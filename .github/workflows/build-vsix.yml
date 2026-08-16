@@ -154,7 +154,7 @@ jobs:
       - name: Publish extension
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
-        run: pnpm --filter deepseek-harness-vscode exec vsce publish --packagePath artifacts/deepseek-harness-vscode-universal.vsix
+        run: pnpm --filter deepseek-harness-vscode exec vsce publish --packagePath ../../artifacts/deepseek-harness-vscode-universal.vsix
 
   release:
     name: Create GitHub Release
