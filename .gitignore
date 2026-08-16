@@ -1,0 +1,19 @@
+node_modules/
+dist/
+coverage/
+*.vsix
+*.log
+*.tsbuildinfo
+artifacts/
+.DS_Store
+Thumbs.db
+.env
+.env.*
+!.env.example
+
+# Generated Webview assets copied into the extension package by Vite.
+apps/extension/media/
+
+# VS Code test/download caches.
+.vscode-test/
+.test-workspace/

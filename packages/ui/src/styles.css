@@ -1,0 +1,43 @@
+:root {
+  color-scheme: light dark;
+  --dsh-space-1: 4px;
+  --dsh-space-2: 8px;
+  --dsh-space-3: 12px;
+  --dsh-space-4: 16px;
+  --dsh-radius: 6px;
+  --dsh-border: 1px solid var(--vscode-widget-border, transparent);
+  --dsh-focus: var(--vscode-focusBorder);
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size);
+  color: var(--vscode-foreground);
+  background: var(--vscode-sideBar-background);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+:focus-visible {
+  outline: 1px solid var(--dsh-focus);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

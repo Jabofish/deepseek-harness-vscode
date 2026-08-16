@@ -1,0 +1,18 @@
+{
+  "name": "@dsh-vscode/dsh-adapter",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@deepseek-ai/dsh-host-apiproxy": "0.1.0-rc.6",
+    "@dsh-vscode/application": "workspace:*",
+    "@dsh-vscode/domain": "workspace:*",
+    "zod": "4.4.3"
+  }
+}

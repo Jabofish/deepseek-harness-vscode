@@ -1,0 +1,26 @@
+{
+  "name": "@dsh-vscode/webview",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "clean": "node -e \"require('node:fs').rmSync('../extension/media',{recursive:true,force:true})\"",
+    "dev": "vite build --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@dsh-vscode/domain": "workspace:*",
+    "@dsh-vscode/timeline": "workspace:*",
+    "@dsh-vscode/ui": "workspace:*",
+    "@dsh-vscode/webview-protocol": "workspace:*",
+    "@tanstack/react-virtual": "3.14.9",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "zustand": "5.0.15"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.4"
+  }
+}

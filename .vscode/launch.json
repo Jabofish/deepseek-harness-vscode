@@ -1,0 +1,16 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run DSH VS Code Extension",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}/apps/extension",
+        "${workspaceFolder}/.test-workspace"
+      ],
+      "outFiles": ["${workspaceFolder}/apps/extension/dist/**/*.js"],
+      "preLaunchTask": "build"
+    }
+  ]
+}

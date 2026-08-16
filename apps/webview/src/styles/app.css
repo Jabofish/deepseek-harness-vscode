@@ -1,0 +1,48 @@
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+body {
+  color: var(--vscode-foreground);
+  background: var(--vscode-sideBar-background);
+}
+
+.scaffold {
+  height: 100%;
+  display: grid;
+  place-content: center;
+  gap: var(--dsh-space-2);
+  padding: var(--dsh-space-4);
+  text-align: center;
+}
+
+.scaffold__mark {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  margin-inline: auto;
+  border: var(--dsh-border);
+  border-radius: 10px;
+  color: var(--vscode-descriptionForeground);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+}
+
+.scaffold h1 {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.scaffold p {
+  max-width: 32ch;
+  margin: 0;
+  color: var(--vscode-descriptionForeground);
+  line-height: 1.5;
+}

@@ -1,0 +1,15 @@
+{
+  "name": "@dsh-vscode/timeline",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@dsh-vscode/domain": "workspace:*"
+  }
+}

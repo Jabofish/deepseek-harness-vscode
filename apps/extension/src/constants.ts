@@ -1,0 +1,5 @@
+export const EXTENSION_ID = 'dsh-vscode.deepseek-harness-vscode'
+export const VIEW_ID = 'dsh.chatView'
+export const OUTPUT_CHANNEL_NAME = 'DeepSeek Harness'
+export const INSTALL_COMMAND = 'npm install --global @deepseek-ai/dsh'
+export const DSH_DOCUMENTATION_URL = 'https://github.com/deepseek-ai/deepseek-harness'

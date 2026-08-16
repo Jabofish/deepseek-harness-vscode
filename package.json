@@ -1,0 +1,46 @@
+{
+  "name": "dsh-vscode-workspace",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "DeepSeek Harness integration for Visual Studio Code",
+  "license": "UNLICENSED",
+  "packageManager": "pnpm@11.19.0",
+  "engines": {
+    "node": ">=22.19.0 <27",
+    "pnpm": ">=11.0.0"
+  },
+  "scripts": {
+    "build": "pnpm --filter @dsh-vscode/webview build && pnpm --filter deepseek-harness-vscode build",
+    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test",
+    "clean": "pnpm -r --if-present clean",
+    "dev": "pnpm --parallel --filter @dsh-vscode/webview --filter deepseek-harness-vscode dev",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint .",
+    "package:vsix": "pnpm build && pnpm --filter deepseek-harness-vscode package:vsix",
+    "test": "vitest run --passWithNoTests",
+    "test:watch": "vitest",
+    "typecheck": "pnpm -r --if-present typecheck"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@testing-library/react": "16.3.2",
+    "@types/node": "26.2.0",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.4",
+    "@types/vscode": "1.125.0",
+    "@vitejs/plugin-react": "6.0.5",
+    "@vscode/test-electron": "3.1.0",
+    "@vscode/vsce": "3.9.2",
+    "eslint": "10.8.1",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "esbuild": "0.28.2",
+    "jsdom": "30.0.1",
+    "prettier": "3.9.6",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.67.0",
+    "vite": "8.2.1",
+    "vitest": "4.1.10"
+  }
+}

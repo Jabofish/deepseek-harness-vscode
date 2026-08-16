@@ -1,0 +1,6 @@
+node_modules
+dist
+coverage
+apps/extension/media
+pnpm-lock.yaml
+DSH_VSCODE_IMPLEMENTATION_PLAN.md

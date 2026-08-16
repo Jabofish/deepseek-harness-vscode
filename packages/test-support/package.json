@@ -1,0 +1,16 @@
+{
+  "name": "@dsh-vscode/test-support",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@dsh-vscode/application": "workspace:*",
+    "@dsh-vscode/domain": "workspace:*"
+  }
+}

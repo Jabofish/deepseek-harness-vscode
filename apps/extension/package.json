@@ -1,0 +1,263 @@
+{
+  "name": "deepseek-harness-vscode",
+  "displayName": "DeepSeek Harness",
+  "description": "A minimal, native-feeling Visual Studio Code client for DeepSeek Harness.",
+  "version": "0.0.1",
+  "publisher": "dsh-vscode",
+  "private": true,
+  "license": "UNLICENSED",
+  "engines": {
+    "vscode": "^1.125.0",
+    "node": ">=22.19.0"
+  },
+  "categories": [
+    "AI",
+    "Other"
+  ],
+  "keywords": [
+    "deepseek",
+    "dsh",
+    "agent",
+    "coding assistant"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "main": "./dist/extension.cjs",
+  "activationEvents": [
+    "onView:dsh.chatView",
+    "onCommand:dsh.connect",
+    "onCommand:dsh.newSession",
+    "onCommand:dsh.installRuntime"
+  ],
+  "files": [
+    "dist/**",
+    "media/**",
+    "resources/**",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "dev": "node esbuild.mjs --watch",
+    "prepackage:vsix": "node -e \"require('node:fs').mkdirSync('../../artifacts',{recursive:true})\"",
+    "package:vsix": "vsce package --no-dependencies --allow-missing-repository -o ../../artifacts/deepseek-harness-vscode.vsix",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@dsh-vscode/application": "workspace:*",
+    "@dsh-vscode/domain": "workspace:*",
+    "@dsh-vscode/dsh-adapter": "workspace:*",
+    "@dsh-vscode/webview-protocol": "workspace:*",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/vscode": "1.125.0"
+  },
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "dsh.container",
+          "title": "DeepSeek Harness",
+          "icon": "resources/dsh.svg"
+        }
+      ]
+    },
+    "views": {
+      "dsh.container": [
+        {
+          "id": "dsh.chatView",
+          "name": "Harness",
+          "type": "webview",
+          "visibility": "visible",
+          "icon": "resources/dsh.svg",
+          "contextualTitle": "DeepSeek Harness"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "dsh.connect",
+        "title": "DSH: Connect or Reconnect",
+        "icon": "$(debug-disconnect)"
+      },
+      {
+        "command": "dsh.newSession",
+        "title": "DSH: New Session",
+        "icon": "$(add)"
+      },
+      {
+        "command": "dsh.openSettings",
+        "title": "DSH: Open Settings",
+        "icon": "$(settings-gear)"
+      },
+      {
+        "command": "dsh.installRuntime",
+        "title": "DSH: Install DeepSeek Harness"
+      },
+      {
+        "command": "dsh.selectExecutable",
+        "title": "DSH: Select Executable"
+      },
+      {
+        "command": "dsh.copyInstallCommand",
+        "title": "DSH: Copy Install Command"
+      },
+      {
+        "command": "dsh.openDocumentation",
+        "title": "DSH: Open Documentation"
+      },
+      {
+        "command": "dsh.openInSecondarySidebar",
+        "title": "DSH: Move View to Secondary Side Bar"
+      },
+      {
+        "command": "dsh.showDiagnostics",
+        "title": "DSH: Show Redacted Diagnostics"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "dsh.newSession",
+          "when": "view == dsh.chatView && dsh.connected",
+          "group": "navigation@1"
+        },
+        {
+          "command": "dsh.connect",
+          "when": "view == dsh.chatView",
+          "group": "navigation@2"
+        },
+        {
+          "command": "dsh.openSettings",
+          "when": "view == dsh.chatView",
+          "group": "navigation@3"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "DeepSeek Harness",
+      "properties": {
+        "dsh.connection.mode": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "attach-only",
+            "new-isolated"
+          ],
+          "default": "auto",
+          "markdownDescription": "Connection policy. `auto` attaches to a running local DSH before starting one; `attach-only` never starts DSH; `new-isolated` always starts an extension-owned instance."
+        },
+        "dsh.connection.managedPort": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535,
+          "default": 0,
+          "description": "Port for an extension-managed DSH. Zero asks DSH to select a free port."
+        },
+        "dsh.connection.attachPorts": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535
+          },
+          "default": [
+            3939
+          ],
+          "description": "Additional local ports probed when looking for an already-running DSH instance."
+        },
+        "dsh.connection.discoveryTimeoutMs": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 30000,
+          "default": 1500,
+          "description": "Maximum time for one local DSH discovery pass."
+        },
+        "dsh.connection.requestTimeoutMs": {
+          "type": "integer",
+          "minimum": 1000,
+          "maximum": 300000,
+          "default": 30000,
+          "description": "Default timeout for non-streaming DSH requests."
+        },
+        "dsh.runtime.executablePath": {
+          "type": "string",
+          "default": "",
+          "scope": "machine-overridable",
+          "description": "Optional absolute path to the DSH executable. Leave empty for automatic discovery."
+        },
+        "dsh.runtime.autoStart": {
+          "type": "boolean",
+          "default": true,
+          "description": "Start a local DSH only after no compatible running instance can be attached."
+        },
+        "dsh.agent.defaultPreset": {
+          "type": "string",
+          "enum": [
+            "standard",
+            "code",
+            "minimal",
+            "cordis"
+          ],
+          "default": "code",
+          "description": "Default DSH agent preset for new sessions."
+        },
+        "dsh.agent.toolMode": {
+          "type": "string",
+          "enum": [
+            "native",
+            "code",
+            "both"
+          ],
+          "default": "both",
+          "description": "Default DSH tool mode for new sessions."
+        },
+        "dsh.agent.permissionPreset": {
+          "type": "string",
+          "enum": [
+            "read-only",
+            "workspace-write",
+            "full-access"
+          ],
+          "default": "workspace-write",
+          "description": "Default permission policy. Runtime prompts still control sensitive actions."
+        },
+        "dsh.agent.planMode": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable DSH plan mode by default for new sessions."
+        },
+        "dsh.model.provider": {
+          "type": "string",
+          "default": "",
+          "description": "Optional default provider id. Leave empty to use DSH configuration."
+        },
+        "dsh.model.id": {
+          "type": "string",
+          "default": "",
+          "description": "Optional default model id. Leave empty to use DSH configuration."
+        },
+        "dsh.model.reasoningLevel": {
+          "type": "string",
+          "default": "",
+          "description": "Optional default reasoning level when supported by the selected model."
+        },
+        "dsh.developer.logLevel": {
+          "type": "string",
+          "enum": [
+            "error",
+            "warn",
+            "info",
+            "debug"
+          ],
+          "default": "info",
+          "description": "Extension diagnostics verbosity. Secrets and prompt bodies are always redacted."
+        }
+      }
+    }
+  }
+}
