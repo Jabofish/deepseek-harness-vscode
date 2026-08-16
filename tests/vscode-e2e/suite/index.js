@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import * as vscode from 'vscode'
 
 export async function run() {
-  const extension = vscode.extensions.getExtension('Direwolf.deepseek-harness-vscode')
+  const extension = vscode.extensions.getExtension('Direwolf.deepseek-harness-client')
   assert.ok(extension, 'the development extension must be installed')
   await extension.activate()
   const commands = await vscode.commands.getCommands(true)

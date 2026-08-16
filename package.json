@@ -11,14 +11,14 @@
     "pnpm": ">=11.0.0"
   },
   "scripts": {
-    "build": "pnpm --filter @dsh-vscode/webview build && pnpm --filter deepseek-harness-vscode build",
+    "build": "pnpm --filter @dsh-vscode/webview build && pnpm --filter deepseek-harness-client build",
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test",
     "clean": "pnpm -r --if-present clean",
-    "dev": "pnpm --parallel --filter @dsh-vscode/webview --filter deepseek-harness-vscode dev",
+    "dev": "pnpm --parallel --filter @dsh-vscode/webview --filter deepseek-harness-client dev",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint .",
-    "package:vsix": "pnpm build && pnpm --filter deepseek-harness-vscode package:vsix",
+    "package:vsix": "pnpm build && pnpm --filter deepseek-harness-client package:vsix",
     "test": "vitest run --passWithNoTests",
     "test:watch": "vitest",
     "typecheck": "pnpm -r --if-present typecheck && pnpm exec tsc -p tests/tsconfig.json --noEmit"

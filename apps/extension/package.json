@@ -1,7 +1,7 @@
 {
-  "name": "deepseek-harness-vscode",
-  "displayName": "DeepSeek Harness",
-  "description": "Use DeepSeek Harness in VS Code: sessions, streaming replies, tools, and model controls. / 在 VS Code 中使用 DSH：会话、流式回复、工具与模型控制。",
+  "name": "deepseek-harness-client",
+  "displayName": "DeepSeek Harness Companion for VS Code",
+  "description": "Run DSH sessions, tools, and coding tasks in VS Code.",
   "version": "0.0.2",
   "publisher": "Direwolf",
   "icon": "resources/dsh.png",
