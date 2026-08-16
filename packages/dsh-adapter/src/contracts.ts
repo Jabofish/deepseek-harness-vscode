@@ -18,6 +18,17 @@ export interface DshVersionAdapter {
 
 export interface DshTransport {
   request<TResponse>(method: string, params: unknown, signal?: AbortSignal): Promise<TResponse>
+  /**
+   * Call a pinned Typert Remote endpoint. The Loopback implementation
+   * validates the complete server-response envelope and returns its `result`
+   * member, so callers receive the RemoteResult union rather than another
+   * response envelope.
+   */
+  remoteRequest<TResponse>(
+    endpoint: string,
+    args: Readonly<Record<string, unknown>>,
+    signal?: AbortSignal,
+  ): Promise<TResponse>
   openEventStream(signal?: AbortSignal): AsyncIterable<unknown>
   openMuxStream?(signal: AbortSignal): AsyncIterable<unknown>
   openHostStream?(signal: AbortSignal): AsyncIterable<unknown>

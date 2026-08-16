@@ -2,7 +2,7 @@
   "name": "deepseek-harness-client",
   "displayName": "DeepSeek Harness Companion for VS Code",
   "description": "Run DSH sessions, tools, and coding tasks in VS Code.",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "publisher": "Direwolf",
   "icon": "resources/dsh.png",
   "license": "MIT",
@@ -84,11 +84,11 @@
       "dsh-container": [
         {
           "id": "dsh.chatView",
-          "name": "Harness",
+          "name": "Chat",
           "type": "webview",
           "visibility": "visible",
           "icon": "resources/dsh.svg",
-          "contextualTitle": "DeepSeek Harness"
+          "contextualTitle": "Chat"
         }
       ]
     },

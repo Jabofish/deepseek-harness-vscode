@@ -8,7 +8,12 @@ import type {
 } from '@dsh-vscode/domain'
 import type { OpenFileCandidate } from '../../app/store.js'
 import { Icon } from '../../ui/Icon.js'
-import { CommandPalette, type CommandArgumentOption } from '../commands/CommandPalette.js'
+import {
+  CommandPalette,
+  firstCommandPaletteSelection,
+  type CommandArgumentOption,
+  type CommandPaletteSelection,
+} from '../commands/CommandPalette.js'
 import { formatPermissionLabel, permissionOptions, SessionControls } from './SessionControls.js'
 
 export interface ComposerProps {
@@ -21,6 +26,7 @@ export interface ComposerProps {
   readonly presets?: readonly AgentPresetDescriptor[]
   readonly permissionPresets?: readonly string[]
   readonly commands?: readonly DynamicCommand[]
+  readonly modelPickerOpenRequest?: number
   readonly estimatedContextTokens?: number
   readonly contextWindowTokens?: number
   readonly cacheHitRate?: number
@@ -28,6 +34,7 @@ export interface ComposerProps {
   readonly presetMutable?: boolean
   readonly onConfigurationChange?: (configuration: AgentConfiguration) => void
   readonly onCommand?: (command: string) => void
+  readonly onCommandQueryChange?: (query: string | undefined) => void
   readonly onDraftChange: (value: string) => void
   readonly onPickAttachment: () => void
   readonly openFileCandidates: readonly OpenFileCandidate[]
@@ -61,6 +68,10 @@ export function Composer(props: ComposerProps): ReactElement {
     props.commands ?? [],
     availableCommandPermissionPresets,
   )
+  const commandPaletteSelection =
+    commandQuery === undefined || props.commands === undefined
+      ? undefined
+      : firstCommandPaletteSelection(commandQuery, props.commands, commandArgumentOptions)
   const openFileCandidates = orderOpenFileCandidates(props.openFileCandidates, props.preferredOpenFileId)
   const defaultOpenFileId =
     props.preferredOpenFileId !== undefined &&
@@ -80,10 +91,46 @@ export function Composer(props: ComposerProps): ReactElement {
     }, 250)
   }
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
+    if (
+      commandPaletteSelection !== undefined &&
+      !props.running &&
+      (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey)) &&
+      !composing.current &&
+      !event.nativeEvent.isComposing
+    ) {
+      event.preventDefault()
+      applyCommandSelection(commandPaletteSelection, event.key === 'Enter')
+      return
+    }
     if (event.key !== 'Enter' || event.shiftKey || composing.current || event.nativeEvent.isComposing) return
     event.preventDefault()
     if (props.running) props.onCancel()
     else submit()
+  }
+  const applyCommandSelection = (selection: CommandPaletteSelection, executeNoInput: boolean): void => {
+    const command = selection.command
+    if (
+      executeNoInput &&
+      selection.argument === undefined &&
+      command.input === undefined &&
+      onCommand !== undefined
+    ) {
+      onCommand(`/${command.name}`)
+      props.onDraftChange('')
+      return
+    }
+    props.onDraftChange(
+      selection.argument === undefined
+        ? `/${command.name}${command.input === undefined ? '' : ' '}`
+        : `/${command.name} ${selection.argument}`,
+    )
+    window.setTimeout(() => {
+      const textarea = textareaRef.current
+      if (textarea === null) return
+      textarea.focus()
+      const end = textarea.value.length
+      textarea.setSelectionRange(end, end)
+    }, 0)
   }
   return (
     <form
@@ -123,7 +170,11 @@ export function Composer(props: ComposerProps): ReactElement {
           aria-label="Prompt"
           value={props.draft}
           disabled={props.disabled || props.running}
-          onChange={(event) => props.onDraftChange(event.target.value)}
+          onChange={(event) => {
+            const value = event.target.value
+            props.onDraftChange(value)
+            props.onCommandQueryChange?.(slashCommandQuery(value))
+          }}
           onKeyDown={onKeyDown}
           onCompositionStart={() => {
             composing.current = true
@@ -142,23 +193,7 @@ export function Composer(props: ComposerProps): ReactElement {
             onExecute={(name, argument) => {
               const command = props.commands?.find((entry) => entry.name === name)
               if (command === undefined) return
-              if (command.input === undefined && argument === undefined && onCommand !== undefined) {
-                onCommand(`/${command.name}`)
-                props.onDraftChange('')
-                return
-              }
-              props.onDraftChange(
-                argument === undefined
-                  ? `/${command.name}${command.input === undefined ? '' : ' '}`
-                  : `/${command.name} ${argument}`,
-              )
-              window.setTimeout(() => {
-                const textarea = textareaRef.current
-                if (textarea === null) return
-                textarea.focus()
-                const end = textarea.value.length
-                textarea.setSelectionRange(end, end)
-              }, 0)
+              applyCommandSelection({ command, ...(argument === undefined ? {} : { argument }) }, true)
             }}
           />
         )}
@@ -271,6 +306,9 @@ export function Composer(props: ComposerProps): ReactElement {
             cacheHitRate={props.cacheHitRate ?? 0}
             disabled={props.configurationDisabled ?? (props.disabled || props.running)}
             presetMutable={props.presetMutable === true}
+            {...(props.modelPickerOpenRequest === undefined
+              ? {}
+              : { modelPickerOpenRequest: props.modelPickerOpenRequest })}
             onChange={onConfigurationChange}
             onCommand={onCommand ?? (() => undefined)}
           />

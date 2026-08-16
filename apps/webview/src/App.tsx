@@ -41,6 +41,7 @@ export function App(): ReactElement {
   const [respondingInteractionId, setRespondingInteractionId] = useState<string | undefined>()
   const [error, setError] = useState<string | undefined>()
   const [dismissedConnection, setDismissedConnection] = useState<string | undefined>()
+  const [modelPickerOpenRequest, setModelPickerOpenRequest] = useState(0)
 
   useEffect(() => {
     if (!hasVsCodeApi()) return
@@ -329,6 +330,7 @@ export function App(): ReactElement {
                     presets={state.presets}
                     permissionPresets={state.permissionPresets}
                     commands={state.commands}
+                    modelPickerOpenRequest={modelPickerOpenRequest}
                     estimatedContextTokens={estimatedContextTokens}
                     {...(contextWindowTokens === undefined ? {} : { contextWindowTokens })}
                     cacheHitRate={cacheHitRate(projectedTokenUsage ?? state.timeline.tokenUsage)}
@@ -344,11 +346,19 @@ export function App(): ReactElement {
                         )
                     }}
                     onCommand={(command) => {
+                      if (command.trim() === '/model') {
+                        setModelPickerOpenRequest((current) => current + 1)
+                        return
+                      }
                       void store
                         .executeCommand(active.id, command)
                         .catch((reason: unknown) =>
                           setError(reason instanceof Error ? reason.message : 'Unable to update DSH mode.'),
                         )
+                    }}
+                    onCommandQueryChange={(query) => {
+                      if (query === undefined || state.commands.length > 0) return
+                      void store.refreshCommands(active.id)
                     }}
                     onDraftChange={setDraft}
                     onPickAttachment={() => {

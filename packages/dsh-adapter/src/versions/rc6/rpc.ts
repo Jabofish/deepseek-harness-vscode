@@ -2,23 +2,20 @@ import { AppError, type AppErrorCode } from '@dsh-vscode/domain'
 
 import type { DshTransport } from '../../contracts.js'
 
+type RpcResult<T> =
+  | { readonly ok: true; readonly value: T }
+  | {
+      readonly ok: false
+      readonly error?: { readonly code?: string; readonly message?: string; readonly details?: unknown }
+    }
+
 export interface RpcResponseLike<T> {
   readonly rpcId?: string
-  readonly result?:
-    | { readonly ok: true; readonly value: T }
-    | {
-        readonly ok: false
-        readonly error?: { readonly code?: string; readonly message?: string; readonly details?: unknown }
-      }
+  readonly result?: RpcResult<T>
 }
 
-export async function callRpc<T>(
-  transport: DshTransport,
-  method: string,
-  payload: unknown,
-  signal?: AbortSignal,
-): Promise<T> {
-  const response = await transport.request<RpcResponseLike<T>>(method, payload, signal)
+/** Unwrap either the ordinary Host API or a Typert Remote RpcResult. */
+export function unwrapRpcResult<T>(response: RpcResponseLike<T>, method: string): T {
   if (
     typeof response !== 'object' ||
     response === null ||
@@ -50,6 +47,27 @@ export async function callRpc<T>(
     retryable: code === 'cancelled' || code === 'agent-busy' || code === 'settings-conflict',
     context: { rpcMethod: method, rpcCode: code },
   })
+}
+
+/**
+ * Unwrap a result returned by a Remote carrier.
+ *
+ * The ordinary Host API client returns the complete response envelope, while
+ * LoopbackApiClient.dispatchRemote validates that envelope and returns its
+ * `result` member.  Keep the same strict validation for that already-unwrapped
+ * value without pretending it still has another `.result` property.
+ */
+export function unwrapRpcResultValue<T>(result: unknown, method: string): T {
+  return unwrapRpcResult<T>({ result: result as RpcResult<T> }, method)
+}
+
+export async function callRpc<T>(
+  transport: DshTransport,
+  method: string,
+  payload: unknown,
+  signal?: AbortSignal,
+): Promise<T> {
+  return unwrapRpcResult(await transport.request<RpcResponseLike<T>>(method, payload, signal), method)
 }
 
 export function unavailable(capability: string): AppError {

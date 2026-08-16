@@ -73,6 +73,24 @@ describe('reduceTimeline', () => {
     expect(replay(initial)).toEqual(replay(initial))
   })
 
+  it('hides command lifecycle start notices when the completed result follows', () => {
+    const next = reduceTimeline(initial, {
+      sequence: 1,
+      event: { type: 'notice', sessionId: 'session-1', level: 'info', text: 'permission started.' },
+    })
+    const completed = reduceTimeline(next, {
+      sequence: 2,
+      event: {
+        type: 'notice',
+        sessionId: 'session-1',
+        level: 'info',
+        text: 'Permission changed to Full access.',
+      },
+    })
+    expect(next.nodes).toEqual([])
+    expect(completed.nodes).toMatchObject([{ kind: 'notice', text: 'Permission changed to Full access.' }])
+  })
+
   it('handles unknown rc6 events without losing later known events', () => {
     const unknown = reduceTimeline(initial, {
       sequence: 1,

@@ -575,14 +575,35 @@ function retryText(name: string, data: Record<string, unknown>): string {
 
 function commandNotice(name: string, data: Record<string, unknown>, sessionId: string): BackendEvent {
   const commandName = firstString(data.name, data.commandName) ?? 'DSH command'
-  const status = firstString(data.status, data.state)
+  const status = firstString(data.status, data.state, data.kind)
   const detail = firstString(data.message, data.text, data.summary)
   return {
     type: 'notice',
     ...(sessionId === '' ? {} : { sessionId }),
     level: name === 'command/done' && (status === 'failed' || status === 'error') ? 'error' : 'info',
-    text:
-      detail === undefined ? `${commandName} ${name === 'command/done' ? 'completed.' : 'started.'}` : detail,
+    text: commandNoticeText(name, commandName, detail),
+  }
+}
+
+function commandNoticeText(name: string, commandName: string, detail: string | undefined): string {
+  if (detail === undefined) return `${commandName} ${name === 'command/done' ? 'completed.' : 'started.'}`
+  const permission = /^preset\s+(.+)$/iu.exec(detail)?.[1]?.trim()
+  if (permission !== undefined && permission !== '')
+    return `Permission changed to ${permissionPresetLabel(permission)}.`
+  return detail
+}
+
+function permissionPresetLabel(value: string): string {
+  switch (value.toLowerCase()) {
+    case 'read-only':
+      return 'Read only'
+    case 'workspace-write':
+      return 'Workspace write'
+    case 'full-access':
+    case 'danger-full-access':
+      return 'Full access'
+    default:
+      return value.replace(/[-_]+/gu, ' ').replace(/\b\w/gu, (character) => character.toUpperCase())
   }
 }
 

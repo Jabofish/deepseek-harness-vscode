@@ -1,5 +1,5 @@
 import { AbstractApiClient } from '@deepseek-ai/dsh-host-apiproxy/client'
-import { serverRequestSchema } from '@deepseek-ai/dsh-host-apiproxy/api'
+import { serverRequestSchema, serverResponseSchema } from '@deepseek-ai/dsh-host-apiproxy/api'
 import { hostFrameSchema, muxFrameSchema } from '@deepseek-ai/dsh-host-apiproxy/api/events.schema'
 import type { RequestPayload } from '@deepseek-ai/dsh-host-apiproxy/api/rpc-map'
 import { RpcId, type ClientResponse, type RpcResult } from '@deepseek-ai/dsh-host-apiproxy/api/rpc'
@@ -57,6 +57,26 @@ export class LoopbackApiClient extends AbstractApiClient implements DshTransport
         }),
       )
     return this.withRetry(method, () => this.dispatch(method, params, signal), signal) as Promise<TResponse>
+  }
+
+  public remoteRequest<TResponse>(
+    endpoint: string,
+    args: Readonly<Record<string, unknown>>,
+    signal?: AbortSignal,
+  ): Promise<TResponse> {
+    if (this.isClosed)
+      return Promise.reject(
+        new AppError({
+          code: 'BACKEND_UNREACHABLE',
+          message: 'The DSH connection is closed.',
+          retryable: true,
+        }),
+      )
+    return this.withRetry(
+      endpoint,
+      () => this.dispatchRemote<TResponse>(endpoint, args, signal),
+      signal,
+    ) as Promise<TResponse>
   }
 
   public openEventStream(signal?: AbortSignal): AsyncIterable<unknown> {
@@ -233,6 +253,65 @@ export class LoopbackApiClient extends AbstractApiClient implements DshTransport
           retryable: false,
         })
     }
+  }
+
+  /**
+   * Typert Remote calls use the same JSON RPC envelope as the Host API, but
+   * their payload is the gateway's exact `{ args }` object.  Keeping this
+   * carrier in the Extension Host preserves the Webview boundary and avoids
+   * treating a command as a model prompt.
+   */
+  private async dispatchRemote<TResponse>(
+    endpoint: string,
+    args: Readonly<Record<string, unknown>>,
+    signal?: AbortSignal,
+  ): Promise<TResponse> {
+    if (!/^[a-z][a-z0-9_-]*\/[a-z][a-z0-9_-]*$/u.test(endpoint))
+      throw new AppError({
+        code: 'INVALID_CONFIGURATION',
+        message: 'The DSH Remote endpoint is invalid.',
+        retryable: false,
+      })
+    const message = {
+      type: 'client-request' as const,
+      rpcId: this.mintRpcId(),
+      method: endpoint,
+      payload: { args },
+    }
+    this.onEnvelope(message)
+    const target = new URL(`/api/${endpoint}`, this.options.endpoint.baseUrl)
+    const response = await this.doFetch(target, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(message),
+      ...(signal === undefined ? {} : { signal }),
+    })
+    if (!response.ok)
+      throw new AppError({
+        code: response.status >= 500 ? 'BACKEND_UNREACHABLE' : 'CAPABILITY_UNAVAILABLE',
+        message: `The DSH Remote endpoint ${endpoint} failed (HTTP ${response.status}).`,
+        retryable: response.status >= 500,
+        context: { endpoint, status: response.status },
+      })
+    let full: ReturnType<typeof serverResponseSchema.parse>
+    try {
+      full = serverResponseSchema.parse(await response.json())
+    } catch (cause) {
+      throw new AppError({
+        code: 'PROTOCOL_ERROR',
+        message: `DSH returned a malformed Remote response for ${endpoint}.`,
+        retryable: false,
+        cause,
+      })
+    }
+    this.onEnvelope(full)
+    if (full.rpcId !== message.rpcId)
+      throw new AppError({
+        code: 'PROTOCOL_ERROR',
+        message: `DSH returned a mismatched Remote response for ${endpoint}.`,
+        retryable: false,
+      })
+    return full.result as TResponse
   }
 
   private openWebSocketStream(
@@ -483,6 +562,7 @@ const IDEMPOTENT_METHODS = new Set([
   'credentials.describe',
   'subagent.list',
   'subagent.history',
+  'commands/list',
 ])
 
 function assertLoopback(endpoint: BackendEndpoint): void {

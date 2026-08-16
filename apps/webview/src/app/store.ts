@@ -64,6 +64,7 @@ export interface AppActions {
   initialize(): Promise<void>
   reconnect(): Promise<void>
   refreshSessions(): Promise<void>
+  refreshCommands(sessionId?: string): Promise<void>
   openSession(sessionId: string): Promise<void>
   renameSession(sessionId: string, title: string): Promise<void>
   createSession(workspaceId?: string): Promise<void>
@@ -165,18 +166,57 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   const callbacks: { openCreatedSession?: (sessionId: string) => Promise<void> } = {}
   let refreshVersion = 0
   let openVersion = 0
-  let commandRefreshVersion = 0
-  const refreshCommands = async (sessionId: string | undefined = state.activeSessionId): Promise<void> => {
+  let commandDirectoryGeneration = 0
+  const commandDirectoryCache = new Map<string, readonly DynamicCommand[]>()
+  const commandDirectoryLoads = new Map<string, Promise<readonly DynamicCommand[] | undefined>>()
+  const loadCommandDirectory = (
+    sessionId: string,
+    force = false,
+  ): Promise<readonly DynamicCommand[] | undefined> => {
+    if (force) commandDirectoryCache.delete(sessionId)
+    else {
+      const cached = commandDirectoryCache.get(sessionId)
+      if (cached !== undefined) return Promise.resolve(cached)
+    }
+    const pending = commandDirectoryLoads.get(sessionId)
+    if (pending !== undefined) return pending
+    const generation = commandDirectoryGeneration
+    const load = readCommandList(client, sessionId)
+      .then((commands) => {
+        if (commands === undefined || generation !== commandDirectoryGeneration) return undefined
+        commandDirectoryCache.set(sessionId, commands)
+        return commands
+      })
+      .finally(() => {
+        if (commandDirectoryLoads.get(sessionId) === load) commandDirectoryLoads.delete(sessionId)
+      })
+    commandDirectoryLoads.set(sessionId, load)
+    return load
+  }
+  const refreshCommands = async (
+    sessionId: string | undefined = state.activeSessionId,
+    force = false,
+  ): Promise<void> => {
     if (sessionId === undefined) return
-    const version = ++commandRefreshVersion
-    const commands = await readCommandList(client, sessionId)
-    if (commands === undefined || version !== commandRefreshVersion) return
+    const commands = await loadCommandDirectory(sessionId, force)
+    if (commands === undefined) return
     setState((current) => (current.activeSessionId === sessionId ? { ...current, commands } : current))
   }
   const refresh = async (): Promise<void> => {
     const version = ++refreshVersion
     await refreshSessions(client, setState, () => version === refreshVersion)
     if (version === refreshVersion) await refreshCommands()
+  }
+  const executeCommandRequest = async (sessionId: string, command: string): Promise<void> => {
+    await client.request<unknown>({
+      type: 'command.execute',
+      requestId: requestId(),
+      payload: { sessionId, command },
+    })
+    setState((current) => {
+      if (current.activeSessionId !== sessionId || current.configuration === undefined) return current
+      return { ...current, configuration: applyKnownCommand(current.configuration, command) }
+    })
   }
   const unsubscribe = client.subscribe((message) => {
     applyHostMessage(message, state, setState)
@@ -185,13 +225,22 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       message.name === 'remote.event' &&
       isCommandDirectoryRefresh(message.payload)
     )
-      void refreshCommands()
+      void refreshCommands(undefined, true)
     if (
       message.type === 'event' &&
       message.name === 'connection.snapshot' &&
       object(message.payload)?.kind === 'connected'
-    )
-      void refreshCommands()
+    ) {
+      commandDirectoryGeneration += 1
+      commandDirectoryCache.clear()
+      commandDirectoryLoads.clear()
+      void refreshCommands(undefined, true)
+    }
+    if (message.type === 'event' && message.name === 'connection.lost') {
+      commandDirectoryGeneration += 1
+      commandDirectoryCache.clear()
+      commandDirectoryLoads.clear()
+    }
     if (
       message.type === 'event' &&
       (message.name === 'workspace.changed' ||
@@ -214,7 +263,6 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   })
   const open = async (sessionId: string): Promise<void> => {
     const version = ++openVersion
-    commandRefreshVersion += 1
     const result = await client.request<unknown>({
       type: 'session.open',
       requestId: requestId(),
@@ -245,7 +293,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         { type: 'subagent.list', requestId: requestId(), payload: { sessionId } },
         isSubagentView,
       ),
-      readCommandList(client, sessionId),
+      loadCommandDirectory(sessionId),
     ])
     if (version !== openVersion) return
     setState((current) => ({
@@ -263,7 +311,10 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       todos: latestTodos(timeline),
       jobs,
       subagents,
-      commands: commands ?? (current.activeSessionId === sessionId ? current.commands : []),
+      commands:
+        commands ??
+        commandDirectoryCache.get(sessionId) ??
+        (current.activeSessionId === sessionId ? current.commands : []),
     }))
     persistWebviewState({ activeSessionId: sessionId })
   }
@@ -355,6 +406,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       await refresh()
     },
     refreshSessions: refresh,
+    refreshCommands: (sessionId) => refreshCommands(sessionId),
     openSession: open,
     renameSession: async (sessionId, title) => {
       await client.request<unknown>({
@@ -378,17 +430,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       rememberComposerConfiguration(configuration)
       setState((current) => (current.activeSessionId === sessionId ? { ...current, configuration } : current))
     },
-    executeCommand: async (sessionId, command) => {
-      await client.request<unknown>({
-        type: 'command.execute',
-        requestId: requestId(),
-        payload: { sessionId, command },
-      })
-      setState((current) => {
-        if (current.activeSessionId !== sessionId || current.configuration === undefined) return current
-        return { ...current, configuration: applyKnownCommand(current.configuration, command) }
-      })
-    },
+    executeCommand: executeCommandRequest,
     createSession: async (workspaceId) => {
       const workspace =
         (workspaceId === undefined
@@ -456,11 +498,11 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       const optimisticId = `optimistic:user:${rpcRequestId}`
       const isSlashCommand = attachments.length === 0 && parseSlashCommand(text) !== undefined
       if (isSlashCommand) {
-        await client.request<unknown>({
-          type: 'session.sendPrompt',
-          requestId: rpcRequestId,
-          payload: { sessionId, text, attachments: [] },
-        })
+        // Slash commands are control-plane operations.  Sending them through
+        // session.prompt turns /plan, /permission, /compact, and every plugin
+        // command into a visible model request.  The official WebUI routes
+        // the complete line through commands.execute instead.
+        await executeCommandRequest(sessionId, text)
         return
       }
       const preview = text || attachments.map((attachment) => `[${attachment.name}]`).join('\n')
@@ -704,12 +746,24 @@ async function readCommandList(
       requestId: requestId(),
       payload: { sessionId },
     })
-    return listValues(result).filter(isDynamicCommand)
+    return withClientCommandContributions(listValues(result).filter(isDynamicCommand))
   } catch {
     // A registry refresh is advisory. Keep the last known directory when a
     // transient connection failure occurs during commands/change handling.
     return undefined
   }
+}
+
+function withClientCommandContributions(commands: readonly DynamicCommand[]): readonly DynamicCommand[] {
+  if (commands.some((command) => command.name === 'model')) return commands
+  return [
+    ...commands,
+    {
+      name: 'model',
+      description: 'Select the model for this conversation',
+      source: 'plugin',
+    },
+  ]
 }
 
 function isCommandDirectoryRefresh(value: unknown): boolean {

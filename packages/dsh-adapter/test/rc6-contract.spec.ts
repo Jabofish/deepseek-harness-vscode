@@ -66,6 +66,11 @@ const rpcMethods = [
 const transport = (response: unknown): DshTransport => ({
   request: <TResponse>(_method: string, _params: unknown, _signal?: AbortSignal) =>
     Promise.resolve(response as TResponse),
+  remoteRequest: <TResponse>(
+    _endpoint: string,
+    _args: Readonly<Record<string, unknown>>,
+    _signal?: AbortSignal,
+  ) => Promise.resolve(response as TResponse),
   openEventStream: async function* () {
     /* fixture stream */
   },
@@ -98,6 +103,22 @@ describe('DeepSeek Harness 0.1.0-rc.6 contract', () => {
         data: { turn: 1, step: 1, chunk: { text: 'Hi' } },
       }),
     ).toMatchObject({ type: 'message.delta', delta: 'Hi' })
+  })
+
+  it('keeps one clear permission result for a command lifecycle pair', () => {
+    expect(
+      rc6Mapper.event('command/run', {
+        sessionId: 's1',
+        name: 'permission',
+      }),
+    ).toMatchObject({ type: 'notice', text: 'permission started.' })
+    expect(
+      rc6Mapper.event('command/done', {
+        sessionId: 's1',
+        kind: 'success',
+        text: 'preset danger-full-access',
+      }),
+    ).toMatchObject({ type: 'notice', text: 'Permission changed to Full access.' })
   })
 
   it('maps the rc.6 session projection, history, queue, jobs, and question correlation', () => {
@@ -291,45 +312,53 @@ describe('DeepSeek Harness 0.1.0-rc.6 contract', () => {
     })
   })
 
-  it('dispatches slash commands through the pinned session.prompt contract', async () => {
+  it('discovers and executes slash commands through the pinned Typert Remote contract', async () => {
     const calls: { readonly method: string; readonly params: unknown }[] = []
     const commandTransport: DshTransport = {
       ...transport({ result: { ok: true, value: [] } }),
-      request: <TResponse>(method: string, params: unknown) => {
+      remoteRequest: <TResponse>(method: string, params: unknown) => {
         calls.push({ method, params })
-        return Promise.resolve({
-          result: {
-            ok: true,
-            value: { accepted: true, command: { kind: 'success', text: 'done' } },
-          },
-        } as TResponse)
+        return Promise.resolve(
+          (method === 'commands/list'
+            ? { ok: true, value: [{ name: 'alpha', description: 'Alpha command' }] }
+            : {
+                ok: true,
+                value: { commandId: 'command-1', result: { kind: 'success' } },
+              }) as TResponse,
+        )
       },
     }
     const repository = new Rc6CommandRepository(commandTransport)
-    await expect(repository.list('session-1')).resolves.toEqual([])
+    await expect(repository.list('session-1')).resolves.toEqual([
+      { name: 'alpha', description: 'Alpha command' },
+    ])
     await repository.execute('session-1', '/alpha value')
     expect(calls).toEqual([
       {
-        method: 'session.prompt',
-        params: { sessionId: 'session-1', mode: 'queue', content: [{ type: 'text', text: '/alpha value' }] },
+        method: 'commands/list',
+        params: { agentId: 'session-1' },
+      },
+      {
+        method: 'commands/execute',
+        params: { agentId: 'session-1', line: '/alpha value' },
       },
     ])
   })
 
-  it('does not invent a command directory when rc.6 has no list RPC', async () => {
+  it('does not request a command directory without an active session', async () => {
     await expect(
-      new Rc6CommandRepository(transport({ result: { ok: true, value: [] } })).list('session-1'),
+      new Rc6CommandRepository(transport({ result: { ok: true, value: [] } })).list(),
     ).resolves.toEqual([])
   })
 
-  it('rejects an undefined slash-command response as malformed', async () => {
+  it('reports an unmatched slash command without sending a model prompt', async () => {
     await expect(
-      new Rc6CommandRepository(transport({ result: { ok: true, value: undefined } })).execute(
-        'session-1',
-        '/not-registered',
-      ),
+      new Rc6CommandRepository({
+        ...transport({ result: { ok: true, value: undefined } }),
+        remoteRequest: <TResponse>() => Promise.resolve({ ok: true, value: undefined } as TResponse),
+      }).execute('session-1', '/not-registered'),
     ).rejects.toMatchObject({
-      code: 'PROTOCOL_ERROR',
+      code: 'INVALID_CONFIGURATION',
     })
   })
 

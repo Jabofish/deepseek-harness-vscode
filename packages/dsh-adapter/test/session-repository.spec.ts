@@ -16,6 +16,7 @@ describe('Rc6SessionRepository session removal', () => {
     const request = vi.fn(requestImplementation) as unknown as DshTransport['request']
     const transport: DshTransport = {
       request,
+      remoteRequest: <TResponse>() => Promise.resolve({ result: { ok: true, value: [] } } as TResponse),
       openEventStream: async function* () {
         /* fixture stream */
       },

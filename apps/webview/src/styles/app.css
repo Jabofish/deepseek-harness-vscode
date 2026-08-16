@@ -4710,3 +4710,61 @@ summary.dsh-timeline__card-header {
 .dsh-compact-picker--labelled .dsh-compact-picker__trigger-text {
   line-height: 1.25;
 }
+
+/* The toolbar has three direct children: the attachment/hint group, the
+   session controls, and the send button. Keep those tracks explicit so a
+   labelled picker cannot create an implicit track and overlap its neighbours. */
+.dsh-composer__toolbar {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.dsh-composer__toolbar > *,
+.dsh-composer__toolbar-start,
+.dsh-session-controls,
+.dsh-session-controls__selectors,
+.dsh-session-controls__metrics {
+  align-self: center;
+}
+
+.dsh-session-controls__access {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  min-height: 28px;
+  flex-basis: 28px;
+  align-self: center;
+}
+
+.dsh-session-controls__metrics,
+.dsh-session-controls__metrics > div {
+  min-height: 28px;
+  height: 28px;
+  align-items: center;
+}
+
+@media (max-width: 520px) {
+  .dsh-composer__toolbar {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+}
+
+/* A narrow composer is an icon rail. The popup itself may be wide, but its
+   trigger must stay in the same 28px slot as the neighbouring controls. */
+@media (max-width: 559px) {
+  .dsh-session-controls__selectors > .dsh-compact-picker {
+    width: 28px;
+    min-width: 28px;
+    flex: 0 0 28px;
+  }
+
+  .dsh-compact-picker--labelled .dsh-compact-picker__trigger {
+    width: 28px;
+    min-width: 28px;
+    max-width: 28px;
+    padding-inline: 0;
+  }
+
+  .dsh-compact-picker--labelled .dsh-compact-picker__trigger-text {
+    display: none;
+  }
+}

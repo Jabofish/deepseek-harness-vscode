@@ -18,12 +18,14 @@ export interface CompactPickerProps {
   readonly value: string
   readonly options: readonly CompactPickerOption[]
   readonly disabled?: boolean
+  readonly openRequest?: number
   readonly onChange: (value: string) => void
 }
 
 export function CompactPicker(props: CompactPickerProps): ReactElement {
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
   const listboxId = useId()
   const className = [
     'dsh-compact-picker',
@@ -50,9 +52,22 @@ export function CompactPicker(props: CompactPickerProps): ReactElement {
     }
   }, [open])
 
+  useEffect(() => {
+    if ((props.openRequest ?? 0) <= 0 || props.disabled || props.options.length === 0) return
+    const openPicker = window.setTimeout(() => {
+      setOpen(true)
+      // A command can open this picker while focus is still on another picker.
+      // Move focus with the popup so the previous control does not keep a stale
+      // focus ring beside the newly opened control.
+      triggerRef.current?.focus()
+    }, 0)
+    return () => window.clearTimeout(openPicker)
+  }, [props.disabled, props.openRequest, props.options.length])
+
   return (
     <div ref={rootRef} className={`${className}${open ? ' dsh-compact-picker--open' : ''}`}>
       <button
+        ref={triggerRef}
         className="dsh-compact-picker__trigger"
         type="button"
         aria-label={`${props.ariaLabel}: ${props.label}`}

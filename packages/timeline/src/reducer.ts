@@ -265,7 +265,11 @@ export function reduceTimeline(state: TimelineState, input: SequencedBackendEven
     case 'queue.updated':
       break
     case 'notice':
-      nodes.push({ kind: 'notice', id: `notice:${input.sequence}`, level: event.level, text: event.text })
+      // Command lifecycle start events are implementation details. The
+      // matching command/done notice carries the useful final state and is
+      // rendered on its own, so one user action produces one visible notice.
+      if (!(event.level === 'info' && / started\.$/u.test(event.text)))
+        nodes.push({ kind: 'notice', id: `notice:${input.sequence}`, level: event.level, text: event.text })
       break
   }
   const tokenUsage =

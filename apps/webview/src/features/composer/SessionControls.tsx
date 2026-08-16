@@ -14,6 +14,7 @@ export interface SessionControlsProps {
   readonly cacheHitRate: number
   readonly disabled: boolean
   readonly presetMutable: boolean
+  readonly modelPickerOpenRequest?: number
   readonly onChange: (configuration: AgentConfiguration) => void
   readonly onCommand: (command: string) => void
 }
@@ -75,6 +76,9 @@ export function SessionControls(props: SessionControlsProps): ReactElement {
         <ModelPicker
           models={props.models}
           value={props.configuration.model}
+          {...(props.modelPickerOpenRequest === undefined
+            ? {}
+            : { openRequest: props.modelPickerOpenRequest })}
           displayLabel
           disabled={props.disabled}
           onChange={(model) => props.onChange({ ...props.configuration, model })}

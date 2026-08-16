@@ -13,6 +13,41 @@ export interface CommandArgumentOption {
   readonly label: string
 }
 
+export interface CommandPaletteSelection {
+  readonly command: DynamicCommand
+  readonly argument?: string
+}
+
+/** Return the first official-directory match used by keyboard completion. */
+export function firstCommandPaletteSelection(
+  query: string,
+  commands: readonly DynamicCommand[],
+  argumentOptions: readonly CommandArgumentOption[] = [],
+): CommandPaletteSelection | undefined {
+  const parsed = parsePaletteQuery(query)
+  if (parsed.argument !== undefined) {
+    const command = commands.find((entry) => entry.name.toLocaleLowerCase() === parsed.name)
+    if (command === undefined) return undefined
+    const argumentQuery = parsed.argument.trim()
+    const argument = argumentOptions
+      .map((option, index) => ({ option, index, score: fuzzyScore(option.value, argumentQuery) }))
+      .filter(
+        (entry): entry is { option: CommandArgumentOption; index: number; score: number } =>
+          entry.score !== undefined,
+      )
+      .sort((left, right) => left.score - right.score || left.index - right.index)[0]?.option.value
+    return argument === undefined ? { command } : { command, argument }
+  }
+  const command = commands
+    .map((entry, index) => ({ command: entry, index, score: fuzzyScore(entry.name, parsed.name) }))
+    .filter(
+      (entry): entry is { command: DynamicCommand; index: number; score: number } =>
+        entry.score !== undefined,
+    )
+    .sort((left, right) => left.score - right.score || left.index - right.index)[0]?.command
+  return command === undefined ? undefined : { command }
+}
+
 export function CommandPalette(props: CommandPaletteProps): ReactElement {
   const parsed = parsePaletteQuery(props.query)
   const argument = parsed.argument

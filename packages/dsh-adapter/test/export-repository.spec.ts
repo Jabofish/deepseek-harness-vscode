@@ -193,6 +193,7 @@ function createTransport(response: unknown, failure?: AppError): DshTransport {
       if (failure !== undefined) throw failure
       return Promise.resolve({ result: { ok: true, value: response } } as TResponse)
     },
+    remoteRequest: <TResponse>() => Promise.resolve({ result: { ok: true, value: response } } as TResponse),
     openEventStream: async function* () {
       /* fixture stream */
     },

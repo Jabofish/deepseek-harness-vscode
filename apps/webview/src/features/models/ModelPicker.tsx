@@ -7,6 +7,7 @@ export interface ModelPickerProps {
   readonly value: ModelSelection
   readonly disabled?: boolean
   readonly displayLabel?: boolean
+  readonly openRequest?: number
   readonly onChange: (value: ModelSelection) => void
 }
 
@@ -57,6 +58,7 @@ export function ModelPicker(props: ModelPickerProps): ReactElement {
       className="dsh-model-picker"
       icon="model"
       {...(props.displayLabel === undefined ? {} : { displayLabel: props.displayLabel })}
+      {...(props.openRequest === undefined ? {} : { openRequest: props.openRequest })}
       label={currentLabel}
       ariaLabel="Model and reasoning"
       title="Select model and reasoning level"
