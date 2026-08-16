@@ -945,7 +945,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
           'dsh.openSettings': () =>
             vscode.commands.executeCommand(
               'workbench.action.openSettings',
-              '@ext:dsh-vscode.deepseek-harness-vscode',
+              '@ext:Direwolf.deepseek-harness-vscode',
             ),
           'dsh.installRuntime': () => runtimeInstaller.install(),
           'dsh.selectExecutable': () => runtimeInstaller.selectExecutable(),

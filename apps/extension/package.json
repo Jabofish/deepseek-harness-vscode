@@ -3,7 +3,7 @@
   "displayName": "DeepSeek Harness",
   "description": "Use DeepSeek Harness in VS Code: sessions, streaming replies, tools, and model controls. / 在 VS Code 中使用 DSH：会话、流式回复、工具与模型控制。",
   "version": "0.0.2",
-  "publisher": "dsh-vscode",
+  "publisher": "Direwolf",
   "icon": "resources/dsh.png",
   "license": "MIT",
   "repository": {
