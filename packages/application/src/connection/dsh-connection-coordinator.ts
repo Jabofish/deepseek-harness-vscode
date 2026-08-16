@@ -1,5 +1,10 @@
-import type { BackendState, DshBackend } from '@dsh-vscode/domain'
-import { unimplemented } from '@dsh-vscode/domain'
+import {
+  AppError,
+  type BackendCandidate,
+  type BackendState,
+  type DshBackend,
+  type ManagedProcessHandle,
+} from '@dsh-vscode/domain'
 
 import type {
   BackendDiscovery,
@@ -26,6 +31,13 @@ export interface ConnectionResult {
 export class DshConnectionCoordinator {
   private state: BackendState = { kind: 'idle' }
   private readonly listeners = new Set<(state: BackendState) => void>()
+  private inFlight: Promise<ConnectionResult> | undefined
+  private inFlightRequest: ConnectionRequest | undefined
+  private backend: DshBackend | undefined
+  private managedProcess: ManagedProcessHandle | undefined
+  private operationAbort: AbortController | undefined
+  private disconnectOperation: Promise<void> | undefined
+  private generation = 0
 
   public constructor(private readonly dependencies: ConnectionCoordinatorDependencies) {}
 
@@ -40,32 +52,309 @@ export class DshConnectionCoordinator {
   }
 
   public async connect(request: ConnectionRequest, signal?: AbortSignal): Promise<ConnectionResult> {
-    return unimplemented<Promise<ConnectionResult>>('connection coordinator attach-before-spawn flow', [
-      'serialize concurrent connect attempts into one in-flight promise',
-      'unless mode is new-isolated, discover and health-check every eligible local DSH instance first',
-      'rank configured and verified instances deterministically and attach without starting a duplicate',
-      'in attach-only mode, never locate or spawn a runtime after candidates are exhausted',
-      'when spawning is allowed, locate a compatible DSH binary and publish runtime-missing when absent',
-      'start dsh web on loopback, capture its resolved port, wait for readiness, then create the adapter',
-      'record external versus managed ownership and never stop externally-owned processes',
-      'propagate AbortSignal and convert expected failures into explicit BackendState variants',
-      'cover candidate fallback, races, timeouts, cancellation, and ownership with unit tests',
-      `request mode is ${request.mode}; autoStart is ${String(request.autoStart)}; signal present ${String(signal !== undefined)}`,
-      `dependency ports available: ${Object.keys(this.dependencies).join(', ')}`,
-    ])
+    if (this.disconnectOperation !== undefined) await this.disconnectOperation
+    if (this.inFlight !== undefined) {
+      if (!sameRequest(this.inFlightRequest, request))
+        throw new AppError({
+          code: 'BACKEND_BUSY',
+          message: 'Another DSH connection operation is already in progress.',
+          retryable: true,
+        })
+      return waitForSignal(this.inFlight, signal)
+    }
+    if (request.mode === 'new-isolated' && this.backend !== undefined) await this.disconnect()
+    const generation = ++this.generation
+    const operationAbort = new AbortController()
+    this.operationAbort = operationAbort
+    const operationSignal = combineSignals(signal, operationAbort.signal)
+    const operation = this.connectOnce(request, operationSignal, generation)
+    this.inFlight = operation
+    this.inFlightRequest = request
+    void operation.then(
+      () => {
+        if (this.inFlight === operation) {
+          this.inFlight = undefined
+          this.inFlightRequest = undefined
+        }
+        if (this.operationAbort === operationAbort) this.operationAbort = undefined
+      },
+      () => {
+        if (this.inFlight === operation) {
+          this.inFlight = undefined
+          this.inFlightRequest = undefined
+        }
+        if (this.operationAbort === operationAbort) this.operationAbort = undefined
+      },
+    )
+    return operation
   }
 
   public async disconnect(): Promise<void> {
-    return unimplemented<Promise<void>>('connection coordinator disconnect', [
-      'close event streams and client resources',
-      'stop only a backend whose ownership is managed',
-      'leave external DSH processes running',
-      'transition atomically back to idle',
-    ])
+    if (this.disconnectOperation !== undefined) return this.disconnectOperation
+    const operation = this.disconnectOnce()
+    this.disconnectOperation = operation
+    void operation.then(
+      () => {
+        if (this.disconnectOperation === operation) this.disconnectOperation = undefined
+      },
+      () => {
+        if (this.disconnectOperation === operation) this.disconnectOperation = undefined
+      },
+    )
+    return operation
+  }
+
+  private async disconnectOnce(): Promise<void> {
+    // Invalidate every in-flight discovery/probe/start operation before
+    // waiting for it.  attach() also checks this generation, so a late probe
+    // cannot resurrect a backend after the extension has started shutting down.
+    this.generation += 1
+    this.operationAbort?.abort()
+    await this.inFlight?.catch(() => undefined)
+
+    const backend = this.backend
+    const managed = this.managedProcess
+    this.backend = undefined
+    this.managedProcess = undefined
+    this.publish({ kind: 'stopping', ownership: managed === undefined ? 'external' : 'managed' })
+    let closeError: unknown
+    let stopError: unknown
+    try {
+      await backend?.close()
+    } catch (error) {
+      closeError = error
+    }
+    if (managed !== undefined) {
+      try {
+        await managed.stop()
+      } catch (error) {
+        stopError = error
+      }
+    }
+    if (closeError !== undefined || stopError !== undefined) {
+      this.publish({
+        kind: 'failed',
+        message: 'The DSH connection could not be closed cleanly.',
+        retryable: true,
+      })
+      throw closeError ?? stopError
+    }
+    if (closeError === undefined && stopError === undefined) {
+      this.publish({ kind: 'idle' })
+    }
+  }
+
+  private async connectOnce(
+    request: ConnectionRequest,
+    signal: AbortSignal | undefined,
+    generation: number,
+  ): Promise<ConnectionResult> {
+    if (this.backend !== undefined && request.mode !== 'new-isolated') {
+      return { backend: this.backend, state: { kind: 'connected', backend: this.backend.connection } }
+    }
+    this.throwIfAborted(signal)
+
+    if (request.mode !== 'new-isolated') {
+      this.publish({ kind: 'discovering', attempt: 1 })
+      const candidates = await this.dependencies.discovery.discover(signal)
+      for (const candidate of candidates) {
+        this.throwIfAborted(signal)
+        this.publish({ kind: 'connecting', candidate })
+        try {
+          const verified = await this.dependencies.probe.probe(candidate, signal)
+          if (verified !== undefined) return this.attach(verified, undefined, signal, generation)
+        } catch (error) {
+          if (isAbort(error, signal)) throw cancelled(error)
+          // A bad candidate must not prevent a later, higher-confidence candidate
+          // from being tried. The probe owns the detailed redacted diagnostics.
+        }
+      }
+      // Close the small race where another DSH appears while the first pass
+      // is finishing. Only an empty first pass gets one bounded last chance;
+      // failed candidates have already been fully probed.
+      if (candidates.length === 0 && request.autoStart) {
+        const lastChance = await this.dependencies.discovery.discover(signal)
+        for (const candidate of lastChance) {
+          this.throwIfAborted(signal)
+          this.publish({ kind: 'connecting', candidate })
+          try {
+            const verified = await this.dependencies.probe.probe(candidate, signal)
+            if (verified !== undefined) return this.attach(verified, undefined, signal, generation)
+          } catch (error) {
+            if (isAbort(error, signal)) throw cancelled(error)
+          }
+        }
+      }
+    }
+
+    if (request.mode === 'attach-only' || !request.autoStart) {
+      const error = new AppError({
+        code: 'NO_RUNNING_INSTANCE',
+        message: 'No compatible local DSH instance is running.',
+        retryable: true,
+      })
+      this.publish({ kind: 'failed', message: error.message, retryable: error.retryable })
+      throw error
+    }
+
+    this.throwIfAborted(signal)
+    this.publish({ kind: 'locating-runtime' })
+    const runtime = await this.dependencies.runtimeLocator.locate(signal)
+    if (runtime !== undefined && !runtime.supported) {
+      this.publish({
+        kind: 'failed',
+        message: 'The installed DSH version is incompatible.',
+        retryable: false,
+      })
+      throw new AppError({
+        code: 'DSH_INCOMPATIBLE',
+        message: 'The installed DeepSeek Harness version is not supported.',
+        retryable: false,
+      })
+    }
+    if (runtime === undefined) {
+      const searchedLocations = this.dependencies.runtimeLocator.searchedLocations()
+      this.publish({ kind: 'runtime-missing', searchedLocations })
+      throw new AppError({
+        code: 'DSH_NOT_FOUND',
+        message: 'DeepSeek Harness was not found. Install it or select an executable.',
+        retryable: true,
+        context: { searched: searchedLocations.length },
+      })
+    }
+
+    this.publish({ kind: 'starting', runtime })
+    let process: ManagedProcessHandle
+    try {
+      process = await this.dependencies.processSupervisor.start(runtime, signal)
+    } catch (error) {
+      if (error instanceof AppError && error.code === 'PORT_CONFLICT') {
+        const port = Number(error.context?.port ?? 0)
+        this.publish({ kind: 'port-conflict', port, message: error.message, retryable: error.retryable })
+      } else if (error instanceof AppError) {
+        this.publish({ kind: 'failed', message: error.message, retryable: error.retryable })
+      }
+      throw error
+    }
+    this.managedProcess = process
+    try {
+      const candidate: BackendCandidate = {
+        endpoint: process.endpoint,
+        source: 'known',
+        pid: process.pid,
+        confidence: 100,
+      }
+      const verified = await this.dependencies.probe.probe(candidate, signal)
+      if (verified === undefined) {
+        await stopManagedProcess(process)
+        this.managedProcess = undefined
+        const error = new AppError({
+          code: 'BACKEND_UNREACHABLE',
+          message: 'The managed DSH process did not become ready.',
+          retryable: true,
+        })
+        this.publish({ kind: 'failed', message: error.message, retryable: error.retryable })
+        throw error
+      }
+      return this.attach({ ...verified, ownership: 'managed', pid: process.pid }, process, signal, generation)
+    } catch (error) {
+      if (this.managedProcess === process && this.backend === undefined) {
+        await stopManagedProcess(process).catch(() => undefined)
+        this.managedProcess = undefined
+      }
+      throw error
+    }
+  }
+
+  private async attach(
+    connected: DshBackend['connection'],
+    managed: ManagedProcessHandle | undefined,
+    signal: AbortSignal | undefined,
+    generation: number,
+  ): Promise<ConnectionResult> {
+    const backend = await this.dependencies.backendFactory.connect(connected)
+    if (generation !== this.generation || signal?.aborted === true) {
+      await backend.close().catch(() => undefined)
+      if (managed !== undefined) await managed.stop().catch(() => undefined)
+      throw cancelled(signal?.reason)
+    }
+    this.backend = backend
+    if (managed === undefined) this.managedProcess = undefined
+    const state: Extract<BackendState, { readonly kind: 'connected' }> = {
+      kind: 'connected',
+      backend: connected,
+    }
+    this.publish(state)
+    return { backend, state }
+  }
+
+  private throwIfAborted(signal: AbortSignal | undefined): void {
+    if (signal?.aborted === true) throw cancelled(signal.reason)
   }
 
   private publish(state: BackendState): void {
     this.state = state
     for (const listener of this.listeners) listener(state)
+  }
+}
+
+function combineSignals(first: AbortSignal | undefined, second: AbortSignal): AbortSignal {
+  if (first === undefined) return second
+  return AbortSignal.any([first, second])
+}
+
+function sameRequest(left: ConnectionRequest | undefined, right: ConnectionRequest): boolean {
+  return left?.mode === right.mode && left.autoStart === right.autoStart
+}
+
+function waitForSignal<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (signal === undefined) return promise
+  if (signal.aborted)
+    return Promise.resolve().then(() => {
+      throw cancelled(signal.reason)
+    })
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = (): void => {
+      cleanup()
+      reject(cancelled(signal.reason))
+    }
+    const cleanup = (): void => signal.removeEventListener('abort', onAbort)
+    signal.addEventListener('abort', onAbort, { once: true })
+    promise.then(
+      (value) => {
+        cleanup()
+        resolve(value)
+      },
+      (error: unknown) => {
+        cleanup()
+        reject(error instanceof Error ? error : new Error('The DSH connection failed.'))
+      },
+    )
+  })
+}
+
+function isAbort(error: unknown, signal: AbortSignal | undefined): boolean {
+  return signal?.aborted === true || (error instanceof DOMException && error.name === 'AbortError')
+}
+
+function cancelled(cause: unknown): AppError {
+  return new AppError({
+    code: 'REQUEST_CANCELLED',
+    message: 'The DSH operation was cancelled.',
+    retryable: true,
+    cause,
+  })
+}
+
+async function stopManagedProcess(process: ManagedProcessHandle): Promise<void> {
+  try {
+    await process.stop()
+  } catch (cause) {
+    throw new AppError({
+      code: 'PROCESS_FAILED',
+      message: 'The managed DSH process could not be stopped.',
+      retryable: true,
+      cause,
+    })
   }
 }

@@ -2,10 +2,12 @@
 
 只有全部必需项满足才可发布。
 
+当前发布版本是 `0.0.2`，运行时契约为 DSH `0.1.0-rc.6`；能力矩阵仍有 `PARTIAL`，以下未勾选项代表真实缺口，不应被“构建成功”替代。
+
 ## 功能
 
 - [ ] `docs/capability-matrix.md` 所有核心能力为 DONE，并有代码/自动/live 证据。
-- [ ] 无用户可达路径抛出 `TodoImplementationError`。
+- [x] 无用户可达路径抛出 `TodoImplementationError`。
 - [ ] 未知 DSH 版本明确拒绝，已支持版本显示准确。
 - [ ] 已运行 DSH 自动连接且不重复 spawn。
 - [ ] 缺失 DSH 底部操作完整，安装不自动执行。

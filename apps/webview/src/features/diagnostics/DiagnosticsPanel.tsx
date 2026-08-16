@@ -1,5 +1,4 @@
 import type { ReactElement } from 'react'
-import { unimplemented } from '@dsh-vscode/domain'
 
 export interface DiagnosticsSnapshot {
   readonly extensionVersion: string
@@ -10,10 +9,38 @@ export interface DiagnosticsSnapshot {
 }
 
 export function DiagnosticsPanel({ snapshot }: { readonly snapshot: DiagnosticsSnapshot }): ReactElement {
-  return unimplemented<ReactElement>('redacted diagnostics panel', [
-    'show versions, state transitions, provider outcomes, and bounded error codes',
-    'exclude endpoint address, pid, workspace path, prompts, tool bodies, and credentials by default',
-    'copy only a visibly previewed redacted report after explicit action',
-    `extension ${snapshot.extensionVersion}; state ${snapshot.state}; events ${snapshot.recentEvents.length}`,
-  ])
+  const report = [
+    `Extension: ${snapshot.extensionVersion}`,
+    `DSH: ${snapshot.dshVersion ?? 'not connected'}`,
+    `State: ${snapshot.state}`,
+    `Ownership: ${snapshot.endpointKind ?? 'unknown'}`,
+    ...snapshot.recentEvents.slice(-20).map((event) => `Event: ${event.slice(0, 256)}`),
+  ].join('\n')
+  return (
+    <section className="dsh-diagnostics" aria-labelledby="diagnostics-title">
+      <h2 id="diagnostics-title">Diagnostics</h2>
+      <dl>
+        <dt>Extension</dt>
+        <dd>{snapshot.extensionVersion}</dd>
+        <dt>DSH</dt>
+        <dd>{snapshot.dshVersion ?? 'not connected'}</dd>
+        <dt>State</dt>
+        <dd>{snapshot.state}</dd>
+        <dt>Ownership</dt>
+        <dd>{snapshot.endpointKind ?? 'unknown'}</dd>
+      </dl>
+      <details>
+        <summary>Preview redacted report</summary>
+        <pre>{report}</pre>
+      </details>
+      <button
+        type="button"
+        onClick={() => {
+          void navigator.clipboard?.writeText(report)
+        }}
+      >
+        Copy report
+      </button>
+    </section>
+  )
 }

@@ -1,42 +1,90 @@
-import type { HostMessage, WebviewRequest } from '@dsh-vscode/webview-protocol'
-import { unimplemented } from '@dsh-vscode/domain'
+import {
+  hostEnvelopeSchema,
+  PROTOCOL_VERSION,
+  webviewRequestSchema,
+  type HostMessage,
+  type WebviewRequest,
+} from '@dsh-vscode/webview-protocol'
 
 import type { VsCodeApi } from '../vscode-api.js'
 
-export class ProtocolClient {
-  private readonly pending = new Map<
-    string,
-    { readonly resolve: (value: unknown) => void; readonly reject: (reason: unknown) => void }
-  >()
+interface Pending {
+  readonly resolve: (value: unknown) => void
+  readonly reject: (reason: unknown) => void
+  readonly timer: number
+}
 
-  public constructor(private readonly api: VsCodeApi) {}
+export class ProtocolClient {
+  private readonly pending = new Map<string, Pending>()
+  private readonly listeners = new Set<(message: HostMessage) => void>()
+  private readonly sequences = new Map<string, number>()
+  private disposed = false
+  private readonly windowListener = (event: MessageEvent<unknown>): void => this.handle(event.data)
+
+  public constructor(
+    private readonly api: VsCodeApi,
+    private readonly timeoutMs = 30_000,
+  ) {
+    window.addEventListener('message', this.windowListener)
+  }
 
   public request<T>(request: WebviewRequest): Promise<T> {
-    return unimplemented<Promise<T>>('Webview typed request client', [
-      'create collision-resistant request ids at call sites or via a request factory',
-      'track one promise per request and enforce local UI timeout',
-      'post only schema-valid WebviewRequest values',
-      'reject outstanding promises when the page unloads',
-      `request ${request.type}; pending ${this.pending.size}; API available ${String(this.api !== undefined)}`,
-    ])
+    if (this.disposed) return Promise.reject(new Error('The Webview protocol client is disposed.'))
+    const parsed = webviewRequestSchema.parse(request)
+    if (this.pending.has(parsed.requestId)) return Promise.reject(new Error('Duplicate request id.'))
+    return new Promise<T>((resolve, reject) => {
+      const timer = window.setTimeout(() => {
+        this.pending.delete(parsed.requestId)
+        reject(new Error('The DSH request timed out.'))
+      }, this.timeoutMs)
+      this.pending.set(parsed.requestId, { resolve: (value) => resolve(value as T), reject, timer })
+      try {
+        this.api.postMessage({ protocolVersion: PROTOCOL_VERSION, message: parsed })
+      } catch (error) {
+        window.clearTimeout(timer)
+        this.pending.delete(parsed.requestId)
+        reject(error instanceof Error ? error : new Error(String(error)))
+      }
+    })
   }
 
   public handle(rawMessage: unknown): void {
-    unimplemented<void>('handle Extension Host protocol messages', [
-      'validate with hostMessageSchema before accessing fields',
-      'resolve or reject response promises exactly once',
-      'forward sequenced events to one subscribed store action',
-      'ignore unknown protocol versions and show a reload-required state',
-      `raw type ${typeof rawMessage}; pending ${this.pending.size}`,
-    ])
+    const parsed = hostEnvelopeSchema.safeParse(rawMessage)
+    if (!parsed.success) return
+    const message = parsed.data.message
+    if (message.type === 'response') {
+      const pending = this.pending.get(message.requestId)
+      if (pending === undefined) return
+      this.pending.delete(message.requestId)
+      window.clearTimeout(pending.timer)
+      if (message.ok) pending.resolve(message.payload)
+      else {
+        const error = new Error(message.error?.message ?? 'DSH returned an unspecified host error.')
+        if (message.error !== undefined) Object.assign(error, message.error)
+        pending.reject(error)
+      }
+      return
+    }
+    const previous = this.sequences.get(message.name) ?? -1
+    if (message.sequence <= previous) return
+    this.sequences.set(message.name, message.sequence)
+    for (const listener of this.listeners) listener(message)
   }
 
   public subscribe(listener: (message: HostMessage) => void): () => void {
-    return unimplemented<() => void>('subscribe to validated host messages', [
-      'attach one window message listener for the client lifecycle',
-      'multicast validated messages only',
-      'return an idempotent unsubscribe function',
-      `listener type ${typeof listener}`,
-    ])
+    this.listeners.add(listener)
+    return () => this.listeners.delete(listener)
+  }
+
+  public dispose(): void {
+    if (this.disposed) return
+    this.disposed = true
+    window.removeEventListener('message', this.windowListener)
+    for (const pending of this.pending.values()) {
+      window.clearTimeout(pending.timer)
+      pending.reject(new Error('The Webview was disposed.'))
+    }
+    this.pending.clear()
+    this.listeners.clear()
   }
 }

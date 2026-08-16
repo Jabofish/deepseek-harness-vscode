@@ -1,22 +1,23 @@
-import type { WebviewRequest } from '@dsh-vscode/webview-protocol'
-import { unimplemented } from '@dsh-vscode/domain'
+import type { ProtocolEnvelope } from '@dsh-vscode/webview-protocol'
 
 export interface VsCodeApi<State = unknown> {
-  postMessage(message: WebviewRequest): void
+  postMessage(message: ProtocolEnvelope): void
   getState(): State | undefined
   setState(newState: State): void
 }
 
 declare function acquireVsCodeApi<State = unknown>(): VsCodeApi<State>
 
+export function hasVsCodeApi(): boolean {
+  return typeof acquireVsCodeApi === 'function'
+}
+
 const holder: { singleton?: VsCodeApi } = {}
 
 export function getVsCodeApi(): VsCodeApi {
-  return unimplemented<VsCodeApi>('acquire and cache VS Code Webview API', [
-    'call acquireVsCodeApi exactly once',
-    'never expose the returned object on window or globalThis',
-    'persist only non-sensitive UI state such as selected drawer and draft identifiers',
-    'never persist prompts, tool output, endpoints, or provider credentials',
-    `existing singleton ${String(holder.singleton !== undefined)}; acquire function type ${typeof acquireVsCodeApi}`,
-  ])
+  if (holder.singleton !== undefined) return holder.singleton
+  holder.singleton = hasVsCodeApi()
+    ? acquireVsCodeApi()
+    : { postMessage: () => undefined, getState: () => undefined, setState: () => undefined }
+  return holder.singleton
 }

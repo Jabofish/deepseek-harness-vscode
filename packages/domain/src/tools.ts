@@ -16,6 +16,7 @@ export interface ToolCallView {
 
 export interface PermissionRequest {
   readonly id: string
+  readonly rpcId?: string
   readonly sessionId: string
   readonly title: string
   readonly description: string
@@ -26,13 +27,31 @@ export interface PermissionRequest {
 export interface PermissionOption {
   readonly id: string
   readonly label: string
-  readonly kind: 'allow-once' | 'allow-session' | 'deny'
+  readonly kind: 'allow-once' | 'deny'
 }
 
 export interface UserQuestion {
   readonly id: string
+  readonly rpcId?: string
   readonly sessionId: string
   readonly prompt: string
   readonly choices?: readonly { readonly id: string; readonly label: string }[]
+  readonly multiSelect?: boolean
   readonly allowFreeText: boolean
+  /** All questions in the rc.6 request. `prompt` remains the first item for
+   * older single-question consumers. */
+  readonly items?: readonly UserQuestionItem[]
+}
+
+export interface UserQuestionItem {
+  readonly id: string
+  readonly prompt: string
+  readonly choices?: readonly { readonly id: string; readonly label: string }[]
+  readonly multiSelect?: boolean
+  readonly allowFreeText: boolean
+}
+
+export interface QuestionAnswer {
+  readonly id: string
+  readonly response: string | readonly string[]
 }

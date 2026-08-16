@@ -31,6 +31,159 @@ select {
   outline-offset: 2px;
 }
 
+.dsh-empty-state {
+  display: grid;
+  gap: var(--dsh-space-2);
+  padding: var(--dsh-space-4);
+  color: var(--vscode-descriptionForeground);
+}
+
+.dsh-empty-state h2,
+.dsh-empty-state p {
+  margin: 0;
+}
+.dsh-empty-state h2 {
+  color: var(--vscode-foreground);
+  font-size: 1rem;
+}
+.dsh-empty-state__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--dsh-space-2);
+}
+
+.dsh-drawer__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  justify-content: flex-end;
+  background: color-mix(in srgb, var(--vscode-editor-background) 60%, transparent);
+}
+
+.dsh-drawer {
+  width: min(92vw, 420px);
+  height: 100%;
+  overflow: auto;
+  background: var(--vscode-sideBar-background);
+  border-inline-start: var(--dsh-border);
+  box-shadow: 0 0 18px color-mix(in srgb, #000 25%, transparent);
+}
+
+.dsh-drawer--left {
+  order: -1;
+  border-inline-start: 0;
+  border-inline-end: var(--dsh-border);
+}
+.dsh-drawer__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--dsh-space-3);
+  border-bottom: var(--dsh-border);
+}
+.dsh-drawer__header h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+.dsh-drawer__header button {
+  border: 0;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+  font-size: 1.2rem;
+}
+.dsh-drawer__body {
+  padding: var(--dsh-space-3);
+}
+
+.dsh-tool-card {
+  border: var(--dsh-border);
+  border-radius: var(--dsh-radius);
+  overflow: hidden;
+}
+.dsh-tool-card__summary {
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto 1rem;
+  align-items: center;
+  gap: var(--dsh-space-2);
+  padding: var(--dsh-space-2);
+  color: inherit;
+  background: transparent;
+  border: 0;
+  text-align: start;
+  cursor: pointer;
+}
+.dsh-tool-card__icon {
+  width: 1rem;
+  height: 1rem;
+  display: inline-grid;
+  place-items: center;
+  color: var(--vscode-descriptionForeground);
+}
+.dsh-tool-card__icon svg {
+  width: 0.9rem;
+  height: 0.9rem;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.dsh-tool-card__disclosure {
+  display: inline-grid;
+  width: 1rem;
+  height: 1rem;
+  flex: 0 0 1rem;
+  place-items: center;
+  color: var(--vscode-descriptionForeground);
+}
+.dsh-tool-card__disclosure svg {
+  width: 0.85rem;
+  height: 0.85rem;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform 120ms ease;
+}
+.dsh-tool-card__disclosure--expanded svg {
+  transform: rotate(90deg);
+}
+.dsh-tool-card__title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.dsh-tool-card__meta {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.9em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dsh-tool-card__details {
+  display: grid;
+  gap: var(--dsh-space-2);
+  padding: 0 var(--dsh-space-2) var(--dsh-space-2);
+}
+.dsh-tool-card pre {
+  margin: 0;
+  max-height: 14rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--vscode-textPreformat-foreground);
+  background: var(--vscode-textCodeBlock-background);
+  padding: var(--dsh-space-2);
+}
+.dsh-tool-card--failed {
+  border-color: var(--vscode-errorForeground);
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

@@ -1,11 +1,23 @@
 {
   "name": "deepseek-harness-vscode",
   "displayName": "DeepSeek Harness",
-  "description": "A minimal, native-feeling Visual Studio Code client for DeepSeek Harness.",
-  "version": "0.0.1",
+  "description": "Use DeepSeek Harness in VS Code: sessions, streaming replies, tools, and model controls. / 在 VS Code 中使用 DSH：会话、流式回复、工具与模型控制。",
+  "version": "0.0.2",
   "publisher": "dsh-vscode",
-  "private": true,
-  "license": "UNLICENSED",
+  "icon": "resources/dsh.png",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Jabofish/deepseek-harness-vscode.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Jabofish/deepseek-harness-vscode/issues"
+  },
+  "homepage": "https://github.com/Jabofish/deepseek-harness-vscode#readme",
+  "galleryBanner": {
+    "color": "#0f172a",
+    "theme": "dark"
+  },
   "engines": {
     "vscode": "^1.125.0",
     "node": ">=22.19.0"
@@ -27,6 +39,7 @@
   "activationEvents": [
     "onView:dsh.chatView",
     "onCommand:dsh.connect",
+    "onCommand:dsh.reconnect",
     "onCommand:dsh.newSession",
     "onCommand:dsh.installRuntime"
   ],
@@ -36,6 +49,7 @@
     "resources/**",
     "README.md",
     "CHANGELOG.md",
+    "SUPPORT.md",
     "LICENSE"
   ],
   "scripts": {
@@ -43,7 +57,7 @@
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
     "dev": "node esbuild.mjs --watch",
     "prepackage:vsix": "node -e \"require('node:fs').mkdirSync('../../artifacts',{recursive:true})\"",
-    "package:vsix": "vsce package --no-dependencies --allow-missing-repository -o ../../artifacts/deepseek-harness-vscode.vsix",
+    "package:vsix": "vsce package --no-dependencies -o ../../artifacts/deepseek-harness-vscode.vsix",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
@@ -60,14 +74,14 @@
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "dsh.container",
+          "id": "dsh-container",
           "title": "DeepSeek Harness",
           "icon": "resources/dsh.svg"
         }
       ]
     },
     "views": {
-      "dsh.container": [
+      "dsh-container": [
         {
           "id": "dsh.chatView",
           "name": "Harness",
@@ -81,13 +95,21 @@
     "commands": [
       {
         "command": "dsh.connect",
-        "title": "DSH: Connect or Reconnect",
+        "title": "DSH: Connect",
         "icon": "$(debug-disconnect)"
       },
       {
+        "command": "dsh.reconnect",
+        "title": "DSH: Connected (Reconnect)",
+        "icon": {
+          "light": "resources/connected.svg",
+          "dark": "resources/connected.svg"
+        }
+      },
+      {
         "command": "dsh.newSession",
-        "title": "DSH: New Session",
-        "icon": "$(add)"
+        "title": "DSH: Open Sessions",
+        "icon": "$(comment-discussion)"
       },
       {
         "command": "dsh.openSettings",
@@ -123,12 +145,17 @@
       "view/title": [
         {
           "command": "dsh.newSession",
-          "when": "view == dsh.chatView && dsh.connected",
+          "when": "view == dsh.chatView",
           "group": "navigation@1"
         },
         {
           "command": "dsh.connect",
-          "when": "view == dsh.chatView",
+          "when": "view == dsh.chatView && !dsh.connected",
+          "group": "navigation@2"
+        },
+        {
+          "command": "dsh.reconnect",
+          "when": "view == dsh.chatView && dsh.connected",
           "group": "navigation@2"
         },
         {
@@ -158,6 +185,11 @@
           "default": 0,
           "description": "Port for an extension-managed DSH. Zero asks DSH to select a free port."
         },
+        "dsh.connection.serverUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Optional existing local DSH URL, restricted to http://127.0.0.1 or http://localhost."
+        },
         "dsh.connection.attachPorts": {
           "type": "array",
           "items": {
@@ -166,7 +198,7 @@
             "maximum": 65535
           },
           "default": [
-            3939
+            3080
           ],
           "description": "Additional local ports probed when looking for an already-running DSH instance."
         },
@@ -197,14 +229,8 @@
         },
         "dsh.agent.defaultPreset": {
           "type": "string",
-          "enum": [
-            "standard",
-            "code",
-            "minimal",
-            "cordis"
-          ],
-          "default": "code",
-          "description": "Default DSH agent preset for new sessions."
+          "default": "standard",
+          "description": "Default DSH agent preset for new sessions; deployments may provide additional ids."
         },
         "dsh.agent.toolMode": {
           "type": "string",
@@ -213,18 +239,13 @@
             "code",
             "both"
           ],
-          "default": "both",
+          "default": "native",
           "description": "Default DSH tool mode for new sessions."
         },
         "dsh.agent.permissionPreset": {
           "type": "string",
-          "enum": [
-            "read-only",
-            "workspace-write",
-            "full-access"
-          ],
           "default": "workspace-write",
-          "description": "Default permission policy. Runtime prompts still control sensitive actions."
+          "description": "Default permission preset supplied by the connected DSH permission plugin."
         },
         "dsh.agent.planMode": {
           "type": "boolean",

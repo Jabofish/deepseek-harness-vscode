@@ -1,6 +1,7 @@
 node_modules
 dist
 coverage
+.vscode-test
 apps/extension/media
 pnpm-lock.yaml
 DSH_VSCODE_IMPLEMENTATION_PLAN.md

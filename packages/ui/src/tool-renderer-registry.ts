@@ -1,6 +1,6 @@
-import type { ReactElement } from 'react'
+import { createElement, type ReactElement } from 'react'
 import type { ToolCallView } from '@dsh-vscode/domain'
-import { unimplemented } from '@dsh-vscode/domain'
+import { ToolCard } from './components/ToolCard.js'
 
 export interface ToolRendererProps {
   readonly tool: ToolCallView
@@ -12,20 +12,31 @@ export class ToolRendererRegistry {
   private readonly renderers = new Map<string, ToolRenderer>()
 
   public register(toolName: string, renderer: ToolRenderer): () => void {
-    return unimplemented<() => void>('register specialized tool renderer', [
-      'reject duplicate names unless explicitly replaced by the owner',
-      'return an idempotent unregister function',
-      'keep renderer registration out of the timeline reducer',
-      `tool ${toolName}; renderer type ${typeof renderer}; current count ${this.renderers.size}`,
-    ])
+    const key = normalize(toolName)
+    if (key.length === 0) throw new Error('A tool renderer name is required.')
+    if (typeof renderer !== 'function') throw new TypeError('A tool renderer must be a function.')
+    if (this.renderers.has(key)) throw new Error(`A renderer is already registered for ${toolName}.`)
+    this.renderers.set(key, renderer)
+    let registered = true
+    return () => {
+      if (!registered) return
+      registered = false
+      if (this.renderers.get(key) === renderer) this.renderers.delete(key)
+    }
   }
 
   public render(tool: ToolCallView): ReactElement {
-    return unimplemented<ReactElement>('render specialized or generic tool card', [
-      'look up an exact renderer by normalized DSH tool name',
-      'fall back to the generic ToolCard for every unknown or newly added DSH tool',
-      'catch renderer errors and preserve access to generic redacted metadata',
-      `tool ${tool.name}; registered count ${this.renderers.size}`,
-    ])
+    const renderer = this.renderers.get(normalize(tool.name))
+    if (renderer === undefined)
+      return createElement(ToolCard, { tool, expanded: false, onToggle: () => undefined })
+    try {
+      return renderer({ tool })
+    } catch {
+      return createElement(ToolCard, { tool, expanded: false, onToggle: () => undefined })
+    }
   }
+}
+
+function normalize(value: string): string {
+  return value.trim().toLocaleLowerCase()
 }

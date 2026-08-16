@@ -4,6 +4,7 @@ import type { ConnectionMode } from './runtime.js'
 export interface ConnectionSettings {
   readonly mode: ConnectionMode
   readonly host: '127.0.0.1' | 'localhost'
+  readonly serverUrl?: string
   /** Zero means ask DSH to allocate an isolated free port. */
   readonly managedPort: number
   readonly attachPorts: readonly number[]

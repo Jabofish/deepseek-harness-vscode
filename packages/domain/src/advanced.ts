@@ -24,8 +24,26 @@ export interface SkillDescriptor {
 export interface DynamicCommand {
   readonly name: string
   readonly description: string
-  readonly argumentHint?: string
-  readonly source: 'builtin' | 'skill' | 'plugin'
+  readonly input?: { readonly hint: string }
+  /** Optional client-side origin; the official command directory does not require it. */
+  readonly source?: 'builtin' | 'skill' | 'plugin'
+}
+
+export interface ParsedSlashCommand {
+  readonly name: string
+  readonly rawInput: string
+}
+
+/**
+ * Parse the exact command grammar used by @deepseek-ai/dsh-commands.
+ * The command name is lowercase, starts with a letter, and preserves every
+ * byte after the name as rawInput so the host-owned command parser remains
+ * authoritative for arguments.
+ */
+export function parseSlashCommand(line: string): ParsedSlashCommand | undefined {
+  const match = /^\/([a-z][a-z0-9_-]*)(?=$|[\t\n\r ])/u.exec(line)
+  if (match === null || match[1] === undefined) return undefined
+  return { name: match[1], rawInput: line.slice(match[0].length) }
 }
 
 export interface PluginDescriptor {
@@ -35,6 +53,23 @@ export interface PluginDescriptor {
   readonly installed: boolean
   readonly capabilities: readonly string[]
   readonly requiresRestart: boolean
+}
+
+export interface AgentPresetDescriptor {
+  readonly id: string
+  readonly trust: 'system' | 'user'
+  readonly isDefault: boolean
+  readonly name?: string
+  readonly description?: string
+  readonly broken?: string
+}
+
+export interface AgentPresetDocument {
+  readonly id: string
+  readonly trust: 'system' | 'user'
+  readonly content: string
+  readonly name?: string
+  readonly description?: string
 }
 
 export interface SettingsFieldSchema {

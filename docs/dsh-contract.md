@@ -19,7 +19,9 @@
 
 ## 主通道决策
 
-主通道是 `dsh web` 的 Web Host API 与 Host/Mux 事件，不是 ACP，也不是从 CLI stdout 解析状态。ACP/SDK 在会话恢复/列表/分叉、图片、推理、工具活动、计划、标题、设置和完整 UI 交互方面并不等价，不能满足本项目能力矩阵。
+主通道是 `dsh --profile web` 的 Web Host API 与 Host/Mux 事件，不是 ACP，也不是从 CLI stdout 解析状态。ACP/SDK 在会话恢复/列表/分叉、图片、推理、工具活动、计划、标题、设置和完整 UI 交互方面并不等价，不能满足本项目能力矩阵。
+
+rc.6 的 `host.describe.version` 是 Host 应用版本，不是独立的协议版本；实际运行中它可以与 CLI npm 版本不同。因此 Probe 以固定 rc.6 RPC/Schema 成功和非空 Host 版本建立兼容性，返回本 Adapter 的 `protocolVersion: rc6` 与固定 npm 支持版本。未来若出现独立协议协商，必须新增版本 Adapter。
 
 ## 实现契约的固定流程
 
@@ -54,6 +56,6 @@
 ## 版本升级
 
 1. 新增 `versions/<new-version>` Adapter 和契约 fixture。
-2. 在 Probe 中按服务端报告版本选择 Adapter。
+2. 在 Probe 中按真实协议协商或固定 API 兼容性选择 Adapter；不要把 Host 应用版本误当成协议版本。
 3. Domain/Protocol 只有真实产品语义改变时才更新。
 4. 完成 rc.6 与新版本双版本测试后，才能修改支持范围。

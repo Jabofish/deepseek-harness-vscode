@@ -1,6 +1,6 @@
 import type { ReactElement } from 'react'
 import type { PromptAttachment } from '@dsh-vscode/domain'
-import { unimplemented } from '@dsh-vscode/domain'
+import { Icon } from '../../ui/Icon.js'
 
 export interface AttachmentPickerProps {
   readonly attachments: readonly PromptAttachment[]
@@ -9,12 +9,26 @@ export interface AttachmentPickerProps {
 }
 
 export function AttachmentPicker(props: AttachmentPickerProps): ReactElement {
-  return unimplemented<ReactElement>('image and file attachment picker', [
-    'support paste, drag-and-drop, and Extension Host file selection',
-    'accept only DSH-supported image/file types and enforce per-file plus total size limits',
-    'render safe local previews through controlled Webview URIs',
-    'retain history metadata while releasing object URLs and large buffers promptly',
-    'never read a dropped directory recursively',
-    `attachments ${props.attachments.length}; callbacks ${typeof props.onPick}/${typeof props.onRemove}`,
-  ])
+  return (
+    <div className="dsh-attachments" aria-label="Attachments">
+      <button className="dsh-button dsh-button--secondary" type="button" onClick={props.onPick}>
+        <Icon name="paperclip" />
+        Attach file
+      </button>
+      {props.attachments.map((attachment) => (
+        <span className="dsh-attachment" key={attachment.uri}>
+          <Icon name={attachment.mimeType?.startsWith('image/') === true ? 'image' : 'file'} />
+          <span title={attachment.name}>{attachment.name}</span>
+          <button
+            className="dsh-icon-button"
+            type="button"
+            aria-label={`Remove ${attachment.name}`}
+            onClick={() => props.onRemove(attachment.uri)}
+          >
+            <Icon name="close" />
+          </button>
+        </span>
+      ))}
+    </div>
+  )
 }

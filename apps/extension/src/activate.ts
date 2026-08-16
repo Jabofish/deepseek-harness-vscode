@@ -1,27 +1,25 @@
-import type * as vscode from 'vscode'
-import { unimplemented } from '@dsh-vscode/domain'
+import * as vscode from 'vscode'
 
 import type { CompositionRoot } from './composition-root.js'
 
-const lifecycle: { root?: CompositionRoot } = {}
+const lifecycle: { root: CompositionRoot | undefined } = { root: undefined }
 
 export async function activateExtension(context: vscode.ExtensionContext): Promise<void> {
-  return unimplemented<Promise<void>>('VS Code extension activation', [
-    'create the composition root with VS Code APIs and immutable configuration',
-    'register the WebviewViewProvider, commands, diagnostics, and configuration listeners',
-    'start auto-connect lazily when the DSH view becomes visible or a DSH command runs',
-    'store every disposable in ExtensionContext.subscriptions',
-    'show actionable errors without throwing through the extension host',
-    `extension path ${context.extensionPath}; existing root ${String(lifecycle.root !== undefined)}`,
-  ])
+  if (lifecycle.root !== undefined) return
+  const { createCompositionRoot } = await import('./composition-root.js')
+  const root = createCompositionRoot(context)
+  lifecycle.root = root
+  try {
+    await root.start()
+  } catch (error) {
+    await vscode.window.showErrorMessage(
+      error instanceof Error ? error.message : 'DeepSeek Harness failed to activate.',
+    )
+  }
 }
 
 export async function deactivateExtension(): Promise<void> {
-  return unimplemented<Promise<void>>('VS Code extension deactivation', [
-    'cancel activation and outstanding requests',
-    'dispose the composition root and managed process only',
-    'never stop externally-owned DSH instances',
-    'resolve within the VS Code shutdown budget',
-    `root present ${String(lifecycle.root !== undefined)}`,
-  ])
+  const root = lifecycle.root
+  lifecycle.root = undefined
+  await root?.dispose()
 }

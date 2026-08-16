@@ -1,5 +1,3 @@
-import { unimplemented } from '@dsh-vscode/domain'
-
 import type { TimelineNode } from './nodes.js'
 
 export interface VisibleTimelineWindow {
@@ -13,10 +11,9 @@ export function projectVisibleWindow(
   start: number,
   end: number,
 ): VisibleTimelineWindow {
-  return unimplemented<VisibleTimelineWindow>('timeline visible-window projection', [
-    'clamp indices to the node array',
-    'preserve stable node identities for React virtualization',
-    'avoid copying data outside the requested window',
-    `node count ${nodes.length}; requested range ${start}-${end}`,
-  ])
+  const normalizedStart = Number.isFinite(start) ? Math.floor(start) : 0
+  const normalizedEnd = Number.isFinite(end) ? Math.ceil(end) : nodes.length
+  const safeStart = Math.max(0, Math.min(nodes.length, normalizedStart))
+  const safeEnd = Math.max(safeStart, Math.min(nodes.length, normalizedEnd))
+  return { start: safeStart, end: safeEnd, nodes: nodes.slice(safeStart, safeEnd) }
 }

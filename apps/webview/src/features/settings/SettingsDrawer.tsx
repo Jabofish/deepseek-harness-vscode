@@ -1,6 +1,5 @@
 import type { ReactElement } from 'react'
 import type { ExtensionSettings } from '@dsh-vscode/domain'
-import { unimplemented } from '@dsh-vscode/domain'
 
 export interface SettingsDrawerProps {
   readonly settings: ExtensionSettings
@@ -8,11 +7,27 @@ export interface SettingsDrawerProps {
 }
 
 export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
-  return unimplemented<ReactElement>('DSH settings drawer and VS Code settings bridge', [
-    'organize Connection, Runtime, Agent, Model, Provider, Security, and Diagnostics sections',
-    'use VS Code configuration commands for extension settings and DSH RPCs for backend settings',
-    'explain which changes affect new sessions, current session, or require reconnect',
-    'validate ports and modes before writing and retain unsaved values on errors',
-    `mode ${props.settings.connection.mode}; DSH version ${props.connectedDshVersion ?? 'not connected'}`,
-  ])
+  return (
+    <section className="dsh-settings" aria-labelledby="settings-title">
+      <h2 id="settings-title">Settings</h2>
+      <dl>
+        <dt>Connection mode</dt>
+        <dd>{props.settings.connection.mode}</dd>
+        <dt>Managed port</dt>
+        <dd>
+          {props.settings.connection.managedPort === 0 ? 'Automatic' : props.settings.connection.managedPort}
+        </dd>
+        <dt>Runtime</dt>
+        <dd>{props.settings.runtime.executablePath ?? 'PATH / npm global'}</dd>
+        <dt>DSH version</dt>
+        <dd>{props.connectedDshVersion ?? 'not connected'}</dd>
+        <dt>Permission preset</dt>
+        <dd>{props.settings.security.defaultPermissionPreset}</dd>
+      </dl>
+      <p>
+        Connection and runtime changes are applied by the Extension Host and never sent to the Webview as
+        secrets.
+      </p>
+    </section>
+  )
 }

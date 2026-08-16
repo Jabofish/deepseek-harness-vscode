@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "description": "DeepSeek Harness integration for Visual Studio Code",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "packageManager": "pnpm@11.19.0",
   "engines": {
     "node": ">=22.19.0 <27",
@@ -21,7 +21,7 @@
     "package:vsix": "pnpm build && pnpm --filter deepseek-harness-vscode package:vsix",
     "test": "vitest run --passWithNoTests",
     "test:watch": "vitest",
-    "typecheck": "pnpm -r --if-present typecheck"
+    "typecheck": "pnpm -r --if-present typecheck && pnpm exec tsc -p tests/tsconfig.json --noEmit"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

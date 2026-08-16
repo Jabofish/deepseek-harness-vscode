@@ -1,6 +1,5 @@
 import type { ReactElement } from 'react'
 import type { SkillDescriptor } from '@dsh-vscode/domain'
-import { unimplemented } from '@dsh-vscode/domain'
 
 export interface SkillPickerProps {
   readonly skills: readonly SkillDescriptor[]
@@ -9,10 +8,32 @@ export interface SkillPickerProps {
 }
 
 export function SkillPicker(props: SkillPickerProps): ReactElement {
-  return unimplemented<ReactElement>('DSH skill discovery and execution picker', [
-    'search and group project, user, and plugin skills',
-    'show source and enabled state while leaving precedence resolution to DSH',
-    'execute only after explicit selection and route input through the current session',
-    `skills ${props.skills.length}; callbacks ${typeof props.onExecute}/${typeof props.onRefresh}`,
-  ])
+  return (
+    <section className="dsh-skills" aria-labelledby="skills-title">
+      <header>
+        <h2 id="skills-title">Skills</h2>
+        <button type="button" onClick={props.onRefresh}>
+          Refresh
+        </button>
+      </header>
+      {props.skills.length === 0 ? (
+        <p>Skills are unavailable until DSH reports a session context.</p>
+      ) : (
+        <ul>
+          {props.skills.map((skill) => (
+            <li key={skill.id}>
+              <strong>{skill.name}</strong>
+              <span>
+                {skill.source} · {skill.enabled ? 'enabled' : 'disabled'}
+              </span>
+              <p>{skill.description}</p>
+              <button type="button" disabled={!skill.enabled} onClick={() => props.onExecute(skill.id)}>
+                Use skill
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  )
 }

@@ -1,52 +1,1015 @@
 import type {
   BackendEvent,
+  CompactionView,
+  GoalView,
+  JobView,
   ModelDescriptor,
+  ModelSelection,
   ModelProvider,
+  PermissionRequest,
+  QueuedInput,
   SessionDetail,
+  SessionConfigurationPatch,
+  SessionHistoryEvent,
+  SessionStatus,
   SessionSummary,
+  SubagentView,
+  TokenUsage,
+  ToolCallView,
+  TodoView,
+  UserQuestion,
+  UserQuestionItem,
   WorkspaceSummary,
 } from '@dsh-vscode/domain'
-import { unimplemented } from '@dsh-vscode/domain'
 
 export const rc6Mapper = {
   sessionSummary(value: unknown): SessionSummary {
-    return unimplemented<SessionSummary>('rc6 session summary mapping', [
-      'validate the upstream value structurally before reading it',
-      'map ids, timestamps, workspace, status, title, and optional model label losslessly',
-      `input type ${typeof value}`,
-    ])
+    const record = object(value, 'session summary')
+    const id = string(record.sessionId ?? record.id, 'sessionId')
+    const projections = objectOrUndefined(record.projections)
+    const projectionValues = objectOrUndefined(projections?.values)
+    const updatedAt = date(record.updatedAt ?? record.createdAt)
+    const running = boolean(record.running, false)
+    const blank = boolean(record.blank, false)
+    const status: SessionStatus = running ? 'running' : blank ? 'idle' : 'completed'
+    const rawTitle = record.title ?? record.name ?? projectionValues?.title
+    const modelRecord = objectOrUndefined(record.model)
+    const rawModelLabel =
+      record.modelLabel ??
+      modelRecord?.label ??
+      modelRecord?.name ??
+      modelRecord?.modelId ??
+      (typeof record.model === 'string' ? record.model : undefined)
+    const cwd = firstString(record.cwd, record.workingDirectory)
+    return {
+      id,
+      workspaceId: stringOr(record.workspaceId, ''),
+      ...(cwd === undefined ? {} : { cwd }),
+      // rc.6 keeps command-only sessions blank. Their projection title may be
+      // the command's success text, but that is not conversation content and
+      // must not turn a reusable New Session into a history row.
+      title: blank ? 'New Session' : normalizeSessionTitle(rawTitle),
+      blank,
+      status,
+      createdAt: date(record.createdAt ?? record.updatedAt),
+      updatedAt,
+      ...(rawModelLabel === undefined ? {} : { modelLabel: stringOr(rawModelLabel, '') }),
+      ...(typeof record.agentPreset === 'string' ? { agentPreset: record.agentPreset } : {}),
+      ...(projectionValues === undefined
+        ? {}
+        : {
+            projection: {
+              asOfSequence: number(projections?.asOfSeq, -1),
+              values: projectionValues,
+            },
+          }),
+    }
   },
+
   sessionDetail(value: unknown): SessionDetail {
-    return unimplemented<SessionDetail>('rc6 session detail mapping', [
-      'compose the validated session summary with agent configuration, goals, and parent session',
-      `input type ${typeof value}`,
-    ])
+    const summary = rc6Mapper.sessionSummary(value)
+    const record = object(value, 'session detail')
+    const permissionPresets = permissionPresetIds(summary.projection?.values)
+    return {
+      ...summary,
+      configuration: configuration(record.configuration),
+      ...(permissionPresets.length === 0 ? {} : { permissionPresets }),
+      goalIds: array(record.goalIds)
+        .map((entry) => stringOr(entry, ''))
+        .filter(Boolean),
+      ...(record.parentSessionId === undefined
+        ? {}
+        : { parentSessionId: string(record.parentSessionId, 'parentSessionId') }),
+    }
   },
+
+  history(
+    value: unknown,
+    sessionId: string,
+  ): {
+    events: readonly SessionHistoryEvent[]
+    hasMore: boolean
+    projection?: SessionDetail['projection']
+  } {
+    const record = object(value, 'session history')
+    const events = array(record.events).map((entry, index) => mapHistoryEntry(entry, index, sessionId))
+    const projection = objectOrUndefined(record.projections)
+    return {
+      events,
+      hasMore: boolean(record.hasMore, false),
+      ...(projection === undefined
+        ? {}
+        : {
+            projection: {
+              asOfSequence: number(projection.asOfSeq, -1),
+              values: objectOrUndefined(projection.values) ?? {},
+            },
+          }),
+    }
+  },
+
   workspace(value: unknown): WorkspaceSummary {
-    return unimplemented<WorkspaceSummary>('rc6 workspace mapping', [
-      'validate and map path, counts, and timestamps without platform-specific path rewriting',
-      `input type ${typeof value}`,
-    ])
+    const record = object(value, 'workspace')
+    const id = string(record.workspaceId ?? record.id, 'workspaceId')
+    const updatedAt = date(record.updatedAt ?? record.createdAt)
+    const sessionIds = array(record.sessionIds).filter(
+      (entry): entry is string => typeof entry === 'string' && entry.length > 0,
+    )
+    return {
+      id,
+      name: stringOr(record.title ?? record.name, id),
+      path: string(record.path, 'path'),
+      createdAt: date(record.createdAt ?? record.updatedAt),
+      updatedAt,
+      sessionCount: sessionIds.length || number(record.sessionCount, 0),
+      ...(sessionIds.length === 0 ? {} : { sessionIds }),
+    }
   },
+
   provider(value: unknown): ModelProvider {
-    return unimplemented<ModelProvider>('rc6 model provider mapping', [
-      'include dynamic provider fields',
-      'never include secret values in the returned model',
-      `input type ${typeof value}`,
-    ])
+    const record = object(value, 'provider')
+    const id = string(record.provider ?? record.id, 'provider')
+    const fields = array(record.fields).map((entry) => {
+      const field = object(entry, 'provider field')
+      const secret = boolean(field.secret, false)
+      return {
+        key: string(field.key ?? field.name, 'field key'),
+        label: stringOr(field.label ?? field.name, 'Setting'),
+        secret,
+        required: boolean(field.required, false),
+        ...(secret || field.value === undefined ? {} : { value: stringOr(field.value, '') }),
+      }
+    })
+    return {
+      id,
+      name: stringOr(record.displayName ?? record.name, id),
+      kind: stringOr(record.kind ?? record.settingsNs, 'provider'),
+      configurable: boolean(record.configurable ?? record.declared, true),
+      ...(typeof record.active === 'boolean' ? { active: record.active } : {}),
+      ...(typeof record.declared === 'boolean' ? { declared: record.declared } : {}),
+      ...(typeof record.settingsNs === 'string' ? { settingsNs: record.settingsNs } : {}),
+      ...(Array.isArray(record.settingsPath)
+        ? { settingsPath: record.settingsPath.filter((entry): entry is string => typeof entry === 'string') }
+        : {}),
+      fields,
+    }
   },
+
   model(value: unknown): ModelDescriptor {
-    return unimplemented<ModelDescriptor>('rc6 model mapping', [
-      'retain provider ownership and reasoning capabilities',
-      `input type ${typeof value}`,
-    ])
+    const record = object(value, 'model')
+    const reasoning = objectOrUndefined(record.reasoning)
+    const context = objectOrUndefined(record.context)
+    const efforts =
+      reasoning === undefined
+        ? []
+        : array(reasoning.efforts)
+            .map((effort) => {
+              const item = object(effort, 'reasoning effort')
+              return stringOr(item.id, '')
+            })
+            .filter(Boolean)
+    return {
+      id: string(record.id, 'model id'),
+      providerId: stringOr(record.providerId ?? record.provider, ''),
+      label: stringOr(record.name ?? record.label, stringOr(record.id, 'Model')),
+      ...(record.contextWindow === undefined && context?.contextWindow === undefined
+        ? {}
+        : { contextWindow: number(record.contextWindow ?? context?.contextWindow, 0) }),
+      supportsReasoning: reasoning !== undefined,
+      ...(efforts.length === 0 ? {} : { reasoningLevels: efforts }),
+    }
   },
+
   event(name: string, value: unknown): BackendEvent {
-    return unimplemented<BackendEvent>('rc6 host and mux event normalization', [
-      'cover session, message delta, tool, interaction, goal, job, subagent, and connection events',
-      'preserve unknown event name and payload behind the unknown domain variant',
-      'test every upstream event family with recorded redacted fixtures',
-      `event ${name}; payload type ${typeof value}`,
-    ])
+    const envelope = objectOrUndefined(value) ?? {}
+    const data = objectOrUndefined(envelope.data) ?? envelope
+    const sessionId = stringOr(envelope.sessionId ?? data.sessionId, '')
+    switch (name) {
+      case 'session/status':
+      case 'host/session-status':
+        return {
+          type: 'session.status',
+          sessionId,
+          status:
+            typeof data.status === 'string' ? data.status : boolean(data.running, false) ? 'running' : 'idle',
+        }
+      case 'session/title':
+        return {
+          type: 'session.title',
+          sessionId,
+          title: stringOr(data.title ?? data.name, ''),
+        }
+      case 'agent-preset/selected':
+        return sessionConfiguration(sessionId, { preset: stringOr(data.agentPreset ?? data.preset, '') })
+      case 'permission/preset':
+        return sessionConfiguration(sessionId, {
+          permissionPreset: stringOr(data.preset ?? data.value ?? data.name, ''),
+        })
+      case 'plan/mode':
+        return sessionConfiguration(sessionId, { planMode: planMode(data) })
+      case 'sandbox/mode':
+        return sessionConfiguration(sessionId, {
+          sandboxMode: stringOr(data.mode ?? data.value ?? data.name, ''),
+        })
+      case 'approval/policy':
+        return sessionConfiguration(sessionId, {
+          approvalPolicy: stringOr(data.policy ?? data.value ?? data.name, ''),
+        })
+      case 'request/context': {
+        const model = modelPatch(data)
+        return Object.keys(model).length === 0
+          ? { type: 'unknown', sessionId, name, payload: safePayload(value) }
+          : sessionConfiguration(sessionId, { model })
+      }
+      case 'request/header': {
+        const model = modelPatch(data)
+        return Object.keys(model).length === 0
+          ? { type: 'unknown', sessionId, name, payload: safePayload(value) }
+          : sessionConfiguration(sessionId, { model })
+      }
+      case 'message/delta':
+      case 'message/chunk':
+      case 'assistant/chunk': {
+        const chunk = objectOrUndefined(data.chunk)
+        const chunkType = stringOr(chunk?.type, '')
+        const messageId = assistantMessageId(data)
+        if (chunkType === 'reasoning-delta')
+          return {
+            type: 'reasoning.delta',
+            sessionId,
+            messageId,
+            delta: stringOr(chunk?.text ?? data.reasoning ?? data.text ?? data.delta, ''),
+          }
+        if (chunkType === '' || chunkType === 'text-delta')
+          return {
+            type: 'message.delta',
+            sessionId,
+            messageId,
+            delta: stringOr(data.delta ?? data.text ?? chunk?.text ?? chunk?.delta, ''),
+          }
+        // block-start, tool-call-delta, block-end, usage and finish are
+        // structured stream bookkeeping. They do not contain visible text;
+        // mapping them to message.delta was the source of empty/fused cards.
+        return {
+          type: 'unknown',
+          ...(sessionId === '' ? {} : { sessionId }),
+          name: chunkType === '' ? 'assistant/chunk' : `assistant/chunk:${chunkType}`,
+          payload: safePayload(data),
+        }
+      }
+      case 'message/completed':
+      case 'message/complete':
+      case 'assistant/message': {
+        const message = objectOrUndefined(data.message) ?? data
+        const visible = messageText(message) || stringOr(data.markdown ?? data.text, '')
+        const reasoning = reasoningText(message) || stringOr(data.reasoning, '')
+        const modelLabel = assistantModelLabel(message, data)
+        const usage = tokenUsage(data.usage ?? message.usage ?? envelope.usage)
+        return {
+          type: 'message.completed',
+          sessionId,
+          messageId: assistantMessageId(data, message),
+          ...(visible === '' ? {} : { markdown: visible }),
+          ...(reasoning === '' ? {} : { reasoning }),
+          ...(modelLabel === undefined ? {} : { modelLabel }),
+          ...(usage === undefined ? {} : { usage }),
+        }
+      }
+      case 'user/message': {
+        const message = objectOrUndefined(data.message) ?? data
+        const source = objectOrUndefined(message.source)
+        const sourceLabel = stringOr(source?.kind ?? source?.type ?? message.source, '')
+        const sourceForm = stringOr(source?.form, '')
+        const sourceSummary = stringOr(source?.summary, '')
+        const rpcId = stringOr(envelope.rpcId ?? data.rpcId ?? source?.rpcId, '')
+        const markdown = messageText(message)
+        return {
+          type: 'message.user',
+          sessionId,
+          messageId: stringOr(message.id, `user:${indexToken(data.turn) ?? 'unknown'}`),
+          markdown,
+          ...(rpcId === '' ? {} : { rpcId }),
+          ...(sourceLabel !== ''
+            ? { source: sourceLabel }
+            : markdown.trimStart().startsWith('/')
+              ? { source: 'command' }
+              : {}),
+          ...(sourceForm === '' ? {} : { sourceForm }),
+          ...(sourceSummary === '' ? {} : { sourceSummary }),
+        }
+      }
+      case 'tool/call':
+      case 'tool/result':
+        return {
+          type: 'tool.updated',
+          sessionId,
+          tool: tool({
+            ...data,
+            ...(envelope.view === undefined ? {} : { view: envelope.view }),
+            ...(objectOrUndefined(data.message) === undefined
+              ? {}
+              : { outputSummary: bounded(data.message) }),
+          }),
+        }
+      case 'approval/requested':
+        return {
+          type: 'permission.requested',
+          request: permission({
+            ...data,
+            sessionId,
+            ...(envelope.rpcId === undefined ? {} : { rpcId: envelope.rpcId }),
+          }),
+        }
+      case 'approval/resolved':
+        return {
+          type: 'permission.resolved',
+          sessionId,
+          requestId: stringOr(data.approvalId ?? data.id, ''),
+          ...(typeof data.outcome === 'string' ? { outcome: data.outcome } : {}),
+        }
+      case 'question/requested':
+        return {
+          type: 'question.requested',
+          question: question({
+            ...data,
+            sessionId,
+            ...(envelope.rpcId === undefined ? {} : { questionRpcId: envelope.rpcId }),
+          }),
+        }
+      case 'question/resolved':
+        return {
+          type: 'question.resolved',
+          sessionId,
+          ...(typeof data.questionRpcId === 'string' ? { questionRpcId: data.questionRpcId } : {}),
+          ...(typeof data.id === 'string' ? { questionId: data.id } : {}),
+          ...(typeof data.outcome === 'string' ? { outcome: data.outcome } : {}),
+        }
+      case 'goal/updated':
+      case 'goal':
+      case 'goal/change':
+        return { type: 'goal.updated', sessionId, goals: array(data.goals).map(goal) }
+      case 'todo/write':
+        return {
+          type: 'todo.updated',
+          sessionId,
+          todos: array(data.todos ?? data.items).map((entry, index) => todo(entry, index)),
+        }
+      case 'compaction/start':
+      case 'compaction/summary':
+      case 'compaction/prune':
+      case 'compaction/end': {
+        const summary = firstString(data.summary, data.text, data.message)
+        return {
+          type: 'compaction.updated',
+          sessionId,
+          compaction: {
+            id: stringOr(data.compactionId ?? data.id ?? data.turn, name),
+            phase: compactionPhase(name),
+            ...(summary === undefined ? {} : { summary }),
+          },
+        }
+      }
+      case 'llm/retry-started':
+      case 'llm/retry':
+        return {
+          type: 'notice',
+          ...(sessionId === '' ? {} : { sessionId }),
+          level: 'warning',
+          text: retryText(name, data),
+        }
+      case 'command/run':
+      case 'command/done':
+        return commandNotice(name, data, sessionId)
+      case 'session/jobs':
+        return {
+          type: 'jobs.updated',
+          sessionId,
+          jobs: array(data.jobs).map(job),
+        }
+      case 'job/updated':
+        return { type: 'job.updated', sessionId, job: job(data.job ?? data) }
+      case 'subagent/updated':
+      case 'subagent':
+      case 'subagent/descriptor':
+        return { type: 'subagent.updated', sessionId, subagent: subagent(data.subagent ?? data, sessionId) }
+      case 'tool/code-dispatch-start':
+        return { type: 'tool.updated', sessionId, tool: tool({ ...data, status: 'running' }) }
+      case 'tool/code-dispatch':
+        return { type: 'tool.updated', sessionId, tool: tool({ ...data, status: 'completed' }) }
+      case 'tool-workflow/agent-start':
+      case 'tool-workflow/agent-end':
+      case 'tool-workflow/run-start':
+      case 'tool-workflow/run-end':
+        return {
+          type: 'notice',
+          ...(sessionId === '' ? {} : { sessionId }),
+          level: name.endsWith('end') ? 'info' : 'info',
+          text: workflowEventText(name, data),
+        }
+      case 'session/queue':
+        return {
+          type: 'queue.updated',
+          sessionId,
+          items: array(data.items).flatMap((entry) => queuedInput(entry, sessionId)),
+        }
+      case 'session/subscribed':
+        return {
+          type: 'session.subscribed',
+          sessionId,
+          lastSequence: number(data.lastSeq, -1),
+        }
+      case 'session/projection':
+        return {
+          type: 'session.projection',
+          sessionId,
+          key: stringOr(data.key, 'unknown'),
+          value: data.value,
+        }
+      case 'host/session-added':
+        return {
+          type: 'session.added',
+          sessionId,
+          ...(typeof data.blank === 'boolean' ? { blank: data.blank } : {}),
+        }
+      case 'host/session-removed':
+        return { type: 'session.removed', sessionId }
+      case 'host/workspace-changed': {
+        const id = workspaceId(data)
+        return id === undefined
+          ? { type: 'workspace.changed' }
+          : { type: 'workspace.changed', workspaceId: id }
+      }
+      case 'host/workspace-removed': {
+        const id = workspaceId(data)
+        return id === undefined
+          ? { type: 'workspace.removed' }
+          : { type: 'workspace.removed', workspaceId: id }
+      }
+      case 'host/workspace-order-changed':
+        return { type: 'workspace.order.changed', workspaceIds: stringArray(data.workspaceIds ?? data.order) }
+      case 'host/archived-sessions-changed':
+        return {
+          type: 'archived.sessions.changed',
+          sessionIds: stringArray(data.sessionIds ?? data.archivedSessionIds),
+        }
+      case 'host/remote-event':
+        return {
+          type: 'remote.event',
+          name: stringOr(data.event ?? data.name, 'unknown'),
+          args: array(data.args).map(safePayload),
+        }
+      case 'host/agent-error':
+        return {
+          type: 'notice',
+          ...(sessionId === '' ? {} : { sessionId }),
+          level: 'error',
+          text: stringOr(data.message, 'DSH agent error.'),
+        }
+      case 'stream/error':
+        return { type: 'connection.lost', reason: 'DSH event stream reported an error.' }
+      default:
+        return {
+          type: 'unknown',
+          ...(sessionId === '' ? {} : { sessionId }),
+          name,
+          payload: safePayload(value),
+        }
+    }
   },
+}
+
+/**
+ * The permission plugin owns this projection and may shape it as a list of
+ * ids or as an object containing `presets`/`options`/`available`. Keep the
+ * mapper tolerant of those documented projection forms without inventing a
+ * fixed permission enum in the domain.
+ */
+export function permissionPresetIds(value: unknown): readonly string[] {
+  const found: string[] = []
+  const record = objectOrUndefined(value)
+  if (Array.isArray(value)) collectPermissionPresetIds(value, found, 0)
+  else if (record !== undefined) {
+    for (const key of ['permissions', 'permissionPresets', 'available', 'availablePresets'] as const) {
+      const source = record[key]
+      if (Array.isArray(source) || objectOrUndefined(source) !== undefined)
+        collectPermissionPresetIds(source, found, 0)
+    }
+  }
+  return [...new Set(found)]
+}
+
+function configuration(value: unknown): SessionDetail['configuration'] {
+  const record = objectOrUndefined(value) ?? {}
+  return {
+    preset: stringOr(record.preset, 'standard'),
+    toolMode: enumValue(record.toolMode, ['native', 'code', 'both'] as const, 'native'),
+    permissionPreset: stringOr(record.permissionPreset, 'workspace-write'),
+    planMode: boolean(record.planMode, false),
+    ...(typeof record.sandboxMode === 'string' ? { sandboxMode: record.sandboxMode } : {}),
+    ...(typeof record.approvalPolicy === 'string' ? { approvalPolicy: record.approvalPolicy } : {}),
+    model: {
+      providerId: stringOr(objectOrUndefined(record.model)?.providerId, ''),
+      modelId: stringOr(objectOrUndefined(record.model)?.modelId, ''),
+      ...(objectOrUndefined(record.model)?.reasoningLevel === undefined
+        ? {}
+        : { reasoningLevel: stringOr(objectOrUndefined(record.model)?.reasoningLevel, '') }),
+    },
+  }
+}
+
+function sessionConfiguration(sessionId: string, patch: SessionConfigurationPatch): BackendEvent {
+  return { type: 'session.configuration', sessionId, patch }
+}
+
+function planMode(data: Record<string, unknown>): boolean {
+  if (typeof data.active === 'boolean') return data.active
+  if (typeof data.enabled === 'boolean') return data.enabled
+  if (typeof data.on === 'boolean') return data.on
+  const mode = stringOr(data.mode ?? data.value, '').toLowerCase()
+  return mode === 'plan' || mode === 'on' || mode === 'active'
+}
+
+function modelPatch(data: Record<string, unknown>): Partial<ModelSelection> {
+  const header = objectOrUndefined(data.header)
+  const config = objectOrUndefined(header?.config) ?? objectOrUndefined(data.config)
+  const provider = firstString(data.provider, data.providerId, config?.provider, config?.providerId)
+  const model = firstString(data.model, data.modelId, config?.model, config?.modelId)
+  const reasoningLevel = firstString(
+    data.reasoningEffort,
+    data.reasoningLevel,
+    config?.reasoningEffort,
+    config?.reasoningLevel,
+  )
+  return {
+    ...(provider === undefined ? {} : { providerId: provider }),
+    ...(model === undefined ? {} : { modelId: model }),
+    ...(reasoningLevel === undefined ? {} : { reasoningLevel }),
+  }
+}
+
+function todo(value: unknown, index: number): TodoView {
+  const record = objectOrUndefined(value) ?? {}
+  const status = stringOr(record.status, 'pending')
+  return {
+    id: stringOr(record.id, `todo:${index}`),
+    content: firstString(record.content, record.title, record.text) ?? 'Todo',
+    status: status === 'completed' ? 'completed' : status === 'in_progress' ? 'in-progress' : 'pending',
+  }
+}
+
+function compactionPhase(name: string): CompactionView['phase'] {
+  if (name === 'compaction/summary') return 'summary'
+  if (name === 'compaction/prune') return 'prune'
+  if (name === 'compaction/end') return 'end'
+  return 'start'
+}
+
+function retryText(name: string, data: Record<string, unknown>): string {
+  const attempt = firstString(data.attempt, data.retry, data.count)
+  return attempt === undefined
+    ? name === 'llm/retry-started'
+      ? 'Model retry started.'
+      : 'Model retrying.'
+    : `Model retrying (attempt ${attempt}).`
+}
+
+function commandNotice(name: string, data: Record<string, unknown>, sessionId: string): BackendEvent {
+  const commandName = firstString(data.name, data.commandName) ?? 'DSH command'
+  const status = firstString(data.status, data.state)
+  const detail = firstString(data.message, data.text, data.summary)
+  return {
+    type: 'notice',
+    ...(sessionId === '' ? {} : { sessionId }),
+    level: name === 'command/done' && (status === 'failed' || status === 'error') ? 'error' : 'info',
+    text:
+      detail === undefined ? `${commandName} ${name === 'command/done' ? 'completed.' : 'started.'}` : detail,
+  }
+}
+
+function workflowEventText(name: string, data: Record<string, unknown>): string {
+  const label = firstString(data.name, data.workflowId, data.id) ?? 'tool workflow'
+  return `${label} ${name.endsWith('end') ? 'finished.' : 'started.'}`
+}
+
+function workspaceId(data: Record<string, unknown>): string | undefined {
+  const workspace = objectOrUndefined(data.workspace)
+  return firstString(data.workspaceId, data.id, workspace?.workspaceId, workspace?.id)
+}
+
+function stringArray(value: unknown): readonly string[] {
+  return array(value).filter((entry): entry is string => typeof entry === 'string' && entry.trim() !== '')
+}
+
+function collectPermissionPresetIds(value: unknown, found: string[], depth: number): void {
+  if (depth > 4) return
+  if (typeof value === 'string') {
+    const id = value.trim()
+    if (id !== '') found.push(id)
+    return
+  }
+  if (Array.isArray(value)) {
+    for (const entry of value) collectPermissionPresetIds(entry, found, depth + 1)
+    return
+  }
+  const record = objectOrUndefined(value)
+  if (record === undefined) return
+  for (const key of ['id', 'preset', 'value'] as const)
+    if (typeof record[key] === 'string') collectPermissionPresetIds(record[key], found, depth + 1)
+  for (const key of [
+    'permissionPresets',
+    'presets',
+    'options',
+    'available',
+    'availablePresets',
+    'allowed',
+    'choices',
+    'items',
+  ])
+    collectPermissionPresetIds(record[key], found, depth + 1)
+}
+
+function mapHistoryEntry(value: unknown, index: number, sessionId: string): SessionHistoryEvent {
+  const historyEntry = objectOrUndefined(value)
+  // The pinned contract uses { event, view }, while accepting a raw event here
+  // keeps history reopening compatible with older rc.6 hosts that returned the
+  // event object directly.
+  const rawEvent = objectOrUndefined(historyEntry?.event) ?? historyEntry
+  const sequence = number(rawEvent?.seq ?? rawEvent?.sequence, index)
+  const time = date(rawEvent?.time ?? rawEvent?.timestamp ?? rawEvent?.createdAt)
+  const type = stringOr(rawEvent?.type ?? rawEvent?.name, 'unknown')
+  try {
+    const mapped = rc6Mapper.event(type, {
+      ...(rawEvent ?? {}),
+      sessionId,
+      ...(historyEntry?.event === undefined || historyEntry.view === undefined
+        ? {}
+        : { view: historyEntry.view }),
+    })
+    return { sequence, time, event: { ...mapped, sequence } }
+  } catch {
+    // A single historical event must never make the whole session unusable.
+    // Unknown rows are intentionally redacted by safePayload below.
+    return {
+      sequence,
+      time,
+      event: {
+        type: 'unknown',
+        name: type,
+        payload: safePayload(value),
+        sequence,
+      },
+    }
+  }
+}
+
+function tool(value: Record<string, unknown>): ToolCallView {
+  const message = objectOrUndefined(value.message)
+  const source = objectOrUndefined(message?.source)
+  const viewEnvelope = objectOrUndefined(value.view)
+  const view = objectOrUndefined(viewEnvelope?.view) ?? viewEnvelope
+  const error = objectOrUndefined(value.error)
+  const input =
+    value.inputSummary ??
+    value.arguments ??
+    view?.inputSummary ??
+    view?.rawInput ??
+    view?.description ??
+    view?.content
+  const messageOutput = message === undefined ? undefined : messageText(message)
+  const output =
+    value.outputSummary ??
+    messageOutput ??
+    view?.outputSummary ??
+    view?.rawOutput ??
+    view?.output ??
+    view?.content
+  const name = firstString(value.toolName, value.name, view?.name, view?.toolName)
+  const title = firstString(value.title, view?.title, name)
+  const category = firstString(value.category, view?.category, view?.kind, view?.card)
+  const status = enumValue(
+    value.status,
+    ['queued', 'running', 'completed', 'failed', 'cancelled'] as const,
+    message === undefined ? 'running' : error !== undefined ? 'failed' : 'completed',
+  )
+  return {
+    id: stringOr(value.callId ?? source?.callId ?? value.id ?? view?.callId ?? view?.id, 'tool-call'),
+    name: name ?? 'unknown-tool',
+    category: category ?? 'tool',
+    title: title ?? 'Tool',
+    status,
+    ...(value.startedAt === undefined ? {} : { startedAt: date(value.startedAt) }),
+    ...(value.completedAt === undefined ? {} : { completedAt: date(value.completedAt) }),
+    ...(input === undefined ? {} : { inputSummary: bounded(input) }),
+    ...(output === undefined ? {} : { outputSummary: bounded(output) }),
+    ...(value.error === undefined ? {} : { error: bounded(error?.message ?? value.error) }),
+    metadata: objectOrUndefined(safePayload(view)) ?? {},
+  }
+}
+
+function goal(value: unknown): GoalView {
+  const record = object(value, 'goal')
+  return {
+    id: stringOr(record.id, 'goal'),
+    title: stringOr(record.title ?? record.objective, 'Goal'),
+    status: enumValue(record.status, ['pending', 'in-progress', 'completed', 'blocked'] as const, 'pending'),
+  }
+}
+
+function job(value: unknown): JobView {
+  const record = object(value, 'job')
+  return {
+    id: stringOr(record.id, 'job'),
+    label: stringOr(record.label ?? record.kind, 'Job'),
+    status: enumValue(
+      record.status,
+      ['running', 'stopping', 'completed', 'failed', 'killed', 'cancelled'] as const,
+      'running',
+    ),
+    ...(record.progress === undefined ? {} : { progress: number(record.progress, 0) }),
+  }
+}
+
+function queuedInput(value: unknown, sessionId: string): QueuedInput[] {
+  const record = objectOrUndefined(value)
+  if (record === undefined || (record.placement !== 'queued' && record.placement !== 'steering')) return []
+  const message = objectOrUndefined(record.message)
+  if (message === undefined || typeof record.id !== 'string') return []
+  return [
+    {
+      id: record.id,
+      sessionId,
+      text: messageText(message),
+      attachments: [],
+      mode: record.placement === 'steering' ? 'steer' : 'queue',
+      createdAt: date(record.createdAt),
+    },
+  ]
+}
+
+function subagent(value: unknown, parentSessionId: string): SubagentView {
+  const record = object(value, 'subagent')
+  return {
+    id: stringOr(record.id, 'subagent'),
+    label: stringOr(record.label, 'Subagent'),
+    status: enumValue(
+      record.status,
+      ['idle', 'running', 'awaiting-input', 'completed', 'failed'] as const,
+      'idle',
+    ),
+    parentSessionId: stringOr(record.parentSessionId, parentSessionId),
+  }
+}
+
+function permission(value: Record<string, unknown>): PermissionRequest {
+  return {
+    id: stringOr(value.approvalId ?? value.id, 'approval'),
+    ...(typeof value.rpcId === 'string' ? { rpcId: value.rpcId } : {}),
+    sessionId: stringOr(value.sessionId, ''),
+    title: stringOr(value.toolName, 'Permission required'),
+    description: stringOr(value.reason, 'DSH requested permission to continue.'),
+    risk: 'medium',
+    options: [
+      { id: 'allowed-once', label: 'Allow once', kind: 'allow-once' },
+      { id: 'rejected', label: 'Reject', kind: 'deny' },
+    ],
+  }
+}
+
+function question(value: Record<string, unknown>): UserQuestion {
+  const questionRecords = array(value.questions)
+    .map((entry) => objectOrUndefined(entry))
+    .filter((entry): entry is Record<string, unknown> => entry !== undefined)
+  const first = questionRecords[0] ?? value
+  const items = questionRecords.map(questionItem)
+  const firstItem = questionItem(first)
+  const choices = firstItem.choices ?? []
+  return {
+    id: stringOr(first.id ?? value.id, 'question'),
+    ...(typeof value.questionRpcId === 'string' || typeof value.rpcId === 'string'
+      ? { rpcId: stringOr(value.questionRpcId ?? value.rpcId, '') }
+      : {}),
+    sessionId: stringOr(value.sessionId, ''),
+    prompt: firstItem.prompt,
+    ...(choices.length === 0 ? {} : { choices }),
+    ...(firstItem.multiSelect === undefined ? {} : { multiSelect: firstItem.multiSelect }),
+    allowFreeText: firstItem.allowFreeText,
+    ...(items.length === 0 ? {} : { items }),
+  }
+}
+
+function questionItem(value: Record<string, unknown>): UserQuestionItem {
+  const choices = array(value.options ?? value.choices)
+    .map((entry) => objectOrUndefined(entry))
+    .filter((entry): entry is Record<string, unknown> => entry !== undefined)
+    .map((entry) => ({
+      // rc.6 validates selected answers against option labels.
+      id: stringOr(entry.label ?? entry.title, 'Choice'),
+      label: stringOr(entry.label ?? entry.title, 'Choice'),
+    }))
+  return {
+    id: stringOr(value.id, 'question'),
+    prompt: stringOr(value.question ?? value.prompt, 'DSH needs an answer.'),
+    ...(choices.length === 0 ? {} : { choices }),
+    ...(value.multiSelect === undefined ? {} : { multiSelect: boolean(value.multiSelect, false) }),
+    allowFreeText: boolean(value.allowFreeText, true),
+  }
+}
+
+function assistantMessageId(data: Record<string, unknown>, message?: Record<string, unknown>): string {
+  const turn = indexToken(data.turn)
+  const step = indexToken(data.step)
+  if (turn !== undefined && step !== undefined) return `assistant:${turn}:${step}`
+  return stringOr(data.messageId ?? data.id ?? message?.id, 'assistant:unknown')
+}
+
+function indexToken(value: unknown): string | undefined {
+  if (typeof value === 'number' && Number.isSafeInteger(value)) return String(value)
+  if (typeof value === 'string' && value.trim() !== '') return value
+  return undefined
+}
+
+function messageText(value: Record<string, unknown> | undefined): string {
+  if (value === undefined) return ''
+  const content = array(value.content)
+  if (content.length === 0) return stringOr(value.text ?? value.markdown ?? value.content, '')
+  return contentText(content, false)
+}
+
+function reasoningText(value: Record<string, unknown> | undefined): string {
+  if (value === undefined) return ''
+  return (
+    contentText(array(value.content), true) ||
+    stringOr(value.reasoning ?? value.reasoningContent ?? value.reasoning_content, '')
+  )
+}
+
+function contentText(content: readonly unknown[], reasoningOnly: boolean): string {
+  return content
+    .map((entry) => {
+      const block = objectOrUndefined(entry)
+      if (block === undefined) return ''
+      if (block.type === 'reasoning') return reasoningOnly ? stringOr(block.text, '') : ''
+      if (reasoningOnly) return ''
+      if (block.type === 'text') return stringOr(block.text, '')
+      if (block.type === 'image') return '[image]'
+      if (block.type === 'tool-result') {
+        const nested = contentText(array(block.content), false)
+        return nested || stringOr(block.text, '[tool result]')
+      }
+      if (block.type === 'tool-call') return ''
+      return stringOr(block.text ?? block.value, '') || contentText(array(block.content), false)
+    })
+    .filter(Boolean)
+    .join('\n')
+}
+
+function assistantModelLabel(
+  message: Record<string, unknown>,
+  envelope: Record<string, unknown>,
+): string | undefined {
+  const source = objectOrUndefined(message.source)
+  const model = objectOrUndefined(message.model) ?? objectOrUndefined(envelope.model)
+  return firstString(
+    message.modelLabel,
+    model?.label,
+    model?.name,
+    message.modelId,
+    model?.modelId,
+    typeof message.model === 'string' ? message.model : undefined,
+    source?.model,
+    source?.modelId,
+    envelope.modelId,
+    typeof envelope.model === 'string' ? envelope.model : undefined,
+  )
+}
+
+function tokenUsage(value: unknown): TokenUsage | undefined {
+  const record = objectOrUndefined(value)
+  if (record === undefined) return undefined
+  const inputTokens = tokenCount(record.inputTokens ?? record.uncachedInputTokens)
+  const outputTokens = tokenCount(record.outputTokens)
+  if (inputTokens === undefined || outputTokens === undefined) return undefined
+  const cacheReadTokens = tokenCount(record.cacheReadTokens)
+  const cacheWriteTokens = tokenCount(record.cacheWriteTokens)
+  const reasoningTokens = tokenCount(record.reasoningTokens)
+  return {
+    inputTokens,
+    outputTokens,
+    ...(cacheReadTokens === undefined ? {} : { cacheReadTokens }),
+    ...(cacheWriteTokens === undefined ? {} : { cacheWriteTokens }),
+    ...(reasoningTokens === undefined ? {} : { reasoningTokens }),
+  }
+}
+
+function tokenCount(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined
+}
+
+function object(value: unknown, label: string): Record<string, unknown> {
+  const record = objectOrUndefined(value)
+  if (record === undefined) throw new Error(`Malformed ${label}`)
+  return record
+}
+
+function objectOrUndefined(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined
+}
+
+function array(value: unknown): readonly unknown[] {
+  return Array.isArray(value) ? value : []
+}
+
+function string(value: unknown, label: string): string {
+  if (typeof value !== 'string' || value.length === 0) throw new Error(`Malformed ${label}`)
+  return value
+}
+
+function stringOr(value: unknown, fallback: string): string {
+  return typeof value === 'string' ? value : fallback
+}
+
+function firstString(...values: readonly unknown[]): string | undefined {
+  return values.find((value): value is string => typeof value === 'string' && value.trim() !== '')
+}
+
+function normalizeSessionTitle(value: unknown): string {
+  const title = stringOr(value, '').trim()
+  if (title === '' || /^session\s+session-/i.test(title)) return 'New Session'
+  return title
+}
+
+function boolean(value: unknown, fallback: boolean): boolean {
+  return typeof value === 'boolean' ? value : fallback
+}
+
+function number(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback
+}
+
+function date(value: unknown): string {
+  if (typeof value === 'string') return value
+  const timestamp = number(value, Date.now())
+  return new Date(timestamp).toISOString()
+}
+
+function enumValue<const T extends readonly string[]>(
+  value: unknown,
+  values: T,
+  fallback: T[number],
+): T[number] {
+  return typeof value === 'string' && values.includes(value) ? value : fallback
+}
+
+function bounded(value: unknown): string {
+  const text = typeof value === 'string' ? value : JSON.stringify(safePayload(value))
+  return (text ?? '').slice(0, 4_096)
+}
+
+function safePayload(value: unknown): unknown {
+  if (Array.isArray(value)) return value.slice(0, 32).map(safePayload)
+  if (typeof value !== 'object' || value === null)
+    return typeof value === 'string' ? value.slice(0, 512) : value
+  const output: Record<string, unknown> = {}
+  for (const [key, entry] of Object.entries(value)) {
+    if (isSensitivePayloadField(key)) continue
+    output[key] = safePayload(entry)
+  }
+  return output
+}
+
+const SENSITIVE_PAYLOAD_FIELDS = new Set([
+  'key',
+  'apikey',
+  'api_key',
+  'authorization',
+  'accesstoken',
+  'access_token',
+  'refreshtoken',
+  'refresh_token',
+  'token',
+  'secret',
+  'secretkey',
+  'privatekey',
+  'password',
+  'prompt',
+  'body',
+  'response',
+  'input',
+  'output',
+  'command',
+  'commandline',
+  'endpoint',
+  'baseurl',
+  'path',
+  'cwd',
+  'directory',
+  'executable',
+  'pid',
+  'stack',
+])
+
+function isSensitivePayloadField(key: string): boolean {
+  return SENSITIVE_PAYLOAD_FIELDS.has(key.toLocaleLowerCase())
 }

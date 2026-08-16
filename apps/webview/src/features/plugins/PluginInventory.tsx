@@ -1,6 +1,5 @@
 import type { ReactElement } from 'react'
 import type { PluginDescriptor } from '@dsh-vscode/domain'
-import { unimplemented } from '@dsh-vscode/domain'
 
 export interface PluginInventoryProps {
   readonly plugins: readonly PluginDescriptor[]
@@ -8,11 +7,32 @@ export interface PluginInventoryProps {
 }
 
 export function PluginInventory(props: PluginInventoryProps): ReactElement {
-  return unimplemented<ReactElement>('DSH plugin inventory and explicit configuration', [
-    'show installed, enabled, capability, and restart-required metadata',
-    'make any enable or disable operation explicit and confirm high-permission plugins',
-    'never force-restart an external backend',
-    'render unsupported operations as informational rather than fake controls',
-    `plugins ${props.plugins.length}; callback ${typeof props.onConfigure}`,
-  ])
+  return (
+    <section className="dsh-plugins" aria-labelledby="plugins-title">
+      <h2 id="plugins-title">Plugins</h2>
+      {props.plugins.length === 0 ? (
+        <p>Plugin inventory is unavailable for this DSH version.</p>
+      ) : (
+        <ul>
+          {props.plugins.map((plugin) => (
+            <li key={plugin.id}>
+              <strong>{plugin.name}</strong>
+              <span>
+                {plugin.installed ? 'Installed' : 'Not installed'} · {plugin.enabled ? 'Enabled' : 'Disabled'}
+              </span>
+              <small>
+                {plugin.capabilities.join(', ') || 'No capabilities reported'}
+                {plugin.requiresRestart ? ' · restart required' : ''}
+              </small>
+              {plugin.installed ? (
+                <button type="button" onClick={() => props.onConfigure(plugin.id, !plugin.enabled)}>
+                  {plugin.enabled ? 'Disable' : 'Enable'}
+                </button>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  )
 }

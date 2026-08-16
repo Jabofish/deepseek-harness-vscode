@@ -15,11 +15,13 @@
     "@dsh-vscode/ui": "workspace:*",
     "@dsh-vscode/webview-protocol": "workspace:*",
     "@tanstack/react-virtual": "3.14.9",
+    "markdown-it": "14.3.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "zustand": "5.0.15"
   },
   "devDependencies": {
+    "@types/markdown-it": "14.1.2",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.4"
   }

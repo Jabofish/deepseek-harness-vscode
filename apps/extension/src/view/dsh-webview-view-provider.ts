@@ -1,7 +1,7 @@
-import type * as vscode from 'vscode'
-import { unimplemented } from '@dsh-vscode/domain'
+import * as vscode from 'vscode'
 
 import { VIEW_ID } from '../constants.js'
+import { createWebviewHtml } from './webview-html.js'
 
 export interface DshWebviewDependencies {
   readonly extensionUri: vscode.Uri
@@ -11,42 +11,44 @@ export interface DshWebviewDependencies {
 export class DshWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Disposable {
   public static readonly viewType = VIEW_ID
   private view: vscode.WebviewView | undefined
+  private readonly disposables: vscode.Disposable[] = []
 
   public constructor(private readonly dependencies: DshWebviewDependencies) {}
 
-  public resolveWebviewView(webviewView: vscode.WebviewView): void | Thenable<void> {
-    return unimplemented<void | Thenable<void>>('resolve DSH Webview View', [
-      'retain the current view and configure enableScripts plus minimal localResourceRoots',
-      'generate nonce-based CSP HTML referencing only packaged Webview JS and CSS',
-      'validate every incoming message with webview-protocol before routing',
-      'dispose listeners when the view is replaced or hidden permanently',
-      'publish the current backend/runtime snapshot after app.ready',
-      `view type ${webviewView.viewType}; extension URI ${this.dependencies.extensionUri.toString()}; prior view ${String(this.view !== undefined)}`,
-    ])
+  public resolveWebviewView(webviewView: vscode.WebviewView): void {
+    this.disposeViewListeners()
+    this.view = webviewView
+    webviewView.webview.options = {
+      enableScripts: true,
+      localResourceRoots: [vscode.Uri.joinPath(this.dependencies.extensionUri, 'media')],
+    }
+    webviewView.webview.html = createWebviewHtml(webviewView.webview, this.dependencies.extensionUri)
+    this.disposables.push(
+      webviewView.webview.onDidReceiveMessage((message: unknown) => {
+        void this.dependencies.onMessage(message)
+      }),
+      webviewView.onDidDispose(() => {
+        if (this.view === webviewView) this.view = undefined
+        this.disposeViewListeners()
+      }),
+    )
   }
 
   public postMessage(message: unknown): Thenable<boolean> {
-    return unimplemented<Thenable<boolean>>('post a protocol message to the DSH Webview', [
-      'send only validated versioned HostMessage values',
-      'return false while the view is not resolved without throwing',
-      'coalesce high-frequency streaming updates before crossing the Webview boundary',
-      `message type ${typeof message}; view present ${String(this.view !== undefined)}`,
-    ])
+    return this.view === undefined ? Promise.resolve(false) : this.view.webview.postMessage(message)
   }
 
   public reveal(preserveFocus = true): Promise<void> {
-    return unimplemented<Promise<void>>('reveal DSH Webview View', [
-      'focus or reveal dsh.chatView through supported VS Code commands',
-      'respect preserveFocus',
-      `preserveFocus ${String(preserveFocus)}`,
-    ])
+    this.view?.show(preserveFocus)
+    return Promise.resolve()
   }
 
   public dispose(): void {
-    unimplemented<void>('dispose DSH Webview provider', [
-      'dispose message and visibility subscriptions',
-      'release the view reference',
-      'do not dispose the globally owned connection directly',
-    ])
+    this.disposeViewListeners()
+    this.view = undefined
+  }
+
+  private disposeViewListeners(): void {
+    while (this.disposables.length > 0) this.disposables.pop()?.dispose()
   }
 }

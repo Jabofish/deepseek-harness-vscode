@@ -1,13 +1,32 @@
-import type * as vscode from 'vscode'
-import { unimplemented } from '@dsh-vscode/domain'
+import * as vscode from 'vscode'
+import { randomBytes } from 'node:crypto'
 
 export function createWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string {
-  return unimplemented<string>('secure Webview HTML shell', [
-    'create a cryptographically random nonce',
-    'permit scripts only from nonce and webview.cspSource',
-    'forbid remote scripts, inline handlers, arbitrary frames, and unsafe-eval',
-    'resolve media/webview.js and media/webview.css with asWebviewUri',
-    'include viewport, theme-compatible color-scheme, and accessible root landmark',
-    `extension URI ${extensionUri.toString()}; CSP source ${webview.cspSource}`,
-  ])
+  const nonce = randomBytes(16).toString('base64url')
+  const script = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'webview.js'))
+  const style = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'webview.css'))
+  const csp = [
+    "default-src 'none'",
+    `img-src ${webview.cspSource} data:`,
+    `style-src ${webview.cspSource}`,
+    `script-src 'nonce-${nonce}'`,
+    `font-src ${webview.cspSource}`,
+    "connect-src 'none'",
+    "frame-src 'none'",
+  ].join('; ')
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="light dark">
+    <meta http-equiv="Content-Security-Policy" content="${csp}">
+  <link rel="stylesheet" href="${style.toString()}">
+    <title>DeepSeek Harness</title>
+  </head>
+  <body>
+    <main id="root" aria-live="polite"></main>
+    <script nonce="${nonce}" src="${script.toString()}"></script>
+  </body>
+</html>`
 }

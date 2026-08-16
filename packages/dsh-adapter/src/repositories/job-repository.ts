@@ -1,25 +1,28 @@
-import type { JobRepository, JobView } from '@dsh-vscode/domain'
-import { unimplemented } from '@dsh-vscode/domain'
+import type { BackendEvent, JobRepository, JobView } from '@dsh-vscode/domain'
 
 import type { DshTransport } from '../contracts.js'
+import { unavailable } from '../versions/rc6/rpc.js'
 
 export class Rc6JobRepository implements JobRepository {
-  public constructor(private readonly transport: DshTransport) {}
+  private readonly jobs = new Map<string, readonly JobView[]>()
+  public constructor(_transport: DshTransport) {}
 
-  public list(sessionId: string, signal?: AbortSignal): Promise<readonly JobView[]> {
-    return unimplemented('rc6 list jobs', this.requirements('list', sessionId, signal))
+  public remember(event: BackendEvent): void {
+    if (event.type === 'jobs.updated') this.jobs.set(event.sessionId, event.jobs)
+    else if (event.type === 'job.updated') {
+      const current = [...(this.jobs.get(event.sessionId) ?? [])]
+      const index = current.findIndex((job) => job.id === event.job.id)
+      if (index < 0) current.push(event.job)
+      else current[index] = event.job
+      this.jobs.set(event.sessionId, current)
+    }
   }
 
-  public cancel(jobId: string, signal?: AbortSignal): Promise<void> {
-    return unimplemented('rc6 cancel job', this.requirements('cancel', jobId, signal))
+  public list(sessionId: string, _signal?: AbortSignal): Promise<readonly JobView[]> {
+    const jobs = this.jobs.get(sessionId)
+    return jobs === undefined ? Promise.reject(unavailable('background job snapshot')) : Promise.resolve(jobs)
   }
-
-  private requirements(operation: string, key: string, signal: AbortSignal | undefined): readonly string[] {
-    return [
-      'map official rc6 background job RPCs and status events',
-      'cancel only the requested job and never terminate the DSH process',
-      'add running, complete, failed, stale, and cancel contract tests',
-      `operation ${operation}; key ${key}; signal present ${String(signal !== undefined)}; transport available ${String(this.transport !== undefined)}`,
-    ]
+  public cancel(_jobId: string, _signal?: AbortSignal): Promise<void> {
+    return Promise.reject(unavailable('background job control'))
   }
 }

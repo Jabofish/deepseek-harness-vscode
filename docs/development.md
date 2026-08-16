@@ -27,13 +27,13 @@ pnpm build
 4. 新 Extension Development Host 使用 `.test-workspace`，不会把测试文件混入仓库。
 5. 修改 Webview 时使用 `pnpm dev`；Vite 输出固定文件到 `apps/extension/media`，该目录不提交。
 
-当前激活会抛出带要求的 `TodoImplementationError`，这是故意的。实现阶段 1 的激活与 Runtime Missing 切片后才应出现交互 UI。
+当前激活已经进入连接/Runtime Missing/会话基础切片；仍请以能力矩阵和门禁结果判断可用范围，不要把成功激活视为所有能力完成。
 
 ## DSH 联调模式
 
 ### 复用外部实例
 
-1. 由开发者自行启动 `dsh web`。
+1. 由开发者自行启动 `dsh --profile web`。
 2. 把端口加入 `dsh.connection.attachPorts` 或使用实现后的进程发现。
 3. 选择 `auto` 或 `attach-only`。
 4. 验证日志显示 `ownership=external`，扩展关闭后 DSH 仍在运行。
@@ -42,7 +42,7 @@ pnpm build
 
 1. 选择 `new-isolated`，或 `auto` 且确认没有可连接实例。
 2. `dsh.connection.managedPort=0` 使用随机空闲端口；固定端口用于可预测调试。
-3. 验证命令固定为参数数组 `web --host 127.0.0.1 --port <n>`。
+3. 验证命令固定为参数数组 `--profile web --host 127.0.0.1 --port <n>`。
 4. 扩展关闭后只结束本次扩展创建的进程。
 
 ## Remote SSH/WSL/Dev Container

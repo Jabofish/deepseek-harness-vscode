@@ -39,12 +39,19 @@ export interface ConnectedBackend {
 
 export type BackendState =
   | { readonly kind: 'idle' }
+  | { readonly kind: 'locating-runtime' }
   | { readonly kind: 'discovering'; readonly attempt: number }
   | { readonly kind: 'connecting'; readonly candidate: BackendCandidate }
   | { readonly kind: 'connected'; readonly backend: ConnectedBackend }
   | { readonly kind: 'starting'; readonly runtime: DshRuntime }
   | { readonly kind: 'runtime-missing'; readonly searchedLocations: readonly string[] }
   | { readonly kind: 'failed'; readonly message: string; readonly retryable: boolean }
+  | {
+      readonly kind: 'port-conflict'
+      readonly port: number
+      readonly message: string
+      readonly retryable: boolean
+    }
   | { readonly kind: 'stopping'; readonly ownership: ProcessOwnership }
 
 export interface ManagedProcessHandle {

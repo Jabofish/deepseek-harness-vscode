@@ -3,7 +3,24 @@
   "compilerOptions": {
     "composite": true,
     "noEmit": true,
-    "types": ["node", "vitest/globals"]
+    "types": ["node", "vitest/globals"],
+    "baseUrl": "..",
+    "paths": {
+      "@dsh-vscode/domain": ["packages/domain/src/index.ts"],
+      "@dsh-vscode/application": ["packages/application/src/index.ts"],
+      "@dsh-vscode/dsh-adapter": ["packages/dsh-adapter/src/index.ts"],
+      "@dsh-vscode/webview-protocol": ["packages/webview-protocol/src/index.ts"],
+      "@dsh-vscode/timeline": ["packages/timeline/src/index.ts"],
+      "@dsh-vscode/test-support": ["packages/test-support/src/index.ts"]
+    }
   },
-  "include": ["**/*.ts"]
+  "include": [
+    "**/*.ts",
+    "../packages/domain/src/**/*.ts",
+    "../packages/application/src/**/*.ts",
+    "../packages/dsh-adapter/src/**/*.ts",
+    "../packages/webview-protocol/src/**/*.ts",
+    "../packages/timeline/src/**/*.ts",
+    "../packages/test-support/src/**/*.ts"
+  ]
 }

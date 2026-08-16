@@ -1,18 +1,29 @@
 import type * as vscode from 'vscode'
-import { unimplemented } from '@dsh-vscode/domain'
 
 export interface CommandDependencies {
   readonly commands: typeof vscode.commands
   readonly subscriptions: { push(...items: vscode.Disposable[]): unknown }
+  readonly handlers?: Partial<Record<CommandId, (...args: readonly unknown[]) => unknown>>
 }
 
 export function registerCommands(dependencies: CommandDependencies): void {
-  unimplemented<void>('register all contributed DSH commands', [
-    'register exactly every command declared in package.json',
-    'delegate command bodies to application use cases or VS Code boundary services',
-    'show progress and map expected errors to actionable messages',
-    'avoid starting a new DSH from new-session until attach-first coordination completes',
-    'push every command disposable into the extension context subscriptions',
-    `commands API available ${String(dependencies.commands !== undefined)}; subscriptions available ${String(dependencies.subscriptions !== undefined)}`,
-  ])
+  for (const id of COMMANDS) {
+    const handler = dependencies.handlers?.[id]
+    const disposable = dependencies.commands.registerCommand(id, (...args: unknown[]) => handler?.(...args))
+    dependencies.subscriptions.push(disposable)
+  }
 }
+
+export type CommandId = (typeof COMMANDS)[number]
+const COMMANDS = [
+  'dsh.connect',
+  'dsh.reconnect',
+  'dsh.newSession',
+  'dsh.openSettings',
+  'dsh.installRuntime',
+  'dsh.selectExecutable',
+  'dsh.copyInstallCommand',
+  'dsh.openDocumentation',
+  'dsh.openInSecondarySidebar',
+  'dsh.showDiagnostics',
+] as const

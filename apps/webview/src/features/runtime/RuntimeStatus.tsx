@@ -1,12 +1,26 @@
 import type { ReactElement } from 'react'
 import type { BackendState } from '@dsh-vscode/domain'
-import { unimplemented } from '@dsh-vscode/domain'
+import { Icon } from '../../ui/Icon.js'
 
 export function RuntimeStatus({ state }: { readonly state: BackendState }): ReactElement {
-  return unimplemented<ReactElement>('compact backend connection status', [
-    'show idle, discovering, attaching, starting, connected, missing, failed, and reconnecting states',
-    'identify external versus managed ownership without exposing pid by default',
-    'provide retry and diagnostics affordances only when relevant',
-    `state ${state.kind}`,
-  ])
+  const label =
+    state.kind === 'connected'
+      ? 'Connected'
+      : state.kind === 'runtime-missing'
+        ? 'Runtime missing'
+        : state.kind === 'failed' || state.kind === 'port-conflict'
+          ? 'Connection failed'
+          : `${state.kind.slice(0, 1).toUpperCase()}${state.kind.slice(1)}`
+  return (
+    <div
+      className={`dsh-runtime-status dsh-runtime-status--${state.kind}`}
+      role="status"
+      aria-live="polite"
+      aria-label={label}
+      title={state.kind === 'failed' || state.kind === 'port-conflict' ? state.message : label}
+    >
+      <Icon name="status" className="dsh-runtime-status__dot" />
+      <span className="dsh-sr-only">{label}</span>
+    </div>
+  )
 }

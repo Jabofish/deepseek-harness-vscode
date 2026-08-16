@@ -1,5 +1,4 @@
 import type { DshSettingsSchema } from '@dsh-vscode/domain'
-import { unimplemented } from '@dsh-vscode/domain'
 
 import type { BackendService } from '../services/backend-service.js'
 
@@ -9,19 +8,14 @@ export class SettingsUseCases {
   public read(
     signal?: AbortSignal,
   ): Promise<{ readonly schema: DshSettingsSchema; readonly values: Readonly<Record<string, unknown>> }> {
-    return unimplemented('read DSH settings and schema', [
-      'read schema and values from one connection revision',
-      'remove secret values and expose only configured/missing status',
-      `signal present ${String(signal !== undefined)}; backend guard ${String(this.backendService !== undefined)}`,
-    ])
+    const backend = this.backendService.requireBackend()
+    return Promise.all([backend.settings.schema(signal), backend.settings.read(signal)]).then(
+      ([schema, values]) => ({ schema, values }),
+    )
   }
 
   public update(path: string, value: unknown, signal?: AbortSignal): Promise<void> {
-    return unimplemented<Promise<void>>('update one DSH setting', [
-      'validate path and value against the current server-provided schema',
-      'honor live versus restart-required semantics and never auto-restart external DSH',
-      'refresh and rollback UI state after server rejection',
-      `path ${path}; value type ${typeof value}; signal present ${String(signal !== undefined)}`,
-    ])
+    if (path.trim() === '') throw new Error('Settings path is required')
+    return this.backendService.requireBackend().settings.update(path, value, signal)
   }
 }
