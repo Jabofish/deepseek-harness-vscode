@@ -9,20 +9,16 @@ export class Rc6JobRepository implements JobRepository {
 
   public remember(event: BackendEvent): void {
     if (event.type === 'jobs.updated') this.jobs.set(event.sessionId, event.jobs)
-    else if (event.type === 'job.updated') {
-      const current = [...(this.jobs.get(event.sessionId) ?? [])]
-      const index = current.findIndex((job) => job.id === event.job.id)
-      if (index < 0) current.push(event.job)
-      else current[index] = event.job
-      this.jobs.set(event.sessionId, current)
-    }
+    else if (event.type === 'session.subscribed')
+      // The pinned Host sends a baseline only when a session currently has
+      // jobs. Every new subscription starts a fresh baseline: retaining a
+      // snapshot from the previous stream would resurrect already-settled
+      // process-local jobs when the reconnect carries no jobs frame.
+      this.jobs.set(event.sessionId, [])
   }
 
   public list(sessionId: string, _signal?: AbortSignal): Promise<readonly JobView[]> {
     const jobs = this.jobs.get(sessionId)
     return jobs === undefined ? Promise.reject(unavailable('background job snapshot')) : Promise.resolve(jobs)
-  }
-  public cancel(_jobId: string, _signal?: AbortSignal): Promise<void> {
-    return Promise.reject(unavailable('background job control'))
   }
 }

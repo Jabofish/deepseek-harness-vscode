@@ -1,5 +1,15 @@
 # Change Log
 
+## 0.0.4
+
+- 完善 DSH rc.6 会话、事件时间线、队列、交互、附件、导出、目标、任务、子代理和工作流展示。
+- 收紧上游响应与事件校验，改进断流恢复、资源释放、凭据脱敏和动态设置处理。
+- 补充适配器契约、应用层、时间线、协议和 Webview 测试覆盖。
+
+- Completes the DSH rc.6 session, event timeline, queue, interaction, attachment, export, goal, job, subagent, and workflow surfaces.
+- Tightens upstream response and event validation, stream recovery, disposal, credential redaction, and dynamic settings handling.
+- Expands adapter contract, application, timeline, protocol, and Webview test coverage.
+
 ## 0.0.2
 
 - 首个公开版本：在 VS Code 中管理 DSH 会话、流式回复、折叠思考和连续工具调用。

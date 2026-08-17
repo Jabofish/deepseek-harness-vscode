@@ -1,5 +1,6 @@
 import { useState, type ReactElement } from 'react'
 import type { SessionExportOptions } from '@dsh-vscode/domain'
+import { useI18n } from '../../i18n.js'
 
 export interface ExportDialogProps {
   readonly sessionId: string
@@ -7,21 +8,30 @@ export interface ExportDialogProps {
 }
 
 export function ExportDialog(props: ExportDialogProps): ReactElement {
+  const { t } = useI18n()
   const [format, setFormat] = useState<SessionExportOptions['format']>('markdown')
   const [includeAttachments, setIncludeAttachments] = useState(true)
   const [includeReasoning, setIncludeReasoning] = useState(true)
+  // rc.6's ZIP archive is produced wholly by the host's session-log download;
+  // it always carries attachments and reasoning, so neither toggle can opt out.
+  const zipLocked = format === 'zip'
   return (
     <form
       className="dsh-export"
       onSubmit={(event) => {
         event.preventDefault()
-        props.onExport({ sessionId: props.sessionId, format, includeAttachments, includeReasoning })
+        props.onExport({
+          sessionId: props.sessionId,
+          format,
+          includeAttachments: zipLocked || includeAttachments,
+          includeReasoning: zipLocked || includeReasoning,
+        })
       }}
     >
-      <h2>Export session</h2>
-      <p>Exports may contain prompts, tool output, and other sensitive content.</p>
+      <h2>{t('export.title')}</h2>
+      <p>{t('export.sensitive')}</p>
       <label>
-        Format{' '}
+        {t('export.format')}{' '}
         <select
           value={format}
           onChange={(event) => setFormat(event.target.value as SessionExportOptions['format'])}
@@ -31,23 +41,28 @@ export function ExportDialog(props: ExportDialogProps): ReactElement {
           <option value="zip">ZIP</option>
         </select>
       </label>
+      {zipLocked ? <p className="dsh-export__zip-hint">{t('export.zipHint')}</p> : null}
       <label>
         <input
           type="checkbox"
-          checked={includeAttachments}
+          checked={zipLocked || includeAttachments}
+          disabled={zipLocked}
           onChange={(event) => setIncludeAttachments(event.target.checked)}
         />{' '}
-        Include attachments
+        {t('export.attachments')}
       </label>
       <label>
         <input
           type="checkbox"
-          checked={includeReasoning}
+          checked={zipLocked || includeReasoning}
+          disabled={zipLocked}
           onChange={(event) => setIncludeReasoning(event.target.checked)}
         />{' '}
-        Include reasoning
+        {t('export.reasoning')}
       </label>
-      <button type="submit">Choose destination and export</button>
+      <button className="dsh-button dsh-button--primary" type="submit">
+        {t('export.submit')}
+      </button>
     </form>
   )
 }

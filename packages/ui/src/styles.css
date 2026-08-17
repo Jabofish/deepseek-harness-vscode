@@ -115,6 +115,10 @@ select {
   text-align: start;
   cursor: pointer;
 }
+.dsh-tool-card__summary:disabled {
+  cursor: default;
+  opacity: 1;
+}
 .dsh-tool-card__icon {
   width: 1rem;
   height: 1rem;
@@ -150,35 +154,86 @@ select {
 .dsh-tool-card__disclosure--expanded svg {
   transform: rotate(90deg);
 }
-.dsh-tool-card__title {
+.dsh-tool-card__heading {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+.dsh-tool-card__title,
+.dsh-tool-card__subtitle {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.dsh-tool-card__title {
   white-space: nowrap;
   font-weight: 600;
 }
-.dsh-tool-card__meta {
-  min-width: 0;
-  overflow: hidden;
+.dsh-tool-card__subtitle {
   color: var(--vscode-descriptionForeground);
   font-size: 0.9em;
-  text-overflow: ellipsis;
+  line-height: 1.35;
   white-space: nowrap;
+}
+.dsh-tool-card__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.9em;
+  white-space: nowrap;
+}
+.dsh-tool-card__status::before {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: currentColor;
+  content: '';
+}
+.dsh-tool-card__status--running,
+.dsh-tool-card__status--queued {
+  color: var(--vscode-progressBar-background, var(--vscode-descriptionForeground));
+}
+.dsh-tool-card__status--failed {
+  color: var(--vscode-errorForeground);
 }
 .dsh-tool-card__details {
   display: grid;
   gap: var(--dsh-space-2);
-  padding: 0 var(--dsh-space-2) var(--dsh-space-2);
+  padding: var(--dsh-space-2);
+  border-top: var(--dsh-border);
 }
-.dsh-tool-card pre {
+.dsh-tool-card__section {
+  min-width: 0;
+  display: grid;
+  gap: var(--dsh-space-1);
+  padding: var(--dsh-space-2);
+  border-radius: var(--dsh-radius);
+  background: var(--vscode-textCodeBlock-background);
+}
+.dsh-tool-card__section h4,
+.dsh-tool-card__section p {
   margin: 0;
+}
+.dsh-tool-card__section h4 {
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.9em;
+  font-weight: 600;
+}
+.dsh-tool-card__section p {
   max-height: 14rem;
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-word;
   color: var(--vscode-textPreformat-foreground);
-  background: var(--vscode-textCodeBlock-background);
-  padding: var(--dsh-space-2);
+  line-height: 1.45;
+}
+.dsh-tool-card__section--error {
+  border: 1px solid var(--vscode-errorForeground);
 }
 .dsh-tool-card--failed {
   border-color: var(--vscode-errorForeground);

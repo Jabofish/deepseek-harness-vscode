@@ -1,5 +1,5 @@
 import * as vscode from 'vscode'
-import { createHash, randomUUID } from 'node:crypto'
+import { createHash } from 'node:crypto'
 import { readFileSync, realpathSync } from 'node:fs'
 import { access, mkdir, mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { execFile, spawn } from 'node:child_process'
@@ -10,7 +10,9 @@ import {
   type AgentConfiguration,
   type BackendState,
   type DshBackend,
-  type PromptAttachment,
+  type ExtensionSettings,
+  type ExtensionSettingsSummary,
+  type QuestionAnswer,
   type SessionDetail,
   type WorkspaceSummary,
 } from '@dsh-vscode/domain'
@@ -57,10 +59,17 @@ import { RuntimeInstaller } from './vscode/install-runtime.js'
 import { requestProviderSecret } from './vscode/credential-input.js'
 import { moveOrExplainSecondarySidebar } from './vscode/secondary-sidebar.js'
 import { updateContextKeys } from './vscode/context-keys.js'
+import {
+  AttachmentStore,
+  decodeCanonicalBase64,
+  isImageMimeType,
+  MAX_ATTACHMENT_BYTES,
+  validImageBytes,
+  type StoredAttachmentInput,
+} from './attachments/attachment-store.js'
 
 const execFileAsync = promisify(execFile)
 const TEMPORARY_WORKSPACE_STATE_KEY = 'dsh.temporaryWorkspace'
-const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024
 
 interface StoredTemporaryWorkspace {
   readonly id: string
@@ -291,7 +300,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     if (removeDirectory && temporaryPath !== undefined)
       await rm(temporaryPath, { recursive: true, force: true }).catch(() => undefined)
   }
-  const attachmentTokens = new Map<string, StoredAttachment>()
+  const attachmentTokens = new AttachmentStore()
   const listCurrentWorkspaces = async (signal?: AbortSignal): Promise<readonly WorkspaceSummary[]> => {
     const folders = currentWorkspaceFolders()
     const workspaces = await workspaceUseCases.list(signal)
@@ -398,7 +407,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     requested: AgentConfiguration,
     signal?: AbortSignal,
   ): Promise<AgentConfiguration> => {
-    const presets = await backendService.requireBackend().presets.list(signal)
+    const { presets } = await backendService.requireBackend().presets.list(signal)
     if (presets.length === 0)
       // A valid rc.6 deployment may compose no preset roster.  In that case
       // the omitted agentPreset tells DSH to use its host composition.
@@ -514,6 +523,59 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       )
     return detail
   }
+  const requireCurrentWorkspaceId = async (workspaceId: string, signal: AbortSignal): Promise<void> => {
+    const workspaces = await listCurrentWorkspaces(signal)
+    if (workspaces.some((workspace) => workspace.id === workspaceId)) return
+    throw new AppError({
+      code: 'PERMISSION_DENIED',
+      message: 'The requested workspace is not part of the current VS Code workspace.',
+      retryable: false,
+    })
+  }
+  const requireOwnedQueuedInput = async (inputId: string, signal: AbortSignal): Promise<void> => {
+    const owner = backendService.requireBackend().sessions.sessionForQueuedInput?.(inputId)
+    if (owner === undefined) {
+      throw new AppError({
+        code: 'PERMISSION_DENIED',
+        message: 'The queued DSH input is not owned by the current workspace.',
+        retryable: false,
+      })
+    }
+    await requireCurrentWorkspaceSession(owner, signal)
+  }
+  const requireOwnedGoal = async (goalId: string, signal: AbortSignal): Promise<void> => {
+    const owner = backendService.requireBackend().goals.sessionForGoal?.(goalId)
+    if (owner === undefined) {
+      throw new AppError({
+        code: 'PERMISSION_DENIED',
+        message: 'The requested goal is not owned by the current workspace.',
+        retryable: false,
+      })
+    }
+    await requireCurrentWorkspaceSession(owner, signal)
+  }
+  const requireOwnedPermission = async (requestId: string, signal: AbortSignal): Promise<void> => {
+    const owner = backendService.requireBackend().interactions.sessionForPermission?.(requestId)
+    if (owner === undefined) {
+      throw new AppError({
+        code: 'PERMISSION_DENIED',
+        message: 'The requested permission is not owned by the current workspace.',
+        retryable: false,
+      })
+    }
+    await requireCurrentWorkspaceSession(owner, signal)
+  }
+  const requireOwnedQuestion = async (questionId: string, signal: AbortSignal): Promise<void> => {
+    const owner = backendService.requireBackend().interactions.sessionForQuestion?.(questionId)
+    if (owner === undefined) {
+      throw new AppError({
+        code: 'PERMISSION_DENIED',
+        message: 'The requested question is not owned by the current workspace.',
+        retryable: false,
+      })
+    }
+    await requireCurrentWorkspaceSession(owner, signal)
+  }
   const handleRequest = async (request: WebviewRequest, signal: AbortSignal): Promise<unknown> => {
     if (request.type === 'app.ready') return connect(signal)
     if (request.type === 'connection.retry') return reconnect(signal)
@@ -555,9 +617,12 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
         await workspaceUseCases.create({ name: request.payload.name, path: uri.fsPath }, signal),
       )
     }
-    if (request.type === 'workspace.rename')
+    if (request.type === 'workspace.rename') {
+      await requireCurrentWorkspaceId(request.payload.workspaceId, signal)
       return workspaceUseCases.rename(request.payload.workspaceId, request.payload.name, signal)
+    }
     if (request.type === 'workspace.remove') {
+      await requireCurrentWorkspaceId(request.payload.workspaceId, signal)
       const removesTemporaryWorkspace =
         request.payload.workspaceId === temporaryWorkspace?.id ||
         request.payload.workspaceId === temporaryWorkspaceReference?.id
@@ -639,55 +704,77 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
         ),
       )
     }
-    if (request.type === 'session.rename')
+    if (request.type === 'session.rename') {
+      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
       return backendService
         .requireBackend()
         .sessions.rename(request.payload.sessionId, request.payload.title, signal)
+    }
     if (request.type === 'session.remove') {
       await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
       return sessionUseCases.remove(request.payload.sessionId, signal)
     }
-    if (request.type === 'session.fork')
+    if (request.type === 'session.fork') {
+      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
       return publicValue(await sessionUseCases.fork(request.payload.sessionId, request.payload.atSeq, signal))
+    }
     if (request.type === 'session.archive') {
       await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
       return sessionUseCases.setArchived(request.payload.sessionId, request.payload.archived, signal)
     }
     if (request.type === 'session.sendPrompt') {
-      const attachments = resolveAttachments(request.payload.attachments, attachmentTokens)
-      await sessionUseCases.sendPrompt(
+      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
+      const attachments = attachmentTokens.resolve(request.payload.attachments)
+      const result = await sessionUseCases.sendPrompt(
         { sessionId: request.payload.sessionId, text: request.payload.text, attachments },
+        request.payload.mode ?? 'queue',
         signal,
       )
-      releaseAttachments(request.payload.attachments, attachmentTokens)
-      return undefined
+      // The Webview keeps the chips after a failed send so the user can retry;
+      // retain their opaque handles on that path as well. Successful admission
+      // consumes them exactly once.
+      attachmentTokens.release(request.payload.attachments)
+      return result
     }
     if (request.type === 'session.enqueuePrompt') {
-      const attachments = resolveAttachments(request.payload.attachments, attachmentTokens)
+      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
+      const attachments = attachmentTokens.resolve(request.payload.attachments)
       const queued = await sessionUseCases.enqueuePrompt(
         { sessionId: request.payload.sessionId, text: request.payload.text, attachments },
         request.payload.mode,
         signal,
       )
-      releaseAttachments(request.payload.attachments, attachmentTokens)
+      attachmentTokens.release(request.payload.attachments)
       return publicValue(queued)
     }
-    if (request.type === 'session.cancel') return sessionUseCases.cancel(request.payload.sessionId, signal)
-    if (request.type === 'session.queue.list')
+    if (request.type === 'session.cancel') {
+      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
+      return sessionUseCases.cancel(request.payload.sessionId, signal)
+    }
+    if (request.type === 'session.queue.list') {
+      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
       return publicList(
         await backendService.requireBackend().sessions.listQueue(request.payload.sessionId, signal),
       )
-    if (request.type === 'session.queue.update')
+    }
+    if (request.type === 'session.queue.update') {
+      await requireOwnedQueuedInput(request.payload.inputId, signal)
       return backendService
         .requireBackend()
         .sessions.updateQueuedInput(request.payload.inputId, request.payload.text, signal)
-    if (request.type === 'session.queue.remove')
+    }
+    if (request.type === 'session.queue.remove') {
+      await requireOwnedQueuedInput(request.payload.inputId, signal)
       return backendService.requireBackend().sessions.removeQueuedInput(request.payload.inputId, signal)
-    if (request.type === 'session.queue.steer')
+    }
+    if (request.type === 'session.queue.steer') {
+      await requireOwnedQueuedInput(request.payload.inputId, signal)
       return backendService
         .requireBackend()
         .sessions.convertQueuedInputToSteer(request.payload.inputId, signal)
+    }
     if (request.type === 'session.configure') {
+      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
       const source = request.payload.configuration
       const requestedConfiguration: AgentConfiguration = {
         preset: source.preset,
@@ -749,12 +836,28 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
         })
       return {
         cancelled: false,
-        attachment: rememberAttachment(attachmentTokens, {
+        attachment: attachmentTokens.remember({
           name: path.basename(uri.fsPath),
           mimeType,
           dataUri: `data:${mimeType};base64,${bytes.toString('base64')}`,
         }),
       }
+    }
+    if (request.type === 'attachment.ingest') {
+      const { name, mimeType, dataBase64 } = request.payload
+      const bytes = decodeCanonicalBase64(dataBase64)
+      return {
+        cancelled: false,
+        attachment: attachmentTokens.remember(prepareAttachment(name, bytes, mimeType)),
+      }
+    }
+    if (request.type === 'attachment.preview') {
+      const dataUri = attachmentTokens.preview(request.payload.uri)
+      return dataUri === undefined ? { cancelled: true } : { cancelled: false, dataUri }
+    }
+    if (request.type === 'attachment.release') {
+      attachmentTokens.releaseUris(request.payload.uris)
+      return undefined
     }
     if (request.type === 'attachment.open.list') {
       const candidates = listOpenFileCandidates()
@@ -775,17 +878,18 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       if (attachment === undefined) return { cancelled: true }
       return {
         cancelled: false,
-        attachment: rememberAttachment(attachmentTokens, attachment),
+        attachment: attachmentTokens.remember(attachment),
       }
     }
     if (request.type === 'attachment.read') {
+      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
       const attachment = await sessionUseCases.readAttachment(
         request.payload.sessionId,
         request.payload.attachmentId,
         signal,
       )
       return {
-        attachment: rememberAttachment(attachmentTokens, {
+        attachment: attachmentTokens.remember({
           name: attachment.name,
           ...(attachment.mimeType === undefined ? {} : { mimeType: attachment.mimeType }),
           dataUri: attachment.uri,
@@ -794,8 +898,10 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     }
     if (request.type === 'models.list')
       return publicList(await modelUseCases.listModels(request.payload.providerId, signal))
-    if (request.type === 'models.session.list')
+    if (request.type === 'models.session.list') {
+      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
       return publicValue(await modelUseCases.listSessionModels(request.payload.sessionId, signal))
+    }
     if (request.type === 'providers.list') return publicList(await modelUseCases.listProviders(signal))
     if (request.type === 'provider.secret.configure') {
       const backend = backendService.requireBackend()
@@ -812,32 +918,47 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       return backendService
         .requireBackend()
         .credentials.removeSecret(request.payload.providerId, request.payload.field, signal)
-    if (request.type === 'interaction.permission.respond')
+    if (request.type === 'interaction.permission.respond') {
+      await requireOwnedPermission(request.payload.interactionId, signal)
       return interactionUseCases.respondToPermission(
         request.payload.interactionId,
         request.payload.optionId,
         signal,
       )
-    if (request.type === 'interaction.question.respond')
+    }
+    if (request.type === 'interaction.question.respond') {
+      await requireOwnedQuestion(request.payload.questionId, signal)
       return interactionUseCases.respondToQuestion(
         request.payload.questionId,
-        request.payload.response,
+        questionResponse(request.payload.response),
         signal,
       )
+    }
+    if (request.type === 'interaction.question.cancel') {
+      await requireOwnedQuestion(request.payload.questionId, signal)
+      return interactionUseCases.cancelQuestion(request.payload.questionId, signal)
+    }
     if (request.type === 'settings.read') return publicValue(await settingsUseCases.read(signal))
+    if (request.type === 'extensionSettings.read')
+      return publicValue(publicExtensionSettings(configuration.read()))
     if (request.type === 'settings.update')
       return settingsUseCases.update(request.payload.path, request.payload.value, signal)
     if (request.type === 'settings.replace')
       return backendService.requireBackend().settings.replace(request.payload.values, signal)
-    if (request.type === 'goal.list')
+    if (request.type === 'goal.list') {
+      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
       return publicList(await advancedUseCases.listGoals(request.payload.sessionId, signal))
-    if (request.type === 'goal.create')
+    }
+    if (request.type === 'goal.create') {
+      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
       return publicValue(
         await backendService
           .requireBackend()
           .goals.create(request.payload.sessionId, request.payload.title, signal),
       )
-    if (request.type === 'goal.update')
+    }
+    if (request.type === 'goal.update') {
+      await requireOwnedGoal(request.payload.goalId, signal)
       return backendService.requireBackend().goals.update(
         request.payload.goalId,
         {
@@ -846,40 +967,57 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
         },
         signal,
       )
-    if (request.type === 'goal.clear') return advancedUseCases.clearGoal(request.payload.goalId, signal)
-    if (request.type === 'job.list')
+    }
+    if (request.type === 'goal.clear') {
+      await requireOwnedGoal(request.payload.goalId, signal)
+      return advancedUseCases.clearGoal(request.payload.goalId, signal)
+    }
+    if (request.type === 'job.list') {
+      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
       return publicList(await advancedUseCases.listJobs(request.payload.sessionId, signal))
-    if (request.type === 'job.cancel') return advancedUseCases.execute('job.cancel', request.payload, signal)
-    if (request.type === 'subagent.list')
-      return publicList(await advancedUseCases.listSubagents(request.payload.sessionId, signal))
-    if (request.type === 'subagent.history')
+    }
+    if (request.type === 'subagent.list') {
+      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
+      return publicValue(await advancedUseCases.listSubagents(request.payload.sessionId, signal))
+    }
+    if (request.type === 'subagent.history') {
+      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
       return publicValue(await advancedUseCases.listSubagentHistory(request.payload.sessionId, signal))
-    if (request.type === 'subagent.send')
+    }
+    if (request.type === 'subagent.send') {
+      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
       return advancedUseCases.execute('subagent.send', request.payload, signal)
-    if (request.type === 'subagent.interrupt')
+    }
+    if (request.type === 'subagent.interrupt') {
+      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
       return advancedUseCases.execute('subagent.interrupt', request.payload, signal)
-    if (request.type === 'workflow.list')
-      return publicList(await advancedUseCases.listWorkflows(request.payload.sessionId, signal))
-    if (request.type === 'workflow.start')
-      return advancedUseCases.execute('workflow.start', request.payload, signal)
-    if (request.type === 'workflow.cancel')
-      return advancedUseCases.execute('workflow.cancel', request.payload, signal)
-    if (request.type === 'skill.list')
+    }
+    if (request.type === 'skill.list') {
+      if (request.payload.sessionId !== undefined)
+        await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
       return publicList(await advancedUseCases.listSkills(request.payload.sessionId, signal))
-    if (request.type === 'skill.refresh')
+    }
+    if (request.type === 'skill.refresh') {
+      if (request.payload.sessionId !== undefined)
+        await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
       return publicList(await advancedUseCases.listSkills(request.payload.sessionId, signal))
-    if (request.type === 'skill.execute')
+    }
+    if (request.type === 'skill.execute') {
+      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
       return advancedUseCases.execute('skill.execute', request.payload, signal)
-    if (request.type === 'command.list')
+    }
+    if (request.type === 'command.list') {
+      if (request.payload.sessionId !== undefined)
+        await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
       return publicList(await advancedUseCases.listCommands(request.payload.sessionId, signal))
+    }
     if (request.type === 'command.execute') {
       await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
       return advancedUseCases.execute('command.execute', request.payload, signal)
     }
-    if (request.type === 'plugin.list') return publicList(await advancedUseCases.listPlugins(signal))
-    if (request.type === 'plugin.configure')
-      return advancedUseCases.execute('plugin.configure', request.payload, signal)
-    if (request.type === 'preset.list') return publicList(await advancedUseCases.listPresets(signal))
+    if (request.type === 'plugin.inventory')
+      return publicValue(await advancedUseCases.pluginInventory(signal))
+    if (request.type === 'preset.list') return publicValue(await advancedUseCases.listPresets(signal))
     if (request.type === 'preset.read')
       return publicValue(await advancedUseCases.readPreset(request.payload.presetId, signal))
     if (request.type === 'preset.copy')
@@ -893,9 +1031,12 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       return advancedUseCases.openPresetDocument(request.payload.presetId, signal)
     if (request.type === 'preset.remove')
       return advancedUseCases.removePreset(request.payload.presetId, signal)
-    if (request.type === 'preset.select')
+    if (request.type === 'preset.select') {
+      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
       return advancedUseCases.selectPreset(request.payload.sessionId, request.payload.presetId, signal)
+    }
     if (request.type === 'session.export') {
+      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
       const uri = await vscode.window.showSaveDialog({ saveLabel: 'Export DSH session' })
       if (uri === undefined) return { cancelled: true }
       const destinationExists = await pathExists(uri.fsPath)
@@ -942,11 +1083,14 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
           'dsh.connect': () => reconnect(),
           'dsh.reconnect': () => reconnect(),
           'dsh.newSession': () => postEvent('ui.sessions.toggle', {}),
-          'dsh.openSettings': () =>
-            vscode.commands.executeCommand(
-              'workbench.action.openSettings',
-              '@ext:Direwolf.deepseek-harness-client',
-            ),
+          'dsh.openSettings': async () => {
+            const delivered = await postEvent('ui.settings.toggle', {})
+            if (!delivered)
+              await vscode.commands.executeCommand(
+                'workbench.action.openSettings',
+                '@ext:Direwolf.deepseek-harness-client',
+              )
+          },
           'dsh.installRuntime': () => runtimeInstaller.install(),
           'dsh.selectExecutable': () => runtimeInstaller.selectExecutable(),
           'dsh.copyInstallCommand': () => runtimeInstaller.copyInstallCommand(),
@@ -1146,6 +1290,7 @@ function stateSubscriptionDisposable(unsubscribe: () => void): vscode.Disposable
 function publicState(state: BackendState): unknown {
   return {
     kind: state.kind,
+    ...(state.kind === 'connected' ? { dshVersion: state.backend.capabilities.dshVersion } : {}),
     ...(state.kind === 'failed'
       ? { message: safeStateMessage(state.message), retryable: state.retryable }
       : {}),
@@ -1200,7 +1345,7 @@ function listOpenFileCandidates(): readonly OpenFileCandidate[] {
 
 async function readOpenFileAttachment(
   candidate: OpenFileCandidate,
-): Promise<Omit<StoredAttachment, 'expiresAt'> | undefined> {
+): Promise<StoredAttachmentInput | undefined> {
   const openDocument = openDocumentForUri(candidate.uri)
   if (openDocument !== undefined)
     return prepareAttachment(candidate.name, Buffer.from(openDocument.getText(), 'utf8'))
@@ -1243,14 +1388,19 @@ function tabInputUris(input: vscode.Tab['input']): readonly vscode.Uri[] {
   return []
 }
 
-function prepareAttachment(name: string, bytes: Buffer): Omit<StoredAttachment, 'expiresAt'> {
+function prepareAttachment(name: string, bytes: Buffer, hintMimeType?: string): StoredAttachmentInput {
   if (bytes.length > MAX_ATTACHMENT_BYTES)
     throw new AppError({
       code: 'INVALID_CONFIGURATION',
       message: 'The current file is too large to attach.',
       retryable: false,
     })
-  const mimeType = attachmentMimeType(name, bytes)
+  let mimeType = attachmentMimeType(name, bytes)
+  // Pasted clipboard images often carry no filename extension. The declared
+  // hint only fills that gap and is still verified against the image magic
+  // numbers below, so a spoofed hint cannot smuggle unsupported bytes.
+  if (mimeType === undefined && hintMimeType !== undefined && isImageMimeType(hintMimeType))
+    mimeType = hintMimeType
   if (mimeType === undefined)
     throw new AppError({
       code: 'INVALID_CONFIGURATION',
@@ -1282,69 +1432,44 @@ function publicValue(value: unknown): unknown {
   return sanitize(value)
 }
 
-interface StoredAttachment {
-  readonly dataUri: string
-  readonly name: string
-  readonly mimeType?: string
-  readonly expiresAt: number
-}
-
-interface AttachmentHandle {
-  readonly uri: string
-  readonly name: string
-  readonly mimeType?: string | undefined
-}
-
-function rememberAttachment(
-  store: Map<string, StoredAttachment>,
-  input: Omit<StoredAttachment, 'expiresAt'>,
-): AttachmentHandle {
-  pruneAttachments(store)
-  while (store.size >= 8) {
-    const oldest = store.keys().next().value
-    if (typeof oldest !== 'string') break
-    store.delete(oldest)
-  }
-  const token = `dsh-attachment:${randomUUID()}`
-  store.set(token, { ...input, expiresAt: Date.now() + 10 * 60 * 1000 })
+function publicExtensionSettings(settings: ExtensionSettings): ExtensionSettingsSummary {
   return {
-    uri: token,
-    name: input.name,
-    ...(input.mimeType === undefined ? {} : { mimeType: input.mimeType }),
+    connection: { mode: settings.connection.mode },
+    runtime: {
+      customExecutableConfigured: settings.runtime.executablePath !== undefined,
+      autoStart: settings.runtime.autoStart,
+    },
+    security: { defaultPermissionPreset: settings.security.defaultPermissionPreset },
+    defaultAgent: settings.defaultAgent,
   }
 }
 
-function resolveAttachments(
-  attachments: readonly AttachmentHandle[],
-  store: Map<string, StoredAttachment>,
-): readonly PromptAttachment[] {
-  pruneAttachments(store)
-  return attachments.map((attachment) => {
-    const stored = store.get(attachment.uri)
-    if (stored === undefined)
-      throw new AppError({
-        code: 'INVALID_CONFIGURATION',
-        message: 'The attachment is no longer available. Select it again.',
-        retryable: false,
+/** Zod-inferred optional fields carry `| undefined`; the domain's
+ * exactOptionalPropertyTypes contracts require it stripped before the
+ * parsed payload reaches application use cases. */
+function questionResponse(
+  response:
+    | string
+    | readonly string[]
+    | readonly {
+        readonly id: string
+        readonly response: string | string[]
+        readonly custom?: string | undefined
+      }[],
+): string | readonly string[] | readonly QuestionAnswer[] {
+  if (typeof response === 'string') return response
+  const labels: string[] = []
+  const answers: QuestionAnswer[] = []
+  for (const entry of response) {
+    if (typeof entry === 'string') labels.push(entry)
+    else
+      answers.push({
+        id: entry.id,
+        response: entry.response,
+        ...(entry.custom === undefined ? {} : { custom: entry.custom }),
       })
-    return {
-      uri: stored.dataUri,
-      name: stored.name,
-      ...(stored.mimeType === undefined ? {} : { mimeType: stored.mimeType }),
-    }
-  })
-}
-
-function releaseAttachments(
-  attachments: readonly AttachmentHandle[],
-  store: Map<string, StoredAttachment>,
-): void {
-  for (const attachment of attachments) store.delete(attachment.uri)
-}
-
-function pruneAttachments(store: Map<string, StoredAttachment>): void {
-  const now = Date.now()
-  for (const [token, attachment] of store) if (attachment.expiresAt <= now) store.delete(token)
+  }
+  return answers.length > 0 ? answers : labels
 }
 
 function requiresTrustedWorkspace(type: WebviewRequest['type']): boolean {
@@ -1357,32 +1482,42 @@ function requiresTrustedWorkspace(type: WebviewRequest['type']): boolean {
     case 'session.remove':
     case 'session.fork':
     case 'session.archive':
+    case 'session.open':
     case 'session.sendPrompt':
     case 'session.enqueuePrompt':
+    case 'session.queue.list':
     case 'session.queue.update':
     case 'session.queue.remove':
     case 'session.queue.steer':
     case 'session.cancel':
     case 'session.configure':
     case 'attachment.pick':
+    case 'attachment.ingest':
+    case 'attachment.preview':
     case 'attachment.open.list':
     case 'attachment.open.attach':
     case 'attachment.read':
     case 'provider.secret.configure':
     case 'provider.secret.remove':
+    case 'interaction.permission.respond':
+    case 'interaction.question.respond':
+    case 'interaction.question.cancel':
     case 'settings.update':
     case 'settings.replace':
     case 'goal.create':
+    case 'goal.list':
     case 'goal.update':
-    case 'job.cancel':
+    case 'goal.clear':
     case 'subagent.send':
     case 'subagent.interrupt':
-    case 'workflow.start':
-    case 'workflow.cancel':
+    case 'subagent.list':
+    case 'subagent.history':
+    case 'skill.list':
     case 'skill.refresh':
     case 'skill.execute':
+    case 'command.list':
     case 'command.execute':
-    case 'plugin.configure':
+    case 'job.list':
     case 'preset.select':
     case 'preset.read':
     case 'preset.copy':
@@ -1423,10 +1558,6 @@ function attachmentMimeType(filePath: string, bytes: Buffer): string | undefined
     TEXT_ATTACHMENT_MIME_TYPES[extension] ?? (fileName === '.env' ? 'text/plain' : undefined)
   if (knownTextType !== undefined) return validTextBytes(bytes) ? knownTextType : undefined
   return validTextBytes(bytes) ? 'text/plain' : undefined
-}
-
-function isImageMimeType(mimeType: string): boolean {
-  return mimeType.startsWith('image/')
 }
 
 function validTextBytes(bytes: Buffer): boolean {
@@ -1504,24 +1635,6 @@ const BINARY_ATTACHMENT_EXTENSIONS = new Set([
   '.zip',
 ])
 
-function validImageBytes(mimeType: string, bytes: Buffer): boolean {
-  if (mimeType === 'image/png')
-    return bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
-  if (mimeType === 'image/jpeg')
-    return bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff
-  if (mimeType === 'image/gif') {
-    const header = bytes.subarray(0, 6).toString('ascii')
-    return header === 'GIF87a' || header === 'GIF89a'
-  }
-  if (mimeType === 'image/webp')
-    return (
-      bytes.length >= 12 &&
-      bytes.subarray(0, 4).toString('ascii') === 'RIFF' &&
-      bytes.subarray(8, 12).toString('ascii') === 'WEBP'
-    )
-  return false
-}
-
 async function pathExists(filePath: string): Promise<boolean> {
   try {
     await stat(filePath)
@@ -1595,7 +1708,17 @@ const SENSITIVE_PUBLIC_FIELDS = new Set([
   'privatekey',
   'token',
   'pid',
+  'processid',
+  'process_id',
   'executable',
+  'executablepath',
+  'executable_path',
+  'managedport',
+  'managed_port',
+  'attachports',
+  'attach_ports',
+  'serverurl',
+  'server_url',
   'commandline',
   'stack',
   'body',

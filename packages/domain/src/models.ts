@@ -25,6 +25,8 @@ export interface ProviderField {
   readonly label: string
   readonly secret: boolean
   readonly required: boolean
+  /** Credential-reference fields carry the host's write capability. */
+  readonly writable?: boolean
   readonly value?: string
 }
 

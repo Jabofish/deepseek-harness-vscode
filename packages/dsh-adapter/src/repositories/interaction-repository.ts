@@ -31,6 +31,16 @@ export class Rc6InteractionRepository implements InteractionRepository {
   private readonly responding = new Map<string, Promise<void>>()
   public constructor(private readonly transport: DshTransport) {}
 
+  /** Return the session that owns a currently remembered permission request. */
+  public sessionForPermission(requestId: string): string | undefined {
+    return this.permissions.get(requestId)?.sessionId
+  }
+
+  /** Return the session that owns a currently remembered question item. */
+  public sessionForQuestion(questionId: string): string | undefined {
+    return this.questions.get(questionId)?.sessionId
+  }
+
   public remember(event: BackendEvent): void {
     if (event.type === 'session.subscribed') {
       for (const [id, pending] of this.permissions)
@@ -39,12 +49,14 @@ export class Rc6InteractionRepository implements InteractionRepository {
         if (pending.sessionId === event.sessionId) this.questions.delete(id)
       return
     }
-    if (event.type === 'permission.requested' && event.request.rpcId !== undefined)
+    if (event.type === 'permission.requested' && event.request.rpcId !== undefined) {
+      this.answered.delete(event.request.id)
       this.permissions.set(event.request.id, {
         rpcId: event.request.rpcId,
         sessionId: event.request.sessionId,
         options: event.request.options,
       })
+    }
     if (event.type === 'permission.resolved') this.permissions.delete(event.requestId)
     if (event.type === 'question.requested' && event.question.rpcId !== undefined) {
       const items = event.question.items ?? [
@@ -57,13 +69,15 @@ export class Rc6InteractionRepository implements InteractionRepository {
         },
       ]
       const questionIds = [...new Set(items.map((item) => item.id))]
-      for (const id of questionIds)
+      for (const id of questionIds) {
+        this.answered.delete(id)
         this.questions.set(id, {
           rpcId: event.question.rpcId,
           sessionId: event.question.sessionId,
           questionIds,
           items,
         })
+      }
     }
     if (event.type === 'question.resolved') {
       for (const [id, pending] of this.questions) {
@@ -78,11 +92,12 @@ export class Rc6InteractionRepository implements InteractionRepository {
 
   public async respondToPermission(requestId: string, optionId: string, signal?: AbortSignal): Promise<void> {
     if (this.answered.has(requestId)) return
-    const active = this.responding.get(requestId)
+    const responseKey = `permission:${this.permissions.get(requestId)?.rpcId ?? requestId}`
+    const active = this.responding.get(responseKey)
     if (active !== undefined) return active
     const operation = this.respondToPermissionOnce(requestId, optionId, signal)
-    this.responding.set(requestId, operation)
-    return operation.finally(() => this.responding.delete(requestId))
+    this.responding.set(responseKey, operation)
+    return operation.finally(() => this.responding.delete(responseKey))
   }
 
   private async respondToPermissionOnce(
@@ -106,11 +121,12 @@ export class Rc6InteractionRepository implements InteractionRepository {
         retryable: false,
       })
     const outcome = option.kind === 'allow-once' ? 'allowed-once' : 'rejected'
-    await this.transport.respondEnvelope(
+    const receipt = await this.transport.respondEnvelope(
       pending.rpcId,
       { ok: true, value: { sessionId: pending.sessionId, approvalId: requestId, outcome } },
       signal,
     )
+    assertAcceptedReceipt(receipt)
     this.markAnswered([requestId])
     this.permissions.delete(requestId)
   }
@@ -121,11 +137,50 @@ export class Rc6InteractionRepository implements InteractionRepository {
     signal?: AbortSignal,
   ): Promise<void> {
     if (this.answered.has(questionId)) return
-    const active = this.responding.get(questionId)
+    const responseKey = `question:${this.questions.get(questionId)?.rpcId ?? questionId}`
+    const active = this.responding.get(responseKey)
     if (active !== undefined) return active
     const operation = this.respondToQuestionOnce(questionId, response, signal)
-    this.responding.set(questionId, operation)
-    return operation.finally(() => this.responding.delete(questionId))
+    this.responding.set(responseKey, operation)
+    return operation.finally(() => this.responding.delete(responseKey))
+  }
+
+  public async cancelQuestion(questionId: string, signal?: AbortSignal): Promise<void> {
+    if (this.answered.has(questionId)) return
+    const responseKey = `question:${this.questions.get(questionId)?.rpcId ?? questionId}`
+    const active = this.responding.get(responseKey)
+    if (active !== undefined) return active
+    const operation = this.cancelQuestionOnce(questionId, signal)
+    this.responding.set(responseKey, operation)
+    return operation.finally(() => this.responding.delete(responseKey))
+  }
+
+  private async cancelQuestionOnce(questionId: string, signal?: AbortSignal): Promise<void> {
+    if (this.transport.respondEnvelope === undefined)
+      throw new AppError({
+        code: 'CAPABILITY_UNAVAILABLE',
+        message: 'The connected DSH cannot cancel user questions.',
+        retryable: false,
+      })
+    const pending = this.questions.get(questionId)
+    if (pending === undefined) throw staleInteraction('question')
+    const receipt = await this.transport.respondEnvelope(
+      pending.rpcId,
+      {
+        ok: false,
+        error: {
+          code: 'cancelled',
+          message: 'the user closed this question request',
+          details: {},
+        },
+      },
+      signal,
+    )
+    assertAcceptedReceipt(receipt)
+    for (const id of pending.questionIds) {
+      this.markAnswered([id])
+      this.questions.delete(id)
+    }
   }
 
   private async respondToQuestionOnce(
@@ -141,7 +196,8 @@ export class Rc6InteractionRepository implements InteractionRepository {
       })
     const pending = this.questions.get(questionId)
     if (pending === undefined) throw staleInteraction('question')
-    const isBatch = Array.isArray(response) && response.every((entry) => isQuestionAnswer(entry))
+    const isBatch =
+      Array.isArray(response) && response.length > 0 && response.every((entry) => isQuestionAnswer(entry))
     if (!isBatch && pending.questionIds.length > 1)
       throw new AppError({
         code: 'INVALID_CONFIGURATION',
@@ -150,12 +206,13 @@ export class Rc6InteractionRepository implements InteractionRepository {
       })
     const answers = isBatch
       ? batchAnswers(response, pending)
-      : [singleAnswer(questionId, response as string | readonly string[], pending.items)]
-    await this.transport.respondEnvelope(
+      : [singleAnswer({ id: questionId, response: response as string | readonly string[] }, pending.items)]
+    const receipt = await this.transport.respondEnvelope(
       pending.rpcId,
       { ok: true, value: { sessionId: pending.sessionId, answer: { answers } } },
       signal,
     )
+    assertAcceptedReceipt(receipt)
     for (const id of pending.questionIds) {
       this.markAnswered([id])
       this.questions.delete(id)
@@ -176,6 +233,23 @@ export class Rc6InteractionRepository implements InteractionRepository {
   }
 }
 
+function assertAcceptedReceipt(value: unknown): void {
+  if (typeof value !== 'object' || value === null || !('accepted' in value))
+    throw malformedInteractionReceipt()
+  const receipt = value as { readonly accepted?: unknown; readonly reason?: unknown }
+  if (receipt.accepted === true) return
+  if (receipt.accepted === false && receipt.reason === 'not-pending') throw staleInteraction('response')
+  throw malformedInteractionReceipt()
+}
+
+function malformedInteractionReceipt(): AppError {
+  return new AppError({
+    code: 'PROTOCOL_ERROR',
+    message: 'DSH returned a malformed interaction response receipt.',
+    retryable: false,
+  })
+}
+
 function isQuestionAnswer(value: unknown): value is QuestionAnswer {
   return (
     typeof value === 'object' &&
@@ -183,23 +257,31 @@ function isQuestionAnswer(value: unknown): value is QuestionAnswer {
     'id' in value &&
     'response' in value &&
     typeof value.id === 'string' &&
+    (!('custom' in value) || value.custom === undefined || typeof value.custom === 'string') &&
     (typeof value.response === 'string' ||
       (Array.isArray(value.response) && value.response.every((entry) => typeof entry === 'string')))
   )
 }
 
 function answer(
-  id: string,
-  response: string | readonly string[],
+  entry: QuestionAnswer,
+  optionLabels: ReadonlySet<string>,
 ): {
   readonly id: string
   readonly selected: readonly string[]
   readonly custom?: string
 } {
+  const { response } = entry
+  // A string response naming an option is that option's label (rc.6 answers
+  // with labels); anything else is free text.
+  const rawCustom = typeof response === 'string' && !optionLabels.has(response) ? response : entry.custom
+  const custom = rawCustom?.trim()
+  const selected =
+    typeof response === 'string' ? (optionLabels.has(response) ? [response] : []) : [...response]
   return {
-    id,
-    selected: typeof response === 'string' ? [] : [...response],
-    ...(typeof response === 'string' && response.length > 0 ? { custom: response } : {}),
+    id: entry.id,
+    selected,
+    ...(custom !== undefined && custom.length > 0 ? { custom } : {}),
   }
 }
 
@@ -221,28 +303,38 @@ function batchAnswers(
     pending.questionIds.some((id) => !ids.includes(id))
   )
     throw invalidQuestionAnswer()
-  return responses.map((entry) => singleAnswer(entry.id, entry.response, pending.items))
+  return pending.questionIds.map((id) => {
+    const entry = responses.find((candidate) => candidate.id === id)
+    if (entry === undefined) throw invalidQuestionAnswer()
+    return singleAnswer(entry, pending.items)
+  })
 }
 
 function singleAnswer(
-  id: string,
-  response: string | readonly string[],
+  entry: QuestionAnswer,
   items: readonly UserQuestionItem[],
 ): {
   readonly id: string
   readonly selected: readonly string[]
   readonly custom?: string
 } {
-  const item = items.find((candidate) => candidate.id === id)
+  const item = items.find((candidate) => candidate.id === entry.id)
   if (item === undefined) throw staleInteraction('question item')
+  const { response } = entry
   const choices = new Set((item.choices ?? []).map((choice) => choice.id))
+  const custom = typeof response === 'string' && !choices.has(response) ? response : entry.custom
+  const hasCustom = custom !== undefined && custom.trim().length > 0
+  if (hasCustom && item.allowFreeText !== true) throw invalidQuestionAnswer()
   if (typeof response === 'string') {
-    if (!item.allowFreeText && !choices.has(response)) throw invalidQuestionAnswer()
+    // Either a known option label or non-empty free text.
+    if (!choices.has(response) && !hasCustom) throw invalidQuestionAnswer()
+    if (choices.has(response) && hasCustom && item.multiSelect !== true) throw invalidQuestionAnswer()
   } else {
     if (item.multiSelect !== true && response.length > 1) throw invalidQuestionAnswer()
-    if (response.length === 0 || response.some((entry) => !choices.has(entry))) throw invalidQuestionAnswer()
+    if (response.some((value) => !choices.has(value))) throw invalidQuestionAnswer()
+    if (hasCustom && item.multiSelect !== true && response.length > 0) throw invalidQuestionAnswer()
   }
-  return answer(id, response)
+  return answer(entry, choices)
 }
 
 function invalidQuestionAnswer(): AppError {

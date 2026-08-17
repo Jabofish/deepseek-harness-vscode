@@ -16,4 +16,8 @@ export class InteractionUseCases {
   ): Promise<void> {
     return this.backendService.requireBackend().interactions.respondToQuestion(questionId, response, signal)
   }
+
+  public cancelQuestion(questionId: string, signal?: AbortSignal): Promise<void> {
+    return this.backendService.requireBackend().interactions.cancelQuestion(questionId, signal)
+  }
 }

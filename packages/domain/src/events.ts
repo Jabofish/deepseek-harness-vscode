@@ -1,6 +1,6 @@
 import type { WorkflowSummary } from './advanced.js'
 import type { AgentConfiguration, ModelSelection, TokenUsage, ToolMode } from './models.js'
-import type { QueuedInput } from './sessions.js'
+import type { PromptAttachment, QueuedInput } from './sessions.js'
 import type { PermissionRequest, ToolCallView, UserQuestion } from './tools.js'
 
 export interface GoalView {
@@ -11,16 +11,39 @@ export interface GoalView {
 
 export interface JobView {
   readonly id: string
+  /** Registry-issued `<kind>-N` producer kind; bare string because producers extend the set. */
+  readonly kind: string
   readonly label: string
-  readonly status: 'running' | 'stopping' | 'completed' | 'failed' | 'killed' | 'cancelled'
-  readonly progress?: number
+  readonly status: 'running' | 'stopping' | 'completed' | 'failed' | 'killed'
+  /** Kind-specific status detail ('exit code: 3'), once the producer supplied one. */
+  readonly detail?: string
+  /** Epoch ms marks the row's duration; live rows tick against the clock. */
+  readonly startedAt: number
+  readonly finishedAt?: number
 }
 
 export interface SubagentView {
+  readonly kind: 'child'
   readonly id: string
-  readonly label: string
-  readonly status: 'idle' | 'running' | 'awaiting-input' | 'completed' | 'failed'
+  readonly label?: string
+  readonly activity: 'running' | 'inactive'
   readonly parentSessionId: string
+  /** Delegation mode; only continuable children accept follow-up prompts. */
+  readonly mode: 'one-shot' | 'continuable'
+  /** Whether the catalog knows this child to have children of its own. */
+  readonly hasChildren: boolean
+}
+
+export interface SubagentDiagnosticView {
+  readonly kind: 'diagnostic'
+  readonly id: string
+  readonly parentSessionId: string
+  readonly reason: 'corrupt' | 'unsupported' | 'unavailable'
+}
+
+export interface SubagentCatalog {
+  readonly entries: readonly (SubagentView | SubagentDiagnosticView)[]
+  readonly parentAvailable: boolean
 }
 
 export interface TodoView {
@@ -43,7 +66,30 @@ export interface CompactionView {
   readonly id: string
   readonly phase: 'start' | 'summary' | 'prune' | 'end'
   readonly summary?: string
+  readonly replacedCount?: number
+  readonly estimatedTokens?: number
 }
+
+/**
+ * Structured model-retry signal. The official Web UI aggregates consecutive
+ * retries into one silent status row with a countdown instead of surfacing
+ * each retry as a separate warning.
+ */
+export interface ModelRetrySignal {
+  readonly sessionId: string
+  /** Producer-owned identity shared by one retry chain. */
+  readonly id: string
+  readonly turn: number
+  readonly step: number
+  readonly attempt: number
+  readonly state: 'scheduled' | 'started'
+  readonly delayMs?: number
+  readonly maxRetries?: number
+  readonly message?: string
+}
+
+/** Safe, presentation-only metadata for a file represented in a user turn. */
+export type MessageAttachment = Pick<PromptAttachment, 'name' | 'mimeType'>
 
 type BackendEventPayload =
   | { readonly type: 'session.status'; readonly sessionId: string; readonly status: string }
@@ -53,13 +99,24 @@ type BackendEventPayload =
       readonly sessionId: string
       readonly patch: SessionConfigurationPatch
     }
-  | { readonly type: 'session.added'; readonly sessionId: string; readonly blank?: boolean }
+  | {
+      readonly type: 'session.added'
+      readonly sessionId: string
+      readonly blank?: boolean
+      readonly parentSessionId?: string
+      readonly origin?: 'subagent'
+      /** Session working directory from the Host creation increment. */
+      readonly cwd?: string
+      /** Resolved agent preset used to compose the new session. */
+      readonly agentPreset?: string
+    }
   | { readonly type: 'session.removed'; readonly sessionId: string }
   | {
       readonly type: 'message.user'
       readonly sessionId: string
       readonly messageId: string
       readonly markdown: string
+      readonly attachments?: readonly MessageAttachment[]
       readonly rpcId?: string
       readonly source?: string
       readonly sourceForm?: string
@@ -70,12 +127,20 @@ type BackendEventPayload =
       readonly sessionId: string
       readonly messageId: string
       readonly delta: string
+      readonly turn?: number
+      readonly step?: number
+      /** Epoch milliseconds from the durable DSH event. */
+      readonly time?: number
     }
   | {
       readonly type: 'reasoning.delta'
       readonly sessionId: string
       readonly messageId: string
       readonly delta: string
+      readonly turn?: number
+      readonly step?: number
+      /** Epoch milliseconds from the durable DSH event. */
+      readonly time?: number
     }
   | {
       readonly type: 'message.completed'
@@ -85,6 +150,28 @@ type BackendEventPayload =
       readonly reasoning?: string
       readonly modelLabel?: string
       readonly usage?: TokenUsage
+      readonly turn?: number
+      readonly step?: number
+      /** Epoch milliseconds from the durable DSH event. */
+      readonly time?: number
+    }
+  | {
+      /** DSH `step/start`; opens the assistant timing boundary. */
+      readonly type: 'step.started'
+      readonly sessionId: string
+      readonly turn: number
+      readonly step: number
+      /** Epoch milliseconds from the durable DSH event. */
+      readonly time?: number
+    }
+  | {
+      /** DSH `step/end`; closes an interrupted timing boundary. */
+      readonly type: 'step.ended'
+      readonly sessionId: string
+      readonly turn: number
+      readonly step: number
+      /** Epoch milliseconds from the durable DSH event. */
+      readonly time?: number
     }
   | { readonly type: 'tool.updated'; readonly sessionId: string; readonly tool: ToolCallView }
   | { readonly type: 'permission.requested'; readonly request: PermissionRequest }
@@ -109,11 +196,30 @@ type BackendEventPayload =
       readonly sessionId: string
       readonly compaction: CompactionView
     }
-  | { readonly type: 'job.updated'; readonly sessionId: string; readonly job: JobView }
+  | { readonly type: 'model.retry'; readonly retry: ModelRetrySignal }
   | { readonly type: 'jobs.updated'; readonly sessionId: string; readonly jobs: readonly JobView[] }
-  | { readonly type: 'subagent.updated'; readonly sessionId: string; readonly subagent: SubagentView }
   | { readonly type: 'queue.updated'; readonly sessionId: string; readonly items: readonly QueuedInput[] }
-  | { readonly type: 'workflow.updated'; readonly sessionId: string; readonly workflow: WorkflowSummary }
+  | { readonly type: 'workflow.started'; readonly sessionId: string; readonly workflow: WorkflowSummary }
+  | {
+      readonly type: 'workflow.member.started'
+      readonly sessionId: string
+      readonly runId: string
+      readonly phase: string | null
+      readonly member: WorkflowSummary['stages'][number]['members'][number]
+    }
+  | {
+      readonly type: 'workflow.member.ended'
+      readonly sessionId: string
+      readonly runId: string
+      readonly seq: number
+      readonly outcome: 'completed' | 'failed' | 'cancelled'
+    }
+  | {
+      readonly type: 'workflow.ended'
+      readonly sessionId: string
+      readonly runId: string
+      readonly stopReason: 'completed' | 'cancelled' | 'error'
+    }
   | { readonly type: 'session.subscribed'; readonly sessionId: string; readonly lastSequence: number }
   | {
       readonly type: 'session.projection'

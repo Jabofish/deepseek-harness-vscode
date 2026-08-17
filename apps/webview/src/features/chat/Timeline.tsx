@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
-import type { TimelineNode } from '@dsh-vscode/timeline'
+import { isInjectedUserMessage, type AssistantTiming, type TimelineNode } from '@dsh-vscode/timeline'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { ToolCard } from '@dsh-vscode/ui'
 import { MarkdownContent } from './MarkdownContent.js'
+import { WorkflowRunCard } from '../workflows/WorkflowDrawer.js'
 import { Icon } from '../../ui/Icon.js'
+import { useI18n } from '../../i18n.js'
 
 type DshEventNode = Extract<TimelineNode, { readonly kind: 'event' }>
 type ToolTimelineNode = Extract<TimelineNode, { readonly kind: 'tool' }>
@@ -18,6 +20,7 @@ interface AssistantTurnNode {
   readonly kind: 'assistant-turn'
   readonly id: string
   readonly modelLabel?: string
+  readonly timing?: AssistantTiming
   readonly reasoning?: {
     readonly markdown: string
     readonly streaming: boolean
@@ -39,9 +42,11 @@ export interface TimelineProps {
   readonly streaming: boolean
   readonly assistantLabel?: string
   readonly onOpenLink?: (href: string) => void
+  readonly onOpenSession?: (sessionId: string) => void
 }
 
 export function Timeline(props: TimelineProps): ReactElement {
+  const { t } = useI18n()
   const scrollRef = useRef<HTMLDivElement>(null)
   const stickToBottomRef = useRef(true)
   const previousSessionRef = useRef(props.sessionId)
@@ -102,6 +107,46 @@ export function Timeline(props: TimelineProps): ReactElement {
     }
   }, [latestSignature, displayNodes.length, props.sessionId, scrollToLatest])
 
+  useEffect(() => {
+    const element = scrollRef.current
+    if (element === null || typeof ResizeObserver === 'undefined') return
+    let previousWidth: number | undefined
+    let settleTimer: number | undefined
+    let followUpTimer: number | undefined
+    const clearTimers = (): void => {
+      if (settleTimer !== undefined) window.clearTimeout(settleTimer)
+      if (followUpTimer !== undefined) window.clearTimeout(followUpTimer)
+    }
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width
+      if (width === undefined) return
+      if (previousWidth === undefined) {
+        previousWidth = width
+        return
+      }
+      if (Math.abs(width - previousWidth) < 0.5) return
+      previousWidth = width
+      // Text reflows before the virtualizer finishes remeasuring every row.
+      // Correct immediately so a resize-generated scroll event still sees the
+      // viewport pinned, then settle twice for the asynchronous measurements.
+      if (!stickToBottomRef.current) return
+      clearTimers()
+      scrollToLatest()
+      settleTimer = window.setTimeout(() => {
+        if (!stickToBottomRef.current) return
+        scrollToLatest()
+        followUpTimer = window.setTimeout(() => {
+          if (stickToBottomRef.current) scrollToLatest()
+        }, 80)
+      }, 0)
+    })
+    observer.observe(element)
+    return () => {
+      observer.disconnect()
+      clearTimers()
+    }
+  }, [scrollToLatest])
+
   // TanStack Virtual owns scroll measurement; stable timeline ids keep
   // streaming cards from remounting as their Markdown grows.
   // eslint-disable-next-line react-hooks/incompatible-library
@@ -114,20 +159,19 @@ export function Timeline(props: TimelineProps): ReactElement {
   })
   return (
     <div className="dsh-timeline-shell">
-      <div
-        ref={scrollRef}
-        className="dsh-timeline"
-        aria-label="Conversation timeline"
-        onScroll={handleScroll}
-      >
+      <div ref={scrollRef} className="dsh-timeline" aria-label={t('timeline.aria')} onScroll={handleScroll}>
         {dshEventCount > 0 ? (
           <div className="dsh-timeline__toolbar">
             <button
               className="dsh-timeline__events-toggle"
               type="button"
               aria-pressed={showDshEvents}
-              aria-label={showDshEvents ? 'Hide DSH events' : 'Show DSH events'}
-              title={showDshEvents ? 'Hide DSH events' : `Show DSH events (${dshEventCount})`}
+              aria-label={showDshEvents ? t('timeline.hideEvents') : t('timeline.showEvents')}
+              title={
+                showDshEvents
+                  ? t('timeline.hideEvents')
+                  : t('timeline.showEventsCount', { count: dshEventCount })
+              }
               onClick={() => setShowDshEvents((current) => !current)}
             >
               <Icon name="terminal" />
@@ -136,7 +180,7 @@ export function Timeline(props: TimelineProps): ReactElement {
           </div>
         ) : null}
         {displayNodes.length === 0 && dshEventCount === 0 ? (
-          <p className="dsh-timeline__empty">Start a session by sending a prompt.</p>
+          <p className="dsh-timeline__empty">{t('timeline.empty')}</p>
         ) : null}
         <div
           className="dsh-timeline__canvas"
@@ -153,14 +197,21 @@ export function Timeline(props: TimelineProps): ReactElement {
                 className="dsh-timeline__row"
                 style={{ transform: `translateY(${item.start}px)` }}
               >
-                {renderNode(node, expandedTools, setExpandedTools, props.assistantLabel, props.onOpenLink)}
+                {renderNode(
+                  node,
+                  expandedTools,
+                  setExpandedTools,
+                  props.assistantLabel,
+                  props.onOpenLink,
+                  props.onOpenSession,
+                )}
               </div>
             )
           })}
         </div>
         {props.streaming ? (
           <span className="dsh-sr-only" aria-live="polite">
-            Response is streaming
+            {t('timeline.streaming')}
           </span>
         ) : null}
       </div>
@@ -168,12 +219,12 @@ export function Timeline(props: TimelineProps): ReactElement {
         <button
           className="dsh-timeline__jump"
           type="button"
-          aria-label="Jump to latest"
-          title="Jump to latest"
+          aria-label={t('timeline.jump')}
+          title={t('timeline.jump')}
           onClick={scrollToLatest}
         >
           <Icon name="arrow-down" />
-          <span>Jump to latest</span>
+          <span>{t('timeline.jump')}</span>
         </button>
       ) : null}
     </div>
@@ -186,6 +237,7 @@ function renderNode(
   setExpanded: (next: ReadonlySet<string>) => void,
   assistantLabel = 'Model',
   onOpenLink?: (href: string) => void,
+  onOpenSession?: (sessionId: string) => void,
 ): ReactElement {
   switch (node.kind) {
     case 'tool':
@@ -246,44 +298,42 @@ function renderNode(
               </span>
               <strong>Context compaction</strong>
             </div>
-            <span className="dsh-timeline__card-meta">{node.compaction.phase}</span>
+            <span className="dsh-timeline__card-meta">{compactionMeta(node.compaction)}</span>
           </summary>
           {node.compaction.summary === undefined ? null : (
             <MarkdownContent markdown={node.compaction.summary} onOpenLink={onOpenLink} />
           )}
         </details>
       )
-    case 'job':
+    case 'retry':
       return (
-        <section className="dsh-timeline__card dsh-timeline__card--event">
-          <header className="dsh-timeline__card-header">
-            <div className="dsh-timeline__card-heading">
-              <span className="dsh-message-avatar dsh-message-avatar--system" aria-hidden="true">
-                <Icon name="terminal" />
-              </span>
-              <strong title={node.job.label}>{node.job.label}</strong>
-            </div>
-            <span className={`dsh-status-pill dsh-status-pill--${node.job.status}`}>
-              {node.job.progress === undefined ? node.job.status : `${Math.round(node.job.progress * 100)}%`}
-            </span>
-          </header>
-        </section>
+        <p
+          className={`dsh-timeline__retry${
+            node.state === 'cancelled' ? ' dsh-timeline__retry--terminal' : ''
+          }`}
+          role="status"
+        >
+          {node.state === 'scheduled' ? (
+            <span className="dsh-timeline__retry-shimmer" aria-hidden="true" />
+          ) : null}
+          <span>
+            {node.state === 'cancelled'
+              ? `Retry ${node.attempt} cancelled`
+              : node.state === 'started'
+                ? `Retry ${node.attempt} started`
+                : node.attempt > 1
+                  ? `Retrying (attempt ${node.attempt})`
+                  : 'Model connection lost. Retrying'}
+            {node.message === undefined ? '' : ` — ${node.message}`}
+          </span>
+        </p>
       )
-    case 'subagent':
+    case 'workflow':
       return (
-        <section className="dsh-timeline__card dsh-timeline__card--event">
-          <header className="dsh-timeline__card-header">
-            <div className="dsh-timeline__card-heading">
-              <span className="dsh-message-avatar dsh-message-avatar--system" aria-hidden="true">
-                <Icon name="users" />
-              </span>
-              <strong title={node.subagent.label}>{node.subagent.label}</strong>
-            </div>
-            <span className={`dsh-status-pill dsh-status-pill--${node.subagent.status}`}>
-              {node.subagent.status}
-            </span>
-          </header>
-        </section>
+        <WorkflowRunCard
+          workflow={node.workflow}
+          {...(onOpenSession === undefined ? {} : { onOpenChild: onOpenSession })}
+        />
       )
     case 'notice':
       return (
@@ -325,7 +375,23 @@ function renderNode(
     case 'user-message':
       return (
         <article className="dsh-timeline__card dsh-timeline__card--user" aria-label="Your message">
-          <MarkdownContent markdown={node.markdown} onOpenLink={onOpenLink} />
+          {node.attachments === undefined || node.attachments.length === 0 ? null : (
+            <div className="dsh-timeline__attachments" aria-label="Attached files">
+              {node.attachments.map((attachment, index) => (
+                <span
+                  className="dsh-timeline__attachment"
+                  key={`${attachment.name}:${index}`}
+                  title={attachment.name}
+                >
+                  <Icon name={attachment.mimeType?.startsWith('image/') === true ? 'image' : 'file'} />
+                  <span>{attachment.name}</span>
+                </span>
+              ))}
+            </div>
+          )}
+          {node.markdown.trim() === '' ? null : (
+            <MarkdownContent markdown={node.markdown} onOpenLink={onOpenLink} />
+          )}
         </article>
       )
     case 'assistant-message':
@@ -333,6 +399,9 @@ function renderNode(
         <article className="dsh-timeline__card dsh-timeline__card--assistant">
           <header className="dsh-timeline__card-header">
             <strong>{node.modelLabel ?? assistantLabel}</strong>
+            {assistantDurationLabel(node.timing) === undefined ? null : (
+              <span className="dsh-timeline__assistant-duration">{assistantDurationLabel(node.timing)}</span>
+            )}
           </header>
           {node.reasoning === undefined ? null : renderReasoning(node.reasoning, onOpenLink)}
           {node.markdown.trim() === '' ? null : (
@@ -374,6 +443,9 @@ function renderAssistantTurn(
     <article className="dsh-timeline__card dsh-timeline__card--assistant">
       <header className="dsh-timeline__card-header">
         <strong>{node.modelLabel ?? assistantLabel}</strong>
+        {assistantDurationLabel(node.timing) === undefined ? null : (
+          <span className="dsh-timeline__assistant-duration">{assistantDurationLabel(node.timing)}</span>
+        )}
       </header>
       {node.reasoning === undefined ? null : renderReasoning(node.reasoning, onOpenLink)}
       {node.tools.length === 0 ? null : (
@@ -482,6 +554,39 @@ function toolSummary(tool: ToolTimelineNode['tool']): string {
   return `${label} · ${tool.status}`
 }
 
+function compactionMeta(
+  compaction: Extract<TimelineNode, { readonly kind: 'compaction' }>['compaction'],
+): string {
+  const parts: string[] = []
+  if (compaction.replacedCount !== undefined) parts.push(`${compaction.replacedCount} entries`)
+  if (compaction.estimatedTokens !== undefined)
+    parts.push(`~${formatTokenCount(compaction.estimatedTokens)} tokens`)
+  if (parts.length === 0) parts.push(compaction.phase)
+  return parts.join(' · ')
+}
+
+function formatTokenCount(value: number): string {
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`
+  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`
+  return `${value}`
+}
+
+/**
+ * Render the same completed-run duration that DSH exposes in chat chrome.
+ * Missing boundaries stay hidden: a historical or interrupted message must
+ * not display a duration invented by the Webview clock.
+ */
+function assistantDurationLabel(timing: AssistantTiming | undefined): string | undefined {
+  const start = timing?.stepStartTime
+  const end = timing?.completedTime
+  if (start === undefined || start === null || end === undefined || end === null) return undefined
+  const totalSeconds = Math.max(0, Math.floor((end - start) / 1_000))
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  const duration = minutes > 0 ? `${minutes}m ${String(seconds).padStart(2, '0')}s` : `${seconds}s`
+  return `Ran for ${duration}`
+}
+
 function nodeSignature(node: DisplayTimelineNode | undefined): string {
   if (node === undefined) return ''
   if (node.kind === 'assistant-turn') {
@@ -511,6 +616,17 @@ function prepareDisplayNodes(
   const display: DisplayTimelineNode[] = []
 
   for (const node of nodes) {
+    if (
+      node.kind === 'user-message' &&
+      isInjectedUserMessage({
+        type: 'message.user',
+        sessionId: '',
+        messageId: node.id,
+        markdown: node.markdown,
+        ...(node.source === undefined ? {} : { source: node.source }),
+      })
+    )
+      continue
     if (node.kind !== 'event') {
       display.push(node)
       continue
@@ -584,6 +700,7 @@ function collapseAssistantTurns(nodes: readonly DisplayTimelineNode[]): readonly
           kind: 'assistant-turn',
           id: `assistant-turn:${node.id}`,
           ...(modelLabel === undefined ? {} : { modelLabel }),
+          ...(node.timing === undefined ? {} : { timing: node.timing }),
           ...(pending.reasoning === undefined ? {} : { reasoning: pending.reasoning }),
           tools: pending.tools,
           markdown: node.markdown,
@@ -598,6 +715,7 @@ function collapseAssistantTurns(nodes: readonly DisplayTimelineNode[]): readonly
             kind: 'assistant-turn',
             id: `assistant-turn:${node.id}`,
             ...(node.modelLabel === undefined ? {} : { modelLabel: node.modelLabel }),
+            ...(node.timing === undefined ? {} : { timing: node.timing }),
             reasoning: node.reasoning,
             tools: [],
             markdown: node.markdown,

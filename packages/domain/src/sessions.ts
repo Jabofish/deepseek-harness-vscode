@@ -3,6 +3,11 @@ import type { BackendEvent } from './events.js'
 
 export type SessionStatus = 'idle' | 'running' | 'awaiting-input' | 'failed' | 'completed'
 
+export interface SessionProjectionSnapshot {
+  readonly asOfSequence: number
+  readonly values: Readonly<Record<string, unknown>>
+}
+
 export interface SessionSummary {
   readonly id: string
   readonly workspaceId: string
@@ -16,10 +21,7 @@ export interface SessionSummary {
   readonly updatedAt: string
   readonly modelLabel?: string
   readonly agentPreset?: string
-  readonly projection?: {
-    readonly asOfSequence: number
-    readonly values: Readonly<Record<string, unknown>>
-  }
+  readonly projection?: SessionProjectionSnapshot
 }
 
 export interface SessionDetail extends SessionSummary {
@@ -30,10 +32,7 @@ export interface SessionDetail extends SessionSummary {
   readonly parentSessionId?: string
   readonly history?: readonly SessionHistoryEvent[]
   readonly historyHasMore?: boolean
-  readonly projection?: {
-    readonly asOfSequence: number
-    readonly values: Readonly<Record<string, unknown>>
-  }
+  readonly projection?: SessionProjectionSnapshot
 }
 
 export interface SessionHistoryEvent {
@@ -45,6 +44,8 @@ export interface SessionHistoryEvent {
 export interface SubagentHistoryPage {
   readonly events: readonly SessionHistoryEvent[]
   readonly hasMore: boolean
+  /** Host-computed projection baseline aligned with this history tail. */
+  readonly projection?: SessionProjectionSnapshot
 }
 
 export interface SessionCreateInput {

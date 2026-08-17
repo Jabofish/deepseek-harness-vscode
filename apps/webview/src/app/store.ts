@@ -2,23 +2,37 @@ import {
   parseSlashCommand,
   type AgentConfiguration,
   type AgentPresetDescriptor,
+  type AgentPresetDocument,
+  type AgentPresetLocation,
+  type AgentPresetRoster,
   type BackendEvent,
   type BackendState,
+  type DshSettingsSchema,
   type DynamicCommand,
+  type ExtensionSettingsSummary,
   type GoalView,
   type JobView,
+  type MessageAttachment,
   type ModelDescriptor,
   type ModelProvider,
   type ModelSelection,
   type PermissionRequest,
+  type PluginInventorySnapshot,
   type PromptAttachment,
+  type QuestionAnswer,
   type QueuedInput,
+  type RunningInputMode,
   type SessionConfigurationPatch,
+  type SessionExportOptions,
   type SessionSummary,
+  type SubagentCatalog,
+  type SubagentHistoryPage,
   type SubagentView,
   type TokenUsage,
   type TodoView,
   type UserQuestion,
+  type WorkflowMember,
+  type WorkflowSummary,
   type WorkspaceSummary,
 } from '@dsh-vscode/domain'
 import { isInjectedUserMessage, reduceTimeline, type TimelineState } from '@dsh-vscode/timeline'
@@ -35,8 +49,17 @@ export interface OpenFileCandidate {
   readonly supported: boolean
 }
 
+/** A paste/drop payload whose bytes the Webview already holds as base64. */
+export interface IngestedFile {
+  readonly name: string
+  readonly mimeType?: string
+  readonly dataBase64: string
+}
+
 export interface AppState {
   readonly backend: BackendState
+  /** Safe connected-host version copied from the Extension Host snapshot. */
+  readonly connectedDshVersion: string | undefined
   readonly sessions: readonly SessionSummary[]
   readonly archivedSessionIds: readonly string[]
   readonly workspaces: readonly WorkspaceSummary[]
@@ -53,37 +76,86 @@ export interface AppState {
   readonly goals: readonly GoalView[]
   readonly todos: readonly TodoView[]
   readonly jobs: readonly JobView[]
-  readonly subagents: readonly SubagentView[]
+  /** Complete direct-child catalog for the active ordinary or child session. */
+  readonly subagents: SubagentCatalog
+  /** Durable address facts retained when a catalog child is opened. */
+  readonly activeSubagent: ActiveSubagent | undefined
   readonly queue: readonly QueuedInput[]
   readonly permissions: readonly PermissionRequest[]
   readonly questions: readonly UserQuestion[]
+  /** Host-side `ui-conversation.busyEnter` preference driving the composer. */
+  readonly busyEnter: RunningInputMode
   readonly drawer: 'sessions' | 'jobs' | 'subagents' | 'settings' | undefined
+}
+
+/** Schema-driven DSH host settings snapshot (describe + resolved values). */
+export interface DshSettingsSnapshot {
+  readonly schema: DshSettingsSchema
+  readonly values: Readonly<Record<string, unknown>>
 }
 
 export interface AppActions {
   initialize(): Promise<void>
   reconnect(): Promise<void>
   refreshSessions(): Promise<void>
+  searchSessions(query: string): Promise<readonly SessionSummary[]>
   refreshCommands(sessionId?: string): Promise<void>
   openSession(sessionId: string): Promise<void>
+  openSubagent(entry: SubagentView, parentAvailable: boolean): Promise<void>
   renameSession(sessionId: string, title: string): Promise<void>
   createSession(workspaceId?: string): Promise<void>
   removeSession(sessionId: string): Promise<void>
   configureSession(sessionId: string, configuration: AgentConfiguration): Promise<void>
   executeCommand(sessionId: string, command: string): Promise<void>
-  sendPrompt(sessionId: string, text: string, attachments: readonly PromptAttachment[]): Promise<void>
+  sendPrompt(
+    sessionId: string,
+    text: string,
+    attachments: readonly PromptAttachment[],
+    mode: RunningInputMode,
+  ): Promise<void>
   cancelSession(sessionId: string): Promise<void>
   updateQueue(inputId: string, text: string): Promise<void>
   removeQueue(inputId: string): Promise<void>
   steerQueue(inputId: string): Promise<void>
+  /** Steer every still-queued pending input into the running turn (official empty-draft accelerated Enter). */
+  steerAllQueued(): Promise<void>
   respondToPermission(interactionId: string, optionId: string): Promise<void>
-  respondToQuestion(questionId: string, response: string | readonly string[]): Promise<void>
+  respondToQuestion(
+    questionId: string,
+    response: string | readonly string[] | readonly QuestionAnswer[],
+  ): Promise<void>
+  cancelQuestion(questionId: string): Promise<void>
   pickAttachment(): Promise<PromptAttachment | undefined>
+  ingestAttachment(input: IngestedFile): Promise<PromptAttachment | undefined>
+  previewAttachment(uri: string): Promise<string | undefined>
+  releaseAttachments(uris: readonly string[]): Promise<void>
   listOpenFiles(): Promise<readonly OpenFileCandidate[]>
   attachOpenFile(candidateId: string): Promise<PromptAttachment | undefined>
   rememberOpenFile(candidateId: string): void
   openLink(href: string): Promise<void>
   runtimeAction(action: 'install' | 'select' | 'copy-command' | 'open-docs'): Promise<void>
+  readSettings(): Promise<ExtensionSettingsSummary | undefined>
+  readDshSettings(): Promise<DshSettingsSnapshot | undefined>
+  updateDshSetting(path: string, value: unknown): Promise<void>
+  configureProviderSecret(providerId: string, field: string): Promise<boolean>
+  removeProviderSecret(providerId: string, field: string): Promise<void>
+  refreshModelCatalog(): Promise<void>
+  /** Read the full preset roster with its authorable/hasDocument facts. */
+  loadPresetRoster(): Promise<AgentPresetRoster | undefined>
+  /** Open one shipped preset's composition in the read-only viewer. */
+  readPresetDocument(presetId: string): Promise<AgentPresetDocument | undefined>
+  /** Copy one preset host-side; resolves to the created preset id. */
+  copyPreset(from: string, presetId: string, name?: string): Promise<string | undefined>
+  /** Delete a user preset; running sessions keep their mounted composition. */
+  removePreset(presetId: string): Promise<void>
+  /** Open a preset directory natively, or reveal its path. */
+  openPresetDocument(presetId: string): Promise<AgentPresetLocation | undefined>
+  /** Read the host's read-only plugin inventory; no mutation path exists. */
+  loadPluginInventory(): Promise<PluginInventorySnapshot | undefined>
+  /** Lazily load one parent's subagent catalog level (`subagent.list`). */
+  loadSubagentChildren(sessionId: string): Promise<SubagentCatalog | undefined>
+  /** Run the host-mediated save flow for one session (`session.export`). */
+  exportSession(options: SessionExportOptions): Promise<void>
   setDrawer(drawer: AppState['drawer']): void
 }
 
@@ -107,12 +179,21 @@ interface PersistedWebviewState {
   readonly activeSessionId?: string
 }
 
+export interface ActiveSubagent {
+  readonly entry: SubagentView
+  readonly parentAvailable: boolean
+  readonly workspaceId: string
+}
+
+const EMPTY_SUBAGENT_CATALOG: SubagentCatalog = { entries: [], parentAvailable: false }
+
 export function createAppStore(client = new ProtocolClient(getVsCodeApi())): AppStore {
   const vscodeApi = getVsCodeApi()
   let persistedWebviewState = readPersistedWebviewState(vscodeApi.getState())
   let composerPreferences = persistedWebviewState.composerPreferences ?? {}
   let state: AppState = {
     backend: { kind: 'idle' },
+    connectedDshVersion: undefined,
     sessions: [],
     archivedSessionIds: [],
     workspaces: [],
@@ -129,10 +210,12 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     goals: [],
     todos: [],
     jobs: [],
-    subagents: [],
+    subagents: EMPTY_SUBAGENT_CATALOG,
+    activeSubagent: undefined,
     queue: [],
     permissions: [],
     questions: [],
+    busyEnter: 'queue',
     drawer: undefined,
   }
   const listeners = new Set<() => void>()
@@ -166,6 +249,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   const callbacks: { openCreatedSession?: (sessionId: string) => Promise<void> } = {}
   let refreshVersion = 0
   let openVersion = 0
+  const pendingOpens = new Map<number, { readonly sessionId: string; readonly messages: HostMessage[] }>()
   let commandDirectoryGeneration = 0
   const commandDirectoryCache = new Map<string, readonly DynamicCommand[]>()
   const commandDirectoryLoads = new Map<string, Promise<readonly DynamicCommand[] | undefined>>()
@@ -202,10 +286,41 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     if (commands === undefined) return
     setState((current) => (current.activeSessionId === sessionId ? { ...current, commands } : current))
   }
+  const loadSubagentCatalog = async (sessionId: string): Promise<SubagentCatalog | undefined> => {
+    try {
+      return parseSubagentCatalog(
+        await client.request<unknown>({
+          type: 'subagent.list',
+          requestId: requestId(),
+          payload: { sessionId },
+        }),
+      )
+    } catch {
+      // Catalog discovery is an optional header surface. Keep the conversation
+      // usable on a transient read failure, but never adopt a partial answer.
+      return undefined
+    }
+  }
   const refresh = async (): Promise<void> => {
     const version = ++refreshVersion
     await refreshSessions(client, setState, () => version === refreshVersion)
     if (version === refreshVersion) await refreshCommands()
+  }
+  const applyBusyEnter = (values: Readonly<Record<string, unknown>>): void => {
+    const conversation = object(values['ui-conversation'])
+    const busyEnter = conversation?.busyEnter
+    if (busyEnter === 'queue' || busyEnter === 'steer')
+      setState((current) => (current.busyEnter === busyEnter ? current : { ...current, busyEnter }))
+  }
+  const applyBusyEnterPreference = async (): Promise<void> => {
+    try {
+      const snapshot = parseDshSettingsSnapshot(
+        await client.request<unknown>({ type: 'settings.read', requestId: requestId() }),
+      )
+      if (snapshot !== undefined) applyBusyEnter(snapshot.values)
+    } catch {
+      // A host that cannot serve settings yet keeps the official 'queue' default.
+    }
   }
   const executeCommandRequest = async (sessionId: string, command: string): Promise<void> => {
     await client.request<unknown>({
@@ -219,7 +334,21 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     })
   }
   const unsubscribe = client.subscribe((message) => {
-    applyHostMessage(message, state, setState)
+    const messageSessionId = hostMessageSessionId(message)
+    let deferredToOpen = false
+    if (messageSessionId !== undefined) {
+      for (const pending of pendingOpens.values()) {
+        if (pending.sessionId !== messageSessionId) continue
+        pending.messages.push(message)
+        deferredToOpen = true
+      }
+    }
+    // A session can be reopened while it is still active. Applying its live
+    // event immediately and replaying it over the freshly hydrated history
+    // would duplicate deltas, queue rows, and interaction requests. Defer
+    // only events addressed to an in-flight open; global connection/workspace
+    // events continue to update the shell while the read is in progress.
+    if (!deferredToOpen) applyHostMessage(message, state, setState)
     if (
       message.type === 'event' &&
       message.name === 'remote.event' &&
@@ -260,68 +389,165 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
           .catch(() => undefined)
       }
     }
+    if (message.type === 'event' && message.name === 'session.added') {
+      const added = object(message.payload)
+      const parentSessionId =
+        added?.origin === 'subagent' && typeof added.parentSessionId === 'string'
+          ? added.parentSessionId
+          : undefined
+      if (parentSessionId !== undefined && parentSessionId === state.activeSessionId)
+        void loadSubagentCatalog(parentSessionId).then((catalog) => {
+          if (catalog !== undefined)
+            setState((current) =>
+              current.activeSessionId === parentSessionId ? { ...current, subagents: catalog } : current,
+            )
+        })
+    }
+    if (message.type === 'event' && message.name === 'session.subscribed') {
+      const subscribed = object(message.payload)
+      const sessionId = typeof subscribed?.sessionId === 'string' ? subscribed.sessionId : undefined
+      if (sessionId !== undefined && sessionId === state.activeSessionId)
+        void loadSubagentCatalog(sessionId).then((catalog) => {
+          if (catalog !== undefined)
+            setState((current) =>
+              current.activeSessionId === sessionId ? { ...current, subagents: catalog } : current,
+            )
+        })
+    }
   })
   const open = async (sessionId: string): Promise<void> => {
     const version = ++openVersion
-    const result = await client.request<unknown>({
-      type: 'session.open',
-      requestId: requestId(),
-      payload: { sessionId },
-    })
-    const detail = object(result)
-    const rawHistory = Array.isArray(detail?.history) ? detail.history : []
-    const timeline = hydrateTimeline(sessionId, rawHistory)
-    const permissionPresets = stringList(detail?.permissionPresets)
-    const [queue, goals, jobs, subagents, commands] = await Promise.all([
-      safeList<QueuedInput>(
-        client,
-        { type: 'session.queue.list', requestId: requestId(), payload: { sessionId } },
-        isQueuedInput,
-      ),
-      safeList<GoalView>(
-        client,
-        { type: 'goal.list', requestId: requestId(), payload: { sessionId } },
-        isGoalView,
-      ),
-      safeList<JobView>(
-        client,
-        { type: 'job.list', requestId: requestId(), payload: { sessionId } },
-        isJobView,
-      ),
-      safeList<SubagentView>(
-        client,
-        { type: 'subagent.list', requestId: requestId(), payload: { sessionId } },
-        isSubagentView,
-      ),
-      loadCommandDirectory(sessionId),
-    ])
-    if (version !== openVersion) return
-    setState((current) => ({
-      ...current,
-      activeSessionId: sessionId,
-      timeline,
-      projections: setSessionProjection(current.projections, sessionId, detail?.projection),
-      sessions: upsertOpenedSession(current.sessions, detail, sessionId),
-      configuration: isAgentConfiguration(detail?.configuration)
-        ? detail.configuration
-        : createDefaultConfiguration(current, composerPreferences),
-      permissionPresets: permissionPresets ?? [],
-      queue,
-      goals,
-      todos: latestTodos(timeline),
-      jobs,
-      subagents,
-      commands:
-        commands ??
-        commandDirectoryCache.get(sessionId) ??
-        (current.activeSessionId === sessionId ? current.commands : []),
-    }))
-    persistWebviewState({ activeSessionId: sessionId })
+    const pending = { sessionId, messages: [] as HostMessage[] }
+    pendingOpens.set(version, pending)
+    try {
+      const result = await client.request<unknown>({
+        type: 'session.open',
+        requestId: requestId(),
+        payload: { sessionId },
+      })
+      const detail = object(result)
+      const rawHistory = Array.isArray(detail?.history) ? detail.history : []
+      const timeline = hydrateTimeline(sessionId, rawHistory)
+      const permissionPresets = stringList(detail?.permissionPresets)
+      const [queue, goals, jobs, subagents, commands] = await Promise.all([
+        safeList<QueuedInput>(
+          client,
+          { type: 'session.queue.list', requestId: requestId(), payload: { sessionId } },
+          isQueuedInput,
+        ),
+        safeList<GoalView>(
+          client,
+          { type: 'goal.list', requestId: requestId(), payload: { sessionId } },
+          isGoalView,
+        ),
+        safeList<JobView>(
+          client,
+          { type: 'job.list', requestId: requestId(), payload: { sessionId } },
+          isJobView,
+        ),
+        loadSubagentCatalog(sessionId),
+        loadCommandDirectory(sessionId),
+      ])
+      if (version !== openVersion) return
+      setState((current) =>
+        replayHostMessages(
+          {
+            ...current,
+            activeSessionId: sessionId,
+            timeline,
+            projections: setSessionProjection(current.projections, sessionId, detail?.projection),
+            sessions: upsertOpenedSession(current.sessions, detail, sessionId),
+            configuration: isAgentConfiguration(detail?.configuration)
+              ? detail.configuration
+              : createDefaultConfiguration(current, composerPreferences),
+            permissionPresets: permissionPresets ?? [],
+            queue,
+            goals,
+            todos: latestTodos(timeline),
+            jobs,
+            subagents: subagents ?? EMPTY_SUBAGENT_CATALOG,
+            activeSubagent: undefined,
+            commands:
+              commands ??
+              commandDirectoryCache.get(sessionId) ??
+              (current.activeSessionId === sessionId ? current.commands : []),
+          },
+          pending.messages,
+        ),
+      )
+      persistWebviewState({ activeSessionId: sessionId })
+    } finally {
+      pendingOpens.delete(version)
+    }
+  }
+  const openSubagent = async (entry: SubagentView, parentAvailable: boolean): Promise<void> => {
+    const version = ++openVersion
+    const pending = { sessionId: entry.id, messages: [] as HostMessage[] }
+    pendingOpens.set(version, pending)
+    const workspaceId =
+      state.sessions.find((session) => session.id === state.activeSessionId)?.workspaceId ??
+      state.activeSubagent?.workspaceId ??
+      ''
+    try {
+      const [history, queue, goals, jobs, subagents] = await Promise.all([
+        client
+          .request<unknown>({
+            type: 'subagent.history',
+            requestId: requestId(),
+            payload: { sessionId: entry.id },
+          })
+          .then(parseSubagentHistory),
+        safeList<QueuedInput>(
+          client,
+          { type: 'session.queue.list', requestId: requestId(), payload: { sessionId: entry.id } },
+          isQueuedInput,
+        ),
+        safeList<GoalView>(
+          client,
+          { type: 'goal.list', requestId: requestId(), payload: { sessionId: entry.id } },
+          isGoalView,
+        ),
+        safeList<JobView>(
+          client,
+          { type: 'job.list', requestId: requestId(), payload: { sessionId: entry.id } },
+          isJobView,
+        ),
+        loadSubagentCatalog(entry.id),
+      ])
+      if (version !== openVersion) return
+      const timeline = hydrateTimeline(entry.id, history.events)
+      setState((current) =>
+        replayHostMessages(
+          {
+            ...current,
+            activeSessionId: entry.id,
+            activeSubagent: { entry, parentAvailable, workspaceId },
+            timeline,
+            projections: setSessionProjection(current.projections, entry.id, history.projection),
+            configuration: undefined,
+            permissionPresets: [],
+            queue,
+            goals,
+            todos: latestTodos(timeline),
+            jobs,
+            subagents: subagents ?? EMPTY_SUBAGENT_CATALOG,
+            commands: [],
+          },
+          pending.messages,
+        ),
+      )
+      persistWebviewState({ activeSessionId: entry.id })
+    } finally {
+      pendingOpens.delete(version)
+    }
   }
   callbacks.openCreatedSession = open
   return {
     get backend() {
       return state.backend
+    },
+    get connectedDshVersion() {
+      return state.connectedDshVersion
     },
     get sessions() {
       return state.sessions
@@ -374,6 +600,9 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     get subagents() {
       return state.subagents
     },
+    get activeSubagent() {
+      return state.activeSubagent
+    },
     get queue() {
       return state.queue
     },
@@ -382,6 +611,9 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     },
     get questions() {
       return state.questions
+    },
+    get busyEnter() {
+      return state.busyEnter
     },
     get drawer() {
       return state.drawer
@@ -394,6 +626,10 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     initialize: async () => {
       await client.request<unknown>({ type: 'app.ready', requestId: requestId() })
       await refresh()
+      // Official ui-conversation row: the host-side busy-Enter preference is
+      // the composer's plain-Enter policy while a turn is running. A failed
+      // read keeps the official default ('queue').
+      await applyBusyEnterPreference()
       const rememberedSessionId = persistedWebviewState.activeSessionId
       if (
         rememberedSessionId !== undefined &&
@@ -406,8 +642,20 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       await refresh()
     },
     refreshSessions: refresh,
+    searchSessions: async (query) => {
+      const trimmed = query.trim()
+      if (trimmed === '') return []
+      const result = await client.request<unknown>({
+        type: 'session.list',
+        requestId: requestId(),
+        payload: { search: trimmed, archived: false },
+      })
+      const items = object(result)?.items
+      return Array.isArray(items) ? items.filter(isSessionSummary) : []
+    },
     refreshCommands: (sessionId) => refreshCommands(sessionId),
     openSession: open,
+    openSubagent,
     renameSession: async (sessionId, title) => {
       await client.request<unknown>({
         type: 'session.rename',
@@ -474,7 +722,8 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
               goals: [],
               todos: [],
               jobs: [],
-              subagents: [],
+              subagents: EMPTY_SUBAGENT_CATALOG,
+              activeSubagent: undefined,
               commands: [],
             }
           : {}),
@@ -493,10 +742,24 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         if (replacement !== undefined) await open(replacement.id)
       }
     },
-    sendPrompt: async (sessionId, text, attachments) => {
+    sendPrompt: async (sessionId, text, attachments, mode) => {
       const rpcRequestId = requestId()
       const optimisticId = `optimistic:user:${rpcRequestId}`
-      const isSlashCommand = attachments.length === 0 && parseSlashCommand(text) !== undefined
+      const subagent =
+        state.activeSessionId === sessionId && state.activeSubagent?.entry.id === sessionId
+          ? state.activeSubagent
+          : undefined
+      if (subagent !== undefined) {
+        if (subagent.entry.mode === 'one-shot')
+          throw new Error('One-shot subagent conversations are read-only.')
+        if (!subagent.parentAvailable)
+          throw new Error('The parent session is unavailable for a subagent follow-up.')
+        if (attachments.length > 0)
+          throw new Error('Attachments are unavailable for subagent follow-up messages.')
+        if (text.trim() === '') throw new Error('A subagent follow-up message is required.')
+      }
+      const isSlashCommand =
+        subagent === undefined && attachments.length === 0 && parseSlashCommand(text) !== undefined
       if (isSlashCommand) {
         // Slash commands are control-plane operations.  Sending them through
         // session.prompt turns /plan, /permission, /compact, and every plugin
@@ -505,8 +768,11 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         await executeCommandRequest(sessionId, text)
         return
       }
-      const preview = text || attachments.map((attachment) => `[${attachment.name}]`).join('\n')
-      if (preview !== '')
+      const messageAttachments: readonly MessageAttachment[] = attachments.map((attachment) => ({
+        name: attachment.name,
+        ...(attachment.mimeType === undefined ? {} : { mimeType: attachment.mimeType }),
+      }))
+      if (text !== '' || messageAttachments.length > 0)
         setState((current) => {
           if (current.activeSessionId !== sessionId) return current
           return {
@@ -515,17 +781,29 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
               ...current.timeline,
               nodes: [
                 ...current.timeline.nodes,
-                { kind: 'user-message', id: optimisticId, markdown: preview },
+                {
+                  kind: 'user-message',
+                  id: optimisticId,
+                  markdown: text,
+                  ...(messageAttachments.length === 0 ? {} : { attachments: messageAttachments }),
+                },
               ],
             },
           }
         })
       try {
-        await client.request<unknown>({
-          type: 'session.sendPrompt',
-          requestId: rpcRequestId,
-          payload: { sessionId, text, attachments: [...attachments] },
-        })
+        if (subagent === undefined)
+          await client.request<unknown>({
+            type: 'session.sendPrompt',
+            requestId: rpcRequestId,
+            payload: { sessionId, text, attachments: [...attachments], mode },
+          })
+        else
+          await client.request<unknown>({
+            type: 'subagent.send',
+            requestId: rpcRequestId,
+            payload: { sessionId, message: text },
+          })
       } catch (reason) {
         setState((current) => ({
           ...current,
@@ -537,10 +815,19 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         throw reason
       }
     },
-    cancelSession: (sessionId) =>
-      client
-        .request<unknown>({ type: 'session.cancel', requestId: requestId(), payload: { sessionId } })
-        .then(() => undefined),
+    cancelSession: async (sessionId) => {
+      const subagent =
+        state.activeSessionId === sessionId && state.activeSubagent?.entry.id === sessionId
+          ? state.activeSubagent
+          : undefined
+      if (subagent?.entry.mode === 'one-shot')
+        throw new Error('One-shot subagent conversations cannot be interrupted.')
+      await client.request<unknown>(
+        subagent === undefined
+          ? { type: 'session.cancel', requestId: requestId(), payload: { sessionId } }
+          : { type: 'subagent.interrupt', requestId: requestId(), payload: { sessionId } },
+      )
+    },
     updateQueue: (inputId, text) =>
       client
         .request<unknown>({
@@ -565,6 +852,24 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
           payload: { inputId },
         })
         .then(() => undefined),
+    steerAllQueued: async () => {
+      // Mirrors the official empty-draft accelerated Enter: every still-queued
+      // pending input is steered FIFO into the running turn. Steer is
+      // best-effort (a closed delivery window turns the item back into the
+      // next waking Queue item), so failures of one row must not abort the rest.
+      const targets = state.queue.filter((item) => item.mode === 'queue')
+      for (const item of targets) {
+        try {
+          await client.request<unknown>({
+            type: 'session.queue.steer',
+            requestId: requestId(),
+            payload: { inputId: item.id },
+          })
+        } catch {
+          // Best-effort, matching the official queue dock semantics.
+        }
+      }
+    },
     respondToPermission: (interactionId, optionId) =>
       client
         .request<unknown>({
@@ -583,7 +888,10 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         .request<unknown>({
           type: 'interaction.question.respond',
           requestId: requestId(),
-          payload: { questionId, response: typeof response === 'string' ? response : [...response] },
+          payload: {
+            questionId,
+            response: questionResponsePayload(response),
+          },
         })
         .then(() =>
           setState((current) => ({
@@ -591,10 +899,57 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
             questions: current.questions.filter((item) => item.id !== questionId),
           })),
         ),
+    cancelQuestion: (questionId) =>
+      client
+        .request<unknown>({
+          type: 'interaction.question.cancel',
+          requestId: requestId(),
+          payload: { questionId },
+        })
+        .then(() =>
+          setState((current) => ({
+            ...current,
+            questions: current.questions.filter(
+              (item) => item.id !== questionId && !item.items?.some((entry) => entry.id === questionId),
+            ),
+          })),
+        ),
     pickAttachment: async () => {
       return attachmentFromResult(
         await client.request<unknown>({ type: 'attachment.pick', requestId: requestId() }),
       )
+    },
+    ingestAttachment: async (input) => {
+      return attachmentFromResult(
+        await client.request<unknown>({
+          type: 'attachment.ingest',
+          requestId: requestId(),
+          payload: {
+            name: input.name,
+            ...(input.mimeType === undefined ? {} : { mimeType: input.mimeType }),
+            dataBase64: input.dataBase64,
+          },
+        }),
+      )
+    },
+    previewAttachment: async (uri) => {
+      const result = object(
+        await client.request<unknown>({
+          type: 'attachment.preview',
+          requestId: requestId(),
+          payload: { uri },
+        }),
+      )
+      if (result?.cancelled === true || typeof result?.dataUri !== 'string') return undefined
+      return result.dataUri
+    },
+    releaseAttachments: async (uris) => {
+      if (uris.length === 0) return
+      await client.request<unknown>({
+        type: 'attachment.release',
+        requestId: requestId(),
+        payload: { uris: [...uris] },
+      })
     },
     listOpenFiles: async () => {
       return openFileCandidatesFromResult(
@@ -634,6 +989,137 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       client
         .request<unknown>({ type: 'runtime.action', requestId: requestId(), payload: { action } })
         .then(() => undefined),
+    readSettings: async () => {
+      return parseExtensionSettings(
+        await client.request<unknown>({ type: 'extensionSettings.read', requestId: requestId() }),
+      )
+    },
+    readDshSettings: async () => {
+      const snapshot = parseDshSettingsSnapshot(
+        await client.request<unknown>({ type: 'settings.read', requestId: requestId() }),
+      )
+      if (snapshot !== undefined) applyBusyEnter(snapshot.values)
+      return snapshot
+    },
+    updateDshSetting: async (path, value) => {
+      await client.request<unknown>({
+        type: 'settings.update',
+        requestId: requestId(),
+        payload: { path, value },
+      })
+    },
+    configureProviderSecret: async (providerId, field) => {
+      const result = object(
+        await client.request<unknown>({
+          type: 'provider.secret.configure',
+          requestId: requestId(),
+          payload: { providerId, field },
+        }),
+      )
+      return result?.configured === true
+    },
+    removeProviderSecret: async (providerId, field) => {
+      await client.request<unknown>({
+        type: 'provider.secret.remove',
+        requestId: requestId(),
+        payload: { providerId, field },
+      })
+    },
+    refreshModelCatalog: async () => {
+      await refreshProvidersAndModels(client, setState)
+    },
+    loadPresetRoster: async () => {
+      const roster = parsePresetRoster(
+        await client.request<unknown>({ type: 'preset.list', requestId: requestId() }),
+      )
+      if (roster !== undefined)
+        setState((current) =>
+          arraysEqual(current.presets, roster.presets) ? current : { ...current, presets: roster.presets },
+        )
+      return roster
+    },
+    readPresetDocument: async (presetId) => {
+      const result = object(
+        await client.request<unknown>({
+          type: 'preset.read',
+          requestId: requestId(),
+          payload: { presetId },
+        }),
+      )
+      if (result === undefined) return undefined
+      if (
+        typeof result.id !== 'string' ||
+        (result.trust !== 'system' && result.trust !== 'user') ||
+        typeof result.content !== 'string'
+      )
+        return undefined
+      return {
+        id: result.id,
+        trust: result.trust,
+        content: result.content,
+        ...(typeof result.name === 'string' ? { name: result.name } : {}),
+        ...(typeof result.description === 'string' ? { description: result.description } : {}),
+      }
+    },
+    copyPreset: async (from, presetId, name) => {
+      // The extension route resolves with the created preset id as a bare string.
+      const created = await client.request<unknown>({
+        type: 'preset.copy',
+        requestId: requestId(),
+        payload: {
+          from,
+          presetId,
+          ...(name === undefined || name.trim() === '' ? {} : { name: name.trim() }),
+        },
+      })
+      return typeof created === 'string' && created !== '' ? created : undefined
+    },
+    removePreset: async (presetId) => {
+      await client.request<unknown>({
+        type: 'preset.remove',
+        requestId: requestId(),
+        payload: { presetId },
+      })
+    },
+    openPresetDocument: async (presetId) => {
+      const result = object(
+        await client.request<unknown>({
+          type: 'preset.openDocument',
+          requestId: requestId(),
+          payload: { presetId },
+        }),
+      )
+      if (result === undefined) return undefined
+      if (result.opened === true) return { opened: true }
+      if (typeof result.path === 'string') return { opened: false, path: result.path }
+      return { opened: false }
+    },
+    loadPluginInventory: async () =>
+      parsePluginInventory(
+        await client.request<unknown>({ type: 'plugin.inventory', requestId: requestId() }),
+      ),
+    exportSession: async (options) => {
+      // The host resolves `{ cancelled: true }` when the user closes the save
+      // dialog; that is a successful no-op, not an error.
+      await client.request<unknown>({
+        type: 'session.export',
+        requestId: requestId(),
+        payload: {
+          sessionId: options.sessionId,
+          format: options.format,
+          includeAttachments: options.includeAttachments,
+          includeReasoning: options.includeReasoning,
+        },
+      })
+    },
+    loadSubagentChildren: async (sessionId) => {
+      const catalog = await loadSubagentCatalog(sessionId)
+      if (catalog !== undefined)
+        setState((current) =>
+          current.activeSessionId === sessionId ? { ...current, subagents: catalog } : current,
+        )
+      return catalog
+    },
     setDrawer: (drawer) => {
       setState((current) => ({ ...current, drawer }))
       persistWebviewState()
@@ -644,6 +1130,134 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       listeners.clear()
     },
   }
+}
+
+async function refreshProvidersAndModels(client: ProtocolClient, setState: StateSetter): Promise<void> {
+  const [providersResult, modelsResult] = await Promise.allSettled([
+    client.request<unknown>({ type: 'providers.list', requestId: requestId() }),
+    client.request<unknown>({ type: 'models.list', requestId: requestId(), payload: {} }),
+  ])
+  const providers =
+    providersResult.status === 'fulfilled'
+      ? listValues(providersResult.value).filter(isModelProvider)
+      : undefined
+  const models =
+    modelsResult.status === 'fulfilled' ? listValues(modelsResult.value).filter(isModelDescriptor) : undefined
+  setState((current) => ({
+    ...current,
+    ...(providers === undefined ? {} : { providers }),
+    ...(models === undefined ? {} : { models }),
+  }))
+}
+
+function parseExtensionSettings(value: unknown): ExtensionSettingsSummary | undefined {
+  const settings = object(value)
+  const connection = object(settings?.connection)
+  const runtime = object(settings?.runtime)
+  const security = object(settings?.security)
+  const defaultAgent = object(settings?.defaultAgent)
+  if (
+    connection === undefined ||
+    runtime === undefined ||
+    security === undefined ||
+    (connection.mode !== 'auto' && connection.mode !== 'attach-only' && connection.mode !== 'new-isolated') ||
+    typeof runtime.customExecutableConfigured !== 'boolean' ||
+    typeof runtime.autoStart !== 'boolean' ||
+    !isPermissionPreset(security.defaultPermissionPreset) ||
+    !isAgentConfiguration(defaultAgent)
+  )
+    return undefined
+  return {
+    connection: { mode: connection.mode },
+    runtime: {
+      customExecutableConfigured: runtime.customExecutableConfigured,
+      autoStart: runtime.autoStart,
+    },
+    security: {
+      defaultPermissionPreset: security.defaultPermissionPreset,
+    },
+    defaultAgent: {
+      preset: defaultAgent.preset,
+      toolMode: defaultAgent.toolMode,
+      permissionPreset: defaultAgent.permissionPreset,
+      planMode: defaultAgent.planMode,
+      ...(defaultAgent.sandboxMode === undefined ? {} : { sandboxMode: defaultAgent.sandboxMode }),
+      ...(defaultAgent.approvalPolicy === undefined ? {} : { approvalPolicy: defaultAgent.approvalPolicy }),
+      model: {
+        providerId: defaultAgent.model.providerId,
+        modelId: defaultAgent.model.modelId,
+        ...(defaultAgent.model.reasoningLevel === undefined
+          ? {}
+          : { reasoningLevel: defaultAgent.model.reasoningLevel }),
+      },
+    },
+  }
+}
+
+function parseDshSettingsSnapshot(value: unknown): DshSettingsSnapshot | undefined {
+  const settings = object(value)
+  const schema = object(settings?.schema)
+  if (
+    schema === undefined ||
+    typeof schema.version !== 'string' ||
+    typeof schema.writable !== 'boolean' ||
+    typeof schema.hasDocument !== 'boolean' ||
+    !Array.isArray(schema.fields) ||
+    !schema.fields.every(isSettingsField) ||
+    !Array.isArray(schema.namespaces) ||
+    !schema.namespaces.every(isSettingsNamespace)
+  )
+    return undefined
+  const values = object(settings?.values)
+  if (values === undefined) return undefined
+  return {
+    schema: {
+      version: schema.version,
+      writable: schema.writable,
+      hasDocument: schema.hasDocument,
+      fields: schema.fields,
+      namespaces: schema.namespaces,
+    },
+    values,
+  }
+}
+
+function isSettingsNamespace(value: unknown): value is DshSettingsSchema['namespaces'][number] {
+  const namespace = object(value)
+  return (
+    namespace !== undefined &&
+    typeof namespace.ns === 'string' &&
+    (namespace.applies === 'live' || namespace.applies === 'restart') &&
+    Array.isArray(namespace.userFields) &&
+    namespace.userFields.every((field) => typeof field === 'string') &&
+    Array.isArray(namespace.secrets) &&
+    namespace.secrets.every(
+      (secret) =>
+        object(secret) !== undefined &&
+        typeof object(secret)?.field === 'string' &&
+        typeof object(secret)?.set === 'boolean',
+    )
+  )
+}
+
+function isSettingsField(value: unknown): value is DshSettingsSchema['fields'][number] {
+  const field = object(value)
+  return (
+    field !== undefined &&
+    typeof field.path === 'string' &&
+    typeof field.label === 'string' &&
+    typeof field.required === 'boolean' &&
+    typeof field.restartRequired === 'boolean' &&
+    (field.enumValues === undefined ||
+      (Array.isArray(field.enumValues) && field.enumValues.every((entry) => typeof entry === 'string'))) &&
+    (field.type === 'string' ||
+      field.type === 'number' ||
+      field.type === 'boolean' ||
+      field.type === 'enum' ||
+      field.type === 'secret' ||
+      field.type === 'object' ||
+      field.type === 'array')
+  )
 }
 
 async function refreshSessions(
@@ -703,7 +1317,7 @@ async function refreshSessions(
       workspaces: listValues(value(1)).filter(isWorkspaceSummary),
       providers: listValues(value(2)).filter(isModelProvider),
       models: listValues(value(3)).filter(isModelDescriptor),
-      presets: listValues(value(4)).filter(isPresetDescriptor),
+      presets: parsePresetRoster(value(4))?.presets ?? current.presets,
       ...(hasVisibilitySnapshot && activeSessionIsArchived
         ? {
             activeSessionId: undefined,
@@ -715,7 +1329,8 @@ async function refreshSessions(
             goals: [],
             todos: [],
             jobs: [],
-            subagents: [],
+            subagents: EMPTY_SUBAGENT_CATALOG,
+            activeSubagent: undefined,
             commands: [],
           }
         : {}),
@@ -734,6 +1349,65 @@ async function safeList<T>(
   } catch {
     return []
   }
+}
+
+function parseSubagentCatalog(value: unknown): SubagentCatalog {
+  const catalog = object(value)
+  if (
+    catalog === undefined ||
+    !Array.isArray(catalog.entries) ||
+    !catalog.entries.every(isSubagentCatalogEntry) ||
+    typeof catalog.parentAvailable !== 'boolean'
+  )
+    throw new Error('DSH returned a malformed subagent catalog.')
+  return {
+    entries: catalog.entries,
+    parentAvailable: catalog.parentAvailable,
+  }
+}
+
+function parseSubagentHistory(value: unknown): SubagentHistoryPage {
+  const page = object(value)
+  if (
+    page === undefined ||
+    !Array.isArray(page.events) ||
+    !page.events.every(isSubagentHistoryEvent) ||
+    typeof page.hasMore !== 'boolean'
+  )
+    throw new Error('DSH returned a malformed subagent history page.')
+  const projection = object(page.projection)
+  if (
+    page.projection !== undefined &&
+    (projection === undefined ||
+      !Number.isSafeInteger(projection.asOfSequence) ||
+      (projection.asOfSequence as number) < -1 ||
+      object(projection.values) === undefined)
+  )
+    throw new Error('DSH returned a malformed subagent projection baseline.')
+  return {
+    events: page.events,
+    hasMore: page.hasMore,
+    ...(projection === undefined
+      ? {}
+      : {
+          projection: {
+            asOfSequence: projection.asOfSequence as number,
+            values: projection.values as Readonly<Record<string, unknown>>,
+          },
+        }),
+  }
+}
+
+function isSubagentHistoryEvent(value: unknown): value is SubagentHistoryPage['events'][number] {
+  const entry = object(value)
+  const event = object(entry?.event)
+  return (
+    entry !== undefined &&
+    Number.isSafeInteger(entry.sequence) &&
+    typeof entry.time === 'string' &&
+    event !== undefined &&
+    typeof event.type === 'string'
+  )
 }
 
 async function readCommandList(
@@ -803,6 +1477,10 @@ function applyHostMessage(message: HostMessage, state: AppState, setState: State
     setState({ ...state, drawer: state.drawer === 'sessions' ? undefined : 'sessions' })
     return
   }
+  if (message.name === 'ui.settings.toggle') {
+    setState({ ...state, drawer: state.drawer === 'settings' ? undefined : 'settings' })
+    return
+  }
   if (message.name === 'connection.snapshot') {
     const snapshot = object(message.payload)
     const kind = snapshot?.kind
@@ -810,7 +1488,7 @@ function applyHostMessage(message: HostMessage, state: AppState, setState: State
       const searchedLocations = Array.isArray(snapshot?.searchedLocations)
         ? snapshot.searchedLocations.filter((entry): entry is string => typeof entry === 'string')
         : []
-      setState({ ...state, backend: { kind, searchedLocations } })
+      setState({ ...state, backend: { kind, searchedLocations }, connectedDshVersion: undefined })
     } else if (
       kind === 'idle' ||
       kind === 'locating-runtime' ||
@@ -825,6 +1503,7 @@ function applyHostMessage(message: HostMessage, state: AppState, setState: State
       if (kind === 'failed')
         setState({
           ...state,
+          connectedDshVersion: undefined,
           backend: {
             kind,
             message: typeof snapshot?.message === 'string' ? snapshot.message : 'Connection failed.',
@@ -834,6 +1513,7 @@ function applyHostMessage(message: HostMessage, state: AppState, setState: State
       else if (kind === 'port-conflict')
         setState({
           ...state,
+          connectedDshVersion: undefined,
           backend: {
             kind,
             port: typeof snapshot?.port === 'number' ? snapshot.port : 0,
@@ -841,20 +1521,35 @@ function applyHostMessage(message: HostMessage, state: AppState, setState: State
             retryable: snapshot?.retryable === true,
           },
         })
-      else setState({ ...state, backend: { kind } as BackendState })
+      else
+        setState({
+          ...state,
+          backend: { kind } as BackendState,
+          connectedDshVersion:
+            kind === 'connected' && typeof snapshot?.dshVersion === 'string'
+              ? snapshot.dshVersion
+              : undefined,
+        })
     }
     return
   }
   const event = domainEvent(message.name, message.payload)
   if (event === undefined) return
+  const eventSessionId = backendEventSessionId(event)
+  const belongsToActiveSession = eventSessionId === undefined || eventSessionId === state.activeSessionId
   const controlPlaneMessage = event.type === 'message.user' && isCommandMessageSource(event.source)
-  const injectedMessage = event.type === 'message.user' && isInjectedUserMessage(event)
-  const timeline =
-    controlPlaneMessage || injectedMessage
+  // Command records are control-plane history and stay out of both Chat and
+  // Trajectory.  Other producer-owned user/message records are retained as
+  // context nodes; Chat filters those nodes while Trajectory exposes their
+  // provenance, matching the upstream target-specific projections.
+  const timeline = !belongsToActiveSession
+    ? state.timeline
+    : controlPlaneMessage
       ? { ...state.timeline, lastSequence: message.sequence }
       : reduceTimeline(state.timeline, { sequence: message.sequence, event })
   let next = { ...state, timeline }
   if (event.type === 'session.status') {
+    const activity = event.status === 'running' ? 'running' : 'inactive'
     next = {
       ...next,
       sessions: next.sessions.map((session) =>
@@ -866,6 +1561,19 @@ function applyHostMessage(message: HostMessage, state: AppState, setState: State
               ...(event.status === 'running' ? { blank: false } : {}),
             },
       ),
+      subagents: {
+        ...next.subagents,
+        entries: next.subagents.entries.map((entry) =>
+          entry.kind === 'child' && entry.id === event.sessionId ? { ...entry, activity } : entry,
+        ),
+      },
+      activeSubagent:
+        next.activeSubagent?.entry.id === event.sessionId
+          ? {
+              ...next.activeSubagent,
+              entry: { ...next.activeSubagent.entry, activity },
+            }
+          : next.activeSubagent,
     }
   } else if (event.type === 'session.title' && event.title.trim() !== '') {
     next = {
@@ -889,6 +1597,17 @@ function applyHostMessage(message: HostMessage, state: AppState, setState: State
           ),
         }
     }
+  } else if (event.type === 'session.subscribed' && event.sessionId === next.activeSessionId) {
+    // queue/jobs and pending interactions are process-local snapshots. The
+    // pinned mux starts every subscription with `session/subscribed` and only
+    // follows it with a queue/jobs frame when that snapshot is non-empty.
+    next = {
+      ...next,
+      queue: [],
+      jobs: [],
+      permissions: next.permissions.filter((request) => request.sessionId !== event.sessionId),
+      questions: next.questions.filter((question) => question.sessionId !== event.sessionId),
+    }
   } else if (event.type === 'session.configuration' && event.sessionId === next.activeSessionId) {
     next = {
       ...next,
@@ -902,6 +1621,10 @@ function applyHostMessage(message: HostMessage, state: AppState, setState: State
     next = {
       ...next,
       sessions: next.sessions.filter((session) => session.id !== event.sessionId),
+      subagents: {
+        ...next.subagents,
+        entries: next.subagents.entries.filter((entry) => entry.id !== event.sessionId),
+      },
       ...(wasActive
         ? {
             activeSessionId: undefined,
@@ -913,10 +1636,23 @@ function applyHostMessage(message: HostMessage, state: AppState, setState: State
             goals: [],
             todos: [],
             jobs: [],
-            subagents: [],
+            subagents: EMPTY_SUBAGENT_CATALOG,
+            activeSubagent: undefined,
             commands: [],
           }
         : {}),
+    }
+  } else if (event.type === 'session.added' && event.origin === 'subagent') {
+    next = {
+      ...next,
+      subagents: {
+        ...next.subagents,
+        entries: next.subagents.entries.map((entry) =>
+          entry.kind === 'child' && entry.id === event.parentSessionId
+            ? { ...entry, hasChildren: true }
+            : entry,
+        ),
+      },
     }
   } else if (event.type === 'message.user') {
     // A command-only session remains blank. The first real user message is
@@ -939,24 +1675,12 @@ function applyHostMessage(message: HostMessage, state: AppState, setState: State
     next = { ...next, todos: event.todos }
   } else if (event.type === 'jobs.updated' && event.sessionId === next.activeSessionId) {
     next = { ...next, jobs: event.jobs }
-  } else if (event.type === 'job.updated' && event.sessionId === next.activeSessionId) {
-    const jobs = [...next.jobs]
-    const index = jobs.findIndex((job) => job.id === event.job.id)
-    if (index < 0) jobs.push(event.job)
-    else jobs[index] = event.job
-    next = { ...next, jobs }
-  } else if (event.type === 'subagent.updated' && event.sessionId === next.activeSessionId) {
-    const subagents = [...next.subagents]
-    const index = subagents.findIndex((subagent) => subagent.id === event.subagent.id)
-    if (index < 0) subagents.push(event.subagent)
-    else subagents[index] = event.subagent
-    next = { ...next, subagents }
-  } else if (event.type === 'permission.resolved') {
+  } else if (event.type === 'permission.resolved' && event.sessionId === next.activeSessionId) {
     next = {
       ...next,
       permissions: next.permissions.filter((request) => request.id !== event.requestId),
     }
-  } else if (event.type === 'question.resolved') {
+  } else if (event.type === 'question.resolved' && event.sessionId === next.activeSessionId) {
     next = {
       ...next,
       questions: next.questions.filter(
@@ -965,20 +1689,56 @@ function applyHostMessage(message: HostMessage, state: AppState, setState: State
           (event.questionRpcId === undefined || question.rpcId !== event.questionRpcId),
       ),
     }
-  } else if (event.type === 'permission.requested') {
+  } else if (event.type === 'permission.requested' && event.request.sessionId === next.activeSessionId) {
     next = {
       ...next,
       permissions: [...next.permissions.filter((request) => request.id !== event.request.id), event.request],
     }
-  } else if (event.type === 'question.requested') {
+  } else if (event.type === 'question.requested' && event.question.sessionId === next.activeSessionId) {
     next = {
       ...next,
       questions: [...next.questions.filter((question) => question.id !== event.question.id), event.question],
     }
   } else if (event.type === 'connection.lost') {
-    next = { ...next, backend: { kind: 'failed', message: event.reason, retryable: true }, commands: [] }
+    next = {
+      ...next,
+      backend: { kind: 'failed', message: event.reason, retryable: true },
+      connectedDshVersion: undefined,
+      queue: [],
+      jobs: [],
+      permissions: [],
+      questions: [],
+      subagents: EMPTY_SUBAGENT_CATALOG,
+      activeSubagent:
+        next.activeSubagent === undefined ? undefined : { ...next.activeSubagent, parentAvailable: false },
+      commands: [],
+    }
   }
   setState(next)
+}
+
+function replayHostMessages(state: AppState, messages: readonly HostMessage[]): AppState {
+  let replayed = state
+  const setReplayed: StateSetter = (next) => {
+    replayed = typeof next === 'function' ? next(replayed) : next
+  }
+  for (const message of messages) applyHostMessage(message, replayed, setReplayed)
+  return replayed
+}
+
+function hostMessageSessionId(message: HostMessage): string | undefined {
+  if (message.type !== 'event') return undefined
+  const event = domainEvent(message.name, message.payload)
+  if (event === undefined) return undefined
+  return backendEventSessionId(event)
+}
+
+function backendEventSessionId(event: BackendEvent): string | undefined {
+  if ('sessionId' in event && typeof event.sessionId === 'string') return event.sessionId
+  if ('request' in event && typeof event.request.sessionId === 'string') return event.request.sessionId
+  if ('question' in event && typeof event.question.sessionId === 'string') return event.question.sessionId
+  if ('retry' in event && typeof event.retry.sessionId === 'string') return event.retry.sessionId
+  return undefined
 }
 
 function sessionStatus(value: string): SessionSummary['status'] {
@@ -1072,47 +1832,88 @@ function domainEvent(name: string, payload: unknown): BackendEvent | undefined {
     typeof value.sessionId === 'string' &&
     typeof value.messageId === 'string' &&
     typeof value.markdown === 'string'
-  )
+  ) {
+    const attachments = messageAttachments(value.attachments)
     return {
       type: 'message.user',
       sessionId: value.sessionId,
       messageId: value.messageId,
       markdown: value.markdown,
+      ...(attachments === undefined ? {} : { attachments }),
       ...(typeof value.rpcId === 'string' ? { rpcId: value.rpcId } : {}),
       ...(typeof value.source === 'string' ? { source: value.source } : {}),
       ...(typeof value.sourceForm === 'string' ? { sourceForm: value.sourceForm } : {}),
       ...(typeof value.sourceSummary === 'string' ? { sourceSummary: value.sourceSummary } : {}),
     }
+  }
+  if ((name === 'step.started' || name === 'step.ended') && typeof value.sessionId === 'string') {
+    const turn = finiteEventIndex(value.turn)
+    const step = finiteEventIndex(value.step)
+    if (turn === undefined || step === undefined) return { type: 'unknown', name, payload }
+    const time = finiteEventTimestamp(value.time)
+    return name === 'step.started'
+      ? {
+          type: 'step.started',
+          sessionId: value.sessionId,
+          turn,
+          step,
+          ...(time === undefined ? {} : { time }),
+        }
+      : {
+          type: 'step.ended',
+          sessionId: value.sessionId,
+          turn,
+          step,
+          ...(time === undefined ? {} : { time }),
+        }
+  }
   if (
     name === 'message.delta' &&
     typeof value.sessionId === 'string' &&
     typeof value.messageId === 'string' &&
     typeof value.delta === 'string'
-  )
+  ) {
+    const turn = finiteEventIndex(value.turn)
+    const step = finiteEventIndex(value.step)
+    const time = finiteEventTimestamp(value.time)
     return {
       type: 'message.delta',
       sessionId: value.sessionId,
       messageId: value.messageId,
       delta: value.delta,
+      ...(turn === undefined ? {} : { turn }),
+      ...(step === undefined ? {} : { step }),
+      ...(time === undefined ? {} : { time }),
     }
+  }
   if (
     name === 'reasoning.delta' &&
     typeof value.sessionId === 'string' &&
     typeof value.messageId === 'string' &&
     typeof value.delta === 'string'
-  )
+  ) {
+    const turn = finiteEventIndex(value.turn)
+    const step = finiteEventIndex(value.step)
+    const time = finiteEventTimestamp(value.time)
     return {
       type: 'reasoning.delta',
       sessionId: value.sessionId,
       messageId: value.messageId,
       delta: value.delta,
+      ...(turn === undefined ? {} : { turn }),
+      ...(step === undefined ? {} : { step }),
+      ...(time === undefined ? {} : { time }),
     }
+  }
   if (
     name === 'message.completed' &&
     typeof value.sessionId === 'string' &&
     typeof value.messageId === 'string'
   ) {
     const usage = parseTokenUsage(value.usage)
+    const turn = finiteEventIndex(value.turn)
+    const step = finiteEventIndex(value.step)
+    const time = finiteEventTimestamp(value.time)
     return {
       type: 'message.completed',
       sessionId: value.sessionId,
@@ -1121,10 +1922,24 @@ function domainEvent(name: string, payload: unknown): BackendEvent | undefined {
       ...(typeof value.reasoning === 'string' ? { reasoning: value.reasoning } : {}),
       ...(typeof value.modelLabel === 'string' ? { modelLabel: value.modelLabel } : {}),
       ...(usage === undefined ? {} : { usage }),
+      ...(turn === undefined ? {} : { turn }),
+      ...(step === undefined ? {} : { step }),
+      ...(time === undefined ? {} : { time }),
     }
   }
   if (name === 'session.status' && typeof value.sessionId === 'string' && typeof value.status === 'string')
     return { type: 'session.status', sessionId: value.sessionId, status: value.status }
+  if (
+    name === 'session.subscribed' &&
+    typeof value.sessionId === 'string' &&
+    typeof value.lastSequence === 'number' &&
+    Number.isSafeInteger(value.lastSequence)
+  )
+    return {
+      type: 'session.subscribed',
+      sessionId: value.sessionId,
+      lastSequence: value.lastSequence,
+    }
   if (name === 'session.title' && typeof value.sessionId === 'string' && typeof value.title === 'string')
     return { type: 'session.title', sessionId: value.sessionId, title: value.title }
   if (name === 'session.configuration' && typeof value.sessionId === 'string' && isRecord(value.patch))
@@ -1138,6 +1953,12 @@ function domainEvent(name: string, payload: unknown): BackendEvent | undefined {
       type: 'session.added',
       sessionId: value.sessionId,
       ...(typeof value.blank === 'boolean' ? { blank: value.blank } : {}),
+      ...(typeof value.parentSessionId === 'string' ? { parentSessionId: value.parentSessionId } : {}),
+      ...(value.origin === 'subagent' ? { origin: 'subagent' as const } : {}),
+      ...(typeof value.cwd === 'string' && value.cwd.trim() !== '' ? { cwd: value.cwd } : {}),
+      ...(typeof value.agentPreset === 'string' && value.agentPreset.trim() !== ''
+        ? { agentPreset: value.agentPreset }
+        : {}),
     }
   if (name === 'session.removed' && typeof value.sessionId === 'string')
     return { type: 'session.removed', sessionId: value.sessionId }
@@ -1216,45 +2037,50 @@ function domainEvent(name: string, payload: unknown): BackendEvent | undefined {
           id: value.compaction.id,
           phase,
           ...(typeof value.compaction.summary === 'string' ? { summary: value.compaction.summary } : {}),
+          ...(typeof value.compaction.replacedCount === 'number'
+            ? { replacedCount: value.compaction.replacedCount }
+            : {}),
+          ...(typeof value.compaction.estimatedTokens === 'number'
+            ? { estimatedTokens: value.compaction.estimatedTokens }
+            : {}),
         },
       }
   }
-  if (name === 'job.updated' && typeof value.sessionId === 'string' && isRecord(value.job)) {
-    const job = value.job
-    if (typeof job.id === 'string' && typeof job.label === 'string' && isJobStatus(job.status))
+  if (name === 'model.retry' && isRecord(value.retry)) {
+    const retry = value.retry
+    if (
+      typeof retry.sessionId === 'string' &&
+      typeof retry.id === 'string' &&
+      typeof retry.turn === 'number' &&
+      typeof retry.step === 'number' &&
+      typeof retry.attempt === 'number' &&
+      (retry.state === 'scheduled' || retry.state === 'started')
+    )
       return {
-        type: 'job.updated',
-        sessionId: value.sessionId,
-        job: {
-          id: job.id,
-          label: job.label,
-          status: job.status,
-          ...(typeof job.progress === 'number' ? { progress: job.progress } : {}),
+        type: 'model.retry',
+        retry: {
+          sessionId: retry.sessionId,
+          id: retry.id,
+          turn: retry.turn,
+          step: retry.step,
+          attempt: retry.attempt,
+          state: retry.state,
+          ...(typeof retry.delayMs === 'number' ? { delayMs: retry.delayMs } : {}),
+          ...(typeof retry.maxRetries === 'number' ? { maxRetries: retry.maxRetries } : {}),
+          ...(typeof retry.message === 'string' ? { message: retry.message } : {}),
         },
       }
   }
-  if (name === 'jobs.updated' && typeof value.sessionId === 'string' && Array.isArray(value.jobs)) {
+  if (
+    name === 'jobs.updated' &&
+    typeof value.sessionId === 'string' &&
+    Array.isArray(value.jobs) &&
+    value.jobs.every(isJobView)
+  ) {
     return {
       type: 'jobs.updated',
       sessionId: value.sessionId,
-      jobs: value.jobs.flatMap((entry) => {
-        const job = object(entry)
-        if (
-          job === undefined ||
-          typeof job.id !== 'string' ||
-          typeof job.label !== 'string' ||
-          !isJobStatus(job.status)
-        )
-          return []
-        return [
-          {
-            id: job.id,
-            label: job.label,
-            status: job.status,
-            ...(typeof job.progress === 'number' ? { progress: job.progress } : {}),
-          },
-        ]
-      }),
+      jobs: value.jobs,
     }
   }
   if (name === 'queue.updated' && typeof value.sessionId === 'string' && Array.isArray(value.items)) {
@@ -1264,25 +2090,54 @@ function domainEvent(name: string, payload: unknown): BackendEvent | undefined {
       items: value.items.flatMap((entry) => (isQueuedInput(entry) ? [entry] : [])),
     }
   }
-  if (name === 'subagent.updated' && typeof value.sessionId === 'string' && isRecord(value.subagent)) {
-    const subagent = value.subagent
-    if (
-      typeof subagent.id === 'string' &&
-      typeof subagent.label === 'string' &&
-      isSubagentStatus(subagent.status) &&
-      typeof subagent.parentSessionId === 'string'
-    )
-      return {
-        type: 'subagent.updated',
-        sessionId: value.sessionId,
-        subagent: {
-          id: subagent.id,
-          label: subagent.label,
-          status: subagent.status,
-          parentSessionId: subagent.parentSessionId,
-        },
-      }
-  }
+  if (name === 'workflow.started' && typeof value.sessionId === 'string' && isWorkflowSummary(value.workflow))
+    return {
+      type: 'workflow.started',
+      sessionId: value.sessionId,
+      workflow: value.workflow,
+    }
+  if (
+    name === 'workflow.member.started' &&
+    typeof value.sessionId === 'string' &&
+    typeof value.runId === 'string' &&
+    (typeof value.phase === 'string' || value.phase === null) &&
+    isWorkflowMember(value.member) &&
+    value.member.status === 'running'
+  )
+    return {
+      type: 'workflow.member.started',
+      sessionId: value.sessionId,
+      runId: value.runId,
+      phase: value.phase,
+      member: value.member,
+    }
+  if (
+    name === 'workflow.member.ended' &&
+    typeof value.sessionId === 'string' &&
+    typeof value.runId === 'string' &&
+    Number.isSafeInteger(value.seq) &&
+    (value.seq as number) > 0 &&
+    (value.outcome === 'completed' || value.outcome === 'failed' || value.outcome === 'cancelled')
+  )
+    return {
+      type: 'workflow.member.ended',
+      sessionId: value.sessionId,
+      runId: value.runId,
+      seq: value.seq as number,
+      outcome: value.outcome,
+    }
+  if (
+    name === 'workflow.ended' &&
+    typeof value.sessionId === 'string' &&
+    typeof value.runId === 'string' &&
+    (value.stopReason === 'completed' || value.stopReason === 'cancelled' || value.stopReason === 'error')
+  )
+    return {
+      type: 'workflow.ended',
+      sessionId: value.sessionId,
+      runId: value.runId,
+      stopReason: value.stopReason,
+    }
   if (name === 'permission.requested' && isRecord(value.request)) {
     const request = value.request
     if (
@@ -1331,20 +2186,39 @@ function domainEvent(name: string, payload: unknown): BackendEvent | undefined {
           ...(typeof question.rpcId === 'string' ? { rpcId: question.rpcId } : {}),
           sessionId: question.sessionId,
           prompt: question.prompt,
-          ...(Array.isArray(question.choices)
+          ...(typeof question.detail === 'string' ? { detail: question.detail } : {}),
+          ...(typeof question.header === 'string' ? { header: question.header } : {}),
+          ...(Array.isArray(question.choices) ? { choices: questionChoices(question.choices) } : {}),
+          ...(typeof question.multiSelect === 'boolean' ? { multiSelect: question.multiSelect } : {}),
+          allowFreeText: question.allowFreeText,
+          ...questionIntent(question.intent),
+          ...(Array.isArray(question.items)
             ? {
-                choices: question.choices.flatMap((entry) => {
-                  const choice = object(entry)
-                  return choice !== undefined &&
-                    typeof choice.id === 'string' &&
-                    typeof choice.label === 'string'
-                    ? [{ id: choice.id, label: choice.label }]
-                    : []
+                items: question.items.flatMap((entry) => {
+                  const item = object(entry)
+                  if (
+                    item === undefined ||
+                    typeof item.id !== 'string' ||
+                    typeof item.prompt !== 'string' ||
+                    typeof item.allowFreeText !== 'boolean'
+                  )
+                    return []
+                  const intent = questionIntent(item.intent)
+                  return [
+                    {
+                      id: item.id,
+                      prompt: item.prompt,
+                      ...(typeof item.detail === 'string' ? { detail: item.detail } : {}),
+                      ...(typeof item.header === 'string' ? { header: item.header } : {}),
+                      ...(Array.isArray(item.choices) ? { choices: questionChoices(item.choices) } : {}),
+                      ...(typeof item.multiSelect === 'boolean' ? { multiSelect: item.multiSelect } : {}),
+                      allowFreeText: item.allowFreeText,
+                      ...(intent === undefined ? {} : { intent }),
+                    },
+                  ]
                 }),
               }
             : {}),
-          ...(typeof question.multiSelect === 'boolean' ? { multiSelect: question.multiSelect } : {}),
-          allowFreeText: question.allowFreeText,
         },
       }
   }
@@ -1440,11 +2314,25 @@ function hydrateTimeline(sessionId: string, history: readonly unknown[]): Timeli
   valid.forEach(({ event, sequence }) => {
     timeline = reduceTimeline(timeline, { sequence, event })
   })
-  return valid.length === 0 ? timeline : { ...timeline, lastSequence: -1 }
+  const lastSequence = valid.reduce((maximum, entry) => Math.max(maximum, entry.sequence), -1)
+  return valid.length === 0 ? timeline : { ...timeline, lastSequence }
 }
 
 function finiteSequence(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isSafeInteger(value) ? value : fallback
+}
+
+function finiteEventIndex(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined
+}
+
+function finiteEventTimestamp(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string') {
+    const timestamp = Date.parse(value)
+    return Number.isFinite(timestamp) ? timestamp : undefined
+  }
+  return undefined
 }
 
 function parseTokenUsage(value: unknown): TokenUsage | undefined {
@@ -1492,6 +2380,21 @@ function attachmentFromResult(resultValue: unknown): PromptAttachment | undefine
   }
 }
 
+function messageAttachments(value: unknown): readonly MessageAttachment[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const attachments = value.slice(0, 32).flatMap((entry): MessageAttachment[] => {
+    const record = object(entry)
+    if (record === undefined || typeof record.name !== 'string' || record.name.trim() === '') return []
+    return [
+      {
+        name: record.name,
+        ...(typeof record.mimeType === 'string' ? { mimeType: record.mimeType } : {}),
+      },
+    ]
+  })
+  return attachments.length === 0 ? undefined : attachments
+}
+
 function openFileCandidatesFromResult(resultValue: unknown): readonly OpenFileCandidate[] {
   const result = object(resultValue)
   if (!Array.isArray(result?.items)) return []
@@ -1535,33 +2438,69 @@ function isGoalStatus(value: unknown): value is 'pending' | 'in-progress' | 'com
   return value === 'pending' || value === 'in-progress' || value === 'completed' || value === 'blocked'
 }
 
-function isJobStatus(
-  value: unknown,
-): value is 'running' | 'stopping' | 'completed' | 'failed' | 'killed' | 'cancelled' {
+function isJobStatus(value: unknown): value is 'running' | 'stopping' | 'completed' | 'failed' | 'killed' {
   return (
     value === 'running' ||
     value === 'stopping' ||
     value === 'completed' ||
     value === 'failed' ||
-    value === 'killed' ||
-    value === 'cancelled'
-  )
-}
-
-function isSubagentStatus(
-  value: unknown,
-): value is 'idle' | 'running' | 'awaiting-input' | 'completed' | 'failed' {
-  return (
-    value === 'idle' ||
-    value === 'running' ||
-    value === 'awaiting-input' ||
-    value === 'completed' ||
-    value === 'failed'
+    value === 'killed'
   )
 }
 
 function isPermissionKind(value: unknown): value is 'allow-once' | 'deny' {
   return value === 'allow-once' || value === 'deny'
+}
+
+function questionChoices(entries: readonly unknown[]): {
+  id: string
+  label: string
+  description?: string
+}[] {
+  return entries.flatMap((entry) => {
+    const choice = object(entry)
+    return choice !== undefined && typeof choice.id === 'string' && typeof choice.label === 'string'
+      ? [
+          {
+            id: choice.id,
+            label: choice.label,
+            ...(typeof choice.description === 'string' ? { description: choice.description } : {}),
+          },
+        ]
+      : []
+  })
+}
+
+/** Upstream intents are tagged; unknown tags render the generic option flow. */
+function questionIntent(value: unknown): UserQuestion['intent'] | undefined {
+  const intent = object(value)
+  if (intent === undefined) return undefined
+  if (intent.kind !== 'plan-review' || typeof intent.approve !== 'string') return undefined
+  return { kind: 'plan-review', approve: intent.approve }
+}
+
+function isQuestionAnswerList(
+  value: readonly string[] | readonly QuestionAnswer[],
+): value is readonly QuestionAnswer[] {
+  return value.some((entry) => typeof entry !== 'string')
+}
+
+/** Shapes a question answer payload for the host schema: single selection,
+ * label array, or the upstream batch `answers` objects with `custom` text. */
+function questionResponsePayload(
+  response: string | readonly string[] | readonly QuestionAnswer[],
+):
+  | string
+  | string[]
+  | { readonly id: string; readonly response: string | string[]; readonly custom?: string }[] {
+  if (typeof response === 'string') return response
+  if (isQuestionAnswerList(response))
+    return response.map((entry) => ({
+      id: entry.id,
+      response: typeof entry.response === 'string' ? entry.response : [...entry.response],
+      ...(entry.custom === undefined ? {} : { custom: entry.custom }),
+    }))
+  return [...response]
 }
 
 function isSessionSummary(value: unknown): value is SessionSummary {
@@ -1715,6 +2654,43 @@ function isPresetDescriptor(value: unknown): value is AgentPresetDescriptor {
   )
 }
 
+/** Parse the `agentPreset.list` answer: roster rows plus the deployment facts. */
+function parsePresetRoster(value: unknown): AgentPresetRoster | undefined {
+  const roster = object(value)
+  if (roster === undefined || !Array.isArray(roster.presets)) return undefined
+  return {
+    presets: roster.presets.filter(isPresetDescriptor),
+    authorable: roster.authorable === true,
+    hasDocument: roster.hasDocument === true,
+  }
+}
+
+const FIBER_PHASES: readonly string[] = ['pending', 'loading', 'active', 'failed', 'unloading']
+
+function isPluginInventoryEntry(value: unknown): value is PluginInventorySnapshot['entries'][number] {
+  const item = object(value)
+  return (
+    item !== undefined &&
+    typeof item.entryId === 'string' &&
+    item.entryId.length > 0 &&
+    typeof item.moduleName === 'string' &&
+    typeof item.enabled === 'boolean' &&
+    (item.fiberPhase === null ||
+      (typeof item.fiberPhase === 'string' && FIBER_PHASES.includes(item.fiberPhase)))
+  )
+}
+
+/** Parse the `pluginInventory/list` projection; malformed rows are dropped. */
+function parsePluginInventory(value: unknown): PluginInventorySnapshot | undefined {
+  const snapshot = object(value)
+  if (snapshot === undefined || !Array.isArray(snapshot.entries)) return undefined
+  return { entries: snapshot.entries.filter(isPluginInventoryEntry) }
+}
+
+function arraysEqual<T>(left: readonly T[], right: readonly T[]): boolean {
+  return left.length === right.length && left.every((item, index) => item === right[index])
+}
+
 function isDynamicCommand(value: unknown): value is DynamicCommand {
   const item = object(value)
   return (
@@ -1744,8 +2720,17 @@ function isJobView(value: unknown): value is JobView {
   return (
     item !== undefined &&
     typeof item.id === 'string' &&
+    item.id.length > 0 &&
+    typeof item.kind === 'string' &&
+    item.kind.length > 0 &&
     typeof item.label === 'string' &&
-    isJobStatus(item.status)
+    item.label.length > 0 &&
+    isJobStatus(item.status) &&
+    Number.isSafeInteger(item.startedAt) &&
+    (item.startedAt as number) >= 0 &&
+    (item.detail === undefined || typeof item.detail === 'string') &&
+    (item.finishedAt === undefined ||
+      (Number.isSafeInteger(item.finishedAt) && (item.finishedAt as number) >= 0))
   )
 }
 
@@ -1753,10 +2738,71 @@ function isSubagentView(value: unknown): value is SubagentView {
   const item = object(value)
   return (
     item !== undefined &&
+    item.kind === 'child' &&
     typeof item.id === 'string' &&
-    typeof item.label === 'string' &&
+    item.id.length > 0 &&
+    (item.label === undefined || typeof item.label === 'string') &&
+    (item.mode !== 'continuable' || typeof item.label === 'string') &&
+    (item.activity === 'running' || item.activity === 'inactive') &&
     typeof item.parentSessionId === 'string' &&
-    isSubagentStatus(item.status)
+    item.parentSessionId.length > 0 &&
+    (item.mode === 'one-shot' || item.mode === 'continuable') &&
+    typeof item.hasChildren === 'boolean'
+  )
+}
+
+function isSubagentCatalogEntry(value: unknown): value is SubagentCatalog['entries'][number] {
+  if (isSubagentView(value)) return true
+  const item = object(value)
+  return (
+    item !== undefined &&
+    item.kind === 'diagnostic' &&
+    typeof item.id === 'string' &&
+    item.id.length > 0 &&
+    typeof item.parentSessionId === 'string' &&
+    item.parentSessionId.length > 0 &&
+    (item.reason === 'corrupt' || item.reason === 'unsupported' || item.reason === 'unavailable')
+  )
+}
+
+const WORKFLOW_STATUSES: readonly string[] = ['running', 'completed', 'failed', 'cancelled', 'interrupted']
+const MEMBER_STATUSES: readonly string[] = ['running', 'completed', 'failed', 'cancelled', 'interrupted']
+
+function isWorkflowMember(value: unknown): value is WorkflowMember {
+  const item = object(value)
+  return (
+    item !== undefined &&
+    Number.isSafeInteger(item.seq) &&
+    (item.seq as number) > 0 &&
+    typeof item.label === 'string' &&
+    typeof item.childId === 'string' &&
+    typeof item.status === 'string' &&
+    MEMBER_STATUSES.includes(item.status)
+  )
+}
+
+function isWorkflowStage(value: unknown): value is WorkflowSummary['stages'][number] {
+  const item = object(value)
+  return (
+    item !== undefined &&
+    typeof item.id === 'string' &&
+    (typeof item.phase === 'string' || item.phase === null) &&
+    Array.isArray(item.members) &&
+    item.members.every(isWorkflowMember)
+  )
+}
+
+function isWorkflowSummary(value: unknown): value is WorkflowSummary {
+  const item = object(value)
+  return (
+    item !== undefined &&
+    typeof item.id === 'string' &&
+    typeof item.sessionId === 'string' &&
+    typeof item.name === 'string' &&
+    typeof item.status === 'string' &&
+    WORKFLOW_STATUSES.includes(item.status) &&
+    Array.isArray(item.stages) &&
+    item.stages.every(isWorkflowStage)
   )
 }
 

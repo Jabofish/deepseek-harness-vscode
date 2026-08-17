@@ -76,10 +76,6 @@ function replayKey(event: BackendEvent): string | undefined {
     case 'session.configuration':
     case 'compaction.updated':
       return `${event.type}:${event.sessionId}:${'key' in event ? event.key : ''}`
-    case 'job.updated':
-      return `job:${event.sessionId}:${event.job.id}`
-    case 'subagent.updated':
-      return `subagent:${event.sessionId}:${event.subagent.id}`
     case 'session.status':
       return `status:${event.sessionId}`
     default:

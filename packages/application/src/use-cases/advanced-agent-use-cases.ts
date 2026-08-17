@@ -2,14 +2,14 @@ import { AppError } from '@dsh-vscode/domain'
 import type {
   AgentPresetDocument,
   DynamicCommand,
-  AgentPresetDescriptor,
+  AgentPresetLocation,
+  AgentPresetRoster,
   GoalView,
   JobView,
-  PluginDescriptor,
+  PluginInventorySnapshot,
   SkillDescriptor,
+  SubagentCatalog,
   SubagentHistoryPage,
-  SubagentView,
-  WorkflowSummary,
 } from '@dsh-vscode/domain'
 
 import type { BackendService } from '../services/backend-service.js'
@@ -25,18 +25,17 @@ export class AdvancedAgentUseCases {
     return this.backendService.requireBackend().jobs.list(sessionId, signal)
   }
 
-  public listSubagents(sessionId: string, signal?: AbortSignal): Promise<readonly SubagentView[]> {
+  public listSubagents(sessionId: string, signal?: AbortSignal): Promise<SubagentCatalog> {
     return this.backendService.requireBackend().subagents.list(sessionId, signal)
   }
 
   public listSubagentHistory(sessionId: string, signal?: AbortSignal): Promise<SubagentHistoryPage> {
-    const history = this.backendService.requireBackend().subagents.history
-    if (history === undefined) return Promise.reject(unavailable('subagent history'))
-    return history(sessionId, signal)
-  }
-
-  public listWorkflows(sessionId: string, signal?: AbortSignal): Promise<readonly WorkflowSummary[]> {
-    return this.backendService.requireBackend().workflows.list(sessionId, signal)
+    const repository = this.backendService.requireBackend().subagents
+    if (repository.history === undefined) return Promise.reject(unavailable('subagent history'))
+    // Invoke through the repository object: rc.6 history resolves the durable
+    // parent/child address from its catalog cache and therefore requires its
+    // method receiver.
+    return repository.history(sessionId, signal)
   }
 
   public listSkills(sessionId?: string, signal?: AbortSignal): Promise<readonly SkillDescriptor[]> {
@@ -47,7 +46,7 @@ export class AdvancedAgentUseCases {
     return this.backendService.requireBackend().commands.list(sessionId, signal)
   }
 
-  public listPresets(signal?: AbortSignal): Promise<readonly AgentPresetDescriptor[]> {
+  public listPresets(signal?: AbortSignal): Promise<AgentPresetRoster> {
     return this.backendService.requireBackend().presets.list(signal)
   }
 
@@ -56,9 +55,9 @@ export class AdvancedAgentUseCases {
   }
 
   public clearGoal(goalId: string, signal?: AbortSignal): Promise<void> {
-    const clear = this.backendService.requireBackend().goals.clear
-    if (clear === undefined) return Promise.reject(unavailable('goal clear'))
-    return clear(goalId, signal)
+    const repository = this.backendService.requireBackend().goals
+    if (repository.clear === undefined) return Promise.reject(unavailable('goal clear'))
+    return repository.clear(goalId, signal)
   }
 
   public readPreset(presetId: string, signal?: AbortSignal): Promise<AgentPresetDocument> {
@@ -73,7 +72,7 @@ export class AdvancedAgentUseCases {
     return copy(from, presetId, name, signal)
   }
 
-  public openPresetDocument(presetId: string, signal?: AbortSignal): Promise<{ readonly opened: boolean }> {
+  public openPresetDocument(presetId: string, signal?: AbortSignal): Promise<AgentPresetLocation> {
     const open = this.backendService.requireBackend().presets.openDocument
     if (open === undefined) return Promise.reject(unavailable('preset document opening'))
     return open(presetId, signal)
@@ -85,27 +84,22 @@ export class AdvancedAgentUseCases {
     return remove(presetId, signal)
   }
 
-  public listPlugins(signal?: AbortSignal): Promise<readonly PluginDescriptor[]> {
-    return this.backendService.requireBackend().plugins.list(signal)
+  /**
+   * The host's read-only plugin inventory — the pinned rc.6 contract exposes
+   * `pluginInventory/list` only; plugins are composed by the deployment and
+   * never toggled from a client.
+   */
+  public pluginInventory(signal?: AbortSignal): Promise<PluginInventorySnapshot> {
+    return this.backendService.requireBackend().plugins.inventory(signal)
   }
 
   public execute(
-    capability:
-      | 'job.cancel'
-      | 'subagent.send'
-      | 'subagent.interrupt'
-      | 'workflow.start'
-      | 'workflow.cancel'
-      | 'skill.execute'
-      | 'command.execute'
-      | 'plugin.configure',
+    capability: 'subagent.send' | 'subagent.interrupt' | 'skill.execute' | 'command.execute',
     input: Readonly<Record<string, unknown>>,
     signal?: AbortSignal,
   ): Promise<void> {
     const backend = this.backendService.requireBackend()
     switch (capability) {
-      case 'job.cancel':
-        return backend.jobs.cancel(requiredString(input, 'jobId'), signal)
       case 'subagent.send':
         return backend.subagents.send(
           requiredString(input, 'sessionId'),
@@ -114,12 +108,6 @@ export class AdvancedAgentUseCases {
         )
       case 'subagent.interrupt':
         return backend.subagents.interrupt(requiredString(input, 'sessionId'), signal)
-      case 'workflow.start':
-        return backend.workflows
-          .start(requiredString(input, 'sessionId'), requiredString(input, 'workflowId'), signal)
-          .then(() => undefined)
-      case 'workflow.cancel':
-        return backend.workflows.cancel(requiredString(input, 'workflowId'), signal)
       case 'skill.execute':
         return backend.skills.execute(
           requiredString(input, 'sessionId'),
@@ -131,12 +119,6 @@ export class AdvancedAgentUseCases {
         return backend.commands.execute(
           requiredString(input, 'sessionId'),
           requiredString(input, 'command'),
-          signal,
-        )
-      case 'plugin.configure':
-        return backend.plugins.configure(
-          requiredString(input, 'pluginId'),
-          requiredBoolean(input, 'enabled'),
           signal,
         )
     }
@@ -154,11 +136,5 @@ function unavailable(capability: string): AppError {
 function requiredString(input: Readonly<Record<string, unknown>>, key: string): string {
   const value = input[key]
   if (typeof value !== 'string' || value.trim() === '') throw new Error(`${key} is required`)
-  return value
-}
-
-function requiredBoolean(input: Readonly<Record<string, unknown>>, key: string): boolean {
-  const value = input[key]
-  if (typeof value !== 'boolean') throw new Error(`${key} is required`)
   return value
 }

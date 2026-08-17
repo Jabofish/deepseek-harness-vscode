@@ -1,4 +1,4 @@
-import type { SkillDescriptor, SkillRepository } from '@dsh-vscode/domain'
+import { AppError, type SkillDescriptor, type SkillRepository } from '@dsh-vscode/domain'
 
 import type { DshTransport } from '../contracts.js'
 import { callRpc, unavailable } from '../versions/rc6/rpc.js'
@@ -9,17 +9,25 @@ export class Rc6SkillRepository implements SkillRepository {
   public async list(sessionId?: string, signal?: AbortSignal): Promise<readonly SkillDescriptor[]> {
     if (sessionId === undefined || sessionId.trim() === '')
       throw unavailable('skill list without a session context')
-    const value = await callRpc<{ skills: unknown[] }>(this.transport, 'skill.list', { sessionId }, signal)
-    return (Array.isArray(value.skills) ? value.skills : []).flatMap((entry) => {
+    const value = asRecord(await callRpc<unknown>(this.transport, 'skill.list', { sessionId }, signal))
+    if (value === undefined || !Array.isArray(value.skills)) throw malformedSkillResponse('list')
+    return value.skills.flatMap((entry) => {
       const record = asRecord(entry)
-      if (typeof record.name !== 'string') return []
+      if (
+        record === undefined ||
+        typeof record.name !== 'string' ||
+        record.name.trim() === '' ||
+        typeof record.description !== 'string' ||
+        typeof record.modelInvocable !== 'boolean'
+      )
+        throw malformedSkillResponse('list entry')
       return [
         {
           id: record.name,
           name: record.name,
-          description: typeof record.description === 'string' ? record.description : '',
+          description: record.description,
           source: 'project' as const,
-          enabled: record.modelInvocable !== false,
+          enabled: record.modelInvocable,
         },
       ]
     })
@@ -35,21 +43,32 @@ export class Rc6SkillRepository implements SkillRepository {
     input: string,
     signal?: AbortSignal,
   ): Promise<void> {
-    await callRpc(
-      this.transport,
-      'session.prompt',
-      {
-        sessionId,
-        mode: 'queue',
-        content: [{ type: 'text', text: `/${skillId}${input.length === 0 ? '' : ` ${input}`}` }],
-      },
-      signal,
+    const value = asRecord(
+      await callRpc<unknown>(
+        this.transport,
+        'session.prompt',
+        {
+          sessionId,
+          mode: 'queue',
+          content: [{ type: 'text', text: `/${skillId}${input.length === 0 ? '' : ` ${input}`}` }],
+        },
+        signal,
+      ),
     )
+    if (value?.accepted !== true) throw malformedSkillResponse('prompt receipt')
   }
 }
 
-function asRecord(value: unknown): Record<string, unknown> {
+function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
-    : {}
+    : undefined
+}
+
+function malformedSkillResponse(part: string): AppError {
+  return new AppError({
+    code: 'PROTOCOL_ERROR',
+    message: `DSH returned a malformed skill ${part} response.`,
+    retryable: false,
+  })
 }

@@ -91,11 +91,23 @@ describe('DeepSeek Harness 0.1.0-rc.6 contract', () => {
       rc6Mapper.event('approval/resolved', { sessionId: 's1', approvalId: 'a1', outcome: 'rejected' }),
       rc6Mapper.event('question/resolved', { sessionId: 's1', questionRpcId: 'q1', outcome: 'answered' }),
       rc6Mapper.event('session/projection', { sessionId: 's1', key: 'goal', seq: 3, value: {} }),
-      rc6Mapper.event('host/session-added', { sessionId: 's1', blank: true }),
+      rc6Mapper.event('host/session-added', {
+        sessionId: 's1',
+        blank: true,
+        parentSessionId: 'parent',
+        origin: 'subagent',
+      }),
       rc6Mapper.event('host/workspace-removed', { workspaceId: 'w1' }),
       rc6Mapper.event('host/remote-event', { event: 'safe', args: [] }),
     ]
     expect(mapped.every((event) => event.type !== 'unknown')).toBe(true)
+    expect(mapped[4]).toEqual({
+      type: 'session.added',
+      sessionId: 's1',
+      blank: true,
+      parentSessionId: 'parent',
+      origin: 'subagent',
+    })
     expect(
       rc6Mapper.event('assistant/chunk', {
         sessionId: 's1',
@@ -103,6 +115,75 @@ describe('DeepSeek Harness 0.1.0-rc.6 contract', () => {
         data: { turn: 1, step: 1, chunk: { text: 'Hi' } },
       }),
     ).toMatchObject({ type: 'message.delta', delta: 'Hi' })
+  })
+
+  it('preserves official step and event timestamps for timing consumers', () => {
+    expect(
+      rc6Mapper.event('step/start', {
+        sessionId: 's1',
+        time: 1_000,
+        data: { turn: 1, step: 1 },
+      }),
+    ).toEqual({ type: 'step.started', sessionId: 's1', turn: 1, step: 1, time: 1_000 })
+    expect(
+      rc6Mapper.event('assistant/chunk', {
+        sessionId: 's1',
+        time: 1_800,
+        data: { turn: 1, step: 1, chunk: { type: 'text-delta', text: 'Hi' } },
+      }),
+    ).toMatchObject({ type: 'message.delta', turn: 1, step: 1, time: 1_800 })
+    expect(
+      rc6Mapper.event('assistant/message', {
+        sessionId: 's1',
+        time: 4_800,
+        data: { turn: 1, step: 1, markdown: 'Hi' },
+      }),
+    ).toMatchObject({ type: 'message.completed', turn: 1, step: 1, time: 4_800 })
+    expect(
+      rc6Mapper.event('tool/call', {
+        sessionId: 's1',
+        time: 5_000,
+        data: { turn: 1, step: 1, callId: 'call-1', name: 'shell', arguments: '{}' },
+      }),
+    ).toMatchObject({ type: 'tool.updated', tool: { id: 'call-1', startedAt: '1970-01-01T00:00:05.000Z' } })
+    expect(
+      rc6Mapper.event('tool/result', {
+        sessionId: 's1',
+        time: 5_600,
+        data: {
+          turn: 1,
+          step: 1,
+          callId: 'call-1',
+          message: { content: 'ok', source: { callId: 'call-1' } },
+        },
+      }),
+    ).toMatchObject({ type: 'tool.updated', tool: { completedAt: '1970-01-01T00:00:05.600Z' } })
+  })
+
+  it('projects adapter-owned text file blocks as compact user attachment metadata', () => {
+    expect(
+      rc6Mapper.event('user/message', {
+        sessionId: 's1',
+        data: {
+          message: {
+            id: 'user-1',
+            content: [
+              { type: 'text', text: '概括文件内容' },
+              {
+                type: 'text',
+                text: '\n\nAttached file: 思路4.md\n\n# 很长的正文\n\nEnd of attached file: 思路4.md',
+              },
+            ],
+          },
+        },
+      }),
+    ).toEqual({
+      type: 'message.user',
+      sessionId: 's1',
+      messageId: 'user-1',
+      markdown: '概括文件内容',
+      attachments: [{ name: '思路4.md' }],
+    })
   })
 
   it('keeps one clear permission result for a command lifecycle pair', () => {
@@ -119,6 +200,107 @@ describe('DeepSeek Harness 0.1.0-rc.6 contract', () => {
         text: 'preset danger-full-access',
       }),
     ).toMatchObject({ type: 'notice', text: 'Permission changed to Full access.' })
+  })
+
+  it('maps model retries and compaction accounting to structured events', () => {
+    expect(
+      rc6Mapper.event('llm/retry', {
+        sessionId: 's1',
+        retryId: 'retry-1',
+        turn: 1,
+        step: 2,
+        provider: 'deepseek',
+        mode: 'normal',
+        policyKey: 'deepseek-normal',
+        retry: 2,
+        maxRetries: 3,
+        delayMs: 4_000,
+        failure: { code: 'RATE_LIMIT', message: 'rate limited' },
+      }),
+    ).toEqual({
+      type: 'model.retry',
+      retry: {
+        sessionId: 's1',
+        id: 'retry-1',
+        turn: 1,
+        step: 2,
+        attempt: 2,
+        state: 'scheduled',
+        delayMs: 4_000,
+        maxRetries: 3,
+        message: 'rate limited',
+      },
+    })
+    expect(
+      rc6Mapper.event('llm/retry-started', {
+        sessionId: 's1',
+        retryId: 'retry-1',
+        turn: 1,
+        step: 2,
+        retry: 2,
+      }),
+    ).toEqual({
+      type: 'model.retry',
+      retry: {
+        sessionId: 's1',
+        id: 'retry-1',
+        turn: 1,
+        step: 2,
+        attempt: 2,
+        state: 'started',
+      },
+    })
+    expect(
+      rc6Mapper.event('compaction/summary', {
+        sessionId: 's1',
+        compactionId: 'c1',
+        summary: [{ type: 'text', text: 'Condensed context' }],
+        shadowedRange: { start: 1, end: 12 },
+        shadowedSeqs: [1, 3, 5],
+        shadowedTokenCount: 8_400,
+        provider: 'deepseek',
+        model: 'deepseek-chat',
+      }),
+    ).toEqual({
+      type: 'compaction.updated',
+      sessionId: 's1',
+      compaction: {
+        id: 'c1',
+        phase: 'summary',
+        summary: 'Condensed context',
+        replacedCount: 3,
+        estimatedTokens: 8_400,
+      },
+    })
+    expect(
+      rc6Mapper.event('compaction/prune', {
+        sessionId: 's1',
+        shadowedRange: { start: 14, end: 14 },
+        shadowedSeqs: [14],
+        shadowedTokenCount: 900,
+      }),
+    ).toMatchObject({
+      type: 'compaction.updated',
+      compaction: { id: 'prune:14', phase: 'prune', replacedCount: 1, estimatedTokens: 900 },
+    })
+    expect(() =>
+      rc6Mapper.event('llm/retry', {
+        sessionId: 's1',
+        retryId: 'retry-invalid',
+        turn: 1,
+        step: 2,
+        retry: 1,
+      }),
+    ).toThrow(/Malformed retry provider/)
+    expect(() =>
+      rc6Mapper.event('llm/retry-started', {
+        sessionId: 's1',
+        retryId: 'retry-invalid',
+        turn: '1',
+        step: 2,
+        retry: 1,
+      }),
+    ).toThrow(/Malformed retry turn/)
   })
 
   it('maps the rc.6 session projection, history, queue, jobs, and question correlation', () => {
@@ -180,11 +362,137 @@ describe('DeepSeek Harness 0.1.0-rc.6 contract', () => {
       question: { id: 'q1', rpcId: 'rpc-question', choices: [{ id: 'Allow', label: 'Allow' }] },
     })
     expect(
+      rc6Mapper.event('question/requested', {
+        rpcId: 'rpc-plan',
+        sessionId: 's1',
+        questions: [
+          {
+            id: 'q-plan',
+            question: 'Proceed with this plan?',
+            header: 'Refactor',
+            detail: '1. Do it',
+            options: [
+              { label: 'Approve', description: 'Run the plan now' },
+              { label: 'Decline', description: 'Stop here' },
+            ],
+            intent: { kind: 'plan-review', approve: 'Approve' },
+          },
+          { id: 'q-extra', question: 'Notify?', multiSelect: true },
+        ],
+      }),
+    ).toMatchObject({
+      type: 'question.requested',
+      question: {
+        id: 'q-plan',
+        rpcId: 'rpc-plan',
+        items: [
+          {
+            id: 'q-plan',
+            prompt: 'Proceed with this plan?',
+            header: 'Refactor',
+            detail: '1. Do it',
+            choices: [
+              { id: 'Approve', label: 'Approve', description: 'Run the plan now' },
+              { id: 'Decline', label: 'Decline', description: 'Stop here' },
+            ],
+            intent: { kind: 'plan-review', approve: 'Approve' },
+          },
+          { id: 'q-extra', prompt: 'Notify?', multiSelect: true },
+        ],
+      },
+    })
+    // Unknown intent tags degrade to the generic flow (upstream contract:
+    // a UI that does not know a tag renders the generic option list).
+    const unknownIntent = rc6Mapper.event('question/requested', {
+      rpcId: 'rpc-unknown-intent',
+      sessionId: 's1',
+      questions: [{ id: 'q9', question: 'Pick', intent: { kind: 'future-tag' } }],
+    })
+    expect(unknownIntent).toMatchObject({
+      type: 'question.requested',
+      question: { id: 'q9', items: [{ id: 'q9' }] },
+    })
+    expect(
+      unknownIntent.type === 'question.requested' && unknownIntent.question.items?.[0]?.intent,
+    ).toBeUndefined()
+    expect(
       rc6Mapper.event('session/jobs', {
         sessionId: 's1',
-        jobs: [{ id: 'job-1', kind: 'bash', label: 'build', status: 'stopping', startedAt: 1 }],
+        jobs: [
+          {
+            id: 'job-1',
+            kind: 'bash',
+            label: 'build',
+            status: 'stopping',
+            detail: 'signal pending',
+            startedAt: 1,
+            finishedAt: 2,
+          },
+        ],
       }),
-    ).toMatchObject({ type: 'jobs.updated', jobs: [{ id: 'job-1', status: 'stopping' }] })
+    ).toEqual({
+      type: 'jobs.updated',
+      sessionId: 's1',
+      jobs: [
+        {
+          id: 'job-1',
+          kind: 'bash',
+          label: 'build',
+          status: 'stopping',
+          detail: 'signal pending',
+          startedAt: 1,
+          finishedAt: 2,
+        },
+      ],
+    })
+    expect(() =>
+      rc6Mapper.event('session/jobs', {
+        sessionId: 's1',
+        jobs: [{ id: 'job-1', label: 'build', status: 'cancelled', startedAt: 1 }],
+      }),
+    ).toThrow(/Malformed job/)
+    expect(() => rc6Mapper.event('session/jobs', { sessionId: 's1', jobs: {} })).toThrow(
+      /Malformed session\/jobs jobs/,
+    )
+    expect(
+      rc6Mapper.event('tool-workflow/run-start', {
+        sessionId: 's1',
+        data: { runId: 'run-1', name: 'audit' },
+      }),
+    ).toEqual({
+      type: 'workflow.started',
+      sessionId: 's1',
+      workflow: {
+        id: 'run-1',
+        sessionId: 's1',
+        name: 'audit',
+        status: 'running',
+        stages: [],
+      },
+    })
+    expect(
+      rc6Mapper.event('tool-workflow/agent-start', {
+        sessionId: 's1',
+        data: { runId: 'run-1', seq: 1, label: '', phase: '', childId: 'child-1' },
+      }),
+    ).toMatchObject({
+      type: 'workflow.member.started',
+      runId: 'run-1',
+      phase: '',
+      member: { seq: 1, label: '', childId: 'child-1', status: 'running' },
+    })
+    expect(
+      rc6Mapper.event('tool-workflow/agent-end', {
+        sessionId: 's1',
+        data: { runId: 'run-1', seq: 1, outcome: 'failed' },
+      }),
+    ).toMatchObject({ type: 'workflow.member.ended', runId: 'run-1', seq: 1, outcome: 'failed' })
+    expect(
+      rc6Mapper.event('tool-workflow/run-end', {
+        sessionId: 's1',
+        data: { runId: 'run-1', stopReason: 'error' },
+      }),
+    ).toMatchObject({ type: 'workflow.ended', runId: 'run-1', stopReason: 'error' })
     expect(
       rc6Mapper.event('session/queue', {
         sessionId: 's1',

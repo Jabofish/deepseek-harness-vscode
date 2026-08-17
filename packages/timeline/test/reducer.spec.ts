@@ -20,6 +20,48 @@ describe('reduceTimeline', () => {
     ])
   })
 
+  it('retains DSH step start, first-token, and completion timing on an assistant node', () => {
+    const started = reduceTimeline(initial, {
+      sequence: 1,
+      event: { type: 'step.started', sessionId: 'session-1', turn: 1, step: 1, time: 1_000 },
+    })
+    const streamed = reduceTimeline(started, {
+      sequence: 2,
+      event: {
+        type: 'message.delta',
+        sessionId: 'session-1',
+        messageId: 'assistant:1:1',
+        turn: 1,
+        step: 1,
+        time: 1_800,
+        delta: 'Hello',
+      },
+    })
+    const completed = reduceTimeline(streamed, {
+      sequence: 3,
+      event: {
+        type: 'message.completed',
+        sessionId: 'session-1',
+        messageId: 'assistant:1:1',
+        turn: 1,
+        step: 1,
+        time: 4_800,
+        markdown: 'Hello',
+      },
+    })
+
+    expect(completed.nodes).toEqual([
+      {
+        kind: 'assistant-message',
+        id: 'assistant:1:1',
+        markdown: 'Hello',
+        streaming: false,
+        timing: { stepStartTime: 1_000, firstTokenTime: 1_800, completedTime: 4_800 },
+      },
+    ])
+    expect(completed.stepTimings).toBeUndefined()
+  })
+
   it('ignores duplicate and stale event sequence numbers', () => {
     const event: BackendEvent = {
       type: 'message.delta',
@@ -32,7 +74,133 @@ describe('reduceTimeline', () => {
     expect(reduceTimeline(first, { sequence: 3, event })).toBe(first)
   })
 
-  it('upserts tool calls, goals, jobs, and subagents by stable id', () => {
+  it('reconciles an optimistic preview with a DSH event-stream rpc id', () => {
+    const pending: TimelineState = {
+      ...initial,
+      nodes: [{ kind: 'user-message', id: 'optimistic:user:webview-1', markdown: 'same prompt' }],
+    }
+    const actual = reduceTimeline(pending, {
+      sequence: 1,
+      event: {
+        type: 'message.user',
+        sessionId: 'session-1',
+        messageId: 'message-1',
+        markdown: 'same prompt',
+        rpcId: 'dsh-frame-1',
+        source: 'user',
+      },
+    })
+
+    expect(actual.nodes).toEqual([
+      {
+        kind: 'user-message',
+        id: 'message-1',
+        markdown: 'same prompt',
+        rpcId: 'dsh-frame-1',
+        source: 'user',
+      },
+    ])
+  })
+
+  it('reconciles a compact text attachment preview without retaining its file body', () => {
+    const pending: TimelineState = {
+      ...initial,
+      nodes: [
+        {
+          kind: 'user-message',
+          id: 'optimistic:user:webview-2',
+          markdown: '概括文件内容',
+          attachments: [{ name: '思路4.md' }],
+        },
+      ],
+    }
+    const actual = reduceTimeline(pending, {
+      sequence: 1,
+      event: {
+        type: 'message.user',
+        sessionId: 'session-1',
+        messageId: 'message-2',
+        markdown: '概括文件内容',
+        attachments: [{ name: '思路4.md' }],
+      },
+    })
+
+    expect(actual.nodes).toEqual([
+      {
+        kind: 'user-message',
+        id: 'message-2',
+        markdown: '概括文件内容',
+        attachments: [{ name: '思路4.md' }],
+      },
+    ])
+  })
+
+  it('retains producer-owned user messages for Trajectory context projection', () => {
+    const next = reduceTimeline(initial, {
+      sequence: 1,
+      event: {
+        type: 'message.user',
+        sessionId: 'session-1',
+        messageId: 'context-1',
+        markdown: 'Injected context that must not become a chat bubble.',
+        source: 'plugin',
+        sourceForm: 'snapshot',
+      },
+    })
+
+    expect(next.nodes).toEqual([
+      {
+        kind: 'user-message',
+        id: 'context-1',
+        markdown: 'Injected context that must not become a chat bubble.',
+        source: 'plugin',
+        sourceForm: 'snapshot',
+      },
+    ])
+  })
+
+  it('does not advance the active session cursor for a foreign event', () => {
+    const next = reduceTimeline(initial, {
+      sequence: 99,
+      event: {
+        type: 'message.completed',
+        sessionId: 'other-session',
+        messageId: 'other-answer',
+        markdown: 'not for the active session',
+      },
+    })
+
+    expect(next).toBe(initial)
+  })
+
+  it('does not reconcile an attachment preview with a different attachment set', () => {
+    const pending: TimelineState = {
+      ...initial,
+      nodes: [
+        {
+          kind: 'user-message',
+          id: 'optimistic:user:webview-3',
+          markdown: 'same prompt',
+          attachments: [{ name: 'one.txt', mimeType: 'text/plain' }],
+        },
+      ],
+    }
+    const actual = reduceTimeline(pending, {
+      sequence: 1,
+      event: {
+        type: 'message.user',
+        sessionId: 'session-1',
+        messageId: 'message-3',
+        markdown: 'same prompt',
+      },
+    })
+
+    expect(actual.nodes).toHaveLength(2)
+    expect(actual.nodes[0]?.id).toBe('optimistic:user:webview-3')
+    expect(actual.nodes[1]?.id).toBe('message-3')
+  })
+
+  it('upserts tool calls by stable id', () => {
     const tool = {
       id: 'tool-1',
       name: 'read',
@@ -51,6 +219,96 @@ describe('reduceTimeline', () => {
     })
     expect(two.nodes).toHaveLength(1)
     expect(two.nodes[0]).toMatchObject({ kind: 'tool', tool: { status: 'completed' } })
+  })
+
+  it('folds durable workflow records by run and exact phase identity', () => {
+    const started = reduceTimeline(initial, {
+      sequence: 1,
+      event: {
+        type: 'workflow.started',
+        sessionId: 'session-1',
+        workflow: {
+          id: 'run-1',
+          sessionId: 'session-1',
+          name: 'audit',
+          status: 'running',
+          stages: [],
+        },
+      },
+    })
+    const withEmptyPhase = reduceTimeline(started, {
+      sequence: 2,
+      event: {
+        type: 'workflow.member.started',
+        sessionId: 'session-1',
+        runId: 'run-1',
+        phase: '',
+        member: { seq: 1, label: 'first', childId: 'child-1', status: 'running' },
+      },
+    })
+    const withMissingPhase = reduceTimeline(withEmptyPhase, {
+      sequence: 3,
+      event: {
+        type: 'workflow.member.started',
+        sessionId: 'session-1',
+        runId: 'run-1',
+        phase: null,
+        member: { seq: 2, label: 'second', childId: 'child-2', status: 'running' },
+      },
+    })
+    const settledMember = reduceTimeline(withMissingPhase, {
+      sequence: 4,
+      event: {
+        type: 'workflow.member.ended',
+        sessionId: 'session-1',
+        runId: 'run-1',
+        seq: 1,
+        outcome: 'completed',
+      },
+    })
+    const ended = reduceTimeline(settledMember, {
+      sequence: 5,
+      event: {
+        type: 'workflow.member.ended',
+        sessionId: 'session-1',
+        runId: 'run-1',
+        seq: 2,
+        outcome: 'failed',
+      },
+    })
+    const failed = reduceTimeline(ended, {
+      sequence: 6,
+      event: {
+        type: 'workflow.ended',
+        sessionId: 'session-1',
+        runId: 'run-1',
+        stopReason: 'error',
+      },
+    })
+    expect(failed.nodes).toMatchObject([
+      {
+        kind: 'workflow',
+        workflow: {
+          status: 'failed',
+          stages: [
+            { id: 'value:0:', phase: '', members: [{ seq: 1, status: 'completed' }] },
+            { id: 'missing', phase: null, members: [{ seq: 2, status: 'failed' }] },
+          ],
+        },
+      },
+    ])
+  })
+
+  it('keeps transient job snapshots out of the durable timeline', () => {
+    const next = reduceTimeline(initial, {
+      sequence: 1,
+      event: {
+        type: 'jobs.updated',
+        sessionId: 'session-1',
+        jobs: [{ id: 'bash-1', kind: 'bash', label: 'pnpm test', status: 'running', startedAt: 0 }],
+      },
+    })
+    expect(next.nodes).toEqual([])
   })
 
   it('replays the same event log to the same immutable state', () => {
@@ -102,5 +360,116 @@ describe('reduceTimeline', () => {
     })
     expect(known.nodes).toHaveLength(2)
     expect(known.nodes[1]).toMatchObject({ id: 'm1' })
+  })
+
+  it('keeps a producer-correlated retry row and records started/cancelled states', () => {
+    const first = reduceTimeline(initial, {
+      sequence: 1,
+      event: {
+        type: 'model.retry',
+        retry: {
+          sessionId: 'session-1',
+          id: 'retry-1',
+          turn: 1,
+          step: 1,
+          attempt: 1,
+          state: 'scheduled',
+        },
+      },
+    })
+    const second = reduceTimeline(first, {
+      sequence: 2,
+      event: {
+        type: 'model.retry',
+        retry: {
+          sessionId: 'session-1',
+          id: 'retry-1',
+          turn: 1,
+          step: 1,
+          attempt: 1,
+          state: 'started',
+        },
+      },
+    })
+    expect(second.nodes).toEqual([
+      { kind: 'retry', id: 'retry:retry-1', turn: 1, step: 1, attempt: 1, state: 'started' },
+    ])
+    const resumed = reduceTimeline(second, {
+      sequence: 3,
+      event: { type: 'message.delta', sessionId: 'session-1', messageId: 'm1', delta: 'back' },
+    })
+    expect(resumed.nodes).toEqual([
+      { kind: 'retry', id: 'retry:retry-1', turn: 1, step: 1, attempt: 1, state: 'started' },
+      { kind: 'assistant-message', id: 'm1', markdown: 'back', streaming: true },
+    ])
+
+    const scheduled = reduceTimeline(resumed, {
+      sequence: 4,
+      event: {
+        type: 'model.retry',
+        retry: {
+          sessionId: 'session-1',
+          id: 'retry-2',
+          turn: 1,
+          step: 2,
+          attempt: 1,
+          state: 'scheduled',
+          message: 'transport failed',
+        },
+      },
+    })
+    const cancelled = reduceTimeline(scheduled, {
+      sequence: 5,
+      event: { type: 'step.ended', sessionId: 'session-1', turn: 1, step: 2 },
+    })
+    expect(cancelled.nodes).toContainEqual({
+      kind: 'retry',
+      id: 'retry:retry-2',
+      turn: 1,
+      step: 2,
+      attempt: 1,
+      state: 'cancelled',
+      message: 'transport failed',
+    })
+  })
+
+  it('merges compaction phases while keeping earlier accounting fields', () => {
+    const start = reduceTimeline(initial, {
+      sequence: 1,
+      event: {
+        type: 'compaction.updated',
+        sessionId: 'session-1',
+        compaction: { id: 'c1', phase: 'start' },
+      },
+    })
+    const summary = reduceTimeline(start, {
+      sequence: 2,
+      event: {
+        type: 'compaction.updated',
+        sessionId: 'session-1',
+        compaction: { id: 'c1', phase: 'summary', summary: 'Kept the task list.' },
+      },
+    })
+    const end = reduceTimeline(summary, {
+      sequence: 3,
+      event: {
+        type: 'compaction.updated',
+        sessionId: 'session-1',
+        compaction: { id: 'c1', phase: 'end', replacedCount: 12, estimatedTokens: 8_400 },
+      },
+    })
+    expect(end.nodes).toEqual([
+      {
+        kind: 'compaction',
+        id: 'compaction:c1',
+        compaction: {
+          id: 'c1',
+          phase: 'end',
+          summary: 'Kept the task list.',
+          replacedCount: 12,
+          estimatedTokens: 8_400,
+        },
+      },
+    ])
   })
 })

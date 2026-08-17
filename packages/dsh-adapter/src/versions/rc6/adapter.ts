@@ -22,7 +22,6 @@ import { Rc6SessionRepository } from '../../repositories/session-repository.js'
 import { Rc6SettingsRepository } from '../../repositories/settings-repository.js'
 import { Rc6SkillRepository } from '../../repositories/skill-repository.js'
 import { Rc6SubagentRepository } from '../../repositories/subagent-repository.js'
-import { Rc6WorkflowRepository } from '../../repositories/workflow-repository.js'
 import { Rc6WorkspaceRepository } from '../../repositories/workspace-repository.js'
 import { DshStreamController } from '../../stream-controller.js'
 import { callRpc } from './rpc.js'
@@ -121,7 +120,6 @@ export class Rc6VersionAdapter implements DshVersionAdapter {
       jobs,
       subagents: new Rc6SubagentRepository(transport),
       settings: new Rc6SettingsRepository(transport),
-      workflows: new Rc6WorkflowRepository(transport),
       skills: new Rc6SkillRepository(transport),
       commands: new Rc6CommandRepository(transport),
       plugins: new Rc6PluginRepository(transport),

@@ -1,18 +1,43 @@
 import type {
   CompactionView,
   GoalView,
-  JobView,
-  SubagentView,
+  MessageAttachment,
   TodoView,
   TokenUsage,
   ToolCallView,
+  WorkflowSummary,
 } from '@dsh-vscode/domain'
+
+/**
+ * Aggregated model-retry status row. Consecutive retry signals collapse into
+ * one producer-correlated row. It persists with its scheduled/started state;
+ * a scheduled wait becomes cancelled if its owning step closes first.
+ */
+export interface ModelRetryNode {
+  readonly kind: 'retry'
+  readonly id: string
+  readonly turn: number
+  readonly step: number
+  readonly attempt: number
+  readonly state: 'scheduled' | 'started' | 'cancelled'
+  readonly delayMs?: number
+  readonly maxRetries?: number
+  readonly message?: string
+}
+
+/** The durable DSH boundaries used by chat and trajectory timing displays. */
+export interface AssistantTiming {
+  readonly stepStartTime: number | null
+  readonly firstTokenTime: number | null
+  readonly completedTime: number | null
+}
 
 export type TimelineNode =
   | {
       readonly kind: 'user-message'
       readonly id: string
       readonly markdown: string
+      readonly attachments?: readonly MessageAttachment[]
       readonly rpcId?: string
       readonly source?: string
       readonly sourceForm?: string
@@ -24,6 +49,8 @@ export type TimelineNode =
       readonly markdown: string
       readonly streaming: boolean
       readonly modelLabel?: string
+      readonly usage?: TokenUsage
+      readonly timing?: AssistantTiming
       readonly reasoning?: {
         readonly markdown: string
         readonly streaming: boolean
@@ -39,8 +66,8 @@ export type TimelineNode =
   | { readonly kind: 'goal'; readonly id: string; readonly goals: readonly GoalView[] }
   | { readonly kind: 'todo'; readonly id: string; readonly todos: readonly TodoView[] }
   | { readonly kind: 'compaction'; readonly id: string; readonly compaction: CompactionView }
-  | { readonly kind: 'job'; readonly id: string; readonly job: JobView }
-  | { readonly kind: 'subagent'; readonly id: string; readonly subagent: SubagentView }
+  | ModelRetryNode
+  | { readonly kind: 'workflow'; readonly id: string; readonly workflow: WorkflowSummary }
   | {
       readonly kind: 'notice'
       readonly id: string
@@ -59,4 +86,6 @@ export interface TimelineState {
   readonly nodes: readonly TimelineNode[]
   readonly lastSequence: number
   readonly tokenUsage?: TokenUsage
+  /** In-flight step boundaries waiting for their assistant message. */
+  readonly stepTimings?: Readonly<Record<string, AssistantTiming>>
 }

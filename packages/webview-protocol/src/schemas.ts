@@ -8,12 +8,14 @@ const requestBase = { requestId: id }
 // larger node budget still permits genuinely long sessions without turning a
 // valid response into a protocol error. String-size limits remain unchanged.
 const MAX_PROTOCOL_NODES = 100_000
+const MAX_ATTACHMENT_BASE64_CHARS = Math.ceil((8 * 1024 * 1024) / 3) * 4
 const session = { sessionId: id }
+const attachmentUri = z.string().regex(/^dsh-attachment:[A-Za-z0-9-]{16,128}$/)
 const attachmentSchema = z
   .object({
     // The Extension Host owns the bytes. The Webview only sends back this
     // short-lived opaque handle, never a path or a data URI.
-    uri: z.string().regex(/^dsh-attachment:[A-Za-z0-9-]{16,128}$/),
+    uri: attachmentUri,
     name: z.string().min(1).max(512),
     mimeType: z.string().max(256).optional(),
   })
@@ -22,7 +24,7 @@ const promptSchema = z
   .object({
     sessionId: id,
     text: z.string().max(1_000_000),
-    attachments: z.array(attachmentSchema).max(32),
+    attachments: z.array(attachmentSchema).max(8),
   })
   .strict()
   .superRefine((value, context) => {
@@ -62,6 +64,8 @@ const questionAnswerSchema = z
   .object({
     id,
     response: z.union([z.string().max(100_000), z.array(id).max(32)]),
+    // Upstream `custom`: free-text answer that may accompany a selection.
+    custom: z.string().max(100_000).optional(),
   })
   .strict()
 
@@ -155,7 +159,13 @@ export const webviewRequestSchema = z.discriminatedUnion('type', [
       payload: z.object({ sessionId: id, archived: z.boolean() }).strict(),
     })
     .strict(),
-  z.object({ type: z.literal('session.sendPrompt'), ...requestBase, payload: promptSchema }).strict(),
+  z
+    .object({
+      type: z.literal('session.sendPrompt'),
+      ...requestBase,
+      payload: promptSchema.extend({ mode: z.enum(['queue', 'steer']).default('queue') }),
+    })
+    .strict(),
   z
     .object({
       type: z.literal('session.enqueuePrompt'),
@@ -198,6 +208,37 @@ export const webviewRequestSchema = z.discriminatedUnion('type', [
     })
     .strict(),
   z.object({ type: z.literal('attachment.pick'), ...requestBase }).strict(),
+  z
+    .object({
+      // Paste/drop bytes originate in the Webview; the Extension Host still
+      // owns validation and storage and returns the same opaque handle.
+      type: z.literal('attachment.ingest'),
+      ...requestBase,
+      payload: z
+        .object({
+          name: z.string().min(1).max(512),
+          mimeType: z.string().max(256).optional(),
+          // 8 MiB of bytes encode to exactly 11,184,812 Base64 characters
+          // in the worst (non-multiple-of-three) case.
+          dataBase64: z.string().min(1).max(MAX_ATTACHMENT_BASE64_CHARS),
+        })
+        .strict(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('attachment.preview'),
+      ...requestBase,
+      payload: z.object({ uri: attachmentUri }).strict(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('attachment.release'),
+      ...requestBase,
+      payload: z.object({ uris: z.array(attachmentUri).min(1).max(8) }).strict(),
+    })
+    .strict(),
   z.object({ type: z.literal('attachment.open.list'), ...requestBase }).strict(),
   z
     .object({
@@ -265,7 +306,17 @@ export const webviewRequestSchema = z.discriminatedUnion('type', [
         .strict(),
     })
     .strict(),
+  z
+    .object({
+      type: z.literal('interaction.question.cancel'),
+      ...requestBase,
+      payload: z.object({ questionId: id }).strict(),
+    })
+    .strict(),
   z.object({ type: z.literal('settings.read'), ...requestBase }).strict(),
+  // Extension-local facts (connection/runtime defaults). The DSH host settings
+  // snapshot travels on settings.read; the two must not be conflated.
+  z.object({ type: z.literal('extensionSettings.read'), ...requestBase }).strict(),
   z
     .object({
       type: z.literal('settings.update'),
@@ -306,9 +357,6 @@ export const webviewRequestSchema = z.discriminatedUnion('type', [
     .strict(),
   z.object({ type: z.literal('job.list'), ...requestBase, payload: z.object(session).strict() }).strict(),
   z
-    .object({ type: z.literal('job.cancel'), ...requestBase, payload: z.object({ jobId: id }).strict() })
-    .strict(),
-  z
     .object({ type: z.literal('subagent.list'), ...requestBase, payload: z.object(session).strict() })
     .strict(),
   z
@@ -323,23 +371,6 @@ export const webviewRequestSchema = z.discriminatedUnion('type', [
     .strict(),
   z
     .object({ type: z.literal('subagent.interrupt'), ...requestBase, payload: z.object(session).strict() })
-    .strict(),
-  z
-    .object({ type: z.literal('workflow.list'), ...requestBase, payload: z.object(session).strict() })
-    .strict(),
-  z
-    .object({
-      type: z.literal('workflow.start'),
-      ...requestBase,
-      payload: z.object({ sessionId: id, workflowId: id }).strict(),
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal('workflow.cancel'),
-      ...requestBase,
-      payload: z.object({ workflowId: id }).strict(),
-    })
     .strict(),
   z
     .object({
@@ -376,14 +407,7 @@ export const webviewRequestSchema = z.discriminatedUnion('type', [
       payload: z.object({ sessionId: id, command: z.string().min(1).max(100_000) }).strict(),
     })
     .strict(),
-  z.object({ type: z.literal('plugin.list'), ...requestBase }).strict(),
-  z
-    .object({
-      type: z.literal('plugin.configure'),
-      ...requestBase,
-      payload: z.object({ pluginId: id, enabled: z.boolean() }).strict(),
-    })
-    .strict(),
+  z.object({ type: z.literal('plugin.inventory'), ...requestBase }).strict(),
   z.object({ type: z.literal('preset.list'), ...requestBase }).strict(),
   z
     .object({ type: z.literal('preset.read'), ...requestBase, payload: z.object({ presetId: id }).strict() })

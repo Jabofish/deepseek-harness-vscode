@@ -1,13 +1,13 @@
-import type { BackendEvent, GoalView, JobView, SubagentView } from './events.js'
+import type { BackendEvent, GoalView, JobView, SubagentCatalog } from './events.js'
 import type {
   DshSettingsSchema,
-  AgentPresetDescriptor,
   AgentPresetDocument,
+  AgentPresetLocation,
+  AgentPresetRoster,
   DynamicCommand,
-  PluginDescriptor,
+  PluginInventorySnapshot,
   SessionExportOptions,
   SkillDescriptor,
-  WorkflowSummary,
 } from './advanced.js'
 import type {
   AgentConfiguration,
@@ -46,12 +46,14 @@ export interface SessionRepository {
   rename(sessionId: string, title: string, signal?: AbortSignal): Promise<void>
   fork(sessionId: string, atSeq?: number, signal?: AbortSignal): Promise<SessionDetail>
   setArchived(sessionId: string, archived: boolean, signal?: AbortSignal): Promise<void>
-  sendPrompt(input: PromptInput, signal?: AbortSignal): Promise<void>
+  sendPrompt(input: PromptInput, mode?: RunningInputMode, signal?: AbortSignal): Promise<void>
   enqueuePrompt(input: PromptInput, mode: RunningInputMode, signal?: AbortSignal): Promise<QueuedInput>
   listQueue(sessionId: string, signal?: AbortSignal): Promise<readonly QueuedInput[]>
   updateQueuedInput(inputId: string, text: string, signal?: AbortSignal): Promise<void>
   removeQueuedInput(inputId: string, signal?: AbortSignal): Promise<void>
   convertQueuedInputToSteer(inputId: string, signal?: AbortSignal): Promise<void>
+  /** Host-side queue ownership used to authorize id-only queue mutations. */
+  readonly sessionForQueuedInput?: (inputId: string) => string | undefined
   cancel(sessionId: string, signal?: AbortSignal): Promise<void>
   setConfiguration(sessionId: string, configuration: AgentConfiguration, signal?: AbortSignal): Promise<void>
 }
@@ -72,9 +74,22 @@ export interface ModelRepository {
   discoverModels(input: ModelDiscoveryInput, signal?: AbortSignal): Promise<readonly DiscoveredModel[]>
 }
 
+/** A credential reference's host-side state; the value itself never leaves the host. */
+export interface CredentialReferenceState {
+  readonly ref: string
+  readonly configured: boolean
+  readonly writable: boolean
+}
+
 export interface CredentialRepository {
   setSecret(providerId: string, field: string, value: string, signal?: AbortSignal): Promise<void>
   removeSecret(providerId: string, field: string, signal?: AbortSignal): Promise<void>
+  /** `credentials.describe` for one explicit reference (plugin-owned secrets). */
+  describeReference(ref: string, signal?: AbortSignal): Promise<CredentialReferenceState>
+  /** `credentials.set` for one explicit reference; the value never transits the Webview. */
+  setReference(ref: string, value: string, signal?: AbortSignal): Promise<void>
+  /** `credentials.unset` for one explicit reference. */
+  unsetReference(ref: string, signal?: AbortSignal): Promise<void>
 }
 
 export interface InteractionRepository {
@@ -84,6 +99,10 @@ export interface InteractionRepository {
     response: string | readonly string[] | readonly QuestionAnswer[],
     signal?: AbortSignal,
   ): Promise<void>
+  cancelQuestion(questionId: string, signal?: AbortSignal): Promise<void>
+  /** Host-side ownership facts used to authorize Webview interaction routes. */
+  readonly sessionForPermission?: (requestId: string) => string | undefined
+  readonly sessionForQuestion?: (questionId: string) => string | undefined
 }
 
 export interface GoalRepository {
@@ -95,15 +114,16 @@ export interface GoalRepository {
     signal?: AbortSignal,
   ): Promise<void>
   readonly clear?: (goalId: string, signal?: AbortSignal) => Promise<void>
+  /** Host-side ownership fact for id-only goal mutations. */
+  readonly sessionForGoal?: (goalId: string) => string | undefined
 }
 
 export interface JobRepository {
   list(sessionId: string, signal?: AbortSignal): Promise<readonly JobView[]>
-  cancel(jobId: string, signal?: AbortSignal): Promise<void>
 }
 
 export interface SubagentRepository {
-  list(sessionId: string, signal?: AbortSignal): Promise<readonly SubagentView[]>
+  list(sessionId: string, signal?: AbortSignal): Promise<SubagentCatalog>
   readonly history?: (sessionId: string, signal?: AbortSignal) => Promise<SubagentHistoryPage>
   send(sessionId: string, message: string, signal?: AbortSignal): Promise<void>
   interrupt(sessionId: string, signal?: AbortSignal): Promise<void>
@@ -113,13 +133,9 @@ export interface SettingsRepository {
   schema(signal?: AbortSignal): Promise<DshSettingsSchema>
   read(signal?: AbortSignal): Promise<Readonly<Record<string, unknown>>>
   update(path: string, value: unknown, signal?: AbortSignal): Promise<void>
+  /** Remove one field's user override (`settings.mutate` op `unset`); the composition base resurfaces. */
+  unset(path: string, signal?: AbortSignal): Promise<void>
   replace(value: Readonly<Record<string, unknown>>, signal?: AbortSignal): Promise<void>
-}
-
-export interface WorkflowRepository {
-  list(sessionId: string, signal?: AbortSignal): Promise<readonly WorkflowSummary[]>
-  start(sessionId: string, workflowId: string, signal?: AbortSignal): Promise<WorkflowSummary>
-  cancel(workflowId: string, signal?: AbortSignal): Promise<void>
 }
 
 export interface SkillRepository {
@@ -133,17 +149,21 @@ export interface CommandRepository {
   execute(sessionId: string, command: string, signal?: AbortSignal): Promise<void>
 }
 
+/**
+ * The host's plugin inventory — a read-only direct-Remote projection. The
+ * pinned rc.6 contract publishes no mutation path: plugins are composed by
+ * the deployment, never toggled from a client.
+ */
 export interface PluginRepository {
-  list(signal?: AbortSignal): Promise<readonly PluginDescriptor[]>
-  configure(pluginId: string, enabled: boolean, signal?: AbortSignal): Promise<void>
+  inventory(signal?: AbortSignal): Promise<PluginInventorySnapshot>
 }
 
 export interface PresetRepository {
-  list(signal?: AbortSignal): Promise<readonly AgentPresetDescriptor[]>
+  list(signal?: AbortSignal): Promise<AgentPresetRoster>
   select(sessionId: string, presetId: string, signal?: AbortSignal): Promise<void>
   readonly read?: (presetId: string, signal?: AbortSignal) => Promise<AgentPresetDocument>
   readonly copy?: (from: string, presetId: string, name?: string, signal?: AbortSignal) => Promise<string>
-  readonly openDocument?: (presetId: string, signal?: AbortSignal) => Promise<{ readonly opened: boolean }>
+  readonly openDocument?: (presetId: string, signal?: AbortSignal) => Promise<AgentPresetLocation>
   readonly remove?: (presetId: string, signal?: AbortSignal) => Promise<void>
 }
 
@@ -167,7 +187,6 @@ export interface DshBackend {
   readonly jobs: JobRepository
   readonly subagents: SubagentRepository
   readonly settings: SettingsRepository
-  readonly workflows: WorkflowRepository
   readonly skills: SkillRepository
   readonly commands: CommandRepository
   readonly plugins: PluginRepository

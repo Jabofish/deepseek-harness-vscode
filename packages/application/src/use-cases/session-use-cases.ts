@@ -27,9 +27,13 @@ export class SessionUseCases {
     return this.backendService.requireBackend().sessions.remove(sessionId, signal)
   }
 
-  public sendPrompt(input: PromptInput, signal?: AbortSignal): Promise<void> {
+  public sendPrompt(
+    input: PromptInput,
+    mode: RunningInputMode = 'queue',
+    signal?: AbortSignal,
+  ): Promise<void> {
     if (input.text.trim() === '' && input.attachments.length === 0) throw new Error('Prompt cannot be empty')
-    return this.backendService.requireBackend().sessions.sendPrompt(input, signal)
+    return this.backendService.requireBackend().sessions.sendPrompt(input, mode, signal)
   }
 
   public cancel(sessionId: string, signal?: AbortSignal): Promise<void> {

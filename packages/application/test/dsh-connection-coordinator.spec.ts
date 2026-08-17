@@ -39,7 +39,6 @@ function backend(connection = fakeConnectedBackend()): DshBackend {
     jobs: {},
     subagents: {},
     settings: {},
-    workflows: {},
     skills: {},
     commands: {},
     plugins: {},

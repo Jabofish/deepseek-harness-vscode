@@ -1,6 +1,6 @@
 import type { BackendEvent } from '@dsh-vscode/domain'
 
-import type { TimelineNode, TimelineState } from './nodes.js'
+import type { AssistantTiming, ModelRetryNode, TimelineNode, TimelineState } from './nodes.js'
 import { addTokenUsage } from './usage.js'
 
 export interface SequencedBackendEvent {
@@ -29,25 +29,34 @@ export function reduceTimeline(state: TimelineState, input: SequencedBackendEven
   if (input.sequence <= state.lastSequence) return state
   const sessionId = eventSessionId(input.event)
   if (state.sessionId !== undefined && sessionId !== undefined && sessionId !== state.sessionId)
-    return { ...state, lastSequence: input.sequence }
+    // Events for another open session are buffered by the Webview store and
+    // replayed after that session's history baseline is installed.  They must
+    // not advance the active session's sequence cursor: doing so can cause a
+    // failed/stale open to drop later events for the session still on screen.
+    return state
   const nodes = [...state.nodes]
+  const stepTimings: Record<string, AssistantTiming> = { ...(state.stepTimings ?? {}) }
   const event = input.event
   switch (event.type) {
     case 'message.user':
-      if (isInjectedUserMessage(event)) break
       {
         const optimisticIndex = nodes.findIndex(
           (node) =>
             node.kind === 'user-message' &&
             node.id.startsWith('optimistic:user:') &&
+            // The DSH rpcId is the event-stream frame id, not the Webview
+            // request id used to create the optimistic preview. Match the
+            // preview text as the transport-independent fallback; ordered
+            // session events keep repeated submissions FIFO.
             ((event.rpcId !== undefined && node.rpcId === event.rpcId) ||
-              (event.rpcId === undefined && node.markdown === event.markdown)),
+              sameUserMessagePreview(node, event)),
         )
         if (optimisticIndex >= 0)
           nodes[optimisticIndex] = {
             kind: 'user-message',
             id: event.messageId,
             markdown: event.markdown,
+            ...(event.attachments === undefined ? {} : { attachments: event.attachments }),
             ...(event.rpcId === undefined ? {} : { rpcId: event.rpcId }),
             ...(event.source === undefined ? {} : { source: event.source }),
             ...(event.sourceForm === undefined ? {} : { sourceForm: event.sourceForm }),
@@ -58,6 +67,7 @@ export function reduceTimeline(state: TimelineState, input: SequencedBackendEven
             kind: 'user-message',
             id: event.messageId,
             markdown: event.markdown,
+            ...(event.attachments === undefined ? {} : { attachments: event.attachments }),
             ...(event.rpcId === undefined ? {} : { rpcId: event.rpcId }),
             ...(event.source === undefined ? {} : { source: event.source }),
             ...(event.sourceForm === undefined ? {} : { sourceForm: event.sourceForm }),
@@ -65,11 +75,30 @@ export function reduceTimeline(state: TimelineState, input: SequencedBackendEven
           })
       }
       break
+    case 'step.started': {
+      const key = timingKey(event.turn, event.step)
+      if (key !== undefined && (event.time !== undefined || stepTimings[key] !== undefined)) {
+        const previous = stepTimings[key]
+        stepTimings[key] = {
+          stepStartTime: event.time ?? previous?.stepStartTime ?? null,
+          firstTokenTime: previous?.firstTokenTime ?? null,
+          completedTime: previous?.completedTime ?? null,
+        }
+      }
+      break
+    }
     case 'message.delta': {
       if (event.delta === '') break
+      const timing = noteFirstToken(stepTimings, event.turn, event.step, event.time)
       const index = conversationNodeIndex(nodes, event.messageId)
       if (index < 0) {
-        nodes.push({ kind: 'assistant-message', id: event.messageId, markdown: event.delta, streaming: true })
+        nodes.push({
+          kind: 'assistant-message',
+          id: event.messageId,
+          markdown: event.delta,
+          streaming: true,
+          ...(timing === undefined ? {} : { timing }),
+        })
         break
       }
       const node = nodes[index]
@@ -78,6 +107,7 @@ export function reduceTimeline(state: TimelineState, input: SequencedBackendEven
           ...node,
           markdown: `${node.markdown}${event.delta}`,
           streaming: true,
+          ...(timing === undefined ? {} : { timing }),
           ...(node.reasoning === undefined ? {} : { reasoning: { ...node.reasoning, streaming: false } }),
         }
       } else if (node?.kind === 'reasoning') {
@@ -89,6 +119,7 @@ export function reduceTimeline(state: TimelineState, input: SequencedBackendEven
           id: event.messageId,
           markdown: event.delta,
           streaming: true,
+          ...(timing === undefined ? {} : { timing }),
           reasoning: { markdown: node.markdown, streaming: false },
         }
       }
@@ -97,12 +128,14 @@ export function reduceTimeline(state: TimelineState, input: SequencedBackendEven
     case 'reasoning.delta': {
       if (event.delta === '') break
       const index = conversationNodeIndex(nodes, event.messageId)
+      const timing = timingForEvent(stepTimings, event.turn, event.step)
       if (index < 0) {
         nodes.push({
           kind: 'assistant-message',
           id: event.messageId,
           markdown: '',
           streaming: false,
+          ...(timing === undefined ? {} : { timing }),
           reasoning: { markdown: event.delta, streaming: true },
         })
         break
@@ -112,6 +145,7 @@ export function reduceTimeline(state: TimelineState, input: SequencedBackendEven
         const reasoning = node.reasoning
         nodes[index] = {
           ...node,
+          ...(timing === undefined ? {} : { timing }),
           reasoning: {
             markdown: `${reasoning?.markdown ?? ''}${event.delta}`,
             streaming: true,
@@ -123,6 +157,7 @@ export function reduceTimeline(state: TimelineState, input: SequencedBackendEven
       break
     }
     case 'message.completed': {
+      const timing = completeTiming(stepTimings, event.turn, event.step, event.time)
       const index = conversationNodeIndex(nodes, event.messageId)
       if (index < 0) {
         if (event.markdown !== undefined || event.reasoning !== undefined)
@@ -131,7 +166,9 @@ export function reduceTimeline(state: TimelineState, input: SequencedBackendEven
             id: event.messageId,
             markdown: event.markdown ?? '',
             streaming: false,
+            ...(timing === undefined ? {} : { timing }),
             ...(event.modelLabel === undefined ? {} : { modelLabel: event.modelLabel }),
+            ...(event.usage === undefined ? {} : { usage: event.usage }),
             ...(event.reasoning === undefined
               ? {}
               : { reasoning: { markdown: event.reasoning, streaming: false } }),
@@ -141,9 +178,17 @@ export function reduceTimeline(state: TimelineState, input: SequencedBackendEven
       const node = nodes[index]
       // A usage-only completion can carry accounting without visible message
       // fields. It must not close the live answer; the accumulator below still
-      // consumes its usage payload.
-      if (event.markdown === undefined && event.reasoning === undefined && event.modelLabel === undefined)
+      // consumes its usage payload, but the retained per-message usage is
+      // still recorded for the Trajectory inspector.
+      if (event.markdown === undefined && event.reasoning === undefined && event.modelLabel === undefined) {
+        if (node?.kind === 'assistant-message' && (event.usage !== undefined || timing !== undefined))
+          nodes[index] = {
+            ...node,
+            ...(event.usage === undefined ? {} : { usage: event.usage }),
+            ...(timing === undefined ? {} : { timing }),
+          }
         break
+      }
       if (node?.kind === 'assistant-message') {
         const reasoning =
           event.reasoning === undefined ? node.reasoning : { markdown: event.reasoning, streaming: false }
@@ -151,7 +196,13 @@ export function reduceTimeline(state: TimelineState, input: SequencedBackendEven
           ...node,
           markdown: event.markdown ?? node.markdown,
           streaming: false,
+          ...(timing === undefined ? {} : { timing }),
           ...(event.modelLabel === undefined ? {} : { modelLabel: event.modelLabel }),
+          ...(event.usage === undefined
+            ? node.usage === undefined
+              ? {}
+              : { usage: node.usage }
+            : { usage: event.usage }),
           ...(reasoning === undefined ? {} : { reasoning: { ...reasoning, streaming: false } }),
         }
       } else if (node?.kind === 'reasoning') {
@@ -160,7 +211,9 @@ export function reduceTimeline(state: TimelineState, input: SequencedBackendEven
           id: event.messageId,
           markdown: event.markdown ?? '',
           streaming: false,
+          ...(timing === undefined ? {} : { timing }),
           ...(event.modelLabel === undefined ? {} : { modelLabel: event.modelLabel }),
+          ...(event.usage === undefined ? {} : { usage: event.usage }),
           reasoning: {
             markdown: event.reasoning ?? node.markdown,
             streaming: false,
@@ -169,6 +222,23 @@ export function reduceTimeline(state: TimelineState, input: SequencedBackendEven
       }
       break
     }
+    case 'step.ended':
+      for (let index = 0; index < nodes.length; index += 1) {
+        const node = nodes[index]
+        if (
+          node?.kind === 'retry' &&
+          node.turn === event.turn &&
+          node.step === event.step &&
+          node.state === 'scheduled'
+        )
+          nodes[index] = { ...node, state: 'cancelled' }
+        else if (node?.kind === 'workflow' && node.workflow.status === 'running')
+          nodes[index] = {
+            ...node,
+            workflow: interruptWorkflow(node.workflow),
+          }
+      }
+      break
     case 'tool.updated': {
       const existingIndex = nodes.findIndex((node) => node.kind === 'tool' && node.id === event.tool.id)
       const existing = existingIndex < 0 ? undefined : nodes[existingIndex]
@@ -187,29 +257,75 @@ export function reduceTimeline(state: TimelineState, input: SequencedBackendEven
     case 'todo.updated':
       upsert(nodes, { kind: 'todo', id: `todo:${event.sessionId}`, todos: event.todos })
       break
-    case 'compaction.updated':
-      upsert(nodes, {
-        kind: 'compaction',
-        id: `compaction:${event.compaction.id}`,
-        compaction: event.compaction,
-      })
+    case 'compaction.updated': {
+      const existingIndex = nodes.findIndex(
+        (node) => node.kind === 'compaction' && node.id === `compaction:${event.compaction.id}`,
+      )
+      const existing = existingIndex < 0 ? undefined : nodes[existingIndex]
+      if (existing?.kind === 'compaction') {
+        nodes[existingIndex] = {
+          kind: 'compaction',
+          id: `compaction:${event.compaction.id}`,
+          compaction: mergeCompaction(existing.compaction, event.compaction),
+        }
+      } else
+        upsert(nodes, {
+          kind: 'compaction',
+          id: `compaction:${event.compaction.id}`,
+          compaction: event.compaction,
+        })
       break
-    case 'job.updated':
-      upsert(nodes, { kind: 'job', id: `job:${event.job.id}`, job: event.job })
+    }
+    case 'model.retry': {
+      const id = `retry:${event.retry.id}`
+      const existingIndex = nodes.findIndex((node) => node.kind === 'retry' && node.id === id)
+      const existing = existingIndex < 0 ? undefined : nodes[existingIndex]
+      const previous = existing?.kind === 'retry' ? existing : undefined
+      const attempt = Math.max(event.retry.attempt, previous?.attempt ?? 0)
+      const delayMs = event.retry.delayMs ?? previous?.delayMs
+      const maxRetries = event.retry.maxRetries ?? previous?.maxRetries
+      const message = event.retry.message ?? previous?.message
+      const node: ModelRetryNode = {
+        kind: 'retry',
+        id,
+        turn: event.retry.turn,
+        step: event.retry.step,
+        attempt,
+        state: event.retry.state,
+        ...(delayMs === undefined ? {} : { delayMs }),
+        ...(maxRetries === undefined ? {} : { maxRetries }),
+        ...(message === undefined ? {} : { message }),
+      }
+      if (existingIndex < 0) nodes.push(node)
+      else nodes[existingIndex] = node
       break
+    }
     case 'jobs.updated':
-      for (const job of event.jobs) upsert(nodes, { kind: 'job', id: `job:${job.id}`, job })
+      // `session/jobs` is a transient full snapshot rendered in the session
+      // header. It is not a durable conversation event and must not create
+      // timeline cards.
       break
-    case 'subagent.updated':
-      upsert(nodes, { kind: 'subagent', id: `subagent:${event.subagent.id}`, subagent: event.subagent })
+    case 'workflow.started':
+      upsert(nodes, { kind: 'workflow', id: `workflow:${event.workflow.id}`, workflow: event.workflow })
       break
-    case 'workflow.updated':
-      upsert(nodes, {
-        kind: 'notice',
-        id: `workflow:${event.workflow.id}`,
-        level: workflowLevel(event.workflow.status),
-        text: `Workflow ${event.workflow.name}: ${event.workflow.status}`,
-      })
+    case 'workflow.member.started':
+      updateWorkflow(nodes, event.runId, (workflow) => addWorkflowMember(workflow, event.phase, event.member))
+      break
+    case 'workflow.member.ended':
+      updateWorkflow(nodes, event.runId, (workflow) =>
+        settleWorkflowMember(workflow, event.seq, event.outcome),
+      )
+      break
+    case 'workflow.ended':
+      updateWorkflow(nodes, event.runId, (workflow) => ({
+        ...workflow,
+        status:
+          event.stopReason === 'completed'
+            ? 'completed'
+            : event.stopReason === 'cancelled'
+              ? 'cancelled'
+              : 'failed',
+      }))
       break
     case 'permission.requested':
       nodes.push({
@@ -272,6 +388,10 @@ export function reduceTimeline(state: TimelineState, input: SequencedBackendEven
         nodes.push({ kind: 'notice', id: `notice:${input.sequence}`, level: event.level, text: event.text })
       break
   }
+  if (event.type === 'message.completed' || event.type === 'step.ended') {
+    const key = timingKey(event.turn, event.step)
+    if (key !== undefined) delete stepTimings[key]
+  }
   const tokenUsage =
     event.type === 'message.completed' && event.usage !== undefined
       ? addTokenUsage(state.tokenUsage, event.usage)
@@ -280,15 +400,79 @@ export function reduceTimeline(state: TimelineState, input: SequencedBackendEven
     sessionId: state.sessionId ?? sessionId,
     nodes,
     lastSequence: input.sequence,
+    ...(Object.keys(stepTimings).length === 0 ? {} : { stepTimings }),
     ...(tokenUsage === undefined ? {} : { tokenUsage }),
   }
+}
+
+function timingKey(turn: number | undefined, step: number | undefined): string | undefined {
+  return turn === undefined || step === undefined ? undefined : `${turn}:${step}`
+}
+
+function timingForEvent(
+  timings: Record<string, AssistantTiming>,
+  turn: number | undefined,
+  step: number | undefined,
+): AssistantTiming | undefined {
+  const key = timingKey(turn, step)
+  return key === undefined ? undefined : timings[key]
+}
+
+function noteFirstToken(
+  timings: Record<string, AssistantTiming>,
+  turn: number | undefined,
+  step: number | undefined,
+  time: number | undefined,
+): AssistantTiming | undefined {
+  const key = timingKey(turn, step)
+  if (key === undefined || time === undefined) return timingForEvent(timings, turn, step)
+  const previous = timings[key] ?? { stepStartTime: null, firstTokenTime: null, completedTime: null }
+  if (previous.firstTokenTime === null) timings[key] = { ...previous, firstTokenTime: time }
+  return timings[key]
+}
+
+function completeTiming(
+  timings: Record<string, AssistantTiming>,
+  turn: number | undefined,
+  step: number | undefined,
+  time: number | undefined,
+): AssistantTiming | undefined {
+  const key = timingKey(turn, step)
+  if (key === undefined) return undefined
+  const previous = timings[key] ?? { stepStartTime: null, firstTokenTime: null, completedTime: null }
+  if (time !== undefined) timings[key] = { ...previous, completedTime: time }
+  return timings[key]
 }
 
 function eventSessionId(event: BackendEvent): string | undefined {
   if ('sessionId' in event) return event.sessionId
   if ('request' in event) return event.request.sessionId
   if ('question' in event) return event.question.sessionId
+  if ('retry' in event) return event.retry.sessionId
   return undefined
+}
+
+/**
+ * Compaction phases arrive as separate events sharing one id. Keep the
+ * summary, replaced count, and token estimate from whichever phase last
+ * carried them so the collapsed row stays informative.
+ */
+function mergeCompaction(
+  previous: Extract<TimelineNode, { readonly kind: 'compaction' }>['compaction'],
+  next: Extract<TimelineNode, { readonly kind: 'compaction' }>['compaction'],
+): Extract<TimelineNode, { readonly kind: 'compaction' }>['compaction'] {
+  return {
+    ...previous,
+    ...next,
+    phase: next.phase,
+    ...(next.summary === undefined && previous.summary !== undefined ? { summary: previous.summary } : {}),
+    ...(next.replacedCount === undefined && previous.replacedCount !== undefined
+      ? { replacedCount: previous.replacedCount }
+      : {}),
+    ...(next.estimatedTokens === undefined && previous.estimatedTokens !== undefined
+      ? { estimatedTokens: previous.estimatedTokens }
+      : {}),
+  }
 }
 
 function upsert(nodes: TimelineNode[], node: TimelineNode): void {
@@ -323,8 +507,84 @@ function conversationNodeIndex(nodes: readonly TimelineNode[], messageId: string
   )
 }
 
-function workflowLevel(status: string): 'info' | 'warning' | 'error' {
-  if (status === 'failed') return 'error'
-  if (status === 'cancelled') return 'warning'
-  return 'info'
+function sameUserMessagePreview(
+  node: Extract<TimelineNode, { readonly kind: 'user-message' }>,
+  event: Extract<BackendEvent, { readonly type: 'message.user' }>,
+): boolean {
+  if (node.markdown !== event.markdown) return false
+  const previewAttachments = node.attachments ?? []
+  const eventAttachments = event.attachments ?? []
+  return (
+    previewAttachments.length === eventAttachments.length &&
+    previewAttachments.every(
+      (attachment, index) =>
+        attachment.name === eventAttachments[index]?.name &&
+        attachment.mimeType === eventAttachments[index]?.mimeType,
+    )
+  )
+}
+
+function workflowPhaseKey(phase: string | null): string {
+  return phase === null ? 'missing' : `value:${phase.length}:${phase}`
+}
+
+function updateWorkflow(
+  nodes: TimelineNode[],
+  runId: string,
+  update: (
+    workflow: Extract<TimelineNode, { readonly kind: 'workflow' }>['workflow'],
+  ) => Extract<TimelineNode, { readonly kind: 'workflow' }>['workflow'],
+): void {
+  const index = nodes.findIndex((node) => node.kind === 'workflow' && node.workflow.id === runId)
+  const node = index < 0 ? undefined : nodes[index]
+  if (node?.kind !== 'workflow') return
+  nodes[index] = { ...node, workflow: update(node.workflow) }
+}
+
+function addWorkflowMember(
+  workflow: Extract<TimelineNode, { readonly kind: 'workflow' }>['workflow'],
+  phase: string | null,
+  member: Extract<
+    TimelineNode,
+    { readonly kind: 'workflow' }
+  >['workflow']['stages'][number]['members'][number],
+): Extract<TimelineNode, { readonly kind: 'workflow' }>['workflow'] {
+  if (workflow.stages.some((stage) => stage.members.some((entry) => entry.seq === member.seq)))
+    return workflow
+  const id = workflowPhaseKey(phase)
+  const index = workflow.stages.findIndex((stage) => stage.id === id)
+  if (index < 0) return { ...workflow, stages: [...workflow.stages, { id, phase, members: [member] }] }
+  const stages = [...workflow.stages]
+  const stage = stages[index]
+  if (stage !== undefined) stages[index] = { ...stage, members: [...stage.members, member] }
+  return { ...workflow, stages }
+}
+
+function settleWorkflowMember(
+  workflow: Extract<TimelineNode, { readonly kind: 'workflow' }>['workflow'],
+  seq: number,
+  outcome: 'completed' | 'failed' | 'cancelled',
+): Extract<TimelineNode, { readonly kind: 'workflow' }>['workflow'] {
+  return {
+    ...workflow,
+    stages: workflow.stages.map((stage) => ({
+      ...stage,
+      members: stage.members.map((member) => (member.seq === seq ? { ...member, status: outcome } : member)),
+    })),
+  }
+}
+
+function interruptWorkflow(
+  workflow: Extract<TimelineNode, { readonly kind: 'workflow' }>['workflow'],
+): Extract<TimelineNode, { readonly kind: 'workflow' }>['workflow'] {
+  return {
+    ...workflow,
+    status: 'interrupted',
+    stages: workflow.stages.map((stage) => ({
+      ...stage,
+      members: stage.members.map((member) =>
+        member.status === 'running' ? { ...member, status: 'interrupted' } : member,
+      ),
+    })),
+  }
 }

@@ -7,18 +7,22 @@ export type IconName =
   | 'box'
   | 'check'
   | 'chevron-down'
+  | 'chevron-right'
   | 'clock'
   | 'close'
   | 'file'
   | 'folder'
   | 'image'
+  | 'list'
   | 'model'
   | 'paperclip'
   | 'plan'
   | 'person'
   | 'play'
   | 'refresh'
+  | 'search'
   | 'send'
+  | 'settings'
   | 'session'
   | 'sparkles'
   | 'status'
@@ -89,6 +93,8 @@ function renderIcon(name: IconName): ReactElement {
       return <path d="m5 12 4.2 4.2L19 6.5" />
     case 'chevron-down':
       return <path d="m6 9 6 6 6-6" />
+    case 'chevron-right':
+      return <path d="m9 6 6 6-6 6" />
     case 'clock':
       return (
         <>
@@ -119,6 +125,13 @@ function renderIcon(name: IconName): ReactElement {
           <rect x="3.5" y="4.5" width="17" height="15" rx="2" />
           <circle cx="8.5" cy="9" r="1.5" />
           <path d="m4.5 17 4.5-4.5 3 3 2.5-2.5 5 5" />
+        </>
+      )
+    case 'list':
+      return (
+        <>
+          <path d="M8.5 6h12M8.5 12h12M8.5 18h12" />
+          <path d="M3.5 6h.01M3.5 12h.01M3.5 18h.01" />
         </>
       )
     case 'model':
@@ -162,11 +175,25 @@ function renderIcon(name: IconName): ReactElement {
           <path d="M21 20v-5h-5" />
         </>
       )
+    case 'search':
+      return (
+        <>
+          <circle cx="10.5" cy="10.5" r="6" />
+          <path d="m15 15 5 5" />
+        </>
+      )
     case 'send':
       return (
         <>
           <path d="m21 3-7.5 18-3.5-7-7-3.5L21 3Z" />
           <path d="M10 14 21 3" />
+        </>
+      )
+    case 'settings':
+      return (
+        <>
+          <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0L6.2 6.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2Z" />
+          <circle cx="12" cy="12" r="3" />
         </>
       )
     case 'session':

@@ -2,15 +2,24 @@ export interface WorkflowSummary {
   readonly id: string
   readonly sessionId: string
   readonly name: string
-  readonly kind: 'workflow' | 'ralph'
-  readonly status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
+  readonly status: 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
   readonly stages: readonly WorkflowStage[]
 }
 
 export interface WorkflowStage {
   readonly id: string
+  /** Exact upstream phase identity; null means the field was absent and '' is distinct. */
+  readonly phase: string | null
+  /** Members that actually started in this phase, in start order. */
+  readonly members: readonly WorkflowMember[]
+}
+
+/** One delegation member of a workflow phase; `childId` names its session. */
+export interface WorkflowMember {
+  readonly seq: number
   readonly label: string
-  readonly status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
+  readonly childId: string
+  readonly status: 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
 }
 
 export interface SkillDescriptor {
@@ -46,13 +55,22 @@ export function parseSlashCommand(line: string): ParsedSlashCommand | undefined 
   return { name: match[1], rawInput: line.slice(match[0].length) }
 }
 
-export interface PluginDescriptor {
-  readonly id: string
-  readonly name: string
+/**
+ * One loader entry of the host's `pluginInventory/list` direct Remote — a
+ * read-only projection of the assembled plugin tree. The phase mirrors the
+ * entry's root Cordis fiber; `null` means no live fiber is mounted.
+ */
+export type PluginFiberPhase = 'pending' | 'loading' | 'active' | 'failed' | 'unloading' | null
+
+export interface PluginInventoryEntry {
+  readonly entryId: string
+  readonly moduleName: string
   readonly enabled: boolean
-  readonly installed: boolean
-  readonly capabilities: readonly string[]
-  readonly requiresRestart: boolean
+  readonly fiberPhase: PluginFiberPhase
+}
+
+export interface PluginInventorySnapshot {
+  readonly entries: readonly PluginInventoryEntry[]
 }
 
 export interface AgentPresetDescriptor {
@@ -72,6 +90,24 @@ export interface AgentPresetDocument {
   readonly description?: string
 }
 
+/**
+ * The full `agentPreset.list` answer exactly as the host composes it: the
+ * roster plus the two deployment facts that gate its management surface —
+ * `authorable` (whether a writable preset root is configured at all) and
+ * `hasDocument` (whether the host can open a preset directory natively).
+ */
+export interface AgentPresetRoster {
+  readonly presets: readonly AgentPresetDescriptor[]
+  readonly authorable: boolean
+  readonly hasDocument: boolean
+}
+
+/** `agentPreset.openDocument` answer: opened natively, or the path revealed. */
+export interface AgentPresetLocation {
+  readonly opened: boolean
+  readonly path?: string
+}
+
 export interface SettingsFieldSchema {
   readonly path: string
   readonly label: string
@@ -84,7 +120,25 @@ export interface SettingsFieldSchema {
 
 export interface DshSettingsSchema {
   readonly version: string
+  /** Global write capability from the pinned `settings.describe` answer. */
+  readonly writable: boolean
+  /** Whether the host can open its settings document without revealing a path. */
+  readonly hasDocument: boolean
   readonly fields: readonly SettingsFieldSchema[]
+  /** Per-namespace facts the flattened field list cannot carry. */
+  readonly namespaces: readonly DshSettingsNamespaceMeta[]
+}
+
+/**
+ * One described settings namespace. `userFields` lists the fields present in
+ * the user layer — presence alone marks an override, exactly as upstream
+ * treats `SettingsNamespaceView.user`.
+ */
+export interface DshSettingsNamespaceMeta {
+  readonly ns: string
+  readonly applies: 'live' | 'restart'
+  readonly userFields: readonly string[]
+  readonly secrets: readonly { readonly field: string; readonly set: boolean }[]
 }
 
 export interface SessionExportOptions {

@@ -14,6 +14,8 @@ export type StreamRecovery = (
 export class DshStreamController implements AsyncEventSource<BackendEvent> {
   private readonly listeners = new Set<(event: BackendEvent) => void>()
   private readonly lastSequences = new Map<string, number>()
+  /** Projection frames share the durable event sequence, so dedupe them per key. */
+  private readonly lastProjectionSequences = new Map<string, Map<string, number>>()
   private lifetime: AbortController | undefined
   private reading: Promise<void> | undefined
   private retryTimer: ReturnType<typeof setTimeout> | undefined
@@ -125,7 +127,12 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
 
   private async accept(event: BackendEvent, signal: AbortSignal): Promise<void> {
     if (signal.aborted) return
+    if (event.type === 'session.removed') {
+      this.lastSequences.delete(event.sessionId)
+      this.lastProjectionSequences.delete(event.sessionId)
+    }
     if (event.type === 'session.subscribed') {
+      this.truncateProjectionSequences(event.sessionId, event.lastSequence)
       const previous = this.lastSequences.get(event.sessionId)
       if (previous === undefined) {
         this.lastSequences.set(event.sessionId, event.lastSequence)
@@ -155,6 +162,15 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
       this.emit(event)
       return
     }
+    if (event.type === 'session.projection') {
+      const perSession = this.lastProjectionSequences.get(sessionId) ?? new Map<string, number>()
+      const previous = perSession.get(event.key)
+      if (previous !== undefined && sequence <= previous) return
+      perSession.set(event.key, sequence)
+      this.lastProjectionSequences.set(sessionId, perSession)
+      this.emit(event)
+      return
+    }
     const previous = this.lastSequences.get(sessionId) ?? -1
     if (sequence <= previous) return
     if (sequence > previous + 1 && this.recover !== undefined) {
@@ -178,6 +194,13 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
     this.lastSequences.set(sessionId, sequence)
     this.retryAttempt = 0
     this.emit(event)
+  }
+
+  private truncateProjectionSequences(sessionId: string, lastSequence: number): void {
+    const perSession = this.lastProjectionSequences.get(sessionId)
+    if (perSession === undefined) return
+    for (const [key, sequence] of perSession) if (sequence > lastSequence) perSession.delete(key)
+    if (perSession.size === 0) this.lastProjectionSequences.delete(sessionId)
   }
 
   private async recoverRange(

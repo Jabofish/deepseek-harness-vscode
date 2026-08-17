@@ -34,9 +34,14 @@ export class Rc6WorkspaceRepository implements WorkspaceRepository {
   }
 
   public async listWithArchiveState(signal?: AbortSignal): Promise<Rc6WorkspaceSnapshot> {
-    const value = asRecord(await callRpc<unknown>(this.transport, 'workspace.list', {}, signal))
-    if (!Array.isArray(value.items) || !isStringArray(value.archivedSessionIds))
-      throw malformedWorkspaceResponse()
+    const value = recordOrUndefined(await callRpc<unknown>(this.transport, 'workspace.list', {}, signal))
+    if (
+      value === undefined ||
+      !Array.isArray(value.items) ||
+      !value.items.every(validWorkspaceView) ||
+      !isStringArray(value.archivedSessionIds)
+    )
+      throw malformedWorkspaceResponse('list')
     const archivedSessionIds = new Set([
       ...value.archivedSessionIds,
       ...this.confirmedLocalArchives,
@@ -60,10 +65,10 @@ export class Rc6WorkspaceRepository implements WorkspaceRepository {
     this.pendingArchives.add(sessionId)
     this.archivedSessionIds.add(sessionId)
     try {
-      const value = asRecord(
+      const value = recordOrUndefined(
         await callRpc<unknown>(this.transport, 'workspace.archiveSession', { sessionId }, signal),
       )
-      if (!isStringArray(value.archivedSessionIds)) throw malformedArchiveResponse()
+      if (value === undefined || !isStringArray(value.archivedSessionIds)) throw malformedArchiveResponse()
       this.pendingArchives.delete(sessionId)
       for (const archivedSessionId of value.archivedSessionIds)
         this.confirmedLocalArchives.add(archivedSessionId)
@@ -81,15 +86,12 @@ export class Rc6WorkspaceRepository implements WorkspaceRepository {
   }
 
   public async create(input: WorkspaceCreateInput, signal?: AbortSignal): Promise<WorkspaceSummary> {
-    const value = await callRpc<{ workspace: unknown; created?: unknown }>(
-      this.transport,
-      'workspace.create',
-      { path: input.path },
-      signal,
+    const value = recordOrUndefined(
+      await callRpc<unknown>(this.transport, 'workspace.create', { path: input.path }, signal),
     )
-    const workspace = rc6Mapper.workspace({
-      ...asRecord(value.workspace),
-    })
+    if (value === undefined || !validWorkspaceView(value.workspace) || typeof value.created !== 'boolean')
+      throw malformedWorkspaceResponse('create')
+    const workspace = rc6Mapper.workspace(value.workspace)
     // workspace.create owns the canonical basename. Rename only a genuinely
     // new registration; an idempotent create over an existing path must not
     // silently rename another workspace as a side effect.
@@ -108,28 +110,55 @@ export class Rc6WorkspaceRepository implements WorkspaceRepository {
   }
 
   public async rename(workspaceId: string, name: string, signal?: AbortSignal): Promise<void> {
-    await callRpc(this.transport, 'workspace.rename', { workspaceId, title: name }, signal)
+    const value = recordOrUndefined(
+      await callRpc<unknown>(this.transport, 'workspace.rename', { workspaceId, title: name }, signal),
+    )
+    if (value === undefined || !validWorkspaceView(value.workspace))
+      throw malformedWorkspaceResponse('rename')
   }
 
   public async remove(workspaceId: string, signal?: AbortSignal): Promise<void> {
-    await callRpc(this.transport, 'workspace.delete', { workspaceId }, signal)
+    const value = recordOrUndefined(
+      await callRpc<unknown>(this.transport, 'workspace.delete', { workspaceId }, signal),
+    )
+    if (value === undefined || value.deleted !== true) throw malformedWorkspaceResponse('delete')
   }
 }
 
-function asRecord(value: unknown): Record<string, unknown> {
+function recordOrUndefined(value: unknown): Record<string, unknown> | undefined {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
-    : {}
+    : undefined
+}
+
+function validWorkspaceView(value: unknown): boolean {
+  const record = recordOrUndefined(value)
+  return (
+    record !== undefined &&
+    typeof record.workspaceId === 'string' &&
+    record.workspaceId.trim() !== '' &&
+    typeof record.path === 'string' &&
+    typeof record.title === 'string' &&
+    typeof record.createdAt === 'string' &&
+    typeof record.updatedAt === 'string' &&
+    Array.isArray(record.sessionIds) &&
+    record.sessionIds.every(
+      (sessionId): sessionId is string => typeof sessionId === 'string' && sessionId.trim() !== '',
+    )
+  )
 }
 
 function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((entry): entry is string => typeof entry === 'string')
+  return (
+    Array.isArray(value) &&
+    value.every((entry): entry is string => typeof entry === 'string' && entry.trim() !== '')
+  )
 }
 
-function malformedWorkspaceResponse(): AppError {
+function malformedWorkspaceResponse(operation: string): AppError {
   return new AppError({
     code: 'PROTOCOL_ERROR',
-    message: 'DSH returned a malformed workspace list.',
+    message: `DSH returned a malformed workspace ${operation} response.`,
     retryable: false,
   })
 }

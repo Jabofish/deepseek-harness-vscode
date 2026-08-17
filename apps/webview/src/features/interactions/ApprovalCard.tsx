@@ -1,6 +1,7 @@
 import type { ReactElement } from 'react'
 import type { PermissionRequest } from '@dsh-vscode/domain'
 import { Icon } from '../../ui/Icon.js'
+import { useI18n } from '../../i18n.js'
 
 export interface ApprovalCardProps {
   readonly request: PermissionRequest
@@ -9,6 +10,7 @@ export interface ApprovalCardProps {
 }
 
 export function ApprovalCard(props: ApprovalCardProps): ReactElement {
+  const { t } = useI18n()
   return (
     <section
       className="dsh-interaction dsh-approval"
@@ -20,14 +22,16 @@ export function ApprovalCard(props: ApprovalCardProps): ReactElement {
           <Icon name="alert" />
         </span>
         <div>
-          <span className="dsh-app__eyebrow">ACTION REQUIRED</span>
+          <span className="dsh-app__eyebrow">{t('approval.required')}</span>
           <h2 id={`approval-${props.request.id}`}>{props.request.title}</h2>
         </div>
       </header>
       <p className="dsh-interaction__description">{props.request.description}</p>
       <p className="dsh-interaction__risk">
-        Risk{' '}
-        <span className={`dsh-status-pill dsh-status-pill--${props.request.risk}`}>{props.request.risk}</span>
+        {t('approval.risk')}{' '}
+        <span className={`dsh-status-pill dsh-status-pill--${props.request.risk}`}>
+          {t(`approval.risk.${props.request.risk}`)}
+        </span>
       </p>
       <div className="dsh-interaction__actions">
         {props.request.options.map((option) => (

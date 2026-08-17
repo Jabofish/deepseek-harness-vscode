@@ -1,6 +1,7 @@
 import type { ReactElement } from 'react'
 import type { ModelDescriptor, ModelSelection } from '@dsh-vscode/domain'
 import { CompactPicker, type CompactPickerOption } from '../composer/CompactPicker.js'
+import { useI18n } from '../../i18n.js'
 
 export interface ModelPickerProps {
   readonly models: readonly ModelDescriptor[]
@@ -12,6 +13,7 @@ export interface ModelPickerProps {
 }
 
 export function ModelPicker(props: ModelPickerProps): ReactElement {
+  const { t } = useI18n()
   const selected = props.models.find(
     (model) => model.providerId === props.value.providerId && model.id === props.value.modelId,
   )
@@ -37,7 +39,8 @@ export function ModelPicker(props: ModelPickerProps): ReactElement {
       ? [
           {
             value: 'unavailable',
-            label: selected === undefined ? 'Default model' : `Unavailable: ${selected.label}`,
+            label:
+              selected === undefined ? t('model.default') : t('model.unavailable', { label: selected.label }),
             disabled: true,
           },
         ]
@@ -50,9 +53,9 @@ export function ModelPicker(props: ModelPickerProps): ReactElement {
   const currentLabel =
     selectedIndex < 0
       ? selected === undefined
-        ? 'Default model'
-        : `Unavailable: ${selected.label}`
-      : (options[selectedIndex]?.label ?? 'Default model')
+        ? t('model.default')
+        : t('model.unavailable', { label: selected.label })
+      : (options[selectedIndex]?.label ?? t('model.default'))
   return (
     <CompactPicker
       className="dsh-model-picker"
@@ -60,8 +63,8 @@ export function ModelPicker(props: ModelPickerProps): ReactElement {
       {...(props.displayLabel === undefined ? {} : { displayLabel: props.displayLabel })}
       {...(props.openRequest === undefined ? {} : { openRequest: props.openRequest })}
       label={currentLabel}
-      ariaLabel="Model and reasoning"
-      title="Select model and reasoning level"
+      ariaLabel={t('model.aria')}
+      title={t('model.select')}
       value={currentValue}
       options={pickerOptions}
       disabled={props.disabled ?? false}

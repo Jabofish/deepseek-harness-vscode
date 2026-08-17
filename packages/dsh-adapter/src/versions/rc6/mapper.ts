@@ -3,6 +3,7 @@ import type {
   CompactionView,
   GoalView,
   JobView,
+  MessageAttachment,
   ModelDescriptor,
   ModelSelection,
   ModelProvider,
@@ -13,7 +14,6 @@ import type {
   SessionHistoryEvent,
   SessionStatus,
   SessionSummary,
-  SubagentView,
   TokenUsage,
   ToolCallView,
   TodoView,
@@ -92,17 +92,22 @@ export const rc6Mapper = {
     projection?: SessionDetail['projection']
   } {
     const record = object(value, 'session history')
-    const events = array(record.events).map((entry, index) => mapHistoryEntry(entry, index, sessionId))
-    const projection = objectOrUndefined(record.projections)
+    if (!Array.isArray(record.events) || typeof record.hasMore !== 'boolean')
+      throw new Error('Malformed session history response')
+    const projections = record.projections
+    if (projections !== undefined && !validProjectionBlock(projections))
+      throw new Error('Malformed session history projections')
+    const events = record.events.map((entry, index) => mapHistoryEntry(entry, index, sessionId))
+    const projection = objectOrUndefined(projections)
     return {
       events,
-      hasMore: boolean(record.hasMore, false),
+      hasMore: record.hasMore,
       ...(projection === undefined
         ? {}
         : {
             projection: {
-              asOfSequence: number(projection.asOfSeq, -1),
-              values: objectOrUndefined(projection.values) ?? {},
+              asOfSequence: projection.asOfSeq as number,
+              values: projection.values as Record<string, unknown>,
             },
           }),
     }
@@ -227,18 +232,44 @@ export const rc6Mapper = {
           ? { type: 'unknown', sessionId, name, payload: safePayload(value) }
           : sessionConfiguration(sessionId, { model })
       }
+      case 'step/start':
+      case 'step/end': {
+        const turn = eventIndex(data.turn)
+        const step = eventIndex(data.step)
+        if (turn === undefined || step === undefined)
+          return {
+            type: 'unknown',
+            ...(sessionId === '' ? {} : { sessionId }),
+            name,
+            payload: safePayload(value),
+          }
+        const time = eventTimestamp(envelope.time ?? data.time)
+        return {
+          type: name === 'step/start' ? 'step.started' : 'step.ended',
+          sessionId,
+          turn,
+          step,
+          ...(time === undefined ? {} : { time }),
+        }
+      }
       case 'message/delta':
       case 'message/chunk':
       case 'assistant/chunk': {
         const chunk = objectOrUndefined(data.chunk)
         const chunkType = stringOr(chunk?.type, '')
         const messageId = assistantMessageId(data)
+        const turn = eventIndex(data.turn)
+        const step = eventIndex(data.step)
+        const time = eventTimestamp(envelope.time ?? data.time)
         if (chunkType === 'reasoning-delta')
           return {
             type: 'reasoning.delta',
             sessionId,
             messageId,
             delta: stringOr(chunk?.text ?? data.reasoning ?? data.text ?? data.delta, ''),
+            ...(turn === undefined ? {} : { turn }),
+            ...(step === undefined ? {} : { step }),
+            ...(time === undefined ? {} : { time }),
           }
         if (chunkType === '' || chunkType === 'text-delta')
           return {
@@ -246,6 +277,9 @@ export const rc6Mapper = {
             sessionId,
             messageId,
             delta: stringOr(data.delta ?? data.text ?? chunk?.text ?? chunk?.delta, ''),
+            ...(turn === undefined ? {} : { turn }),
+            ...(step === undefined ? {} : { step }),
+            ...(time === undefined ? {} : { time }),
           }
         // block-start, tool-call-delta, block-end, usage and finish are
         // structured stream bookkeeping. They do not contain visible text;
@@ -265,6 +299,9 @@ export const rc6Mapper = {
         const reasoning = reasoningText(message) || stringOr(data.reasoning, '')
         const modelLabel = assistantModelLabel(message, data)
         const usage = tokenUsage(data.usage ?? message.usage ?? envelope.usage)
+        const turn = eventIndex(data.turn)
+        const step = eventIndex(data.step)
+        const time = eventTimestamp(envelope.time ?? data.time)
         return {
           type: 'message.completed',
           sessionId,
@@ -273,6 +310,9 @@ export const rc6Mapper = {
           ...(reasoning === '' ? {} : { reasoning }),
           ...(modelLabel === undefined ? {} : { modelLabel }),
           ...(usage === undefined ? {} : { usage }),
+          ...(turn === undefined ? {} : { turn }),
+          ...(step === undefined ? {} : { step }),
+          ...(time === undefined ? {} : { time }),
         }
       }
       case 'user/message': {
@@ -282,16 +322,17 @@ export const rc6Mapper = {
         const sourceForm = stringOr(source?.form, '')
         const sourceSummary = stringOr(source?.summary, '')
         const rpcId = stringOr(envelope.rpcId ?? data.rpcId ?? source?.rpcId, '')
-        const markdown = messageText(message)
+        const userContent = userMessageContent(message)
         return {
           type: 'message.user',
           sessionId,
           messageId: stringOr(message.id, `user:${indexToken(data.turn) ?? 'unknown'}`),
-          markdown,
+          markdown: userContent.markdown,
+          ...(userContent.attachments.length === 0 ? {} : { attachments: userContent.attachments }),
           ...(rpcId === '' ? {} : { rpcId }),
           ...(sourceLabel !== ''
             ? { source: sourceLabel }
-            : markdown.trimStart().startsWith('/')
+            : userContent.markdown.trimStart().startsWith('/')
               ? { source: 'command' }
               : {}),
           ...(sourceForm === '' ? {} : { sourceForm }),
@@ -299,18 +340,30 @@ export const rc6Mapper = {
         }
       }
       case 'tool/call':
-      case 'tool/result':
+      case 'tool/result': {
+        const time = eventTimestamp(envelope.time ?? data.time)
         return {
           type: 'tool.updated',
           sessionId,
           tool: tool({
             ...data,
+            ...(name === 'tool/call' && time === undefined
+              ? {}
+              : name === 'tool/call'
+                ? { startedAt: time }
+                : {}),
+            ...(name === 'tool/result' && time === undefined
+              ? {}
+              : name === 'tool/result'
+                ? { completedAt: time }
+                : {}),
             ...(envelope.view === undefined ? {} : { view: envelope.view }),
             ...(objectOrUndefined(data.message) === undefined
               ? {}
               : { outputSummary: bounded(data.message) }),
           }),
         }
+      }
       case 'approval/requested':
         return {
           type: 'permission.requested',
@@ -358,53 +411,140 @@ export const rc6Mapper = {
       case 'compaction/summary':
       case 'compaction/prune':
       case 'compaction/end': {
-        const summary = firstString(data.summary, data.text, data.message)
+        const shadowedSeqs = safeEventSeqs(data.shadowedSeqs)
+        const summary =
+          name === 'compaction/summary' ? contentText(array(data.summary), false) || undefined : undefined
+        const replacedCount = shadowedSeqs?.length
+        const estimatedTokens = nonNegativeSafeNumber(data.shadowedTokenCount)
+        const compactionId =
+          name === 'compaction/prune'
+            ? `prune:${shadowedSeqs?.join(',') ?? stringOr(envelope.seq ?? data.seq, 'unknown')}`
+            : string(data.compactionId, 'compactionId')
         return {
           type: 'compaction.updated',
           sessionId,
           compaction: {
-            id: stringOr(data.compactionId ?? data.id ?? data.turn, name),
+            id: compactionId,
             phase: compactionPhase(name),
             ...(summary === undefined ? {} : { summary }),
+            ...(replacedCount === undefined ? {} : { replacedCount }),
+            ...(estimatedTokens === undefined ? {} : { estimatedTokens }),
           },
         }
       }
       case 'llm/retry-started':
-      case 'llm/retry':
-        return {
-          type: 'notice',
-          ...(sessionId === '' ? {} : { sessionId }),
-          level: 'warning',
-          text: retryText(name, data),
+      case 'llm/retry': {
+        const retryId = string(data.retryId, 'retryId')
+        const turn = eventIndex(data.turn)
+        const step = eventIndex(data.step)
+        const attempt = positiveSafeNumber(data.retry)
+        if (turn === undefined) throw new Error('Malformed retry turn')
+        if (step === undefined) throw new Error('Malformed retry step')
+        if (attempt === undefined) throw new Error('Malformed retry attempt')
+        if (name === 'llm/retry') {
+          const provider = string(data.provider, 'retry provider')
+          const mode = data.mode
+          const policyKey = string(data.policyKey, 'retry policyKey')
+          const delayMs = nonNegativeSafeNumber(data.delayMs)
+          const failure = retryFailure(data.failure)
+          if (mode !== 'normal' && mode !== 'always') throw new Error('Malformed retry mode')
+          if (delayMs === undefined) throw new Error('Malformed retry delayMs')
+          if (mode === 'normal' && positiveSafeNumber(data.maxRetries) === undefined)
+            throw new Error('Malformed retry maxRetries')
+          // Validate all provider-owned routing fields even though the Domain
+          // signal deliberately keeps only presentation facts.
+          void provider
+          void policyKey
+          return {
+            type: 'model.retry',
+            retry: {
+              sessionId,
+              id: retryId,
+              turn,
+              step,
+              attempt,
+              state: 'scheduled',
+              delayMs,
+              ...(mode === 'normal' ? { maxRetries: data.maxRetries as number } : {}),
+              ...(failure.message === '' ? {} : { message: failure.message }),
+            },
+          }
         }
+        return {
+          type: 'model.retry',
+          retry: {
+            sessionId,
+            id: retryId,
+            turn,
+            step,
+            attempt,
+            state: 'started',
+          },
+        }
+      }
       case 'command/run':
       case 'command/done':
         return commandNotice(name, data, sessionId)
       case 'session/jobs':
+        if (!Array.isArray(data.jobs)) throw new Error('Malformed session/jobs jobs')
         return {
           type: 'jobs.updated',
           sessionId,
-          jobs: array(data.jobs).map(job),
+          jobs: data.jobs.map(job),
         }
-      case 'job/updated':
-        return { type: 'job.updated', sessionId, job: job(data.job ?? data) }
-      case 'subagent/updated':
-      case 'subagent':
-      case 'subagent/descriptor':
-        return { type: 'subagent.updated', sessionId, subagent: subagent(data.subagent ?? data, sessionId) }
       case 'tool/code-dispatch-start':
         return { type: 'tool.updated', sessionId, tool: tool({ ...data, status: 'running' }) }
       case 'tool/code-dispatch':
         return { type: 'tool.updated', sessionId, tool: tool({ ...data, status: 'completed' }) }
-      case 'tool-workflow/agent-start':
-      case 'tool-workflow/agent-end':
       case 'tool-workflow/run-start':
+        return {
+          type: 'workflow.started',
+          sessionId,
+          workflow: {
+            id: string(data.runId, 'workflow runId'),
+            sessionId,
+            name: string(data.name, 'workflow name'),
+            status: 'running',
+            stages: [],
+          },
+        }
+      case 'tool-workflow/agent-start': {
+        const phase = data.phase
+        if (phase !== undefined && typeof phase !== 'string') throw new Error('Malformed workflow phase')
+        const seq = positiveSafeNumber(data.seq)
+        if (seq === undefined) throw new Error('Malformed workflow member seq')
+        if (typeof data.label !== 'string') throw new Error('Malformed workflow member label')
+        return {
+          type: 'workflow.member.started',
+          sessionId,
+          runId: string(data.runId, 'workflow runId'),
+          phase: phase ?? null,
+          member: {
+            seq,
+            label: data.label,
+            childId: string(data.childId, 'workflow childId'),
+            status: 'running',
+          },
+        }
+      }
+      case 'tool-workflow/agent-end': {
+        const seq = positiveSafeNumber(data.seq)
+        if (seq === undefined) throw new Error('Malformed workflow member seq')
+        const outcome = workflowMemberOutcome(data.outcome)
+        return {
+          type: 'workflow.member.ended',
+          sessionId,
+          runId: string(data.runId, 'workflow runId'),
+          seq,
+          outcome,
+        }
+      }
       case 'tool-workflow/run-end':
         return {
-          type: 'notice',
-          ...(sessionId === '' ? {} : { sessionId }),
-          level: name.endsWith('end') ? 'info' : 'info',
-          text: workflowEventText(name, data),
+          type: 'workflow.ended',
+          sessionId,
+          runId: string(data.runId, 'workflow runId'),
+          stopReason: workflowStopReason(data.stopReason),
         }
       case 'session/queue':
         return {
@@ -430,6 +570,12 @@ export const rc6Mapper = {
           type: 'session.added',
           sessionId,
           ...(typeof data.blank === 'boolean' ? { blank: data.blank } : {}),
+          ...(typeof data.parentSessionId === 'string' ? { parentSessionId: data.parentSessionId } : {}),
+          ...(data.origin === 'subagent' ? { origin: 'subagent' as const } : {}),
+          ...(typeof data.cwd === 'string' && data.cwd.trim() !== '' ? { cwd: data.cwd } : {}),
+          ...(typeof data.agentPreset === 'string' && data.agentPreset.trim() !== ''
+            ? { agentPreset: data.agentPreset }
+            : {}),
         }
       case 'host/session-removed':
         return { type: 'session.removed', sessionId }
@@ -478,24 +624,20 @@ export const rc6Mapper = {
   },
 }
 
-/**
- * The permission plugin owns this projection and may shape it as a list of
- * ids or as an object containing `presets`/`options`/`available`. Keep the
- * mapper tolerant of those documented projection forms without inventing a
- * fixed permission enum in the domain.
- */
+/** Read only the pinned `values.permissions.options[].value` projection. */
 export function permissionPresetIds(value: unknown): readonly string[] {
-  const found: string[] = []
-  const record = objectOrUndefined(value)
-  if (Array.isArray(value)) collectPermissionPresetIds(value, found, 0)
-  else if (record !== undefined) {
-    for (const key of ['permissions', 'permissionPresets', 'available', 'availablePresets'] as const) {
-      const source = record[key]
-      if (Array.isArray(source) || objectOrUndefined(source) !== undefined)
-        collectPermissionPresetIds(source, found, 0)
-    }
-  }
-  return [...new Set(found)]
+  const permissions = objectOrUndefined(objectOrUndefined(value)?.permissions)
+  const options = array(permissions?.options)
+  return [
+    ...new Set(
+      options.flatMap((entry) => {
+        const option = objectOrUndefined(entry)
+        return typeof option?.value === 'string' && option.value !== '' && option.value !== 'custom'
+          ? [option.value]
+          : []
+      }),
+    ),
+  ]
 }
 
 function configuration(value: unknown): SessionDetail['configuration'] {
@@ -564,13 +706,29 @@ function compactionPhase(name: string): CompactionView['phase'] {
   return 'start'
 }
 
-function retryText(name: string, data: Record<string, unknown>): string {
-  const attempt = firstString(data.attempt, data.retry, data.count)
-  return attempt === undefined
-    ? name === 'llm/retry-started'
-      ? 'Model retry started.'
-      : 'Model retrying.'
-    : `Model retrying (attempt ${attempt}).`
+function safeEventSeqs(value: unknown): readonly number[] | undefined {
+  if (
+    !Array.isArray(value) ||
+    !value.every((entry): entry is number => Number.isSafeInteger(entry) && (entry as number) >= 0)
+  )
+    return undefined
+  return value
+}
+
+function nonNegativeSafeNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined
+}
+
+function positiveSafeNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined
+}
+
+function retryFailure(value: unknown): { readonly code: string; readonly message: string } {
+  const failure = object(value, 'retry failure')
+  return {
+    code: string(failure.code, 'retry failure code'),
+    message: string(failure.message, 'retry failure message'),
+  }
 }
 
 function commandNotice(name: string, data: Record<string, unknown>, sessionId: string): BackendEvent {
@@ -607,11 +765,6 @@ function permissionPresetLabel(value: string): string {
   }
 }
 
-function workflowEventText(name: string, data: Record<string, unknown>): string {
-  const label = firstString(data.name, data.workflowId, data.id) ?? 'tool workflow'
-  return `${label} ${name.endsWith('end') ? 'finished.' : 'started.'}`
-}
-
 function workspaceId(data: Record<string, unknown>): string | undefined {
   const workspace = objectOrUndefined(data.workspace)
   return firstString(data.workspaceId, data.id, workspace?.workspaceId, workspace?.id)
@@ -619,34 +772,6 @@ function workspaceId(data: Record<string, unknown>): string | undefined {
 
 function stringArray(value: unknown): readonly string[] {
   return array(value).filter((entry): entry is string => typeof entry === 'string' && entry.trim() !== '')
-}
-
-function collectPermissionPresetIds(value: unknown, found: string[], depth: number): void {
-  if (depth > 4) return
-  if (typeof value === 'string') {
-    const id = value.trim()
-    if (id !== '') found.push(id)
-    return
-  }
-  if (Array.isArray(value)) {
-    for (const entry of value) collectPermissionPresetIds(entry, found, depth + 1)
-    return
-  }
-  const record = objectOrUndefined(value)
-  if (record === undefined) return
-  for (const key of ['id', 'preset', 'value'] as const)
-    if (typeof record[key] === 'string') collectPermissionPresetIds(record[key], found, depth + 1)
-  for (const key of [
-    'permissionPresets',
-    'presets',
-    'options',
-    'available',
-    'availablePresets',
-    'allowed',
-    'choices',
-    'items',
-  ])
-    collectPermissionPresetIds(record[key], found, depth + 1)
 }
 
 function mapHistoryEntry(value: unknown, index: number, sessionId: string): SessionHistoryEvent {
@@ -738,16 +863,40 @@ function goal(value: unknown): GoalView {
 
 function job(value: unknown): JobView {
   const record = object(value, 'job')
+  const status = record.status
+  if (
+    status !== 'running' &&
+    status !== 'stopping' &&
+    status !== 'completed' &&
+    status !== 'killed' &&
+    status !== 'failed'
+  )
+    throw new Error('Malformed job status')
+  const startedAt = nonNegativeSafeNumber(record.startedAt)
+  if (startedAt === undefined) throw new Error('Malformed job startedAt')
+  const finishedAt = record.finishedAt === undefined ? undefined : nonNegativeSafeNumber(record.finishedAt)
+  if (record.finishedAt !== undefined && finishedAt === undefined) throw new Error('Malformed job finishedAt')
+  if (record.detail !== undefined && typeof record.detail !== 'string')
+    throw new Error('Malformed job detail')
   return {
-    id: stringOr(record.id, 'job'),
-    label: stringOr(record.label ?? record.kind, 'Job'),
-    status: enumValue(
-      record.status,
-      ['running', 'stopping', 'completed', 'failed', 'killed', 'cancelled'] as const,
-      'running',
-    ),
-    ...(record.progress === undefined ? {} : { progress: number(record.progress, 0) }),
+    id: string(record.id, 'job id'),
+    kind: string(record.kind, 'job kind'),
+    label: string(record.label, 'job label'),
+    status,
+    ...(record.detail === undefined ? {} : { detail: record.detail }),
+    startedAt,
+    ...(finishedAt === undefined ? {} : { finishedAt }),
   }
+}
+
+function workflowMemberOutcome(value: unknown): 'completed' | 'failed' | 'cancelled' {
+  if (value === 'completed' || value === 'failed' || value === 'cancelled') return value
+  throw new Error('Malformed workflow member outcome')
+}
+
+function workflowStopReason(value: unknown): 'completed' | 'cancelled' | 'error' {
+  if (value === 'completed' || value === 'cancelled' || value === 'error') return value
+  throw new Error('Malformed workflow stop reason')
 }
 
 function queuedInput(value: unknown, sessionId: string): QueuedInput[] {
@@ -765,20 +914,6 @@ function queuedInput(value: unknown, sessionId: string): QueuedInput[] {
       createdAt: date(record.createdAt),
     },
   ]
-}
-
-function subagent(value: unknown, parentSessionId: string): SubagentView {
-  const record = object(value, 'subagent')
-  return {
-    id: stringOr(record.id, 'subagent'),
-    label: stringOr(record.label, 'Subagent'),
-    status: enumValue(
-      record.status,
-      ['idle', 'running', 'awaiting-input', 'completed', 'failed'] as const,
-      'idle',
-    ),
-    parentSessionId: stringOr(record.parentSessionId, parentSessionId),
-  }
 }
 
 function permission(value: Record<string, unknown>): PermissionRequest {
@@ -811,9 +946,12 @@ function question(value: Record<string, unknown>): UserQuestion {
       : {}),
     sessionId: stringOr(value.sessionId, ''),
     prompt: firstItem.prompt,
+    ...(firstItem.detail === undefined ? {} : { detail: firstItem.detail }),
+    ...(firstItem.header === undefined ? {} : { header: firstItem.header }),
     ...(choices.length === 0 ? {} : { choices }),
     ...(firstItem.multiSelect === undefined ? {} : { multiSelect: firstItem.multiSelect }),
     allowFreeText: firstItem.allowFreeText,
+    ...(firstItem.intent === undefined ? {} : { intent: firstItem.intent }),
     ...(items.length === 0 ? {} : { items }),
   }
 }
@@ -826,14 +964,31 @@ function questionItem(value: Record<string, unknown>): UserQuestionItem {
       // rc.6 validates selected answers against option labels.
       id: stringOr(entry.label ?? entry.title, 'Choice'),
       label: stringOr(entry.label ?? entry.title, 'Choice'),
+      ...(typeof entry.description === 'string' ? { description: entry.description } : {}),
     }))
+  const intent = planReviewIntent(value.intent)
   return {
     id: stringOr(value.id, 'question'),
     prompt: stringOr(value.question ?? value.prompt, 'DSH needs an answer.'),
+    ...(typeof value.detail === 'string' ? { detail: value.detail } : {}),
+    ...(typeof value.header === 'string' ? { header: value.header } : {}),
     ...(choices.length === 0 ? {} : { choices }),
     ...(value.multiSelect === undefined ? {} : { multiSelect: boolean(value.multiSelect, false) }),
-    allowFreeText: boolean(value.allowFreeText, true),
+    // rc.6 has no allowFreeText wire flag. The official generic question UI
+    // always offers custom input; plan-review narrowing is presentation-only.
+    allowFreeText: true,
+    ...(intent === undefined ? {} : { intent }),
   }
+}
+
+/** Upstream intents are tagged; only known tags may reach the UI — an
+ * unknown tag renders the generic option flow (answer encoding is
+ * identical either way, so dropping it is presentation-only). */
+function planReviewIntent(value: unknown): UserQuestionItem['intent'] | undefined {
+  if (value === null || typeof value !== 'object') return undefined
+  const intent = value as Record<string, unknown>
+  if (intent.kind !== 'plan-review' || typeof intent.approve !== 'string') return undefined
+  return { kind: 'plan-review', approve: intent.approve }
 }
 
 function assistantMessageId(data: Record<string, unknown>, message?: Record<string, unknown>): string {
@@ -841,6 +996,10 @@ function assistantMessageId(data: Record<string, unknown>, message?: Record<stri
   const step = indexToken(data.step)
   if (turn !== undefined && step !== undefined) return `assistant:${turn}:${step}`
   return stringOr(data.messageId ?? data.id ?? message?.id, 'assistant:unknown')
+}
+
+function eventIndex(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined
 }
 
 function indexToken(value: unknown): string | undefined {
@@ -854,6 +1013,61 @@ function messageText(value: Record<string, unknown> | undefined): string {
   const content = array(value.content)
   if (content.length === 0) return stringOr(value.text ?? value.markdown ?? value.content, '')
   return contentText(content, false)
+}
+
+interface UserMessageContent {
+  readonly markdown: string
+  readonly attachments: readonly MessageAttachment[]
+}
+
+/**
+ * Project the user-facing part of a durable message without changing what
+ * DSH received. rc.6 has no text-file attachment block: promptContent sends
+ * text files as a deliberately marked text block so the model can read them.
+ * Recognize only that exact adapter-owned envelope and keep its filename as
+ * metadata; ordinary user text is left untouched.
+ */
+function userMessageContent(value: Record<string, unknown> | undefined): UserMessageContent {
+  if (value === undefined) return { markdown: '', attachments: [] }
+  const content = array(value.content)
+  if (content.length === 0) {
+    const text = stringOr(value.text ?? value.markdown ?? value.content, '')
+    const parsed = attachedFileBlock(text)
+    return parsed === undefined
+      ? { markdown: text, attachments: [] }
+      : { markdown: '', attachments: [{ name: parsed.name }] }
+  }
+
+  const textParts: string[] = []
+  const attachments: MessageAttachment[] = []
+  for (const entry of content) {
+    const block = objectOrUndefined(entry)
+    if (block?.type === 'text' && typeof block.text === 'string') {
+      const parsed = attachedFileBlock(block.text)
+      if (parsed !== undefined) {
+        attachments.push({ name: parsed.name })
+        continue
+      }
+      textParts.push(block.text)
+      continue
+    }
+    const text = contentText([entry], false)
+    if (text !== '') textParts.push(text)
+  }
+  return { markdown: textParts.join('\n'), attachments }
+}
+
+interface AttachedFileBlock {
+  readonly name: string
+}
+
+const ATTACHED_FILE_BLOCK =
+  /^\s*Attached file: ([^\r\n]+)\r?\n\r?\n[\s\S]*\r?\n\r?\nEnd of attached file: \1\s*$/u
+
+function attachedFileBlock(value: string): AttachedFileBlock | undefined {
+  const match = ATTACHED_FILE_BLOCK.exec(value)
+  const name = match?.[1]?.trim()
+  return name === undefined || name === '' ? undefined : { name }
 }
 
 function reasoningText(value: Record<string, unknown> | undefined): string {
@@ -938,6 +1152,18 @@ function objectOrUndefined(value: unknown): Record<string, unknown> | undefined 
     : undefined
 }
 
+function validProjectionBlock(
+  value: unknown,
+): value is { readonly asOfSeq: number; readonly values: Record<string, unknown> } {
+  const record = objectOrUndefined(value)
+  return (
+    record !== undefined &&
+    Number.isSafeInteger(record.asOfSeq) &&
+    (record.asOfSeq as number) >= -1 &&
+    objectOrUndefined(record.values) !== undefined
+  )
+}
+
 function array(value: unknown): readonly unknown[] {
   return Array.isArray(value) ? value : []
 }
@@ -973,6 +1199,16 @@ function date(value: unknown): string {
   if (typeof value === 'string') return value
   const timestamp = number(value, Date.now())
   return new Date(timestamp).toISOString()
+}
+
+/** Preserve an event's real wall-clock boundary without manufacturing one. */
+function eventTimestamp(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string') {
+    const timestamp = Date.parse(value)
+    return Number.isFinite(timestamp) ? timestamp : undefined
+  }
+  return undefined
 }
 
 function enumValue<const T extends readonly string[]>(
