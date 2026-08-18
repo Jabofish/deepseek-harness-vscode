@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import type { TimelineNode } from '@dsh-vscode/timeline'
 import { buildTrajectory, searchTrajectoryRecords, type TrajectoryRecord } from '@dsh-vscode/timeline'
+import { useI18n, type Translate } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
 
 export interface TrajectoryViewProps {
@@ -18,6 +19,7 @@ export interface TrajectoryViewProps {
  * while streaming and suspends following once the user scrolls up.
  */
 export function TrajectoryView(props: TrajectoryViewProps): ReactElement {
+  const { t } = useI18n()
   const scrollRef = useRef<HTMLDivElement>(null)
   const stickToBottomRef = useRef(true)
   const previousSessionRef = useRef(props.sessionId)
@@ -80,26 +82,35 @@ export function TrajectoryView(props: TrajectoryViewProps): ReactElement {
           className="dsh-trajectory__search"
           type="search"
           value={query}
-          placeholder={`Search ${projection.recordCount} records`}
-          aria-label="Search trajectory records"
+          placeholder={t('trajectory.searchPlaceholder', { count: projection.recordCount })}
+          aria-label={t('trajectory.searchAria')}
           onChange={(event) => setQuery(event.target.value)}
         />
         {searching ? (
           <span className="dsh-trajectory__count" role="status">
-            {matches.length} match{matches.length === 1 ? '' : 'es'}
+            {t(matches.length === 1 ? 'trajectory.matches' : 'trajectory.matches.plural', {
+              count: matches.length,
+            })}
           </span>
         ) : (
           <span className="dsh-trajectory__count">
-            {projection.recordCount} record{projection.recordCount === 1 ? '' : 's'}
+            {t(projection.recordCount === 1 ? 'trajectory.records' : 'trajectory.records.plural', {
+              count: projection.recordCount,
+            })}
           </span>
         )}
       </div>
-      <div ref={scrollRef} className="dsh-trajectory" aria-label="Trajectory ledger" onScroll={handleScroll}>
+      <div
+        ref={scrollRef}
+        className="dsh-trajectory"
+        aria-label={t('trajectory.ledger')}
+        onScroll={handleScroll}
+      >
         {projection.recordCount === 0 ? (
-          <p className="dsh-trajectory__empty">No trajectory records yet.</p>
+          <p className="dsh-trajectory__empty">{t('trajectory.empty')}</p>
         ) : searching ? (
           matches.length === 0 ? (
-            <p className="dsh-trajectory__empty">No records match “{query.trim()}”.</p>
+            <p className="dsh-trajectory__empty">{t('trajectory.noMatch', { query: query.trim() })}</p>
           ) : (
             <ul className="dsh-trajectory__rows">
               {matches.map((record) => (
@@ -108,6 +119,7 @@ export function TrajectoryView(props: TrajectoryViewProps): ReactElement {
                   record={record}
                   selected={selectedId === record.id}
                   onSelect={() => setSelectedId(record.id)}
+                  t={t}
                 />
               ))}
             </ul>
@@ -119,10 +131,16 @@ export function TrajectoryView(props: TrajectoryViewProps): ReactElement {
               key={
                 section.kind === 'turn' ? `turn:${section.turn ?? sectionIndex}` : `between:${sectionIndex}`
               }
-              aria-label={section.kind === 'turn' ? `Turn ${section.turn ?? 0}` : 'Between turns'}
+              aria-label={
+                section.kind === 'turn'
+                  ? t('trajectory.turn', { turn: section.turn ?? 0 })
+                  : t('trajectory.betweenTurns')
+              }
             >
               <h3 className="dsh-trajectory__section-title">
-                {section.kind === 'turn' ? `Turn ${section.turn ?? 0}` : 'Between turns'}
+                {section.kind === 'turn'
+                  ? t('trajectory.turn', { turn: section.turn ?? 0 })
+                  : t('trajectory.betweenTurns')}
               </h3>
               <ul className="dsh-trajectory__rows">
                 {section.records.map((record) => (
@@ -131,6 +149,7 @@ export function TrajectoryView(props: TrajectoryViewProps): ReactElement {
                     record={record}
                     selected={selectedId === record.id}
                     onSelect={() => setSelectedId(record.id)}
+                    t={t}
                   />
                 ))}
               </ul>
@@ -139,23 +158,23 @@ export function TrajectoryView(props: TrajectoryViewProps): ReactElement {
         )}
         {props.streaming ? (
           <span className="dsh-sr-only" aria-live="polite">
-            Response is streaming
+            {t('timeline.streaming')}
           </span>
         ) : null}
       </div>
       {selected === undefined ? null : (
-        <TrajectoryInspector record={selected} onClose={() => setSelectedId(undefined)} />
+        <TrajectoryInspector record={selected} onClose={() => setSelectedId(undefined)} t={t} />
       )}
       {showJumpToLatest ? (
         <button
           className="dsh-trajectory__jump"
           type="button"
-          aria-label="Jump to latest"
-          title="Jump to latest"
+          aria-label={t('timeline.jump')}
+          title={t('timeline.jump')}
           onClick={scrollToLatest}
         >
           <Icon name="arrow-down" />
-          <span>Jump to latest</span>
+          <span>{t('timeline.jump')}</span>
         </button>
       ) : null}
     </div>
@@ -166,8 +185,9 @@ function TrajectoryRow(props: {
   readonly record: TrajectoryRecord
   readonly selected: boolean
   readonly onSelect: () => void
+  readonly t: Translate
 }): ReactElement {
-  const { record } = props
+  const { record, t } = props
   return (
     <li>
       <button
@@ -182,7 +202,7 @@ function TrajectoryRow(props: {
         <span className="dsh-trajectory__text">{record.text}</span>
         <span className="dsh-trajectory__time">
           {record.streaming
-            ? 'running'
+            ? t('trajectory.running')
             : record.timeSeconds === null
               ? ''
               : formatDuration(record.timeSeconds)}
@@ -195,11 +215,16 @@ function TrajectoryRow(props: {
 function TrajectoryInspector(props: {
   readonly record: TrajectoryRecord
   readonly onClose: () => void
+  readonly t: Translate
 }): ReactElement {
-  const { record } = props
+  const { record, t } = props
   const usage = record.usage
   return (
-    <aside className="dsh-trajectory-inspector" role="region" aria-label={`Record #${record.index} details`}>
+    <aside
+      className="dsh-trajectory-inspector"
+      role="region"
+      aria-label={t('trajectory.inspectorAria', { index: record.index })}
+    >
       <header className="dsh-trajectory-inspector__header">
         <h4>
           #{record.index} · {record.kind}
@@ -208,43 +233,43 @@ function TrajectoryInspector(props: {
         <button
           className="dsh-icon-button"
           type="button"
-          aria-label="Close details"
-          title="Close details"
+          aria-label={t('trajectory.closeDetails')}
+          title={t('trajectory.closeDetails')}
           onClick={props.onClose}
         >
           <Icon name="close" />
         </button>
       </header>
       <dl className="dsh-trajectory-inspector__facts">
-        <dt>Duration</dt>
-        <dd>{record.streaming ? 'running' : formatDuration(record.timeSeconds)}</dd>
+        <dt>{t('trajectory.duration')}</dt>
+        <dd>{record.streaming ? t('trajectory.running') : formatDuration(record.timeSeconds)}</dd>
         {record.startedAt === undefined ? null : (
           <>
-            <dt>Started</dt>
+            <dt>{t('trajectory.started')}</dt>
             <dd>{new Date(record.startedAt).toLocaleTimeString()}</dd>
           </>
         )}
         {usage === undefined ? null : (
           <>
-            <dt>Input</dt>
+            <dt>{t('trajectory.input')}</dt>
             <dd>{usage.inputTokens.toLocaleString()} tk</dd>
             {usage.cacheReadTokens === undefined ? null : (
               <>
-                <dt>Cache read</dt>
+                <dt>{t('trajectory.cacheRead')}</dt>
                 <dd>{usage.cacheReadTokens.toLocaleString()} tk</dd>
               </>
             )}
             {usage.cacheWriteTokens === undefined ? null : (
               <>
-                <dt>Cache write</dt>
+                <dt>{t('trajectory.cacheWrite')}</dt>
                 <dd>{usage.cacheWriteTokens.toLocaleString()} tk</dd>
               </>
             )}
-            <dt>Output</dt>
+            <dt>{t('trajectory.output')}</dt>
             <dd>{usage.outputTokens.toLocaleString()} tk</dd>
             {usage.reasoningTokens === undefined ? null : (
               <>
-                <dt>Reasoning</dt>
+                <dt>{t('trajectory.reasoning')}</dt>
                 <dd>{usage.reasoningTokens.toLocaleString()} tk</dd>
               </>
             )}
@@ -253,19 +278,22 @@ function TrajectoryInspector(props: {
       </dl>
       {record.inputDetail === undefined ? null : (
         <details className="dsh-trajectory-inspector__block" open>
-          <summary>Input</summary>
+          <summary>{t('trajectory.input')}</summary>
           <pre>{record.inputDetail}</pre>
         </details>
       )}
       {record.outputDetail === undefined ? null : (
         <details className="dsh-trajectory-inspector__block" open>
-          <summary>Output{record.isError ? ' · failed' : ''}</summary>
+          <summary>
+            {t('trajectory.output')}
+            {record.isError ? ` · ${t('trajectory.failed')}` : ''}
+          </summary>
           <pre>{record.outputDetail}</pre>
         </details>
       )}
       {record.thinkingDetail === undefined ? null : (
         <details className="dsh-trajectory-inspector__block">
-          <summary>Thinking</summary>
+          <summary>{t('timeline.thinking')}</summary>
           <pre>{record.thinkingDetail}</pre>
         </details>
       )}
@@ -277,5 +305,5 @@ function TrajectoryInspector(props: {
 function formatDuration(seconds: number | null): string {
   if (seconds === null || !Number.isFinite(seconds)) return '—'
   const millis = Math.round(seconds * 1000)
-  return `${millis.toLocaleString('en-US')} ms`
+  return `${millis.toLocaleString()} ms`
 }

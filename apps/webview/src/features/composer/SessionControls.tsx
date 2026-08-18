@@ -3,7 +3,7 @@ import { useState, type ReactElement } from 'react'
 import { CompactPicker, type CompactPickerOption } from './CompactPicker.js'
 import { Icon, type IconName } from '../../ui/Icon.js'
 import { ModelPicker } from '../models/ModelPicker.js'
-import { useI18n } from '../../i18n.js'
+import { useI18n, type Translate } from '../../i18n.js'
 
 export interface SessionControlsProps {
   readonly configuration: AgentConfiguration
@@ -39,20 +39,20 @@ export function SessionControls(props: SessionControlsProps): ReactElement {
       ? [
           {
             value: props.configuration.preset,
-            label: formatPresetLabel(props.configuration.preset),
+            label: formatPresetLabel(props.configuration.preset, undefined, t),
             disabled: true,
           },
         ]
       : []),
     ...availablePresets.map((preset) => ({
       value: preset.id,
-      label: formatPresetLabel(preset.id, preset.name),
+      label: formatPresetLabel(preset.id, preset.name, t),
     })),
   ]
   const modeLabel =
     selectedPreset === undefined
-      ? formatPresetLabel(props.configuration.preset)
-      : formatPresetLabel(selectedPreset.id, selectedPreset.name)
+      ? formatPresetLabel(props.configuration.preset, undefined, t)
+      : formatPresetLabel(selectedPreset.id, selectedPreset.name, t)
   // Permission ids belong to the connected DSH composition. Preserve the
   // exact id returned by the host so the command registry receives the same
   // value that the permission plugin exposes (for example `full-access` or
@@ -92,13 +92,13 @@ export function SessionControls(props: SessionControlsProps): ReactElement {
         <CompactPicker
           className="dsh-session-controls__access-picker"
           icon="folder"
-          label={formatPermissionLabel(permissionPreset)}
+          label={formatPermissionLabel(permissionPreset, t)}
           ariaLabel={t('controls.access')}
           title={t('controls.accessChange')}
           value={permissionPreset}
           options={availablePermissionPresets.map((preset) => ({
             value: preset,
-            label: formatPermissionLabel(preset),
+            label: formatPermissionLabel(preset, t),
           }))}
           disabled={props.disabled || availablePermissionPresets.length < 2}
           onChange={(preset) => {
@@ -189,9 +189,9 @@ export function SessionControls(props: SessionControlsProps): ReactElement {
   )
 }
 
-function formatPresetLabel(id: string, name?: string): string {
+function formatPresetLabel(id: string, name: string | undefined, t: Translate = (key) => key): string {
   const label = name?.trim() || id.trim()
-  if (label === '') return 'Default mode'
+  if (label === '') return t('controls.defaultMode')
   return label
     .replace(/[-_]+/g, ' ')
     .replace(/\s+/g, ' ')
@@ -214,9 +214,9 @@ export function permissionOptions(current: string, projected: readonly string[])
   return uniquePermissionOptions([current, ...projected])
 }
 
-export function formatPermissionLabel(id: string): string {
-  if (isFullAccessPreset(id)) return 'Full access'
-  return formatPresetLabel(id)
+export function formatPermissionLabel(id: string, t: Translate = (key) => key): string {
+  if (isFullAccessPreset(id)) return t('controls.fullAccess')
+  return formatPresetLabel(id, undefined, t)
 }
 
 function isFullAccessPreset(id: string): boolean {

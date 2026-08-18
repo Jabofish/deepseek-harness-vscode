@@ -27,7 +27,7 @@ import { SubagentDrawer } from './features/subagents/SubagentDrawer.js'
 import { SettingsDrawer } from './features/settings/SettingsDrawer.js'
 import { TrajectoryView } from './features/trajectory/TrajectoryView.js'
 import { createAppStore, type OpenFileCandidate } from './app/store.js'
-import { useI18n } from './i18n.js'
+import { useI18n, type Translate } from './i18n.js'
 import { Icon } from './ui/Icon.js'
 import { hasVsCodeApi } from './vscode-api.js'
 
@@ -64,9 +64,12 @@ export function App(): ReactElement {
     void store
       .initialize()
       .catch((reason: unknown) =>
-        setError(reason instanceof Error ? reason.message : 'Unable to initialize DSH.'),
+        setError(reason instanceof Error ? reason.message : t('app.error.initialize')),
       )
     return () => store.dispose()
+    // t is stable per locale; re-running initialize on a locale change would
+    // dispose the store while the view is still mounted.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [store])
 
   useEffect(() => {
@@ -129,7 +132,7 @@ export function App(): ReactElement {
     void store
       .runtimeAction(action)
       .catch((reason: unknown) =>
-        setError(reason instanceof Error ? reason.message : 'Runtime action failed.'),
+        setError(reason instanceof Error ? reason.message : t('app.error.runtimeAction')),
       )
       .finally(() => setBusyAction(undefined))
   }
@@ -144,7 +147,7 @@ export function App(): ReactElement {
             void store
               .reconnect()
               .catch((reason: unknown) =>
-                setError(reason instanceof Error ? reason.message : 'Unable to reconnect to DSH.'),
+                setError(reason instanceof Error ? reason.message : t('app.error.reconnect')),
               )
           }}
         />
@@ -172,7 +175,7 @@ export function App(): ReactElement {
     active === undefined ? [] : state.permissions.filter((request) => request.sessionId === active.id)
   const pendingQuestions =
     active === undefined ? [] : state.questions.filter((question) => question.sessionId === active.id)
-  const assistantLabel = resolveAssistantModelLabel(active, state.configuration, state.models)
+  const assistantLabel = resolveAssistantModelLabel(active, state.configuration, state.models, t)
   const activeProjection = active === undefined ? undefined : state.projections[active.id]
   const contextPressure = readContextPressure(activeProjection?.contextPressure)
   const estimatedContextTokens = contextPressure?.projectedTokens ?? contextPressure?.pressureTokens
@@ -221,7 +224,7 @@ export function App(): ReactElement {
       void store
         .releaseAttachments(uris)
         .catch((reason: unknown) =>
-          setError(reason instanceof Error ? reason.message : 'Unable to release the attachment.'),
+          setError(reason instanceof Error ? reason.message : t('app.error.releaseAttachment')),
         )
   }
   const discardAttachmentDrafts = (): void => {
@@ -235,13 +238,13 @@ export function App(): ReactElement {
   const ingestFiles = (files: readonly File[]): void => {
     const generation = attachmentGenerationRef.current
     for (const file of files) {
-      void readFileAsBase64(file)
+      void readFileAsBase64(file, t)
         .then((payload) => store.ingestAttachment(payload))
         .then((attachment) => {
           if (attachment !== undefined) appendAttachment(attachment, undefined, generation)
         })
         .catch((reason: unknown) =>
-          setError(reason instanceof Error ? reason.message : 'Unable to attach the pasted or dropped file.'),
+          setError(reason instanceof Error ? reason.message : t('app.error.attachPasted')),
         )
     }
   }
@@ -261,7 +264,7 @@ export function App(): ReactElement {
         )
         setOpenFilePickerOpen(false)
       })
-      .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : 'Prompt failed.'))
+      .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : t('app.error.prompt')))
   }
   const toggleOpenFilePicker = (): void => {
     if (openFilePickerOpen) {
@@ -274,7 +277,7 @@ export function App(): ReactElement {
       .listOpenFiles()
       .then(setOpenFileCandidates)
       .catch((reason: unknown) =>
-        setError(reason instanceof Error ? reason.message : 'Unable to list open files.'),
+        setError(reason instanceof Error ? reason.message : t('app.error.listOpenFiles')),
       )
       .finally(() => setOpenFilePickerLoading(false))
   }
@@ -292,7 +295,7 @@ export function App(): ReactElement {
       .attachOpenFile(candidateId)
       .then((attachment) => {
         if (attachment === undefined) {
-          setError('The selected open file is no longer available.')
+          setError(t('app.error.openFileGone'))
           return
         }
         store.rememberOpenFile(candidateId)
@@ -300,7 +303,7 @@ export function App(): ReactElement {
         setOpenFilePickerOpen(false)
       })
       .catch((reason: unknown) =>
-        setError(reason instanceof Error ? reason.message : 'Unable to attach the selected file.'),
+        setError(reason instanceof Error ? reason.message : t('app.error.attachSelectedFile')),
       )
       .finally(() => {
         attachingOpenFileRef.current = undefined
@@ -323,19 +326,19 @@ export function App(): ReactElement {
               void store
                 .openSession(sessionId)
                 .catch((reason: unknown) =>
-                  setError(reason instanceof Error ? reason.message : 'Unable to open session.'),
+                  setError(reason instanceof Error ? reason.message : t('app.error.openSession')),
                 )
             }}
             onCreate={(workspaceId) => {
               void store
                 .createSession(workspaceId)
                 .catch((reason: unknown) =>
-                  setError(reason instanceof Error ? reason.message : 'Unable to create session.'),
+                  setError(reason instanceof Error ? reason.message : t('app.error.createSession')),
                 )
             }}
             onArchive={(sessionId) =>
               store.removeSession(sessionId).catch((reason: unknown) => {
-                const message = reason instanceof Error ? reason.message : 'Unable to archive session.'
+                const message = reason instanceof Error ? reason.message : t('app.error.archiveSession')
                 setError(message)
                 throw reason
               })
@@ -380,7 +383,9 @@ export function App(): ReactElement {
         {connectionMessage === undefined || connectionKey === dismissedConnection ? null : (
           <div className="dsh-app__connection-alert" role="alert">
             <div>
-              <strong>{backend.kind === 'port-conflict' ? 'Port conflict' : 'Connection failed'}</strong>
+              <strong>
+                {backend.kind === 'port-conflict' ? t('app.portConflict') : t('app.connectionFailed')}
+              </strong>
               <span>{connectionMessage}</span>
             </div>
             <button
@@ -423,9 +428,7 @@ export function App(): ReactElement {
                     void store
                       .openSubagent(entry, parentAvailable)
                       .catch((reason: unknown) =>
-                        setError(
-                          reason instanceof Error ? reason.message : 'Unable to open subagent history.',
-                        ),
+                        setError(reason instanceof Error ? reason.message : t('app.error.openSubagent')),
                       )
                   }}
                 />
@@ -527,9 +530,7 @@ export function App(): ReactElement {
                     void store
                       .openLink(href)
                       .catch((reason: unknown) =>
-                        setError(
-                          reason instanceof Error ? reason.message : 'The linked file could not be opened.',
-                        ),
+                        setError(reason instanceof Error ? reason.message : t('app.error.openLink')),
                       )
                   }}
                   onOpenSession={(sessionId) => {
@@ -537,7 +538,7 @@ export function App(): ReactElement {
                     void store
                       .openSession(sessionId)
                       .catch((reason: unknown) =>
-                        setError(reason instanceof Error ? reason.message : 'Unable to open session.'),
+                        setError(reason instanceof Error ? reason.message : t('app.error.openSession')),
                       )
                   }}
                 />
@@ -551,16 +552,14 @@ export function App(): ReactElement {
                     void store
                       .updateQueue(inputId, text)
                       .catch((reason: unknown) =>
-                        setError(reason instanceof Error ? reason.message : 'Unable to edit queued prompt.'),
+                        setError(reason instanceof Error ? reason.message : t('app.error.editQueue')),
                       )
                   }}
                   onRemove={(inputId) => {
                     void store
                       .removeQueue(inputId)
                       .catch((reason: unknown) =>
-                        setError(
-                          reason instanceof Error ? reason.message : 'Unable to remove queued prompt.',
-                        ),
+                        setError(reason instanceof Error ? reason.message : t('app.error.removeQueue')),
                       )
                   }}
                   onModeChange={(inputId, mode) => {
@@ -568,7 +567,7 @@ export function App(): ReactElement {
                     void store
                       .steerQueue(inputId)
                       .catch((reason: unknown) =>
-                        setError(reason instanceof Error ? reason.message : 'Unable to steer queued prompt.'),
+                        setError(reason instanceof Error ? reason.message : t('app.error.steerQueue')),
                       )
                   }}
                 />
@@ -608,7 +607,7 @@ export function App(): ReactElement {
                           .configureSession(active.id, configuration)
                           .catch((reason: unknown) =>
                             setError(
-                              reason instanceof Error ? reason.message : 'Unable to update session settings.',
+                              reason instanceof Error ? reason.message : t('app.error.sessionSettings'),
                             ),
                           )
                       }}
@@ -620,7 +619,7 @@ export function App(): ReactElement {
                         void store
                           .executeCommand(active.id, command)
                           .catch((reason: unknown) =>
-                            setError(reason instanceof Error ? reason.message : 'Unable to update DSH mode.'),
+                            setError(reason instanceof Error ? reason.message : t('app.error.dshMode')),
                           )
                       }}
                       onCommandQueryChange={(query) => {
@@ -637,7 +636,7 @@ export function App(): ReactElement {
                           })
                           .catch((reason: unknown) =>
                             setError(
-                              reason instanceof Error ? reason.message : 'Attachment selection failed.',
+                              reason instanceof Error ? reason.message : t('app.error.attachmentSelection'),
                             ),
                           )
                       }}
@@ -661,14 +660,14 @@ export function App(): ReactElement {
                         void store
                           .cancelSession(active.id)
                           .catch((reason: unknown) =>
-                            setError(reason instanceof Error ? reason.message : 'Cancellation failed.'),
+                            setError(reason instanceof Error ? reason.message : t('app.error.cancel')),
                           )
                       }}
                       onSteerQueue={() => {
                         void store
                           .steerAllQueued()
                           .catch((reason: unknown) =>
-                            setError(reason instanceof Error ? reason.message : 'Steering the queue failed.'),
+                            setError(reason instanceof Error ? reason.message : t('app.error.steerAll')),
                           )
                       }}
                       queue={state.queue}
@@ -698,7 +697,7 @@ export function App(): ReactElement {
                             .respondToPermission(request.id, optionId)
                             .catch((reason: unknown) =>
                               setError(
-                                reason instanceof Error ? reason.message : 'Unable to answer approval.',
+                                reason instanceof Error ? reason.message : t('app.error.answerApproval'),
                               ),
                             )
                             .finally(() => setRespondingInteractionId(undefined))
@@ -716,7 +715,7 @@ export function App(): ReactElement {
                             .respondToQuestion(question.id, response)
                             .catch((reason: unknown) =>
                               setError(
-                                reason instanceof Error ? reason.message : 'Unable to answer question.',
+                                reason instanceof Error ? reason.message : t('app.error.answerQuestion'),
                               ),
                             )
                             .finally(() => setRespondingInteractionId(undefined))
@@ -727,7 +726,7 @@ export function App(): ReactElement {
                             .cancelQuestion(question.id)
                             .catch((reason: unknown) =>
                               setError(
-                                reason instanceof Error ? reason.message : 'Unable to cancel question.',
+                                reason instanceof Error ? reason.message : t('app.error.cancelQuestion'),
                               ),
                             )
                             .finally(() => setRespondingInteractionId(undefined))
@@ -813,19 +812,22 @@ function object(value: unknown): Record<string, unknown> | undefined {
     : undefined
 }
 
-function readFileAsBase64(file: File): Promise<{ name: string; mimeType?: string; dataBase64: string }> {
-  if (file.size === 0) return Promise.reject(new Error(`${file.name} is empty.`))
+function readFileAsBase64(
+  file: File,
+  t: Translate,
+): Promise<{ name: string; mimeType?: string; dataBase64: string }> {
+  if (file.size === 0) return Promise.reject(new Error(t('app.error.fileEmpty', { name: file.name })))
   if (file.size > 8 * 1024 * 1024)
-    return Promise.reject(new Error(`${file.name} is larger than the 8 MiB attachment limit.`))
+    return Promise.reject(new Error(t('app.error.fileTooLarge', { name: file.name })))
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
-    reader.onerror = () => reject(new Error(`Unable to read ${file.name}.`))
+    reader.onerror = () => reject(new Error(t('app.error.readFile', { name: file.name })))
     reader.onload = () => {
       const result = typeof reader.result === 'string' ? reader.result : ''
       const match = /^data:([^;,]+);base64,(.*)$/s.exec(result)
       const dataBase64 = match?.[2]
       if (match === null || dataBase64 === undefined || dataBase64 === '') {
-        reject(new Error(`Unable to read ${file.name}.`))
+        reject(new Error(t('app.error.readFile', { name: file.name })))
         return
       }
       const mimeType = file.type === '' ? (match[1] ?? 'application/octet-stream') : file.type
@@ -852,6 +854,7 @@ function resolveAssistantModelLabel(
   session: SessionSummary | undefined,
   configuration: AgentConfiguration | undefined,
   models: readonly ModelDescriptor[],
+  t: Translate,
 ): string {
   const selected =
     configuration === undefined
@@ -861,6 +864,9 @@ function resolveAssistantModelLabel(
             model.providerId === configuration.model.providerId && model.id === configuration.model.modelId,
         )
   return (
-    selected?.label.trim() || session?.modelLabel?.trim() || configuration?.model.modelId.trim() || 'Model'
+    selected?.label.trim() ||
+    session?.modelLabel?.trim() ||
+    configuration?.model.modelId.trim() ||
+    t('timeline.assistant')
   )
 }

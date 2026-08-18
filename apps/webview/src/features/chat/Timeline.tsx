@@ -5,7 +5,7 @@ import { ToolCard } from '@dsh-vscode/ui'
 import { MarkdownContent } from './MarkdownContent.js'
 import { WorkflowRunCard } from '../workflows/WorkflowDrawer.js'
 import { Icon } from '../../ui/Icon.js'
-import { useI18n } from '../../i18n.js'
+import { useI18n, type Translate } from '../../i18n.js'
 
 type DshEventNode = Extract<TimelineNode, { readonly kind: 'event' }>
 type ToolTimelineNode = Extract<TimelineNode, { readonly kind: 'tool' }>
@@ -204,6 +204,7 @@ export function Timeline(props: TimelineProps): ReactElement {
                   props.assistantLabel,
                   props.onOpenLink,
                   props.onOpenSession,
+                  t,
                 )}
               </div>
             )
@@ -238,12 +239,13 @@ function renderNode(
   assistantLabel = 'Model',
   onOpenLink?: (href: string) => void,
   onOpenSession?: (sessionId: string) => void,
+  t: Translate = (key) => key,
 ): ReactElement {
   switch (node.kind) {
     case 'tool':
-      return renderToolCard(node, expanded, setExpanded)
+      return renderToolCard(node, expanded, setExpanded, t)
     case 'assistant-turn':
-      return renderAssistantTurn(node, expanded, setExpanded, assistantLabel, onOpenLink)
+      return renderAssistantTurn(node, expanded, setExpanded, assistantLabel, onOpenLink, t)
     case 'goal':
       return (
         <section className="dsh-timeline__card dsh-timeline__card--event">
@@ -252,15 +254,19 @@ function renderNode(
               <span className="dsh-message-avatar dsh-message-avatar--system" aria-hidden="true">
                 <Icon name="target" />
               </span>
-              <strong>Goals</strong>
+              <strong>{t('timeline.goals')}</strong>
             </div>
-            <span className="dsh-timeline__card-meta">{node.goals.length} items</span>
+            <span className="dsh-timeline__card-meta">
+              {t('timeline.items', { count: node.goals.length })}
+            </span>
           </header>
           <ul className="dsh-timeline__event-list">
             {node.goals.map((goal) => (
               <li key={goal.id}>
                 <span className="dsh-timeline__event-title">{goal.title}</span>
-                <span className={`dsh-status-pill dsh-status-pill--${goal.status}`}>{goal.status}</span>
+                <span className={`dsh-status-pill dsh-status-pill--${goal.status}`}>
+                  {t(`goal.status.${goal.status}`)}
+                </span>
               </li>
             ))}
           </ul>
@@ -274,15 +280,19 @@ function renderNode(
               <span className="dsh-message-avatar dsh-message-avatar--system" aria-hidden="true">
                 <Icon name="check" />
               </span>
-              <strong>To-do</strong>
+              <strong>{t('app.todo')}</strong>
             </div>
-            <span className="dsh-timeline__card-meta">{node.todos.length} items</span>
+            <span className="dsh-timeline__card-meta">
+              {t('timeline.items', { count: node.todos.length })}
+            </span>
           </header>
           <ul className="dsh-timeline__event-list">
             {node.todos.map((todo) => (
               <li key={todo.id}>
                 <span className="dsh-timeline__event-title">{todo.content}</span>
-                <span className={`dsh-status-pill dsh-status-pill--${todo.status}`}>{todo.status}</span>
+                <span className={`dsh-status-pill dsh-status-pill--${todo.status}`}>
+                  {t(`todo.status.${todo.status}`)}
+                </span>
               </li>
             ))}
           </ul>
@@ -296,9 +306,9 @@ function renderNode(
               <span className="dsh-message-avatar dsh-message-avatar--system" aria-hidden="true">
                 <Icon name="box" />
               </span>
-              <strong>Context compaction</strong>
+              <strong>{t('timeline.contextCompaction')}</strong>
             </div>
-            <span className="dsh-timeline__card-meta">{compactionMeta(node.compaction)}</span>
+            <span className="dsh-timeline__card-meta">{compactionMeta(node.compaction, t)}</span>
           </summary>
           {node.compaction.summary === undefined ? null : (
             <MarkdownContent markdown={node.compaction.summary} onOpenLink={onOpenLink} />
@@ -318,12 +328,12 @@ function renderNode(
           ) : null}
           <span>
             {node.state === 'cancelled'
-              ? `Retry ${node.attempt} cancelled`
+              ? t('timeline.retryCancelled', { attempt: node.attempt })
               : node.state === 'started'
-                ? `Retry ${node.attempt} started`
+                ? t('timeline.retryStarted', { attempt: node.attempt })
                 : node.attempt > 1
-                  ? `Retrying (attempt ${node.attempt})`
-                  : 'Model connection lost. Retrying'}
+                  ? t('timeline.retryingAttempt', { attempt: node.attempt })
+                  : t('timeline.retryConnectionLost')}
             {node.message === undefined ? '' : ` — ${node.message}`}
           </span>
         </p>
@@ -350,7 +360,7 @@ function renderNode(
           <summary className="dsh-timeline__event-group-summary">
             <span className="dsh-timeline__event-group-heading">
               <Icon name="terminal" />
-              <span>Events</span>
+              <span>{t('timeline.events')}</span>
             </span>
             <span className="dsh-timeline__event-group-meta">
               <span>{node.events.length}</span>
@@ -364,8 +374,8 @@ function renderNode(
               <li key={event.id} className="dsh-timeline__event-group-item">
                 <code title={event.name}>{event.name}</code>
                 <details className="dsh-timeline__event-payload">
-                  <summary>Payload</summary>
-                  <pre>{formatEventPayload(event.payload)}</pre>
+                  <summary>{t('timeline.payload')}</summary>
+                  <pre>{formatEventPayload(event.payload, t)}</pre>
                 </details>
               </li>
             ))}
@@ -374,9 +384,12 @@ function renderNode(
       )
     case 'user-message':
       return (
-        <article className="dsh-timeline__card dsh-timeline__card--user" aria-label="Your message">
+        <article
+          className="dsh-timeline__card dsh-timeline__card--user"
+          aria-label={t('timeline.yourMessage')}
+        >
           {node.attachments === undefined || node.attachments.length === 0 ? null : (
-            <div className="dsh-timeline__attachments" aria-label="Attached files">
+            <div className="dsh-timeline__attachments" aria-label={t('timeline.attachedFiles')}>
               {node.attachments.map((attachment, index) => (
                 <span
                   className="dsh-timeline__attachment"
@@ -399,17 +412,19 @@ function renderNode(
         <article className="dsh-timeline__card dsh-timeline__card--assistant">
           <header className="dsh-timeline__card-header">
             <strong>{node.modelLabel ?? assistantLabel}</strong>
-            {assistantDurationLabel(node.timing) === undefined ? null : (
-              <span className="dsh-timeline__assistant-duration">{assistantDurationLabel(node.timing)}</span>
+            {assistantDurationLabel(node.timing, t) === undefined ? null : (
+              <span className="dsh-timeline__assistant-duration">
+                {assistantDurationLabel(node.timing, t)}
+              </span>
             )}
           </header>
-          {node.reasoning === undefined ? null : renderReasoning(node.reasoning, onOpenLink)}
+          {node.reasoning === undefined ? null : renderReasoning(node.reasoning, onOpenLink, t)}
           {node.markdown.trim() === '' ? null : (
             <MarkdownContent markdown={node.markdown} onOpenLink={onOpenLink} />
           )}
           {node.streaming || node.reasoning?.streaming ? (
             <span className="dsh-sr-only" aria-live="polite">
-              Response is streaming
+              {t('timeline.streaming')}
             </span>
           ) : null}
         </article>
@@ -428,6 +443,7 @@ function renderNode(
         setExpanded,
         assistantLabel,
         onOpenLink,
+        t,
       )
   }
 }
@@ -438,19 +454,20 @@ function renderAssistantTurn(
   setExpanded: (next: ReadonlySet<string>) => void,
   assistantLabel: string,
   onOpenLink?: (href: string) => void,
+  t: Translate = (key) => key,
 ): ReactElement {
   return (
     <article className="dsh-timeline__card dsh-timeline__card--assistant">
       <header className="dsh-timeline__card-header">
         <strong>{node.modelLabel ?? assistantLabel}</strong>
-        {assistantDurationLabel(node.timing) === undefined ? null : (
-          <span className="dsh-timeline__assistant-duration">{assistantDurationLabel(node.timing)}</span>
+        {assistantDurationLabel(node.timing, t) === undefined ? null : (
+          <span className="dsh-timeline__assistant-duration">{assistantDurationLabel(node.timing, t)}</span>
         )}
       </header>
-      {node.reasoning === undefined ? null : renderReasoning(node.reasoning, onOpenLink)}
+      {node.reasoning === undefined ? null : renderReasoning(node.reasoning, onOpenLink, t)}
       {node.tools.length === 0 ? null : (
         <div className="dsh-timeline__assistant-tools">
-          {renderToolCollection(node.tools, expanded, setExpanded)}
+          {renderToolCollection(node.tools, expanded, setExpanded, t)}
         </div>
       )}
       {node.markdown.trim() === '' ? null : (
@@ -458,7 +475,7 @@ function renderAssistantTurn(
       )}
       {node.streaming || node.reasoning?.streaming ? (
         <span className="dsh-sr-only" aria-live="polite">
-          Response is streaming
+          {t('timeline.streaming')}
         </span>
       ) : null}
     </article>
@@ -471,13 +488,14 @@ function renderReasoning(
     readonly streaming: boolean
   },
   onOpenLink?: (href: string) => void,
+  t: Translate = (key) => key,
 ): ReactElement {
   return (
     <details className="dsh-timeline__reasoning">
-      <summary className="dsh-timeline__reasoning-summary" aria-label="Show reasoning">
-        <span>Thinking</span>
+      <summary className="dsh-timeline__reasoning-summary" aria-label={t('timeline.showReasoning')}>
+        <span>{t('timeline.thinking')}</span>
         <span className="dsh-timeline__reasoning-meta">
-          {reasoning.streaming ? <span className="dsh-sr-only">In progress</span> : null}
+          {reasoning.streaming ? <span className="dsh-sr-only">{t('timeline.inProgress')}</span> : null}
           <span className="dsh-timeline__disclosure" aria-hidden="true">
             <Icon name="chevron-down" />
           </span>
@@ -492,11 +510,13 @@ function renderToolCard(
   node: ToolTimelineNode,
   expanded: ReadonlySet<string>,
   setExpanded: (next: ReadonlySet<string>) => void,
+  t: Translate = (key) => key,
 ): ReactElement {
   return (
     <ToolCard
       tool={node.tool}
       expanded={expanded.has(node.id)}
+      translate={t}
       onToggle={() => {
         const next = new Set(expanded)
         if (next.has(node.id)) next.delete(node.id)
@@ -511,17 +531,18 @@ function renderToolCollection(
   tools: readonly ToolTimelineNode[],
   expanded: ReadonlySet<string>,
   setExpanded: (next: ReadonlySet<string>) => void,
+  t: Translate = (key) => key,
 ): ReactElement {
   if (tools.length === 1) {
     const tool = tools[0]
-    if (tool !== undefined) return renderToolCard(tool, expanded, setExpanded)
+    if (tool !== undefined) return renderToolCard(tool, expanded, setExpanded, t)
   }
   const latest = tools[tools.length - 1]!
   return (
     <details className="dsh-timeline__reasoning dsh-timeline__tool-group">
       <summary
         className="dsh-timeline__reasoning-summary dsh-timeline__tool-group-summary"
-        aria-label={`Show ${tools.length} tool calls`}
+        aria-label={t('timeline.showToolCalls', { count: tools.length })}
       >
         <span className="dsh-timeline__tool-group-icon" aria-hidden="true">
           <Icon name="tool" />
@@ -529,8 +550,8 @@ function renderToolCollection(
         <span className="dsh-timeline__tool-group-count" aria-hidden="true">
           {tools.length}
         </span>
-        <span className="dsh-timeline__tool-group-latest" title={toolSummary(latest.tool)}>
-          {toolSummary(latest.tool)}
+        <span className="dsh-timeline__tool-group-latest" title={toolSummary(latest.tool, t)}>
+          {toolSummary(latest.tool, t)}
         </span>
         <span className="dsh-timeline__reasoning-meta">
           <span className="dsh-timeline__disclosure" aria-hidden="true">
@@ -540,27 +561,30 @@ function renderToolCollection(
       </summary>
       <div className="dsh-timeline__tool-group-list">
         {tools.map((toolNode) => (
-          <div key={toolNode.id}>{renderToolCard(toolNode, expanded, setExpanded)}</div>
+          <div key={toolNode.id}>{renderToolCard(toolNode, expanded, setExpanded, t)}</div>
         ))}
       </div>
     </details>
   )
 }
 
-function toolSummary(tool: ToolTimelineNode['tool']): string {
+function toolSummary(tool: ToolTimelineNode['tool'], t: Translate = (key) => key): string {
   const title = tool.title.trim()
   const name = tool.name.trim()
-  const label = title !== '' && title.toLowerCase() !== 'tool' ? title : name || title || 'Tool'
+  const label =
+    title !== '' && title.toLowerCase() !== 'tool' ? title : name || title || t('timeline.toolFallback')
   return `${label} · ${tool.status}`
 }
 
 function compactionMeta(
   compaction: Extract<TimelineNode, { readonly kind: 'compaction' }>['compaction'],
+  t: Translate = (key) => key,
 ): string {
   const parts: string[] = []
-  if (compaction.replacedCount !== undefined) parts.push(`${compaction.replacedCount} entries`)
+  if (compaction.replacedCount !== undefined)
+    parts.push(t('timeline.compactionEntries', { count: compaction.replacedCount }))
   if (compaction.estimatedTokens !== undefined)
-    parts.push(`~${formatTokenCount(compaction.estimatedTokens)} tokens`)
+    parts.push(t('timeline.compactionTokens', { count: formatTokenCount(compaction.estimatedTokens) }))
   if (parts.length === 0) parts.push(compaction.phase)
   return parts.join(' · ')
 }
@@ -576,7 +600,10 @@ function formatTokenCount(value: number): string {
  * Missing boundaries stay hidden: a historical or interrupted message must
  * not display a duration invented by the Webview clock.
  */
-function assistantDurationLabel(timing: AssistantTiming | undefined): string | undefined {
+function assistantDurationLabel(
+  timing: AssistantTiming | undefined,
+  t: Translate = (key) => key,
+): string | undefined {
   const start = timing?.stepStartTime
   const end = timing?.completedTime
   if (start === undefined || start === null || end === undefined || end === null) return undefined
@@ -584,7 +611,7 @@ function assistantDurationLabel(timing: AssistantTiming | undefined): string | u
   const minutes = Math.floor(totalSeconds / 60)
   const seconds = totalSeconds % 60
   const duration = minutes > 0 ? `${minutes}m ${String(seconds).padStart(2, '0')}s` : `${seconds}s`
-  return `Ran for ${duration}`
+  return t('timeline.ranFor', { duration })
 }
 
 function nodeSignature(node: DisplayTimelineNode | undefined): string {
@@ -600,12 +627,12 @@ function nodeSignature(node: DisplayTimelineNode | undefined): string {
   return node.id
 }
 
-function formatEventPayload(value: unknown): string {
+function formatEventPayload(value: unknown, t: Translate = (key) => key): string {
   try {
     const json = JSON.stringify(value, null, 2)
     return (json ?? '').slice(0, 8_192)
   } catch {
-    return '[event payload unavailable]'
+    return t('timeline.payloadUnavailable')
   }
 }
 

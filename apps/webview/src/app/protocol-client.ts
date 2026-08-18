@@ -6,6 +6,7 @@ import {
   type WebviewRequest,
 } from '@dsh-vscode/webview-protocol'
 
+import { translate } from '../i18n.js'
 import type { VsCodeApi } from '../vscode-api.js'
 
 interface Pending {
@@ -29,13 +30,14 @@ export class ProtocolClient {
   }
 
   public request<T>(request: WebviewRequest): Promise<T> {
-    if (this.disposed) return Promise.reject(new Error('The Webview protocol client is disposed.'))
+    if (this.disposed) return Promise.reject(new Error(translate('app.error.disposed')))
     const parsed = webviewRequestSchema.parse(request)
-    if (this.pending.has(parsed.requestId)) return Promise.reject(new Error('Duplicate request id.'))
+    if (this.pending.has(parsed.requestId))
+      return Promise.reject(new Error(translate('app.error.duplicateRequest')))
     return new Promise<T>((resolve, reject) => {
       const timer = window.setTimeout(() => {
         this.pending.delete(parsed.requestId)
-        reject(new Error('The DSH request timed out.'))
+        reject(new Error(translate('app.error.timeout')))
       }, this.timeoutMs)
       this.pending.set(parsed.requestId, { resolve: (value) => resolve(value as T), reject, timer })
       try {
@@ -59,7 +61,7 @@ export class ProtocolClient {
       window.clearTimeout(pending.timer)
       if (message.ok) pending.resolve(message.payload)
       else {
-        const error = new Error(message.error?.message ?? 'DSH returned an unspecified host error.')
+        const error = new Error(message.error?.message ?? translate('app.error.hostUnspecified'))
         if (message.error !== undefined) Object.assign(error, message.error)
         pending.reject(error)
       }
@@ -82,7 +84,7 @@ export class ProtocolClient {
     window.removeEventListener('message', this.windowListener)
     for (const pending of this.pending.values()) {
       window.clearTimeout(pending.timer)
-      pending.reject(new Error('The Webview was disposed.'))
+      pending.reject(new Error(translate('app.error.webviewDisposed')))
     }
     this.pending.clear()
     this.listeners.clear()

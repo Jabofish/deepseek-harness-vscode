@@ -1,3 +1,5 @@
+import type { Translate } from '../../i18n.js'
+
 export function isDefaultSessionTitle(title: string): boolean {
   const normalized = title.trim()
   return (
@@ -5,7 +7,11 @@ export function isDefaultSessionTitle(title: string): boolean {
   )
 }
 
-export function displaySessionTitle(title: string): string {
+export function displaySessionTitle(title: string, t?: Translate): string {
   const normalized = title.trim()
-  return isDefaultSessionTitle(normalized) ? 'New Session' : normalized
+  return isDefaultSessionTitle(normalized)
+    ? t === undefined
+      ? 'New Session'
+      : t('sessions.new')
+    : normalized
 }

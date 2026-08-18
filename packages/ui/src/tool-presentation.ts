@@ -1,5 +1,11 @@
 import type { ToolCallView } from '@dsh-vscode/domain'
 
+/** Optional label translator supplied by the hosting surface (English default). */
+export type PresentationTranslate = (
+  key: string,
+  params?: Readonly<Record<string, string | number>>,
+) => string
+
 export interface ToolDetailBlock {
   readonly label: string
   readonly content: string
@@ -32,18 +38,29 @@ const INTERNAL_FIELDS = new Set([
   'password',
 ])
 
-const FIELD_LABELS: Readonly<Record<string, string>> = {
-  description: 'Task',
-  prompt: 'Instructions',
-  query: 'Query',
-  command: 'Command',
-  code: 'Code',
-  path: 'File',
-  url: 'URL',
-  target: 'Target',
-  to: 'Target',
-  content: 'Content',
-  text: 'Text',
+/** Known field names map to a translation key plus the English fallback. */
+const FIELD_LABELS: Readonly<Record<string, readonly [key: string, english: string]>> = {
+  description: ['presentation.task', 'Task'],
+  prompt: ['presentation.instructions', 'Instructions'],
+  query: ['presentation.field.query', 'Query'],
+  command: ['presentation.field.command', 'Command'],
+  code: ['presentation.field.code', 'Code'],
+  path: ['presentation.field.file', 'File'],
+  url: ['presentation.field.url', 'URL'],
+  target: ['presentation.field.target', 'Target'],
+  to: ['presentation.field.target', 'Target'],
+  content: ['presentation.field.content', 'Content'],
+  text: ['presentation.field.text', 'Text'],
+}
+
+/** Translate when a translator is present, otherwise keep the English copy. */
+function localize(
+  t: PresentationTranslate | undefined,
+  key: string,
+  english: string,
+  params?: Readonly<Record<string, string | number>>,
+): string {
+  return t === undefined ? english : t(key, params)
 }
 
 /**
@@ -51,16 +68,23 @@ const FIELD_LABELS: Readonly<Record<string, string>> = {
  * a presentation boundary: protocol envelopes and identifiers never become a
  * second, raw JSON interface inside the card.
  */
-export function toolPresentation(tool: ToolCallView): ToolPresentation {
+export function toolPresentation(tool: ToolCallView, t?: PresentationTranslate): ToolPresentation {
   const input = decode(tool.inputSummary)
   const output = decode(tool.outputSummary)
   const subagent = isSubagent(tool)
-  const request = subagent ? subagentRequest(input) : detailBlocks(input, 'Request')
+  const request = subagent
+    ? subagentRequest(input, t)
+    : detailBlocks(input, 'presentation.request', 'Request', t)
   const responseText = visibleContent(output)
   const response =
     responseText.length > 0
-      ? [{ label: 'Result', content: cleanAcknowledgement(responseText.join('\n\n'), subagent) }]
-      : detailBlocks(output, 'Result')
+      ? [
+          {
+            label: localize(t, 'presentation.result', 'Result'),
+            content: cleanAcknowledgement(responseText.join('\n\n'), subagent, t),
+          },
+        ]
+      : detailBlocks(output, 'presentation.result', 'Result', t)
   const summary = firstString(
     field(input, 'description'),
     field(tool.metadata, 'description'),
@@ -69,19 +93,25 @@ export function toolPresentation(tool: ToolCallView): ToolPresentation {
   const summaryText = summary === undefined ? undefined : oneLine(summary)
 
   return {
-    title: displayTitle(tool, subagent),
-    ...(summaryText === undefined ? {} : { summary: subagent ? `Task · ${summaryText}` : summaryText }),
+    title: displayTitle(tool, subagent, t),
+    ...(summaryText === undefined
+      ? {}
+      : {
+          summary: subagent
+            ? localize(t, 'presentation.taskSummary', `Task · ${summaryText}`, { summary: summaryText })
+            : summaryText,
+        }),
     request,
     response,
   }
 }
 
-function displayTitle(tool: ToolCallView, subagent: boolean): string {
-  if (subagent) return 'Subagent'
+function displayTitle(tool: ToolCallView, subagent: boolean, t?: PresentationTranslate): string {
+  if (subagent) return localize(t, 'presentation.subagent', 'Subagent')
   const title = tool.title.trim()
   const name = tool.name.trim()
   if (title !== '' && title.toLocaleLowerCase() !== 'tool') return title
-  return name || title || 'Tool'
+  return name || title || localize(t, 'presentation.tool', 'Tool')
 }
 
 function isSubagent(tool: ToolCallView): boolean {
@@ -89,52 +119,66 @@ function isSubagent(tool: ToolCallView): boolean {
   return /(^|[^a-z])subagent([^a-z]|$)/u.test(identity)
 }
 
-function subagentRequest(value: unknown): readonly ToolDetailBlock[] {
+function subagentRequest(value: unknown, t?: PresentationTranslate): readonly ToolDetailBlock[] {
   const record = object(value)
-  if (record === undefined) return detailBlocks(value, 'Instructions')
+  if (record === undefined) return detailBlocks(value, 'presentation.instructions', 'Instructions', t)
   const blocks: ToolDetailBlock[] = []
   const description = text(record.description)
   const prompt = text(record.prompt)
-  if (description !== undefined) blocks.push({ label: 'Task', content: description })
-  if (prompt !== undefined) blocks.push({ label: 'Instructions', content: prompt })
+  if (description !== undefined)
+    blocks.push({ label: localize(t, 'presentation.task', 'Task'), content: description })
+  if (prompt !== undefined)
+    blocks.push({ label: localize(t, 'presentation.instructions', 'Instructions'), content: prompt })
   const handled = new Set(['description', 'prompt'])
   for (const [key, entry] of Object.entries(record)) {
     if (handled.has(key.toLocaleLowerCase()) || isInternalField(key)) continue
-    appendField(blocks, key, entry, 0)
+    appendField(blocks, key, entry, 0, t)
   }
   return blocks
 }
 
-function detailBlocks(value: unknown, fallbackLabel: string): readonly ToolDetailBlock[] {
+function detailBlocks(
+  value: unknown,
+  fallbackKey: string,
+  fallbackEnglish: string,
+  t?: PresentationTranslate,
+): readonly ToolDetailBlock[] {
   if (value === undefined || value === null || value === '') return []
   const record = object(value)
   if (record === undefined) {
     const content = displayValue(value)
-    return content === undefined ? [] : [{ label: fallbackLabel, content }]
+    return content === undefined ? [] : [{ label: localize(t, fallbackKey, fallbackEnglish), content }]
   }
   const blocks: ToolDetailBlock[] = []
   for (const [key, entry] of Object.entries(record)) {
     if (isInternalField(key) || key.toLocaleLowerCase() === 'content') continue
-    appendField(blocks, key, entry, 0)
+    appendField(blocks, key, entry, 0, t)
   }
   const content = visibleContent(record.content)
-  if (content.length > 0) blocks.push({ label: fallbackLabel, content: content.join('\n\n') })
+  if (content.length > 0)
+    blocks.push({ label: localize(t, fallbackKey, fallbackEnglish), content: content.join('\n\n') })
   return blocks
 }
 
-function appendField(blocks: ToolDetailBlock[], key: string, value: unknown, depth: number): void {
+function appendField(
+  blocks: ToolDetailBlock[],
+  key: string,
+  value: unknown,
+  depth: number,
+  t?: PresentationTranslate,
+): void {
   if (depth > 1 || isInternalField(key)) return
   const record = object(value)
   if (record !== undefined) {
     for (const [childKey, child] of Object.entries(record)) {
       if (isInternalField(childKey)) continue
       const content = displayValue(child)
-      if (content !== undefined) blocks.push({ label: `${label(key)} · ${label(childKey)}`, content })
+      if (content !== undefined) blocks.push({ label: `${label(key, t)} · ${label(childKey, t)}`, content })
     }
     return
   }
   const content = displayValue(value)
-  if (content !== undefined) blocks.push({ label: label(key), content })
+  if (content !== undefined) blocks.push({ label: label(key, t), content })
 }
 
 function visibleContent(value: unknown): readonly string[] {
@@ -154,9 +198,9 @@ function visibleContent(value: unknown): readonly string[] {
   return []
 }
 
-function cleanAcknowledgement(value: string, subagent: boolean): string {
+function cleanAcknowledgement(value: string, subagent: boolean, t?: PresentationTranslate): string {
   if (subagent && /^started subagent(?:\s+\S+)?[.!]?$/iu.test(value.trim()))
-    return 'Subagent started successfully.'
+    return localize(t, 'presentation.subagentStarted', 'Subagent started successfully.')
   return bounded(value)
 }
 
@@ -193,16 +237,18 @@ function displayValue(value: unknown): string | undefined {
   return undefined
 }
 
-function label(value: string): string {
+function label(value: string, t?: PresentationTranslate): string {
   const normalized = value.toLocaleLowerCase()
   const known = FIELD_LABELS[normalized]
-  if (known !== undefined) return known
+  if (known !== undefined) return localize(t, known[0], known[1])
   const spaced = value
     .replace(/([a-z0-9])([A-Z])/gu, '$1 $2')
     .replace(/[_-]+/gu, ' ')
     .trim()
   const sentence = spaced.toLocaleLowerCase()
-  return sentence === '' ? 'Detail' : `${sentence[0]?.toLocaleUpperCase() ?? ''}${sentence.slice(1)}`
+  return sentence === ''
+    ? localize(t, 'presentation.detail', 'Detail')
+    : `${sentence[0]?.toLocaleUpperCase() ?? ''}${sentence.slice(1)}`
 }
 
 function isInternalField(value: string): boolean {

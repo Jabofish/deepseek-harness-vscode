@@ -1,16 +1,18 @@
 import type { ReactElement } from 'react'
 import type { BackendState } from '@dsh-vscode/domain'
+import { useI18n } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
 
 export function RuntimeStatus({ state }: { readonly state: BackendState }): ReactElement {
+  const { t } = useI18n()
   const label =
     state.kind === 'connected'
-      ? 'Connected'
+      ? t('runtime.status.connected')
       : state.kind === 'runtime-missing'
-        ? 'Runtime missing'
+        ? t('runtime.status.runtime-missing')
         : state.kind === 'failed' || state.kind === 'port-conflict'
-          ? 'Connection failed'
-          : `${state.kind.slice(0, 1).toUpperCase()}${state.kind.slice(1)}`
+          ? t('runtime.status.connection-failed')
+          : t(`runtime.status.${state.kind}`)
   return (
     <div
       className={`dsh-runtime-status dsh-runtime-status--${state.kind}`}

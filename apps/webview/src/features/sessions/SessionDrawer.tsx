@@ -66,7 +66,7 @@ export function SessionDrawer(props: SessionDrawerProps): ReactElement {
       ? sortSessions(workspaceSessions, sorting)
       : sortSessions(
           workspaceSessions.filter((session) =>
-            displaySessionTitle(session.title).toLowerCase().includes(query),
+            displaySessionTitle(session.title, t).toLowerCase().includes(query),
           ),
           sorting,
         )
@@ -114,7 +114,7 @@ export function SessionDrawer(props: SessionDrawerProps): ReactElement {
   }
 
   const renderSessionRow = (session: SessionSummary, workspaceName: string | undefined): ReactElement => {
-    const title = displaySessionTitle(session.title)
+    const title = displaySessionTitle(session.title, t)
     const statusLabel = t(`sessions.status.${session.status}`)
     return (
       <li key={session.id} aria-busy={removingSessionId === session.id}>
@@ -176,9 +176,11 @@ export function SessionDrawer(props: SessionDrawerProps): ReactElement {
           aria-label={
             activeSession === undefined
               ? t('sessions.open')
-              : t('sessions.switch', { title: displaySessionTitle(activeSession.title) })
+              : t('sessions.switch', { title: displaySessionTitle(activeSession.title, t) })
           }
-          title={activeSession === undefined ? t('sessions.open') : displaySessionTitle(activeSession.title)}
+          title={
+            activeSession === undefined ? t('sessions.open') : displaySessionTitle(activeSession.title, t)
+          }
           onClick={() => setOpen((current) => !current)}
         >
           <span className="dsh-session-switcher__icon" aria-hidden="true">
@@ -187,7 +189,7 @@ export function SessionDrawer(props: SessionDrawerProps): ReactElement {
           <span className="dsh-sr-only">
             {activeSession === undefined
               ? (currentWorkspace?.name ?? t('sessions.open'))
-              : displaySessionTitle(activeSession.title)}
+              : displaySessionTitle(activeSession.title, t)}
           </span>
           <span className="dsh-session-switcher__chevron" aria-hidden="true">
             <Icon name="chevron-down" />

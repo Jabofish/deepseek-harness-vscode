@@ -38,6 +38,7 @@ import {
 import { isInjectedUserMessage, reduceTimeline, type TimelineState } from '@dsh-vscode/timeline'
 import type { HostMessage, WebviewRequest } from '@dsh-vscode/webview-protocol'
 
+import { translate } from '../i18n.js'
 import { ProtocolClient } from './protocol-client.js'
 import { getVsCodeApi } from '../vscode-api.js'
 
@@ -750,13 +751,10 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
           ? state.activeSubagent
           : undefined
       if (subagent !== undefined) {
-        if (subagent.entry.mode === 'one-shot')
-          throw new Error('One-shot subagent conversations are read-only.')
-        if (!subagent.parentAvailable)
-          throw new Error('The parent session is unavailable for a subagent follow-up.')
-        if (attachments.length > 0)
-          throw new Error('Attachments are unavailable for subagent follow-up messages.')
-        if (text.trim() === '') throw new Error('A subagent follow-up message is required.')
+        if (subagent.entry.mode === 'one-shot') throw new Error(translate('app.error.subagentReadOnly'))
+        if (!subagent.parentAvailable) throw new Error(translate('app.error.subagentParentUnavailable'))
+        if (attachments.length > 0) throw new Error(translate('app.error.subagentAttachments'))
+        if (text.trim() === '') throw new Error(translate('app.error.subagentMessageRequired'))
       }
       const isSlashCommand =
         subagent === undefined && attachments.length === 0 && parseSlashCommand(text) !== undefined
@@ -820,8 +818,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         state.activeSessionId === sessionId && state.activeSubagent?.entry.id === sessionId
           ? state.activeSubagent
           : undefined
-      if (subagent?.entry.mode === 'one-shot')
-        throw new Error('One-shot subagent conversations cannot be interrupted.')
+      if (subagent?.entry.mode === 'one-shot') throw new Error(translate('app.error.subagentInterrupt'))
       await client.request<unknown>(
         subagent === undefined
           ? { type: 'session.cancel', requestId: requestId(), payload: { sessionId } }
@@ -981,9 +978,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         }),
       )
       if (result?.opened === true) return
-      throw new Error(
-        typeof result?.message === 'string' ? result.message : 'The linked file could not be opened.',
-      )
+      throw new Error(typeof result?.message === 'string' ? result.message : translate('app.error.openLink'))
     },
     runtimeAction: (action) =>
       client
@@ -1359,7 +1354,7 @@ function parseSubagentCatalog(value: unknown): SubagentCatalog {
     !catalog.entries.every(isSubagentCatalogEntry) ||
     typeof catalog.parentAvailable !== 'boolean'
   )
-    throw new Error('DSH returned a malformed subagent catalog.')
+    throw new Error(translate('app.error.malformedCatalog'))
   return {
     entries: catalog.entries,
     parentAvailable: catalog.parentAvailable,
@@ -1374,7 +1369,7 @@ function parseSubagentHistory(value: unknown): SubagentHistoryPage {
     !page.events.every(isSubagentHistoryEvent) ||
     typeof page.hasMore !== 'boolean'
   )
-    throw new Error('DSH returned a malformed subagent history page.')
+    throw new Error(translate('app.error.malformedHistory'))
   const projection = object(page.projection)
   if (
     page.projection !== undefined &&
@@ -1383,7 +1378,7 @@ function parseSubagentHistory(value: unknown): SubagentHistoryPage {
       (projection.asOfSequence as number) < -1 ||
       object(projection.values) === undefined)
   )
-    throw new Error('DSH returned a malformed subagent projection baseline.')
+    throw new Error(translate('app.error.malformedProjection'))
   return {
     events: page.events,
     hasMore: page.hasMore,
@@ -1434,7 +1429,7 @@ function withClientCommandContributions(commands: readonly DynamicCommand[]): re
     ...commands,
     {
       name: 'model',
-      description: 'Select the model for this conversation',
+      description: translate('commands.modelDescription'),
       source: 'plugin',
     },
   ]
@@ -1506,7 +1501,10 @@ function applyHostMessage(message: HostMessage, state: AppState, setState: State
           connectedDshVersion: undefined,
           backend: {
             kind,
-            message: typeof snapshot?.message === 'string' ? snapshot.message : 'Connection failed.',
+            message:
+              typeof snapshot?.message === 'string'
+                ? snapshot.message
+                : translate('app.error.connectionFailed'),
             retryable: snapshot?.retryable === true,
           },
         })
@@ -1517,7 +1515,8 @@ function applyHostMessage(message: HostMessage, state: AppState, setState: State
           backend: {
             kind,
             port: typeof snapshot?.port === 'number' ? snapshot.port : 0,
-            message: typeof snapshot?.message === 'string' ? snapshot.message : 'Port conflict.',
+            message:
+              typeof snapshot?.message === 'string' ? snapshot.message : translate('app.error.portConflict'),
             retryable: snapshot?.retryable === true,
           },
         })

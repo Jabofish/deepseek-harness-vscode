@@ -1,5 +1,6 @@
 import type { ErrorInfo, ReactNode } from 'react'
 import { Component } from 'react'
+import { useI18n } from '../../i18n.js'
 
 export interface AppErrorBoundaryProps {
   readonly children: ReactNode
@@ -23,14 +24,19 @@ export class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorB
 
   public override render(): ReactNode {
     if (this.state.error === undefined) return this.props.children
-    return (
-      <section className="dsh-error-boundary" role="alert">
-        <h1>DeepSeek Harness view failed</h1>
-        <p>The view can be reloaded without stopping DSH.</p>
-        <button type="button" onClick={() => window.location.reload()}>
-          Reload view
-        </button>
-      </section>
-    )
+    return <ErrorFallback />
   }
+}
+
+function ErrorFallback(): ReactNode {
+  const { t } = useI18n()
+  return (
+    <section className="dsh-error-boundary" role="alert">
+      <h1>{t('errorBoundary.title')}</h1>
+      <p>{t('errorBoundary.description')}</p>
+      <button type="button" onClick={() => window.location.reload()}>
+        {t('errorBoundary.reload')}
+      </button>
+    </section>
+  )
 }

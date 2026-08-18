@@ -1,25 +1,34 @@
 import type { ReactElement } from 'react'
 import type { ToolCallView } from '@dsh-vscode/domain'
-import { toolPresentation } from '../tool-presentation.js'
+import { toolPresentation, type PresentationTranslate } from '../tool-presentation.js'
 
 export interface ToolCardProps {
   readonly tool: ToolCallView
   readonly expanded: boolean
   readonly onToggle: () => void
+  /** Optional label translator supplied by the hosting surface (English default). */
+  readonly translate?: PresentationTranslate
 }
 
 export function ToolCard(props: ToolCardProps): ReactElement {
-  const presentation = toolPresentation(props.tool)
+  const presentation = toolPresentation(props.tool, props.translate)
   const hasDetails =
     presentation.request.length > 0 || presentation.response.length > 0 || props.tool.error !== undefined
+  const expand = props.translate === undefined ? 'Expand' : props.translate('toolcard.expand')
+  const collapse = props.translate === undefined ? 'Collapse' : props.translate('toolcard.collapse')
+  const expandTitle =
+    props.translate === undefined ? 'Expand tool details' : props.translate('toolcard.expandTitle')
+  const collapseTitle =
+    props.translate === undefined ? 'Collapse tool details' : props.translate('toolcard.collapseTitle')
+  const errorLabel = props.translate === undefined ? 'Error' : props.translate('toolcard.error')
   return (
     <article className={`dsh-tool-card dsh-tool-card--${props.tool.status}`}>
       <button
         type="button"
         className="dsh-tool-card__summary"
         aria-expanded={props.expanded}
-        aria-label={`${props.expanded ? 'Collapse' : 'Expand'} ${presentation.title} details`}
-        title={`${props.expanded ? 'Collapse' : 'Expand'} tool details`}
+        aria-label={`${props.expanded ? collapse : expand} ${presentation.title} details`}
+        title={props.expanded ? collapseTitle : expandTitle}
         onClick={props.onToggle}
         disabled={!hasDetails}
       >
@@ -41,7 +50,7 @@ export function ToolCard(props: ToolCardProps): ReactElement {
           )}
         </span>
         <span className={`dsh-tool-card__status dsh-tool-card__status--${props.tool.status}`}>
-          {statusLabel(props.tool.status)}
+          {statusLabel(props.tool.status, props.translate)}
         </span>
         {hasDetails ? (
           <span
@@ -70,7 +79,7 @@ export function ToolCard(props: ToolCardProps): ReactElement {
           ))}
           {props.tool.error === undefined ? null : (
             <section className="dsh-tool-card__section dsh-tool-card__section--error" role="alert">
-              <h4>Error</h4>
+              <h4>{errorLabel}</h4>
               <p>{bounded(props.tool.error)}</p>
             </section>
           )}
@@ -80,18 +89,19 @@ export function ToolCard(props: ToolCardProps): ReactElement {
   )
 }
 
-function statusLabel(status: ToolCallView['status']): string {
+function statusLabel(status: ToolCallView['status'], t?: PresentationTranslate): string {
+  const localize = (key: string, english: string): string => (t === undefined ? english : t(key))
   switch (status) {
     case 'queued':
-      return 'Queued'
+      return localize('toolcard.status.queued', 'Queued')
     case 'running':
-      return 'Running'
+      return localize('toolcard.status.running', 'Running')
     case 'completed':
-      return 'Completed'
+      return localize('toolcard.status.completed', 'Completed')
     case 'failed':
-      return 'Failed'
+      return localize('toolcard.status.failed', 'Failed')
     case 'cancelled':
-      return 'Cancelled'
+      return localize('toolcard.status.cancelled', 'Cancelled')
   }
 }
 
