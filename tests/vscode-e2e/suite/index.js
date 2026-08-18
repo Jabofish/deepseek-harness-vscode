@@ -8,6 +8,7 @@ export async function run() {
   const commands = await vscode.commands.getCommands(true)
   assert.ok(commands.includes('dsh.connect'))
   assert.ok(commands.includes('dsh.openInSecondarySidebar'))
+  assert.ok(commands.includes('dsh.openWebUi'))
   assert.equal(typeof globalThis.WebSocket, 'function', 'the Extension Host must provide WebSocket')
   console.log(
     `[dsh-vscode-e2e] extension-host node=${process.version} websocket=${typeof globalThis.WebSocket}`,

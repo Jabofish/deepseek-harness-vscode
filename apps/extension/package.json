@@ -41,6 +41,7 @@
     "onCommand:dsh.connect",
     "onCommand:dsh.reconnect",
     "onCommand:dsh.newSession",
+    "onCommand:dsh.openWebUi",
     "onCommand:dsh.installRuntime"
   ],
   "files": [
@@ -117,6 +118,11 @@
         "icon": "$(settings-gear)"
       },
       {
+        "command": "dsh.openWebUi",
+        "title": "DSH: Open Web UI",
+        "icon": "$(globe)"
+      },
+      {
         "command": "dsh.installRuntime",
         "title": "DSH: Install DeepSeek Harness"
       },
@@ -162,6 +168,11 @@
           "command": "dsh.openSettings",
           "when": "view == dsh.chatView",
           "group": "navigation@3"
+        },
+        {
+          "command": "dsh.openWebUi",
+          "when": "view == dsh.chatView && dsh.connected",
+          "group": "navigation@4"
         }
       ]
     },

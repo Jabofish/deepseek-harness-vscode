@@ -20,6 +20,7 @@ const COMMANDS = [
   'dsh.reconnect',
   'dsh.newSession',
   'dsh.openSettings',
+  'dsh.openWebUi',
   'dsh.installRuntime',
   'dsh.selectExecutable',
   'dsh.copyInstallCommand',

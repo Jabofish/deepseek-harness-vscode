@@ -1091,6 +1091,18 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
                 '@ext:Direwolf.deepseek-harness-client',
               )
           },
+          'dsh.openWebUi': async () => {
+            const state = coordinator.getState()
+            if (state.kind !== 'connected') {
+              void vscode.window.showInformationMessage(
+                'Connect to a local DSH instance before opening its Web UI.',
+              )
+              return
+            }
+            const opened = await vscode.env.openExternal(vscode.Uri.parse(state.backend.endpoint.baseUrl))
+            if (!opened)
+              void vscode.window.showWarningMessage('Unable to open the DSH Web UI in your browser.')
+          },
           'dsh.installRuntime': () => runtimeInstaller.install(),
           'dsh.selectExecutable': () => runtimeInstaller.selectExecutable(),
           'dsh.copyInstallCommand': () => runtimeInstaller.copyInstallCommand(),
