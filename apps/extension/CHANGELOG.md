@@ -1,5 +1,13 @@
 # Change Log
 
+## 0.0.5
+
+- 修复流式回复未及时刷新、工具调用被拆分隐藏以及任务完成状态误判，完成后可立即复制或创建分支。
+- 补充会话、代码块和表格的复制操作，并保持任务进度、模式切换和中英文界面的一致展示。
+
+- Fixes delayed streaming updates, hidden or split tool calls, and incorrect task termination state so completed replies immediately expose copy and branch actions.
+- Adds copy actions for conversations, code blocks, and tables while keeping task progress, mode switching, and bilingual labels consistent.
+
 ## 0.0.4
 
 - 完善 DSH rc.6 会话、事件时间线、队列、交互、附件、导出、目标、任务、子代理和工作流展示。
