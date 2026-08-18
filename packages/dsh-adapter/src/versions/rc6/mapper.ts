@@ -50,6 +50,10 @@ export const rc6Mapper = {
       // must not turn a reusable New Session into a history row.
       title: blank ? 'New Session' : normalizeSessionTitle(rawTitle),
       blank,
+      ...(record.parentSessionId === undefined
+        ? {}
+        : { parentSessionId: string(record.parentSessionId, 'parentSessionId') }),
+      ...(record.origin === 'subagent' ? { origin: 'subagent' as const } : {}),
       status,
       createdAt: date(record.createdAt ?? record.updatedAt),
       updatedAt,

@@ -350,6 +350,18 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     // only events addressed to an in-flight open; global connection/workspace
     // events continue to update the shell while the read is in progress.
     if (!deferredToOpen) applyHostMessage(message, state, setState)
+    // The switcher only caches its rows, so a session whose title changed
+    // while the drawer was closed (a missed live frame, a reconnect gap, or a
+    // title generated before this client attached) would keep showing the
+    // stale value. Re-fetch the authoritative list whenever the drawer opens,
+    // mirroring the subagent drawer's open-reads-fresh behavior.
+    if (
+      !deferredToOpen &&
+      message.type === 'event' &&
+      message.name === 'ui.sessions.toggle' &&
+      state.drawer === 'sessions'
+    )
+      void refresh()
     if (
       message.type === 'event' &&
       message.name === 'remote.event' &&
@@ -1116,8 +1128,10 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       return catalog
     },
     setDrawer: (drawer) => {
+      const openingSessionsDrawer = drawer === 'sessions' && state.drawer !== 'sessions'
       setState((current) => ({ ...current, drawer }))
       persistWebviewState()
+      if (openingSessionsDrawer) void refresh()
     },
     dispose: () => {
       unsubscribe()

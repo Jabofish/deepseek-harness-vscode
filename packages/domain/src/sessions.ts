@@ -16,6 +16,10 @@ export interface SessionSummary {
   readonly title: string
   /** True until the first model turn starts; command-only sessions stay blank. */
   readonly blank: boolean
+  /** Fork/spawn lineage; present when the session is a child. */
+  readonly parentSessionId?: string
+  /** Durable origin; 'subagent' marks a child managed via the subagent surface. */
+  readonly origin?: 'subagent'
   readonly status: SessionStatus
   readonly createdAt: string
   readonly updatedAt: string

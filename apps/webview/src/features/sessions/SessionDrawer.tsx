@@ -50,11 +50,17 @@ export function SessionDrawer(props: SessionDrawerProps): ReactElement {
   const trimmedSearchQuery = searchQuery.trim()
   const contentMatches = contentSearch.query === trimmedSearchQuery ? contentSearch.matches : []
   const query = trimmedSearchQuery.toLowerCase()
+  // Subagent children are managed and labeled on the subagent surface (they
+  // carry their parent lineage there). The root conversation picker only shows
+  // user-facing sessions; subagent children never appear here, even when one
+  // is the active session (the parent root session is always listed, so
+  // switching back stays possible).
   const workspaceSessions =
     currentWorkspace === undefined
       ? []
       : props.sessions.filter(
           (session) =>
+            session.origin !== 'subagent' &&
             (session.workspaceId === currentWorkspace.id ||
               currentWorkspace.sessionIds?.includes(session.id)) &&
             (!session.blank || session.id === props.activeSessionId),
@@ -95,7 +101,11 @@ export function SessionDrawer(props: SessionDrawerProps): ReactElement {
   const visibleIds = new Set(visibleSessions.map((session) => session.id))
   const otherWorkspaceMatches = sortSessions(
     contentMatches.filter(
-      (session) => !visibleIds.has(session.id) && !session.blank && session.id !== props.activeSessionId,
+      (session) =>
+        !visibleIds.has(session.id) &&
+        session.origin !== 'subagent' &&
+        !session.blank &&
+        session.id !== props.activeSessionId,
     ),
     sorting,
   )

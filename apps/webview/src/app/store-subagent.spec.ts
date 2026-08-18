@@ -65,10 +65,17 @@ function answer(request: WebviewRequest): unknown {
       }
     case 'subagent.list':
       return { entries: [], parentAvailable: false }
+    case 'session.list':
+    case 'workspace.list':
+      return { items: [] }
     case 'session.queue.list':
     case 'goal.list':
     case 'job.list':
+    case 'providers.list':
+    case 'models.list':
       return []
+    case 'preset.list':
+      return { presets: [] }
     case 'subagent.send':
     case 'subagent.interrupt':
       return undefined
@@ -339,6 +346,40 @@ describe('AppStore subagent transport routing', () => {
 
     expect(store.queue).toEqual([])
     expect(store.jobs).toEqual([])
+    store.dispose()
+  })
+})
+
+describe('AppStore sessions drawer', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  const sessionListCount = (client: FakeClient): number =>
+    client.requests.filter((request) => request.type === 'session.list').length
+
+  it('re-fetches the session list when the sessions drawer opens', () => {
+    const client = new FakeClient(answer)
+    const store = createAppStore(client as unknown as ProtocolClient)
+    const before = sessionListCount(client)
+
+    client.emit({ type: 'event', name: 'ui.sessions.toggle', sequence: 1, payload: {} })
+
+    expect(store.drawer).toBe('sessions')
+    // Opening the drawer re-fetches the authoritative list so stale cached
+    // titles (missed live frames, reconnect gaps) cannot linger in the picker.
+    expect(sessionListCount(client)).toBeGreaterThan(before)
+    store.dispose()
+  })
+
+  it('does not re-fetch when the sessions drawer closes', () => {
+    const client = new FakeClient(answer)
+    const store = createAppStore(client as unknown as ProtocolClient)
+    client.emit({ type: 'event', name: 'ui.sessions.toggle', sequence: 1, payload: {} })
+    const afterOpen = sessionListCount(client)
+
+    client.emit({ type: 'event', name: 'ui.sessions.toggle', sequence: 2, payload: {} })
+
+    expect(store.drawer).toBeUndefined()
+    expect(sessionListCount(client)).toBe(afterOpen)
     store.dispose()
   })
 })

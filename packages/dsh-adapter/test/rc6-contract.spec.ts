@@ -322,6 +322,22 @@ describe('DeepSeek Harness 0.1.0-rc.6 contract', () => {
       }),
     ).toMatchObject({ title: 'New Session', status: 'idle' })
     expect(
+      rc6Mapper.sessionSummary({
+        sessionId: 'child-1',
+        updatedAt: 1_700_000_000_000,
+        running: false,
+        blank: false,
+        parentSessionId: 's1',
+        origin: 'subagent',
+        projections: { values: { title: 'Inspect the project layout' } },
+      }),
+    ).toMatchObject({
+      id: 'child-1',
+      title: 'Inspect the project layout',
+      parentSessionId: 's1',
+      origin: 'subagent',
+    })
+    expect(
       rc6Mapper.workspace({
         workspaceId: 'w1',
         title: 'WebCraft',

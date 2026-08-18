@@ -103,4 +103,34 @@ describe('SessionDrawer', () => {
     expect(sort.parentElement).toBe(create.parentElement)
     expect(sort.parentElement?.classList.contains('dsh-session-switcher__panel-actions')).toBe(true)
   })
+
+  it('hides subagent children from the root conversation picker', () => {
+    const subagent = session({
+      id: 'child',
+      title: 'Inspect the project layout',
+      origin: 'subagent',
+      parentSessionId: 's1',
+      updatedAt: '2026-01-06T00:00:00.000Z',
+    })
+    renderDrawer({ sessions: [...sessions, subagent] })
+    expect(screen.getByTitle('Fix login bug')).toBeDefined()
+    expect(screen.getByTitle('Write docs')).toBeDefined()
+    expect(screen.queryByTitle('Inspect the project layout')).toBeNull()
+  })
+
+  it('hides the active session when it is a subagent child', () => {
+    const subagent = session({
+      id: 'child',
+      title: 'Inspect the project layout',
+      origin: 'subagent',
+      parentSessionId: 's1',
+    })
+    renderDrawer({ sessions: [...sessions, subagent], activeSessionId: 'child' })
+    // Even while a subagent conversation is open, the root picker stays clean:
+    // only user-facing root sessions are listed, so switching back to the
+    // parent is one click away.
+    expect(screen.getByTitle('Fix login bug')).toBeDefined()
+    expect(screen.getByTitle('Write docs')).toBeDefined()
+    expect(screen.queryByTitle('Inspect the project layout')).toBeNull()
+  })
 })
