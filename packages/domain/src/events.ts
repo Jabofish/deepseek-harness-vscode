@@ -91,6 +91,10 @@ export interface ModelRetrySignal {
 /** Safe, presentation-only metadata for a file represented in a user turn. */
 export type MessageAttachment = Pick<PromptAttachment, 'name' | 'mimeType'>
 
+/** Terminal boundary reported by the durable DSH turn lifecycle. */
+export type TurnEndReasonKind =
+  'completed' | 'aborted' | 'blocked' | 'error' | 'max-tokens' | 'interrupted' | 'unknown'
+
 type BackendEventPayload =
   | { readonly type: 'session.status'; readonly sessionId: string; readonly status: string }
   | { readonly type: 'session.title'; readonly sessionId: string; readonly title: string }
@@ -98,6 +102,13 @@ type BackendEventPayload =
       readonly type: 'session.configuration'
       readonly sessionId: string
       readonly patch: SessionConfigurationPatch
+    }
+  | { readonly type: 'turn.started'; readonly sessionId: string; readonly turn: number }
+  | {
+      readonly type: 'turn.ended'
+      readonly sessionId: string
+      readonly turn: number
+      readonly reason: TurnEndReasonKind
     }
   | {
       readonly type: 'session.added'

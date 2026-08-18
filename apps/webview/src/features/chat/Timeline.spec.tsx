@@ -129,6 +129,193 @@ describe('Timeline', () => {
     expect(screen.getByText('Ran for 3m 08s')).toBeDefined()
   })
 
+  it('renders compact message actions and branches from any completed answer', () => {
+    const branch = vi.fn()
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal('navigator', { clipboard: { writeText } })
+
+    render(
+      <Timeline
+        sessionId="session-1"
+        nodes={[
+          { kind: 'assistant-message', id: 'assistant-1', markdown: 'First', streaming: false, sequence: 2 },
+          { kind: 'assistant-message', id: 'assistant-2', markdown: 'Latest', streaming: false, sequence: 4 },
+        ]}
+        streaming={false}
+        onBranch={branch}
+      />,
+    )
+
+    const branchButtons = screen.getAllByRole('button', { name: 'Branch into a new conversation' })
+    expect(branchButtons).toHaveLength(2)
+    expect(branchButtons[0]?.getAttribute('aria-disabled')).toBeNull()
+    expect(branchButtons[1]?.getAttribute('aria-disabled')).toBeNull()
+    fireEvent.click(branchButtons[0]!)
+    fireEvent.click(branchButtons[1]!)
+    fireEvent.click(screen.getAllByRole('button', { name: 'Copy' })[1]!)
+
+    expect(branch).toHaveBeenCalledTimes(2)
+    expect(branch).toHaveBeenNthCalledWith(1, 2)
+    expect(branch).toHaveBeenNthCalledWith(2, 4)
+    expect(writeText).toHaveBeenCalledWith('Latest')
+  })
+
+  it('keeps a tool call inside one assistant turn and anchors branching to the final answer', () => {
+    const branch = vi.fn()
+    render(
+      <Timeline
+        sessionId="session-1"
+        nodes={[
+          {
+            kind: 'assistant-message',
+            id: 'assistant-before',
+            markdown: 'Before the tool.',
+            streaming: false,
+            sequence: 3,
+            turn: 1,
+            step: 0,
+            turnCompleted: false,
+          },
+          {
+            kind: 'tool',
+            id: 'tool:call-1',
+            tool: {
+              id: 'call-1',
+              turn: 1,
+              step: 0,
+              name: 'read',
+              category: 'filesystem',
+              title: 'Read',
+              status: 'completed',
+              inputSummary: 'README.md',
+              outputSummary: 'file contents',
+              metadata: {},
+            },
+          },
+          {
+            kind: 'assistant-message',
+            id: 'assistant-after',
+            markdown: 'After the tool.',
+            streaming: false,
+            sequence: 7,
+            turn: 1,
+            step: 1,
+            turnCompleted: true,
+          },
+        ]}
+        streaming={false}
+        onBranch={branch}
+      />,
+    )
+
+    expect(document.querySelectorAll('.dsh-timeline__card--assistant')).toHaveLength(1)
+    expect(screen.getByText('Before the tool.')).toBeDefined()
+    expect(screen.getByText('After the tool.')).toBeDefined()
+    expect(screen.getByRole('button', { name: 'Expand Read details' })).toBeDefined()
+    fireEvent.click(screen.getByRole('button', { name: 'Branch into a new conversation' }))
+    expect(branch).toHaveBeenCalledWith(7)
+  })
+
+  it('shows a compact activity phrase instead of message actions while an answer is streaming', () => {
+    render(
+      <Timeline
+        sessionId="session-1"
+        nodes={[
+          {
+            kind: 'assistant-message',
+            id: 'assistant-1',
+            markdown: 'In progress',
+            streaming: true,
+            sequence: 2,
+          },
+        ]}
+        streaming={true}
+        onBranch={() => undefined}
+      />,
+    )
+
+    expect(screen.getByRole('status')).toBeDefined()
+    expect(screen.queryByRole('button', { name: 'Branch into a new conversation' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Copy' })).toBeNull()
+  })
+
+  it('keeps a settled step in activity state until the durable turn end arrives', () => {
+    const nodes: readonly TimelineNode[] = [
+      {
+        kind: 'assistant-message',
+        id: 'assistant-1',
+        markdown: 'Waiting for the turn boundary',
+        streaming: false,
+        sequence: 2,
+        turn: 1,
+        step: 0,
+      },
+    ]
+    const view = render(
+      <Timeline
+        sessionId="session-1"
+        nodes={nodes}
+        streaming={true}
+        activeTurn={1}
+        onBranch={() => undefined}
+      />,
+    )
+
+    expect(screen.getByRole('status')).toBeDefined()
+    expect(screen.queryByRole('button', { name: 'Branch into a new conversation' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Copy' })).toBeNull()
+
+    view.rerender(
+      <Timeline
+        sessionId="session-1"
+        nodes={[
+          {
+            kind: 'assistant-message',
+            id: 'assistant-1',
+            markdown: 'Waiting for the turn boundary',
+            streaming: false,
+            sequence: 2,
+            turn: 1,
+            step: 0,
+            turnCompleted: true,
+          },
+        ]}
+        streaming={false}
+        onBranch={() => undefined}
+      />,
+    )
+    expect(screen.queryByRole('status')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Branch into a new conversation' })).toBeDefined()
+  })
+
+  it('does not treat a settled answer as active when the session is idle', () => {
+    render(
+      <Timeline
+        sessionId="session-1"
+        nodes={[
+          {
+            kind: 'assistant-message',
+            id: 'assistant-1',
+            markdown: 'Completed answer',
+            streaming: false,
+            sequence: 4,
+            turn: 1,
+            step: 1,
+            turnCompleted: true,
+          },
+        ]}
+        streaming={false}
+        running={false}
+        activeTurn={1}
+        onBranch={() => undefined}
+      />,
+    )
+
+    expect(screen.queryByRole('status')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Copy' })).toBeDefined()
+    expect(screen.getByRole('button', { name: 'Branch into a new conversation' })).toBeDefined()
+  })
+
   it('renders the aggregated retry row and compaction accounting', () => {
     const nodes: readonly TimelineNode[] = [
       {

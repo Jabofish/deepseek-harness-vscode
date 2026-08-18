@@ -16,6 +16,7 @@ import type {
   SessionSummary,
   TokenUsage,
   ToolCallView,
+  TurnEndReasonKind,
   TodoView,
   UserQuestion,
   UserQuestionItem,
@@ -235,6 +236,24 @@ export const rc6Mapper = {
         return Object.keys(model).length === 0
           ? { type: 'unknown', sessionId, name, payload: safePayload(value) }
           : sessionConfiguration(sessionId, { model })
+      }
+      case 'turn/start':
+      case 'turn/end': {
+        const turn = eventIndex(data.turn)
+        if (turn === undefined)
+          return {
+            type: 'unknown',
+            ...(sessionId === '' ? {} : { sessionId }),
+            name,
+            payload: safePayload(value),
+          }
+        if (name === 'turn/start') return { type: 'turn.started', sessionId, turn }
+        return {
+          type: 'turn.ended',
+          sessionId,
+          turn,
+          reason: turnEndReason(data.reason),
+        }
       }
       case 'step/start':
       case 'step/end': {
@@ -841,8 +860,12 @@ function tool(value: Record<string, unknown>): ToolCallView {
     ['queued', 'running', 'completed', 'failed', 'cancelled'] as const,
     message === undefined ? 'running' : error !== undefined ? 'failed' : 'completed',
   )
+  const turn = eventIndex(value.turn)
+  const step = eventIndex(value.step)
   return {
     id: stringOr(value.callId ?? source?.callId ?? value.id ?? view?.callId ?? view?.id, 'tool-call'),
+    ...(turn === undefined ? {} : { turn }),
+    ...(step === undefined ? {} : { step }),
     name: name ?? 'unknown-tool',
     category: category ?? 'tool',
     title: title ?? 'Tool',
@@ -854,6 +877,18 @@ function tool(value: Record<string, unknown>): ToolCallView {
     ...(value.error === undefined ? {} : { error: bounded(error?.message ?? value.error) }),
     metadata: objectOrUndefined(safePayload(view)) ?? {},
   }
+}
+
+function turnEndReason(value: unknown): TurnEndReasonKind {
+  const kind = objectOrUndefined(value)?.kind ?? value
+  return kind === 'completed' ||
+    kind === 'aborted' ||
+    kind === 'blocked' ||
+    kind === 'error' ||
+    kind === 'max-tokens' ||
+    kind === 'interrupted'
+    ? kind
+    : 'unknown'
 }
 
 function goal(value: unknown): GoalView {

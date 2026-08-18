@@ -3,6 +3,7 @@ import { isInjectedUserMessage, type AssistantTiming, type TimelineNode } from '
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { ToolCard } from '@dsh-vscode/ui'
 import { MarkdownContent } from './MarkdownContent.js'
+import { MessageActions } from './MessageActions.js'
 import { WorkflowRunCard } from '../workflows/WorkflowDrawer.js'
 import { Icon } from '../../ui/Icon.js'
 import { useI18n, type Translate } from '../../i18n.js'
@@ -28,6 +29,10 @@ interface AssistantTurnNode {
   readonly tools: readonly ToolTimelineNode[]
   readonly markdown: string
   readonly streaming: boolean
+  readonly sequence?: number
+  readonly turn?: number
+  readonly step?: number
+  readonly turnCompleted?: boolean
 }
 
 type DisplayTimelineNode =
@@ -40,9 +45,16 @@ export interface TimelineProps {
   readonly sessionId: string
   readonly nodes: readonly TimelineNode[]
   readonly streaming: boolean
+  /** Authoritative session-level running bit from the host status stream. */
+  readonly running?: boolean
   readonly assistantLabel?: string
   readonly onOpenLink?: (href: string) => void
   readonly onOpenSession?: (sessionId: string) => void
+  /** Fork the active session at a durable assistant-message sequence. */
+  readonly onBranch?: (atSeq: number) => void
+  readonly branching?: boolean
+  /** DSH turn remains open across tool calls and multiple model steps. */
+  readonly activeTurn?: number
 }
 
 export function Timeline(props: TimelineProps): ReactElement {
@@ -64,6 +76,10 @@ export function Timeline(props: TimelineProps): ReactElement {
   const displayNodes = useMemo(
     () => prepareDisplayNodes(props.nodes, showDshEvents),
     [props.nodes, showDshEvents],
+  )
+  const running = props.running ?? props.streaming
+  const usingTool = props.nodes.some(
+    (node) => node.kind === 'tool' && (node.tool.status === 'queued' || node.tool.status === 'running'),
   )
   const latestNode = displayNodes[displayNodes.length - 1]
   const latestSignature = nodeSignature(latestNode)
@@ -204,12 +220,22 @@ export function Timeline(props: TimelineProps): ReactElement {
                   props.assistantLabel,
                   props.onOpenLink,
                   props.onOpenSession,
+                  props.onBranch,
+                  branchUnavailableForNode(node, props.branching === true),
+                  running,
                   t,
                 )}
               </div>
             )
           })}
         </div>
+        {running ? (
+          <StreamingActivity
+            id={`turn:${props.activeTurn ?? latestNode?.id ?? props.sessionId}`}
+            usingTool={usingTool}
+            translate={t}
+          />
+        ) : null}
         {props.streaming ? (
           <span className="dsh-sr-only" aria-live="polite">
             {t('timeline.streaming')}
@@ -239,13 +265,26 @@ function renderNode(
   assistantLabel = 'Model',
   onOpenLink?: (href: string) => void,
   onOpenSession?: (sessionId: string) => void,
+  onBranch?: (atSeq: number) => void,
+  branchUnavailable = true,
+  running = false,
   t: Translate = (key) => key,
 ): ReactElement {
   switch (node.kind) {
     case 'tool':
       return renderToolCard(node, expanded, setExpanded, t)
     case 'assistant-turn':
-      return renderAssistantTurn(node, expanded, setExpanded, assistantLabel, onOpenLink, t)
+      return renderAssistantTurn(
+        node,
+        expanded,
+        setExpanded,
+        assistantLabel,
+        onOpenLink,
+        t,
+        onBranch,
+        branchUnavailable,
+        running,
+      )
     case 'goal':
       return (
         <section className="dsh-timeline__card dsh-timeline__card--event">
@@ -384,51 +423,34 @@ function renderNode(
       )
     case 'user-message':
       return (
-        <article
-          className="dsh-timeline__card dsh-timeline__card--user"
-          aria-label={t('timeline.yourMessage')}
-        >
-          {node.attachments === undefined || node.attachments.length === 0 ? null : (
-            <div className="dsh-timeline__attachments" aria-label={t('timeline.attachedFiles')}>
-              {node.attachments.map((attachment, index) => (
-                <span
-                  className="dsh-timeline__attachment"
-                  key={`${attachment.name}:${index}`}
-                  title={attachment.name}
-                >
-                  <Icon name={attachment.mimeType?.startsWith('image/') === true ? 'image' : 'file'} />
-                  <span>{attachment.name}</span>
-                </span>
-              ))}
-            </div>
-          )}
-          {node.markdown.trim() === '' ? null : (
-            <MarkdownContent markdown={node.markdown} onOpenLink={onOpenLink} />
-          )}
-        </article>
+        <div className="dsh-timeline__message-stack dsh-timeline__message-stack--user">
+          <article
+            className="dsh-timeline__card dsh-timeline__card--user"
+            aria-label={t('timeline.yourMessage')}
+          >
+            {node.attachments === undefined || node.attachments.length === 0 ? null : (
+              <div className="dsh-timeline__attachments" aria-label={t('timeline.attachedFiles')}>
+                {node.attachments.map((attachment, index) => (
+                  <span
+                    className="dsh-timeline__attachment"
+                    key={`${attachment.name}:${index}`}
+                    title={attachment.name}
+                  >
+                    <Icon name={attachment.mimeType?.startsWith('image/') === true ? 'image' : 'file'} />
+                    <span>{attachment.name}</span>
+                  </span>
+                ))}
+              </div>
+            )}
+            {node.markdown.trim() === '' ? null : (
+              <MarkdownContent markdown={node.markdown} onOpenLink={onOpenLink} />
+            )}
+          </article>
+          {node.markdown.trim() === '' ? null : <MessageActions text={node.markdown} translate={t} />}
+        </div>
       )
     case 'assistant-message':
-      return (
-        <article className="dsh-timeline__card dsh-timeline__card--assistant">
-          <header className="dsh-timeline__card-header">
-            <strong>{node.modelLabel ?? assistantLabel}</strong>
-            {assistantDurationLabel(node.timing, t) === undefined ? null : (
-              <span className="dsh-timeline__assistant-duration">
-                {assistantDurationLabel(node.timing, t)}
-              </span>
-            )}
-          </header>
-          {node.reasoning === undefined ? null : renderReasoning(node.reasoning, onOpenLink, t)}
-          {node.markdown.trim() === '' ? null : (
-            <MarkdownContent markdown={node.markdown} onOpenLink={onOpenLink} />
-          )}
-          {node.streaming || node.reasoning?.streaming ? (
-            <span className="dsh-sr-only" aria-live="polite">
-              {t('timeline.streaming')}
-            </span>
-          ) : null}
-        </article>
-      )
+      return renderAssistantMessage(node, assistantLabel, onOpenLink, t, onBranch, branchUnavailable, running)
     case 'reasoning':
       return renderAssistantTurn(
         {
@@ -444,6 +466,9 @@ function renderNode(
         assistantLabel,
         onOpenLink,
         t,
+        undefined,
+        true,
+        running,
       )
   }
 }
@@ -455,31 +480,124 @@ function renderAssistantTurn(
   assistantLabel: string,
   onOpenLink?: (href: string) => void,
   t: Translate = (key) => key,
+  onBranch?: (atSeq: number) => void,
+  branchUnavailable = true,
+  running = false,
 ): ReactElement {
+  const inProgress = assistantNodeInProgress(node)
+  const actionsUnavailable = running || inProgress || (node.turn !== undefined && node.turnCompleted !== true)
   return (
-    <article className="dsh-timeline__card dsh-timeline__card--assistant">
-      <header className="dsh-timeline__card-header">
-        <strong>{node.modelLabel ?? assistantLabel}</strong>
-        {assistantDurationLabel(node.timing, t) === undefined ? null : (
-          <span className="dsh-timeline__assistant-duration">{assistantDurationLabel(node.timing, t)}</span>
+    <div className="dsh-timeline__message-stack">
+      <article className="dsh-timeline__card dsh-timeline__card--assistant">
+        <header className="dsh-timeline__card-header">
+          <strong>{node.modelLabel ?? assistantLabel}</strong>
+          {assistantDurationLabel(node.timing, t) === undefined ? null : (
+            <span className="dsh-timeline__assistant-duration">{assistantDurationLabel(node.timing, t)}</span>
+          )}
+        </header>
+        {node.reasoning === undefined ? null : renderReasoning(node.reasoning, onOpenLink, t)}
+        {node.tools.length === 0 ? null : (
+          <div className="dsh-timeline__assistant-tools">
+            {renderToolCollection(node.tools, expanded, setExpanded, t)}
+          </div>
         )}
-      </header>
-      {node.reasoning === undefined ? null : renderReasoning(node.reasoning, onOpenLink, t)}
-      {node.tools.length === 0 ? null : (
-        <div className="dsh-timeline__assistant-tools">
-          {renderToolCollection(node.tools, expanded, setExpanded, t)}
-        </div>
+        {node.markdown.trim() === '' ? null : (
+          <MarkdownContent markdown={node.markdown} onOpenLink={onOpenLink} />
+        )}
+      </article>
+      {node.markdown.trim() === '' || actionsUnavailable ? null : (
+        <MessageActions
+          text={node.markdown}
+          {...(onBranch === undefined
+            ? {}
+            : { onBranch: node.sequence === undefined ? () => undefined : () => onBranch(node.sequence!) })}
+          branchUnavailable={branchUnavailable}
+          translate={t}
+        />
       )}
-      {node.markdown.trim() === '' ? null : (
-        <MarkdownContent markdown={node.markdown} onOpenLink={onOpenLink} />
-      )}
-      {node.streaming || node.reasoning?.streaming ? (
-        <span className="dsh-sr-only" aria-live="polite">
-          {t('timeline.streaming')}
-        </span>
-      ) : null}
-    </article>
+    </div>
   )
+}
+
+function renderAssistantMessage(
+  node: Extract<DisplayTimelineNode, { readonly kind: 'assistant-message' }>,
+  assistantLabel: string,
+  onOpenLink: ((href: string) => void) | undefined,
+  t: Translate,
+  onBranch: ((atSeq: number) => void) | undefined,
+  branchUnavailable: boolean,
+  running = false,
+): ReactElement {
+  const inProgress = assistantNodeInProgress(node)
+  const actionsUnavailable = running || inProgress || (node.turn !== undefined && node.turnCompleted !== true)
+  return (
+    <div className="dsh-timeline__message-stack">
+      <article className="dsh-timeline__card dsh-timeline__card--assistant">
+        <header className="dsh-timeline__card-header">
+          <strong>{node.modelLabel ?? assistantLabel}</strong>
+          {assistantDurationLabel(node.timing, t) === undefined ? null : (
+            <span className="dsh-timeline__assistant-duration">{assistantDurationLabel(node.timing, t)}</span>
+          )}
+        </header>
+        {node.reasoning === undefined ? null : renderReasoning(node.reasoning, onOpenLink, t)}
+        {node.markdown.trim() === '' ? null : (
+          <MarkdownContent markdown={node.markdown} onOpenLink={onOpenLink} />
+        )}
+      </article>
+      {node.markdown.trim() === '' || actionsUnavailable ? null : (
+        <MessageActions
+          text={node.markdown}
+          {...(onBranch === undefined
+            ? {}
+            : { onBranch: node.sequence === undefined ? () => undefined : () => onBranch(node.sequence!) })}
+          branchUnavailable={branchUnavailable}
+          translate={t}
+        />
+      )}
+    </div>
+  )
+}
+
+function StreamingActivity(props: {
+  readonly id: string
+  readonly usingTool?: boolean
+  readonly translate: Translate
+}): ReactElement {
+  const phraseKeys = [
+    'timeline.activity.deepDiving',
+    'timeline.activity.thinking',
+    'timeline.activity.checking',
+    'timeline.activity.composing',
+  ] as const
+  const key =
+    props.usingTool === true
+      ? 'timeline.activity.usingTool'
+      : (phraseKeys[stableHash(props.id) % phraseKeys.length] ?? 'timeline.activity.deepDiving')
+  return (
+    <span className="dsh-timeline__streaming-status" role="status" aria-live="polite">
+      <Icon name={props.usingTool === true ? 'tool' : 'sparkles'} />
+      <span>{props.translate(key)}</span>
+    </span>
+  )
+}
+
+function assistantNodeInProgress(
+  node:
+    | Pick<AssistantTurnNode, 'streaming' | 'reasoning' | 'tools' | 'turn'>
+    | Extract<DisplayTimelineNode, { readonly kind: 'assistant-message' }>,
+): boolean {
+  return (
+    node.streaming ||
+    node.reasoning?.streaming === true ||
+    ('tools' in node &&
+      node.tools.some((tool) => tool.tool.status === 'queued' || tool.tool.status === 'running'))
+  )
+}
+
+function stableHash(value: string): number {
+  let hash = 0
+  for (const character of value) hash = (hash * 31 + character.charCodeAt(0)) >>> 0
+  return hash
 }
 
 function renderReasoning(
@@ -627,6 +745,16 @@ function nodeSignature(node: DisplayTimelineNode | undefined): string {
   return node.id
 }
 
+function branchUnavailableForNode(node: DisplayTimelineNode, branching: boolean): boolean {
+  if (node.kind !== 'assistant-message' && node.kind !== 'assistant-turn') return true
+  return (
+    branching ||
+    assistantNodeInProgress(node) ||
+    (node.turn !== undefined && node.turnCompleted !== true) ||
+    node.sequence === undefined
+  )
+}
+
 function formatEventPayload(value: unknown, t: Translate = (key) => key): string {
   try {
     const json = JSON.stringify(value, null, 2)
@@ -682,8 +810,15 @@ interface ReasoningBlock {
 interface PendingAssistantWork {
   readonly id: string
   modelLabel?: string
+  timing?: AssistantTiming
   reasoning?: ReasoningBlock | undefined
   readonly tools: ToolTimelineNode[]
+  markdown: string
+  streaming: boolean
+  sequence?: number
+  turn?: number
+  step?: number
+  turnCompleted?: boolean
 }
 
 function collapseAssistantTurns(nodes: readonly DisplayTimelineNode[]): readonly DisplayTimelineNode[] {
@@ -696,22 +831,49 @@ function collapseAssistantTurns(nodes: readonly DisplayTimelineNode[]): readonly
       kind: 'assistant-turn',
       id: `assistant-turn:${pending.id}`,
       ...(pending.modelLabel === undefined ? {} : { modelLabel: pending.modelLabel }),
+      ...(pending.timing === undefined ? {} : { timing: pending.timing }),
       ...(pending.reasoning === undefined ? {} : { reasoning: pending.reasoning }),
       tools: pending.tools,
-      markdown: '',
-      streaming: pending.reasoning?.streaming ?? false,
+      markdown: pending.markdown,
+      streaming: pending.streaming || pending.reasoning?.streaming === true,
+      ...(pending.sequence === undefined ? {} : { sequence: pending.sequence }),
+      ...(pending.turn === undefined ? {} : { turn: pending.turn }),
+      ...(pending.step === undefined ? {} : { step: pending.step }),
+      ...(pending.turnCompleted === undefined ? {} : { turnCompleted: pending.turnCompleted }),
     })
     pending = undefined
   }
 
   for (const node of nodes) {
     if (node.kind === 'reasoning') {
-      if (pending === undefined) pending = { id: node.id, reasoning: node, tools: [] }
+      if (pending === undefined)
+        pending = { id: node.id, reasoning: node, tools: [], markdown: '', streaming: node.streaming }
       else pending.reasoning = appendReasoning(pending.reasoning, node)
       continue
     }
     if (node.kind === 'tool') {
-      if (pending === undefined) pending = { id: node.id, tools: [] }
+      if (pending === undefined) {
+        const previous = collapsed[collapsed.length - 1]
+        if (previous?.kind === 'assistant-message') {
+          collapsed.pop()
+          pending = pendingFromAssistantMessage(previous)
+        } else if (previous?.kind === 'assistant-turn') {
+          collapsed.pop()
+          pending = {
+            id: previous.id,
+            ...(previous.modelLabel === undefined ? {} : { modelLabel: previous.modelLabel }),
+            ...(previous.timing === undefined ? {} : { timing: previous.timing }),
+            ...(previous.reasoning === undefined ? {} : { reasoning: previous.reasoning }),
+            tools: [...previous.tools],
+            markdown: previous.markdown,
+            streaming: previous.streaming,
+            ...(previous.sequence === undefined ? {} : { sequence: previous.sequence }),
+            ...(previous.turn === undefined ? {} : { turn: previous.turn }),
+            ...(previous.step === undefined ? {} : { step: previous.step }),
+            ...(previous.turnCompleted === undefined ? {} : { turnCompleted: previous.turnCompleted }),
+          }
+        } else pending = { id: node.id, tools: [], markdown: '', streaming: false }
+      }
       pending.tools.push(node)
       continue
     }
@@ -719,20 +881,17 @@ function collapseAssistantTurns(nodes: readonly DisplayTimelineNode[]): readonly
       const hasVisibleOutput = node.markdown.trim() !== ''
       if (pending !== undefined) {
         if (node.modelLabel !== undefined) pending.modelLabel = node.modelLabel
+        if (node.timing !== undefined) pending.timing = node.timing
+        if (node.sequence !== undefined) pending.sequence = node.sequence
+        if (node.turn !== undefined) pending.turn = node.turn
+        if (node.step !== undefined) pending.step = node.step
+        if (node.turnCompleted !== undefined) pending.turnCompleted = node.turnCompleted
         pending.reasoning = appendReasoning(pending.reasoning, node.reasoning)
+        pending.markdown = joinAssistantMarkdown(pending.markdown, node.markdown)
+        pending.streaming = node.streaming
         if (!hasVisibleOutput) continue
 
-        const modelLabel = node.modelLabel ?? pending.modelLabel
-        collapsed.push({
-          kind: 'assistant-turn',
-          id: `assistant-turn:${node.id}`,
-          ...(modelLabel === undefined ? {} : { modelLabel }),
-          ...(node.timing === undefined ? {} : { timing: node.timing }),
-          ...(pending.reasoning === undefined ? {} : { reasoning: pending.reasoning }),
-          tools: pending.tools,
-          markdown: node.markdown,
-          streaming: node.streaming,
-        })
+        collapsed.push(toAssistantTurn(pending, node.id))
         pending = undefined
         continue
       }
@@ -747,14 +906,13 @@ function collapseAssistantTurns(nodes: readonly DisplayTimelineNode[]): readonly
             tools: [],
             markdown: node.markdown,
             streaming: node.streaming,
+            ...(node.sequence === undefined ? {} : { sequence: node.sequence }),
+            ...(node.turn === undefined ? {} : { turn: node.turn }),
+            ...(node.step === undefined ? {} : { step: node.step }),
+            ...(node.turnCompleted === undefined ? {} : { turnCompleted: node.turnCompleted }),
           })
         } else {
-          pending = {
-            id: node.id,
-            ...(node.modelLabel === undefined ? {} : { modelLabel: node.modelLabel }),
-            reasoning: node.reasoning,
-            tools: [],
-          }
+          pending = pendingFromAssistantMessage(node)
         }
         continue
       }
@@ -767,6 +925,49 @@ function collapseAssistantTurns(nodes: readonly DisplayTimelineNode[]): readonly
   }
   flush()
   return collapsed
+}
+
+function pendingFromAssistantMessage(
+  node: Extract<DisplayTimelineNode, { readonly kind: 'assistant-message' }>,
+): PendingAssistantWork {
+  return {
+    id: node.id,
+    ...(node.modelLabel === undefined ? {} : { modelLabel: node.modelLabel }),
+    ...(node.timing === undefined ? {} : { timing: node.timing }),
+    ...(node.reasoning === undefined ? {} : { reasoning: node.reasoning }),
+    tools: [],
+    markdown: node.markdown,
+    streaming: node.streaming,
+    ...(node.sequence === undefined ? {} : { sequence: node.sequence }),
+    ...(node.turn === undefined ? {} : { turn: node.turn }),
+    ...(node.step === undefined ? {} : { step: node.step }),
+    ...(node.turnCompleted === undefined ? {} : { turnCompleted: node.turnCompleted }),
+  }
+}
+
+function toAssistantTurn(pending: PendingAssistantWork, id: string): AssistantTurnNode {
+  return {
+    kind: 'assistant-turn',
+    id: `assistant-turn:${id}`,
+    ...(pending.modelLabel === undefined ? {} : { modelLabel: pending.modelLabel }),
+    ...(pending.timing === undefined ? {} : { timing: pending.timing }),
+    ...(pending.reasoning === undefined ? {} : { reasoning: pending.reasoning }),
+    tools: pending.tools,
+    markdown: pending.markdown,
+    streaming: pending.streaming || pending.reasoning?.streaming === true,
+    ...(pending.sequence === undefined ? {} : { sequence: pending.sequence }),
+    ...(pending.turn === undefined ? {} : { turn: pending.turn }),
+    ...(pending.step === undefined ? {} : { step: pending.step }),
+    ...(pending.turnCompleted === undefined ? {} : { turnCompleted: pending.turnCompleted }),
+  }
+}
+
+function joinAssistantMarkdown(left: string, right: string): string {
+  if (left.trim() === '') return right
+  if (right.trim() === '') return left
+  if (left === right || left.endsWith(right)) return left
+  if (right.startsWith(left)) return right
+  return `${left}\n\n${right}`
 }
 
 function appendReasoning(

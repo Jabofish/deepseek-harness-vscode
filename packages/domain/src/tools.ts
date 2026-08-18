@@ -2,6 +2,9 @@ export type ToolCallStatus = 'queued' | 'running' | 'completed' | 'failed' | 'ca
 
 export interface ToolCallView {
   readonly id: string
+  /** DSH turn/step coordinates; used to close interrupted tools at turn/end. */
+  readonly turn?: number
+  readonly step?: number
   readonly name: string
   readonly category: string
   readonly title: string

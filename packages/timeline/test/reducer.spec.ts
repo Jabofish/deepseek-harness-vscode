@@ -56,10 +56,286 @@ describe('reduceTimeline', () => {
         id: 'assistant:1:1',
         markdown: 'Hello',
         streaming: false,
+        sequence: 3,
+        turn: 1,
+        step: 1,
         timing: { stepStartTime: 1_000, firstTokenTime: 1_800, completedTime: 4_800 },
       },
     ])
     expect(completed.stepTimings).toBeUndefined()
+  })
+
+  it('closes an accumulated answer when the terminal completion carries usage only', () => {
+    const streamed = reduceTimeline(initial, {
+      sequence: 10,
+      event: { type: 'message.delta', sessionId: 'session-1', messageId: 'm1', delta: 'answer' },
+    })
+    const completed = reduceTimeline(streamed, {
+      sequence: 11,
+      event: {
+        type: 'message.completed',
+        sessionId: 'session-1',
+        messageId: 'm1',
+        usage: { inputTokens: 4, outputTokens: 2 },
+      },
+    })
+
+    expect(completed.nodes).toEqual([
+      {
+        kind: 'assistant-message',
+        id: 'm1',
+        markdown: 'answer',
+        streaming: false,
+        sequence: 11,
+        usage: { inputTokens: 4, outputTokens: 2 },
+      },
+    ])
+  })
+
+  it('keeps a completed step active until turn/end and settles the final answer there', () => {
+    let state = reduceTimeline(initial, {
+      sequence: 1,
+      event: { type: 'turn.started', sessionId: 'session-1', turn: 1 },
+    })
+    state = reduceTimeline(state, {
+      sequence: 2,
+      event: { type: 'step.started', sessionId: 'session-1', turn: 1, step: 0 },
+    })
+    state = reduceTimeline(state, {
+      sequence: 3,
+      event: {
+        type: 'message.delta',
+        sessionId: 'session-1',
+        messageId: 'assistant:1:0',
+        turn: 1,
+        step: 0,
+        delta: 'Before tool',
+      },
+    })
+    state = reduceTimeline(state, {
+      sequence: 4,
+      event: {
+        type: 'message.completed',
+        sessionId: 'session-1',
+        messageId: 'assistant:1:0',
+        turn: 1,
+        step: 0,
+        markdown: 'Before tool',
+      },
+    })
+    expect(state.activeTurn).toBe(1)
+    expect(state.nodes).toContainEqual(expect.objectContaining({ id: 'assistant:1:0', streaming: false }))
+    const firstAssistant = state.nodes.find(
+      (node) => node.kind === 'assistant-message' && node.id === 'assistant:1:0',
+    )
+    expect(
+      firstAssistant?.kind === 'assistant-message' ? firstAssistant.turnCompleted : undefined,
+    ).toBeUndefined()
+
+    state = reduceTimeline(state, {
+      sequence: 5,
+      event: {
+        type: 'tool.updated',
+        sessionId: 'session-1',
+        tool: {
+          id: 'call-1',
+          turn: 1,
+          step: 0,
+          name: 'read',
+          category: 'filesystem',
+          title: 'Read',
+          status: 'completed',
+          metadata: {},
+        },
+      },
+    })
+    state = reduceTimeline(state, {
+      sequence: 6,
+      event: { type: 'step.started', sessionId: 'session-1', turn: 1, step: 1 },
+    })
+    state = reduceTimeline(state, {
+      sequence: 7,
+      event: {
+        type: 'message.completed',
+        sessionId: 'session-1',
+        messageId: 'assistant:1:1',
+        turn: 1,
+        step: 1,
+        markdown: 'Final answer',
+      },
+    })
+    expect(state.activeTurn).toBe(1)
+
+    const ended = reduceTimeline(state, {
+      sequence: 8,
+      event: { type: 'turn.ended', sessionId: 'session-1', turn: 1, reason: 'completed' },
+    })
+    expect(ended.activeTurn).toBeUndefined()
+    expect(ended.nodes).toContainEqual(expect.objectContaining({ id: 'assistant:1:0', turnCompleted: false }))
+    expect(ended.nodes).toContainEqual(expect.objectContaining({ id: 'assistant:1:1', turnCompleted: true }))
+  })
+
+  it('closes an interrupted streamed step at step/end without closing its turn', () => {
+    let state = reduceTimeline(initial, {
+      sequence: 1,
+      event: { type: 'turn.started', sessionId: 'session-1', turn: 2 },
+    })
+    state = reduceTimeline(state, {
+      sequence: 2,
+      event: {
+        type: 'message.delta',
+        sessionId: 'session-1',
+        messageId: 'assistant:2:0',
+        turn: 2,
+        step: 0,
+        delta: 'partial',
+      },
+    })
+    state = reduceTimeline(state, {
+      sequence: 3,
+      event: { type: 'step.ended', sessionId: 'session-1', turn: 2, step: 0 },
+    })
+    expect(state.activeTurn).toBe(2)
+    expect(state.nodes).toContainEqual(
+      expect.objectContaining({ id: 'assistant:2:0', streaming: false, sequence: 3 }),
+    )
+
+    const ended = reduceTimeline(state, {
+      sequence: 4,
+      event: { type: 'turn.ended', sessionId: 'session-1', turn: 2, reason: 'aborted' },
+    })
+    expect(ended.activeTurn).toBeUndefined()
+    expect(ended.nodes).toContainEqual(expect.objectContaining({ id: 'assistant:2:0', turnCompleted: true }))
+  })
+
+  it('does not mark an answer branchable when an error or later tool follows it', () => {
+    let state = reduceTimeline(initial, {
+      sequence: 1,
+      event: { type: 'turn.started', sessionId: 'session-1', turn: 3 },
+    })
+    state = reduceTimeline(state, {
+      sequence: 2,
+      event: {
+        type: 'message.completed',
+        sessionId: 'session-1',
+        messageId: 'assistant:3:0',
+        turn: 3,
+        step: 0,
+        markdown: 'Answer',
+      },
+    })
+    state = reduceTimeline(state, {
+      sequence: 3,
+      event: {
+        type: 'tool.updated',
+        sessionId: 'session-1',
+        tool: {
+          id: 'call-after',
+          turn: 3,
+          step: 1,
+          name: 'search',
+          category: 'tool',
+          title: 'Search',
+          status: 'completed',
+          metadata: {},
+        },
+      },
+    })
+    const toolFollowed = reduceTimeline(state, {
+      sequence: 4,
+      event: { type: 'turn.ended', sessionId: 'session-1', turn: 3, reason: 'completed' },
+    })
+    expect(toolFollowed.nodes).toContainEqual(
+      expect.objectContaining({ id: 'assistant:3:0', turnCompleted: false }),
+    )
+
+    let errorState = reduceTimeline(initial, {
+      sequence: 1,
+      event: { type: 'turn.started', sessionId: 'session-1', turn: 4 },
+    })
+    errorState = reduceTimeline(errorState, {
+      sequence: 2,
+      event: {
+        type: 'message.completed',
+        sessionId: 'session-1',
+        messageId: 'assistant:4:0',
+        turn: 4,
+        step: 0,
+        markdown: 'Failed after output',
+      },
+    })
+    const errored = reduceTimeline(errorState, {
+      sequence: 3,
+      event: { type: 'turn.ended', sessionId: 'session-1', turn: 4, reason: 'error' },
+    })
+    expect(errored.nodes).toContainEqual(
+      expect.objectContaining({ id: 'assistant:4:0', turnCompleted: false }),
+    )
+  })
+
+  it('does not reopen a closed turn when a late tool projection arrives', () => {
+    let state = reduceTimeline(initial, {
+      sequence: 1,
+      event: { type: 'turn.started', sessionId: 'session-1', turn: 5 },
+    })
+    state = reduceTimeline(state, {
+      sequence: 2,
+      event: {
+        type: 'message.completed',
+        sessionId: 'session-1',
+        messageId: 'assistant:5:0',
+        turn: 5,
+        step: 0,
+        markdown: 'Done',
+      },
+    })
+    state = reduceTimeline(state, {
+      sequence: 3,
+      event: { type: 'turn.ended', sessionId: 'session-1', turn: 5, reason: 'completed' },
+    })
+    const late = reduceTimeline(state, {
+      sequence: 4,
+      event: {
+        type: 'tool.updated',
+        sessionId: 'session-1',
+        tool: {
+          id: 'late-call',
+          turn: 5,
+          step: 0,
+          name: 'read',
+          category: 'tool',
+          title: 'Read',
+          status: 'running',
+          metadata: {},
+        },
+      },
+    })
+    expect(late.activeTurn).toBeUndefined()
+    expect(late.nodes).toContainEqual(expect.objectContaining({ id: 'assistant:5:0', turnCompleted: false }))
+    const lateTool = late.nodes.find((node) => node.kind === 'tool' && node.id === 'late-call')
+    expect(lateTool?.kind === 'tool' ? lateTool.tool.status : undefined).toBe('cancelled')
+  })
+
+  it('does not let host-only notices consume the durable session cursor', () => {
+    const streamed = reduceTimeline(initial, {
+      sequence: 10,
+      event: { type: 'message.delta', sessionId: 'session-1', messageId: 'm1', delta: 'a' },
+    })
+    const hostNotice = reduceTimeline(streamed, {
+      sequence: 999,
+      advanceSequence: false,
+      event: { type: 'workspace.changed' },
+    })
+    const resumed = reduceTimeline(hostNotice, {
+      sequence: 11,
+      event: { type: 'message.delta', sessionId: 'session-1', messageId: 'm1', delta: 'b' },
+    })
+
+    expect(hostNotice.lastSequence).toBe(10)
+    expect(resumed.nodes).toContainEqual(
+      expect.objectContaining({ id: 'm1', markdown: 'ab', streaming: true }),
+    )
+    expect(resumed.lastSequence).toBe(11)
   })
 
   it('ignores duplicate and stale event sequence numbers', () => {
@@ -392,14 +668,14 @@ describe('reduceTimeline', () => {
       },
     })
     expect(second.nodes).toEqual([
-      { kind: 'retry', id: 'retry:retry-1', turn: 1, step: 1, attempt: 1, state: 'started' },
+      { kind: 'retry', id: 'retry:retry-1', sequence: 2, turn: 1, step: 1, attempt: 1, state: 'started' },
     ])
     const resumed = reduceTimeline(second, {
       sequence: 3,
       event: { type: 'message.delta', sessionId: 'session-1', messageId: 'm1', delta: 'back' },
     })
     expect(resumed.nodes).toEqual([
-      { kind: 'retry', id: 'retry:retry-1', turn: 1, step: 1, attempt: 1, state: 'started' },
+      { kind: 'retry', id: 'retry:retry-1', sequence: 2, turn: 1, step: 1, attempt: 1, state: 'started' },
       { kind: 'assistant-message', id: 'm1', markdown: 'back', streaming: true },
     ])
 
@@ -425,6 +701,7 @@ describe('reduceTimeline', () => {
     expect(cancelled.nodes).toContainEqual({
       kind: 'retry',
       id: 'retry:retry-2',
+      sequence: 4,
       turn: 1,
       step: 2,
       attempt: 1,

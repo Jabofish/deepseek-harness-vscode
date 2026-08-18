@@ -30,6 +30,7 @@ import {
   type SubagentView,
   type TokenUsage,
   type TodoView,
+  type TurnEndReasonKind,
   type UserQuestion,
   type WorkflowMember,
   type WorkflowSummary,
@@ -104,6 +105,7 @@ export interface AppActions {
   openSession(sessionId: string): Promise<void>
   openSubagent(entry: SubagentView, parentAvailable: boolean): Promise<void>
   renameSession(sessionId: string, title: string): Promise<void>
+  forkSession(sessionId: string, atSeq?: number): Promise<void>
   createSession(workspaceId?: string): Promise<void>
   removeSession(sessionId: string): Promise<void>
   configureSession(sessionId: string, configuration: AgentConfiguration): Promise<void>
@@ -681,6 +683,26 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
           session.id === sessionId ? { ...session, title } : session,
         ),
       }))
+    },
+    forkSession: async (sessionId, atSeq) => {
+      const result = object(
+        await client.request<unknown>({
+          type: 'session.fork',
+          requestId: requestId(),
+          payload: {
+            sessionId,
+            ...(atSeq === undefined ? {} : { atSeq }),
+          },
+        }),
+      )
+      const childId =
+        typeof result?.id === 'string'
+          ? result.id
+          : typeof result?.sessionId === 'string'
+            ? result.sessionId
+            : undefined
+      if (childId === undefined || childId.trim() === '') throw new Error(translate('app.error.forkSession'))
+      await open(childId)
     },
     configureSession: async (sessionId, configuration) => {
       await client.request<unknown>({
@@ -1558,8 +1580,14 @@ function applyHostMessage(message: HostMessage, state: AppState, setState: State
   const timeline = !belongsToActiveSession
     ? state.timeline
     : controlPlaneMessage
-      ? { ...state.timeline, lastSequence: message.sequence }
-      : reduceTimeline(state.timeline, { sequence: message.sequence, event })
+      ? state.timeline
+      : reduceTimeline(state.timeline, {
+          sequence: event.sequence ?? message.sequence,
+          event,
+          ...(event.sequence === undefined && !advancesTimelineSequence(event)
+            ? { advanceSequence: false }
+            : {}),
+        })
   let next = { ...state, timeline }
   if (event.type === 'session.status') {
     const activity = event.status === 'running' ? 'running' : 'inactive'
@@ -1754,6 +1782,29 @@ function backendEventSessionId(event: BackendEvent): string | undefined {
   return undefined
 }
 
+/** Host lifecycle notices use the Webview delivery cursor, not the DSH log. */
+function advancesTimelineSequence(event: BackendEvent): boolean {
+  switch (event.type) {
+    case 'archived.sessions.changed':
+    case 'connection.lost':
+    case 'session.added':
+    case 'session.configuration':
+    case 'session.projection':
+    case 'session.removed':
+    case 'session.status':
+    case 'session.subscribed':
+    case 'session.title':
+    case 'workspace.changed':
+    case 'workspace.order.changed':
+    case 'workspace.removed':
+    case 'remote.event':
+    case 'notice':
+      return false
+    default:
+      return true
+  }
+}
+
 function sessionStatus(value: string): SessionSummary['status'] {
   if (value === 'running') return 'running'
   if (value === 'awaiting-input') return 'awaiting-input'
@@ -1838,6 +1889,13 @@ function removeSessionProjection(
 }
 
 function domainEvent(name: string, payload: unknown): BackendEvent | undefined {
+  const event = parseDomainEvent(name, payload)
+  if (event === undefined) return undefined
+  const sequence = finiteEventSequence(object(payload)?.sequence)
+  return sequence === undefined ? event : { ...event, sequence }
+}
+
+function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefined {
   const value = object(payload)
   if (value === undefined) return { type: 'unknown', name, payload }
   if (
@@ -1857,6 +1915,17 @@ function domainEvent(name: string, payload: unknown): BackendEvent | undefined {
       ...(typeof value.source === 'string' ? { source: value.source } : {}),
       ...(typeof value.sourceForm === 'string' ? { sourceForm: value.sourceForm } : {}),
       ...(typeof value.sourceSummary === 'string' ? { sourceSummary: value.sourceSummary } : {}),
+    }
+  }
+  if ((name === 'turn.started' || name === 'turn.ended') && typeof value.sessionId === 'string') {
+    const turn = finiteEventIndex(value.turn)
+    if (turn === undefined) return { type: 'unknown', name, payload }
+    if (name === 'turn.started') return { type: 'turn.started', sessionId: value.sessionId, turn }
+    return {
+      type: 'turn.ended',
+      sessionId: value.sessionId,
+      turn,
+      reason: turnEndReason(value.reason),
     }
   }
   if ((name === 'step.started' || name === 'step.ended') && typeof value.sessionId === 'string') {
@@ -1984,12 +2053,16 @@ function domainEvent(name: string, payload: unknown): BackendEvent | undefined {
     typeof value.tool.id === 'string' &&
     typeof value.tool.name === 'string' &&
     isToolStatus(value.tool.status)
-  )
+  ) {
+    const turn = finiteEventIndex(value.tool.turn)
+    const step = finiteEventIndex(value.tool.step)
     return {
       type: 'tool.updated',
       sessionId: value.sessionId,
       tool: {
         id: value.tool.id,
+        ...(turn === undefined ? {} : { turn }),
+        ...(step === undefined ? {} : { step }),
         name: value.tool.name,
         category: typeof value.tool.category === 'string' ? value.tool.category : 'tool',
         title: typeof value.tool.title === 'string' ? value.tool.title : value.tool.name,
@@ -2002,6 +2075,7 @@ function domainEvent(name: string, payload: unknown): BackendEvent | undefined {
         metadata: isRecord(value.tool.metadata) ? value.tool.metadata : {},
       },
     }
+  }
   if (name === 'goal.updated' && typeof value.sessionId === 'string' && Array.isArray(value.goals)) {
     const goals = value.goals.flatMap((entry) => {
       const goal = object(entry)
@@ -2335,6 +2409,10 @@ function finiteSequence(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isSafeInteger(value) ? value : fallback
 }
 
+function finiteEventSequence(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined
+}
+
 function finiteEventIndex(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined
 }
@@ -2346,6 +2424,18 @@ function finiteEventTimestamp(value: unknown): number | undefined {
     return Number.isFinite(timestamp) ? timestamp : undefined
   }
   return undefined
+}
+
+function turnEndReason(value: unknown): TurnEndReasonKind {
+  const kind = isRecord(value) ? value.kind : value
+  return kind === 'completed' ||
+    kind === 'aborted' ||
+    kind === 'blocked' ||
+    kind === 'error' ||
+    kind === 'max-tokens' ||
+    kind === 'interrupted'
+    ? kind
+    : 'unknown'
 }
 
 function parseTokenUsage(value: unknown): TokenUsage | undefined {

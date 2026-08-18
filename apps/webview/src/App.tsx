@@ -51,6 +51,7 @@ export function App(): ReactElement {
   const attachmentGenerationRef = useRef(0)
   const [busyAction, setBusyAction] = useState<'install' | 'select' | undefined>()
   const [respondingInteractionId, setRespondingInteractionId] = useState<string | undefined>()
+  const [branching, setBranching] = useState(false)
   const [error, setError] = useState<string | undefined>()
   const [dismissedConnection, setDismissedConnection] = useState<string | undefined>()
   const [modelPickerOpenRequest, setModelPickerOpenRequest] = useState(0)
@@ -182,13 +183,12 @@ export function App(): ReactElement {
   const contextWindowTokens = contextPressure?.contextWindow
   const projectedTokenUsage = readTokenUsageProjection(activeProjection?.tokenUsage)
   const sessionStats = readSessionStatsProjection(activeProjection?.sessionStats)
-  const streaming = state.timeline.nodes.some(
-    (node) =>
-      (node.kind === 'assistant-message' && (node.streaming || node.reasoning?.streaming === true)) ||
-      (node.kind === 'reasoning' && node.streaming),
-  )
   const activeRunning =
     activeSubagent === undefined ? active?.status === 'running' : activeSubagent.activity === 'running'
+  // DSH's host/session-status is the authoritative running bit. Timeline
+  // nodes describe durable content, but a settled assistant step can remain
+  // inside an open turn while tools or a later model step are still active.
+  const streaming = activeRunning
   const subagentReadOnlyReason =
     activeSubagent?.mode === 'one-shot'
       ? 'oneShot'
@@ -310,6 +310,16 @@ export function App(): ReactElement {
         setAttachingOpenFileId(undefined)
       })
   }
+  const branchSession = (atSeq: number): void => {
+    if (active === undefined || activeSubagent !== undefined || branching) return
+    setBranching(true)
+    void store
+      .forkSession(active.id, atSeq)
+      .catch((reason: unknown) =>
+        setError(reason instanceof Error ? reason.message : t('app.error.forkSession')),
+      )
+      .finally(() => setBranching(false))
+  }
   return (
     <AppErrorBoundary>
       <main className="dsh-app">
@@ -412,75 +422,105 @@ export function App(): ReactElement {
               className="dsh-conversation"
               aria-label={active.title.trim() === '' ? t('app.conversation') : active.title}
             >
-              <div className="dsh-conversation__popovers">
-                {/* The keys reset popover state when the last entry disappears,
+              <div className="dsh-conversation__topbar">
+                <div
+                  className="dsh-conversation__views"
+                  role="tablist"
+                  aria-label={t('app.conversationView')}
+                >
+                  <button
+                    className={`dsh-conversation__view-tab${
+                      conversationView === 'chat' ? ' dsh-conversation__view-tab--active' : ''
+                    }`}
+                    type="button"
+                    role="tab"
+                    aria-selected={conversationView === 'chat'}
+                    onClick={() => setConversationView('chat')}
+                  >
+                    {t('app.chat')}
+                  </button>
+                  <button
+                    className={`dsh-conversation__view-tab${
+                      conversationView === 'trajectory' ? ' dsh-conversation__view-tab--active' : ''
+                    }`}
+                    type="button"
+                    role="tab"
+                    aria-selected={conversationView === 'trajectory'}
+                    onClick={() => setConversationView('trajectory')}
+                  >
+                    {t('app.trajectory')}
+                  </button>
+                </div>
+                <div className="dsh-conversation__popovers">
+                  {/* The keys reset popover state when the last entry disappears,
                     so a refilled catalog never reopens stale. */}
-                <JobsDrawer key={state.jobs.length > 0 ? 'jobs' : 'jobs-empty'} jobs={state.jobs} />
-                <SubagentDrawer
-                  key={active.id}
-                  parentSessionId={active.id}
-                  catalog={state.subagents}
-                  onLoadChildren={(sessionId) => store.loadSubagentChildren(sessionId)}
-                  onOpenChild={(entry, parentAvailable) => {
-                    // subagent.prompt accepts text ContentBlocks only. Clear
-                    // ordinary-session attachment handles at navigation time.
-                    discardAttachmentDrafts()
-                    void store
-                      .openSubagent(entry, parentAvailable)
-                      .catch((reason: unknown) =>
-                        setError(reason instanceof Error ? reason.message : t('app.error.openSubagent')),
-                      )
-                  }}
-                />
-                {activeSubagent === undefined ? (
-                  <button
-                    type="button"
-                    className="dsh-conversation__export-trigger"
-                    aria-expanded={exportOpen}
-                    onClick={() => setExportOpen((current) => !current)}
-                  >
-                    {t('export.trigger')}
-                  </button>
-                ) : null}
-                <span ref={localeControlRef} className="dsh-conversation__locale-control">
-                  <button
-                    type="button"
-                    className="dsh-conversation__locale-switch"
-                    aria-label={t('locale.label')}
-                    title={t('locale.label')}
-                    aria-haspopup="listbox"
-                    aria-expanded={localeOpen}
-                    onClick={() => setLocaleOpen((current) => !current)}
-                  >
-                    <span>{locale === 'zh' ? t('locale.chinese') : t('locale.english')}</span>
-                    <Icon name="chevron-down" />
-                  </button>
-                  {localeOpen ? (
-                    <div
-                      className="dsh-conversation__locale-menu"
-                      role="listbox"
-                      aria-label={t('locale.label')}
+                  <JobsDrawer key={state.jobs.length > 0 ? 'jobs' : 'jobs-empty'} jobs={state.jobs} />
+                  <SubagentDrawer
+                    key={active.id}
+                    parentSessionId={active.id}
+                    catalog={state.subagents}
+                    onLoadChildren={(sessionId) => store.loadSubagentChildren(sessionId)}
+                    onOpenChild={(entry, parentAvailable) => {
+                      // subagent.prompt accepts text ContentBlocks only. Clear
+                      // ordinary-session attachment handles at navigation time.
+                      discardAttachmentDrafts()
+                      void store
+                        .openSubagent(entry, parentAvailable)
+                        .catch((reason: unknown) =>
+                          setError(reason instanceof Error ? reason.message : t('app.error.openSubagent')),
+                        )
+                    }}
+                  />
+                  {activeSubagent === undefined ? (
+                    <button
+                      type="button"
+                      className="dsh-conversation__export-trigger"
+                      aria-expanded={exportOpen}
+                      onClick={() => setExportOpen((current) => !current)}
                     >
-                      {(['en', 'zh'] as const).map((option) => (
-                        <button
-                          key={option}
-                          type="button"
-                          role="option"
-                          aria-selected={locale === option}
-                          className={`dsh-conversation__locale-option${
-                            locale === option ? ' dsh-conversation__locale-option--selected' : ''
-                          }`}
-                          onClick={() => {
-                            setLocale(option)
-                            setLocaleOpen(false)
-                          }}
-                        >
-                          {option === 'zh' ? t('locale.chinese') : t('locale.english')}
-                        </button>
-                      ))}
-                    </div>
+                      {t('export.trigger')}
+                    </button>
                   ) : null}
-                </span>
+                  <span ref={localeControlRef} className="dsh-conversation__locale-control">
+                    <button
+                      type="button"
+                      className="dsh-conversation__locale-switch"
+                      aria-label={t('locale.label')}
+                      title={t('locale.label')}
+                      aria-haspopup="listbox"
+                      aria-expanded={localeOpen}
+                      onClick={() => setLocaleOpen((current) => !current)}
+                    >
+                      <span>{locale === 'zh' ? t('locale.chinese') : t('locale.english')}</span>
+                      <Icon name="chevron-down" />
+                    </button>
+                    {localeOpen ? (
+                      <div
+                        className="dsh-conversation__locale-menu"
+                        role="listbox"
+                        aria-label={t('locale.label')}
+                      >
+                        {(['en', 'zh'] as const).map((option) => (
+                          <button
+                            key={option}
+                            type="button"
+                            role="option"
+                            aria-selected={locale === option}
+                            className={`dsh-conversation__locale-option${
+                              locale === option ? ' dsh-conversation__locale-option--selected' : ''
+                            }`}
+                            onClick={() => {
+                              setLocale(option)
+                              setLocaleOpen(false)
+                            }}
+                          >
+                            {option === 'zh' ? t('locale.chinese') : t('locale.english')}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </span>
+                </div>
               </div>
               {exportOpen && activeSubagent === undefined ? (
                 <ExportDialog
@@ -496,36 +536,18 @@ export function App(): ReactElement {
                 />
               ) : null}
               {state.goals.length > 0 ? <GoalTodoStrip goals={state.goals} /> : null}
-              <div className="dsh-conversation__views" role="tablist" aria-label={t('app.conversationView')}>
-                <button
-                  className={`dsh-conversation__view-tab${
-                    conversationView === 'chat' ? ' dsh-conversation__view-tab--active' : ''
-                  }`}
-                  type="button"
-                  role="tab"
-                  aria-selected={conversationView === 'chat'}
-                  onClick={() => setConversationView('chat')}
-                >
-                  {t('app.chat')}
-                </button>
-                <button
-                  className={`dsh-conversation__view-tab${
-                    conversationView === 'trajectory' ? ' dsh-conversation__view-tab--active' : ''
-                  }`}
-                  type="button"
-                  role="tab"
-                  aria-selected={conversationView === 'trajectory'}
-                  onClick={() => setConversationView('trajectory')}
-                >
-                  {t('app.trajectory')}
-                </button>
-              </div>
               {conversationView === 'chat' ? (
                 <Timeline
                   sessionId={active.id}
                   nodes={state.timeline.nodes}
                   streaming={streaming}
+                  running={activeRunning}
+                  {...(state.timeline.activeTurn === undefined
+                    ? {}
+                    : { activeTurn: state.timeline.activeTurn })}
                   assistantLabel={assistantLabel}
+                  {...(activeSubagent === undefined ? { onBranch: branchSession } : {})}
+                  branching={branching}
                   onOpenLink={(href) => {
                     void store
                       .openLink(href)
@@ -573,7 +595,7 @@ export function App(): ReactElement {
                 />
               )}
               <div className="dsh-compose-area">
-                <TodoList todos={state.todos} />
+                <TodoList key={active?.id ?? 'todo-list'} todos={state.todos} />
                 <StatsLine
                   nodes={state.timeline.nodes}
                   usage={projectedTokenUsage ?? state.timeline.tokenUsage}

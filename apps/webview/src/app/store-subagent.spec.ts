@@ -287,6 +287,76 @@ describe('AppStore subagent transport routing', () => {
     store.dispose()
   })
 
+  it('keeps live model output when the history and host transport use different sequence spaces', async () => {
+    const client = new FakeClient((request) => {
+      switch (request.type) {
+        case 'session.open':
+          return {
+            id: 'parent',
+            workspaceId: 'workspace',
+            title: 'Parent',
+            blank: false,
+            status: 'running',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+            history: [
+              {
+                sequence: 100,
+                event: {
+                  type: 'message.completed',
+                  sessionId: 'parent',
+                  messageId: 'assistant-1',
+                  markdown: 'before',
+                },
+              },
+            ],
+          }
+        case 'session.queue.list':
+        case 'goal.list':
+        case 'job.list':
+        case 'command.list':
+          return []
+        case 'subagent.list':
+          return { entries: [], parentAvailable: true }
+        default:
+          throw new Error(`unexpected request ${request.type}`)
+      }
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+    await store.openSession('parent')
+
+    // The outer sequence is only the Webview delivery order. The payload's
+    // sequence is the durable DSH cursor used by the hydrated history.
+    client.emit({
+      type: 'event',
+      name: 'session.projection',
+      sequence: 1,
+      payload: {
+        sessionId: 'parent',
+        sequence: 101,
+        key: 'sessionStats',
+        value: { turns: 1 },
+      },
+    })
+    client.emit({
+      type: 'event',
+      name: 'message.delta',
+      sequence: 2,
+      payload: {
+        sessionId: 'parent',
+        sequence: 102,
+        messageId: 'assistant-1',
+        delta: ' live',
+      },
+    })
+
+    expect(store.timeline.nodes).toContainEqual(
+      expect.objectContaining({ id: 'assistant-1', markdown: 'before live', streaming: true }),
+    )
+    expect(store.timeline.lastSequence).toBe(102)
+    store.dispose()
+  })
+
   it('clears transient queue and jobs at a fresh subscription baseline', async () => {
     const client = new FakeClient((request) => {
       switch (request.type) {
@@ -380,6 +450,113 @@ describe('AppStore sessions drawer', () => {
 
     expect(store.drawer).toBeUndefined()
     expect(sessionListCount(client)).toBe(afterOpen)
+    store.dispose()
+  })
+})
+
+describe('AppStore session branching', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  it('forks at the durable sequence and opens the returned child session', async () => {
+    const childDetail = {
+      id: 'child',
+      workspaceId: 'workspace',
+      title: 'Branched',
+      blank: false,
+      status: 'idle',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:01.000Z',
+      history: [],
+    }
+    const client = new FakeClient((request) => {
+      switch (request.type) {
+        case 'session.fork':
+          return { id: 'child' }
+        case 'session.open':
+          return childDetail
+        case 'session.queue.list':
+        case 'goal.list':
+        case 'job.list':
+        case 'command.list':
+          return []
+        case 'subagent.list':
+          return { entries: [], parentAvailable: true }
+        default:
+          throw new Error(`unexpected request ${request.type}`)
+      }
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+
+    await store.forkSession('parent', 42)
+
+    expect(client.requests).toContainEqual(
+      expect.objectContaining({
+        type: 'session.fork',
+        payload: { sessionId: 'parent', atSeq: 42 },
+      }),
+    )
+    expect(store.activeSessionId).toBe('child')
+    expect(store.sessions).toContainEqual(expect.objectContaining({ id: 'child', title: 'Branched' }))
+    store.dispose()
+  })
+})
+
+describe('AppStore running lifecycle', () => {
+  it('stops the UI running bit from host idle without reopening the durable turn', async () => {
+    const client = new FakeClient((request) => {
+      switch (request.type) {
+        case 'session.open':
+          return {
+            id: 'parent',
+            workspaceId: 'workspace',
+            title: 'Parent',
+            blank: false,
+            status: 'running',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+            history: [
+              {
+                sequence: 1,
+                event: { type: 'turn.started', sessionId: 'parent', turn: 1 },
+              },
+              {
+                sequence: 2,
+                event: {
+                  type: 'message.completed',
+                  sessionId: 'parent',
+                  messageId: 'assistant:1:0',
+                  turn: 1,
+                  step: 0,
+                  markdown: 'done',
+                },
+              },
+            ],
+          }
+        case 'session.queue.list':
+        case 'goal.list':
+        case 'job.list':
+        case 'command.list':
+          return []
+        case 'subagent.list':
+          return { entries: [], parentAvailable: true }
+        default:
+          throw new Error(`unexpected request ${request.type}`)
+      }
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+
+    await store.openSession('parent')
+    expect(store.sessions).toContainEqual(expect.objectContaining({ id: 'parent', status: 'running' }))
+
+    client.emit({
+      type: 'event',
+      name: 'session.status',
+      sequence: 10,
+      payload: { sessionId: 'parent', status: 'idle' },
+    })
+
+    expect(store.sessions).toContainEqual(expect.objectContaining({ id: 'parent', status: 'idle' }))
+    expect(store.timeline.activeTurn).toBe(1)
     store.dispose()
   })
 })

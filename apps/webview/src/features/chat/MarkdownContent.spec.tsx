@@ -1,11 +1,14 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it } from 'vitest'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MarkdownContent } from './MarkdownContent.js'
 
 describe('MarkdownContent', () => {
-  afterEach(() => cleanup())
+  afterEach(() => {
+    cleanup()
+    vi.unstubAllGlobals()
+  })
 
   it('renders conversation Markdown as structured content', () => {
     const { container } = render(
@@ -32,5 +35,32 @@ describe('MarkdownContent', () => {
     expect(container.querySelector('script')).toBeNull()
     expect(container.querySelector('img')).toBeNull()
     expect(container.textContent).toContain('<script>alert(1)</script>')
+  })
+
+  it('adds compact copy controls to fenced code and tables', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal('navigator', { clipboard: { writeText } })
+    const { container } = render(
+      <MarkdownContent
+        markdown={[
+          '```ts',
+          'const value = 1',
+          '```',
+          '',
+          '| Field | Value |',
+          '| --- | --- |',
+          '| one | two |',
+        ].join('\n')}
+      />,
+    )
+
+    const buttons = await screen.findAllByRole('button', { name: 'Copy' })
+    expect(buttons).toHaveLength(2)
+    fireEvent.click(buttons[0]!)
+    await waitFor(() =>
+      expect(writeText).toHaveBeenCalledWith(container.querySelector('pre')?.textContent ?? ''),
+    )
+    fireEvent.click(buttons[1]!)
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('Field\tValue\none\ttwo'))
   })
 })

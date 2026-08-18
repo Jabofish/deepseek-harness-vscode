@@ -5,11 +5,13 @@ export type IconName =
   | 'alert'
   | 'arrow-down'
   | 'box'
+  | 'branch'
   | 'check'
   | 'chevron-down'
   | 'chevron-right'
   | 'clock'
   | 'close'
+  | 'copy'
   | 'file'
   | 'folder'
   | 'image'
@@ -89,6 +91,16 @@ function renderIcon(name: IconName): ReactElement {
           <path d="M12 12.1V21" />
         </>
       )
+    case 'branch':
+      return (
+        <>
+          <circle cx="6" cy="5" r="2" />
+          <circle cx="18" cy="5" r="2" />
+          <circle cx="18" cy="19" r="2" />
+          <path d="M8 5h4a6 6 0 0 1 6 6v6" />
+          <path d="M6 7v10a2 2 0 0 0 2 2h8" />
+        </>
+      )
     case 'check':
       return <path d="m5 12 4.2 4.2L19 6.5" />
     case 'chevron-down':
@@ -107,6 +119,13 @@ function renderIcon(name: IconName): ReactElement {
         <>
           <path d="m6 6 12 12" />
           <path d="m18 6-12 12" />
+        </>
+      )
+    case 'copy':
+      return (
+        <>
+          <rect x="8" y="8" width="11" height="11" rx="1.5" />
+          <path d="M5 15V5a2 2 0 0 1 2-2h10" />
         </>
       )
     case 'folder':

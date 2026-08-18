@@ -2,8 +2,7 @@
 
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { SessionControls } from './SessionControls.js'
-import { permissionOptions } from './SessionControls.js'
+import { formatPresetLabel, modeIcon, permissionOptions, SessionControls } from './SessionControls.js'
 
 describe('SessionControls', () => {
   afterEach(() => cleanup())
@@ -109,6 +108,19 @@ describe('SessionControls', () => {
     expect(permissionOptions('workspace-write', [])).toEqual(['workspace-write'])
   })
 
+  it('uses distinct mode icons and localized built-in mode labels', () => {
+    expect(modeIcon('standard', 'Standard')).toBe('session')
+    expect(modeIcon('plan', 'Plan')).toBe('plan')
+    expect(modeIcon('code', 'Code')).toBe('terminal')
+    expect(modeIcon('deep-research', 'Deep Research')).toBe('search')
+    expect(modeIcon('subagent', 'Subagent')).toBe('users')
+    expect(
+      formatPresetLabel('deep-research', 'Deep Research', (key) =>
+        key === 'controls.mode.research' ? '研究' : key,
+      ),
+    ).toBe('研究')
+  })
+
   it('requires acknowledgement before sending the exact full-access command', () => {
     const onCommand = vi.fn()
     render(
@@ -138,5 +150,30 @@ describe('SessionControls', () => {
     fireEvent.click(screen.getByRole('checkbox'))
     fireEvent.click(enable)
     expect(onCommand).toHaveBeenCalledWith('/permission danger-full-access')
+  })
+
+  it('marks full access with the warning-colored access control', () => {
+    render(
+      <SessionControls
+        configuration={{
+          preset: 'standard',
+          toolMode: 'native',
+          permissionPreset: 'danger-full-access',
+          planMode: false,
+          model: { providerId: 'deepseek', modelId: 'deepseek-chat' },
+        }}
+        models={[]}
+        presets={[{ id: 'standard', trust: 'system', isDefault: true }]}
+        permissionPresets={['danger-full-access']}
+        disabled={false}
+        presetMutable
+        onChange={vi.fn()}
+        onCommand={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: 'Access: Full access' }).parentElement?.className).toContain(
+      'dsh-session-controls__access-picker--full-access',
+    )
   })
 })

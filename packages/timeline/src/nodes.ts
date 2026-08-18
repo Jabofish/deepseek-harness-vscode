@@ -16,6 +16,7 @@ import type {
 export interface ModelRetryNode {
   readonly kind: 'retry'
   readonly id: string
+  readonly sequence?: number
   readonly turn: number
   readonly step: number
   readonly attempt: number
@@ -48,6 +49,13 @@ export type TimelineNode =
       readonly id: string
       readonly markdown: string
       readonly streaming: boolean
+      /** Durable event sequence used as the rc.6 session.fork anchor. */
+      readonly sequence?: number
+      /** DSH coordinates keep step and turn completion separate. */
+      readonly turn?: number
+      readonly step?: number
+      /** Set only after the durable turn/end boundary closes this turn. */
+      readonly turnCompleted?: boolean
       readonly modelLabel?: string
       readonly usage?: TokenUsage
       readonly timing?: AssistantTiming
@@ -62,7 +70,7 @@ export type TimelineNode =
       readonly markdown: string
       readonly streaming: boolean
     }
-  | { readonly kind: 'tool'; readonly id: string; readonly tool: ToolCallView }
+  | { readonly kind: 'tool'; readonly id: string; readonly tool: ToolCallView; readonly sequence?: number }
   | { readonly kind: 'goal'; readonly id: string; readonly goals: readonly GoalView[] }
   | { readonly kind: 'todo'; readonly id: string; readonly todos: readonly TodoView[] }
   | { readonly kind: 'compaction'; readonly id: string; readonly compaction: CompactionView }
@@ -88,4 +96,8 @@ export interface TimelineState {
   readonly tokenUsage?: TokenUsage
   /** In-flight step boundaries waiting for their assistant message. */
   readonly stepTimings?: Readonly<Record<string, AssistantTiming>>
+  /** Durable turn currently open; message.completed only closes a step. */
+  readonly activeTurn?: number
+  /** Prevent late durable projections from reopening a closed turn. */
+  readonly closedTurns?: readonly number[]
 }

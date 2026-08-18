@@ -90,8 +90,10 @@ export function SessionControls(props: SessionControlsProps): ReactElement {
           onChange={(model) => props.onChange({ ...props.configuration, model })}
         />
         <CompactPicker
-          className="dsh-session-controls__access-picker"
-          icon="folder"
+          className={`dsh-session-controls__access-picker${
+            isFullAccessPreset(permissionPreset) ? ' dsh-session-controls__access-picker--full-access' : ''
+          }`}
+          icon={permissionIcon(permissionPreset)}
           label={formatPermissionLabel(permissionPreset, t)}
           ariaLabel={t('controls.access')}
           title={t('controls.accessChange')}
@@ -189,7 +191,9 @@ export function SessionControls(props: SessionControlsProps): ReactElement {
   )
 }
 
-function formatPresetLabel(id: string, name: string | undefined, t: Translate = (key) => key): string {
+export function formatPresetLabel(id: string, name: string | undefined, t: Translate = (key) => key): string {
+  const translationKey = presetTranslationKey(id, name)
+  if (translationKey !== undefined) return t(translationKey)
   const label = name?.trim() || id.trim()
   if (label === '') return t('controls.defaultMode')
   return label
@@ -198,13 +202,46 @@ function formatPresetLabel(id: string, name: string | undefined, t: Translate = 
     .replace(/\b\w/g, (letter) => letter.toUpperCase())
 }
 
-function modeIcon(id: string, label: string): IconName {
+export function modeIcon(id: string, label: string): IconName {
   const value = `${id} ${label}`.toLocaleLowerCase()
-  if (/(^|\W)(plan|planning|计划)(\W|$)/u.test(value)) return 'file'
+  if (/(^|\W)(plan|planning|计划)(\W|$)/u.test(value)) return 'plan'
   if (/(^|\W)(code|coding|developer|development|编程|开发)(\W|$)/u.test(value)) return 'terminal'
-  if (/(^|\W)(research|reasoning|deep|研究|推理)(\W|$)/u.test(value)) return 'users'
+  if (/(^|\W)(research|reasoning|analysis|deep|研究|推理|分析)(\W|$)/u.test(value)) return 'search'
+  if (/(^|\W)(agent|subagent|delegate|代理|子代理)(\W|$)/u.test(value)) return 'users'
   if (/(^|\W)(minimal|light|fast|极简|轻量|快速)(\W|$)/u.test(value)) return 'sparkles'
   return 'session'
+}
+
+function presetTranslationKey(id: string, name: string | undefined): string | undefined {
+  const values = [id, name ?? ''].map((value) => value.trim().toLocaleLowerCase())
+  const exact = new Map<string, string>([
+    ['standard', 'controls.mode.standard'],
+    ['default', 'controls.mode.standard'],
+    ['cordis', 'controls.mode.cordis'],
+    ['plan', 'controls.mode.plan'],
+    ['planning', 'controls.mode.plan'],
+    ['code', 'controls.mode.code'],
+    ['coding', 'controls.mode.code'],
+    ['developer', 'controls.mode.code'],
+    ['development', 'controls.mode.code'],
+    ['research', 'controls.mode.research'],
+    ['deep-research', 'controls.mode.research'],
+    ['reasoning', 'controls.mode.research'],
+    ['analysis', 'controls.mode.research'],
+    ['chat', 'controls.mode.chat'],
+    ['general', 'controls.mode.chat'],
+    ['agent', 'controls.mode.agent'],
+    ['subagent', 'controls.mode.subagent'],
+    ['delegate', 'controls.mode.subagent'],
+    ['fast', 'controls.mode.fast'],
+    ['minimal', 'controls.mode.fast'],
+    ['light', 'controls.mode.fast'],
+  ])
+  for (const value of values) {
+    const key = exact.get(value)
+    if (key !== undefined) return key
+  }
+  return undefined
 }
 
 export function permissionOptions(current: string, projected: readonly string[]): readonly string[] {
@@ -217,6 +254,13 @@ export function permissionOptions(current: string, projected: readonly string[])
 export function formatPermissionLabel(id: string, t: Translate = (key) => key): string {
   if (isFullAccessPreset(id)) return t('controls.fullAccess')
   return formatPresetLabel(id, undefined, t)
+}
+
+function permissionIcon(id: string): IconName {
+  if (isFullAccessPreset(id)) return 'alert'
+  if (id === 'read-only') return 'file'
+  if (id === 'workspace-write') return 'folder'
+  return 'settings'
 }
 
 function isFullAccessPreset(id: string): boolean {

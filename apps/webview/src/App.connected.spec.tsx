@@ -92,6 +92,7 @@ function storeFor(state: AppState): AppStore {
     openSession: vi.fn().mockResolvedValue(undefined),
     openSubagent: vi.fn().mockResolvedValue(undefined),
     renameSession: vi.fn().mockResolvedValue(undefined),
+    forkSession: vi.fn().mockResolvedValue(undefined),
     createSession: vi.fn().mockResolvedValue(undefined),
     removeSession: vi.fn().mockResolvedValue(undefined),
     configureSession: vi.fn(),
@@ -352,8 +353,8 @@ describe('App connected rendering', () => {
     const composeArea = container.querySelector('.dsh-compose-area')
     const todoList = composeArea?.querySelector('.dsh-todo-list')
     expect(todoList).not.toBeNull()
-    expect(todoList?.textContent).toContain('查询系统信息')
     expect(todoList?.textContent).toContain('执行子代理调研')
+    expect(todoList?.textContent).not.toContain('查询系统信息')
     expect(container.querySelector('.dsh-conversation > .dsh-goal-strip')).toBeNull()
   })
 })

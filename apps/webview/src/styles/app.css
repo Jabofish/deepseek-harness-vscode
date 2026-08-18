@@ -570,6 +570,31 @@ button:disabled {
   overscroll-behavior: contain;
   padding: 4px 2px 8px 0;
   scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--vscode-scrollbarSlider-background, var(--dsh-border-color)) transparent;
+}
+
+.dsh-timeline::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.dsh-timeline::-webkit-scrollbar-track,
+.dsh-timeline::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.dsh-timeline::-webkit-scrollbar-thumb {
+  min-height: 32px;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: var(--vscode-scrollbarSlider-background, var(--dsh-border-color));
+  background-clip: padding-box;
+}
+
+.dsh-timeline::-webkit-scrollbar-thumb:hover {
+  background: var(--vscode-scrollbarSlider-hoverBackground, var(--dsh-muted));
+  background-clip: padding-box;
 }
 
 .dsh-timeline__toolbar {
@@ -1782,6 +1807,48 @@ summary.dsh-timeline__card-header {
   }
 }
 
+.dsh-timeline__streaming-status {
+  min-height: 18px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  color: var(--dsh-muted);
+  font-size: 0.72rem;
+  line-height: 1.2;
+}
+
+.dsh-timeline__streaming-status .dsh-icon {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 13px;
+  color: var(--dsh-accent);
+  animation: dsh-activity-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes dsh-activity-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
+.dsh-session-controls__access-picker--full-access .dsh-compact-picker__trigger {
+  color: var(--vscode-editorWarning-foreground, #e5c07b);
+  background: color-mix(in srgb, var(--vscode-editorWarning-foreground, #e5c07b) 9%, transparent);
+}
+
+.dsh-session-controls__access-picker--full-access .dsh-compact-picker__trigger:hover:not(:disabled),
+.dsh-session-controls__access-picker--full-access .dsh-compact-picker__trigger:focus-visible {
+  color: var(--vscode-editorWarning-foreground, #e5c07b);
+  border-color: color-mix(in srgb, var(--vscode-editorWarning-foreground, #e5c07b) 55%, transparent);
+  background: color-mix(in srgb, var(--vscode-editorWarning-foreground, #e5c07b) 15%, transparent);
+}
+
 @media (max-width: 360px) {
   .dsh-app__header {
     grid-template-columns: minmax(0, 1fr);
@@ -2124,6 +2191,51 @@ summary.dsh-timeline__card-header {
   overflow: auto;
   border-collapse: collapse;
   scrollbar-gutter: stable;
+}
+
+/* Keep copy affordances attached to the block they act on without turning
+   code or tables into larger cards. */
+.dsh-markdown__copy-region {
+  position: relative;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.dsh-markdown__copy-region--code > pre {
+  padding-inline-end: 42px;
+}
+
+.dsh-markdown__copy-button {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  z-index: 1;
+  width: 22px;
+  height: 22px;
+  min-width: 22px;
+  min-height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px;
+  border: 1px solid transparent;
+  border-radius: var(--dsh-radius-sm);
+  color: var(--dsh-muted);
+  background: color-mix(in srgb, var(--dsh-surface-raised) 72%, transparent);
+  cursor: pointer;
+}
+
+.dsh-markdown__copy-button:hover,
+.dsh-markdown__copy-button:focus-visible {
+  border-color: var(--dsh-control-border);
+  color: var(--vscode-foreground);
+  background: var(--dsh-surface-hover);
+  outline: none;
+}
+
+.dsh-markdown__copy-button > .dsh-icon {
+  width: 14px;
+  height: 14px;
 }
 
 .dsh-markdown th,
@@ -3265,6 +3377,65 @@ summary.dsh-timeline__card-header {
 .dsh-timeline__card--user {
   min-width: 0;
   max-width: 100%;
+}
+
+.dsh-timeline__message-stack {
+  min-width: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.dsh-timeline__message-stack--user {
+  align-items: flex-end;
+}
+
+.dsh-message-actions {
+  min-height: 24px;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  margin-inline-start: 2px;
+  color: var(--dsh-muted);
+}
+
+.dsh-message-actions__button {
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px;
+  border: 0;
+  border-radius: var(--dsh-radius-sm);
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+
+.dsh-message-actions__button:hover,
+.dsh-message-actions__button:focus-visible {
+  color: var(--vscode-foreground);
+  background: var(--dsh-surface-hover);
+}
+
+.dsh-message-actions__button[aria-disabled='true'] {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.dsh-message-actions__button[aria-disabled='true']:hover {
+  color: inherit;
+  background: transparent;
+}
+
+.dsh-message-actions__button > .dsh-icon {
+  width: 16px;
+  height: 16px;
 }
 
 .dsh-timeline__card--assistant {
@@ -5448,12 +5619,23 @@ summary.dsh-timeline__card-header {
   font-variant-numeric: tabular-nums;
 }
 
-.dsh-conversation__popovers {
+.dsh-conversation__topbar {
   display: flex;
-  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  min-height: 30px;
+  border-bottom: 1px solid var(--dsh-control-border);
+}
+
+.dsh-conversation__popovers {
+  flex: 1 1 auto;
+  display: flex;
+  flex-wrap: nowrap;
   justify-content: flex-end;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
 }
 
@@ -6082,10 +6264,12 @@ summary.dsh-timeline__card-header {
 /* Conversation view tab ring (chat / trajectory), mirroring the official
    conversation.view slot ring. */
 .dsh-conversation__views {
+  flex: 0 0 auto;
   display: flex;
   gap: 2px;
-  padding: 0 10px;
-  border-bottom: 1px solid var(--dsh-control-border);
+  min-width: 0;
+  padding: 0;
+  border-bottom: 0;
 }
 
 .dsh-conversation__view-tab {
@@ -6787,5 +6971,64 @@ summary.dsh-timeline__card-header {
 
   .dsh-compact-picker--labelled .dsh-compact-picker__trigger-text {
     display: none;
+  }
+}
+
+/* Final conversation geometry: keep the usable rail close to the Webview
+   edges and reserve one compact line for navigation plus session actions. */
+.dsh-app {
+  padding-inline: 8px;
+}
+
+.dsh-app__body,
+.dsh-conversation {
+  width: 100%;
+  max-width: 100%;
+  margin-inline: 0;
+}
+
+.dsh-conversation {
+  gap: 4px;
+}
+
+.dsh-conversation__topbar {
+  gap: 6px;
+}
+
+.dsh-conversation__popovers {
+  gap: 4px;
+}
+
+.dsh-conversation__view-tab {
+  padding-inline: 8px;
+}
+
+.dsh-timeline,
+.dsh-trajectory {
+  padding-inline-start: 0;
+  padding-inline-end: 4px;
+}
+
+.dsh-trajectory__toolbar {
+  padding-inline: 4px;
+}
+
+.dsh-stats-line {
+  padding-inline: 4px;
+}
+
+@media (max-width: 520px) {
+  .dsh-conversation__topbar {
+    gap: 4px;
+  }
+
+  .dsh-conversation__view-tab {
+    padding-inline: 6px;
+  }
+
+  .dsh-conversation__export-trigger,
+  .dsh-conversation__locale-switch {
+    padding-inline: 7px;
+    font-size: 0.68rem;
   }
 }

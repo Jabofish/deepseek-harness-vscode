@@ -6,6 +6,8 @@ import { addTokenUsage } from './usage.js'
 export interface SequencedBackendEvent {
   readonly sequence: number
   readonly event: BackendEvent
+  /** Host-only notices do not belong to the durable DSH sequence space. */
+  readonly advanceSequence?: boolean
 }
 
 /**
@@ -26,7 +28,7 @@ export function isInjectedUserMessage(
 }
 
 export function reduceTimeline(state: TimelineState, input: SequencedBackendEvent): TimelineState {
-  if (input.sequence <= state.lastSequence) return state
+  if (input.advanceSequence !== false && input.sequence <= state.lastSequence) return state
   const sessionId = eventSessionId(input.event)
   if (state.sessionId !== undefined && sessionId !== undefined && sessionId !== state.sessionId)
     // Events for another open session are buffered by the Webview store and
@@ -36,8 +38,24 @@ export function reduceTimeline(state: TimelineState, input: SequencedBackendEven
     return state
   const nodes = [...state.nodes]
   const stepTimings: Record<string, AssistantTiming> = { ...(state.stepTimings ?? {}) }
+  let activeTurn = state.activeTurn
+  const closedTurns = new Set(state.closedTurns ?? [])
+  const openTurn = (turn: number): void => {
+    if (!closedTurns.has(turn)) activeTurn = turn
+  }
   const event = input.event
   switch (event.type) {
+    case 'turn.started':
+      closedTurns.delete(event.turn)
+      activeTurn = event.turn
+      break
+    case 'turn.ended':
+      closeTurn(nodes, event.turn, event.reason, input.sequence)
+      if (activeTurn === event.turn) activeTurn = undefined
+      closedTurns.add(event.turn)
+      for (const key of Object.keys(stepTimings))
+        if (key.startsWith(`${event.turn}:`)) delete stepTimings[key]
+      break
     case 'message.user':
       {
         const optimisticIndex = nodes.findIndex(
@@ -76,6 +94,7 @@ export function reduceTimeline(state: TimelineState, input: SequencedBackendEven
       }
       break
     case 'step.started': {
+      openTurn(event.turn)
       const key = timingKey(event.turn, event.step)
       if (key !== undefined && (event.time !== undefined || stepTimings[key] !== undefined)) {
         const previous = stepTimings[key]
@@ -88,6 +107,9 @@ export function reduceTimeline(state: TimelineState, input: SequencedBackendEven
       break
     }
     case 'message.delta': {
+      if (event.turn !== undefined) openTurn(event.turn)
+      const turnClosed = event.turn !== undefined && closedTurns.has(event.turn)
+      if (turnClosed && event.turn !== undefined) invalidateTurnTail(nodes, event.turn)
       if (event.delta === '') break
       const timing = noteFirstToken(stepTimings, event.turn, event.step, event.time)
       const index = conversationNodeIndex(nodes, event.messageId)
@@ -96,7 +118,10 @@ export function reduceTimeline(state: TimelineState, input: SequencedBackendEven
           kind: 'assistant-message',
           id: event.messageId,
           markdown: event.delta,
-          streaming: true,
+          streaming: !turnClosed,
+          ...(event.turn === undefined ? {} : { turn: event.turn }),
+          ...(event.step === undefined ? {} : { step: event.step }),
+          ...(turnClosed ? { turnCompleted: false } : {}),
           ...(timing === undefined ? {} : { timing }),
         })
         break
@@ -106,7 +131,10 @@ export function reduceTimeline(state: TimelineState, input: SequencedBackendEven
         nodes[index] = {
           ...node,
           markdown: `${node.markdown}${event.delta}`,
-          streaming: true,
+          streaming: !turnClosed,
+          ...(event.turn === undefined ? {} : { turn: event.turn }),
+          ...(event.step === undefined ? {} : { step: event.step }),
+          ...(event.turn === undefined ? {} : { turnCompleted: false }),
           ...(timing === undefined ? {} : { timing }),
           ...(node.reasoning === undefined ? {} : { reasoning: { ...node.reasoning, streaming: false } }),
         }
@@ -118,7 +146,10 @@ export function reduceTimeline(state: TimelineState, input: SequencedBackendEven
           kind: 'assistant-message',
           id: event.messageId,
           markdown: event.delta,
-          streaming: true,
+          streaming: !turnClosed,
+          ...(event.turn === undefined ? {} : { turn: event.turn }),
+          ...(event.step === undefined ? {} : { step: event.step }),
+          ...(turnClosed ? { turnCompleted: false } : {}),
           ...(timing === undefined ? {} : { timing }),
           reasoning: { markdown: node.markdown, streaming: false },
         }
@@ -126,6 +157,9 @@ export function reduceTimeline(state: TimelineState, input: SequencedBackendEven
       break
     }
     case 'reasoning.delta': {
+      if (event.turn !== undefined) openTurn(event.turn)
+      const turnClosed = event.turn !== undefined && closedTurns.has(event.turn)
+      if (turnClosed && event.turn !== undefined) invalidateTurnTail(nodes, event.turn)
       if (event.delta === '') break
       const index = conversationNodeIndex(nodes, event.messageId)
       const timing = timingForEvent(stepTimings, event.turn, event.step)
@@ -135,8 +169,11 @@ export function reduceTimeline(state: TimelineState, input: SequencedBackendEven
           id: event.messageId,
           markdown: '',
           streaming: false,
+          ...(event.turn === undefined ? {} : { turn: event.turn }),
+          ...(event.step === undefined ? {} : { step: event.step }),
+          ...(turnClosed ? { turnCompleted: false } : {}),
           ...(timing === undefined ? {} : { timing }),
-          reasoning: { markdown: event.delta, streaming: true },
+          reasoning: { markdown: event.delta, streaming: !turnClosed },
         })
         break
       }
@@ -145,18 +182,24 @@ export function reduceTimeline(state: TimelineState, input: SequencedBackendEven
         const reasoning = node.reasoning
         nodes[index] = {
           ...node,
+          ...(event.turn === undefined ? {} : { turn: event.turn }),
+          ...(event.step === undefined ? {} : { step: event.step }),
+          ...(event.turn === undefined ? {} : { turnCompleted: false }),
           ...(timing === undefined ? {} : { timing }),
           reasoning: {
             markdown: `${reasoning?.markdown ?? ''}${event.delta}`,
-            streaming: true,
+            streaming: !turnClosed,
           },
         }
       } else if (node?.kind === 'reasoning') {
-        nodes[index] = { ...node, markdown: `${node.markdown}${event.delta}`, streaming: true }
+        nodes[index] = { ...node, markdown: `${node.markdown}${event.delta}`, streaming: !turnClosed }
       }
       break
     }
     case 'message.completed': {
+      if (event.turn !== undefined) openTurn(event.turn)
+      const turnClosed = event.turn !== undefined && closedTurns.has(event.turn)
+      if (turnClosed && event.turn !== undefined) invalidateTurnTail(nodes, event.turn)
       const timing = completeTiming(stepTimings, event.turn, event.step, event.time)
       const index = conversationNodeIndex(nodes, event.messageId)
       if (index < 0) {
@@ -166,6 +209,10 @@ export function reduceTimeline(state: TimelineState, input: SequencedBackendEven
             id: event.messageId,
             markdown: event.markdown ?? '',
             streaming: false,
+            sequence: input.sequence,
+            ...(event.turn === undefined ? {} : { turn: event.turn }),
+            ...(event.step === undefined ? {} : { step: event.step }),
+            ...(turnClosed ? { turnCompleted: false } : {}),
             ...(timing === undefined ? {} : { timing }),
             ...(event.modelLabel === undefined ? {} : { modelLabel: event.modelLabel }),
             ...(event.usage === undefined ? {} : { usage: event.usage }),
@@ -176,16 +223,36 @@ export function reduceTimeline(state: TimelineState, input: SequencedBackendEven
         break
       }
       const node = nodes[index]
-      // A usage-only completion can carry accounting without visible message
-      // fields. It must not close the live answer; the accumulator below still
-      // consumes its usage payload, but the retained per-message usage is
-      // still recorded for the Trajectory inspector.
+      // An empty assistant/message is still the durable terminal boundary for
+      // a step (for example a tool-only step). Keep its visible accumulator,
+      // but do not treat it as the end of the surrounding turn: turn/end is
+      // the only event that settles activity and branch eligibility.
       if (event.markdown === undefined && event.reasoning === undefined && event.modelLabel === undefined) {
-        if (node?.kind === 'assistant-message' && (event.usage !== undefined || timing !== undefined))
+        if (node?.kind === 'assistant-message')
           nodes[index] = {
             ...node,
+            streaming: false,
+            sequence: input.sequence,
+            ...(event.turn === undefined ? {} : { turn: event.turn }),
+            ...(event.step === undefined ? {} : { step: event.step }),
+            ...(turnClosed ? { turnCompleted: false } : {}),
+            ...(node.reasoning === undefined ? {} : { reasoning: { ...node.reasoning, streaming: false } }),
             ...(event.usage === undefined ? {} : { usage: event.usage }),
             ...(timing === undefined ? {} : { timing }),
+          }
+        else if (node?.kind === 'reasoning')
+          nodes[index] = {
+            kind: 'assistant-message',
+            id: event.messageId,
+            markdown: '',
+            streaming: false,
+            sequence: input.sequence,
+            ...(event.turn === undefined ? {} : { turn: event.turn }),
+            ...(event.step === undefined ? {} : { step: event.step }),
+            ...(turnClosed ? { turnCompleted: false } : {}),
+            ...(timing === undefined ? {} : { timing }),
+            ...(event.usage === undefined ? {} : { usage: event.usage }),
+            reasoning: { markdown: node.markdown, streaming: false },
           }
         break
       }
@@ -196,6 +263,10 @@ export function reduceTimeline(state: TimelineState, input: SequencedBackendEven
           ...node,
           markdown: event.markdown ?? node.markdown,
           streaming: false,
+          sequence: input.sequence,
+          ...(event.turn === undefined ? {} : { turn: event.turn }),
+          ...(event.step === undefined ? {} : { step: event.step }),
+          ...(turnClosed ? { turnCompleted: false } : {}),
           ...(timing === undefined ? {} : { timing }),
           ...(event.modelLabel === undefined ? {} : { modelLabel: event.modelLabel }),
           ...(event.usage === undefined
@@ -211,6 +282,10 @@ export function reduceTimeline(state: TimelineState, input: SequencedBackendEven
           id: event.messageId,
           markdown: event.markdown ?? '',
           streaming: false,
+          sequence: input.sequence,
+          ...(event.turn === undefined ? {} : { turn: event.turn }),
+          ...(event.step === undefined ? {} : { step: event.step }),
+          ...(turnClosed ? { turnCompleted: false } : {}),
           ...(timing === undefined ? {} : { timing }),
           ...(event.modelLabel === undefined ? {} : { modelLabel: event.modelLabel }),
           ...(event.usage === undefined ? {} : { usage: event.usage }),
@@ -223,6 +298,22 @@ export function reduceTimeline(state: TimelineState, input: SequencedBackendEven
       break
     }
     case 'step.ended':
+      openTurn(event.turn)
+      for (let index = 0; index < nodes.length; index += 1) {
+        const node = nodes[index]
+        if (
+          node?.kind === 'assistant-message' &&
+          node.turn === event.turn &&
+          node.step === event.step &&
+          (node.streaming || node.reasoning?.streaming === true)
+        )
+          nodes[index] = {
+            ...node,
+            streaming: false,
+            sequence: input.sequence,
+            ...(node.reasoning === undefined ? {} : { reasoning: { ...node.reasoning, streaming: false } }),
+          }
+      }
       for (let index = 0; index < nodes.length; index += 1) {
         const node = nodes[index]
         if (
@@ -240,15 +331,20 @@ export function reduceTimeline(state: TimelineState, input: SequencedBackendEven
       }
       break
     case 'tool.updated': {
+      if (event.tool.turn !== undefined) openTurn(event.tool.turn)
+      if (event.tool.turn !== undefined && closedTurns.has(event.tool.turn))
+        invalidateTurnTail(nodes, event.tool.turn)
+      const tool = closeLateTool(event.tool, closedTurns)
       const existingIndex = nodes.findIndex((node) => node.kind === 'tool' && node.id === event.tool.id)
       const existing = existingIndex < 0 ? undefined : nodes[existingIndex]
       if (existing?.kind === 'tool') {
         nodes[existingIndex] = {
           kind: 'tool',
           id: event.tool.id,
-          tool: mergeTool(existing.tool, event.tool),
+          sequence: input.sequence,
+          tool: mergeTool(existing.tool, tool),
         }
-      } else upsert(nodes, { kind: 'tool', id: event.tool.id, tool: event.tool })
+      } else upsert(nodes, { kind: 'tool', id: event.tool.id, sequence: input.sequence, tool })
       break
     }
     case 'goal.updated':
@@ -277,6 +373,8 @@ export function reduceTimeline(state: TimelineState, input: SequencedBackendEven
       break
     }
     case 'model.retry': {
+      openTurn(event.retry.turn)
+      if (closedTurns.has(event.retry.turn)) invalidateTurnTail(nodes, event.retry.turn)
       const id = `retry:${event.retry.id}`
       const existingIndex = nodes.findIndex((node) => node.kind === 'retry' && node.id === id)
       const existing = existingIndex < 0 ? undefined : nodes[existingIndex]
@@ -288,10 +386,11 @@ export function reduceTimeline(state: TimelineState, input: SequencedBackendEven
       const node: ModelRetryNode = {
         kind: 'retry',
         id,
+        sequence: input.sequence,
         turn: event.retry.turn,
         step: event.retry.step,
         attempt,
-        state: event.retry.state,
+        state: closedTurns.has(event.retry.turn) ? 'cancelled' : event.retry.state,
         ...(delayMs === undefined ? {} : { delayMs }),
         ...(maxRetries === undefined ? {} : { maxRetries }),
         ...(message === undefined ? {} : { message }),
@@ -344,6 +443,7 @@ export function reduceTimeline(state: TimelineState, input: SequencedBackendEven
       })
       break
     case 'connection.lost':
+      activeTurn = undefined
       nodes.push({ kind: 'notice', id: `connection:${input.sequence}`, level: 'error', text: event.reason })
       break
     case 'session.gap':
@@ -399,14 +499,109 @@ export function reduceTimeline(state: TimelineState, input: SequencedBackendEven
   return {
     sessionId: state.sessionId ?? sessionId,
     nodes,
-    lastSequence: input.sequence,
+    lastSequence: input.advanceSequence === false ? state.lastSequence : input.sequence,
     ...(Object.keys(stepTimings).length === 0 ? {} : { stepTimings }),
     ...(tokenUsage === undefined ? {} : { tokenUsage }),
+    ...(activeTurn === undefined ? {} : { activeTurn }),
+    ...(closedTurns.size === 0 ? {} : { closedTurns: [...closedTurns] }),
   }
 }
 
 function timingKey(turn: number | undefined, step: number | undefined): string | undefined {
   return turn === undefined || step === undefined ? undefined : `${turn}:${step}`
+}
+
+/**
+ * Close one durable turn. Assistant/message closes a model step; only this
+ * boundary can settle the turn and decide whether the final visible assistant
+ * is still the transcript tail that may be forked.
+ */
+function closeTurn(
+  nodes: TimelineNode[],
+  turn: number,
+  reason: Extract<BackendEvent, { readonly type: 'turn.ended' }>['reason'],
+  sequence: number,
+): void {
+  for (let index = 0; index < nodes.length; index += 1) {
+    const node = nodes[index]
+    if (node?.kind === 'assistant-message' && node.turn === turn) {
+      if (node.streaming || node.reasoning?.streaming === true)
+        nodes[index] = {
+          ...node,
+          streaming: false,
+          ...(node.sequence === undefined ? { sequence } : {}),
+          ...(node.reasoning === undefined ? {} : { reasoning: { ...node.reasoning, streaming: false } }),
+        }
+    } else if (
+      node?.kind === 'tool' &&
+      node.tool.turn === turn &&
+      (node.tool.status === 'queued' || node.tool.status === 'running')
+    ) {
+      nodes[index] = {
+        ...node,
+        tool: {
+          ...node.tool,
+          status: reason === 'error' ? 'failed' : 'cancelled',
+        },
+      }
+    }
+  }
+
+  let closingIndex = -1
+  for (let index = 0; index < nodes.length; index += 1) {
+    const node = nodes[index]
+    if (node?.kind === 'assistant-message' && node.turn === turn && node.markdown.trim() !== '')
+      closingIndex = index
+  }
+
+  const blockedByTerminalReason = reason === 'error' || reason === 'unknown'
+  const closingNode = closingIndex < 0 ? undefined : nodes[closingIndex]
+  const closingSequence = closingNode?.kind === 'assistant-message' ? closingNode.sequence : undefined
+  const blockedByLaterTranscript =
+    closingIndex >= 0 &&
+    nodes.some((node, index) => {
+      const relevant =
+        (node.kind === 'assistant-message' && node.turn === turn) ||
+        (node.kind === 'tool' && (node.tool.turn === undefined || node.tool.turn === turn)) ||
+        (node.kind === 'retry' && node.turn === turn)
+      if (!relevant || index === closingIndex) return false
+      const nodeSequence =
+        node.kind === 'assistant-message' || node.kind === 'tool' || node.kind === 'retry'
+          ? node.sequence
+          : undefined
+      if (closingSequence !== undefined && nodeSequence !== undefined) return nodeSequence > closingSequence
+      return index > closingIndex
+    })
+  for (let index = 0; index < nodes.length; index += 1) {
+    const node = nodes[index]
+    if (node?.kind !== 'assistant-message' || node.turn !== turn) continue
+    nodes[index] = {
+      ...node,
+      turnCompleted: index === closingIndex && !blockedByTerminalReason && !blockedByLaterTranscript,
+    }
+  }
+}
+
+function closeLateTool(
+  tool: Extract<BackendEvent, { readonly type: 'tool.updated' }>['tool'],
+  closedTurns: ReadonlySet<number>,
+): Extract<BackendEvent, { readonly type: 'tool.updated' }>['tool'] {
+  if (
+    tool.turn === undefined ||
+    !closedTurns.has(tool.turn) ||
+    (tool.status !== 'queued' && tool.status !== 'running')
+  )
+    return tool
+  return { ...tool, status: 'cancelled' }
+}
+
+/** A post-turn transcript event invalidates the completed-turn action tail. */
+function invalidateTurnTail(nodes: TimelineNode[], turn: number): void {
+  for (let index = 0; index < nodes.length; index += 1) {
+    const node = nodes[index]
+    if (node?.kind === 'assistant-message' && node.turn === turn)
+      nodes[index] = { ...node, turnCompleted: false }
+  }
 }
 
 function timingForEvent(

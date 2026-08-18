@@ -10,7 +10,7 @@ export interface TodoListProps {
 /** Persistent task progress directly above the composer. */
 export function TodoList({ todos }: TodoListProps): ReactElement | null {
   const { t } = useI18n()
-  const [open, setOpen] = useState(true)
+  const [open, setOpen] = useState(false)
   if (todos.length === 0) return null
   const completed = todos.filter((todo) => todo.status === 'completed').length
   const current =
@@ -37,16 +37,24 @@ export function TodoList({ todos }: TodoListProps): ReactElement | null {
               {t('todo.progress', { completed, total: todos.length })}
             </span>
           </>
-        ) : current === undefined ? (
-          <span className="dsh-todo-list__collapsed-copy">
-            <TodoStateIcon status="completed" />
-            <span className="dsh-todo-list__current">{t('todo.allCompleted')}</span>
-          </span>
         ) : (
           <span className="dsh-todo-list__collapsed-copy">
-            <TodoStateIcon status={current.status} />
-            <span className="dsh-todo-list__current">{current.content}</span>
-            <span className="dsh-todo-list__status">{t(`todo.status.${current.status}`)}</span>
+            <span className="dsh-todo-list__heading">
+              <Icon name="list" />
+              <strong>{t('todo.title')}</strong>
+            </span>
+            <span className="dsh-todo-list__progress" role="status">
+              {t('todo.progress', { completed, total: todos.length })}
+            </span>
+            {current === undefined ? (
+              <span className="dsh-todo-list__current">{t('todo.allCompleted')}</span>
+            ) : (
+              <>
+                <TodoStateIcon status={current.status} />
+                <span className="dsh-todo-list__current">{current.content}</span>
+                <span className="dsh-todo-list__status">{t(`todo.status.${current.status}`)}</span>
+              </>
+            )}
           </span>
         )}
         <span className="dsh-todo-list__chevron" aria-hidden="true">

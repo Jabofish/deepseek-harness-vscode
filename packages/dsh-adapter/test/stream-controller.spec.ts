@@ -65,6 +65,53 @@ describe('DshStreamController', () => {
     await waitFor(() => values.length === 2)
     expect(values).toEqual(['old', 'new'])
   })
+
+  it('forwards the durable turn end and host idle status from rc.6 frames', async () => {
+    const sessionId = 's1'
+    const transport = streamTransport([
+      { payload: { type: 'session/subscribed', sessionId, lastSeq: 0 } },
+      {
+        payload: {
+          type: 'session/event',
+          sessionId,
+          event: { type: 'turn/start', seq: 1, time: 1, data: { turn: 1 } },
+        },
+      },
+      {
+        payload: {
+          type: 'session/event',
+          sessionId,
+          event: {
+            type: 'assistant/message',
+            seq: 2,
+            time: 2,
+            data: { turn: 1, step: 0, markdown: 'done' },
+          },
+        },
+      },
+      {
+        payload: {
+          type: 'session/event',
+          sessionId,
+          event: { type: 'turn/end', seq: 3, time: 3, data: { turn: 1, reason: { kind: 'completed' } } },
+        },
+      },
+      { payload: { type: 'host/session-status', sessionId, running: false } },
+    ])
+    const received: string[] = []
+    const controller = new DshStreamController(transport)
+    controllers.push(controller)
+    controller.subscribe((event) => received.push(event.type))
+
+    await waitFor(() => received.includes('session.status'))
+    expect(received).toEqual([
+      'session.subscribed',
+      'turn.started',
+      'message.completed',
+      'turn.ended',
+      'session.status',
+    ])
+  })
 })
 
 function streamTransport(frames: readonly unknown[]): DshTransport {

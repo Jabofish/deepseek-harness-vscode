@@ -119,6 +119,24 @@ describe('DeepSeek Harness 0.1.0-rc.6 contract', () => {
 
   it('preserves official step and event timestamps for timing consumers', () => {
     expect(
+      rc6Mapper.event('turn/start', {
+        sessionId: 's1',
+        data: { turn: 1 },
+      }),
+    ).toEqual({ type: 'turn.started', sessionId: 's1', turn: 1 })
+    expect(
+      rc6Mapper.event('turn/end', {
+        sessionId: 's1',
+        data: { turn: 1, reason: { kind: 'completed' } },
+      }),
+    ).toEqual({ type: 'turn.ended', sessionId: 's1', turn: 1, reason: 'completed' })
+    expect(
+      rc6Mapper.event('turn/end', {
+        sessionId: 's1',
+        data: { turn: 1, reason: { kind: 'future-plugin-reason' } },
+      }),
+    ).toEqual({ type: 'turn.ended', sessionId: 's1', turn: 1, reason: 'unknown' })
+    expect(
       rc6Mapper.event('step/start', {
         sessionId: 's1',
         time: 1_000,
@@ -145,7 +163,10 @@ describe('DeepSeek Harness 0.1.0-rc.6 contract', () => {
         time: 5_000,
         data: { turn: 1, step: 1, callId: 'call-1', name: 'shell', arguments: '{}' },
       }),
-    ).toMatchObject({ type: 'tool.updated', tool: { id: 'call-1', startedAt: '1970-01-01T00:00:05.000Z' } })
+    ).toMatchObject({
+      type: 'tool.updated',
+      tool: { id: 'call-1', turn: 1, step: 1, startedAt: '1970-01-01T00:00:05.000Z' },
+    })
     expect(
       rc6Mapper.event('tool/result', {
         sessionId: 's1',

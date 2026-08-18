@@ -14,17 +14,16 @@ const todos: readonly TodoView[] = [
 describe('TodoList', () => {
   afterEach(() => cleanup())
 
-  it('shows every current task with progress and semantic status', () => {
+  it('starts collapsed with the current task and progress', () => {
     render(<TodoList todos={todos} />)
 
     const list = screen.getByRole('region', { name: 'Current to-do list' })
     expect(within(list).getByText('1/3 completed')).toBeDefined()
-    expect(within(list).getByText('查询系统信息')).toBeDefined()
-    expect(within(list).getByText('Completed')).toBeDefined()
     expect(within(list).getByText('执行子代理调研')).toBeDefined()
     expect(within(list).getByText('In progress')).toBeDefined()
-    expect(within(list).getByText('整理最终答案')).toBeDefined()
-    expect(within(list).getByText('Pending')).toBeDefined()
+    expect(within(list).queryByText('查询系统信息')).toBeNull()
+    expect(within(list).queryByText('整理最终答案')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Expand tasks' }).getAttribute('aria-expanded')).toBe('false')
   })
 
   it('renders nothing when no task exists', () => {
@@ -32,16 +31,18 @@ describe('TodoList', () => {
     expect(container.firstChild).toBeNull()
   })
 
-  it('collapses to one line containing only the current task', () => {
+  it('expands to show every task and its semantic status', () => {
     render(<TodoList todos={todos} />)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Collapse tasks' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Expand tasks' }))
 
     const list = screen.getByRole('region', { name: 'Current to-do list' })
+    expect(within(list).getByText('查询系统信息')).toBeDefined()
+    expect(within(list).getByText('Completed')).toBeDefined()
     expect(within(list).getByText('执行子代理调研')).toBeDefined()
     expect(within(list).getByText('In progress')).toBeDefined()
-    expect(within(list).queryByText('查询系统信息')).toBeNull()
-    expect(within(list).queryByText('整理最终答案')).toBeNull()
-    expect(screen.getByRole('button', { name: 'Expand tasks' }).getAttribute('aria-expanded')).toBe('false')
+    expect(within(list).getByText('整理最终答案')).toBeDefined()
+    expect(within(list).getByText('Pending')).toBeDefined()
+    expect(screen.getByRole('button', { name: 'Collapse tasks' }).getAttribute('aria-expanded')).toBe('true')
   })
 })
