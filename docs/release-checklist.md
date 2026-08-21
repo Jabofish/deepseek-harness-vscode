@@ -2,7 +2,7 @@
 
 只有全部必需项满足才可发布。
 
-当前发布版本是 `0.0.6`，运行时契约覆盖 DSH `0.1.0-rc.6` 至 `0.1.1-rc.1`；任何非空未知版本标签进入兼容模式并显示警告。能力矩阵仍有 `PARTIAL`，以下未勾选项代表真实缺口，不应被“构建成功”替代。
+当前发布版本是 `0.0.7`，运行时契约覆盖 DSH `0.1.0-rc.6` 至 `0.1.1-rc.2`；任何非空未知版本标签进入兼容模式并显示警告。能力矩阵仍有 `PARTIAL`，以下未勾选项代表真实缺口，不应被“构建成功”替代。
 
 ## 功能
 
@@ -18,7 +18,7 @@
 - [ ] clean checkout 执行 `pnpm install --frozen-lockfile && pnpm check && pnpm build`。
 - [ ] Windows、Linux、macOS 与 Node 22.19/24 CI 通过。
 - [ ] VS Code 最低支持版本 E2E 通过。
-- [ ] 真实 DSH rc.6/rc.7/rc.8/rc.1 smoke matrix 通过，且未知版本警告降级通过。
+- [ ] 真实 DSH rc.6/rc.7/rc.8/rc.1/rc.2 smoke matrix 通过，且未知版本警告降级通过。
 - [ ] 性能、长会话、断流恢复、资源泄漏基线通过。
 - [ ] 键盘、屏幕阅读器、亮/暗/高对比、240px、Reduced Motion 通过。
 

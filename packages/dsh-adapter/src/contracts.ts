@@ -6,9 +6,15 @@ import type {
   DshBackend,
 } from '@dsh-vscode/domain'
 
-export const SUPPORTED_DSH_VERSIONS = ['0.1.0-rc.6', '0.1.0-rc.7', '0.1.0-rc.8', '0.1.1-rc.1'] as const
+export const SUPPORTED_DSH_VERSIONS = [
+  '0.1.0-rc.6',
+  '0.1.0-rc.7',
+  '0.1.0-rc.8',
+  '0.1.1-rc.1',
+  '0.1.1-rc.2',
+] as const
 
-export const SUPPORTED_DSH_RANGE = '0.1.0-rc.6 through 0.1.1-rc.1' as const
+export const SUPPORTED_DSH_RANGE = '0.1.0-rc.6 through 0.1.1-rc.2' as const
 
 export const DSH_PACKAGE_NAME = '@deepseek-ai/dsh' as const
 

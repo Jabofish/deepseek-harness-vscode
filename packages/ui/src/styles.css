@@ -483,8 +483,18 @@ select {
 }
 .dsh-tool-row__source {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 3px;
   padding: 7px;
+}
+.dsh-tool-row__source > strong {
+  min-width: 0;
+  display: block;
+  overflow: hidden;
+  font-size: 0.82em;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .dsh-tool-row__source p,
 .dsh-tool-row__source time {

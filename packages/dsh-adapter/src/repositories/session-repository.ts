@@ -36,10 +36,18 @@ export class Rc6SessionRepository implements SessionRepository {
     private readonly pathComparator: ((left: string, right: string) => boolean) | undefined = undefined,
     options: SessionRepositoryOptions = {},
   ) {
+    this.supportsPreallocatedSessionId =
+      options.preallocatedSessionId === true || options.reuseWorkspaceBlank === true
     this.supportsWorkspaceBlankReuse = options.reuseWorkspaceBlank === true
+    this.maxPromptAttachmentBytes = options.maxPromptAttachmentBytes ?? MAX_PROMPT_ATTACHMENT_BYTES
+    this.maxPromptAttachmentTotalBytes =
+      options.maxPromptAttachmentTotalBytes ?? MAX_PROMPT_ATTACHMENT_TOTAL_BYTES
   }
 
+  private readonly supportsPreallocatedSessionId: boolean
   private readonly supportsWorkspaceBlankReuse: boolean
+  private readonly maxPromptAttachmentBytes: number
+  private readonly maxPromptAttachmentTotalBytes: number
 
   public remember(event: BackendEvent): void {
     if (event.type !== 'queue.updated') {
@@ -233,10 +241,15 @@ export class Rc6SessionRepository implements SessionRepository {
     // host to resolve an invalid preset id and is rejected by deployments that
     // intentionally compose no preset roster.
     const reusableSessionId =
-      this.supportsWorkspaceBlankReuse && typeof input.sessionId === 'string' && input.sessionId.trim() !== ''
+      this.supportsPreallocatedSessionId &&
+      typeof input.sessionId === 'string' &&
+      input.sessionId.trim() !== ''
         ? input.sessionId
         : undefined
-    const reusingWorkspaceBlank = reusableSessionId !== undefined && input.reuseWorkspaceBlank === true
+    const reusingWorkspaceBlank =
+      this.supportsWorkspaceBlankReuse &&
+      reusableSessionId !== undefined &&
+      input.reuseWorkspaceBlank === true
     const agentPreset = reusingWorkspaceBlank
       ? ''
       : typeof input.configuration.preset === 'string'
@@ -343,7 +356,7 @@ export class Rc6SessionRepository implements SessionRepository {
     const bytes = Buffer.from(encoded, 'base64')
     if (
       bytes.length === 0 ||
-      bytes.length > MAX_PROMPT_ATTACHMENT_BYTES ||
+      bytes.length > this.maxPromptAttachmentBytes ||
       bytes.length !== reference.bytes ||
       bytes.toString('base64') !== encoded ||
       !matchesImageSignature(resolvedMediaType, bytes)
@@ -381,7 +394,11 @@ export class Rc6SessionRepository implements SessionRepository {
     const receipt = await callRpc<unknown>(
       this.transport,
       'session.prompt',
-      { sessionId: input.sessionId, mode, content: promptContent(input) },
+      {
+        sessionId: input.sessionId,
+        mode,
+        content: promptContent(input, this.maxPromptAttachmentBytes, this.maxPromptAttachmentTotalBytes),
+      },
       signal,
     )
     assertAccepted(receipt, 'session prompt')
@@ -408,7 +425,11 @@ export class Rc6SessionRepository implements SessionRepository {
     )
     const response = await this.transport.request<RpcResponseLike<unknown>>(
       'session.prompt',
-      { sessionId: input.sessionId, mode, content: promptContent(input) },
+      {
+        sessionId: input.sessionId,
+        mode,
+        content: promptContent(input, this.maxPromptAttachmentBytes, this.maxPromptAttachmentTotalBytes),
+      },
       signal,
     )
     const receipt = unwrapRpcResult(response, 'session.prompt')
@@ -732,7 +753,12 @@ export class Rc6SessionRepository implements SessionRepository {
 }
 
 interface SessionRepositoryOptions {
+  /** rc.2 accepts an idempotency/preallocated sessionId without rc.1's reuse flag. */
+  readonly preallocatedSessionId?: boolean
   readonly reuseWorkspaceBlank?: boolean
+  /** rc.2 raises the DSH image envelope to 20 MiB per image / 200 MiB per message. */
+  readonly maxPromptAttachmentBytes?: number
+  readonly maxPromptAttachmentTotalBytes?: number
 }
 
 function samePath(
@@ -879,7 +905,11 @@ function historyCwd(history: readonly unknown[]): string | undefined {
   return undefined
 }
 
-function promptContent(input: PromptInput): readonly Record<string, string>[] {
+function promptContent(
+  input: PromptInput,
+  maxImageBytes: number,
+  maxAttachmentTotalBytes: number,
+): readonly Record<string, string>[] {
   let totalBytes = 0
   const content: Record<string, string>[] = [{ type: 'text', text: input.text }]
   for (const attachment of input.attachments) {
@@ -905,14 +935,15 @@ function promptContent(input: PromptInput): readonly Record<string, string>[] {
         message: 'The attachment encoding is not canonical Base64.',
         retryable: false,
       })
-    if (bytes.length > MAX_PROMPT_ATTACHMENT_BYTES)
+    const maxBytes = SUPPORTED_IMAGE_TYPES.has(mediaType) ? maxImageBytes : MAX_PROMPT_ATTACHMENT_BYTES
+    if (bytes.length > maxBytes)
       throw new AppError({
         code: 'INVALID_CONFIGURATION',
         message: 'The attachment is too large.',
         retryable: false,
       })
     totalBytes += bytes.length
-    if (totalBytes > MAX_PROMPT_ATTACHMENT_TOTAL_BYTES)
+    if (totalBytes > maxAttachmentTotalBytes)
       throw new AppError({
         code: 'INVALID_CONFIGURATION',
         message: 'The combined attachment size is too large.',

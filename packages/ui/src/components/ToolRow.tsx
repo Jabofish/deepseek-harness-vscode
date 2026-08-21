@@ -218,7 +218,9 @@ function presentationTargets(view: ToolPresentationView | undefined): readonly T
       break
     case 'web':
       if (view.kind === 'fetch') add(view.url, view.url)
-      else for (const source of view.sources) add(source.url, source.title ?? source.url)
+      // Web search already renders each source, including its openable URL,
+      // inside the specialized sources section. Adding the generic target
+      // list here would render the same sources a second time.
       break
     default:
       break

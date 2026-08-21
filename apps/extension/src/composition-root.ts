@@ -37,6 +37,7 @@ import {
   Rc7VersionAdapter,
   Rc8VersionAdapter,
   Rc11VersionAdapter,
+  Rc12VersionAdapter,
   VersionedBackendFactory,
   VersionedBackendProbe,
   type ExportFileSystem,
@@ -76,6 +77,7 @@ import {
   decodeCanonicalBase64,
   isImageMimeType,
   MAX_ATTACHMENT_BYTES,
+  MAX_IMAGE_ATTACHMENT_BYTES,
   validImageBytes,
   type StoredAttachmentInput,
 } from './attachments/attachment-store.js'
@@ -247,11 +249,12 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     samePath: sameWorkspacePath,
     exportFileSystem: createExportFileSystem(vscode),
   }
+  const rc12Adapter = new Rc12VersionAdapter(adapterOptions)
   const rc11Adapter = new Rc11VersionAdapter(adapterOptions)
   const rc8Adapter = new Rc8VersionAdapter(adapterOptions)
   const rc7Adapter = new Rc7VersionAdapter(adapterOptions)
   const rc6Adapter = new Rc6VersionAdapter(adapterOptions)
-  const adapters = [rc11Adapter, rc8Adapter, rc7Adapter, rc6Adapter] as const
+  const adapters = [rc12Adapter, rc11Adapter, rc8Adapter, rc7Adapter, rc6Adapter] as const
   const probe = new VersionedBackendProbe(adapters)
   const factory = new VersionedBackendFactory(adapters)
   const supervisor = new DshProcessSupervisor({
@@ -954,14 +957,14 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       const uri = selected?.[0]
       if (uri === undefined) return { cancelled: true }
       const info = await stat(uri.fsPath)
-      if (!info.isFile() || info.size > MAX_ATTACHMENT_BYTES)
+      if (!info.isFile() || info.size > MAX_IMAGE_ATTACHMENT_BYTES)
         throw new AppError({
           code: 'INVALID_CONFIGURATION',
           message: 'The selected file is too large or is not a regular file.',
           retryable: false,
         })
       const bytes = await readFile(uri.fsPath)
-      if (bytes.length > MAX_ATTACHMENT_BYTES)
+      if (bytes.length > MAX_IMAGE_ATTACHMENT_BYTES)
         throw new AppError({
           code: 'INVALID_CONFIGURATION',
           message: 'The selected file is too large.',
@@ -973,6 +976,13 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
           code: 'INVALID_CONFIGURATION',
           message:
             'This DSH integration supports images and text-based files; this binary file is not supported.',
+          retryable: false,
+        })
+      const maximumBytes = isImageMimeType(mimeType) ? MAX_IMAGE_ATTACHMENT_BYTES : MAX_ATTACHMENT_BYTES
+      if (bytes.length > maximumBytes)
+        throw new AppError({
+          code: 'INVALID_CONFIGURATION',
+          message: 'The selected file is too large.',
           retryable: false,
         })
       if (isImageMimeType(mimeType) && !validImageBytes(mimeType, bytes))
@@ -992,7 +1002,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     }
     if (request.type === 'attachment.ingest') {
       const { name, mimeType, dataBase64 } = request.payload
-      const bytes = decodeCanonicalBase64(dataBase64)
+      const bytes = decodeCanonicalBase64(dataBase64, MAX_IMAGE_ATTACHMENT_BYTES)
       return {
         cancelled: false,
         attachment: attachmentTokens.remember(prepareAttachment(name, bytes, mimeType)),
@@ -1715,12 +1725,6 @@ function tabInputUris(input: vscode.Tab['input']): readonly vscode.Uri[] {
 }
 
 function prepareAttachment(name: string, bytes: Buffer, hintMimeType?: string): StoredAttachmentInput {
-  if (bytes.length > MAX_ATTACHMENT_BYTES)
-    throw new AppError({
-      code: 'INVALID_CONFIGURATION',
-      message: 'The current file is too large to attach.',
-      retryable: false,
-    })
   let mimeType = attachmentMimeType(name, bytes)
   // Pasted clipboard images often carry no filename extension. The declared
   // hint only fills that gap and is still verified against the image magic
@@ -1731,6 +1735,13 @@ function prepareAttachment(name: string, bytes: Buffer, hintMimeType?: string): 
     throw new AppError({
       code: 'INVALID_CONFIGURATION',
       message: 'The current file is not supported; attach an image or a text-based file instead.',
+      retryable: false,
+    })
+  const maximumBytes = isImageMimeType(mimeType) ? MAX_IMAGE_ATTACHMENT_BYTES : MAX_ATTACHMENT_BYTES
+  if (bytes.length > maximumBytes)
+    throw new AppError({
+      code: 'INVALID_CONFIGURATION',
+      message: 'The current file is too large to attach.',
       retryable: false,
     })
   if (isImageMimeType(mimeType) && !validImageBytes(mimeType, bytes))

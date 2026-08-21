@@ -3,6 +3,7 @@ import {
   AttachmentStore,
   decodeCanonicalBase64,
   MAX_ATTACHMENT_COUNT,
+  MAX_IMAGE_ATTACHMENT_BYTES,
   validImageBytes,
 } from './attachment-store.js'
 
@@ -17,6 +18,14 @@ describe('attachment ingest boundary', () => {
     expect(() => decodeCanonicalBase64(Buffer.alloc(5).toString('base64'), 4)).toThrow(
       /could not be decoded/i,
     )
+  })
+
+  it('can admit the rc.2 image envelope without widening the legacy default', () => {
+    const bytes = Buffer.alloc(8 * 1024 * 1024 + 1, 1)
+    const encoded = bytes.toString('base64')
+
+    expect(() => decodeCanonicalBase64(encoded)).toThrow(/could not be decoded/i)
+    expect(decodeCanonicalBase64(encoded, MAX_IMAGE_ATTACHMENT_BYTES)).toHaveLength(bytes.length)
   })
 
   it('rejects image-extension spoofing by checking each supported magic header', () => {

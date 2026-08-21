@@ -141,7 +141,7 @@ describe('Timeline', () => {
     expect(screen.getByRole('button', { name: 'Jump to latest' })).toBeDefined()
   })
 
-  it('keeps long reasoning collapsed while rendering the latest response as Markdown', () => {
+  it('hides completed reasoning while rendering the latest response as Markdown', () => {
     const nodes: readonly TimelineNode[] = [
       {
         kind: 'reasoning',
@@ -158,13 +158,61 @@ describe('Timeline', () => {
       },
     ]
 
-    const { container } = render(<Timeline sessionId="session-1" nodes={nodes} streaming={false} />)
+    render(<Timeline sessionId="session-1" nodes={nodes} streaming={false} />)
 
-    expect(screen.getByText('Thinking')).toBeDefined()
-    expect(container.querySelector('details')?.open).toBe(false)
+    expect(screen.queryByText('Thinking')).toBeNull()
+    expect(screen.queryByText(/A long private chain/)).toBeNull()
     expect(screen.getByRole('heading', { name: 'Done' })).toBeDefined()
     expect(screen.getByText('result')).toBeDefined()
     expect(screen.getByText('Ran for 3m 08s')).toBeDefined()
+  })
+
+  it('previews only the latest three reasoning lines while streaming', () => {
+    const { container, rerender } = render(
+      <Timeline
+        sessionId="session-1"
+        nodes={[
+          {
+            kind: 'assistant-message',
+            id: 'assistant-1',
+            markdown: 'The answer is ready.',
+            streaming: true,
+            reasoning: {
+              markdown: 'old line\nlatest one\nlatest two\nlatest three',
+              streaming: true,
+            },
+          },
+        ]}
+        streaming
+      />,
+    )
+
+    const preview = container.querySelector<HTMLElement>('.dsh-timeline__reasoning-preview-content')
+    expect(preview?.textContent).toBe('latest one\nlatest two\nlatest three')
+    expect(preview?.textContent).not.toContain('old line')
+    const answer = screen.getByText('The answer is ready.')
+    expect(answer.compareDocumentPosition(preview!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+
+    rerender(
+      <Timeline
+        sessionId="session-1"
+        nodes={[
+          {
+            kind: 'assistant-message',
+            id: 'assistant-1',
+            markdown: 'The answer is ready.',
+            streaming: false,
+            reasoning: {
+              markdown: 'old line\nlatest one\nlatest two\nlatest three',
+              streaming: false,
+            },
+          },
+        ]}
+        streaming={false}
+      />,
+    )
+
+    expect(container.querySelector('.dsh-timeline__reasoning-preview-content')).toBeNull()
   })
 
   it('renders the structured terminal failure beside the generic turn label', () => {

@@ -4,7 +4,7 @@
 
 | 层          | 目标                                              | 禁止替代                     |
 | ----------- | ------------------------------------------------- | ---------------------------- |
-| Contract    | rc.6–0.1.1-rc.1 RPC/Event/Tool 形状与 mapper      | 不能只 mock Domain           |
+| Contract    | rc.6–0.1.1-rc.2 RPC/Event/Tool 形状与 mapper      | 不能只 mock Domain           |
 | Unit        | 状态机、排序、去重、reducer、错误映射             | 不能靠 E2E 才发现竞态        |
 | Integration | Fake DSH socket/server、spawn 依赖、重连/资源释放 | 不能调用真实用户实例         |
 | VS Code E2E | View、命令、设置、Webview 协议、焦点和布局        | 不能只测 React DOM           |

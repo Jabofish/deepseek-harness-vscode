@@ -69,6 +69,19 @@ describe('SessionRepository workspace blank reuse compatibility', () => {
       reuseWorkspaceBlank: true,
     })
   })
+
+  it('uses rc.2 session idempotency without sending the removed rc.1 field', async () => {
+    const calls: { method: string; params: unknown }[] = []
+    await new Rc6SessionRepository(sessionCreateTransport(calls), undefined, undefined, {
+      preallocatedSessionId: true,
+    }).create(createInput)
+
+    expect(calls.find((call) => call.method === 'session.create')?.params).toEqual({
+      workspaceId: 'workspace-1',
+      sessionId: 'session-blank',
+      agentPreset: 'standard',
+    })
+  })
 })
 
 describe('Rc6SessionRepository session removal', () => {
@@ -150,6 +163,34 @@ describe('Rc6SessionRepository prompt delivery modes', () => {
         },
       },
     ])
+  })
+
+  it('only widens the prompt image envelope when the rc.2 adapter opts in', async () => {
+    const bytes = Buffer.alloc(8 * 1024 * 1024 + 1, 1)
+    bytes.set([137, 80, 78, 71, 13, 10, 26, 10], 0)
+    const uri = `data:image/png;base64,${bytes.toString('base64')}`
+    const input = {
+      sessionId: 'session-1',
+      text: 'inspect this image',
+      attachments: [{ uri, name: 'large.png', mimeType: 'image/png' }],
+    }
+
+    await expect(new Rc6SessionRepository(recordingTransport([])).sendPrompt(input)).rejects.toMatchObject({
+      code: 'INVALID_CONFIGURATION',
+    })
+
+    const calls: { method: string; params: unknown }[] = []
+    await new Rc6SessionRepository(recordingTransport(calls), undefined, undefined, {
+      maxPromptAttachmentBytes: 20 * 1024 * 1024,
+      maxPromptAttachmentTotalBytes: 200 * 1024 * 1024,
+    }).sendPrompt(input)
+    expect(calls[0]?.method).toBe('session.prompt')
+    expect(calls[0]?.params).toMatchObject({
+      content: [
+        { type: 'text', text: 'inspect this image' },
+        { type: 'image', mediaType: 'image/png' },
+      ],
+    })
   })
 
   it('rejects a malformed prompt receipt instead of consuming attachment handles as success', async () => {

@@ -6,6 +6,7 @@ import { Rc6VersionAdapter } from '../src/versions/rc6/adapter.js'
 import { Rc7VersionAdapter } from '../src/versions/rc7/adapter.js'
 import { Rc8VersionAdapter } from '../src/versions/rc8/adapter.js'
 import { Rc11VersionAdapter } from '../src/versions/rc11/adapter.js'
+import { Rc12VersionAdapter } from '../src/versions/rc12/adapter.js'
 
 const endpoint = { host: '127.0.0.1' as const, port: 3939, baseUrl: 'http://127.0.0.1:3939' }
 const candidate: BackendCandidate = { endpoint, source: 'configured', confidence: 100 }
@@ -46,7 +47,7 @@ function connected(version: string, protocolVersion = 'rc11'): ConnectedBackend 
   }
 }
 
-describe('DeepSeek Harness 0.1.1-rc.1 compatibility contract', () => {
+describe('DeepSeek Harness rc.1/rc.2 compatibility contract', () => {
   it('selects the exact rc.1 adapter and keeps rc.8 from claiming that version', async () => {
     const rc11 = new Rc11VersionAdapter(options({ home: 'fixture-home' }))
     await expect(rc11.probe({ ...candidate, runtimeVersion: '0.1.1-rc.1' })).resolves.toMatchObject({
@@ -61,8 +62,23 @@ describe('DeepSeek Harness 0.1.1-rc.1 compatibility contract', () => {
     ).resolves.toBeUndefined()
   })
 
+  it('selects the exact rc.2 adapter and keeps rc.1 from sending its removed field', async () => {
+    const rc12 = new Rc12VersionAdapter(options({ home: 'fixture-home' }))
+    await expect(rc12.probe({ ...candidate, runtimeVersion: '0.1.1-rc.2' })).resolves.toMatchObject({
+      protocolVersion: 'rc12',
+      dshVersion: '0.1.1-rc.2',
+    })
+    await expect(
+      new Rc11VersionAdapter(options({ home: 'fixture-home' })).probe({
+        ...candidate,
+        runtimeVersion: '0.1.1-rc.2',
+      }),
+    ).resolves.toBeUndefined()
+  })
+
   it('retains exact legacy adapters and unknown-version warning fallback', async () => {
     const adapters = [
+      new Rc12VersionAdapter(options({ home: 'fixture-home' })),
       new Rc11VersionAdapter(options({ home: 'fixture-home' })),
       new Rc8VersionAdapter(options({ home: 'fixture-home' })),
       new Rc7VersionAdapter(options({})),
@@ -74,6 +90,7 @@ describe('DeepSeek Harness 0.1.1-rc.1 compatibility contract', () => {
       ['0.1.0-rc.7', 'rc7'],
       ['0.1.0-rc.8', 'rc8'],
       ['0.1.1-rc.1', 'rc11'],
+      ['0.1.1-rc.2', 'rc12'],
     ] as const) {
       const backend = await factory.connect(connected(version, protocolVersion))
       expect(backend.connection.capabilities.dshVersion).toBe(version)

@@ -8,9 +8,9 @@ const requestBase = { requestId: id }
 // larger node budget still permits genuinely long sessions without turning a
 // valid response into a protocol error. String-size limits remain unchanged.
 const MAX_PROTOCOL_NODES = 100_000
-const MAX_ATTACHMENT_BASE64_CHARS = Math.ceil((8 * 1024 * 1024) / 3) * 4
+const MAX_ATTACHMENT_BASE64_CHARS = Math.ceil((20 * 1024 * 1024) / 3) * 4
 const MAX_PROMPT_ATTACHMENTS = 20
-const MAX_PROMPT_ATTACHMENT_TOTAL_BYTES = 100 * 1024 * 1024
+const MAX_PROMPT_ATTACHMENT_TOTAL_BYTES = 200 * 1024 * 1024
 const session = { sessionId: id }
 const attachmentUri = z.string().regex(/^dsh-attachment:[A-Za-z0-9-]{16,128}$/)
 const attachmentSchema = z
@@ -281,8 +281,8 @@ export const webviewRequestSchema = z.discriminatedUnion('type', [
         .object({
           name: z.string().min(1).max(512),
           mimeType: z.string().max(256).optional(),
-          // 8 MiB of bytes encode to exactly 11,184,812 Base64 characters
-          // in the worst (non-multiple-of-three) case.
+          // rc.2 permits 20 MiB images; the Extension Host still performs
+          // MIME-aware validation and keeps non-image files at 8 MiB.
           dataBase64: z.string().min(1).max(MAX_ATTACHMENT_BASE64_CHARS),
         })
         .strict(),

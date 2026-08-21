@@ -39,6 +39,9 @@ import { PopupSelectRegistry } from './features/commands/popupSelectRegistry.js'
 
 const WELCOME_DISMISSED_KEY = 'dsh-welcome-dismissed'
 const RUNTIME_UPDATE_DISMISSED_KEY = 'dsh-runtime-update-dismissed-version'
+const DEFAULT_ATTACHMENT_BYTES = 8 * 1024 * 1024
+const MAX_IMAGE_ATTACHMENT_BYTES = 20 * 1024 * 1024
+const MAX_PROMPT_IMAGE_BYTES = 200 * 1024 * 1024
 
 export function App(): ReactElement {
   const { locale, setLocale, t } = useI18n()
@@ -1242,24 +1245,18 @@ function readFileAsBase64(
   imageLimits?: ImageAttachmentLimits,
 ): Promise<{ name: string; mimeType?: string; dataBase64: string }> {
   if (file.size === 0) return Promise.reject(new Error(t('app.error.fileEmpty', { name: file.name })))
-  const imageLimit =
-    file.type.startsWith('image/') && imageLimits !== undefined
-      ? Math.min(8 * 1024 * 1024, imageLimits.maxImageBytes)
-      : 8 * 1024 * 1024
-  if (file.size > imageLimit) {
-    if (file.type.startsWith('image/') && imageLimits !== undefined) {
-      return Promise.reject(
-        new Error(
-          t('app.error.imageTooLarge', {
-            name: file.name,
-            size: formatByteSize(imageLimits.maxImageBytes),
-          }),
-        ),
-      )
-    }
-  }
-  if (file.size > 8 * 1024 * 1024)
-    return Promise.reject(new Error(t('app.error.fileTooLarge', { name: file.name })))
+  const isImage = file.type.startsWith('image/')
+  const imageLimit = isImage
+    ? Math.min(MAX_IMAGE_ATTACHMENT_BYTES, imageLimits?.maxImageBytes ?? DEFAULT_ATTACHMENT_BYTES)
+    : DEFAULT_ATTACHMENT_BYTES
+  if (file.size > imageLimit)
+    return Promise.reject(
+      new Error(
+        isImage && imageLimits !== undefined
+          ? t('app.error.imageTooLarge', { name: file.name, size: formatByteSize(imageLimit) })
+          : t('app.error.fileTooLarge', { name: file.name }),
+      ),
+    )
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
     reader.onerror = () => reject(new Error(t('app.error.readFile', { name: file.name })))
@@ -1302,9 +1299,9 @@ function readImageAttachmentLimits(value: unknown): ImageAttachmentLimits | unde
   return {
     // Keep future hosts from advertising a limit beyond the opaque attachment
     // store and prompt boundary implemented by this extension.
-    maxImageBytes: Math.min(maxImageBytes, 8 * 1024 * 1024),
+    maxImageBytes: Math.min(maxImageBytes, MAX_IMAGE_ATTACHMENT_BYTES),
     maxImagesPerMessage: Math.min(maxImagesPerMessage, 20),
-    maxMessageImageBytes: Math.min(maxMessageImageBytes, 100 * 1024 * 1024),
+    maxMessageImageBytes: Math.min(maxMessageImageBytes, MAX_PROMPT_IMAGE_BYTES),
     maxImagePixels,
     ...(maxImageDimension === undefined ? {} : { maxImageDimension }),
     mediaTypes,

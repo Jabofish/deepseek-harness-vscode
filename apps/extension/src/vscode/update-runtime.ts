@@ -108,6 +108,17 @@ export class DshRuntimeUpdater {
         checked.failure === undefined ? undefined : `Registry check failed: ${checked.failure}.`,
       )
     }
+    if (checked.globalVersion === requested) {
+      // Installing the exact global version again is a no-op. Keep this guard
+      // in the Host as well as the Webview because the UI snapshot can be
+      // stale or a caller can bypass the Webview action entirely.
+      this.cached =
+        checked.currentVersion !== undefined && checked.currentVersion !== requested
+          ? { ...checked, restartRequired: true }
+          : checked
+      this.emitProgress({ phase: 'completed', version: requested })
+      return this.cached
+    }
 
     this.emitProgress({ phase: 'downloading', version: requested })
     try {
@@ -463,7 +474,15 @@ function runtimeCommandFailureDetail(error: unknown): string | undefined {
   const candidates = [record?.stderr, record?.stdout, error instanceof Error ? error.message : undefined]
   for (const candidate of candidates) {
     if (typeof candidate !== 'string') continue
-    const compact = candidate.replace(ANSI_ESCAPE_PATTERN, '').replace(/\s+/gu, ' ').trim()
+    const actionableLines = candidate
+      .replace(ANSI_ESCAPE_PATTERN, '')
+      .replace(/&#x20;/giu, ' ')
+      .replace(/&#32;/gu, ' ')
+      .replace(/\\@/gu, '@')
+      .split(/\r?\n/gu)
+      .map((line) => line.trim())
+      .filter((line) => line !== '' && !isNpmWarningLine(line))
+    const compact = actionableLines.join(' ').replace(/\s+/gu, ' ').trim()
     if (compact === '') continue
     const redacted = compact
       .replace(/(https?:\/\/)([^/\s:@]+(?::[^/\s@]*)?@)/giu, '$1[redacted]@')
@@ -474,4 +493,8 @@ function runtimeCommandFailureDetail(error: unknown): string | undefined {
     return redacted.slice(0, 480)
   }
   return undefined
+}
+
+function isNpmWarningLine(line: string): boolean {
+  return /^(?:npm\s+warn|npm\s+WARN)\b/iu.test(line) || /^warning\b.*\bdeprecated\b/iu.test(line)
 }

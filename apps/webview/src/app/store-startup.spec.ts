@@ -232,6 +232,46 @@ describe('AppStore startup session restoration', () => {
     store.dispose()
   })
 
+  it('opens the matching blank workspace session locally on rc.2', async () => {
+    const client = new StartupClient((request) => {
+      if (request.type === 'workspace.list') return { items: [workspace] }
+      if (request.type === 'session.list') return { items: [{ ...blankSession, cwd: workspace.path }] }
+      if (request.type === 'session.open')
+        return {
+          ...blankSession,
+          cwd: workspace.path,
+          history: [],
+          permissionPresets: [],
+          configuration: {
+            preset: 'standard',
+            toolMode: 'native',
+            permissionPreset: 'workspace-write',
+            planMode: false,
+            model: { providerId: 'deepseek', modelId: 'deepseek-chat' },
+          },
+        }
+      return startupResponse(request)
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+
+    await store.initialize()
+    client.emit({
+      type: 'event',
+      name: 'connection.snapshot',
+      sequence: 1,
+      payload: { kind: 'connected', dshVersion: '0.1.1-rc.2' },
+    })
+    await store.createSession('workspace-1')
+
+    expect(client.requests.filter((request) => request.type === 'session.create')).toHaveLength(0)
+    expect(client.requests).toContainEqual(
+      expect.objectContaining({ type: 'session.open', payload: { sessionId: 'session-blank' } }),
+    )
+    expect(store.activeSessionId).toBe('session-blank')
+
+    store.dispose()
+  })
+
   it('refreshes the cached model directory on rc.1 and legacy owner invalidations', async () => {
     const client = new StartupClient()
     const store = createAppStore(client as unknown as ProtocolClient)

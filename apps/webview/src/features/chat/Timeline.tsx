@@ -836,7 +836,6 @@ function renderAssistantTurn(
             </span>
           )}
         </header>
-        {node.reasoning === undefined ? null : renderReasoning(node.reasoning, onOpenLink, t)}
         <MessageImages
           images={node.images ?? []}
           {...(onLoadImage === undefined ? {} : { loadImage: onLoadImage })}
@@ -855,6 +854,7 @@ function renderAssistantTurn(
             producedFiles={producedFiles}
           />
         )}
+        {node.reasoning === undefined ? null : renderReasoningPreview(node.reasoning, t)}
         {renderProducedFiles(producedFiles, onOpenLink, onShowInFolder, t)}
       </article>
       {node.markdown.trim() === '' || actionsUnavailable ? null : (
@@ -915,7 +915,6 @@ function renderAssistantMessage(
             </span>
           )}
         </header>
-        {node.reasoning === undefined ? null : renderReasoning(node.reasoning, onOpenLink, t)}
         <MessageImages
           images={node.images ?? []}
           {...(onLoadImage === undefined ? {} : { loadImage: onLoadImage })}
@@ -924,6 +923,7 @@ function renderAssistantMessage(
         {node.markdown.trim() === '' ? null : (
           <MarkdownContent markdown={node.markdown} streaming={node.streaming} onOpenLink={onOpenLink} />
         )}
+        {node.reasoning === undefined ? null : renderReasoningPreview(node.reasoning, t)}
       </article>
       {node.markdown.trim() === '' || actionsUnavailable ? null : (
         <MessageActions
@@ -1095,32 +1095,33 @@ function stableHash(value: string): number {
   return hash
 }
 
-function renderReasoning(
+function renderReasoningPreview(
   reasoning: {
     readonly markdown: string
     readonly streaming: boolean
   },
-  onOpenLink?: (href: string) => void,
   t: Translate = (key) => key,
-): ReactElement {
+): ReactElement | null {
+  if (!reasoning.streaming) return null
+  const preview = latestReasoningLines(reasoning.markdown)
+  if (preview === '') return null
+
   return (
-    <details className="dsh-timeline__reasoning">
-      <summary className="dsh-timeline__reasoning-summary" aria-label={t('timeline.showReasoning')}>
+    <section className="dsh-timeline__reasoning-preview" aria-live="polite">
+      <div className="dsh-timeline__reasoning-preview-header">
         <span>{t('timeline.thinking')}</span>
-        <span className="dsh-timeline__reasoning-meta">
-          {reasoning.streaming ? <span className="dsh-sr-only">{t('timeline.inProgress')}</span> : null}
-          <span className="dsh-timeline__disclosure" aria-hidden="true">
-            <Icon name="chevron-down" />
-          </span>
-        </span>
-      </summary>
-      <MarkdownContent
-        markdown={reasoning.markdown}
-        streaming={reasoning.streaming}
-        onOpenLink={onOpenLink}
-      />
-    </details>
+        <span className="dsh-timeline__streaming" aria-hidden="true" />
+      </div>
+      <span className="dsh-timeline__reasoning-preview-content">{preview}</span>
+    </section>
   )
+}
+
+function latestReasoningLines(markdown: string): string {
+  const lines = markdown.replace(/\r\n?/gu, '\n').split('\n')
+  while (lines.length > 0 && lines[lines.length - 1]?.trim() === '') lines.pop()
+  const preview = lines.slice(-3).join('\n')
+  return preview.trim() === '' ? '' : preview
 }
 
 function renderToolCard(

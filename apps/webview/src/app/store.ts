@@ -269,6 +269,7 @@ export interface ActiveSubagent {
 
 const EMPTY_SUBAGENT_CATALOG: SubagentCatalog = { entries: [], parentAvailable: false }
 const DSH_RC11_VERSION = '0.1.1-rc.1'
+const DSH_RC12_VERSION = '0.1.1-rc.2'
 
 export function createAppStore(client = new ProtocolClient(getVsCodeApi())): AppStore {
   const vscodeApi = getVsCodeApi()
@@ -681,6 +682,10 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   }
   callbacks.openCreatedSession = open
   const checkDshUpdates = async (force = false): Promise<DshUpdateSnapshot | undefined> => {
+    setState((current) => ({
+      ...current,
+      dshUpdateProgress: { phase: 'checking' },
+    }))
     const snapshot = parseDshUpdateSnapshot(
       await client.request<unknown>({
         type: 'runtime.update.check',
@@ -692,6 +697,10 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     return snapshot
   }
   const installDshVersion = async (version: string): Promise<DshUpdateSnapshot | undefined> => {
+    setState((current) => ({
+      ...current,
+      dshUpdateProgress: { phase: 'checking', version },
+    }))
     const snapshot = parseDshUpdateSnapshot(
       await client.request<unknown>({
         type: 'runtime.update.install',
@@ -1012,17 +1021,22 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       const configuration =
         presetId === undefined ? defaultConfiguration : { ...defaultConfiguration, preset: presetId }
       const reusableBlank =
-        presetId === undefined && state.connectedDshVersion === DSH_RC11_VERSION && workspace !== undefined
+        presetId === undefined && workspace !== undefined
           ? findReusableBlankSession(state.sessions, state.archivedSessionIds, workspace)
           : undefined
+      if (state.connectedDshVersion === DSH_RC12_VERSION && reusableBlank !== undefined) {
+        await open(reusableBlank.id)
+        return
+      }
+      const rc11ReusableBlank = state.connectedDshVersion === DSH_RC11_VERSION ? reusableBlank : undefined
       const result = await client.request<unknown>({
         type: 'session.create',
         requestId: requestId(),
         payload: {
           ...(workspace === undefined ? {} : { workspaceId: workspace.id }),
-          ...(reusableBlank === undefined
+          ...(rc11ReusableBlank === undefined
             ? {}
-            : { sessionId: reusableBlank.id, reuseWorkspaceBlank: true as const }),
+            : { sessionId: rc11ReusableBlank.id, reuseWorkspaceBlank: true as const }),
           configuration,
         },
       })

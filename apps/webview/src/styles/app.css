@@ -4495,6 +4495,38 @@ summary.dsh-timeline__card-header {
   font-weight: 500;
 }
 
+.dsh-timeline__reasoning-preview {
+  min-width: 0;
+  width: min(760px, 100%);
+  max-width: 100%;
+  box-sizing: border-box;
+  padding-inline-start: 18px;
+  color: var(--dsh-muted);
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.dsh-timeline__reasoning-preview-header {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--dsh-muted);
+  font-size: 0.74rem;
+}
+
+.dsh-timeline__reasoning-preview-content {
+  min-width: 0;
+  display: block;
+  max-height: calc(1.45em * 3);
+  overflow: hidden;
+  color: var(--dsh-muted);
+  opacity: 0.82;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .dsh-timeline__assistant-duration {
   color: var(--dsh-muted);
   font-size: 0.75rem;
@@ -6408,13 +6440,47 @@ button.dsh-timeline__produced-chip:focus-visible {
   font-size: 0.74rem;
 }
 
-.dsh-settings__runtime-update-progress-bar {
-  display: block;
-  width: 100%;
-  max-width: 100%;
+.dsh-settings__runtime-update-progress-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
   min-width: 0;
-  height: 5px;
-  accent-color: var(--dsh-accent);
+}
+
+.dsh-settings__runtime-update-progress-head > * {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.dsh-settings__runtime-update-progress-head > :last-child {
+  flex: 0 0 auto;
+  color: var(--dsh-muted);
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.dsh-settings__runtime-update-progress-track {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+  min-width: 0;
+  height: 6px;
+}
+
+.dsh-settings__runtime-update-progress-step {
+  min-width: 0;
+  height: 100%;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--dsh-control-border) 85%, transparent);
+}
+
+.dsh-settings__runtime-update-progress-step--complete {
+  background: color-mix(in srgb, var(--dsh-accent) 55%, var(--dsh-control-border));
+}
+
+.dsh-settings__runtime-update-progress-step--active {
+  background: var(--dsh-accent);
 }
 
 .dsh-settings__runtime-update-controls {
@@ -10061,15 +10127,156 @@ button.dsh-timeline__produced-chip:focus-visible {
 .dsh-subagent-tree__row {
   grid-template-columns: 18px 8px minmax(0, 1fr) minmax(0, 96px);
 }
+
+/* Settings control baseline: connection and update surfaces are siblings, so
+   their controls must share the same height, radius, text scale, and spacing.
+   Keep this scoped to the settings drawer so chat/composer controls retain
+   their existing geometry. */
+.dsh-settings {
+  --dsh-settings-control-height: 32px;
+  --dsh-settings-control-radius: var(--dsh-radius-sm);
+}
+
+.dsh-settings__body {
+  gap: 12px;
+}
+
+.dsh-settings__connection,
+.dsh-settings__runtime-update {
+  gap: 12px;
+  padding: 12px;
+}
+
+.dsh-settings__connection-head,
+.dsh-settings__runtime-update-head > div {
+  gap: 4px;
+}
+
+.dsh-settings__connection-head h3,
+.dsh-settings__runtime-update-head h3 {
+  font-size: 0.84rem;
+  line-height: 1.25;
+}
+
+.dsh-settings__connection-head p,
+.dsh-settings__runtime-update-head p {
+  font-size: 0.74rem;
+  line-height: 1.45;
+}
+
+.dsh-settings .dsh-button--compact,
+.dsh-settings__editable-model input,
+.dsh-settings__provider-editor-field input,
+.dsh-settings__model-field input,
+.dsh-settings__custom-provider-grid input,
+.dsh-settings__connection-endpoint input,
+.dsh-settings__runtime-update-controls select,
+.dsh-settings__segment-item {
+  min-height: var(--dsh-settings-control-height);
+  box-sizing: border-box;
+}
+
+.dsh-settings .dsh-button--compact {
+  padding: 6px 10px;
+}
+
+.dsh-settings__runtime-update-check {
+  flex: 0 0 auto;
+  align-self: flex-start;
+  white-space: nowrap;
+}
+
+.dsh-settings__connection-option {
+  min-height: 52px;
+  align-items: center;
+  padding: 8px 10px;
+}
+
+.dsh-settings__connection-option input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--vscode-focusBorder, var(--dsh-accent));
+}
+
+.dsh-settings__connection-option > span {
+  gap: 3px;
+}
+
+.dsh-settings__connection-option strong {
+  font-size: 0.78rem;
+  line-height: 1.25;
+}
+
+.dsh-settings__connection-option small {
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
+
+.dsh-settings__connection-endpoint input,
+.dsh-settings__editable-model input,
+.dsh-settings__provider-editor-field input,
+.dsh-settings__model-field input,
+.dsh-settings__custom-provider-grid input,
+.dsh-settings__runtime-update-controls select {
+  padding: 6px 8px;
+  border: 1px solid var(--dsh-control-border);
+  border-radius: var(--dsh-settings-control-radius);
+  font: inherit;
+  font-size: 0.76rem;
+  line-height: 1.2;
+}
+
+.dsh-settings__runtime-update-controls select {
+  color: var(--vscode-dropdown-foreground, var(--vscode-foreground));
+  background: var(--vscode-dropdown-background, var(--dsh-surface));
+}
+
+.dsh-settings__runtime-update-facts,
+.dsh-settings__runtime-update-notice,
+.dsh-settings__runtime-update-progress {
+  font-size: 0.76rem;
+}
+
+.dsh-settings__runtime-update-controls {
+  gap: 8px;
+}
+
+.dsh-settings__runtime-update-controls label {
+  min-width: max-content;
+  color: var(--dsh-muted);
+  line-height: 1.2;
+}
+
+.dsh-settings__runtime-update-controls .dsh-button {
+  white-space: nowrap;
+}
+
+.dsh-settings__segment-item {
+  padding: 6px 10px;
+  font-size: 0.76rem;
+  line-height: 1.2;
+}
+
+@media (min-width: 410px) and (max-width: 430px) {
+  .dsh-settings__runtime-update-head {
+    align-items: flex-start;
+    flex-direction: row;
+  }
+
+  .dsh-settings__runtime-update-controls {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+}
+
 /* Responsive composer tiers: measure the composer itself because a VS Code
-   sidebar can be narrower than the Webview viewport. A single 559px media
-   breakpoint made the labelled pickers collapse unpredictably in the middle
-   range; give that range its own control row instead. */
+   sidebar can be narrower than the Webview viewport. Keep one row, preserve
+   useful labels through the middle widths, and compact controls progressively. */
 .dsh-composer {
   container: dsh-composer / inline-size;
 }
 
-@container dsh-composer (min-width: 620px) {
+@container dsh-composer (min-width: 560px) {
   .dsh-composer__toolbar {
     height: 30px;
     min-height: 30px;
@@ -10115,44 +10322,79 @@ button.dsh-timeline__produced-chip:focus-visible {
   }
 
   .dsh-model-picker {
-    flex: 1 1 158px;
-    max-width: 158px;
+    flex: 1 1 auto;
+    max-width: none;
   }
 }
 
-@container dsh-composer (min-width: 421px) and (max-width: 619px) {
+@container dsh-composer (min-width: 480px) and (max-width: 559px) {
   .dsh-composer__toolbar {
-    height: auto;
-    min-height: 64px;
-    max-height: none;
-    grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-areas:
-      'start submit'
-      'controls controls';
+    height: 30px;
+    min-height: 30px;
+    max-height: 30px;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas: none;
     align-items: center;
     row-gap: 4px;
   }
 
-  .dsh-composer__toolbar-start {
-    grid-area: start;
-    width: auto;
-    max-width: 100%;
+  .dsh-composer__hint {
+    display: none;
+  }
+
+  .dsh-composer__toolbar-start,
+  .dsh-session-controls,
+  .dsh-composer__submit {
+    grid-area: auto;
   }
 
   .dsh-session-controls {
-    grid-area: controls;
     width: 100%;
     max-width: 100%;
-    justify-content: space-between;
+    justify-content: flex-end;
   }
 
   .dsh-session-controls__selectors {
+    flex: 1 1 auto;
+    justify-content: flex-end;
+  }
+
+  .dsh-session-controls__selectors > .dsh-compact-picker--labelled {
+    width: auto;
+    min-width: 28px;
+    max-width: 120px;
+    flex: 0 0 auto;
+  }
+
+  .dsh-compact-picker--labelled .dsh-compact-picker__trigger {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
     justify-content: flex-start;
+    padding-inline: 5px;
+  }
+
+  .dsh-compact-picker--labelled .dsh-compact-picker__trigger-text {
+    display: block;
+  }
+
+  .dsh-session-controls__selectors > .dsh-session-controls__mode {
+    width: 80px;
+    min-width: 80px;
+    max-width: 80px;
+    flex: 0 0 80px;
+  }
+
+  .dsh-session-controls__selectors > .dsh-model-picker {
+    width: auto;
+    min-width: 100px;
+    max-width: none;
+    flex: 1 1 auto;
   }
 
   .dsh-session-controls__metrics {
-    flex: 0 1 104px;
-    max-width: 104px;
+    flex: 0 0 78px;
+    max-width: 78px;
   }
 
   .dsh-session-controls__metrics > div,
@@ -10161,11 +10403,45 @@ button.dsh-timeline__produced-chip:focus-visible {
   .dsh-context-meter__trigger {
     max-width: 100%;
   }
+}
 
-  .dsh-compact-picker--labelled {
+@container dsh-composer (min-width: 400px) and (max-width: 479px) {
+  .dsh-composer__toolbar {
+    height: 30px;
+    min-height: 30px;
+    max-height: 30px;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas: none;
+    align-items: center;
+    row-gap: 4px;
+  }
+
+  .dsh-composer__hint {
+    display: none;
+  }
+
+  .dsh-composer__toolbar-start,
+  .dsh-session-controls,
+  .dsh-composer__submit {
+    grid-area: auto;
+  }
+
+  .dsh-session-controls {
+    width: 100%;
+    max-width: 100%;
+    justify-content: flex-end;
+  }
+
+  .dsh-session-controls__selectors {
+    flex: 1 1 auto;
+    justify-content: flex-end;
+  }
+
+  .dsh-session-controls__selectors > .dsh-compact-picker--labelled {
     width: auto;
     min-width: 28px;
-    flex: 0 1 auto;
+    max-width: 84px;
+    flex: 0 0 auto;
   }
 
   .dsh-compact-picker--labelled .dsh-compact-picker__trigger {
@@ -10173,59 +10449,73 @@ button.dsh-timeline__produced-chip:focus-visible {
     min-width: 0;
     max-width: 100%;
     justify-content: flex-start;
-    padding-inline: 6px;
+    padding-inline: 4px;
   }
 
   .dsh-compact-picker--labelled .dsh-compact-picker__trigger-text {
     display: block;
   }
 
-  .dsh-session-controls__mode {
-    flex: 0 1 112px;
-    max-width: 112px;
+  .dsh-session-controls__selectors > .dsh-session-controls__mode {
+    width: 60px;
+    min-width: 60px;
+    max-width: 60px;
+    flex: 0 0 60px;
   }
 
-  .dsh-model-picker {
-    flex: 1 1 158px;
-    max-width: 220px;
+  .dsh-session-controls__selectors > .dsh-model-picker {
+    width: auto;
+    min-width: 84px;
+    max-width: none;
+    flex: 1 1 auto;
+  }
+
+  .dsh-session-controls__metrics {
+    flex: 0 0 60px;
+    max-width: 60px;
+  }
+
+  .dsh-session-controls__metrics > div,
+  .dsh-session-controls__context-cell,
+  .dsh-session-controls__context-cell .dsh-context-meter,
+  .dsh-context-meter__trigger {
+    max-width: 100%;
   }
 }
 
-@container dsh-composer (max-width: 420px) {
+@container dsh-composer (max-width: 399px) {
   .dsh-composer__toolbar {
-    height: auto;
-    min-height: 64px;
-    max-height: none;
-    grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-areas:
-      'start submit'
-      'controls controls';
+    height: 30px;
+    min-height: 30px;
+    max-height: 30px;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas: none;
     align-items: center;
     row-gap: 4px;
-  }
-
-  .dsh-composer__toolbar-start {
-    grid-area: start;
-    width: auto;
-    max-width: 100%;
   }
 
   .dsh-composer__hint {
     display: none;
   }
 
+  .dsh-composer__toolbar-start,
+  .dsh-session-controls,
+  .dsh-composer__submit {
+    grid-area: auto;
+  }
+
   .dsh-session-controls {
-    grid-area: controls;
     width: 100%;
     max-width: 100%;
-    justify-content: space-between;
+    justify-content: flex-end;
   }
 
   .dsh-session-controls__selectors {
-    flex: 1 1 auto;
-    justify-content: flex-start;
+    flex: 0 1 auto;
+    justify-content: flex-end;
   }
 
+  .dsh-compact-picker--labelled,
   .dsh-session-controls__mode,
   .dsh-model-picker,
   .dsh-session-controls__selectors > .dsh-compact-picker {
@@ -10239,6 +10529,7 @@ button.dsh-timeline__produced-chip:focus-visible {
     width: 28px;
     min-width: 28px;
     max-width: 28px;
+    justify-content: center;
     padding-inline: 0;
   }
 
@@ -10247,31 +10538,52 @@ button.dsh-timeline__produced-chip:focus-visible {
   }
 
   .dsh-session-controls__metrics {
-    flex: 0 1 96px;
-    max-width: 96px;
-  }
-
-  .dsh-session-controls__metrics > div,
-  .dsh-session-controls__context-cell,
-  .dsh-session-controls__context-cell .dsh-context-meter,
-  .dsh-context-meter__trigger {
-    max-width: 100%;
+    flex: 0 1 72px;
+    max-width: 72px;
   }
 
   .dsh-context-meter__trigger {
     gap: 2px;
     padding-inline: 2px;
+    font-size: 0.66rem;
   }
 }
 
-@container dsh-composer (max-width: 280px) {
-  .dsh-session-controls__metrics {
-    flex-basis: 78px;
-    max-width: 78px;
+@container dsh-composer (max-width: 300px) {
+  .dsh-session-controls {
+    justify-content: flex-start;
+    overflow: hidden;
   }
 
-  .dsh-context-meter__trigger {
-    font-size: 0.66rem;
+  .dsh-session-controls__selectors {
+    flex: 0 0 auto;
+    justify-content: flex-start;
+    overflow: hidden;
+  }
+
+  .dsh-session-controls__metrics {
+    display: none;
+  }
+}
+
+@container dsh-composer (max-width: 220px) {
+  .dsh-session-controls__selectors > .dsh-compact-picker,
+  .dsh-session-controls__selectors > .dsh-session-controls__access {
+    width: 24px;
+    min-width: 24px;
+    max-width: 24px;
+    flex-basis: 24px;
+  }
+
+  .dsh-session-controls__selectors > .dsh-compact-picker .dsh-compact-picker__trigger {
+    width: 24px;
+    min-width: 24px;
+    max-width: 24px;
+  }
+
+  .dsh-session-controls__selectors > .dsh-session-controls__access {
+    height: 26px;
+    min-height: 26px;
   }
 }
 

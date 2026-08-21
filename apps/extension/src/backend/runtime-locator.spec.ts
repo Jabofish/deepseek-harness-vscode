@@ -36,8 +36,8 @@ function locator(version: string): DshRuntimeLocator {
 }
 
 describe('DshRuntimeLocator compatibility policy', () => {
-  it('keeps rc.6 through rc.1 as known launchable runtimes', async () => {
-    for (const version of ['0.1.0-rc.6', '0.1.0-rc.7', '0.1.0-rc.8', '0.1.1-rc.1']) {
+  it('keeps rc.6 through rc.2 as known launchable runtimes', async () => {
+    for (const version of ['0.1.0-rc.6', '0.1.0-rc.7', '0.1.0-rc.8', '0.1.1-rc.1', '0.1.1-rc.2']) {
       await expect(locator(version).locate()).resolves.toMatchObject({
         version,
         supported: true,

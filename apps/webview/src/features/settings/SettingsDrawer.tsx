@@ -257,6 +257,10 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
     selectedDshVersion !== undefined && availableDshVersions.includes(selectedDshVersion)
       ? selectedDshVersion
       : (dshUpdate?.latestVersion ?? availableDshVersions[0])
+  const selectedDshVersionAlreadyInstalled =
+    dshUpdate?.status === 'ready' &&
+    effectiveSelectedDshVersion !== undefined &&
+    dshUpdate.globalVersion === effectiveSelectedDshVersion
 
   const modelsByProvider = new Map<string, ModelDescriptor[]>()
   for (const model of props.models) {
@@ -307,6 +311,7 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
     if (
       dshUpdateBusy !== undefined ||
       effectiveSelectedDshVersion === undefined ||
+      selectedDshVersionAlreadyInstalled ||
       onInstallDshVersion === undefined
     )
       return
@@ -602,7 +607,7 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                         <p>{t('settings.dshUpdateHint')}</p>
                       </div>
                       <button
-                        className="dsh-button dsh-button--ghost dsh-button--compact"
+                        className="dsh-button dsh-button--secondary dsh-button--compact dsh-settings__runtime-update-check"
                         type="button"
                         disabled={dshUpdateBusy !== undefined}
                         onClick={checkDshUpdates}
@@ -628,12 +633,39 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                             role="status"
                             aria-live="polite"
                           >
-                            <progress
-                              className="dsh-settings__runtime-update-progress-bar"
-                              max={100}
+                            <div className="dsh-settings__runtime-update-progress-head">
+                              <span>{dshUpdateProgressLabel(dshUpdateBusy, dshUpdateProgress, t)}</span>
+                              <span>
+                                {t('settings.dshUpdateProgressStage', {
+                                  current: dshUpdateProgressStage(dshUpdateBusy, dshUpdateProgress),
+                                  total: DSH_UPDATE_PROGRESS_TOTAL_STAGES,
+                                })}
+                              </span>
+                            </div>
+                            <div
+                              className="dsh-settings__runtime-update-progress-track"
+                              role="progressbar"
                               aria-label={t('settings.dshUpdateProgressLabel')}
-                            />
-                            <span>{dshUpdateProgressLabel(dshUpdateBusy, dshUpdateProgress, t)}</span>
+                              aria-valuemin={0}
+                              aria-valuemax={DSH_UPDATE_PROGRESS_TOTAL_STAGES}
+                              aria-valuenow={dshUpdateProgressStage(dshUpdateBusy, dshUpdateProgress)}
+                              aria-valuetext={dshUpdateProgressLabel(dshUpdateBusy, dshUpdateProgress, t)}
+                            >
+                              {Array.from({ length: DSH_UPDATE_PROGRESS_TOTAL_STAGES }, (_, index) => {
+                                const stage = index + 1
+                                const current = dshUpdateProgressStage(dshUpdateBusy, dshUpdateProgress)
+                                return (
+                                  <span
+                                    className={`dsh-settings__runtime-update-progress-step${
+                                      stage < current
+                                        ? ' dsh-settings__runtime-update-progress-step--complete'
+                                        : ''
+                                    }${stage === current ? ' dsh-settings__runtime-update-progress-step--active' : ''}`}
+                                    key={stage}
+                                  />
+                                )
+                              })}
+                            </div>
                           </div>
                         ) : null}
                         <dl className="dsh-settings__runtime-update-facts">
@@ -648,6 +680,13 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                           <p className="dsh-settings__runtime-update-notice" role="status">
                             {t('settings.dshUpdateAvailable', {
                               version: dshUpdate.latestVersion ?? '—',
+                            })}
+                          </p>
+                        ) : null}
+                        {selectedDshVersionAlreadyInstalled ? (
+                          <p className="dsh-settings__runtime-update-notice" role="status">
+                            {t('settings.dshUpdateAlreadyInstalled', {
+                              version: effectiveSelectedDshVersion,
                             })}
                           </p>
                         ) : null}
@@ -673,13 +712,16 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                             disabled={
                               dshUpdateBusy !== undefined ||
                               effectiveSelectedDshVersion === undefined ||
+                              selectedDshVersionAlreadyInstalled ||
                               availableDshVersions.length === 0
                             }
                             onClick={installDshVersion}
                           >
-                            {dshUpdateBusy === 'install'
-                              ? t('settings.dshUpdateInstalling')
-                              : t('settings.dshUpdateInstall')}
+                            {selectedDshVersionAlreadyInstalled
+                              ? t('settings.dshUpdateInstalled')
+                              : dshUpdateBusy === 'install'
+                                ? t('settings.dshUpdateInstalling')
+                                : t('settings.dshUpdateInstall')}
                           </button>
                         </div>
                         {dshUpdate.restartRequired ? (
@@ -1258,6 +1300,29 @@ function dshUpdateProgressLabel(
       return busy === 'check'
         ? t('settings.dshUpdateProgressChecking')
         : t('settings.dshUpdateProgressDownloading')
+  }
+}
+
+const DSH_UPDATE_PROGRESS_TOTAL_STAGES = 4
+
+function dshUpdateProgressStage(
+  busy: 'check' | 'install' | undefined,
+  progress: DshRuntimeUpdateProgress | undefined,
+): number {
+  switch (progress?.phase) {
+    case 'checking':
+      return 1
+    case 'downloading':
+    case 'installing':
+      return 2
+    case 'verifying':
+      return 3
+    case 'completed':
+      return 4
+    case 'failed':
+      return busy === 'check' ? 1 : 2
+    default:
+      return busy === 'check' ? 1 : 2
   }
 }
 

@@ -89,8 +89,8 @@ describe('attachment ingest schema', () => {
     ).toBe(false)
   })
 
-  it('accepts the exact Base64 envelope size of an 8 MiB attachment', () => {
-    const encodedLength = Math.ceil((8 * 1024 * 1024) / 3) * 4
+  it('accepts the exact Base64 envelope size of a 20 MiB rc.2 image', () => {
+    const encodedLength = Math.ceil((20 * 1024 * 1024) / 3) * 4
     const request = {
       type: 'attachment.ingest',
       requestId: 'request-1',

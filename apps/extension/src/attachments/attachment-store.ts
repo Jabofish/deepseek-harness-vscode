@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto'
 import { AppError, type PromptAttachment } from '@dsh-vscode/domain'
 
 export const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024
+/** rc.2 raises DSH's per-image admission limit to 20 MiB. */
+export const MAX_IMAGE_ATTACHMENT_BYTES = 20 * 1024 * 1024
 export const MAX_ATTACHMENT_COUNT = 20
 
 export interface StoredAttachmentInput {

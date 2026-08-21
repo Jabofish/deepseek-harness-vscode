@@ -122,6 +122,30 @@ describe('DshRuntimeUpdater', () => {
     expect(calls).toContainEqual(['install', '--global', '@deepseek-ai/dsh@0.1.0-rc.8'])
   })
 
+  it('does not reinstall a version that is already the global package', async () => {
+    const calls: string[][] = []
+    const phases: string[] = []
+    const execute: ExecuteRuntimeCommand = async (_executable, args) => {
+      await Promise.resolve()
+      calls.push([...args])
+      if (args[0] === 'view') return { stdout: metadata, stderr: '' }
+      if (args[0] === 'list')
+        return {
+          stdout: JSON.stringify({ dependencies: { '@deepseek-ai/dsh': { version: '0.1.0-rc.8' } } }),
+          stderr: '',
+        }
+      throw new Error(`unexpected command: ${args.join(' ')}`)
+    }
+
+    const snapshot = await updater(execute, runtime('0.1.0-rc.8'), (progress) =>
+      phases.push(progress.phase),
+    ).installVersion('0.1.0-rc.8')
+
+    expect(snapshot.globalVersion).toBe('0.1.0-rc.8')
+    expect(calls.some((args) => args[0] === 'install')).toBe(false)
+    expect(phases).toEqual(['checking', 'checking', 'completed', 'completed'])
+  })
+
   it('emits visible lifecycle phases while a real npm install is pending', async () => {
     let installed = '0.1.0-rc.6'
     const phases: string[] = []
@@ -155,7 +179,10 @@ describe('DshRuntimeUpdater', () => {
           stderr: '',
         }
       const failure = Object.assign(new Error('npm exited with code 1'), {
-        stderr: 'GET https://user:password@example.invalid/package failed token=secret-value',
+        stderr:
+          'npm warn deprecated node-domexception@1.0.0: Use your platform native DOMException instead &#x20;\n' +
+          'npm error code EAI_AGAIN\n' +
+          'GET https://user:password@example.invalid/package failed token=secret-value',
       })
       throw failure
     }
@@ -174,6 +201,9 @@ describe('DshRuntimeUpdater', () => {
         ? (failure as { readonly context?: { readonly detail?: unknown } }).context?.detail
         : undefined
     expect(detail).toEqual(expect.stringContaining('[redacted]'))
+    expect(detail).toEqual(expect.stringContaining('npm error code EAI_AGAIN'))
+    expect(detail).not.toEqual(expect.stringContaining('deprecated'))
+    expect(detail).not.toEqual(expect.stringContaining('&#x20;'))
   })
 
   it('returns a bounded unavailable snapshot for malformed registry data', async () => {
