@@ -100,6 +100,24 @@ describe('SessionDrawer', () => {
     expect(titles()).toEqual(['Write docs', 'Fix login bug'])
   })
 
+  it('pins the active blank New Session row before stale manual order', () => {
+    const blank = session({
+      id: 'blank',
+      title: 'New Session',
+      blank: true,
+      status: 'idle',
+      updatedAt: '2026-01-06T00:00:00.000Z',
+    })
+    renderDrawer({
+      sessions: [sessions[0]!, blank, sessions[1]!],
+      activeSessionId: 'blank',
+    })
+    const titles = Array.from(
+      screen.getAllByRole('list')[0]?.querySelectorAll('.dsh-session-item__copy strong') ?? [],
+    ).map((node) => node.textContent)
+    expect(titles).toEqual(['New Session', 'Fix login bug', 'Write docs'])
+  })
+
   it('keeps the sort control beside the new-session action', () => {
     renderDrawer()
     const sort = screen.getByTitle('Sort: manual. Switch to last updated.')

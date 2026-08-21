@@ -230,6 +230,23 @@ describe('DeepSeek Harness rc.8 compatibility contract', () => {
     ).not.toThrow(/absolute host path/i)
   })
 
+  it('maps model-unavailable to a configuration failure instead of an auth failure', () => {
+    expect(() =>
+      unwrapRpcResult(
+        {
+          result: {
+            ok: false,
+            error: {
+              code: 'model-unavailable',
+              message: 'provider route is not configured',
+            },
+          },
+        },
+        'session.selectModel',
+      ),
+    ).toThrowError(expect.objectContaining({ code: 'INVALID_CONFIGURATION' }))
+  })
+
   it('retains a bounded internal Remote diagnostic while redacting credential-shaped values', () => {
     expect(() =>
       unwrapRpcResult(

@@ -8,6 +8,7 @@ import {
   type BackendEvent,
   type BackendState,
   type DshSettingsSchema,
+  type DshRuntimeUpdateProgress,
   type DshUpdateSnapshot,
   type DiscoveredModel,
   type DynamicCommand,
@@ -35,6 +36,7 @@ import {
   type SessionSummary,
   type SkillDescriptor,
   type TeamActivityView,
+  type TurnEndFailure,
   type SubagentCatalog,
   type SubagentHistoryPage,
   type SubagentView,
@@ -100,6 +102,8 @@ export interface AppState {
   readonly dshCompatibilityWarning: string | undefined
   /** Latest Host-owned npm registry snapshot for the DSH runtime. */
   readonly dshUpdate: DshUpdateSnapshot | undefined
+  /** Latest phase emitted by the Host while an update request is running. */
+  readonly dshUpdateProgress: DshRuntimeUpdateProgress | undefined
   readonly sessions: readonly SessionSummary[]
   readonly archivedSessionIds: readonly string[]
   readonly workspaces: readonly WorkspaceSummary[]
@@ -264,6 +268,7 @@ export interface ActiveSubagent {
 }
 
 const EMPTY_SUBAGENT_CATALOG: SubagentCatalog = { entries: [], parentAvailable: false }
+const DSH_RC11_VERSION = '0.1.1-rc.1'
 
 export function createAppStore(client = new ProtocolClient(getVsCodeApi())): AppStore {
   const vscodeApi = getVsCodeApi()
@@ -274,6 +279,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     connectedDshVersion: undefined,
     dshCompatibilityWarning: undefined,
     dshUpdate: undefined,
+    dshUpdateProgress: undefined,
     sessions: [],
     archivedSessionIds: [],
     workspaces: [],
@@ -465,6 +471,8 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       isCommandDirectoryRefresh(message.payload)
     )
       void refreshCommands(undefined, true)
+    if (message.type === 'event' && message.name === 'remote.event' && isModelCatalogRefresh(message.payload))
+      void refreshProvidersAndModels(client, setState)
     if (
       message.type === 'event' &&
       message.name === 'connection.snapshot' &&
@@ -706,6 +714,9 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     },
     get dshUpdate() {
       return state.dshUpdate
+    },
+    get dshUpdateProgress() {
+      return state.dshUpdateProgress
     },
     get sessions() {
       return state.sessions
@@ -1000,11 +1011,18 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       const defaultConfiguration = createDefaultConfiguration(state, composerPreferences)
       const configuration =
         presetId === undefined ? defaultConfiguration : { ...defaultConfiguration, preset: presetId }
+      const reusableBlank =
+        presetId === undefined && state.connectedDshVersion === DSH_RC11_VERSION && workspace !== undefined
+          ? findReusableBlankSession(state.sessions, state.archivedSessionIds, workspace)
+          : undefined
       const result = await client.request<unknown>({
         type: 'session.create',
         requestId: requestId(),
         payload: {
           ...(workspace === undefined ? {} : { workspaceId: workspace.id }),
+          ...(reusableBlank === undefined
+            ? {}
+            : { sessionId: reusableBlank.id, reuseWorkspaceBlank: true as const }),
           configuration,
         },
       })
@@ -1782,6 +1800,28 @@ function parseDshUpdateSnapshot(value: unknown): DshUpdateSnapshot | undefined {
   }
 }
 
+function parseDshUpdateProgress(value: unknown): DshRuntimeUpdateProgress | undefined {
+  const progress = object(value)
+  if (progress === undefined) return undefined
+  const phase = progress.phase
+  if (
+    phase !== 'checking' &&
+    phase !== 'downloading' &&
+    phase !== 'installing' &&
+    phase !== 'verifying' &&
+    phase !== 'completed' &&
+    phase !== 'failed'
+  )
+    return undefined
+  const version = progress.version
+  if (version !== undefined && (typeof version !== 'string' || version.length === 0 || version.length > 128))
+    return undefined
+  return {
+    phase,
+    ...(version === undefined ? {} : { version }),
+  }
+}
+
 function parseDshSettingsSnapshot(value: unknown): DshSettingsSnapshot | undefined {
   const settings = object(value)
   const schema = object(settings?.schema)
@@ -1951,11 +1991,33 @@ function selectStartupSession(
   if (remembered !== undefined) return remembered
 
   const rootSessions = sessions
-    .filter((session) => session.origin !== 'subagent' && !session.blank)
+    .filter((session) => session.origin !== 'subagent')
     .sort((left, right) => sessionRecency(right) - sessionRecency(left))
+  const nonBlankRootSessions = rootSessions.filter((session) => !session.blank)
   return (
-    rootSessions.find((session) => session.status === 'running' || session.status === 'awaiting-input') ??
+    nonBlankRootSessions.find(
+      (session) => session.status === 'running' || session.status === 'awaiting-input',
+    ) ??
+    nonBlankRootSessions[0] ??
     rootSessions[0]
+  )
+}
+
+function findReusableBlankSession(
+  sessions: readonly SessionSummary[],
+  archivedSessionIds: readonly string[],
+  workspace: WorkspaceSummary,
+): SessionSummary | undefined {
+  if (workspace.path === undefined || workspace.path.trim() === '') return undefined
+  const archived = new Set(archivedSessionIds)
+  return sessions.find(
+    (session) =>
+      session.origin !== 'subagent' &&
+      session.blank &&
+      !archived.has(session.id) &&
+      workspace.sessionIds?.includes(session.id) === true &&
+      session.cwd !== undefined &&
+      session.cwd === workspace.path,
   )
 }
 
@@ -2148,6 +2210,26 @@ function isCommandDirectoryRefresh(value: unknown): boolean {
   return name === 'commands/change' || name === 'agent-preset/selected'
 }
 
+/**
+ * DSH rc.1 renamed credential invalidation to a reference-scoped event and
+ * also publishes owner events when adapter topology or settings documents
+ * change. The official model/settings surfaces refresh their catalog in all
+ * three cases; keep the Webview's cached provider/model directory coherent
+ * without exposing credentials or making the Webview call DSH directly.
+ */
+function isModelCatalogRefresh(value: unknown): boolean {
+  const name = object(value)?.name
+  return (
+    // rc.6–rc.8 used the broader invalidation name; rc.1 narrowed it to a
+    // reference-scoped event. Accept both so an older connected DSH keeps the
+    // settings/model cache live after a credential change.
+    name === 'credentials/updated' ||
+    name === 'credentials/reference-updated' ||
+    name === 'llm/adapters-updated' ||
+    name === 'settings/document-updated'
+  )
+}
+
 function listValues(value: unknown): readonly unknown[] {
   if (Array.isArray(value)) return value
   const record = object(value)
@@ -2176,6 +2258,11 @@ function upsertOpenedSession(
 
 function applyHostMessage(message: HostMessage, state: AppState, setState: StateSetter): void {
   if (message.type !== 'event') return
+  if (message.name === 'runtime.update.progress') {
+    const progress = parseDshUpdateProgress(message.payload)
+    if (progress !== undefined) setState({ ...state, dshUpdateProgress: progress })
+    return
+  }
   if (message.name === 'ui.sessions.toggle') {
     setState({ ...state, drawer: state.drawer === 'sessions' ? undefined : 'sessions' })
     return
@@ -2631,11 +2718,13 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
     const turn = finiteEventIndex(value.turn)
     if (turn === undefined) return { type: 'unknown', name, payload }
     if (name === 'turn.started') return { type: 'turn.started', sessionId: value.sessionId, turn }
+    const failure = turnEndFailure(value.failure ?? value.reason)
     return {
       type: 'turn.ended',
       sessionId: value.sessionId,
       turn,
       reason: turnEndReason(value.reason),
+      ...(failure === undefined ? {} : { failure }),
     }
   }
   if ((name === 'step.started' || name === 'step.ended') && typeof value.sessionId === 'string') {
@@ -3273,6 +3362,24 @@ function turnEndReason(value: unknown): TurnEndReasonKind {
     kind === 'interrupted'
     ? kind
     : 'unknown'
+}
+
+function turnEndFailure(value: unknown): TurnEndFailure | undefined {
+  const record = object(value)
+  const failure = record?.kind === 'error' ? object(record.error) : record
+  if (failure === undefined) return undefined
+  if (typeof failure.message !== 'string') return undefined
+  const compact = failure.message.replace(/\s+/gu, ' ').trim()
+  if (compact === '') return undefined
+  const redacted = compact.replace(
+    /\b(?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|authorization|password|secret|private[_ -]?key|token|prompt|body|response)\b\s*[:=]\s*[^\s,;]+/giu,
+    (match) => match.replace(/[:=].*$/u, ': [redacted]'),
+  )
+  const code =
+    typeof failure.code === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$/u.test(failure.code)
+      ? failure.code
+      : undefined
+  return { message: redacted.slice(0, 320), ...(code === undefined ? {} : { code }) }
 }
 
 function parseTokenUsage(value: unknown): TokenUsage | undefined {

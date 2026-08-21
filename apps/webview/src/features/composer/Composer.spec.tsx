@@ -158,6 +158,19 @@ describe('Composer', () => {
     expect(onDraftChange).toHaveBeenLastCalledWith('@"docs/release notes.md"')
   })
 
+  it('deletes a complete session mention on native caret deletion', () => {
+    const onDraftChange = vi.fn()
+    const mention = '@[Review](dsh-session:s2)'
+    render(<Composer {...baseProps()} draft={`before ${mention} after`} onDraftChange={onDraftChange} />)
+    const textarea = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })
+    const end = `before ${mention}`.length
+    textarea.setSelectionRange(end, end)
+
+    fireEvent.keyDown(textarea, { key: 'Backspace' })
+
+    expect(onDraftChange).toHaveBeenCalledWith('before  after')
+  })
+
   it('surfaces the connected DSH image admission limits in the drop affordance', () => {
     render(
       <Composer

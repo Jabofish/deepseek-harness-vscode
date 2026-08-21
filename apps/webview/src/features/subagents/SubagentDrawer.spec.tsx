@@ -2,7 +2,7 @@
 
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { SubagentCatalog, SubagentView } from '@dsh-vscode/domain'
+import type { SessionSummary, SubagentCatalog, SubagentView } from '@dsh-vscode/domain'
 import { SubagentDrawer } from './SubagentDrawer.js'
 
 function child(overrides: Partial<SubagentView> & Pick<SubagentView, 'id'>): SubagentView {
@@ -53,6 +53,42 @@ describe('SubagentDrawer tree', () => {
     expect(screen.getByRole('button', { name: 'Subagents: 1' })).toBeDefined()
     expect(screen.getByText('Subagents')).toBeDefined()
     expect(container.querySelector('.dsh-subagent-tree__trigger-count')?.textContent).toBe('1')
+  })
+
+  it('shows the official token and elapsed-time metrics from the session projection', async () => {
+    const summary: SessionSummary = {
+      id: 'c1',
+      workspaceId: 'w1',
+      title: 'Researcher',
+      blank: false,
+      status: 'completed',
+      createdAt: '',
+      updatedAt: '',
+      projection: {
+        asOfSequence: 8,
+        values: {
+          tokenUsage: {
+            uncachedInputTokens: 1200,
+            cacheReadTokens: 300,
+            cacheWriteTokens: 0,
+            outputTokens: 500,
+          },
+          subagentTiming: { settledMs: 125_000 },
+        },
+      },
+    }
+    render(
+      <SubagentDrawer
+        parentSessionId="root"
+        catalog={catalog([child({ id: 'c1', label: 'Researcher' })])}
+        summaries={[summary]}
+        onLoadChildren={vi.fn()}
+        onOpenChild={vi.fn()}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Subagents: 1' }))
+    await waitFor(() => expect(screen.getByText('2K tok · 2m 05s')).toBeDefined())
   })
 
   it('positions the catalog as a viewport-clamped floating menu', () => {

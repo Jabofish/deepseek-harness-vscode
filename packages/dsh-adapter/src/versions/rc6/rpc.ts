@@ -88,7 +88,7 @@ function mapRpcError(code: string): AppErrorCode {
     case 'cancelled':
       return 'REQUEST_CANCELLED'
     case 'model-unavailable':
-      return 'AUTH_REQUIRED'
+      return 'INVALID_CONFIGURATION'
     case 'agent-preset-read-only':
       return 'PERMISSION_DENIED'
     case 'agent-preset-not-found':

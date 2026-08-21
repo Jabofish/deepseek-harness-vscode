@@ -629,7 +629,15 @@ function renderNode(
           role="status"
         >
           <Icon name="alert" />
-          <span>{turnTerminalLabel(node.reason, t)}</span>
+          <span className="dsh-timeline__turn-terminal-message">
+            <span>{turnTerminalLabel(node.reason, t)}</span>
+            {node.failure === undefined ? null : (
+              <span className="dsh-timeline__turn-terminal-detail">
+                {node.failure.code === undefined ? null : <code>{node.failure.code}</code>}
+                <span>{node.failure.message}</span>
+              </span>
+            )}
+          </span>
         </p>
       )
     case 'event-group':

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactElement } from 'react'
-import type { SubagentCatalog, SubagentView } from '@dsh-vscode/domain'
+import type { SessionSummary, SubagentCatalog, SubagentView } from '@dsh-vscode/domain'
 import { useI18n } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
 
@@ -8,6 +8,8 @@ export interface SubagentCatalogProps {
   readonly parentSessionId: string
   /** Direct-child catalog of the active session, already held in app state. */
   readonly catalog: SubagentCatalog
+  /** Session-list summaries used for the official token and duration metrics. */
+  readonly summaries?: readonly SessionSummary[]
   /** Lazily fetch one parent's catalog level (`subagent.list`). */
   readonly onLoadChildren: (sessionId: string) => Promise<SubagentCatalog | undefined>
   /** Open one child session for viewing, as upstream's `openChild`. */
@@ -38,6 +40,64 @@ function isRunning(entry: SubagentView): boolean {
 
 function childEntries(catalog: SubagentCatalog): readonly SubagentView[] {
   return catalog.entries.filter((entry): entry is SubagentView => entry.kind === 'child')
+}
+
+function record(value: unknown): Readonly<Record<string, unknown>> | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Readonly<Record<string, unknown>>)
+    : undefined
+}
+
+function nonNegativeInteger(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined
+}
+
+function formatTokens(value: number): string {
+  const scaled = (next: number): string =>
+    next >= 100 ? String(Math.round(next)) : String(Math.round(next * 10) / 10)
+  if (value < 1_000) return String(value)
+  if (value < 1_000_000) return `${scaled(value / 1_000)}K`
+  return `${scaled(value / 1_000_000)}M`
+}
+
+function subagentTokenTotal(summary: SessionSummary | undefined): number | undefined {
+  const usage = record(summary?.projection?.values.tokenUsage)
+  if (usage === undefined) return undefined
+  const input = nonNegativeInteger(usage.uncachedInputTokens ?? usage.inputTokens)
+  const output = nonNegativeInteger(usage.outputTokens)
+  const cacheRead = nonNegativeInteger(usage.cacheReadTokens)
+  const cacheWrite = nonNegativeInteger(usage.cacheWriteTokens)
+  if (input === undefined && output === undefined && cacheRead === undefined && cacheWrite === undefined)
+    return undefined
+  return (input ?? 0) + (output ?? 0) + (cacheRead ?? 0) + (cacheWrite ?? 0)
+}
+
+function subagentDurationMs(
+  summary: SessionSummary | undefined,
+  activity: SubagentView['activity'],
+  now: number,
+): number | undefined {
+  const timing = record(summary?.projection?.values.subagentTiming)
+  if (timing === undefined) return undefined
+  const settledMs = nonNegativeInteger(timing.settledMs)
+  if (settledMs === undefined) return undefined
+  const active = record(timing.active)
+  if (active === undefined) return settledMs
+  const since = nonNegativeInteger(active.since)
+  const through = nonNegativeInteger(active.through)
+  if (since === undefined || through === undefined) return settledMs
+  const end = activity === 'running' ? now : through
+  return settledMs + Math.max(0, end - since)
+}
+
+function formatSubagentDuration(ms: number, t: ReturnType<typeof useI18n>['t']): string {
+  const totalSeconds = Math.floor(Math.max(0, ms) / 1_000)
+  const minutes = Math.floor(totalSeconds / 60)
+  const hours = Math.floor(minutes / 60)
+  if (hours > 0) return t('duration.hoursMinutes', { hours, minutes: String(minutes % 60).padStart(2, '0') })
+  if (minutes > 0)
+    return t('duration.minutesSeconds', { minutes, seconds: String(totalSeconds % 60).padStart(2, '0') })
+  return t('duration.seconds', { seconds: totalSeconds })
 }
 
 interface SubagentAggregate {
@@ -93,8 +153,10 @@ export function SubagentDrawer(props: SubagentCatalogProps): ReactElement | null
   const [busy, setBusy] = useState<ReadonlySet<string>>(() => new Set())
   const [loadErrors, setLoadErrors] = useState<ReadonlySet<string>>(() => new Set())
   const [menuPosition, setMenuPosition] = useState<FloatingMenuPosition | undefined>()
+  const [now, setNow] = useState(() => Date.now())
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
+  const summaries = props.summaries ?? []
 
   const loadedAggregate = aggregateLoadedChildren(props.catalog, catalogs)
   const runningCount = loadedAggregate.running
@@ -108,6 +170,12 @@ export function SubagentDrawer(props: SubagentCatalogProps): ReactElement | null
     document.addEventListener('pointerdown', closeOutside)
     return () => document.removeEventListener('pointerdown', closeOutside)
   }, [open])
+
+  useEffect(() => {
+    if (!open || runningCount === 0) return
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000)
+    return () => window.clearInterval(timer)
+  }, [open, runningCount])
 
   useEffect(() => {
     if (!open) return
@@ -266,7 +334,17 @@ export function SubagentDrawer(props: SubagentCatalogProps): ReactElement | null
               : t('subagents.activity.inactive')
             const availability =
               entry.mode === 'continuable' && !parentAvailable ? t('subagents.parentUnavailable') : undefined
-            const label = [entryLabel, mode, status, availability].filter(Boolean).join(' · ')
+            const summary = summaries.find((item) => item.id === entry.id)
+            const totalTokens = subagentTokenTotal(summary)
+            const durationMs = subagentDurationMs(summary, entry.activity, now)
+            const tokenMetric =
+              totalTokens === undefined
+                ? undefined
+                : t('subagents.tokens', { count: formatTokens(totalTokens) })
+            const durationMetric =
+              durationMs === undefined ? undefined : formatSubagentDuration(durationMs, t)
+            const metrics = [tokenMetric, durationMetric].filter(Boolean).join(' · ')
+            const label = [entryLabel, mode, status, availability, metrics].filter(Boolean).join(' · ')
             return (
               <div
                 key={entry.id}
@@ -321,6 +399,11 @@ export function SubagentDrawer(props: SubagentCatalogProps): ReactElement | null
                       ? t('subagents.loadFailed')
                       : [mode, status, availability].filter(Boolean).join(' · ')}
                 </span>
+                {metrics === '' ? null : (
+                  <span className="dsh-subagent-tree__metrics" title={metrics}>
+                    {metrics}
+                  </span>
+                )}
               </div>
             )
           })}

@@ -4,6 +4,7 @@ import type {
   AgentPresetLocation,
   AgentPresetRoster,
   DshSettingsSchema,
+  DshRuntimeUpdateProgress,
   DshUpdateSnapshot,
   DiscoveredModel,
   ExtensionSettingsSummary,
@@ -27,6 +28,7 @@ export interface SettingsDrawerProps {
   readonly connectedDshVersion: string | undefined
   readonly onConfigureConnection: (mode: 'auto' | 'custom', endpoint?: string) => Promise<void>
   readonly dshUpdate?: DshUpdateSnapshot | undefined
+  readonly dshUpdateProgress?: DshRuntimeUpdateProgress | undefined
   readonly onCheckDshUpdates?: (force?: boolean) => Promise<DshUpdateSnapshot | undefined>
   readonly onInstallDshVersion?: (version: string) => Promise<DshUpdateSnapshot | undefined>
   readonly providers: readonly ModelProvider[]
@@ -111,6 +113,7 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
   const {
     open,
     dshUpdate,
+    dshUpdateProgress,
     onCheckDshUpdates,
     onInstallDshVersion,
     onLoadSettings,
@@ -310,6 +313,14 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
     setDshUpdateError(undefined)
     setDshUpdateBusy('install')
     void onInstallDshVersion(effectiveSelectedDshVersion)
+      .then((snapshot) => {
+        if (snapshot === undefined) {
+          setDshUpdateError(t('settings.dshUpdateFailed'))
+          return
+        }
+        if (snapshot.status === 'unavailable') setDshUpdateError(dshUpdateFailureMessage(snapshot.failure, t))
+        return snapshot
+      })
       .catch((reason: unknown) =>
         setDshUpdateError(reason instanceof Error ? reason.message : t('settings.dshUpdateFailed')),
       )
@@ -611,6 +622,20 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                       </p>
                     ) : (
                       <>
+                        {dshUpdateBusy !== undefined ? (
+                          <div
+                            className="dsh-settings__runtime-update-progress"
+                            role="status"
+                            aria-live="polite"
+                          >
+                            <progress
+                              className="dsh-settings__runtime-update-progress-bar"
+                              max={100}
+                              aria-label={t('settings.dshUpdateProgressLabel')}
+                            />
+                            <span>{dshUpdateProgressLabel(dshUpdateBusy, dshUpdateProgress, t)}</span>
+                          </div>
+                        ) : null}
                         <dl className="dsh-settings__runtime-update-facts">
                           <dt>{t('settings.dshUpdateCurrent')}</dt>
                           <dd>{dshUpdate.currentVersion ?? t('settings.dshUpdateNotInstalled')}</dd>
@@ -1208,6 +1233,31 @@ function dshUpdateFailureMessage(failure: DshUpdateSnapshot['failure'], t: Trans
       return t('settings.dshUpdateRegistryUnavailable')
     default:
       return t('settings.dshUpdateUnavailable')
+  }
+}
+
+function dshUpdateProgressLabel(
+  busy: 'check' | 'install',
+  progress: DshRuntimeUpdateProgress | undefined,
+  t: Translate,
+): string {
+  switch (progress?.phase) {
+    case 'checking':
+      return t('settings.dshUpdateProgressChecking')
+    case 'downloading':
+      return t('settings.dshUpdateProgressDownloading')
+    case 'installing':
+      return t('settings.dshUpdateProgressInstalling')
+    case 'verifying':
+      return t('settings.dshUpdateProgressVerifying')
+    case 'completed':
+      return t('settings.dshUpdateProgressCompleted')
+    case 'failed':
+      return t('settings.dshUpdateProgressFailed')
+    default:
+      return busy === 'check'
+        ? t('settings.dshUpdateProgressChecking')
+        : t('settings.dshUpdateProgressDownloading')
   }
 }
 

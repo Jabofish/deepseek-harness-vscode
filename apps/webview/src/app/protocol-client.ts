@@ -15,6 +15,13 @@ interface Pending {
   readonly timer: number
 }
 
+// npm installation is a host-side operation and may legitimately take longer
+// than ordinary chat/settings requests. Keep the Webview pending until the
+// Extension Host can return the real result instead of turning a slow download
+// into a misleading generic timeout.
+const RUNTIME_UPDATE_CHECK_TIMEOUT_MS = 45_000
+const RUNTIME_UPDATE_INSTALL_TIMEOUT_MS = 180_000
+
 export class ProtocolClient {
   private readonly pending = new Map<string, Pending>()
   private readonly listeners = new Set<(message: HostMessage) => void>()
@@ -35,10 +42,16 @@ export class ProtocolClient {
     if (this.pending.has(parsed.requestId))
       return Promise.reject(new Error(translate('app.error.duplicateRequest')))
     return new Promise<T>((resolve, reject) => {
+      const timeoutMs =
+        parsed.type === 'runtime.update.install'
+          ? Math.max(this.timeoutMs, RUNTIME_UPDATE_INSTALL_TIMEOUT_MS)
+          : parsed.type === 'runtime.update.check'
+            ? Math.max(this.timeoutMs, RUNTIME_UPDATE_CHECK_TIMEOUT_MS)
+            : this.timeoutMs
       const timer = window.setTimeout(() => {
         this.pending.delete(parsed.requestId)
         reject(new Error(translate('app.error.timeout')))
-      }, this.timeoutMs)
+      }, timeoutMs)
       this.pending.set(parsed.requestId, { resolve: (value) => resolve(value as T), reject, timer })
       try {
         this.api.postMessage({ protocolVersion: PROTOCOL_VERSION, message: parsed })

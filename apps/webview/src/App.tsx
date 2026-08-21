@@ -27,6 +27,7 @@ import { JobsDrawer } from './features/jobs/JobsDrawer.js'
 import { QueuePanel } from './features/input/QueuePanel.js'
 import { RuntimeMissingView } from './features/runtime/RuntimeMissingView.js'
 import { SessionDrawer } from './features/sessions/SessionDrawer.js'
+import { SessionLineage } from './features/subagents/SessionLineage.js'
 import { SubagentDrawer } from './features/subagents/SubagentDrawer.js'
 import { SettingsDrawer } from './features/settings/SettingsDrawer.js'
 import { TrajectoryView } from './features/trajectory/TrajectoryView.js'
@@ -471,6 +472,7 @@ export function App(): ReactElement {
           connectedDshVersion={state.connectedDshVersion}
           onConfigureConnection={(mode, endpoint) => store.configureConnection(mode, endpoint)}
           dshUpdate={state.dshUpdate}
+          dshUpdateProgress={state.dshUpdateProgress}
           onCheckDshUpdates={(force) => store.checkDshUpdates(force)}
           onInstallDshVersion={(version) => store.installDshVersion(version)}
           providers={state.providers}
@@ -661,6 +663,31 @@ export function App(): ReactElement {
                         {t('app.trajectory')}
                       </button>
                     </div>
+                    {activeSubagent !== undefined || active.parentSessionId !== undefined ? (
+                      <SessionLineage
+                        active={active}
+                        {...(activeSubagent === undefined
+                          ? {}
+                          : {
+                              activeSubagent: {
+                                id: activeSubagent.id,
+                                parentSessionId: activeSubagent.parentSessionId,
+                                ...(activeSubagent.label === undefined
+                                  ? {}
+                                  : { label: activeSubagent.label }),
+                              },
+                            })}
+                        sessions={state.sessions}
+                        onOpenSession={(sessionId) => {
+                          discardAttachmentDrafts()
+                          void store
+                            .openSession(sessionId)
+                            .catch((reason: unknown) =>
+                              setError(reason instanceof Error ? reason.message : t('app.error.openSession')),
+                            )
+                        }}
+                      />
+                    ) : null}
                     <div className="dsh-conversation__popovers">
                       {/* The keys reset popover state when the last entry disappears,
                     so a refilled catalog never reopens stale. */}
@@ -669,6 +696,7 @@ export function App(): ReactElement {
                         key={active.id}
                         parentSessionId={active.id}
                         catalog={state.subagents}
+                        summaries={state.sessions}
                         onLoadChildren={(sessionId) => store.loadSubagentChildren(sessionId)}
                         onOpenChild={(entry, parentAvailable) => {
                           // subagent.prompt accepts text ContentBlocks only. Clear

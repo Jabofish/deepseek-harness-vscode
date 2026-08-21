@@ -51,6 +51,44 @@ describe('attachment ingest schema', () => {
     ).toBe(false)
   })
 
+  it('validates the official workspace blank-session reuse request shape', () => {
+    expect(
+      webviewRequestSchema.safeParse({
+        type: 'session.create',
+        requestId: 'session-reuse',
+        payload: {
+          workspaceId: 'workspace-1',
+          sessionId: 'session-blank',
+          reuseWorkspaceBlank: true,
+          configuration: {
+            preset: 'standard',
+            toolMode: 'native',
+            permissionPreset: 'workspace-write',
+            planMode: false,
+            model: { providerId: '', modelId: '' },
+          },
+        },
+      }).success,
+    ).toBe(true)
+    expect(
+      webviewRequestSchema.safeParse({
+        type: 'session.create',
+        requestId: 'session-reuse-invalid',
+        payload: {
+          workspaceId: 'workspace-1',
+          reuseWorkspaceBlank: true,
+          configuration: {
+            preset: 'standard',
+            toolMode: 'native',
+            permissionPreset: 'workspace-write',
+            planMode: false,
+            model: { providerId: '', modelId: '' },
+          },
+        },
+      }).success,
+    ).toBe(false)
+  })
+
   it('accepts the exact Base64 envelope size of an 8 MiB attachment', () => {
     const encodedLength = Math.ceil((8 * 1024 * 1024) / 3) * 4
     const request = {

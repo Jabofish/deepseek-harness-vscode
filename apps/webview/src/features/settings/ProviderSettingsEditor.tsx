@@ -242,10 +242,9 @@ function positiveNumber(value: unknown): number | undefined {
 }
 
 function copyModel(model: EditableModel): EditableModel {
-  return {
-    id: model.id,
-    ...(model.name === undefined ? {} : { name: model.name }),
-    ...(model.contextWindow === undefined ? {} : { contextWindow: model.contextWindow }),
-    ...(model.maxTokens === undefined ? {} : { maxTokens: model.maxTokens }),
-  }
+  // Keep fields introduced by a newer DSH schema (for example
+  // `inputModalities: ['text', 'image']`) intact while this editor only
+  // exposes the common id/name/capacity controls. Dropping them on a no-op
+  // edit would make opening and applying the provider form destructive.
+  return { ...model }
 }

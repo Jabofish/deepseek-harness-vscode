@@ -7,6 +7,7 @@ import type {
   TodoView,
   TokenUsage,
   ToolCallView,
+  TurnEndFailure,
   WorkflowSummary,
 } from '@dsh-vscode/domain'
 
@@ -101,6 +102,7 @@ export type TimelineNode =
       readonly turn: number
       readonly sequence: number
       readonly reason: 'aborted' | 'blocked' | 'error' | 'max-tokens' | 'interrupted' | 'unknown'
+      readonly failure?: TurnEndFailure
     }
   | {
       readonly kind: 'event'

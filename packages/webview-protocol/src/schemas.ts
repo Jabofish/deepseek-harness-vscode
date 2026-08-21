@@ -184,10 +184,18 @@ export const webviewRequestSchema = z.discriminatedUnion('type', [
       payload: z
         .object({
           workspaceId: id.optional(),
+          sessionId: id.optional(),
+          reuseWorkspaceBlank: z.literal(true).optional(),
           title: z.string().max(512).optional(),
           configuration: agentConfigurationSchema,
         })
-        .strict(),
+        .strict()
+        .refine(
+          (payload) =>
+            payload.reuseWorkspaceBlank !== true ||
+            (payload.workspaceId !== undefined && payload.sessionId !== undefined),
+          { message: 'Reusing a workspace blank session requires workspaceId and sessionId.' },
+        ),
     })
     .strict(),
   z

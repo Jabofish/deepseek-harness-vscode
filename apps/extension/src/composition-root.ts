@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import { readFileSync, realpathSync } from 'node:fs'
 import { access, mkdir, mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { execFile, spawn } from 'node:child_process'
+import { homedir } from 'node:os'
 import { promisify } from 'node:util'
 import path from 'node:path'
 import {
@@ -11,6 +12,7 @@ import {
   type BackendEndpoint,
   type BackendState,
   type DshBackend,
+  type DshRuntimeUpdateProgress,
   type ExtensionSettings,
   type ExtensionSettingsSummary,
   type QuestionAnswer,
@@ -34,6 +36,7 @@ import {
   Rc6VersionAdapter,
   Rc7VersionAdapter,
   Rc8VersionAdapter,
+  Rc11VersionAdapter,
   VersionedBackendFactory,
   VersionedBackendProbe,
   type ExportFileSystem,
@@ -173,10 +176,10 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
   const runtimeLocator = new DshRuntimeLocator({
     os: platform(),
     configuredPath: () => configuration.read().runtime.executablePath,
-    pathEntries: () => runtimePathEntries(platform(), process.env),
+    pathEntries: () => extensionRuntimePathEntries(platform(), process.env),
     npmGlobalPrefix: async (signal) => {
       const os = platform()
-      const npm = resolveNpmExecutable(os, runtimePathEntries(os, process.env))
+      const npm = resolveNpmExecutable(os, extensionRuntimePathEntries(os, process.env))
       const resolved =
         os === 'windows'
           ? resolveWindowsShim(npm, os, readTextFile, windowsShimOptions(os, process.env))
@@ -244,10 +247,11 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     samePath: sameWorkspacePath,
     exportFileSystem: createExportFileSystem(vscode),
   }
+  const rc11Adapter = new Rc11VersionAdapter(adapterOptions)
   const rc8Adapter = new Rc8VersionAdapter(adapterOptions)
   const rc7Adapter = new Rc7VersionAdapter(adapterOptions)
   const rc6Adapter = new Rc6VersionAdapter(adapterOptions)
-  const adapters = [rc8Adapter, rc7Adapter, rc6Adapter] as const
+  const adapters = [rc11Adapter, rc8Adapter, rc7Adapter, rc6Adapter] as const
   const probe = new VersionedBackendProbe(adapters)
   const factory = new VersionedBackendFactory(adapters)
   const supervisor = new DshProcessSupervisor({
@@ -272,7 +276,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     workspace: vscode.workspace,
     runInstall: async () => {
       const os = platform()
-      const npm = resolveNpmExecutable(os, runtimePathEntries(os, process.env))
+      const npm = resolveNpmExecutable(os, extensionRuntimePathEntries(os, process.env))
       const resolved =
         os === 'windows'
           ? resolveWindowsShim(npm, os, readTextFile, windowsShimOptions(os, process.env))
@@ -290,12 +294,14 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     verifyInstall: async () => (await runtimeLocator.locate())?.supported === true,
     verifyExecutable: async (executable) => (await runtimeLocator.inspectExecutable(executable)).supported,
   })
+  let postRuntimeUpdateProgress: (progress: DshRuntimeUpdateProgress) => void = () => undefined
   const runtimeUpdater = new DshRuntimeUpdater({
     npmExecutable: () => {
       const os = platform()
-      return resolveNpmExecutable(os, runtimePathEntries(os, process.env))
+      return resolveNpmExecutable(os, extensionRuntimePathEntries(os, process.env))
     },
     locateRuntime: (signal) => runtimeLocator.locate(signal),
+    onProgress: (progress) => postRuntimeUpdateProgress(progress),
     execute: async (executable, args, options) => {
       const resolved =
         platform() === 'windows'
@@ -512,6 +518,9 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       () => undefined,
     )
     return task.catch(() => false)
+  }
+  postRuntimeUpdateProgress = (progress) => {
+    void postEvent('runtime.update.progress', progress)
   }
   const publishState = (state: BackendState): void => {
     void updateContextKeys(vscode.commands, state)
@@ -833,6 +842,8 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
         await sessionUseCases.create(
           {
             workspaceId: workspace.id,
+            ...(request.payload.sessionId === undefined ? {} : { sessionId: request.payload.sessionId }),
+            ...(request.payload.reuseWorkspaceBlank === true ? { reuseWorkspaceBlank: true as const } : {}),
             ...(request.payload.title === undefined ? {} : { title: request.payload.title }),
             configuration: resolvedConfiguration,
           },
@@ -1383,7 +1394,7 @@ function endpointFromServerUrl(serverUrl: string | undefined): BackendEndpoint |
 
 function runtimeEnvironment(overrides?: NodeJS.ProcessEnv, executable?: string): NodeJS.ProcessEnv {
   const environment = { ...process.env, ...(overrides ?? {}) }
-  const entries = runtimePathEntries(platform(), environment)
+  const entries = extensionRuntimePathEntries(platform(), environment)
   const executableDirectory = executable === undefined ? undefined : path.dirname(executable)
   const prefix =
     executableDirectory === undefined || executableDirectory === '.' ? undefined : executableDirectory
@@ -1401,9 +1412,16 @@ function windowsShimOptions(
   readonly processExecutable: string
 } {
   return {
-    pathEntries: runtimePathEntries(os, environment),
+    pathEntries: extensionRuntimePathEntries(os, environment),
     processExecutable: process.execPath,
   }
+}
+
+function extensionRuntimePathEntries(
+  os: 'windows' | 'linux' | 'macos',
+  environment: NodeJS.ProcessEnv,
+): readonly string[] {
+  return runtimePathEntries(os, environment, os === 'windows' ? homedir() : undefined)
 }
 
 function readStoredTemporaryWorkspace(value: unknown): StoredTemporaryWorkspace | undefined {
@@ -1538,7 +1556,7 @@ function spawnManagedChild(
   const resolvedExecutable = resolved?.executable ?? executable
   const executableDirectory = path.dirname(resolvedExecutable)
   const prefix = executableDirectory === '.' ? undefined : executableDirectory
-  childEnvironment.PATH = [prefix, ...runtimePathEntries(platform(), childEnvironment)]
+  childEnvironment.PATH = [prefix, ...extensionRuntimePathEntries(platform(), childEnvironment)]
     .filter((entry): entry is string => entry !== undefined)
     .join(path.delimiter)
   const child = spawn(

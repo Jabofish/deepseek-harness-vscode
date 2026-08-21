@@ -72,6 +72,32 @@ describe('ProtocolClient', () => {
     client.dispose()
   })
 
+  it('keeps an npm DSH install request pending beyond the ordinary request timeout', async () => {
+    const setTimeoutSpy = vi.spyOn(window, 'setTimeout')
+    const client = new ProtocolClient({
+      postMessage: () => undefined,
+      getState: () => undefined,
+      setState: () => undefined,
+    })
+    try {
+      const request = client.request<unknown>({
+        type: 'runtime.update.install',
+        requestId: 'install-1',
+        payload: { version: '0.1.1-rc.1' },
+      })
+
+      expect(setTimeoutSpy.mock.calls.some(([, timeout]) => timeout === 180_000)).toBe(true)
+      client.handle({
+        protocolVersion: PROTOCOL_VERSION,
+        message: { type: 'response', requestId: 'install-1', ok: true, payload: { status: 'ready' } },
+      })
+      await expect(request).resolves.toEqual({ status: 'ready' })
+    } finally {
+      setTimeoutSpy.mockRestore()
+      client.dispose()
+    }
+  })
+
   it('rejects every pending request on page disposal', async () => {
     const client = new ProtocolClient({
       postMessage: () => undefined,

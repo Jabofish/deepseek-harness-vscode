@@ -130,7 +130,7 @@ export function SessionDrawer(props: SessionDrawerProps): ReactElement {
       query === ''
         ? sessions
         : sessions.filter((session) => displaySessionTitle(session.title, t).toLowerCase().includes(query))
-    return sortSessions(filtered, sorting, workspace.sessionIds)
+    return sortSessions(filtered, sorting, workspace.sessionIds, props.activeSessionId)
   }
 
   const currentWorkspaceSessions = selectedWorkspace === undefined ? [] : filterSessions(selectedWorkspace)
@@ -698,17 +698,35 @@ function sortSessions(
   sessions: readonly SessionSummary[],
   sorting: SessionSorting,
   manualOrder?: readonly string[],
+  activeSessionId?: string,
 ): readonly SessionSummary[] {
-  if (sorting === 'manual' && manualOrder === undefined) return sessions
   if (sorting === 'manual') {
     const position = new Map((manualOrder ?? []).map((id, index) => [id, index]))
-    return [...sessions].sort(
+    const sorted = [...sessions].sort(
       (left, right) =>
         (position.get(left.id) ?? Number.MAX_SAFE_INTEGER) -
         (position.get(right.id) ?? Number.MAX_SAFE_INTEGER),
     )
+    return pinCurrentBlank(sorted, activeSessionId)
   }
   return [...sessions].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+}
+
+/**
+ * The official workspace runtime promotes the current blank New Session row
+ * to the head of the workspace order. Keep that visual invariant even when a
+ * stale session-order projection still places another row first.
+ */
+function pinCurrentBlank(
+  sessions: readonly SessionSummary[],
+  activeSessionId: string | undefined,
+): readonly SessionSummary[] {
+  if (activeSessionId === undefined) return sessions
+  const index = sessions.findIndex((session) => session.id === activeSessionId && session.blank)
+  if (index <= 0) return sessions
+  const active = sessions[index]
+  if (active === undefined) return sessions
+  return [active, ...sessions.slice(0, index), ...sessions.slice(index + 1)]
 }
 
 function sessionStatusIcon(status: SessionSummary['status']): 'alert' | 'check' | 'clock' | 'play' {

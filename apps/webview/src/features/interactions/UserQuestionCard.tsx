@@ -108,12 +108,12 @@ export function UserQuestionCard(props: UserQuestionCardProps): ReactElement {
             </div>
           )}
           {!planReview ? (
-            <textarea
-              className="dsh-question__textarea"
-              disabled={props.disabled}
+            <QuestionAnswerField
               value={drafts[index]?.custom ?? ''}
-              onChange={(event) => {
-                const value = event.target.value
+              disabled={props.disabled}
+              ariaLabel={t('question.answer', { prompt: item.prompt })}
+              placeholder={t('question.custom')}
+              onChange={(value) => {
                 setDrafts((current) =>
                   current.map((draft, position) =>
                     position === index
@@ -126,8 +126,6 @@ export function UserQuestionCard(props: UserQuestionCardProps): ReactElement {
                   ),
                 )
               }}
-              aria-label={t('question.answer', { prompt: item.prompt })}
-              placeholder={t('question.custom')}
             />
           ) : null}
           {!planReview ? (
@@ -174,6 +172,39 @@ export function UserQuestionCard(props: UserQuestionCardProps): ReactElement {
         </button>
       )}
     </section>
+  )
+}
+
+interface QuestionAnswerFieldProps {
+  readonly value: string
+  readonly disabled: boolean
+  readonly ariaLabel: string
+  readonly placeholder: string
+  readonly onChange: (value: string) => void
+}
+
+/**
+ * Mirror-backed answer field matching the upstream six-line behavior. The
+ * hidden mirror determines the height; the textarea becomes the only
+ * scrollport once the cap is reached, so a long answer cannot push the
+ * question actions out of the takeover card.
+ */
+function QuestionAnswerField(props: QuestionAnswerFieldProps): ReactElement {
+  return (
+    <div className="dsh-question__field">
+      <div className="dsh-question__field-mirror" aria-hidden="true">
+        {`${props.value}\n`}
+      </div>
+      <textarea
+        className="dsh-question__textarea"
+        disabled={props.disabled}
+        value={props.value}
+        rows={1}
+        aria-label={props.ariaLabel}
+        placeholder={props.placeholder}
+        onChange={(event) => props.onChange(event.target.value)}
+      />
+    </div>
   )
 }
 

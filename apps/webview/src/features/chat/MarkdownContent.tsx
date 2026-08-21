@@ -59,7 +59,10 @@ export function MarkdownContent({
   useEffect(() => {
     let cancelled = false
     void highlightMarkdownHtml(rawHtml).then((html) => {
-      if (!cancelled) setHighlightedHtml({ source: rawHtml, html })
+      // Avoid a no-op state update for ordinary Markdown. It would tear down
+      // the DOM-mounted copy regions once and recreate them on the next
+      // effect pass, which can race React roots while a table is classified.
+      if (!cancelled && html !== rawHtml) setHighlightedHtml({ source: rawHtml, html })
     })
     return () => {
       cancelled = true
@@ -77,6 +80,14 @@ export function MarkdownContent({
       const region = document.createElement('div')
       const kind = target.tagName.toLowerCase() === 'table' ? 'table' : 'code'
       region.className = `dsh-markdown__copy-region dsh-markdown__copy-region--${kind}`
+      if (kind === 'table') {
+        const columns = target.querySelector<HTMLTableRowElement>('tr')?.cells.length ?? 0
+        const wide = columns >= 4 && target.closest('blockquote') === null
+        region.classList.add(
+          wide ? 'dsh-markdown__copy-region--table-wide' : 'dsh-markdown__copy-region--table-fill',
+        )
+        if (wide) region.tabIndex = 0
+      }
       const mount = document.createElement('span')
       mount.className = 'dsh-markdown__copy-mount'
       target.replaceWith(region)
@@ -123,7 +134,7 @@ export function MarkdownContent({
           entry.region.replaceWith(entry.target)
       }
     }
-  }, [markdown, onOpenLink, producedFiles, t])
+  }, [markdown, onOpenLink, producedFiles, rawHtml, highlightedHtml, t])
 
   const handleClick = (event: MouseEvent<HTMLDivElement>): void => {
     if (onOpenLink === undefined) return

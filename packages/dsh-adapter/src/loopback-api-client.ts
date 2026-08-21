@@ -67,7 +67,7 @@ export class LoopbackApiClient extends AbstractApiClient implements DshTransport
 
   /**
    * Keep only the stable carrier checks from the pinned package. The generated
-   * client also applies the current rc.8 method-value schema here; that makes
+   * client also applies the pinned method-value schema here; that makes
    * an rc.6/rc.7 response fail before its version adapter can project it.
    * Domain repositories already validate and narrow each value, so the
    * version-neutral transport must leave `result.value` opaque.
@@ -232,7 +232,7 @@ export class LoopbackApiClient extends AbstractApiClient implements DshTransport
       case 'subagent.interrupt':
         return this.subagents.interrupt(params as RequestPayload<'subagent.interrupt'>, signal)
       case 'host.describe':
-        // rc.8 made `home` required in the generated response schema. Keep
+        // rc.8 and later make `home` required in the generated response schema. Keep
         // this one handshake call at the wire-envelope level so rc.6 hosts
         // that legitimately omit the new field can still be detected and
         // served by the legacy adapter.
@@ -320,7 +320,7 @@ export class LoopbackApiClient extends AbstractApiClient implements DshTransport
   }
 
   /**
-   * Read the handshake envelope without applying rc.8's generated host schema.
+   * Read the handshake envelope without applying the newest generated host schema.
    * The adapter performs the version-specific field checks after this method
    * returns, which is what lets an rc.6 host omit fields introduced later.
    */
@@ -384,7 +384,7 @@ export class LoopbackApiClient extends AbstractApiClient implements DshTransport
     signal?: AbortSignal,
   ): Promise<TResponse> {
     // Typert namespaces are JavaScript identifiers, not lower-case slugs.
-    // rc.8 exposes `messageFeedback/...` and `sessionReferenceResolver/...`;
+    // The current contract exposes `messageFeedback/...` and `sessionReferenceResolver/...`;
     // rejecting their capital letters turns a valid Remote call into the
     // misleading INVALID_CONFIGURATION error before it reaches DSH.
     if (!/^[A-Za-z][A-Za-z0-9_-]*\/[A-Za-z][A-Za-z0-9_-]*$/u.test(endpoint))
@@ -687,7 +687,7 @@ const IDEMPOTENT_METHODS = new Set([
 ])
 
 /**
- * rc.6/rc.7 still emit the settings-not-exposed error branch that rc.8
+ * rc.6/rc.7 still emit the settings-not-exposed error branch that later
  * removed from its generated envelope schema. Keep the current upstream
  * typed client for every success/value schema, but widen this one legacy
  * error at the transport seam so an older host is not rejected before the

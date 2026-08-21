@@ -143,6 +143,18 @@ export interface MessageImageReference {
 export type TurnEndReasonKind =
   'completed' | 'aborted' | 'blocked' | 'error' | 'max-tokens' | 'interrupted' | 'unknown'
 
+/**
+ * Display-safe failure facts carried by an error turn/end reason.
+ *
+ * The adapter keeps only the bounded message and stable error code. Provider
+ * request ids, status details, and other upstream metadata must not cross into
+ * the Webview projection.
+ */
+export interface TurnEndFailure {
+  readonly message: string
+  readonly code?: string
+}
+
 type BackendEventPayload =
   | { readonly type: 'session.status'; readonly sessionId: string; readonly status: string }
   | { readonly type: 'session.title'; readonly sessionId: string; readonly title: string }
@@ -157,6 +169,7 @@ type BackendEventPayload =
       readonly sessionId: string
       readonly turn: number
       readonly reason: TurnEndReasonKind
+      readonly failure?: TurnEndFailure
     }
   | {
       readonly type: 'session.added'

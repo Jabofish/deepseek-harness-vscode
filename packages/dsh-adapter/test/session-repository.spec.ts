@@ -2,6 +2,75 @@ import { describe, expect, it, vi } from 'vitest'
 import type { DshTransport } from '../src/contracts.js'
 import { Rc6SessionRepository } from '../src/repositories/session-repository.js'
 
+function sessionCreateTransport(calls: { method: string; params: unknown }[]): DshTransport {
+  return {
+    request: <TResponse>(method: string, params: unknown) => {
+      calls.push({ method, params })
+      const value =
+        method === 'session.create'
+          ? { sessionId: 'session-blank' }
+          : method === 'session.list'
+            ? {
+                items: [
+                  {
+                    sessionId: 'session-blank',
+                    updatedAt: 1,
+                    running: false,
+                    blank: true,
+                    workspaceId: 'workspace-1',
+                    cwd: 'C:\\workspace',
+                  },
+                ],
+              }
+            : { events: [], hasMore: false }
+      return Promise.resolve({ result: { ok: true, value } } as TResponse)
+    },
+    remoteRequest: <TResponse>() => Promise.resolve({ result: { ok: true, value: [] } } as TResponse),
+    openEventStream: async function* () {
+      /* fixture stream */
+    },
+    close: () => Promise.resolve(),
+  }
+}
+
+const createInput = {
+  workspaceId: 'workspace-1',
+  sessionId: 'session-blank',
+  reuseWorkspaceBlank: true as const,
+  configuration: {
+    preset: 'standard',
+    toolMode: 'native' as const,
+    permissionPreset: 'workspace-write',
+    planMode: false,
+    model: { providerId: '', modelId: '' },
+  },
+}
+
+describe('SessionRepository workspace blank reuse compatibility', () => {
+  it('keeps the rc.6 request shape unchanged when reuse is requested by a newer client', async () => {
+    const calls: { method: string; params: unknown }[] = []
+    await new Rc6SessionRepository(sessionCreateTransport(calls)).create(createInput)
+
+    expect(calls.find((call) => call.method === 'session.create')?.params).toEqual({
+      workspaceId: 'workspace-1',
+      agentPreset: 'standard',
+    })
+  })
+
+  it('sends the exact rc.1 adoption fields only when the version adapter enables them', async () => {
+    const calls: { method: string; params: unknown }[] = []
+    await new Rc6SessionRepository(sessionCreateTransport(calls), undefined, undefined, {
+      reuseWorkspaceBlank: true,
+    }).create(createInput)
+
+    expect(calls.find((call) => call.method === 'session.create')?.params).toEqual({
+      workspaceId: 'workspace-1',
+      sessionId: 'session-blank',
+      reuseWorkspaceBlank: true,
+    })
+  })
+})
+
 describe('Rc6SessionRepository session removal', () => {
   it('maps removal to the pinned rc.6 archive RPC', async () => {
     const requestImplementation = <TResponse>(

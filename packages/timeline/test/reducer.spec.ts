@@ -36,9 +36,21 @@ describe('reduceTimeline', () => {
 
     const error = reduceTimeline(initial, {
       sequence: 4,
-      event: { type: 'turn.ended', sessionId: 'session-1', turn: 8, reason: 'error' },
+      event: {
+        type: 'turn.ended',
+        sessionId: 'session-1',
+        turn: 8,
+        reason: 'error',
+        failure: { code: 'PROVIDER_UNAVAILABLE', message: 'The provider is unavailable.' },
+      },
     })
-    expect(error.nodes).toContainEqual(expect.objectContaining({ reason: 'error', turn: 8 }))
+    expect(error.nodes).toContainEqual(
+      expect.objectContaining({
+        reason: 'error',
+        turn: 8,
+        failure: { code: 'PROVIDER_UNAVAILABLE', message: 'The provider is unavailable.' },
+      }),
+    )
   })
 
   it('appends ordered message deltas to the stable message node', () => {

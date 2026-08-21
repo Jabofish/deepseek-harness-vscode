@@ -26,6 +26,7 @@ function connectedState(activeSession: boolean): AppState {
     connectedDshVersion: '0.1.0-rc.6',
     dshCompatibilityWarning: undefined,
     dshUpdate: undefined,
+    dshUpdateProgress: undefined,
     sessions: activeSession
       ? [
           {

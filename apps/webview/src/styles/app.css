@@ -4534,6 +4534,28 @@ summary.dsh-timeline__card-header {
   background: color-mix(in srgb, var(--dsh-danger) 8%, transparent);
 }
 
+.dsh-timeline__turn-terminal-message {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.dsh-timeline__turn-terminal-detail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin-top: 3px;
+  color: var(--dsh-foreground);
+  font-size: 0.78rem;
+  font-weight: 400;
+  line-height: 1.35;
+}
+
+.dsh-timeline__turn-terminal-detail code {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  color: inherit;
+}
+
 .dsh-context-meter {
   position: relative;
   display: inline-flex;
@@ -6374,6 +6396,27 @@ button.dsh-timeline__produced-chip:focus-visible {
   font-size: 0.74rem;
 }
 
+.dsh-settings__runtime-update-progress {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 5px;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid color-mix(in srgb, var(--dsh-accent) 45%, var(--dsh-control-border));
+  border-radius: var(--dsh-radius-sm);
+  color: var(--dsh-accent);
+  font-size: 0.74rem;
+}
+
+.dsh-settings__runtime-update-progress-bar {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  height: 5px;
+  accent-color: var(--dsh-accent);
+}
+
 .dsh-settings__runtime-update-controls {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
@@ -7821,6 +7864,21 @@ button.dsh-timeline__produced-chip:focus-visible {
   color: var(--dsh-muted);
   font-size: 0.68rem;
   overflow-wrap: anywhere;
+}
+
+.dsh-subagent-tree__metrics {
+  grid-column: 4;
+  grid-row: 1 / span 2;
+  min-width: 0;
+  max-width: 96px;
+  overflow: hidden;
+  color: var(--dsh-muted);
+  font-size: 0.65rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 16px;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .dsh-subagent-readonly {
@@ -9871,4 +9929,135 @@ button.dsh-timeline__produced-chip:focus-visible {
   min-width: 0;
   max-width: 100%;
   overflow-wrap: anywhere;
+}
+
+/* rc.1 question parity: the mirror owns growth and the textarea owns the
+   scrollport after six 24px text lines. This is intentionally appended so
+   older question-card geometry remains unchanged outside the new field. */
+.dsh-question__field {
+  min-width: 0;
+  display: grid;
+  --dsh-question-field-padding: 8px;
+}
+
+.dsh-question__field > * {
+  grid-area: 1 / 1;
+  min-width: 0;
+  padding: var(--dsh-question-field-padding);
+  font: inherit;
+  line-height: 24px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.dsh-question__field-mirror {
+  box-sizing: content-box;
+  max-height: 144px;
+  overflow: hidden;
+  visibility: hidden;
+}
+
+.dsh-question__field .dsh-question__textarea {
+  height: 100%;
+  min-height: 24px;
+  max-height: 144px;
+  resize: none;
+  overflow-y: auto;
+}
+
+/* rc.1 markdown parity: wide tables reveal their horizontal scroll affordance
+   on hover/focus while ordinary tables fill the available message width. */
+.dsh-markdown__copy-region--table-wide {
+  overflow-x: hidden;
+  padding-bottom: 8px;
+}
+
+.dsh-markdown__copy-region--table-wide:hover,
+.dsh-markdown__copy-region--table-wide:focus-visible {
+  overflow-x: auto;
+  padding-bottom: 0;
+}
+
+.dsh-markdown__copy-region--table-wide:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1px var(--vscode-focusBorder, var(--dsh-accent));
+}
+
+.dsh-markdown__copy-region--table-wide table {
+  width: max-content;
+  max-width: max-content;
+  overflow: visible;
+}
+
+.dsh-markdown__copy-region--table-fill table {
+  width: 100%;
+  max-width: none;
+}
+
+/* rc.1 subagent parity: keep the parent breadcrumb compact in the header;
+   known long titles must shrink and ellipsize instead of pushing actions out
+   of the Webview. */
+.dsh-session-lineage {
+  display: inline-flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dsh-muted);
+  font-size: 0.72rem;
+  line-height: 18px;
+}
+
+.dsh-session-lineage__segment {
+  display: inline-flex;
+  flex: 0 1 auto;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.dsh-session-lineage__separator {
+  flex: 0 0 auto;
+  margin-inline: 2px;
+  color: var(--dsh-muted);
+}
+
+.dsh-session-lineage__parent,
+.dsh-session-lineage__current {
+  min-width: 0;
+  max-width: min(244px, 100%);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-session-lineage__parent {
+  padding: 3px 4px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.dsh-session-lineage__parent:hover,
+.dsh-session-lineage__parent:focus-visible {
+  color: var(--vscode-foreground, inherit);
+  background: var(--vscode-list-hoverBackground, rgba(128, 128, 128, 0.1));
+}
+
+.dsh-session-lineage__current {
+  padding: 3px 4px;
+  color: var(--vscode-foreground, inherit);
+  font-weight: 500;
+}
+
+/* Metrics occupy a bounded fourth column; without this override the grid
+   would place them in an implicit column and long values could widen the
+   menu beyond the viewport. */
+.dsh-subagent-tree__row {
+  grid-template-columns: 18px 8px minmax(0, 1fr) minmax(0, 96px);
 }

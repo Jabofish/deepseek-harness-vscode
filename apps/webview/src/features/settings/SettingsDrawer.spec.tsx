@@ -469,7 +469,7 @@ describe('SettingsDrawer', () => {
         'llm-pi-ai': {
           providers: {
             openai: {
-              models: [{ id: 'local-chat', name: 'Local Chat' }],
+              models: [{ id: 'local-chat', name: 'Local Chat', inputModalities: ['text', 'image'] }],
             },
           },
         },
@@ -506,7 +506,7 @@ describe('SettingsDrawer', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
     await waitFor(() =>
       expect(onUpdateDshSetting).toHaveBeenCalledWith('llm-pi-ai.providers.openai.models', [
-        { id: 'local-chat', name: 'Local Chat' },
+        { id: 'local-chat', name: 'Local Chat', inputModalities: ['text', 'image'] },
         { id: 'remote-chat', name: 'Remote Chat', contextWindow: 64_000 },
       ]),
     )

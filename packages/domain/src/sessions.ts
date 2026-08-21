@@ -79,6 +79,10 @@ export interface SubagentHistoryPage {
 
 export interface SessionCreateInput {
   readonly workspaceId: string
+  /** Existing blank session selected by the official workspace runtime. */
+  readonly sessionId?: string
+  /** Ask a capable Host to adopt the selected blank workspace session. */
+  readonly reuseWorkspaceBlank?: true
   readonly title?: string
   readonly configuration: AgentConfiguration
 }

@@ -37,7 +37,7 @@ The General settings page checks upstream npm versions at startup. Available rel
 
 - Visual Studio Code `1.125+`
 - Windows, Linux, or macOS local Extension Host
-- DeepSeek Harness `0.1.0-rc.6` through `0.1.0-rc.8` Host/Web API; unknown non-empty version labels are attempted in compatibility mode
+- DeepSeek Harness `0.1.0-rc.6` through `0.1.1-rc.1` Host/Web API; unknown non-empty version labels are attempted in compatibility mode
 - Node.js `22.19+` when installing DSH from the extension
 
 模型、工具和高级 Agent 能力由当前 DSH 实例决定；未提供的能力会安全降级并明确提示。

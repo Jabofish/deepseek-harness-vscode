@@ -64,6 +64,30 @@ describe('MarkdownContent', () => {
     await waitFor(() => expect(writeText).toHaveBeenCalledWith('Field\tValue\none\ttwo'))
   })
 
+  it('uses a focusable reveal-on-hover scroll region for wide tables', async () => {
+    const { container } = render(
+      <MarkdownContent
+        markdown={[
+          '| A | B | C | D |',
+          '| --- | --- | --- | --- |',
+          '| 1 | 2 | 3 | 4 |',
+          '',
+          '> | A | B | C | D |',
+          '> | --- | --- | --- | --- |',
+          '> | 1 | 2 | 3 | 4 |',
+        ].join('\n')}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(container.querySelectorAll('.dsh-markdown__copy-region--table-wide')).toHaveLength(1)
+      expect(container.querySelectorAll('.dsh-markdown__copy-region--table-fill')).toHaveLength(1)
+    })
+    const wide = container.querySelector<HTMLElement>('.dsh-markdown__copy-region--table-wide')
+    expect(wide).not.toBeNull()
+    expect(wide?.getAttribute('tabindex')).toBe('0')
+  })
+
   it('turns unique produced-file mentions into safe open actions', async () => {
     const onOpenLink = vi.fn()
     render(

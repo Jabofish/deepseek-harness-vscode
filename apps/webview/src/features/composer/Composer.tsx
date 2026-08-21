@@ -5,6 +5,7 @@ import {
   useState,
   type ClipboardEvent,
   type DragEvent,
+  type FormEvent,
   type KeyboardEvent,
   type ReactElement,
 } from 'react'
@@ -329,8 +330,7 @@ export function Composer(props: ComposerProps): ReactElement {
   }
 
   const deleteEmbeddedReference = (event: KeyboardEvent<HTMLTextAreaElement>): boolean => {
-    if (!(event.metaKey || event.ctrlKey) || (event.key !== 'Backspace' && event.key !== 'Delete'))
-      return false
+    if (event.key !== 'Backspace' && event.key !== 'Delete') return false
     const textarea = textareaRef.current
     if (textarea === null || textarea.selectionStart !== textarea.selectionEnd) return false
     const range = embeddedReferenceRange(props.draft, textarea.selectionStart, event.key === 'Backspace')
@@ -339,6 +339,19 @@ export function Composer(props: ComposerProps): ReactElement {
     props.onDraftChange(props.draft.slice(0, range.start) + props.draft.slice(range.end))
     pendingCursorRef.current = range.start
     return true
+  }
+
+  const deleteEmbeddedReferenceBeforeInput = (event: FormEvent<HTMLTextAreaElement>): void => {
+    const inputType = (event.nativeEvent as InputEvent).inputType
+    const backwards = inputType === 'deleteContentBackward'
+    if (!backwards && inputType !== 'deleteContentForward') return
+    const textarea = textareaRef.current
+    if (textarea === null || textarea.selectionStart !== textarea.selectionEnd) return
+    const range = embeddedReferenceRange(props.draft, textarea.selectionStart, backwards)
+    if (range === undefined) return
+    event.preventDefault()
+    props.onDraftChange(props.draft.slice(0, range.start) + props.draft.slice(range.end))
+    pendingCursorRef.current = range.start
   }
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
@@ -687,6 +700,7 @@ export function Composer(props: ComposerProps): ReactElement {
             props.onReferenceQueryChange?.(token?.query, token?.quoted ?? false)
           }}
           onKeyDown={onKeyDown}
+          onBeforeInput={deleteEmbeddedReferenceBeforeInput}
           onPaste={onPaste}
           onCompositionStart={() => {
             composing.current = true

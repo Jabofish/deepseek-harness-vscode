@@ -50,7 +50,7 @@ export class Rc6VersionAdapter implements DshVersionAdapter {
   public readonly protocolVersion: string = 'rc6'
   protected readonly requiresHome: boolean = false
 
-  public constructor(private readonly options: Rc6AdapterOptions) {}
+  public constructor(protected readonly options: Rc6AdapterOptions) {}
 
   public async probe(
     candidate: BackendCandidate,
@@ -128,7 +128,7 @@ export class Rc6VersionAdapter implements DshVersionAdapter {
     const transport = this.createTransport(backend.endpoint)
     const interactions = new Rc6InteractionRepository(transport)
     const workspaces = new Rc6WorkspaceRepository(transport)
-    const sessions = new Rc6SessionRepository(transport, workspaces, this.options.samePath)
+    const sessions = this.createSessionRepository(transport, workspaces)
     const goals = new Rc6GoalRepository(transport)
     const jobs = new Rc6JobRepository(transport)
     const events = new DshStreamController(
@@ -178,5 +178,12 @@ export class Rc6VersionAdapter implements DshVersionAdapter {
   /** Version adapters may select the exact Remote argument shape they serve. */
   protected createCommandRepository(transport: DshTransport): Rc6CommandRepository {
     return new Rc6CommandRepository(transport)
+  }
+
+  protected createSessionRepository(
+    transport: DshTransport,
+    workspaces: Rc6WorkspaceRepository,
+  ): Rc6SessionRepository {
+    return new Rc6SessionRepository(transport, workspaces, this.options.samePath)
   }
 }

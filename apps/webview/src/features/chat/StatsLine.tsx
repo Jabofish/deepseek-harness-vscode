@@ -1,5 +1,6 @@
 import { useMemo, type ReactElement } from 'react'
 import type { SessionStatsProjection, TokenUsage } from '@dsh-vscode/domain'
+import { billedInputTokens, cacheHitPercent } from '@dsh-vscode/timeline'
 import type { TimelineNode } from '@dsh-vscode/timeline'
 import { useI18n } from '../../i18n.js'
 
@@ -27,7 +28,10 @@ export function StatsLine(props: StatsLineProps): ReactElement {
   )
   if (stats.turns === 0 && props.usage === undefined)
     return <div className="dsh-stats-line" aria-hidden="true" />
-  const cachePercent = props.usage === undefined ? 0 : Math.round(props.cacheHit * 100)
+  const cachePercent =
+    props.usage === undefined
+      ? '0'
+      : (cacheHitPercent(props.usage) ?? String(Math.round(props.cacheHit * 100)))
   const tokenTotal =
     props.usage === undefined
       ? undefined
@@ -62,9 +66,7 @@ export function StatsLine(props: StatsLineProps): ReactElement {
       {props.usage === undefined ? null : (
         <>
           <span aria-hidden="true">·</span>
-          <span title={t('stats.input')}>
-            ↑{formatTokens(props.usage.inputTokens + (props.usage.cacheReadTokens ?? 0))}
-          </span>
+          <span title={t('stats.input')}>↑{formatTokens(billedInputTokens(props.usage))}</span>
           <span aria-hidden="true">·</span>
           <span title={t('stats.output')}>↓{formatTokens(props.usage.outputTokens)}</span>
           <span aria-hidden="true">·</span>

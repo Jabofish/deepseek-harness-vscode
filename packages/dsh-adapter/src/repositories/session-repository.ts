@@ -34,7 +34,12 @@ export class Rc6SessionRepository implements SessionRepository {
     private readonly transport: DshTransport,
     private readonly workspaceRepository?: Rc6WorkspaceRepository,
     private readonly pathComparator: ((left: string, right: string) => boolean) | undefined = undefined,
-  ) {}
+    options: SessionRepositoryOptions = {},
+  ) {
+    this.supportsWorkspaceBlankReuse = options.reuseWorkspaceBlank === true
+  }
+
+  private readonly supportsWorkspaceBlankReuse: boolean
 
   public remember(event: BackendEvent): void {
     if (event.type !== 'queue.updated') {
@@ -227,14 +232,24 @@ export class Rc6SessionRepository implements SessionRepository {
     // value must therefore stay omitted; sending `agentPreset: ''` asks the
     // host to resolve an invalid preset id and is rejected by deployments that
     // intentionally compose no preset roster.
-    const agentPreset =
-      typeof input.configuration.preset === 'string' ? input.configuration.preset.trim() : ''
+    const reusableSessionId =
+      this.supportsWorkspaceBlankReuse && typeof input.sessionId === 'string' && input.sessionId.trim() !== ''
+        ? input.sessionId
+        : undefined
+    const reusingWorkspaceBlank = reusableSessionId !== undefined && input.reuseWorkspaceBlank === true
+    const agentPreset = reusingWorkspaceBlank
+      ? ''
+      : typeof input.configuration.preset === 'string'
+        ? input.configuration.preset.trim()
+        : ''
     const value = requiredRecord(
       await callRpc<unknown>(
         this.transport,
         'session.create',
         {
           ...(input.workspaceId.length === 0 ? {} : { workspaceId: input.workspaceId }),
+          ...(reusableSessionId === undefined ? {} : { sessionId: reusableSessionId }),
+          ...(reusingWorkspaceBlank ? { reuseWorkspaceBlank: true } : {}),
           ...(agentPreset === '' ? {} : { agentPreset }),
         },
         signal,
@@ -714,6 +729,10 @@ export class Rc6SessionRepository implements SessionRepository {
       )
     })
   }
+}
+
+interface SessionRepositoryOptions {
+  readonly reuseWorkspaceBlank?: boolean
 }
 
 function samePath(

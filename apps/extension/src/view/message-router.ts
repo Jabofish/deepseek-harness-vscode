@@ -142,11 +142,20 @@ function publicErrorMessage(
         return 'npm was not found in the Extension Host environment. Copy the install command or open a terminal.'
       if (reason === 'invalid-version') return 'Select an exact DSH version from the upstream version list.'
       if (reason === 'metadata-unavailable')
-        return 'The selected DSH version could not be verified against the upstream registry.'
+        return withRuntimeUpdateDetail(
+          'The selected DSH version could not be verified against the upstream registry.',
+          context.detail,
+        )
       if (reason === 'verify-failed')
-        return 'DSH installation finished, but the selected global version could not be verified.'
+        return withRuntimeUpdateDetail(
+          'DSH installation finished, but the selected global version could not be verified.',
+          context.detail,
+        )
       if (reason === 'install-failed')
-        return 'The selected DSH version could not be installed. Check the npm output and try again.'
+        return withRuntimeUpdateDetail(
+          'The selected DSH version could not be installed. Check the npm output and try again.',
+          context.detail,
+        )
     }
   }
   const fallback: Record<string, string> = {
@@ -220,9 +229,17 @@ function publicErrorMessage(
 function safeCommandDiagnostic(message: string): string | undefined {
   const compact = message.replace(/\s+/gu, ' ').trim()
   if (compact === '') return undefined
-  const redacted = compact.replace(
-    /\b(?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|authorization|password|secret|private[_ -]?key|token|prompt|body|response)\b\s*[:=]\s*[^\s,;]+/giu,
-    (match) => match.replace(/[:=].*$/u, ': [redacted]'),
-  )
+  const redacted = compact
+    .replace(/(https?:\/\/)([^/\s:@]+(?::[^/\s@]*)?@)/giu, '$1[redacted]@')
+    .replace(
+      /\b(?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|authorization|password|secret|private[_ -]?key|token|prompt|body|response)\b\s*[:=]\s*[^\s,;]+/giu,
+      (match) => match.replace(/[:=].*$/u, ': [redacted]'),
+    )
   return redacted.slice(0, 320)
+}
+
+function withRuntimeUpdateDetail(base: string, value: string | number | boolean | undefined): string {
+  if (typeof value !== 'string') return base
+  const detail = safeCommandDiagnostic(value)
+  return detail === undefined ? base : `${base} Detail: ${detail}`
 }

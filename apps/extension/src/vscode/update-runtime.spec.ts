@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { DshRuntime } from '@dsh-vscode/domain'
+import type { DshRuntime, DshRuntimeUpdateProgress } from '@dsh-vscode/domain'
 
 import {
   compareVersions,
@@ -24,11 +24,16 @@ function runtime(version = '0.1.0-rc.6'): DshRuntime {
   }
 }
 
-function updater(execute: ExecuteRuntimeCommand, current = runtime()): DshRuntimeUpdater {
+function updater(
+  execute: ExecuteRuntimeCommand,
+  current = runtime(),
+  onProgress?: (progress: DshRuntimeUpdateProgress) => void,
+): DshRuntimeUpdater {
   return new DshRuntimeUpdater({
     npmExecutable: () => 'npm.cmd',
     locateRuntime: () => Promise.resolve(current),
     execute,
+    ...(onProgress === undefined ? {} : { onProgress }),
     environment: () => ({ PATH: 'test-path' }),
     now: () => new Date('2026-08-21T00:00:00.000Z'),
     nodeSupported: () => true,
@@ -117,6 +122,60 @@ describe('DshRuntimeUpdater', () => {
     expect(calls).toContainEqual(['install', '--global', '@deepseek-ai/dsh@0.1.0-rc.8'])
   })
 
+  it('emits visible lifecycle phases while a real npm install is pending', async () => {
+    let installed = '0.1.0-rc.6'
+    const phases: string[] = []
+    const execute: ExecuteRuntimeCommand = async (_executable, args) => {
+      await Promise.resolve()
+      if (args[0] === 'view') return { stdout: metadata, stderr: '' }
+      if (args[0] === 'list')
+        return {
+          stdout: JSON.stringify({ dependencies: { '@deepseek-ai/dsh': { version: installed } } }),
+          stderr: '',
+        }
+      if (args[0] === 'install') {
+        installed = '0.1.0-rc.8'
+        return { stdout: 'added packages', stderr: '' }
+      }
+      throw new Error(`unexpected command: ${args.join(' ')}`)
+    }
+
+    await updater(execute, runtime(), (progress) => phases.push(progress.phase)).installVersion('0.1.0-rc.8')
+
+    expect(phases).toEqual(expect.arrayContaining(['checking', 'downloading', 'verifying', 'completed']))
+  })
+
+  it('preserves a bounded npm error detail without exposing a token', async () => {
+    const execute: ExecuteRuntimeCommand = async (_executable, args) => {
+      await Promise.resolve()
+      if (args[0] === 'view') return { stdout: metadata, stderr: '' }
+      if (args[0] === 'list')
+        return {
+          stdout: JSON.stringify({ dependencies: { '@deepseek-ai/dsh': { version: '0.1.0-rc.6' } } }),
+          stderr: '',
+        }
+      const failure = Object.assign(new Error('npm exited with code 1'), {
+        stderr: 'GET https://user:password@example.invalid/package failed token=secret-value',
+      })
+      throw failure
+    }
+
+    const failure = await updater(execute)
+      .installVersion('0.1.0-rc.8')
+      .then(
+        () => undefined,
+        (error: unknown) => error,
+      )
+    expect(failure).toMatchObject({
+      context: { operation: 'runtime.update', reason: 'install-failed' },
+    })
+    const detail =
+      typeof failure === 'object' && failure !== null && 'context' in failure
+        ? (failure as { readonly context?: { readonly detail?: unknown } }).context?.detail
+        : undefined
+    expect(detail).toEqual(expect.stringContaining('[redacted]'))
+  })
+
   it('returns a bounded unavailable snapshot for malformed registry data', async () => {
     const execute: ExecuteRuntimeCommand = async () => {
       await Promise.resolve()
@@ -146,6 +205,7 @@ describe('DshRuntimeUpdater', () => {
   })
 
   it('rejects a requested version that was not returned by the registry', async () => {
+    const phases: string[] = []
     const execute: ExecuteRuntimeCommand = async (_executable, args) => {
       await Promise.resolve()
       if (args[0] === 'view') return { stdout: metadata, stderr: '' }
@@ -153,9 +213,12 @@ describe('DshRuntimeUpdater', () => {
       throw new Error('install must not run')
     }
 
-    await expect(updater(execute).installVersion('0.1.0-rc.999')).rejects.toMatchObject({
+    await expect(
+      updater(execute, runtime(), (progress) => phases.push(progress.phase)).installVersion('0.1.0-rc.999'),
+    ).rejects.toMatchObject({
       code: 'CAPABILITY_UNAVAILABLE',
       context: { operation: 'runtime.update', reason: 'metadata-unavailable' },
     })
+    expect(phases).toContain('failed')
   })
 })

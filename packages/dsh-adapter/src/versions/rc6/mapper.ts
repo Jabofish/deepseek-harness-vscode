@@ -24,6 +24,7 @@ import type {
   ToolPresentationSearchMatch,
   ToolPresentationSource,
   ToolPresentationView,
+  TurnEndFailure,
   TurnEndReasonKind,
   TodoView,
   UserQuestion,
@@ -260,11 +261,13 @@ export const rc6Mapper = {
             payload: safePayload(value),
           }
         if (name === 'turn/start') return { type: 'turn.started', sessionId, turn }
+        const failure = turnEndFailure(data.reason)
         return {
           type: 'turn.ended',
           sessionId,
           turn,
           reason: turnEndReason(data.reason),
+          ...(failure === undefined ? {} : { failure }),
         }
       }
       case 'step/start':
@@ -1311,6 +1314,37 @@ function turnEndReason(value: unknown): TurnEndReasonKind {
     kind === 'interrupted'
     ? kind
     : 'unknown'
+}
+
+/**
+ * Preserve the rc.1 structured turn failure without forwarding provider-owned
+ * metadata. Older hosts simply omit this field and keep the generic terminal
+ * reason projection.
+ */
+function turnEndFailure(value: unknown): TurnEndFailure | undefined {
+  const reason = objectOrUndefined(value)
+  if (reason?.kind !== 'error') return undefined
+  const failure = objectOrUndefined(reason.error)
+  if (failure === undefined) return undefined
+  const message = safeFailureText(failure.message)
+  if (message === undefined) return undefined
+  const code = safeFailureCode(failure.code)
+  return { message, ...(code === undefined ? {} : { code }) }
+}
+
+function safeFailureText(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const compact = value.replace(/\s+/gu, ' ').trim()
+  if (compact === '') return undefined
+  const redacted = compact.replace(
+    /\b(?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|authorization|password|secret|private[_ -]?key|token|prompt|body|response)\b\s*[:=]\s*[^\s,;]+/giu,
+    (match) => match.replace(/[:=].*$/u, ': [redacted]'),
+  )
+  return redacted.slice(0, 320)
+}
+
+function safeFailureCode(value: unknown): string | undefined {
+  return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$/u.test(value) ? value : undefined
 }
 
 function goal(value: unknown): GoalView {

@@ -14,6 +14,7 @@ type RuntimeEnvironment = Readonly<Record<string, string | undefined>>
 export function runtimePathEntries(
   os: OperatingSystem,
   environment: RuntimeEnvironment = process.env,
+  fallbackHome?: string,
 ): readonly string[] {
   const pathApi = os === 'windows' ? path.win32 : path.posix
   const delimiter = os === 'windows' ? ';' : ':'
@@ -29,7 +30,6 @@ export function runtimePathEntries(
   }
   for (const entry of (environment.PATH ?? '').split(delimiter)) add(entry)
 
-  const home = environment.HOME ?? environment.USERPROFILE
   if (os === 'windows') {
     // A GUI-launched VS Code often does not inherit the terminal's npm-global
     // PATH entry. npm's default Windows prefix is `%APPDATA%\\npm`; include
@@ -37,7 +37,12 @@ export function runtimePathEntries(
     // shell lookup or a filesystem scan.
     add(environment.NPM_CONFIG_PREFIX ?? environment.npm_config_prefix)
     if (environment.APPDATA !== undefined) add(pathApi.join(environment.APPDATA, 'npm'))
-    if (home !== undefined) add(pathApi.join(home, 'AppData', 'Roaming', 'npm'))
+    // HOME can be overridden by a shell or an IDE launcher. Keep USERPROFILE
+    // as an independent candidate; using `HOME ?? USERPROFILE` made discovery
+    // depend on which process launched VS Code.
+    for (const home of [environment.USERPROFILE, environment.HOME, fallbackHome]) {
+      if (home !== undefined) add(pathApi.join(home, 'AppData', 'Roaming', 'npm'))
+    }
     if (environment.ProgramFiles !== undefined) add(pathApi.join(environment.ProgramFiles, 'nodejs'))
     const programFilesX86 = environment['ProgramFiles(x86)']
     if (programFilesX86 !== undefined) add(pathApi.join(programFilesX86, 'nodejs'))
@@ -47,6 +52,7 @@ export function runtimePathEntries(
     return entries
   }
 
+  const home = environment.HOME ?? environment.USERPROFILE
   add(environment.NVM_BIN)
   add(environment.FNM_MULTISHELL_PATH)
   if (environment.VOLTA_HOME !== undefined) add(pathApi.join(environment.VOLTA_HOME, 'bin'))

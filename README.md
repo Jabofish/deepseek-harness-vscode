@@ -41,9 +41,9 @@ Connections, file access, credentials, and process ownership stay in the VS Code
 
 ## 兼容性 · Compatibility
 
-当前适配 DeepSeek Harness `0.1.0-rc.6`、`rc.7` 和 `rc.8` Host/Web API；任何能报告非空版本标签的未知版本也会尝试以兼容模式连接，并在界面显示警告。支持 Windows、Linux 和 macOS；从扩展内安装 DSH 时需要 Node.js `22.19+`。模型、工具和高级 Agent 能力以当前 DSH 实例为准，未提供的能力会明确提示。
+当前适配 DeepSeek Harness `0.1.0-rc.6` 至 `0.1.1-rc.1` Host/Web API；任何能报告非空版本标签的未知版本也会尝试以兼容模式连接，并在界面显示警告。支持 Windows、Linux 和 macOS；从扩展内安装 DSH 时需要 Node.js `22.19+`。模型、工具和高级 Agent 能力以当前 DSH 实例为准，未提供的能力会明确提示。
 
-Currently targets the DeepSeek Harness `0.1.0-rc.6`, `rc.7`, and `rc.8` Host/Web API on Windows, Linux, and macOS. Any unknown version that reports a non-empty label is also attempted in compatibility mode and surfaced with a warning. Installing DSH from the extension requires Node.js `22.19+`. Available models, tools, and advanced Agent capabilities depend on the connected DSH instance.
+Currently targets the DeepSeek Harness `0.1.0-rc.6` through `0.1.1-rc.1` Host/Web API on Windows, Linux, and macOS. Any unknown version that reports a non-empty label is also attempted in compatibility mode and surfaced with a warning. Installing DSH from the extension requires Node.js `22.19+`. Available models, tools, and advanced Agent capabilities depend on the connected DSH instance.
 
 ## 开发 · Development
 

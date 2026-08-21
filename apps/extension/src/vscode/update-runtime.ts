@@ -1,4 +1,9 @@
-import type { DshRuntime, DshUpdateSnapshot, DshUpdateFailure } from '@dsh-vscode/domain'
+import type {
+  DshRuntime,
+  DshRuntimeUpdateProgress,
+  DshUpdateFailure,
+  DshUpdateSnapshot,
+} from '@dsh-vscode/domain'
 import { AppError } from '@dsh-vscode/domain'
 import { DSH_PACKAGE_NAME } from '@dsh-vscode/dsh-adapter'
 
@@ -7,6 +12,7 @@ import { isSupportedNodeVersion } from './install-runtime.js'
 const UPDATE_CHECK_TIMEOUT_MS = 30_000
 const UPDATE_INSTALL_TIMEOUT_MS = 120_000
 const UPDATE_MAX_BUFFER = 1024 * 1024
+const ANSI_ESCAPE_PATTERN = new RegExp(`${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`, 'gu')
 const VERSION_PATTERN =
   /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u
 
@@ -32,6 +38,8 @@ export interface DshRuntimeUpdaterDependencies {
   readonly npmExecutable: () => string
   readonly locateRuntime: (signal?: AbortSignal) => Promise<DshRuntime | undefined>
   readonly execute: ExecuteRuntimeCommand
+  /** Safe, phase-only progress; never include npm output, paths, or secrets. */
+  readonly onProgress?: (progress: DshRuntimeUpdateProgress) => void
   readonly environment?: () => NodeJS.ProcessEnv
   readonly now?: () => Date
   readonly nodeSupported?: () => boolean
@@ -82,14 +90,26 @@ export class DshRuntimeUpdater {
         false,
       )
 
-    const checked = await this.checkForUpdates(false, signal)
-    if (checked.status !== 'ready' || !checked.availableVersions.includes(requested))
+    this.emitProgress({ phase: 'checking', version: requested })
+    let checked: DshUpdateSnapshot
+    try {
+      checked = await this.checkForUpdates(false, signal)
+    } catch (error) {
+      this.emitProgress({ phase: 'failed', version: requested })
+      throw error
+    }
+    if (checked.status !== 'ready' || !checked.availableVersions.includes(requested)) {
+      this.emitProgress({ phase: 'failed', version: requested })
       throw updateError(
         'metadata-unavailable',
         'The selected DSH version could not be verified against the upstream registry.',
         true,
+        undefined,
+        checked.failure === undefined ? undefined : `Registry check failed: ${checked.failure}.`,
       )
+    }
 
+    this.emitProgress({ phase: 'downloading', version: requested })
     try {
       await this.dependencies.execute(
         this.dependencies.npmExecutable(),
@@ -97,6 +117,7 @@ export class DshRuntimeUpdater {
         this.commandOptions(UPDATE_INSTALL_TIMEOUT_MS, signal),
       )
     } catch (error) {
+      this.emitProgress({ phase: 'failed', version: requested })
       if (isCancellation(error, signal)) throw cancelledError(error)
       if (isMissingExecutable(error))
         throw updateError(
@@ -110,16 +131,20 @@ export class DshRuntimeUpdater {
         'The selected DSH version could not be installed. Check the npm output and try again.',
         true,
         error,
+        runtimeCommandFailureDetail(error),
       )
     }
 
+    this.emitProgress({ phase: 'verifying', version: requested })
     const globalVersion = await this.readGlobalVersion(signal)
-    if (globalVersion !== requested)
+    if (globalVersion !== requested) {
+      this.emitProgress({ phase: 'failed', version: requested })
       throw updateError(
         'verify-failed',
         'DSH installation finished, but the selected global version could not be verified.',
         true,
       )
+    }
     let runtime: DshRuntime | undefined
     try {
       runtime = await this.dependencies.locateRuntime(signal)
@@ -136,10 +161,12 @@ export class DshRuntimeUpdater {
       ...snapshot,
       ...(runtime !== undefined && runtime.version !== requested ? { restartRequired: true } : {}),
     }
+    this.emitProgress({ phase: 'completed', version: requested })
     return this.cached
   }
 
   private async checkOnce(signal?: AbortSignal): Promise<DshUpdateSnapshot> {
+    this.emitProgress({ phase: 'checking' })
     const checkedAt = this.timestamp()
     const [runtimeResult, metadataResult] = await Promise.allSettled([
       this.dependencies.locateRuntime(signal),
@@ -159,6 +186,7 @@ export class DshRuntimeUpdater {
         failure: failureFor(metadataResult.reason),
       }
       this.cached = snapshot
+      this.emitProgress({ phase: 'failed' })
       return snapshot
     }
 
@@ -166,7 +194,16 @@ export class DshRuntimeUpdater {
     const globalVersion = await this.readGlobalVersion(signal)
     const snapshot = this.snapshot('ready', runtime, globalVersion, metadataResult.value, checkedAt)
     this.cached = snapshot
+    this.emitProgress({ phase: 'completed' })
     return snapshot
+  }
+
+  private emitProgress(progress: DshRuntimeUpdateProgress): void {
+    try {
+      this.dependencies.onProgress?.(progress)
+    } catch {
+      // Progress is advisory. A disconnected Webview must never fail npm work.
+    }
   }
 
   private async readMetadata(signal?: AbortSignal): Promise<RegistryMetadata> {
@@ -398,6 +435,7 @@ function updateError(
   message: string,
   retryable: boolean,
   cause?: unknown,
+  detail?: string,
 ): AppError {
   return new AppError({
     code:
@@ -411,6 +449,29 @@ function updateError(
     message,
     retryable,
     ...(cause === undefined ? {} : { cause }),
-    context: { operation: 'runtime.update', reason },
+    context: {
+      operation: 'runtime.update',
+      reason,
+      ...(detail === undefined ? {} : { detail }),
+    },
   })
+}
+
+/** Keep npm failure output useful without forwarding credentials or a log dump. */
+function runtimeCommandFailureDetail(error: unknown): string | undefined {
+  const record = asRecord(error)
+  const candidates = [record?.stderr, record?.stdout, error instanceof Error ? error.message : undefined]
+  for (const candidate of candidates) {
+    if (typeof candidate !== 'string') continue
+    const compact = candidate.replace(ANSI_ESCAPE_PATTERN, '').replace(/\s+/gu, ' ').trim()
+    if (compact === '') continue
+    const redacted = compact
+      .replace(/(https?:\/\/)([^/\s:@]+(?::[^/\s@]*)?@)/giu, '$1[redacted]@')
+      .replace(
+        /\b(?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|authorization|password|secret|private[_ -]?key|token|prompt|body|response)\b\s*[:=]\s*[^\s,;]+/giu,
+        (match) => match.replace(/[:=].*$/u, ': [redacted]'),
+      )
+    return redacted.slice(0, 480)
+  }
+  return undefined
 }

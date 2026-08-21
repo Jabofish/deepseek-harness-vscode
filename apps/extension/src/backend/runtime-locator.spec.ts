@@ -36,8 +36,8 @@ function locator(version: string): DshRuntimeLocator {
 }
 
 describe('DshRuntimeLocator compatibility policy', () => {
-  it('keeps rc.6, rc.7, and rc.8 as known launchable runtimes', async () => {
-    for (const version of ['0.1.0-rc.6', '0.1.0-rc.7', '0.1.0-rc.8']) {
+  it('keeps rc.6 through rc.1 as known launchable runtimes', async () => {
+    for (const version of ['0.1.0-rc.6', '0.1.0-rc.7', '0.1.0-rc.8', '0.1.1-rc.1']) {
       await expect(locator(version).locate()).resolves.toMatchObject({
         version,
         supported: true,
@@ -100,6 +100,27 @@ describe('DshRuntimeLocator compatibility policy', () => {
     })
 
     await expect(runtime.locate()).resolves.toBeUndefined()
+    expect(runtime.searchedLocations()).toEqual([existing])
+  })
+
+  it('finds the npm-global shim from npm prefix when the Extension Host PATH omits it', async () => {
+    const npmPrefix = testPlatform.existingDirectory
+    const existing = testPlatform.pathApi.join(npmPrefix, testPlatform.executableName)
+    const runtime = new DshRuntimeLocator({
+      os: testPlatform.os,
+      configuredPath: () => undefined,
+      pathEntries: () => ['C:\\Windows\\System32'],
+      npmGlobalPrefix: () => Promise.resolve(npmPrefix),
+      fileExists: (candidate) => Promise.resolve(candidate === existing),
+      executeVersion: () => Promise.resolve('0.1.1-rc.1'),
+    })
+
+    await expect(runtime.locate()).resolves.toMatchObject({
+      executable: existing,
+      version: '0.1.1-rc.1',
+      source: 'npm-global',
+      supported: true,
+    })
     expect(runtime.searchedLocations()).toEqual([existing])
   })
 })

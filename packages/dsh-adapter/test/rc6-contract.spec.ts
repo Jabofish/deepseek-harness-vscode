@@ -149,6 +149,30 @@ describe('DeepSeek Harness 0.1.0-rc.6 contract', () => {
       }),
     ).toEqual({ type: 'turn.ended', sessionId: 's1', turn: 1, reason: 'unknown' })
     expect(
+      rc6Mapper.event('turn/end', {
+        sessionId: 's1',
+        data: {
+          turn: 2,
+          reason: {
+            kind: 'error',
+            error: { code: 'PROVIDER_UNAVAILABLE', message: 'apiKey=do-not-leak provider unavailable' },
+          },
+        },
+      }),
+    ).toEqual({
+      type: 'turn.ended',
+      sessionId: 's1',
+      turn: 2,
+      reason: 'error',
+      failure: { code: 'PROVIDER_UNAVAILABLE', message: 'apiKey: [redacted] provider unavailable' },
+    })
+    expect(
+      rc6Mapper.event('turn/end', {
+        sessionId: 's1',
+        data: { turn: 3, reason: { kind: 'error', error: { code: 'BAD CODE', message: '' } } },
+      }),
+    ).toEqual({ type: 'turn.ended', sessionId: 's1', turn: 3, reason: 'error' })
+    expect(
       rc6Mapper.event('step/start', {
         sessionId: 's1',
         time: 1_000,

@@ -167,6 +167,29 @@ describe('Timeline', () => {
     expect(screen.getByText('Ran for 3m 08s')).toBeDefined()
   })
 
+  it('renders the structured terminal failure beside the generic turn label', () => {
+    render(
+      <Timeline
+        sessionId="session-1"
+        nodes={[
+          {
+            kind: 'turn-terminal',
+            id: 'turn-terminal:1',
+            turn: 1,
+            sequence: 3,
+            reason: 'error',
+            failure: { code: 'PROVIDER_UNAVAILABLE', message: 'The provider is unavailable.' },
+          },
+        ]}
+        streaming={false}
+      />,
+    )
+
+    expect(screen.getByText('Turn ended with an error')).toBeDefined()
+    expect(screen.getByText('PROVIDER_UNAVAILABLE')).toBeDefined()
+    expect(screen.getByText('The provider is unavailable.')).toBeDefined()
+  })
+
   it('renders compact message actions and branches from any completed answer', () => {
     const branch = vi.fn()
     const writeText = vi.fn().mockResolvedValue(undefined)

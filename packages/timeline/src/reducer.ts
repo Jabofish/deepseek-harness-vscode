@@ -51,7 +51,7 @@ export function reduceTimeline(state: TimelineState, input: SequencedBackendEven
       activeTurn = event.turn
       break
     case 'turn.ended':
-      closeTurn(nodes, event.turn, event.reason, input.sequence)
+      closeTurn(nodes, event.turn, event.reason, event.failure, input.sequence)
       if (activeTurn === event.turn) activeTurn = undefined
       closedTurns.add(event.turn)
       for (const key of Object.keys(stepTimings))
@@ -572,6 +572,7 @@ function closeTurn(
   nodes: TimelineNode[],
   turn: number,
   reason: Extract<BackendEvent, { readonly type: 'turn.ended' }>['reason'],
+  failure: Extract<BackendEvent, { readonly type: 'turn.ended' }>['failure'],
   sequence: number,
 ): void {
   for (let index = 0; index < nodes.length; index += 1) {
@@ -606,6 +607,7 @@ function closeTurn(
       turn,
       sequence,
       reason,
+      ...(failure === undefined ? {} : { failure }),
     })
 
   let closingIndex = -1

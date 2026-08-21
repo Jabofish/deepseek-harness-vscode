@@ -47,4 +47,15 @@ describe('runtime path resolution', () => {
   it('uses the Windows npm shim name when no inspected path exists', () => {
     expect(resolveNpmExecutable('windows', [], () => false)).toBe('npm.cmd')
   })
+
+  it('keeps USERPROFILE discovery stable when HOME is overridden by a launcher', () => {
+    const entries = runtimePathEntries('windows', {
+      PATH: '',
+      HOME: 'C:\\launcher-home',
+      USERPROFILE: 'C:\\Users\\alice',
+    })
+
+    expect(entries).toContain('C:\\Users\\alice\\AppData\\Roaming\\npm')
+    expect(entries).toContain('C:\\launcher-home\\AppData\\Roaming\\npm')
+  })
 })

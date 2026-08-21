@@ -73,4 +73,17 @@ describe('StatsLine', () => {
     expect(screen.getByText('LLM 3.8s · Tool 0.6s')).toBeDefined()
     expect(screen.getByText('TTFT 0.8s · 40 tk/s')).toBeDefined()
   })
+
+  it('keeps near-full cache hits below 100 percent and includes cache writes', () => {
+    render(
+      <StatsLine
+        nodes={nodes}
+        usage={{ inputTokens: 0, outputTokens: 2, cacheReadTokens: 999, cacheWriteTokens: 1 }}
+        cacheHit={0}
+      />,
+    )
+
+    expect(screen.getByText('cache 99.9%')).toBeDefined()
+    expect(screen.getByText('↑1.0K')).toBeDefined()
+  })
 })
