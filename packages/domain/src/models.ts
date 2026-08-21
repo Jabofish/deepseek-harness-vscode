@@ -78,10 +78,18 @@ export interface TokenUsage {
 }
 
 /** DSH token-meter projection for the next request's context occupancy. */
+export interface ContextBreakdown {
+  readonly systemTokens: number
+  readonly toolsTokens: number
+  readonly messageTokens: number
+}
+
 export interface ContextPressure {
   readonly pressureTokens?: number
   readonly projectedTokens?: number
   readonly contextWindow?: number
+  /** rc.8 token-meter categories used by the context details view. */
+  readonly breakdown?: ContextBreakdown
 }
 
 export interface AgentConfiguration {

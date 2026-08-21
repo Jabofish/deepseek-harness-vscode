@@ -8,10 +8,12 @@ export type IconName =
   | 'branch'
   | 'check'
   | 'chevron-down'
+  | 'chevron-left'
   | 'chevron-right'
   | 'clock'
   | 'close'
   | 'copy'
+  | 'edit'
   | 'file'
   | 'folder'
   | 'image'
@@ -31,6 +33,8 @@ export type IconName =
   | 'stop'
   | 'target'
   | 'terminal'
+  | 'thumb-down'
+  | 'thumb-up'
   | 'tool'
   | 'trash'
   | 'users'
@@ -105,6 +109,8 @@ function renderIcon(name: IconName): ReactElement {
       return <path d="m5 12 4.2 4.2L19 6.5" />
     case 'chevron-down':
       return <path d="m6 9 6 6 6-6" />
+    case 'chevron-left':
+      return <path d="m15 6-6 6 6 6" />
     case 'chevron-right':
       return <path d="m9 6 6 6-6 6" />
     case 'clock':
@@ -126,6 +132,13 @@ function renderIcon(name: IconName): ReactElement {
         <>
           <rect x="8" y="8" width="11" height="11" rx="1.5" />
           <path d="M5 15V5a2 2 0 0 1 2-2h10" />
+        </>
+      )
+    case 'edit':
+      return (
+        <>
+          <path d="m4 16.5-.8 3.3 3.3-.8L18.8 6.7a2.2 2.2 0 0 0-3.1-3.1L4 16.5Z" />
+          <path d="m13.8 5.2 3.1 3.1" />
         </>
       )
     case 'folder':
@@ -250,6 +263,20 @@ function renderIcon(name: IconName): ReactElement {
         <>
           <rect x="3.5" y="5" width="17" height="14" rx="2" />
           <path d="m7 10 2 2-2 2M12 14h4" />
+        </>
+      )
+    case 'thumb-down':
+      return (
+        <>
+          <path d="M17 14V4h2.5A1.5 1.5 0 0 1 21 5.5v7a1.5 1.5 0 0 1-1.5 1.5H17Z" />
+          <path d="m17 14-3 6.5a2 2 0 0 1-3.8-1.5l.7-5H5a2 2 0 0 1-1.9-2.6l2.1-7A2 2 0 0 1 7.1 3H14a3 3 0 0 1 3 3v8Z" />
+        </>
+      )
+    case 'thumb-up':
+      return (
+        <>
+          <path d="M7 10v10H4.5A1.5 1.5 0 0 1 3 18.5v-7A1.5 1.5 0 0 1 4.5 10H7Z" />
+          <path d="M7 10 10 3.5A2 2 0 0 1 13.8 5l-.7 5H19a2 2 0 0 1 1.9 2.6l-2.1 7A2 2 0 0 1 16.9 21H10a3 3 0 0 1-3-3v-8Z" />
         </>
       )
     case 'tool':

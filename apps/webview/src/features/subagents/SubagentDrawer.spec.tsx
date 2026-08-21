@@ -86,6 +86,35 @@ describe('SubagentDrawer tree', () => {
     expect(Number.parseFloat(menu.style.width)).toBeLessThanOrEqual(window.innerWidth - 24)
   })
 
+  it('opens upward when the trigger is close to the viewport bottom', () => {
+    render(
+      <SubagentDrawer
+        parentSessionId="root"
+        catalog={catalog(ROOT)}
+        onLoadChildren={vi.fn().mockResolvedValue(catalog(ROOT))}
+        onOpenChild={vi.fn()}
+      />,
+    )
+    const trigger = screen.getByRole('button', { name: 'Subagents: 2, 1 running' })
+    vi.spyOn(trigger, 'getBoundingClientRect').mockReturnValue({
+      x: 430,
+      y: window.innerHeight - 38,
+      top: window.innerHeight - 38,
+      right: 498,
+      bottom: window.innerHeight - 8,
+      left: 430,
+      width: 68,
+      height: 30,
+      toJSON: () => ({}),
+    })
+
+    fireEvent.click(trigger)
+
+    const menu = screen.getByRole('tree')
+    expect(Number.parseFloat(menu.style.top)).toBeLessThan(window.innerHeight - 8)
+    expect(Number.parseFloat(menu.style.maxHeight)).toBeGreaterThan(0)
+  })
+
   it('lazily loads a branch on disclosure and nests it at level 2', async () => {
     const onLoadChildren = vi.fn().mockResolvedValue(catalog([child({ id: 'g1', label: 'Grandchild' })]))
     render(

@@ -33,10 +33,13 @@ export interface SkillDescriptor {
 export interface DynamicCommand {
   readonly name: string
   readonly description: string
-  readonly input?: { readonly hint: string }
+  readonly input?: { readonly hint: string; readonly images?: boolean }
   /** Optional client-side origin; the official command directory does not require it. */
   readonly source?: 'builtin' | 'skill' | 'plugin'
 }
+
+export type CommandExecutionResult =
+  { readonly kind: 'success'; readonly text?: string } | { readonly kind: 'error'; readonly text: string }
 
 export interface ParsedSlashCommand {
   readonly name: string

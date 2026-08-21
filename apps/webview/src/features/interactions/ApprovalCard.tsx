@@ -27,6 +27,10 @@ export function ApprovalCard(props: ApprovalCardProps): ReactElement {
         </div>
       </header>
       <p className="dsh-interaction__description">{props.request.description}</p>
+      <div className="dsh-approval__takeover" role="status">
+        <span>{t('approval.takeover')}</span>
+        {props.request.commandLine === undefined ? null : <code>{props.request.commandLine}</code>}
+      </div>
       <p className="dsh-interaction__risk">
         {t('approval.risk')}{' '}
         <span className={`dsh-status-pill dsh-status-pill--${props.request.risk}`}>

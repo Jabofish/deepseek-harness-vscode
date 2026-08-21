@@ -1,10 +1,13 @@
 import type { BackendEvent, GoalView, JobView, SubagentCatalog } from './events.js'
+import type { MessageFeedbackRepository } from './feedback.js'
+import type { ReferenceRepository } from './references.js'
 import type {
   DshSettingsSchema,
   AgentPresetDocument,
   AgentPresetLocation,
   AgentPresetRoster,
   DynamicCommand,
+  CommandExecutionResult,
   PluginInventorySnapshot,
   SessionExportOptions,
   SkillDescriptor,
@@ -25,6 +28,7 @@ import type {
   RunningInputMode,
   SessionCreateInput,
   SessionDetail,
+  SessionHistoryPage,
   SessionListQuery,
   SessionPage,
   SubagentHistoryPage,
@@ -40,6 +44,7 @@ export interface AsyncEventSource<T> {
 export interface SessionRepository {
   list(query?: SessionListQuery, signal?: AbortSignal): Promise<SessionPage>
   get(sessionId: string, signal?: AbortSignal): Promise<SessionDetail>
+  history(sessionId: string, beforeSequence?: number, signal?: AbortSignal): Promise<SessionHistoryPage>
   readAttachment(sessionId: string, attachmentId: string, signal?: AbortSignal): Promise<PromptAttachment>
   create(input: SessionCreateInput, signal?: AbortSignal): Promise<SessionDetail>
   remove(sessionId: string, signal?: AbortSignal): Promise<void>
@@ -65,6 +70,15 @@ export interface WorkspaceRepository {
   create(input: WorkspaceCreateInput, signal?: AbortSignal): Promise<WorkspaceSummary>
   rename(workspaceId: string, name: string, signal?: AbortSignal): Promise<void>
   remove(workspaceId: string, signal?: AbortSignal): Promise<void>
+  /** Move a workspace before an optional anchor; omitted anchor appends. */
+  insertBefore(workspaceId: string, beforeWorkspaceId?: string, signal?: AbortSignal): Promise<void>
+  /** Move a session within its workspace before an optional anchor. */
+  insertSessionBefore(
+    workspaceId: string,
+    sessionId: string,
+    beforeSessionId?: string,
+    signal?: AbortSignal,
+  ): Promise<void>
 }
 
 export interface ModelRepository {
@@ -132,6 +146,8 @@ export interface SubagentRepository {
 export interface SettingsRepository {
   schema(signal?: AbortSignal): Promise<DshSettingsSchema>
   read(signal?: AbortSignal): Promise<Readonly<Record<string, unknown>>>
+  /** Ask the host to open its configured local settings document. */
+  readonly openDocument?: (signal?: AbortSignal) => Promise<void>
   update(path: string, value: unknown, signal?: AbortSignal): Promise<void>
   /** Remove one field's user override (`settings.mutate` op `unset`); the composition base resurfaces. */
   unset(path: string, signal?: AbortSignal): Promise<void>
@@ -146,7 +162,12 @@ export interface SkillRepository {
 
 export interface CommandRepository {
   list(sessionId?: string, signal?: AbortSignal): Promise<readonly DynamicCommand[]>
-  execute(sessionId: string, command: string, signal?: AbortSignal): Promise<void>
+  execute(
+    sessionId: string,
+    command: string,
+    attachments?: readonly PromptAttachment[] | AbortSignal,
+    signal?: AbortSignal,
+  ): Promise<CommandExecutionResult>
 }
 
 /**
@@ -192,6 +213,8 @@ export interface DshBackend {
   readonly plugins: PluginRepository
   readonly presets: PresetRepository
   readonly exports: ExportRepository
+  readonly references: ReferenceRepository
+  readonly feedback: MessageFeedbackRepository
   readonly events: AsyncEventSource<BackendEvent>
   close(): Promise<void>
 }

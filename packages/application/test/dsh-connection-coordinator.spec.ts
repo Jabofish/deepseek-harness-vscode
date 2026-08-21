@@ -101,6 +101,71 @@ describe('DshConnectionCoordinator', () => {
     expect(deps.processSupervisor.start).not.toHaveBeenCalled()
   })
 
+  it('probes only the user-selected custom endpoint and never discovers or starts DSH', async () => {
+    const selected = endpoint(4310)
+    const connected = fakeConnectedBackend(4310)
+    const probe = {
+      probe: vi.fn(async (candidate: BackendCandidate) =>
+        candidate.endpoint.port === selected.port ? connected : undefined,
+      ),
+    }
+    const deps = dependencies({ probe })
+    const coordinator = new DshConnectionCoordinator(deps)
+
+    const result = await coordinator.connect({ mode: 'custom', autoStart: true, endpoint: selected })
+
+    expect(result.state.backend.endpoint).toEqual(selected)
+    expect(probe.probe).toHaveBeenCalledWith(
+      expect.objectContaining({ endpoint: selected, source: 'configured', confidence: 120 }),
+      expect.any(AbortSignal),
+    )
+    expect(deps.discovery.discover).not.toHaveBeenCalled()
+    expect(deps.runtimeLocator.locate).not.toHaveBeenCalled()
+    expect(deps.processSupervisor.start).not.toHaveBeenCalled()
+  })
+
+  it('rejects custom mode without an endpoint before probing or starting DSH', async () => {
+    const deps = dependencies()
+    const coordinator = new DshConnectionCoordinator(deps)
+
+    await expect(coordinator.connect({ mode: 'custom', autoStart: true })).rejects.toMatchObject({
+      code: 'INVALID_CONFIGURATION',
+    })
+    expect(deps.discovery.discover).not.toHaveBeenCalled()
+    expect(deps.probe.probe).not.toHaveBeenCalled()
+    expect(deps.runtimeLocator.locate).not.toHaveBeenCalled()
+    expect(deps.processSupervisor.start).not.toHaveBeenCalled()
+  })
+
+  it('reports an unreachable custom endpoint without falling back to another DSH', async () => {
+    const deps = dependencies({ probe: { probe: vi.fn(async () => undefined) } })
+    const coordinator = new DshConnectionCoordinator(deps)
+
+    await expect(
+      coordinator.connect({ mode: 'custom', autoStart: true, endpoint: endpoint(4311) }),
+    ).rejects.toMatchObject({ code: 'BACKEND_UNREACHABLE' })
+    expect(deps.discovery.discover).not.toHaveBeenCalled()
+    expect(deps.runtimeLocator.locate).not.toHaveBeenCalled()
+    expect(deps.processSupervisor.start).not.toHaveBeenCalled()
+  })
+
+  it('re-publishes connected state when a cached backend is reused', async () => {
+    const connected = fakeConnectedBackend(4110)
+    const deps = dependencies({
+      discovery: { discover: vi.fn(async () => [fakeCandidate(4110)]) },
+      probe: { probe: vi.fn(async () => connected) },
+    })
+    const coordinator = new DshConnectionCoordinator(deps)
+    await coordinator.connect({ mode: 'auto', autoStart: false })
+    const states: string[] = []
+    coordinator.subscribe((state) => states.push(state.kind))
+
+    const result = await coordinator.connect({ mode: 'auto', autoStart: false })
+
+    expect(result.state.kind).toBe('connected')
+    expect(states).toEqual(['connected', 'connected'])
+  })
+
   it('falls through unhealthy candidates without starting early', async () => {
     const first = fakeCandidate(4101)
     const second = fakeCandidate(4102)

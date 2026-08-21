@@ -117,6 +117,18 @@ describe('DeepSeek Harness 0.1.0-rc.6 contract', () => {
     ).toMatchObject({ type: 'message.delta', delta: 'Hi' })
   })
 
+  it('does not confuse a shipped provider with a read-only provider when declared is false', () => {
+    expect(
+      rc6Mapper.provider({
+        provider: 'minimax-cn',
+        displayName: 'MiniMax',
+        settingsNs: 'llm-pi-ai',
+        settingsPath: ['providers', 'minimax-cn'],
+        declared: false,
+      }),
+    ).toMatchObject({ configurable: true, declared: false })
+  })
+
   it('preserves official step and event timestamps for timing consumers', () => {
     expect(
       rc6Mapper.event('turn/start', {
@@ -181,6 +193,67 @@ describe('DeepSeek Harness 0.1.0-rc.6 contract', () => {
     ).toMatchObject({ type: 'tool.updated', tool: { completedAt: '1970-01-01T00:00:05.600Z' } })
   })
 
+  it('projects the pinned upstream image attachment reference without leaking image bytes', () => {
+    const attachment = {
+      attachmentId: 'fixture:image',
+      mediaType: 'image/png',
+      bytes: 247,
+      width: 160,
+      height: 90,
+      name: 'fixture-image.png',
+    }
+    const user = rc6Mapper.event('user/message', {
+      sessionId: 's1',
+      message: {
+        id: 'user-73',
+        content: [
+          { type: 'image', attachment },
+          { type: 'text', text: '历史用户图片' },
+        ],
+      },
+    })
+    const assistant = rc6Mapper.event('assistant/message', {
+      sessionId: 's1',
+      data: {
+        turn: 73,
+        step: 0,
+        message: {
+          id: 'assistant-73',
+          content: [
+            { type: 'text', text: '结构化模型图片：' },
+            { type: 'image', attachment },
+          ],
+        },
+      },
+    })
+
+    expect(user).toMatchObject({
+      type: 'message.user',
+      markdown: '历史用户图片',
+      images: [attachment],
+    })
+    expect(assistant).toMatchObject({
+      type: 'message.completed',
+      markdown: '结构化模型图片：',
+      images: [attachment],
+    })
+    expect(JSON.stringify(user)).not.toContain('iVBOR')
+    expect(JSON.stringify(assistant)).not.toContain('iVBOR')
+  })
+
+  it('preserves the durable assistant message id used by feedback mutations', () => {
+    expect(
+      rc6Mapper.event('assistant/message', {
+        sessionId: 's1',
+        data: {
+          turn: 1,
+          step: 1,
+          message: { id: 'assistant-message-real-1', content: [{ type: 'text', text: 'Hi' }] },
+        },
+      }),
+    ).toMatchObject({ type: 'message.completed', messageId: 'assistant-message-real-1' })
+  })
+
   it('projects adapter-owned text file blocks as compact user attachment metadata', () => {
     expect(
       rc6Mapper.event('user/message', {
@@ -211,16 +284,31 @@ describe('DeepSeek Harness 0.1.0-rc.6 contract', () => {
     expect(
       rc6Mapper.event('command/run', {
         sessionId: 's1',
+        commandId: 'command-1',
         name: 'permission',
+        args: ' danger-full-access',
       }),
-    ).toMatchObject({ type: 'notice', text: 'permission started.' })
+    ).toMatchObject({
+      type: 'notice',
+      text: 'permission started.',
+      commandName: 'permission',
+      commandId: 'command-1',
+      commandPhase: 'run',
+      commandInput: '/permission danger-full-access',
+    })
     expect(
       rc6Mapper.event('command/done', {
         sessionId: 's1',
+        commandId: 'command-1',
         kind: 'success',
         text: 'preset danger-full-access',
       }),
-    ).toMatchObject({ type: 'notice', text: 'Permission changed to Full access.' })
+    ).toMatchObject({
+      type: 'notice',
+      commandId: 'command-1',
+      commandPhase: 'done',
+      text: 'Permission changed to Full access.',
+    })
   })
 
   it('maps model retries and compaction accounting to structured events', () => {
@@ -688,6 +776,38 @@ describe('DeepSeek Harness 0.1.0-rc.6 contract', () => {
         params: { agentId: 'session-1', line: '/alpha value' },
       },
     ])
+  })
+
+  it('forwards validated image data for image-capable slash commands and retains error outcomes', async () => {
+    const calls: { readonly method: string; readonly params: unknown }[] = []
+    const commandTransport: DshTransport = {
+      ...transport({ result: { ok: true, value: [] } }),
+      remoteRequest: <TResponse>(method: string, params: unknown) => {
+        calls.push({ method, params })
+        return Promise.resolve(
+          (method === 'commands/execute'
+            ? {
+                ok: true,
+                value: { commandId: 'command-2', result: { kind: 'error', text: 'needs more detail' } },
+              }
+            : { ok: true, value: [] }) as TResponse,
+        )
+      },
+    }
+    const repository = new Rc6CommandRepository(commandTransport)
+    await expect(
+      repository.execute('session-1', '/goal inspect', [
+        { uri: 'data:image/png;base64,AQ==', name: 'diagram.png', mimeType: 'image/png' },
+      ]),
+    ).resolves.toEqual({ kind: 'error', text: 'needs more detail' })
+    expect(calls[0]).toEqual({
+      method: 'commands/execute',
+      params: {
+        agentId: 'session-1',
+        line: '/goal inspect',
+        images: [{ mediaType: 'image/png', data: 'AQ==', name: 'diagram.png' }],
+      },
+    })
   })
 
   it('does not request a command directory without an active session', async () => {

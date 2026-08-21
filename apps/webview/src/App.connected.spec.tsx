@@ -24,6 +24,8 @@ function connectedState(activeSession: boolean): AppState {
     // the full Extension Host backend object.
     backend: { kind: 'connected' } as AppState['backend'],
     connectedDshVersion: '0.1.0-rc.6',
+    dshCompatibilityWarning: undefined,
+    dshUpdate: undefined,
     sessions: activeSession
       ? [
           {
@@ -51,6 +53,10 @@ function connectedState(activeSession: boolean): AppState {
     activeSessionId: activeSession ? 's1' : undefined,
     preferredOpenFileId: undefined,
     timeline: { sessionId: activeSession ? 's1' : undefined, nodes: [], lastSequence: -1 },
+    history: [],
+    historyHasMore: false,
+    historyBeforeSequence: undefined,
+    historyLoading: false,
     projections: {},
     configuration: activeSession
       ? {
@@ -63,12 +69,14 @@ function connectedState(activeSession: boolean): AppState {
       : undefined,
     providers: [],
     models: [],
+    sessionModels: [],
     presets: [],
     permissionPresets: [],
     commands: [],
     goals: [],
     todos: [],
     jobs: [],
+    feedback: {},
     subagents: { entries: [], parentAvailable: false },
     activeSubagent: undefined,
     queue: [],
@@ -86,12 +94,18 @@ function storeFor(state: AppState): AppStore {
     subscribe: () => () => undefined,
     initialize: vi.fn().mockResolvedValue(undefined),
     reconnect: vi.fn().mockResolvedValue(undefined),
+    configureConnection: vi.fn().mockResolvedValue(undefined),
     refreshSessions: vi.fn().mockResolvedValue(undefined),
     searchSessions: vi.fn().mockResolvedValue([]),
     refreshCommands: vi.fn().mockResolvedValue(undefined),
     openSession: vi.fn().mockResolvedValue(undefined),
+    loadOlderHistory: vi.fn().mockResolvedValue(undefined),
     openSubagent: vi.fn().mockResolvedValue(undefined),
     renameSession: vi.fn().mockResolvedValue(undefined),
+    renameWorkspace: vi.fn().mockResolvedValue(undefined),
+    removeWorkspace: vi.fn().mockResolvedValue(undefined),
+    moveWorkspace: vi.fn().mockResolvedValue(undefined),
+    moveSession: vi.fn().mockResolvedValue(undefined),
     forkSession: vi.fn().mockResolvedValue(undefined),
     createSession: vi.fn().mockResolvedValue(undefined),
     removeSession: vi.fn().mockResolvedValue(undefined),
@@ -103,21 +117,33 @@ function storeFor(state: AppState): AppStore {
     removeQueue: vi.fn(),
     steerQueue: vi.fn(),
     steerAllQueued: vi.fn().mockResolvedValue(undefined),
+    loadFeedback: vi.fn().mockResolvedValue(undefined),
+    toggleFeedback: vi.fn().mockResolvedValue(undefined),
+    setFeedbackNote: vi.fn().mockResolvedValue(undefined),
+    removeFeedback: vi.fn().mockResolvedValue(undefined),
+    listReferences: vi.fn().mockResolvedValue([]),
     respondToPermission: vi.fn(),
     respondToQuestion: vi.fn(),
     cancelQuestion: vi.fn(),
     pickAttachment: vi.fn().mockResolvedValue(undefined),
     ingestAttachment: vi.fn().mockResolvedValue(undefined),
     previewAttachment: vi.fn().mockResolvedValue(undefined),
+    readSessionAttachment: vi.fn().mockResolvedValue(undefined),
     releaseAttachments: vi.fn().mockResolvedValue(undefined),
     listOpenFiles: vi.fn().mockResolvedValue([]),
     attachOpenFile: vi.fn().mockResolvedValue(undefined),
     rememberOpenFile: vi.fn(),
     openLink: vi.fn().mockResolvedValue(undefined),
+    showInFolder: vi.fn().mockResolvedValue(undefined),
     runtimeAction: vi.fn().mockResolvedValue(undefined),
+    checkDshUpdates: vi.fn().mockResolvedValue(undefined),
+    installDshVersion: vi.fn().mockResolvedValue(undefined),
     readSettings: vi.fn().mockResolvedValue(undefined),
     readDshSettings: vi.fn().mockResolvedValue(undefined),
+    openDshSettingsDocument: vi.fn().mockResolvedValue(undefined),
     updateDshSetting: vi.fn().mockResolvedValue(undefined),
+    unsetDshSetting: vi.fn().mockResolvedValue(undefined),
+    discoverModels: vi.fn().mockResolvedValue([]),
     configureProviderSecret: vi.fn().mockResolvedValue(false),
     removeProviderSecret: vi.fn().mockResolvedValue(undefined),
     refreshModelCatalog: vi.fn().mockResolvedValue(undefined),
@@ -128,6 +154,8 @@ function storeFor(state: AppState): AppStore {
     openPresetDocument: vi.fn().mockResolvedValue(undefined),
     loadPluginInventory: vi.fn().mockResolvedValue(undefined),
     loadSubagentChildren: vi.fn().mockResolvedValue(undefined),
+    updateGoal: vi.fn().mockResolvedValue(undefined),
+    clearGoal: vi.fn().mockResolvedValue(undefined),
     exportSession: vi.fn().mockResolvedValue(undefined),
     setDrawer: vi.fn(),
     dispose: vi.fn(),
@@ -152,6 +180,66 @@ describe('App connected rendering', () => {
     render(<App />)
 
     expect(screen.queryByRole('button', { name: 'Open settings' })).toBeNull()
+  })
+
+  it('lets the user dismiss an update notice for the current upstream version', () => {
+    currentStore = storeFor({
+      ...connectedState(false),
+      dshUpdate: {
+        status: 'ready',
+        currentVersion: '0.1.0-rc.8',
+        latestVersion: '0.1.0-rc.9',
+        availableVersions: ['0.1.0-rc.9', '0.1.0-rc.8'],
+        updateAvailable: true,
+        checkedAt: '2026-08-21T00:00:00.000Z',
+      },
+    })
+
+    render(<App />)
+
+    expect(screen.getByText('DSH update available')).toBeDefined()
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss update notice' }))
+    expect(screen.queryByText('DSH update available')).toBeNull()
+    expect(window.localStorage.getItem('dsh-runtime-update-dismissed-version')).toBe('0.1.0-rc.9')
+  })
+
+  it('shows a newer update after an older notice was dismissed', () => {
+    window.localStorage.setItem('dsh-runtime-update-dismissed-version', '0.1.0-rc.9')
+    currentStore = storeFor({
+      ...connectedState(false),
+      dshUpdate: {
+        status: 'ready',
+        currentVersion: '0.1.0-rc.8',
+        latestVersion: '0.1.0-rc.10',
+        availableVersions: ['0.1.0-rc.10'],
+        updateAvailable: true,
+        checkedAt: '2026-08-21T00:00:00.000Z',
+      },
+    })
+
+    render(<App />)
+
+    expect(screen.getByText('DSH update available')).toBeDefined()
+  })
+
+  it('keeps the settings entry point available when the runtime is missing', () => {
+    const setDrawer = vi.fn()
+    currentStore = {
+      ...storeFor({
+        ...connectedState(false),
+        backend: {
+          kind: 'runtime-missing',
+          searchedLocations: ['C:\\Users\\Direwolf\\AppData\\Roaming\\npm\\dsh.cmd'],
+        },
+      }),
+      setDrawer,
+    }
+
+    render(<App />)
+
+    expect(screen.getByRole('heading', { name: "DeepSeek Harness isn't ready yet" })).toBeDefined()
+    fireEvent.click(screen.getByRole('button', { name: 'Open settings' }))
+    expect(setDrawer).toHaveBeenCalledWith('settings')
   })
 
   it('keeps the subagent catalog trigger visible when the host reports children', () => {
@@ -289,12 +377,48 @@ describe('App connected rendering', () => {
       projections: {
         s1: {
           contextPressure: { pressureTokens: 1_024, contextWindow: 1_000_000 },
+          contextBreakdown: { systemTokens: 1_600, toolsTokens: 6_700, messageTokens: 19_500 },
         },
       },
     })
     render(<App />)
 
     expect(screen.getByLabelText('Context ~1.0k / 1.0m tokens')).toBeDefined()
+    fireEvent.click(screen.getByRole('button', { name: 'Context ~1.0k / 1.0m tokens' }))
+    expect(screen.getByRole('dialog').textContent).toContain('System prompt')
+    expect(screen.getByRole('dialog').textContent).toContain('~1.6K')
+    expect(screen.getByRole('dialog').textContent).toContain('Conversation messages')
+  })
+
+  it('pre-checks rc.8 image limits before sending bytes to the Extension Host', () => {
+    const state = connectedState(true)
+    const ingestAttachment = vi.fn().mockResolvedValue(undefined)
+    currentStore = {
+      ...storeFor({
+        ...state,
+        projections: {
+          s1: {
+            imageLimits: {
+              maxImageBytes: 2,
+              maxImagesPerMessage: 20,
+              maxMessageImageBytes: 100,
+              maxImagePixels: 100,
+              maxImageDimension: 10,
+              mediaTypes: ['image/png'],
+            },
+          },
+        },
+      }),
+      ingestAttachment,
+    }
+    render(<App />)
+    const file = new File(['too-large'], 'screenshot.png', { type: 'image/png' })
+    fireEvent.paste(screen.getByRole('textbox', { name: 'Prompt' }), {
+      clipboardData: { files: [file] },
+    })
+
+    expect(screen.getByRole('alert').textContent).toContain('DSH image limit of 2 B')
+    expect(ingestAttachment).not.toHaveBeenCalled()
   })
 
   it('releases an opaque Host attachment handle when its draft chip is removed', async () => {

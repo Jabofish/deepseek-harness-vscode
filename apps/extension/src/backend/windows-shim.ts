@@ -46,18 +46,66 @@ export function resolveWindowsShim(
 }
 
 export function extractCmdShimTarget(content: string, shimDir: string): string | undefined {
+  const assignments = readCmdAssignments(content)
   const lines = content.split(/\r?\n/)
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i]
-    if (line === undefined) continue
-    const m = line.match(/"([^"]+\.js)"/i)
-    if (m === null) continue
-    const jsTarget = m[1] ?? ''
-    if (jsTarget === '') continue
-    if (/%\w+%/i.test(jsTarget.replace(/%dp0%/gi, ''))) continue
-    return windowsPath.resolve(jsTarget.replace(/%dp0%/gi, shimDir))
+    if (line === undefined || /^\s*@?\s*set\s+/iu.test(line)) continue
+    const matches = [...line.matchAll(/"([^"]+)"/gu)]
+    for (let matchIndex = matches.length - 1; matchIndex >= 0; matchIndex -= 1) {
+      const rawTarget = matches[matchIndex]?.[1]
+      if (rawTarget === undefined) continue
+      const target = expandCmdValue(rawTarget, assignments, shimDir)
+      if (!/\.js$/iu.test(target) || target.includes('%')) continue
+      return windowsPath.resolve(target)
+    }
   }
   return undefined
+}
+
+function readCmdAssignments(content: string): ReadonlyMap<string, string> {
+  const assignments = new Map<string, string>()
+  for (const line of content.split(/\r?\n/u)) {
+    const match = line.match(/^\s*@?\s*set\s+(?:"([^"=]+)=(.*)"|([^\s=]+)=(.*))\s*$/iu)
+    if (match === null) continue
+    const name = (match[1] ?? match[3] ?? '').trim().toLocaleLowerCase()
+    const value = (match[2] ?? match[4] ?? '').trim()
+    // npm.cmd conditionally rewrites NPM_CLI_JS from a `FOR /F` result. That
+    // result contains %%F and cannot be evaluated without running cmd.exe.
+    // Keep the first statically resolvable assignment instead; it is the
+    // portable fallback npm itself declares before the conditional rewrite.
+    if (name !== '' && !assignments.has(name) && !hasDynamicCmdValue(value, assignments))
+      assignments.set(name, value)
+  }
+  return assignments
+}
+
+function hasDynamicCmdValue(value: string, assignments: ReadonlyMap<string, string>): boolean {
+  if (value.includes('%%')) return true
+  for (const match of value.matchAll(/%([^%]+)%/gu)) {
+    const name = match[1]?.toLocaleLowerCase()
+    if (name === undefined || name === 'dp0') continue
+    const assigned = assignments.get(name)
+    if (assigned === undefined || assigned.includes('%%')) return true
+  }
+  return false
+}
+
+function expandCmdValue(
+  value: string,
+  assignments: ReadonlyMap<string, string>,
+  shimDir: string,
+  seen = new Set<string>(),
+): string {
+  const withShimDirectory = value.replace(/%~dp0/giu, shimDir).replace(/%dp0%/giu, shimDir)
+  return withShimDirectory.replace(/%([^%]+)%/gu, (whole, name: string) => {
+    const key = name.toLocaleLowerCase()
+    const assigned = assignments.get(key)
+    if (assigned === undefined || seen.has(key)) return whole
+    const nextSeen = new Set(seen)
+    nextSeen.add(key)
+    return expandCmdValue(assigned, assignments, shimDir, nextSeen)
+  })
 }
 
 function findNodeExecutable(shimPath: string, options: WindowsShimResolutionOptions): string {

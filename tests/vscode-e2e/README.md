@@ -1,6 +1,6 @@
 # VS Code end-to-end suite
 
-`run.ts` launches the pinned minimum VS Code build through `@vscode/test-electron`, creates a unique workspace, and serves a loopback rc.6 fixture with HTTP RPC plus WebSocket event downlinks. The default fixture is attach-only, so the test proves that discovery/attach does not spawn a runtime. The suite owns and removes only its temporary workspace and fixture sockets.
+`run.ts` launches the pinned minimum VS Code build through `@vscode/test-electron`, creates a unique workspace, and serves a loopback rc.8-shaped fixture with HTTP RPC plus WebSocket event downlinks. The fixture includes the newer `host.describe.home` field while remaining useful for rc.6/rc.7 adapter regression. The default fixture is attach-only, so the test proves that discovery/attach does not spawn a runtime. The suite owns and removes only its temporary workspace and fixture sockets.
 
 The runner is opt-in. To avoid an implicit network download, provide a local VS Code executable:
 

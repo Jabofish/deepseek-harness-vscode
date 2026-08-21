@@ -40,8 +40,8 @@ flowchart TB
 | 包                          | 职责                                        | 可以依赖                                | 禁止依赖                      |
 | --------------------------- | ------------------------------------------- | --------------------------------------- | ----------------------------- |
 | `packages/domain`           | 稳定业务类型、错误、仓储接口                | 无平台依赖                              | VS Code、React、HTTP、process |
-| `packages/application`      | 用例、连接协调、端口接口                    | Domain                                  | rc.6 wire type、VS Code UI    |
-| `packages/dsh-adapter`      | rc.6 RPC/Event 映射、仓储、流恢复           | Domain、Application ports、固定上游包   | VS Code、React                |
+| `packages/application`      | 用例、连接协调、端口接口                    | Domain                                  | DSH wire type、VS Code UI     |
+| `packages/dsh-adapter`      | rc.6/rc.7/rc.8 RPC/Event 映射、仓储、流恢复 | Domain、Application ports、固定上游包   | VS Code、React                |
 | `packages/webview-protocol` | Host/Webview 版本化消息 Schema              | Zod                                     | 传输实现、Secret              |
 | `packages/timeline`         | 事件归并、回放、可见窗口                    | Domain                                  | React、VS Code、HTTP          |
 | `packages/ui`               | 无业务副作用的可复用 UI                     | React、Domain view DTO                  | DSH、VS Code API              |
@@ -75,7 +75,9 @@ packages/
   application/            # Use cases + ports
   domain/                 # 业务契约
   dsh-adapter/
-    src/versions/rc6/     # 唯一允许理解 rc.6 wire shape 的位置
+    src/versions/rc6/     # 兼容基线与通用 mapper
+    src/versions/rc7/     # rc.7 版本身份与契约入口
+    src/versions/rc8/     # rc.8 版本身份、增量事件与契约入口
     src/repositories/     # 每个能力域一个仓储
   timeline/
   ui/
@@ -110,6 +112,7 @@ stateDiagram-v2
 ```
 
 `auto` 模式必须完整走完 Discovering 才能 Starting；`attach-only` 没有 Starting 边；`new-isolated` 明确跳过外部候选但仍禁止创建两个受管子进程。
+`custom` 模式只把用户配置的、经过 Host 校验的 loopback endpoint 作为候选；健康检查失败直接进入 Failed，不执行发现、运行时定位或启动。
 
 ## 进程所有权不变量
 

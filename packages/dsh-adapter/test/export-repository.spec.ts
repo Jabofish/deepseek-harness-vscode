@@ -1,4 +1,14 @@
-import { link, mkdtemp, readFile, readdir, rename, rm, stat, unlink, writeFile } from 'node:fs/promises'
+import {
+  mkdtemp,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  stat,
+  unlink,
+  writeFile,
+  writeFile as fsWriteFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -8,6 +18,16 @@ import type { DshTransport, ExportFileSystem } from '../src/index.js'
 import { Rc6ExportRepository } from '../src/index.js'
 
 const temporaryRoots: string[] = []
+
+const nodeFileSystem: ExportFileSystem = {
+  stat,
+  rename: async (source, destination, overwrite = false) => {
+    if (overwrite) await unlink(destination).catch(() => undefined)
+    await rename(source, destination)
+  },
+  unlink,
+  writeFile: (filePath, data) => fsWriteFile(filePath, data),
+}
 
 afterEach(async () => {
   await Promise.all(temporaryRoots.splice(0).map((root) => rm(root, { force: true, recursive: true })))
@@ -23,6 +43,7 @@ describe('Rc6ExportRepository', () => {
           { type: 'message.user', text: 'Hello' },
         ],
       }),
+      nodeFileSystem,
     )
 
     await repository.exportSession(exportOptions('json', false), destination)
@@ -36,7 +57,10 @@ describe('Rc6ExportRepository', () => {
   it('never overwrites an existing destination without an explicit Host confirmation', async () => {
     const destination = await destinationPath('existing.json')
     await writeFile(destination, 'original bytes', 'utf8')
-    const repository = new Rc6ExportRepository(createTransport({ events: [{ type: 'message.user' }] }))
+    const repository = new Rc6ExportRepository(
+      createTransport({ events: [{ type: 'message.user' }] }),
+      nodeFileSystem,
+    )
 
     await expect(repository.exportSession(exportOptions('json', true), destination)).rejects.toMatchObject({
       code: 'EXPORT_FAILED',
@@ -53,7 +77,7 @@ describe('Rc6ExportRepository', () => {
       message: 'backend unavailable',
       retryable: true,
     })
-    const repository = new Rc6ExportRepository(createTransport(undefined, failure))
+    const repository = new Rc6ExportRepository(createTransport(undefined, failure), nodeFileSystem)
 
     await expect(repository.exportSession(exportOptions('json', true), destination)).rejects.toBe(failure)
     await expect(readFile(destination, 'utf8')).resolves.toBe('original bytes')
@@ -62,7 +86,7 @@ describe('Rc6ExportRepository', () => {
   it('rejects a malformed history value without touching the destination', async () => {
     const destination = await destinationPath('malformed-history.json')
     await writeFile(destination, 'original bytes', 'utf8')
-    const repository = new Rc6ExportRepository(createTransport(null))
+    const repository = new Rc6ExportRepository(createTransport(null), nodeFileSystem)
 
     await expect(repository.exportSession(exportOptions('json', true), destination)).rejects.toMatchObject({
       code: 'PROTOCOL_ERROR',
@@ -73,11 +97,11 @@ describe('Rc6ExportRepository', () => {
   it('replaces a confirmed destination and restores the original when the commit rename fails', async () => {
     const destination = await destinationPath('rollback.json')
     await writeFile(destination, 'original bytes', 'utf8')
-    const renames = vi.fn(async (source: string, target: string) => {
+    const renames = vi.fn<ExportFileSystem['rename']>(async (source, target, overwrite = false) => {
       if (renames.mock.calls.length === 2) throw new Error('commit rename failed')
-      await rename(source, target)
+      await nodeFileSystem.rename(source, target, overwrite)
     })
-    const fileSystem: ExportFileSystem = { stat, rename: renames, unlink, link }
+    const fileSystem: ExportFileSystem = { ...nodeFileSystem, rename: renames }
     const repository = new Rc6ExportRepository(
       createTransport({ events: [{ type: 'message.user', text: 'replacement' }] }),
       fileSystem,
@@ -101,10 +125,13 @@ describe('Rc6ExportRepository', () => {
       },
     })
     const downloadSessionLog = vi.fn(() => Promise.resolve(new Response(body)))
-    const repository = new Rc6ExportRepository({
-      ...createTransport(undefined),
-      downloadSessionLog,
-    })
+    const repository = new Rc6ExportRepository(
+      {
+        ...createTransport(undefined),
+        downloadSessionLog,
+      },
+      nodeFileSystem,
+    )
 
     await expect(
       repository.exportSession(exportOptions('zip', true), destination, undefined, true),
@@ -120,10 +147,13 @@ describe('Rc6ExportRepository', () => {
     const downloadSessionLog = vi.fn((_sessionId: string, _includeDescendants: boolean) =>
       Promise.resolve(new Response(new Uint8Array([1, 2, 3]))),
     )
-    const repository = new Rc6ExportRepository({
-      ...createTransport(undefined),
-      downloadSessionLog,
-    })
+    const repository = new Rc6ExportRepository(
+      {
+        ...createTransport(undefined),
+        downloadSessionLog,
+      },
+      nodeFileSystem,
+    )
 
     await repository.exportSession(exportOptions('zip', true), destination)
 
@@ -134,10 +164,13 @@ describe('Rc6ExportRepository', () => {
   it('rejects a ZIP request that asks to omit attachments because rc.6 cannot express that option', async () => {
     const destination = await destinationPath('without-attachments.zip')
     const downloadSessionLog = vi.fn(() => Promise.resolve(new Response(new Uint8Array([1]))))
-    const repository = new Rc6ExportRepository({
-      ...createTransport(undefined),
-      downloadSessionLog,
-    })
+    const repository = new Rc6ExportRepository(
+      {
+        ...createTransport(undefined),
+        downloadSessionLog,
+      },
+      nodeFileSystem,
+    )
 
     await expect(
       repository.exportSession(exportOptions('zip', true, false), destination),
@@ -150,10 +183,13 @@ describe('Rc6ExportRepository', () => {
   it('rejects a ZIP request that asks to omit reasoning because rc.6 returns the raw archive', async () => {
     const destination = await destinationPath('without-reasoning.zip')
     const downloadSessionLog = vi.fn(() => Promise.resolve(new Response(new Uint8Array([1]))))
-    const repository = new Rc6ExportRepository({
-      ...createTransport(undefined),
-      downloadSessionLog,
-    })
+    const repository = new Rc6ExportRepository(
+      {
+        ...createTransport(undefined),
+        downloadSessionLog,
+      },
+      nodeFileSystem,
+    )
 
     await expect(repository.exportSession(exportOptions('zip', false), destination)).rejects.toMatchObject({
       code: 'CAPABILITY_UNAVAILABLE',
@@ -165,7 +201,10 @@ describe('Rc6ExportRepository', () => {
     const destination = await destinationPath('cancelled.json')
     const controller = new AbortController()
     controller.abort()
-    const repository = new Rc6ExportRepository(createTransport({ events: [{ type: 'message.user' }] }))
+    const repository = new Rc6ExportRepository(
+      createTransport({ events: [{ type: 'message.user' }] }),
+      nodeFileSystem,
+    )
 
     await expect(
       repository.exportSession(exportOptions('json', true), destination, controller.signal),

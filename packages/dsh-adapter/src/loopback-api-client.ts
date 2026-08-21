@@ -1,8 +1,13 @@
 import { AbstractApiClient } from '@deepseek-ai/dsh-host-apiproxy/client'
 import { serverRequestSchema, serverResponseSchema } from '@deepseek-ai/dsh-host-apiproxy/api'
 import { hostFrameSchema, muxFrameSchema } from '@deepseek-ai/dsh-host-apiproxy/api/events.schema'
-import type { RequestPayload } from '@deepseek-ai/dsh-host-apiproxy/api/rpc-map'
-import { RpcId, type ClientResponse, type RpcResult } from '@deepseek-ai/dsh-host-apiproxy/api/rpc'
+import type { RequestPayload, ResponseValue, RpcMethodMap } from '@deepseek-ai/dsh-host-apiproxy/api/rpc-map'
+import {
+  RpcId,
+  type ClientResponse,
+  type RpcResponse,
+  type RpcResult,
+} from '@deepseek-ai/dsh-host-apiproxy/api/rpc'
 import { AppError, type BackendEndpoint } from '@dsh-vscode/domain'
 
 import type { DshTransport, RetryPolicy } from './contracts.js'
@@ -15,7 +20,7 @@ export interface LoopbackApiClientOptions {
   readonly webSocket?: typeof globalThis.WebSocket
 }
 
-/** The network boundary. HTTP RPCs and rc.6 WebSocket event downlinks stay in the Extension Host. */
+/** The network boundary. HTTP RPCs and DSH WebSocket event downlinks stay in the Extension Host. */
 export class LoopbackApiClient extends AbstractApiClient implements DshTransport {
   private readonly closed = new AbortController()
   private isClosed = false
@@ -40,11 +45,12 @@ export class LoopbackApiClient extends AbstractApiClient implements DshTransport
         retryable: false,
       })
     }
-    return this.options.fetch(target, {
+    const response = await this.options.fetch(target, {
       ...init,
       redirect: 'error',
       signal: mergeSignals(init?.signal, this.closed.signal),
     })
+    return normalizeLegacyRpcResponse(response)
   }
 
   public request<TResponse>(method: string, params: unknown, signal?: AbortSignal): Promise<TResponse> {
@@ -57,6 +63,60 @@ export class LoopbackApiClient extends AbstractApiClient implements DshTransport
         }),
       )
     return this.withRetry(method, () => this.dispatch(method, params, signal), signal) as Promise<TResponse>
+  }
+
+  /**
+   * Keep only the stable carrier checks from the pinned package. The generated
+   * client also applies the current rc.8 method-value schema here; that makes
+   * an rc.6/rc.7 response fail before its version adapter can project it.
+   * Domain repositories already validate and narrow each value, so the
+   * version-neutral transport must leave `result.value` opaque.
+   */
+  protected override async callUnary<K extends keyof RpcMethodMap>(
+    method: K,
+    payload: RequestPayload<K>,
+    signal?: AbortSignal,
+    timeoutPolicy: 'default' | 'caller-signal-only' = 'default',
+  ): Promise<RpcResponse<ResponseValue<K>>> {
+    const message = {
+      type: 'client-request' as const,
+      rpcId: this.mintRpcId(),
+      method,
+      payload,
+    }
+    this.onEnvelope(message)
+    const requestSignal =
+      timeoutPolicy === 'caller-signal-only'
+        ? signal
+        : signal === undefined
+          ? AbortSignal.timeout(this.options.requestTimeoutMs)
+          : AbortSignal.any([AbortSignal.timeout(this.options.requestTimeoutMs), signal])
+    const response = await this.doFetch(new URL(`/api/${method}`, this.options.endpoint.baseUrl), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(message),
+      ...(requestSignal === undefined ? {} : { signal: requestSignal }),
+    })
+    if (!response.ok) throw new Error(`transport failure for ${method}: HTTP ${response.status}`)
+    let full: ReturnType<typeof serverResponseSchema.parse>
+    try {
+      full = serverResponseSchema.parse(await response.json())
+    } catch (cause) {
+      throw new AppError({
+        code: 'PROTOCOL_ERROR',
+        message: `DSH returned a malformed response for ${method}.`,
+        retryable: false,
+        cause,
+      })
+    }
+    this.onEnvelope(full)
+    if (full.rpcId !== message.rpcId)
+      throw new AppError({
+        code: 'PROTOCOL_ERROR',
+        message: `DSH returned a mismatched response for ${method}.`,
+        retryable: false,
+      })
+    return { rpcId: full.rpcId, result: full.result as RpcResponse<ResponseValue<K>>['result'] }
   }
 
   public remoteRequest<TResponse>(
@@ -172,7 +232,11 @@ export class LoopbackApiClient extends AbstractApiClient implements DshTransport
       case 'subagent.interrupt':
         return this.subagents.interrupt(params as RequestPayload<'subagent.interrupt'>, signal)
       case 'host.describe':
-        return this.host.describe(params as RequestPayload<'host.describe'>, signal)
+        // rc.8 made `home` required in the generated response schema. Keep
+        // this one handshake call at the wire-envelope level so rc.6 hosts
+        // that legitimately omit the new field can still be detected and
+        // served by the legacy adapter.
+        return this.dispatchHostDescribe(params as RequestPayload<'host.describe'>, signal)
       case 'host.pickDirectory':
         return this.host.pickDirectory(params as RequestPayload<'host.pickDirectory'>, signal)
       case 'host.listDirectory':
@@ -256,6 +320,59 @@ export class LoopbackApiClient extends AbstractApiClient implements DshTransport
   }
 
   /**
+   * Read the handshake envelope without applying rc.8's generated host schema.
+   * The adapter performs the version-specific field checks after this method
+   * returns, which is what lets an rc.6 host omit fields introduced later.
+   */
+  private async dispatchHostDescribe(
+    params: RequestPayload<'host.describe'>,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
+    const message = {
+      type: 'client-request' as const,
+      rpcId: this.mintRpcId(),
+      method: 'host.describe',
+      payload: params,
+    }
+    this.onEnvelope(message)
+    const requestSignal =
+      signal === undefined
+        ? AbortSignal.timeout(this.options.requestTimeoutMs)
+        : AbortSignal.any([AbortSignal.timeout(this.options.requestTimeoutMs), signal])
+    const response = await this.doFetch(new URL('/api/host.describe', this.options.endpoint.baseUrl), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(message),
+      signal: requestSignal,
+    })
+    if (!response.ok)
+      throw new AppError({
+        code: response.status >= 500 ? 'BACKEND_UNREACHABLE' : 'CAPABILITY_UNAVAILABLE',
+        message: `The DSH host.describe endpoint failed (HTTP ${response.status}).`,
+        retryable: response.status >= 500,
+      })
+    let full: ReturnType<typeof serverResponseSchema.parse>
+    try {
+      full = serverResponseSchema.parse(await response.json())
+    } catch (cause) {
+      throw new AppError({
+        code: 'PROTOCOL_ERROR',
+        message: 'DSH returned a malformed host.describe response.',
+        retryable: false,
+        cause,
+      })
+    }
+    this.onEnvelope(full)
+    if (full.rpcId !== message.rpcId)
+      throw new AppError({
+        code: 'PROTOCOL_ERROR',
+        message: 'DSH returned a mismatched host.describe response.',
+        retryable: false,
+      })
+    return { rpcId: full.rpcId, result: full.result }
+  }
+
+  /**
    * Typert Remote calls use the same JSON RPC envelope as the Host API, but
    * their payload is the gateway's exact `{ args }` object.  Keeping this
    * carrier in the Extension Host preserves the Webview boundary and avoids
@@ -266,7 +383,11 @@ export class LoopbackApiClient extends AbstractApiClient implements DshTransport
     args: Readonly<Record<string, unknown>>,
     signal?: AbortSignal,
   ): Promise<TResponse> {
-    if (!/^[a-z][a-z0-9_-]*\/[a-z][a-z0-9_-]*$/u.test(endpoint))
+    // Typert namespaces are JavaScript identifiers, not lower-case slugs.
+    // rc.8 exposes `messageFeedback/...` and `sessionReferenceResolver/...`;
+    // rejecting their capital letters turns a valid Remote call into the
+    // misleading INVALID_CONFIGURATION error before it reaches DSH.
+    if (!/^[A-Za-z][A-Za-z0-9_-]*\/[A-Za-z][A-Za-z0-9_-]*$/u.test(endpoint))
       throw new AppError({
         code: 'INVALID_CONFIGURATION',
         message: 'The DSH Remote endpoint is invalid.',
@@ -323,7 +444,7 @@ export class LoopbackApiClient extends AbstractApiClient implements DshTransport
   }
 
   /**
-   * rc.6 exposes event paths as read-only WebSocket downlinks. A normal fetch
+   * DSH exposes event paths as read-only WebSocket downlinks. A normal fetch
    * is intentionally rejected by DSH with HTTP 426, so keep the upgrade and
    * frame decoding here instead of leaking a transport detail upward.
    */
@@ -564,6 +685,62 @@ const IDEMPOTENT_METHODS = new Set([
   'subagent.history',
   'commands/list',
 ])
+
+/**
+ * rc.6/rc.7 still emit the settings-not-exposed error branch that rc.8
+ * removed from its generated envelope schema. Keep the current upstream
+ * typed client for every success/value schema, but widen this one legacy
+ * error at the transport seam so an older host is not rejected before the
+ * adapter's own error mapper sees it.
+ */
+async function normalizeLegacyRpcResponse(response: Response): Promise<Response> {
+  if (!response.headers.get('content-type')?.toLocaleLowerCase().includes('json')) return response
+  let value: unknown
+  try {
+    value = await response.clone().json()
+  } catch {
+    return response
+  }
+  if (!isLegacySettingsErrorEnvelope(value)) return response
+  const envelope = value as Record<string, unknown>
+  const result = envelope.result as Record<string, unknown>
+  const error = result.error as Record<string, unknown>
+  const normalized = {
+    ...envelope,
+    result: {
+      ...result,
+      error: { ...error, code: 'settings-rejected' },
+    },
+  }
+  const headers = new Headers(response.headers)
+  headers.delete('content-length')
+  headers.set('content-type', 'application/json')
+  return new Response(JSON.stringify(normalized), {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  })
+}
+
+function isLegacySettingsErrorEnvelope(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const envelope = value as Record<string, unknown>
+  const result = envelope.result
+  if (typeof result !== 'object' || result === null || Array.isArray(result)) return false
+  const resultRecord = result as Record<string, unknown>
+  const error = resultRecord.error
+  if (resultRecord.ok !== false || typeof error !== 'object' || error === null || Array.isArray(error))
+    return false
+  const errorRecord = error as Record<string, unknown>
+  const details = errorRecord.details
+  return (
+    errorRecord.code === 'settings-not-exposed' &&
+    typeof details === 'object' &&
+    details !== null &&
+    !Array.isArray(details) &&
+    typeof (details as Record<string, unknown>).ns === 'string'
+  )
+}
 
 function assertLoopback(endpoint: BackendEndpoint): void {
   if (

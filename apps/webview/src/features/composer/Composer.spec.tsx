@@ -99,6 +99,84 @@ describe('Composer', () => {
     expect(onIngestFiles).toHaveBeenCalledWith([file])
   })
 
+  it('uses host-backed @ candidates and inserts a safe file mention', () => {
+    const onDraftChange = vi.fn()
+    const onReferenceQueryChange = vi.fn()
+    render(
+      <Composer
+        {...baseProps()}
+        draft="@src/"
+        onDraftChange={onDraftChange}
+        onReferenceQueryChange={onReferenceQueryChange}
+        references={[
+          {
+            id: 'file:src/app.ts',
+            kind: 'file',
+            path: 'src/app.ts',
+            label: 'app.ts',
+            description: 'src/app.ts',
+          },
+          { id: 'file:src', kind: 'directory', path: 'src', label: 'src', description: 'src' },
+        ]}
+      />,
+    )
+    expect(screen.getByRole('listbox', { name: 'Files and sessions' })).toBeDefined()
+    fireEvent.mouseDown(screen.getByRole('option', { name: /app\.ts/ }))
+    expect(onDraftChange).toHaveBeenLastCalledWith('@src/app.ts')
+    expect(onReferenceQueryChange).toHaveBeenLastCalledWith('src/app.ts', false)
+  })
+
+  it('quotes file references that contain spaces and keeps session mentions opaque', () => {
+    const onDraftChange = vi.fn()
+    render(
+      <Composer
+        {...baseProps()}
+        onDraftChange={onDraftChange}
+        draft="@"
+        references={[
+          {
+            id: 'file:docs/release notes.md',
+            kind: 'file',
+            path: 'docs/release notes.md',
+            label: 'release notes.md',
+            description: 'docs/release notes.md',
+          },
+          {
+            id: 'session:s2',
+            kind: 'session',
+            sessionId: 's2',
+            label: 'Review',
+            description: 'workspace',
+            mention: '@[Review](dsh-session:s2)',
+          },
+        ]}
+      />,
+    )
+    const textarea = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })
+    fireEvent.change(textarea, { target: { value: '@' } })
+    fireEvent.mouseDown(screen.getByRole('option', { name: /release notes\.md/ }))
+    expect(onDraftChange).toHaveBeenLastCalledWith('@"docs/release notes.md"')
+  })
+
+  it('surfaces the connected DSH image admission limits in the drop affordance', () => {
+    render(
+      <Composer
+        {...baseProps()}
+        imageLimits={{
+          maxImageBytes: 3_670_016,
+          maxImagesPerMessage: 20,
+          maxMessageImageBytes: 100 * 1024 * 1024,
+          maxImagePixels: 40_000_000,
+          maxImageDimension: 8_000,
+          mediaTypes: ['image/png', 'image/jpeg'],
+        }}
+      />,
+    )
+    const form = composerForm()
+    fireEvent.dragEnter(form, { dataTransfer: { types: ['Files'] } })
+    expect(screen.getByText('Drop images to attach · up to 20, 3.5 MiB each')).toBeDefined()
+  })
+
   it('ignores non-file drags', () => {
     const onIngestFiles = vi.fn()
     render(<Composer {...baseProps()} onIngestFiles={onIngestFiles} />)

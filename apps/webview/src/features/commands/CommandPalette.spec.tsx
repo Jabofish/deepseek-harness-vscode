@@ -11,6 +11,7 @@ import {
   parsePaletteQuery,
   type CommandArgumentOption,
 } from './CommandPalette.js'
+import { PopupSelectRegistry } from './popupSelectRegistry.js'
 
 const commands: readonly DynamicCommand[] = [
   { name: 'goal', description: 'Set the agent goal', input: { hint: '<goal>' } },
@@ -127,6 +128,25 @@ describe('CommandPalette', () => {
     fireEvent.mouseDown(screen.getByRole('option', { name: 'Use /permission yolo' }))
     expect(onExecute).toHaveBeenCalledTimes(1)
     expect(onExecute).toHaveBeenCalledWith('permission', 'yolo')
+  })
+
+  it('routes a decorated bare command to popupSelect instead of executing the wire command', () => {
+    const onExecute = vi.fn()
+    const onPopupSelect = vi.fn()
+    const popupSelects = new PopupSelectRegistry()
+    popupSelects.register({ command: 'plan', onOpen: vi.fn() })
+    render(
+      <CommandPalette
+        commands={commands}
+        query="/p"
+        popupSelects={popupSelects}
+        onPopupSelect={onPopupSelect}
+        onExecute={onExecute}
+      />,
+    )
+    fireEvent.mouseDown(screen.getByRole('option', { name: /\/plan/u }))
+    expect(onPopupSelect).toHaveBeenCalledWith('plan')
+    expect(onExecute).not.toHaveBeenCalled()
   })
 })
 

@@ -9,6 +9,8 @@ const requestBase = { requestId: id }
 // valid response into a protocol error. String-size limits remain unchanged.
 const MAX_PROTOCOL_NODES = 100_000
 const MAX_ATTACHMENT_BASE64_CHARS = Math.ceil((8 * 1024 * 1024) / 3) * 4
+const MAX_PROMPT_ATTACHMENTS = 20
+const MAX_PROMPT_ATTACHMENT_TOTAL_BYTES = 100 * 1024 * 1024
 const session = { sessionId: id }
 const attachmentUri = z.string().regex(/^dsh-attachment:[A-Za-z0-9-]{16,128}$/)
 const attachmentSchema = z
@@ -24,7 +26,7 @@ const promptSchema = z
   .object({
     sessionId: id,
     text: z.string().max(1_000_000),
-    attachments: z.array(attachmentSchema).max(8),
+    attachments: z.array(attachmentSchema).max(MAX_PROMPT_ATTACHMENTS),
   })
   .strict()
   .superRefine((value, context) => {
@@ -33,7 +35,7 @@ const promptSchema = z
       const match = attachment.uri.match(/^data:[^;,]+;base64,([A-Za-z0-9+/]+={0,2})$/i)
       if (match === null) continue
       totalBytes += Math.floor(((match[1]?.length ?? 0) * 3) / 4)
-      if (totalBytes > 16 * 1024 * 1024) {
+      if (totalBytes > MAX_PROMPT_ATTACHMENT_TOTAL_BYTES) {
         context.addIssue({
           code: 'custom',
           path: ['attachments'],
@@ -79,9 +81,35 @@ export const webviewRequestSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('connection.retry'), ...requestBase }).strict(),
   z
     .object({
+      type: z.literal('connection.configure'),
+      ...requestBase,
+      payload: z
+        .object({
+          mode: z.enum(['auto', 'custom']),
+          endpoint: z.string().max(512).optional(),
+        })
+        .strict(),
+    })
+    .strict(),
+  z
+    .object({
       type: z.literal('runtime.action'),
       ...requestBase,
       payload: z.object({ action: z.enum(['install', 'select', 'copy-command', 'open-docs']) }).strict(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('runtime.update.check'),
+      ...requestBase,
+      payload: z.object({ force: z.boolean().optional() }).strict(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('runtime.update.install'),
+      ...requestBase,
+      payload: z.object({ version: z.string().min(1).max(128) }).strict(),
     })
     .strict(),
   z.object({ type: z.literal('workspace.list'), ...requestBase }).strict(),
@@ -108,6 +136,20 @@ export const webviewRequestSchema = z.discriminatedUnion('type', [
     .strict(),
   z
     .object({
+      type: z.literal('workspace.move'),
+      ...requestBase,
+      payload: z.object({ workspaceId: id, beforeWorkspaceId: id.optional() }).strict(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('session.move'),
+      ...requestBase,
+      payload: z.object({ workspaceId: id, sessionId: id, beforeSessionId: id.optional() }).strict(),
+    })
+    .strict(),
+  z
+    .object({
       type: z.literal('session.list'),
       ...requestBase,
       payload: z
@@ -122,6 +164,19 @@ export const webviewRequestSchema = z.discriminatedUnion('type', [
     })
     .strict(),
   z.object({ type: z.literal('session.open'), ...requestBase, payload: z.object(session).strict() }).strict(),
+  z
+    .object({
+      type: z.literal('session.history'),
+      ...requestBase,
+      payload: z
+        .object({
+          sessionId: id,
+          beforeSeq: z.number().int().nonnegative().optional(),
+          maxMessages: z.number().int().positive().max(200).optional(),
+        })
+        .strict(),
+    })
+    .strict(),
   z
     .object({
       type: z.literal('session.create'),
@@ -236,7 +291,7 @@ export const webviewRequestSchema = z.discriminatedUnion('type', [
     .object({
       type: z.literal('attachment.release'),
       ...requestBase,
-      payload: z.object({ uris: z.array(attachmentUri).min(1).max(8) }).strict(),
+      payload: z.object({ uris: z.array(attachmentUri).min(1).max(MAX_PROMPT_ATTACHMENTS) }).strict(),
     })
     .strict(),
   z.object({ type: z.literal('attachment.open.list'), ...requestBase }).strict(),
@@ -256,6 +311,57 @@ export const webviewRequestSchema = z.discriminatedUnion('type', [
     .strict(),
   z
     .object({
+      type: z.literal('reference.list'),
+      ...requestBase,
+      payload: z
+        .object({
+          sessionId: id,
+          query: z.string().max(4_096),
+          quoted: z.boolean().optional(),
+        })
+        .strict(),
+    })
+    .strict(),
+  z
+    .object({ type: z.literal('feedback.list'), ...requestBase, payload: z.object(session).strict() })
+    .strict(),
+  z
+    .object({
+      type: z.literal('feedback.toggle'),
+      ...requestBase,
+      payload: z
+        .object({
+          sessionId: id,
+          messageId: id,
+          rating: z.enum(['positive', 'negative']),
+          note: z.string().max(16_384).optional(),
+        })
+        .strict(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('feedback.note'),
+      ...requestBase,
+      payload: z
+        .object({
+          sessionId: id,
+          messageId: id,
+          rating: z.enum(['positive', 'negative']),
+          note: z.string().max(16_384).optional(),
+        })
+        .strict(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('feedback.remove'),
+      ...requestBase,
+      payload: z.object({ sessionId: id, messageId: id }).strict(),
+    })
+    .strict(),
+  z
+    .object({
       type: z.literal('models.list'),
       ...requestBase,
       payload: z.object({ providerId: id.optional() }).strict(),
@@ -266,6 +372,20 @@ export const webviewRequestSchema = z.discriminatedUnion('type', [
       type: z.literal('models.session.list'),
       ...requestBase,
       payload: z.object({ sessionId: id }).strict(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('models.discover'),
+      ...requestBase,
+      payload: z
+        .object({
+          settingsNamespace: id,
+          providerId: id.optional(),
+          baseUrl: z.string().max(2048).optional(),
+          api: z.string().max(128).optional(),
+        })
+        .strict(),
     })
     .strict(),
   z.object({ type: z.literal('providers.list'), ...requestBase }).strict(),
@@ -314,6 +434,7 @@ export const webviewRequestSchema = z.discriminatedUnion('type', [
     })
     .strict(),
   z.object({ type: z.literal('settings.read'), ...requestBase }).strict(),
+  z.object({ type: z.literal('settings.openDocument'), ...requestBase }).strict(),
   // Extension-local facts (connection/runtime defaults). The DSH host settings
   // snapshot travels on settings.read; the two must not be conflated.
   z.object({ type: z.literal('extensionSettings.read'), ...requestBase }).strict(),
@@ -322,6 +443,13 @@ export const webviewRequestSchema = z.discriminatedUnion('type', [
       type: z.literal('settings.update'),
       ...requestBase,
       payload: z.object({ path: z.string().min(1).max(512), value: boundedUnknown }).strict(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('settings.unset'),
+      ...requestBase,
+      payload: z.object({ path: z.string().min(1).max(512) }).strict(),
     })
     .strict(),
   z
@@ -404,7 +532,13 @@ export const webviewRequestSchema = z.discriminatedUnion('type', [
     .object({
       type: z.literal('command.execute'),
       ...requestBase,
-      payload: z.object({ sessionId: id, command: z.string().min(1).max(100_000) }).strict(),
+      payload: z
+        .object({
+          sessionId: id,
+          command: z.string().min(1).max(100_000),
+          attachments: z.array(attachmentSchema).max(MAX_PROMPT_ATTACHMENTS).optional(),
+        })
+        .strict(),
     })
     .strict(),
   z.object({ type: z.literal('plugin.inventory'), ...requestBase }).strict(),
@@ -458,6 +592,13 @@ export const webviewRequestSchema = z.discriminatedUnion('type', [
   z
     .object({
       type: z.literal('view.openLink'),
+      ...requestBase,
+      payload: z.object({ href: z.string().min(1).max(4_096) }).strict(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('view.showInFolder'),
       ...requestBase,
       payload: z.object({ href: z.string().min(1).max(4_096) }).strict(),
     })

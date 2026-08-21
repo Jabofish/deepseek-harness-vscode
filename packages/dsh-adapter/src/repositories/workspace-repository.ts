@@ -123,6 +123,48 @@ export class Rc6WorkspaceRepository implements WorkspaceRepository {
     )
     if (value === undefined || value.deleted !== true) throw malformedWorkspaceResponse('delete')
   }
+
+  public async insertBefore(
+    workspaceId: string,
+    beforeWorkspaceId?: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const value = recordOrUndefined(
+      await callRpc<unknown>(
+        this.transport,
+        'workspace.insertBefore',
+        {
+          workspaceId,
+          ...(beforeWorkspaceId === undefined ? {} : { beforeWorkspaceId }),
+        },
+        signal,
+      ),
+    )
+    if (value === undefined || !isStringArray(value.workspaceIds))
+      throw malformedWorkspaceResponse('insertBefore')
+  }
+
+  public async insertSessionBefore(
+    workspaceId: string,
+    sessionId: string,
+    beforeSessionId?: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const value = recordOrUndefined(
+      await callRpc<unknown>(
+        this.transport,
+        'workspace.insertSessionBefore',
+        {
+          workspaceId,
+          sessionId,
+          ...(beforeSessionId === undefined ? {} : { beforeSessionId }),
+        },
+        signal,
+      ),
+    )
+    if (value === undefined || !validWorkspaceView(value.workspace))
+      throw malformedWorkspaceResponse('insertSessionBefore')
+  }
 }
 
 function recordOrUndefined(value: unknown): Record<string, unknown> | undefined {

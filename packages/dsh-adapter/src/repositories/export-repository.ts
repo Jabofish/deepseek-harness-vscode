@@ -1,9 +1,3 @@
-import { randomUUID } from 'node:crypto'
-import { createWriteStream } from 'node:fs'
-import { link, open, rename, stat, unlink } from 'node:fs/promises'
-import { Readable } from 'node:stream'
-import { pipeline } from 'node:stream/promises'
-import type { ReadableStream as NodeReadableStream } from 'node:stream/web'
 import { AppError, type ExportRepository, type SessionExportOptions } from '@dsh-vscode/domain'
 
 import type { DshTransport } from '../contracts.js'
@@ -11,17 +5,22 @@ import { callRpc, unavailable } from '../versions/rc6/rpc.js'
 
 export interface ExportFileSystem {
   stat(path: string): Promise<{ isDirectory(): boolean }>
-  rename(source: string, destination: string): Promise<void>
+  rename(source: string, destination: string, overwrite?: boolean): Promise<void>
   unlink(path: string): Promise<void>
-  link(source: string, destination: string): Promise<void>
+  writeFile(path: string, data: Uint8Array): Promise<void>
 }
 
-const nodeFileSystem: ExportFileSystem = { stat, rename, unlink, link }
+const unavailableFileSystem: ExportFileSystem = {
+  stat: () => Promise.reject(unavailable('authorized export file system')),
+  rename: () => Promise.reject(unavailable('authorized export file system')),
+  unlink: () => Promise.reject(unavailable('authorized export file system')),
+  writeFile: () => Promise.reject(unavailable('authorized export file system')),
+}
 
 export class Rc6ExportRepository implements ExportRepository {
   public constructor(
     private readonly transport: DshTransport,
-    private readonly fileSystem: ExportFileSystem = nodeFileSystem,
+    private readonly fileSystem: ExportFileSystem = unavailableFileSystem,
   ) {}
 
   public async exportSession(
@@ -75,7 +74,12 @@ export class Rc6ExportRepository implements ExportRepository {
       options.format === 'json'
         ? jsonChunks(events, options.includeReasoning, options.includeAttachments)
         : markdownChunks(events, options.includeReasoning, options.includeAttachments)
-    await pipeText(source, destination, signal)
+    const chunks: string[] = []
+    for (const chunk of source) {
+      throwIfAborted(signal)
+      chunks.push(chunk)
+    }
+    await this.fileSystem.writeFile(destination, new TextEncoder().encode(chunks.join('')))
   }
 
   private async writeStream(
@@ -83,8 +87,26 @@ export class Rc6ExportRepository implements ExportRepository {
     body: ReadableStream<Uint8Array>,
     signal?: AbortSignal,
   ): Promise<void> {
-    const source = Readable.fromWeb(body as unknown as NodeReadableStream<Uint8Array>)
-    await pipe(source, destination, signal)
+    const reader = body.getReader()
+    const chunks: Uint8Array[] = []
+    try {
+      while (true) {
+        throwIfAborted(signal)
+        const next = await reader.read()
+        if (next.done) break
+        chunks.push(next.value)
+      }
+    } finally {
+      await reader.cancel().catch(() => undefined)
+    }
+    const total = chunks.reduce((size, chunk) => size + chunk.byteLength, 0)
+    const data = new Uint8Array(total)
+    let offset = 0
+    for (const chunk of chunks) {
+      data.set(chunk, offset)
+      offset += chunk.byteLength
+    }
+    await this.fileSystem.writeFile(destination, data)
   }
 }
 
@@ -142,17 +164,16 @@ export async function writeExportAtomically(
   produce: (temporaryPath: string, signal?: AbortSignal) => Promise<void>,
   signal?: AbortSignal,
   overwriteConfirmed = false,
-  fileSystem: ExportFileSystem = nodeFileSystem,
+  fileSystem: ExportFileSystem = unavailableFileSystem,
 ): Promise<void> {
   throwIfAborted(signal)
-  const temporaryPath = await reserveTemporaryPath(destination)
+  const temporaryPath = await reserveTemporaryPath(destination, fileSystem)
   let temporaryOwned = true
   let backupPath: string | undefined
 
   try {
     await produce(temporaryPath, signal)
     throwIfAborted(signal)
-    await syncFile(temporaryPath)
 
     let destinationInfo = await readDestinationInfo(destination, fileSystem)
     if (destinationInfo?.isDirectory() === true)
@@ -170,13 +191,13 @@ export async function writeExportAtomically(
 
     const replaceExisting = async (): Promise<void> => {
       backupPath = `${temporaryPath}.backup`
-      await fileSystem.rename(destination, backupPath)
+      await fileSystem.rename(destination, backupPath, false)
       try {
-        await fileSystem.rename(temporaryPath, destination)
+        await fileSystem.rename(temporaryPath, destination, false)
         temporaryOwned = false
       } catch (error) {
         try {
-          await fileSystem.rename(backupPath, destination)
+          await fileSystem.rename(backupPath, destination, true)
           backupPath = undefined
         } catch (restoreError) {
           throw new AggregateError(
@@ -197,10 +218,9 @@ export async function writeExportAtomically(
     }
 
     try {
-      // A hard link is the only cross-platform no-overwrite commit available to
-      // Node here. It also closes the race between the existence check and commit.
-      await fileSystem.link(temporaryPath, destination)
-      await fileSystem.unlink(temporaryPath)
+      // The Extension Host's authorized file system provides the commit
+      // operation. The adapter never opens or writes a platform path itself.
+      await fileSystem.rename(temporaryPath, destination, false)
       temporaryOwned = false
     } catch (error) {
       if (!isErrorCode(error, 'EEXIST') || !overwriteConfirmed) throw error
@@ -215,44 +235,21 @@ export async function writeExportAtomically(
       await replaceExisting()
     }
   } finally {
-    if (temporaryOwned) await unlink(temporaryPath).catch(() => undefined)
+    if (temporaryOwned) await fileSystem.unlink(temporaryPath).catch(() => undefined)
     // A remaining backup contains the user's original file. Never delete it as
     // generic failure cleanup; leaving it recoverable is safer than data loss.
   }
 }
 
-async function pipeText(
-  source: Iterable<string> | AsyncIterable<string>,
-  destination: string,
-  signal?: AbortSignal,
-): Promise<void> {
-  await pipe(Readable.from(source), destination, signal)
-}
-
-async function pipe(source: Readable, destination: string, signal?: AbortSignal): Promise<void> {
-  const writer = createWriteStream(destination, { flags: 'w' })
-  if (signal === undefined) {
-    await pipeline(source, writer)
-  } else {
-    await pipeline(source, writer, { signal })
-  }
-}
-
-async function reserveTemporaryPath(destination: string): Promise<string> {
+async function reserveTemporaryPath(destination: string, fileSystem: ExportFileSystem): Promise<string> {
   for (let attempt = 0; attempt < 8; attempt += 1) {
-    const temporaryPath = `${destination}.dsh-vscode-${randomUUID()}.tmp`
-    let handle: Awaited<ReturnType<typeof open>> | undefined
-    let created = false
+    const temporaryPath = `${destination}.dsh-vscode-${globalThis.crypto.randomUUID()}.tmp`
     try {
-      handle = await open(temporaryPath, 'wx')
-      created = true
-      await handle.close()
-      return temporaryPath
+      await fileSystem.stat(temporaryPath)
+      continue
     } catch (error) {
-      await handle?.close().catch(() => undefined)
-      if (created) await unlink(temporaryPath).catch(() => undefined)
-      if (isErrorCode(error, 'EEXIST') && !created) continue
-      throw error
+      if (!isNotFoundError(error)) throw error
+      return temporaryPath
     }
   }
   throw new AppError({
@@ -262,15 +259,6 @@ async function reserveTemporaryPath(destination: string): Promise<string> {
   })
 }
 
-async function syncFile(filePath: string): Promise<void> {
-  const handle = await open(filePath, 'r+')
-  try {
-    await handle.sync()
-  } finally {
-    await handle.close()
-  }
-}
-
 async function readDestinationInfo(
   destination: string,
   fileSystem: ExportFileSystem,
@@ -278,7 +266,7 @@ async function readDestinationInfo(
   try {
     return await fileSystem.stat(destination)
   } catch (error) {
-    if (isErrorCode(error, 'ENOENT')) return undefined
+    if (isNotFoundError(error)) return undefined
     throw error
   }
 }
@@ -382,4 +370,8 @@ function mapExportError(error: unknown, signal: AbortSignal | undefined): AppErr
 
 function isErrorCode(error: unknown, code: string): boolean {
   return typeof error === 'object' && error !== null && 'code' in error && error.code === code
+}
+
+function isNotFoundError(error: unknown): boolean {
+  return isErrorCode(error, 'ENOENT') || isErrorCode(error, 'FileNotFound')
 }

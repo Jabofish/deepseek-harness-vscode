@@ -29,14 +29,21 @@ export class VersionedBackendProbe implements BackendProbe {
     signal?: AbortSignal,
   ): Promise<ConnectedBackend | undefined> {
     for (const adapter of this.adapters) {
-      const capabilities = await adapter.probe(candidate, signal)
-      if (capabilities !== undefined) {
-        return {
-          endpoint: candidate.endpoint,
-          ownership: 'external',
-          capabilities,
-          ...(candidate.pid === undefined ? {} : { pid: candidate.pid }),
+      try {
+        const capabilities = await adapter.probe(candidate, signal)
+        if (capabilities !== undefined) {
+          return {
+            endpoint: candidate.endpoint,
+            ownership: 'external',
+            capabilities,
+            ...(candidate.pid === undefined ? {} : { pid: candidate.pid }),
+          }
         }
+      } catch (error) {
+        // A version-specific probe may decline a candidate. Continue with the
+        // legacy/fallback adapter unless the caller cancelled the operation.
+        if (signal?.aborted === true || (error instanceof DOMException && error.name === 'AbortError'))
+          throw error
       }
     }
     return undefined

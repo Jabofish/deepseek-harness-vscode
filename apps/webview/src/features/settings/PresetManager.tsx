@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom'
 import { useEffect, useState, type ReactElement } from 'react'
 import type {
   AgentPresetDescriptor,
@@ -14,6 +15,7 @@ export interface PresetManagerProps {
   readonly onCopy: (from: string, presetId: string, name?: string) => Promise<string | undefined>
   readonly onRemove: (presetId: string) => Promise<void>
   readonly onOpenLocation: (presetId: string) => Promise<AgentPresetLocation | undefined>
+  readonly onStartCreatorDraft?: () => Promise<void>
   /** Writes the host-side `agent-presets.default` settings field. */
   readonly onMakeDefault: (presetId: string) => Promise<void>
   readonly defaultWritable?: boolean
@@ -78,11 +80,14 @@ export function PresetManager(props: PresetManagerProps): ReactElement | null {
     error: undefined,
   })
   const [view, setView] = useState<PresetView | undefined>(undefined)
+  const [viewLoading, setViewLoading] = useState(false)
+  const [viewError, setViewError] = useState<string | undefined>(undefined)
   const [copy, setCopy] = useState<CopyDraft | undefined>(undefined)
   const [pendingDelete, setPendingDelete] = useState<string | undefined>(undefined)
   const [deleting, setDeleting] = useState(false)
   const [defaultingId, setDefaultingId] = useState<string | undefined>(undefined)
   const [revealedPaths, setRevealedPaths] = useState<Readonly<Record<string, string>>>({})
+  const [creatorBusy, setCreatorBusy] = useState(false)
 
   const fetchRoster = (): Promise<void> =>
     props
@@ -147,19 +152,23 @@ export function PresetManager(props: PresetManagerProps): ReactElement | null {
   }
 
   const openComposition = (id: string): void => {
+    if (viewLoading) return
+    setView(undefined)
+    setViewError(undefined)
+    setViewLoading(true)
     void props
       .onReadDocument(id)
-      .catch(() => undefined)
       .then((document) => {
         if (document === undefined) {
-          setRoster((current) => ({
-            ...current,
-            error: t('presets.compositionError'),
-          }))
+          setViewError(t('presets.compositionError'))
           return
         }
         setView({ id, title: document.name ?? document.id, content: document.content })
       })
+      .catch((reason: unknown) =>
+        setViewError(reason instanceof Error ? reason.message : t('presets.compositionError')),
+      )
+      .finally(() => setViewLoading(false))
   }
 
   const openLocation = (id: string): void => {
@@ -259,6 +268,31 @@ export function PresetManager(props: PresetManagerProps): ReactElement | null {
     copy === undefined
       ? undefined
       : (copy.error ?? (blocker === undefined ? undefined : t(`presets.${blocker}`)))
+  const hasCordisPreset = roster.rows.some((row) => row.id === 'cordis' && row.broken === undefined)
+  const creatorCard =
+    hasCordisPreset && props.onStartCreatorDraft !== undefined ? (
+      <button
+        className="dsh-presets__creator-card"
+        type="button"
+        disabled={!roster.authorable || creatorBusy}
+        title={roster.authorable ? t('presets.creatorDraftTitle') : t('presets.noWritableRoot')}
+        onClick={() => {
+          if (creatorBusy) return
+          setCreatorBusy(true)
+          void props.onStartCreatorDraft!()
+            .catch((reason: unknown) =>
+              setRoster((current) => ({
+                ...current,
+                error: reason instanceof Error ? reason.message : t('presets.rosterError'),
+              })),
+            )
+            .finally(() => setCreatorBusy(false))
+        }}
+      >
+        <Icon name="add" />
+        <span>{t('presets.creatorDraft')}</span>
+      </button>
+    ) : null
 
   return (
     <div className="dsh-presets">
@@ -279,7 +313,7 @@ export function PresetManager(props: PresetManagerProps): ReactElement | null {
           return trust === 'user' ? (
             <section className="dsh-presets__group" key={trust}>
               <h3>{t(heading)}</h3>
-              <p className="dsh-presets__empty-group">{t('presets.emptyCustom')}</p>
+              {creatorCard ?? <p className="dsh-presets__empty-group">{t('presets.emptyCustom')}</p>}
             </section>
           ) : null
         return (
@@ -422,95 +456,164 @@ export function PresetManager(props: PresetManagerProps): ReactElement | null {
                 </li>
               ))}
             </ul>
+            {trust === 'user' ? creatorCard : null}
           </section>
         )
       })}
-      {copy === undefined ? null : (
-        <div className="dsh-presets__dialog" role="dialog" aria-label={t('presets.copyAria')}>
-          <h3>{t('presets.copyHeading', { name: copy.fromTitle })}</h3>
-          <label className="dsh-presets__field">
-            <span>{t('presets.id')}</span>
-            <input
-              value={copy.id}
-              autoFocus
-              spellCheck={false}
-              placeholder="my-preset"
-              onChange={(event) => setCopy({ ...copy, id: event.target.value, error: undefined })}
-            />
-          </label>
-          <label className="dsh-presets__field">
-            <span>{t('presets.displayName')}</span>
-            <input
-              value={copy.name}
-              spellCheck={false}
-              placeholder={t('presets.displayNamePlaceholder')}
-              onChange={(event) => setCopy({ ...copy, name: event.target.value, error: undefined })}
-            />
-          </label>
-          {copyMessage === undefined ? null : (
-            <p className="dsh-presets__dialog-error" role="alert">
-              {copyMessage}
-            </p>
+      {copy === undefined
+        ? null
+        : portalled(
+            <div className="dsh-presets__modal-backdrop" role="presentation">
+              <div
+                className="dsh-presets__dialog"
+                role="dialog"
+                aria-modal="true"
+                aria-label={t('presets.copyAria')}
+              >
+                <h3>{t('presets.copyHeading', { name: copy.fromTitle })}</h3>
+                <label className="dsh-presets__field">
+                  <span>{t('presets.id')}</span>
+                  <input
+                    value={copy.id}
+                    autoFocus
+                    spellCheck={false}
+                    placeholder="my-preset"
+                    onChange={(event) => setCopy({ ...copy, id: event.target.value, error: undefined })}
+                  />
+                </label>
+                <label className="dsh-presets__field">
+                  <span>{t('presets.displayName')}</span>
+                  <input
+                    value={copy.name}
+                    spellCheck={false}
+                    placeholder={t('presets.displayNamePlaceholder')}
+                    onChange={(event) => setCopy({ ...copy, name: event.target.value, error: undefined })}
+                  />
+                </label>
+                {copyMessage === undefined ? null : (
+                  <p className="dsh-presets__dialog-error" role="alert">
+                    {copyMessage}
+                  </p>
+                )}
+                <div className="dsh-presets__dialog-actions">
+                  <button
+                    className="dsh-button dsh-button--secondary dsh-button--compact"
+                    type="button"
+                    disabled={copy.saving}
+                    onClick={() => setCopy(undefined)}
+                  >
+                    {t('presets.cancel')}
+                  </button>
+                  <button
+                    className="dsh-button dsh-button--compact"
+                    type="button"
+                    disabled={copy.saving || blocker !== undefined}
+                    onClick={confirmCopy}
+                  >
+                    {copy.saving ? t('presets.creating') : t('presets.create')}
+                  </button>
+                </div>
+              </div>
+            </div>,
           )}
-          <div className="dsh-presets__dialog-actions">
-            <button
-              className="dsh-button dsh-button--secondary dsh-button--compact"
-              type="button"
-              disabled={copy.saving}
-              onClick={() => setCopy(undefined)}
-            >
-              {t('presets.cancel')}
-            </button>
-            <button
-              className="dsh-button dsh-button--compact"
-              type="button"
-              disabled={copy.saving || blocker !== undefined}
-              onClick={confirmCopy}
-            >
-              {copy.saving ? t('presets.creating') : t('presets.create')}
-            </button>
-          </div>
-        </div>
-      )}
-      {view === undefined ? null : (
-        <div className="dsh-presets__dialog" role="dialog" aria-label={t('presets.composition')}>
-          <h3>{t('presets.compositionHeading', { name: view.title })}</h3>
-          <pre className="dsh-presets__code">{view.content}</pre>
-          <div className="dsh-presets__dialog-actions">
-            <button
-              className="dsh-button dsh-button--secondary dsh-button--compact"
-              type="button"
-              onClick={() => setView(undefined)}
-            >
-              {t('presets.close')}
-            </button>
-          </div>
-        </div>
-      )}
-      {pendingDelete === undefined ? null : (
-        <div className="dsh-presets__dialog" role="alertdialog" aria-label={t('presets.deleteAria')}>
-          <h3>{t('presets.deleteHeading')}</h3>
-          <p>{t('presets.deletePrompt', { name: pendingDelete })}</p>
-          <div className="dsh-presets__dialog-actions">
-            <button
-              className="dsh-button dsh-button--secondary dsh-button--compact"
-              type="button"
-              disabled={deleting}
-              onClick={() => setPendingDelete(undefined)}
-            >
-              {t('presets.cancel')}
-            </button>
-            <button
-              className="dsh-button dsh-button--danger dsh-button--compact"
-              type="button"
-              disabled={deleting}
-              onClick={remove}
-            >
-              {deleting ? t('presets.deleting') : t('presets.deleteAction')}
-            </button>
-          </div>
-        </div>
-      )}
+      {viewLoading || viewError !== undefined
+        ? portalled(
+            <div className="dsh-presets__modal-backdrop" role="presentation">
+              <div
+                className="dsh-presets__dialog"
+                role="dialog"
+                aria-modal="true"
+                aria-label={t('presets.composition')}
+              >
+                <h3>
+                  {viewError === undefined ? t('presets.compositionLoading') : t('presets.composition')}
+                </h3>
+                {viewError === undefined ? (
+                  <p className="dsh-settings__empty" role="status">
+                    {t('presets.loading')}
+                  </p>
+                ) : (
+                  <p className="dsh-presets__dialog-error" role="alert">
+                    {viewError}
+                  </p>
+                )}
+                <div className="dsh-presets__dialog-actions">
+                  <button
+                    className="dsh-button dsh-button--secondary dsh-button--compact"
+                    type="button"
+                    disabled={viewLoading}
+                    onClick={() => {
+                      setViewError(undefined)
+                      setViewLoading(false)
+                    }}
+                  >
+                    {t('presets.close')}
+                  </button>
+                </div>
+              </div>
+            </div>,
+          )
+        : view === undefined
+          ? null
+          : portalled(
+              <div className="dsh-presets__modal-backdrop" role="presentation">
+                <div
+                  className="dsh-presets__dialog"
+                  role="dialog"
+                  aria-modal="true"
+                  aria-label={t('presets.composition')}
+                >
+                  <h3>{t('presets.compositionHeading', { name: view.title })}</h3>
+                  <pre className="dsh-presets__code">{view.content}</pre>
+                  <div className="dsh-presets__dialog-actions">
+                    <button
+                      className="dsh-button dsh-button--secondary dsh-button--compact"
+                      type="button"
+                      onClick={() => setView(undefined)}
+                    >
+                      {t('presets.close')}
+                    </button>
+                  </div>
+                </div>
+              </div>,
+            )}
+      {pendingDelete === undefined
+        ? null
+        : portalled(
+            <div className="dsh-presets__modal-backdrop" role="presentation">
+              <div
+                className="dsh-presets__dialog"
+                role="alertdialog"
+                aria-modal="true"
+                aria-label={t('presets.deleteAria')}
+              >
+                <h3>{t('presets.deleteHeading')}</h3>
+                <p>{t('presets.deletePrompt', { name: pendingDelete })}</p>
+                <div className="dsh-presets__dialog-actions">
+                  <button
+                    className="dsh-button dsh-button--secondary dsh-button--compact"
+                    type="button"
+                    disabled={deleting}
+                    onClick={() => setPendingDelete(undefined)}
+                  >
+                    {t('presets.cancel')}
+                  </button>
+                  <button
+                    className="dsh-button dsh-button--danger dsh-button--compact"
+                    type="button"
+                    disabled={deleting}
+                    onClick={remove}
+                  >
+                    {deleting ? t('presets.deleting') : t('presets.deleteAction')}
+                  </button>
+                </div>
+              </div>
+            </div>,
+          )}
     </div>
   )
+}
+
+function portalled(node: ReactElement): ReactElement {
+  return typeof document === 'undefined' ? node : createPortal(node, document.body)
 }

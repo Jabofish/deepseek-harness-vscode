@@ -151,36 +151,87 @@ export function UserQuestionCard(props: UserQuestionCardProps): ReactElement {
       <button
         className="dsh-button dsh-button--primary"
         type="button"
-        disabled={props.disabled || !complete}
-        onClick={() => {
-          // Always submit the batch encoding (a one-element batch is fine):
-          // selections and free text stay separate slots this way.
-          props.onRespond(
-            items.map((item, index) => {
-              const draft = drafts[index] ?? { selected: [], custom: '', skipped: false }
-              return {
-                id: item.id,
-                response:
-                  draft.skipped || (item.multiSelect !== true && draft.custom.trim() !== '')
-                    ? []
-                    : draft.selected,
-                ...(draft.skipped || draft.custom.trim() === '' ? {} : { custom: draft.custom.trim() }),
-              }
-            }),
-          )
-        }}
+        disabled={props.disabled || !complete || planReview}
+        onClick={() => props.onRespond(encodeAnswers(items, drafts))}
       >
         {t('question.submit')}
       </button>
+      {planReview ? (
+        <PlanDecisionRow
+          item={items[0]!}
+          disabled={props.disabled}
+          onChat={props.onCancel}
+          onRespond={(choice) => props.onRespond([{ id: items[0]!.id, response: [choice.id] }])}
+        />
+      ) : (
+        <button
+          className="dsh-button dsh-button--secondary"
+          type="button"
+          disabled={props.disabled}
+          onClick={props.onCancel}
+        >
+          {t('question.cancel')}
+        </button>
+      )}
+    </section>
+  )
+}
+
+function encodeAnswers(
+  items: readonly UserQuestionItem[],
+  drafts: readonly ItemDraft[],
+): readonly QuestionAnswer[] {
+  return items.map((item, index) => {
+    const draft = drafts[index] ?? { selected: [], custom: '', skipped: false }
+    return {
+      id: item.id,
+      response:
+        draft.skipped || (item.multiSelect !== true && draft.custom.trim() !== '') ? [] : draft.selected,
+      ...(draft.skipped || draft.custom.trim() === '' ? {} : { custom: draft.custom.trim() }),
+    }
+  })
+}
+
+function PlanDecisionRow(props: {
+  readonly item: UserQuestionItem
+  readonly disabled: boolean
+  readonly onChat: () => void
+  readonly onRespond: (choice: QuestionChoice) => void
+}): ReactElement {
+  const { t } = useI18n()
+  const approve = props.item.choices?.find((choice) => isApproveChoice(props.item, choice))
+  const refuse = props.item.choices?.find((choice) => !isApproveChoice(props.item, choice))
+  return (
+    <div className="dsh-question__decision-row" role="group" aria-label={t('question.planDecision')}>
       <button
         className="dsh-button dsh-button--secondary"
         type="button"
         disabled={props.disabled}
-        onClick={props.onCancel}
+        onClick={props.onChat}
       >
-        {t(planReview ? 'question.discuss' : 'question.cancel')}
+        {t('question.discuss')}
       </button>
-    </section>
+      <button
+        className="dsh-button dsh-button--secondary"
+        type="button"
+        disabled={props.disabled || refuse === undefined}
+        onClick={() => {
+          if (refuse !== undefined) props.onRespond(refuse)
+        }}
+      >
+        {t('question.refuse')}
+      </button>
+      <button
+        className="dsh-button dsh-button--primary"
+        type="button"
+        disabled={props.disabled || approve === undefined}
+        onClick={() => {
+          if (approve !== undefined) props.onRespond(approve)
+        }}
+      >
+        {t('question.approve')}
+      </button>
+    </div>
   )
 }
 

@@ -4,6 +4,7 @@ import type {
   GoalView,
   JobView,
   MessageAttachment,
+  MessageImageReference,
   ModelDescriptor,
   ModelSelection,
   ModelProvider,
@@ -14,8 +15,15 @@ import type {
   SessionHistoryEvent,
   SessionStatus,
   SessionSummary,
+  TeamActivityView,
   TokenUsage,
   ToolCallView,
+  ToolPresentationDiff,
+  ToolPresentationLine,
+  ToolPresentationSearchFile,
+  ToolPresentationSearchMatch,
+  ToolPresentationSource,
+  ToolPresentationView,
   TurnEndReasonKind,
   TodoView,
   UserQuestion,
@@ -154,7 +162,11 @@ export const rc6Mapper = {
       id,
       name: stringOr(record.displayName ?? record.name, id),
       kind: stringOr(record.kind ?? record.settingsNs, 'provider'),
-      configurable: boolean(record.configurable ?? record.declared, true),
+      // `declared` means that the route was hand-declared by the deployment;
+      // it does not mean that a shipped provider is read-only.  Upstream's
+      // provider directory exposes every configured route to the Models page,
+      // so only an explicit `configurable: false` can disable editing.
+      configurable: boolean(record.configurable, true),
       ...(typeof record.active === 'boolean' ? { active: record.active } : {}),
       ...(typeof record.declared === 'boolean' ? { declared: record.declared } : {}),
       ...(typeof record.settingsNs === 'string' ? { settingsNs: record.settingsNs } : {}),
@@ -321,6 +333,7 @@ export const rc6Mapper = {
         const visible = messageText(message) || stringOr(data.markdown ?? data.text, '')
         const reasoning = reasoningText(message) || stringOr(data.reasoning, '')
         const modelLabel = assistantModelLabel(message, data)
+        const images = messageImages(message)
         const usage = tokenUsage(data.usage ?? message.usage ?? envelope.usage)
         const turn = eventIndex(data.turn)
         const step = eventIndex(data.step)
@@ -332,10 +345,14 @@ export const rc6Mapper = {
           ...(visible === '' ? {} : { markdown: visible }),
           ...(reasoning === '' ? {} : { reasoning }),
           ...(modelLabel === undefined ? {} : { modelLabel }),
+          ...(images.length === 0 ? {} : { images }),
           ...(usage === undefined ? {} : { usage }),
           ...(turn === undefined ? {} : { turn }),
           ...(step === undefined ? {} : { step }),
           ...(time === undefined ? {} : { time }),
+          ...(data.interrupted === true || message.interrupted === true
+            ? { interrupted: true as const }
+            : {}),
         }
       }
       case 'user/message': {
@@ -352,6 +369,7 @@ export const rc6Mapper = {
           messageId: stringOr(message.id, `user:${indexToken(data.turn) ?? 'unknown'}`),
           markdown: userContent.markdown,
           ...(userContent.attachments.length === 0 ? {} : { attachments: userContent.attachments }),
+          ...(userContent.images.length === 0 ? {} : { images: userContent.images }),
           ...(rpcId === '' ? {} : { rpcId }),
           ...(sourceLabel !== ''
             ? { source: sourceLabel }
@@ -368,23 +386,26 @@ export const rc6Mapper = {
         return {
           type: 'tool.updated',
           sessionId,
-          tool: tool({
-            ...data,
-            ...(name === 'tool/call' && time === undefined
-              ? {}
-              : name === 'tool/call'
-                ? { startedAt: time }
-                : {}),
-            ...(name === 'tool/result' && time === undefined
-              ? {}
-              : name === 'tool/result'
-                ? { completedAt: time }
-                : {}),
-            ...(envelope.view === undefined ? {} : { view: envelope.view }),
-            ...(objectOrUndefined(data.message) === undefined
-              ? {}
-              : { outputSummary: bounded(data.message) }),
-          }),
+          tool: tool(
+            {
+              ...data,
+              ...(name === 'tool/call' && time === undefined
+                ? {}
+                : name === 'tool/call'
+                  ? { startedAt: time }
+                  : {}),
+              ...(name === 'tool/result' && time === undefined
+                ? {}
+                : name === 'tool/result'
+                  ? { completedAt: time }
+                  : {}),
+              ...(envelope.view === undefined ? {} : { view: envelope.view }),
+              ...(objectOrUndefined(data.message) === undefined
+                ? {}
+                : { outputSummary: bounded(data.message) }),
+            },
+            name === 'tool/call' ? 'call' : 'result',
+          ),
         }
       }
       case 'approval/requested':
@@ -516,9 +537,9 @@ export const rc6Mapper = {
           jobs: data.jobs.map(job),
         }
       case 'tool/code-dispatch-start':
-        return { type: 'tool.updated', sessionId, tool: tool({ ...data, status: 'running' }) }
+        return { type: 'tool.updated', sessionId, tool: tool({ ...data, status: 'running' }, 'call') }
       case 'tool/code-dispatch':
-        return { type: 'tool.updated', sessionId, tool: tool({ ...data, status: 'completed' }) }
+        return { type: 'tool.updated', sessionId, tool: tool({ ...data, status: 'completed' }, 'result') }
       case 'tool-workflow/run-start':
         return {
           type: 'workflow.started',
@@ -569,6 +590,20 @@ export const rc6Mapper = {
           runId: string(data.runId, 'workflow runId'),
           stopReason: workflowStopReason(data.stopReason),
         }
+      case 'team/member':
+      case 'team/task':
+      case 'team/message/queued':
+      case 'team/message/delivered': {
+        const activity = teamActivity(name, data)
+        return activity === undefined
+          ? {
+              type: 'unknown',
+              ...(sessionId === '' ? {} : { sessionId }),
+              name,
+              payload: safePayload(value),
+            }
+          : { type: 'team.updated', sessionId, activity }
+      }
       case 'session/queue':
         return {
           type: 'queue.updated',
@@ -755,15 +790,32 @@ function retryFailure(value: unknown): { readonly code: string; readonly message
 }
 
 function commandNotice(name: string, data: Record<string, unknown>, sessionId: string): BackendEvent {
-  const commandName = firstString(data.name, data.commandName) ?? 'DSH command'
+  const commandName = firstString(data.name, data.commandName)
+  const displayCommandName = commandName ?? 'DSH command'
+  const commandId = firstString(data.commandId, data.id)
   const status = firstString(data.status, data.state, data.kind)
   const detail = firstString(data.message, data.text, data.summary)
+  const commandInput = name === 'command/run' ? commandInputText(displayCommandName, data.args) : undefined
   return {
     type: 'notice',
     ...(sessionId === '' ? {} : { sessionId }),
     level: name === 'command/done' && (status === 'failed' || status === 'error') ? 'error' : 'info',
-    text: commandNoticeText(name, commandName, detail),
+    text: commandNoticeText(name, displayCommandName, detail),
+    ...(commandName === undefined ? {} : { commandName }),
+    ...(commandId === undefined ? {} : { commandId }),
+    commandPhase: name === 'command/run' ? 'run' : 'done',
+    ...(commandInput === undefined ? {} : { commandInput }),
   }
+}
+
+/** Preserve the structured command/run input for the UI projection. This is
+ * not re-parsed from rendered text and remains bounded before leaving the
+ * adapter. */
+function commandInputText(commandName: string, rawArgs: unknown): string | undefined {
+  if (!/^[a-z][a-z0-9_-]*$/iu.test(commandName)) return undefined
+  const args = typeof rawArgs === 'string' ? rawArgs.trimEnd() : ''
+  const text = `/${commandName}${args}`
+  return text.length > 4_096 ? text.slice(0, 4_096) : text
 }
 
 function commandNoticeText(name: string, commandName: string, detail: string | undefined): string {
@@ -831,11 +883,12 @@ function mapHistoryEntry(value: unknown, index: number, sessionId: string): Sess
   }
 }
 
-function tool(value: Record<string, unknown>): ToolCallView {
+function tool(value: Record<string, unknown>, phase: 'call' | 'result' = 'result'): ToolCallView {
   const message = objectOrUndefined(value.message)
   const source = objectOrUndefined(message?.source)
   const viewEnvelope = objectOrUndefined(value.view)
   const view = objectOrUndefined(viewEnvelope?.view) ?? viewEnvelope
+  const presentation = toolPresentationView(viewEnvelope, phase)
   const error = objectOrUndefined(value.error)
   const input =
     value.inputSummary ??
@@ -855,6 +908,7 @@ function tool(value: Record<string, unknown>): ToolCallView {
   const name = firstString(value.toolName, value.name, view?.name, view?.toolName)
   const title = firstString(value.title, view?.title, name)
   const category = firstString(value.category, view?.category, view?.kind, view?.card)
+  const locations = toolLocations(value.locations ?? view?.locations)
   const status = enumValue(
     value.status,
     ['queued', 'running', 'completed', 'failed', 'cancelled'] as const,
@@ -875,8 +929,376 @@ function tool(value: Record<string, unknown>): ToolCallView {
     ...(input === undefined ? {} : { inputSummary: bounded(input) }),
     ...(output === undefined ? {} : { outputSummary: bounded(output) }),
     ...(value.error === undefined ? {} : { error: bounded(error?.message ?? value.error) }),
+    ...(locations === undefined ? {} : { locations }),
+    ...(presentation === undefined ? {} : { presentation }),
     metadata: objectOrUndefined(safePayload(view)) ?? {},
   }
+}
+
+/**
+ * Project the official DSH presentation union without importing upstream
+ * types into the domain. The adapter accepts both the rc.8 durable wrapper
+ * `{ for, view }` and the older/direct shape, then drops an invalid or future
+ * card so the generic tool card remains usable on every supported version.
+ */
+function toolPresentationView(
+  envelope: Record<string, unknown> | undefined,
+  fallbackPhase: 'call' | 'result',
+): ToolPresentationView | undefined {
+  if (envelope === undefined) return undefined
+  const candidate = objectOrUndefined(envelope.view) ?? envelope
+  if (candidate === undefined || typeof candidate.card !== 'string') return undefined
+  const phase = envelope.for === 'call' || envelope.for === 'result' ? envelope.for : fallbackPhase
+  const card = candidate.card
+  if (card === 'generic') return genericPresentation(candidate, phase)
+  if (card === 'terminal') return terminalPresentation(candidate, phase)
+  if (card === 'diff') return diffPresentation(candidate, phase)
+  if (card === 'search' && phase === 'result') return searchPresentation(candidate)
+  if (card === 'read' && phase === 'result') return readPresentation(candidate)
+  if (card === 'web' && phase === 'result') return webPresentation(candidate)
+  return undefined
+}
+
+function genericPresentation(value: Record<string, unknown>, phase: 'call' | 'result'): ToolPresentationView {
+  const title = optionalText(value.title)
+  const kind = optionalText(value.kind)
+  const content = presentationContent(value.content)
+  const locations = toolLocations(value.locations)
+  if (phase === 'call') {
+    const rawInput = presentationValue(value.rawInput)
+    return {
+      phase,
+      card: 'generic',
+      ...(title === undefined ? {} : { title }),
+      ...(kind === undefined ? {} : { kind }),
+      ...(rawInput === undefined ? {} : { rawInput }),
+      ...(content === undefined ? {} : { content }),
+      ...(locations === undefined ? {} : { locations }),
+    }
+  }
+  return {
+    phase,
+    card: 'generic',
+    ...(title === undefined ? {} : { title }),
+    ...(kind === undefined ? {} : { kind }),
+    ...(content === undefined ? {} : { content }),
+  }
+}
+
+function terminalPresentation(
+  value: Record<string, unknown>,
+  phase: 'call' | 'result',
+): ToolPresentationView | undefined {
+  if (phase === 'call') {
+    const title = requiredText(value.title)
+    if (title === undefined) return undefined
+    const description = optionalText(value.description)
+    const cwd = safePath(value.cwd)
+    return {
+      phase,
+      card: 'terminal',
+      title,
+      ...(description === undefined ? {} : { description }),
+      ...(cwd === undefined ? {} : { cwd }),
+    }
+  }
+  const title = optionalText(value.title)
+  const output = optionalText(value.output)
+  const exitCode = presentationExitCode(value.exitCode)
+  const signal = optionalText(value.signal)
+  if (title === undefined && output === undefined && exitCode === undefined && signal === undefined)
+    return undefined
+  return {
+    phase,
+    card: 'terminal',
+    ...(title === undefined ? {} : { title }),
+    ...(output === undefined ? {} : { output }),
+    ...(exitCode === undefined ? {} : { exitCode }),
+    ...(signal === undefined ? {} : { signal }),
+  }
+}
+
+function diffPresentation(
+  value: Record<string, unknown>,
+  phase: 'call' | 'result',
+): ToolPresentationView | undefined {
+  const title = requiredText(value.title)
+  if (phase === 'call' && title === undefined) return undefined
+  const diffs = array(value.diffs).flatMap((entry) => {
+    const diff = objectOrUndefined(entry)
+    if (diff === undefined) return []
+    const path = safePath(diff.path)
+    const newText = requiredText(diff.newText)
+    const oldText = diff.oldText === null ? null : requiredText(diff.oldText)
+    if (path === undefined || newText === undefined || (diff.oldText !== null && oldText === undefined))
+      return []
+    const normalizedOldText: string | null = oldText === undefined ? null : oldText
+    return [{ path, oldText: normalizedOldText, newText } satisfies ToolPresentationDiff]
+  })
+  if (diffs.length === 0) return undefined
+  if (phase === 'call') {
+    if (title === undefined) return undefined
+    const locations = toolLocations(value.locations)
+    return {
+      phase,
+      card: 'diff',
+      title,
+      diffs,
+      ...(locations === undefined ? {} : { locations }),
+    }
+  }
+  return {
+    phase,
+    card: 'diff',
+    ...(title === undefined ? {} : { title }),
+    diffs,
+  }
+}
+
+function searchPresentation(value: Record<string, unknown>): ToolPresentationView | undefined {
+  const shape = value.shape
+  const title = optionalText(value.title)
+  const truncated = value.truncated
+  const total = nonNegativeCount(value.total)
+  if (typeof truncated !== 'boolean' || total === undefined) return undefined
+  if (shape === 'paths') {
+    const paths = array(value.paths).flatMap((entry) => {
+      const path = safePath(entry)
+      return path === undefined ? [] : [path]
+    })
+    return {
+      phase: 'result',
+      card: 'search',
+      shape: 'paths',
+      ...(title === undefined ? {} : { title }),
+      paths,
+      truncated,
+      total,
+    }
+  }
+  if (shape !== 'matches') return undefined
+  const files = array(value.files).flatMap((entry) => {
+    const file = objectOrUndefined(entry)
+    const path = safePath(file?.path)
+    if (file === undefined || path === undefined) return []
+    const matches = array(file.matches).flatMap((matchValue) => {
+      const match = objectOrUndefined(matchValue)
+      const lineNumber = positiveCount(match?.lineNumber)
+      const line = lineText(match?.line)
+      return lineNumber === undefined || line === undefined
+        ? []
+        : [{ lineNumber, line } satisfies ToolPresentationSearchMatch]
+    })
+    return [{ path, matches } satisfies ToolPresentationSearchFile]
+  })
+  return {
+    phase: 'result',
+    card: 'search',
+    shape: 'matches',
+    ...(title === undefined ? {} : { title }),
+    files,
+    truncated,
+    total,
+  }
+}
+
+function readPresentation(value: Record<string, unknown>): ToolPresentationView | undefined {
+  const path = safePath(value.path)
+  const offset = nonNegativeCount(value.offset)
+  const totalLines = nonNegativeCount(value.totalLines)
+  if (path === undefined || offset === undefined || totalLines === undefined) return undefined
+  const lines = array(value.lines).flatMap((entry) => {
+    const line = objectOrUndefined(entry)
+    const number = positiveCount(line?.number)
+    const text = lineText(line?.text)
+    return number === undefined || text === undefined ? [] : [{ number, text } satisfies ToolPresentationLine]
+  })
+  const title = optionalText(value.title)
+  const lang = optionalText(value.lang)
+  const content = presentationContent(value.content)
+  return {
+    phase: 'result',
+    card: 'read',
+    ...(title === undefined ? {} : { title }),
+    path,
+    offset,
+    lines,
+    totalLines,
+    ...(lang === undefined ? {} : { lang }),
+    ...(content === undefined ? {} : { content }),
+  }
+}
+
+function webPresentation(value: Record<string, unknown>): ToolPresentationView | undefined {
+  const kind = value.kind
+  const title = optionalText(value.title)
+  const truncated = value.truncated
+  if (typeof truncated !== 'boolean') return undefined
+  if (kind === 'fetch') {
+    const url = safeUrl(value.url)
+    const statusCode = httpStatus(value.statusCode)
+    if (url === undefined || statusCode === undefined) return undefined
+    return {
+      phase: 'result',
+      card: 'web',
+      kind: 'fetch',
+      ...(title === undefined ? {} : { title }),
+      url,
+      statusCode,
+      truncated,
+    }
+  }
+  if (kind !== 'search') return undefined
+  const sources = array(value.sources).flatMap((entry) => {
+    const source = objectOrUndefined(entry)
+    const url = safeUrl(source?.url)
+    if (source === undefined || url === undefined) return []
+    const sourceTitle = optionalText(source.title)
+    const snippet = optionalText(source.snippet)
+    const publishedAt = optionalText(source.publishedAt)
+    return [
+      {
+        url,
+        ...(sourceTitle === undefined ? {} : { title: sourceTitle }),
+        ...(snippet === undefined ? {} : { snippet }),
+        ...(publishedAt === undefined ? {} : { publishedAt }),
+      } satisfies ToolPresentationSource,
+    ]
+  })
+  const answer = optionalText(value.answer)
+  return {
+    phase: 'result',
+    card: 'web',
+    kind: 'search',
+    ...(title === undefined ? {} : { title }),
+    sources,
+    ...(answer === undefined ? {} : { answer }),
+    truncated,
+  }
+}
+
+function presentationContent(value: unknown): readonly string[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const text = contentText(value, false)
+  return text === '' ? undefined : [bounded(text)]
+}
+
+function presentationValue(value: unknown): string | undefined {
+  if (value === undefined) return undefined
+  if (typeof value === 'string') return bounded(value)
+  const sanitized = safePresentationValue(value)
+  if (sanitized === undefined) return undefined
+  const text = JSON.stringify(sanitized)
+  return text === undefined ? undefined : text.slice(0, 4_096)
+}
+
+function safePresentationValue(value: unknown, depth = 0): unknown {
+  if (depth > 3) return undefined
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' || typeof value === 'boolean' || value === null) return value
+  if (Array.isArray(value)) return value.slice(0, 32).map((entry) => safePresentationValue(entry, depth + 1))
+  const record = objectOrUndefined(value)
+  if (record === undefined) return undefined
+  const output: Record<string, unknown> = {}
+  for (const [key, entry] of Object.entries(record)) {
+    if (isSensitivePresentationField(key)) continue
+    const safe = safePresentationValue(entry, depth + 1)
+    if (safe !== undefined) output[key] = safe
+  }
+  return output
+}
+
+const SENSITIVE_PRESENTATION_FIELDS = new Set([
+  'authorization',
+  'token',
+  'secret',
+  'password',
+  'apikey',
+  'accessToken',
+  'refreshToken',
+  'privateKey',
+  'body',
+  'response',
+])
+
+function isSensitivePresentationField(key: string): boolean {
+  const normalized = key.replace(/[_-]/gu, '').toLocaleLowerCase()
+  return [...SENSITIVE_PRESENTATION_FIELDS].some(
+    (field) => field.replace(/[_-]/gu, '').toLocaleLowerCase() === normalized,
+  )
+}
+
+function requiredText(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() !== '' ? bounded(value) : undefined
+}
+
+function lineText(value: unknown): string | undefined {
+  return typeof value === 'string' ? bounded(value) : undefined
+}
+
+function optionalText(value: unknown): string | undefined {
+  return requiredText(value)
+}
+
+function safePath(value: unknown): string | undefined {
+  const path = requiredText(value)
+  return path === undefined || hasUnsafePathCharacters(path) ? undefined : path
+}
+
+function safeUrl(value: unknown): string | undefined {
+  const url = requiredText(value)
+  return url === undefined || hasUnsafePathCharacters(url) ? undefined : url
+}
+
+function nonNegativeCount(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined
+}
+
+function positiveCount(value: unknown): number | undefined {
+  const count = nonNegativeCount(value)
+  return count === undefined || count === 0 ? undefined : count
+}
+
+function httpStatus(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 100 && value <= 599
+    ? value
+    : undefined
+}
+
+function presentationExitCode(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) ? value : undefined
+}
+
+function toolLocations(
+  value: unknown,
+): readonly { readonly path: string; readonly line?: number }[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const seen = new Set<string>()
+  const locations: { path: string; line?: number }[] = []
+  for (const entry of value) {
+    const record = objectOrUndefined(entry)
+    const path = record?.path
+    if (
+      typeof path !== 'string' ||
+      path.trim() === '' ||
+      path.length > 4_096 ||
+      hasUnsafePathCharacters(path) ||
+      seen.has(path)
+    )
+      continue
+    seen.add(path)
+    const line = eventIndex(record?.line)
+    locations.push({ path, ...(line === undefined ? {} : { line }) })
+    if (locations.length >= 32) break
+  }
+  return locations.length === 0 ? undefined : locations
+}
+
+function hasUnsafePathCharacters(value: string): boolean {
+  return Array.from(value).some((character) => {
+    const code = character.codePointAt(0) ?? 0
+    return code <= 0x1f || (code >= 0x7f && code <= 0x9f)
+  })
 }
 
 function turnEndReason(value: unknown): TurnEndReasonKind {
@@ -938,11 +1360,104 @@ function workflowStopReason(value: unknown): 'completed' | 'cancelled' | 'error'
   throw new Error('Malformed workflow stop reason')
 }
 
+/** Project rc.8 experimental Team events into a bounded read-only activity row. */
+function teamActivity(name: string, data: Record<string, unknown>): TeamActivityView | undefined {
+  if (data.version !== 1 || typeof data.teamId !== 'string' || data.teamId.trim() === '') return undefined
+  if (name === 'team/member') {
+    const member = objectOrUndefined(data.member)
+    if (
+      member === undefined ||
+      typeof member.id !== 'string' ||
+      typeof member.name !== 'string' ||
+      (member.phase !== 'provisioning' && member.phase !== 'active' && member.phase !== 'failed')
+    )
+      return undefined
+    return {
+      kind: 'member',
+      id: `team:member:${data.teamId}:${member.id}`,
+      teamId: data.teamId,
+      memberId: member.id,
+      name: bounded(member.name),
+      phase: member.phase,
+      ...(typeof member.error === 'string' ? { error: bounded(member.error) } : {}),
+    }
+  }
+  if (name === 'team/task') {
+    const task = objectOrUndefined(data.task)
+    const blockedBy = task === undefined ? undefined : task.blockedBy
+    const writeScopes = task === undefined ? undefined : task.writeScopes
+    if (
+      task === undefined ||
+      typeof task.id !== 'string' ||
+      typeof task.subject !== 'string' ||
+      !teamTaskStatus(task.status) ||
+      !stringArrayValue(blockedBy) ||
+      !stringArrayValue(writeScopes)
+    )
+      return undefined
+    return {
+      kind: 'task',
+      id: `team:task:${data.teamId}:${task.id}`,
+      teamId: data.teamId,
+      taskId: task.id,
+      subject: bounded(task.subject),
+      status: task.status,
+      ...(typeof task.ownerId === 'string' ? { ownerId: task.ownerId } : {}),
+      blockedByCount: blockedBy.length,
+      writeScopeCount: writeScopes.length,
+    }
+  }
+  if (name === 'team/message/queued') {
+    const message = objectOrUndefined(data.message)
+    const content = message === undefined ? undefined : message.content
+    if (
+      message === undefined ||
+      typeof message.id !== 'string' ||
+      typeof message.senderName !== 'string' ||
+      typeof message.targetId !== 'string' ||
+      (message.delivery !== 'quiet' && message.delivery !== 'wakeup') ||
+      !Array.isArray(content)
+    )
+      return undefined
+    return {
+      kind: 'message.queued',
+      id: `team:message:queued:${data.teamId}:${message.id}`,
+      teamId: data.teamId,
+      messageId: message.id,
+      senderName: bounded(message.senderName),
+      targetId: message.targetId,
+      delivery: message.delivery,
+      content: bounded(contentText(content, false)),
+    }
+  }
+  if (name === 'team/message/delivered') {
+    if (typeof data.messageId !== 'string' || typeof data.targetId !== 'string') return undefined
+    return {
+      kind: 'message.delivered',
+      id: `team:message:delivered:${data.teamId}:${data.messageId}`,
+      teamId: data.teamId,
+      messageId: data.messageId,
+      targetId: data.targetId,
+    }
+  }
+  return undefined
+}
+
+function teamTaskStatus(value: unknown): value is 'pending' | 'in_progress' | 'completed' | 'deleted' {
+  return value === 'pending' || value === 'in_progress' || value === 'completed' || value === 'deleted'
+}
+
+function stringArrayValue(value: unknown): value is readonly string[] {
+  return Array.isArray(value) && value.every((entry) => typeof entry === 'string')
+}
+
 function queuedInput(value: unknown, sessionId: string): QueuedInput[] {
   const record = objectOrUndefined(value)
   if (record === undefined || (record.placement !== 'queued' && record.placement !== 'steering')) return []
   const message = objectOrUndefined(record.message)
   if (message === undefined || typeof record.id !== 'string') return []
+  const source = objectOrUndefined(message.source)
+  const rpcId = firstString(message.rpcId, source?.rpcId)
   return [
     {
       id: record.id,
@@ -951,6 +1466,7 @@ function queuedInput(value: unknown, sessionId: string): QueuedInput[] {
       attachments: [],
       mode: record.placement === 'steering' ? 'steer' : 'queue',
       createdAt: date(record.createdAt),
+      ...(rpcId === undefined ? {} : { rpcId }),
     },
   ]
 }
@@ -962,6 +1478,9 @@ function permission(value: Record<string, unknown>): PermissionRequest {
     sessionId: stringOr(value.sessionId, ''),
     title: stringOr(value.toolName, 'Permission required'),
     description: stringOr(value.reason, 'DSH requested permission to continue.'),
+    ...(typeof value.commandLine === 'string' && value.commandLine.trim() !== ''
+      ? { commandLine: value.commandLine.trim().slice(0, 4_096) }
+      : {}),
     risk: 'medium',
     options: [
       { id: 'allowed-once', label: 'Allow once', kind: 'allow-once' },
@@ -1031,10 +1550,14 @@ function planReviewIntent(value: unknown): UserQuestionItem['intent'] | undefine
 }
 
 function assistantMessageId(data: Record<string, unknown>, message?: Record<string, unknown>): string {
+  const explicitId = [data.messageId, message?.id, data.id].find(
+    (value): value is string => typeof value === 'string' && value.trim() !== '',
+  )
+  if (explicitId !== undefined) return explicitId
   const turn = indexToken(data.turn)
   const step = indexToken(data.step)
   if (turn !== undefined && step !== undefined) return `assistant:${turn}:${step}`
-  return stringOr(data.messageId ?? data.id ?? message?.id, 'assistant:unknown')
+  return 'assistant:unknown'
 }
 
 function eventIndex(value: unknown): number | undefined {
@@ -1057,6 +1580,7 @@ function messageText(value: Record<string, unknown> | undefined): string {
 interface UserMessageContent {
   readonly markdown: string
   readonly attachments: readonly MessageAttachment[]
+  readonly images: readonly MessageImageReference[]
 }
 
 /**
@@ -1067,18 +1591,19 @@ interface UserMessageContent {
  * metadata; ordinary user text is left untouched.
  */
 function userMessageContent(value: Record<string, unknown> | undefined): UserMessageContent {
-  if (value === undefined) return { markdown: '', attachments: [] }
+  if (value === undefined) return { markdown: '', attachments: [], images: [] }
   const content = array(value.content)
   if (content.length === 0) {
     const text = stringOr(value.text ?? value.markdown ?? value.content, '')
     const parsed = attachedFileBlock(text)
     return parsed === undefined
-      ? { markdown: text, attachments: [] }
-      : { markdown: '', attachments: [{ name: parsed.name }] }
+      ? { markdown: text, attachments: [], images: [] }
+      : { markdown: '', attachments: [{ name: parsed.name }], images: [] }
   }
 
   const textParts: string[] = []
   const attachments: MessageAttachment[] = []
+  const images: MessageImageReference[] = []
   for (const entry of content) {
     const block = objectOrUndefined(entry)
     if (block?.type === 'text' && typeof block.text === 'string') {
@@ -1090,10 +1615,75 @@ function userMessageContent(value: Record<string, unknown> | undefined): UserMes
       textParts.push(block.text)
       continue
     }
+    if (block?.type === 'image') {
+      const image = imageReference(block.attachment)
+      if (image !== undefined) {
+        images.push(image)
+        continue
+      }
+    }
     const text = contentText([entry], false)
     if (text !== '') textParts.push(text)
   }
-  return { markdown: textParts.join('\n'), attachments }
+  return { markdown: textParts.join('\n'), attachments, images: uniqueImages(images) }
+}
+
+function messageImages(value: Record<string, unknown> | undefined): readonly MessageImageReference[] {
+  if (value === undefined) return []
+  const images: MessageImageReference[] = []
+  for (const entry of array(value.content)) {
+    const block = objectOrUndefined(entry)
+    if (block?.type !== 'image') continue
+    const image = imageReference(block.attachment)
+    if (image !== undefined) images.push(image)
+  }
+  return uniqueImages(images)
+}
+
+function imageReference(value: unknown): MessageImageReference | undefined {
+  const record = objectOrUndefined(value)
+  if (record === undefined) return undefined
+  const attachmentId = stringOr(record.attachmentId ?? record.id, '').trim()
+  const mediaType = record.mediaType
+  const bytes = positiveSafeInteger(record.bytes)
+  const width = positiveSafeInteger(record.width)
+  const height = positiveSafeInteger(record.height)
+  if (
+    attachmentId === '' ||
+    (mediaType !== 'image/png' &&
+      mediaType !== 'image/jpeg' &&
+      mediaType !== 'image/webp' &&
+      mediaType !== 'image/gif') ||
+    bytes === undefined ||
+    width === undefined ||
+    height === undefined
+  )
+    return undefined
+  const name = optionalText(record.name)
+  return {
+    attachmentId,
+    mediaType,
+    bytes,
+    width,
+    height,
+    ...(name === undefined ? {} : { name }),
+  }
+}
+
+function uniqueImages(images: readonly MessageImageReference[]): readonly MessageImageReference[] {
+  const seen = new Set<string>()
+  const result: MessageImageReference[] = []
+  for (const image of images) {
+    if (seen.has(image.attachmentId)) continue
+    seen.add(image.attachmentId)
+    result.push(image)
+    if (result.length >= 32) break
+  }
+  return result
+}
+
+function positiveSafeInteger(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined
 }
 
 interface AttachedFileBlock {
@@ -1125,7 +1715,7 @@ function contentText(content: readonly unknown[], reasoningOnly: boolean): strin
       if (block.type === 'reasoning') return reasoningOnly ? stringOr(block.text, '') : ''
       if (reasoningOnly) return ''
       if (block.type === 'text') return stringOr(block.text, '')
-      if (block.type === 'image') return '[image]'
+      if (block.type === 'image') return imageReference(block.attachment) === undefined ? '[image]' : ''
       if (block.type === 'tool-result') {
         const nested = contentText(array(block.content), false)
         return nested || stringOr(block.text, '[tool result]')

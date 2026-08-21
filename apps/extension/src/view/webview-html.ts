@@ -26,7 +26,7 @@ export function createWebviewHtml(webview: vscode.Webview, extensionUri: vscode.
   </head>
   <body>
     <main id="root" aria-live="polite"></main>
-    <script nonce="${nonce}" src="${script.toString()}"></script>
+    <script type="module" nonce="${nonce}" src="${script.toString()}"></script>
   </body>
 </html>`
 }

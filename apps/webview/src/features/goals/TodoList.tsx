@@ -13,6 +13,9 @@ export function TodoList({ todos }: TodoListProps): ReactElement | null {
   const [open, setOpen] = useState(false)
   if (todos.length === 0) return null
   const completed = todos.filter((todo) => todo.status === 'completed').length
+  const inProgress = todos.filter((todo) => todo.status === 'in-progress').length
+  const pending = todos.filter((todo) => todo.status === 'pending').length
+  const summary = t('todo.summary', { completed, inProgress, pending })
   const current =
     todos.find((todo) => todo.status === 'in-progress') ?? todos.find((todo) => todo.status === 'pending')
   return (
@@ -35,6 +38,9 @@ export function TodoList({ todos }: TodoListProps): ReactElement | null {
             </span>
             <span className="dsh-todo-list__progress" role="status">
               {t('todo.progress', { completed, total: todos.length })}
+            </span>
+            <span className="dsh-todo-list__summary" title={summary}>
+              {summary}
             </span>
           </>
         ) : (

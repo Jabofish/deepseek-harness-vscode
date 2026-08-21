@@ -1,6 +1,7 @@
 import {
   AppError,
   type BackendCandidate,
+  type BackendEndpoint,
   type BackendState,
   type DshBackend,
   type ManagedProcessHandle,
@@ -62,7 +63,8 @@ export class DshConnectionCoordinator {
         })
       return waitForSignal(this.inFlight, signal)
     }
-    if (request.mode === 'new-isolated' && this.backend !== undefined) await this.disconnect()
+    if (this.backend !== undefined && shouldDisconnectForRequest(this.backend.connection.endpoint, request))
+      await this.disconnect()
     const generation = ++this.generation
     const operationAbort = new AbortController()
     this.operationAbort = operationAbort
@@ -149,10 +151,53 @@ export class DshConnectionCoordinator {
     signal: AbortSignal | undefined,
     generation: number,
   ): Promise<ConnectionResult> {
-    if (this.backend !== undefined && request.mode !== 'new-isolated') {
-      return { backend: this.backend, state: { kind: 'connected', backend: this.backend.connection } }
+    if (
+      this.backend !== undefined &&
+      !shouldDisconnectForRequest(this.backend.connection.endpoint, request)
+    ) {
+      const state: Extract<BackendState, { readonly kind: 'connected' }> = {
+        kind: 'connected',
+        backend: this.backend.connection,
+      }
+      // A cached backend is still a connection result. Re-publish the state so
+      // callers that subscribed after the original attach do not remain on a
+      // stale failed/idle snapshot.
+      this.publish(state)
+      return { backend: this.backend, state }
     }
     this.throwIfAborted(signal)
+
+    if (request.mode === 'custom') {
+      const endpoint = request.endpoint
+      if (endpoint === undefined) {
+        const error = new AppError({
+          code: 'INVALID_CONFIGURATION',
+          message: 'A custom DSH endpoint must be configured before connecting.',
+          retryable: false,
+        })
+        this.publish({ kind: 'failed', message: error.message, retryable: error.retryable })
+        throw error
+      }
+      const candidate: BackendCandidate = {
+        endpoint,
+        source: 'configured',
+        confidence: 120,
+      }
+      this.publish({ kind: 'connecting', candidate })
+      try {
+        const verified = await this.dependencies.probe.probe(candidate, signal)
+        if (verified !== undefined) return this.attach(verified, undefined, signal, generation)
+      } catch (error) {
+        if (isAbort(error, signal)) throw cancelled(error)
+      }
+      const error = new AppError({
+        code: 'BACKEND_UNREACHABLE',
+        message: 'The configured DSH endpoint did not respond as a compatible local DSH service.',
+        retryable: true,
+      })
+      this.publish({ kind: 'failed', message: error.message, retryable: error.retryable })
+      throw error
+    }
 
     if (request.mode !== 'new-isolated') {
       this.publish({ kind: 'discovering', attempt: 1 })
@@ -203,12 +248,12 @@ export class DshConnectionCoordinator {
     if (runtime !== undefined && !runtime.supported) {
       this.publish({
         kind: 'failed',
-        message: 'The installed DSH version is incompatible.',
+        message: 'The selected executable did not report a DSH version.',
         retryable: false,
       })
       throw new AppError({
         code: 'DSH_INCOMPATIBLE',
-        message: 'The installed DeepSeek Harness version is not supported.',
+        message: 'The selected executable did not report a valid DeepSeek Harness version.',
         retryable: false,
       })
     }
@@ -241,6 +286,7 @@ export class DshConnectionCoordinator {
       const candidate: BackendCandidate = {
         endpoint: process.endpoint,
         source: 'known',
+        runtimeVersion: runtime.version,
         pid: process.pid,
         confidence: 100,
       }
@@ -304,7 +350,18 @@ function combineSignals(first: AbortSignal | undefined, second: AbortSignal): Ab
 }
 
 function sameRequest(left: ConnectionRequest | undefined, right: ConnectionRequest): boolean {
-  return left?.mode === right.mode && left.autoStart === right.autoStart
+  return (
+    left?.mode === right.mode &&
+    left.autoStart === right.autoStart &&
+    left.endpoint?.baseUrl === right.endpoint?.baseUrl
+  )
+}
+
+function shouldDisconnectForRequest(current: BackendEndpoint, request: ConnectionRequest): boolean {
+  return (
+    request.mode === 'new-isolated' ||
+    (request.mode === 'custom' && request.endpoint?.baseUrl !== current.baseUrl)
+  )
 }
 
 function waitForSignal<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {

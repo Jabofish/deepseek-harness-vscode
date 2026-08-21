@@ -254,3 +254,22 @@ describe('Rc6SettingsRepository unset', () => {
     expect(calls.map((call) => call.method)).toEqual(['settings.describe'])
   })
 })
+
+describe('Rc6SettingsRepository document action', () => {
+  it('opens the host-owned settings document without exposing a path', async () => {
+    const calls: Call[] = []
+    const repository = new Rc6SettingsRepository(
+      transportFor({ 'settings.openDocument': { opened: true } }, calls),
+    )
+
+    await repository.openDocument?.()
+
+    expect(calls).toEqual([{ method: 'settings.openDocument', params: {} }])
+  })
+
+  it('rejects a malformed open-document response', async () => {
+    const repository = new Rc6SettingsRepository(transportFor({ 'settings.openDocument': { opened: false } }))
+
+    await expect(repository.openDocument?.()).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
+  })
+})

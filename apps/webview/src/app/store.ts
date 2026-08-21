@@ -8,12 +8,18 @@ import {
   type BackendEvent,
   type BackendState,
   type DshSettingsSchema,
+  type DshUpdateSnapshot,
+  type DiscoveredModel,
   type DynamicCommand,
   type ExtensionSettingsSummary,
   type GoalView,
   type JobView,
+  type MessageFeedbackItem,
+  type MessageFeedbackRating,
   type MessageAttachment,
+  type MessageImageReference,
   type ModelDescriptor,
+  type ModelDiscoveryInput,
   type ModelProvider,
   type ModelSelection,
   type PermissionRequest,
@@ -24,12 +30,22 @@ import {
   type RunningInputMode,
   type SessionConfigurationPatch,
   type SessionExportOptions,
+  type SessionHistoryEvent,
+  type SessionProjectionSnapshot,
   type SessionSummary,
+  type SkillDescriptor,
+  type TeamActivityView,
   type SubagentCatalog,
   type SubagentHistoryPage,
   type SubagentView,
   type TokenUsage,
   type TodoView,
+  type ToolPresentationDiff,
+  type ToolPresentationLine,
+  type ToolPresentationSearchFile,
+  type ToolPresentationSearchMatch,
+  type ToolPresentationSource,
+  type ToolPresentationView,
   type TurnEndReasonKind,
   type UserQuestion,
   type WorkflowMember,
@@ -51,6 +67,24 @@ export interface OpenFileCandidate {
   readonly supported: boolean
 }
 
+/** Safe, host-resolved candidates for the official DSH `@` reference menu. */
+export type ReferenceCandidate =
+  | {
+      readonly id: string
+      readonly kind: 'file' | 'directory'
+      readonly path: string
+      readonly label: string
+      readonly description: string
+    }
+  | {
+      readonly id: string
+      readonly kind: 'session'
+      readonly sessionId: string
+      readonly label: string
+      readonly description: string
+      readonly mention: string
+    }
+
 /** A paste/drop payload whose bytes the Webview already holds as base64. */
 export interface IngestedFile {
   readonly name: string
@@ -62,22 +96,38 @@ export interface AppState {
   readonly backend: BackendState
   /** Safe connected-host version copied from the Extension Host snapshot. */
   readonly connectedDshVersion: string | undefined
+  /** Safe compatibility warning for an unknown/fallback DSH runtime. */
+  readonly dshCompatibilityWarning: string | undefined
+  /** Latest Host-owned npm registry snapshot for the DSH runtime. */
+  readonly dshUpdate: DshUpdateSnapshot | undefined
   readonly sessions: readonly SessionSummary[]
   readonly archivedSessionIds: readonly string[]
   readonly workspaces: readonly WorkspaceSummary[]
   readonly activeSessionId: string | undefined
   readonly preferredOpenFileId: string | undefined
   readonly timeline: TimelineState
+  /** The bounded, durable history window currently installed in the timeline. */
+  readonly history: readonly SessionHistoryEvent[]
+  readonly historyHasMore: boolean
+  /** Raw sequence boundary used by DSH `session.history(beforeSeq)`. */
+  readonly historyBeforeSequence: number | undefined
+  readonly historyLoading: boolean
   readonly projections: Readonly<Record<string, Readonly<Record<string, unknown>>>>
   readonly configuration: AgentConfiguration | undefined
   readonly providers: readonly ModelProvider[]
   readonly models: readonly ModelDescriptor[]
+  /** Session-scoped model directory; the global catalog remains the Settings source. */
+  readonly sessionModels: readonly ModelDescriptor[]
   readonly presets: readonly AgentPresetDescriptor[]
   readonly permissionPresets: readonly string[]
   readonly commands: readonly DynamicCommand[]
   readonly goals: readonly GoalView[]
   readonly todos: readonly TodoView[]
   readonly jobs: readonly JobView[]
+  /** Feedback keyed by assistant message id for the active session. */
+  readonly feedback: Readonly<Record<string, MessageFeedbackItem>>
+  /** True after the connected DSH explicitly reports that message feedback is unavailable. */
+  readonly feedbackUnavailable?: boolean
   /** Complete direct-child catalog for the active ordinary or child session. */
   readonly subagents: SubagentCatalog
   /** Durable address facts retained when a catalog child is opened. */
@@ -103,13 +153,22 @@ export interface AppActions {
   searchSessions(query: string): Promise<readonly SessionSummary[]>
   refreshCommands(sessionId?: string): Promise<void>
   openSession(sessionId: string): Promise<void>
+  loadOlderHistory(): Promise<void>
   openSubagent(entry: SubagentView, parentAvailable: boolean): Promise<void>
   renameSession(sessionId: string, title: string): Promise<void>
+  renameWorkspace(workspaceId: string, name: string): Promise<void>
+  removeWorkspace(workspaceId: string): Promise<void>
+  moveWorkspace(workspaceId: string, beforeWorkspaceId?: string): Promise<void>
+  moveSession(workspaceId: string, sessionId: string, beforeSessionId?: string): Promise<void>
   forkSession(sessionId: string, atSeq?: number): Promise<void>
-  createSession(workspaceId?: string): Promise<void>
+  createSession(workspaceId?: string, presetId?: string): Promise<void>
   removeSession(sessionId: string): Promise<void>
   configureSession(sessionId: string, configuration: AgentConfiguration): Promise<void>
-  executeCommand(sessionId: string, command: string): Promise<void>
+  executeCommand(
+    sessionId: string,
+    command: string,
+    attachments?: readonly PromptAttachment[],
+  ): Promise<boolean>
   sendPrompt(
     sessionId: string,
     text: string,
@@ -117,11 +176,18 @@ export interface AppActions {
     mode: RunningInputMode,
   ): Promise<void>
   cancelSession(sessionId: string): Promise<void>
+  updateGoal(goalId: string, update: Partial<Pick<GoalView, 'title' | 'status'>>): Promise<void>
+  clearGoal(goalId: string): Promise<void>
   updateQueue(inputId: string, text: string): Promise<void>
   removeQueue(inputId: string): Promise<void>
   steerQueue(inputId: string): Promise<void>
   /** Steer every still-queued pending input into the running turn (official empty-draft accelerated Enter). */
   steerAllQueued(): Promise<void>
+  loadFeedback(sessionId: string): Promise<void>
+  toggleFeedback(sessionId: string, messageId: string, rating: MessageFeedbackRating): Promise<void>
+  setFeedbackNote(sessionId: string, messageId: string, note: string | undefined): Promise<void>
+  removeFeedback(sessionId: string, messageId: string): Promise<void>
+  listReferences(sessionId: string, query: string, quoted: boolean): Promise<readonly ReferenceCandidate[]>
   respondToPermission(interactionId: string, optionId: string): Promise<void>
   respondToQuestion(
     questionId: string,
@@ -131,18 +197,27 @@ export interface AppActions {
   pickAttachment(): Promise<PromptAttachment | undefined>
   ingestAttachment(input: IngestedFile): Promise<PromptAttachment | undefined>
   previewAttachment(uri: string): Promise<string | undefined>
+  readSessionAttachment(sessionId: string, image: MessageImageReference): Promise<string | undefined>
   releaseAttachments(uris: readonly string[]): Promise<void>
   listOpenFiles(): Promise<readonly OpenFileCandidate[]>
   attachOpenFile(candidateId: string): Promise<PromptAttachment | undefined>
   rememberOpenFile(candidateId: string): void
   openLink(href: string): Promise<void>
+  showInFolder(href: string): Promise<void>
   runtimeAction(action: 'install' | 'select' | 'copy-command' | 'open-docs'): Promise<void>
+  configureConnection(mode: 'auto' | 'custom', endpoint?: string): Promise<void>
+  checkDshUpdates(force?: boolean): Promise<DshUpdateSnapshot | undefined>
+  installDshVersion(version: string): Promise<DshUpdateSnapshot | undefined>
   readSettings(): Promise<ExtensionSettingsSummary | undefined>
   readDshSettings(): Promise<DshSettingsSnapshot | undefined>
+  openDshSettingsDocument(): Promise<void>
   updateDshSetting(path: string, value: unknown): Promise<void>
+  unsetDshSetting(path: string): Promise<void>
   configureProviderSecret(providerId: string, field: string): Promise<boolean>
   removeProviderSecret(providerId: string, field: string): Promise<void>
   refreshModelCatalog(): Promise<void>
+  /** Discover provider models through the Host without carrying credentials in the Webview. */
+  discoverModels(input: Omit<ModelDiscoveryInput, 'apiKey'>): Promise<readonly DiscoveredModel[]>
   /** Read the full preset roster with its authorable/hasDocument facts. */
   loadPresetRoster(): Promise<AgentPresetRoster | undefined>
   /** Open one shipped preset's composition in the read-only viewer. */
@@ -197,22 +272,31 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   let state: AppState = {
     backend: { kind: 'idle' },
     connectedDshVersion: undefined,
+    dshCompatibilityWarning: undefined,
+    dshUpdate: undefined,
     sessions: [],
     archivedSessionIds: [],
     workspaces: [],
     activeSessionId: undefined,
     preferredOpenFileId: composerPreferences.openFileId,
     timeline: { sessionId: undefined, nodes: [], lastSequence: -1 },
+    history: [],
+    historyHasMore: false,
+    historyBeforeSequence: undefined,
+    historyLoading: false,
     projections: {},
     configuration: undefined,
     providers: [],
     models: [],
+    sessionModels: [],
     presets: [],
     permissionPresets: [],
     commands: [],
     goals: [],
     todos: [],
     jobs: [],
+    feedback: {},
+    feedbackUnavailable: false,
     subagents: EMPTY_SUBAGENT_CATALOG,
     activeSubagent: undefined,
     queue: [],
@@ -254,6 +338,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   let openVersion = 0
   const pendingOpens = new Map<number, { readonly sessionId: string; readonly messages: HostMessage[] }>()
   let commandDirectoryGeneration = 0
+  let configurationGeneration = 0
   const commandDirectoryCache = new Map<string, readonly DynamicCommand[]>()
   const commandDirectoryLoads = new Map<string, Promise<readonly DynamicCommand[] | undefined>>()
   const loadCommandDirectory = (
@@ -325,16 +410,26 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       // A host that cannot serve settings yet keeps the official 'queue' default.
     }
   }
-  const executeCommandRequest = async (sessionId: string, command: string): Promise<void> => {
-    await client.request<unknown>({
-      type: 'command.execute',
-      requestId: requestId(),
-      payload: { sessionId, command },
-    })
+  const executeCommandRequest = async (
+    sessionId: string,
+    command: string,
+    attachments: readonly PromptAttachment[] = [],
+  ): Promise<boolean> => {
+    const result = object(
+      await client.request<unknown>({
+        type: 'command.execute',
+        requestId: requestId(),
+        payload: { sessionId, command, attachments: [...attachments] },
+      }),
+    )
+    if (result?.kind === 'error')
+      throw new Error(typeof result.text === 'string' ? result.text : translate('app.error.dshMode'))
+    if (result !== undefined && result?.kind !== 'success') throw new Error(translate('app.error.dshMode'))
     setState((current) => {
       if (current.activeSessionId !== sessionId || current.configuration === undefined) return current
       return { ...current, configuration: applyKnownCommand(current.configuration, command) }
     })
+    return true
   }
   const unsubscribe = client.subscribe((message) => {
     const messageSessionId = hostMessageSessionId(message)
@@ -443,8 +538,9 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       const detail = object(result)
       const rawHistory = Array.isArray(detail?.history) ? detail.history : []
       const timeline = hydrateTimeline(sessionId, rawHistory)
+      const history = parseSessionHistory(rawHistory)
       const permissionPresets = stringList(detail?.permissionPresets)
-      const [queue, goals, jobs, subagents, commands] = await Promise.all([
+      const [queue, goals, jobs, feedback, subagents, commands, sessionModels] = await Promise.all([
         safeList<QueuedInput>(
           client,
           { type: 'session.queue.list', requestId: requestId(), payload: { sessionId } },
@@ -460,8 +556,10 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
           { type: 'job.list', requestId: requestId(), payload: { sessionId } },
           isJobView,
         ),
+        safeFeedbackList(client, sessionId),
         loadSubagentCatalog(sessionId),
         loadCommandDirectory(sessionId),
+        loadSessionModelDirectory(client, sessionId),
       ])
       if (version !== openVersion) return
       setState((current) =>
@@ -470,16 +568,25 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
             ...current,
             activeSessionId: sessionId,
             timeline,
+            history,
+            historyHasMore: detail?.historyHasMore === true,
+            historyBeforeSequence:
+              optionalSequence(detail?.historyBeforeSequence) ??
+              (detail?.historyHasMore === true ? oldestHistorySequence(history) : undefined),
+            historyLoading: false,
             projections: setSessionProjection(current.projections, sessionId, detail?.projection),
             sessions: upsertOpenedSession(current.sessions, detail, sessionId),
             configuration: isAgentConfiguration(detail?.configuration)
               ? detail.configuration
               : createDefaultConfiguration(current, composerPreferences),
+            sessionModels: sessionModels ?? [],
             permissionPresets: permissionPresets ?? [],
             queue,
             goals,
             todos: latestTodos(timeline),
             jobs,
+            feedback: feedbackRecord(feedback.items),
+            feedbackUnavailable: feedback.unavailable,
             subagents: subagents ?? EMPTY_SUBAGENT_CATALOG,
             activeSubagent: undefined,
             commands:
@@ -504,7 +611,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       state.activeSubagent?.workspaceId ??
       ''
     try {
-      const [history, queue, goals, jobs, subagents] = await Promise.all([
+      const [history, queue, goals, jobs, feedback, subagents] = await Promise.all([
         client
           .request<unknown>({
             type: 'subagent.history',
@@ -527,6 +634,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
           { type: 'job.list', requestId: requestId(), payload: { sessionId: entry.id } },
           isJobView,
         ),
+        safeFeedbackList(client, entry.id),
         loadSubagentCatalog(entry.id),
       ])
       if (version !== openVersion) return
@@ -538,13 +646,20 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
             activeSessionId: entry.id,
             activeSubagent: { entry, parentAvailable, workspaceId },
             timeline,
+            history: history.events,
+            historyHasMore: false,
+            historyBeforeSequence: undefined,
+            historyLoading: false,
             projections: setSessionProjection(current.projections, entry.id, history.projection),
             configuration: undefined,
+            sessionModels: [],
             permissionPresets: [],
             queue,
             goals,
             todos: latestTodos(timeline),
             jobs,
+            feedback: feedbackRecord(feedback.items),
+            feedbackUnavailable: feedback.unavailable,
             subagents: subagents ?? EMPTY_SUBAGENT_CATALOG,
             commands: [],
           },
@@ -557,12 +672,40 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     }
   }
   callbacks.openCreatedSession = open
+  const checkDshUpdates = async (force = false): Promise<DshUpdateSnapshot | undefined> => {
+    const snapshot = parseDshUpdateSnapshot(
+      await client.request<unknown>({
+        type: 'runtime.update.check',
+        requestId: requestId(),
+        payload: { force },
+      }),
+    )
+    if (snapshot !== undefined) setState((current) => ({ ...current, dshUpdate: snapshot }))
+    return snapshot
+  }
+  const installDshVersion = async (version: string): Promise<DshUpdateSnapshot | undefined> => {
+    const snapshot = parseDshUpdateSnapshot(
+      await client.request<unknown>({
+        type: 'runtime.update.install',
+        requestId: requestId(),
+        payload: { version },
+      }),
+    )
+    if (snapshot !== undefined) setState((current) => ({ ...current, dshUpdate: snapshot }))
+    return snapshot
+  }
   return {
     get backend() {
       return state.backend
     },
     get connectedDshVersion() {
       return state.connectedDshVersion
+    },
+    get dshCompatibilityWarning() {
+      return state.dshCompatibilityWarning
+    },
+    get dshUpdate() {
+      return state.dshUpdate
     },
     get sessions() {
       return state.sessions
@@ -582,6 +725,18 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     get timeline() {
       return state.timeline
     },
+    get history() {
+      return state.history
+    },
+    get historyHasMore() {
+      return state.historyHasMore
+    },
+    get historyBeforeSequence() {
+      return state.historyBeforeSequence
+    },
+    get historyLoading() {
+      return state.historyLoading
+    },
     get projections() {
       return state.projections
     },
@@ -593,6 +748,9 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     },
     get models() {
       return state.models
+    },
+    get sessionModels() {
+      return state.sessionModels
     },
     get presets() {
       return state.presets
@@ -611,6 +769,9 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     },
     get jobs() {
       return state.jobs
+    },
+    get feedback() {
+      return state.feedback
     },
     get subagents() {
       return state.subagents
@@ -639,6 +800,10 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       return () => listeners.delete(listener)
     },
     initialize: async () => {
+      // The update check is independent of DSH connectivity. Start it before
+      // app.ready so a missing runtime does not suppress the startup notice;
+      // the result is intentionally not on the critical connection path.
+      void checkDshUpdates(false).catch(() => undefined)
       await client.request<unknown>({ type: 'app.ready', requestId: requestId() })
       await refresh()
       // Official ui-conversation row: the host-side busy-Enter preference is
@@ -646,11 +811,8 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       // read keeps the official default ('queue').
       await applyBusyEnterPreference()
       const rememberedSessionId = persistedWebviewState.activeSessionId
-      if (
-        rememberedSessionId !== undefined &&
-        state.sessions.some((session) => session.id === rememberedSessionId)
-      )
-        await open(rememberedSessionId)
+      const startupSession = selectStartupSession(state.sessions, rememberedSessionId)
+      if (startupSession !== undefined) await open(startupSession.id)
     },
     reconnect: async () => {
       await client.request<unknown>({ type: 'connection.retry', requestId: requestId() })
@@ -670,21 +832,120 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     },
     refreshCommands: (sessionId) => refreshCommands(sessionId),
     openSession: open,
+    loadOlderHistory: async () => {
+      const sessionId = state.activeSessionId
+      const beforeSeq = state.historyBeforeSequence
+      if (
+        sessionId === undefined ||
+        state.activeSubagent !== undefined ||
+        !state.historyHasMore ||
+        beforeSeq === undefined ||
+        state.historyLoading
+      )
+        return
+      setState((current) =>
+        current.activeSessionId === sessionId ? { ...current, historyLoading: true } : current,
+      )
+      try {
+        const result = await client.request<unknown>({
+          type: 'session.history',
+          requestId: requestId(),
+          payload: { sessionId, beforeSeq, maxMessages: 200 },
+        })
+        const page = parseSessionHistoryPage(result)
+        const current = state
+        if (current.activeSessionId !== sessionId) return
+        const currentBase = current.historyBeforeSequence ?? oldestHistorySequence(current.history)
+        const pageNewest = newestHistorySequence(page.events)
+        if (pageNewest !== undefined && currentBase !== undefined && pageNewest >= currentBase)
+          throw new Error(translate('app.error.historyDiscontinuous'))
+        const history = mergeHistory(current.history, page.events)
+        const timeline = hydrateTimeline(sessionId, history)
+        const nextBefore = page.beforeSequence ?? oldestHistorySequence(page.events)
+        const hasMore =
+          page.hasMore && nextBefore !== undefined && (currentBase === undefined || nextBefore < currentBase)
+        setState((next) =>
+          next.activeSessionId === sessionId
+            ? {
+                ...next,
+                timeline,
+                history,
+                historyHasMore: hasMore,
+                historyBeforeSequence: nextBefore,
+                historyLoading: false,
+                projections:
+                  page.projection === undefined
+                    ? next.projections
+                    : setSessionProjection(next.projections, sessionId, page.projection),
+                todos: latestTodos(timeline),
+              }
+            : next,
+        )
+      } finally {
+        if (state.activeSessionId === sessionId && state.historyLoading)
+          setState((current) =>
+            current.activeSessionId === sessionId ? { ...current, historyLoading: false } : current,
+          )
+      }
+    },
     openSubagent,
     renameSession: async (sessionId, title) => {
-      await client.request<unknown>({
-        type: 'session.rename',
-        requestId: requestId(),
-        payload: { sessionId, title },
-      })
+      const result = object(
+        await client.request<unknown>({
+          type: 'session.rename',
+          requestId: requestId(),
+          payload: { sessionId, title },
+        }),
+      )
+      const acceptedTitle = typeof result?.title === 'string' ? result.title : title.trim()
       setState((current) => ({
         ...current,
         sessions: current.sessions.map((session) =>
-          session.id === sessionId ? { ...session, title } : session,
+          session.id === sessionId ? { ...session, title: acceptedTitle } : session,
         ),
       }))
     },
+    renameWorkspace: async (workspaceId, name) => {
+      await client.request<unknown>({
+        type: 'workspace.rename',
+        requestId: requestId(),
+        payload: { workspaceId, name },
+      })
+      await refresh()
+    },
+    removeWorkspace: async (workspaceId) => {
+      await client.request<unknown>({
+        type: 'workspace.remove',
+        requestId: requestId(),
+        payload: { workspaceId },
+      })
+      await refresh()
+    },
+    moveWorkspace: async (workspaceId, beforeWorkspaceId) => {
+      await client.request<unknown>({
+        type: 'workspace.move',
+        requestId: requestId(),
+        payload: {
+          workspaceId,
+          ...(beforeWorkspaceId === undefined ? {} : { beforeWorkspaceId }),
+        },
+      })
+      await refresh()
+    },
+    moveSession: async (workspaceId, sessionId, beforeSessionId) => {
+      await client.request<unknown>({
+        type: 'session.move',
+        requestId: requestId(),
+        payload: {
+          workspaceId,
+          sessionId,
+          ...(beforeSessionId === undefined ? {} : { beforeSessionId }),
+        },
+      })
+      await refresh()
+    },
     forkSession: async (sessionId, atSeq) => {
+      const source = state.sessions.find((session) => session.id === sessionId)
       const result = object(
         await client.request<unknown>({
           type: 'session.fork',
@@ -702,24 +963,43 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
             ? result.sessionId
             : undefined
       if (childId === undefined || childId.trim() === '') throw new Error(translate('app.error.forkSession'))
+      if (source !== undefined) {
+        const childTitle = nextForkTitle(source.title, state.sessions, source.workspaceId)
+        try {
+          await client.request<unknown>({
+            type: 'session.rename',
+            requestId: requestId(),
+            payload: { sessionId: childId, title: childTitle },
+          })
+        } catch (reason: unknown) {
+          // The fork is already durable. Open it before surfacing a rename
+          // failure so a failed cosmetic follow-up never strands the child.
+          await open(childId)
+          throw reason
+        }
+      }
       await open(childId)
     },
     configureSession: async (sessionId, configuration) => {
+      const generation = ++configurationGeneration
       await client.request<unknown>({
         type: 'session.configure',
         requestId: requestId(),
         payload: { sessionId, configuration },
       })
+      if (generation !== configurationGeneration) return
       rememberComposerConfiguration(configuration)
       setState((current) => (current.activeSessionId === sessionId ? { ...current, configuration } : current))
     },
     executeCommand: executeCommandRequest,
-    createSession: async (workspaceId) => {
+    createSession: async (workspaceId, presetId) => {
       const workspace =
         (workspaceId === undefined
           ? undefined
           : state.workspaces.find((entry) => entry.id === workspaceId)) ?? state.workspaces[0]
-      const configuration = createDefaultConfiguration(state, composerPreferences)
+      const defaultConfiguration = createDefaultConfiguration(state, composerPreferences)
+      const configuration =
+        presetId === undefined ? defaultConfiguration : { ...defaultConfiguration, preset: presetId }
       const result = await client.request<unknown>({
         type: 'session.create',
         requestId: requestId(),
@@ -750,13 +1030,20 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
           ? {
               activeSessionId: undefined,
               timeline: { sessionId: undefined, nodes: [], lastSequence: -1 },
+              history: [],
+              historyHasMore: false,
+              historyBeforeSequence: undefined,
+              historyLoading: false,
               projections: removeSessionProjection(current.projections, sessionId),
               configuration: undefined,
+              sessionModels: [],
               permissionPresets: [],
               queue: [],
               goals: [],
               todos: [],
               jobs: [],
+              feedback: {},
+              feedbackUnavailable: false,
               subagents: EMPTY_SUBAGENT_CATALOG,
               activeSubagent: undefined,
               commands: [],
@@ -859,6 +1146,29 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
           : { type: 'subagent.interrupt', requestId: requestId(), payload: { sessionId } },
       )
     },
+    updateGoal: async (goalId, update) => {
+      if (update.title === undefined && update.status === undefined) return
+      await client.request<unknown>({
+        type: 'goal.update',
+        requestId: requestId(),
+        payload: { goalId, ...update },
+      })
+      setState((current) => ({
+        ...current,
+        goals: current.goals.map((goal) => (goal.id === goalId ? { ...goal, ...update } : goal)),
+      }))
+    },
+    clearGoal: async (goalId) => {
+      await client.request<unknown>({
+        type: 'goal.clear',
+        requestId: requestId(),
+        payload: { goalId },
+      })
+      setState((current) => ({
+        ...current,
+        goals: current.goals.filter((goal) => goal.id !== goalId),
+      }))
+    },
     updateQueue: (inputId, text) =>
       client
         .request<unknown>({
@@ -900,6 +1210,117 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
           // Best-effort, matching the official queue dock semantics.
         }
       }
+    },
+    loadFeedback: async (sessionId) => {
+      const result = await safeFeedbackList(client, sessionId)
+      setState((current) =>
+        current.activeSessionId === sessionId
+          ? {
+              ...current,
+              feedback: feedbackRecord(result.items),
+              feedbackUnavailable: result.unavailable,
+            }
+          : current,
+      )
+    },
+    toggleFeedback: async (sessionId, messageId, rating) => {
+      try {
+        const current = state.feedback[messageId]
+        if (current?.rating === rating) {
+          await client.request<unknown>({
+            type: 'feedback.remove',
+            requestId: requestId(),
+            payload: { sessionId, messageId },
+          })
+          setState((next) => {
+            if (next.activeSessionId !== sessionId) return next
+            const feedback = { ...next.feedback }
+            delete feedback[messageId]
+            return { ...next, feedback }
+          })
+          return
+        }
+        const item = object(
+          await client.request<unknown>({
+            type: 'feedback.toggle',
+            requestId: requestId(),
+            payload: {
+              sessionId,
+              messageId,
+              rating,
+              ...(current?.note === undefined ? {} : { note: current.note }),
+            },
+          }),
+        )
+        if (!isMessageFeedbackItem(item)) throw new Error(translate('app.error.feedback'))
+        setState((next) =>
+          next.activeSessionId === sessionId
+            ? { ...next, feedback: { ...next.feedback, [item.messageId]: item } }
+            : next,
+        )
+      } catch (error) {
+        if (!isFeedbackCapabilityUnavailable(error)) throw error
+        setState((next) =>
+          next.activeSessionId === sessionId ? { ...next, feedbackUnavailable: true } : next,
+        )
+      }
+    },
+    setFeedbackNote: async (sessionId, messageId, note) => {
+      try {
+        const current = state.feedback[messageId]
+        if (current === undefined) return
+        const item = object(
+          await client.request<unknown>({
+            type: 'feedback.note',
+            requestId: requestId(),
+            payload: {
+              sessionId,
+              messageId,
+              rating: current.rating,
+              ...(note === undefined ? {} : { note }),
+            },
+          }),
+        )
+        if (!isMessageFeedbackItem(item)) throw new Error(translate('app.error.feedback'))
+        setState((next) =>
+          next.activeSessionId === sessionId
+            ? { ...next, feedback: { ...next.feedback, [item.messageId]: item } }
+            : next,
+        )
+      } catch (error) {
+        if (!isFeedbackCapabilityUnavailable(error)) throw error
+        setState((next) =>
+          next.activeSessionId === sessionId ? { ...next, feedbackUnavailable: true } : next,
+        )
+      }
+    },
+    removeFeedback: async (sessionId, messageId) => {
+      try {
+        await client.request<unknown>({
+          type: 'feedback.remove',
+          requestId: requestId(),
+          payload: { sessionId, messageId },
+        })
+        setState((next) => {
+          if (next.activeSessionId !== sessionId) return next
+          const feedback = { ...next.feedback }
+          delete feedback[messageId]
+          return { ...next, feedback }
+        })
+      } catch (error) {
+        if (!isFeedbackCapabilityUnavailable(error)) throw error
+        setState((next) =>
+          next.activeSessionId === sessionId ? { ...next, feedbackUnavailable: true } : next,
+        )
+      }
+    },
+    listReferences: async (sessionId, query, quoted) => {
+      const result = await client.request<unknown>({
+        type: 'reference.list',
+        requestId: requestId(),
+        payload: { sessionId, query, quoted },
+      })
+      return referenceCandidates(result)
     },
     respondToPermission: (interactionId, optionId) =>
       client
@@ -974,6 +1395,38 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       if (result?.cancelled === true || typeof result?.dataUri !== 'string') return undefined
       return result.dataUri
     },
+    readSessionAttachment: async (sessionId, image) => {
+      const result = object(
+        await client.request<unknown>({
+          type: 'attachment.read',
+          requestId: requestId(),
+          payload: { sessionId, attachmentId: image.attachmentId },
+        }),
+      )
+      if (result?.cancelled === true) return undefined
+      const direct = imageDataUri(result?.dataUri)
+      if (direct !== undefined) return direct
+      const handle = object(result?.attachment)?.uri
+      if (typeof handle !== 'string' || handle.trim() === '') return undefined
+      try {
+        const preview = object(
+          await client.request<unknown>({
+            type: 'attachment.preview',
+            requestId: requestId(),
+            payload: { uri: handle },
+          }),
+        )
+        return imageDataUri(preview?.dataUri)
+      } finally {
+        await client
+          .request<unknown>({
+            type: 'attachment.release',
+            requestId: requestId(),
+            payload: { uris: [handle] },
+          })
+          .catch(() => undefined)
+      }
+    },
     releaseAttachments: async (uris) => {
       if (uris.length === 0) return
       await client.request<unknown>({
@@ -1014,10 +1467,30 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       if (result?.opened === true) return
       throw new Error(typeof result?.message === 'string' ? result.message : translate('app.error.openLink'))
     },
+    showInFolder: async (href) => {
+      const result = object(
+        await client.request<unknown>({
+          type: 'view.showInFolder',
+          requestId: requestId(),
+          payload: { href },
+        }),
+      )
+      if (result?.opened === true) return
+      throw new Error(typeof result?.message === 'string' ? result.message : translate('app.error.openLink'))
+    },
     runtimeAction: (action) =>
       client
         .request<unknown>({ type: 'runtime.action', requestId: requestId(), payload: { action } })
         .then(() => undefined),
+    configureConnection: async (mode, endpoint) => {
+      await client.request<unknown>({
+        type: 'connection.configure',
+        requestId: requestId(),
+        payload: { mode, ...(endpoint === undefined ? {} : { endpoint }) },
+      })
+    },
+    checkDshUpdates,
+    installDshVersion,
     readSettings: async () => {
       return parseExtensionSettings(
         await client.request<unknown>({ type: 'extensionSettings.read', requestId: requestId() }),
@@ -1030,11 +1503,21 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       if (snapshot !== undefined) applyBusyEnter(snapshot.values)
       return snapshot
     },
+    openDshSettingsDocument: async () => {
+      await client.request<unknown>({ type: 'settings.openDocument', requestId: requestId() })
+    },
     updateDshSetting: async (path, value) => {
       await client.request<unknown>({
         type: 'settings.update',
         requestId: requestId(),
         payload: { path, value },
+      })
+    },
+    unsetDshSetting: async (path) => {
+      await client.request<unknown>({
+        type: 'settings.unset',
+        requestId: requestId(),
+        payload: { path },
       })
     },
     configureProviderSecret: async (providerId, field) => {
@@ -1056,6 +1539,16 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     },
     refreshModelCatalog: async () => {
       await refreshProvidersAndModels(client, setState)
+    },
+    discoverModels: async (input) => {
+      const value = await client.request<unknown>({
+        type: 'models.discover',
+        requestId: requestId(),
+        payload: input,
+      })
+      const models = parseDiscoveredModels(value)
+      if (models === undefined) throw new Error(translate('settings.discoveryMalformed'))
+      return models
     },
     loadPresetRoster: async () => {
       const roster = parsePresetRoster(
@@ -1191,7 +1684,11 @@ function parseExtensionSettings(value: unknown): ExtensionSettingsSummary | unde
     connection === undefined ||
     runtime === undefined ||
     security === undefined ||
-    (connection.mode !== 'auto' && connection.mode !== 'attach-only' && connection.mode !== 'new-isolated') ||
+    (connection.mode !== 'auto' &&
+      connection.mode !== 'custom' &&
+      connection.mode !== 'attach-only' &&
+      connection.mode !== 'new-isolated') ||
+    typeof connection.customEndpointConfigured !== 'boolean' ||
     typeof runtime.customExecutableConfigured !== 'boolean' ||
     typeof runtime.autoStart !== 'boolean' ||
     !isPermissionPreset(security.defaultPermissionPreset) ||
@@ -1199,7 +1696,10 @@ function parseExtensionSettings(value: unknown): ExtensionSettingsSummary | unde
   )
     return undefined
   return {
-    connection: { mode: connection.mode },
+    connection: {
+      mode: connection.mode,
+      customEndpointConfigured: connection.customEndpointConfigured,
+    },
     runtime: {
       customExecutableConfigured: runtime.customExecutableConfigured,
       autoStart: runtime.autoStart,
@@ -1222,6 +1722,63 @@ function parseExtensionSettings(value: unknown): ExtensionSettingsSummary | unde
           : { reasoningLevel: defaultAgent.model.reasoningLevel }),
       },
     },
+  }
+}
+
+function parseDshUpdateSnapshot(value: unknown): DshUpdateSnapshot | undefined {
+  const snapshot = object(value)
+  if (
+    snapshot === undefined ||
+    (snapshot.status !== 'ready' && snapshot.status !== 'unavailable') ||
+    !Array.isArray(snapshot.availableVersions) ||
+    !snapshot.availableVersions.every(
+      (entry): entry is string => typeof entry === 'string' && entry.length <= 128,
+    ) ||
+    typeof snapshot.updateAvailable !== 'boolean' ||
+    typeof snapshot.checkedAt !== 'string'
+  )
+    return undefined
+  const optionalString = (key: string): string | undefined => {
+    const entry = snapshot[key]
+    return entry === undefined ? undefined : typeof entry === 'string' ? entry : undefined
+  }
+  const currentSource = optionalString('currentSource')
+  const currentVersion = optionalString('currentVersion')
+  const globalVersion = optionalString('globalVersion')
+  const latestVersion = optionalString('latestVersion')
+  const latestTagVersion = optionalString('latestTagVersion')
+  const nextTagVersion = optionalString('nextTagVersion')
+  const failure = optionalString('failure')
+  if (
+    currentSource !== undefined &&
+    currentSource !== 'configured' &&
+    currentSource !== 'path' &&
+    currentSource !== 'npm-global' &&
+    currentSource !== 'bundled'
+  )
+    return undefined
+  if (
+    failure !== undefined &&
+    failure !== 'npm-not-found' &&
+    failure !== 'registry-unavailable' &&
+    failure !== 'invalid-response'
+  )
+    return undefined
+  const restartRequired = snapshot.restartRequired
+  if (restartRequired !== undefined && typeof restartRequired !== 'boolean') return undefined
+  return {
+    status: snapshot.status,
+    ...(currentVersion === undefined ? {} : { currentVersion }),
+    ...(currentSource === undefined ? {} : { currentSource }),
+    ...(globalVersion === undefined ? {} : { globalVersion }),
+    ...(latestVersion === undefined ? {} : { latestVersion }),
+    ...(latestTagVersion === undefined ? {} : { latestTagVersion }),
+    ...(nextTagVersion === undefined ? {} : { nextTagVersion }),
+    availableVersions: snapshot.availableVersions,
+    updateAvailable: snapshot.updateAvailable,
+    checkedAt: snapshot.checkedAt,
+    ...(failure === undefined ? {} : { failure }),
+    ...(restartRequired === true ? { restartRequired: true } : {}),
   }
 }
 
@@ -1353,13 +1910,20 @@ async function refreshSessions(
         ? {
             activeSessionId: undefined,
             timeline: { sessionId: undefined, nodes: [], lastSequence: -1 },
+            history: [],
+            historyHasMore: false,
+            historyBeforeSequence: undefined,
+            historyLoading: false,
             projections: {},
             configuration: undefined,
+            sessionModels: [],
             permissionPresets: [],
             queue: [],
             goals: [],
             todos: [],
             jobs: [],
+            feedback: {},
+            feedbackUnavailable: false,
             subagents: EMPTY_SUBAGENT_CATALOG,
             activeSubagent: undefined,
             commands: [],
@@ -1367,6 +1931,37 @@ async function refreshSessions(
         : {}),
     }
   })
+}
+
+/**
+ * Restore the last explicit session when possible. A fresh Webview can lose
+ * its persisted id while the DSH session registry is already populated, so
+ * fall back to the most recent active root session and then the most recent
+ * non-blank root session instead of presenting a misleading "new session"
+ * posture.
+ */
+function selectStartupSession(
+  sessions: readonly SessionSummary[],
+  rememberedSessionId: string | undefined,
+): SessionSummary | undefined {
+  const remembered =
+    rememberedSessionId === undefined
+      ? undefined
+      : sessions.find((session) => session.id === rememberedSessionId)
+  if (remembered !== undefined) return remembered
+
+  const rootSessions = sessions
+    .filter((session) => session.origin !== 'subagent' && !session.blank)
+    .sort((left, right) => sessionRecency(right) - sessionRecency(left))
+  return (
+    rootSessions.find((session) => session.status === 'running' || session.status === 'awaiting-input') ??
+    rootSessions[0]
+  )
+}
+
+function sessionRecency(session: SessionSummary): number {
+  const timestamp = Date.parse(session.updatedAt)
+  return Number.isFinite(timestamp) ? timestamp : 0
 }
 
 async function safeList<T>(
@@ -1380,6 +1975,31 @@ async function safeList<T>(
   } catch {
     return []
   }
+}
+
+interface FeedbackListResult {
+  readonly items: readonly MessageFeedbackItem[]
+  readonly unavailable: boolean
+}
+
+async function safeFeedbackList(client: ProtocolClient, sessionId: string): Promise<FeedbackListResult> {
+  try {
+    const result = await client.request<unknown>({
+      type: 'feedback.list',
+      requestId: requestId(),
+      payload: { sessionId },
+    })
+    return {
+      items: listValues(result).filter(isMessageFeedbackItem),
+      unavailable: false,
+    }
+  } catch (error) {
+    return { items: [], unavailable: isFeedbackCapabilityUnavailable(error) }
+  }
+}
+
+function isFeedbackCapabilityUnavailable(error: unknown): boolean {
+  return object(error)?.code === 'CAPABILITY_UNAVAILABLE'
 }
 
 function parseSubagentCatalog(value: unknown): SubagentCatalog {
@@ -1445,16 +2065,68 @@ async function readCommandList(
   client: ProtocolClient,
   sessionId: string,
 ): Promise<readonly DynamicCommand[] | undefined> {
-  try {
-    const result = await client.request<unknown>({
+  const [commandsResult, skillsResult] = await Promise.allSettled([
+    client.request<unknown>({
       type: 'command.list',
       requestId: requestId(),
       payload: { sessionId },
-    })
-    return withClientCommandContributions(listValues(result).filter(isDynamicCommand))
-  } catch {
+    }),
+    client.request<unknown>({
+      type: 'skill.list',
+      requestId: requestId(),
+      payload: { sessionId },
+    }),
+  ])
+  if (commandsResult.status === 'rejected' && skillsResult.status === 'rejected') {
     // A registry refresh is advisory. Keep the last known directory when a
     // transient connection failure occurs during commands/change handling.
+    return undefined
+  }
+  const commands =
+    commandsResult.status === 'fulfilled' ? listValues(commandsResult.value).filter(isDynamicCommand) : []
+  const skills =
+    skillsResult.status === 'fulfilled' ? listValues(skillsResult.value).filter(isSkillDescriptor) : []
+  return withClientCommandContributions(mergeSkillCommands(commands, skills))
+}
+
+function mergeSkillCommands(
+  commands: readonly DynamicCommand[],
+  skills: readonly SkillDescriptor[],
+): readonly DynamicCommand[] {
+  const names = new Set(commands.map((command) => command.name.toLocaleLowerCase()))
+  const skillCommands = skills.flatMap((skill) => {
+    const name = skill.name.trim()
+    const key = name.toLocaleLowerCase()
+    if (name === '' || names.has(key)) return []
+    names.add(key)
+    return [
+      {
+        name,
+        description: skill.enabled
+          ? skill.description
+          : `${translate('commands.skillUserOnly')} · ${skill.description}`,
+        source: 'skill' as const,
+      },
+    ]
+  })
+  return [...commands, ...skillCommands]
+}
+
+async function loadSessionModelDirectory(
+  client: ProtocolClient,
+  sessionId: string,
+): Promise<readonly ModelDescriptor[] | undefined> {
+  try {
+    const result = object(
+      await client.request<unknown>({
+        type: 'models.session.list',
+        requestId: requestId(),
+        payload: { sessionId },
+      }),
+    )
+    if (result === undefined || !Array.isArray(result.models)) return undefined
+    return result.models.filter(isModelDescriptor)
+  } catch {
     return undefined
   }
 }
@@ -1519,7 +2191,12 @@ function applyHostMessage(message: HostMessage, state: AppState, setState: State
       const searchedLocations = Array.isArray(snapshot?.searchedLocations)
         ? snapshot.searchedLocations.filter((entry): entry is string => typeof entry === 'string')
         : []
-      setState({ ...state, backend: { kind, searchedLocations }, connectedDshVersion: undefined })
+      setState({
+        ...state,
+        backend: { kind, searchedLocations },
+        connectedDshVersion: undefined,
+        dshCompatibilityWarning: undefined,
+      })
     } else if (
       kind === 'idle' ||
       kind === 'locating-runtime' ||
@@ -1535,6 +2212,7 @@ function applyHostMessage(message: HostMessage, state: AppState, setState: State
         setState({
           ...state,
           connectedDshVersion: undefined,
+          dshCompatibilityWarning: undefined,
           backend: {
             kind,
             message:
@@ -1548,6 +2226,7 @@ function applyHostMessage(message: HostMessage, state: AppState, setState: State
         setState({
           ...state,
           connectedDshVersion: undefined,
+          dshCompatibilityWarning: undefined,
           backend: {
             kind,
             port: typeof snapshot?.port === 'number' ? snapshot.port : 0,
@@ -1564,6 +2243,10 @@ function applyHostMessage(message: HostMessage, state: AppState, setState: State
             kind === 'connected' && typeof snapshot?.dshVersion === 'string'
               ? snapshot.dshVersion
               : undefined,
+          dshCompatibilityWarning:
+            kind === 'connected' && typeof snapshot?.compatibilityWarning === 'string'
+              ? snapshot.compatibilityWarning
+              : undefined,
         })
     }
     return
@@ -1573,6 +2256,18 @@ function applyHostMessage(message: HostMessage, state: AppState, setState: State
   const eventSessionId = backendEventSessionId(event)
   const belongsToActiveSession = eventSessionId === undefined || eventSessionId === state.activeSessionId
   const controlPlaneMessage = event.type === 'message.user' && isCommandMessageSource(event.source)
+  const history =
+    state.activeSessionId !== undefined &&
+    eventSessionId === state.activeSessionId &&
+    event.sequence !== undefined
+      ? mergeHistory(state.history, [
+          {
+            sequence: event.sequence,
+            time: historyTime(event),
+            event,
+          },
+        ])
+      : state.history
   // Command records are control-plane history and stay out of both Chat and
   // Trajectory.  Other producer-owned user/message records are retained as
   // context nodes; Chat filters those nodes while Trajectory exposes their
@@ -1584,11 +2279,14 @@ function applyHostMessage(message: HostMessage, state: AppState, setState: State
       : reduceTimeline(state.timeline, {
           sequence: event.sequence ?? message.sequence,
           event,
-          ...(event.sequence === undefined && !advancesTimelineSequence(event)
-            ? { advanceSequence: false }
-            : {}),
+          // Some DSH lifecycle/projection events carry the durable DSH
+          // sequence even though they are not timeline records. They must
+          // never move the conversation cursor: doing so can make the next
+          // live delta look stale until history is replayed after switching
+          // sessions.
+          ...(!advancesTimelineSequence(event) ? { advanceSequence: false } : {}),
         })
-  let next = { ...state, timeline }
+  let next = { ...state, timeline, history }
   if (event.type === 'session.status') {
     const activity = event.status === 'running' ? 'running' : 'inactive'
     next = {
@@ -1670,13 +2368,20 @@ function applyHostMessage(message: HostMessage, state: AppState, setState: State
         ? {
             activeSessionId: undefined,
             timeline: { sessionId: undefined, nodes: [], lastSequence: -1 },
+            history: [],
+            historyHasMore: false,
+            historyBeforeSequence: undefined,
+            historyLoading: false,
             projections: removeSessionProjection(next.projections, event.sessionId),
             configuration: undefined,
+            sessionModels: [],
             permissionPresets: [],
             queue: [],
             goals: [],
             todos: [],
             jobs: [],
+            feedback: {},
+            feedbackUnavailable: false,
             subagents: EMPTY_SUBAGENT_CATALOG,
             activeSubagent: undefined,
             commands: [],
@@ -1745,8 +2450,11 @@ function applyHostMessage(message: HostMessage, state: AppState, setState: State
       ...next,
       backend: { kind: 'failed', message: event.reason, retryable: true },
       connectedDshVersion: undefined,
+      dshCompatibilityWarning: undefined,
       queue: [],
       jobs: [],
+      feedback: {},
+      feedbackUnavailable: false,
       permissions: [],
       questions: [],
       subagents: EMPTY_SUBAGENT_CATALOG,
@@ -1782,7 +2490,7 @@ function backendEventSessionId(event: BackendEvent): string | undefined {
   return undefined
 }
 
-/** Host lifecycle notices use the Webview delivery cursor, not the DSH log. */
+/** Only durable conversation records advance the DSH timeline cursor. */
 function advancesTimelineSequence(event: BackendEvent): boolean {
   switch (event.type) {
     case 'archived.sessions.changed':
@@ -1905,12 +2613,14 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
     typeof value.markdown === 'string'
   ) {
     const attachments = messageAttachments(value.attachments)
+    const images = messageImages(value.images)
     return {
       type: 'message.user',
       sessionId: value.sessionId,
       messageId: value.messageId,
       markdown: value.markdown,
       ...(attachments === undefined ? {} : { attachments }),
+      ...(images === undefined ? {} : { images }),
       ...(typeof value.rpcId === 'string' ? { rpcId: value.rpcId } : {}),
       ...(typeof value.source === 'string' ? { source: value.source } : {}),
       ...(typeof value.sourceForm === 'string' ? { sourceForm: value.sourceForm } : {}),
@@ -1966,6 +2676,7 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
       ...(turn === undefined ? {} : { turn }),
       ...(step === undefined ? {} : { step }),
       ...(time === undefined ? {} : { time }),
+      ...(value.interrupted === true ? { interrupted: true as const } : {}),
     }
   }
   if (
@@ -1993,6 +2704,7 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
     typeof value.messageId === 'string'
   ) {
     const usage = parseTokenUsage(value.usage)
+    const images = messageImages(value.images)
     const turn = finiteEventIndex(value.turn)
     const step = finiteEventIndex(value.step)
     const time = finiteEventTimestamp(value.time)
@@ -2003,6 +2715,7 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
       ...(typeof value.markdown === 'string' ? { markdown: value.markdown } : {}),
       ...(typeof value.reasoning === 'string' ? { reasoning: value.reasoning } : {}),
       ...(typeof value.modelLabel === 'string' ? { modelLabel: value.modelLabel } : {}),
+      ...(images === undefined ? {} : { images }),
       ...(usage === undefined ? {} : { usage }),
       ...(turn === undefined ? {} : { turn }),
       ...(step === undefined ? {} : { step }),
@@ -2056,6 +2769,8 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
   ) {
     const turn = finiteEventIndex(value.tool.turn)
     const step = finiteEventIndex(value.tool.step)
+    const locations = parseToolLocations(value.tool.locations)
+    const presentation = parseToolPresentation(value.tool.presentation)
     return {
       type: 'tool.updated',
       sessionId: value.sessionId,
@@ -2072,9 +2787,17 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
         ...(typeof value.tool.inputSummary === 'string' ? { inputSummary: value.tool.inputSummary } : {}),
         ...(typeof value.tool.outputSummary === 'string' ? { outputSummary: value.tool.outputSummary } : {}),
         ...(typeof value.tool.error === 'string' ? { error: value.tool.error } : {}),
+        ...(locations === undefined ? {} : { locations }),
+        ...(presentation === undefined ? {} : { presentation }),
         metadata: isRecord(value.tool.metadata) ? value.tool.metadata : {},
       },
     }
+  }
+  if (name === 'team.updated' && typeof value.sessionId === 'string') {
+    const activity = parseTeamActivity(value.activity)
+    return activity === undefined
+      ? { type: 'unknown', sessionId: value.sessionId, name, payload }
+      : { type: 'team.updated', sessionId: value.sessionId, activity }
   }
   if (name === 'goal.updated' && typeof value.sessionId === 'string' && Array.isArray(value.goals)) {
     const goals = value.goals.flatMap((entry) => {
@@ -2344,6 +3067,18 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
       ...(typeof value.sessionId === 'string' ? { sessionId: value.sessionId } : {}),
       level: value.level,
       text: value.text,
+      ...(typeof value.commandName === 'string' && value.commandName.trim() !== ''
+        ? { commandName: value.commandName.slice(0, 128) }
+        : {}),
+      ...(typeof value.commandId === 'string' && value.commandId.trim() !== ''
+        ? { commandId: value.commandId.slice(0, 256) }
+        : {}),
+      ...(value.commandPhase === 'run' || value.commandPhase === 'done'
+        ? { commandPhase: value.commandPhase }
+        : {}),
+      ...(typeof value.commandInput === 'string' && value.commandInput.trim() !== ''
+        ? { commandInput: value.commandInput.slice(0, 4_096) }
+        : {}),
     }
   if (name === 'connection.lost' && typeof value.reason === 'string')
     return { type: 'connection.lost', reason: value.reason }
@@ -2353,6 +3088,97 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
     name,
     payload,
   }
+}
+
+function parseSessionHistory(value: unknown): readonly SessionHistoryEvent[] {
+  if (!Array.isArray(value)) return []
+  return value.flatMap((entry, index): SessionHistoryEvent[] => {
+    const record = object(entry)
+    const eventRecord = object(record?.event) ?? record
+    if (eventRecord === undefined || typeof eventRecord.type !== 'string') return []
+    const event = domainEvent(eventRecord.type, eventRecord)
+    if (event === undefined) return []
+    const sequence = finiteSequence(record?.sequence ?? eventRecord.sequence, index)
+    return [
+      {
+        sequence,
+        time: typeof record?.time === 'string' ? record.time : historyTime(event),
+        event: { ...event, sequence },
+      },
+    ]
+  })
+}
+
+function parseSessionHistoryPage(value: unknown): {
+  readonly events: readonly SessionHistoryEvent[]
+  readonly hasMore: boolean
+  readonly beforeSequence?: number
+  readonly projection?: SessionProjectionSnapshot
+} {
+  const page = object(value)
+  if (page === undefined || !Array.isArray(page.events) || typeof page.hasMore !== 'boolean')
+    throw new Error(translate('app.error.malformedHistory'))
+  const events = parseSessionHistory(page.events)
+  const beforeSequence = optionalSequence(page.beforeSeq) ?? oldestHistorySequence(events)
+  const projection = parseSessionProjection(page.projection)
+  return {
+    events,
+    hasMore: page.hasMore,
+    ...(beforeSequence === undefined ? {} : { beforeSequence }),
+    ...(projection === undefined ? {} : { projection }),
+  }
+}
+
+function parseSessionProjection(value: unknown): SessionProjectionSnapshot | undefined {
+  if (value === undefined) return undefined
+  const projection = object(value)
+  if (
+    projection === undefined ||
+    !Number.isSafeInteger(projection.asOfSequence) ||
+    (projection.asOfSequence as number) < -1 ||
+    object(projection.values) === undefined
+  )
+    throw new Error(translate('app.error.malformedProjection'))
+  return {
+    asOfSequence: projection.asOfSequence as number,
+    values: projection.values as Readonly<Record<string, unknown>>,
+  }
+}
+
+function mergeHistory(
+  current: readonly SessionHistoryEvent[],
+  additions: readonly SessionHistoryEvent[],
+): readonly SessionHistoryEvent[] {
+  const bySequence = new Map<number, SessionHistoryEvent>()
+  for (const entry of [...current, ...additions]) {
+    if (!bySequence.has(entry.sequence)) bySequence.set(entry.sequence, entry)
+  }
+  return [...bySequence.values()].sort((left, right) => left.sequence - right.sequence)
+}
+
+function oldestHistorySequence(history: readonly SessionHistoryEvent[]): number | undefined {
+  return history.reduce<number | undefined>(
+    (oldest, entry) => (oldest === undefined ? entry.sequence : Math.min(oldest, entry.sequence)),
+    undefined,
+  )
+}
+
+function newestHistorySequence(history: readonly SessionHistoryEvent[]): number | undefined {
+  return history.reduce<number | undefined>(
+    (newest, entry) => (newest === undefined ? entry.sequence : Math.max(newest, entry.sequence)),
+    undefined,
+  )
+}
+
+function optionalSequence(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined
+}
+
+function historyTime(event: BackendEvent): string {
+  const value = 'time' in event ? event.time : undefined
+  return typeof value === 'number' && Number.isFinite(value)
+    ? new Date(value).toISOString()
+    : new Date().toISOString()
 }
 
 function hydrateTimeline(sessionId: string, history: readonly unknown[]): TimelineState {
@@ -2398,10 +3224,21 @@ function hydrateTimeline(sessionId: string, history: readonly unknown[]): Timeli
     nodes: [],
     lastSequence: valid.length === 0 ? -1 : Number.MIN_SAFE_INTEGER,
   }
+  valid.sort((left, right) => left.sequence - right.sequence)
   valid.forEach(({ event, sequence }) => {
-    timeline = reduceTimeline(timeline, { sequence, event })
+    timeline = reduceTimeline(timeline, {
+      sequence,
+      event,
+      // Projection/lifecycle records carry durable sequence metadata but are
+      // not conversation records. Keep their state updates while preventing
+      // them from consuming the timeline cursor during history rehydration.
+      ...(!advancesTimelineSequence(event) ? { advanceSequence: false } : {}),
+    })
   })
-  const lastSequence = valid.reduce((maximum, entry) => Math.max(maximum, entry.sequence), -1)
+  const lastSequence = valid.reduce(
+    (maximum, entry) => (advancesTimelineSequence(entry.event) ? Math.max(maximum, entry.sequence) : maximum),
+    -1,
+  )
   return valid.length === 0 ? timeline : { ...timeline, lastSequence }
 }
 
@@ -2483,6 +3320,12 @@ function attachmentFromResult(resultValue: unknown): PromptAttachment | undefine
   }
 }
 
+function imageDataUri(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const uri = value.trim()
+  return /^data:image\/(?:png|jpeg|webp|gif);base64,[A-Za-z0-9+/]+={0,2}$/u.test(uri) ? uri : undefined
+}
+
 function messageAttachments(value: unknown): readonly MessageAttachment[] | undefined {
   if (!Array.isArray(value)) return undefined
   const attachments = value.slice(0, 32).flatMap((entry): MessageAttachment[] => {
@@ -2496,6 +3339,51 @@ function messageAttachments(value: unknown): readonly MessageAttachment[] | unde
     ]
   })
   return attachments.length === 0 ? undefined : attachments
+}
+
+function messageImages(value: unknown): readonly MessageImageReference[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const images = value.slice(0, 32).flatMap((entry): MessageImageReference[] => {
+    const record = object(entry)
+    const attachmentId = typeof record?.attachmentId === 'string' ? record.attachmentId.trim() : ''
+    const mediaType = record?.mediaType
+    const bytes = positiveSafeInteger(record?.bytes)
+    const width = positiveSafeInteger(record?.width)
+    const height = positiveSafeInteger(record?.height)
+    if (
+      attachmentId === '' ||
+      (mediaType !== 'image/png' &&
+        mediaType !== 'image/jpeg' &&
+        mediaType !== 'image/webp' &&
+        mediaType !== 'image/gif') ||
+      bytes === undefined ||
+      width === undefined ||
+      height === undefined
+    )
+      return []
+    return [
+      {
+        attachmentId,
+        mediaType,
+        bytes,
+        width,
+        height,
+        ...(typeof record?.name === 'string' && record.name.trim() !== '' ? { name: record.name } : {}),
+      },
+    ]
+  })
+  const unique: MessageImageReference[] = []
+  const seen = new Set<string>()
+  for (const image of images) {
+    if (seen.has(image.attachmentId)) continue
+    seen.add(image.attachmentId)
+    unique.push(image)
+  }
+  return unique.length === 0 ? undefined : unique
+}
+
+function positiveSafeInteger(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined
 }
 
 function openFileCandidatesFromResult(resultValue: unknown): readonly OpenFileCandidate[] {
@@ -2525,6 +3413,357 @@ function openFileCandidatesFromResult(resultValue: unknown): readonly OpenFileCa
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return object(value) !== undefined
+}
+
+/** Keep the Webview boundary closed over the adapter-owned structured card. */
+function parseToolPresentation(value: unknown): ToolPresentationView | undefined {
+  const view = object(value)
+  if (view === undefined || (view.phase !== 'call' && view.phase !== 'result')) return undefined
+  const phase = view.phase
+  if (view.card === 'generic') {
+    const title = presentationText(view.title)
+    const kind = presentationText(view.kind)
+    const content = presentationTextList(view.content)
+    if (phase === 'call') {
+      const rawInput = presentationText(view.rawInput)
+      const locations = parseToolLocations(view.locations)
+      return {
+        phase,
+        card: 'generic',
+        ...(title === undefined ? {} : { title }),
+        ...(kind === undefined ? {} : { kind }),
+        ...(rawInput === undefined ? {} : { rawInput }),
+        ...(content === undefined ? {} : { content }),
+        ...(locations === undefined ? {} : { locations }),
+      }
+    }
+    return {
+      phase,
+      card: 'generic',
+      ...(title === undefined ? {} : { title }),
+      ...(kind === undefined ? {} : { kind }),
+      ...(content === undefined ? {} : { content }),
+    }
+  }
+  if (view.card === 'terminal') {
+    const title = presentationText(view.title)
+    if (phase === 'call') {
+      if (title === undefined) return undefined
+      const description = presentationText(view.description)
+      const cwd = presentationPath(view.cwd)
+      return {
+        phase,
+        card: 'terminal',
+        title,
+        ...(description === undefined ? {} : { description }),
+        ...(cwd === undefined ? {} : { cwd }),
+      }
+    }
+    const output = presentationText(view.output)
+    const exitCode = presentationExitCode(view.exitCode)
+    const signal = presentationText(view.signal)
+    if (title === undefined && output === undefined && exitCode === undefined && signal === undefined)
+      return undefined
+    return {
+      phase,
+      card: 'terminal',
+      ...(title === undefined ? {} : { title }),
+      ...(output === undefined ? {} : { output }),
+      ...(exitCode === undefined ? {} : { exitCode }),
+      ...(signal === undefined ? {} : { signal }),
+    }
+  }
+  if (view.card === 'diff') {
+    const title = presentationText(view.title)
+    const diffs = parseToolDiffs(view.diffs)
+    if (diffs.length === 0 || (phase === 'call' && title === undefined)) return undefined
+    if (phase === 'call') {
+      if (title === undefined) return undefined
+      const locations = parseToolLocations(view.locations)
+      return {
+        phase,
+        card: 'diff',
+        title,
+        diffs,
+        ...(locations === undefined ? {} : { locations }),
+      }
+    }
+    return {
+      phase,
+      card: 'diff',
+      ...(title === undefined ? {} : { title }),
+      diffs,
+    }
+  }
+  if (phase !== 'result') return undefined
+  if (view.card === 'search') return parseSearchPresentation(view)
+  if (view.card === 'read') return parseReadPresentation(view)
+  if (view.card === 'web') return parseWebPresentation(view)
+  return undefined
+}
+
+function parseToolLocations(
+  value: unknown,
+): readonly { readonly path: string; readonly line?: number }[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const seen = new Set<string>()
+  const locations: { path: string; line?: number }[] = []
+  for (const entry of value.slice(0, 32)) {
+    const record = object(entry)
+    const path = presentationPath(record?.path)
+    if (path === undefined || seen.has(path)) continue
+    seen.add(path)
+    const line = positivePresentationNumber(record?.line)
+    locations.push({ path, ...(line === undefined ? {} : { line }) })
+  }
+  return locations.length === 0 ? undefined : locations
+}
+
+function parseToolDiffs(value: unknown): readonly ToolPresentationDiff[] {
+  if (!Array.isArray(value)) return []
+  return value.slice(0, 32).flatMap((entry): ToolPresentationDiff[] => {
+    const diff = object(entry)
+    const path = presentationPath(diff?.path)
+    const newText = presentationText(diff?.newText)
+    const oldText = diff?.oldText === null ? null : presentationText(diff?.oldText)
+    return path === undefined || newText === undefined || (diff?.oldText !== null && oldText === undefined)
+      ? []
+      : [{ path, oldText: oldText === undefined ? null : oldText, newText }]
+  })
+}
+
+function parseSearchPresentation(value: Record<string, unknown>): ToolPresentationView | undefined {
+  if (typeof value.truncated !== 'boolean') return undefined
+  const total = nonNegativePresentationNumber(value.total)
+  if (total === undefined) return undefined
+  const title = presentationText(value.title)
+  if (value.shape === 'paths') {
+    if (!Array.isArray(value.paths)) return undefined
+    const paths = value.paths.slice(0, 256).flatMap((entry) => {
+      const path = presentationPath(entry)
+      return path === undefined ? [] : [path]
+    })
+    return {
+      phase: 'result',
+      card: 'search',
+      shape: 'paths',
+      ...(title === undefined ? {} : { title }),
+      paths,
+      truncated: value.truncated,
+      total,
+    }
+  }
+  if (value.shape !== 'matches' || !Array.isArray(value.files)) return undefined
+  const files = value.files.slice(0, 128).flatMap((entry): ToolPresentationSearchFile[] => {
+    const file = object(entry)
+    const path = presentationPath(file?.path)
+    if (file === undefined || path === undefined || !Array.isArray(file.matches)) return []
+    const matches = file.matches.slice(0, 128).flatMap((matchValue): ToolPresentationSearchMatch[] => {
+      const match = object(matchValue)
+      const lineNumber = positivePresentationNumber(match?.lineNumber)
+      const line = presentationText(match?.line, true)
+      return lineNumber === undefined || line === undefined ? [] : [{ lineNumber, line }]
+    })
+    return [{ path, matches }]
+  })
+  return {
+    phase: 'result',
+    card: 'search',
+    shape: 'matches',
+    ...(title === undefined ? {} : { title }),
+    files,
+    truncated: value.truncated,
+    total,
+  }
+}
+
+function parseReadPresentation(value: Record<string, unknown>): ToolPresentationView | undefined {
+  const path = presentationPath(value.path)
+  const offset = nonNegativePresentationNumber(value.offset)
+  const totalLines = nonNegativePresentationNumber(value.totalLines)
+  if (path === undefined || offset === undefined || totalLines === undefined || !Array.isArray(value.lines))
+    return undefined
+  const lines = value.lines.slice(0, 512).flatMap((entry): ToolPresentationLine[] => {
+    const line = object(entry)
+    const number = positivePresentationNumber(line?.number)
+    const text = presentationText(line?.text, true)
+    return number === undefined || text === undefined ? [] : [{ number, text }]
+  })
+  const title = presentationText(value.title)
+  const lang = presentationText(value.lang)
+  const content = presentationTextList(value.content)
+  return {
+    phase: 'result',
+    card: 'read',
+    ...(title === undefined ? {} : { title }),
+    path,
+    offset,
+    lines,
+    totalLines,
+    ...(lang === undefined ? {} : { lang }),
+    ...(content === undefined ? {} : { content }),
+  }
+}
+
+function parseWebPresentation(value: Record<string, unknown>): ToolPresentationView | undefined {
+  if (typeof value.truncated !== 'boolean') return undefined
+  const title = presentationText(value.title)
+  if (value.kind === 'fetch') {
+    const url = presentationUrl(value.url)
+    const statusCode = presentationStatusCode(value.statusCode)
+    if (url === undefined || statusCode === undefined) return undefined
+    return {
+      phase: 'result',
+      card: 'web',
+      kind: 'fetch',
+      ...(title === undefined ? {} : { title }),
+      url,
+      statusCode,
+      truncated: value.truncated,
+    }
+  }
+  if (value.kind !== 'search' || !Array.isArray(value.sources)) return undefined
+  const sources = value.sources.slice(0, 64).flatMap((entry): ToolPresentationSource[] => {
+    const source = object(entry)
+    const url = presentationUrl(source?.url)
+    if (source === undefined || url === undefined) return []
+    const sourceTitle = presentationText(source.title)
+    const snippet = presentationText(source.snippet)
+    const publishedAt = presentationText(source.publishedAt)
+    return [
+      {
+        url,
+        ...(sourceTitle === undefined ? {} : { title: sourceTitle }),
+        ...(snippet === undefined ? {} : { snippet }),
+        ...(publishedAt === undefined ? {} : { publishedAt }),
+      },
+    ]
+  })
+  const answer = presentationText(value.answer)
+  return {
+    phase: 'result',
+    card: 'web',
+    kind: 'search',
+    ...(title === undefined ? {} : { title }),
+    sources,
+    ...(answer === undefined ? {} : { answer }),
+    truncated: value.truncated,
+  }
+}
+
+function presentationText(value: unknown, allowEmpty = false): string | undefined {
+  if (typeof value !== 'string' || (!allowEmpty && value.trim() === '')) return undefined
+  return value.slice(0, 4_096)
+}
+
+function presentationTextList(value: unknown): readonly string[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const items = value.slice(0, 32).flatMap((entry) => {
+    const text = presentationText(entry)
+    return text === undefined ? [] : [text]
+  })
+  return items.length === 0 ? undefined : items
+}
+
+function presentationPath(value: unknown): string | undefined {
+  const path = presentationText(value)
+  return path === undefined || hasPresentationControlCharacter(path) ? undefined : path
+}
+
+function presentationUrl(value: unknown): string | undefined {
+  const url = presentationText(value)
+  return url === undefined || hasPresentationControlCharacter(url) ? undefined : url
+}
+
+function hasPresentationControlCharacter(value: string): boolean {
+  return Array.from(value).some((character) => {
+    const code = character.codePointAt(0) ?? 0
+    return code <= 0x1f || (code >= 0x7f && code <= 0x9f)
+  })
+}
+
+function nonNegativePresentationNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined
+}
+
+function positivePresentationNumber(value: unknown): number | undefined {
+  const number = nonNegativePresentationNumber(value)
+  return number === undefined || number === 0 ? undefined : number
+}
+
+function presentationExitCode(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) ? value : undefined
+}
+
+function presentationStatusCode(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 100 && value <= 599
+    ? value
+    : undefined
+}
+
+function parseTeamActivity(value: unknown): TeamActivityView | undefined {
+  const activity = object(value)
+  if (activity === undefined || typeof activity.id !== 'string' || typeof activity.teamId !== 'string')
+    return undefined
+  if (
+    activity.kind === 'member' &&
+    typeof activity.memberId === 'string' &&
+    typeof activity.name === 'string' &&
+    (activity.phase === 'provisioning' || activity.phase === 'active' || activity.phase === 'failed')
+  )
+    return {
+      kind: 'member',
+      id: activity.id,
+      teamId: activity.teamId,
+      memberId: activity.memberId,
+      name: activity.name,
+      phase: activity.phase,
+      ...(typeof activity.error === 'string' ? { error: activity.error } : {}),
+    }
+  if (
+    activity.kind === 'task' &&
+    typeof activity.taskId === 'string' &&
+    typeof activity.subject === 'string' &&
+    (activity.status === 'pending' ||
+      activity.status === 'in_progress' ||
+      activity.status === 'completed' ||
+      activity.status === 'deleted') &&
+    typeof activity.blockedByCount === 'number' &&
+    Number.isSafeInteger(activity.blockedByCount) &&
+    activity.blockedByCount >= 0 &&
+    typeof activity.writeScopeCount === 'number' &&
+    Number.isSafeInteger(activity.writeScopeCount) &&
+    activity.writeScopeCount >= 0
+  )
+    return {
+      kind: 'task',
+      id: activity.id,
+      teamId: activity.teamId,
+      taskId: activity.taskId,
+      subject: activity.subject,
+      status: activity.status,
+      ...(typeof activity.ownerId === 'string' ? { ownerId: activity.ownerId } : {}),
+      blockedByCount: activity.blockedByCount,
+      writeScopeCount: activity.writeScopeCount,
+    }
+  if (
+    (activity.kind === 'message.queued' || activity.kind === 'message.delivered') &&
+    typeof activity.messageId === 'string' &&
+    typeof activity.targetId === 'string'
+  )
+    return {
+      kind: activity.kind,
+      id: activity.id,
+      teamId: activity.teamId,
+      messageId: activity.messageId,
+      ...(typeof activity.senderName === 'string' ? { senderName: activity.senderName } : {}),
+      targetId: activity.targetId,
+      ...(activity.delivery === 'quiet' || activity.delivery === 'wakeup'
+        ? { delivery: activity.delivery }
+        : {}),
+      ...(typeof activity.content === 'string' ? { content: activity.content } : {}),
+    }
+  return undefined
 }
 
 function isToolStatus(value: unknown): value is 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' {
@@ -2643,6 +3882,32 @@ function isModelDescriptor(value: unknown): value is ModelDescriptor {
     typeof item.label === 'string' &&
     typeof item.supportsReasoning === 'boolean'
   )
+}
+
+function isDiscoveredModel(value: unknown): value is DiscoveredModel {
+  const item = object(value)
+  return (
+    item !== undefined &&
+    typeof item.id === 'string' &&
+    item.id.trim() !== '' &&
+    item.id.length <= 256 &&
+    typeof item.label === 'string' &&
+    item.label.trim() !== '' &&
+    item.label.length <= 512 &&
+    (item.contextWindow === undefined ||
+      (typeof item.contextWindow === 'number' &&
+        Number.isSafeInteger(item.contextWindow) &&
+        item.contextWindow > 0)) &&
+    (item.maxTokens === undefined ||
+      (typeof item.maxTokens === 'number' && Number.isSafeInteger(item.maxTokens) && item.maxTokens > 0))
+  )
+}
+
+function parseDiscoveredModels(value: unknown): readonly DiscoveredModel[] | undefined {
+  const root = object(value)
+  const rows = Array.isArray(value) ? value : root?.models
+  if (!Array.isArray(rows)) return undefined
+  return rows.length > 512 ? undefined : rows.filter(isDiscoveredModel)
 }
 
 function isAgentConfiguration(value: unknown): value is AgentConfiguration {
@@ -2800,11 +4065,26 @@ function isDynamicCommand(value: unknown): value is DynamicCommand {
     item !== undefined &&
     typeof item.name === 'string' &&
     typeof item.description === 'string' &&
-    (item.input === undefined || (isRecord(item.input) && typeof item.input.hint === 'string')) &&
+    (item.input === undefined ||
+      (isRecord(item.input) &&
+        typeof item.input.hint === 'string' &&
+        (item.input.images === undefined || typeof item.input.images === 'boolean'))) &&
     (item.source === undefined ||
       item.source === 'builtin' ||
       item.source === 'skill' ||
       item.source === 'plugin')
+  )
+}
+
+function isSkillDescriptor(value: unknown): value is SkillDescriptor {
+  const item = object(value)
+  return (
+    item !== undefined &&
+    typeof item.id === 'string' &&
+    typeof item.name === 'string' &&
+    typeof item.description === 'string' &&
+    (item.source === 'project' || item.source === 'user' || item.source === 'plugin') &&
+    typeof item.enabled === 'boolean'
   )
 }
 
@@ -2835,6 +4115,99 @@ function isJobView(value: unknown): value is JobView {
     (item.finishedAt === undefined ||
       (Number.isSafeInteger(item.finishedAt) && (item.finishedAt as number) >= 0))
   )
+}
+
+function isMessageFeedbackItem(value: unknown): value is MessageFeedbackItem {
+  const item = object(value)
+  return (
+    item !== undefined &&
+    typeof item.messageId === 'string' &&
+    item.messageId.length > 0 &&
+    (item.rating === 'positive' || item.rating === 'negative') &&
+    typeof item.version === 'string' &&
+    item.version.length > 0 &&
+    (item.note === undefined || typeof item.note === 'string') &&
+    (item.createdAt === undefined ||
+      (typeof item.createdAt === 'number' && Number.isSafeInteger(item.createdAt) && item.createdAt >= 0)) &&
+    (item.updatedAt === undefined ||
+      (typeof item.updatedAt === 'number' && Number.isSafeInteger(item.updatedAt) && item.updatedAt >= 0))
+  )
+}
+
+function feedbackRecord(
+  items: readonly MessageFeedbackItem[],
+): Readonly<Record<string, MessageFeedbackItem>> {
+  return Object.fromEntries(items.map((item) => [item.messageId, item]))
+}
+
+function hasUnsafeReferencePath(value: string): boolean {
+  if (value.includes('"')) return true
+  return Array.from(value).some((character) => {
+    const code = character.codePointAt(0) ?? 0
+    return code <= 0x1f || (code >= 0x7f && code <= 0x9f)
+  })
+}
+
+function referenceCandidates(value: unknown): readonly ReferenceCandidate[] {
+  const record = object(value)
+  if (record === undefined) return []
+  const candidates: ReferenceCandidate[] = []
+  const seen = new Set<string>()
+  if (Array.isArray(record.files))
+    for (const value of record.files) {
+      const item = object(value)
+      if (
+        item === undefined ||
+        typeof item.path !== 'string' ||
+        item.path.trim() === '' ||
+        item.path.length > 4_096 ||
+        hasUnsafeReferencePath(item.path) ||
+        (item.kind !== 'file' && item.kind !== 'directory')
+      )
+        continue
+      const id = `file:${item.path}`
+      if (seen.has(id)) continue
+      seen.add(id)
+      candidates.push({
+        id,
+        kind: item.kind,
+        path: item.path,
+        label: referenceLabel(item.path),
+        description: item.path,
+      })
+    }
+  if (Array.isArray(record.sessions))
+    for (const value of record.sessions) {
+      const item = object(value)
+      if (
+        item === undefined ||
+        typeof item.sessionId !== 'string' ||
+        item.sessionId.trim() === '' ||
+        typeof item.label !== 'string' ||
+        item.label.trim() === '' ||
+        typeof item.mention !== 'string' ||
+        !/^@\[[^\]\r\n]{1,512}\]\(dsh-session:[A-Za-z0-9_-]{1,512}\)$/u.test(item.mention)
+      )
+        continue
+      const id = `session:${item.sessionId}`
+      if (seen.has(id)) continue
+      seen.add(id)
+      candidates.push({
+        id,
+        kind: 'session',
+        sessionId: item.sessionId,
+        label: item.label,
+        description: typeof item.cwd === 'string' && item.cwd !== '' ? item.cwd : item.sessionId,
+        mention: item.mention,
+      })
+    }
+  return candidates.slice(0, 100)
+}
+
+function referenceLabel(path: string): string {
+  const normalized = path.replace(/[\\/]+$/u, '')
+  const slash = Math.max(normalized.lastIndexOf('/'), normalized.lastIndexOf('\\'))
+  return slash >= 0 && slash + 1 < normalized.length ? normalized.slice(slash + 1) : normalized
 }
 
 function isSubagentView(value: unknown): value is SubagentView {
@@ -2920,6 +4293,26 @@ function isQueuedInput(value: unknown): value is QueuedInput {
     (item.mode === 'queue' || item.mode === 'steer') &&
     typeof item.createdAt === 'string'
   )
+}
+
+function nextForkTitle(
+  sourceTitle: string,
+  sessions: readonly SessionSummary[],
+  workspaceId: string,
+): string {
+  const base = sourceTitle.trim() === '' ? 'New Session' : sourceTitle.trim()
+  const taken = new Set(
+    sessions
+      .filter((session) => session.workspaceId === workspaceId)
+      .map((session) => session.title.trim().toLocaleLowerCase()),
+  )
+  let suffix = 1
+  let candidate = `${base} (${suffix})`
+  while (taken.has(candidate.toLocaleLowerCase())) {
+    suffix += 1
+    candidate = `${base} (${suffix})`
+  }
+  return candidate
 }
 
 function requestId(): string {

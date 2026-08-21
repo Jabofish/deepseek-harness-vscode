@@ -1,8 +1,13 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { ExtensionSettingsSummary, ModelDescriptor, ModelProvider } from '@dsh-vscode/domain'
+import type {
+  DshUpdateSnapshot,
+  ExtensionSettingsSummary,
+  ModelDescriptor,
+  ModelProvider,
+} from '@dsh-vscode/domain'
 import type { DshSettingsSnapshot } from '../../app/store.js'
 import { I18nProvider } from '../../i18n.js'
 import { SettingsDrawer } from './SettingsDrawer.js'
@@ -45,7 +50,7 @@ const models: readonly ModelDescriptor[] = [
 
 function settingsFixture(): ExtensionSettingsSummary {
   return {
-    connection: { mode: 'new-isolated' },
+    connection: { mode: 'new-isolated', customEndpointConfigured: false },
     runtime: { customExecutableConfigured: false, autoStart: true },
     security: { defaultPermissionPreset: 'workspace-write' },
     defaultAgent: {
@@ -127,11 +132,15 @@ function renderDrawer(
       onOpenChange={vi.fn()}
       connected
       connectedDshVersion="0.6.0"
+      onConfigureConnection={vi.fn().mockResolvedValue(undefined)}
       providers={providers}
       models={models}
       onLoadSettings={vi.fn().mockResolvedValue(settingsFixture())}
       onLoadDshSettings={vi.fn().mockResolvedValue(dshSettingsFixture())}
+      onOpenDshSettingsDocument={vi.fn().mockResolvedValue(undefined)}
       onUpdateDshSetting={vi.fn().mockResolvedValue(undefined)}
+      onUnsetDshSetting={vi.fn().mockResolvedValue(undefined)}
+      onDiscoverModels={vi.fn().mockResolvedValue([])}
       onConfigureSecret={vi.fn().mockResolvedValue(true)}
       onRemoveSecret={vi.fn().mockResolvedValue(undefined)}
       onRefreshCatalog={vi.fn().mockResolvedValue(undefined)}
@@ -174,6 +183,89 @@ describe('SettingsDrawer', () => {
     await waitFor(() => expect(screen.getByText('new-isolated')).toBeDefined())
     expect(screen.getByText('0.6.0')).toBeDefined()
     expect(screen.getByText('deepseek/deepseek-chat')).toBeDefined()
+  })
+
+  it('applies a custom loopback endpoint and reconnects through the Host', async () => {
+    const onConfigureConnection = vi.fn().mockResolvedValue(undefined)
+    renderDrawer({ onConfigureConnection })
+
+    await screen.findByRole('heading', { name: 'DSH connection' })
+    fireEvent.click(screen.getByRole('radio', { name: /Custom endpoint/ }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Service endpoint' }), {
+      target: { value: 'http://127.0.0.1:4310' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Apply and reconnect' }))
+
+    await waitFor(() => expect(onConfigureConnection).toHaveBeenCalledWith('custom', 'http://127.0.0.1:4310'))
+    expect(await screen.findByRole('status', { name: '' })).toBeDefined()
+  })
+
+  it('requires an endpoint before applying custom mode', async () => {
+    const onConfigureConnection = vi.fn().mockResolvedValue(undefined)
+    renderDrawer({ onConfigureConnection })
+
+    await screen.findByRole('heading', { name: 'DSH connection' })
+    fireEvent.click(screen.getByRole('radio', { name: /Custom endpoint/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Apply and reconnect' }))
+
+    expect(onConfigureConnection).not.toHaveBeenCalled()
+    expect((await screen.findByRole('alert')).textContent).toContain('Enter a local DSH endpoint first.')
+  })
+
+  it('shows the upstream DSH version picker and installs the selected exact version', async () => {
+    const dshUpdate: DshUpdateSnapshot = {
+      status: 'ready',
+      currentVersion: '0.1.0-rc.6',
+      currentSource: 'npm-global',
+      globalVersion: '0.1.0-rc.6',
+      latestVersion: '0.1.0-rc.8',
+      latestTagVersion: '0.1.0-rc.7',
+      nextTagVersion: '0.1.0-rc.8',
+      availableVersions: ['0.1.0-rc.8', '0.1.0-rc.7', '0.1.0-rc.6'],
+      updateAvailable: true,
+      checkedAt: '2026-08-21T00:00:00.000Z',
+    }
+    const onCheckDshUpdates = vi.fn().mockResolvedValue(dshUpdate)
+    const onInstallDshVersion = vi.fn().mockResolvedValue(dshUpdate)
+    renderDrawer({ dshUpdate, onCheckDshUpdates, onInstallDshVersion })
+
+    expect(await screen.findByText('An upstream update is available: 0.1.0-rc.8.')).toBeDefined()
+    fireEvent.click(screen.getByRole('button', { name: 'Check now' }))
+    await waitFor(() => expect(onCheckDshUpdates).toHaveBeenCalledWith(true))
+    fireEvent.change(screen.getByLabelText('Version to install'), { target: { value: '0.1.0-rc.7' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Download and install' }))
+    await waitFor(() => expect(onInstallDshVersion).toHaveBeenCalledWith('0.1.0-rc.7'))
+  })
+
+  it('shows the Host-side npm failure reason instead of hiding it behind a generic warning', async () => {
+    const dshUpdate: DshUpdateSnapshot = {
+      status: 'unavailable',
+      availableVersions: [],
+      updateAvailable: false,
+      checkedAt: '2026-08-21T00:00:00.000Z',
+      failure: 'npm-not-found',
+    }
+    renderDrawer({
+      dshUpdate,
+      onCheckDshUpdates: vi.fn().mockResolvedValue(dshUpdate),
+      onInstallDshVersion: vi.fn().mockResolvedValue(dshUpdate),
+    })
+
+    expect(await screen.findByText(/Extension Host could not start npm/i)).toBeDefined()
+  })
+
+  it('opens the host-owned settings document when the host advertises one', async () => {
+    const onOpenDshSettingsDocument = vi.fn().mockResolvedValue(undefined)
+    const fixture = dshSettingsFixture()
+    renderDrawer({
+      onOpenDshSettingsDocument,
+      onLoadDshSettings: vi.fn().mockResolvedValue({
+        ...fixture,
+        schema: { ...fixture.schema, hasDocument: true },
+      }),
+    })
+    fireEvent.click(await screen.findByRole('button', { name: 'Open settings file' }))
+    await waitFor(() => expect(onOpenDshSettingsDocument).toHaveBeenCalledTimes(1))
   })
 
   it('does not report a connected host as disconnected when its version is unavailable', async () => {
@@ -268,14 +360,74 @@ describe('SettingsDrawer', () => {
     expect(screen.queryByRole('group', { name: 'Permission' })).toBeNull()
   })
 
-  it('switches to the models tab and lists providers with secret state', () => {
+  it('switches to the models tab and lists providers with secret state', async () => {
     renderDrawer()
     fireEvent.click(screen.getByRole('tab', { name: 'Models' }))
-    expect(screen.getByText('DeepSeek')).toBeDefined()
-    expect(screen.getByText('Missing')).toBeDefined()
+    expect(await screen.findByText('DeepSeek')).toBeDefined()
+    expect(await screen.findByText('Missing')).toBeDefined()
     expect(screen.queryByText('Configured')).toBeNull()
-    expect(screen.getByText('1 provider · 2 models')).toBeDefined()
-    expect(screen.getByRole('button', { name: 'Configure' })).toBeDefined()
+    expect(await screen.findByText('1 provider · 2 models')).toBeDefined()
+    expect(await screen.findByRole('button', { name: 'Configure' })).toBeDefined()
+  })
+
+  it('matches the official provider join: configured rows stay visible, dormant catalog rows stay hidden', async () => {
+    const deepseek: ModelProvider = {
+      ...baseProvider,
+      settingsNs: 'llm-deepseek',
+      settingsPath: [],
+    }
+    const minimax: ModelProvider = {
+      ...baseProvider,
+      id: 'minimax-cn',
+      name: 'minimax-cn',
+      settingsNs: 'llm-pi-ai',
+      settingsPath: ['providers', 'minimax-cn'],
+      fields: [],
+    }
+    const dormant: ModelProvider = {
+      ...baseProvider,
+      id: 'amazon-bedrock',
+      name: 'amazon-bedrock',
+      settingsNs: 'llm-pi-ai',
+      settingsPath: ['providers', 'amazon-bedrock'],
+      fields: [],
+    }
+    const snapshot: DshSettingsSnapshot = {
+      ...dshSettingsFixture(),
+      values: {
+        'llm-deepseek': {},
+        'llm-pi-ai': { providers: { 'minimax-cn': { models: [{ id: 'MiniMax-M1' }] } } },
+      },
+    }
+    renderDrawer({
+      providers: [deepseek, minimax, dormant],
+      onLoadDshSettings: vi.fn().mockResolvedValue(snapshot),
+    })
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Models' }))
+    await waitFor(() => expect(screen.getByText('2 providers · 2 models')).toBeDefined())
+    expect(screen.getByText('DeepSeek')).toBeDefined()
+    expect(screen.getByText('minimax-cn')).toBeDefined()
+    expect(screen.queryByText('amazon-bedrock')).toBeNull()
+    expect(screen.getAllByRole('button', { name: 'Edit' })).toHaveLength(2)
+  })
+
+  it('does not render the provider directory before the settings join is ready', () => {
+    const dormant: ModelProvider = {
+      ...baseProvider,
+      id: 'amazon-bedrock',
+      name: 'amazon-bedrock',
+      settingsNs: 'llm-pi-ai',
+      settingsPath: ['providers', 'amazon-bedrock'],
+    }
+    renderDrawer({
+      providers: [dormant],
+      onLoadDshSettings: vi.fn(() => new Promise<DshSettingsSnapshot>(() => undefined)),
+    })
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Models' }))
+    expect(screen.getByText(/Loading DSH settings/)).toBeDefined()
+    expect(screen.queryByText('amazon-bedrock')).toBeNull()
   })
 
   it('configures a secret and refreshes the catalog afterwards', async () => {
@@ -283,12 +435,143 @@ describe('SettingsDrawer', () => {
     const onRefreshCatalog = vi.fn().mockResolvedValue(undefined)
     renderDrawer({ onConfigureSecret, onRefreshCatalog })
     fireEvent.click(screen.getByRole('tab', { name: 'Models' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Configure' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Configure' }))
     await waitFor(() => expect(onConfigureSecret).toHaveBeenCalledWith('deepseek', 'apiKeyEnv'))
     await waitFor(() => expect(onRefreshCatalog).toHaveBeenCalled())
   })
 
-  it('exposes secret removal only for configured fields', () => {
+  it('edits a schema-advertised model list and imports discovered models', async () => {
+    const provider: ModelProvider = {
+      ...baseProvider,
+      id: 'openai',
+      name: 'OpenAI',
+      settingsNs: 'llm-pi-ai',
+      settingsPath: ['providers', 'openai'],
+    }
+    const fixture = dshSettingsFixture()
+    const snapshot: DshSettingsSnapshot = {
+      ...fixture,
+      schema: {
+        ...fixture.schema,
+        fields: [
+          ...fixture.schema.fields,
+          {
+            path: 'llm-pi-ai.providers.openai.models',
+            label: 'models',
+            type: 'array',
+            required: false,
+            restartRequired: false,
+          },
+        ],
+      },
+      values: {
+        ...fixture.values,
+        'llm-pi-ai': {
+          providers: {
+            openai: {
+              models: [{ id: 'local-chat', name: 'Local Chat' }],
+            },
+          },
+        },
+      },
+    }
+    const onDiscoverModels = vi
+      .fn()
+      .mockResolvedValue([{ id: 'remote-chat', label: 'Remote Chat', contextWindow: 64_000 }])
+    const onUpdateDshSetting = vi.fn().mockResolvedValue(undefined)
+    renderDrawer({
+      providers: [provider],
+      onDiscoverModels,
+      onUpdateDshSetting,
+      onLoadDshSettings: vi.fn().mockResolvedValue(snapshot),
+    })
+    await waitFor(() => expect(screen.getByText('new-isolated')).toBeDefined())
+    fireEvent.click(screen.getByRole('tab', { name: 'Models' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
+    const editor = screen.getAllByRole('region', { name: 'Configured model list' })[0]!
+    expect(editor).toBeDefined()
+    fireEvent.click(within(editor).getByRole('button', { name: 'Get available models' }))
+    await waitFor(() =>
+      expect(onDiscoverModels).toHaveBeenCalledWith({
+        settingsNamespace: 'llm-pi-ai',
+        providerId: 'openai',
+        baseUrl: 'https://api.deepseek.com',
+      }),
+    )
+    const picker = await screen.findByRole('dialog', { name: 'Available models' })
+    fireEvent.click(within(picker).getByRole('button', { name: 'Add selected' }))
+    expect(
+      screen.getAllByRole('textbox').some((input) => (input as HTMLInputElement).value === 'remote-chat'),
+    ).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+    await waitFor(() =>
+      expect(onUpdateDshSetting).toHaveBeenCalledWith('llm-pi-ai.providers.openai.models', [
+        { id: 'local-chat', name: 'Local Chat' },
+        { id: 'remote-chat', name: 'Remote Chat', contextWindow: 64_000 },
+      ]),
+    )
+  })
+
+  it('offers a dashed custom-provider card from a dynamic settings path', async () => {
+    const provider: ModelProvider = {
+      ...baseProvider,
+      id: 'openai',
+      settingsNs: 'llm-pi-ai',
+      settingsPath: ['providers', 'openai'],
+    }
+    const fixture = dshSettingsFixture()
+    const snapshot: DshSettingsSnapshot = {
+      ...fixture,
+      schema: {
+        ...fixture.schema,
+        fields: [
+          ...fixture.schema.fields,
+          {
+            path: 'llm-pi-ai.providers.openai.models',
+            label: 'models',
+            type: 'array',
+            required: false,
+            restartRequired: false,
+          },
+        ],
+      },
+      values: {
+        ...fixture.values,
+        'llm-pi-ai': { providers: { openai: { api: 'openai-completions', models: [] } } },
+      },
+    }
+    const onUpdateDshSetting = vi.fn().mockResolvedValue(undefined)
+    renderDrawer({
+      providers: [provider],
+      onUpdateDshSetting,
+      onLoadDshSettings: vi.fn().mockResolvedValue(snapshot),
+    })
+    await waitFor(() => expect(screen.getByText('new-isolated')).toBeDefined())
+    fireEvent.click(screen.getByRole('tab', { name: 'Models' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add custom provider' }))
+    const card = screen.getByRole('region', { name: 'Add custom provider' })
+    fireEvent.change(within(card).getByRole('textbox', { name: 'Provider ID' }), {
+      target: { value: 'gateway' },
+    })
+    fireEvent.change(within(card).getByRole('textbox', { name: 'Provider base URL' }), {
+      target: { value: 'http://127.0.0.1:9000/v1' },
+    })
+    fireEvent.click(within(card).getByRole('button', { name: 'Add model' }))
+    fireEvent.change(within(card).getAllByRole('textbox')[4]!, { target: { value: 'gateway-chat' } })
+    fireEvent.click(within(card).getByRole('button', { name: 'Save provider' }))
+    await waitFor(() =>
+      expect(onUpdateDshSetting).toHaveBeenCalledWith(
+        'llm-pi-ai.providers.gateway',
+        expect.objectContaining({
+          api: 'openai-completions',
+          baseURL: 'http://127.0.0.1:9000/v1',
+          models: [{ id: 'gateway-chat' }],
+        }),
+      ),
+    )
+  })
+
+  it('exposes secret removal only for configured fields', async () => {
     const configured: readonly ModelProvider[] = [
       {
         ...baseProvider,
@@ -306,12 +589,12 @@ describe('SettingsDrawer', () => {
     ]
     renderDrawer({ providers: configured })
     fireEvent.click(screen.getByRole('tab', { name: 'Models' }))
-    expect(screen.getByText('Configured')).toBeDefined()
-    expect(screen.getByRole('button', { name: 'Replace' })).toBeDefined()
-    expect(screen.getByRole('button', { name: 'Remove DeepSeek API key' })).toBeDefined()
+    expect(await screen.findByText('Configured')).toBeDefined()
+    expect(await screen.findByRole('button', { name: 'Replace' })).toBeDefined()
+    expect(await screen.findByRole('button', { name: 'Remove DeepSeek API key' })).toBeDefined()
   })
 
-  it('keeps an environment-shadowed credential visible but disables replacement and removal', () => {
+  it('keeps an environment-shadowed credential visible but disables replacement and removal', async () => {
     const configured: readonly ModelProvider[] = [
       {
         ...baseProvider,
@@ -330,10 +613,10 @@ describe('SettingsDrawer', () => {
     renderDrawer({ providers: configured })
     fireEvent.click(screen.getByRole('tab', { name: 'Models' }))
 
-    expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Replace' }).disabled).toBe(true)
-    expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Remove DeepSeek API key' }).disabled).toBe(
-      true,
-    )
+    expect((await screen.findByRole<HTMLButtonElement>('button', { name: 'Replace' })).disabled).toBe(true)
+    expect(
+      (await screen.findByRole<HTMLButtonElement>('button', { name: 'Remove DeepSeek API key' })).disabled,
+    ).toBe(true)
   })
 
   it('switches to the plugins tab and reads the read-only inventory', async () => {

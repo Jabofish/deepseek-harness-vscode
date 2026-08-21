@@ -10,7 +10,7 @@
 2. 完成 `Rc6VersionAdapter.probe`，明确识别兼容/不兼容/非 DSH/不可达。
 3. 完成 AppError 映射规范和所有协议 Schema。
 
-退出条件：契约测试可发现 rpc-map 漂移；连接未知版本会明确失败；fixture 不含路径、Prompt 或 Secret。
+退出条件：契约测试可发现 rpc-map 漂移；连接未知版本会进入警告降级；fixture 不含路径、Prompt 或 Secret。
 
 ## 阶段 1：View、配置和 Runtime Missing
 
@@ -46,7 +46,7 @@
 4. 文本/推理/错误/标题/统计 Timeline；虚拟化和流合批。
 5. Composer 发送/停止；附件基础通路。
 
-退出条件：重放 fixture 得到确定 Timeline；重连无重复/缺失；大历史不卡主线程；实际 rc.6 完成新会话和恢复。
+退出条件：重放 fixture 得到确定 Timeline；重连无重复/缺失；大历史不卡主线程；实际 rc.6、rc.7 和 rc.8 均完成新会话和恢复，并验证未知版本的警告降级路径。
 
 ## 阶段 4：运行中输入、模型和交互
 

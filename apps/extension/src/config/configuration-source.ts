@@ -9,7 +9,7 @@ export class VsCodeConfigurationSource {
     const config = this.workspace.getConfiguration('dsh')
     const mode = readEnum(
       config.get<unknown>('connection.mode', 'auto'),
-      ['auto', 'attach-only', 'new-isolated'] as const,
+      ['auto', 'custom', 'attach-only', 'new-isolated'] as const,
       'connection.mode',
     )
     const managedPort = readPort(
@@ -33,7 +33,7 @@ export class VsCodeConfigurationSource {
       300_000,
       'connection.requestTimeoutMs',
     )
-    const serverUrl = readOptionalLoopbackUrl(config.get<unknown>('connection.serverUrl', ''))
+    const serverUrl = normalizeLoopbackUrl(config.get<unknown>('connection.serverUrl', ''))
     const executablePath = readOptionalPath(config.get<unknown>('runtime.executablePath', ''))
     const preset = readString(config.get<unknown>('agent.defaultPreset', 'standard'), 'agent.defaultPreset')
     const toolMode = readEnum(
@@ -123,7 +123,7 @@ function readOptionalPath(value: unknown): string | undefined {
   return value
 }
 
-function readOptionalLoopbackUrl(value: unknown): string | undefined {
+export function normalizeLoopbackUrl(value: unknown): string | undefined {
   if (typeof value !== 'string') invalid('connection.serverUrl', 'a string')
   if (value.trim() === '') return undefined
   let parsed: URL

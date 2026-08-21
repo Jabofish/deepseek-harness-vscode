@@ -31,6 +31,16 @@ export function runtimePathEntries(
 
   const home = environment.HOME ?? environment.USERPROFILE
   if (os === 'windows') {
+    // A GUI-launched VS Code often does not inherit the terminal's npm-global
+    // PATH entry. npm's default Windows prefix is `%APPDATA%\\npm`; include
+    // the bounded well-known locations so the runtime can be found without a
+    // shell lookup or a filesystem scan.
+    add(environment.NPM_CONFIG_PREFIX ?? environment.npm_config_prefix)
+    if (environment.APPDATA !== undefined) add(pathApi.join(environment.APPDATA, 'npm'))
+    if (home !== undefined) add(pathApi.join(home, 'AppData', 'Roaming', 'npm'))
+    if (environment.ProgramFiles !== undefined) add(pathApi.join(environment.ProgramFiles, 'nodejs'))
+    const programFilesX86 = environment['ProgramFiles(x86)']
+    if (programFilesX86 !== undefined) add(pathApi.join(programFilesX86, 'nodejs'))
     add(environment.FNM_MULTISHELL_PATH)
     add(environment.NVM_HOME)
     if (environment.VOLTA_HOME !== undefined) add(pathApi.join(environment.VOLTA_HOME, 'bin'))

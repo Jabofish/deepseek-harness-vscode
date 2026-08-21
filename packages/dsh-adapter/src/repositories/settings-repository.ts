@@ -76,6 +76,13 @@ export class Rc6SettingsRepository implements SettingsRepository {
     )
   }
 
+  public async openDocument(signal?: AbortSignal): Promise<void> {
+    const value = recordOrUndefined(
+      await callRpc<unknown>(this.transport, 'settings.openDocument', {}, signal),
+    )
+    if (value === undefined || value.opened !== true) throw malformedSettingsDocumentResponse()
+  }
+
   public async update(path: string, value: unknown, signal?: AbortSignal): Promise<void> {
     const [namespace, ...parts] = path.split('.')
     if (namespace === undefined || namespace === '' || parts.length === 0)
@@ -253,6 +260,14 @@ function malformedSettings(): AppError {
   return new AppError({
     code: 'PROTOCOL_ERROR',
     message: 'DSH returned a malformed settings descriptor.',
+    retryable: false,
+  })
+}
+
+function malformedSettingsDocumentResponse(): AppError {
+  return new AppError({
+    code: 'PROTOCOL_ERROR',
+    message: 'DSH returned a malformed settings document response.',
     retryable: false,
   })
 }

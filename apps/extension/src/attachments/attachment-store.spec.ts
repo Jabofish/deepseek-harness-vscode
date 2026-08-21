@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { AttachmentStore, decodeCanonicalBase64, validImageBytes } from './attachment-store.js'
+import {
+  AttachmentStore,
+  decodeCanonicalBase64,
+  MAX_ATTACHMENT_COUNT,
+  validImageBytes,
+} from './attachment-store.js'
 
 describe('attachment ingest boundary', () => {
   it('accepts canonical Base64 and rejects decoder-tolerated malformed forms', () => {
@@ -77,12 +82,12 @@ describe('AttachmentStore', () => {
       () => now,
       () => `00000000-0000-4000-8000-${String(next++).padStart(12, '0')}`,
     )
-    const handles = Array.from({ length: 8 }, (_, index) =>
+    const handles = Array.from({ length: MAX_ATTACHMENT_COUNT }, (_, index) =>
       store.remember({ name: `${index}.txt`, dataUri: 'data:text/plain;base64,eA==' }),
     )
-    expect(store.size).toBe(8)
+    expect(store.size).toBe(MAX_ATTACHMENT_COUNT)
     expect(() => store.remember({ name: 'overflow.txt', dataUri: 'data:text/plain;base64,eA==' })).toThrow(
-      /at most 8 attachment drafts/i,
+      new RegExp(`at most ${MAX_ATTACHMENT_COUNT} attachment drafts`, 'i'),
     )
     expect(store.resolve([handles[0]!])).toHaveLength(1)
 

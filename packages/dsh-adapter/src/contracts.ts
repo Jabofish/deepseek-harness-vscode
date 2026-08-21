@@ -6,11 +6,32 @@ import type {
   DshBackend,
 } from '@dsh-vscode/domain'
 
-export const SUPPORTED_DSH_RANGE = '0.1.0-rc.6' as const
+export const SUPPORTED_DSH_VERSIONS = ['0.1.0-rc.6', '0.1.0-rc.7', '0.1.0-rc.8'] as const
+
+export const SUPPORTED_DSH_RANGE = '0.1.0-rc.6 through 0.1.0-rc.8' as const
+
+export const DSH_PACKAGE_NAME = '@deepseek-ai/dsh' as const
+
+export const LATEST_SUPPORTED_DSH_VERSION =
+  SUPPORTED_DSH_VERSIONS[SUPPORTED_DSH_VERSIONS.length - 1] ?? 'unknown'
+
+export function isKnownDshVersion(version: string): boolean {
+  return (SUPPORTED_DSH_VERSIONS as readonly string[]).includes(version)
+}
+
+export function normalizeDshVersion(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined
+  const match = value.match(/\b\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\b/u)
+  return match?.[0] ?? (value.trim() === '' ? undefined : value.trim())
+}
 
 export interface DshVersionAdapter {
   readonly id: string
   readonly supportedVersion: string
+  /** Wire family selected during probing; preserves the shape for unknown versions. */
+  readonly protocolVersion?: string
+  /** A legacy adapter may service an unknown future version after probing succeeds. */
+  readonly fallback?: boolean
   probe(candidate: BackendCandidate, signal?: AbortSignal): Promise<BackendCapabilities | undefined>
   createTransport(endpoint: BackendEndpoint): DshTransport
   createBackend?(backend: ConnectedBackend, signal?: AbortSignal): Promise<DshBackend>

@@ -55,7 +55,10 @@ export class DshProcessSupervisor implements ProcessSupervisor {
       Number.isInteger(configuredPort) && configuredPort >= 0 && configuredPort <= 65535 ? configuredPort : 0
     const child = this.dependencies.spawn(
       runtime.executable,
-      ['--profile', 'web', '--host', '127.0.0.1', '--port', String(port)],
+      // The extension owns the Webview surface. DSH's web profile opens the
+      // system browser by default, which is only appropriate for a direct
+      // CLI launch, never for a managed Extension Host process.
+      ['--profile', 'web', '--no-open', '--host', '127.0.0.1', '--port', String(port)],
       this.dependencies.workingDirectory?.(),
       toolEnvironment(this.dependencies.toolMode?.()),
     )

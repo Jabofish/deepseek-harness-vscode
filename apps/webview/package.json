@@ -15,9 +15,12 @@
     "@dsh-vscode/ui": "workspace:*",
     "@dsh-vscode/webview-protocol": "workspace:*",
     "@tanstack/react-virtual": "3.14.9",
+    "katex": "^0.18.4",
     "markdown-it": "14.3.0",
+    "markdown-it-texmath": "^1.0.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
+    "shiki": "^4.4.3",
     "zustand": "5.0.15"
   },
   "devDependencies": {

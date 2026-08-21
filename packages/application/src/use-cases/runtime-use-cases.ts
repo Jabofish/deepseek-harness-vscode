@@ -1,8 +1,12 @@
+import type { DshUpdateSnapshot } from '@dsh-vscode/domain'
+
 export interface RuntimeActionPort {
   install(): Promise<void>
   selectExecutable(): Promise<void>
   copyInstallCommand(): Promise<void>
   openDocumentation(): Promise<void>
+  checkForUpdates(force: boolean, signal?: AbortSignal): Promise<DshUpdateSnapshot>
+  installVersion(version: string, signal?: AbortSignal): Promise<DshUpdateSnapshot>
 }
 
 export class RuntimeUseCases {
@@ -19,5 +23,13 @@ export class RuntimeUseCases {
       case 'open-docs':
         return this.actions.openDocumentation()
     }
+  }
+
+  public checkForUpdates(force = false, signal?: AbortSignal): Promise<DshUpdateSnapshot> {
+    return this.actions.checkForUpdates(force, signal)
+  }
+
+  public installVersion(version: string, signal?: AbortSignal): Promise<DshUpdateSnapshot> {
+    return this.actions.installVersion(version, signal)
   }
 }

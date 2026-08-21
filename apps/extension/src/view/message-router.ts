@@ -118,7 +118,6 @@ function publicErrorMessage(
   context: Readonly<Record<string, string | number | boolean>> | undefined,
   requestType: string,
 ): string {
-  void message
   if (requestType === 'runtime.action') {
     if (context?.operation === 'runtime.install') {
       const reason = context.reason
@@ -133,6 +132,22 @@ function publicErrorMessage(
     }
     if (context?.operation === 'runtime.select' && context.reason === 'invalid-executable')
       return 'The selected file is not a supported DeepSeek Harness executable.'
+  }
+  if (requestType === 'runtime.update.install' || requestType === 'runtime.update.check') {
+    if (context?.operation === 'runtime.update') {
+      const reason = context.reason
+      if (reason === 'node-version')
+        return 'DSH installation requires Node.js 22.19.0 or newer in the Extension Host.'
+      if (reason === 'npm-not-found')
+        return 'npm was not found in the Extension Host environment. Copy the install command or open a terminal.'
+      if (reason === 'invalid-version') return 'Select an exact DSH version from the upstream version list.'
+      if (reason === 'metadata-unavailable')
+        return 'The selected DSH version could not be verified against the upstream registry.'
+      if (reason === 'verify-failed')
+        return 'DSH installation finished, but the selected global version could not be verified.'
+      if (reason === 'install-failed')
+        return 'The selected DSH version could not be installed. Check the npm output and try again.'
+    }
   }
   const fallback: Record<string, string> = {
     DSH_NOT_FOUND: 'DeepSeek Harness was not found.',
@@ -154,6 +169,44 @@ function publicErrorMessage(
     INTERNAL_ERROR: 'DSH returned an internal error.',
   }
   const base = fallback[code] ?? `DSH operation failed (${code}).`
+  if (requestType === 'command.execute') {
+    const method = typeof context?.rpcMethod === 'string' ? context.rpcMethod : undefined
+    const rpcCode = typeof context?.rpcCode === 'string' ? context.rpcCode : undefined
+    const diagnostic = safeCommandDiagnostic(message)
+    const suffix = [
+      method === undefined ? undefined : `DSH method: ${method}.`,
+      rpcCode === undefined ? undefined : `DSH code: ${rpcCode}.`,
+      diagnostic === undefined || diagnostic === base
+        ? undefined
+        : diagnostic.startsWith(`${base} `)
+          ? diagnostic.slice(base.length + 1)
+          : diagnostic,
+    ].filter((entry): entry is string => entry !== undefined)
+    return suffix.length === 0 ? base : `${base} ${suffix.join(' ')}`
+  }
+  // Settings and model configuration failures are actionable in the drawer.
+  // Keep the same bounded/redacted diagnostic used for commands; otherwise a
+  // native opener failure or a schema rejection is reduced to the unhelpful
+  // "internal error" text and the user has no way to locate the fault.
+  if (
+    requestType.startsWith('settings.') ||
+    requestType.startsWith('models.') ||
+    requestType.startsWith('provider.')
+  ) {
+    const method = typeof context?.rpcMethod === 'string' ? context.rpcMethod : undefined
+    const rpcCode = typeof context?.rpcCode === 'string' ? context.rpcCode : undefined
+    const diagnostic = safeCommandDiagnostic(message)
+    const suffix = [
+      method === undefined ? undefined : `DSH method: ${method}.`,
+      rpcCode === undefined ? undefined : `DSH code: ${rpcCode}.`,
+      diagnostic === undefined || diagnostic === base
+        ? undefined
+        : diagnostic.startsWith(`${base} `)
+          ? diagnostic.slice(base.length + 1)
+          : `DSH detail: ${diagnostic}`,
+    ].filter((entry): entry is string => entry !== undefined)
+    return suffix.length === 0 ? base : `${base} ${suffix.join(' ')}`
+  }
   if (requestType === 'session.open' || context?.operation === 'session.open') {
     const stage = typeof context?.stage === 'string' ? context.stage : 'session open'
     const rpcCode = typeof context?.rpcCode === 'string' ? context.rpcCode : undefined
@@ -161,4 +214,15 @@ function publicErrorMessage(
     return `Unable to open this DSH session during ${stage}. ${base}${rpcSuffix}`
   }
   return base
+}
+
+/** Command failures are actionable in the composer, so retain a bounded, redacted diagnostic. */
+function safeCommandDiagnostic(message: string): string | undefined {
+  const compact = message.replace(/\s+/gu, ' ').trim()
+  if (compact === '') return undefined
+  const redacted = compact.replace(
+    /\b(?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|authorization|password|secret|private[_ -]?key|token|prompt|body|response)\b\s*[:=]\s*[^\s,;]+/giu,
+    (match) => match.replace(/[:=].*$/u, ': [redacted]'),
+  )
+  return redacted.slice(0, 320)
 }

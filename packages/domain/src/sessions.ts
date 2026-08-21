@@ -8,6 +8,20 @@ export interface SessionProjectionSnapshot {
   readonly values: Readonly<Record<string, unknown>>
 }
 
+/**
+ * Host-advertised image admission limits carried by DSH's `imageLimits`
+ * session projection. Older hosts may omit the projection or the rc.8-only
+ * dimension field, so the latter stays optional at this product boundary.
+ */
+export interface ImageAttachmentLimits {
+  readonly maxImageBytes: number
+  readonly maxImagesPerMessage: number
+  readonly maxMessageImageBytes: number
+  readonly maxImagePixels: number
+  readonly maxImageDimension?: number
+  readonly mediaTypes: readonly string[]
+}
+
 export interface SessionSummary {
   readonly id: string
   readonly workspaceId: string
@@ -36,6 +50,8 @@ export interface SessionDetail extends SessionSummary {
   readonly parentSessionId?: string
   readonly history?: readonly SessionHistoryEvent[]
   readonly historyHasMore?: boolean
+  /** Durable sequence immediately before the currently loaded history window. */
+  readonly historyBeforeSequence?: number
   readonly projection?: SessionProjectionSnapshot
 }
 
@@ -43,6 +59,15 @@ export interface SessionHistoryEvent {
   readonly sequence: number
   readonly time: string
   readonly event: BackendEvent
+}
+
+/** One bounded DSH history window, ordered oldest-to-newest by durable sequence. */
+export interface SessionHistoryPage {
+  readonly events: readonly SessionHistoryEvent[]
+  readonly hasMore: boolean
+  /** Raw oldest sequence in the page; needed because delta compaction changes display rows. */
+  readonly beforeSequence?: number
+  readonly projection?: SessionProjectionSnapshot
 }
 
 export interface SubagentHistoryPage {
@@ -92,4 +117,6 @@ export interface QueuedInput {
   readonly attachments: readonly PromptAttachment[]
   readonly mode: RunningInputMode
   readonly createdAt: string
+  /** Opaque host request correlation used to reconcile an accepted prompt. */
+  readonly rpcId?: string
 }

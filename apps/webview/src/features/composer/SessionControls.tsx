@@ -1,17 +1,28 @@
-import type { AgentConfiguration, AgentPresetDescriptor, ModelDescriptor } from '@dsh-vscode/domain'
-import { useState, type ReactElement } from 'react'
+import type {
+  AgentConfiguration,
+  AgentPresetDescriptor,
+  ContextBreakdown,
+  DynamicCommand,
+  ModelDescriptor,
+} from '@dsh-vscode/domain'
+import { createPortal } from 'react-dom'
+import { useLayoutEffect, useRef, useState, type CSSProperties, type ReactElement } from 'react'
 import { CompactPicker, type CompactPickerOption } from './CompactPicker.js'
 import { Icon, type IconName } from '../../ui/Icon.js'
 import { ModelPicker } from '../models/ModelPicker.js'
 import { useI18n, type Translate } from '../../i18n.js'
+import { ContextMeter } from './ContextMeter.js'
 
 export interface SessionControlsProps {
   readonly configuration: AgentConfiguration
   readonly models: readonly ModelDescriptor[]
   readonly presets: readonly AgentPresetDescriptor[]
   readonly permissionPresets: readonly string[]
+  /** Optional command directory; omitted means capability discovery is unavailable. */
+  readonly commands?: readonly DynamicCommand[]
   readonly estimatedContextTokens?: number
   readonly contextWindowTokens?: number
+  readonly contextBreakdown?: ContextBreakdown
   readonly disabled: boolean
   readonly presetMutable: boolean
   readonly modelPickerOpenRequest?: number
@@ -21,17 +32,18 @@ export interface SessionControlsProps {
 
 export function SessionControls(props: SessionControlsProps): ReactElement {
   const { t } = useI18n()
+  const selectorsRef = useRef<HTMLDivElement>(null)
   const riskContext = `${props.configuration.permissionPreset}:${props.disabled ? 'disabled' : 'enabled'}`
   const [riskState, setRiskState] = useState<{
     readonly context: string
     readonly pending?: string
     readonly acknowledged: boolean
   }>({ context: riskContext, acknowledged: false })
-  if (riskState.context !== riskContext) {
-    setRiskState({ context: riskContext, acknowledged: false })
-  }
-  const riskPending = riskState.context === riskContext ? riskState.pending : undefined
-  const riskAcknowledged = riskState.context === riskContext && riskState.acknowledged
+  const activeRiskState =
+    riskState.context === riskContext ? riskState : { context: riskContext, acknowledged: false as const }
+  const riskPending = activeRiskState.pending
+  const riskAcknowledged = activeRiskState.acknowledged
+  const [riskPosition, setRiskPosition] = useState<CSSProperties | undefined>()
   const availablePresets = props.presets.filter((preset) => preset.broken === undefined)
   const selectedPreset = availablePresets.find((preset) => preset.id === props.configuration.preset)
   const modeOptions: CompactPickerOption[] = [
@@ -59,14 +71,104 @@ export function SessionControls(props: SessionControlsProps): ReactElement {
   // `danger-full-access`).
   const permissionPreset = props.configuration.permissionPreset
   const availablePermissionPresets = permissionOptions(permissionPreset, props.permissionPresets)
+  const permissionCommandAvailable = hasCommand(props.commands, 'permission')
+  const planCommandAvailable = hasCommand(props.commands, 'plan')
   const contextWindowTokens = positiveTokenCount(props.contextWindowTokens)
   const contextLabel =
     props.estimatedContextTokens === undefined || contextWindowTokens === undefined
       ? undefined
       : formatContextLabel(props.estimatedContextTokens, contextWindowTokens)
+
+  useLayoutEffect(() => {
+    if (riskPending === undefined) return
+    const updateRiskPosition = (): void => {
+      const anchor = selectorsRef.current
+      if (anchor === null) return
+      const rect = anchor.getBoundingClientRect()
+      const viewportWidth = document.documentElement.clientWidth || window.innerWidth
+      const viewportHeight = document.documentElement.clientHeight || window.innerHeight
+      const width = Math.min(320, Math.max(0, viewportWidth - 24))
+      const maxHeight = Math.min(260, Math.max(0, viewportHeight - 24))
+      const maxRight = Math.max(12, viewportWidth - width - 12)
+      const desiredRight = viewportWidth - rect.right
+      const right = Math.min(maxRight, Math.max(12, desiredRight))
+      const preferredBottom = viewportHeight - rect.top + 8
+      const maxBottom = Math.max(12, viewportHeight - 12 - maxHeight)
+      const bottom = Math.max(12, Math.min(maxBottom, preferredBottom))
+      setRiskPosition({
+        position: 'fixed',
+        left: 'auto',
+        right: `${right}px`,
+        insetInlineStart: 'auto',
+        insetInlineEnd: 'auto',
+        bottom: `${bottom}px`,
+        width: `${width}px`,
+        maxWidth: `calc(100vw - 24px)`,
+        visibility: 'visible',
+      })
+    }
+    updateRiskPosition()
+    window.addEventListener('resize', updateRiskPosition)
+    window.addEventListener('scroll', updateRiskPosition, true)
+    return () => {
+      window.removeEventListener('resize', updateRiskPosition)
+      window.removeEventListener('scroll', updateRiskPosition, true)
+    }
+  }, [riskPending])
+
+  const riskPopover =
+    riskPending === undefined ? null : (
+      <div
+        className="dsh-session-controls__risk"
+        style={riskPosition ?? { visibility: 'hidden' }}
+        role="alertdialog"
+        aria-label={t('controls.fullAccessQuestion')}
+      >
+        <p>{t('controls.fullAccessDetail')}</p>
+        <label>
+          <input
+            type="checkbox"
+            checked={riskAcknowledged}
+            disabled={props.disabled}
+            onChange={(event) => {
+              const acknowledged = event.currentTarget.checked
+              setRiskState((current) => ({
+                ...current,
+                acknowledged,
+              }))
+            }}
+          />
+          {t('controls.fullAccessAck')}
+        </label>
+        <div className="dsh-session-controls__risk-actions">
+          <button
+            className="dsh-button dsh-button--danger dsh-button--compact"
+            type="button"
+            disabled={props.disabled || !riskAcknowledged}
+            onClick={() => {
+              if (!riskAcknowledged) return
+              const preset = riskPending
+              setRiskState({ context: riskContext, acknowledged: false })
+              props.onCommand(`/permission ${preset}`)
+            }}
+          >
+            {t('controls.fullAccessEnable')}
+          </button>
+          <button
+            className="dsh-button dsh-button--secondary dsh-button--compact"
+            type="button"
+            disabled={props.disabled}
+            onClick={() => setRiskState({ context: riskContext, acknowledged: false })}
+          >
+            {t('controls.cancel')}
+          </button>
+        </div>
+      </div>
+    )
+
   return (
     <div className="dsh-session-controls" aria-label={t('controls.aria')}>
-      <div className="dsh-session-controls__selectors">
+      <div ref={selectorsRef} className="dsh-session-controls__selectors">
         <CompactPicker
           className="dsh-session-controls__mode"
           icon={modeIcon(props.configuration.preset, modeLabel)}
@@ -96,15 +198,15 @@ export function SessionControls(props: SessionControlsProps): ReactElement {
           icon={permissionIcon(permissionPreset)}
           label={formatPermissionLabel(permissionPreset, t)}
           ariaLabel={t('controls.access')}
-          title={t('controls.accessChange')}
+          title={permissionCommandAvailable ? t('controls.accessChange') : t('controls.accessUnavailable')}
           value={permissionPreset}
           options={availablePermissionPresets.map((preset) => ({
             value: preset,
             label: formatPermissionLabel(preset, t),
           }))}
-          disabled={props.disabled || availablePermissionPresets.length < 2}
+          disabled={props.disabled || availablePermissionPresets.length < 2 || !permissionCommandAvailable}
           onChange={(preset) => {
-            if (preset === 'danger-full-access') {
+            if (isFullAccessPreset(preset)) {
               setRiskState({ context: riskContext, pending: preset, acknowledged: false })
               return
             }
@@ -116,8 +218,14 @@ export function SessionControls(props: SessionControlsProps): ReactElement {
           type="button"
           aria-label={props.configuration.planMode ? t('controls.planOff') : t('controls.planOn')}
           aria-pressed={props.configuration.planMode}
-          title={props.configuration.planMode ? t('controls.planOff') : t('controls.planOn')}
-          disabled={props.disabled}
+          title={
+            planCommandAvailable
+              ? props.configuration.planMode
+                ? t('controls.planOff')
+                : t('controls.planOn')
+              : t('controls.planUnavailable')
+          }
+          disabled={props.disabled || !planCommandAvailable}
           onClick={() => props.onCommand(props.configuration.planMode ? '/plan off' : '/plan')}
         >
           <Icon name="plan" />
@@ -126,67 +234,21 @@ export function SessionControls(props: SessionControlsProps): ReactElement {
           </span>
         </button>
       </div>
-      {riskPending === undefined ? null : (
-        <div
-          className="dsh-session-controls__risk"
-          role="alertdialog"
-          aria-label={t('controls.fullAccessQuestion')}
-        >
-          <p>{t('controls.fullAccessDetail')}</p>
-          <label>
-            <input
-              type="checkbox"
-              checked={riskAcknowledged}
-              disabled={props.disabled}
-              onChange={(event) => {
-                const acknowledged = event.currentTarget.checked
-                setRiskState((current) => ({
-                  ...current,
-                  acknowledged,
-                }))
-              }}
-            />
-            {t('controls.fullAccessAck')}
-          </label>
-          <div className="dsh-settings__risk-actions">
-            <button
-              className="dsh-button dsh-button--danger dsh-button--compact"
-              type="button"
-              disabled={props.disabled || !riskAcknowledged}
-              onClick={() => {
-                if (!riskAcknowledged) return
-                const preset = riskPending
-                setRiskState({ context: riskContext, acknowledged: false })
-                props.onCommand(`/permission ${preset}`)
-              }}
-            >
-              {t('controls.fullAccessEnable')}
-            </button>
-            <button
-              className="dsh-button dsh-button--secondary dsh-button--compact"
-              type="button"
-              disabled={props.disabled}
-              onClick={() => setRiskState({ context: riskContext, acknowledged: false })}
-            >
-              {t('controls.cancel')}
-            </button>
-          </div>
-        </div>
-      )}
       <dl className="dsh-session-controls__metrics">
         {contextLabel === undefined ? null : (
-          <div
-            aria-label={t('controls.contextAria', { value: contextLabel })}
-            title={
-              contextWindowTokens === undefined ? t('controls.contextUnknown') : t('controls.contextKnown')
-            }
-          >
+          <div>
             <dt className="dsh-sr-only">{t('controls.context')}</dt>
-            <Icon name="target" />
-            <dd>{contextLabel}</dd>
+            <dd className="dsh-session-controls__context-cell">
+              <ContextMeter
+                tokens={props.estimatedContextTokens!}
+                {...(contextWindowTokens === undefined ? {} : { maximum: contextWindowTokens })}
+                {...(props.contextBreakdown === undefined ? {} : { breakdown: props.contextBreakdown })}
+              />
+            </dd>
           </div>
         )}
       </dl>
+      {riskPopover === null ? null : createPortal(riskPopover, document.body)}
     </div>
   )
 }
@@ -252,8 +314,23 @@ export function permissionOptions(current: string, projected: readonly string[])
 }
 
 export function formatPermissionLabel(id: string, t: Translate = (key) => key): string {
-  if (isFullAccessPreset(id)) return t('controls.fullAccess')
+  const translationKey = permissionTranslationKey(id)
+  if (translationKey !== undefined) return t(translationKey)
   return formatPresetLabel(id, undefined, t)
+}
+
+function permissionTranslationKey(id: string): string | undefined {
+  switch (id.trim().toLocaleLowerCase()) {
+    case 'danger-full-access':
+    case 'full-access':
+      return 'settings.value.danger-full-access'
+    case 'workspace-write':
+      return 'settings.value.workspace-write'
+    case 'read-only':
+      return 'settings.value.read-only'
+    default:
+      return undefined
+  }
 }
 
 function permissionIcon(id: string): IconName {
@@ -264,7 +341,9 @@ function permissionIcon(id: string): IconName {
 }
 
 function isFullAccessPreset(id: string): boolean {
-  return id === 'danger-full-access'
+  return (
+    id.trim().toLocaleLowerCase() === 'danger-full-access' || id.trim().toLocaleLowerCase() === 'full-access'
+  )
 }
 
 function uniqueOptions(values: readonly string[]): readonly string[] {
@@ -274,11 +353,17 @@ function uniqueOptions(values: readonly string[]): readonly string[] {
 function uniquePermissionOptions(values: readonly string[]): readonly string[] {
   const seenLabels = new Set<string>()
   return uniqueOptions(values).filter((value) => {
-    const displayKey = isFullAccessPreset(value) ? 'full-access' : value
+    const displayKey = permissionTranslationKey(value) ?? value.trim().toLocaleLowerCase()
     if (seenLabels.has(displayKey)) return false
     seenLabels.add(displayKey)
     return true
   })
+}
+
+function hasCommand(commands: readonly DynamicCommand[] | undefined, name: string): boolean {
+  return (
+    commands === undefined || commands.some((command) => command.name.trim().toLocaleLowerCase() === name)
+  )
 }
 
 function formatCount(value: number): string {

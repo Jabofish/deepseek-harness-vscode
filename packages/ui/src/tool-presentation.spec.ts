@@ -77,4 +77,47 @@ describe('toolPresentation', () => {
     expect(JSON.stringify(presentation)).not.toContain('request-secret')
     expect(JSON.stringify(presentation)).not.toContain('session-secret')
   })
+
+  it('wraps Python-style question payloads instead of exposing native object reprs', () => {
+    const presentation = toolPresentation(
+      tool({
+        name: 'ask_user_question',
+        title: 'Question',
+        inputSummary: "{'questions': [{'id': 'today_temperature', 'question': 'How warm?'}]}",
+        outputSummary: "{'answers': [{'id': 'today_temperature', 'selected': ['温和 (15-25°C)']}]} ",
+      }),
+    )
+
+    expect(presentation.request).toEqual([{ label: 'Questions', content: '• Question: How warm?' }])
+    expect(presentation.response).toEqual([{ label: 'Answers', content: '• Selected: • 温和 (15-25°C)' }])
+    expect(JSON.stringify(presentation)).not.toContain("{'answers'")
+  })
+
+  it('formats the double-quoted result emitted by the question tool', () => {
+    const presentation = toolPresentation(
+      tool({
+        name: 'question',
+        title: '问题',
+        outputSummary: '{"answers":[{"id":"today_temperature","selected":["温和 (15-25°C)"]}]}',
+      }),
+    )
+
+    expect(presentation.response[0]?.label).toBe('Answers')
+    expect(presentation.response[0]?.content).toContain('温和 (15-25°C)')
+    expect(JSON.stringify(presentation)).not.toContain('{"answers"')
+  })
+
+  it('formats a structured result even when a bridge prepends a status line', () => {
+    const presentation = toolPresentation(
+      tool({
+        name: 'question',
+        title: '问题',
+        outputSummary: 'Tool completed: {"answers":[{"selected":["yes"]}]}',
+      }),
+    )
+
+    expect(presentation.response[0]?.content).toContain('Tool completed:')
+    expect(presentation.response[0]?.content).toContain('Answers')
+    expect(JSON.stringify(presentation)).not.toContain('{"answers"')
+  })
 })

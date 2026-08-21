@@ -34,7 +34,10 @@ export interface ExtensionSettings {
 /** Browser-safe allowlist of extension configuration facts. Host addresses,
  * ports, executable paths, and every credential stay in the Extension Host. */
 export interface ExtensionSettingsSummary {
-  readonly connection: Pick<ConnectionSettings, 'mode'>
+  readonly connection: Pick<ConnectionSettings, 'mode'> & {
+    /** The endpoint is deliberately not returned to the Webview. */
+    readonly customEndpointConfigured: boolean
+  }
   readonly runtime: {
     readonly customExecutableConfigured: boolean
     readonly autoStart: boolean

@@ -1,12 +1,15 @@
 import type { ReactElement } from 'react'
 import type { DynamicCommand } from '@dsh-vscode/domain'
 import { useI18n } from '../../i18n.js'
+import { commandDispatchKind, type PopupSelectRegistry } from './popupSelectRegistry.js'
 
 export interface CommandPaletteProps {
   readonly commands: readonly DynamicCommand[]
   readonly query: string
   readonly argumentOptions?: readonly CommandArgumentOption[]
   readonly onExecute: (command: string, argument?: string) => void
+  readonly popupSelects?: PopupSelectRegistry
+  readonly onPopupSelect?: (command: string) => void
   /** Official escape tier: while equal to `query` the menu renders nothing. */
   readonly dismissedFor?: string
   /** Highlighted row index driven by the composer's keyboard arbitration. */
@@ -138,7 +141,12 @@ export function CommandPalette(props: CommandPaletteProps): ReactElement {
                 // keeps focus (preventDefault stops the native focus shift).
                 onMouseDown={(event) => {
                   event.preventDefault()
-                  props.onExecute(command.name)
+                  if (
+                    commandDispatchKind(command, props.popupSelects) === 'popupSelect' &&
+                    props.onPopupSelect !== undefined
+                  )
+                    props.onPopupSelect(command.name)
+                  else props.onExecute(command.name)
                 }}
               >
                 <strong>/{command.name}</strong>

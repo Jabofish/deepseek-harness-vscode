@@ -2,6 +2,8 @@ import type {
   CompactionView,
   GoalView,
   MessageAttachment,
+  MessageImageReference,
+  TeamActivityView,
   TodoView,
   TokenUsage,
   ToolCallView,
@@ -39,6 +41,7 @@ export type TimelineNode =
       readonly id: string
       readonly markdown: string
       readonly attachments?: readonly MessageAttachment[]
+      readonly images?: readonly MessageImageReference[]
       readonly rpcId?: string
       readonly source?: string
       readonly sourceForm?: string
@@ -58,7 +61,10 @@ export type TimelineNode =
       readonly turnCompleted?: boolean
       readonly modelLabel?: string
       readonly usage?: TokenUsage
+      readonly images?: readonly MessageImageReference[]
       readonly timing?: AssistantTiming
+      /** rc.8 marks a delivered prefix that ended because the step was interrupted. */
+      readonly interrupted?: true
       readonly reasoning?: {
         readonly markdown: string
         readonly streaming: boolean
@@ -76,6 +82,7 @@ export type TimelineNode =
   | { readonly kind: 'compaction'; readonly id: string; readonly compaction: CompactionView }
   | ModelRetryNode
   | { readonly kind: 'workflow'; readonly id: string; readonly workflow: WorkflowSummary }
+  | { readonly kind: 'team'; readonly id: string; readonly activity: TeamActivityView }
   | {
       readonly kind: 'notice'
       readonly id: string
@@ -83,8 +90,23 @@ export type TimelineNode =
       readonly text: string
     }
   | {
+      /** Durable human `/command` input projected from command/run. */
+      readonly kind: 'command-input'
+      readonly id: string
+      readonly text: string
+    }
+  | {
+      readonly kind: 'turn-terminal'
+      readonly id: string
+      readonly turn: number
+      readonly sequence: number
+      readonly reason: 'aborted' | 'blocked' | 'error' | 'max-tokens' | 'interrupted' | 'unknown'
+    }
+  | {
       readonly kind: 'event'
       readonly id: string
+      /** Durable DSH sequence used to place unknown events in the transcript. */
+      readonly sequence?: number
       readonly name: string
       readonly payload: unknown
     }
@@ -93,6 +115,8 @@ export interface TimelineState {
   readonly sessionId: string | undefined
   readonly nodes: readonly TimelineNode[]
   readonly lastSequence: number
+  /** In-flight DSH command names used to classify command/done events. */
+  readonly commandModes?: Readonly<Record<string, 'plan' | 'permission'>>
   readonly tokenUsage?: TokenUsage
   /** In-flight step boundaries waiting for their assistant message. */
   readonly stepTimings?: Readonly<Record<string, AssistantTiming>>

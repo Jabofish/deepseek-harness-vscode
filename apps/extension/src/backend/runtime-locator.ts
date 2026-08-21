@@ -1,6 +1,7 @@
 import type { RuntimeLocator } from '@dsh-vscode/application'
 import type { DshRuntime, OperatingSystem } from '@dsh-vscode/domain'
 import { AppError } from '@dsh-vscode/domain'
+import { isKnownDshVersion } from '@dsh-vscode/dsh-adapter'
 import path from 'node:path'
 
 export interface RuntimeLocatorDependencies {
@@ -24,8 +25,10 @@ export class DshRuntimeLocator implements RuntimeLocator {
     // An explicit executable is an operator decision.  If it exists but is
     // an incompatible version, surface that fact instead of silently falling
     // back to a different PATH binary.
-    if (configured !== undefined && (await this.dependencies.fileExists(configured.path)))
+    if (configured !== undefined && (await this.dependencies.fileExists(configured.path))) {
+      this.rememberLocation(configured.path)
       return this.inspect(configured, signal)
+    }
 
     const initial = await this.findSupported(
       candidates.filter((candidate) => candidate !== configured),
@@ -54,6 +57,7 @@ export class DshRuntimeLocator implements RuntimeLocator {
         message: 'The selected DSH executable was not found.',
         retryable: false,
       })
+    this.rememberLocation(executable)
     return this.inspect({ path: path.normalize(executable), source: 'configured' }, signal)
   }
 
@@ -61,7 +65,6 @@ export class DshRuntimeLocator implements RuntimeLocator {
     candidates: readonly Candidate[],
     signal?: AbortSignal,
   ): Promise<DshRuntime | undefined> {
-    this.locations = [...this.locations, ...candidates.map((candidate) => candidate.path)]
     let incompatible: DshRuntime | undefined
     for (const candidate of candidates) {
       if (signal?.aborted === true)
@@ -71,6 +74,10 @@ export class DshRuntimeLocator implements RuntimeLocator {
           retryable: true,
         })
       if (!(await this.dependencies.fileExists(candidate.path))) continue
+      // Report only executable paths that actually exist. Listing every
+      // derived `dsh.cmd` candidate from PATH makes the diagnostic look like
+      // a successful search while hiding the one path that matters.
+      this.rememberLocation(candidate.path)
       try {
         const runtime = await this.inspect(candidate, signal)
         if (runtime.supported) return runtime
@@ -82,13 +89,48 @@ export class DshRuntimeLocator implements RuntimeLocator {
     return incompatible
   }
 
+  private rememberLocation(candidatePath: string): void {
+    const normalized = path.normalize(candidatePath)
+    const key = this.dependencies.os === 'windows' ? normalized.toLowerCase() : normalized
+    if (
+      this.locations.some((location) => {
+        const existing = path.normalize(location)
+        const existingKey = this.dependencies.os === 'windows' ? existing.toLowerCase() : existing
+        return existingKey === key
+      })
+    )
+      return
+    this.locations = [...this.locations, normalized]
+  }
+
   private async inspect(candidate: Candidate, signal?: AbortSignal): Promise<DshRuntime> {
-    const version = await withTimeout(this.dependencies.executeVersion(candidate.path, signal), 3_000, signal)
-    return {
-      executable: candidate.path,
-      version: normalizeVersion(version),
-      supported: isSupportedVersion(version),
-      source: candidate.source,
+    if (signal?.aborted === true)
+      throw signal.reason instanceof AppError
+        ? signal.reason
+        : new AppError({
+            code: 'REQUEST_CANCELLED',
+            message: 'Runtime detection was cancelled.',
+            retryable: true,
+          })
+    const timeoutAbort = new AbortController()
+    const probeSignal =
+      signal === undefined ? timeoutAbort.signal : AbortSignal.any([signal, timeoutAbort.signal])
+    try {
+      const version = await withTimeout(
+        this.dependencies.executeVersion(candidate.path, probeSignal),
+        3_000,
+        signal,
+        () => timeoutAbort.abort(new Error('runtime version detection cancelled')),
+      )
+      return {
+        executable: candidate.path,
+        version: normalizeVersion(version),
+        supported: isDshVersion(version),
+        compatibility: isKnownDshVersion(normalizeVersion(version)) ? 'known' : 'unknown',
+        source: candidate.source,
+      }
+    } finally {
+      timeoutAbort.abort()
     }
   }
 
@@ -129,18 +171,30 @@ interface Candidate {
 }
 
 function normalizeVersion(output: string): string {
-  const match = output.match(/\b\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\b/)
-  return match?.[0] ?? output.trim()
+  const firstLine = output.trim().split(/\r?\n/u, 1)[0]?.trim() ?? ''
+  const match = firstLine.match(/\b\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\b/u)
+  return (match?.[0] ?? firstLine).slice(0, 128)
 }
 
-function isSupportedVersion(output: string): boolean {
-  return normalizeVersion(output) === '0.1.0-rc.6'
+function isDshVersion(output: string): boolean {
+  // Version syntax is intentionally not a gate.  Future DSH builds may use a
+  // different label; the adapter probe is the compatibility boundary and can
+  // surface a warning while retaining basic functionality.
+  return normalizeVersion(output) !== ''
 }
 
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, signal?: AbortSignal): Promise<T> {
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  signal?: AbortSignal,
+  cancelUnderlying?: () => void,
+): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     let settled = false
-    const timer = setTimeout(() => finish(undefined, new Error('runtime version timeout')), timeoutMs)
+    const timer = setTimeout(() => {
+      cancelUnderlying?.()
+      finish(undefined, new Error('runtime version timeout'))
+    }, timeoutMs)
     const cleanup = (): void => {
       clearTimeout(timer)
       signal?.removeEventListener('abort', onAbort)
@@ -152,11 +206,19 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, signal?: A
       if (error === undefined) resolve(value as T)
       else reject(error instanceof Error ? error : new Error('Runtime version detection failed.'))
     }
-    const onAbort = (): void =>
+    const onAbort = (): void => {
+      cancelUnderlying?.()
       finish(
         undefined,
-        signal?.reason instanceof Error ? signal.reason : new Error('runtime version detection cancelled'),
+        signal?.reason instanceof AppError
+          ? signal.reason
+          : new AppError({
+              code: 'REQUEST_CANCELLED',
+              message: 'Runtime detection was cancelled.',
+              retryable: true,
+            }),
       )
+    }
     if (signal?.aborted === true) {
       onAbort()
       return

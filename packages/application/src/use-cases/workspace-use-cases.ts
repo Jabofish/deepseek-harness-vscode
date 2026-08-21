@@ -23,4 +23,25 @@ export class WorkspaceUseCases {
   public remove(workspaceId: string, signal?: AbortSignal): Promise<void> {
     return this.backendService.requireBackend().workspaces.remove(workspaceId, signal)
   }
+
+  public insertBefore(workspaceId: string, beforeWorkspaceId?: string, signal?: AbortSignal): Promise<void> {
+    if (workspaceId.trim() === '' || beforeWorkspaceId?.trim() === workspaceId)
+      throw new Error('Workspace order target is invalid')
+    return this.backendService
+      .requireBackend()
+      .workspaces.insertBefore(workspaceId, beforeWorkspaceId, signal)
+  }
+
+  public insertSessionBefore(
+    workspaceId: string,
+    sessionId: string,
+    beforeSessionId?: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    if (workspaceId.trim() === '' || sessionId.trim() === '' || beforeSessionId?.trim() === sessionId)
+      throw new Error('Session order target is invalid')
+    return this.backendService
+      .requireBackend()
+      .workspaces.insertSessionBefore(workspaceId, sessionId, beforeSessionId, signal)
+  }
 }

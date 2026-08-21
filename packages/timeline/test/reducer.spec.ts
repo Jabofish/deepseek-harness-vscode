@@ -6,6 +6,41 @@ import type { TimelineState } from '../src/nodes.js'
 const initial: TimelineState = { sessionId: 'session-1', nodes: [], lastSequence: -1 }
 
 describe('reduceTimeline', () => {
+  it('adds a visible terminal node for max-token and error turn endings', () => {
+    let state = reduceTimeline(initial, {
+      sequence: 1,
+      event: { type: 'turn.started', sessionId: 'session-1', turn: 7 },
+    })
+    state = reduceTimeline(state, {
+      sequence: 2,
+      event: {
+        type: 'message.completed',
+        sessionId: 'session-1',
+        messageId: 'assistant:7:0',
+        turn: 7,
+        step: 0,
+        markdown: 'partial',
+      },
+    })
+    const maxTokens = reduceTimeline(state, {
+      sequence: 3,
+      event: { type: 'turn.ended', sessionId: 'session-1', turn: 7, reason: 'max-tokens' },
+    })
+    expect(maxTokens.nodes).toContainEqual({
+      kind: 'turn-terminal',
+      id: 'turn-terminal:7',
+      turn: 7,
+      sequence: 3,
+      reason: 'max-tokens',
+    })
+
+    const error = reduceTimeline(initial, {
+      sequence: 4,
+      event: { type: 'turn.ended', sessionId: 'session-1', turn: 8, reason: 'error' },
+    })
+    expect(error.nodes).toContainEqual(expect.objectContaining({ reason: 'error', turn: 8 }))
+  })
+
   it('appends ordered message deltas to the stable message node', () => {
     const first = reduceTimeline(initial, {
       sequence: 1,
@@ -18,6 +53,42 @@ describe('reduceTimeline', () => {
     expect(second.nodes).toEqual([
       { kind: 'assistant-message', id: 'm1', markdown: 'Hello world', streaming: true },
     ])
+  })
+
+  it('retains durable image references on user and assistant timeline nodes', () => {
+    const image = {
+      attachmentId: 'fixture:image',
+      mediaType: 'image/png' as const,
+      bytes: 247,
+      width: 160,
+      height: 90,
+      name: 'fixture-image.png',
+    }
+    const user = reduceTimeline(initial, {
+      sequence: 1,
+      event: {
+        type: 'message.user',
+        sessionId: 'session-1',
+        messageId: 'user-1',
+        markdown: 'look at this',
+        images: [image],
+      },
+    })
+    const assistant = reduceTimeline(user, {
+      sequence: 2,
+      event: {
+        type: 'message.completed',
+        sessionId: 'session-1',
+        messageId: 'assistant-1',
+        markdown: 'I can see it.',
+        images: [image],
+      },
+    })
+
+    expect(assistant.nodes).toContainEqual(expect.objectContaining({ kind: 'user-message', images: [image] }))
+    expect(assistant.nodes).toContainEqual(
+      expect.objectContaining({ kind: 'assistant-message', images: [image] }),
+    )
   })
 
   it('retains DSH step start, first-token, and completion timing on an assistant node', () => {
@@ -63,6 +134,43 @@ describe('reduceTimeline', () => {
       },
     ])
     expect(completed.stepTimings).toBeUndefined()
+  })
+
+  it('reconciles streamed coordinates with the durable assistant message id', () => {
+    const streamed = reduceTimeline(initial, {
+      sequence: 1,
+      event: {
+        type: 'message.delta',
+        sessionId: 'session-1',
+        messageId: 'assistant:1:1',
+        turn: 1,
+        step: 1,
+        delta: 'Hello',
+      },
+    })
+    const completed = reduceTimeline(streamed, {
+      sequence: 2,
+      event: {
+        type: 'message.completed',
+        sessionId: 'session-1',
+        messageId: 'assistant-message-real-1',
+        turn: 1,
+        step: 1,
+        markdown: 'Hello',
+      },
+    })
+
+    expect(completed.nodes).toEqual([
+      {
+        kind: 'assistant-message',
+        id: 'assistant-message-real-1',
+        markdown: 'Hello',
+        streaming: false,
+        sequence: 2,
+        turn: 1,
+        step: 1,
+      },
+    ])
   })
 
   it('closes an accumulated answer when the terminal completion carries usage only', () => {
@@ -208,6 +316,29 @@ describe('reduceTimeline', () => {
     expect(ended.nodes).toContainEqual(expect.objectContaining({ id: 'assistant:2:0', turnCompleted: true }))
   })
 
+  it('preserves the rc.8 interrupted-prefix marker on the assistant node', () => {
+    const next = reduceTimeline(initial, {
+      sequence: 1,
+      event: {
+        type: 'message.completed',
+        sessionId: 'session-1',
+        messageId: 'assistant:1:0',
+        markdown: 'partial answer',
+        interrupted: true,
+      },
+    })
+    expect(next.nodes).toEqual([
+      {
+        kind: 'assistant-message',
+        id: 'assistant:1:0',
+        markdown: 'partial answer',
+        streaming: false,
+        sequence: 1,
+        interrupted: true,
+      },
+    ])
+  })
+
   it('does not mark an answer branchable when an error or later tool follows it', () => {
     let state = reduceTimeline(initial, {
       sequence: 1,
@@ -332,6 +463,33 @@ describe('reduceTimeline', () => {
     })
 
     expect(hostNotice.lastSequence).toBe(10)
+    expect(resumed.nodes).toContainEqual(
+      expect.objectContaining({ id: 'm1', markdown: 'ab', streaming: true }),
+    )
+    expect(resumed.lastSequence).toBe(11)
+  })
+
+  it('does not let a sequenced session projection consume the durable session cursor', () => {
+    const streamed = reduceTimeline(initial, {
+      sequence: 10,
+      event: { type: 'message.delta', sessionId: 'session-1', messageId: 'm1', delta: 'a' },
+    })
+    const projection = reduceTimeline(streamed, {
+      sequence: 999,
+      advanceSequence: false,
+      event: {
+        type: 'session.projection',
+        sessionId: 'session-1',
+        key: 'sessionStats',
+        value: { turns: 1 },
+      },
+    })
+    const resumed = reduceTimeline(projection, {
+      sequence: 11,
+      event: { type: 'message.delta', sessionId: 'session-1', messageId: 'm1', delta: 'b' },
+    })
+
+    expect(projection.lastSequence).toBe(10)
     expect(resumed.nodes).toContainEqual(
       expect.objectContaining({ id: 'm1', markdown: 'ab', streaming: true }),
     )
@@ -575,6 +733,41 @@ describe('reduceTimeline', () => {
     ])
   })
 
+  it('upserts rc.8 Agent Team activity by durable activity identity', () => {
+    const member = reduceTimeline(initial, {
+      sequence: 1,
+      event: {
+        type: 'team.updated',
+        sessionId: 'session-1',
+        activity: {
+          kind: 'member',
+          id: 'team:member:team-1:member-1',
+          teamId: 'team-1',
+          memberId: 'member-1',
+          name: 'Planner',
+          phase: 'provisioning',
+        },
+      },
+    })
+    const active = reduceTimeline(member, {
+      sequence: 2,
+      event: {
+        type: 'team.updated',
+        sessionId: 'session-1',
+        activity: {
+          kind: 'member',
+          id: 'team:member:team-1:member-1',
+          teamId: 'team-1',
+          memberId: 'member-1',
+          name: 'Planner',
+          phase: 'active',
+        },
+      },
+    })
+    expect(active.nodes).toHaveLength(1)
+    expect(active.nodes[0]).toMatchObject({ kind: 'team', activity: { phase: 'active' } })
+  })
+
   it('keeps transient job snapshots out of the durable timeline', () => {
     const next = reduceTimeline(initial, {
       sequence: 1,
@@ -625,6 +818,88 @@ describe('reduceTimeline', () => {
     expect(completed.nodes).toMatchObject([{ kind: 'notice', text: 'Permission changed to Full access.' }])
   })
 
+  it('keeps plan and permission switches out of the chat timeline', () => {
+    let state = reduceTimeline(initial, {
+      sequence: 1,
+      event: {
+        type: 'notice',
+        sessionId: 'session-1',
+        level: 'info',
+        text: 'permission started.',
+        commandId: 'command-1',
+        commandPhase: 'run',
+        commandName: 'permission',
+        commandInput: '/permission read-only',
+      },
+    })
+    state = reduceTimeline(state, {
+      sequence: 2,
+      event: {
+        type: 'notice',
+        sessionId: 'session-1',
+        level: 'info',
+        text: 'Permission changed to Read only.',
+        commandId: 'command-1',
+        commandPhase: 'done',
+        commandName: 'permission',
+      },
+    })
+    state = reduceTimeline(state, {
+      sequence: 3,
+      event: {
+        type: 'notice',
+        sessionId: 'session-1',
+        level: 'info',
+        text: 'Plan mode on.',
+        commandId: 'command-2',
+        commandPhase: 'run',
+        commandName: 'plan',
+        commandInput: '/plan',
+      },
+    })
+
+    expect(state.nodes).toEqual([])
+  })
+
+  it('retains mode-switch failures as visible error notices', () => {
+    const state = reduceTimeline(initial, {
+      sequence: 1,
+      event: {
+        type: 'notice',
+        sessionId: 'session-1',
+        level: 'error',
+        text: 'The DSH command could not be applied. Details: invalid permission.',
+        commandName: 'permission',
+        commandInput: '/permission read-only',
+      },
+    })
+
+    expect(state.nodes).toEqual([
+      {
+        kind: 'notice',
+        id: 'notice:1',
+        level: 'error',
+        text: 'The DSH command could not be applied. Details: invalid permission.',
+      },
+    ])
+  })
+
+  it('projects structured command/run input before its completion notice', () => {
+    const next = reduceTimeline(initial, {
+      sequence: 1,
+      event: {
+        type: 'notice',
+        sessionId: 'session-1',
+        level: 'info',
+        text: 'permission started.',
+        commandInput: '/permission workspace-write',
+      },
+    })
+    expect(next.nodes).toEqual([
+      { kind: 'command-input', id: 'command-input:1', text: '/permission workspace-write' },
+    ])
+  })
+
   it('handles unknown rc6 events without losing later known events', () => {
     const unknown = reduceTimeline(initial, {
       sequence: 1,
@@ -636,6 +911,30 @@ describe('reduceTimeline', () => {
     })
     expect(known.nodes).toHaveLength(2)
     expect(known.nodes[1]).toMatchObject({ id: 'm1' })
+  })
+
+  it('places a late-arriving unknown event before a later durable transcript node', () => {
+    const state: TimelineState = {
+      sessionId: 'session-1',
+      nodes: [
+        {
+          kind: 'assistant-message',
+          id: 'assistant-message-5',
+          markdown: 'answer',
+          streaming: false,
+          sequence: 5,
+        },
+      ],
+      lastSequence: 0,
+    }
+
+    const next = reduceTimeline(state, {
+      sequence: 3,
+      event: { type: 'unknown', name: 'future/event', payload: { source: 'dsh' } },
+    })
+
+    expect(next.nodes.map((node) => node.kind)).toEqual(['event', 'assistant-message'])
+    expect(next.nodes[0]).toMatchObject({ kind: 'event', sequence: 3, name: 'future/event' })
   })
 
   it('keeps a producer-correlated retry row and records started/cancelled states', () => {

@@ -1,12 +1,36 @@
 export type OperatingSystem = 'windows' | 'linux' | 'macos'
 export type ProcessOwnership = 'external' | 'managed'
-export type ConnectionMode = 'auto' | 'attach-only' | 'new-isolated'
+export type ConnectionMode = 'auto' | 'custom' | 'attach-only' | 'new-isolated'
 
 export interface DshRuntime {
   readonly executable: string
   readonly version: string
   readonly supported: boolean
+  /** `known` means covered by a pinned adapter; `unknown` remains launchable in fallback mode. */
+  readonly compatibility?: 'known' | 'unknown'
   readonly source: 'configured' | 'path' | 'npm-global' | 'bundled'
+}
+
+/**
+ * Browser-safe result of the Extension Host's npm update check.  It contains
+ * version labels only; executable paths, registry configuration and command
+ * output never cross the Host/Webview boundary.
+ */
+export type DshUpdateFailure = 'npm-not-found' | 'registry-unavailable' | 'invalid-response'
+
+export interface DshUpdateSnapshot {
+  readonly status: 'ready' | 'unavailable'
+  readonly currentVersion?: string
+  readonly currentSource?: DshRuntime['source']
+  readonly globalVersion?: string
+  readonly latestVersion?: string
+  readonly latestTagVersion?: string
+  readonly nextTagVersion?: string
+  readonly availableVersions: readonly string[]
+  readonly updateAvailable: boolean
+  readonly checkedAt: string
+  readonly failure?: DshUpdateFailure
+  readonly restartRequired?: boolean
 }
 
 export interface BackendEndpoint {
@@ -18,6 +42,8 @@ export interface BackendEndpoint {
 export interface BackendCandidate {
   readonly endpoint: BackendEndpoint
   readonly source: 'configured' | 'known' | 'default-port' | 'process-scan' | 'companion'
+  /** Optional host-side runtime hint; never forwarded to the Webview. */
+  readonly runtimeVersion?: string
   readonly pid?: number
   readonly startedAt?: string
   readonly commandLine?: string
@@ -28,6 +54,8 @@ export interface BackendCapabilities {
   readonly protocolVersion: string
   readonly dshVersion: string
   readonly features: ReadonlySet<string>
+  /** Set only when the runtime was outside the pinned compatibility range. */
+  readonly compatibilityWarning?: string
 }
 
 export interface ConnectedBackend {

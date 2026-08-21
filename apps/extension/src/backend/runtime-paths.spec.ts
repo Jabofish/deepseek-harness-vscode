@@ -30,6 +30,20 @@ describe('runtime path resolution', () => {
     ).toBe('/opt/node/bin/npm')
   })
 
+  it('adds the Windows npm-global and Node locations when a GUI PATH omits them', () => {
+    expect(
+      runtimePathEntries('windows', {
+        PATH: 'C:\\Windows\\System32',
+        APPDATA: 'C:\\Users\\alice\\AppData\\Roaming',
+        ProgramFiles: 'C:\\Program Files',
+      }),
+    ).toEqual([
+      'C:\\Windows\\System32',
+      'C:\\Users\\alice\\AppData\\Roaming\\npm',
+      'C:\\Program Files\\nodejs',
+    ])
+  })
+
   it('uses the Windows npm shim name when no inspected path exists', () => {
     expect(resolveNpmExecutable('windows', [], () => false)).toBe('npm.cmd')
   })

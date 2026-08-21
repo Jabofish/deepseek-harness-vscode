@@ -40,6 +40,32 @@ function childEntries(catalog: SubagentCatalog): readonly SubagentView[] {
   return catalog.entries.filter((entry): entry is SubagentView => entry.kind === 'child')
 }
 
+interface SubagentAggregate {
+  readonly total: number
+  readonly running: number
+}
+
+function aggregateLoadedChildren(
+  catalog: SubagentCatalog,
+  catalogs: Readonly<Record<string, SubagentCatalog>>,
+  visited: ReadonlySet<string> = new Set(),
+): SubagentAggregate {
+  let total = 0
+  let running = 0
+  for (const entry of childEntries(catalog)) {
+    total += 1
+    if (isRunning(entry)) running += 1
+    const branch = catalogs[entry.id]
+    if (!entry.hasChildren || branch === undefined || visited.has(entry.id)) continue
+    const nextVisited = new Set(visited)
+    nextVisited.add(entry.id)
+    const nested = aggregateLoadedChildren(branch, catalogs, nextVisited)
+    total += nested.total
+    running += nested.running
+  }
+  return { total, running }
+}
+
 function flatten(
   catalog: SubagentCatalog,
   catalogs: Readonly<Record<string, SubagentCatalog>>,
@@ -70,7 +96,8 @@ export function SubagentDrawer(props: SubagentCatalogProps): ReactElement | null
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
 
-  const runningCount = children.filter(isRunning).length
+  const loadedAggregate = aggregateLoadedChildren(props.catalog, catalogs)
+  const runningCount = loadedAggregate.running
   const diagnosticCount = props.catalog.entries.length - children.length
 
   useEffect(() => {
@@ -163,7 +190,7 @@ export function SubagentDrawer(props: SubagentCatalogProps): ReactElement | null
 
   if (props.catalog.entries.length === 0) return null
 
-  const count = children.length
+  const count = loadedAggregate.total
   const healthyLabel =
     runningCount > 0
       ? t('subagents.summary.running', { count, running: runningCount })
@@ -311,12 +338,18 @@ function measureFloatingMenu(trigger: HTMLButtonElement | null): FloatingMenuPos
   const centeredLeft = rect.left + rect.width / 2 - width / 2
   const maxLeft = Math.max(VIEWPORT_GUTTER, window.innerWidth - width - VIEWPORT_GUTTER)
   const left = Math.min(Math.max(VIEWPORT_GUTTER, centeredLeft), maxLeft)
-  const availableHeight = Math.max(0, window.innerHeight - rect.bottom - VIEWPORT_GUTTER - MENU_GAP)
+  const belowHeight = Math.max(0, window.innerHeight - rect.bottom - VIEWPORT_GUTTER - MENU_GAP)
+  const aboveHeight = Math.max(0, rect.top - VIEWPORT_GUTTER - MENU_GAP)
+  const opensBelow = belowHeight >= aboveHeight
+  const availableHeight = opensBelow ? belowHeight : aboveHeight
+  const maxHeight = Math.min(MENU_MAX_HEIGHT, availableHeight)
+  const preferredTop = opensBelow ? rect.bottom + MENU_GAP : rect.top - MENU_GAP - maxHeight
+  const maxTop = Math.max(VIEWPORT_GUTTER, window.innerHeight - VIEWPORT_GUTTER - maxHeight)
   return {
-    top: rect.bottom + MENU_GAP,
+    top: Math.min(Math.max(VIEWPORT_GUTTER, preferredTop), maxTop),
     left,
     width,
-    maxHeight: Math.min(MENU_MAX_HEIGHT, availableHeight),
+    maxHeight,
   }
 }
 

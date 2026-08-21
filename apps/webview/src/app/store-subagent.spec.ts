@@ -71,6 +71,8 @@ function answer(request: WebviewRequest): unknown {
     case 'session.queue.list':
     case 'goal.list':
     case 'job.list':
+    case 'command.list':
+    case 'skill.list':
     case 'providers.list':
     case 'models.list':
       return []
@@ -183,6 +185,7 @@ describe('AppStore subagent transport routing', () => {
         case 'subagent.list':
           return { entries: [], parentAvailable: true }
         case 'command.list':
+        case 'skill.list':
           return []
         default:
           throw new Error(`unexpected request ${request.type}`)
@@ -256,6 +259,7 @@ describe('AppStore subagent transport routing', () => {
         case 'subagent.list':
           return { entries: [], parentAvailable: true }
         case 'command.list':
+        case 'skill.list':
           return []
         default:
           throw new Error(`unexpected request ${request.type}`)
@@ -315,6 +319,7 @@ describe('AppStore subagent transport routing', () => {
         case 'goal.list':
         case 'job.list':
         case 'command.list':
+        case 'skill.list':
           return []
         case 'subagent.list':
           return { entries: [], parentAvailable: true }
@@ -333,7 +338,9 @@ describe('AppStore subagent transport routing', () => {
       sequence: 1,
       payload: {
         sessionId: 'parent',
-        sequence: 101,
+        // A projection may carry a later durable sequence than the next
+        // visible delta. It is not itself a timeline record.
+        sequence: 999,
         key: 'sessionStats',
         value: { turns: 1 },
       },
@@ -397,6 +404,7 @@ describe('AppStore subagent transport routing', () => {
         case 'subagent.list':
           return { entries: [], parentAvailable: true }
         case 'command.list':
+        case 'skill.list':
           return []
         default:
           throw new Error(`unexpected request ${request.type}`)
@@ -454,6 +462,101 @@ describe('AppStore sessions drawer', () => {
   })
 })
 
+describe('AppStore history paging', () => {
+  it('prepends one real-protocol-shaped history page and advances its beforeSeq boundary', async () => {
+    const client = new FakeClient((request) => {
+      switch (request.type) {
+        case 'session.open':
+          return {
+            id: 'parent',
+            workspaceId: 'workspace',
+            title: 'Parent',
+            blank: false,
+            status: 'completed',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+            historyHasMore: true,
+            historyBeforeSequence: 20,
+            history: [
+              {
+                sequence: 20,
+                time: '2026-01-01T00:00:02.000Z',
+                event: {
+                  type: 'message.completed',
+                  sessionId: 'parent',
+                  messageId: 'newer',
+                  markdown: 'newer',
+                },
+              },
+              {
+                sequence: 999,
+                time: '2026-01-01T00:00:03.000Z',
+                event: {
+                  type: 'session.projection',
+                  sessionId: 'parent',
+                  key: 'sessionStats',
+                  value: { turns: 1 },
+                },
+              },
+            ],
+          }
+        case 'session.history':
+          return {
+            beforeSeq: 10,
+            hasMore: false,
+            projection: {
+              asOfSequence: 20,
+              values: { sessionStats: { turns: 1, steps: 1, llmMs: 10, toolMs: 5 } },
+            },
+            events: [
+              {
+                sequence: 10,
+                time: '2026-01-01T00:00:01.000Z',
+                event: {
+                  type: 'message.completed',
+                  sessionId: 'parent',
+                  messageId: 'older',
+                  markdown: 'older',
+                },
+              },
+            ],
+          }
+        case 'session.queue.list':
+        case 'goal.list':
+        case 'job.list':
+        case 'command.list':
+        case 'skill.list':
+          return []
+        case 'subagent.list':
+          return { entries: [], parentAvailable: true }
+        default:
+          throw new Error(`unexpected request ${request.type}`)
+      }
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+
+    await store.openSession('parent')
+    expect(store.timeline.lastSequence).toBe(20)
+    await store.loadOlderHistory()
+
+    expect(client.requests).toContainEqual(
+      expect.objectContaining({
+        type: 'session.history',
+        payload: { sessionId: 'parent', beforeSeq: 20, maxMessages: 200 },
+      }),
+    )
+    expect(store.timeline.nodes.map((node) => node.id)).toEqual(['older', 'newer'])
+    expect(store.timeline.lastSequence).toBe(20)
+    expect(store.historyHasMore).toBe(false)
+    expect(store.historyBeforeSequence).toBe(10)
+    expect(store.getState().projections.parent).toEqual({
+      sessionStats: { turns: 1, steps: 1, llmMs: 10, toolMs: 5 },
+    })
+    expect(store.historyLoading).toBe(false)
+    store.dispose()
+  })
+})
+
 describe('AppStore session branching', () => {
   afterEach(() => vi.restoreAllMocks())
 
@@ -478,6 +581,7 @@ describe('AppStore session branching', () => {
         case 'goal.list':
         case 'job.list':
         case 'command.list':
+        case 'skill.list':
           return []
         case 'subagent.list':
           return { entries: [], parentAvailable: true }
@@ -497,6 +601,81 @@ describe('AppStore session branching', () => {
     )
     expect(store.activeSessionId).toBe('child')
     expect(store.sessions).toContainEqual(expect.objectContaining({ id: 'child', title: 'Branched' }))
+    store.dispose()
+  })
+
+  it('assigns the next available numeric fork suffix before opening the child', async () => {
+    const parent = {
+      id: 'parent',
+      workspaceId: 'workspace',
+      title: 'Task',
+      blank: false,
+      status: 'completed',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    }
+    const childDetail = {
+      id: 'child',
+      workspaceId: 'workspace',
+      title: 'Task (2)',
+      blank: false,
+      status: 'idle',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:01.000Z',
+      history: [],
+    }
+    const sibling = { ...parent, id: 'sibling', title: 'Task (1)' }
+    const client = new FakeClient((request) => {
+      switch (request.type) {
+        case 'session.list':
+          return { items: [parent, sibling] }
+        case 'workspace.list':
+          return {
+            items: [
+              {
+                id: 'workspace',
+                name: 'Workspace',
+                createdAt: parent.createdAt,
+                updatedAt: parent.updatedAt,
+                sessionIds: ['parent', 'sibling'],
+                sessionCount: 2,
+              },
+            ],
+            archivedSessionIds: [],
+          }
+        case 'providers.list':
+        case 'models.list':
+          return []
+        case 'preset.list':
+          return { presets: [] }
+        case 'session.fork':
+          return { id: 'child' }
+        case 'session.rename':
+          return { title: 'Task (2)', seq: 44 }
+        case 'session.open':
+          return childDetail
+        case 'session.queue.list':
+        case 'goal.list':
+        case 'job.list':
+        case 'command.list':
+        case 'skill.list':
+        case 'subagent.list':
+          return request.type === 'subagent.list' ? { entries: [], parentAvailable: true } : []
+        default:
+          throw new Error(`unexpected request ${request.type}`)
+      }
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+
+    await store.refreshSessions()
+    await store.forkSession('parent')
+
+    expect(client.requests).toContainEqual(
+      expect.objectContaining({
+        type: 'session.rename',
+        payload: { sessionId: 'child', title: 'Task (2)' },
+      }),
+    )
     store.dispose()
   })
 })
@@ -536,6 +715,7 @@ describe('AppStore running lifecycle', () => {
         case 'goal.list':
         case 'job.list':
         case 'command.list':
+        case 'skill.list':
           return []
         case 'subagent.list':
           return { entries: [], parentAvailable: true }

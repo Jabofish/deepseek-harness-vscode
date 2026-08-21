@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { AppError, type PromptAttachment } from '@dsh-vscode/domain'
 
 export const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024
+export const MAX_ATTACHMENT_COUNT = 20
 
 export interface StoredAttachmentInput {
   readonly dataUri: string
@@ -38,7 +39,7 @@ export class AttachmentStore {
 
   public remember(input: StoredAttachmentInput): AttachmentHandle {
     this.prune()
-    if (this.values.size >= 8) throw attachmentCapacityReached()
+    if (this.values.size >= MAX_ATTACHMENT_COUNT) throw attachmentCapacityReached()
     const token = `dsh-attachment:${this.makeToken()}`
     this.values.set(token, { ...input, expiresAt: this.now() + 10 * 60 * 1000 })
     return {
@@ -131,7 +132,7 @@ function unavailableAttachment(): AppError {
 function attachmentCapacityReached(): AppError {
   return new AppError({
     code: 'INVALID_CONFIGURATION',
-    message: 'At most 8 attachment drafts may be kept. Remove one and try again.',
+    message: `At most ${MAX_ATTACHMENT_COUNT} attachment drafts may be kept. Remove one and try again.`,
     retryable: false,
   })
 }

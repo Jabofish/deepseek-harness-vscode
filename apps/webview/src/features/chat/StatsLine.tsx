@@ -28,6 +28,13 @@ export function StatsLine(props: StatsLineProps): ReactElement {
   if (stats.turns === 0 && props.usage === undefined)
     return <div className="dsh-stats-line" aria-hidden="true" />
   const cachePercent = props.usage === undefined ? 0 : Math.round(props.cacheHit * 100)
+  const tokenTotal =
+    props.usage === undefined
+      ? undefined
+      : props.usage.inputTokens +
+        props.usage.outputTokens +
+        (props.usage.cacheReadTokens ?? 0) +
+        (props.usage.cacheWriteTokens ?? 0)
   const durations: string[] = []
   if (stats.llmMs > 0) durations.push(`LLM ${formatDuration(stats.llmMs)}`)
   if (stats.toolMs > 0) durations.push(`${t('stats.tool')} ${formatDuration(stats.toolMs)}`)
@@ -62,6 +69,14 @@ export function StatsLine(props: StatsLineProps): ReactElement {
           <span title={t('stats.output')}>↓{formatTokens(props.usage.outputTokens)}</span>
           <span aria-hidden="true">·</span>
           <span title={t('stats.cache')}>{t('stats.cacheShort', { percent: cachePercent })}</span>
+          {tokenTotal === undefined ? null : (
+            <>
+              <span aria-hidden="true">·</span>
+              <span title={t('stats.totalTokens')}>
+                {t('stats.totalTokensValue', { count: formatTokens(tokenTotal) })}
+              </span>
+            </>
+          )}
         </>
       )}
     </div>

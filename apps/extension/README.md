@@ -12,7 +12,8 @@ Use DeepSeek Harness where you work: manage sessions, send tasks, and follow rep
 - **保持专注 · Stay in flow** — 在 VS Code 侧栏完成任务，工作区和会话上下文一目了然。
 - **看清全过程 · See the whole run** — 用户输入、模型回复、折叠思考和连续工具调用按时间线呈现。
 - **掌控运行方式 · Stay in control** — 按当前 DSH 能力选择模型、Provider、Reasoning、权限和 Plan。
-- **带上工作内容 · Bring your context** — 发送文本、图片和工作区文件，及时处理审批与用户问题。
+- **带上工作内容 · Bring your context** — 发送文本、图片和工作区文件，以 `@` 引用文件/会话，及时处理审批与用户问题。
+- **闭环交互 · Close the loop** — 对回复点赞/点踩并补充备注，直接打开工具产生或修改的文件。
 - **遇到问题也有答案 · Recover with confidence** — 连接、恢复、错误和不可用能力都有明确状态与诊断。
 
 ## 三步开始 · Start in seconds
@@ -28,11 +29,15 @@ Use DeepSeek Harness where you work: manage sessions, send tasks, and follow rep
 
 The extension discovers a compatible local DSH automatically. When it is missing, the view offers guided actions to install it, select an existing executable, copy the install command, or open the documentation.
 
+设置的常规页会在启动时检查 npm 上游版本；有更新时可从已验证的上游版本清单选择精确版本下载安装。更新操作在 Extension Host 执行，不会把 npm 配置、路径或凭据发送到 Webview，也不会停止外部 DSH。
+
+The General settings page checks upstream npm versions at startup. Available releases can be selected from the verified upstream list and installed exactly. The operation runs in the Extension Host, never sends npm configuration, paths, or credentials to the Webview, and never stops an external DSH.
+
 ## 兼容性 · Compatibility
 
 - Visual Studio Code `1.125+`
 - Windows, Linux, or macOS local Extension Host
-- DeepSeek Harness `0.1.0-rc.6` Host/Web API
+- DeepSeek Harness `0.1.0-rc.6` through `0.1.0-rc.8` Host/Web API; unknown non-empty version labels are attempted in compatibility mode
 - Node.js `22.19+` when installing DSH from the extension
 
 模型、工具和高级 Agent 能力由当前 DSH 实例决定；未提供的能力会安全降级并明确提示。

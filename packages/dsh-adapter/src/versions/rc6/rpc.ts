@@ -41,11 +41,16 @@ export function unwrapRpcResult<T>(response: RpcResponseLike<T>, method: string)
   }
   const error = response.result.error
   const code = error?.code ?? 'internal'
+  const attachmentReason = code === 'attachment-error' ? safeAttachmentReason(error?.details) : undefined
   throw new AppError({
     code: mapRpcError(code),
-    message: safeRpcMessage(method, code, error?.message),
+    message: safeRpcMessage(method, code, error?.message, attachmentReason),
     retryable: code === 'cancelled' || code === 'agent-busy' || code === 'settings-conflict',
-    context: { rpcMethod: method, rpcCode: code },
+    context: {
+      rpcMethod: method,
+      rpcCode: code,
+      ...(attachmentReason === undefined ? {} : { attachmentReason }),
+    },
   })
 }
 
@@ -73,7 +78,7 @@ export async function callRpc<T>(
 export function unavailable(capability: string): AppError {
   return new AppError({
     code: 'CAPABILITY_UNAVAILABLE',
-    message: `This rc.6 DSH host does not expose ${capability}.`,
+    message: `This DSH host does not expose ${capability}.`,
     retryable: false,
   })
 }
@@ -96,7 +101,12 @@ function mapRpcError(code: string): AppErrorCode {
     case 'title-invalid':
     case 'workspace-invalid-path':
     case 'workspace-name-conflict':
+    case 'workspace-move-invalid':
     case 'invalid-time-zone':
+    case 'settings-rejected':
+    case 'settings-not-exposed':
+    case 'model-discovery-failed':
+    case 'fork-unavailable':
     case 'bad-request':
       return 'INVALID_CONFIGURATION'
     case 'workspace-not-found':
@@ -111,6 +121,18 @@ function mapRpcError(code: string): AppErrorCode {
       return 'PERMISSION_DENIED'
     case 'session-not-found':
       return 'BACKEND_UNREACHABLE'
+    case 'subagent-parent-unavailable':
+    case 'subagent-not-found':
+    case 'subagent-catalog-diagnostic':
+    case 'subagent-not-resumable':
+    case 'subagent-unauthorized':
+    case 'subagent-delivery-unavailable':
+      return 'CAPABILITY_UNAVAILABLE'
+    case 'queue-item-not-found':
+      return 'STALE_INTERACTION'
+    case 'steer-unavailable':
+    case 'directory-picker-unavailable':
+      return 'CAPABILITY_UNAVAILABLE'
     case 'attachment-error':
     case 'directory-unreadable':
     case 'directory-exists':
@@ -123,8 +145,12 @@ function mapRpcError(code: string): AppErrorCode {
   }
 }
 
-function safeRpcMessage(method: string, code: string, message: string | undefined): string {
-  void message
+function safeRpcMessage(
+  method: string,
+  code: string,
+  message: string | undefined,
+  attachmentReason?: string,
+): string {
   const known: Record<string, string> = {
     cancelled: 'The DSH request was cancelled.',
     'model-unavailable': 'The selected DSH model is unavailable.',
@@ -145,10 +171,71 @@ function safeRpcMessage(method: string, code: string, message: string | undefine
     'workspace-attach-failed': 'The DSH session could not be attached to the workspace.',
     'workspace-invalid-path': 'The DSH workspace path is invalid.',
     'workspace-name-conflict': 'A DSH workspace with that name already exists.',
+    'workspace-move-invalid': 'The DSH workspace session order could not be changed.',
     'title-invalid': 'The DSH session title is invalid.',
     'invalid-time-zone': 'The DSH time zone is invalid.',
+    'settings-rejected': 'The DSH settings change was rejected.',
+    'settings-not-exposed': 'This DSH settings namespace is not exposed by the host.',
+    'model-discovery-failed': 'The DSH model catalog could not be loaded.',
+    'fork-unavailable': 'The DSH session cannot be forked in this host.',
+    'directory-picker-unavailable': 'The DSH host cannot open a directory picker.',
+    'queue-item-not-found': 'The queued DSH prompt is no longer available.',
+    'steer-unavailable': 'The queued DSH prompt cannot be steered.',
+    'subagent-parent-unavailable': 'The parent DSH session is no longer available.',
+    'subagent-not-found': 'The requested DSH subagent is no longer available.',
+    'subagent-catalog-diagnostic': 'The DSH subagent catalog is temporarily unavailable.',
+    'subagent-not-resumable': 'The DSH subagent cannot be resumed.',
+    'subagent-unauthorized': 'The DSH subagent is not authorized for this session.',
+    'subagent-delivery-unavailable': 'The DSH subagent could not receive the message.',
+    'directory-unreadable': 'The DSH directory could not be read.',
+    'directory-exists': 'The DSH directory already exists.',
+    'directory-create-failed': 'The DSH directory could not be created.',
     'attachment-error': 'The DSH rejected the attachment.',
     internal: 'The DSH returned an internal error.',
   }
-  return known[code] ?? `DSH method ${method} failed.`
+  if (code === 'attachment-error') {
+    switch (attachmentReason) {
+      case 'MODEL_DOES_NOT_SUPPORT_IMAGES':
+        return 'The selected DSH model does not support image input.'
+      case 'IMAGE_DIMENSION_TOO_LARGE':
+        return 'The DSH rejected the image because one side exceeds its configured dimension limit.'
+      case 'IMAGE_TOO_MANY_PIXELS':
+        return 'The DSH rejected the image because its decoded pixel count is too large.'
+      case 'IMAGE_TOO_LARGE':
+      case 'IMAGES_TOO_LARGE':
+        return 'The DSH rejected the image because it exceeds the configured byte limit.'
+      case 'TOO_MANY_IMAGES':
+        return 'The DSH rejected the prompt because it contains too many images.'
+      case 'UNSUPPORTED_IMAGE_TYPE':
+        return 'The DSH host does not accept this image type.'
+      case 'INVALID_IMAGE_BASE64':
+      case 'INVALID_IMAGE':
+      case 'IMAGE_TYPE_MISMATCH':
+        return 'The DSH rejected the image data. Select the file again or convert it to a supported image.'
+      default:
+        return known[code] ?? `DSH method ${method} failed.`
+    }
+  }
+  const fallback = known[code] ?? `DSH method ${method} failed.`
+  const detail = safeRpcDiagnostic(message)
+  if (detail === undefined || detail === fallback) return fallback
+  return `${fallback} Details: ${detail}`
+}
+
+/** Keep useful DSH failure text without allowing credentials or huge payloads across the boundary. */
+function safeRpcDiagnostic(message: string | undefined): string | undefined {
+  if (typeof message !== 'string') return undefined
+  const compact = message.replace(/\s+/gu, ' ').trim()
+  if (compact === '') return undefined
+  const redacted = compact.replace(
+    /\b(?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|authorization|password|secret|private[_ -]?key|token|prompt|body|response)\b\s*[:=]\s*[^\s,;]+/giu,
+    (match) => match.replace(/[:=].*$/u, ': [redacted]'),
+  )
+  return redacted.slice(0, 320)
+}
+
+function safeAttachmentReason(details: unknown): string | undefined {
+  if (typeof details !== 'object' || details === null || Array.isArray(details)) return undefined
+  const reason = (details as Record<string, unknown>).reason
+  return typeof reason === 'string' && /^[A-Z0-9_]{1,96}$/u.test(reason) ? reason : undefined
 }

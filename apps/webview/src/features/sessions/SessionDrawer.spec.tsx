@@ -54,6 +54,11 @@ function renderDrawer(
     onOpen: vi.fn(),
     onCreate: vi.fn(),
     onArchive: vi.fn().mockResolvedValue(undefined),
+    onRename: vi.fn().mockResolvedValue(undefined),
+    onRenameWorkspace: vi.fn().mockResolvedValue(undefined),
+    onRemoveWorkspace: vi.fn().mockResolvedValue(undefined),
+    onMoveWorkspace: vi.fn().mockResolvedValue(undefined),
+    onMoveSession: vi.fn().mockResolvedValue(undefined),
     onSearch,
     ...overrides,
   }
@@ -80,7 +85,7 @@ describe('SessionDrawer', () => {
     })
     await waitFor(() => expect(onSearch).toHaveBeenCalledWith('note'))
     await waitFor(() => expect(screen.getByTitle('Other workspace note')).toBeDefined())
-    await waitFor(() => expect(screen.getByText('Beta')).toBeDefined())
+    await waitFor(() => expect(screen.getAllByText('Beta').length).toBeGreaterThan(0))
     expect(screen.getByText('Content matches')).toBeDefined()
   })
 
@@ -132,5 +137,68 @@ describe('SessionDrawer', () => {
     expect(screen.getByTitle('Fix login bug')).toBeDefined()
     expect(screen.getByTitle('Write docs')).toBeDefined()
     expect(screen.queryByTitle('Inspect the project layout')).toBeNull()
+  })
+
+  it('opens a session rename dialog, warns about a duplicate, and saves the edited title', async () => {
+    const onRename = vi.fn().mockResolvedValue(undefined)
+    renderDrawer({ onRename })
+
+    fireEvent.click(screen.getAllByTitle('Rename session')[0]!)
+    const input = screen.getByLabelText('Session name')
+    fireEvent.change(input, { target: { value: 'Write docs' } })
+
+    expect(screen.getByText('Another session in this workspace already uses this name.')).toBeDefined()
+    fireEvent.change(input, { target: { value: 'Rename me' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(onRename).toHaveBeenCalledWith('s1', 'Rename me'))
+    expect(screen.queryByRole('dialog', { name: 'Rename session' })).toBeNull()
+  })
+
+  it('confirms workspace removal and keeps the destructive action explicit', async () => {
+    const onRemoveWorkspace = vi.fn().mockResolvedValue(undefined)
+    renderDrawer({ onRemoveWorkspace })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove workspace Alpha' }))
+    const dialog = screen.getByRole('alertdialog', { name: 'Remove workspace' })
+    expect(dialog).toBeDefined()
+    expect(dialog.parentElement?.parentElement).toBe(document.body)
+    expect(screen.getByText('Remove “Alpha” from DSH? Its 2 session(s) and files will remain.')).toBeDefined()
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }))
+
+    await waitFor(() => expect(onRemoveWorkspace).toHaveBeenCalledWith('w1'))
+  })
+
+  it('switches to grouped workspace view and exposes explicit status badges', () => {
+    renderDrawer()
+    fireEvent.click(screen.getByTitle('Show sessions grouped by workspace'))
+
+    expect(screen.getAllByText('Alpha').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('Beta').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('Completed').length).toBeGreaterThan(0)
+  })
+
+  it('moves workspaces and sessions through host-backed drop targets', async () => {
+    const onMoveWorkspace = vi.fn().mockResolvedValue(undefined)
+    const onMoveSession = vi.fn().mockResolvedValue(undefined)
+    renderDrawer({ onMoveWorkspace, onMoveSession })
+    const dataTransfer = {
+      effectAllowed: '',
+      dropEffect: '',
+      value: '',
+      setData: vi.fn((_type: string, value: string) => {
+        dataTransfer.value = value
+      }),
+      getData: vi.fn(() => dataTransfer.value),
+    }
+    const workspaceCards = screen.getAllByTitle('Drag to reorder workspace')
+    fireEvent.dragStart(workspaceCards[1]!, { dataTransfer })
+    fireEvent.drop(workspaceCards[0]!, { dataTransfer })
+    await waitFor(() => expect(onMoveWorkspace).toHaveBeenCalledWith('w2', 'w1'))
+
+    const sessionRows = screen.getAllByTitle('Drag to reorder session')
+    fireEvent.dragStart(sessionRows[1]!, { dataTransfer })
+    fireEvent.drop(sessionRows[0]!, { dataTransfer })
+    await waitFor(() => expect(onMoveSession).toHaveBeenCalledWith('w1', 's2', 's1'))
   })
 })

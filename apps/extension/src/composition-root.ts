@@ -8,6 +8,7 @@ import path from 'node:path'
 import {
   AppError,
   type AgentConfiguration,
+  type BackendEndpoint,
   type BackendState,
   type DshBackend,
   type ExtensionSettings,
@@ -29,7 +30,14 @@ import {
   WorkspaceUseCases,
   type ConnectionRequest,
 } from '@dsh-vscode/application'
-import { Rc6VersionAdapter, VersionedBackendFactory, VersionedBackendProbe } from '@dsh-vscode/dsh-adapter'
+import {
+  Rc6VersionAdapter,
+  Rc7VersionAdapter,
+  Rc8VersionAdapter,
+  VersionedBackendFactory,
+  VersionedBackendProbe,
+  type ExportFileSystem,
+} from '@dsh-vscode/dsh-adapter'
 import {
   hostEnvelopeSchema,
   hostMessageSchema,
@@ -51,11 +59,12 @@ import { DshProcessSupervisor, type SpawnedChild } from './backend/process-super
 import { DshRuntimeLocator } from './backend/runtime-locator.js'
 import { resolveNpmExecutable, runtimePathEntries } from './backend/runtime-paths.js'
 import { resolveWindowsShim } from './backend/windows-shim.js'
-import { VsCodeConfigurationSource } from './config/configuration-source.js'
+import { normalizeLoopbackUrl, VsCodeConfigurationSource } from './config/configuration-source.js'
 import { DSH_DOCUMENTATION_URL, DSH_PACKAGE, OUTPUT_CHANNEL_NAME } from './constants.js'
 import { WebviewMessageRouter } from './view/message-router.js'
 import { DshWebviewViewProvider } from './view/dsh-webview-view-provider.js'
 import { RuntimeInstaller } from './vscode/install-runtime.js'
+import { DshRuntimeUpdater } from './vscode/update-runtime.js'
 import { requestProviderSecret } from './vscode/credential-input.js'
 import { moveOrExplainSecondarySidebar } from './vscode/secondary-sidebar.js'
 import { updateContextKeys } from './vscode/context-keys.js'
@@ -103,7 +112,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       activeEditor === undefined ? undefined : vscode.workspace.getWorkspaceFolder(activeEditor.document.uri)
     return activeFolder ?? currentWorkspaceFolders()[0]
   }
-  const openMarkdownLink = async (href: string): Promise<OpenLinkResult> => {
+  const openMarkdownLink = async (href: string, revealInFolder = false): Promise<OpenLinkResult> => {
     const target = href.trim()
     if (target === '' || target.startsWith('#'))
       return { opened: false, message: 'This Markdown link does not contain a file target.' }
@@ -150,6 +159,10 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       return { opened: false, message: 'Only files inside the current workspace can be opened.' }
 
     try {
+      if (revealInFolder) {
+        await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(filePath))
+        return { opened: true }
+      }
       const document = await vscode.workspace.openTextDocument(vscode.Uri.file(filePath))
       await vscode.window.showTextDocument(document, { preview: true })
       return { opened: true }
@@ -164,7 +177,10 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     npmGlobalPrefix: async (signal) => {
       const os = platform()
       const npm = resolveNpmExecutable(os, runtimePathEntries(os, process.env))
-      const resolved = os === 'windows' ? resolveWindowsShim(npm, os, readTextFile) : undefined
+      const resolved =
+        os === 'windows'
+          ? resolveWindowsShim(npm, os, readTextFile, windowsShimOptions(os, process.env))
+          : undefined
       try {
         const result = await execFileAsync(
           resolved?.executable ?? npm,
@@ -187,7 +203,12 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
         () => false,
       ),
     executeVersion: async (executable, signal) => {
-      const resolved = resolveWindowsShim(executable, platform(), readTextFile) ?? {
+      const resolved = resolveWindowsShim(
+        executable,
+        platform(),
+        readTextFile,
+        windowsShimOptions(platform(), process.env),
+      ) ?? {
         executable,
         prefixArgs: [],
       }
@@ -212,7 +233,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     new LinuxProcessDiscoveryProvider(),
     new MacOsProcessDiscoveryProvider(),
   ])
-  const adapter = new Rc6VersionAdapter({
+  const adapterOptions = {
     get requestTimeoutMs() {
       return configuration.read().connection.requestTimeoutMs
     },
@@ -220,9 +241,15 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       return { maximumAttempts: 2, baseDelayMs: 100, maximumDelayMs: 500 }
     },
     fetch: globalThis.fetch,
-  })
-  const probe = new VersionedBackendProbe([adapter])
-  const factory = new VersionedBackendFactory([adapter])
+    samePath: sameWorkspacePath,
+    exportFileSystem: createExportFileSystem(vscode),
+  }
+  const rc8Adapter = new Rc8VersionAdapter(adapterOptions)
+  const rc7Adapter = new Rc7VersionAdapter(adapterOptions)
+  const rc6Adapter = new Rc6VersionAdapter(adapterOptions)
+  const adapters = [rc8Adapter, rc7Adapter, rc6Adapter] as const
+  const probe = new VersionedBackendProbe(adapters)
+  const factory = new VersionedBackendFactory(adapters)
   const supervisor = new DshProcessSupervisor({
     managedPort: () => configuration.read().connection.managedPort,
     workingDirectory: () => currentWorkspaceFolder()?.uri.fsPath ?? process.cwd(),
@@ -246,20 +273,62 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     runInstall: async () => {
       const os = platform()
       const npm = resolveNpmExecutable(os, runtimePathEntries(os, process.env))
-      await execFileAsync(npm, ['install', '--global', DSH_PACKAGE], {
-        timeout: 120_000,
-        maxBuffer: 32 * 1024,
-        env: runtimeEnvironment(undefined, npm),
-      })
+      const resolved =
+        os === 'windows'
+          ? resolveWindowsShim(npm, os, readTextFile, windowsShimOptions(os, process.env))
+          : undefined
+      await execFileAsync(
+        resolved?.executable ?? npm,
+        [...(resolved?.prefixArgs ?? []), 'install', '--global', DSH_PACKAGE],
+        {
+          timeout: 120_000,
+          maxBuffer: 32 * 1024,
+          env: runtimeEnvironment(undefined, resolved?.executable ?? npm),
+        },
+      )
     },
     verifyInstall: async () => (await runtimeLocator.locate())?.supported === true,
     verifyExecutable: async (executable) => (await runtimeLocator.inspectExecutable(executable)).supported,
   })
+  const runtimeUpdater = new DshRuntimeUpdater({
+    npmExecutable: () => {
+      const os = platform()
+      return resolveNpmExecutable(os, runtimePathEntries(os, process.env))
+    },
+    locateRuntime: (signal) => runtimeLocator.locate(signal),
+    execute: async (executable, args, options) => {
+      const resolved =
+        platform() === 'windows'
+          ? resolveWindowsShim(
+              executable,
+              'windows',
+              readTextFile,
+              windowsShimOptions('windows', { ...process.env, ...(options.env ?? {}) }),
+            )
+          : undefined
+      const resolvedExecutable = resolved?.executable ?? executable
+      const result = await execFileAsync(resolvedExecutable, [...(resolved?.prefixArgs ?? []), ...args], {
+        timeout: options.timeout,
+        maxBuffer: options.maxBuffer,
+        encoding: 'utf8',
+        env: runtimeEnvironment(options.env, resolvedExecutable),
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
+      })
+      return {
+        stdout: result.stdout,
+        stderr: result.stderr,
+      }
+    },
+    environment: () => runtimeEnvironment(),
+  })
+  const runtimeUpdateLifecycle = new AbortController()
   const runtimeUseCases = new RuntimeUseCases({
     install: () => runtimeInstaller.install(),
     selectExecutable: () => runtimeInstaller.selectExecutable(),
     copyInstallCommand: () => Promise.resolve(runtimeInstaller.copyInstallCommand()),
     openDocumentation: () => Promise.resolve(runtimeInstaller.openDocumentation()).then(() => undefined),
+    checkForUpdates: (force, signal) => runtimeUpdater.checkForUpdates(force, signal),
+    installVersion: (version, signal) => runtimeUpdater.installVersion(version, signal),
   })
   const workspaceUseCases = new WorkspaceUseCases(backendService)
   const sessionUseCases = new SessionUseCases(backendService)
@@ -457,8 +526,11 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
   const connect = async (signal?: AbortSignal): Promise<unknown> => {
     const current = configuration.read()
     const hasWorkspaceFolder = currentWorkspaceFolders().length > 0
+    const customEndpoint =
+      current.connection.mode === 'custom' ? endpointFromServerUrl(current.connection.serverUrl) : undefined
     const request: ConnectionRequest = {
       mode: current.connection.mode,
+      ...(customEndpoint === undefined ? {} : { endpoint: customEndpoint }),
       // A workspace that has not been trusted may attach to an existing
       // loopback host. An empty window is safe to isolate in a temporary
       // workspace, but an untrusted project folder must never auto-start DSH.
@@ -474,6 +546,33 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     // had no recipient.
     publishState(result.state)
     return { connected: true }
+  }
+  const configureConnection = async (
+    mode: 'auto' | 'custom',
+    endpoint: string | undefined,
+    signal?: AbortSignal,
+  ): Promise<unknown> => {
+    const settings = vscode.workspace.getConfiguration('dsh')
+    if (mode === 'custom') {
+      const normalized = normalizeLoopbackUrl(endpoint ?? '')
+      if (normalized === undefined)
+        throw new AppError({
+          code: 'INVALID_CONFIGURATION',
+          message: 'Enter an HTTP loopback endpoint such as http://127.0.0.1:3080.',
+          retryable: false,
+        })
+      // Write the endpoint before switching modes so the configuration is
+      // never observed in a transient custom-without-endpoint state.
+      await settings.update('connection.serverUrl', normalized, vscode.ConfigurationTarget.Global)
+      await settings.update('connection.mode', mode, vscode.ConfigurationTarget.Global)
+    } else {
+      // Switch out of custom mode before clearing its endpoint for the same
+      // reason. Existing attach-only/new-isolated settings remain untouched
+      // until the user explicitly chooses a mode here.
+      await settings.update('connection.mode', mode, vscode.ConfigurationTarget.Global)
+      await settings.update('connection.serverUrl', '', vscode.ConfigurationTarget.Global)
+    }
+    return reconnect(signal)
   }
   const reconnect = async (signal?: AbortSignal): Promise<unknown> => {
     await coordinator.disconnect()
@@ -578,13 +677,20 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
   }
   const handleRequest = async (request: WebviewRequest, signal: AbortSignal): Promise<unknown> => {
     if (request.type === 'app.ready') return connect(signal)
+    if (request.type === 'connection.configure')
+      return configureConnection(request.payload.mode, request.payload.endpoint, signal)
     if (request.type === 'connection.retry') return reconnect(signal)
     if (request.type === 'view.openLink') return openMarkdownLink(request.payload.href)
+    if (request.type === 'view.showInFolder') return openMarkdownLink(request.payload.href, true)
     if (request.type === 'runtime.action') {
       await runtimeUseCases.execute(request.payload.action)
       if (request.payload.action === 'install' || request.payload.action === 'select') return connect(signal)
       return undefined
     }
+    if (request.type === 'runtime.update.check')
+      return publicValue(await runtimeUseCases.checkForUpdates(request.payload.force === true, signal))
+    if (request.type === 'runtime.update.install')
+      return publicValue(await runtimeUseCases.installVersion(request.payload.version, signal))
     if (request.type === 'view.moveRightGuide')
       return moveOrExplainSecondarySidebar(vscode.commands, vscode.window)
     if (request.type === 'diagnostics.show') {
@@ -630,6 +736,24 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       if (removesTemporaryWorkspace) await forgetTemporaryWorkspace(true)
       return result
     }
+    if (request.type === 'workspace.move') {
+      await requireCurrentWorkspaceId(request.payload.workspaceId, signal)
+      return workspaceUseCases.insertBefore(
+        request.payload.workspaceId,
+        request.payload.beforeWorkspaceId,
+        signal,
+      )
+    }
+    if (request.type === 'session.move') {
+      await requireCurrentWorkspaceId(request.payload.workspaceId, signal)
+      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
+      return workspaceUseCases.insertSessionBefore(
+        request.payload.workspaceId,
+        request.payload.sessionId,
+        request.payload.beforeSessionId,
+        signal,
+      )
+    }
     if (request.type === 'session.list') {
       const folders = currentWorkspaceFolders()
       const workspaces = await listCurrentWorkspaces(signal)
@@ -672,6 +796,18 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     }
     if (request.type === 'session.open') {
       return publicValue(await requireCurrentWorkspaceSession(request.payload.sessionId, signal))
+    }
+    if (request.type === 'session.history') {
+      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
+      const page = await backendService
+        .requireBackend()
+        .sessions.history(request.payload.sessionId, request.payload.beforeSeq, signal)
+      return publicValue({
+        events: page.events,
+        hasMore: page.hasMore,
+        ...(page.beforeSequence === undefined ? {} : { beforeSeq: page.beforeSequence }),
+        ...(page.projection === undefined ? {} : { projection: page.projection }),
+      })
     }
     if (request.type === 'session.create') {
       const workspace = await ensureCurrentWorkspace(request.payload.workspaceId, signal)
@@ -889,12 +1025,71 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
         signal,
       )
       return {
-        attachment: attachmentTokens.remember({
+        cancelled: false,
+        attachment: {
           name: attachment.name,
           ...(attachment.mimeType === undefined ? {} : { mimeType: attachment.mimeType }),
-          dataUri: attachment.uri,
-        }),
+        },
+        // The adapter has already validated this as a bounded image data URI.
+        // It is display data, not an endpoint or credential, so historical
+        // images do not need a second opaque-handle round trip.
+        dataUri: attachment.uri,
       }
+    }
+    if (request.type === 'reference.list') {
+      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
+      const backend = backendService.requireBackend()
+      const files = backend.references
+        .listFiles(request.payload.sessionId, request.payload.query, signal)
+        .catch(() => [])
+      const sessions =
+        request.payload.quoted === true
+          ? Promise.resolve([])
+          : backend.references
+              .listSessions(request.payload.sessionId, request.payload.query, signal)
+              .catch(() => [])
+      const [fileCandidates, sessionCandidates] = await Promise.all([files, sessions])
+      return publicValue({ files: fileCandidates, sessions: sessionCandidates })
+    }
+    if (request.type === 'feedback.list') {
+      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
+      return publicList(
+        await backendService.requireBackend().feedback.list(request.payload.sessionId, signal),
+      )
+    }
+    if (request.type === 'feedback.toggle') {
+      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
+      return publicValue(
+        await backendService
+          .requireBackend()
+          .feedback.put(
+            request.payload.sessionId,
+            request.payload.messageId,
+            request.payload.rating,
+            request.payload.note,
+            signal,
+          ),
+      )
+    }
+    if (request.type === 'feedback.note') {
+      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
+      return publicValue(
+        await backendService
+          .requireBackend()
+          .feedback.put(
+            request.payload.sessionId,
+            request.payload.messageId,
+            request.payload.rating,
+            request.payload.note,
+            signal,
+          ),
+      )
+    }
+    if (request.type === 'feedback.remove') {
+      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
+      return backendService
+        .requireBackend()
+        .feedback.remove(request.payload.sessionId, request.payload.messageId, signal)
     }
     if (request.type === 'models.list')
       return publicList(await modelUseCases.listModels(request.payload.providerId, signal))
@@ -902,6 +1097,18 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
       return publicValue(await modelUseCases.listSessionModels(request.payload.sessionId, signal))
     }
+    if (request.type === 'models.discover')
+      return publicList(
+        await modelUseCases.discoverModels(
+          {
+            settingsNamespace: request.payload.settingsNamespace,
+            ...(request.payload.providerId === undefined ? {} : { providerId: request.payload.providerId }),
+            ...(request.payload.baseUrl === undefined ? {} : { baseUrl: request.payload.baseUrl }),
+            ...(request.payload.api === undefined ? {} : { api: request.payload.api }),
+          },
+          signal,
+        ),
+      )
     if (request.type === 'providers.list') return publicList(await modelUseCases.listProviders(signal))
     if (request.type === 'provider.secret.configure') {
       const backend = backendService.requireBackend()
@@ -939,10 +1146,12 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       return interactionUseCases.cancelQuestion(request.payload.questionId, signal)
     }
     if (request.type === 'settings.read') return publicValue(await settingsUseCases.read(signal))
+    if (request.type === 'settings.openDocument') return settingsUseCases.openDocument(signal)
     if (request.type === 'extensionSettings.read')
       return publicValue(publicExtensionSettings(configuration.read()))
     if (request.type === 'settings.update')
       return settingsUseCases.update(request.payload.path, request.payload.value, signal)
+    if (request.type === 'settings.unset') return settingsUseCases.unset(request.payload.path, signal)
     if (request.type === 'settings.replace')
       return backendService.requireBackend().settings.replace(request.payload.values, signal)
     if (request.type === 'goal.list') {
@@ -1013,7 +1222,10 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     }
     if (request.type === 'command.execute') {
       await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
-      return advancedUseCases.execute('command.execute', request.payload, signal)
+      const attachments = attachmentTokens.resolve(request.payload.attachments ?? [])
+      return publicValue(
+        await advancedUseCases.execute('command.execute', { ...request.payload, attachments }, signal),
+      )
     }
     if (request.type === 'plugin.inventory')
       return publicValue(await advancedUseCases.pluginInventory(signal))
@@ -1125,9 +1337,14 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
           )
         }),
       )
+      // Check once per Extension Host activation. This is independent of
+      // connection startup and only probes the runtime/npm registry; the
+      // Webview receives the cached, safe version snapshot when it opens.
+      void runtimeUpdater.checkForUpdates(false, runtimeUpdateLifecycle.signal).catch(() => undefined)
       return Promise.resolve()
     },
     dispose: async () => {
+      runtimeUpdateLifecycle.abort()
       router.cancelAll()
       stateSubscription()
       provider.dispose()
@@ -1144,6 +1361,26 @@ function platform(): 'windows' | 'linux' | 'macos' {
   return process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'macos' : 'linux'
 }
 
+function endpointFromServerUrl(serverUrl: string | undefined): BackendEndpoint | undefined {
+  if (serverUrl === undefined) return undefined
+  try {
+    const parsed = new URL(serverUrl)
+    const host = parsed.hostname
+    const port = Number(parsed.port)
+    if (
+      parsed.protocol !== 'http:' ||
+      (host !== '127.0.0.1' && host !== 'localhost') ||
+      !Number.isInteger(port) ||
+      port < 1 ||
+      port > 65_535
+    )
+      return undefined
+    return { host, port, baseUrl: `http://${host}:${port}` }
+  } catch {
+    return undefined
+  }
+}
+
 function runtimeEnvironment(overrides?: NodeJS.ProcessEnv, executable?: string): NodeJS.ProcessEnv {
   const environment = { ...process.env, ...(overrides ?? {}) }
   const entries = runtimePathEntries(platform(), environment)
@@ -1154,6 +1391,19 @@ function runtimeEnvironment(overrides?: NodeJS.ProcessEnv, executable?: string):
     .filter((entry): entry is string => entry !== undefined)
     .join(path.delimiter)
   return environment
+}
+
+function windowsShimOptions(
+  os: 'windows' | 'linux' | 'macos',
+  environment: NodeJS.ProcessEnv,
+): {
+  readonly pathEntries: readonly string[]
+  readonly processExecutable: string
+} {
+  return {
+    pathEntries: runtimePathEntries(os, environment),
+    processExecutable: process.execPath,
+  }
 }
 
 function readStoredTemporaryWorkspace(value: unknown): StoredTemporaryWorkspace | undefined {
@@ -1214,6 +1464,25 @@ function sameWorkspacePath(left: string, right: string): boolean {
   return normalize(left) === normalize(right)
 }
 
+function createExportFileSystem(api: typeof vscode): ExportFileSystem {
+  const uri = (filePath: string): vscode.Uri => api.Uri.file(filePath)
+  return {
+    stat: async (filePath) => {
+      const info = await api.workspace.fs.stat(uri(filePath))
+      return { isDirectory: () => (info.type & api.FileType.Directory) !== 0 }
+    },
+    rename: async (source, destination, overwrite = false) => {
+      await api.workspace.fs.rename(uri(source), uri(destination), { overwrite })
+    },
+    unlink: async (filePath) => {
+      await api.workspace.fs.delete(uri(filePath), { recursive: false, useTrash: false })
+    },
+    writeFile: async (filePath, data) => {
+      await api.workspace.fs.writeFile(uri(filePath), data)
+    },
+  }
+}
+
 function sessionOpenFailure(stage: string, error: unknown): AppError {
   const source = error instanceof AppError ? error : undefined
   return new AppError({
@@ -1259,8 +1528,13 @@ function spawnManagedChild(
   cwd?: string,
   environment?: NodeJS.ProcessEnv,
 ): SpawnedChild {
-  const resolved = resolveWindowsShim(executable, platform(), readTextFile)
   const childEnvironment = { ...process.env, ...(environment ?? {}) }
+  const resolved = resolveWindowsShim(
+    executable,
+    platform(),
+    readTextFile,
+    windowsShimOptions(platform(), childEnvironment),
+  )
   const resolvedExecutable = resolved?.executable ?? executable
   const executableDirectory = path.dirname(resolvedExecutable)
   const prefix = executableDirectory === '.' ? undefined : executableDirectory
@@ -1302,7 +1576,14 @@ function stateSubscriptionDisposable(unsubscribe: () => void): vscode.Disposable
 function publicState(state: BackendState): unknown {
   return {
     kind: state.kind,
-    ...(state.kind === 'connected' ? { dshVersion: state.backend.capabilities.dshVersion } : {}),
+    ...(state.kind === 'connected'
+      ? {
+          dshVersion: state.backend.capabilities.dshVersion,
+          ...(state.backend.capabilities.compatibilityWarning === undefined
+            ? {}
+            : { compatibilityWarning: state.backend.capabilities.compatibilityWarning }),
+        }
+      : {}),
     ...(state.kind === 'failed'
       ? { message: safeStateMessage(state.message), retryable: state.retryable }
       : {}),
@@ -1310,9 +1591,24 @@ function publicState(state: BackendState): unknown {
       ? { message: 'The configured DSH port is unavailable.', retryable: state.retryable, port: state.port }
       : {}),
     ...(state.kind === 'runtime-missing'
-      ? { searchedLocations: state.searchedLocations.map((location) => path.basename(location)) }
+      ? { searchedLocations: publicRuntimeLocations(state.searchedLocations) }
       : {}),
   }
+}
+
+function publicRuntimeLocations(locations: readonly string[]): readonly string[] {
+  const seen = new Set<string>()
+  const result: string[] = []
+  for (const location of locations) {
+    const normalized = path.normalize(location)
+    const name = path.basename(normalized)
+    const parent = path.basename(path.dirname(normalized))
+    const label = parent === '' || parent === '.' ? name : `${parent}/${name}`
+    if (label === '' || seen.has(label)) continue
+    seen.add(label)
+    result.push(label)
+  }
+  return result
 }
 
 interface OpenFileCandidate {
@@ -1433,8 +1729,13 @@ function prepareAttachment(name: string, bytes: Buffer, hintMimeType?: string): 
 }
 
 function safeStateMessage(message: string): string {
-  void message
-  return 'The DSH connection operation failed.'
+  const compact = message.replace(/\s+/gu, ' ').trim()
+  if (compact === '') return 'The DSH connection operation failed.'
+  const redacted = compact.replace(
+    /\b(?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|authorization|password|secret|private[_ -]?key|token)\b\s*[:=]\s*[^\s,;]+/giu,
+    (match) => match.replace(/[:=].*$/u, ': [redacted]'),
+  )
+  return redacted.slice(0, 320)
 }
 
 function publicList(value: readonly unknown[]): readonly unknown[] {
@@ -1446,7 +1747,10 @@ function publicValue(value: unknown): unknown {
 
 function publicExtensionSettings(settings: ExtensionSettings): ExtensionSettingsSummary {
   return {
-    connection: { mode: settings.connection.mode },
+    connection: {
+      mode: settings.connection.mode,
+      customEndpointConfigured: settings.connection.serverUrl !== undefined,
+    },
     runtime: {
       customExecutableConfigured: settings.runtime.executablePath !== undefined,
       autoStart: settings.runtime.autoStart,
@@ -1489,12 +1793,15 @@ function requiresTrustedWorkspace(type: WebviewRequest['type']): boolean {
     case 'workspace.create':
     case 'workspace.rename':
     case 'workspace.remove':
+    case 'workspace.move':
+    case 'session.move':
     case 'session.create':
     case 'session.rename':
     case 'session.remove':
     case 'session.fork':
     case 'session.archive':
     case 'session.open':
+    case 'session.history':
     case 'session.sendPrompt':
     case 'session.enqueuePrompt':
     case 'session.queue.list':
@@ -1509,13 +1816,20 @@ function requiresTrustedWorkspace(type: WebviewRequest['type']): boolean {
     case 'attachment.open.list':
     case 'attachment.open.attach':
     case 'attachment.read':
+    case 'reference.list':
+    case 'feedback.list':
+    case 'feedback.toggle':
+    case 'feedback.note':
+    case 'feedback.remove':
     case 'provider.secret.configure':
     case 'provider.secret.remove':
     case 'interaction.permission.respond':
     case 'interaction.question.respond':
     case 'interaction.question.cancel':
     case 'settings.update':
+    case 'settings.unset':
     case 'settings.replace':
+    case 'settings.openDocument':
     case 'goal.create':
     case 'goal.list':
     case 'goal.update':
@@ -1649,10 +1963,15 @@ const BINARY_ATTACHMENT_EXTENSIONS = new Set([
 
 async function pathExists(filePath: string): Promise<boolean> {
   try {
-    await stat(filePath)
+    await vscode.workspace.fs.stat(vscode.Uri.file(filePath))
     return true
   } catch (error) {
-    if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT')
+    if (
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error &&
+      (error.code === 'ENOENT' || error.code === 'FileNotFound')
+    )
       return false
     throw new AppError({
       code: 'EXPORT_FAILED',

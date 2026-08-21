@@ -70,6 +70,42 @@ export interface CompactionView {
   readonly estimatedTokens?: number
 }
 
+export type TeamMemberPhase = 'provisioning' | 'active' | 'failed'
+export type TeamTaskStatus = 'pending' | 'in_progress' | 'completed' | 'deleted'
+
+/** Safe, read-only projection of the experimental rc.8 Agent Teams events. */
+export type TeamActivityView =
+  | {
+      readonly kind: 'member'
+      readonly id: string
+      readonly teamId: string
+      readonly memberId: string
+      readonly name: string
+      readonly phase: TeamMemberPhase
+      readonly error?: string
+    }
+  | {
+      readonly kind: 'task'
+      readonly id: string
+      readonly teamId: string
+      readonly taskId: string
+      readonly subject: string
+      readonly status: TeamTaskStatus
+      readonly ownerId?: string
+      readonly blockedByCount: number
+      readonly writeScopeCount: number
+    }
+  | {
+      readonly kind: 'message.queued' | 'message.delivered'
+      readonly id: string
+      readonly teamId: string
+      readonly messageId: string
+      readonly senderName?: string
+      readonly targetId: string
+      readonly delivery?: 'quiet' | 'wakeup'
+      readonly content?: string
+    }
+
 /**
  * Structured model-retry signal. The official Web UI aggregates consecutive
  * retries into one silent status row with a countdown instead of surfacing
@@ -90,6 +126,18 @@ export interface ModelRetrySignal {
 
 /** Safe, presentation-only metadata for a file represented in a user turn. */
 export type MessageAttachment = Pick<PromptAttachment, 'name' | 'mimeType'>
+
+/** Durable image reference used by the upstream conversation image surface. */
+export type MessageImageMediaType = 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'
+
+export interface MessageImageReference {
+  readonly attachmentId: string
+  readonly mediaType: MessageImageMediaType
+  readonly bytes: number
+  readonly width: number
+  readonly height: number
+  readonly name?: string
+}
 
 /** Terminal boundary reported by the durable DSH turn lifecycle. */
 export type TurnEndReasonKind =
@@ -128,6 +176,7 @@ type BackendEventPayload =
       readonly messageId: string
       readonly markdown: string
       readonly attachments?: readonly MessageAttachment[]
+      readonly images?: readonly MessageImageReference[]
       readonly rpcId?: string
       readonly source?: string
       readonly sourceForm?: string
@@ -160,11 +209,14 @@ type BackendEventPayload =
       readonly markdown?: string
       readonly reasoning?: string
       readonly modelLabel?: string
+      readonly images?: readonly MessageImageReference[]
       readonly usage?: TokenUsage
       readonly turn?: number
       readonly step?: number
       /** Epoch milliseconds from the durable DSH event. */
       readonly time?: number
+      /** rc.8 finalizes a delivered prefix when cancellation interrupts a step. */
+      readonly interrupted?: true
     }
   | {
       /** DSH `step/start`; opens the assistant timing boundary. */
@@ -231,6 +283,7 @@ type BackendEventPayload =
       readonly runId: string
       readonly stopReason: 'completed' | 'cancelled' | 'error'
     }
+  | { readonly type: 'team.updated'; readonly sessionId: string; readonly activity: TeamActivityView }
   | { readonly type: 'session.subscribed'; readonly sessionId: string; readonly lastSequence: number }
   | {
       readonly type: 'session.projection'
@@ -255,6 +308,13 @@ type BackendEventPayload =
       readonly sessionId?: string
       readonly level: 'info' | 'warning' | 'error'
       readonly text: string
+      /** Structured `/command` input from a DSH command/run lifecycle. */
+      readonly commandInput?: string
+      /** Structured command name; keeps control-plane filtering out of text parsing. */
+      readonly commandName?: string
+      /** DSH command lifecycle identity shared by command/run and command/done. */
+      readonly commandId?: string
+      readonly commandPhase?: 'run' | 'done'
     }
   | {
       readonly type: 'unknown'

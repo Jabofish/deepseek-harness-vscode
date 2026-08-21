@@ -4,9 +4,11 @@ import type {
   DynamicCommand,
   AgentPresetLocation,
   AgentPresetRoster,
+  CommandExecutionResult,
   GoalView,
   JobView,
   PluginInventorySnapshot,
+  PromptAttachment,
   SkillDescriptor,
   SubagentCatalog,
   SubagentHistoryPage,
@@ -93,32 +95,36 @@ export class AdvancedAgentUseCases {
     return this.backendService.requireBackend().plugins.inventory(signal)
   }
 
-  public execute(
+  public async execute(
     capability: 'subagent.send' | 'subagent.interrupt' | 'skill.execute' | 'command.execute',
     input: Readonly<Record<string, unknown>>,
     signal?: AbortSignal,
-  ): Promise<void> {
+  ): Promise<CommandExecutionResult | undefined> {
     const backend = this.backendService.requireBackend()
     switch (capability) {
       case 'subagent.send':
-        return backend.subagents.send(
+        await backend.subagents.send(
           requiredString(input, 'sessionId'),
           requiredString(input, 'message'),
           signal,
         )
+        return undefined
       case 'subagent.interrupt':
-        return backend.subagents.interrupt(requiredString(input, 'sessionId'), signal)
+        await backend.subagents.interrupt(requiredString(input, 'sessionId'), signal)
+        return undefined
       case 'skill.execute':
-        return backend.skills.execute(
+        await backend.skills.execute(
           requiredString(input, 'sessionId'),
           requiredString(input, 'skillId'),
           typeof input.input === 'string' ? input.input : '',
           signal,
         )
+        return undefined
       case 'command.execute':
         return backend.commands.execute(
           requiredString(input, 'sessionId'),
           requiredString(input, 'command'),
+          promptAttachments(input.attachments),
           signal,
         )
     }
@@ -137,4 +143,36 @@ function requiredString(input: Readonly<Record<string, unknown>>, key: string): 
   const value = input[key]
   if (typeof value !== 'string' || value.trim() === '') throw new Error(`${key} is required`)
   return value
+}
+
+function promptAttachments(value: unknown): readonly PromptAttachment[] {
+  if (value === undefined) return []
+  if (!Array.isArray(value)) throw malformedAttachment(0)
+  return value.map((entry, index) => {
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) throw malformedAttachment(index)
+    const record = entry as Record<string, unknown>
+    if (
+      typeof record.uri !== 'string' ||
+      record.uri.trim() === '' ||
+      typeof record.name !== 'string' ||
+      record.name.trim() === '' ||
+      (record.mimeType !== undefined &&
+        (typeof record.mimeType !== 'string' || record.mimeType.trim() === ''))
+    )
+      throw malformedAttachment(index)
+    return {
+      uri: record.uri,
+      name: record.name,
+      ...(typeof record.mimeType === 'string' ? { mimeType: record.mimeType } : {}),
+    }
+  })
+}
+
+function malformedAttachment(index: number): AppError {
+  return new AppError({
+    code: 'INVALID_CONFIGURATION',
+    message: 'The command contains a malformed attachment.',
+    retryable: false,
+    context: { attachmentIndex: index },
+  })
 }

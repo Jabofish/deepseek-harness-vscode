@@ -96,6 +96,55 @@ describe('Rc6SessionRepository prompt delivery modes', () => {
     ).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
   })
 
+  it('does not send a duplicate prompt while an accepted request is awaiting a late queue identity', async () => {
+    vi.useFakeTimers()
+    try {
+      const calls: { method: string; params: unknown }[] = []
+      const transport: DshTransport = {
+        request: <TResponse>(method: string, params: unknown) => {
+          calls.push({ method, params })
+          return Promise.resolve({
+            rpcId: 'rpc-1',
+            result: { ok: true, value: { accepted: true } },
+          } as TResponse)
+        },
+        remoteRequest: <TResponse>() => Promise.reject<TResponse>(new Error('unexpected Remote')),
+        openEventStream: async function* () {
+          /* fixture stream */
+        },
+        close: () => Promise.resolve(),
+      }
+      const repository = new Rc6SessionRepository(transport)
+      const input = { sessionId: 'session-1', text: 'same text', attachments: [] }
+      const first = repository.enqueuePrompt(input, 'queue')
+      const firstRejection = expect(first).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
+      await vi.advanceTimersByTimeAsync(2_000)
+      await firstRejection
+
+      const retry = repository.enqueuePrompt(input, 'queue')
+      expect(calls.filter((call) => call.method === 'session.prompt')).toHaveLength(1)
+      repository.remember({
+        type: 'queue.updated',
+        sessionId: 'session-1',
+        items: [
+          {
+            id: 'queued-1',
+            sessionId: 'session-1',
+            text: 'same text',
+            attachments: [],
+            mode: 'queue',
+            createdAt: new Date().toISOString(),
+            rpcId: 'rpc-1',
+          },
+        ],
+      })
+      await expect(retry).resolves.toMatchObject({ id: 'queued-1' })
+      expect(calls.filter((call) => call.method === 'session.prompt')).toHaveLength(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('preserves a sanitized image name in the pinned prompt content part', async () => {
     const calls: { method: string; params: unknown }[] = []
     const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).toString('base64')
@@ -186,5 +235,177 @@ describe('Rc6SessionRepository historical attachments', () => {
         'attachment-1',
       ),
     ).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
+  })
+})
+
+describe('Rc6SessionRepository configuration safety', () => {
+  function configurationTransport(failingCommand?: string): {
+    readonly transport: DshTransport
+    readonly calls: { method: string; params: unknown }[]
+  } {
+    const calls: { method: string; params: unknown }[] = []
+    const transport: DshTransport = {
+      request: async <TResponse>(method: string, params: unknown) => {
+        await Promise.resolve()
+        calls.push({ method, params })
+        if (method === 'session.list')
+          return {
+            result: {
+              ok: true,
+              value: {
+                items: [
+                  {
+                    sessionId: 'session-1',
+                    updatedAt: 1_000,
+                    running: false,
+                    blank: false,
+                    agentPreset: 'standard',
+                  },
+                ],
+              },
+            },
+          } as TResponse
+        if (method === 'session.history')
+          return {
+            result: {
+              ok: true,
+              value: {
+                events: [
+                  {
+                    event: {
+                      type: 'request/header',
+                      seq: 1,
+                      time: 1_000,
+                      data: {
+                        header: {
+                          config: { provider: 'provider-old', model: 'model-old', reasoningEffort: 'low' },
+                        },
+                      },
+                    },
+                  },
+                ],
+                hasMore: false,
+                projections: {
+                  asOfSeq: 1,
+                  values: {
+                    permissions: { options: [{ value: 'workspace-write' }, { value: 'read-only' }] },
+                  },
+                },
+              },
+            },
+          } as TResponse
+        if (method === 'session.selectModel')
+          return {
+            result: {
+              ok: true,
+              value: { selected: { provider: 'provider-new', model: 'model-new', reasoningEffort: 'high' } },
+            },
+          } as TResponse
+        throw new Error(`unexpected request ${method}`)
+      },
+      remoteRequest: async <TResponse>(_endpoint: string, params: unknown) => {
+        await Promise.resolve()
+        calls.push({ method: 'commands/execute', params })
+        const line = (params as { readonly line?: unknown }).line
+        if (line === failingCommand)
+          return {
+            ok: false,
+            error: { code: 'command-error', message: 'command rejected', details: {} },
+          } as TResponse
+        return { ok: true, value: { result: { kind: 'success' } } } as TResponse
+      },
+      openEventStream: async function* () {
+        /* fixture stream */
+      },
+      close: () => Promise.resolve(),
+    }
+    return { transport, calls }
+  }
+
+  it('does not pretend to support archived filtering without workspace state', async () => {
+    const { transport } = configurationTransport()
+    await expect(new Rc6SessionRepository(transport).list({ archived: true })).rejects.toMatchObject({
+      code: 'CAPABILITY_UNAVAILABLE',
+    })
+  })
+
+  it('rejects an unadvertised permission before mutating the model', async () => {
+    const { transport, calls } = configurationTransport()
+    const repository = new Rc6SessionRepository(transport)
+
+    await expect(
+      repository.setConfiguration('session-1', {
+        preset: 'standard',
+        toolMode: 'native',
+        permissionPreset: 'custom',
+        planMode: false,
+        model: { providerId: 'provider-new', modelId: 'model-new', reasoningLevel: 'high' },
+      }),
+    ).rejects.toMatchObject({ code: 'INVALID_CONFIGURATION' })
+    expect(calls.some((call) => call.method === 'session.selectModel')).toBe(false)
+  })
+
+  it('rolls back a permission change when a later configuration command fails', async () => {
+    const { transport, calls } = configurationTransport('/plan')
+    const repository = new Rc6SessionRepository(transport)
+
+    await expect(
+      repository.setConfiguration('session-1', {
+        preset: 'standard',
+        toolMode: 'native',
+        permissionPreset: 'read-only',
+        planMode: true,
+        model: { providerId: 'provider-new', modelId: 'model-new', reasoningLevel: 'high' },
+      }),
+    ).rejects.toMatchObject({ code: 'INVALID_CONFIGURATION' })
+    expect(
+      calls
+        .filter((call) => call.method === 'commands/execute')
+        .map((call) => (call.params as { readonly line: string }).line),
+    ).toEqual(['/permission read-only', '/plan', '/permission workspace-write'])
+    expect(calls.some((call) => call.method === 'session.selectModel')).toBe(false)
+  })
+})
+
+describe('Rc6SessionRepository history windows', () => {
+  it('uses the official tail-page and beforeSeq contract without reading the whole log', async () => {
+    const calls: { method: string; params: unknown }[] = []
+    const transport: DshTransport = {
+      request: <TResponse>(method: string, params: unknown) => {
+        calls.push({ method, params })
+        return Promise.resolve({
+          result: {
+            ok: true,
+            value: {
+              events: [
+                {
+                  event: { type: 'turn/start', seq: 14, time: 1_000 },
+                },
+                {
+                  event: { type: 'assistant/message', seq: 20, time: 2_000, data: { markdown: 'older' } },
+                },
+              ],
+              hasMore: true,
+            },
+          },
+        } as TResponse)
+      },
+      remoteRequest: <TResponse>() => Promise.reject<TResponse>(new Error('unexpected Remote')),
+      openEventStream: async function* () {
+        /* fixture stream */
+      },
+      close: () => Promise.resolve(),
+    }
+
+    const page = await new Rc6SessionRepository(transport).history('session-1', 42)
+
+    expect(calls).toEqual([
+      {
+        method: 'session.history',
+        params: { sessionId: 'session-1', maxMessages: 200, beforeSeq: 42 },
+      },
+    ])
+    expect(page).toMatchObject({ hasMore: true, beforeSequence: 14 })
+    expect(page.events.map((entry) => entry.sequence)).toEqual([14, 20])
   })
 })

@@ -153,4 +153,54 @@ describe('Rc6ModelRepository provider configuration', () => {
 
     await expect(repository.listProviders()).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
   })
+
+  it('discovers models through the pinned llm route without requiring a Webview secret', async () => {
+    const calls: Call[] = []
+    const repository = new Rc6ModelRepository(
+      transportFor(
+        {
+          'llm.discoverModels': {
+            models: [
+              { id: 'gateway-chat', name: 'Gateway Chat', contextWindow: 128_000, maxTokens: 8_000 },
+              { id: 'gateway-reasoner' },
+            ],
+          },
+        },
+        calls,
+      ),
+    )
+
+    await expect(
+      repository.discoverModels({
+        settingsNamespace: 'llm-pi-ai',
+        providerId: 'gateway',
+        baseUrl: 'http://127.0.0.1:9000/v1',
+        api: 'openai-completions',
+      }),
+    ).resolves.toEqual([
+      { id: 'gateway-chat', label: 'Gateway Chat', contextWindow: 128_000, maxTokens: 8_000 },
+      { id: 'gateway-reasoner', label: 'gateway-reasoner' },
+    ])
+    expect(calls).toEqual([
+      {
+        method: 'llm.discoverModels',
+        params: {
+          settingsNs: 'llm-pi-ai',
+          provider: 'gateway',
+          baseURL: 'http://127.0.0.1:9000/v1',
+          api: 'openai-completions',
+        },
+      },
+    ])
+  })
+
+  it('rejects malformed discovered model rows', async () => {
+    const repository = new Rc6ModelRepository(
+      transportFor({ 'llm.discoverModels': { models: [{ id: 'broken', contextWindow: 0 }] } }),
+    )
+
+    await expect(repository.discoverModels({ settingsNamespace: 'llm-pi-ai' })).rejects.toMatchObject({
+      code: 'PROTOCOL_ERROR',
+    })
+  })
 })

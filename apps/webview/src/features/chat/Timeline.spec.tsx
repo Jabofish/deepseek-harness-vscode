@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { TimelineNode } from '@dsh-vscode/timeline'
 import { Timeline } from './Timeline.js'
@@ -67,6 +67,44 @@ describe('Timeline', () => {
     act(() => {
       vi.runAllTimers()
     })
+  })
+
+  it('offers the bounded older-history page and invokes the host-backed loader', () => {
+    const loadOlder = vi.fn(() => Promise.resolve())
+    render(
+      <Timeline
+        sessionId="session-1"
+        nodes={[{ kind: 'user-message', id: 'user-1', markdown: 'latest' }]}
+        streaming={false}
+        hasMoreHistory
+        onLoadOlderHistory={loadOlder}
+      />,
+    )
+
+    const button = screen.getByRole('button', { name: 'Load earlier' })
+    fireEvent.click(button)
+
+    expect(loadOlder).toHaveBeenCalledTimes(1)
+  })
+
+  it('loads an older page when the user scrolls to the top', () => {
+    const loadOlder = vi.fn(() => Promise.resolve())
+    const { container } = render(
+      <Timeline
+        sessionId="session-1"
+        nodes={[{ kind: 'user-message', id: 'user-1', markdown: 'latest' }]}
+        streaming={false}
+        hasMoreHistory
+        onLoadOlderHistory={loadOlder}
+      />,
+    )
+    const timeline = container.querySelector<HTMLDivElement>('.dsh-timeline')!
+    Object.defineProperty(timeline, 'scrollHeight', { configurable: true, value: 1_000 })
+    Object.defineProperty(timeline, 'clientHeight', { configurable: true, value: 300 })
+    timeline.scrollTop = 0
+    fireEvent.scroll(timeline)
+
+    expect(loadOlder).toHaveBeenCalledTimes(1)
   })
 
   it('does not force the latest item after a resize when the user scrolled upward', () => {
@@ -214,6 +252,176 @@ describe('Timeline', () => {
     expect(screen.getByRole('button', { name: 'Expand Read details' })).toBeDefined()
     fireEvent.click(screen.getByRole('button', { name: 'Branch into a new conversation' }))
     expect(branch).toHaveBeenCalledWith(7)
+  })
+
+  it('sends feedback for the durable message id after collapsing a tool turn', () => {
+    const onFeedback = vi.fn()
+    render(
+      <Timeline
+        sessionId="session-1"
+        nodes={[
+          {
+            kind: 'assistant-message',
+            id: 'assistant-message-real-1',
+            markdown: 'Before the tool.',
+            streaming: false,
+            turn: 1,
+            step: 0,
+            turnCompleted: true,
+          },
+          {
+            kind: 'tool',
+            id: 'tool:call-1',
+            tool: {
+              id: 'call-1',
+              turn: 1,
+              step: 0,
+              name: 'read',
+              category: 'filesystem',
+              title: 'Read',
+              status: 'completed',
+              metadata: {},
+            },
+          },
+        ]}
+        streaming={false}
+        onFeedback={onFeedback}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Good response' }))
+    expect(onFeedback).toHaveBeenCalledWith('assistant-message-real-1', 'positive')
+  })
+
+  it('renders a specialized skill row and reveals only its visible result text', () => {
+    render(
+      <Timeline
+        sessionId="session-1"
+        nodes={[
+          {
+            kind: 'tool',
+            id: 'tool:skill-1',
+            tool: {
+              id: 'call-skill-1',
+              name: 'skill',
+              category: 'tool',
+              title: 'Tool',
+              status: 'completed',
+              inputSummary: JSON.stringify({ name: 'editing-cordis-compositions' }),
+              outputSummary: JSON.stringify({
+                source: { kind: 'tool', callId: 'call-secret' },
+                content: [
+                  {
+                    type: 'tool-result',
+                    toolCallId: 'call-secret',
+                    content: [
+                      { type: 'text', text: '<skill_content>Use the editing workflow.</skill_content>' },
+                    ],
+                  },
+                ],
+              }),
+              metadata: {},
+            },
+          },
+        ]}
+        streaming={false}
+      />,
+    )
+
+    const row = document.querySelector<HTMLElement>('[data-tool="skill"]')
+    expect(row?.getAttribute('data-variant')).toBe('skill')
+    expect(screen.getByText('Skill')).toBeDefined()
+    expect(screen.getByText('editing-cordis-compositions')).toBeDefined()
+    expect(screen.queryByText('<skill_content>Use the editing workflow.</skill_content>')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Skill details' }))
+
+    expect(screen.getByText('<skill_content>Use the editing workflow.</skill_content>')).toBeDefined()
+    expect(document.body.textContent).not.toContain('call-secret')
+  })
+
+  it('renders a real-shaped read card and delegates file opening to the host', () => {
+    const openLink = vi.fn()
+    render(
+      <Timeline
+        sessionId="session-1"
+        nodes={[
+          {
+            kind: 'tool',
+            id: 'tool:read-1',
+            tool: {
+              id: 'call-read-1',
+              name: 'read',
+              category: 'read',
+              title: 'Read feature.ts',
+              status: 'completed',
+              presentation: {
+                phase: 'result',
+                card: 'read',
+                path: 'src/feature.ts',
+                offset: 11,
+                lines: [{ number: 11, text: 'export const answer = 42' }],
+                totalLines: 42,
+                lang: 'ts',
+              },
+              metadata: {},
+            },
+          },
+        ]}
+        streaming={false}
+        onOpenLink={openLink}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Read details' }))
+    expect(screen.getByText('11: export const answer = 42')).toBeDefined()
+    fireEvent.click(screen.getByTitle('src/feature.ts'))
+    expect(openLink).toHaveBeenCalledWith('src/feature.ts')
+  })
+
+  it('keeps a Host file-open refusal in a retryable modal', async () => {
+    const openLink = vi
+      .fn<(_: string) => Promise<void>>()
+      .mockRejectedValueOnce(new Error('The editor refused this path.'))
+      .mockResolvedValueOnce(undefined)
+    render(
+      <Timeline
+        sessionId="session-1"
+        nodes={[
+          {
+            kind: 'tool',
+            id: 'tool:read-open-error',
+            tool: {
+              id: 'call-read-open-error',
+              name: 'read',
+              category: 'read',
+              title: 'Read feature.ts',
+              status: 'completed',
+              presentation: {
+                phase: 'result',
+                card: 'read',
+                path: 'src/feature.ts',
+                offset: 11,
+                lines: [{ number: 11, text: 'export const answer = 42' }],
+                totalLines: 42,
+                lang: 'ts',
+              },
+              metadata: {},
+            },
+          },
+        ]}
+        streaming={false}
+        onOpenLink={openLink}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Read details' }))
+    fireEvent.click(screen.getByTitle('src/feature.ts'))
+    await waitFor(() => expect(screen.getByRole('dialog')).toBeDefined())
+    expect(screen.getByText('The editor refused this path.')).toBeDefined()
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    await waitFor(() => expect(openLink).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
   })
 
   it('shows a compact activity phrase instead of message actions while an answer is streaming', () => {

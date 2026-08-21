@@ -1,4 +1,4 @@
-import { AppError, type GoalRepository, type GoalView } from '@dsh-vscode/domain'
+import { AppError, type BackendEvent, type GoalRepository, type GoalView } from '@dsh-vscode/domain'
 
 import type { DshTransport } from '../contracts.js'
 import { callRpc, unavailable } from '../versions/rc6/rpc.js'
@@ -9,15 +9,24 @@ export class Rc6GoalRepository implements GoalRepository {
     string,
     { readonly sessionId: string; readonly id: string; revision: number }
   >()
+  private readonly goalCache = new Map<string, readonly GoalView[]>()
   public constructor(private readonly transport: DshTransport) {}
+
+  public remember(event: BackendEvent): void {
+    if (event.type === 'goal.updated') this.goalCache.set(event.sessionId, event.goals)
+    else if (event.type === 'session.subscribed' || event.type === 'session.removed')
+      this.goalCache.delete(event.sessionId)
+  }
 
   public sessionForGoal(goalId: string): string | undefined {
     return this.refs.get(goalId)?.sessionId
   }
 
   public async list(sessionId: string, signal?: AbortSignal): Promise<readonly GoalView[]> {
+    const cached = this.goalCache.get(sessionId)
+    if (cached !== undefined) return cached
     // rc.6 deliberately exposes goal state through the session projection and
-    // mux events; recover the latest durable value from the history tail.
+    // mux events; use history only until the live stream has supplied a cache.
     let beforeSeq: number | undefined
     let latest: readonly GoalView[] | undefined
     for (let page = 0; page < 100; page += 1) {
@@ -39,7 +48,9 @@ export class Rc6GoalRepository implements GoalRepository {
       if (oldest === undefined || (beforeSeq !== undefined && oldest >= beforeSeq)) break
       beforeSeq = oldest
     }
-    return latest ?? []
+    const goals = latest ?? []
+    this.goalCache.set(sessionId, goals)
+    return goals
   }
 
   public async create(sessionId: string, title: string, signal?: AbortSignal): Promise<GoalView> {
@@ -48,7 +59,10 @@ export class Rc6GoalRepository implements GoalRepository {
       'create',
     )
     this.refs.set(value.id, { sessionId, id: value.id, revision: value.revision })
-    return { id: value.id, title, status: 'in-progress' }
+    const goal = { id: value.id, title, status: 'in-progress' as const }
+    const cached = this.goalCache.get(sessionId)
+    if (cached !== undefined) this.goalCache.set(sessionId, [...cached, goal])
+    return goal
   }
 
   public async update(
@@ -76,6 +90,7 @@ export class Rc6GoalRepository implements GoalRepository {
       )
       assertSameGoalRef(ref, value, 'edit')
       ref.revision = value.revision
+      this.patchCachedGoal(ref.sessionId, ref.id, { title: update.title })
     }
     if (update.status === 'completed') {
       const value = assertGoalRefReceipt(
@@ -89,6 +104,7 @@ export class Rc6GoalRepository implements GoalRepository {
       )
       assertSameGoalRef(ref, value, 'complete')
       ref.revision = value.revision
+      this.patchCachedGoal(ref.sessionId, ref.id, { status: 'completed' })
     } else if (update.status === 'in-progress') {
       const value = assertGoalRefReceipt(
         await callRpc<unknown>(
@@ -101,6 +117,7 @@ export class Rc6GoalRepository implements GoalRepository {
       )
       assertSameGoalRef(ref, value, 'resume')
       ref.revision = value.revision
+      this.patchCachedGoal(ref.sessionId, ref.id, { status: 'in-progress' })
     } else if (update.status === 'pending' || update.status === 'blocked') {
       const value = assertGoalRefReceipt(
         await callRpc<unknown>(
@@ -113,6 +130,7 @@ export class Rc6GoalRepository implements GoalRepository {
       )
       assertSameGoalRef(ref, value, 'pause')
       ref.revision = value.revision
+      this.patchCachedGoal(ref.sessionId, ref.id, { status: update.status })
     }
   }
 
@@ -129,6 +147,21 @@ export class Rc6GoalRepository implements GoalRepository {
     )
     if (value?.cleared !== true) throw malformedGoalResponse('clear receipt')
     this.refs.delete(goalId)
+    const sessionGoals = this.goalCache.get(ref.sessionId)
+    if (sessionGoals !== undefined)
+      this.goalCache.set(
+        ref.sessionId,
+        sessionGoals.filter((goal) => goal.id !== goalId),
+      )
+  }
+
+  private patchCachedGoal(sessionId: string, goalId: string, patch: Partial<GoalView>): void {
+    const goals = this.goalCache.get(sessionId)
+    if (goals === undefined) return
+    this.goalCache.set(
+      sessionId,
+      goals.map((goal) => (goal.id === goalId ? { ...goal, ...patch } : goal)),
+    )
   }
 }
 

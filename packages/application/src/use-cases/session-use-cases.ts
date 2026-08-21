@@ -5,6 +5,7 @@ import type {
   RunningInputMode,
   SessionCreateInput,
   SessionDetail,
+  SessionHistoryPage,
   SessionListQuery,
   SessionPage,
 } from '@dsh-vscode/domain'
@@ -21,6 +22,14 @@ export class SessionUseCases {
   public create(input: SessionCreateInput, signal?: AbortSignal): Promise<SessionDetail> {
     if (input.workspaceId.trim() === '') throw new Error('Workspace is required')
     return this.backendService.requireBackend().sessions.create(input, signal)
+  }
+
+  public history(
+    sessionId: string,
+    beforeSequence?: number,
+    signal?: AbortSignal,
+  ): Promise<SessionHistoryPage> {
+    return this.backendService.requireBackend().sessions.history(sessionId, beforeSequence, signal)
   }
 
   public remove(sessionId: string, signal?: AbortSignal): Promise<void> {

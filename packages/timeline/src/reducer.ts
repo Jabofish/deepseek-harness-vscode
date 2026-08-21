@@ -38,6 +38,7 @@ export function reduceTimeline(state: TimelineState, input: SequencedBackendEven
     return state
   const nodes = [...state.nodes]
   const stepTimings: Record<string, AssistantTiming> = { ...(state.stepTimings ?? {}) }
+  const commandModes: Record<string, 'plan' | 'permission'> = { ...(state.commandModes ?? {}) }
   let activeTurn = state.activeTurn
   const closedTurns = new Set(state.closedTurns ?? [])
   const openTurn = (turn: number): void => {
@@ -75,6 +76,7 @@ export function reduceTimeline(state: TimelineState, input: SequencedBackendEven
             id: event.messageId,
             markdown: event.markdown,
             ...(event.attachments === undefined ? {} : { attachments: event.attachments }),
+            ...(event.images === undefined ? {} : { images: event.images }),
             ...(event.rpcId === undefined ? {} : { rpcId: event.rpcId }),
             ...(event.source === undefined ? {} : { source: event.source }),
             ...(event.sourceForm === undefined ? {} : { sourceForm: event.sourceForm }),
@@ -86,6 +88,7 @@ export function reduceTimeline(state: TimelineState, input: SequencedBackendEven
             id: event.messageId,
             markdown: event.markdown,
             ...(event.attachments === undefined ? {} : { attachments: event.attachments }),
+            ...(event.images === undefined ? {} : { images: event.images }),
             ...(event.rpcId === undefined ? {} : { rpcId: event.rpcId }),
             ...(event.source === undefined ? {} : { source: event.source }),
             ...(event.sourceForm === undefined ? {} : { sourceForm: event.sourceForm }),
@@ -112,7 +115,7 @@ export function reduceTimeline(state: TimelineState, input: SequencedBackendEven
       if (turnClosed && event.turn !== undefined) invalidateTurnTail(nodes, event.turn)
       if (event.delta === '') break
       const timing = noteFirstToken(stepTimings, event.turn, event.step, event.time)
-      const index = conversationNodeIndex(nodes, event.messageId)
+      const index = conversationNodeIndex(nodes, event.messageId, event.turn, event.step)
       if (index < 0) {
         nodes.push({
           kind: 'assistant-message',
@@ -161,7 +164,7 @@ export function reduceTimeline(state: TimelineState, input: SequencedBackendEven
       const turnClosed = event.turn !== undefined && closedTurns.has(event.turn)
       if (turnClosed && event.turn !== undefined) invalidateTurnTail(nodes, event.turn)
       if (event.delta === '') break
-      const index = conversationNodeIndex(nodes, event.messageId)
+      const index = conversationNodeIndex(nodes, event.messageId, event.turn, event.step)
       const timing = timingForEvent(stepTimings, event.turn, event.step)
       if (index < 0) {
         nodes.push({
@@ -201,9 +204,9 @@ export function reduceTimeline(state: TimelineState, input: SequencedBackendEven
       const turnClosed = event.turn !== undefined && closedTurns.has(event.turn)
       if (turnClosed && event.turn !== undefined) invalidateTurnTail(nodes, event.turn)
       const timing = completeTiming(stepTimings, event.turn, event.step, event.time)
-      const index = conversationNodeIndex(nodes, event.messageId)
+      const index = conversationNodeIndex(nodes, event.messageId, event.turn, event.step)
       if (index < 0) {
-        if (event.markdown !== undefined || event.reasoning !== undefined)
+        if (event.markdown !== undefined || event.reasoning !== undefined || event.images !== undefined)
           nodes.push({
             kind: 'assistant-message',
             id: event.messageId,
@@ -216,6 +219,8 @@ export function reduceTimeline(state: TimelineState, input: SequencedBackendEven
             ...(timing === undefined ? {} : { timing }),
             ...(event.modelLabel === undefined ? {} : { modelLabel: event.modelLabel }),
             ...(event.usage === undefined ? {} : { usage: event.usage }),
+            ...(event.images === undefined ? {} : { images: event.images }),
+            ...(event.interrupted === undefined ? {} : { interrupted: event.interrupted }),
             ...(event.reasoning === undefined
               ? {}
               : { reasoning: { markdown: event.reasoning, streaming: false } }),
@@ -227,10 +232,16 @@ export function reduceTimeline(state: TimelineState, input: SequencedBackendEven
       // a step (for example a tool-only step). Keep its visible accumulator,
       // but do not treat it as the end of the surrounding turn: turn/end is
       // the only event that settles activity and branch eligibility.
-      if (event.markdown === undefined && event.reasoning === undefined && event.modelLabel === undefined) {
+      if (
+        event.markdown === undefined &&
+        event.reasoning === undefined &&
+        event.modelLabel === undefined &&
+        event.images === undefined
+      ) {
         if (node?.kind === 'assistant-message')
           nodes[index] = {
             ...node,
+            id: event.messageId,
             streaming: false,
             sequence: input.sequence,
             ...(event.turn === undefined ? {} : { turn: event.turn }),
@@ -238,6 +249,8 @@ export function reduceTimeline(state: TimelineState, input: SequencedBackendEven
             ...(turnClosed ? { turnCompleted: false } : {}),
             ...(node.reasoning === undefined ? {} : { reasoning: { ...node.reasoning, streaming: false } }),
             ...(event.usage === undefined ? {} : { usage: event.usage }),
+            ...(node.images === undefined ? {} : { images: node.images }),
+            ...(event.interrupted === undefined ? {} : { interrupted: event.interrupted }),
             ...(timing === undefined ? {} : { timing }),
           }
         else if (node?.kind === 'reasoning')
@@ -261,6 +274,7 @@ export function reduceTimeline(state: TimelineState, input: SequencedBackendEven
           event.reasoning === undefined ? node.reasoning : { markdown: event.reasoning, streaming: false }
         nodes[index] = {
           ...node,
+          id: event.messageId,
           markdown: event.markdown ?? node.markdown,
           streaming: false,
           sequence: input.sequence,
@@ -269,11 +283,17 @@ export function reduceTimeline(state: TimelineState, input: SequencedBackendEven
           ...(turnClosed ? { turnCompleted: false } : {}),
           ...(timing === undefined ? {} : { timing }),
           ...(event.modelLabel === undefined ? {} : { modelLabel: event.modelLabel }),
+          ...(event.interrupted === undefined ? {} : { interrupted: event.interrupted }),
           ...(event.usage === undefined
             ? node.usage === undefined
               ? {}
               : { usage: node.usage }
             : { usage: event.usage }),
+          ...(event.images === undefined
+            ? node.images === undefined
+              ? {}
+              : { images: node.images }
+            : { images: event.images }),
           ...(reasoning === undefined ? {} : { reasoning: { ...reasoning, streaming: false } }),
         }
       } else if (node?.kind === 'reasoning') {
@@ -289,6 +309,8 @@ export function reduceTimeline(state: TimelineState, input: SequencedBackendEven
           ...(timing === undefined ? {} : { timing }),
           ...(event.modelLabel === undefined ? {} : { modelLabel: event.modelLabel }),
           ...(event.usage === undefined ? {} : { usage: event.usage }),
+          ...(event.images === undefined ? {} : { images: event.images }),
+          ...(event.interrupted === undefined ? {} : { interrupted: event.interrupted }),
           reasoning: {
             markdown: event.reasoning ?? node.markdown,
             streaming: false,
@@ -426,6 +448,13 @@ export function reduceTimeline(state: TimelineState, input: SequencedBackendEven
               : 'failed',
       }))
       break
+    case 'team.updated':
+      upsert(nodes, {
+        kind: 'team',
+        id: event.activity.id,
+        activity: event.activity,
+      })
+      break
     case 'permission.requested':
       nodes.push({
         kind: 'notice',
@@ -469,9 +498,10 @@ export function reduceTimeline(state: TimelineState, input: SequencedBackendEven
     case 'remote.event':
       break
     case 'unknown':
-      nodes.push({
+      insertSequencedNode(nodes, {
         kind: 'event',
         id: `event:${input.sequence}:${event.name}`,
+        sequence: input.sequence,
         name: event.name,
         payload: event.payload,
       })
@@ -480,13 +510,28 @@ export function reduceTimeline(state: TimelineState, input: SequencedBackendEven
       break
     case 'queue.updated':
       break
-    case 'notice':
+    case 'notice': {
       // Command lifecycle start events are implementation details. The
       // matching command/done notice carries the useful final state and is
       // rendered on its own, so one user action produces one visible notice.
-      if (!(event.level === 'info' && / started\.$/u.test(event.text)))
+      const explicitModeName = modeCommandName(event.commandName)
+      const modeName =
+        explicitModeName !== undefined
+          ? explicitModeName
+          : event.commandId === undefined
+            ? undefined
+            : commandModes[event.commandId]
+      if (event.commandPhase === 'run' && event.commandId !== undefined && modeName !== undefined)
+        commandModes[event.commandId] = modeName
+      const modeCommand = modeName !== undefined
+      if (event.commandInput !== undefined && !modeCommand)
+        nodes.push({ kind: 'command-input', id: `command-input:${input.sequence}`, text: event.commandInput })
+      const hideNotice = modeCommand && event.level === 'info'
+      if (!hideNotice && !(event.level === 'info' && / started\.$/u.test(event.text)))
         nodes.push({ kind: 'notice', id: `notice:${input.sequence}`, level: event.level, text: event.text })
+      if (event.commandPhase === 'done' && event.commandId !== undefined) delete commandModes[event.commandId]
       break
+    }
   }
   if (event.type === 'message.completed' || event.type === 'step.ended') {
     const key = timingKey(event.turn, event.step)
@@ -500,11 +545,18 @@ export function reduceTimeline(state: TimelineState, input: SequencedBackendEven
     sessionId: state.sessionId ?? sessionId,
     nodes,
     lastSequence: input.advanceSequence === false ? state.lastSequence : input.sequence,
+    ...(Object.keys(commandModes).length === 0 ? {} : { commandModes }),
     ...(Object.keys(stepTimings).length === 0 ? {} : { stepTimings }),
     ...(tokenUsage === undefined ? {} : { tokenUsage }),
     ...(activeTurn === undefined ? {} : { activeTurn }),
     ...(closedTurns.size === 0 ? {} : { closedTurns: [...closedTurns] }),
   }
+}
+
+/** Plan and permission switches are control-plane state, not chat content. */
+function modeCommandName(commandName: string | undefined): 'plan' | 'permission' | undefined {
+  const normalized = commandName?.trim().toLocaleLowerCase()
+  return normalized === 'plan' || normalized === 'permission' ? normalized : undefined
 }
 
 function timingKey(turn: number | undefined, step: number | undefined): string | undefined {
@@ -546,6 +598,15 @@ function closeTurn(
       }
     }
   }
+
+  if (reason !== 'completed')
+    upsert(nodes, {
+      kind: 'turn-terminal',
+      id: `turn-terminal:${turn}`,
+      turn,
+      sequence,
+      reason,
+    })
 
   let closingIndex = -1
   for (let index = 0; index < nodes.length; index += 1) {
@@ -676,6 +737,44 @@ function upsert(nodes: TimelineNode[], node: TimelineNode): void {
   else nodes[index] = node
 }
 
+/**
+ * Unknown events are intentionally preserved, but they can be delivered after
+ * a known projection has already occupied the transcript. Insert them before
+ * the first later durable sequence so enabling the DSH event view does not
+ * turn every future event into a block at the bottom of the conversation.
+ */
+function insertSequencedNode(nodes: TimelineNode[], node: TimelineNode): void {
+  const existingIndex = nodes.findIndex((existing) => existing.id === node.id)
+  if (existingIndex >= 0) {
+    nodes[existingIndex] = node
+    return
+  }
+  const sequence = nodeSequence(node)
+  if (sequence === undefined) {
+    nodes.push(node)
+    return
+  }
+  const laterIndex = nodes.findIndex((existing) => {
+    const existingSequence = nodeSequence(existing)
+    return existingSequence !== undefined && existingSequence > sequence
+  })
+  if (laterIndex < 0) nodes.push(node)
+  else nodes.splice(laterIndex, 0, node)
+}
+
+function nodeSequence(node: TimelineNode): number | undefined {
+  switch (node.kind) {
+    case 'assistant-message':
+    case 'tool':
+    case 'retry':
+    case 'turn-terminal':
+    case 'event':
+      return node.sequence
+    default:
+      return undefined
+  }
+}
+
 function mergeTool(
   previous: Extract<TimelineNode, { readonly kind: 'tool' }>['tool'],
   next: Extract<TimelineNode, { readonly kind: 'tool' }>['tool'],
@@ -696,9 +795,18 @@ function mergeTool(
   }
 }
 
-function conversationNodeIndex(nodes: readonly TimelineNode[], messageId: string): number {
-  return nodes.findIndex(
+function conversationNodeIndex(
+  nodes: readonly TimelineNode[],
+  messageId: string,
+  turn?: number,
+  step?: number,
+): number {
+  const exactIndex = nodes.findIndex(
     (node) => node.id === messageId && (node.kind === 'assistant-message' || node.kind === 'reasoning'),
+  )
+  if (exactIndex >= 0 || turn === undefined || step === undefined) return exactIndex
+  return nodes.findIndex(
+    (node) => node.kind === 'assistant-message' && node.turn === turn && node.step === step,
   )
 }
 

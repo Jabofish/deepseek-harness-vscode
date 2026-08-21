@@ -7,10 +7,12 @@ export interface RuntimeMissingViewProps {
   readonly busyAction: 'install' | 'select' | undefined
   readonly onAction: (action: 'install' | 'select' | 'copy-command' | 'open-docs') => void
   readonly onRetry?: () => void
+  readonly onOpenSettings?: () => void
 }
 
 export function RuntimeMissingView(props: RuntimeMissingViewProps): ReactElement {
   const { t } = useI18n()
+  const searchedLocations = [...new Set(props.searchedLocations.filter((location) => location.trim() !== ''))]
   return (
     <section className="dsh-runtime-missing" aria-labelledby="runtime-missing-title">
       <div className="dsh-runtime-missing__intro">
@@ -55,6 +57,11 @@ export function RuntimeMissingView(props: RuntimeMissingViewProps): ReactElement
         <button className="dsh-button dsh-button--ghost" type="button" onClick={props.onRetry}>
           {t('runtime.retry')}
         </button>
+        {props.onOpenSettings === undefined ? null : (
+          <button className="dsh-button dsh-button--ghost" type="button" onClick={props.onOpenSettings}>
+            {t('runtime.openSettings')}
+          </button>
+        )}
         <button
           className="dsh-button dsh-button--ghost"
           type="button"
@@ -64,9 +71,9 @@ export function RuntimeMissingView(props: RuntimeMissingViewProps): ReactElement
         </button>
       </div>
       <details>
-        <summary>{t('runtime.searched', { count: props.searchedLocations.length })}</summary>
+        <summary>{t('runtime.searched', { count: searchedLocations.length })}</summary>
         <ul>
-          {props.searchedLocations.map((location) => (
+          {searchedLocations.map((location) => (
             <li key={location}>
               <code>{location}</code>
             </li>

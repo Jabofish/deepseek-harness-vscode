@@ -1,6 +1,6 @@
 import type { ReactElement } from 'react'
 import type { ToolCallView } from '@dsh-vscode/domain'
-import { toolPresentation, type PresentationTranslate } from '../tool-presentation.js'
+import { formatToolText, toolPresentation, type PresentationTranslate } from '../tool-presentation.js'
 
 export interface ToolCardProps {
   readonly tool: ToolCallView
@@ -12,8 +12,9 @@ export interface ToolCardProps {
 
 export function ToolCard(props: ToolCardProps): ReactElement {
   const presentation = toolPresentation(props.tool, props.translate)
-  const hasDetails =
-    presentation.request.length > 0 || presentation.response.length > 0 || props.tool.error !== undefined
+  const request = presentation.request
+  const response = presentation.response
+  const hasDetails = request.length > 0 || response.length > 0 || props.tool.error !== undefined
   const expand = props.translate === undefined ? 'Expand' : props.translate('toolcard.expand')
   const collapse = props.translate === undefined ? 'Collapse' : props.translate('toolcard.collapse')
   const expandTitle =
@@ -65,13 +66,13 @@ export function ToolCard(props: ToolCardProps): ReactElement {
       </button>
       {props.expanded && hasDetails ? (
         <div className="dsh-tool-card__details">
-          {presentation.request.map((block, index) => (
+          {request.map((block, index) => (
             <section className="dsh-tool-card__section" key={`request:${block.label}:${index}`}>
               <h4>{block.label}</h4>
               <p>{block.content}</p>
             </section>
           ))}
-          {presentation.response.map((block, index) => (
+          {response.map((block, index) => (
             <section className="dsh-tool-card__section" key={`response:${block.label}:${index}`}>
               <h4>{block.label}</h4>
               <p>{block.content}</p>
@@ -80,7 +81,7 @@ export function ToolCard(props: ToolCardProps): ReactElement {
           {props.tool.error === undefined ? null : (
             <section className="dsh-tool-card__section dsh-tool-card__section--error" role="alert">
               <h4>{errorLabel}</h4>
-              <p>{bounded(props.tool.error)}</p>
+              <p>{formatToolText(props.tool.error, props.translate) ?? bounded(props.tool.error)}</p>
             </section>
           )}
         </div>

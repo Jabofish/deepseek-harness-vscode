@@ -66,7 +66,9 @@ export function JobsDrawer(props: JobsPopoverProps): ReactElement | null {
   const triggerRef = useRef<HTMLButtonElement>(null)
 
   const rows = useMemo(() => ordered(jobs), [jobs])
-  const liveCount = useMemo(() => jobs.filter(isLive).length, [jobs])
+  const runningCount = useMemo(() => jobs.filter((job) => job.status === 'running').length, [jobs])
+  const stoppingCount = useMemo(() => jobs.filter((job) => job.status === 'stopping').length, [jobs])
+  const liveCount = runningCount + stoppingCount
 
   useEffect(() => {
     if (!open) return
@@ -93,7 +95,14 @@ export function JobsDrawer(props: JobsPopoverProps): ReactElement | null {
   if (jobs.length === 0) return null
 
   const count = liveCount > 0 ? liveCount : jobs.length
-  const countLabel = liveCount > 0 ? t('jobs.count.running', { count }) : t('jobs.count', { count })
+  const countLabel =
+    runningCount > 0 && stoppingCount > 0
+      ? t('jobs.count.live', { running: runningCount, stopping: stoppingCount })
+      : runningCount > 0
+        ? t('jobs.count.running', { count: runningCount })
+        : stoppingCount > 0
+          ? t('jobs.count.stopping', { count: stoppingCount })
+          : t('jobs.count', { count })
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
     if (event.key !== 'Escape' || !open) return
@@ -115,7 +124,9 @@ export function JobsDrawer(props: JobsPopoverProps): ReactElement | null {
           setOpen((current) => !current)
         }}
       >
-        {liveCount > 0 ? <span className="dsh-jobs-popover__dot" data-state="ongoing" /> : null}
+        {liveCount > 0 ? (
+          <span className="dsh-jobs-popover__dot" data-state={stoppingCount > 0 ? 'warning' : 'ongoing'} />
+        ) : null}
         <span className="dsh-jobs-popover__count">{countLabel}</span>
         <Icon name="chevron-down" />
       </button>

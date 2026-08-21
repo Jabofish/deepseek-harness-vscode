@@ -37,6 +37,9 @@ describe('SessionControls', () => {
     )
 
     expect(screen.getByLabelText('Context ~2.2k / 128.0k tokens')).toBeDefined()
+    expect(screen.getByLabelText('Context ~2.2k / 128.0k tokens').closest('dd')?.className).toContain(
+      'dsh-session-controls__context-cell',
+    )
     expect(screen.queryByLabelText(/Cache hit/u)).toBeNull()
   })
 
@@ -108,6 +111,34 @@ describe('SessionControls', () => {
     expect(permissionOptions('workspace-write', [])).toEqual(['workspace-write'])
   })
 
+  it('disables optional permission and plan controls when DSH does not advertise their commands', () => {
+    render(
+      <SessionControls
+        configuration={{
+          preset: 'standard',
+          toolMode: 'native',
+          permissionPreset: 'workspace-write',
+          planMode: false,
+          model: { providerId: 'deepseek', modelId: 'deepseek-chat' },
+        }}
+        models={[]}
+        presets={[{ id: 'standard', trust: 'system', isDefault: true }]}
+        permissionPresets={['workspace-write', 'danger-full-access']}
+        commands={[{ name: 'model', description: 'Select the model' }]}
+        disabled={false}
+        presetMutable
+        onChange={vi.fn()}
+        onCommand={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Access: Workspace Write' }).disabled).toBe(
+      true,
+    )
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Turn on plan mode' }).disabled).toBe(true)
+    expect(screen.getByTitle('Plan mode is unavailable in this DSH session')).toBeDefined()
+  })
+
   it('uses distinct mode icons and localized built-in mode labels', () => {
     expect(modeIcon('standard', 'Standard')).toBe('session')
     expect(modeIcon('plan', 'Plan')).toBe('plan')
@@ -143,7 +174,7 @@ describe('SessionControls', () => {
     )
 
     fireEvent.click(screen.getByRole('button', { name: 'Access: Workspace Write' }))
-    fireEvent.click(screen.getByRole('option', { name: 'Full access' }))
+    fireEvent.click(screen.getByRole('option', { name: 'Full Access' }))
     expect(onCommand).not.toHaveBeenCalled()
     const enable = screen.getByRole<HTMLButtonElement>('button', { name: 'Enable Full access' })
     expect(enable.disabled).toBe(true)
@@ -172,7 +203,7 @@ describe('SessionControls', () => {
       />,
     )
 
-    expect(screen.getByRole('button', { name: 'Access: Full access' }).parentElement?.className).toContain(
+    expect(screen.getByRole('button', { name: 'Access: Full Access' }).parentElement?.className).toContain(
       'dsh-session-controls__access-picker--full-access',
     )
   })

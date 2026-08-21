@@ -2,7 +2,7 @@
   "name": "deepseek-harness-client",
   "displayName": "DeepSeek Harness Companion for VS Code",
   "description": "Run DSH sessions, tools, and coding tasks in VS Code.",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "publisher": "Direwolf",
   "icon": "resources/dsh.png",
   "license": "MIT",
@@ -37,6 +37,7 @@
   ],
   "main": "./dist/extension.cjs",
   "activationEvents": [
+    "onStartupFinished",
     "onView:dsh.chatView",
     "onCommand:dsh.connect",
     "onCommand:dsh.reconnect",
@@ -183,11 +184,12 @@
           "type": "string",
           "enum": [
             "auto",
+            "custom",
             "attach-only",
             "new-isolated"
           ],
           "default": "auto",
-          "markdownDescription": "Connection policy. `auto` attaches to a running local DSH before starting one; `attach-only` never starts DSH; `new-isolated` always starts an extension-owned instance."
+          "markdownDescription": "Connection policy. `auto` discovers and starts a local DSH as needed; `custom` probes only the configured local endpoint; `attach-only` never starts DSH; `new-isolated` always starts an extension-owned instance."
         },
         "dsh.connection.managedPort": {
           "type": "integer",

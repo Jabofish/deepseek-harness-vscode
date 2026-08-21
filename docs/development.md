@@ -5,7 +5,7 @@
 - Node.js：`>=22.19.0 <27`，CI 使用 `22.19.0` 和 `24`。
 - pnpm：`11.19.0`，由根 `packageManager` 固定。
 - VS Code：扩展 `engines.vscode` 为 `^1.125.0`。
-- DSH：`0.1.0-rc.6`；真实联调前用 `dsh --version` 确认。
+- DSH：`0.1.0-rc.6` 至 `0.1.0-rc.8`；任何非空未知版本标签会走兼容降级；真实联调前用 `dsh --version` 确认。
 
 ## 首次安装
 
@@ -38,11 +38,17 @@ pnpm build
 3. 选择 `auto` 或 `attach-only`。
 4. 验证日志显示 `ownership=external`，扩展关闭后 DSH 仍在运行。
 
+### 指定现有服务端点
+
+在设置的 DSH 连接中选择“自定义端点”，填写 `http://127.0.0.1:<port>` 或
+`http://localhost:<port>`，然后应用并重新连接。该模式只探测这个端点；它不会扫描其它端口，
+也不会自动启动 DSH。端点只在 Extension Host 内使用，Webview 只知道是否已配置。
+
 ### 受管实例
 
 1. 选择 `new-isolated`，或 `auto` 且确认没有可连接实例。
 2. `dsh.connection.managedPort=0` 使用随机空闲端口；固定端口用于可预测调试。
-3. 验证命令固定为参数数组 `--profile web --host 127.0.0.1 --port <n>`。
+3. 验证命令固定为参数数组 `--profile web --no-open --host 127.0.0.1 --port <n>`，避免受管 DSH 把系统浏览器当成启动界面。
 4. 扩展关闭后只结束本次扩展创建的进程。
 
 ## Remote SSH/WSL/Dev Container

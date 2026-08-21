@@ -114,7 +114,13 @@ async function handleFixtureRequest(request: IncomingMessage, response: ServerRe
   const method = request.url?.replace(/^\/api\//, '')
   const value =
     method === 'host.describe'
-      ? { version: '0.1.0-rc.6', cwd: workspaceCwd(), attachedSessions: 0, canOpenPath: true }
+      ? {
+          version: '0.1.0-rc.8',
+          cwd: workspaceCwd(),
+          attachedSessions: 0,
+          home: 'e2e-home',
+          canOpenPath: true,
+        }
       : method === 'session.list'
         ? { items: [] }
         : {}

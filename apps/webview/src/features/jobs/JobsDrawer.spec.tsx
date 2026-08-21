@@ -46,4 +46,16 @@ describe('JobsDrawer popover', () => {
     fireEvent.keyDown(trigger.parentElement as HTMLElement, { key: 'Escape' })
     expect(screen.queryByRole('list', { name: 'Background jobs' })).toBeNull()
   })
+
+  it('separates running and stopping counts in the session header', () => {
+    render(
+      <JobsDrawer
+        jobs={[
+          job({ id: 'running', label: 'server', status: 'running' }),
+          job({ id: 'stopping', label: 'old server', status: 'stopping' }),
+        ]}
+      />,
+    )
+    expect(screen.getByRole('button', { name: '1 running · 1 stopping' })).toBeDefined()
+  })
 })

@@ -9,27 +9,31 @@ import {
   type SessionCreateInput,
   type SessionDetail,
   type SessionHistoryEvent,
+  type SessionHistoryPage,
   type SessionListQuery,
   type SessionPage,
   type SessionRepository,
   type SessionSummary,
 } from '@dsh-vscode/domain'
-import { realpathSync } from 'node:fs'
-import path from 'node:path'
 
 import type { DshTransport } from '../contracts.js'
 import { executeRc6Command } from './command-repository.js'
-import { callRpc, unavailable } from '../versions/rc6/rpc.js'
+import { callRpc, type RpcResponseLike, unavailable, unwrapRpcResult } from '../versions/rc6/rpc.js'
 import { permissionPresetIds, rc6Mapper } from '../versions/rc6/mapper.js'
 import type { Rc6WorkspaceRepository } from './workspace-repository.js'
+
+const MAX_PROMPT_ATTACHMENT_BYTES = 8 * 1024 * 1024
+const MAX_PROMPT_ATTACHMENT_TOTAL_BYTES = 100 * 1024 * 1024
 
 export class Rc6SessionRepository implements SessionRepository {
   private readonly queueOwners = new Map<string, string>()
   private readonly queues = new Map<string, readonly QueuedInput[]>()
   private readonly queueWaiters = new Map<string, Set<(items: readonly QueuedInput[]) => void>>()
+  private readonly pendingQueueIdentities = new Map<string, Promise<QueuedInput | undefined>>()
   public constructor(
     private readonly transport: DshTransport,
     private readonly workspaceRepository?: Rc6WorkspaceRepository,
+    private readonly pathComparator: ((left: string, right: string) => boolean) | undefined = undefined,
   ) {}
 
   public remember(event: BackendEvent): void {
@@ -56,6 +60,8 @@ export class Rc6SessionRepository implements SessionRepository {
   public async list(query?: SessionListQuery, signal?: AbortSignal): Promise<SessionPage> {
     if (query?.cursor !== undefined && query.cursor.trim() !== '')
       throw unavailable('session list pagination')
+    if (query?.archived !== undefined && this.workspaceRepository === undefined)
+      throw unavailable('archived session listing without workspace state')
     const value = await callRpc<unknown>(
       this.transport,
       'session.list',
@@ -82,7 +88,9 @@ export class Rc6SessionRepository implements SessionRepository {
         const workspaceId =
           workspaceBySession.get(item.id) ??
           (item.workspaceId.trim() === '' ? undefined : item.workspaceId) ??
-          workspaces.find((workspace) => item.cwd !== undefined && samePath(workspace.path, item.cwd))?.id
+          workspaces.find(
+            (workspace) => item.cwd !== undefined && samePath(workspace.path, item.cwd, this.pathComparator),
+          )?.id
         return { ...item, ...(workspaceId === undefined ? {} : { workspaceId }) }
       })
     }
@@ -136,65 +144,29 @@ export class Rc6SessionRepository implements SessionRepository {
       // The history endpoint is the authoritative open/read path. Keep going
       // when only the registry hint is temporarily unavailable.
     }
-    const historyPages: ReturnType<typeof rc6Mapper.history>[] = []
-    const rawPages: unknown[][] = []
-    let beforeSeq: number | undefined
-    let historyHasMore = false
-    for (let page = 0; page < 100; page += 1) {
-      const historyValue = await callRpc<unknown>(
-        this.transport,
-        'session.history',
-        { sessionId, maxMessages: 200, ...(beforeSeq === undefined ? {} : { beforeSeq }) },
-        signal,
-      )
-      if (!validHistoryResponse(historyValue)) throw malformedSessionResponse('session history')
-      const mapped = rc6Mapper.history(historyValue, sessionId)
-      historyPages.push(mapped)
-      rawPages.push(Array.isArray(historyValue.events) ? historyValue.events : [])
-      historyHasMore = mapped.hasMore
-      if (!mapped.hasMore) break
-      const sequences = mapped.events.map((entry) => entry.sequence).filter((value) => value >= 0)
-      const oldest = sequences.length === 0 ? undefined : Math.min(...sequences)
-      if (oldest === undefined || (beforeSeq !== undefined && oldest >= beforeSeq)) break
-      beforeSeq = oldest
-    }
-    const history = {
-      events: compactHistoryEvents(
-        historyPages
-          .slice()
-          .reverse()
-          .flatMap((page) => page.events)
-          .sort((left, right) => left.sequence - right.sequence),
-      ),
-      hasMore: historyHasMore,
-      projection: historyPages[0]?.projection,
-    }
+    const firstPage = await this.readHistoryPage(sessionId, undefined, signal)
+    const history = firstPage.page
+    const rawHistory = firstPage.rawEvents
     if (summary === undefined) {
       // session.list is a reconnect hint. A just-finished session can be
       // absent for one registry turn while its durable history is already
       // readable, especially while workspace attachment is being published.
       // History is the authoritative existence check for session.open.
-      const cwd = historyCwd(rawPages.flat())
+      const cwd = historyCwd(rawHistory)
       let workspaceId: string | undefined
       try {
         const workspaceSnapshot = await this.workspaceRepository?.listWithArchiveState(signal)
         workspaceId = workspaceSnapshot?.items.find(
           (workspace) =>
             workspace.sessionIds?.includes(sessionId) === true ||
-            (cwd !== undefined && samePath(workspace.path, cwd)),
+            (cwd !== undefined && samePath(workspace.path, cwd, this.pathComparator)),
         )?.id
       } catch {
         // A session can still be reopened from history while the workspace
         // registry is catching up; the extension performs the final scope
         // check against its current workspace snapshot.
       }
-      summary = fallbackSessionSummary(
-        sessionId,
-        history.events,
-        rawPages.flat(),
-        workspaceId,
-        history.projection,
-      )
+      summary = fallbackSessionSummary(sessionId, history.events, rawHistory, workspaceId, history.projection)
     }
     if (summary === undefined)
       throw new AppError({
@@ -205,12 +177,48 @@ export class Rc6SessionRepository implements SessionRepository {
     const permissionPresets = permissionPresetIds(history.projection?.values ?? summary.projection?.values)
     return {
       ...summary,
-      configuration: configurationFromRawHistory(rawPages.slice().reverse().flat(), summary.agentPreset),
+      configuration: configurationFromRawHistory(rawHistory, summary.agentPreset),
       ...(permissionPresets.length === 0 ? {} : { permissionPresets }),
       goalIds: [],
       history: history.events,
       historyHasMore: history.hasMore,
+      ...(history.beforeSequence === undefined ? {} : { historyBeforeSequence: history.beforeSequence }),
       ...(history.projection === undefined ? {} : { projection: history.projection }),
+    }
+  }
+
+  public async history(
+    sessionId: string,
+    beforeSequence?: number,
+    signal?: AbortSignal,
+  ): Promise<SessionHistoryPage> {
+    return (await this.readHistoryPage(sessionId, beforeSequence, signal)).page
+  }
+
+  private async readHistoryPage(
+    sessionId: string,
+    beforeSequence?: number,
+    signal?: AbortSignal,
+  ): Promise<{ readonly page: SessionHistoryPage; readonly rawEvents: readonly unknown[] }> {
+    const historyValue = await callRpc<unknown>(
+      this.transport,
+      'session.history',
+      { sessionId, maxMessages: 200, ...(beforeSequence === undefined ? {} : { beforeSeq: beforeSequence }) },
+      signal,
+    )
+    if (!validHistoryResponse(historyValue)) throw malformedSessionResponse('session history')
+    const mapped = rc6Mapper.history(historyValue, sessionId)
+    const rawEvents = Array.isArray(historyValue.events) ? historyValue.events : []
+    const sequences = mapped.events.map((entry) => entry.sequence).filter((value) => value >= 0)
+    const oldest = sequences.length === 0 ? undefined : Math.min(...sequences)
+    return {
+      page: {
+        events: compactHistoryEvents(mapped.events),
+        hasMore: mapped.hasMore,
+        ...(oldest === undefined ? {} : { beforeSequence: oldest }),
+        ...(mapped.projection === undefined ? {} : { projection: mapped.projection }),
+      },
+      rawEvents,
     }
   }
 
@@ -320,7 +328,7 @@ export class Rc6SessionRepository implements SessionRepository {
     const bytes = Buffer.from(encoded, 'base64')
     if (
       bytes.length === 0 ||
-      bytes.length > 8 * 1024 * 1024 ||
+      bytes.length > MAX_PROMPT_ATTACHMENT_BYTES ||
       bytes.length !== reference.bytes ||
       bytes.toString('base64') !== encoded ||
       !matchesImageSignature(resolvedMediaType, bytes)
@@ -369,22 +377,58 @@ export class Rc6SessionRepository implements SessionRepository {
     mode: RunningInputMode,
     signal?: AbortSignal,
   ): Promise<QueuedInput> {
+    const promptKey = queuedPromptKey(input, mode)
+    const pending = this.pendingQueueIdentities.get(promptKey)
+    if (pending !== undefined) {
+      const queued = await this.awaitQueueIdentity(pending, signal, QUEUE_IDENTITY_GRACE_MS)
+      if (queued !== undefined) {
+        this.queueOwners.set(queued.id, input.sessionId)
+        return queued
+      }
+      if (this.pendingQueueIdentities.get(promptKey) === pending)
+        this.pendingQueueIdentities.delete(promptKey)
+    }
     const beforeIds = new Set(
       (this.queues.get(input.sessionId) ?? []).filter((item) => item.mode === mode).map((item) => item.id),
     )
-    const receipt = await callRpc<unknown>(
-      this.transport,
+    const response = await this.transport.request<RpcResponseLike<unknown>>(
       'session.prompt',
       { sessionId: input.sessionId, mode, content: promptContent(input) },
       signal,
     )
+    const receipt = unwrapRpcResult(response, 'session.prompt')
     assertAccepted(receipt, 'session prompt')
-    const queued = findNewQueuedInput(this.queues.get(input.sessionId), beforeIds, input, mode)
+    const queued = findNewQueuedInput(
+      this.queues.get(input.sessionId),
+      beforeIds,
+      input,
+      mode,
+      response.rpcId,
+    )
     if (queued !== undefined) {
       this.queueOwners.set(queued.id, input.sessionId)
       return queued
     }
-    const waited = await this.waitForQueuedIdentity(input, mode, beforeIds, signal)
+    const identityPromise = this.waitForQueuedIdentity(
+      input,
+      mode,
+      beforeIds,
+      response.rpcId,
+      QUEUE_IDENTITY_GRACE_MS,
+    )
+    this.pendingQueueIdentities.set(promptKey, identityPromise)
+    void identityPromise.then(
+      (resolved) => {
+        if (this.pendingQueueIdentities.get(promptKey) === identityPromise)
+          this.pendingQueueIdentities.delete(promptKey)
+        if (resolved !== undefined) this.queueOwners.set(resolved.id, input.sessionId)
+      },
+      () => {
+        if (this.pendingQueueIdentities.get(promptKey) === identityPromise)
+          this.pendingQueueIdentities.delete(promptKey)
+      },
+    )
+    const waited = await this.awaitQueueIdentity(identityPromise, signal, QUEUE_IDENTITY_TIMEOUT_MS)
     if (waited !== undefined) {
       this.queueOwners.set(waited.id, input.sessionId)
       return waited
@@ -461,11 +505,40 @@ export class Rc6SessionRepository implements SessionRepository {
         message: 'The session model selection is incomplete.',
         retryable: false,
       })
-    const selectModel = async (model: {
-      readonly providerId: string
-      readonly modelId: string
-      readonly reasoningLevel?: string
-    }): Promise<void> => {
+    const requestedPermission = configuration.permissionPreset.trim()
+    if (!isPermissionPresetId(requestedPermission))
+      throw new AppError({
+        code: 'INVALID_CONFIGURATION',
+        message: 'The session permission preset is invalid.',
+        retryable: false,
+      })
+    const current = await this.get(sessionId, signal)
+    const currentPermission = current.configuration.permissionPreset.trim()
+    if (
+      requestedPermission !== currentPermission &&
+      current.permissionPresets !== undefined &&
+      current.permissionPresets.length > 0 &&
+      !current.permissionPresets.includes(requestedPermission)
+    )
+      throw new AppError({
+        code: 'INVALID_CONFIGURATION',
+        message: 'The requested session permission preset is not advertised by DSH.',
+        retryable: false,
+      })
+
+    const requestedPreset = configuration.preset.trim()
+    const currentPreset = current.configuration.preset.trim()
+    if (requestedPreset !== '' && requestedPreset !== currentPreset && current.status !== 'idle')
+      throw unavailable('changing the agent preset of an existing session')
+
+    const selectModel = async (
+      model: {
+        readonly providerId: string
+        readonly modelId: string
+        readonly reasoningLevel?: string
+      },
+      operationSignal?: AbortSignal,
+    ): Promise<void> => {
       assertModelSelection(
         await callRpc<unknown>(
           this.transport,
@@ -476,51 +549,84 @@ export class Rc6SessionRepository implements SessionRepository {
             model: model.modelId,
             ...(model.reasoningLevel === undefined ? {} : { reasoningEffort: model.reasoningLevel }),
           },
-          signal,
+          operationSignal,
         ),
       )
     }
-    const current = await this.get(sessionId, signal)
     const previousModel = current.configuration.model
     const modelChanged =
       hasModel &&
       (previousModel.providerId !== configuration.model.providerId ||
         previousModel.modelId !== configuration.model.modelId ||
         previousModel.reasoningLevel !== configuration.model.reasoningLevel)
-    if (modelChanged) await selectModel(configuration.model)
-
-    const requestedPreset = configuration.preset.trim()
-    const currentPreset = current.configuration.preset.trim()
-    if (requestedPreset !== '' && requestedPreset !== currentPreset) {
-      // agentPreset.select is intentionally blank-session-only in rc.6. Do
-      // not issue it against a resumed session and turn a harmless model or
-      // permission change into an agent-preset-locked failure.
-      if (current.status !== 'idle') throw unavailable('changing the agent preset of an existing session')
-      const preset = await callRpc<unknown>(
+    const rollback: Array<() => Promise<void>> = []
+    const apply = async (forward: () => Promise<void>, reverse: () => Promise<void>): Promise<void> => {
+      await forward()
+      rollback.unshift(reverse)
+    }
+    const selectPreset = async (preset: string, operationSignal?: AbortSignal): Promise<void> => {
+      const value = await callRpc<unknown>(
         this.transport,
         'agentPreset.select',
-        { sessionId, agentPreset: requestedPreset },
-        signal,
+        { sessionId, agentPreset: preset },
+        operationSignal,
       )
-      const presetRecord = requiredRecord(preset, 'agent preset selection')
+      const presetRecord = requiredRecord(value, 'agent preset selection')
       if (typeof presetRecord.agentPreset !== 'string' || presetRecord.agentPreset.trim() === '')
         throw malformedSessionResponse('agent preset selection')
     }
+    const command = async (value: string, operationSignal?: AbortSignal): Promise<void> => {
+      await executeRc6Command(this.transport, sessionId, value, operationSignal)
+    }
 
-    if (configuration.permissionPreset !== current.configuration.permissionPreset)
-      await executeRc6Command(
-        this.transport,
-        sessionId,
-        `/permission ${configuration.permissionPreset}`,
-        signal,
-      )
-    if (configuration.planMode !== current.configuration.planMode)
-      await executeRc6Command(
-        this.transport,
-        sessionId,
-        configuration.planMode ? '/plan' : '/plan off',
-        signal,
-      )
+    try {
+      // DSH exposes independent mutation RPCs rather than a transaction. Apply
+      // the cheap host-validated settings first and keep explicit compensating
+      // actions so a later failure does not leave a mixed configuration.
+      if (requestedPreset !== '' && requestedPreset !== currentPreset)
+        await apply(
+          () => selectPreset(requestedPreset, signal),
+          () => (currentPreset === '' ? Promise.resolve() : selectPreset(currentPreset)),
+        )
+      if (requestedPermission !== currentPermission)
+        await apply(
+          () => command(`/permission ${requestedPermission}`, signal),
+          () =>
+            isPermissionPresetId(currentPermission)
+              ? command(`/permission ${currentPermission}`)
+              : Promise.resolve(),
+        )
+      if (configuration.planMode !== current.configuration.planMode)
+        await apply(
+          () => command(configuration.planMode ? '/plan' : '/plan off', signal),
+          () => command(current.configuration.planMode ? '/plan' : '/plan off'),
+        )
+      if (modelChanged)
+        await apply(
+          () => selectModel(configuration.model, signal),
+          () =>
+            previousModel.providerId.trim() !== '' && previousModel.modelId.trim() !== ''
+              ? selectModel(previousModel)
+              : Promise.resolve(),
+        )
+    } catch (error) {
+      const rollbackErrors: unknown[] = []
+      for (const undo of rollback) {
+        try {
+          await undo()
+        } catch (rollbackError) {
+          rollbackErrors.push(rollbackError)
+        }
+      }
+      if (rollbackErrors.length > 0)
+        throw new AppError({
+          code: 'INTERNAL_ERROR',
+          message: 'DSH configuration failed and could not be fully restored.',
+          retryable: true,
+          cause: new AggregateError([error, ...rollbackErrors]),
+        })
+      throw error
+    }
   }
 
   private ownerOf(inputId: string): string {
@@ -537,13 +643,47 @@ export class Rc6SessionRepository implements SessionRepository {
   private clearQueueState(sessionId: string): void {
     this.queues.delete(sessionId)
     for (const [inputId, owner] of this.queueOwners) if (owner === sessionId) this.queueOwners.delete(inputId)
+    const prefix = `${sessionId}\u0000`
+    for (const key of this.pendingQueueIdentities.keys())
+      if (key.startsWith(prefix)) this.pendingQueueIdentities.delete(key)
   }
 
   private waitForQueuedIdentity(
     input: PromptInput,
     mode: RunningInputMode,
     beforeIds: ReadonlySet<string>,
-    signal?: AbortSignal,
+    rpcId: string | undefined,
+    timeoutMs: number,
+  ): Promise<QueuedInput | undefined> {
+    return new Promise((resolve) => {
+      let settled = false
+      const finish = (value: QueuedInput | undefined): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        const waiters = this.queueWaiters.get(input.sessionId)
+        if (waiters !== undefined) {
+          waiters.delete(onQueue)
+          if (waiters.size === 0) this.queueWaiters.delete(input.sessionId)
+        }
+        resolve(value)
+      }
+      const onQueue = (items: readonly QueuedInput[]): void => {
+        const candidate = findNewQueuedInput(items, beforeIds, input, mode, rpcId)
+        if (candidate !== undefined) finish(candidate)
+      }
+      const waiters =
+        this.queueWaiters.get(input.sessionId) ?? new Set<(items: readonly QueuedInput[]) => void>()
+      waiters.add(onQueue)
+      this.queueWaiters.set(input.sessionId, waiters)
+      const timer = setTimeout(() => finish(undefined), timeoutMs)
+    })
+  }
+
+  private awaitQueueIdentity(
+    promise: Promise<QueuedInput | undefined>,
+    signal: AbortSignal | undefined,
+    timeoutMs: number,
   ): Promise<QueuedInput | undefined> {
     return new Promise((resolve, reject) => {
       let settled = false
@@ -552,19 +692,10 @@ export class Rc6SessionRepository implements SessionRepository {
         settled = true
         clearTimeout(timer)
         signal?.removeEventListener('abort', onAbort)
-        const waiters = this.queueWaiters.get(input.sessionId)
-        if (waiters !== undefined) {
-          waiters.delete(onQueue)
-          if (waiters.size === 0) this.queueWaiters.delete(input.sessionId)
-        }
         if (error === undefined) resolve(value)
         else reject(error)
       }
-      const onQueue = (items: readonly QueuedInput[]): void => {
-        const candidate = findNewQueuedInput(items, beforeIds, input, mode)
-        if (candidate !== undefined) finish(candidate)
-      }
-      const onAbort = (): void => {
+      const onAbort = (): void =>
         finish(
           undefined,
           new AppError({
@@ -573,31 +704,41 @@ export class Rc6SessionRepository implements SessionRepository {
             retryable: false,
           }),
         )
-      }
-      const waiters =
-        this.queueWaiters.get(input.sessionId) ?? new Set<(items: readonly QueuedInput[]) => void>()
-      waiters.add(onQueue)
-      this.queueWaiters.set(input.sessionId, waiters)
-      const timer = setTimeout(() => finish(undefined), QUEUE_IDENTITY_TIMEOUT_MS)
+      const timer = setTimeout(() => finish(undefined), timeoutMs)
       if (signal?.aborted === true) onAbort()
       else signal?.addEventListener('abort', onAbort, { once: true })
+      promise.then(
+        (value) => finish(value),
+        (error: unknown) =>
+          finish(undefined, error instanceof Error ? error : new Error('Queue identity failed.')),
+      )
     })
   }
 }
 
-function samePath(left: string | undefined, right: string | undefined): boolean {
+function samePath(
+  left: string | undefined,
+  right: string | undefined,
+  comparator?: (left: string, right: string) => boolean,
+): boolean {
   if (left === undefined || right === undefined || left.trim() === '' || right.trim() === '') return false
-  const normalize = (value: string): string => {
-    const resolved = path.normalize(path.resolve(value))
-    let canonical = resolved
-    try {
-      canonical = realpathSync.native(resolved)
-    } catch {
-      // Keep matching canonical DSH paths when a path is temporarily absent.
-    }
-    return process.platform === 'win32' ? canonical.toLowerCase() : canonical
+  if (comparator !== undefined) return comparator(left, right)
+  return normalizePath(left) === normalizePath(right)
+}
+
+/**
+ * Tests and non-VS Code consumers still get useful matching without making
+ * the adapter call a platform filesystem. The Extension Host injects the
+ * canonical realpath comparator for production workspace matching.
+ */
+function normalizePath(value: string): string {
+  const segments: string[] = []
+  for (const segment of value.trim().replaceAll('\\', '/').split('/')) {
+    if (segment === '' || segment === '.') continue
+    if (segment === '..') segments.pop()
+    else segments.push(segment)
   }
-  return normalize(left) === normalize(right)
+  return segments.join('/').toLocaleLowerCase()
 }
 
 /**
@@ -745,14 +886,14 @@ function promptContent(input: PromptInput): readonly Record<string, string>[] {
         message: 'The attachment encoding is not canonical Base64.',
         retryable: false,
       })
-    if (bytes.length > 8 * 1024 * 1024)
+    if (bytes.length > MAX_PROMPT_ATTACHMENT_BYTES)
       throw new AppError({
         code: 'INVALID_CONFIGURATION',
         message: 'The attachment is too large.',
         retryable: false,
       })
     totalBytes += bytes.length
-    if (totalBytes > 16 * 1024 * 1024)
+    if (totalBytes > MAX_PROMPT_ATTACHMENT_TOTAL_BYTES)
       throw new AppError({
         code: 'INVALID_CONFIGURATION',
         message: 'The combined attachment size is too large.',
@@ -1151,10 +1292,15 @@ function findNewQueuedInput(
   beforeIds: ReadonlySet<string>,
   input: PromptInput,
   mode: RunningInputMode,
+  rpcId?: string,
 ): QueuedInput | undefined {
   const candidates = [...(items ?? [])]
     .reverse()
     .filter((item) => !beforeIds.has(item.id) && item.mode === mode)
+  if (rpcId !== undefined) {
+    const correlated = candidates.find((item) => item.rpcId === rpcId)
+    if (correlated !== undefined) return correlated
+  }
   return (
     candidates.find((item) => item.text === input.text) ??
     (input.attachments.length > 0 ? candidates[0] : undefined)
@@ -1162,8 +1308,27 @@ function findNewQueuedInput(
 }
 
 const QUEUE_IDENTITY_TIMEOUT_MS = 2_000
+const QUEUE_IDENTITY_GRACE_MS = 30_000
+
+function queuedPromptKey(input: PromptInput, mode: RunningInputMode): string {
+  const value = `${mode}\u0000${input.text}\u0000${input.attachments
+    .map((attachment) => `${attachment.name}\u0000${attachment.mimeType ?? ''}\u0000${attachment.uri}`)
+    .join('\u0001')}`
+  let hash = 2_166_136_261
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index)
+    hash = Math.imul(hash, 16_777_619)
+  }
+  return `${input.sessionId}\u0000${mode}\u0000${hash >>> 0}`
+}
 
 function assertAccepted(value: unknown, method: string): void {
   if (asRecord(value).accepted === true) return
   throw malformedSessionResponse(`${method} receipt`)
+}
+
+function isPermissionPresetId(value: string): boolean {
+  // rc.6 exposes this as a one-token slash command. Reject control/whitespace
+  // and separators before any other setting is mutated.
+  return /^[A-Za-z0-9][A-Za-z0-9._:-]*$/u.test(value)
 }

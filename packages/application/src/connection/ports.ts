@@ -1,5 +1,6 @@
 import type {
   BackendCandidate,
+  BackendEndpoint,
   ConnectedBackend,
   ConnectionMode,
   DshBackend,
@@ -31,4 +32,6 @@ export interface ProcessSupervisor {
 export interface ConnectionRequest {
   readonly mode: ConnectionMode
   readonly autoStart: boolean
+  /** Required only for `custom`; the Webview never receives this value back. */
+  readonly endpoint?: BackendEndpoint
 }
