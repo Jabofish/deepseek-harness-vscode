@@ -1,11 +1,33 @@
+import path from 'node:path'
+
 import { describe, expect, it, vi } from 'vitest'
 
 import { DshRuntimeLocator } from './runtime-locator.js'
 
+const testPlatform =
+  process.platform === 'win32'
+    ? {
+        os: 'windows' as const,
+        pathApi: path.win32,
+        executableName: 'dsh.cmd',
+        configuredDirectory: 'C:\\dsh',
+        missingDirectory: 'C:\\missing',
+        existingDirectory: 'C:\\Users\\alice\\AppData\\Roaming\\npm',
+      }
+    : {
+        os: process.platform === 'darwin' ? ('macos' as const) : ('linux' as const),
+        pathApi: path.posix,
+        executableName: 'dsh',
+        configuredDirectory: '/tmp/dsh',
+        missingDirectory: '/missing',
+        existingDirectory: '/home/alice/.local/bin',
+      }
+
 function locator(version: string): DshRuntimeLocator {
   return new DshRuntimeLocator({
-    os: 'windows',
-    configuredPath: () => 'C:\\dsh\\dsh.cmd',
+    os: testPlatform.os,
+    configuredPath: () =>
+      testPlatform.pathApi.join(testPlatform.configuredDirectory, testPlatform.executableName),
     pathEntries: () => [],
     npmGlobalPrefix: () => Promise.resolve(undefined),
     fileExists: () => Promise.resolve(true),
@@ -67,11 +89,11 @@ describe('DshRuntimeLocator compatibility policy', () => {
   })
 
   it('reports only PATH candidates that actually exist', async () => {
-    const existing = 'C:\\Users\\alice\\AppData\\Roaming\\npm\\dsh.cmd'
+    const existing = testPlatform.pathApi.join(testPlatform.existingDirectory, testPlatform.executableName)
     const runtime = new DshRuntimeLocator({
-      os: 'windows',
+      os: testPlatform.os,
       configuredPath: () => undefined,
-      pathEntries: () => ['C:\\missing', 'C:\\Users\\alice\\AppData\\Roaming\\npm'],
+      pathEntries: () => [testPlatform.missingDirectory, testPlatform.existingDirectory],
       npmGlobalPrefix: () => Promise.resolve(undefined),
       fileExists: (candidate) => Promise.resolve(candidate === existing),
       executeVersion: () => Promise.reject(new Error('probe failed')),
