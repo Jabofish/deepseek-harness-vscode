@@ -10061,3 +10061,230 @@ button.dsh-timeline__produced-chip:focus-visible {
 .dsh-subagent-tree__row {
   grid-template-columns: 18px 8px minmax(0, 1fr) minmax(0, 96px);
 }
+/* Responsive composer tiers: measure the composer itself because a VS Code
+   sidebar can be narrower than the Webview viewport. A single 559px media
+   breakpoint made the labelled pickers collapse unpredictably in the middle
+   range; give that range its own control row instead. */
+.dsh-composer {
+  container: dsh-composer / inline-size;
+}
+
+@container dsh-composer (min-width: 620px) {
+  .dsh-composer__toolbar {
+    height: 30px;
+    min-height: 30px;
+    max-height: 30px;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas: none;
+    row-gap: 4px;
+  }
+
+  .dsh-composer__toolbar-start {
+    grid-area: auto;
+  }
+
+  .dsh-session-controls {
+    grid-area: auto;
+  }
+
+  .dsh-composer__submit {
+    grid-area: auto;
+  }
+
+  .dsh-compact-picker--labelled {
+    width: auto;
+    min-width: 28px;
+    flex: 0 1 auto;
+  }
+
+  .dsh-compact-picker--labelled .dsh-compact-picker__trigger {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    justify-content: flex-start;
+    padding-inline: 6px;
+  }
+
+  .dsh-compact-picker--labelled .dsh-compact-picker__trigger-text {
+    display: block;
+  }
+
+  .dsh-session-controls__mode {
+    flex: 0 1 112px;
+    max-width: 112px;
+  }
+
+  .dsh-model-picker {
+    flex: 1 1 158px;
+    max-width: 158px;
+  }
+}
+
+@container dsh-composer (min-width: 421px) and (max-width: 619px) {
+  .dsh-composer__toolbar {
+    height: auto;
+    min-height: 64px;
+    max-height: none;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'start submit'
+      'controls controls';
+    align-items: center;
+    row-gap: 4px;
+  }
+
+  .dsh-composer__toolbar-start {
+    grid-area: start;
+    width: auto;
+    max-width: 100%;
+  }
+
+  .dsh-session-controls {
+    grid-area: controls;
+    width: 100%;
+    max-width: 100%;
+    justify-content: space-between;
+  }
+
+  .dsh-session-controls__selectors {
+    justify-content: flex-start;
+  }
+
+  .dsh-session-controls__metrics {
+    flex: 0 1 104px;
+    max-width: 104px;
+  }
+
+  .dsh-session-controls__metrics > div,
+  .dsh-session-controls__context-cell,
+  .dsh-session-controls__context-cell .dsh-context-meter,
+  .dsh-context-meter__trigger {
+    max-width: 100%;
+  }
+
+  .dsh-compact-picker--labelled {
+    width: auto;
+    min-width: 28px;
+    flex: 0 1 auto;
+  }
+
+  .dsh-compact-picker--labelled .dsh-compact-picker__trigger {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    justify-content: flex-start;
+    padding-inline: 6px;
+  }
+
+  .dsh-compact-picker--labelled .dsh-compact-picker__trigger-text {
+    display: block;
+  }
+
+  .dsh-session-controls__mode {
+    flex: 0 1 112px;
+    max-width: 112px;
+  }
+
+  .dsh-model-picker {
+    flex: 1 1 158px;
+    max-width: 220px;
+  }
+}
+
+@container dsh-composer (max-width: 420px) {
+  .dsh-composer__toolbar {
+    height: auto;
+    min-height: 64px;
+    max-height: none;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'start submit'
+      'controls controls';
+    align-items: center;
+    row-gap: 4px;
+  }
+
+  .dsh-composer__toolbar-start {
+    grid-area: start;
+    width: auto;
+    max-width: 100%;
+  }
+
+  .dsh-composer__hint {
+    display: none;
+  }
+
+  .dsh-session-controls {
+    grid-area: controls;
+    width: 100%;
+    max-width: 100%;
+    justify-content: space-between;
+  }
+
+  .dsh-session-controls__selectors {
+    flex: 1 1 auto;
+    justify-content: flex-start;
+  }
+
+  .dsh-session-controls__mode,
+  .dsh-model-picker,
+  .dsh-session-controls__selectors > .dsh-compact-picker {
+    width: 28px;
+    min-width: 28px;
+    max-width: 28px;
+    flex: 0 0 28px;
+  }
+
+  .dsh-compact-picker--labelled .dsh-compact-picker__trigger {
+    width: 28px;
+    min-width: 28px;
+    max-width: 28px;
+    padding-inline: 0;
+  }
+
+  .dsh-compact-picker--labelled .dsh-compact-picker__trigger-text {
+    display: none;
+  }
+
+  .dsh-session-controls__metrics {
+    flex: 0 1 96px;
+    max-width: 96px;
+  }
+
+  .dsh-session-controls__metrics > div,
+  .dsh-session-controls__context-cell,
+  .dsh-session-controls__context-cell .dsh-context-meter,
+  .dsh-context-meter__trigger {
+    max-width: 100%;
+  }
+
+  .dsh-context-meter__trigger {
+    gap: 2px;
+    padding-inline: 2px;
+  }
+}
+
+@container dsh-composer (max-width: 280px) {
+  .dsh-session-controls__metrics {
+    flex-basis: 78px;
+    max-width: 78px;
+  }
+
+  .dsh-context-meter__trigger {
+    font-size: 0.66rem;
+  }
+}
+
+/* Keep every toolbar track shrinkable. Without this final constraint a
+   labelled picker can preserve its intrinsic width even after its grid track
+   has been reduced, which is the source of the narrow-layout overflow. */
+.dsh-composer__toolbar,
+.dsh-composer__toolbar > *,
+.dsh-composer__toolbar-start,
+.dsh-session-controls,
+.dsh-session-controls__selectors,
+.dsh-session-controls__metrics {
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
+}
