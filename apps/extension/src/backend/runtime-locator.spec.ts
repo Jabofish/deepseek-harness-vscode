@@ -104,12 +104,18 @@ describe('DshRuntimeLocator compatibility policy', () => {
   })
 
   it('finds the npm-global shim from npm prefix when the Extension Host PATH omits it', async () => {
-    const npmPrefix = testPlatform.existingDirectory
-    const existing = testPlatform.pathApi.join(npmPrefix, testPlatform.executableName)
+    const npmPrefix =
+      testPlatform.os === 'windows'
+        ? testPlatform.existingDirectory
+        : testPlatform.pathApi.dirname(testPlatform.existingDirectory)
+    const existing =
+      testPlatform.os === 'windows'
+        ? testPlatform.pathApi.join(npmPrefix, testPlatform.executableName)
+        : testPlatform.pathApi.join(npmPrefix, 'bin', testPlatform.executableName)
     const runtime = new DshRuntimeLocator({
       os: testPlatform.os,
       configuredPath: () => undefined,
-      pathEntries: () => ['C:\\Windows\\System32'],
+      pathEntries: () => [testPlatform.pathApi.join(testPlatform.missingDirectory, 'system32')],
       npmGlobalPrefix: () => Promise.resolve(npmPrefix),
       fileExists: (candidate) => Promise.resolve(candidate === existing),
       executeVersion: () => Promise.resolve('0.1.1-rc.1'),
