@@ -56,7 +56,7 @@ function dependencies(
   overrides: Partial<ConnectionCoordinatorDependencies> = {},
 ): ConnectionCoordinatorDependencies {
   return {
-    runtimeLocator: { locate: vi.fn(async () => fakeRuntime()), searchedLocations: () => [] },
+    runtimeLocator: { locate: vi.fn(async () => ({ runtime: fakeRuntime(), searchedLocations: [] })) },
     discovery: { discover: vi.fn(async () => []) },
     probe: { probe: vi.fn(async () => undefined) },
     backendFactory: { connect: vi.fn(async (connection) => backend(connection)) },
@@ -89,7 +89,7 @@ describe('DshConnectionCoordinator', () => {
   it('attaches to the highest-ranked healthy existing DSH before locating a runtime', async () => {
     const candidate = fakeCandidate(4100)
     const connected = fakeConnectedBackend(4100)
-    const runtimeLocator = { locate: vi.fn(async () => fakeRuntime()), searchedLocations: () => [] }
+    const runtimeLocator = { locate: vi.fn(async () => ({ runtime: fakeRuntime(), searchedLocations: [] })) }
     const deps = dependencies({
       discovery: { discover: vi.fn(async () => [candidate]) },
       probe: { probe: vi.fn(async () => connected) },
@@ -122,6 +122,26 @@ describe('DshConnectionCoordinator', () => {
     expect(deps.discovery.discover).not.toHaveBeenCalled()
     expect(deps.runtimeLocator.locate).not.toHaveBeenCalled()
     expect(deps.processSupervisor.start).not.toHaveBeenCalled()
+  })
+
+  it('passes the operation signal through when creating the backend', async () => {
+    const connected = fakeConnectedBackend(4312)
+    const connect = vi.fn(async (connection: typeof connected, signal?: AbortSignal) => {
+      expect(signal).toBeInstanceOf(AbortSignal)
+      return backend(connection)
+    })
+    const deps = dependencies({
+      probe: { probe: vi.fn(async () => connected) },
+      backendFactory: { connect },
+    })
+
+    await new DshConnectionCoordinator(deps).connect({
+      mode: 'custom',
+      autoStart: true,
+      endpoint: connected.endpoint,
+    })
+
+    expect(connect).toHaveBeenCalledWith(connected, expect.any(AbortSignal))
   })
 
   it('rejects custom mode without an endpoint before probing or starting DSH', async () => {
@@ -166,6 +186,26 @@ describe('DshConnectionCoordinator', () => {
     expect(states).toEqual(['connected', 'connected'])
   })
 
+  it('honors cancellation before returning a cached backend', async () => {
+    const connected = fakeConnectedBackend(4111)
+    const deps = dependencies({
+      discovery: { discover: vi.fn(async () => [fakeCandidate(4111)]) },
+      probe: { probe: vi.fn(async () => connected) },
+    })
+    const coordinator = new DshConnectionCoordinator(deps)
+    await coordinator.connect({ mode: 'auto', autoStart: false })
+
+    const controller = new AbortController()
+    controller.abort()
+
+    await expect(
+      coordinator.connect({ mode: 'auto', autoStart: false }, controller.signal),
+    ).rejects.toMatchObject({
+      code: 'REQUEST_CANCELLED',
+    })
+    expect(deps.discovery.discover).toHaveBeenCalledTimes(1)
+  })
+
   it('falls through unhealthy candidates without starting early', async () => {
     const first = fakeCandidate(4101)
     const second = fakeCandidate(4102)
@@ -205,8 +245,7 @@ describe('DshConnectionCoordinator', () => {
     const states: string[] = []
     const deps = dependencies({
       runtimeLocator: {
-        locate: vi.fn(async () => undefined),
-        searchedLocations: () => ['C:\\safe\\dsh.cmd'],
+        locate: vi.fn(async () => ({ searchedLocations: ['C:\\safe\\dsh.cmd'] })),
       },
     })
     const coordinator = new DshConnectionCoordinator(deps)

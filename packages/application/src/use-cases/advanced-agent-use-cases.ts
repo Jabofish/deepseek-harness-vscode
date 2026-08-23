@@ -12,6 +12,7 @@ import type {
   SkillDescriptor,
   SubagentCatalog,
   SubagentHistoryPage,
+  SubagentHistoryQuery,
 } from '@dsh-vscode/domain'
 
 import type { BackendService } from '../services/backend-service.js'
@@ -31,13 +32,17 @@ export class AdvancedAgentUseCases {
     return this.backendService.requireBackend().subagents.list(sessionId, signal)
   }
 
-  public listSubagentHistory(sessionId: string, signal?: AbortSignal): Promise<SubagentHistoryPage> {
+  public listSubagentHistory(
+    sessionId: string,
+    query?: SubagentHistoryQuery,
+    signal?: AbortSignal,
+  ): Promise<SubagentHistoryPage> {
     const repository = this.backendService.requireBackend().subagents
     if (repository.history === undefined) return Promise.reject(unavailable('subagent history'))
     // Invoke through the repository object: rc.6 history resolves the durable
     // parent/child address from its catalog cache and therefore requires its
     // method receiver.
-    return repository.history(sessionId, signal)
+    return repository.history(sessionId, query, signal)
   }
 
   public listSkills(sessionId?: string, signal?: AbortSignal): Promise<readonly SkillDescriptor[]> {
@@ -63,27 +68,28 @@ export class AdvancedAgentUseCases {
   }
 
   public readPreset(presetId: string, signal?: AbortSignal): Promise<AgentPresetDocument> {
-    const read = this.backendService.requireBackend().presets.read
-    if (read === undefined) return Promise.reject(unavailable('preset read'))
-    return read(presetId, signal)
+    const repository = this.backendService.requireBackend().presets
+    if (repository.read === undefined) return Promise.reject(unavailable('preset read'))
+    // Keep the call on the repository object: adapter methods use `this.transport`.
+    return repository.read(presetId, signal)
   }
 
   public copyPreset(from: string, presetId: string, name?: string, signal?: AbortSignal): Promise<string> {
-    const copy = this.backendService.requireBackend().presets.copy
-    if (copy === undefined) return Promise.reject(unavailable('preset copy'))
-    return copy(from, presetId, name, signal)
+    const repository = this.backendService.requireBackend().presets
+    if (repository.copy === undefined) return Promise.reject(unavailable('preset copy'))
+    return repository.copy(from, presetId, name, signal)
   }
 
   public openPresetDocument(presetId: string, signal?: AbortSignal): Promise<AgentPresetLocation> {
-    const open = this.backendService.requireBackend().presets.openDocument
-    if (open === undefined) return Promise.reject(unavailable('preset document opening'))
-    return open(presetId, signal)
+    const repository = this.backendService.requireBackend().presets
+    if (repository.openDocument === undefined) return Promise.reject(unavailable('preset document opening'))
+    return repository.openDocument(presetId, signal)
   }
 
   public removePreset(presetId: string, signal?: AbortSignal): Promise<void> {
-    const remove = this.backendService.requireBackend().presets.remove
-    if (remove === undefined) return Promise.reject(unavailable('preset removal'))
-    return remove(presetId, signal)
+    const repository = this.backendService.requireBackend().presets
+    if (repository.remove === undefined) return Promise.reject(unavailable('preset removal'))
+    return repository.remove(presetId, signal)
   }
 
   /**

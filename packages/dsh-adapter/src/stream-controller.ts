@@ -1,6 +1,7 @@
-import type { AsyncEventSource, BackendEvent } from '@dsh-vscode/domain'
+import { AppError, type AsyncEventSource, type BackendEvent } from '@dsh-vscode/domain'
 
 import type { DshTransport } from './contracts.js'
+import { redactText, safePayload } from './redaction.js'
 import { rc6Mapper } from './versions/rc6/mapper.js'
 
 export type StreamRecovery = (
@@ -65,9 +66,19 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
         if (!this.closed && !lifetime.signal.aborted) this.scheduleReconnect(lifetime, error)
       })
       .finally(() => {
+        // Sample before the teardown abort below: after it, every settled
+        // generation would look "aborted" and the restart guard below would
+        // bypass the reconnect backoff for natural failures.
+        const strandedSubscriber = lifetime.signal.aborted
         lifetime.abort()
         this.reading = undefined
         if (this.lifetime === lifetime) this.lifetime = undefined
+        // An unsubscribe-triggered abort can leave a freshly subscribed
+        // listener stranded: subscribe() skipped it because `reading` was
+        // still set while the aborted generation unwound. Restart only for
+        // that case; natural failures keep the backoff path in
+        // scheduleReconnect, so a down host cannot hot-loop reconnects.
+        if (strandedSubscriber && !this.closed && this.listeners.size > 0) this.startReading()
       })
   }
 
@@ -253,20 +264,24 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
 function normalizeEnvelope(value: unknown): BackendEvent | undefined {
   const envelope = record(value)
   const frame = record(envelope?.payload ?? value)
-  if (frame === undefined) return { type: 'unknown', name: 'protocol/frame', payload: safePayload(value) }
+  if (frame === undefined)
+    return withSequence({ type: 'unknown', name: 'protocol/frame', payload: safePayload(value) }, undefined)
   if (typeof frame.type !== 'string')
-    return { type: 'unknown', name: 'protocol/frame', payload: safePayload(frame) }
+    return withSequence({ type: 'unknown', name: 'protocol/frame', payload: safePayload(frame) }, frame.seq)
   const withRpcId = typeof envelope?.rpcId === 'string' ? { ...frame, rpcId: envelope.rpcId } : frame
   switch (frame.type) {
     case 'session/event': {
       const event = record(frame.event)
       return typeof event?.type !== 'string'
-        ? {
-            type: 'unknown',
-            ...(typeof frame.sessionId === 'string' ? { sessionId: frame.sessionId } : {}),
-            name: 'session/event',
-            payload: safePayload(frame.event),
-          }
+        ? withSequence(
+            {
+              type: 'unknown',
+              ...(typeof frame.sessionId === 'string' ? { sessionId: frame.sessionId } : {}),
+              name: 'session/event',
+              payload: safePayload(frame.event),
+            },
+            event?.seq,
+          )
         : withSequence(
             mapStreamEvent(event.type, {
               ...event,
@@ -285,7 +300,6 @@ function normalizeEnvelope(value: unknown): BackendEvent | undefined {
     case 'host/workspace-order-changed':
     case 'host/archived-sessions-changed':
     case 'host/remote-event':
-    case 'session/title':
     case 'approval/requested':
     case 'approval/resolved':
     case 'question/requested':
@@ -296,7 +310,7 @@ function normalizeEnvelope(value: unknown): BackendEvent | undefined {
     case 'session/projection':
       return withSequence(mapStreamEvent(frame.type, withRpcId), frame.seq)
     case 'stream/error':
-      return { type: 'connection.lost', reason: 'DSH event stream reported an error.' }
+      return { type: 'connection.lost', reason: streamErrorReason(frame.error) }
     case 'host/agent-error':
       return {
         type: 'notice',
@@ -305,12 +319,15 @@ function normalizeEnvelope(value: unknown): BackendEvent | undefined {
         text: typeof frame.message === 'string' ? frame.message.slice(0, 512) : 'DSH agent error.',
       }
     default:
-      return {
-        type: 'unknown',
-        ...(typeof frame.sessionId === 'string' ? { sessionId: frame.sessionId } : {}),
-        name: frame.type,
-        payload: safePayload(frame),
-      }
+      return withSequence(
+        {
+          type: 'unknown',
+          ...(typeof frame.sessionId === 'string' ? { sessionId: frame.sessionId } : {}),
+          name: frame.type,
+          payload: safePayload(frame),
+        },
+        frame.seq,
+      )
   }
 }
 
@@ -348,53 +365,31 @@ function record(value: unknown): Record<string, unknown> | undefined {
 }
 
 function safeReason(error: unknown): string {
-  void error
-  return 'DSH event stream disconnected.'
-}
-
-function safePayload(value: unknown): unknown {
-  if (Array.isArray(value)) return value.slice(0, 32).map(safePayload)
-  const object = record(value)
-  if (object === undefined) return typeof value === 'string' ? value.slice(0, 512) : value
-  const result: Record<string, unknown> = {}
-  for (const [key, entry] of Object.entries(object)) {
-    if (isSensitivePayloadField(key)) continue
-    result[key] = safePayload(entry)
+  if (error instanceof AppError) {
+    const method = error.context?.method
+    const status = error.context?.status
+    if (typeof method === 'string' && typeof status === 'number')
+      return `DSH event stream request ${method} failed (HTTP ${status}).`
+    if (error.context?.timedOut === true && typeof method === 'string')
+      return `DSH event stream request ${method} timed out.`
+    return `DSH event stream disconnected (${error.code}).`
   }
-  return result
+  const detail = safeErrorDetail(error)
+  return detail === undefined ? 'DSH event stream disconnected.' : `DSH event stream disconnected: ${detail}`
 }
 
-const SENSITIVE_PAYLOAD_FIELDS = new Set([
-  'key',
-  'apikey',
-  'api_key',
-  'authorization',
-  'accesstoken',
-  'access_token',
-  'refreshtoken',
-  'refresh_token',
-  'token',
-  'secret',
-  'secretkey',
-  'privatekey',
-  'password',
-  'prompt',
-  'body',
-  'response',
-  'input',
-  'output',
-  'command',
-  'commandline',
-  'endpoint',
-  'baseurl',
-  'path',
-  'cwd',
-  'directory',
-  'executable',
-  'pid',
-  'stack',
-])
+function streamErrorReason(value: unknown): string {
+  const error = record(value)
+  const code = typeof error?.code === 'string' ? error.code : undefined
+  const message = safeErrorDetail(typeof error?.message === 'string' ? new Error(error.message) : undefined)
+  if (code === undefined) return 'DSH event stream reported an unspecified error.'
+  return message === undefined
+    ? `DSH event stream reported ${code}.`
+    : `DSH event stream reported ${code}: ${message}`
+}
 
-function isSensitivePayloadField(key: string): boolean {
-  return SENSITIVE_PAYLOAD_FIELDS.has(key.toLocaleLowerCase())
+function safeErrorDetail(error: unknown): string | undefined {
+  if (!(error instanceof Error)) return undefined
+  const detail = redactText(error.message, 240)
+  return detail === '' ? undefined : detail
 }

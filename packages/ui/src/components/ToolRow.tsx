@@ -3,6 +3,7 @@ import type { ToolCallView, ToolPresentationView } from '@dsh-vscode/domain'
 import {
   decodeToolValue,
   formatToolText,
+  toolNameLabel,
   toolPresentation,
   type PresentationTranslate,
   type ToolDetailBlock,
@@ -499,6 +500,8 @@ function rowState(tool: ToolCallView): ToolRowState {
 
 function rowTitle(variant: ToolRowVariant, tool: ToolCallView, t?: PresentationTranslate): string {
   const name = tool.name.trim().toLocaleLowerCase()
+  if (name === 'ask_user_question' || name === 'question')
+    return toolNameLabel(tool.name, t) ?? label(t, 'toolrow.title.question', 'Question')
   if (name === 'pwsh') return label(t, 'toolrow.title.pwsh', 'Pwsh')
   if (name === 'web_search') return label(t, 'toolrow.title.search', 'Search')
   if (name === 'web_fetch') return label(t, 'toolrow.title.fetch', 'Fetch')

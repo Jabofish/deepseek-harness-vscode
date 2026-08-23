@@ -28,7 +28,14 @@ export function runtimePathEntries(
     seen.add(key)
     entries.push(normalized)
   }
-  for (const entry of (environment.PATH ?? '').split(delimiter)) add(entry)
+  // `process.env` is case-insensitive on Windows, but spreading it into a
+  // plain object (as the extension does when composing child environments)
+  // preserves whichever casing the launcher used. Accept both spellings so
+  // GUI-launched Extension Hosts do not lose their inherited PATH.
+  for (const value of [environment.PATH, environment.Path]) {
+    if (value === undefined) continue
+    for (const entry of value.split(delimiter)) add(entry)
+  }
 
   if (os === 'windows') {
     // A GUI-launched VS Code often does not inherit the terminal's npm-global

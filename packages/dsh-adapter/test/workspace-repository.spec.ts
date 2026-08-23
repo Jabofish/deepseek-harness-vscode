@@ -72,4 +72,26 @@ describe('Rc6WorkspaceRepository ordering', () => {
 
     await expect(repository.insertBefore('w1')).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
   })
+
+  it('does not turn a successful create into a failure when the display refresh is unavailable', async () => {
+    const calls: Call[] = []
+    const repository = new Rc6WorkspaceRepository(
+      transportFor(
+        {
+          'workspace.create': { workspace: WORKSPACE, created: true },
+          'workspace.rename': { workspace: { ...WORKSPACE, title: 'Renamed' } },
+        },
+        calls,
+      ),
+    )
+
+    await expect(repository.create({ path: '/workspace', name: 'Renamed' })).resolves.toMatchObject({
+      id: 'w1',
+    })
+    expect(calls.map((call) => call.method)).toEqual([
+      'workspace.create',
+      'workspace.rename',
+      'workspace.list',
+    ])
+  })
 })

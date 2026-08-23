@@ -9,8 +9,13 @@ import type {
 } from '@dsh-vscode/domain'
 
 export interface RuntimeLocator {
-  locate(signal?: AbortSignal): Promise<DshRuntime | undefined>
-  searchedLocations(): readonly string[]
+  locate(signal?: AbortSignal): Promise<RuntimeLookupResult>
+}
+
+/** A runtime probe and the diagnostics belonging to that one probe. */
+export interface RuntimeLookupResult {
+  readonly runtime?: DshRuntime
+  readonly searchedLocations: readonly string[]
 }
 
 export interface BackendDiscovery {

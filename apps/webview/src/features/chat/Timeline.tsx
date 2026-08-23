@@ -7,7 +7,7 @@ import type {
   TokenUsage,
 } from '@dsh-vscode/domain'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { ToolRendererRegistry } from '@dsh-vscode/ui'
+import { ToolRendererRegistry, toolNameLabel } from '@dsh-vscode/ui'
 import { MarkdownContent } from './MarkdownContent.js'
 import { MessageImages } from './MessageImages.js'
 import { MessageActions } from './MessageActions.js'
@@ -1190,8 +1190,12 @@ function renderToolCollection(
 function toolSummary(tool: ToolTimelineNode['tool'], t: Translate = (key) => key): string {
   const title = tool.title.trim()
   const name = tool.name.trim()
+  const normalizedTitle = title.toLowerCase()
+  const normalizedName = name.toLowerCase()
   const label =
-    title !== '' && title.toLowerCase() !== 'tool' ? title : name || title || t('timeline.toolFallback')
+    title !== '' && normalizedTitle !== 'tool' && normalizedTitle !== normalizedName
+      ? title
+      : (toolNameLabel(name, t) ?? (name || title || t('timeline.toolFallback')))
   return `${label} · ${tool.status}`
 }
 

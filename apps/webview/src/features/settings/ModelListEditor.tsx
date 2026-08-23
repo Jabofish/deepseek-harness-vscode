@@ -51,20 +51,16 @@ export function ModelListEditor(props: ModelListEditorProps): ReactElement {
 
   const update = (index: number, patch: ModelPatch): void => {
     setSaved(false)
-    setDraft((current) => {
-      const next = current.map((model, at) => (at === index ? applyPatch(model, patch) : model))
-      props.onChange?.(next.map(copyModel))
-      return next
-    })
+    const next = draft.map((model, at) => (at === index ? applyPatch(model, patch) : model))
+    setDraft(next)
+    props.onChange?.(next.map(copyModel))
   }
 
   const remove = (index: number): void => {
     setSaved(false)
-    setDraft((current) => {
-      const next = current.filter((_model, at) => at !== index)
-      props.onChange?.(next.map(copyModel))
-      return next
-    })
+    const next = draft.filter((_model, at) => at !== index)
+    setDraft(next)
+    props.onChange?.(next.map(copyModel))
     setExpanded((current) => shiftIndexes(current, index))
     setEditingCapacity((current) => shiftCapacityBuffers(current, index))
   }

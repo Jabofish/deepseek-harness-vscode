@@ -3,7 +3,7 @@ import { readdir, readFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import { discoveryCancelled, type DiscoveryProvider } from './provider.js'
+import { discoveryCancelled, isDiscoveryCancellation, type DiscoveryProvider } from './provider.js'
 
 export class CompanionRegistryDiscoveryProvider implements DiscoveryProvider {
   public readonly id = 'companion-registry'
@@ -27,7 +27,10 @@ export class CompanionRegistryDiscoveryProvider implements DiscoveryProvider {
         }
         return candidates
       })
-      .catch(() => [])
+      .catch((error: unknown) => {
+        if (isDiscoveryCancellation(error, signal)) throw discoveryCancelled(signal?.reason ?? error)
+        return []
+      })
   }
 }
 

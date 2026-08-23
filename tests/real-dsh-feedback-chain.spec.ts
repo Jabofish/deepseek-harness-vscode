@@ -2,8 +2,6 @@ import { describe, expect, it } from 'vitest'
 
 import type { DshTransport } from '../packages/dsh-adapter/src/contracts.js'
 import { rc6Mapper } from '../packages/dsh-adapter/src/versions/rc6/mapper.js'
-import { rc7Mapper } from '../packages/dsh-adapter/src/versions/rc7/mapper.js'
-import { rc8Mapper } from '../packages/dsh-adapter/src/versions/rc8/mapper.js'
 import { Rc6MessageFeedbackRepository } from '../packages/dsh-adapter/src/repositories/feedback-repository.js'
 import { reduceTimeline } from '../packages/timeline/src/reducer.js'
 
@@ -76,11 +74,10 @@ function feedbackTransport(
 describe('real DSH feedback data chain', () => {
   it('maps upstream stream/final events into the real message id used by the feedback RPC', async () => {
     const initial = { sessionId, nodes: [], lastSequence: -1 } as const
-    for (const mapper of [rc6Mapper, rc7Mapper, rc8Mapper])
-      expect(mapper.event(upstreamMessage.type, upstreamMessage)).toMatchObject({
-        type: 'message.completed',
-        messageId: durableMessageId,
-      })
+    expect(rc6Mapper.event(upstreamMessage.type, upstreamMessage)).toMatchObject({
+      type: 'message.completed',
+      messageId: durableMessageId,
+    })
     const streamed = reduceTimeline(initial, {
       sequence: 2,
       event: rc6Mapper.event(upstreamChunk.type, upstreamChunk),

@@ -1,7 +1,6 @@
 import type { BackendEvent, JobRepository, JobView } from '@dsh-vscode/domain'
 
 import type { DshTransport } from '../contracts.js'
-import { unavailable } from '../versions/rc6/rpc.js'
 
 export class Rc6JobRepository implements JobRepository {
   private readonly jobs = new Map<string, readonly JobView[]>()
@@ -15,10 +14,15 @@ export class Rc6JobRepository implements JobRepository {
       // snapshot from the previous stream would resurrect already-settled
       // process-local jobs when the reconnect carries no jobs frame.
       this.jobs.set(event.sessionId, [])
+    else if (event.type === 'session.removed')
+      // The official runtime drops the jobs state when the session is
+      // removed; keeping it would surface stale rows for a recycled id.
+      this.jobs.delete(event.sessionId)
   }
 
   public list(sessionId: string, _signal?: AbortSignal): Promise<readonly JobView[]> {
-    const jobs = this.jobs.get(sessionId)
-    return jobs === undefined ? Promise.reject(unavailable('background job snapshot')) : Promise.resolve(jobs)
+    // The official runtime treats an absent key as an empty set rather than
+    // an error; the caller has simply not observed a subscription yet.
+    return Promise.resolve(this.jobs.get(sessionId) ?? [])
   }
 }

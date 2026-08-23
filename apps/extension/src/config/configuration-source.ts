@@ -79,9 +79,11 @@ export class VsCodeConfigurationSource {
     }
   }
 
-  public onDidChange(listener: () => void): vscode.Disposable {
+  public onDidChange(
+    listener: (affectsConfiguration: (section: string) => boolean) => void,
+  ): vscode.Disposable {
     return this.workspace.onDidChangeConfiguration((event) => {
-      if (event.affectsConfiguration('dsh')) listener()
+      if (event.affectsConfiguration('dsh')) listener((section) => event.affectsConfiguration(section))
     })
   }
 }

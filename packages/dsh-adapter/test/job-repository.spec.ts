@@ -13,11 +13,28 @@ const transport: DshTransport = {
 }
 
 describe('Rc6JobRepository snapshot semantics', () => {
-  it('is unavailable before the mux subscription establishes a baseline', async () => {
+  it('treats a never-subscribed session as an empty set like the official runtime', async () => {
     const repository = new Rc6JobRepository(transport)
-    await expect(repository.list('session')).rejects.toMatchObject({
-      code: 'CAPABILITY_UNAVAILABLE',
+    await expect(repository.list('session')).resolves.toEqual([])
+  })
+
+  it('clears the snapshot when the session is removed', async () => {
+    const repository = new Rc6JobRepository(transport)
+    repository.remember({
+      type: 'jobs.updated',
+      sessionId: 'session',
+      jobs: [
+        {
+          id: 'job-1',
+          kind: 'build',
+          label: 'build',
+          status: 'running',
+          startedAt: 1,
+        },
+      ],
     })
+    repository.remember({ type: 'session.removed', sessionId: 'session' })
+    await expect(repository.list('session')).resolves.toEqual([])
   })
 
   it('treats subscribed-without-jobs as the authoritative empty snapshot', async () => {

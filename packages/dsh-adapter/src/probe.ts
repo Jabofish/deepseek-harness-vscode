@@ -10,6 +10,7 @@ export class VersionedBackendProbe implements BackendProbe {
   public probe(candidate: BackendCandidate, signal?: AbortSignal): Promise<ConnectedBackend | undefined> {
     if (
       (candidate.endpoint.host !== '127.0.0.1' && candidate.endpoint.host !== 'localhost') ||
+      !Number.isInteger(candidate.endpoint.port) ||
       candidate.endpoint.port < 1 ||
       candidate.endpoint.port > 65_535
     ) {

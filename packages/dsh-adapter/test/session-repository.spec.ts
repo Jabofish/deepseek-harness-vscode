@@ -142,6 +142,7 @@ describe('Rc6SessionRepository prompt delivery modes', () => {
           sessionId: 'session-1',
           mode: 'queue',
           content: [{ type: 'text', text: 'hello' }],
+          clientTimeZone: expect.stringMatching(/^[A-Za-z_]+\/[A-Za-z_0-9+-]+$|^UTC$/u) as unknown,
         },
       },
     ])
@@ -160,6 +161,7 @@ describe('Rc6SessionRepository prompt delivery modes', () => {
           sessionId: 'session-1',
           mode: 'steer',
           content: [{ type: 'text', text: 'redirect' }],
+          clientTimeZone: expect.stringMatching(/^[A-Za-z_]+\/[A-Za-z_0-9+-]+$|^UTC$/u) as unknown,
         },
       },
     ])
@@ -227,7 +229,7 @@ describe('Rc6SessionRepository prompt delivery modes', () => {
       const repository = new Rc6SessionRepository(transport)
       const input = { sessionId: 'session-1', text: 'same text', attachments: [] }
       const first = repository.enqueuePrompt(input, 'queue')
-      const firstRejection = expect(first).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
+      const firstRejection = expect(first).rejects.toMatchObject({ code: 'BACKEND_UNREACHABLE' })
       await vi.advanceTimersByTimeAsync(2_000)
       await firstRejection
 
@@ -278,6 +280,7 @@ describe('Rc6SessionRepository prompt delivery modes', () => {
         { type: 'text', text: '' },
         { type: 'image', mediaType: 'image/png', data: png, name: 'preview.png' },
       ],
+      clientTimeZone: expect.stringMatching(/^[A-Za-z_]+\/[A-Za-z_0-9+-]+$|^UTC$/u) as unknown,
     })
   })
 
@@ -512,10 +515,84 @@ describe('Rc6SessionRepository history windows', () => {
     expect(calls).toEqual([
       {
         method: 'session.history',
-        params: { sessionId: 'session-1', maxMessages: 200, beforeSeq: 42 },
+        params: { sessionId: 'session-1', maxMessages: 50, beforeSeq: 42 },
       },
     ])
     expect(page).toMatchObject({ hasMore: true, beforeSequence: 14 })
     expect(page.events.map((entry) => entry.sequence)).toEqual([14, 20])
+  })
+
+  it('salvages the published session when workspace attachment fails', async () => {
+    const calls: { method: string; params: unknown }[] = []
+    const transport: DshTransport = {
+      request: <TResponse>(method: string, params: unknown) => {
+        calls.push({ method, params })
+        if (method === 'session.create')
+          return Promise.resolve({
+            result: {
+              ok: false,
+              error: {
+                code: 'workspace-attach-failed',
+                message: 'attach failed',
+                details: { sessionId: 'published-1' },
+              },
+            },
+          } as TResponse)
+        const value = method === 'session.history' ? { events: [], hasMore: false } : { items: [] }
+        return Promise.resolve({ result: { ok: true, value } } as TResponse)
+      },
+      remoteRequest: <TResponse>() => Promise.reject<TResponse>(new Error('unexpected Remote')),
+      openEventStream: async function* () {
+        /* fixture stream */
+      },
+      close: () => Promise.resolve(),
+    }
+
+    const detail = await new Rc6SessionRepository(transport).create({
+      workspaceId: 'workspace-1',
+      configuration: {
+        preset: '',
+        toolMode: 'native',
+        permissionPreset: 'workspace-write',
+        planMode: false,
+        model: { providerId: '', modelId: '' },
+      },
+    })
+
+    expect(detail.id).toBe('published-1')
+    expect(
+      calls.filter((call) => call.method === 'session.create' || call.method === 'session.history'),
+    ).toEqual([
+      { method: 'session.create', params: { workspaceId: 'workspace-1' } },
+      { method: 'session.history', params: { sessionId: 'published-1', maxMessages: 50 } },
+    ])
+  })
+
+  it('keeps partial session.search results instead of failing broad queries', async () => {
+    const transport: DshTransport = {
+      request: <TResponse>(method: string) => {
+        const value =
+          method === 'session.list'
+            ? {
+                items: [
+                  { sessionId: 'session-a', updatedAt: 2, running: false, blank: false },
+                  { sessionId: 'session-b', updatedAt: 1, running: false, blank: false },
+                ],
+              }
+            : method === 'session.search'
+              ? { items: [{ sessionId: 'session-a', snippet: 'match' }], hasMore: true }
+              : { events: [], hasMore: false }
+        return Promise.resolve({ result: { ok: true, value } } as TResponse)
+      },
+      remoteRequest: <TResponse>() => Promise.reject<TResponse>(new Error('unexpected Remote')),
+      openEventStream: async function* () {
+        /* fixture stream */
+      },
+      close: () => Promise.resolve(),
+    }
+
+    const page = await new Rc6SessionRepository(transport).list({ search: 'wide query' })
+
+    expect(page.items.map((item) => item.id)).toEqual(['session-a'])
   })
 })

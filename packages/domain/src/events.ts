@@ -1,6 +1,6 @@
 import type { WorkflowSummary } from './advanced.js'
 import type { AgentConfiguration, ModelSelection, TokenUsage, ToolMode } from './models.js'
-import type { PromptAttachment, QueuedInput } from './sessions.js'
+import type { PromptAttachment, QueuedInput, SessionProjectionSnapshot } from './sessions.js'
 import type { PermissionRequest, ToolCallView, UserQuestion } from './tools.js'
 
 export interface GoalView {
@@ -297,7 +297,12 @@ type BackendEventPayload =
       readonly stopReason: 'completed' | 'cancelled' | 'error'
     }
   | { readonly type: 'team.updated'; readonly sessionId: string; readonly activity: TeamActivityView }
-  | { readonly type: 'session.subscribed'; readonly sessionId: string; readonly lastSequence: number }
+  | {
+      readonly type: 'session.subscribed'
+      readonly sessionId: string
+      readonly lastSequence: number
+      readonly projection?: SessionProjectionSnapshot
+    }
   | {
       readonly type: 'session.projection'
       readonly sessionId: string

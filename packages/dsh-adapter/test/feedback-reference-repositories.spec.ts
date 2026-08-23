@@ -87,6 +87,25 @@ describe('rc.8 optional reference and feedback remotes', () => {
     await expect(repository.listSessions('s1', '')).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
   })
 
+  it('treats an absent optional reference remote as empty but preserves cancellation', async () => {
+    const unavailableClient = transport(() =>
+      Promise.reject(
+        new AppError({ code: 'CAPABILITY_UNAVAILABLE', message: 'not exposed', retryable: false }),
+      ),
+    )
+    const unavailableRepository = new Rc6ReferenceRepository(unavailableClient)
+    await expect(unavailableRepository.listFiles('s1', 'src')).resolves.toEqual([])
+    await expect(unavailableRepository.listSessions('s1', 'src')).resolves.toEqual([])
+
+    const cancelledClient = transport(() =>
+      Promise.reject(new AppError({ code: 'REQUEST_CANCELLED', message: 'cancelled', retryable: false })),
+    )
+    const cancelledRepository = new Rc6ReferenceRepository(cancelledClient)
+    await expect(cancelledRepository.listFiles('s1', 'src')).rejects.toMatchObject({
+      code: 'REQUEST_CANCELLED',
+    })
+  })
+
   it('unwraps the Remote business union and carries the optimistic feedback version', async () => {
     const updated = {
       messageId: 'm1',

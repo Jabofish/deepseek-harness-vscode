@@ -6,7 +6,6 @@ import type {
   MessageAttachment,
   MessageImageReference,
   ModelDescriptor,
-  ModelSelection,
   ModelProvider,
   PermissionRequest,
   QueuedInput,
@@ -18,19 +17,20 @@ import type {
   TeamActivityView,
   TokenUsage,
   ToolCallView,
-  ToolPresentationDiff,
-  ToolPresentationLine,
-  ToolPresentationSearchFile,
-  ToolPresentationSearchMatch,
-  ToolPresentationSource,
-  ToolPresentationView,
   TurnEndFailure,
   TurnEndReasonKind,
-  TodoView,
   UserQuestion,
   UserQuestionItem,
   WorkspaceSummary,
 } from '@dsh-vscode/domain'
+
+import { safePayload } from '../../redaction.js'
+import {
+  recordOrUndefined as objectOrUndefined,
+  validProjectionBlock,
+} from '../../repositories/shared/guards.js'
+import { mapConfiguration, mapModelPatch, mapTodo, permissionPresetIds } from '../../projection/agent.js'
+import { projectToolPresentation } from '../../projection/tool-presentation.js'
 
 export const rc6Mapper = {
   sessionSummary(value: unknown): SessionSummary {
@@ -86,7 +86,7 @@ export const rc6Mapper = {
     const permissionPresets = permissionPresetIds(summary.projection?.values)
     return {
       ...summary,
-      configuration: configuration(record.configuration),
+      configuration: mapConfiguration(record.configuration),
       ...(permissionPresets.length === 0 ? {} : { permissionPresets }),
       goalIds: array(record.goalIds)
         .map((entry) => stringOr(entry, ''))
@@ -239,13 +239,13 @@ export const rc6Mapper = {
           approvalPolicy: stringOr(data.policy ?? data.value ?? data.name, ''),
         })
       case 'request/context': {
-        const model = modelPatch(data)
+        const model = mapModelPatch(data)
         return Object.keys(model).length === 0
           ? { type: 'unknown', sessionId, name, payload: safePayload(value) }
           : sessionConfiguration(sessionId, { model })
       }
       case 'request/header': {
-        const model = modelPatch(data)
+        const model = mapModelPatch(data)
         return Object.keys(model).length === 0
           ? { type: 'unknown', sessionId, name, payload: safePayload(value) }
           : sessionConfiguration(sessionId, { model })
@@ -452,7 +452,7 @@ export const rc6Mapper = {
         return {
           type: 'todo.updated',
           sessionId,
-          todos: array(data.todos ?? data.items).map((entry, index) => todo(entry, index)),
+          todos: array(data.todos ?? data.items).map((entry, index) => mapTodo(entry, index)),
         }
       case 'compaction/start':
       case 'compaction/summary':
@@ -614,10 +614,25 @@ export const rc6Mapper = {
           items: array(data.items).flatMap((entry) => queuedInput(entry, sessionId)),
         }
       case 'session/subscribed':
-        return {
-          type: 'session.subscribed',
-          sessionId,
-          lastSequence: number(data.lastSeq, -1),
+        if (data.projections !== undefined && !validProjectionBlock(data.projections))
+          throw new Error('Malformed session/subscribed projections')
+        if (data.projection !== undefined && !validProjectionBlock(data.projection))
+          throw new Error('Malformed session/subscribed projection')
+        {
+          const projection = objectOrUndefined(data.projections ?? data.projection)
+          return {
+            type: 'session.subscribed',
+            sessionId,
+            lastSequence: number(data.lastSeq, -1),
+            ...(projection === undefined
+              ? {}
+              : {
+                  projection: {
+                    asOfSequence: projection.asOfSeq as number,
+                    values: projection.values as Record<string, unknown>,
+                  },
+                }),
+          }
         }
       case 'session/projection':
         return {
@@ -685,41 +700,6 @@ export const rc6Mapper = {
   },
 }
 
-/** Read only the pinned `values.permissions.options[].value` projection. */
-export function permissionPresetIds(value: unknown): readonly string[] {
-  const permissions = objectOrUndefined(objectOrUndefined(value)?.permissions)
-  const options = array(permissions?.options)
-  return [
-    ...new Set(
-      options.flatMap((entry) => {
-        const option = objectOrUndefined(entry)
-        return typeof option?.value === 'string' && option.value !== '' && option.value !== 'custom'
-          ? [option.value]
-          : []
-      }),
-    ),
-  ]
-}
-
-function configuration(value: unknown): SessionDetail['configuration'] {
-  const record = objectOrUndefined(value) ?? {}
-  return {
-    preset: stringOr(record.preset, 'standard'),
-    toolMode: enumValue(record.toolMode, ['native', 'code', 'both'] as const, 'native'),
-    permissionPreset: stringOr(record.permissionPreset, 'workspace-write'),
-    planMode: boolean(record.planMode, false),
-    ...(typeof record.sandboxMode === 'string' ? { sandboxMode: record.sandboxMode } : {}),
-    ...(typeof record.approvalPolicy === 'string' ? { approvalPolicy: record.approvalPolicy } : {}),
-    model: {
-      providerId: stringOr(objectOrUndefined(record.model)?.providerId, ''),
-      modelId: stringOr(objectOrUndefined(record.model)?.modelId, ''),
-      ...(objectOrUndefined(record.model)?.reasoningLevel === undefined
-        ? {}
-        : { reasoningLevel: stringOr(objectOrUndefined(record.model)?.reasoningLevel, '') }),
-    },
-  }
-}
-
 function sessionConfiguration(sessionId: string, patch: SessionConfigurationPatch): BackendEvent {
   return { type: 'session.configuration', sessionId, patch }
 }
@@ -730,34 +710,6 @@ function planMode(data: Record<string, unknown>): boolean {
   if (typeof data.on === 'boolean') return data.on
   const mode = stringOr(data.mode ?? data.value, '').toLowerCase()
   return mode === 'plan' || mode === 'on' || mode === 'active'
-}
-
-function modelPatch(data: Record<string, unknown>): Partial<ModelSelection> {
-  const header = objectOrUndefined(data.header)
-  const config = objectOrUndefined(header?.config) ?? objectOrUndefined(data.config)
-  const provider = firstString(data.provider, data.providerId, config?.provider, config?.providerId)
-  const model = firstString(data.model, data.modelId, config?.model, config?.modelId)
-  const reasoningLevel = firstString(
-    data.reasoningEffort,
-    data.reasoningLevel,
-    config?.reasoningEffort,
-    config?.reasoningLevel,
-  )
-  return {
-    ...(provider === undefined ? {} : { providerId: provider }),
-    ...(model === undefined ? {} : { modelId: model }),
-    ...(reasoningLevel === undefined ? {} : { reasoningLevel }),
-  }
-}
-
-function todo(value: unknown, index: number): TodoView {
-  const record = objectOrUndefined(value) ?? {}
-  const status = stringOr(record.status, 'pending')
-  return {
-    id: stringOr(record.id, `todo:${index}`),
-    content: firstString(record.content, record.title, record.text) ?? 'Todo',
-    status: status === 'completed' ? 'completed' : status === 'in_progress' ? 'in-progress' : 'pending',
-  }
 }
 
 function compactionPhase(name: string): CompactionView['phase'] {
@@ -891,7 +843,7 @@ function tool(value: Record<string, unknown>, phase: 'call' | 'result' = 'result
   const source = objectOrUndefined(message?.source)
   const viewEnvelope = objectOrUndefined(value.view)
   const view = objectOrUndefined(viewEnvelope?.view) ?? viewEnvelope
-  const presentation = toolPresentationView(viewEnvelope, phase)
+  const presentation = projectToolPresentation(viewEnvelope, phase, contentText)
   const error = objectOrUndefined(value.error)
   const input =
     value.inputSummary ??
@@ -936,340 +888,6 @@ function tool(value: Record<string, unknown>, phase: 'call' | 'result' = 'result
     ...(presentation === undefined ? {} : { presentation }),
     metadata: objectOrUndefined(safePayload(view)) ?? {},
   }
-}
-
-/**
- * Project the official DSH presentation union without importing upstream
- * types into the domain. The adapter accepts both the rc.8 durable wrapper
- * `{ for, view }` and the older/direct shape, then drops an invalid or future
- * card so the generic tool card remains usable on every supported version.
- */
-function toolPresentationView(
-  envelope: Record<string, unknown> | undefined,
-  fallbackPhase: 'call' | 'result',
-): ToolPresentationView | undefined {
-  if (envelope === undefined) return undefined
-  const candidate = objectOrUndefined(envelope.view) ?? envelope
-  if (candidate === undefined || typeof candidate.card !== 'string') return undefined
-  const phase = envelope.for === 'call' || envelope.for === 'result' ? envelope.for : fallbackPhase
-  const card = candidate.card
-  if (card === 'generic') return genericPresentation(candidate, phase)
-  if (card === 'terminal') return terminalPresentation(candidate, phase)
-  if (card === 'diff') return diffPresentation(candidate, phase)
-  if (card === 'search' && phase === 'result') return searchPresentation(candidate)
-  if (card === 'read' && phase === 'result') return readPresentation(candidate)
-  if (card === 'web' && phase === 'result') return webPresentation(candidate)
-  return undefined
-}
-
-function genericPresentation(value: Record<string, unknown>, phase: 'call' | 'result'): ToolPresentationView {
-  const title = optionalText(value.title)
-  const kind = optionalText(value.kind)
-  const content = presentationContent(value.content)
-  const locations = toolLocations(value.locations)
-  if (phase === 'call') {
-    const rawInput = presentationValue(value.rawInput)
-    return {
-      phase,
-      card: 'generic',
-      ...(title === undefined ? {} : { title }),
-      ...(kind === undefined ? {} : { kind }),
-      ...(rawInput === undefined ? {} : { rawInput }),
-      ...(content === undefined ? {} : { content }),
-      ...(locations === undefined ? {} : { locations }),
-    }
-  }
-  return {
-    phase,
-    card: 'generic',
-    ...(title === undefined ? {} : { title }),
-    ...(kind === undefined ? {} : { kind }),
-    ...(content === undefined ? {} : { content }),
-  }
-}
-
-function terminalPresentation(
-  value: Record<string, unknown>,
-  phase: 'call' | 'result',
-): ToolPresentationView | undefined {
-  if (phase === 'call') {
-    const title = requiredText(value.title)
-    if (title === undefined) return undefined
-    const description = optionalText(value.description)
-    const cwd = safePath(value.cwd)
-    return {
-      phase,
-      card: 'terminal',
-      title,
-      ...(description === undefined ? {} : { description }),
-      ...(cwd === undefined ? {} : { cwd }),
-    }
-  }
-  const title = optionalText(value.title)
-  const output = optionalText(value.output)
-  const exitCode = presentationExitCode(value.exitCode)
-  const signal = optionalText(value.signal)
-  if (title === undefined && output === undefined && exitCode === undefined && signal === undefined)
-    return undefined
-  return {
-    phase,
-    card: 'terminal',
-    ...(title === undefined ? {} : { title }),
-    ...(output === undefined ? {} : { output }),
-    ...(exitCode === undefined ? {} : { exitCode }),
-    ...(signal === undefined ? {} : { signal }),
-  }
-}
-
-function diffPresentation(
-  value: Record<string, unknown>,
-  phase: 'call' | 'result',
-): ToolPresentationView | undefined {
-  const title = requiredText(value.title)
-  if (phase === 'call' && title === undefined) return undefined
-  const diffs = array(value.diffs).flatMap((entry) => {
-    const diff = objectOrUndefined(entry)
-    if (diff === undefined) return []
-    const path = safePath(diff.path)
-    const newText = requiredText(diff.newText)
-    const oldText = diff.oldText === null ? null : requiredText(diff.oldText)
-    if (path === undefined || newText === undefined || (diff.oldText !== null && oldText === undefined))
-      return []
-    const normalizedOldText: string | null = oldText === undefined ? null : oldText
-    return [{ path, oldText: normalizedOldText, newText } satisfies ToolPresentationDiff]
-  })
-  if (diffs.length === 0) return undefined
-  if (phase === 'call') {
-    if (title === undefined) return undefined
-    const locations = toolLocations(value.locations)
-    return {
-      phase,
-      card: 'diff',
-      title,
-      diffs,
-      ...(locations === undefined ? {} : { locations }),
-    }
-  }
-  return {
-    phase,
-    card: 'diff',
-    ...(title === undefined ? {} : { title }),
-    diffs,
-  }
-}
-
-function searchPresentation(value: Record<string, unknown>): ToolPresentationView | undefined {
-  const shape = value.shape
-  const title = optionalText(value.title)
-  const truncated = value.truncated
-  const total = nonNegativeCount(value.total)
-  if (typeof truncated !== 'boolean' || total === undefined) return undefined
-  if (shape === 'paths') {
-    const paths = array(value.paths).flatMap((entry) => {
-      const path = safePath(entry)
-      return path === undefined ? [] : [path]
-    })
-    return {
-      phase: 'result',
-      card: 'search',
-      shape: 'paths',
-      ...(title === undefined ? {} : { title }),
-      paths,
-      truncated,
-      total,
-    }
-  }
-  if (shape !== 'matches') return undefined
-  const files = array(value.files).flatMap((entry) => {
-    const file = objectOrUndefined(entry)
-    const path = safePath(file?.path)
-    if (file === undefined || path === undefined) return []
-    const matches = array(file.matches).flatMap((matchValue) => {
-      const match = objectOrUndefined(matchValue)
-      const lineNumber = positiveCount(match?.lineNumber)
-      const line = lineText(match?.line)
-      return lineNumber === undefined || line === undefined
-        ? []
-        : [{ lineNumber, line } satisfies ToolPresentationSearchMatch]
-    })
-    return [{ path, matches } satisfies ToolPresentationSearchFile]
-  })
-  return {
-    phase: 'result',
-    card: 'search',
-    shape: 'matches',
-    ...(title === undefined ? {} : { title }),
-    files,
-    truncated,
-    total,
-  }
-}
-
-function readPresentation(value: Record<string, unknown>): ToolPresentationView | undefined {
-  const path = safePath(value.path)
-  const offset = nonNegativeCount(value.offset)
-  const totalLines = nonNegativeCount(value.totalLines)
-  if (path === undefined || offset === undefined || totalLines === undefined) return undefined
-  const lines = array(value.lines).flatMap((entry) => {
-    const line = objectOrUndefined(entry)
-    const number = positiveCount(line?.number)
-    const text = lineText(line?.text)
-    return number === undefined || text === undefined ? [] : [{ number, text } satisfies ToolPresentationLine]
-  })
-  const title = optionalText(value.title)
-  const lang = optionalText(value.lang)
-  const content = presentationContent(value.content)
-  return {
-    phase: 'result',
-    card: 'read',
-    ...(title === undefined ? {} : { title }),
-    path,
-    offset,
-    lines,
-    totalLines,
-    ...(lang === undefined ? {} : { lang }),
-    ...(content === undefined ? {} : { content }),
-  }
-}
-
-function webPresentation(value: Record<string, unknown>): ToolPresentationView | undefined {
-  const kind = value.kind
-  const title = optionalText(value.title)
-  const truncated = value.truncated
-  if (typeof truncated !== 'boolean') return undefined
-  if (kind === 'fetch') {
-    const url = safeUrl(value.url)
-    const statusCode = httpStatus(value.statusCode)
-    if (url === undefined || statusCode === undefined) return undefined
-    return {
-      phase: 'result',
-      card: 'web',
-      kind: 'fetch',
-      ...(title === undefined ? {} : { title }),
-      url,
-      statusCode,
-      truncated,
-    }
-  }
-  if (kind !== 'search') return undefined
-  const sources = array(value.sources).flatMap((entry) => {
-    const source = objectOrUndefined(entry)
-    const url = safeUrl(source?.url)
-    if (source === undefined || url === undefined) return []
-    const sourceTitle = optionalText(source.title)
-    const snippet = optionalText(source.snippet)
-    const publishedAt = optionalText(source.publishedAt)
-    return [
-      {
-        url,
-        ...(sourceTitle === undefined ? {} : { title: sourceTitle }),
-        ...(snippet === undefined ? {} : { snippet }),
-        ...(publishedAt === undefined ? {} : { publishedAt }),
-      } satisfies ToolPresentationSource,
-    ]
-  })
-  const answer = optionalText(value.answer)
-  return {
-    phase: 'result',
-    card: 'web',
-    kind: 'search',
-    ...(title === undefined ? {} : { title }),
-    sources,
-    ...(answer === undefined ? {} : { answer }),
-    truncated,
-  }
-}
-
-function presentationContent(value: unknown): readonly string[] | undefined {
-  if (!Array.isArray(value)) return undefined
-  const text = contentText(value, false)
-  return text === '' ? undefined : [bounded(text)]
-}
-
-function presentationValue(value: unknown): string | undefined {
-  if (value === undefined) return undefined
-  if (typeof value === 'string') return bounded(value)
-  const sanitized = safePresentationValue(value)
-  if (sanitized === undefined) return undefined
-  const text = JSON.stringify(sanitized)
-  return text === undefined ? undefined : text.slice(0, 4_096)
-}
-
-function safePresentationValue(value: unknown, depth = 0): unknown {
-  if (depth > 3) return undefined
-  if (typeof value === 'string') return value
-  if (typeof value === 'number' || typeof value === 'boolean' || value === null) return value
-  if (Array.isArray(value)) return value.slice(0, 32).map((entry) => safePresentationValue(entry, depth + 1))
-  const record = objectOrUndefined(value)
-  if (record === undefined) return undefined
-  const output: Record<string, unknown> = {}
-  for (const [key, entry] of Object.entries(record)) {
-    if (isSensitivePresentationField(key)) continue
-    const safe = safePresentationValue(entry, depth + 1)
-    if (safe !== undefined) output[key] = safe
-  }
-  return output
-}
-
-const SENSITIVE_PRESENTATION_FIELDS = new Set([
-  'authorization',
-  'token',
-  'secret',
-  'password',
-  'apikey',
-  'accessToken',
-  'refreshToken',
-  'privateKey',
-  'body',
-  'response',
-])
-
-function isSensitivePresentationField(key: string): boolean {
-  const normalized = key.replace(/[_-]/gu, '').toLocaleLowerCase()
-  return [...SENSITIVE_PRESENTATION_FIELDS].some(
-    (field) => field.replace(/[_-]/gu, '').toLocaleLowerCase() === normalized,
-  )
-}
-
-function requiredText(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() !== '' ? bounded(value) : undefined
-}
-
-function lineText(value: unknown): string | undefined {
-  return typeof value === 'string' ? bounded(value) : undefined
-}
-
-function optionalText(value: unknown): string | undefined {
-  return requiredText(value)
-}
-
-function safePath(value: unknown): string | undefined {
-  const path = requiredText(value)
-  return path === undefined || hasUnsafePathCharacters(path) ? undefined : path
-}
-
-function safeUrl(value: unknown): string | undefined {
-  const url = requiredText(value)
-  return url === undefined || hasUnsafePathCharacters(url) ? undefined : url
-}
-
-function nonNegativeCount(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined
-}
-
-function positiveCount(value: unknown): number | undefined {
-  const count = nonNegativeCount(value)
-  return count === undefined || count === 0 ? undefined : count
-}
-
-function httpStatus(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 100 && value <= 599
-    ? value
-    : undefined
-}
-
-function presentationExitCode(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isSafeInteger(value) ? value : undefined
 }
 
 function toolLocations(
@@ -1809,24 +1427,6 @@ function object(value: unknown, label: string): Record<string, unknown> {
   return record
 }
 
-function objectOrUndefined(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined
-}
-
-function validProjectionBlock(
-  value: unknown,
-): value is { readonly asOfSeq: number; readonly values: Record<string, unknown> } {
-  const record = objectOrUndefined(value)
-  return (
-    record !== undefined &&
-    Number.isSafeInteger(record.asOfSeq) &&
-    (record.asOfSeq as number) >= -1 &&
-    objectOrUndefined(record.values) !== undefined
-  )
-}
-
 function array(value: unknown): readonly unknown[] {
   return Array.isArray(value) ? value : []
 }
@@ -1838,6 +1438,10 @@ function string(value: unknown, label: string): string {
 
 function stringOr(value: unknown, fallback: string): string {
   return typeof value === 'string' ? value : fallback
+}
+
+function optionalText(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() !== '' ? bounded(value) : undefined
 }
 
 function firstString(...values: readonly unknown[]): string | undefined {
@@ -1885,51 +1489,4 @@ function enumValue<const T extends readonly string[]>(
 function bounded(value: unknown): string {
   const text = typeof value === 'string' ? value : JSON.stringify(safePayload(value))
   return (text ?? '').slice(0, 4_096)
-}
-
-function safePayload(value: unknown): unknown {
-  if (Array.isArray(value)) return value.slice(0, 32).map(safePayload)
-  if (typeof value !== 'object' || value === null)
-    return typeof value === 'string' ? value.slice(0, 512) : value
-  const output: Record<string, unknown> = {}
-  for (const [key, entry] of Object.entries(value)) {
-    if (isSensitivePayloadField(key)) continue
-    output[key] = safePayload(entry)
-  }
-  return output
-}
-
-const SENSITIVE_PAYLOAD_FIELDS = new Set([
-  'key',
-  'apikey',
-  'api_key',
-  'authorization',
-  'accesstoken',
-  'access_token',
-  'refreshtoken',
-  'refresh_token',
-  'token',
-  'secret',
-  'secretkey',
-  'privatekey',
-  'password',
-  'prompt',
-  'body',
-  'response',
-  'input',
-  'output',
-  'command',
-  'commandline',
-  'endpoint',
-  'baseurl',
-  'path',
-  'cwd',
-  'directory',
-  'executable',
-  'pid',
-  'stack',
-])
-
-function isSensitivePayloadField(key: string): boolean {
-  return SENSITIVE_PAYLOAD_FIELDS.has(key.toLocaleLowerCase())
 }

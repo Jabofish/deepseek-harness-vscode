@@ -5,7 +5,7 @@ import type {
   DshUpdateSnapshot,
 } from '@dsh-vscode/domain'
 import { AppError } from '@dsh-vscode/domain'
-import { DSH_PACKAGE_NAME } from '@dsh-vscode/dsh-adapter'
+import { DSH_PACKAGE_NAME, redactText } from '@dsh-vscode/dsh-adapter'
 
 import { isSupportedNodeVersion } from './install-runtime.js'
 
@@ -484,13 +484,7 @@ function runtimeCommandFailureDetail(error: unknown): string | undefined {
       .filter((line) => line !== '' && !isNpmWarningLine(line))
     const compact = actionableLines.join(' ').replace(/\s+/gu, ' ').trim()
     if (compact === '') continue
-    const redacted = compact
-      .replace(/(https?:\/\/)([^/\s:@]+(?::[^/\s@]*)?@)/giu, '$1[redacted]@')
-      .replace(
-        /\b(?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|authorization|password|secret|private[_ -]?key|token|prompt|body|response)\b\s*[:=]\s*[^\s,;]+/giu,
-        (match) => match.replace(/[:=].*$/u, ': [redacted]'),
-      )
-    return redacted.slice(0, 480)
+    return redactText(compact, 480)
   }
   return undefined
 }

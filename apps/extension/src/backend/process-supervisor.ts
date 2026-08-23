@@ -128,8 +128,16 @@ export class DshProcessSupervisor implements ProcessSupervisor {
         stop: async () => {
           if (stopped.value) return
           stopped.value = true
-          await stopChild(child)
           if (this.active?.pid === child.pid) this.active = undefined
+          try {
+            await stopChild(child)
+          } catch (error) {
+            // The handle is no longer active as soon as shutdown is requested,
+            // but a failed termination must remain retryable. This also keeps
+            // a later SIGKILL attempt idempotent after a transient kill error.
+            stopped.value = false
+            throw error
+          }
         },
       }
       this.active = handle

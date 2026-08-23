@@ -17,11 +17,25 @@ import {
 } from '@dsh-vscode/domain'
 
 import type { DshTransport } from '../contracts.js'
-import { executeRc6Command } from './command-repository.js'
+import { executeSessionConfigCommand } from './command-repository.js'
 import { callRpc, type RpcResponseLike, unavailable, unwrapRpcResult } from '../versions/rc6/rpc.js'
-import { permissionPresetIds, rc6Mapper } from '../versions/rc6/mapper.js'
+import { clientTimeZoneField } from '../client-time-zone.js'
+import { rc6Mapper } from '../versions/rc6/mapper.js'
+import { permissionPresetIds } from '../projection/agent.js'
 import type { Rc6WorkspaceRepository } from './workspace-repository.js'
+import { recordOrUndefined, validProjectionBlock } from './shared/guards.js'
+import {
+  decodeCanonicalBase64,
+  isCanonicalBase64,
+  isSupportedImageMimeType,
+  isTextAttachment,
+  matchesImageSignature,
+  parseBase64DataUri,
+  safeAttachmentName,
+} from '../attachment-codec.js'
 
+/** The official web client pages session.history at 50 messages per read. */
+const HISTORY_PAGE_MESSAGES = 50
 const MAX_PROMPT_ATTACHMENT_BYTES = 8 * 1024 * 1024
 const MAX_PROMPT_ATTACHMENT_TOTAL_BYTES = 100 * 1024 * 1024
 
@@ -39,6 +53,7 @@ export class Rc6SessionRepository implements SessionRepository {
     this.supportsPreallocatedSessionId =
       options.preallocatedSessionId === true || options.reuseWorkspaceBlank === true
     this.supportsWorkspaceBlankReuse = options.reuseWorkspaceBlank === true
+    this.includesEmptyCommandImages = options.includeEmptyCommandImages === true
     this.maxPromptAttachmentBytes = options.maxPromptAttachmentBytes ?? MAX_PROMPT_ATTACHMENT_BYTES
     this.maxPromptAttachmentTotalBytes =
       options.maxPromptAttachmentTotalBytes ?? MAX_PROMPT_ATTACHMENT_TOTAL_BYTES
@@ -46,6 +61,7 @@ export class Rc6SessionRepository implements SessionRepository {
 
   private readonly supportsPreallocatedSessionId: boolean
   private readonly supportsWorkspaceBlankReuse: boolean
+  private readonly includesEmptyCommandImages: boolean
   private readonly maxPromptAttachmentBytes: number
   private readonly maxPromptAttachmentTotalBytes: number
 
@@ -131,7 +147,10 @@ export class Rc6SessionRepository implements SessionRepository {
         typeof searchRecord.hasMore !== 'boolean'
       )
         throw malformedSessionResponse('session search')
-      if (searchRecord.hasMore) throw unavailable('session search continuation')
+      // `hasMore` asks the client to refine the query; the returned items
+      // stay valid, and the official runtime surfaces them instead of
+      // failing the search. Keep the same behavior here rather than turning
+      // every broad query into a CAPABILITY_UNAVAILABLE error.
       const allowed = new Set(
         searchRecord.items.map(
           (item) => (recordOrUndefined(item) as { readonly sessionId: string }).sessionId,
@@ -216,7 +235,11 @@ export class Rc6SessionRepository implements SessionRepository {
     const historyValue = await callRpc<unknown>(
       this.transport,
       'session.history',
-      { sessionId, maxMessages: 200, ...(beforeSequence === undefined ? {} : { beforeSeq: beforeSequence }) },
+      {
+        sessionId,
+        maxMessages: HISTORY_PAGE_MESSAGES,
+        ...(beforeSequence === undefined ? {} : { beforeSeq: beforeSequence }),
+      },
       signal,
     )
     if (!validHistoryResponse(historyValue)) throw malformedSessionResponse('session history')
@@ -256,9 +279,7 @@ export class Rc6SessionRepository implements SessionRepository {
         ? input.configuration.preset.trim()
         : ''
     const value = requiredRecord(
-      await callRpc<unknown>(
-        this.transport,
-        'session.create',
+      await this.createSession(
         {
           ...(input.workspaceId.length === 0 ? {} : { workspaceId: input.workspaceId }),
           ...(reusableSessionId === undefined ? {} : { sessionId: reusableSessionId }),
@@ -270,14 +291,20 @@ export class Rc6SessionRepository implements SessionRepository {
       'session create',
     )
     const createdSessionId = requiredSessionId(value, 'session create')
+    const attachmentFailed = value.attachmentFailed === true
     if (
+      !attachmentFailed &&
       value.agentPreset !== undefined &&
       (typeof value.agentPreset !== 'string' || value.agentPreset.trim() === '')
     )
       throw malformedSessionResponse('session create receipt')
-    if (input.title !== undefined && input.title.trim() !== '')
+    if (!attachmentFailed && input.title !== undefined && input.title.trim() !== '')
       await this.rename(createdSessionId, input.title, signal)
-    if (input.configuration.model.providerId !== '' && input.configuration.model.modelId !== '')
+    if (
+      !attachmentFailed &&
+      input.configuration.model.providerId !== '' &&
+      input.configuration.model.modelId !== ''
+    )
       assertModelSelection(
         await callRpc<unknown>(
           this.transport,
@@ -300,6 +327,29 @@ export class Rc6SessionRepository implements SessionRepository {
     // Do not turn a failed authoritative read into a locally fabricated
     // session. The caller must know whether the host actually published it.
     return this.get(createdSessionId, signal)
+  }
+
+  /**
+   * `workspace-attach-failed` still leaves a published session on the host;
+   * the official client surfaces it as ungrouped instead of losing it. Read
+   * it back through the history path so the caller can open the real session
+   * and retry attachment later.
+   */
+  private async createSession(
+    payload: Readonly<Record<string, unknown>>,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
+    try {
+      return await callRpc<unknown>(this.transport, 'session.create', payload, signal)
+    } catch (error) {
+      if (
+        error instanceof AppError &&
+        error.context?.rpcCode === 'workspace-attach-failed' &&
+        typeof error.context.publishedSessionId === 'string'
+      )
+        return { sessionId: error.context.publishedSessionId, attachmentFailed: true }
+      throw error
+    }
   }
 
   public async remove(sessionId: string, signal?: AbortSignal): Promise<void> {
@@ -338,27 +388,25 @@ export class Rc6SessionRepository implements SessionRepository {
     )
     const reference = asRecord(value?.attachment)
     const rawData = typeof value?.data === 'string' ? value.data : ''
-    const dataUri = rawData.match(/^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/]+={0,2})$/i)
+    const dataUri = parseBase64DataUri(rawData)
     const mediaType = typeof reference.mediaType === 'string' ? reference.mediaType.toLowerCase() : undefined
-    const encoded = dataUri?.[2] ?? rawData
-    const resolvedMediaType = dataUri?.[1]?.toLowerCase() ?? mediaType
+    const encoded = dataUri?.encoded ?? rawData
+    const resolvedMediaType = dataUri?.mediaType ?? mediaType
+    const bytes = decodeCanonicalBase64(encoded, this.maxPromptAttachmentBytes)
     if (
       resolvedMediaType === undefined ||
-      !SUPPORTED_IMAGE_TYPES.has(resolvedMediaType) ||
-      !isValidBase64(encoded) ||
-      !validAttachmentReference(reference ?? {}, attachmentId)
+      !isSupportedImageMimeType(resolvedMediaType) ||
+      bytes === undefined ||
+      !validAttachmentReference(reference, attachmentId)
     )
       throw new AppError({
         code: 'PROTOCOL_ERROR',
         message: 'DSH returned an invalid historical attachment.',
         retryable: false,
       })
-    const bytes = Buffer.from(encoded, 'base64')
     if (
       bytes.length === 0 ||
-      bytes.length > this.maxPromptAttachmentBytes ||
       bytes.length !== reference.bytes ||
-      bytes.toString('base64') !== encoded ||
       !matchesImageSignature(resolvedMediaType, bytes)
     )
       throw new AppError({
@@ -398,6 +446,7 @@ export class Rc6SessionRepository implements SessionRepository {
         sessionId: input.sessionId,
         mode,
         content: promptContent(input, this.maxPromptAttachmentBytes, this.maxPromptAttachmentTotalBytes),
+        ...clientTimeZoneField(),
       },
       signal,
     )
@@ -429,6 +478,7 @@ export class Rc6SessionRepository implements SessionRepository {
         sessionId: input.sessionId,
         mode,
         content: promptContent(input, this.maxPromptAttachmentBytes, this.maxPromptAttachmentTotalBytes),
+        ...clientTimeZoneField(),
       },
       signal,
     )
@@ -469,10 +519,14 @@ export class Rc6SessionRepository implements SessionRepository {
       this.queueOwners.set(waited.id, input.sessionId)
       return waited
     }
+    // The prompt was accepted, so a missing identity within the wait window
+    // is a slow host rather than a broken protocol; classify it like every
+    // other transport timeout instead of signalling protocol drift.
     throw new AppError({
-      code: 'PROTOCOL_ERROR',
-      message: 'DSH accepted the prompt but did not publish its queue identity.',
+      code: 'BACKEND_UNREACHABLE',
+      message: 'DSH accepted the prompt but did not publish its queue identity in time.',
       retryable: true,
+      context: { method: 'session.prompt', timedOut: true },
     })
   }
 
@@ -612,7 +666,13 @@ export class Rc6SessionRepository implements SessionRepository {
         throw malformedSessionResponse('agent preset selection')
     }
     const command = async (value: string, operationSignal?: AbortSignal): Promise<void> => {
-      await executeRc6Command(this.transport, sessionId, value, operationSignal)
+      await executeSessionConfigCommand(
+        this.transport,
+        sessionId,
+        value,
+        this.includesEmptyCommandImages,
+        operationSignal,
+      )
     }
 
     try {
@@ -759,6 +819,8 @@ interface SessionRepositoryOptions {
   /** rc.2 raises the DSH image envelope to 20 MiB per image / 200 MiB per message. */
   readonly maxPromptAttachmentBytes?: number
   readonly maxPromptAttachmentTotalBytes?: number
+  /** rc.8+ requires the `images` array on commands/execute even when empty. */
+  readonly includeEmptyCommandImages?: boolean
 }
 
 function samePath(
@@ -913,29 +975,29 @@ function promptContent(
   let totalBytes = 0
   const content: Record<string, string>[] = [{ type: 'text', text: input.text }]
   for (const attachment of input.attachments) {
-    const match = attachment.uri.match(/^data:([^;,]+);base64,([A-Za-z0-9+/]*={0,2})$/i)
-    if (match === null)
+    const parsed = parseBase64DataUri(attachment.uri)
+    if (parsed === undefined)
       throw new AppError({
         code: 'INVALID_CONFIGURATION',
         message: 'The attachment must be a supported base64 data URI.',
         retryable: false,
       })
-    const mediaType = match[1]?.toLowerCase() ?? ''
-    const encoded = match[2] ?? ''
-    if (!isValidBase64(encoded))
+    const mediaType = parsed.mediaType
+    const encoded = parsed.encoded
+    if (!isCanonicalBase64(encoded))
       throw new AppError({
         code: 'INVALID_CONFIGURATION',
         message: 'The attachment encoding is invalid.',
         retryable: false,
       })
-    const bytes = Buffer.from(encoded, 'base64')
-    if (bytes.toString('base64') !== encoded)
+    const bytes = decodeCanonicalBase64(encoded)
+    if (bytes === undefined)
       throw new AppError({
         code: 'INVALID_CONFIGURATION',
         message: 'The attachment encoding is not canonical Base64.',
         retryable: false,
       })
-    const maxBytes = SUPPORTED_IMAGE_TYPES.has(mediaType) ? maxImageBytes : MAX_PROMPT_ATTACHMENT_BYTES
+    const maxBytes = isSupportedImageMimeType(mediaType) ? maxImageBytes : MAX_PROMPT_ATTACHMENT_BYTES
     if (bytes.length > maxBytes)
       throw new AppError({
         code: 'INVALID_CONFIGURATION',
@@ -949,7 +1011,7 @@ function promptContent(
         message: 'The combined attachment size is too large.',
         retryable: false,
       })
-    if (SUPPORTED_IMAGE_TYPES.has(mediaType)) {
+    if (isSupportedImageMimeType(mediaType)) {
       if (bytes.length === 0 || !matchesImageSignature(mediaType, bytes))
         throw new AppError({
           code: 'INVALID_CONFIGURATION',
@@ -974,141 +1036,6 @@ function promptContent(
   }
   return content
 }
-
-function isValidBase64(value: string): boolean {
-  return value.length % 4 === 0 && (value === '' || /^[A-Za-z0-9+/]+={0,2}$/.test(value))
-}
-
-function isTextAttachment(mediaType: string, name: string, bytes: Buffer): boolean {
-  if (!validTextBytes(bytes)) return false
-  if (mediaType.startsWith('text/') || TEXT_ATTACHMENT_MIME_TYPES.has(mediaType)) return true
-  const extension = extensionFromName(name)
-  return !BINARY_ATTACHMENT_EXTENSIONS.has(extension) && TEXT_ATTACHMENT_EXTENSIONS.has(extension)
-}
-
-function validTextBytes(bytes: Buffer): boolean {
-  if (bytes.includes(0)) return false
-  return !bytes.toString('utf8').includes('\ufffd')
-}
-
-function extensionFromName(name: string): string {
-  const baseName = name.split(/[\\/]/).pop() ?? name
-  const dot = baseName.lastIndexOf('.')
-  return dot <= 0 ? '' : baseName.slice(dot).toLowerCase()
-}
-
-function safeAttachmentName(name: string): string {
-  const baseName = name.split(/[\\/]/).pop() ?? name
-  const sanitized = Array.from(baseName, (character) => {
-    const code = character.charCodeAt(0)
-    return code <= 0x1f || code === 0x7f ? ' ' : character
-  })
-    .join('')
-    .trim()
-  return (sanitized === '' ? 'file' : sanitized).slice(0, 256)
-}
-
-function matchesImageSignature(mediaType: string, bytes: Buffer): boolean {
-  if (mediaType === 'image/png')
-    return bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
-  if (mediaType === 'image/jpeg')
-    return bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff
-  if (mediaType === 'image/gif')
-    return (
-      bytes.length >= 6 &&
-      (bytes.subarray(0, 6).toString('ascii') === 'GIF89a' ||
-        bytes.subarray(0, 6).toString('ascii') === 'GIF87a')
-    )
-  if (mediaType === 'image/webp')
-    return (
-      bytes.length >= 12 &&
-      bytes.subarray(0, 4).toString('ascii') === 'RIFF' &&
-      bytes.subarray(8, 12).toString('ascii') === 'WEBP'
-    )
-  return false
-}
-
-const SUPPORTED_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
-
-const TEXT_ATTACHMENT_MIME_TYPES = new Set([
-  'application/json',
-  'application/javascript',
-  'application/sql',
-  'application/toml',
-  'application/typescript',
-  'application/x-sh',
-  'application/x-yaml',
-  'application/xml',
-  'application/yaml',
-])
-
-const TEXT_ATTACHMENT_EXTENSIONS = new Set([
-  '.c',
-  '.cc',
-  '.cpp',
-  '.css',
-  '.csv',
-  '.go',
-  '.h',
-  '.hpp',
-  '.htm',
-  '.html',
-  '.ini',
-  '.java',
-  '.js',
-  '.json',
-  '.jsx',
-  '.log',
-  '.md',
-  '.mjs',
-  '.py',
-  '.rs',
-  '.scss',
-  '.sh',
-  '.sql',
-  '.svelte',
-  '.toml',
-  '.ts',
-  '.tsx',
-  '.txt',
-  '.vue',
-  '.xml',
-  '.yaml',
-  '.yml',
-  '.zsh',
-])
-
-const BINARY_ATTACHMENT_EXTENSIONS = new Set([
-  '.7z',
-  '.avi',
-  '.bin',
-  '.bz2',
-  '.dll',
-  '.doc',
-  '.docx',
-  '.exe',
-  '.flac',
-  '.gz',
-  '.ico',
-  '.jar',
-  '.mp3',
-  '.mp4',
-  '.mov',
-  '.pdf',
-  '.ppt',
-  '.pptx',
-  '.psd',
-  '.rar',
-  '.tar',
-  '.ttf',
-  '.wav',
-  '.webm',
-  '.woff',
-  '.woff2',
-  '.xls',
-  '.xlsx',
-  '.zip',
-])
 
 function defaultConfiguration(): AgentConfiguration {
   return {
@@ -1199,12 +1126,6 @@ function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {}
-}
-
-function recordOrUndefined(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined
 }
 
 function malformedSessionResponse(method: string): AppError {
@@ -1316,7 +1237,7 @@ function validAttachmentReference(value: Record<string, unknown>, requestedId: s
     typeof value.attachmentId === 'string' &&
     value.attachmentId === requestedId &&
     typeof value.mediaType === 'string' &&
-    SUPPORTED_IMAGE_TYPES.has(value.mediaType.toLowerCase()) &&
+    isSupportedImageMimeType(value.mediaType) &&
     Number.isSafeInteger(value.bytes) &&
     (value.bytes as number) > 0 &&
     Number.isSafeInteger(value.width) &&
@@ -1324,16 +1245,6 @@ function validAttachmentReference(value: Record<string, unknown>, requestedId: s
     Number.isSafeInteger(value.height) &&
     (value.height as number) > 0 &&
     (value.name === undefined || typeof value.name === 'string')
-  )
-}
-
-function validProjectionBlock(value: unknown): boolean {
-  const record = recordOrUndefined(value)
-  return (
-    record !== undefined &&
-    Number.isSafeInteger(record.asOfSeq) &&
-    (record.asOfSeq as number) >= -1 &&
-    recordOrUndefined(record.values) !== undefined
   )
 }
 

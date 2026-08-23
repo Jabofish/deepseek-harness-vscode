@@ -53,7 +53,7 @@ export class DshConnectionCoordinator {
   }
 
   public async connect(request: ConnectionRequest, signal?: AbortSignal): Promise<ConnectionResult> {
-    if (this.disconnectOperation !== undefined) await this.disconnectOperation
+    if (this.disconnectOperation !== undefined) await waitForSignal(this.disconnectOperation, signal)
     if (this.inFlight !== undefined) {
       if (!sameRequest(this.inFlightRequest, request))
         throw new AppError({
@@ -151,6 +151,7 @@ export class DshConnectionCoordinator {
     signal: AbortSignal | undefined,
     generation: number,
   ): Promise<ConnectionResult> {
+    this.throwIfAborted(signal)
     if (
       this.backend !== undefined &&
       !shouldDisconnectForRequest(this.backend.connection.endpoint, request)
@@ -165,7 +166,6 @@ export class DshConnectionCoordinator {
       this.publish(state)
       return { backend: this.backend, state }
     }
-    this.throwIfAborted(signal)
 
     if (request.mode === 'custom') {
       const endpoint = request.endpoint
@@ -244,7 +244,8 @@ export class DshConnectionCoordinator {
 
     this.throwIfAborted(signal)
     this.publish({ kind: 'locating-runtime' })
-    const runtime = await this.dependencies.runtimeLocator.locate(signal)
+    const runtimeLookup = await this.dependencies.runtimeLocator.locate(signal)
+    const runtime = runtimeLookup.runtime
     if (runtime !== undefined && !runtime.supported) {
       this.publish({
         kind: 'failed',
@@ -258,7 +259,7 @@ export class DshConnectionCoordinator {
       })
     }
     if (runtime === undefined) {
-      const searchedLocations = this.dependencies.runtimeLocator.searchedLocations()
+      const searchedLocations = runtimeLookup.searchedLocations
       this.publish({ kind: 'runtime-missing', searchedLocations })
       throw new AppError({
         code: 'DSH_NOT_FOUND',
@@ -318,7 +319,7 @@ export class DshConnectionCoordinator {
     signal: AbortSignal | undefined,
     generation: number,
   ): Promise<ConnectionResult> {
-    const backend = await this.dependencies.backendFactory.connect(connected)
+    const backend = await this.dependencies.backendFactory.connect(connected, signal)
     if (generation !== this.generation || signal?.aborted === true) {
       await backend.close().catch(() => undefined)
       if (managed !== undefined) await managed.stop().catch(() => undefined)

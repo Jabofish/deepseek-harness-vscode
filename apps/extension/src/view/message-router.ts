@@ -1,4 +1,5 @@
 import { AppError } from '@dsh-vscode/domain'
+import { redactText } from '@dsh-vscode/dsh-adapter'
 import {
   hostMessageSchema,
   protocolValueWithinBudget,
@@ -7,9 +8,22 @@ import {
   type WebviewRequest,
 } from '@dsh-vscode/webview-protocol'
 
+export interface UnexpectedErrorEntry {
+  readonly requestType: string
+  readonly name: string
+  readonly message: string
+  readonly stack?: string
+}
+
 export interface MessageRouterDependencies {
   readonly postMessage: (message: HostMessage) => Thenable<boolean>
   readonly handleRequest?: (request: WebviewRequest, signal: AbortSignal) => Promise<unknown>
+  /**
+   * Non-AppError handler failures are reduced to a generic INTERNAL_ERROR for
+   * the Webview; this hook keeps the redacted cause reachable in the host
+   * diagnostics channel instead of losing it entirely.
+   */
+  readonly logUnexpectedError?: (entry: UnexpectedErrorEntry) => void
 }
 
 export class WebviewMessageRouter {
@@ -41,6 +55,7 @@ export class WebviewMessageRouter {
           : await this.dependencies.handleRequest(request, controller.signal)
       this.complete(request, response(request.requestId, true, payload))
     } catch (error) {
+      if (!(error instanceof AppError)) this.reportUnexpectedError(unexpectedErrorEntry(request.type, error))
       this.complete(request, response(request.requestId, false, undefined, publicError(error, request.type)))
     }
   }
@@ -52,12 +67,30 @@ export class WebviewMessageRouter {
 
   private complete(request: WebviewRequest, message: HostMessage): void {
     if (!this.inFlight.delete(request.requestId)) return
-    void this.dependencies.postMessage(message)
+    void Promise.resolve(this.dependencies.postMessage(message)).catch((error: unknown) => {
+      // The Webview may disappear between request handling and response
+      // delivery. Keep that transport failure out of the unhandled-rejection
+      // channel while retaining a bounded diagnostic for the host.
+      this.reportUnexpectedError(unexpectedErrorEntry(request.type, error))
+    })
   }
 
   private async postError(requestId: string, message: string, retryable: boolean): Promise<void> {
     const value = response(requestId, false, undefined, { code: 'PROTOCOL_ERROR', message, retryable })
-    await this.dependencies.postMessage(value)
+    try {
+      await this.dependencies.postMessage(value)
+    } catch (error) {
+      this.reportUnexpectedError(unexpectedErrorEntry('protocol.error', error))
+    }
+  }
+
+  private reportUnexpectedError(entry: UnexpectedErrorEntry): void {
+    try {
+      this.dependencies.logUnexpectedError?.(entry)
+    } catch {
+      // Diagnostics are best effort. A broken output-channel adapter must not
+      // suppress the protocol response or create a second unhandled rejection.
+    }
   }
 }
 
@@ -110,6 +143,23 @@ function publicError(
         : `Unable to complete ${requestType}: an unexpected host error occurred. Open DSH diagnostics for the redacted failure details.`,
     retryable: true,
   }
+}
+
+/** Bound and redact an unexpected failure for the diagnostics channel. */
+function unexpectedErrorEntry(requestType: string, error: unknown): UnexpectedErrorEntry {
+  const name = error instanceof Error ? error.name : typeof error
+  const rawMessage = error instanceof Error ? error.message : String(error)
+  const message = safeCommandDiagnostic(rawMessage) ?? ''
+  const entry: UnexpectedErrorEntry = { requestType, name: name.slice(0, 128), message }
+  if (error instanceof Error && typeof error.stack === 'string') {
+    const stack = error.stack
+      .split('\n')
+      .slice(0, 8)
+      .map((line) => safeCommandDiagnostic(line) ?? '')
+      .join('\n')
+    if (stack !== '') return { ...entry, stack: stack.slice(0, 2_048) }
+  }
+  return entry
 }
 
 function publicErrorMessage(
@@ -227,15 +277,8 @@ function publicErrorMessage(
 
 /** Command failures are actionable in the composer, so retain a bounded, redacted diagnostic. */
 function safeCommandDiagnostic(message: string): string | undefined {
-  const compact = message.replace(/\s+/gu, ' ').trim()
-  if (compact === '') return undefined
-  const redacted = compact
-    .replace(/(https?:\/\/)([^/\s:@]+(?::[^/\s@]*)?@)/giu, '$1[redacted]@')
-    .replace(
-      /\b(?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|authorization|password|secret|private[_ -]?key|token|prompt|body|response)\b\s*[:=]\s*[^\s,;]+/giu,
-      (match) => match.replace(/[:=].*$/u, ': [redacted]'),
-    )
-  return redacted.slice(0, 320)
+  const redacted = redactText(message, 320)
+  return redacted === '' ? undefined : redacted
 }
 
 function withRuntimeUpdateDetail(base: string, value: string | number | boolean | undefined): string {

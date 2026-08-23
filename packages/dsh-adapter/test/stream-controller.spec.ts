@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
+import { AppError } from '@dsh-vscode/domain'
+import type { BackendEvent } from '@dsh-vscode/domain'
 import type { DshTransport } from '../src/contracts.js'
 import { DshStreamController } from '../src/stream-controller.js'
 
@@ -44,6 +46,47 @@ describe('DshStreamController', () => {
 
     await waitFor(() => received.length === 2)
     expect(received).toEqual(['tokenUsage', 'contextPressure'])
+  })
+
+  it('restarts the stream for a listener that subscribes during teardown', async () => {
+    const transport = streamTransport([
+      { payload: { type: 'session/subscribed', sessionId: 's1', lastSeq: 0 } },
+    ])
+    const received: string[] = []
+    const controller = new DshStreamController(transport)
+    controllers.push(controller)
+    const first = controller.subscribe((event) => received.push(`first:${event.type}`))
+    first()
+    // Re-subscribe while the aborted generation is still unwinding: the
+    // reader promise exists, so subscribe() cannot start a stream itself.
+    controller.subscribe((event) => received.push(`second:${event.type}`))
+
+    await waitFor(() => received.includes('second:session.subscribed'))
+    expect(received.filter((entry) => entry.startsWith('second:'))).toEqual(['second:session.subscribed'])
+  })
+
+  it('keeps reconnect backoff instead of hot-looping a failing stream', async () => {
+    const received: string[] = []
+    const failingStream: NonNullable<DshTransport['openMuxStream']> = (_signal) => ({
+      [Symbol.asyncIterator](): AsyncIterator<unknown> {
+        return {
+          async next() {
+            await Promise.resolve()
+            throw new Error('stream down')
+          },
+        }
+      },
+    })
+    const transport: DshTransport = { ...streamTransport([]), openMuxStream: failingStream }
+    const controller = new DshStreamController(transport)
+    controllers.push(controller)
+    controller.subscribe((event) => received.push(event.type))
+
+    await waitFor(() => received.includes('connection.lost'))
+    await new Promise((resolve) => setTimeout(resolve, 80))
+    // The reconnect backoff is at least 250ms, so a failing stream must not
+    // burn generations (and connection.lost notices) in a microtask loop.
+    expect(received.filter((type) => type === 'connection.lost')).toHaveLength(1)
   })
 
   it('releases sequence watermarks when a session is removed', async () => {
@@ -111,6 +154,109 @@ describe('DshStreamController', () => {
       'turn.ended',
       'session.status',
     ])
+  })
+
+  it('keeps future frame types as redacted unknown events', async () => {
+    const received: BackendEvent[] = []
+    const controller = new DshStreamController(
+      streamTransport([
+        {
+          payload: {
+            type: 'future/frame',
+            sessionId: 's1',
+            seq: 3,
+            token: 'secret',
+            path: 'C:\\private\\file.txt',
+            data: { text: 'x'.repeat(2_000) },
+            safe: 'ok',
+          },
+        },
+      ]),
+    )
+    controllers.push(controller)
+    controller.subscribe((event) => received.push(event))
+
+    await waitFor(() => received.some((event) => event.type === 'unknown'))
+    const unknown = received.find((event) => event.type === 'unknown')
+    expect(unknown).toMatchObject({ type: 'unknown', name: 'future/frame', sessionId: 's1', sequence: 3 })
+    expect(JSON.stringify(unknown)).not.toContain('secret')
+    expect(JSON.stringify(unknown)).not.toContain('private')
+    expect(JSON.stringify(unknown)).toContain('ok')
+    expect(JSON.stringify(unknown)).not.toContain('x'.repeat(513))
+  })
+
+  it('keeps frame types removed from the pinned schema in the unknown bucket', async () => {
+    const received: BackendEvent[] = []
+    const controller = new DshStreamController(
+      streamTransport([{ payload: { type: 'session/title', sessionId: 's1', title: 'stale' } }]),
+    )
+    controllers.push(controller)
+    controller.subscribe((event) => received.push(event))
+
+    await waitFor(() => received.some((event) => event.type === 'unknown'))
+    expect(received.find((event) => event.type === 'unknown')).toMatchObject({
+      type: 'unknown',
+      name: 'session/title',
+      sessionId: 's1',
+    })
+  })
+
+  it('reports bounded stream error diagnostics without exposing secrets', async () => {
+    const received: BackendEvent[] = []
+    const controller = new DshStreamController(
+      streamTransport([
+        {
+          payload: {
+            type: 'stream/error',
+            error: {
+              code: 'internal',
+              message: 'request failed token=secret',
+              details: {},
+            },
+          },
+        },
+      ]),
+    )
+    controllers.push(controller)
+    controller.subscribe((event) => received.push(event))
+
+    await waitFor(() => received.some((event) => event.type === 'connection.lost'))
+    const lost = received.find((event) => event.type === 'connection.lost')
+    expect(lost).toMatchObject({
+      type: 'connection.lost',
+      reason: 'DSH event stream reported internal: request failed token: [redacted]',
+    })
+  })
+
+  it('includes safe transport context when a stream reader fails', async () => {
+    const received: BackendEvent[] = []
+    const failingStream: NonNullable<DshTransport['openMuxStream']> = (_signal) => ({
+      [Symbol.asyncIterator](): AsyncIterator<unknown> {
+        return {
+          async next() {
+            await Promise.resolve()
+            throw new AppError({
+              code: 'BACKEND_UNREACHABLE',
+              message: 'request failed',
+              retryable: true,
+              context: { method: 'session.history', status: 503 },
+            })
+          },
+        }
+      },
+    })
+    const transport: DshTransport = {
+      ...streamTransport([]),
+      openMuxStream: failingStream,
+    }
+    const controller = new DshStreamController(transport)
+    controllers.push(controller)
+    controller.subscribe((event) => received.push(event))
+
+    await waitFor(() => received.some((event) => event.type === 'connection.lost'))
+    expect(received.find((event) => event.type === 'connection.lost')).toMatchObject({
+      reason: 'DSH event stream request session.history failed (HTTP 503).',
+    })
   })
 })
 

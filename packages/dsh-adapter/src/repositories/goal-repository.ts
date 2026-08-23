@@ -3,7 +3,10 @@ import { AppError, type BackendEvent, type GoalRepository, type GoalView } from 
 import type { DshTransport } from '../contracts.js'
 import { callRpc, unavailable } from '../versions/rc6/rpc.js'
 import { rc6Mapper } from '../versions/rc6/mapper.js'
+import { walkHistoryPages } from './shared/guards.js'
 
+/** Match the official web client's 50-message history pages. */
+const HISTORY_PAGE_MESSAGES = 50
 export class Rc6GoalRepository implements GoalRepository {
   private readonly refs = new Map<
     string,
@@ -14,8 +17,14 @@ export class Rc6GoalRepository implements GoalRepository {
 
   public remember(event: BackendEvent): void {
     if (event.type === 'goal.updated') this.goalCache.set(event.sessionId, event.goals)
-    else if (event.type === 'session.subscribed' || event.type === 'session.removed')
+    else if (event.type === 'session.projection' && event.key === 'goal') {
+      const goals = goalViewsFromProjection(event.value)
+      if (goals !== undefined) this.goalCache.set(event.sessionId, goals)
+    } else if (event.type === 'session.subscribed') {
       this.goalCache.delete(event.sessionId)
+      const goals = goalViewsFromProjection(event.projection?.values)
+      if (goals !== undefined) this.goalCache.set(event.sessionId, goals)
+    } else if (event.type === 'session.removed') this.goalCache.delete(event.sessionId)
   }
 
   public sessionForGoal(goalId: string): string | undefined {
@@ -27,26 +36,34 @@ export class Rc6GoalRepository implements GoalRepository {
     if (cached !== undefined) return cached
     // rc.6 deliberately exposes goal state through the session projection and
     // mux events; use history only until the live stream has supplied a cache.
-    let beforeSeq: number | undefined
+    const pages = await walkHistoryPages(
+      async (beforeSequence) => {
+        const value = await callRpc<{ events: unknown[]; hasMore: boolean; projections?: unknown }>(
+          this.transport,
+          'session.history',
+          {
+            sessionId,
+            maxMessages: HISTORY_PAGE_MESSAGES,
+            ...(beforeSequence === undefined ? {} : { beforeSeq: beforeSequence }),
+          },
+          signal,
+        )
+        const mapped = rc6Mapper.history(value, sessionId)
+        rememberProjectionRefs(this.refs, sessionId, mapped.projection?.values)
+        return mapped
+      },
+      {
+        stopWhen: (page) => goalViewsFromProjection(page.projection?.values) !== undefined,
+      },
+    )
     let latest: readonly GoalView[] | undefined
-    for (let page = 0; page < 100; page += 1) {
-      const value = await callRpc<{ events: unknown[]; hasMore: boolean; projections?: unknown }>(
-        this.transport,
-        'session.history',
-        { sessionId, maxMessages: 200, ...(beforeSeq === undefined ? {} : { beforeSeq }) },
-        signal,
-      )
-      const mapped = rc6Mapper.history(value, sessionId)
-      rememberProjectionRefs(this.refs, sessionId, mapped.projection?.values)
+    for (const mapped of pages) {
+      const projectionGoals = goalViewsFromProjection(mapped.projection?.values)
+      if (projectionGoals !== undefined && latest === undefined) latest = projectionGoals
       for (let index = mapped.events.length - 1; index >= 0; index -= 1) {
         const event = mapped.events[index]?.event
         if (event?.type === 'goal.updated' && latest === undefined) latest = event.goals
       }
-      if (!mapped.hasMore) break
-      const sequences = mapped.events.map((entry) => entry.sequence).filter((entry) => entry >= 0)
-      const oldest = sequences.length === 0 ? undefined : Math.min(...sequences)
-      if (oldest === undefined || (beforeSeq !== undefined && oldest >= beforeSeq)) break
-      beforeSeq = oldest
     }
     const goals = latest ?? []
     this.goalCache.set(sessionId, goals)
@@ -163,6 +180,50 @@ export class Rc6GoalRepository implements GoalRepository {
       goals.map((goal) => (goal.id === goalId ? { ...goal, ...patch } : goal)),
     )
   }
+}
+
+function goalViewsFromProjection(value: unknown): readonly GoalView[] | undefined {
+  if (value === null) return []
+  const values = asRecord(value)
+  if (values === undefined) return undefined
+  if (values.goal === null) return []
+  const projection = asRecord(values.goal)
+  if (projection === undefined) return undefined
+  const goalValue = projection.goal === null ? null : (projection.goal ?? projection)
+  if (goalValue === null) return []
+  const goal = asRecord(goalValue)
+  if (goal === undefined) return undefined
+  const id = typeof goal.id === 'string' ? goal.id : undefined
+  const title =
+    typeof goal.title === 'string'
+      ? goal.title
+      : typeof goal.objective === 'string'
+        ? goal.objective
+        : undefined
+  const phase = goal.phase
+  const status = goal.status
+  if (id === undefined || id.trim() === '' || title === undefined || title.trim() === '') return undefined
+  if (
+    status !== undefined &&
+    status !== 'pending' &&
+    status !== 'in-progress' &&
+    status !== 'completed' &&
+    status !== 'blocked'
+  )
+    return undefined
+  const mappedStatus =
+    status ??
+    (phase === 'active'
+      ? 'in-progress'
+      : phase === 'paused'
+        ? 'pending'
+        : phase === 'blocked'
+          ? 'blocked'
+          : phase === 'complete'
+            ? 'completed'
+            : undefined)
+  if (mappedStatus === undefined) return undefined
+  return [{ id, title, status: mappedStatus }]
 }
 
 function assertGoalRefReceipt(

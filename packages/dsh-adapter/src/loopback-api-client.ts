@@ -11,6 +11,7 @@ import {
 import { AppError, type BackendEndpoint } from '@dsh-vscode/domain'
 
 import type { DshTransport, RetryPolicy } from './contracts.js'
+import { cancelled as cancelledError, httpFailure, normalizeTransportError } from './transport-errors.js'
 
 export interface LoopbackApiClientOptions {
   readonly endpoint: BackendEndpoint
@@ -50,7 +51,7 @@ export class LoopbackApiClient extends AbstractApiClient implements DshTransport
       redirect: 'error',
       signal: mergeSignals(init?.signal, this.closed.signal),
     })
-    return normalizeLegacyRpcResponse(response)
+    return normalizeLegacyRpcResponse(response, input.pathname)
   }
 
   public request<TResponse>(method: string, params: unknown, signal?: AbortSignal): Promise<TResponse> {
@@ -59,7 +60,9 @@ export class LoopbackApiClient extends AbstractApiClient implements DshTransport
         new AppError({
           code: 'BACKEND_UNREACHABLE',
           message: 'The DSH connection is closed.',
-          retryable: true,
+          // Retrying against a closed client can never succeed; keep this
+          // permanent so withRetry does not burn its attempts.
+          retryable: false,
         }),
       )
     return this.withRetry(method, () => this.dispatch(method, params, signal), signal) as Promise<TResponse>
@@ -97,7 +100,7 @@ export class LoopbackApiClient extends AbstractApiClient implements DshTransport
       body: JSON.stringify(message),
       ...(requestSignal === undefined ? {} : { signal: requestSignal }),
     })
-    if (!response.ok) throw new Error(`transport failure for ${method}: HTTP ${response.status}`)
+    if (!response.ok) throw httpFailure(String(method), response.status)
     let full: ReturnType<typeof serverResponseSchema.parse>
     try {
       full = serverResponseSchema.parse(await response.json())
@@ -129,7 +132,9 @@ export class LoopbackApiClient extends AbstractApiClient implements DshTransport
         new AppError({
           code: 'BACKEND_UNREACHABLE',
           message: 'The DSH connection is closed.',
-          retryable: true,
+          // Retrying against a closed client can never succeed; keep this
+          // permanent so withRetry does not burn its attempts.
+          retryable: false,
         }),
       )
     return this.withRetry(
@@ -148,6 +153,7 @@ export class LoopbackApiClient extends AbstractApiClient implements DshTransport
       '/api/events.mux',
       mergeSignals(signal, this.closed.signal),
       muxFrameSchema,
+      MUX_FRAME_TYPES,
     )
   }
 
@@ -156,6 +162,7 @@ export class LoopbackApiClient extends AbstractApiClient implements DshTransport
       '/api/events.host',
       mergeSignals(signal, this.closed.signal),
       hostFrameSchema,
+      HOST_FRAME_TYPES,
     )
   }
 
@@ -176,17 +183,16 @@ export class LoopbackApiClient extends AbstractApiClient implements DshTransport
     const target = new URL('/api/session.export', this.options.endpoint.baseUrl)
     target.searchParams.set('sessionId', sessionId)
     target.searchParams.set('includeDescendants', String(includeDescendants))
-    const response = await this.doFetch(target, {
-      method: 'GET',
-      ...(signal === undefined ? {} : { signal }),
-    })
-    if (!response.ok)
-      throw new AppError({
-        code: 'EXPORT_FAILED',
-        message: 'DSH did not return the session export.',
-        retryable: true,
-        context: { status: response.status },
+    let response: Response
+    try {
+      response = await this.doFetch(target, {
+        method: 'GET',
+        ...(signal === undefined ? {} : { signal }),
       })
+    } catch (error) {
+      throw normalizeTransportError('session.export', error, signal)
+    }
+    if (!response.ok) throw httpFailure('session.export', response.status, 'EXPORT_FAILED')
     return response
   }
 
@@ -345,12 +351,7 @@ export class LoopbackApiClient extends AbstractApiClient implements DshTransport
       body: JSON.stringify(message),
       signal: requestSignal,
     })
-    if (!response.ok)
-      throw new AppError({
-        code: response.status >= 500 ? 'BACKEND_UNREACHABLE' : 'CAPABILITY_UNAVAILABLE',
-        message: `The DSH host.describe endpoint failed (HTTP ${response.status}).`,
-        retryable: response.status >= 500,
-      })
+    if (!response.ok) throw httpFailure('host.describe', response.status)
     let full: ReturnType<typeof serverResponseSchema.parse>
     try {
       full = serverResponseSchema.parse(await response.json())
@@ -401,19 +402,20 @@ export class LoopbackApiClient extends AbstractApiClient implements DshTransport
     }
     this.onEnvelope(message)
     const target = new URL(`/api/${endpoint}`, this.options.endpoint.baseUrl)
+    // Mirror callUnary's deadline: without it a hung Remote host leaves
+    // commands/execute and the feedback/reference Remotes unsettled until the
+    // caller's signal fires, which many callers never pass.
+    const requestSignal =
+      signal === undefined
+        ? AbortSignal.timeout(this.options.requestTimeoutMs)
+        : AbortSignal.any([AbortSignal.timeout(this.options.requestTimeoutMs), signal])
     const response = await this.doFetch(target, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(message),
-      ...(signal === undefined ? {} : { signal }),
+      signal: requestSignal,
     })
-    if (!response.ok)
-      throw new AppError({
-        code: response.status >= 500 ? 'BACKEND_UNREACHABLE' : 'CAPABILITY_UNAVAILABLE',
-        message: `The DSH Remote endpoint ${endpoint} failed (HTTP ${response.status}).`,
-        retryable: response.status >= 500,
-        context: { endpoint, status: response.status },
-      })
+    if (!response.ok) throw httpFailure(endpoint, response.status)
     let full: ReturnType<typeof serverResponseSchema.parse>
     try {
       full = serverResponseSchema.parse(await response.json())
@@ -439,8 +441,9 @@ export class LoopbackApiClient extends AbstractApiClient implements DshTransport
     path: string,
     signal: AbortSignal,
     frameSchema: { parse(value: unknown): unknown },
+    knownFrameTypes: ReadonlySet<string>,
   ): AsyncIterable<unknown> {
-    return this.readWebSocket(path, signal, frameSchema)
+    return this.readWebSocket(path, signal, frameSchema, knownFrameTypes)
   }
 
   /**
@@ -452,6 +455,7 @@ export class LoopbackApiClient extends AbstractApiClient implements DshTransport
     path: string,
     signal: AbortSignal,
     frameSchema: { parse(value: unknown): unknown },
+    knownFrameTypes: ReadonlySet<string>,
   ): AsyncIterable<unknown> {
     if (signal.aborted) return
     const WebSocketConstructor = this.options.webSocket ?? globalThis.WebSocket
@@ -514,7 +518,7 @@ export class LoopbackApiClient extends AbstractApiClient implements DshTransport
       }
       try {
         const full = serverRequestSchema.parse(JSON.parse(event.data))
-        const frame = frameSchema.parse(full.payload)
+        const frame = parseFramePayload(frameSchema, full.payload, knownFrameTypes)
         this.onEnvelope(full)
         enqueue({ kind: 'frame', value: { rpcId: full.rpcId, payload: frame } })
       } catch {
@@ -614,8 +618,9 @@ export class LoopbackApiClient extends AbstractApiClient implements DshTransport
       try {
         return await operation()
       } catch (error) {
-        lastError = error
-        if (attempt + 1 >= attempts) throw error
+        const normalized = normalizeTransportError(method, error, signal)
+        lastError = normalized
+        if (!normalized.retryable || attempt + 1 >= attempts) throw normalized
         await delay(
           Math.min(
             this.options.retryPolicy.maximumDelayMs,
@@ -683,8 +688,29 @@ const IDEMPOTENT_METHODS = new Set([
   'credentials.describe',
   'subagent.list',
   'subagent.history',
-  'commands/list',
 ])
+
+const MUX_FRAME_TYPES = frameTypes(muxFrameSchema)
+const HOST_FRAME_TYPES = frameTypes(hostFrameSchema)
+
+/**
+ * The pinned package exports these schemas through a broad ZodType cast, but
+ * the concrete Zod discriminated union retains its public `options` array at
+ * runtime. Derive the allowlist from that source rather than copying tags.
+ */
+function frameTypes(schema: { parse(value: unknown): unknown }): ReadonlySet<string> {
+  const options = (schema as unknown as { readonly options?: unknown }).options
+  if (!Array.isArray(options)) throw new Error('Pinned DSH frame schema has no discriminated options.')
+  return new Set(
+    options.flatMap((entry) => {
+      const option = record(entry)
+      const shape = record(option?.shape)
+      const type = record(shape?.type)
+      const value = type?.value
+      return typeof value === 'string' ? [value] : []
+    }),
+  )
+}
 
 /**
  * rc.6/rc.7 still emit the settings-not-exposed error branch that later
@@ -693,7 +719,11 @@ const IDEMPOTENT_METHODS = new Set([
  * error at the transport seam so an older host is not rejected before the
  * adapter's own error mapper sees it.
  */
-async function normalizeLegacyRpcResponse(response: Response): Promise<Response> {
+async function normalizeLegacyRpcResponse(response: Response, pathname: string): Promise<Response> {
+  // The legacy settings error is a 2xx envelope, while non-2xx responses are
+  // the only other responses worth probing for a structured error. Avoid
+  // cloning large successful exports and ordinary RPC values.
+  if (response.ok && !isSettingsRpcPath(pathname)) return response
   if (!response.headers.get('content-type')?.toLocaleLowerCase().includes('json')) return response
   let value: unknown
   try {
@@ -722,6 +752,10 @@ async function normalizeLegacyRpcResponse(response: Response): Promise<Response>
   })
 }
 
+function isSettingsRpcPath(pathname: string): boolean {
+  return pathname.startsWith('/api/settings.')
+}
+
 function isLegacySettingsErrorEnvelope(value: unknown): boolean {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
   const envelope = value as Record<string, unknown>
@@ -740,6 +774,32 @@ function isLegacySettingsErrorEnvelope(value: unknown): boolean {
     !Array.isArray(details) &&
     typeof (details as Record<string, unknown>).ns === 'string'
   )
+}
+
+/**
+ * Keep the pinned schema strict for known frames, but leave a future frame
+ * type available to the adapter's safe `unknown` projection. A malformed
+ * known frame still fails closed and triggers the normal stream recovery.
+ */
+function parseFramePayload(
+  schema: { parse(value: unknown): unknown },
+  value: unknown,
+  knownFrameTypes: ReadonlySet<string>,
+): unknown {
+  try {
+    return schema.parse(value)
+  } catch (error) {
+    const frame = record(value)
+    if (frame !== undefined && typeof frame.type === 'string' && !knownFrameTypes.has(frame.type))
+      return value
+    throw error
+  }
+}
+
+function record(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined
 }
 
 function assertLoopback(endpoint: BackendEndpoint): void {
@@ -823,10 +883,5 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, signal?: A
 }
 
 function cancelled(cause: unknown): AppError {
-  return new AppError({
-    code: 'REQUEST_CANCELLED',
-    message: 'The DSH request was cancelled.',
-    retryable: true,
-    cause,
-  })
+  return cancelledError(cause)
 }

@@ -8,6 +8,7 @@ import {
 } from '@dsh-vscode/domain'
 
 import type { DshTransport } from '../contracts.js'
+import { encodeImageAttachments } from '../attachment-codec.js'
 import { unwrapRpcResultValue } from '../versions/rc6/rpc.js'
 
 export class Rc6CommandRepository implements CommandRepository {
@@ -70,6 +71,20 @@ export async function executeRc6Command(
   return executeCommand(transport, sessionId, command, attachmentsOrSignal, signal, false)
 }
 
+/**
+ * Session-configuration commands (`/permission`, `/plan`) travel without
+ * attachments; rc.8+ hosts still require the `images` array in that case.
+ */
+export async function executeSessionConfigCommand(
+  transport: DshTransport,
+  sessionId: string,
+  command: string,
+  includeEmptyImages: boolean,
+  signal?: AbortSignal,
+): Promise<CommandExecutionResult> {
+  return executeCommand(transport, sessionId, command, [], signal, includeEmptyImages)
+}
+
 async function executeCommand(
   transport: DshTransport,
   sessionId: string,
@@ -87,12 +102,20 @@ async function executeCommand(
       message: 'A DSH session is required to execute a slash command.',
       retryable: false,
     })
+  const images =
+    includeEmptyImages || attachments.length > 0 ? encodeImageAttachments(attachments) : undefined
+  if (images === undefined && attachments.length > 0)
+    throw new AppError({
+      code: 'INVALID_CONFIGURATION',
+      message: 'Only validated image attachments can accompany a DSH slash command.',
+      retryable: false,
+    })
   const response = await transport.remoteRequest<unknown>(
     'commands/execute',
     {
       agentId: sessionId,
       line: wireCommand,
-      ...(includeEmptyImages || attachments.length > 0 ? { images: encodedImages(attachments) } : {}),
+      ...(images === undefined ? {} : { images }),
     },
     requestSignal,
   )
@@ -165,23 +188,6 @@ function normalizeSlashCommand(command: string): string {
     code: 'INVALID_CONFIGURATION',
     message: 'The DSH slash command syntax is invalid.',
     retryable: false,
-  })
-}
-
-function encodedImages(attachments: readonly PromptAttachment[]): readonly Record<string, string>[] {
-  return attachments.map((attachment) => {
-    const match = /^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/]+={0,2})$/iu.exec(attachment.uri)
-    if (match === null || match[1] === undefined || match[2] === undefined)
-      throw new AppError({
-        code: 'INVALID_CONFIGURATION',
-        message: 'Only validated image attachments can accompany a DSH slash command.',
-        retryable: false,
-      })
-    return {
-      mediaType: match[1].toLowerCase(),
-      data: match[2],
-      ...(attachment.name === '' ? {} : { name: attachment.name }),
-    }
   })
 }
 

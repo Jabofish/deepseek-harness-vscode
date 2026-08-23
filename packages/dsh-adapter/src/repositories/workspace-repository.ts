@@ -8,6 +8,7 @@ import {
 import type { DshTransport } from '../contracts.js'
 import { callRpc } from '../versions/rc6/rpc.js'
 import { rc6Mapper } from '../versions/rc6/mapper.js'
+import { recordOrUndefined } from './shared/guards.js'
 
 export interface Rc6WorkspaceSnapshot {
   readonly items: readonly WorkspaceSummary[]
@@ -103,8 +104,16 @@ export class Rc6WorkspaceRepository implements WorkspaceRepository {
         // must not make the new session unusable; keep DSH's canonical title.
         if (!(error instanceof AppError) || error.context?.rpcCode !== 'workspace-name-conflict') throw error
       }
-      const refreshed = (await this.list(signal)).find((item) => item.id === workspace.id)
-      if (refreshed !== undefined) return refreshed
+      try {
+        const refreshed = (await this.list(signal)).find((item) => item.id === workspace.id)
+        if (refreshed !== undefined) return refreshed
+      } catch (error) {
+        // Creation and rename already committed. A follow-up list is only a
+        // display-name refresh; do not report a successful mutation as failed
+        // because that best-effort read raced a transient transport error.
+        if (signal?.aborted === true || (error instanceof AppError && error.code === 'REQUEST_CANCELLED'))
+          throw error
+      }
     }
     return workspace
   }
@@ -165,12 +174,6 @@ export class Rc6WorkspaceRepository implements WorkspaceRepository {
     if (value === undefined || !validWorkspaceView(value.workspace))
       throw malformedWorkspaceResponse('insertSessionBefore')
   }
-}
-
-function recordOrUndefined(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined
 }
 
 function validWorkspaceView(value: unknown): boolean {

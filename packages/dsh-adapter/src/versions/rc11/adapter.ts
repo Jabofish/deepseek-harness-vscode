@@ -13,16 +13,13 @@ export class Rc11VersionAdapter extends Rc8VersionAdapter {
   public override readonly fallback = false
   public override readonly protocolVersion = 'rc11'
 
-  protected override acceptsRuntimeHint(version: string | undefined): boolean {
-    return version === this.supportedVersion
-  }
-
   protected override createSessionRepository(
     transport: DshTransport,
     workspaces: Rc6WorkspaceRepository,
   ): Rc6SessionRepository {
     return new Rc6SessionRepository(transport, workspaces, this.options.samePath, {
       reuseWorkspaceBlank: true,
+      includeEmptyCommandImages: true,
     })
   }
 }

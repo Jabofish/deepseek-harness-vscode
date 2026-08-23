@@ -40,6 +40,7 @@ import {
   Rc12VersionAdapter,
   VersionedBackendFactory,
   VersionedBackendProbe,
+  redactText,
   type ExportFileSystem,
 } from '@dsh-vscode/dsh-adapter'
 import {
@@ -60,6 +61,7 @@ import { LinuxProcessDiscoveryProvider } from './backend/discovery/linux-process
 import { MacOsProcessDiscoveryProvider } from './backend/discovery/macos-process-provider.js'
 import { WindowsProcessDiscoveryProvider } from './backend/discovery/windows-process-provider.js'
 import { DshProcessSupervisor, type SpawnedChild } from './backend/process-supervisor.js'
+import { isManagedTemporaryWorkspacePath, isPathWithin } from './backend/path-safety.js'
 import { DshRuntimeLocator } from './backend/runtime-locator.js'
 import { resolveNpmExecutable, runtimePathEntries } from './backend/runtime-paths.js'
 import { resolveWindowsShim } from './backend/windows-shim.js'
@@ -75,15 +77,27 @@ import { updateContextKeys } from './vscode/context-keys.js'
 import {
   AttachmentStore,
   decodeCanonicalBase64,
-  isImageMimeType,
   MAX_ATTACHMENT_BYTES,
   MAX_IMAGE_ATTACHMENT_BYTES,
-  validImageBytes,
   type StoredAttachmentInput,
 } from './attachments/attachment-store.js'
+import {
+  attachmentMimeType,
+  isImageMimeType,
+  prepareAttachment,
+  validImageBytes,
+} from './attachments/attachment-codec.js'
 
 const execFileAsync = promisify(execFile)
 const TEMPORARY_WORKSPACE_STATE_KEY = 'dsh.temporaryWorkspace'
+const TRANSPORT_CONFIGURATION_KEYS = [
+  'dsh.connection.mode',
+  'dsh.connection.serverUrl',
+  'dsh.connection.managedPort',
+  'dsh.connection.attachPorts',
+  'dsh.connection.discoveryTimeoutMs',
+  'dsh.connection.requestTimeoutMs',
+] as const
 
 interface StoredTemporaryWorkspace {
   readonly id: string
@@ -294,7 +308,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
         },
       )
     },
-    verifyInstall: async () => (await runtimeLocator.locate())?.supported === true,
+    verifyInstall: async () => (await runtimeLocator.locate()).runtime?.supported === true,
     verifyExecutable: async (executable) => (await runtimeLocator.inspectExecutable(executable)).supported,
   })
   let postRuntimeUpdateProgress: (progress: DshRuntimeUpdateProgress) => void = () => undefined
@@ -303,7 +317,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       const os = platform()
       return resolveNpmExecutable(os, extensionRuntimePathEntries(os, process.env))
     },
-    locateRuntime: (signal) => runtimeLocator.locate(signal),
+    locateRuntime: async (signal) => (await runtimeLocator.locate(signal)).runtime,
     onProgress: (progress) => postRuntimeUpdateProgress(progress),
     execute: async (executable, args, options) => {
       const resolved =
@@ -375,7 +389,15 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     temporaryWorkspace = undefined
     temporaryWorkspaceReference = undefined
     await context.globalState.update(TEMPORARY_WORKSPACE_STATE_KEY, undefined)
-    if (removeDirectory && temporaryPath !== undefined)
+    // Only remove directories created by this extension under its own storage
+    // root. The persisted reference is user state and may be stale, manually
+    // edited, or point at a real project folder; recursive deletion must never
+    // trust that value as an arbitrary path.
+    if (
+      removeDirectory &&
+      temporaryPath !== undefined &&
+      isManagedTemporaryWorkspacePath(context.globalStorageUri.fsPath, temporaryPath)
+    )
       await rm(temporaryPath, { recursive: true, force: true }).catch(() => undefined)
   }
   const attachmentTokens = new AttachmentStore()
@@ -559,6 +581,20 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     publishState(result.state)
     return { connected: true }
   }
+  let reconnectOperation: Promise<unknown> | undefined
+  const reconnect = async (signal?: AbortSignal): Promise<unknown> => {
+    if (reconnectOperation !== undefined) return reconnectOperation
+    const operation = (async (): Promise<unknown> => {
+      await coordinator.disconnect()
+      return connect(signal)
+    })()
+    reconnectOperation = operation
+    try {
+      return await operation
+    } finally {
+      if (reconnectOperation === operation) reconnectOperation = undefined
+    }
+  }
   const configureConnection = async (
     mode: 'auto' | 'custom',
     endpoint: string | undefined,
@@ -585,10 +621,6 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       await settings.update('connection.serverUrl', '', vscode.ConfigurationTarget.Global)
     }
     return reconnect(signal)
-  }
-  const reconnect = async (signal?: AbortSignal): Promise<unknown> => {
-    await coordinator.disconnect()
-    return connect(signal)
   }
   const requireCurrentWorkspaceSession = async (
     sessionId: string,
@@ -1060,15 +1092,11 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     if (request.type === 'reference.list') {
       await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
       const backend = backendService.requireBackend()
-      const files = backend.references
-        .listFiles(request.payload.sessionId, request.payload.query, signal)
-        .catch(() => [])
+      const files = backend.references.listFiles(request.payload.sessionId, request.payload.query, signal)
       const sessions =
         request.payload.quoted === true
           ? Promise.resolve([])
-          : backend.references
-              .listSessions(request.payload.sessionId, request.payload.query, signal)
-              .catch(() => [])
+          : backend.references.listSessions(request.payload.sessionId, request.payload.query, signal)
       const [fileCandidates, sessionCandidates] = await Promise.all([files, sessions])
       return publicValue({ files: fileCandidates, sessions: sessionCandidates })
     }
@@ -1146,6 +1174,14 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       return backendService
         .requireBackend()
         .credentials.removeSecret(request.payload.providerId, request.payload.field, signal)
+    if (request.type === 'plugin.credential.configure') {
+      const value = await requestProviderSecret(vscode.window, 'plugin', request.payload.ref)
+      if (value === undefined) return { configured: false, cancelled: true }
+      await backendService.requireBackend().credentials.setReference(request.payload.ref, value, signal)
+      return { configured: true }
+    }
+    if (request.type === 'plugin.credential.remove')
+      return backendService.requireBackend().credentials.unsetReference(request.payload.ref, signal)
     if (request.type === 'interaction.permission.respond') {
       await requireOwnedPermission(request.payload.interactionId, signal)
       return interactionUseCases.respondToPermission(
@@ -1212,7 +1248,13 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     }
     if (request.type === 'subagent.history') {
       await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
-      return publicValue(await advancedUseCases.listSubagentHistory(request.payload.sessionId, signal))
+      return publicValue(
+        await advancedUseCases.listSubagentHistory(
+          request.payload.sessionId,
+          request.payload.beforeSeq === undefined ? undefined : { beforeSequence: request.payload.beforeSeq },
+          signal,
+        ),
+      )
     }
     if (request.type === 'subagent.send') {
       await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
@@ -1285,10 +1327,23 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     }
     return { accepted: true }
   }
-  const router = new WebviewMessageRouter({ postMessage: post, handleRequest })
+  const router = new WebviewMessageRouter({
+    postMessage: post,
+    handleRequest,
+    // Unexpected (non-AppError) handler failures must stay diagnosable: the
+    // Webview only sees a generic INTERNAL_ERROR, so keep the redacted cause
+    // in the output channel the error message points users at.
+    logUnexpectedError: (entry) => diagnostics.log('error', 'request-unexpected', { ...entry }),
+  })
   const provider = new DshWebviewViewProvider({
     extensionUri: context.extensionUri,
     onMessage: (message) => router.handle(message),
+    onMessageError: (error) => {
+      diagnostics.log('error', 'webview-message-unhandled', {
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      })
+    },
   })
   const stateSubscription = coordinator.subscribe(publishState)
   const subscriptions: vscode.Disposable[] = [
@@ -1346,16 +1401,23 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       })
       context.subscriptions.push(...subscriptions)
       context.subscriptions.push(
-        configuration.onDidChange(() => {
-          // Adapter timeout, endpoint and managed-process settings are
-          // captured by long-lived objects. Treat those changes as a
-          // reconnect boundary so the new configuration cannot appear in the
-          // UI while requests still use stale transport state.
-          void coordinator.disconnect().then(
-            () => publishState(coordinator.getState()),
-            () =>
-              publishState({ kind: 'failed', message: 'DSH configuration reload failed.', retryable: true }),
+        configuration.onDidChange((affectsConfiguration) => {
+          if (!TRANSPORT_CONFIGURATION_KEYS.some((key) => affectsConfiguration(key))) return
+          const stateKind = coordinator.getState().kind
+          if (
+            stateKind !== 'connected' &&
+            stateKind !== 'connecting' &&
+            stateKind !== 'discovering' &&
+            stateKind !== 'locating-runtime' &&
+            stateKind !== 'starting'
           )
+            return
+          // Disconnect invalidates the coordinator generation and aborts an
+          // in-flight attach. The shared reconnect operation coalesces this
+          // automatic path with an explicit connection.configure reconnect.
+          void reconnect().catch(() => {
+            publishState({ kind: 'failed', message: 'DSH configuration reload failed.', retryable: true })
+          })
         }),
       )
       // Check once per Extension Host activation. This is independent of
@@ -1456,25 +1518,6 @@ function isAbsoluteWorkspacePath(value: string): boolean {
 
 function isAbsoluteFilePath(value: string): boolean {
   return /^[A-Za-z]:[\\/]/.test(value) || value.startsWith('\\\\')
-}
-
-function isPathWithin(root: string, candidate: string): boolean {
-  const normalize = (value: string): string => {
-    const resolved = path.normalize(path.resolve(value))
-    let canonical = resolved
-    try {
-      canonical = realpathSync.native(resolved)
-    } catch {
-      // The linked file may not exist yet; compare its normalized path while
-      // preserving the workspace boundary check.
-    }
-    return process.platform === 'win32' ? canonical.toLowerCase() : canonical
-  }
-  const relative = path.relative(normalize(root), normalize(candidate))
-  return (
-    relative === '' ||
-    (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
-  )
 }
 
 function sameWorkspacePath(left: string, right: string): boolean {
@@ -1724,47 +1767,9 @@ function tabInputUris(input: vscode.Tab['input']): readonly vscode.Uri[] {
   return []
 }
 
-function prepareAttachment(name: string, bytes: Buffer, hintMimeType?: string): StoredAttachmentInput {
-  let mimeType = attachmentMimeType(name, bytes)
-  // Pasted clipboard images often carry no filename extension. The declared
-  // hint only fills that gap and is still verified against the image magic
-  // numbers below, so a spoofed hint cannot smuggle unsupported bytes.
-  if (mimeType === undefined && hintMimeType !== undefined && isImageMimeType(hintMimeType))
-    mimeType = hintMimeType
-  if (mimeType === undefined)
-    throw new AppError({
-      code: 'INVALID_CONFIGURATION',
-      message: 'The current file is not supported; attach an image or a text-based file instead.',
-      retryable: false,
-    })
-  const maximumBytes = isImageMimeType(mimeType) ? MAX_IMAGE_ATTACHMENT_BYTES : MAX_ATTACHMENT_BYTES
-  if (bytes.length > maximumBytes)
-    throw new AppError({
-      code: 'INVALID_CONFIGURATION',
-      message: 'The current file is too large to attach.',
-      retryable: false,
-    })
-  if (isImageMimeType(mimeType) && !validImageBytes(mimeType, bytes))
-    throw new AppError({
-      code: 'INVALID_CONFIGURATION',
-      message: 'The current file contents do not match its declared image type.',
-      retryable: false,
-    })
-  return {
-    name,
-    mimeType,
-    dataUri: `data:${mimeType};base64,${bytes.toString('base64')}`,
-  }
-}
-
 function safeStateMessage(message: string): string {
-  const compact = message.replace(/\s+/gu, ' ').trim()
-  if (compact === '') return 'The DSH connection operation failed.'
-  const redacted = compact.replace(
-    /\b(?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|authorization|password|secret|private[_ -]?key|token)\b\s*[:=]\s*[^\s,;]+/giu,
-    (match) => match.replace(/[:=].*$/u, ': [redacted]'),
-  )
-  return redacted.slice(0, 320)
+  const redacted = redactText(message, 320)
+  return redacted === '' ? 'The DSH connection operation failed.' : redacted
 }
 
 function publicList(value: readonly unknown[]): readonly unknown[] {
@@ -1852,6 +1857,8 @@ function requiresTrustedWorkspace(type: WebviewRequest['type']): boolean {
     case 'feedback.remove':
     case 'provider.secret.configure':
     case 'provider.secret.remove':
+    case 'plugin.credential.configure':
+    case 'plugin.credential.remove':
     case 'interaction.permission.respond':
     case 'interaction.question.respond':
     case 'interaction.question.cancel':
@@ -1884,111 +1891,6 @@ function requiresTrustedWorkspace(type: WebviewRequest['type']): boolean {
       return false
   }
 }
-
-function imageMimeType(filePath: string): string | undefined {
-  const extension = path.extname(filePath).toLowerCase()
-  switch (extension) {
-    case '.png':
-      return 'image/png'
-    case '.jpg':
-    case '.jpeg':
-      return 'image/jpeg'
-    case '.webp':
-      return 'image/webp'
-    case '.gif':
-      return 'image/gif'
-    default:
-      return undefined
-  }
-}
-
-function attachmentMimeType(filePath: string, bytes: Buffer): string | undefined {
-  const imageType = imageMimeType(filePath)
-  if (imageType !== undefined) return imageType
-
-  const fileName = path.basename(filePath).toLowerCase()
-  const extension = path.extname(fileName)
-  if (BINARY_ATTACHMENT_EXTENSIONS.has(extension)) return undefined
-  const knownTextType =
-    TEXT_ATTACHMENT_MIME_TYPES[extension] ?? (fileName === '.env' ? 'text/plain' : undefined)
-  if (knownTextType !== undefined) return validTextBytes(bytes) ? knownTextType : undefined
-  return validTextBytes(bytes) ? 'text/plain' : undefined
-}
-
-function validTextBytes(bytes: Buffer): boolean {
-  if (bytes.includes(0)) return false
-  return !bytes.toString('utf8').includes('\ufffd')
-}
-
-const TEXT_ATTACHMENT_MIME_TYPES: Readonly<Record<string, string>> = {
-  '.c': 'text/x-c',
-  '.cc': 'text/x-c++',
-  '.cpp': 'text/x-c++',
-  '.css': 'text/css',
-  '.csv': 'text/csv',
-  '.go': 'text/x-go',
-  '.h': 'text/x-c',
-  '.hpp': 'text/x-c++',
-  '.htm': 'text/html',
-  '.html': 'text/html',
-  '.ini': 'text/plain',
-  '.java': 'text/x-java-source',
-  '.js': 'text/javascript',
-  '.json': 'application/json',
-  '.jsx': 'text/javascript',
-  '.log': 'text/plain',
-  '.md': 'text/markdown',
-  '.mjs': 'text/javascript',
-  '.py': 'text/x-python',
-  '.rs': 'text/x-rust',
-  '.scss': 'text/x-scss',
-  '.sh': 'application/x-sh',
-  '.sql': 'application/sql',
-  '.svelte': 'text/html',
-  '.toml': 'application/toml',
-  '.ts': 'application/typescript',
-  '.tsx': 'application/typescript',
-  '.txt': 'text/plain',
-  '.vue': 'text/html',
-  '.xml': 'application/xml',
-  '.yaml': 'application/yaml',
-  '.yml': 'application/yaml',
-  '.zsh': 'application/x-sh',
-}
-
-const BINARY_ATTACHMENT_EXTENSIONS = new Set([
-  '.7z',
-  '.avi',
-  '.bin',
-  '.bz2',
-  '.dll',
-  '.doc',
-  '.docx',
-  '.exe',
-  '.flac',
-  '.gz',
-  '.ico',
-  '.jar',
-  '.jpeg',
-  '.jpg',
-  '.mp3',
-  '.mp4',
-  '.mov',
-  '.pdf',
-  '.ppt',
-  '.pptx',
-  '.psd',
-  '.rar',
-  '.tar',
-  '.ttf',
-  '.wav',
-  '.webm',
-  '.woff',
-  '.woff2',
-  '.xls',
-  '.xlsx',
-  '.zip',
-])
 
 async function pathExists(filePath: string): Promise<boolean> {
   try {

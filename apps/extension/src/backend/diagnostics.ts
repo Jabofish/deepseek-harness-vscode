@@ -1,9 +1,12 @@
 import type * as vscode from 'vscode'
+import { redactText } from '@dsh-vscode/dsh-adapter'
 
 export type DiagnosticLevel = 'error' | 'warn' | 'info' | 'debug'
 
 export class RedactedDiagnostics implements vscode.Disposable {
-  public constructor(private readonly channel: vscode.OutputChannel) {}
+  public constructor(
+    private readonly channel: Pick<vscode.OutputChannel, 'appendLine' | 'show' | 'dispose'>,
+  ) {}
 
   public log(level: DiagnosticLevel, event: string, fields: Readonly<Record<string, unknown>> = {}): void {
     const safe = redact(fields)
@@ -26,12 +29,18 @@ export class RedactedDiagnostics implements vscode.Disposable {
 }
 
 const SAFE_FIELD =
-  /^(code|phase|candidateSource|latencyBucket|hostVersion|method|status|attempt|count|durationMs|ownership)$/
+  /^(code|phase|candidateSource|latencyBucket|hostVersion|method|status|attempt|count|durationMs|ownership|requestType|rpcMethod|name)$/
+/** Free-text fields never pass through raw; they get the shared scrubber below. */
+const REDACTED_TEXT_FIELD = /^(message|stack|detail)$/
 
 function redact(value: unknown): Readonly<Record<string, unknown>> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return {}
   const result: Record<string, unknown> = {}
   for (const [key, entry] of Object.entries(value)) {
+    if (REDACTED_TEXT_FIELD.test(key)) {
+      if (typeof entry === 'string') result[key] = redactText(entry, 2_048)
+      continue
+    }
     if (!SAFE_FIELD.test(key)) continue
     if (typeof entry === 'string') result[key] = entry.slice(0, 128)
     else if (typeof entry === 'number' || typeof entry === 'boolean' || entry === null) result[key] = entry

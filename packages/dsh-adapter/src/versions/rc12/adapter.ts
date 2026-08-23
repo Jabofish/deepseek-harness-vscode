@@ -17,16 +17,13 @@ export class Rc12VersionAdapter extends Rc8VersionAdapter {
   public override readonly fallback = false
   public override readonly protocolVersion = 'rc12'
 
-  protected override acceptsRuntimeHint(version: string | undefined): boolean {
-    return version === this.supportedVersion
-  }
-
   protected override createSessionRepository(
     transport: DshTransport,
     workspaces: Rc6WorkspaceRepository,
   ): Rc6SessionRepository {
     return new Rc6SessionRepository(transport, workspaces, this.options.samePath, {
       preallocatedSessionId: true,
+      includeEmptyCommandImages: true,
       maxPromptAttachmentBytes: RC12_MAX_PROMPT_ATTACHMENT_BYTES,
       maxPromptAttachmentTotalBytes: RC12_MAX_PROMPT_ATTACHMENT_TOTAL_BYTES,
     })

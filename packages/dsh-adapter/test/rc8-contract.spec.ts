@@ -4,10 +4,11 @@ import type { DshTransport } from '../src/contracts.js'
 
 import { VersionedBackendFactory } from '../src/backend-factory.js'
 import { Rc6VersionAdapter } from '../src/versions/rc6/adapter.js'
+import { rc6Mapper } from '../src/versions/rc6/mapper.js'
 import { Rc7VersionAdapter } from '../src/versions/rc7/adapter.js'
 import { Rc8VersionAdapter } from '../src/versions/rc8/adapter.js'
-import { rc8Mapper } from '../src/versions/rc8/mapper.js'
 import { Rc8CommandRepository } from '../src/repositories/command-repository.js'
+import { Rc6SessionRepository } from '../src/repositories/session-repository.js'
 import { unwrapRpcResult } from '../src/versions/rc6/rpc.js'
 
 const endpoint = { host: '127.0.0.1' as const, port: 3939, baseUrl: 'http://127.0.0.1:3939' }
@@ -58,11 +59,11 @@ describe('DeepSeek Harness rc.8 compatibility contract', () => {
     })
   })
 
-  it('keeps an unknown version launchable and exposes only a safe compatibility warning', async () => {
+  it('defers an unknown version to the rc.6 fallback instead of selecting rc.8', async () => {
     const adapter = new Rc8VersionAdapter(options({ home: 'fixture-home' }))
-    const result = await adapter.probe({ ...candidate, runtimeVersion: 'dsh-next-development' })
-    expect(result).toMatchObject({ dshVersion: 'dsh-next-development' })
-    expect(result?.compatibilityWarning).toContain('basic compatibility mode')
+    await expect(
+      adapter.probe({ ...candidate, runtimeVersion: 'dsh-next-development' }),
+    ).resolves.toBeUndefined()
   })
 
   it('falls back to the legacy adapter when an older host has no home field', async () => {
@@ -122,9 +123,55 @@ describe('DeepSeek Harness rc.8 compatibility contract', () => {
     ])
   })
 
+  it('sends rc.8 session-config commands the required empty images array', async () => {
+    const commands: { readonly method: string; readonly params: unknown }[] = []
+    const transport = configCommandTransport(commands, true)
+    await new Rc6SessionRepository(transport, undefined, undefined, {
+      includeEmptyCommandImages: true,
+    }).setConfiguration('session-1', {
+      preset: '',
+      toolMode: 'native',
+      permissionPreset: 'read-only',
+      planMode: true,
+      model: { providerId: '', modelId: '' },
+    })
+    expect(commands).toEqual([
+      {
+        method: 'commands/execute',
+        params: { agentId: 'session-1', line: '/permission read-only', images: [] },
+      },
+      {
+        method: 'commands/execute',
+        params: { agentId: 'session-1', line: '/plan', images: [] },
+      },
+    ])
+  })
+
+  it('keeps the rc.6 session-config commands free of the images field', async () => {
+    const commands: { readonly method: string; readonly params: unknown }[] = []
+    const transport = configCommandTransport(commands, false)
+    await new Rc6SessionRepository(transport).setConfiguration('session-1', {
+      preset: '',
+      toolMode: 'native',
+      permissionPreset: 'read-only',
+      planMode: true,
+      model: { providerId: '', modelId: '' },
+    })
+    expect(commands).toEqual([
+      {
+        method: 'commands/execute',
+        params: { agentId: 'session-1', line: '/permission read-only' },
+      },
+      {
+        method: 'commands/execute',
+        params: { agentId: 'session-1', line: '/plan' },
+      },
+    ])
+  })
+
   it('maps interrupted prefixes and Agent Team durable events into bounded domain views', () => {
     expect(
-      rc8Mapper.event('assistant/message', {
+      rc6Mapper.event('assistant/message', {
         sessionId: 's1',
         data: {
           turn: 1,
@@ -141,7 +188,7 @@ describe('DeepSeek Harness rc.8 compatibility contract', () => {
     })
 
     expect(
-      rc8Mapper.event('team/member', {
+      rc6Mapper.event('team/member', {
         sessionId: 's1',
         data: {
           version: 1,
@@ -151,7 +198,7 @@ describe('DeepSeek Harness rc.8 compatibility contract', () => {
       }),
     ).toMatchObject({ type: 'team.updated', activity: { kind: 'member', memberId: 'member-1' } })
     expect(
-      rc8Mapper.event('team/task', {
+      rc6Mapper.event('team/task', {
         sessionId: 's1',
         data: {
           version: 1,
@@ -172,7 +219,7 @@ describe('DeepSeek Harness rc.8 compatibility contract', () => {
       activity: { kind: 'task', taskId: 'task-1', blockedByCount: 1, writeScopeCount: 1 },
     })
     expect(
-      rc8Mapper.event('team/message/queued', {
+      rc6Mapper.event('team/message/queued', {
         sessionId: 's1',
         data: {
           version: 1,
@@ -189,12 +236,12 @@ describe('DeepSeek Harness rc.8 compatibility contract', () => {
       }),
     ).toMatchObject({ type: 'team.updated', activity: { kind: 'message.queued', content: 'check this' } })
     expect(
-      rc8Mapper.event('team/message/delivered', {
+      rc6Mapper.event('team/message/delivered', {
         sessionId: 's1',
         data: { version: 1, teamId: 'team-1', messageId: 'message-1', targetId: 'member-1' },
       }),
     ).toMatchObject({ type: 'team.updated', activity: { kind: 'message.delivered' } })
-    expect(rc8Mapper.event('team/task', { sessionId: 's1', data: { version: 2 } }).type).toBe('unknown')
+    expect(rc6Mapper.event('team/task', { sessionId: 's1', data: { version: 2 } }).type).toBe('unknown')
   })
 
   it('maps rc.8 attachment admission reasons without leaking the upstream message', () => {
@@ -280,7 +327,7 @@ describe('DeepSeek Harness rc.8 compatibility contract', () => {
 
   it('preserves official mutation locations for produced-file chips', () => {
     expect(
-      rc8Mapper.event('tool/result', {
+      rc6Mapper.event('tool/result', {
         sessionId: 's1',
         data: {
           turn: 1,
@@ -308,3 +355,30 @@ describe('DeepSeek Harness rc.8 compatibility contract', () => {
     })
   })
 })
+
+function configCommandTransport(
+  commands: { readonly method: string; readonly params: unknown }[],
+  includeImages: boolean,
+): DshTransport {
+  void includeImages
+  return {
+    request: <TResponse>(method: string) => {
+      if (method === 'session.history')
+        return Promise.resolve({
+          result: { ok: true, value: { events: [], hasMore: false } },
+        } as TResponse)
+      return Promise.resolve({ result: { ok: true, value: { items: [] } } } as TResponse)
+    },
+    remoteRequest: <TResponse>(method: string, params: unknown) => {
+      commands.push({ method, params })
+      return Promise.resolve({
+        ok: true,
+        value: { commandId: 'config-command', result: { kind: 'success', text: 'applied' } },
+      } as TResponse)
+    },
+    openEventStream: async function* () {
+      /* fixture stream */
+    },
+    close: () => Promise.resolve(),
+  }
+}

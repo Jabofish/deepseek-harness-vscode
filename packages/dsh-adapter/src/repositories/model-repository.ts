@@ -16,6 +16,12 @@ import {
   schemasteryNodeAtPath,
   type SerializedSchemaNode,
 } from '../versions/rc6/schemastery.js'
+import {
+  nonEmptyString,
+  recordOrUndefined,
+  validProviderView,
+  validSettingsNamespace,
+} from './shared/guards.js'
 
 interface ProviderFieldDraft {
   readonly field: ModelProvider['fields'][number]
@@ -178,56 +184,6 @@ function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {}
-}
-
-function recordOrUndefined(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined
-}
-
-function nonEmptyString(value: unknown): value is string {
-  return typeof value === 'string' && value.trim() !== ''
-}
-
-function validProviderView(value: unknown): boolean {
-  const record = recordOrUndefined(value)
-  return (
-    record !== undefined &&
-    nonEmptyString(record.provider) &&
-    nonEmptyString(record.displayName) &&
-    typeof record.settingsNs === 'string' &&
-    Array.isArray(record.settingsPath) &&
-    record.settingsPath.every((part): part is string => typeof part === 'string') &&
-    typeof record.active === 'boolean' &&
-    (record.declared === undefined || typeof record.declared === 'boolean')
-  )
-}
-
-function validSettingsNamespace(value: unknown): boolean {
-  const record = recordOrUndefined(value)
-  return (
-    record !== undefined &&
-    nonEmptyString(record.ns) &&
-    Object.prototype.hasOwnProperty.call(record, 'schema') &&
-    Object.prototype.hasOwnProperty.call(record, 'value') &&
-    (record.base === undefined || Object.prototype.hasOwnProperty.call(record, 'base')) &&
-    (record.user === undefined || Object.prototype.hasOwnProperty.call(record, 'user')) &&
-    (record.applies === 'live' || record.applies === 'restart') &&
-    Number.isSafeInteger(record.revision) &&
-    (record.revision as number) >= 0 &&
-    Array.isArray(record.secrets) &&
-    record.secrets.every((secret) => {
-      const item = recordOrUndefined(secret)
-      return (
-        item !== undefined &&
-        Array.isArray(item.path) &&
-        item.path.length > 0 &&
-        item.path.every((part): part is string => nonEmptyString(part)) &&
-        typeof item.set === 'boolean'
-      )
-    })
-  )
 }
 
 function validModelSelection(value: unknown): value is Record<string, unknown> & {

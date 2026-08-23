@@ -1,4 +1,4 @@
-import type { RuntimeLocator } from '@dsh-vscode/application'
+import type { RuntimeLocator, RuntimeLookupResult } from '@dsh-vscode/application'
 import type { DshRuntime, OperatingSystem } from '@dsh-vscode/domain'
 import { AppError } from '@dsh-vscode/domain'
 import { isKnownDshVersion } from '@dsh-vscode/dsh-adapter'
@@ -14,40 +14,50 @@ export interface RuntimeLocatorDependencies {
 }
 
 export class DshRuntimeLocator implements RuntimeLocator {
-  private locations: readonly string[] = []
-
   public constructor(private readonly dependencies: RuntimeLocatorDependencies) {}
 
-  public async locate(signal?: AbortSignal): Promise<DshRuntime | undefined> {
-    this.locations = []
+  public async locate(signal?: AbortSignal): Promise<RuntimeLookupResult> {
+    if (signal?.aborted === true) throw runtimeDetectionCancelled(signal)
+    const locations: string[] = []
     const candidates = this.candidates(undefined)
     const configured = candidates.find((candidate) => candidate.source === 'configured')
     // An explicit executable is an operator decision.  If it exists but is
     // an incompatible version, surface that fact instead of silently falling
     // back to a different PATH binary.
     if (configured !== undefined && (await this.dependencies.fileExists(configured.path))) {
-      this.rememberLocation(configured.path)
-      return this.inspect(configured, signal)
+      this.rememberLocation(locations, configured.path)
+      return { runtime: await this.inspect(configured, signal), searchedLocations: [...locations] }
     }
 
     const initial = await this.findSupported(
       candidates.filter((candidate) => candidate !== configured),
+      locations,
       signal,
     )
-    if (initial?.supported === true) return initial
+    if (initial.runtime?.supported === true)
+      return { runtime: initial.runtime, searchedLocations: [...locations] }
 
     // Explicit configuration and PATH take precedence over npm discovery.
     // This also avoids spawning npm on the common configured-runtime path.
-    const prefix = await this.dependencies.npmGlobalPrefix(signal)
+    let prefix: string | undefined
+    try {
+      prefix = await this.dependencies.npmGlobalPrefix(signal)
+    } catch (error) {
+      if (signal?.aborted) throw runtimeDetectionCancelled(signal)
+      throw error
+    }
+    if (signal?.aborted) throw runtimeDetectionCancelled(signal)
     const npmCandidates = this.candidates(prefix).filter(
       (candidate) => !candidates.some((known) => known.path.toLowerCase() === candidate.path.toLowerCase()),
     )
-    const npmRuntime = await this.findSupported(npmCandidates, signal)
-    return npmRuntime?.supported === true ? npmRuntime : (initial ?? npmRuntime)
-  }
-
-  public searchedLocations(): readonly string[] {
-    return this.locations
+    const npmRuntime = await this.findSupported(npmCandidates, locations, signal)
+    const runtime =
+      npmRuntime.runtime?.supported === true ? npmRuntime.runtime : (initial.runtime ?? npmRuntime.runtime)
+    if (runtime === undefined) {
+      const timeout = initial.timeout ?? npmRuntime.timeout
+      if (timeout !== undefined) throw timeout
+    }
+    return { ...(runtime === undefined ? {} : { runtime }), searchedLocations: [...locations] }
   }
 
   public async inspectExecutable(executable: string, signal?: AbortSignal): Promise<DshRuntime> {
@@ -57,50 +67,50 @@ export class DshRuntimeLocator implements RuntimeLocator {
         message: 'The selected DSH executable was not found.',
         retryable: false,
       })
-    this.rememberLocation(executable)
-    return this.inspect({ path: path.normalize(executable), source: 'configured' }, signal)
+    return this.inspect(
+      { path: pathApi(this.dependencies.os).normalize(executable), source: 'configured' },
+      signal,
+    )
   }
 
   private async findSupported(
     candidates: readonly Candidate[],
+    locations: string[],
     signal?: AbortSignal,
-  ): Promise<DshRuntime | undefined> {
+  ): Promise<RuntimeSearchResult> {
     let incompatible: DshRuntime | undefined
+    let timeout: AppError | undefined
     for (const candidate of candidates) {
-      if (signal?.aborted === true)
-        throw new AppError({
-          code: 'REQUEST_CANCELLED',
-          message: 'Runtime detection was cancelled.',
-          retryable: true,
-        })
+      if (signal?.aborted === true) throw runtimeDetectionCancelled(signal)
       if (!(await this.dependencies.fileExists(candidate.path))) continue
-      // Report only executable paths that actually exist. Listing every
-      // derived `dsh.cmd` candidate from PATH makes the diagnostic look like
-      // a successful search while hiding the one path that matters.
-      this.rememberLocation(candidate.path)
+      // Report only runtime candidates that actually exist. Listing every
+      // derived candidate from PATH makes the diagnostic look like a
+      // successful search while hiding the one path that matters.
+      this.rememberLocation(locations, candidate.path)
       try {
         const runtime = await this.inspect(candidate, signal)
-        if (runtime.supported) return runtime
+        if (runtime.supported) return { runtime, timeout }
         incompatible ??= runtime
       } catch (error) {
         if (signal?.aborted) throw error
+        if (isRuntimeProbeTimeout(error)) timeout = error
       }
     }
-    return incompatible
+    return { runtime: incompatible, timeout }
   }
 
-  private rememberLocation(candidatePath: string): void {
-    const normalized = path.normalize(candidatePath)
+  private rememberLocation(locations: string[], candidatePath: string): void {
+    const normalized = pathApi(this.dependencies.os).normalize(candidatePath)
     const key = this.dependencies.os === 'windows' ? normalized.toLowerCase() : normalized
     if (
-      this.locations.some((location) => {
-        const existing = path.normalize(location)
+      locations.some((location) => {
+        const existing = pathApi(this.dependencies.os).normalize(location)
         const existingKey = this.dependencies.os === 'windows' ? existing.toLowerCase() : existing
         return existingKey === key
       })
     )
       return
-    this.locations = [...this.locations, normalized]
+    locations.push(normalized)
   }
 
   private async inspect(candidate: Candidate, signal?: AbortSignal): Promise<DshRuntime> {
@@ -137,9 +147,10 @@ export class DshRuntimeLocator implements RuntimeLocator {
   private candidates(npmPrefix: string | undefined): readonly Candidate[] {
     const result: Candidate[] = []
     const seen = new Set<string>()
+    const pathModule = pathApi(this.dependencies.os)
     const add = (value: string | undefined, source: DshRuntime['source']): void => {
       if (value === undefined || value.trim() === '') return
-      const normalized = path.normalize(value)
+      const normalized = pathModule.normalize(value)
       const key = this.dependencies.os === 'windows' ? normalized.toLowerCase() : normalized
       if (seen.has(key)) return
       seen.add(key)
@@ -148,18 +159,22 @@ export class DshRuntimeLocator implements RuntimeLocator {
 
     const configured = this.dependencies.configuredPath()
     add(configured, 'configured')
-    const executableName = this.dependencies.os === 'windows' ? 'dsh.cmd' : 'dsh'
-    for (const entry of this.dependencies.pathEntries()) add(path.join(entry, executableName), 'path')
+    const executableNames =
+      this.dependencies.os === 'windows' ? ['dsh.cmd', 'dsh.bat', 'dsh.exe', 'dsh'] : ['dsh']
+    for (const entry of this.dependencies.pathEntries())
+      for (const executableName of executableNames) add(pathModule.join(entry, executableName), 'path')
     // npm's global prefix is a directory, not an executable. Keep the lookup
     // platform-specific and never invoke a shell to ask npm for a command.
     if (npmPrefix !== undefined) {
-      add(
-        this.dependencies.os === 'windows'
-          ? path.join(npmPrefix, executableName)
-          : path.join(npmPrefix, 'bin', executableName),
-        'npm-global',
-      )
-      add(path.join(npmPrefix, 'node_modules', '.bin', executableName), 'npm-global')
+      for (const executableName of executableNames) {
+        add(
+          this.dependencies.os === 'windows'
+            ? pathModule.join(npmPrefix, executableName)
+            : pathModule.join(npmPrefix, 'bin', executableName),
+          'npm-global',
+        )
+        add(pathModule.join(npmPrefix, 'node_modules', '.bin', executableName), 'npm-global')
+      }
     }
     return result
   }
@@ -168,6 +183,10 @@ export class DshRuntimeLocator implements RuntimeLocator {
 interface Candidate {
   readonly path: string
   readonly source: DshRuntime['source']
+}
+
+function pathApi(os: OperatingSystem): typeof path.posix {
+  return os === 'windows' ? path.win32 : path.posix
 }
 
 function normalizeVersion(output: string): string {
@@ -193,7 +212,7 @@ async function withTimeout<T>(
     let settled = false
     const timer = setTimeout(() => {
       cancelUnderlying?.()
-      finish(undefined, new Error('runtime version timeout'))
+      finish(undefined, runtimeVersionTimeout())
     }, timeoutMs)
     const cleanup = (): void => {
       clearTimeout(timer)
@@ -229,4 +248,38 @@ async function withTimeout<T>(
       (error: unknown) => finish(undefined, error),
     )
   })
+}
+
+interface RuntimeSearchResult {
+  readonly runtime: DshRuntime | undefined
+  readonly timeout: AppError | undefined
+}
+
+function runtimeVersionTimeout(): AppError {
+  return new AppError({
+    code: 'BACKEND_UNREACHABLE',
+    message: 'Timed out while checking the DSH runtime version.',
+    retryable: true,
+    context: { operation: 'runtime.version', timedOut: true },
+  })
+}
+
+function runtimeDetectionCancelled(signal: AbortSignal): AppError {
+  return signal.reason instanceof AppError
+    ? signal.reason
+    : new AppError({
+        code: 'REQUEST_CANCELLED',
+        message: 'Runtime detection was cancelled.',
+        retryable: true,
+        cause: signal.reason,
+      })
+}
+
+function isRuntimeProbeTimeout(error: unknown): error is AppError {
+  return (
+    error instanceof AppError &&
+    error.code === 'BACKEND_UNREACHABLE' &&
+    error.context?.operation === 'runtime.version' &&
+    error.context?.timedOut === true
+  )
 }

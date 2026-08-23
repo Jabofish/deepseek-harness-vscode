@@ -6,24 +6,26 @@ import { discoveryCancelled, type DiscoveryProvider } from './provider.js'
 export class CompositeInstanceDiscovery implements BackendDiscovery {
   public constructor(private readonly providers: readonly DiscoveryProvider[]) {}
 
-  public discover(signal?: AbortSignal): Promise<readonly BackendCandidate[]> {
-    if (signal?.aborted === true) return Promise.reject(discoveryCancelled(signal.reason))
-    return Promise.allSettled(this.providers.map((provider) => provider.discover(signal))).then((results) => {
-      const byEndpoint = new Map<string, BackendCandidate>()
-      for (const result of results) {
-        if (result.status !== 'fulfilled') continue
-        for (const candidate of result.value) {
-          if (!isLoopbackCandidate(candidate)) continue
-          const key = `${candidate.endpoint.host}:${candidate.endpoint.port}`
-          const existing = byEndpoint.get(key)
-          if (existing === undefined || rank(candidate) > rank(existing)) byEndpoint.set(key, candidate)
-        }
+  public async discover(signal?: AbortSignal): Promise<readonly BackendCandidate[]> {
+    if (signal?.aborted) throw discoveryCancelled(signal.reason)
+    const results = await Promise.allSettled(this.providers.map((provider) => provider.discover(signal)))
+    // allSettled deliberately isolates stale optional discovery providers, but
+    // it must not turn a caller cancellation into a successful empty result.
+    if (signal?.aborted) throw discoveryCancelled(signal.reason)
+    const byEndpoint = new Map<string, BackendCandidate>()
+    for (const result of results) {
+      if (result.status !== 'fulfilled') continue
+      for (const candidate of result.value) {
+        if (!isLoopbackCandidate(candidate)) continue
+        const key = `${candidate.endpoint.host}:${candidate.endpoint.port}`
+        const existing = byEndpoint.get(key)
+        if (existing === undefined || rank(candidate) > rank(existing)) byEndpoint.set(key, candidate)
       }
-      return [...byEndpoint.values()].sort((left, right) => {
-        const score = rank(right) - rank(left)
-        if (score !== 0) return score
-        return left.endpoint.port - right.endpoint.port
-      })
+    }
+    return [...byEndpoint.values()].sort((left, right) => {
+      const score = rank(right) - rank(left)
+      if (score !== 0) return score
+      return left.endpoint.port - right.endpoint.port
     })
   }
 }

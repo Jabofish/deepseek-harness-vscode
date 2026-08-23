@@ -7396,6 +7396,199 @@ button.dsh-timeline__produced-chip:focus-visible {
   font-size: 0.68rem;
 }
 
+.dsh-plugin-configuration {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  margin-bottom: 18px;
+}
+
+.dsh-plugin-configuration__intro {
+  display: grid;
+  gap: 3px;
+}
+
+.dsh-plugin-configuration__intro h3 {
+  margin: 0;
+  font-size: 0.86rem;
+}
+
+.dsh-plugin-configuration__intro p {
+  margin: 0;
+  color: var(--dsh-muted);
+  font-size: 0.76rem;
+}
+
+.dsh-plugin-configuration__cards {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.dsh-plugin-configuration__card {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--vscode-panel-border, #2b2b2b);
+  border-radius: 8px;
+}
+
+.dsh-plugin-configuration__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  padding: 12px 14px;
+  background: transparent;
+  border: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.dsh-plugin-configuration__header:hover {
+  background: var(--vscode-list-hoverBackground, rgba(128, 128, 128, 0.1));
+}
+
+.dsh-plugin-configuration__header:focus-visible {
+  outline: 2px solid var(--vscode-focusBorder, #0078d4);
+  outline-offset: -2px;
+}
+
+.dsh-plugin-configuration__header-copy {
+  display: grid;
+  flex: 1;
+  gap: 3px;
+  min-width: 0;
+}
+
+.dsh-plugin-configuration__header-copy strong {
+  font-size: 0.86rem;
+}
+
+.dsh-plugin-configuration__header-copy span {
+  overflow: hidden;
+  color: var(--dsh-muted);
+  font-size: 0.74rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-plugin-configuration__unsaved,
+.dsh-plugin-configuration__field-head small {
+  flex: none;
+  color: var(--vscode-charts-yellow, #cca700);
+  font-size: 0.68rem;
+}
+
+.dsh-plugin-configuration__chevron {
+  flex: none;
+  color: var(--dsh-muted);
+  font-size: 1rem;
+  line-height: 1;
+  transform: rotate(0deg);
+  transition: transform 120ms ease;
+}
+
+.dsh-plugin-configuration__chevron--open {
+  transform: rotate(180deg);
+}
+
+.dsh-plugin-configuration__body {
+  display: grid;
+  gap: 12px;
+  padding: 0 14px 14px;
+  border-top: 1px solid var(--vscode-panel-border, #2b2b2b);
+}
+
+.dsh-plugin-configuration__readonly,
+.dsh-plugin-configuration__error {
+  margin: 12px 0 0;
+  color: var(--vscode-charts-red, #f85149);
+  font-size: 0.74rem;
+}
+
+.dsh-plugin-configuration__readonly {
+  color: var(--dsh-muted);
+}
+
+.dsh-plugin-configuration__field,
+.dsh-plugin-configuration__credential {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding-top: 12px;
+}
+
+.dsh-plugin-configuration__field + .dsh-plugin-configuration__field,
+.dsh-plugin-configuration__credential {
+  border-top: 1px solid var(--vscode-panel-border, #2b2b2b);
+}
+
+.dsh-plugin-configuration__field-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  font-size: 0.76rem;
+}
+
+.dsh-plugin-configuration__field input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.dsh-plugin-configuration__hint {
+  color: var(--dsh-muted);
+  font-size: 0.7rem;
+  line-height: 1.35;
+}
+
+.dsh-plugin-configuration__hint--error {
+  color: var(--vscode-charts-red, #f85149);
+}
+
+.dsh-plugin-configuration__reset {
+  justify-self: start;
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: var(--vscode-textLink-foreground, #3794ff);
+  font: inherit;
+  font-size: 0.7rem;
+  cursor: pointer;
+}
+
+.dsh-plugin-configuration__reset:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.dsh-plugin-configuration__credential-actions,
+.dsh-plugin-configuration__footer {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.dsh-plugin-configuration__credential-actions {
+  margin-top: 3px;
+}
+
+.dsh-plugin-configuration__footer {
+  justify-content: flex-end;
+  padding-top: 4px;
+}
+
+.dsh-plugin-configuration__error {
+  flex: 1 1 100%;
+}
+
 .dsh-plugin-inventory {
   display: grid;
   gap: 10px;
@@ -7422,14 +7615,41 @@ button.dsh-timeline__produced-chip:focus-visible {
 .dsh-plugin-inventory__search {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   min-width: 0;
-  color: var(--dsh-muted);
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--vscode-input-border, var(--dsh-control-border));
+  border-radius: var(--dsh-radius-lg, 12px);
+  color: var(--vscode-input-foreground, var(--dsh-control-foreground));
+  background: var(--vscode-input-background, var(--dsh-surface-raised));
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease,
+    background-color 120ms ease;
+}
+
+.dsh-plugin-inventory__search:focus-within {
+  border-color: var(--vscode-focusBorder, var(--dsh-accent));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--vscode-focusBorder, var(--dsh-accent)) 55%, transparent);
 }
 
 .dsh-plugin-inventory__search input {
   flex: 1;
   min-width: 0;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  font-size: 0.78rem;
+}
+
+.dsh-plugin-inventory__search input::placeholder {
+  color: var(--vscode-input-placeholderForeground, var(--dsh-muted));
+  opacity: 1;
 }
 
 .dsh-plugin-inventory__heading {
@@ -7450,7 +7670,9 @@ button.dsh-timeline__produced-chip:focus-visible {
 
 .dsh-plugin-inventory__cards {
   display: grid;
-  gap: 6px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+  align-items: start;
+  gap: 10px 12px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -7458,9 +7680,10 @@ button.dsh-timeline__produced-chip:focus-visible {
 
 .dsh-plugin-inventory__card {
   min-width: 0;
-  border: 1px solid var(--vscode-panel-border, #2b2b2b);
-  border-radius: 6px;
+  border: 1px solid var(--vscode-panel-border, var(--dsh-control-border));
+  border-radius: var(--dsh-radius-md, 8px);
   overflow: hidden;
+  background: color-mix(in srgb, var(--dsh-surface-raised) 78%, var(--dsh-surface));
 }
 
 .dsh-plugin-inventory__card-content {
@@ -7470,7 +7693,8 @@ button.dsh-timeline__produced-chip:focus-visible {
   gap: 8px;
   width: 100%;
   min-width: 0;
-  padding: 8px 10px;
+  min-height: 46px;
+  padding: 9px 12px;
   background: transparent;
   border: none;
   color: inherit;
@@ -7480,7 +7704,7 @@ button.dsh-timeline__produced-chip:focus-visible {
 }
 
 .dsh-plugin-inventory__card-content:hover {
-  background: var(--vscode-list-hoverBackground, rgba(128, 128, 128, 0.1));
+  background: var(--vscode-list-hoverBackground, var(--dsh-control-hover));
 }
 
 .dsh-plugin-inventory__card-content:focus-visible {
@@ -7526,17 +7750,20 @@ button.dsh-timeline__produced-chip:focus-visible {
 }
 
 .dsh-plugin-inventory__config-tag {
-  padding: 1px 6px;
+  padding: 2px 7px;
   border-radius: 999px;
-  border: 1px solid var(--vscode-panel-border, #2b2b2b);
+  border: 1px solid var(--vscode-panel-border, var(--dsh-control-border));
   font-size: 0.66rem;
 }
 
 .dsh-plugin-inventory__config-tag[data-enabled='true'] {
-  color: var(--vscode-charts-green, #3fb950);
+  border-color: color-mix(in srgb, var(--dsh-success) 38%, var(--dsh-control-border));
+  color: var(--dsh-success);
+  background: color-mix(in srgb, var(--dsh-success) 12%, transparent);
 }
 
 .dsh-plugin-inventory__config-tag[data-enabled='false'] {
+  background: color-mix(in srgb, var(--dsh-surface-soft) 72%, transparent);
   color: var(--dsh-muted);
 }
 
@@ -7548,7 +7775,8 @@ button.dsh-timeline__produced-chip:focus-visible {
   display: grid;
   gap: 8px;
   padding: 8px 10px 10px;
-  border-top: 1px solid var(--vscode-panel-border, #2b2b2b);
+  border-top: 1px solid var(--vscode-panel-border, var(--dsh-control-border));
+  background: color-mix(in srgb, var(--dsh-surface) 54%, transparent);
 }
 
 .dsh-plugin-inventory__entry-value {

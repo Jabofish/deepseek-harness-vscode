@@ -42,6 +42,10 @@ export function unwrapRpcResult<T>(response: RpcResponseLike<T>, method: string)
   const error = response.result.error
   const code = error?.code ?? 'internal'
   const attachmentReason = code === 'attachment-error' ? safeAttachmentReason(error?.details) : undefined
+  // Publication precedes workspace attachment: the official client reads the
+  // already-published session id from this error so it can surface the
+  // session as ungrouped instead of losing it.
+  const publishedSessionId = publishedWorkspaceAttachSessionId(code, error?.details)
   throw new AppError({
     code: mapRpcError(code),
     message: safeRpcMessage(method, code, error?.message, attachmentReason),
@@ -50,6 +54,7 @@ export function unwrapRpcResult<T>(response: RpcResponseLike<T>, method: string)
       rpcMethod: method,
       rpcCode: code,
       ...(attachmentReason === undefined ? {} : { attachmentReason }),
+      ...(publishedSessionId === undefined ? {} : { publishedSessionId }),
     },
   })
 }
@@ -232,6 +237,12 @@ function safeRpcDiagnostic(message: string | undefined): string | undefined {
     (match) => match.replace(/[:=].*$/u, ': [redacted]'),
   )
   return redacted.slice(0, 320)
+}
+
+function publishedWorkspaceAttachSessionId(code: string, details: unknown): string | undefined {
+  if (code !== 'workspace-attach-failed') return undefined
+  const sessionId = (details as { readonly sessionId?: unknown } | undefined)?.sessionId
+  return typeof sessionId === 'string' && sessionId.trim() !== '' ? sessionId : undefined
 }
 
 function safeAttachmentReason(details: unknown): string | undefined {

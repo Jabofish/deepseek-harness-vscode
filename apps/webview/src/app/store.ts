@@ -219,6 +219,9 @@ export interface AppActions {
   unsetDshSetting(path: string): Promise<void>
   configureProviderSecret(providerId: string, field: string): Promise<boolean>
   removeProviderSecret(providerId: string, field: string): Promise<void>
+  /** Configure a plugin-owned credential without carrying the secret in the Webview. */
+  configurePluginCredential(ref: string): Promise<boolean>
+  removePluginCredential(ref: string): Promise<void>
   refreshModelCatalog(): Promise<void>
   /** Discover provider models through the Host without carrying credentials in the Webview. */
   discoverModels(input: Omit<ModelDiscoveryInput, 'apiKey'>): Promise<readonly DiscoveredModel[]>
@@ -1567,6 +1570,23 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         type: 'provider.secret.remove',
         requestId: requestId(),
         payload: { providerId, field },
+      })
+    },
+    configurePluginCredential: async (ref) => {
+      const result = object(
+        await client.request<unknown>({
+          type: 'plugin.credential.configure',
+          requestId: requestId(),
+          payload: { ref },
+        }),
+      )
+      return result?.configured === true
+    },
+    removePluginCredential: async (ref) => {
+      await client.request<unknown>({
+        type: 'plugin.credential.remove',
+        requestId: requestId(),
+        payload: { ref },
       })
     },
     refreshModelCatalog: async () => {

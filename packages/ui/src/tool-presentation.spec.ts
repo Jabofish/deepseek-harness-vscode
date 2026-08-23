@@ -93,6 +93,31 @@ describe('toolPresentation', () => {
     expect(JSON.stringify(presentation)).not.toContain("{'answers'")
   })
 
+  it('localizes built-in question names and payload fields when the host supplies a locale', () => {
+    const zh: Readonly<Record<string, string>> = {
+      'presentation.tool.askUserQuestion': '询问用户',
+      'presentation.field.questions': '问题',
+      'presentation.field.question': '问题',
+      'presentation.field.options': '选项',
+      'presentation.field.label': '标签',
+    }
+    const presentation = toolPresentation(
+      tool({
+        name: 'ask_user_question',
+        title: 'ask_user_question',
+        inputSummary: JSON.stringify({
+          questions: [{ question: '你喜欢什么？', options: [{ label: '茶' }] }],
+        }),
+      }),
+      (key) => zh[key] ?? key,
+    )
+
+    expect(presentation.title).toBe('询问用户')
+    expect(presentation.request[0]?.label).toBe('问题')
+    expect(presentation.request[0]?.content).toContain('问题:')
+    expect(presentation.request[0]?.content).toContain('标签:')
+  })
+
   it('formats the double-quoted result emitted by the question tool', () => {
     const presentation = toolPresentation(
       tool({

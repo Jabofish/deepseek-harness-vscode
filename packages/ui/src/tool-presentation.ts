@@ -56,6 +56,12 @@ export function formatToolText(value: string | undefined, t?: PresentationTransl
   return bounded(source)
 }
 
+/** Localize built-in DSH tool names while leaving third-party identifiers intact. */
+export function toolNameLabel(name: string, t?: PresentationTranslate): string | undefined {
+  const entry = TOOL_LABELS[name.trim().toLocaleLowerCase()]
+  return entry === undefined ? undefined : localize(t, entry[0], entry[1])
+}
+
 const INTERNAL_FIELDS = new Set([
   'source',
   'role',
@@ -80,6 +86,20 @@ const INTERNAL_FIELDS = new Set([
 const FIELD_LABELS: Readonly<Record<string, readonly [key: string, english: string]>> = {
   description: ['presentation.task', 'Task'],
   prompt: ['presentation.instructions', 'Instructions'],
+  questions: ['presentation.field.questions', 'Questions'],
+  question: ['presentation.field.question', 'Question'],
+  options: ['presentation.field.options', 'Options'],
+  option: ['presentation.field.option', 'Option'],
+  label: ['presentation.field.label', 'Label'],
+  header: ['presentation.field.header', 'Header'],
+  answers: ['presentation.field.answers', 'Answers'],
+  answer: ['presentation.field.answer', 'Answer'],
+  selected: ['presentation.field.selected', 'Selected'],
+  custom: ['presentation.field.custom', 'Custom'],
+  todos: ['presentation.field.todos', 'To-dos'],
+  subject: ['presentation.field.subject', 'Subject'],
+  status: ['presentation.field.status', 'Status'],
+  name: ['presentation.field.name', 'Name'],
   query: ['presentation.field.query', 'Query'],
   command: ['presentation.field.command', 'Command'],
   code: ['presentation.field.code', 'Code'],
@@ -89,6 +109,27 @@ const FIELD_LABELS: Readonly<Record<string, readonly [key: string, english: stri
   to: ['presentation.field.target', 'Target'],
   content: ['presentation.field.content', 'Content'],
   text: ['presentation.field.text', 'Text'],
+}
+
+/** Stable labels for built-in DSH tools; unknown plugin tools keep their own names. */
+const TOOL_LABELS: Readonly<Record<string, readonly [key: string, english: string]>> = {
+  ask_user_question: ['presentation.tool.askUserQuestion', 'Ask user question'],
+  question: ['presentation.tool.askUserQuestion', 'Ask user question'],
+  bash: ['toolrow.title.bash', 'Bash'],
+  pwsh: ['toolrow.title.pwsh', 'Pwsh'],
+  web_search: ['toolrow.title.search', 'Search'],
+  web_fetch: ['toolrow.title.fetch', 'Fetch'],
+  read: ['toolrow.title.read', 'Read'],
+  write: ['toolrow.title.write', 'Write'],
+  edit: ['toolrow.title.edit', 'Edit'],
+  run_code: ['toolrow.title.code', 'Code'],
+  todo_write: ['toolrow.title.todo', 'To-do'],
+  skill: ['toolrow.title.skill', 'Skill'],
+  grep: ['toolrow.title.search', 'Search'],
+  glob: ['toolrow.title.search', 'Search'],
+  cordis_run: ['toolrow.title.cordisRun', 'Run Cordis Plugin'],
+  cordis_stop: ['toolrow.title.cordisStop', 'Stop Cordis Plugin'],
+  cordis_undefine: ['toolrow.title.cordisUndefine', 'Remove Cordis Plugin'],
 }
 
 /** Translate when a translator is present, otherwise keep the English copy. */
@@ -148,8 +189,10 @@ function displayTitle(tool: ToolCallView, subagent: boolean, t?: PresentationTra
   if (subagent) return localize(t, 'presentation.subagent', 'Subagent')
   const title = tool.title.trim()
   const name = tool.name.trim()
-  if (title !== '' && title.toLocaleLowerCase() !== 'tool') return title
-  return name || title || localize(t, 'presentation.tool', 'Tool')
+  const normalizedTitle = title.toLocaleLowerCase()
+  const normalizedName = name.toLocaleLowerCase()
+  if (title !== '' && normalizedTitle !== 'tool' && normalizedTitle !== normalizedName) return title
+  return toolNameLabel(name, t) ?? (name || title || localize(t, 'presentation.tool', 'Tool'))
 }
 
 function isSubagent(tool: ToolCallView): boolean {

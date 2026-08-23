@@ -8,6 +8,7 @@ import {
   schemasteryUnionMembers,
   type SerializedSchemaNode,
 } from '../versions/rc6/schemastery.js'
+import { recordOrUndefined } from './shared/guards.js'
 
 interface Namespace {
   readonly ns: string
@@ -206,12 +207,6 @@ function asObject(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {}
-}
-
-function recordOrUndefined(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined
 }
 
 function normalizeNamespace(value: unknown): Namespace {

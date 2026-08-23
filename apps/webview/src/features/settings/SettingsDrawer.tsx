@@ -16,6 +16,7 @@ import type {
 import type { DshSettingsSnapshot } from '../../app/store.js'
 import { Icon } from '../../ui/Icon.js'
 import { PluginInventory } from '../plugins/PluginInventory.js'
+import { PluginConfiguration } from '../plugins/PluginConfiguration.js'
 import { PresetManager } from './PresetManager.js'
 import { CustomProviderCard, type CustomProviderTemplate } from './CustomProviderCard.js'
 import { ProviderSettingsEditor, type ProviderSettingChange } from './ProviderSettingsEditor.js'
@@ -43,6 +44,9 @@ export interface SettingsDrawerProps {
   ) => Promise<readonly DiscoveredModel[]>
   readonly onConfigureSecret: (providerId: string, field: string) => Promise<boolean>
   readonly onRemoveSecret: (providerId: string, field: string) => Promise<void>
+  /** Host-mediated plugin credential actions; the secret never enters the Webview. */
+  readonly onConfigurePluginCredential?: (ref: string) => Promise<boolean>
+  readonly onRemovePluginCredential?: (ref: string) => Promise<void>
   readonly onRefreshCatalog: () => Promise<void>
   readonly onLoadPresetRoster: () => Promise<AgentPresetRoster | undefined>
   readonly onReadPresetDocument: (presetId: string) => Promise<AgentPresetDocument | undefined>
@@ -1115,6 +1119,18 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                 aria-labelledby="dsh-settings-tab-plugins"
                 aria-label={t('settings.pluginsAria')}
               >
+                <PluginConfiguration
+                  snapshot={dshState.status === 'ready' ? dshState.snapshot : undefined}
+                  onReload={async () => {
+                    const snapshot = await props.onLoadDshSettings()
+                    if (snapshot !== undefined) setDshState({ status: 'ready', snapshot })
+                    return snapshot
+                  }}
+                  onUpdateSetting={props.onUpdateDshSetting}
+                  onUnsetSetting={props.onUnsetDshSetting}
+                  onConfigureCredential={props.onConfigurePluginCredential}
+                  onRemoveCredential={props.onRemovePluginCredential}
+                />
                 <PluginInventory onLoadInventory={() => props.onLoadPluginInventory()} />
               </div>
             )}

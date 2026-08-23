@@ -147,6 +147,8 @@ function storeFor(state: AppState): AppStore {
     discoverModels: vi.fn().mockResolvedValue([]),
     configureProviderSecret: vi.fn().mockResolvedValue(false),
     removeProviderSecret: vi.fn().mockResolvedValue(undefined),
+    configurePluginCredential: vi.fn().mockResolvedValue(false),
+    removePluginCredential: vi.fn().mockResolvedValue(undefined),
     refreshModelCatalog: vi.fn().mockResolvedValue(undefined),
     loadPresetRoster: vi.fn().mockResolvedValue(undefined),
     readPresetDocument: vi.fn().mockResolvedValue(undefined),

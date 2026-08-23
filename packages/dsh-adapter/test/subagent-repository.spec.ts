@@ -176,6 +176,7 @@ describe('Rc6SubagentRepository catalog', () => {
         childSessionId: 'child',
         mode: 'continuable',
         content: [{ type: 'text', text: 'still routed' }],
+        clientTimeZone: expect.stringMatching(/^[A-Za-z_]+\/[A-Za-z_0-9+-]+$|^UTC$/u) as unknown,
       },
     })
   })
@@ -201,7 +202,7 @@ describe('Rc6SubagentRepository addressed operations', () => {
     await repository.list('parent')
 
     await repository.send('continuable-child', 'follow up')
-    await expect(repository.history('continuable-child')).resolves.toEqual({
+    await expect(repository.history('continuable-child', { beforeSequence: 3 })).resolves.toEqual({
       events: [],
       hasMore: false,
       projection: { asOfSequence: 8, values: { title: 'Child title' } },
@@ -216,6 +217,7 @@ describe('Rc6SubagentRepository addressed operations', () => {
           childSessionId: 'continuable-child',
           mode: 'continuable',
           content: [{ type: 'text', text: 'follow up' }],
+          clientTimeZone: expect.stringMatching(/^[A-Za-z_]+\/[A-Za-z_0-9+-]+$|^UTC$/u) as unknown,
         },
       },
       {
@@ -224,7 +226,8 @@ describe('Rc6SubagentRepository addressed operations', () => {
           parentSessionId: 'parent',
           childSessionId: 'continuable-child',
           mode: 'continuable',
-          maxMessages: 200,
+          maxMessages: 50,
+          beforeSeq: 3,
         },
       },
       {

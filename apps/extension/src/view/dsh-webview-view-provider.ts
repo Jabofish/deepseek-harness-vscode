@@ -6,6 +6,8 @@ import { createWebviewHtml } from './webview-html.js'
 export interface DshWebviewDependencies {
   readonly extensionUri: vscode.Uri
   readonly onMessage: (message: unknown) => Promise<void>
+  /** Observe a rejected Webview message task; event callbacks cannot await it. */
+  readonly onMessageError?: (error: unknown) => void
 }
 
 export class DshWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Disposable {
@@ -25,7 +27,18 @@ export class DshWebviewViewProvider implements vscode.WebviewViewProvider, vscod
     webviewView.webview.html = createWebviewHtml(webviewView.webview, this.dependencies.extensionUri)
     this.disposables.push(
       webviewView.webview.onDidReceiveMessage((message: unknown) => {
-        void this.dependencies.onMessage(message)
+        // VS Code does not await message listeners. Assimilate both a
+        // synchronous throw and a rejected task so a failed response cannot
+        // become an unhandled Promise rejection.
+        void Promise.resolve()
+          .then(() => this.dependencies.onMessage(message))
+          .catch((error: unknown) => {
+            try {
+              this.dependencies.onMessageError?.(error)
+            } catch {
+              // Error reporting must not escape the VS Code event callback.
+            }
+          })
       }),
       webviewView.onDidDispose(() => {
         if (this.view === webviewView) this.view = undefined

@@ -3,16 +3,21 @@ import {
   type SubagentCatalog,
   type SubagentDiagnosticView,
   type SubagentHistoryPage,
+  type SubagentHistoryQuery,
   type SubagentRepository,
   type SubagentView,
 } from '@dsh-vscode/domain'
 
 import type { DshTransport } from '../contracts.js'
 import { callRpc, unavailable } from '../versions/rc6/rpc.js'
+import { clientTimeZoneField } from '../client-time-zone.js'
 import { rc6Mapper } from '../versions/rc6/mapper.js'
+import { recordOrUndefined, validProjectionBlock } from './shared/guards.js'
 
 type Address = { readonly parentSessionId: string; readonly mode: 'one-shot' | 'continuable' }
 
+/** Match the official web client's 50-message history pages. */
+const HISTORY_PAGE_MESSAGES = 50
 export class Rc6SubagentRepository implements SubagentRepository {
   private readonly addresses = new Map<string, Address>()
 
@@ -49,6 +54,7 @@ export class Rc6SubagentRepository implements SubagentRepository {
           childSessionId: sessionId,
           mode: address.mode,
           content: [{ type: 'text', text: message }],
+          ...clientTimeZoneField(),
         },
         signal,
       ),
@@ -57,7 +63,11 @@ export class Rc6SubagentRepository implements SubagentRepository {
       throw malformedSubagentResponse('prompt receipt')
   }
 
-  public async history(sessionId: string, signal?: AbortSignal): Promise<SubagentHistoryPage> {
+  public async history(
+    sessionId: string,
+    query?: SubagentHistoryQuery,
+    signal?: AbortSignal,
+  ): Promise<SubagentHistoryPage> {
     const address = this.addresses.get(sessionId)
     if (address === undefined) throw unavailable('subagent history without a current catalog entry')
     const value = requiredRecord(
@@ -68,7 +78,8 @@ export class Rc6SubagentRepository implements SubagentRepository {
           parentSessionId: address.parentSessionId,
           childSessionId: sessionId,
           mode: address.mode,
-          maxMessages: 200,
+          maxMessages: HISTORY_PAGE_MESSAGES,
+          ...(query?.beforeSequence === undefined ? {} : { beforeSeq: query.beforeSequence }),
         },
         signal,
       ),
@@ -131,26 +142,10 @@ function catalogEntry(value: unknown, parentSessionId: string): SubagentView | S
   }
 }
 
-function validProjectionBlock(value: unknown): boolean {
-  const record = recordOrUndefined(value)
-  return (
-    record !== undefined &&
-    Number.isSafeInteger(record.asOfSeq) &&
-    (record.asOfSeq as number) >= -1 &&
-    recordOrUndefined(record.values) !== undefined
-  )
-}
-
 function requiredRecord(value: unknown): Record<string, unknown> {
   const record = recordOrUndefined(value)
   if (record !== undefined) return record
   throw malformedSubagentResponse('response')
-}
-
-function recordOrUndefined(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined
 }
 
 function malformedSubagentResponse(part: string): AppError {

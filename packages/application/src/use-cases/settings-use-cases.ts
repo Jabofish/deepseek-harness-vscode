@@ -26,8 +26,8 @@ export class SettingsUseCases {
   }
 
   public openDocument(signal?: AbortSignal): Promise<void> {
-    const openDocument = this.backendService.requireBackend().settings.openDocument
-    if (openDocument === undefined)
+    const repository = this.backendService.requireBackend().settings
+    if (repository.openDocument === undefined)
       return Promise.reject(
         new AppError({
           code: 'CAPABILITY_UNAVAILABLE',
@@ -35,6 +35,7 @@ export class SettingsUseCases {
           retryable: false,
         }),
       )
-    return openDocument(signal)
+    // Keep the call on the repository object: adapter methods use `this.transport`.
+    return repository.openDocument(signal)
   }
 }

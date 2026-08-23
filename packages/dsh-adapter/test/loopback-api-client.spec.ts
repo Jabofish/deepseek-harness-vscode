@@ -49,11 +49,15 @@ class FakeWebSocket {
   }
 }
 
-function createClient(fetch: typeof globalThis.fetch = vi.fn()): LoopbackApiClient {
+function createClient(
+  fetch: typeof globalThis.fetch = vi.fn(),
+  requestTimeoutMs = 1_000,
+  maximumAttempts = 1,
+): LoopbackApiClient {
   return new LoopbackApiClient({
     endpoint: { host: '127.0.0.1', port: 4567, baseUrl: 'http://127.0.0.1:4567' },
-    requestTimeoutMs: 1_000,
-    retryPolicy: { maximumAttempts: 1, baseDelayMs: 1, maximumDelayMs: 1 },
+    requestTimeoutMs,
+    retryPolicy: { maximumAttempts, baseDelayMs: 1, maximumDelayMs: 1 },
     fetch,
     webSocket: FakeWebSocket as unknown as typeof globalThis.WebSocket,
   })
@@ -69,6 +73,69 @@ function serverFrame(payload: unknown): string {
 }
 
 describe('LoopbackApiClient rc.6 event transport', () => {
+  it('maps transient HTTP failures with method/status diagnostics and retries them', async () => {
+    const fetch = vi.fn(() => Promise.resolve(new Response('', { status: 503 })))
+    const client = createClient(fetch, 1_000, 3)
+
+    await expect(client.request('session.list', {})).rejects.toMatchObject({
+      code: 'BACKEND_UNREACHABLE',
+      retryable: true,
+      context: { method: 'session.list', status: 503 },
+    })
+    expect(fetch).toHaveBeenCalledTimes(3)
+  })
+
+  it('does not retry a permanent HTTP or protocol failure', async () => {
+    const fetch = vi.fn(() => Promise.resolve(new Response('', { status: 400 })))
+    const client = createClient(fetch, 1_000, 3)
+
+    await expect(client.request('session.list', {})).rejects.toMatchObject({
+      code: 'INVALID_CONFIGURATION',
+      retryable: false,
+      context: { method: 'session.list', status: 400 },
+    })
+    expect(fetch).toHaveBeenCalledTimes(1)
+
+    const malformedFetch = vi.fn(() =>
+      Promise.resolve(new Response('{malformed', { headers: { 'content-type': 'application/json' } })),
+    )
+    await expect(createClient(malformedFetch, 1_000, 3).request('session.list', {})).rejects.toMatchObject({
+      code: 'PROTOCOL_ERROR',
+      retryable: false,
+    })
+    expect(malformedFetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('distinguishes timeout, cancellation, and network failures', async () => {
+    const timeout = vi.fn(() => Promise.reject(new DOMException('request timed out', 'TimeoutError')))
+    await expect(createClient(timeout).request('session.history', {})).rejects.toMatchObject({
+      code: 'BACKEND_UNREACHABLE',
+      retryable: true,
+      context: { method: 'session.history', timedOut: true },
+    })
+
+    const cancellation = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      await new Promise<void>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), {
+          once: true,
+        })
+      })
+      return new Response()
+    })
+    const client = createClient(cancellation)
+    const controller = new AbortController()
+    const pending = client.request('session.history', {}, controller.signal)
+    controller.abort()
+    await expect(pending).rejects.toMatchObject({ code: 'REQUEST_CANCELLED', retryable: false })
+    expect(cancellation).toHaveBeenCalledTimes(1)
+
+    const network = vi.fn(() => Promise.reject(new TypeError('fetch failed')))
+    await expect(createClient(network).request('session.list', {})).rejects.toMatchObject({
+      code: 'BACKEND_UNREACHABLE',
+      retryable: true,
+      context: { method: 'session.list' },
+    })
+  })
   it('accepts mixed-case Typert namespaces used by optional DSH remotes', async () => {
     const fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       const request = JSON.parse(await new Response(init?.body ?? null).text()) as { readonly rpcId: string }
@@ -93,6 +160,33 @@ describe('LoopbackApiClient rc.6 event transport', () => {
       expect.objectContaining({ pathname: '/api/messageFeedback/list' }),
       expect.objectContaining({ method: 'POST' }),
     )
+  })
+
+  it('times out a hung Remote call without waiting for a caller signal', async () => {
+    const hung = vi.fn(
+      (_input: RequestInfo | URL, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            'abort',
+            () => {
+              reject(
+                init.signal?.reason instanceof Error
+                  ? init.signal.reason
+                  : new DOMException('aborted', 'AbortError'),
+              )
+            },
+            { once: true },
+          )
+        }),
+    )
+    const client = createClient(hung, 20)
+
+    await expect(client.remoteRequest('pluginInventory/list', { agentId: 's1' })).rejects.toMatchObject({
+      code: 'BACKEND_UNREACHABLE',
+      retryable: true,
+      context: { method: 'pluginInventory/list', timedOut: true },
+    })
+    expect(hung).toHaveBeenCalledTimes(1)
   })
 
   it('accepts a socket that reached OPEN before listeners were attached', async () => {
@@ -135,6 +229,29 @@ describe('LoopbackApiClient rc.6 event transport', () => {
     await expect(client.request('settings.describe', {})).resolves.toMatchObject({
       result: { ok: false, error: { code: 'settings-rejected', details: { ns: 'provider.test' } } },
     })
+  })
+
+  it('does not clone successful non-settings RPC responses during legacy probing', async () => {
+    const fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const request = JSON.parse(await new Response(init?.body ?? null).text()) as { readonly rpcId: string }
+      return new Response(
+        JSON.stringify({
+          type: 'server-response',
+          rpcId: request.rpcId,
+          result: { ok: true, value: { sessions: [] } },
+        }),
+        { headers: { 'content-type': 'application/json' } },
+      )
+    })
+    const clone = vi.spyOn(Response.prototype, 'clone')
+    try {
+      await expect(createClient(fetch).request('session.list', {})).resolves.toMatchObject({
+        result: { ok: true, value: { sessions: [] } },
+      })
+      expect(clone).not.toHaveBeenCalled()
+    } finally {
+      clone.mockRestore()
+    }
   })
 
   it('does not apply the rc.8 value schema to an rc.7 session history projection', async () => {
@@ -214,6 +331,25 @@ describe('LoopbackApiClient rc.6 event transport', () => {
     const socket = FakeWebSocket.instances[0]
     socket?.message('{malformed')
     await expect(next).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
+    await iterator.return?.()
+  })
+
+  it('keeps a future frame type available for the adapter fallback', async () => {
+    FakeWebSocket.instances.length = 0
+    const client = createClient()
+    const iterator = client.openMuxStream(new AbortController().signal)[Symbol.asyncIterator]()
+    const next = iterator.next()
+    const socket = FakeWebSocket.instances[0]
+    socket?.open()
+    socket?.message(
+      serverFrame({ type: 'future/frame', sessionId: 's1', token: 'must stay in the Host', safe: 'ok' }),
+    )
+    await expect(next).resolves.toMatchObject({
+      done: false,
+      value: {
+        payload: { type: 'future/frame', sessionId: 's1', token: 'must stay in the Host', safe: 'ok' },
+      },
+    })
     await iterator.return?.()
   })
 

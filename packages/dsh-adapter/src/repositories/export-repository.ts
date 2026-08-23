@@ -17,6 +17,8 @@ const unavailableFileSystem: ExportFileSystem = {
   writeFile: () => Promise.reject(unavailable('authorized export file system')),
 }
 
+/** Export streams the entire history; larger pages halve the roundtrips. */
+const EXPORT_HISTORY_PAGE_MESSAGES = 200
 export class Rc6ExportRepository implements ExportRepository {
   public constructor(
     private readonly transport: DshTransport,
@@ -121,7 +123,11 @@ async function readExportHistory(
     const value = await callRpc<{ events: unknown[]; hasMore: boolean }>(
       transport,
       'session.history',
-      { sessionId, maxMessages: 200, ...(beforeSeq === undefined ? {} : { beforeSeq }) },
+      {
+        sessionId,
+        maxMessages: EXPORT_HISTORY_PAGE_MESSAGES,
+        ...(beforeSeq === undefined ? {} : { beforeSeq }),
+      },
       signal,
     )
     if (

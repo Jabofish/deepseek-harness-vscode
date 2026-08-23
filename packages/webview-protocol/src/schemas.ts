@@ -413,6 +413,20 @@ export const webviewRequestSchema = z.discriminatedUnion('type', [
     .strict(),
   z
     .object({
+      type: z.literal('plugin.credential.configure'),
+      ...requestBase,
+      payload: z.object({ ref: id }).strict(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('plugin.credential.remove'),
+      ...requestBase,
+      payload: z.object({ ref: id }).strict(),
+    })
+    .strict(),
+  z
+    .object({
       type: z.literal('interaction.permission.respond'),
       ...requestBase,
       payload: z.object({ interactionId: id, optionId: id }).strict(),
@@ -496,7 +510,11 @@ export const webviewRequestSchema = z.discriminatedUnion('type', [
     .object({ type: z.literal('subagent.list'), ...requestBase, payload: z.object(session).strict() })
     .strict(),
   z
-    .object({ type: z.literal('subagent.history'), ...requestBase, payload: z.object(session).strict() })
+    .object({
+      type: z.literal('subagent.history'),
+      ...requestBase,
+      payload: z.object({ sessionId: id, beforeSeq: z.number().int().nonnegative().optional() }).strict(),
+    })
     .strict(),
   z
     .object({

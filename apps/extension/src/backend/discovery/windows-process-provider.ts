@@ -1,6 +1,6 @@
 import type { BackendCandidate } from '@dsh-vscode/domain'
 
-import { discoveryCancelled, type DiscoveryProvider } from './provider.js'
+import { discoveryCancelled, isDiscoveryCancellation, type DiscoveryProvider } from './provider.js'
 import { parseDshProcessCandidates, runDiscoveryCommand } from './process-provider.js'
 
 export class WindowsProcessDiscoveryProvider implements DiscoveryProvider {
@@ -14,6 +14,9 @@ export class WindowsProcessDiscoveryProvider implements DiscoveryProvider {
       runDiscoveryCommand('netstat.exe', ['-ano'], signal),
     ])
       .then(([processes, listeners]) => parseDshProcessCandidates(processes, listeners))
-      .catch(() => [])
+      .catch((error: unknown) => {
+        if (isDiscoveryCancellation(error, signal)) throw discoveryCancelled(signal?.reason ?? error)
+        return []
+      })
   }
 }

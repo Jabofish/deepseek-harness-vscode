@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { AppError, type PromptAttachment } from '@dsh-vscode/domain'
+import { decodeCanonicalBase64 as decodeAttachmentBase64 } from '@dsh-vscode/dsh-adapter'
 
 export const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024
 /** rc.2 raises DSH's per-image admission limit to 20 MiB. */
@@ -25,9 +26,8 @@ export interface AttachmentHandle {
 /** Decode only canonical RFC 4648 Base64. Node's permissive decoder is not a
  * validation boundary: it silently accepts missing padding and stray forms. */
 export function decodeCanonicalBase64(value: string, maximumBytes = MAX_ATTACHMENT_BYTES): Buffer {
-  if (value === '' || value.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(value)) throw invalidBase64()
-  const bytes = Buffer.from(value, 'base64')
-  if (bytes.length > maximumBytes || bytes.toString('base64') !== value) throw invalidBase64()
+  const bytes = value === '' ? undefined : decodeAttachmentBase64(value, maximumBytes)
+  if (bytes === undefined) throw invalidBase64()
   return bytes
 }
 

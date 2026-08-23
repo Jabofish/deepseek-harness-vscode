@@ -58,4 +58,12 @@ describe('runtime path resolution', () => {
     expect(entries).toContain('C:\\Users\\alice\\AppData\\Roaming\\npm')
     expect(entries).toContain('C:\\launcher-home\\AppData\\Roaming\\npm')
   })
+
+  it('reads the Windows Path spelling from a plain merged environment', () => {
+    expect(
+      runtimePathEntries('windows', {
+        Path: 'C:\\Users\\alice\\AppData\\Roaming\\npm',
+      }),
+    ).toContain('C:\\Users\\alice\\AppData\\Roaming\\npm')
+  })
 })

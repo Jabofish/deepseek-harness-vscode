@@ -77,6 +77,11 @@ export interface SubagentHistoryPage {
   readonly projection?: SessionProjectionSnapshot
 }
 
+/** Cursor for loading an older page from a subagent transcript. */
+export interface SubagentHistoryQuery {
+  readonly beforeSequence?: number
+}
+
 export interface SessionCreateInput {
   readonly workspaceId: string
   /** Existing blank session selected by the official workspace runtime. */

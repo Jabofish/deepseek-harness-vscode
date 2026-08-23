@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest'
 
 import type { ToolCallView } from '@dsh-vscode/domain'
 import { rc6Mapper } from '../src/versions/rc6/mapper.js'
-import { rc8Mapper } from '../src/versions/rc8/mapper.js'
 
 function mapped(
   mapper: typeof rc6Mapper,
@@ -16,7 +15,7 @@ function mapped(
 
 describe('DSH tool presentation contract', () => {
   it('maps rc.8 terminal calls and read results into bounded domain views', () => {
-    const call = mapped(rc8Mapper, 'tool/call', {
+    const call = mapped(rc6Mapper, 'tool/call', {
       callId: 'call-terminal',
       name: 'bash',
       arguments: JSON.stringify({ command: 'pnpm check' }),
@@ -38,7 +37,7 @@ describe('DSH tool presentation contract', () => {
       cwd: 'D:\\CS\\deepseek-harness-vscode',
     })
 
-    const result = mapped(rc8Mapper, 'tool/result', {
+    const result = mapped(rc6Mapper, 'tool/result', {
       callId: 'call-read',
       name: 'read',
       message: { content: 'model-facing read result' },

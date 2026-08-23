@@ -32,6 +32,7 @@ import type {
   SessionListQuery,
   SessionPage,
   SubagentHistoryPage,
+  SubagentHistoryQuery,
 } from './sessions.js'
 import type { QuestionAnswer } from './tools.js'
 import type { WorkspaceCreateInput, WorkspaceSummary } from './workspaces.js'
@@ -58,7 +59,7 @@ export interface SessionRepository {
   removeQueuedInput(inputId: string, signal?: AbortSignal): Promise<void>
   convertQueuedInputToSteer(inputId: string, signal?: AbortSignal): Promise<void>
   /** Host-side queue ownership used to authorize id-only queue mutations. */
-  readonly sessionForQueuedInput?: (inputId: string) => string | undefined
+  readonly sessionForQueuedInput?: (this: SessionRepository, inputId: string) => string | undefined
   cancel(sessionId: string, signal?: AbortSignal): Promise<void>
   setConfiguration(sessionId: string, configuration: AgentConfiguration, signal?: AbortSignal): Promise<void>
 }
@@ -115,8 +116,8 @@ export interface InteractionRepository {
   ): Promise<void>
   cancelQuestion(questionId: string, signal?: AbortSignal): Promise<void>
   /** Host-side ownership facts used to authorize Webview interaction routes. */
-  readonly sessionForPermission?: (requestId: string) => string | undefined
-  readonly sessionForQuestion?: (questionId: string) => string | undefined
+  readonly sessionForPermission?: (this: InteractionRepository, requestId: string) => string | undefined
+  readonly sessionForQuestion?: (this: InteractionRepository, questionId: string) => string | undefined
 }
 
 export interface GoalRepository {
@@ -127,9 +128,9 @@ export interface GoalRepository {
     update: Partial<Pick<GoalView, 'title' | 'status'>>,
     signal?: AbortSignal,
   ): Promise<void>
-  readonly clear?: (goalId: string, signal?: AbortSignal) => Promise<void>
+  readonly clear?: (this: GoalRepository, goalId: string, signal?: AbortSignal) => Promise<void>
   /** Host-side ownership fact for id-only goal mutations. */
-  readonly sessionForGoal?: (goalId: string) => string | undefined
+  readonly sessionForGoal?: (this: GoalRepository, goalId: string) => string | undefined
 }
 
 export interface JobRepository {
@@ -138,7 +139,12 @@ export interface JobRepository {
 
 export interface SubagentRepository {
   list(sessionId: string, signal?: AbortSignal): Promise<SubagentCatalog>
-  readonly history?: (sessionId: string, signal?: AbortSignal) => Promise<SubagentHistoryPage>
+  readonly history?: (
+    this: SubagentRepository,
+    sessionId: string,
+    query?: SubagentHistoryQuery,
+    signal?: AbortSignal,
+  ) => Promise<SubagentHistoryPage>
   send(sessionId: string, message: string, signal?: AbortSignal): Promise<void>
   interrupt(sessionId: string, signal?: AbortSignal): Promise<void>
 }
@@ -147,7 +153,7 @@ export interface SettingsRepository {
   schema(signal?: AbortSignal): Promise<DshSettingsSchema>
   read(signal?: AbortSignal): Promise<Readonly<Record<string, unknown>>>
   /** Ask the host to open its configured local settings document. */
-  readonly openDocument?: (signal?: AbortSignal) => Promise<void>
+  readonly openDocument?: (this: SettingsRepository, signal?: AbortSignal) => Promise<void>
   update(path: string, value: unknown, signal?: AbortSignal): Promise<void>
   /** Remove one field's user override (`settings.mutate` op `unset`); the composition base resurfaces. */
   unset(path: string, signal?: AbortSignal): Promise<void>
@@ -182,10 +188,24 @@ export interface PluginRepository {
 export interface PresetRepository {
   list(signal?: AbortSignal): Promise<AgentPresetRoster>
   select(sessionId: string, presetId: string, signal?: AbortSignal): Promise<void>
-  readonly read?: (presetId: string, signal?: AbortSignal) => Promise<AgentPresetDocument>
-  readonly copy?: (from: string, presetId: string, name?: string, signal?: AbortSignal) => Promise<string>
-  readonly openDocument?: (presetId: string, signal?: AbortSignal) => Promise<AgentPresetLocation>
-  readonly remove?: (presetId: string, signal?: AbortSignal) => Promise<void>
+  readonly read?: (
+    this: PresetRepository,
+    presetId: string,
+    signal?: AbortSignal,
+  ) => Promise<AgentPresetDocument>
+  readonly copy?: (
+    this: PresetRepository,
+    from: string,
+    presetId: string,
+    name?: string,
+    signal?: AbortSignal,
+  ) => Promise<string>
+  readonly openDocument?: (
+    this: PresetRepository,
+    presetId: string,
+    signal?: AbortSignal,
+  ) => Promise<AgentPresetLocation>
+  readonly remove?: (this: PresetRepository, presetId: string, signal?: AbortSignal) => Promise<void>
 }
 
 export interface ExportRepository {

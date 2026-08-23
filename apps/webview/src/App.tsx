@@ -488,6 +488,8 @@ export function App(): ReactElement {
           onDiscoverModels={(input) => store.discoverModels(input)}
           onConfigureSecret={(providerId, field) => store.configureProviderSecret(providerId, field)}
           onRemoveSecret={(providerId, field) => store.removeProviderSecret(providerId, field)}
+          onConfigurePluginCredential={(ref) => store.configurePluginCredential(ref)}
+          onRemovePluginCredential={(ref) => store.removePluginCredential(ref)}
           onRefreshCatalog={() => store.refreshModelCatalog()}
           onLoadPresetRoster={() => store.loadPresetRoster()}
           onReadPresetDocument={(presetId) => store.readPresetDocument(presetId)}

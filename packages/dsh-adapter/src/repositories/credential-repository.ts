@@ -3,6 +3,7 @@ import { AppError, type CredentialReferenceState, type CredentialRepository } fr
 import type { DshTransport } from '../contracts.js'
 import { callRpc } from '../versions/rc6/rpc.js'
 import { schemasteryNodeAtPath } from '../versions/rc6/schemastery.js'
+import { recordOrUndefined, validProviderView, validSettingsNamespace } from './shared/guards.js'
 
 /** Reference names the pinned credentials domain accepts (`credentials.*`). */
 const REFERENCE_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/
@@ -156,53 +157,6 @@ function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {}
-}
-
-function recordOrUndefined(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined
-}
-
-function validProviderView(value: unknown): boolean {
-  const record = recordOrUndefined(value)
-  return (
-    record !== undefined &&
-    typeof record.provider === 'string' &&
-    record.provider.trim() !== '' &&
-    typeof record.displayName === 'string' &&
-    record.displayName.trim() !== '' &&
-    typeof record.settingsNs === 'string' &&
-    Array.isArray(record.settingsPath) &&
-    record.settingsPath.every((part): part is string => typeof part === 'string') &&
-    typeof record.active === 'boolean' &&
-    (record.declared === undefined || typeof record.declared === 'boolean')
-  )
-}
-
-function validSettingsNamespace(value: unknown): boolean {
-  const record = recordOrUndefined(value)
-  return (
-    record !== undefined &&
-    typeof record.ns === 'string' &&
-    record.ns.trim() !== '' &&
-    Object.prototype.hasOwnProperty.call(record, 'schema') &&
-    Object.prototype.hasOwnProperty.call(record, 'value') &&
-    (record.applies === 'live' || record.applies === 'restart') &&
-    Number.isSafeInteger(record.revision) &&
-    (record.revision as number) >= 0 &&
-    Array.isArray(record.secrets) &&
-    record.secrets.every((secret) => {
-      const item = recordOrUndefined(secret)
-      return (
-        item !== undefined &&
-        Array.isArray(item.path) &&
-        item.path.length > 0 &&
-        item.path.every((part): part is string => typeof part === 'string' && part.trim() !== '') &&
-        typeof item.set === 'boolean'
-      )
-    })
-  )
 }
 
 function invalidCredentialField(): AppError {

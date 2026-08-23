@@ -17,12 +17,17 @@ export class Rc6ReferenceRepository implements ReferenceRepository {
     query: string,
     signal?: AbortSignal,
   ): Promise<readonly FileReferenceCandidate[]> {
-    const result = await this.transport.remoteRequest<unknown>(
-      'fileReferences/list',
-      { agentId: sessionId, query },
-      signal,
-    )
-    return parseFiles(unwrapRpcResultValue(result, 'fileReferences/list'))
+    try {
+      const result = await this.transport.remoteRequest<unknown>(
+        'fileReferences/list',
+        { agentId: sessionId, query },
+        signal,
+      )
+      return parseFiles(unwrapRpcResultValue(result, 'fileReferences/list'))
+    } catch (error) {
+      if (isOptionalUnavailable(error)) return []
+      throw error
+    }
   }
 
   public async listSessions(
@@ -30,12 +35,17 @@ export class Rc6ReferenceRepository implements ReferenceRepository {
     query: string,
     signal?: AbortSignal,
   ): Promise<readonly SessionReferenceCandidate[]> {
-    const result = await this.transport.remoteRequest<unknown>(
-      'sessionReferenceResolver/candidates',
-      { agentId: sessionId, query },
-      signal,
-    )
-    return parseSessions(unwrapRpcResultValue(result, 'sessionReferenceResolver/candidates'))
+    try {
+      const result = await this.transport.remoteRequest<unknown>(
+        'sessionReferenceResolver/candidates',
+        { agentId: sessionId, query },
+        signal,
+      )
+      return parseSessions(unwrapRpcResultValue(result, 'sessionReferenceResolver/candidates'))
+    } catch (error) {
+      if (isOptionalUnavailable(error)) return []
+      throw error
+    }
   }
 }
 
@@ -100,4 +110,10 @@ function malformed(kind: string): AppError {
     message: `DSH returned malformed ${kind}.`,
     retryable: false,
   })
+}
+
+function isOptionalUnavailable(error: unknown): boolean {
+  if (!(error instanceof AppError)) return false
+  if (error.code === 'CAPABILITY_UNAVAILABLE') return true
+  return error.code === 'INVALID_CONFIGURATION' && error.context?.rpcCode === 'unknown-command'
 }
