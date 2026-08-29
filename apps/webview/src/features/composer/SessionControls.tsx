@@ -267,7 +267,7 @@ export function formatPresetLabel(id: string, name: string | undefined, t: Trans
 export function modeIcon(id: string, label: string): IconName {
   const value = `${id} ${label}`.toLocaleLowerCase()
   if (/(^|\W)(plan|planning|计划)(\W|$)/u.test(value)) return 'plan'
-  if (/(^|\W)(code|coding|developer|development|编程|开发)(\W|$)/u.test(value)) return 'terminal'
+  if (/(^|\W)(ptc|code|coding|developer|development|编程|开发)(\W|$)/u.test(value)) return 'terminal'
   if (/(^|\W)(research|reasoning|analysis|deep|研究|推理|分析)(\W|$)/u.test(value)) return 'search'
   if (/(^|\W)(agent|subagent|delegate|代理|子代理)(\W|$)/u.test(value)) return 'users'
   if (/(^|\W)(minimal|light|fast|极简|轻量|快速)(\W|$)/u.test(value)) return 'sparkles'
@@ -282,6 +282,7 @@ function presetTranslationKey(id: string, name: string | undefined): string | un
     ['cordis', 'controls.mode.cordis'],
     ['plan', 'controls.mode.plan'],
     ['planning', 'controls.mode.plan'],
+    ['ptc', 'controls.mode.code'],
     ['code', 'controls.mode.code'],
     ['coding', 'controls.mode.code'],
     ['developer', 'controls.mode.code'],

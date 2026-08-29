@@ -157,6 +157,8 @@ export interface TurnEndFailure {
 
 type BackendEventPayload =
   | { readonly type: 'session.status'; readonly sessionId: string; readonly status: string }
+  /** Alpha Session Controller list activity notification. */
+  | { readonly type: 'session.activity'; readonly sessionId: string; readonly updatedAt: number }
   | { readonly type: 'session.title'; readonly sessionId: string; readonly title: string }
   | {
       readonly type: 'session.configuration'

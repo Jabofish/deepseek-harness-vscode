@@ -216,6 +216,18 @@ export const rc6Mapper = {
           status:
             typeof data.status === 'string' ? data.status : boolean(data.running, false) ? 'running' : 'idle',
         }
+      case 'session/activity':
+      case 'host/session-activity': {
+        const updatedAt = eventTimestamp(data.updatedAt)
+        return updatedAt === undefined
+          ? {
+              type: 'unknown',
+              ...(sessionId === '' ? {} : { sessionId }),
+              name,
+              payload: safePayload(value),
+            }
+          : { type: 'session.activity', sessionId, updatedAt }
+      }
       case 'session/title':
         return {
           type: 'session.title',
@@ -1470,7 +1482,7 @@ function date(value: unknown): string {
 
 /** Preserve an event's real wall-clock boundary without manufacturing one. */
 function eventTimestamp(value: unknown): number | undefined {
-  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) return value
   if (typeof value === 'string') {
     const timestamp = Date.parse(value)
     return Number.isFinite(timestamp) ? timestamp : undefined

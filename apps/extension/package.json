@@ -249,11 +249,12 @@
           "type": "string",
           "enum": [
             "native",
+            "ptc",
             "code",
             "both"
           ],
           "default": "native",
-          "description": "Default DSH tool mode for new sessions."
+          "description": "Default DSH tool mode for new sessions. Alpha runtimes use ptc; code is retained for published rc runtimes."
         },
         "dsh.agent.permissionPreset": {
           "type": "string",

@@ -2435,6 +2435,16 @@ function applyHostMessage(message: HostMessage, state: AppState, setState: State
             }
           : next.activeSubagent,
     }
+  } else if (event.type === 'session.activity') {
+    const updatedAt = new Date(event.updatedAt).toISOString()
+    next = {
+      ...next,
+      sessions: next.sessions.map((session) =>
+        session.id !== event.sessionId
+          ? session
+          : { ...session, updatedAt: laterSessionTimestamp(session.updatedAt, event.updatedAt, updatedAt) },
+      ),
+    }
   } else if (event.type === 'session.title' && event.title.trim() !== '') {
     next = {
       ...next,
@@ -2617,6 +2627,7 @@ function advancesTimelineSequence(event: BackendEvent): boolean {
     case 'archived.sessions.changed':
     case 'connection.lost':
     case 'session.added':
+    case 'session.activity':
     case 'session.configuration':
     case 'session.projection':
     case 'session.removed':
@@ -2640,6 +2651,11 @@ function sessionStatus(value: string): SessionSummary['status'] {
   if (value === 'failed') return 'failed'
   if (value === 'completed') return 'completed'
   return 'idle'
+}
+
+function laterSessionTimestamp(current: string, candidateMs: number, candidate: string): string {
+  const currentMs = Date.parse(current)
+  return Number.isFinite(currentMs) && currentMs > candidateMs ? current : candidate
 }
 
 function isCommandMessageSource(source: string | undefined): boolean {
@@ -2847,6 +2863,14 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
   }
   if (name === 'session.status' && typeof value.sessionId === 'string' && typeof value.status === 'string')
     return { type: 'session.status', sessionId: value.sessionId, status: value.status }
+  if (
+    name === 'session.activity' &&
+    typeof value.sessionId === 'string' &&
+    typeof value.updatedAt === 'number' &&
+    Number.isSafeInteger(value.updatedAt) &&
+    value.updatedAt >= 0
+  )
+    return { type: 'session.activity', sessionId: value.sessionId, updatedAt: value.updatedAt }
   if (
     name === 'session.subscribed' &&
     typeof value.sessionId === 'string' &&
@@ -4146,7 +4170,7 @@ function applyKnownCommand(configuration: AgentConfiguration, command: string): 
 }
 
 function isToolMode(value: unknown): value is AgentConfiguration['toolMode'] {
-  return value === 'native' || value === 'code' || value === 'both'
+  return value === 'native' || value === 'ptc' || value === 'code' || value === 'both'
 }
 
 function isPermissionPreset(value: unknown): value is AgentConfiguration['permissionPreset'] {

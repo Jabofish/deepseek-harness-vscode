@@ -22,7 +22,7 @@ export function mapConfiguration(value: unknown): SessionDetail['configuration']
   const record = recordOrUndefined(value) ?? {}
   return {
     preset: stringOr(record.preset, 'standard'),
-    toolMode: enumValue(record.toolMode, ['native', 'code', 'both'] as const, 'native'),
+    toolMode: enumValue(record.toolMode, ['native', 'ptc', 'code', 'both'] as const, 'native'),
     permissionPreset: stringOr(record.permissionPreset, 'workspace-write'),
     planMode: boolean(record.planMode, false),
     ...(typeof record.sandboxMode === 'string' ? { sandboxMode: record.sandboxMode } : {}),

@@ -38,7 +38,7 @@ export class VsCodeConfigurationSource {
     const preset = readString(config.get<unknown>('agent.defaultPreset', 'standard'), 'agent.defaultPreset')
     const toolMode = readEnum(
       config.get<unknown>('agent.toolMode', 'native'),
-      ['native', 'code', 'both'] as const,
+      ['native', 'ptc', 'code', 'both'] as const,
       'agent.toolMode',
     )
     const permissionPreset = readString(

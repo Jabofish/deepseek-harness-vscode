@@ -2,6 +2,7 @@ import {
   AppError,
   type AgentConfiguration,
   type BackendEvent,
+  type ImageAttachmentLimits,
   type PromptAttachment,
   type PromptInput,
   type QueuedInput,
@@ -44,6 +45,7 @@ export class Rc6SessionRepository implements SessionRepository {
   private readonly queues = new Map<string, readonly QueuedInput[]>()
   private readonly queueWaiters = new Map<string, Set<(items: readonly QueuedInput[]) => void>>()
   private readonly pendingQueueIdentities = new Map<string, Promise<QueuedInput | undefined>>()
+  private readonly imageLimitsBySession = new Map<string, ImageAttachmentLimits>()
   public constructor(
     private readonly transport: DshTransport,
     private readonly workspaceRepository?: Rc6WorkspaceRepository,
@@ -57,6 +59,8 @@ export class Rc6SessionRepository implements SessionRepository {
     this.maxPromptAttachmentBytes = options.maxPromptAttachmentBytes ?? MAX_PROMPT_ATTACHMENT_BYTES
     this.maxPromptAttachmentTotalBytes =
       options.maxPromptAttachmentTotalBytes ?? MAX_PROMPT_ATTACHMENT_TOTAL_BYTES
+    this.onSessionAccess = options.onSessionAccess
+    this.deriveTitleFromCwd = options.deriveTitleFromCwd === true
   }
 
   private readonly supportsPreallocatedSessionId: boolean
@@ -64,14 +68,20 @@ export class Rc6SessionRepository implements SessionRepository {
   private readonly includesEmptyCommandImages: boolean
   private readonly maxPromptAttachmentBytes: number
   private readonly maxPromptAttachmentTotalBytes: number
+  private readonly onSessionAccess: ((sessionId: string) => void) | undefined
+  private readonly deriveTitleFromCwd: boolean
 
   public remember(event: BackendEvent): void {
     if (event.type !== 'queue.updated') {
       if (event.type === 'session.subscribed') {
         this.clearQueueState(event.sessionId)
         this.queues.set(event.sessionId, [])
+        this.rememberProjectionValues(event.sessionId, event.projection?.values, true)
       } else if (event.type === 'session.removed') {
         this.clearQueueState(event.sessionId)
+        this.imageLimitsBySession.delete(event.sessionId)
+      } else if (event.type === 'session.projection' && event.key === 'imageLimits') {
+        this.rememberImageLimitsValue(event.sessionId, event.value)
       }
       return
     }
@@ -104,7 +114,11 @@ export class Rc6SessionRepository implements SessionRepository {
       (list.nextCursor !== undefined && typeof list.nextCursor !== 'string')
     )
       throw malformedSessionResponse('session list')
-    let items = list.items.map((item) => rc6Mapper.sessionSummary(item))
+    let items = list.items.map((item) => {
+      const mapped = rc6Mapper.sessionSummary(item)
+      this.rememberProjectionValues(mapped.id, mapped.projection?.values, true)
+      return mapped
+    })
     let archivedSessionIds: ReadonlySet<string> | undefined
     if (this.workspaceRepository !== undefined) {
       const workspaceSnapshot = await this.workspaceRepository.listWithArchiveState(signal)
@@ -168,6 +182,7 @@ export class Rc6SessionRepository implements SessionRepository {
   }
 
   public async get(sessionId: string, signal?: AbortSignal): Promise<SessionDetail> {
+    this.onSessionAccess?.(sessionId)
     let summary: SessionSummary | undefined
     try {
       const page = await this.list(undefined, signal)
@@ -198,7 +213,14 @@ export class Rc6SessionRepository implements SessionRepository {
         // registry is catching up; the extension performs the final scope
         // check against its current workspace snapshot.
       }
-      summary = fallbackSessionSummary(sessionId, history.events, rawHistory, workspaceId, history.projection)
+      summary = fallbackSessionSummary(
+        sessionId,
+        history.events,
+        rawHistory,
+        workspaceId,
+        history.projection,
+        this.deriveTitleFromCwd,
+      )
     }
     if (summary === undefined)
       throw new AppError({
@@ -206,16 +228,27 @@ export class Rc6SessionRepository implements SessionRepository {
         message: 'The requested DSH session was not found.',
         retryable: true,
       })
-    const permissionPresets = permissionPresetIds(history.projection?.values ?? summary.projection?.values)
+    // A history projection is an exact durable cut. Do not merge it with an
+    // older list hint: omitted keys in the authoritative baseline mean that
+    // the capability is absent at this cut, not that the hint should survive.
+    const projectionValues = history.projection?.values ?? summary.projection?.values ?? {}
+    this.rememberProjectionValues(
+      sessionId,
+      projectionValues,
+      history.projection !== undefined || summary.projection !== undefined,
+    )
+    const permissionPresets = permissionPresetIds(projectionValues)
+    const agentPreset = firstString(summary.agentPreset, projectionValues.agentPreset)
+    const projection = history.projection ?? summary.projection
     return {
       ...summary,
-      configuration: configurationFromRawHistory(rawHistory, summary.agentPreset),
+      configuration: configurationFromRawHistory(rawHistory, agentPreset, projectionValues),
       ...(permissionPresets.length === 0 ? {} : { permissionPresets }),
       goalIds: [],
       history: history.events,
       historyHasMore: history.hasMore,
       ...(history.beforeSequence === undefined ? {} : { historyBeforeSequence: history.beforeSequence }),
-      ...(history.projection === undefined ? {} : { projection: history.projection }),
+      ...(projection === undefined ? {} : { projection }),
     }
   }
 
@@ -244,6 +277,7 @@ export class Rc6SessionRepository implements SessionRepository {
     )
     if (!validHistoryResponse(historyValue)) throw malformedSessionResponse('session history')
     const mapped = rc6Mapper.history(historyValue, sessionId)
+    this.rememberProjectionValues(sessionId, mapped.projection?.values, mapped.projection !== undefined)
     const rawEvents = Array.isArray(historyValue.events) ? historyValue.events : []
     const sequences = mapped.events.map((entry) => entry.sequence).filter((value) => value >= 0)
     const oldest = sequences.length === 0 ? undefined : Math.min(...sequences)
@@ -392,7 +426,7 @@ export class Rc6SessionRepository implements SessionRepository {
     const mediaType = typeof reference.mediaType === 'string' ? reference.mediaType.toLowerCase() : undefined
     const encoded = dataUri?.encoded ?? rawData
     const resolvedMediaType = dataUri?.mediaType ?? mediaType
-    const bytes = decodeCanonicalBase64(encoded, this.maxPromptAttachmentBytes)
+    const bytes = decodeCanonicalBase64(encoded, this.promptContentLimits(sessionId).maxImageBytes)
     if (
       resolvedMediaType === undefined ||
       !isSupportedImageMimeType(resolvedMediaType) ||
@@ -439,13 +473,14 @@ export class Rc6SessionRepository implements SessionRepository {
     mode: RunningInputMode = 'queue',
     signal?: AbortSignal,
   ): Promise<void> {
+    const limits = this.promptContentLimits(input.sessionId)
     const receipt = await callRpc<unknown>(
       this.transport,
       'session.prompt',
       {
         sessionId: input.sessionId,
         mode,
-        content: promptContent(input, this.maxPromptAttachmentBytes, this.maxPromptAttachmentTotalBytes),
+        content: promptContent(input, limits),
         ...clientTimeZoneField(),
       },
       signal,
@@ -458,6 +493,7 @@ export class Rc6SessionRepository implements SessionRepository {
     mode: RunningInputMode,
     signal?: AbortSignal,
   ): Promise<QueuedInput> {
+    const limits = this.promptContentLimits(input.sessionId)
     const promptKey = queuedPromptKey(input, mode)
     const pending = this.pendingQueueIdentities.get(promptKey)
     if (pending !== undefined) {
@@ -477,7 +513,7 @@ export class Rc6SessionRepository implements SessionRepository {
       {
         sessionId: input.sessionId,
         mode,
-        content: promptContent(input, this.maxPromptAttachmentBytes, this.maxPromptAttachmentTotalBytes),
+        content: promptContent(input, limits),
         ...clientTimeZoneField(),
       },
       signal,
@@ -736,6 +772,42 @@ export class Rc6SessionRepository implements SessionRepository {
     return sessionId
   }
 
+  private promptContentLimits(sessionId: string): PromptContentLimits {
+    const imageLimits = this.imageLimitsBySession.get(sessionId)
+    return {
+      maxImageBytes:
+        imageLimits === undefined
+          ? this.maxPromptAttachmentBytes
+          : Math.min(this.maxPromptAttachmentBytes, imageLimits.maxImageBytes),
+      maxAttachmentTotalBytes: this.maxPromptAttachmentTotalBytes,
+      maxImageTotalBytes:
+        imageLimits === undefined
+          ? this.maxPromptAttachmentTotalBytes
+          : Math.min(this.maxPromptAttachmentTotalBytes, imageLimits.maxMessageImageBytes),
+      ...(imageLimits === undefined ? {} : { maxImagesPerMessage: imageLimits.maxImagesPerMessage }),
+      ...(imageLimits === undefined ? {} : { mediaTypes: new Set(imageLimits.mediaTypes) }),
+    }
+  }
+
+  private rememberProjectionValues(
+    sessionId: string,
+    values: Readonly<Record<string, unknown>> | undefined,
+    authoritative = false,
+  ): void {
+    if (values === undefined) return
+    if (Object.prototype.hasOwnProperty.call(values, 'imageLimits')) {
+      this.rememberImageLimitsValue(sessionId, values.imageLimits)
+    } else if (authoritative) {
+      this.imageLimitsBySession.delete(sessionId)
+    }
+  }
+
+  private rememberImageLimitsValue(sessionId: string, value: unknown): void {
+    const limits = parseImageAttachmentLimits(value)
+    if (limits === undefined) this.imageLimitsBySession.delete(sessionId)
+    else this.imageLimitsBySession.set(sessionId, limits)
+  }
+
   private clearQueueState(sessionId: string): void {
     this.queues.delete(sessionId)
     for (const [inputId, owner] of this.queueOwners) if (owner === sessionId) this.queueOwners.delete(inputId)
@@ -821,6 +893,18 @@ interface SessionRepositoryOptions {
   readonly maxPromptAttachmentTotalBytes?: number
   /** rc.8+ requires the `images` array on commands/execute even when empty. */
   readonly includeEmptyCommandImages?: boolean
+  /** Version adapters may attach a logical per-session event stream lazily. */
+  readonly onSessionAccess?: (sessionId: string) => void
+  /** Alpha's list projection derives a display title from cwd when no title exists. */
+  readonly deriveTitleFromCwd?: boolean
+}
+
+interface PromptContentLimits {
+  readonly maxImageBytes: number
+  readonly maxAttachmentTotalBytes: number
+  readonly maxImageTotalBytes: number
+  readonly maxImagesPerMessage?: number
+  readonly mediaTypes?: ReadonlySet<string>
 }
 
 function samePath(
@@ -913,6 +997,7 @@ function fallbackSessionSummary(
   rawHistory: readonly unknown[],
   workspaceId: string | undefined,
   projectionBlock: SessionDetail['projection'] | undefined,
+  deriveTitleFromCwd: boolean,
 ): SessionSummary {
   const first = history[0]?.time
   const last = history[history.length - 1]?.time
@@ -930,11 +1015,13 @@ function fallbackSessionSummary(
       : undefined
   const projectionTitle = firstString(projectionBlock?.values.title, projectionTitleFromEvent)
   const cwd = historyCwd(rawHistory)
+  const derivedTitle =
+    deriveTitleFromCwd && hasHumanMessage ? (workspaceTitleFromPath(cwd) ?? sessionId) : 'New Session'
   return {
     id: sessionId,
     workspaceId: workspaceId ?? '',
     ...(cwd === undefined ? {} : { cwd }),
-    title: projectionTitle ?? 'New Session',
+    title: projectionTitle ?? derivedTitle,
     blank: !hasHumanMessage,
     status:
       statusEvent?.type === 'session.status'
@@ -953,6 +1040,16 @@ function fallbackSessionSummary(
   }
 }
 
+function workspaceTitleFromPath(value: string | undefined): string | undefined {
+  if (value === undefined || value.trim() === '') return undefined
+  const segments = value
+    .trim()
+    .replace(/[\\/]+$/u, '')
+    .split(/[\\/]/u)
+    .filter(Boolean)
+  return segments.at(-1)
+}
+
 function historyCwd(history: readonly unknown[]): string | undefined {
   for (const entry of history) {
     const wrapper = asRecord(entry)
@@ -967,12 +1064,10 @@ function historyCwd(history: readonly unknown[]): string | undefined {
   return undefined
 }
 
-function promptContent(
-  input: PromptInput,
-  maxImageBytes: number,
-  maxAttachmentTotalBytes: number,
-): readonly Record<string, string>[] {
+function promptContent(input: PromptInput, limits: PromptContentLimits): readonly Record<string, string>[] {
   let totalBytes = 0
+  let imageBytes = 0
+  let imageCount = 0
   const content: Record<string, string>[] = [{ type: 'text', text: input.text }]
   for (const attachment of input.attachments) {
     const parsed = parseBase64DataUri(attachment.uri)
@@ -990,28 +1085,50 @@ function promptContent(
         message: 'The attachment encoding is invalid.',
         retryable: false,
       })
-    const bytes = decodeCanonicalBase64(encoded)
+    const image = isSupportedImageMimeType(mediaType)
+    if (image && limits.mediaTypes !== undefined && !limits.mediaTypes.has(mediaType))
+      throw new AppError({
+        code: 'INVALID_CONFIGURATION',
+        message: 'The attachment image type is not accepted by DSH.',
+        retryable: false,
+      })
+    const bytes = decodeCanonicalBase64(encoded, image ? limits.maxImageBytes : MAX_PROMPT_ATTACHMENT_BYTES)
     if (bytes === undefined)
       throw new AppError({
         code: 'INVALID_CONFIGURATION',
         message: 'The attachment encoding is not canonical Base64.',
         retryable: false,
       })
-    const maxBytes = isSupportedImageMimeType(mediaType) ? maxImageBytes : MAX_PROMPT_ATTACHMENT_BYTES
-    if (bytes.length > maxBytes)
+    if (image && limits.maxImagesPerMessage !== undefined) {
+      imageCount += 1
+      if (imageCount > limits.maxImagesPerMessage)
+        throw new AppError({
+          code: 'INVALID_CONFIGURATION',
+          message: 'The message contains too many images for DSH.',
+          retryable: false,
+        })
+    }
+    if (image && bytes.length > limits.maxImageBytes)
       throw new AppError({
         code: 'INVALID_CONFIGURATION',
         message: 'The attachment is too large.',
         retryable: false,
       })
     totalBytes += bytes.length
-    if (totalBytes > maxAttachmentTotalBytes)
+    if (totalBytes > limits.maxAttachmentTotalBytes)
       throw new AppError({
         code: 'INVALID_CONFIGURATION',
         message: 'The combined attachment size is too large.',
         retryable: false,
       })
-    if (isSupportedImageMimeType(mediaType)) {
+    if (image) {
+      imageBytes += bytes.length
+      if (imageBytes > limits.maxImageTotalBytes)
+        throw new AppError({
+          code: 'INVALID_CONFIGURATION',
+          message: 'The combined image size is too large for DSH.',
+          retryable: false,
+        })
       if (bytes.length === 0 || !matchesImageSignature(mediaType, bytes))
         throw new AppError({
           code: 'INVALID_CONFIGURATION',
@@ -1047,8 +1164,12 @@ function defaultConfiguration(): AgentConfiguration {
   }
 }
 
-function configurationFromRawHistory(history: readonly unknown[], agentPreset?: string): AgentConfiguration {
-  let model = { providerId: '', modelId: '', reasoningLevel: undefined as string | undefined }
+function configurationFromRawHistory(
+  history: readonly unknown[],
+  agentPreset?: string,
+  projectionValues?: Readonly<Record<string, unknown>>,
+): AgentConfiguration {
+  let model = modelSelectionFromProjection(projectionValues)
   let permissionPreset = 'workspace-write'
   let planMode = false
   let sandboxMode: string | undefined
@@ -1077,6 +1198,17 @@ function configurationFromRawHistory(history: readonly unknown[], agentPreset?: 
     if (event.type === 'approval/policy') {
       const policy = firstString(data.policy, data.value, data.name)
       if (policy !== undefined) approvalPolicy = policy
+      continue
+    }
+    if (event.type === 'model/selection') {
+      const provider = firstString(data.provider, data.providerId)
+      const modelId = firstString(data.model, data.modelId)
+      const reasoningLevel = firstString(data.reasoningEffort, data.reasoningLevel)
+      model = {
+        providerId: provider ?? model.providerId,
+        modelId: modelId ?? model.modelId,
+        reasoningLevel: reasoningLevel ?? model.reasoningLevel,
+      }
       continue
     }
     if (event.type === 'request/context') {
@@ -1114,12 +1246,67 @@ function configurationFromRawHistory(history: readonly unknown[], agentPreset?: 
   }
 }
 
+function modelSelectionFromProjection(projectionValues: Readonly<Record<string, unknown>> | undefined): {
+  providerId: string
+  modelId: string
+  reasoningLevel: string | undefined
+} {
+  const state = recordOrUndefined(projectionValues?.modelSelection)
+  const selected = recordOrUndefined(state?.next) ?? recordOrUndefined(state?.lastUsed)
+  return {
+    providerId: firstString(selected?.provider, selected?.providerId) ?? '',
+    modelId: firstString(selected?.model, selected?.modelId) ?? '',
+    reasoningLevel: firstString(selected?.reasoningEffort, selected?.reasoningLevel),
+  }
+}
+
+function parseImageAttachmentLimits(value: unknown): ImageAttachmentLimits | undefined {
+  const record = recordOrUndefined(value)
+  if (record === undefined) return undefined
+  const maxImageBytes = positiveSafeInteger(record.maxImageBytes)
+  const maxImagesPerMessage = positiveSafeInteger(record.maxImagesPerMessage)
+  const maxMessageImageBytes = positiveSafeInteger(record.maxMessageImageBytes)
+  const maxImagePixels = positiveSafeInteger(record.maxImagePixels)
+  const maxImageDimension =
+    record.maxImageDimension === undefined ? undefined : positiveSafeInteger(record.maxImageDimension)
+  const mediaTypes = Array.isArray(record.mediaTypes)
+    ? [
+        ...new Set(
+          record.mediaTypes
+            .filter((entry): entry is string => typeof entry === 'string' && entry.trim() !== '')
+            .map((entry) => entry.toLowerCase()),
+        ),
+      ]
+    : []
+  if (
+    maxImageBytes === undefined ||
+    maxImagesPerMessage === undefined ||
+    maxMessageImageBytes === undefined ||
+    maxImagePixels === undefined ||
+    mediaTypes.length === 0 ||
+    (record.maxImageDimension !== undefined && maxImageDimension === undefined)
+  )
+    return undefined
+  return {
+    maxImageBytes,
+    maxImagesPerMessage,
+    maxMessageImageBytes,
+    maxImagePixels,
+    ...(maxImageDimension === undefined ? {} : { maxImageDimension }),
+    mediaTypes,
+  }
+}
+
 function firstString(...values: readonly unknown[]): string | undefined {
   return values.find((value): value is string => typeof value === 'string' && value.trim() !== '')
 }
 
 function booleanValue(value: unknown): boolean | undefined {
   return typeof value === 'boolean' ? value : undefined
+}
+
+function positiveSafeInteger(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

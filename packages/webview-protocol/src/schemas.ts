@@ -48,7 +48,7 @@ const promptSchema = z
 const agentConfigurationSchema = z
   .object({
     preset: id,
-    toolMode: z.enum(['native', 'code', 'both']),
+    toolMode: z.enum(['native', 'ptc', 'code', 'both']),
     permissionPreset: id,
     planMode: z.boolean(),
     sandboxMode: id.optional(),

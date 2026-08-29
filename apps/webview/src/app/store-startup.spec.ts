@@ -155,6 +155,34 @@ describe('AppStore startup session restoration', () => {
     store.dispose()
   })
 
+  it('applies alpha session activity timestamps without allowing an older event to reorder the list', async () => {
+    const client = new StartupClient()
+    const store = createAppStore(client as unknown as ProtocolClient)
+
+    await store.initialize()
+    client.emit({
+      type: 'event',
+      name: 'session.activity',
+      sequence: 1,
+      payload: { sessionId: 'session-active', updatedAt: Date.parse('2026-08-22T08:05:00.000Z') },
+    })
+    expect(store.sessions.find((session) => session.id === 'session-active')?.updatedAt).toBe(
+      '2026-08-22T08:05:00.000Z',
+    )
+
+    client.emit({
+      type: 'event',
+      name: 'session.activity',
+      sequence: 2,
+      payload: { sessionId: 'session-active', updatedAt: Date.parse('2026-08-21T08:00:00.000Z') },
+    })
+    expect(store.sessions.find((session) => session.id === 'session-active')?.updatedAt).toBe(
+      '2026-08-22T08:05:00.000Z',
+    )
+
+    store.dispose()
+  })
+
   it('opens an existing blank root session instead of showing the new-session empty state', async () => {
     const client = new StartupClient()
     client.request = <T>(request: WebviewRequest): Promise<T> => {

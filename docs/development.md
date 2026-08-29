@@ -5,7 +5,7 @@
 - Node.js：`>=22.19.0 <27`，CI 使用 `22.19.0` 和 `24`。
 - pnpm：`11.19.0`，由根 `packageManager` 固定。
 - VS Code：扩展 `engines.vscode` 为 `^1.125.0`。
-- DSH：`0.1.0-rc.6` 至 `0.1.1-rc.2`；任何非空未知版本标签会走兼容降级；真实联调前用 `dsh --version` 确认。
+- DSH：已发布 `0.1.0-rc.6` 至 `0.1.1-rc.2`，并预适配未发布源码 `0.1.2-alpha.1`；任何非空未知版本标签会走兼容降级；真实联调前用 `dsh --version` 确认。alpha 尚未进入安装默认值。
 
 ## 首次安装
 
@@ -60,3 +60,4 @@ pnpm build
 - 普通工具依赖：单独 PR，运行三平台 CI 和 VSIX 构建。
 - DSH 依赖：必须遵循 `docs/dsh-contract.md` 版本升级流程。
 - 不允许 `latest`、`^` 或 `~` 浮动版本；本仓库使用精确版本和 lockfile。
+- 未发布 DSH 源码只能通过版本化 Adapter 和脱敏契约 fixture 预适配；在对应 npm 包发布并完成真实 smoke 前，不得把它设为安装默认或标记为 `DONE`。

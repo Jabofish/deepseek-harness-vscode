@@ -2,13 +2,13 @@
 
 ## 层次
 
-| 层          | 目标                                              | 禁止替代                     |
-| ----------- | ------------------------------------------------- | ---------------------------- |
-| Contract    | rc.6–0.1.1-rc.2 RPC/Event/Tool 形状与 mapper      | 不能只 mock Domain           |
-| Unit        | 状态机、排序、去重、reducer、错误映射             | 不能靠 E2E 才发现竞态        |
-| Integration | Fake DSH socket/server、spawn 依赖、重连/资源释放 | 不能调用真实用户实例         |
-| VS Code E2E | View、命令、设置、Webview 协议、焦点和布局        | 不能只测 React DOM           |
-| Live smoke  | 固定 DSH 版本真实运行                             | 不能声称自动测试等于真实兼容 |
+| 层          | 目标                                                    | 禁止替代                     |
+| ----------- | ------------------------------------------------------- | ---------------------------- |
+| Contract    | rc.6–0.1.1-rc.2 与 alpha.1 RPC/Event/Tool 形状与 mapper | 不能只 mock Domain           |
+| Unit        | 状态机、排序、去重、reducer、错误映射                   | 不能靠 E2E 才发现竞态        |
+| Integration | Fake DSH socket/server、spawn 依赖、重连/资源释放       | 不能调用真实用户实例         |
+| VS Code E2E | View、命令、设置、Webview 协议、焦点和布局              | 不能只测 React DOM           |
+| Live smoke  | 固定 DSH 版本真实运行                                   | 不能声称自动测试等于真实兼容 |
 
 ## 必测负面路径
 
@@ -27,6 +27,7 @@
 
 - 只保留结构必需字段；名称、路径、Prompt、模型输出和 key 全部使用假值。
 - 每个 fixture 标注上游 commit、文件和类型名。
+- 未发布版本 fixture 必须同时标注源码 tag/commit，并在能力矩阵中注明尚无真实运行包证据。
 - 大流量 fixture 由生成器产生，避免提交真实会话日志。
 - 更新 DSH 依赖时先运行漂移测试，再更新 fixture；禁止直接更新 snapshot 接受未知差异。
 

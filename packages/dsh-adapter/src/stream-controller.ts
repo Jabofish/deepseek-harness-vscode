@@ -4,6 +4,13 @@ import type { DshTransport } from './contracts.js'
 import { redactText, safePayload } from './redaction.js'
 import { rc6Mapper } from './versions/rc6/mapper.js'
 
+export interface DshStreamControllerOptions {
+  /** Optional version-specific logical stream (for example alpha Remote mux). */
+  readonly streamSource?: (signal: AbortSignal) => AsyncIterable<unknown>
+  /** Shared alpha streams do not own the transport lifecycle. */
+  readonly closeTransport?: boolean
+}
+
 export type StreamRecovery = (
   sessionId: string,
   fromSequence: number,
@@ -27,6 +34,7 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
     private readonly transport: DshTransport,
     private readonly observe?: (event: BackendEvent) => void,
     private readonly recover?: StreamRecovery,
+    private readonly options: DshStreamControllerOptions = {},
   ) {}
 
   public subscribe(listener: (event: BackendEvent) => void): () => void {
@@ -54,7 +62,7 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
     this.lifetime?.abort()
     this.listeners.clear()
     await this.reading?.catch(() => undefined)
-    await this.transport.close()
+    if (this.options.closeTransport !== false) await this.transport.close()
   }
 
   private startReading(): void {
@@ -85,15 +93,18 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
   private async runGeneration(lifetime: AbortController): Promise<void> {
     const generation = new AbortController()
     const signal = AbortSignal.any([lifetime.signal, generation.signal])
-    const tasks: Promise<void>[] = [
-      Promise.resolve().then(() =>
-        this.readStream(
-          this.transport.openMuxStream?.(signal) ?? this.transport.openEventStream(signal),
-          signal,
-        ),
-      ),
-    ]
-    if (this.transport.openHostStream !== undefined)
+    const tasks: Promise<void>[] =
+      this.options.streamSource === undefined
+        ? [
+            Promise.resolve().then(() =>
+              this.readStream(
+                this.transport.openMuxStream?.(signal) ?? this.transport.openEventStream(signal),
+                signal,
+              ),
+            ),
+          ]
+        : [Promise.resolve().then(() => this.readStream(this.options.streamSource!(signal), signal))]
+    if (this.options.streamSource === undefined && this.transport.openHostStream !== undefined)
       tasks.push(
         Promise.resolve().then(() => this.readStream(this.transport.openHostStream!(signal), signal)),
       )
@@ -293,6 +304,7 @@ function normalizeEnvelope(value: unknown): BackendEvent | undefined {
           )
     }
     case 'host/session-status':
+    case 'host/session-activity':
     case 'host/session-added':
     case 'host/session-removed':
     case 'host/workspace-changed':

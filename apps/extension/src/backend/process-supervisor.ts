@@ -4,6 +4,7 @@ import {
   type BackendEndpoint,
   type DshRuntime,
   type ManagedProcessHandle,
+  type ToolMode,
 } from '@dsh-vscode/domain'
 
 export interface SpawnedChild {
@@ -23,7 +24,14 @@ export interface ProcessSupervisorDependencies {
   ) => SpawnedChild
   readonly managedPort: () => number
   readonly workingDirectory?: () => string | undefined
-  readonly toolMode?: () => 'native' | 'code' | 'both' | undefined
+  readonly toolMode?: () => ToolMode | undefined
+  /** Complete the managed alpha web login before exposing the endpoint. */
+  readonly onReadyEndpoint?: (endpoint: BackendEndpoint, launchUrl?: string) => Promise<void> | void
+}
+
+interface ReadyEndpoint {
+  readonly endpoint: BackendEndpoint
+  readonly launchUrl?: string
 }
 
 export class DshProcessSupervisor implements ProcessSupervisor {
@@ -60,15 +68,15 @@ export class DshProcessSupervisor implements ProcessSupervisor {
       // CLI launch, never for a managed Extension Host process.
       ['--profile', 'web', '--no-open', '--host', '127.0.0.1', '--port', String(port)],
       this.dependencies.workingDirectory?.(),
-      toolEnvironment(this.dependencies.toolMode?.()),
+      toolEnvironment(this.dependencies.toolMode?.(), runtime.version),
     )
     const output = new RingBuffer(64 * 1024)
     const errors = new RingBuffer(64 * 1024)
-    let resolvedEndpoint: BackendEndpoint | undefined
+    let resolvedEndpoint: ReadyEndpoint | undefined
     let readinessBuffer = ''
-    let resolveReady: ((endpoint: BackendEndpoint) => void) | undefined
+    let resolveReady: ((endpoint: ReadyEndpoint) => void) | undefined
     let rejectReady: ((reason: unknown) => void) | undefined
-    const ready = new Promise<BackendEndpoint>((resolve, reject) => {
+    const ready = new Promise<ReadyEndpoint>((resolve, reject) => {
       resolveReady = resolve
       rejectReady = reject
     })
@@ -120,11 +128,12 @@ export class DshProcessSupervisor implements ProcessSupervisor {
       return status
     })
     try {
-      const endpoint = await withTimeout(ready, 15_000, signal)
+      const readyEndpoint = await withTimeout(ready, 15_000, signal)
+      await this.dependencies.onReadyEndpoint?.(readyEndpoint.endpoint, readyEndpoint.launchUrl)
       const stopped = { value: false }
       const handle: ManagedProcessHandle = {
         pid: child.pid,
-        endpoint,
+        endpoint: readyEndpoint.endpoint,
         stop: async () => {
           if (stopped.value) return
           stopped.value = true
@@ -166,17 +175,34 @@ export class DshProcessSupervisor implements ProcessSupervisor {
   }
 }
 
-function parseReadyEndpoint(value: string): BackendEndpoint | undefined {
+function parseReadyEndpoint(value: string): ReadyEndpoint | undefined {
   const ansiEscape = new RegExp(`${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`, 'g')
   const normalized = value.replace(ansiEscape, '')
   const match = normalized.match(
-    /(?:dsh\s+web|listening|running)[^\r\n]*https?:\/\/(127\.0\.0\.1|localhost):(\d{1,5})/i,
+    /(?:dsh\s+web|listening|running)[^\r\n]*?(https?:\/\/(127\.0\.0\.1|localhost):(\d{1,5})(?:\/[^\s"'<>]*)?)/i,
   )
-  const host = match?.[1]
-  const port = Number(match?.[2])
+  const host = match?.[2]
+  const port = Number(match?.[3])
   if (host !== '127.0.0.1' && host !== 'localhost') return undefined
   if (!Number.isInteger(port) || port < 1 || port > 65535) return undefined
-  return { host, port, baseUrl: `http://${host}:${port}` }
+  const endpoint: BackendEndpoint = { host, port, baseUrl: `http://${host}:${port}` }
+  const rawUrl = match?.[1]?.replace(/[),.;]+$/u, '')
+  if (rawUrl === undefined) return { endpoint }
+  try {
+    const launch = new URL(rawUrl)
+    if (
+      launch.pathname !== '/' ||
+      launch.hash !== '' ||
+      launch.hostname !== host ||
+      Number(launch.port || (launch.protocol === 'https:' ? 443 : 80)) !== port ||
+      launch.searchParams.get('token') === null ||
+      launch.searchParams.get('token')?.trim() === ''
+    )
+      return { endpoint }
+    return { endpoint, launchUrl: launch.href }
+  } catch {
+    return { endpoint }
+  }
 }
 
 class RingBuffer {
@@ -257,7 +283,9 @@ function cancelled(cause: unknown): AppError {
   })
 }
 
-function toolEnvironment(mode: 'native' | 'code' | 'both' | undefined): NodeJS.ProcessEnv | undefined {
+function toolEnvironment(mode: ToolMode | undefined, runtimeVersion: string): NodeJS.ProcessEnv | undefined {
   if (mode === undefined) return undefined
-  return { ...process.env, DSH_TOOLS_MODE: mode }
+  const alpha = runtimeVersion === '0.1.2-alpha.1'
+  const wireMode = mode === 'code' || mode === 'ptc' ? (alpha ? 'ptc' : 'code') : mode
+  return { ...process.env, DSH_TOOLS_MODE: wireMode }
 }

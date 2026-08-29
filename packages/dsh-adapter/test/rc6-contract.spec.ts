@@ -88,6 +88,7 @@ describe('DeepSeek Harness 0.1.0-rc.6 contract', () => {
   it('maps official host and mux event families without parsing terminal output', () => {
     const mapped = [
       rc6Mapper.event('session/subscribed', { sessionId: 's1', lastSeq: 2 }),
+      rc6Mapper.event('host/session-activity', { sessionId: 's1', updatedAt: 1_700_000_000_000 }),
       rc6Mapper.event('approval/resolved', { sessionId: 's1', approvalId: 'a1', outcome: 'rejected' }),
       rc6Mapper.event('question/resolved', { sessionId: 's1', questionRpcId: 'q1', outcome: 'answered' }),
       rc6Mapper.event('session/projection', { sessionId: 's1', key: 'goal', seq: 3, value: {} }),
@@ -101,7 +102,12 @@ describe('DeepSeek Harness 0.1.0-rc.6 contract', () => {
       rc6Mapper.event('host/remote-event', { event: 'safe', args: [] }),
     ]
     expect(mapped.every((event) => event.type !== 'unknown')).toBe(true)
-    expect(mapped[4]).toEqual({
+    expect(mapped[1]).toEqual({
+      type: 'session.activity',
+      sessionId: 's1',
+      updatedAt: 1_700_000_000_000,
+    })
+    expect(mapped[5]).toEqual({
       type: 'session.added',
       sessionId: 's1',
       blank: true,

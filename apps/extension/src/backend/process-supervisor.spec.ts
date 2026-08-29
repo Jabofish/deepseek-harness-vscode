@@ -56,6 +56,66 @@ describe('DshProcessSupervisor', () => {
     expect(kill).toHaveBeenCalledWith('SIGTERM')
   })
 
+  it('hands the managed launch token to the Extension Host login seam without exposing it on the handle', async () => {
+    const onReadyEndpoint = vi.fn()
+    const supervisor = new DshProcessSupervisor({
+      managedPort: () => 4317,
+      spawn: () => ({
+        ...child(vi.fn()),
+        stdout: output('dsh web: http://127.0.0.1:4317/?token=launch-secret\n'),
+      }),
+      onReadyEndpoint,
+    })
+
+    const handle = await supervisor.start(runtime())
+
+    expect(onReadyEndpoint).toHaveBeenCalledWith(
+      { host: '127.0.0.1', port: 4317, baseUrl: 'http://127.0.0.1:4317' },
+      'http://127.0.0.1:4317/?token=launch-secret',
+    )
+    expect(handle).toEqual(
+      expect.objectContaining({
+        endpoint: { host: '127.0.0.1', port: 4317, baseUrl: 'http://127.0.0.1:4317' },
+      }),
+    )
+    expect(handle).not.toHaveProperty('launchUrl')
+    await handle.stop()
+  })
+
+  it('translates the alpha user-facing ptc mode to DSH_TOOLS_MODE', async () => {
+    let environment: NodeJS.ProcessEnv | undefined
+    const supervisor = new DshProcessSupervisor({
+      managedPort: () => 4317,
+      toolMode: () => 'ptc',
+      spawn: (_executable, _args, _cwd, receivedEnvironment) => {
+        environment = receivedEnvironment
+        return child(vi.fn())
+      },
+    })
+
+    const handle = await supervisor.start({ ...runtime(), version: '0.1.2-alpha.1' })
+
+    expect(environment).toMatchObject({ DSH_TOOLS_MODE: 'ptc' })
+    await handle.stop()
+  })
+
+  it('keeps the legacy code wire value for published runtimes', async () => {
+    let environment: NodeJS.ProcessEnv | undefined
+    const supervisor = new DshProcessSupervisor({
+      managedPort: () => 4317,
+      toolMode: () => 'ptc',
+      spawn: (_executable, _args, _cwd, receivedEnvironment) => {
+        environment = receivedEnvironment
+        return child(vi.fn())
+      },
+    })
+
+    const handle = await supervisor.start(runtime())
+
+    expect(environment).toMatchObject({ DSH_TOOLS_MODE: 'code' })
+    await handle.stop()
+  })
+
   it('releases the active handle when stop starts so a new process can start', async () => {
     let releaseExit: (() => void) | undefined
     const firstExited = new Promise<{ readonly code: number | null; readonly signal: string | null }>(

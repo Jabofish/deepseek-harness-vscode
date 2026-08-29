@@ -195,6 +195,49 @@ describe('Rc6SessionRepository prompt delivery modes', () => {
     })
   })
 
+  it('uses the DSH imageLimits projection for Host-side prompt admission', async () => {
+    const calls: { method: string; params: unknown }[] = []
+    const repository = new Rc6SessionRepository(recordingTransport(calls))
+    repository.remember({
+      type: 'session.projection',
+      sessionId: 'session-1',
+      key: 'imageLimits',
+      value: {
+        maxImageBytes: 8,
+        maxImagesPerMessage: 2,
+        maxMessageImageBytes: 8,
+        maxImagePixels: 1_000,
+        maxImageDimension: 100,
+        mediaTypes: ['image/png'],
+      },
+    })
+    const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).toString('base64')
+    const image = { uri: `data:image/png;base64,${png}`, name: 'preview.png', mimeType: 'image/png' }
+
+    await expect(
+      repository.sendPrompt({ sessionId: 'session-1', text: 'one', attachments: [image] }),
+    ).resolves.toBeUndefined()
+    await expect(
+      repository.sendPrompt({ sessionId: 'session-1', text: 'two', attachments: [image, image] }),
+    ).rejects.toMatchObject({ code: 'INVALID_CONFIGURATION' })
+    repository.remember({
+      type: 'session.projection',
+      sessionId: 'session-1',
+      key: 'imageLimits',
+      value: {
+        maxImageBytes: 8,
+        maxImagesPerMessage: 2,
+        maxMessageImageBytes: 8,
+        maxImagePixels: 1_000,
+        mediaTypes: ['image/jpeg'],
+      },
+    })
+    await expect(
+      repository.sendPrompt({ sessionId: 'session-1', text: 'wrong type', attachments: [image] }),
+    ).rejects.toMatchObject({ code: 'INVALID_CONFIGURATION' })
+    expect(calls).toHaveLength(1)
+  })
+
   it('rejects a malformed prompt receipt instead of consuming attachment handles as success', async () => {
     const transport = recordingTransport([])
     transport.request = <TResponse>() => Promise.resolve({ result: { ok: true, value: {} } } as TResponse)

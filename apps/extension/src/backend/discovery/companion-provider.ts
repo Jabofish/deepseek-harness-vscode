@@ -54,6 +54,7 @@ function parseRegistryEntry(value: unknown): BackendCandidate | undefined {
   return {
     endpoint: { host, port, baseUrl: `http://${host}:${port}` },
     source: 'companion',
+    runtimeVersion: version,
     pid,
     confidence: 60,
   }

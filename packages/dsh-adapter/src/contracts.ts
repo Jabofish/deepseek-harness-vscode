@@ -12,14 +12,20 @@ export const SUPPORTED_DSH_VERSIONS = [
   '0.1.0-rc.8',
   '0.1.1-rc.1',
   '0.1.1-rc.2',
+  // Unpublished upstream alpha. Keep this in the negotiated set so the
+  // rc.6 compatibility fallback never claims the new `/api` protocol.
+  '0.1.2-alpha.1',
 ] as const
 
-export const SUPPORTED_DSH_RANGE = '0.1.0-rc.6 through 0.1.1-rc.2' as const
+export const SUPPORTED_DSH_RANGE = '0.1.0-rc.6 through 0.1.1-rc.2; upstream 0.1.2-alpha.1' as const
 
 export const DSH_PACKAGE_NAME = '@deepseek-ai/dsh' as const
 
-export const LATEST_SUPPORTED_DSH_VERSION =
-  SUPPORTED_DSH_VERSIONS[SUPPORTED_DSH_VERSIONS.length - 1] ?? 'unknown'
+/** Latest published package used by the extension's installer. */
+export const LATEST_PUBLISHED_DSH_VERSION = '0.1.1-rc.2' as const
+
+/** Do not make an unpublished upstream snapshot the install default. */
+export const LATEST_SUPPORTED_DSH_VERSION = LATEST_PUBLISHED_DSH_VERSION
 
 export function isKnownDshVersion(version: string): boolean {
   return (SUPPORTED_DSH_VERSIONS as readonly string[]).includes(version)

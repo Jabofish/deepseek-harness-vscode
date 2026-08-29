@@ -33,6 +33,7 @@ import {
   type ConnectionRequest,
 } from '@dsh-vscode/application'
 import {
+  AlphaVersionAdapter,
   Rc6VersionAdapter,
   Rc7VersionAdapter,
   Rc8VersionAdapter,
@@ -263,12 +264,46 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     samePath: sameWorkspacePath,
     exportFileSystem: createExportFileSystem(vscode),
   }
+  const endpointCookies = new Map<string, string>()
+  const rememberReadyEndpoint = async (endpoint: BackendEndpoint, launchUrl?: string): Promise<void> => {
+    // A managed port can be reused by a fresh DSH process. Never let a cookie
+    // from the previous process authorize the new endpoint.
+    endpointCookies.delete(endpoint.baseUrl)
+    if (launchUrl === undefined) return
+    let response: Response
+    try {
+      response = await globalThis.fetch(launchUrl, { method: 'GET', redirect: 'manual' })
+    } catch {
+      throw new AppError({
+        code: 'BACKEND_UNREACHABLE',
+        message: 'The managed DSH web login could not be completed.',
+        retryable: true,
+      })
+    }
+    const headers = response.headers as Headers & { getSetCookie?: () => string[] }
+    const setCookies = headers.getSetCookie?.() ?? [headers.get('set-cookie') ?? '']
+    const cookie = setCookies
+      .map((value) => value.split(';', 1)[0]?.trim() ?? '')
+      .find((value) => /^[^=;\s]+=[^;\r\n]+$/u.test(value))
+    if (response.status < 300 || response.status >= 400 || cookie === undefined) {
+      throw new AppError({
+        code: 'BACKEND_UNREACHABLE',
+        message: 'The managed DSH web login returned no session cookie.',
+        retryable: true,
+      })
+    }
+    endpointCookies.set(endpoint.baseUrl, cookie)
+  }
+  const alphaAdapter = new AlphaVersionAdapter({
+    ...adapterOptions,
+    authCookie: (endpoint) => endpointCookies.get(endpoint.baseUrl),
+  })
   const rc12Adapter = new Rc12VersionAdapter(adapterOptions)
   const rc11Adapter = new Rc11VersionAdapter(adapterOptions)
   const rc8Adapter = new Rc8VersionAdapter(adapterOptions)
   const rc7Adapter = new Rc7VersionAdapter(adapterOptions)
   const rc6Adapter = new Rc6VersionAdapter(adapterOptions)
-  const adapters = [rc12Adapter, rc11Adapter, rc8Adapter, rc7Adapter, rc6Adapter] as const
+  const adapters = [alphaAdapter, rc12Adapter, rc11Adapter, rc8Adapter, rc7Adapter, rc6Adapter] as const
   const probe = new VersionedBackendProbe(adapters)
   const factory = new VersionedBackendFactory(adapters)
   const supervisor = new DshProcessSupervisor({
@@ -276,6 +311,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     workingDirectory: () => currentWorkspaceFolder()?.uri.fsPath ?? process.cwd(),
     toolMode: () => configuration.read().defaultAgent.toolMode,
     spawn: spawnManagedChild,
+    onReadyEndpoint: rememberReadyEndpoint,
   })
   const coordinator = new DshConnectionCoordinator({
     runtimeLocator,

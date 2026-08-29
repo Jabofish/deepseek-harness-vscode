@@ -2,7 +2,11 @@
 // remain common values, while user presets must not be rejected by a static
 // Webview enum.
 export type AgentPreset = string
-export type ToolMode = 'native' | 'code' | 'both'
+/**
+ * Process-level tool presentation. `code` is retained as a legacy alias for
+ * published rc runtimes; the 0.1.2 alpha names that mode `ptc`.
+ */
+export type ToolMode = 'native' | 'ptc' | 'code' | 'both'
 // Permission presets are supplied by the connected permission plugin. Keep
 // this open so deployments can add ids such as danger-full-access without
 // making the Webview or extension reject a valid host value.

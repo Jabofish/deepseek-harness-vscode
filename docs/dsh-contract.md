@@ -2,12 +2,14 @@
 
 ## 当前上游版本
 
-| 项目          | 固定值                                      |
-| ------------- | ------------------------------------------- |
-| npm CLI       | `@deepseek-ai/dsh@0.1.1-rc.2`               |
-| API package   | `@deepseek-ai/dsh-host-apiproxy@0.1.1-rc.2` |
-| 源码提交      | `b150a551b8`                                |
-| Node 最低版本 | `22.19.0`                                   |
+| 项目           | 固定值                                      |
+| -------------- | ------------------------------------------- |
+| npm CLI        | `@deepseek-ai/dsh@0.1.1-rc.2`               |
+| API package    | `@deepseek-ai/dsh-host-apiproxy@0.1.1-rc.2` |
+| 源码提交       | `b150a551b8`                                |
+| Node 最低版本  | `22.19.0`                                   |
+| 未发布源码 tag | `dsh-v0.1.2-alpha.1`                        |
+| 未发布源码提交 | `cd5ef8148158c3a752a658978873241fdf8e2bbc`  |
 
 权威入口：
 
@@ -16,19 +18,34 @@
 - [rc.2 Event Contract](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8/packages/host/apiproxy/src/api/events.ts)
 - [rc.2 Tool Catalog](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8/docs/tool-catalog.md)
 - [rc.2 CLI/Profile Reference](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8/apps/cli/reference/README.md)
+- [alpha.1 source tag](https://github.com/deepseek-ai/deepseek-harness/tree/dsh-v0.1.2-alpha.1)
+- [alpha.1 Connection RPC](https://github.com/deepseek-ai/deepseek-harness/blob/cd5ef8148158c3a752a658978873241fdf8e2bbc/packages/client/connection/src/rpc.ts)
+- [alpha.1 Gateway stream protocol](https://github.com/deepseek-ai/deepseek-harness/blob/cd5ef8148158c3a752a658978873241fdf8e2bbc/packages/api/gateway/src/stream-protocol.ts)
 
 ## 支持范围
 
-| DSH 版本             | 适配方式        | 兼容说明                                                                                                                                                         |
-| -------------------- | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0.1.0-rc.6`         | `versions/rc6`  | 固定基线；允许旧 Host 在 `host.describe` 中不返回 `home`。                                                                                                       |
-| `0.1.0-rc.7`         | `versions/rc7`  | 复用 rc.6 wire mapper，保留明确的版本身份。                                                                                                                      |
-| `0.1.0-rc.8`         | `versions/rc8`  | 支持 `home`、`imageLimits.maxImageDimension`、中断回复和 Agent Teams 事件。                                                                                      |
-| `0.1.1-rc.1`         | `versions/rc11` | 复用 rc.8 wire/event mapper；按官方 WebUI 条件启用 `session.create` 空白会话复用。                                                                               |
-| `0.1.1-rc.2`         | `versions/rc12` | 复用 rc.8 wire/event mapper；按官方 WebUI 先在客户端打开匹配的空白会话，否则使用 `session.create.sessionId` 幂等语义，不发送 rc.1 专用的 `reuseWorkspaceBlank`。 |
-| 任意非空未知版本标签 | rc.6 fallback   | 先完成通用握手，再以基础功能兼容模式连接并显示警告；版本特有字段只在安全识别后使用。                                                                             |
+| DSH 版本             | 适配方式         | 兼容说明                                                                                                                                                         |
+| -------------------- | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0.1.0-rc.6`         | `versions/rc6`   | 固定基线；允许旧 Host 在 `host.describe` 中不返回 `home`。                                                                                                       |
+| `0.1.0-rc.7`         | `versions/rc7`   | 复用 rc.6 wire mapper，保留明确的版本身份。                                                                                                                      |
+| `0.1.0-rc.8`         | `versions/rc8`   | 支持 `home`、`imageLimits.maxImageDimension`、中断回复和 Agent Teams 事件。                                                                                      |
+| `0.1.1-rc.1`         | `versions/rc11`  | 复用 rc.8 wire/event mapper；按官方 WebUI 条件启用 `session.create` 空白会话复用。                                                                               |
+| `0.1.1-rc.2`         | `versions/rc12`  | 复用 rc.8 wire/event mapper；按官方 WebUI 先在客户端打开匹配的空白会话，否则使用 `session.create.sessionId` 幂等语义，不发送 rc.1 专用的 `reuseWorkspaceBlank`。 |
+| `0.1.2-alpha.1`      | `versions/alpha` | 基于源码 tag `dsh-v0.1.2-alpha.1`/提交 `cd5ef814` 的 `/api` Connection、Cookie 握手和 `remote.mux` 预适配；未发布、未作为安装默认，等待运行包 smoke。            |
+| 任意非空未知版本标签 | rc.6 fallback    | 先完成通用握手，再以基础功能兼容模式连接并显示警告；版本特有字段只在安全识别后使用。                                                                             |
 
 rc.6 与 rc.7 的 `rpc-map`/事件外壳仍可由 rc.6 mapper 处理。rc.8/rc.1/rc.2 的生成 Host schema 将 `host.describe.home` 设为必填，因此握手请求在 Extension Host 内按通用 RPC envelope 读取，再由版本 Adapter 检查字段，避免新 schema 把旧 Host 拒绝。rc.1 的 `session.create({ workspaceId, sessionId, reuseWorkspaceBlank: true })` 只有在空白、同一工作区成员、cwd 精确相等且未归档时才发送；rc.2 按官方 WebUI 行为在满足同样条件时先由 Webview 打开已有空白会话，只有没有可复用会话时才创建；其官方 schema 已删除 `reuseWorkspaceBlank`，因此 rc.2 Adapter 不发送该字段。rc.2 仍保留通用 `sessionId` 预分配/幂等创建语义，并将图片输入上限提升为单图 20 MiB、单条消息 200 MiB；插件只在 rc.2 的 Webview/Host/Adapter 链路放宽输入边界，图片规范化和 Files API 仍由 DSH 内部完成。rc.6–rc.8 和未知版本继续使用 8 MiB/100 MiB 的保守边界。结构化 `turn/end` 失败只保留脱敏、限长的 code/message，畸形失败回退为通用终止原因。
+
+## 0.1.2-alpha.1 预适配契约
+
+该源码版本移除了旧的 `host-apiproxy` 包，改由 `client-connection` 与 Gateway 提供统一 `/api` 入口。当前 `versions/alpha` 适配已按源码 tag 冻结以下边界：
+
+- Unary Remote 使用 `POST /api/<namespace>/<method>`，发送 `client-request`/`{ args }`，接收带同一 `rpcId` 的 `server-response`；错误统一经过现有 `AppError` 映射。
+- 长连接使用 `/api/remote.mux`，以 `open`/`cancel` 多路复用 `$events`、`session/follow`、`session/control` 和 `workspace/follow`；`item`、`error`、`end` 帧严格校验 stream ID。
+- `/?token=<launch-token>` 只由 Extension Host 用于换取 Cookie；Cookie 仅留在 Host 的 HTTP/WebSocket transport，token、Cookie 和 endpoint 不进入 Webview。
+- 新的 Session chunk rows、Goal ref、Model catalog、Preset roster、Workspace projection 和事件 waterfall 在 Adapter 内投影为现有 Domain/Application 接口；不把上游类或动态 Provider/Tool 清单泄漏到稳定层。
+
+契约 fixture 位于 `packages/dsh-adapter/test/alpha-contract.spec.ts`。当前证据为源码对照、契约测试、`pnpm check` 和 `pnpm build`；由于 alpha 尚未发布 npm/运行包，真实 alpha DSH smoke 尚未完成，因此该版本保持 `PARTIAL`，不能标为 `DONE`。
 
 ## 主通道决策
 
