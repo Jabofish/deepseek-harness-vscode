@@ -920,4 +920,86 @@ describe('alpha backend assembly baseline ownership', () => {
       await backend.close()
     }
   })
+
+  it('keeps a pending approval answerable across a session follow re-subscription', async () => {
+    FakeWebSocket.instances.length = 0
+    const adapter = new AlphaVersionAdapter({
+      requestTimeoutMs: 1_000,
+      retryPolicy: { maximumAttempts: 1, baseDelayMs: 1, maximumDelayMs: 1 },
+      fetch: vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
+        Promise.resolve(response(init, undefined)),
+      ),
+      authCookie: () => 'dsh_session=test-cookie',
+      webSocket: FakeWebSocket,
+    })
+    const backend = await adapter.createBackend({
+      endpoint,
+      ownership: 'external',
+      capabilities: {
+        protocolVersion: 'alpha1',
+        dshVersion: '0.1.2-alpha.1',
+        features: new Set(['events']),
+      },
+    })
+    const received: BackendEvent[] = []
+    const unsubscribe = backend.events.subscribe((event) => received.push(event))
+    try {
+      const socket = await waitForSocket()
+      socket.open()
+      await waitForSent(socket, 3)
+      const openStreamId = (streamEndpoint: string): number => {
+        for (const sent of socket.sent) {
+          const frame = JSON.parse(sent) as { type?: string; endpoint?: string; streamId?: number }
+          if (frame.type === 'open' && frame.endpoint === streamEndpoint) return frame.streamId as number
+        }
+        throw new Error(`the alpha mux never opened ${streamEndpoint}`)
+      }
+      socket.message({
+        type: 'item',
+        streamId: openStreamId('$events'),
+        value: { type: 'ready', clientId: 'client-1', host: { home: '/home/tester' } },
+      })
+      socket.message({
+        type: 'item',
+        streamId: openStreamId('workspace/follow'),
+        value: { type: 'baseline', value: { items: [], archivedSessionIds: [] } },
+      })
+      // A pending approval arrives through the $events waterfall while the
+      // session has never been followed.
+      socket.message({
+        type: 'item',
+        streamId: openStreamId('$events'),
+        value: {
+          type: 'waterfall',
+          event: 'approval/request',
+          eventId: 'evt-1',
+          agentId: 's1',
+          request: { toolName: 'shell', reason: 'needs approval' },
+        },
+      })
+      await waitForEvent(() => received.some((event) => event.type === 'permission.requested'))
+
+      ;(backend.events as AlphaEventSource).watchSession('s1')
+      await waitForSent(socket, 4)
+      socket.message({
+        type: 'item',
+        streamId: openStreamId('session/follow'),
+        value: {
+          type: 'snapshot',
+          header: {},
+          cursor: 5,
+          records: [],
+          hasMore: false,
+          projections: { asOfSeq: 5, values: {} },
+        },
+      })
+      await waitForEvent(() => received.some((event) => event.type === 'session.subscribed'))
+      // Alpha delivers approvals as $events waterfalls; a session/follow
+      // subscription replays nothing, so the pending answer must survive it.
+      await expect(backend.interactions.respondToPermission('evt-1', 'allowed-once')).resolves.toBeUndefined()
+    } finally {
+      unsubscribe()
+      await backend.close()
+    }
+  })
 })

@@ -106,7 +106,7 @@ export class AlphaVersionAdapter implements DshVersionAdapter {
 
   public createBackend(backend: ConnectedBackend): Promise<DshBackend> {
     const transport = this.createTransport(backend.endpoint) as AlphaLoopbackApiClient
-    const interactions = new Rc6InteractionRepository(transport)
+    const interactions = new Rc6InteractionRepository(transport, { resetPendingOnSubscribe: false })
     const workspaces = new Rc6WorkspaceRepository(transport)
     const eventsHolder: { value?: AlphaEventSource } = {}
     const sessions = new Rc6SessionRepository(transport, workspaces, this.options.samePath, {

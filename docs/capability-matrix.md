@@ -345,6 +345,25 @@ VS Code 无文件夹 Webview 回放，因此该修复不提升能力矩阵中的
   `apps/extension/src/editor/editor-context-provider.ts`、`packages/application/src/ports/feature-ports.ts`
   等前端流文件，后端本批触碰文件均干净，按"不修改前端"纪律本批不处理。
 
+## 2026-08-30 backend review batch N evidence
+
+- IN-01（alpha 重订阅清空 pending 审批/问题，修复）：`Rc6InteractionRepository.remember` 对
+  `session.subscribed` 擦除该会话全部 pending permissions/questions。该语义源于 rc.6 mux 的刷新
+  恢复基线——mux 打开时对每个 attached session 先发 subscribed 再**重放**仍 pending 的
+  approval/question requested 帧（rpcId 原样复用，rc.6 `events.ts` 头注），擦除后由重放重新注册。
+  alpha 则按官方 remote-event 契约"Approval and Question use Agent-scoped waterfall"（remote-event
+  delivery 设计笔记）经 `$events` 载体投递，且 `session/follow` 快照不含任何审批/问题基线：首次
+  watch 或 follow 重连触发的 subscribed 之后没有任何重放，pending 审批被擦除后
+  `respondToPermission` 永远 `STALE_INTERACTION`，而 host 侧 waterfall 仍在等待应答。现在仓储增加
+  显式选项 `resetPendingOnSubscribe`（默认 `true` 保持 rc.6 重放语义），alpha 装配传 `false`；
+  alpha 的条目清理仍由 `permission.resolved`/`question.resolved`（经 `$events` 独立到达）完成。
+  红绿证据：`packages/dsh-adapter/test/alpha-contract.spec.ts` 新增 adapter 级测试——`$events`
+  waterfall 注入 `approval/request`（eventId `evt-1`）→ `watchSession` 注入 follow snapshot 触发
+  subscribed → `respondToPermission('evt-1', 'allowed-once')`；修复前拒绝 `STALE_INTERACTION`（红），
+  修复后经 `$events/result` 正常提交（绿）；rc.6 默认语义既有测试全部保持通过。
+- 门禁状态：全量 `test` 748 测试中除既知 6 个预存前端失败外全部通过；typecheck 9 包通过；
+  触碰文件 prettier 干净。
+
 ## rc.8 适配增量与兼容证据
 
 - 版本层：`versions/rc6`、`versions/rc7`、`versions/rc8` 与受控 rc.6 fallback；运行时定位允许任何非空未知版本标签并把警告安全传给 Webview。
