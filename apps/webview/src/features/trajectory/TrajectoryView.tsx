@@ -37,7 +37,7 @@ export function TrajectoryView(props: TrajectoryViewProps): ReactElement {
   const lastRecord = projection.sections.at(-1)?.records.at(-1)
   const tailSignature = lastRecord === undefined ? '' : `${lastRecord.id}:${lastRecord.text.length}`
 
-  const { scrollRef, contentRef, handleScroll, scrollToLatest, isPinnedToBottom, showJumpToLatest } =
+  const { scrollRef, contentRef, scrollToLatest, isPinnedToBottom, showJumpToLatest } =
     useScrollFollow({
       contentKey: tailSignature,
       itemCount: projection.recordCount,
@@ -84,7 +84,6 @@ export function TrajectoryView(props: TrajectoryViewProps): ReactElement {
         className="dsh-trajectory"
         data-scroll-follow={isPinnedToBottom ? 'pinned' : 'free'}
         aria-label={t('trajectory.ledger')}
-        onScroll={handleScroll}
       >
         <div ref={contentRef} className="dsh-trajectory__content">
           {projection.recordCount === 0 ? (

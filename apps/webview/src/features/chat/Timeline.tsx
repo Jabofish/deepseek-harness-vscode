@@ -175,7 +175,6 @@ export function Timeline(props: TimelineProps): ReactElement {
   const {
     scrollRef,
     contentRef,
-    handleScroll: handleFollowScroll,
     scrollToLatest,
     captureScrollAnchor,
     restoreScrollAnchor,
@@ -209,8 +208,7 @@ export function Timeline(props: TimelineProps): ReactElement {
   const handleScroll = useCallback((): void => {
     const element = scrollRef.current
     if (element !== null && element.scrollTop <= 24) loadOlderHistory()
-    handleFollowScroll()
-  }, [handleFollowScroll, loadOlderHistory, scrollRef])
+  }, [loadOlderHistory, scrollRef])
 
   useLayoutEffect(() => {
     const anchor = prependAnchorRef.current

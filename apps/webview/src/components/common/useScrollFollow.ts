@@ -62,6 +62,7 @@ export function useScrollFollow(options: ScrollFollowOptions): ScrollFollowResul
   const userScrollActiveRef = useRef(false)
   const interactionGenerationRef = useRef(0)
   const internalScrollTopRef = useRef<number | undefined>(undefined)
+  const scrollHandlerRef = useRef<() => void>(() => undefined)
   const itemCountRef = useRef(options.itemCount)
   itemCountRef.current = options.itemCount
   const [isPinnedToBottom, setIsPinnedToBottom] = useState(true)
@@ -105,10 +106,16 @@ export function useScrollFollow(options: ScrollFollowOptions): ScrollFollowResul
     // faster than a frame; resetting the timer for every update creates a
     // moving target and increases the chance of racing a native gesture.
     if (scheduledFrameRef.current !== undefined) return
+    const scheduledGeneration = interactionGenerationRef.current
 
     const run = (): void => {
       scheduledFrameRef.current = undefined
-      if (!userScrollActiveRef.current && stickToBottomRef.current) scrollToLatest()
+      if (
+        scheduledGeneration === interactionGenerationRef.current &&
+        !userScrollActiveRef.current &&
+        stickToBottomRef.current
+      )
+        scrollToLatest()
     }
 
     const id = window.setTimeout(run, FOLLOW_INPUT_GRACE_MS)
@@ -147,7 +154,7 @@ export function useScrollFollow(options: ScrollFollowOptions): ScrollFollowResul
 
   const armUserScrollLock = useCallback((): void => {
     internalScrollTopRef.current = undefined
-    interactionGenerationRef.current += 1
+    if (!userScrollActiveRef.current) interactionGenerationRef.current += 1
     userScrollActiveRef.current = true
     if (userScrollIdleTimerRef.current !== undefined) window.clearTimeout(userScrollIdleTimerRef.current)
     userScrollIdleTimerRef.current = window.setTimeout(() => {
@@ -168,7 +175,11 @@ export function useScrollFollow(options: ScrollFollowOptions): ScrollFollowResul
       // Scroll events are the final source of truth. They also cover input
       // paths that do not reliably expose wheel/pointer intent in a Webview.
       cancelScheduledFollow()
-      if (!userScrollActiveRef.current) armUserScrollLock()
+      // Refresh the lock for every physical scroll event. A pointer drag or
+      // inertial trackpad sequence can last longer than one idle interval;
+      // allowing the first timer to expire during that sequence hands control
+      // back to the append follower while the reader is still moving.
+      armUserScrollLock()
     }
     const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight
     // During a native gesture, only an actual arrival at the tail can
@@ -185,6 +196,7 @@ export function useScrollFollow(options: ScrollFollowOptions): ScrollFollowResul
       return current === next ? current : next
     })
   }, [armUserScrollLock, bottomThreshold, cancelScheduledFollow, options.itemCount])
+  scrollHandlerRef.current = handleScroll
 
   const handleWheel = useCallback(
     (event: Pick<WheelEvent, 'deltaY'>): void => {
@@ -225,16 +237,26 @@ export function useScrollFollow(options: ScrollFollowOptions): ScrollFollowResul
       cancelScheduledFollow()
       armUserScrollLock()
     }
+    const onScrollEnd = (): void => {
+      if (!userScrollActiveRef.current) return
+      clearUserScrollLock()
+      if (stickToBottomRef.current && itemCountRef.current > 0) scheduleScrollToLatest()
+    }
     // Capture the gesture on the scroll owner itself, before React's delegated
     // listener and before the browser applies the native scroll offset. The
     // pointer path also covers scrollbar dragging, which has no wheel event.
+    const onScroll = (): void => scrollHandlerRef.current()
     element.addEventListener('wheel', onWheel, { capture: true, passive: true })
     element.addEventListener('pointerdown', onPointerDown, { capture: true, passive: true })
     element.addEventListener('keydown', onKeyDown, { capture: true })
+    element.addEventListener('scroll', onScroll, { capture: true, passive: true })
+    element.addEventListener('scrollend', onScrollEnd, { capture: true, passive: true })
     return () => {
       element.removeEventListener('wheel', onWheel, true)
       element.removeEventListener('pointerdown', onPointerDown, true)
       element.removeEventListener('keydown', onKeyDown, true)
+      element.removeEventListener('scroll', onScroll, true)
+      element.removeEventListener('scrollend', onScrollEnd, true)
     }
   }, [armUserScrollLock, cancelScheduledFollow, handleWheel])
 
