@@ -567,7 +567,7 @@ export function App(): ReactElement {
           onLoadPluginInventory={() => store.loadPluginInventory()}
         />
         {runtimeUpdateVisible ? (
-          <div className="dsh-app__runtime-update" role="status">
+          <div className="dsh-app__runtime-update dsh-toast" role="status">
             <div className="dsh-app__runtime-update-copy">
               <strong>{t('runtime.updateAvailable')}</strong>
               <span>
@@ -615,7 +615,7 @@ export function App(): ReactElement {
         )}
         {connectionMessage === undefined || connectionKey === dismissedConnection ? null : (
           <div
-            className={`dsh-app__connection-alert${compatibilityWarning === undefined ? '' : ' dsh-app__connection-alert--warning'}`}
+            className={`dsh-app__connection-alert dsh-toast${compatibilityWarning === undefined ? '' : ' dsh-app__connection-alert--warning'}`}
             role="alert"
           >
             <div>
@@ -654,7 +654,7 @@ export function App(): ReactElement {
               active === undefined &&
               state.sessions.length === 0 &&
               welcomeVisible ? (
-                <div className="dsh-welcome-notice" role="status">
+                <div className="dsh-welcome-notice dsh-toast" role="status">
                   <div>
                     <strong>{t('welcome.title')}</strong>
                     <span>{t('welcome.description')}</span>

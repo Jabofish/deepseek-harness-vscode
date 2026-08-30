@@ -1037,7 +1037,8 @@
     transparent 100%
   );
   background-size: 200% 100%;
-  animation: dsh-retry-shimmer 1.4s ease-in-out infinite;
+  animation: dsh-retry-shimmer var(--dsh-motion-duration-loop-shimmer) var(--dsh-motion-ease-standard)
+    infinite;
 }
 
 .dsh-todo-list__toggle {
@@ -1130,6 +1131,10 @@
 .dsh-todo-list__state-icon .dsh-icon {
   width: 13px;
   height: 13px;
+}
+
+.dsh-todo-list__state-icon--completed .dsh-icon {
+  animation: dsh-pop-once var(--dsh-motion-duration-fast) var(--dsh-motion-ease-pop) both;
 }
 
 .dsh-todo-list__item--completed .dsh-todo-list__state-icon,
@@ -2098,6 +2103,10 @@
   background: transparent;
   color: var(--dsh-muted);
   cursor: pointer;
+}
+
+.dsh-subagent-tree__disclosure svg {
+  transition: transform var(--dsh-motion-duration-fast) var(--dsh-motion-ease-standard);
 }
 
 .dsh-subagent-tree__disclosure--open svg {

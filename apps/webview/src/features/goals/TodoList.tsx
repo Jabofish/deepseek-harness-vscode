@@ -70,19 +70,21 @@ export function TodoList({ todos }: TodoListProps): ReactElement | null {
           <Icon name="chevron-down" />
         </span>
       </button>
-      {open ? (
-        <ol className="dsh-todo-list__items">
-          {todos.map((todo) => (
-            <li className={`dsh-todo-list__item dsh-todo-list__item--${todo.status}`} key={todo.id}>
-              <TodoStateIcon status={todo.status} />
-              <ContentFlow as="span" className="dsh-todo-list__content">
-                {todo.content}
-              </ContentFlow>
-              <span className="dsh-todo-list__status">{t(`todo.status.${todo.status}`)}</span>
-            </li>
-          ))}
-        </ol>
-      ) : null}
+      <div className="dsh-disclosure dsh-todo-list__disclosure" data-open={open}>
+        <div className="dsh-disclosure__inner">
+          <ol className="dsh-todo-list__items" aria-hidden={!open}>
+            {todos.map((todo) => (
+              <li className={`dsh-todo-list__item dsh-todo-list__item--${todo.status}`} key={todo.id}>
+                <TodoStateIcon status={todo.status} />
+                <ContentFlow as="span" className="dsh-todo-list__content">
+                  {todo.content}
+                </ContentFlow>
+                <span className="dsh-todo-list__status">{t(`todo.status.${todo.status}`)}</span>
+              </li>
+            ))}
+          </ol>
+        </div>
+      </div>
     </section>
   )
 }

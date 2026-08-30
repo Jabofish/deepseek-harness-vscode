@@ -23,8 +23,21 @@ describe('MarkdownContent', () => {
     expect(screen.getByText('Ready')).toBeDefined()
     expect(screen.getByText('pnpm check')).toBeDefined()
     expect(screen.getByRole('list')).toBeDefined()
-    expect(screen.getByRole('link', { name: 'Docs' }).getAttribute('href')).toBe('https://example.com')
+    const link = screen.getByRole('link', { name: 'Docs' })
+    expect(link.getAttribute('href')).toBeNull()
+    expect(link.getAttribute('data-dsh-link')).toBe('https://example.com')
     expect(container.querySelector('pre')).toBeNull()
+  })
+
+  it('requires an explicit gesture before delegating a Markdown link', () => {
+    const onOpenLink = vi.fn()
+    render(<MarkdownContent markdown={'[Docs](https://example.com)'} onOpenLink={onOpenLink} />)
+
+    const link = screen.getByRole('link', { name: 'Docs' })
+    expect(onOpenLink).not.toHaveBeenCalled()
+    fireEvent.click(link)
+    expect(onOpenLink).toHaveBeenCalledOnce()
+    expect(onOpenLink).toHaveBeenCalledWith('https://example.com')
   })
 
   it('does not allow raw HTML or remote image tags from model output', () => {

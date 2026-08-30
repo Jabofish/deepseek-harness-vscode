@@ -35,6 +35,7 @@ export function RuntimeStatus({
   const triggerRef = useRef<HTMLButtonElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   const label = runtimeStatusLabel(state, t)
+  const loading = isRuntimeLoading(state)
   const menuPosition = useViewportMenuPosition({
     open,
     anchorRef: triggerRef,
@@ -78,6 +79,9 @@ export function RuntimeStatus({
         onClick={() => setOpen((current) => !current)}
       >
         <Icon name={runtimeStatusIcon(state)} className="dsh-runtime-status__icon" />
+        {loading ? (
+          <span className="dsh-skeleton dsh-runtime-status__loading-indicator" aria-hidden="true" />
+        ) : null}
         <ContentFlow as="span" variant="truncate" className="dsh-runtime-status__label">
           {label}
         </ContentFlow>
@@ -173,6 +177,15 @@ function runtimeStatusLabel(state: WebviewBackendState, t: Translate): string {
   if (state.kind === 'runtime-missing') return t('runtime.status.runtime-missing')
   if (state.kind === 'failed' || state.kind === 'port-conflict') return t('runtime.status.connection-failed')
   return t(`runtime.status.${state.kind}`)
+}
+
+function isRuntimeLoading(state: WebviewBackendState): boolean {
+  return (
+    state.kind === 'locating-runtime' ||
+    state.kind === 'discovering' ||
+    state.kind === 'connecting' ||
+    state.kind === 'starting'
+  )
 }
 
 function runtimeStatusIcon(state: WebviewBackendState): IconName {

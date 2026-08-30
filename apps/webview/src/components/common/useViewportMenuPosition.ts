@@ -85,12 +85,21 @@ export function useViewportMenuPosition({
         visibility: 'visible',
       }
 
+      // Keep the shared popover origin close to the trigger. The positioning
+      // hook owns this geometry so every anchored surface gets the same
+      // direction without feature-specific animation state.
+      menu.dataset.flipX = String(
+        Math.abs(left + width - anchorRect.right) <= Math.abs(left - anchorRect.left),
+      )
+      menu.dataset.flipY = String(top < anchorRect.top)
+
       setStyle((current) => (sameStyle(current, nextStyle) ? current : nextStyle))
     }
 
     update()
     window.addEventListener('resize', update)
     window.addEventListener('scroll', update, true)
+    const menu = menuRef.current
 
     let resizeObserver: ResizeObserver | undefined
     if (typeof ResizeObserver !== 'undefined') {
@@ -103,6 +112,8 @@ export function useViewportMenuPosition({
       window.removeEventListener('resize', update)
       window.removeEventListener('scroll', update, true)
       resizeObserver?.disconnect()
+      menu?.removeAttribute('data-flip-x')
+      menu?.removeAttribute('data-flip-y')
     }
   }, [align, anchorRef, gap, margin, menuRef, observeMenuResize, open, placement, refreshKey])
 

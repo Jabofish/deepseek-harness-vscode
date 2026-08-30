@@ -247,7 +247,8 @@ describe('App connected rendering', () => {
 
     render(<App />)
 
-    expect(screen.getByText('DSH update available')).toBeDefined()
+    const updateNotice = screen.getByText('DSH update available').closest('.dsh-app__runtime-update')
+    expect(updateNotice?.classList.contains('dsh-toast')).toBe(true)
     fireEvent.click(screen.getByRole('button', { name: 'Dismiss update notice' }))
     expect(screen.queryByText('DSH update available')).toBeNull()
     expect(window.localStorage.getItem('dsh-runtime-update-dismissed-version')).toBe('0.1.0-rc.9')
@@ -269,7 +270,8 @@ describe('App connected rendering', () => {
 
     render(<App />)
 
-    expect(screen.getByText('DSH update available')).toBeDefined()
+    const updateNotice = screen.getByText('DSH update available').closest('.dsh-app__runtime-update')
+    expect(updateNotice?.classList.contains('dsh-toast')).toBe(true)
   })
 
   it('keeps the settings entry point available when the runtime is missing', () => {
@@ -553,8 +555,9 @@ describe('App connected rendering', () => {
     const composeArea = container.querySelector('.dsh-compose-area')
     const todoList = composeArea?.querySelector('.dsh-todo-list')
     expect(todoList).not.toBeNull()
-    expect(todoList?.textContent).toContain('执行子代理调研')
-    expect(todoList?.textContent).not.toContain('查询系统信息')
+    const todoToggle = todoList?.querySelector<HTMLButtonElement>('.dsh-todo-list__toggle')
+    expect(todoToggle?.textContent).toContain('执行子代理调研')
+    expect(todoToggle?.textContent).not.toContain('查询系统信息')
     expect(container.querySelector('.dsh-conversation > .dsh-goal-strip')).toBeNull()
   })
 })

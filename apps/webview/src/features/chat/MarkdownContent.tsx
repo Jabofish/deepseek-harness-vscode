@@ -3,7 +3,15 @@ import * as katex from 'katex'
 import texmath from 'markdown-it-texmath'
 import { createRoot, type Root } from 'react-dom/client'
 import { createHighlighter, type BundledLanguage } from 'shiki'
-import { useEffect, useMemo, useRef, useState, type MouseEvent, type ReactElement } from 'react'
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent,
+  type ReactElement,
+} from 'react'
 import { useI18n } from '../../i18n.js'
 import { CopyButton } from './CopyButton.js'
 import { ContentFlow } from '../../components/common/ContentFlow.js'
@@ -18,6 +26,23 @@ const markdownRenderer = new MarkdownIt({
   linkify: false,
   typographer: false,
 })
+
+// Markdown is model-authored content. Do not leave a native href in the
+// Webview: a browser navigation must never happen before the extension host
+// has received an explicit user gesture and applied its own policy.
+markdownRenderer.renderer.rules.link_open = (tokens, index, options, _env, self): string => {
+  const token = tokens[index]
+  const href = token?.attrGet('href')
+  if (token === undefined || href === null || href === undefined || href.startsWith('#')) {
+    return self.renderToken(tokens, index, options)
+  }
+
+  token.attrs = (token.attrs ?? []).filter(([name]) => name !== 'href')
+  token.attrSet('data-dsh-link', href)
+  token.attrSet('role', 'link')
+  token.attrSet('tabindex', '0')
+  return self.renderToken(tokens, index, options)
+}
 
 // Model output is untrusted UI input. Keep raw HTML and remote images out of the
 // webview while retaining the common Markdown used in conversations.
@@ -141,14 +166,24 @@ export function MarkdownContent({
   }, [markdown, onOpenLink, producedFiles, rawHtml, highlightedHtml, t])
 
   const handleClick = (event: MouseEvent<HTMLDivElement>): void => {
-    if (onOpenLink === undefined) return
     const target = event.target
     if (!(target instanceof Element)) return
-    const anchor = target.closest('a')
-    const href = anchor?.getAttribute('href')
-    if (href === null || href === undefined || href.startsWith('#')) return
+    const link = target.closest<HTMLElement>('[data-dsh-link]')
+    const href = link?.getAttribute('data-dsh-link')
+    if (href === null || href === undefined || href.trim() === '') return
     event.preventDefault()
-    onOpenLink(href)
+    onOpenLink?.(href)
+  }
+
+  const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
+    if (event.key !== 'Enter' && event.key !== ' ') return
+    const target = event.target
+    if (!(target instanceof Element)) return
+    const link = target.closest<HTMLElement>('[data-dsh-link]')
+    const href = link?.getAttribute('data-dsh-link')
+    if (href === null || href === undefined || href.trim() === '') return
+    event.preventDefault()
+    onOpenLink?.(href)
   }
 
   return (
@@ -156,6 +191,7 @@ export function MarkdownContent({
       ref={contentRef}
       className={`dsh-markdown${streaming ? ' dsh-markdown--streaming' : ''}`}
       onClick={handleClick}
+      onKeyDown={handleKeyDown}
       dangerouslySetInnerHTML={{
         __html: highlightedHtml?.source === rawHtml ? highlightedHtml.html : rawHtml,
       }}

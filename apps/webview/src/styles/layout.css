@@ -224,7 +224,15 @@
   background: color-mix(in srgb, var(--dsh-info) 92%, var(--dsh-surface-raised));
 }
 
-.dsh-scroll-to-latest > span {
+.dsh-scroll-to-latest__content {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: var(--dsh-space-2);
+  animation: dsh-rise-in var(--dsh-motion-duration-standard) var(--dsh-motion-ease-enter) both;
+}
+
+.dsh-scroll-to-latest__content > span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1728,17 +1736,6 @@
   .dsh-settings__tab {
     padding-inline: var(--dsh-space-2);
     font-size: 0.78rem;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    scroll-behavior: auto !important;
-    transition-duration: 0.01ms !important;
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
   }
 }
 

@@ -25,6 +25,11 @@
 .dsh-button {
   min-height: var(--dsh-control-height);
   padding: var(--dsh-space-2) var(--dsh-space-3);
+  transition: transform var(--dsh-motion-duration-fast) var(--dsh-motion-ease-standard);
+}
+
+.dsh-button:active:not(:disabled) {
+  transform: scale(var(--dsh-motion-scale-press));
 }
 
 .dsh-button--primary {
@@ -145,6 +150,8 @@
   border-radius: var(--dsh-radius-md);
   background: var(--dsh-widget-bg);
   box-shadow: var(--dsh-shadow);
+  transform-origin: top left;
+  animation: dsh-pop-in var(--dsh-motion-duration-standard) var(--dsh-motion-ease-enter) both;
 }
 
 /* Form-bound selectors may reserve their own space instead of covering the
@@ -158,7 +165,6 @@
   min-width: 0;
   max-width: none;
   margin-top: var(--dsh-space-2);
-  animation: dsh-surface-enter var(--dsh-motion-duration-standard) var(--dsh-motion-ease-standard) both;
 }
 
 .dsh-select-menu__trigger {
@@ -620,6 +626,23 @@
   color: var(--dsh-text);
   background: var(--vscode-editorWidget-background, var(--dsh-widget-bg));
   box-shadow: var(--dsh-shadow);
+  transform-origin: top left;
+  animation: dsh-pop-in var(--dsh-motion-duration-standard) var(--dsh-motion-ease-enter) both;
+}
+
+.dsh-popover-card[data-flip-x='true'],
+.dsh-select-menu__menu[data-flip-x='true'] {
+  transform-origin: top right;
+}
+
+.dsh-popover-card[data-flip-y='true'],
+.dsh-select-menu__menu[data-flip-y='true'] {
+  transform-origin: bottom left;
+}
+
+.dsh-popover-card[data-flip-x='true'][data-flip-y='true'],
+.dsh-select-menu__menu[data-flip-x='true'][data-flip-y='true'] {
+  transform-origin: bottom right;
 }
 
 .dsh-modal-wrapper {
@@ -632,6 +655,12 @@
   min-height: 0;
   padding: var(--dsh-panel-gutter);
   background: color-mix(in srgb, var(--dsh-bg) 76%, transparent);
+  animation: dsh-overlay-fade-in var(--dsh-motion-duration-standard) var(--dsh-motion-ease-enter) both;
+}
+
+.dsh-modal-wrapper > [role='dialog'] {
+  transform-origin: center;
+  animation: dsh-pop-in var(--dsh-motion-duration-standard) var(--dsh-motion-ease-enter) both;
 }
 
 .dsh-session-header {
@@ -822,6 +851,12 @@
   border-radius: var(--dsh-radius-md);
   background: var(--dsh-surface-raised);
   text-align: start;
+  transition: border-color var(--dsh-motion-duration-fast) var(--dsh-motion-ease-standard);
+}
+
+.dsh-preset-card:hover,
+.dsh-preset-card:focus-within {
+  border-color: var(--dsh-focus-ring);
 }
 
 .dsh-preset-card__main {

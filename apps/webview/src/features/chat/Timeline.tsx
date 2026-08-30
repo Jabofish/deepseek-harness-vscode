@@ -29,6 +29,7 @@ import {
   ScrollToLatestButton,
   useVirtualizedCollection,
   useScrollFollow,
+  useTailEntrance,
   type ScrollAnchor,
 } from '../../components/common/index.js'
 import { Icon } from '../../ui/Icon.js'
@@ -149,14 +150,16 @@ export function Timeline(props: TimelineProps): ReactElement {
   const requestOpenLink = useCallback(
     (href: string): void => {
       if (onOpenLink === undefined) return
+      const normalized = href.trim()
+      if (normalized === '') return
       setOpenLinkError(undefined)
       setOpenLinkBusy(true)
       let operation: void | Promise<void>
       try {
-        operation = onOpenLink(href)
+        operation = onOpenLink(normalized)
       } catch (reason: unknown) {
         setOpenLinkError({
-          href,
+          href: normalized,
           message: reason instanceof Error ? reason.message : t('app.error.openLink'),
         })
         setOpenLinkBusy(false)
@@ -165,7 +168,7 @@ export function Timeline(props: TimelineProps): ReactElement {
       void Promise.resolve(operation)
         .catch((reason: unknown) => {
           setOpenLinkError({
-            href,
+            href: normalized,
             message: reason instanceof Error ? reason.message : t('app.error.openLink'),
           })
         })
@@ -179,7 +182,7 @@ export function Timeline(props: TimelineProps): ReactElement {
   const {
     scrollRef,
     contentRef,
-    scrollToLatest,
+    userScrollToLatest,
     scheduleScrollToLatest,
     captureScrollAnchor,
     restoreScrollAnchor,
@@ -197,6 +200,10 @@ export function Timeline(props: TimelineProps): ReactElement {
     enabled: virtualizeTimeline,
     getItemKey: timelineNodeKey,
   })
+  const enteredId = useTailEntrance(
+    displayNodes.map((node) => node.id),
+    props.sessionId,
+  )
   useLayoutEffect(() => {
     if (!virtualized.enabled || virtualized.totalSize <= 0) return
     // Virtual rows refine the canvas height as they enter the measurement
@@ -259,7 +266,14 @@ export function Timeline(props: TimelineProps): ReactElement {
               disabled={props.loadingOlderHistory === true}
               onClick={loadOlderHistory}
             >
-              {props.loadingOlderHistory === true ? t('timeline.loadingOlder') : t('timeline.loadOlder')}
+              {props.loadingOlderHistory === true ? (
+                <>
+                  <span className="dsh-skeleton dsh-timeline__history-more-skeleton" aria-hidden="true" />
+                  <span>{t('timeline.loadingOlder')}</span>
+                </>
+              ) : (
+                t('timeline.loadOlder')
+              )}
             </button>
           </div>
         ) : null}
@@ -272,7 +286,11 @@ export function Timeline(props: TimelineProps): ReactElement {
             <span>{t('timeline.emptyHint')}</span>
           </div>
         ) : null}
-        <div ref={contentRef} className="dsh-timeline__content">
+        <div
+          key={props.sessionId}
+          ref={contentRef}
+          className="dsh-timeline__content dsh-timeline__content--session-enter"
+        >
           <div
             className={`dsh-timeline__canvas${virtualized.enabled ? ' dsh-timeline__canvas--virtualized' : ''}`}
             style={virtualized.enabled ? { height: `${virtualized.totalSize}px` } : undefined}
@@ -286,7 +304,7 @@ export function Timeline(props: TimelineProps): ReactElement {
                       key={item.key}
                       ref={virtualized.measureElement}
                       data-index={item.index}
-                      className="dsh-timeline__row"
+                      className={`dsh-timeline__row${node.id === enteredId ? ' dsh-timeline__row--enter' : ''}`}
                       style={{ transform: `translateY(${item.start}px)` }}
                     >
                       {renderTimelineNode(node, {
@@ -301,7 +319,10 @@ export function Timeline(props: TimelineProps): ReactElement {
                   )
                 })
               : displayNodes.map((node) => (
-                  <div key={node.id} className="dsh-timeline__row">
+                  <div
+                    key={node.id}
+                    className={`dsh-timeline__row${node.id === enteredId ? ' dsh-timeline__row--enter' : ''}`}
+                  >
                     {renderTimelineNode(node, {
                       expandedDetails,
                       setExpandedDetails,
@@ -327,7 +348,9 @@ export function Timeline(props: TimelineProps): ReactElement {
           </span>
         ) : null}
       </div>
-      {showJumpToLatest ? <ScrollToLatestButton label={t('timeline.jump')} onClick={scrollToLatest} /> : null}
+      {showJumpToLatest ? (
+        <ScrollToLatestButton label={t('timeline.jump')} onClick={userScrollToLatest} />
+      ) : null}
       {openLinkError === undefined ? null : (
         <ToolLinkErrorDialog
           href={openLinkError.href}

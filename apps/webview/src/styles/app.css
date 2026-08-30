@@ -264,6 +264,10 @@ ul {
   border-radius: var(--dsh-radius-md);
 }
 
+.dsh-toast {
+  animation: dsh-toast-in var(--dsh-motion-duration-standard) var(--dsh-motion-ease-enter) both;
+}
+
 .dsh-app__error {
   color: var(--dsh-danger);
   background: var(--dsh-danger-bg);
@@ -979,6 +983,10 @@ ul {
   min-width: 0;
 }
 
+.dsh-timeline__row--enter > * {
+  animation: dsh-rise-in var(--dsh-motion-duration-standard) var(--dsh-motion-ease-enter) both;
+}
+
 .dsh-timeline__message-stack {
   display: flex;
   flex-direction: column;
@@ -1255,10 +1263,6 @@ summary.dsh-timeline__card-header,
   transform: rotate(180deg);
 }
 
-.dsh-timeline__reasoning-preview--expanded > .dsh-timeline__reasoning-preview-content {
-  animation: dsh-surface-enter var(--dsh-motion-duration-standard) var(--dsh-motion-ease-standard) both;
-}
-
 .dsh-timeline__reasoning-preview-content {
   display: block;
   max-height: var(--dsh-reasoning-max-height);
@@ -1294,6 +1298,20 @@ summary.dsh-timeline__card-header,
   align-items: center;
   gap: var(--dsh-space-2);
   color: var(--dsh-info);
+}
+
+.dsh-timeline__streaming-status .dsh-icon {
+  animation: dsh-breathe var(--dsh-motion-duration-loop-breathe) var(--dsh-motion-ease-standard) infinite;
+}
+
+.dsh-timeline__content--session-enter {
+  animation: dsh-overlay-fade-in var(--dsh-motion-duration-fast) var(--dsh-motion-ease-enter) both;
+}
+
+.dsh-runtime-status__loading-indicator {
+  width: var(--dsh-space-3);
+  height: var(--dsh-space-1);
+  flex: 0 0 auto;
 }
 
 .dsh-timeline__attachments {
@@ -1465,11 +1483,20 @@ summary.dsh-timeline__card-header,
 }
 
 .dsh-timeline__history-more-button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--dsh-space-2);
   min-height: 1.75rem;
   padding: var(--dsh-space-1) var(--dsh-space-2);
   color: var(--dsh-muted);
   background: var(--dsh-surface-raised);
   font-size: 0.82em;
+}
+
+.dsh-timeline__history-more-skeleton {
+  width: var(--dsh-space-3);
+  height: var(--dsh-space-1);
+  flex: 0 0 auto;
 }
 
 .dsh-goal-bar,
@@ -1772,6 +1799,7 @@ summary.dsh-timeline__card-header,
 .dsh-session-switcher__chevron {
   flex: 0 0 auto;
   color: var(--dsh-muted);
+  transition: transform var(--dsh-motion-duration-fast) var(--dsh-motion-ease-standard);
 }
 
 .dsh-session-switcher__details[open] .dsh-session-switcher__chevron {
@@ -3261,7 +3289,13 @@ summary.dsh-timeline__card-header,
   border-color: color-mix(in srgb, var(--dsh-accent) 48%, var(--dsh-border-color));
   border-radius: var(--dsh-radius-md);
   background: var(--dsh-surface-soft);
+  transition: border-color var(--dsh-motion-duration-fast) var(--dsh-motion-ease-standard);
   animation: dsh-surface-enter var(--dsh-motion-duration-standard) var(--dsh-motion-ease-standard) both;
+}
+
+.dsh-settings__custom-provider:hover,
+.dsh-settings__custom-provider:focus-within {
+  border-color: var(--dsh-focus-ring);
 }
 
 .dsh-settings__custom-provider-head {

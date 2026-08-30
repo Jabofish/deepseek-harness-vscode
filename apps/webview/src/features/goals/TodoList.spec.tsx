@@ -18,12 +18,13 @@ describe('TodoList', () => {
     render(<TodoList todos={todos} />)
 
     const list = screen.getByRole('region', { name: 'Current to-do list' })
+    const toggle = screen.getByRole('button', { name: 'Expand tasks' })
     expect(within(list).getByText('1/3 completed')).toBeDefined()
-    expect(within(list).getByText('执行子代理调研')).toBeDefined()
-    expect(within(list).getByText('In progress')).toBeDefined()
-    expect(within(list).queryByText('查询系统信息')).toBeNull()
-    expect(within(list).queryByText('整理最终答案')).toBeNull()
-    expect(screen.getByRole('button', { name: 'Expand tasks' }).getAttribute('aria-expanded')).toBe('false')
+    expect(toggle.textContent).toContain('执行子代理调研')
+    expect(toggle.textContent).toContain('In progress')
+    expect(toggle.textContent).not.toContain('查询系统信息')
+    expect(toggle.textContent).not.toContain('整理最终答案')
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
   })
 
   it('renders nothing when no task exists', () => {
@@ -34,9 +35,15 @@ describe('TodoList', () => {
   it('expands to show every task and its semantic status', () => {
     render(<TodoList todos={todos} />)
 
+    const list = screen.getByRole('region', { name: 'Current to-do list' })
+    const disclosure = list.querySelector<HTMLElement>('.dsh-todo-list__disclosure')
+    expect(disclosure?.getAttribute('data-open')).toBe('false')
+    expect(disclosure?.querySelector('.dsh-todo-list__items')?.getAttribute('aria-hidden')).toBe('true')
+
     fireEvent.click(screen.getByRole('button', { name: 'Expand tasks' }))
 
-    const list = screen.getByRole('region', { name: 'Current to-do list' })
+    expect(disclosure?.getAttribute('data-open')).toBe('true')
+    expect(disclosure?.querySelector('.dsh-todo-list__items')?.getAttribute('aria-hidden')).toBe('false')
     expect(within(list).getByText('查询系统信息')).toBeDefined()
     expect(within(list).getByText('Completed')).toBeDefined()
     expect(within(list).getByText('执行子代理调研')).toBeDefined()

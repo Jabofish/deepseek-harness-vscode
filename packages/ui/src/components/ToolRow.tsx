@@ -1,5 +1,5 @@
 import { useState, type ReactElement } from 'react'
-import type { ToolCallView, ToolPresentationView } from '@dsh-vscode/domain'
+import type { ToolCallView, ToolPresentationSource, ToolPresentationView } from '@dsh-vscode/domain'
 import {
   decodeToolValue,
   formatToolText,
@@ -436,31 +436,57 @@ function renderWebSearch(
         <h4>{label(t, 'toolrow.presentation.sources', 'Sources')}</h4>
         <div className="dsh-tool-row__source-list" role="list">
           {view.sources.map((source) => (
-            <article className="dsh-tool-row__source" key={source.url} role="listitem">
-              {source.title === undefined ? null : <strong>{source.title}</strong>}
-              {source.snippet === undefined ? null : <p>{source.snippet}</p>}
-              {source.publishedAt === undefined ? null : <time>{source.publishedAt}</time>}
-              {onOpenLink === undefined ? (
-                <span className="dsh-tool-row__source-link" title={source.url}>
-                  {source.url}
-                </span>
-              ) : (
-                <button
-                  className="dsh-tool-row__source-link"
-                  type="button"
-                  onClick={() => onOpenLink(source.url)}
-                  title={source.url}
-                >
-                  {source.url}
-                </button>
-              )}
-            </article>
+            <WebSourceRow key={source.url} source={source} onOpenLink={onOpenLink} />
           ))}
-          {view.sources.length === 0 ? <span>{searchTotal(0, 0, view.truncated, t)}</span> : null}
+          {view.sources.length === 0 ? (
+            <span role="listitem">{searchTotal(0, 0, view.truncated, t)}</span>
+          ) : null}
         </div>
       </section>
     </>
   )
+}
+
+function WebSourceRow({
+  source,
+  onOpenLink,
+}: {
+  readonly source: ToolPresentationSource
+  readonly onOpenLink: ((href: string) => void) | undefined
+}): ReactElement {
+  const content = (
+    <>
+      {hasSourceText(source.title) ? <strong>{source.title}</strong> : null}
+      {hasSourceText(source.snippet) ? (
+        <span className="dsh-tool-row__source-snippet">{source.snippet}</span>
+      ) : null}
+      {hasSourceText(source.publishedAt) ? <time>{source.publishedAt}</time> : null}
+      <span className="dsh-tool-row__source-url" title={source.url}>
+        {source.url}
+      </span>
+    </>
+  )
+
+  return (
+    <div className="dsh-tool-row__source-item" role="listitem">
+      {onOpenLink === undefined ? (
+        <article className="dsh-tool-row__source">{content}</article>
+      ) : (
+        <button
+          className="dsh-tool-row__source dsh-tool-row__source--interactive"
+          type="button"
+          onClick={() => onOpenLink(source.url)}
+          aria-label={source.url}
+        >
+          {content}
+        </button>
+      )}
+    </div>
+  )
+}
+
+function hasSourceText(value: string | undefined): value is string {
+  return value !== undefined && value.trim() !== ''
 }
 
 interface DiffLine {

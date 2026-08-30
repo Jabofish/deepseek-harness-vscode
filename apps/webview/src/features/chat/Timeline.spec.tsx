@@ -183,6 +183,65 @@ describe('Timeline', () => {
     expect(screen.getByRole('button', { name: 'Jump to latest' })).toBeDefined()
   })
 
+  it('animates only an appended tail row, never the initial, prepended, or switched collection', () => {
+    const { container, rerender } = render(
+      <Timeline
+        sessionId="session-1"
+        nodes={[
+          { kind: 'user-message', id: 'user-1', markdown: 'first' },
+          { kind: 'assistant-message', id: 'assistant-1', markdown: 'answer', streaming: false },
+        ]}
+        streaming={false}
+      />,
+    )
+
+    expect(container.querySelectorAll('.dsh-timeline__row--enter')).toHaveLength(0)
+    const firstContent = container.querySelector('.dsh-timeline__content')
+
+    rerender(
+      <Timeline
+        sessionId="session-1"
+        nodes={[
+          { kind: 'user-message', id: 'user-0', markdown: 'older' },
+          { kind: 'user-message', id: 'user-1', markdown: 'first' },
+          { kind: 'assistant-message', id: 'assistant-1', markdown: 'answer', streaming: false },
+        ]}
+        streaming={false}
+      />,
+    )
+    expect(container.querySelectorAll('.dsh-timeline__row--enter')).toHaveLength(0)
+
+    rerender(
+      <Timeline
+        sessionId="session-1"
+        nodes={[
+          { kind: 'user-message', id: 'user-0', markdown: 'older' },
+          { kind: 'user-message', id: 'user-1', markdown: 'first' },
+          { kind: 'assistant-message', id: 'assistant-1', markdown: 'answer', streaming: false },
+          { kind: 'assistant-message', id: 'assistant-2', markdown: 'new answer', streaming: false },
+        ]}
+        streaming={false}
+      />,
+    )
+    expect(container.querySelectorAll('.dsh-timeline__row--enter')).toHaveLength(1)
+    expect(screen.getByText('new answer')).toBeDefined()
+
+    rerender(
+      <Timeline
+        sessionId="session-2"
+        nodes={[{ kind: 'assistant-message', id: 'assistant-3', markdown: 'switched', streaming: false }]}
+        streaming={false}
+      />,
+    )
+    expect(container.querySelector('.dsh-timeline__content')).not.toBe(firstContent)
+    expect(
+      container
+        .querySelector('.dsh-timeline__content')
+        ?.classList.contains('dsh-timeline__content--session-enter'),
+    ).toBe(true)
+    expect(container.querySelectorAll('.dsh-timeline__row--enter')).toHaveLength(0)
+  })
+
   it('keeps completed reasoning collapsed until the reader opens it', () => {
     const nodes: readonly TimelineNode[] = [
       {
@@ -203,7 +262,11 @@ describe('Timeline', () => {
     const { container } = render(<Timeline sessionId="session-1" nodes={nodes} streaming={false} />)
 
     const reasoningToggle = screen.getByRole('button', { name: 'Show reasoning' })
-    expect(container.querySelector('.dsh-timeline__reasoning-preview-content')).toBeNull()
+    const collapsedContent = container.querySelector<HTMLElement>('.dsh-timeline__reasoning-preview-content')
+    expect(collapsedContent).not.toBeNull()
+    expect(collapsedContent?.textContent).toBe('')
+    expect(collapsedContent?.getAttribute('aria-hidden')).toBe('true')
+    expect(collapsedContent?.parentElement?.parentElement?.getAttribute('data-open')).toBe('false')
     expect(screen.getByRole('heading', { name: 'Done' })).toBeDefined()
     expect(screen.getByText('result')).toBeDefined()
     expect(screen.getByText('Ran for 3m 08s')).toBeDefined()
@@ -260,7 +323,10 @@ describe('Timeline', () => {
       />,
     )
 
-    expect(container.querySelector('.dsh-timeline__reasoning-preview-content')).toBeNull()
+    expect(container.querySelector('.dsh-timeline__reasoning-preview-content')?.textContent).toBe('')
+    expect(
+      container.querySelector('.dsh-timeline__reasoning-preview-content')?.getAttribute('aria-hidden'),
+    ).toBe('true')
   })
 
   it('renders the structured terminal failure beside the generic turn label', () => {

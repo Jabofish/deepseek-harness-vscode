@@ -19,8 +19,10 @@ export function ScrollToLatestButton(props: ScrollToLatestButtonProps): ReactEle
       title={props.label}
       onClick={props.onClick}
     >
-      <Icon name="arrow-down" />
-      <span>{props.label}</span>
+      <span className="dsh-scroll-to-latest__content">
+        <Icon name="arrow-down" />
+        <span>{props.label}</span>
+      </span>
     </button>
   )
 }

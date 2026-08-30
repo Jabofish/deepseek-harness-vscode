@@ -23,6 +23,7 @@ export function ReasoningDisclosure(props: ReasoningDisclosureProps): ReactEleme
 
   const preview = latestReasoningLines(content)
   const contentId = `${props.id}:content`
+  const showPreview = props.expanded || (props.streaming && preview !== '')
   const toggle = (): void => props.onExpandedChange(!props.expanded)
 
   return (
@@ -30,6 +31,7 @@ export function ReasoningDisclosure(props: ReasoningDisclosureProps): ReactEleme
       className={`dsh-timeline__reasoning-preview${props.expanded ? ' dsh-timeline__reasoning-preview--expanded' : ''}`}
       aria-live={props.streaming ? 'polite' : undefined}
       data-reasoning-id={props.id}
+      data-open={props.expanded}
     >
       <button
         className="dsh-timeline__reasoning-toggle"
@@ -59,25 +61,19 @@ export function ReasoningDisclosure(props: ReasoningDisclosureProps): ReactEleme
           <Icon name="chevron-down" />
         </span>
       </button>
-      {props.expanded ? (
-        <ContentFlow
-          id={contentId}
-          as="div"
-          variant="preserve-breaks"
-          className="dsh-timeline__reasoning-preview-content"
-        >
-          {content}
-        </ContentFlow>
-      ) : props.streaming && preview !== '' ? (
-        <ContentFlow
-          id={contentId}
-          as="div"
-          variant="preserve-breaks"
-          className="dsh-timeline__reasoning-preview-content"
-        >
-          {preview}
-        </ContentFlow>
-      ) : null}
+      <div className="dsh-disclosure" data-open={props.expanded}>
+        <div className="dsh-disclosure__inner">
+          <ContentFlow
+            id={contentId}
+            as="div"
+            variant="preserve-breaks"
+            className="dsh-timeline__reasoning-preview-content"
+            aria-hidden={!props.expanded}
+          >
+            {showPreview ? (props.expanded ? content : preview) : null}
+          </ContentFlow>
+        </div>
+      </div>
     </section>
   )
 }

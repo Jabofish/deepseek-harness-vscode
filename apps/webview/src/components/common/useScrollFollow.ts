@@ -38,6 +38,8 @@ export interface ScrollFollowResult {
   readonly contentRef: RefObject<HTMLDivElement | null>
   readonly handleScroll: () => void
   readonly scrollToLatest: () => void
+  /** Move to the tail from an explicit reader action with smooth motion. */
+  readonly userScrollToLatest: () => void
   /** Capture the current position for a guarded prepend restoration. */
   readonly captureScrollAnchor: () => ScrollAnchor | undefined
   /** Restore a captured prepend position only while the reader is still there. */
@@ -68,6 +70,7 @@ export function useScrollFollow(options: ScrollFollowOptions): ScrollFollowResul
   const userScrollActiveRef = useRef(false)
   const interactionGenerationRef = useRef(0)
   const internalScrollTopRef = useRef<number | undefined>(undefined)
+  const smoothScrollActiveRef = useRef(false)
   const scrollHandlerRef = useRef<() => void>(() => undefined)
   const itemCountRef = useRef(options.itemCount)
   const [isPinnedToBottom, setIsPinnedToBottom] = useState(true)
@@ -87,6 +90,7 @@ export function useScrollFollow(options: ScrollFollowOptions): ScrollFollowResul
       userScrollIdleTimerRef.current = undefined
     }
     userScrollActiveRef.current = false
+    smoothScrollActiveRef.current = false
   }, [])
 
   const scrollToLatest = useCallback((): void => {
@@ -103,6 +107,34 @@ export function useScrollFollow(options: ScrollFollowOptions): ScrollFollowResul
       element.scrollTop = maxScrollTop
     } else internalScrollTopRef.current = undefined
     setShowJumpToLatest(false)
+  }, [cancelScheduledFollow, clearUserScrollLock])
+
+  const userScrollToLatest = useCallback((): void => {
+    clearUserScrollLock()
+    cancelScheduledFollow()
+    const element = scrollRef.current
+    if (element === null) return
+
+    stickToBottomRef.current = true
+    setIsPinnedToBottom(true)
+    const maxScrollTop = Math.max(0, element.scrollHeight - element.clientHeight)
+    setShowJumpToLatest(false)
+
+    const reduceMotion =
+      typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    if (
+      reduceMotion ||
+      Math.abs(element.scrollTop - maxScrollTop) <= 0.5 ||
+      typeof element.scrollTo !== 'function'
+    ) {
+      internalScrollTopRef.current = maxScrollTop
+      element.scrollTop = maxScrollTop
+      return
+    }
+
+    internalScrollTopRef.current = undefined
+    smoothScrollActiveRef.current = true
+    element.scrollTo({ top: maxScrollTop, behavior: 'smooth' })
   }, [cancelScheduledFollow, clearUserScrollLock])
 
   const scheduleScrollToLatest = useCallback((): void => {
@@ -172,6 +204,11 @@ export function useScrollFollow(options: ScrollFollowOptions): ScrollFollowResul
   const handleScroll = useCallback((): void => {
     const element = scrollRef.current
     if (element === null) return
+    if (smoothScrollActiveRef.current) {
+      const maxScrollTop = Math.max(0, element.scrollHeight - element.clientHeight)
+      if (element.scrollTop >= maxScrollTop - 1) smoothScrollActiveRef.current = false
+      return
+    }
     const expectedScrollTop = internalScrollTopRef.current
     const isInternalScroll =
       expectedScrollTop !== undefined && Math.abs(element.scrollTop - expectedScrollTop) <= 1
@@ -210,6 +247,7 @@ export function useScrollFollow(options: ScrollFollowOptions): ScrollFollowResul
   const handleWheel = useCallback(
     (event: Pick<WheelEvent, 'deltaY'>): void => {
       if (event.deltaY === 0) return
+      smoothScrollActiveRef.current = false
       cancelScheduledFollow()
       armUserScrollLock()
 
@@ -237,16 +275,19 @@ export function useScrollFollow(options: ScrollFollowOptions): ScrollFollowResul
     const onPointerDown = (event: PointerEvent): void => {
       if (event.button !== 0) return
       if (event.pointerType === 'mouse' && event.target !== element) return
+      smoothScrollActiveRef.current = false
       cancelScheduledFollow()
       armUserScrollLock()
     }
     const onKeyDown = (event: KeyboardEvent): void => {
       if (!SCROLL_KEYS.has(event.key)) return
       if (event.target instanceof HTMLButtonElement || event.target instanceof HTMLInputElement) return
+      smoothScrollActiveRef.current = false
       cancelScheduledFollow()
       armUserScrollLock()
     }
     const onScrollEnd = (): void => {
+      smoothScrollActiveRef.current = false
       if (!userScrollActiveRef.current) return
       clearUserScrollLock()
       if (stickToBottomRef.current && itemCountRef.current > 0) scheduleScrollToLatest()
@@ -312,7 +353,7 @@ export function useScrollFollow(options: ScrollFollowOptions): ScrollFollowResul
       observer.disconnect()
       cancelScheduledFollow()
     }
-  }, [cancelScheduledFollow, options.observeContentSize, scheduleScrollToLatest])
+  }, [cancelScheduledFollow, options.observeContentSize, options.sessionId, scheduleScrollToLatest])
 
   useLayoutEffect(() => cancelScheduledFollow, [cancelScheduledFollow])
 
@@ -321,6 +362,7 @@ export function useScrollFollow(options: ScrollFollowOptions): ScrollFollowResul
     contentRef,
     handleScroll,
     scrollToLatest,
+    userScrollToLatest,
     captureScrollAnchor,
     restoreScrollAnchor,
     scheduleScrollToLatest,

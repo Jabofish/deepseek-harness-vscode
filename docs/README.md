@@ -22,6 +22,7 @@
 | [protocol.md](protocol.md)                         | Extension Host ↔ Webview 消息协议与流量控制                               | 改 Webview、路由或 Schema 前 |
 | [security.md](security.md)                         | 信任模型、强制控制与诊断字段 allowlist                                    | 涉及凭据/路径/进程/网络时    |
 | [testing.md](testing.md)                           | 测试层次、必测负面路径、fixture 规则、性能预算                            | 编写测试之前                 |
+| [motion.md](motion.md)                             | Webview 动效 token、keyframes、Reduced Motion 与性能规则                  | 修改动效或新增交互过渡时     |
 | [development.md](development.md)                   | 环境版本、调试、DSH 联调模式、依赖升级                                    | 配置环境或联调 DSH 时        |
 | [release-checklist.md](release-checklist.md)       | 发布前必须满足的全部条目                                                  | 发版之前                     |
 | [adr/](adr/)                                       | 已接受的架构决策（主通道、进程所有权、侧栏、版本化 Adapter、Secret 边界） | 做相关架构选择时             |
