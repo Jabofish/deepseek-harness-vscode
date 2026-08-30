@@ -410,6 +410,23 @@ VS Code 无文件夹 Webview 回放，因此该修复不提升能力矩阵中的
   `feature-capabilities` 分级门控、rc.6 `withRetry` 仅对 15 个幂等读重试且 abort 优先——均无新缺陷。
 - 门禁状态：本轮为纯审计（无代码改动），门禁沿用 batch O 提交 `1f0de27` 的全绿结果。
 
+## 2026-08-30 backend review batch Q evidence（runtime/shim 与扩展本地能力审计）
+
+- 审计记录（本轮扫描覆盖面，不改）：`backend/windows-shim.ts`——npm `.cmd` shim 的静态解析
+  （自底向上取最后一个可解析 `.js` 引用、`SET` 行跳过、`FOR /F` 动态值经 `%%` 检测跳过并保留首个
+  静态可解析赋值、`%~dp0`/变量展开的 seen-set 环防护）与 node 查找三级回退（shim 同目录 node.exe →
+  Extension Host 可执行仅当确为 Node → PATH → `node.exe` 直名），全程无 shell，符合子进程红线。
+  `backend/runtime-locator.ts`——configured 存在即采纳（不兼容也如实上报，不静默换 PATH 二进制）、
+  npm 前端探测仅在 configured/PATH 未命中时发生、候 select 去重（Windows 大小写不敏感）、探针 3s
+  超时并取消底层执行、超时与取消错误分类保留、`findSupported` 记录"仅存在候选"供诊断。
+  `attachments/attachment-store.ts`——容量/10 分钟过期/魔数校验（PNG/JPEG/GIF/WebP）/canonical
+  Base64 边界。`prompts/prompt-template-store.ts`——索引 checksum 写读对称（`decodeIndex` 确实校验
+  sha256，键序固定）、body 完整性失败自动 disable、原子写 + 失败清理、create/update/delete 回滚路径
+  （update 的 oldBody 回写在同 hash 场景等价）、所有权/信任边界、重复 id 即 STORAGE_CORRUPT。
+  `navigation/navigation-service.ts`——WorkspacePathGuard 解析 + 规则文件断言 + 打开后 range 校验。
+  `commands/register-commands.ts`（30 行注册）无逻辑面。均未发现可红测试复现的真实缺陷。
+- 门禁状态：本轮为纯审计（无代码改动），门禁沿用 batch O 提交 `1f0de27` 的全绿结果。
+
 ## rc.8 适配增量与兼容证据
 
 - 版本层：`versions/rc6`、`versions/rc7`、`versions/rc8` 与受控 rc.6 fallback；运行时定位允许任何非空未知版本标签并把警告安全传给 Webview。
