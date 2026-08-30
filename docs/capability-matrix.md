@@ -185,6 +185,27 @@ VS Code 无文件夹 Webview 回放，因此该修复不提升能力矩阵中的
   属效率优化候选，未在本轮改动。
 - 门禁状态：全量 `test` 732 测试中除既知 6 个预存前端失败外全部通过；typecheck/lint/format 通过。
 
+## 2026-08-30 backend review batch H evidence
+
+- RV-01（变更采集效率）：`ChangeSetTracker.observeBackendEvent` 此前对每个 `tool.updated` 事件都在
+  seen-events 去重之前 await `resolveSessionWorkspaceFolderId`，而该解析走完整的
+  `sessions.get()`（`session.list` + `session.history`，必要时还有 `workspace.list`）。活跃 turn 的
+  工具事件流因此被放大为每事件 2–3 个 RPC。现在按附件周期缓存每个会话的解析结果（attach/detach 清空；
+  解析失败或不可归属的会话在下一事件重试）。红绿证据：
+  `apps/extension/src/changes/change-set-tracker.spec.ts` 新增同会话 3 事件仅解析 1 次、重新 attach
+  后重新解析的断言，修复前 3 次（红），修复后 1 次再 2 次（绿）。
+- TC-01（任务中心作用域）：`TaskCenterRegistry` 的类契约是"当前会话任务投影"，但 `get()` 此前从
+  `entries` 缓存返回任意会话的任务，`stop()`/`answer()` 由此可对用户已切换离开的会话执行
+  `sessions.cancel` 或应答交互（entries 的裁剪谓词只按当前会话删除，前一会话的条目被保留）。现在
+  `get()` 按当前会话作用域（含 `session:<id>` 子任务谓词，与 list 的裁剪一致）校验缓存条目，越界
+  返回 `TASK_NOT_OWNED`；`stop()`/`answer()` 经 `get()` 传递性获得作用域。红绿证据：
+  `apps/extension/src/tasks/task-center-registry.spec.ts` 新增切换会话后的拒绝断言，修复前
+  `get` 解析出陈旧任务且 `stop` 会调用 cancel（红），修复后两个调用均拒绝且 cancel 未被调用（绿）。
+- 审计记录（不改）：`NavigationService.openDiff` 的 `after` 参数目前无生产调用方（staged 路由，
+  注释已声明临时实现），其静默忽略不构成用户可见缺陷；alpha `watchSession` 的按需创建为
+  `events.ts` 注释明示的设计，仅保留其与 `session.removed` 的对称清理（batch E 已修）。
+- 门禁状态：全量 `test` 734 测试中除既知 6 个预存前端失败外全部通过；typecheck/lint/format 通过。
+
 ## rc.8 适配增量与兼容证据
 
 - 版本层：`versions/rc6`、`versions/rc7`、`versions/rc8` 与受控 rc.6 fallback；运行时定位允许任何非空未知版本标签并把警告安全传给 Webview。

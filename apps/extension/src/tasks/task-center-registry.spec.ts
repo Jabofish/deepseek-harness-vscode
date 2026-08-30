@@ -158,6 +158,27 @@ describe('TaskCenterRegistry', () => {
     expect(cancel).not.toHaveBeenCalled()
   })
 
+  it('does not serve tasks from a session the user navigated away from', async () => {
+    const cancel = vi.fn().mockResolvedValue(undefined)
+    const current = backend({ cancel })
+    const registry = new TaskCenterRegistry({ now: () => 4_000 })
+    registry.attach(current, () => 'folder-1')
+    registry.setCurrentSession('session-1')
+    const task = (await registry.list({ sessionId: 'session-1' })).find((item) => item.kind === 'session')
+    if (task === undefined) throw new Error('session task was not projected')
+
+    // The registry is a current-session projection: after switching, the
+    // previous session's cached tasks must not stay readable or actionable,
+    // or stop/answer could act on a session the view no longer shows.
+    registry.setCurrentSession('session-2')
+
+    await expect(registry.get(task.taskId)).rejects.toMatchObject({ code: 'TASK_NOT_OWNED' })
+    await expect(registry.stop(task.taskId, 'session-cancel', task.taskRevision)).rejects.toMatchObject({
+      code: 'TASK_NOT_OWNED',
+    })
+    expect(cancel).not.toHaveBeenCalled()
+  })
+
   it('does not expose a stop action for one-shot children', async () => {
     const current = backend({ subagentMode: 'one-shot' })
     const registry = new TaskCenterRegistry()
