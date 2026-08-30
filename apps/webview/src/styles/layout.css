@@ -167,21 +167,6 @@
   min-width: var(--dsh-control-height);
 }
 
-/* The switcher lives inside the compact chrome, but its card must not inherit
- * that small icon button's containing block. A fixed, viewport-bounded card
- * keeps the search/list surface usable on narrow webviews as well as wide
- * editor panels. */
-.dsh-session-switcher__panel.dsh-popover-card {
-  position: fixed;
-  z-index: 60;
-  top: calc(var(--dsh-space-3) + var(--dsh-control-height) + var(--dsh-space-2));
-  right: max(var(--dsh-space-2), env(safe-area-inset-right));
-  left: auto;
-  width: min(31rem, calc(100vw - var(--dsh-space-4)));
-  min-width: min(24rem, calc(100vw - var(--dsh-space-4)));
-  max-height: min(34rem, calc(100vh - var(--dsh-space-5)));
-}
-
 /* The primary picker is anchored in the bottom composer. Its menu opens
  * upward so the last row of the webview never becomes an unreachable popup. */
 .dsh-unified-composer
@@ -1120,9 +1105,9 @@
     display: none;
   }
 
-  /* The legacy viewport rule changes this toolbar to a wrapping flex column.
-   * The composer owns its responsive geometry, so keep the intrinsic rail in
-   * one row and let only labels collapse at narrow widths. */
+  /* The responsive feature rule previously changed this toolbar to a
+   * wrapping flex column. The composer owns its intrinsic geometry, so keep
+   * the rail in one row and let only labels collapse at narrow widths. */
   .dsh-unified-composer .dsh-composer__toolbar {
     display: grid;
     grid-template-columns: minmax(0, auto) minmax(0, 1fr) auto;

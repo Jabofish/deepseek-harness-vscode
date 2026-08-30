@@ -37,6 +37,16 @@ describe('MarkdownContent', () => {
     expect(container.textContent).toContain('<script>alert(1)</script>')
   })
 
+  it('treats soft-wrapped model output as paragraph text', () => {
+    const { container } = render(
+      <MarkdownContent markdown={'这是一行被模型软换行的内容\n这里应该继续属于同一段。'} />,
+    )
+
+    const paragraph = container.querySelector('p')
+    expect(paragraph?.querySelector('br')).toBeNull()
+    expect(paragraph?.textContent).toContain('这里应该继续属于同一段。')
+  })
+
   it('adds compact copy controls to fenced code and tables', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined)
     vi.stubGlobal('navigator', { clipboard: { writeText } })
@@ -90,7 +100,7 @@ describe('MarkdownContent', () => {
 
   it('turns unique produced-file mentions into safe open actions', async () => {
     const onOpenLink = vi.fn()
-    render(
+    const { container } = render(
       <MarkdownContent
         markdown={'Created `report.html` and `style.css`; the second name is ambiguous.'}
         producedFiles={['site/report.html', 'a/style.css', 'b/style.css']}
@@ -101,10 +111,12 @@ describe('MarkdownContent', () => {
     const link = await screen.findByRole('button', { name: 'Open site/report.html' })
     expect(link.textContent).toBe('report.html')
     expect(link.getAttribute('title')).toBe('site/report.html')
+    expect(link.classList.contains('dsh-inline-reference')).toBe(true)
     expect(screen.getByText('style.css')).toBeDefined()
     expect(screen.queryByRole('button', { name: /style\.css/u })).toBeNull()
     fireEvent.click(link)
     expect(onOpenLink).toHaveBeenCalledWith('site/report.html')
+    expect(container.querySelectorAll('.dsh-inline-reference')).toHaveLength(1)
   })
 
   it('renders inline and display dollar math through KaTeX', async () => {

@@ -1,4 +1,4 @@
-/* Compatibility coverage for legacy Webview feature selectors. */
+/* Feature-surface compatibility rules for the current Webview contract. */
 
 .dsh-workspace-card__icon {
   flex: 0 0 24px;
@@ -63,7 +63,6 @@
   background: color-mix(in srgb, var(--dsh-warning) 14%, transparent);
 }
 
-.dsh-timeline__content,
 .dsh-timeline__card pre {
   min-width: 0;
   max-width: 100%;
@@ -101,12 +100,6 @@
 
 .dsh-goal-strip__icon {
   color: var(--dsh-success);
-}
-
-.dsh-composer__input-hint {
-  justify-self: end;
-  color: var(--dsh-muted);
-  font-size: 0.72rem;
 }
 
 .dsh-composer__attachment-icon {
@@ -316,7 +309,6 @@
 
 .dsh-jobs,
 .dsh-subagents,
-.dsh-command-palette,
 .dsh-diagnostics {
   display: grid;
   gap: 9px;
@@ -330,8 +322,7 @@
 }
 
 .dsh-jobs ul,
-.dsh-subagents ul,
-.dsh-command-palette ul {
+.dsh-subagents ul {
   display: grid;
   gap: 6px;
   min-width: 0;
@@ -469,9 +460,9 @@
   background: color-mix(in srgb, var(--vscode-charts-red, var(--dsh-danger)) 28%, transparent);
 }
 
-/* Settings editor correction: the legacy model card used a five-column grid.
-   The new compact row owns its own grid, so the parent must collapse to one
-   track or the row is measured at min-content width. */
+/* Model editor row contract: the compact row owns its own grid, so the
+   surrounding editor collapses to one track instead of measuring at
+   min-content width. */
 .dsh-settings__provider-editor-head {
   display: none;
 }
@@ -642,60 +633,11 @@
   transform: rotate(180deg);
 }
 
-/* Keep copy affordances attached to the block they act on without turning
-   code or tables into larger cards. */
-.dsh-markdown__copy-region {
-  position: relative;
-  min-width: 0;
-  max-width: 100%;
-}
-
-.dsh-markdown__copy-region--code > pre {
-  padding-inline-end: 42px;
-}
-
-.dsh-markdown__copy-button {
-  position: absolute;
-  top: 5px;
-  right: 5px;
-  z-index: 1;
-  width: 22px;
-  height: 22px;
-  min-width: 22px;
-  min-height: 22px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 3px;
-  border: 1px solid transparent;
-  border-radius: var(--dsh-radius-sm);
-  color: var(--dsh-muted);
-  background: color-mix(in srgb, var(--dsh-surface-raised) 72%, transparent);
-  cursor: pointer;
-}
-
-.dsh-markdown__copy-button:hover,
-.dsh-markdown__copy-button:focus-visible {
-  border-color: var(--dsh-control-border);
-  color: var(--vscode-foreground);
-  background: var(--dsh-surface-hover);
-  outline: none;
-}
-
-.dsh-markdown__copy-button > .dsh-icon {
-  width: 14px;
-  height: 14px;
-}
-
 .dsh-session-switcher__workspace > span:not(.dsh-session-switcher__workspace-icon) {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.dsh-composer__input-hint {
-  display: none;
 }
 
 .dsh-session-switcher__workspace-button:hover:not(:disabled),
@@ -728,8 +670,6 @@
   height: 15px;
 }
 
-.dsh-button .dsh-icon,
-.dsh-icon-button .dsh-icon,
 .dsh-composer__attachment-icon .dsh-icon,
 .dsh-message-avatar .dsh-icon {
   width: 15px;
@@ -741,8 +681,6 @@
   height: 13px;
 }
 
-.dsh-button .dsh-icon,
-.dsh-icon-button .dsh-icon,
 .dsh-session-switcher__icon .dsh-icon,
 .dsh-session-switcher__chevron .dsh-icon,
 .dsh-session-item__icon .dsh-icon,
@@ -1074,15 +1012,6 @@
 .dsh-timeline__card--assistant:focus-within .dsh-timeline__assistant-metrics {
   max-width: 360px;
   opacity: 1;
-}
-
-.dsh-markdown__frozen,
-.dsh-markdown__tail {
-  min-width: 0;
-}
-
-.dsh-markdown--streaming [data-dsh-markdown-frozen='true'] {
-  contain: content;
 }
 
 .dsh-timeline__reasoning {
@@ -1469,38 +1398,6 @@
 }
 
 /* Official General-section writable rows (settings.describe driven). */
-.dsh-settings__preferences {
-  display: grid;
-  gap: 8px;
-  padding-top: 6px;
-  border-top: 1px solid var(--dsh-control-border);
-}
-
-.dsh-settings__row-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.dsh-settings__row-note {
-  padding: 1px 6px;
-  border: 1px solid var(--vscode-editorWarning-border, var(--dsh-control-border));
-  border-radius: var(--dsh-radius-sm);
-  color: var(--vscode-editorWarning-foreground, var(--dsh-muted));
-  font-size: 0.66rem;
-}
-
-.dsh-settings__row-saving {
-  color: var(--dsh-muted);
-  font-size: 0.7rem;
-}
-
-.dsh-settings__segment {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
 .dsh-presets {
   display: grid;
   gap: 12px;
@@ -1556,23 +1453,12 @@
   cursor: not-allowed;
 }
 
-.dsh-presets__card--active {
+.dsh-preset-card--active {
   border-color: var(--vscode-focusBorder, currentColor);
 }
 
-.dsh-presets__card--broken {
+.dsh-preset-card--broken {
   border-color: var(--vscode-editorError-border, var(--dsh-danger, currentColor));
-}
-
-.dsh-presets__card-name {
-  font-weight: 600;
-  font-size: 0.8rem;
-}
-
-.dsh-presets__card-id {
-  font-size: 0.7rem;
-  color: var(--dsh-muted);
-  font-family: var(--vscode-editor-font-family, monospace);
 }
 
 .dsh-presets__revealed {
@@ -2698,81 +2584,6 @@
   text-align: center;
 }
 
-.dsh-command-palette li button.dsh-command-palette__item {
-  width: 100%;
-  min-width: 0;
-  min-height: 34px;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 7px;
-  padding: 5px 7px;
-  border: 1px solid transparent;
-  border-radius: var(--dsh-radius-sm);
-  color: var(--dsh-widget-foreground, var(--vscode-foreground));
-  background: transparent;
-  text-align: start;
-  line-height: 1.2;
-}
-
-.dsh-command-palette li button.dsh-command-palette__item:hover:not(:disabled),
-.dsh-command-palette li button.dsh-command-palette__item:focus-visible {
-  border-color: var(--vscode-focusBorder, var(--dsh-control-border));
-  color: var(--dsh-widget-foreground, var(--vscode-foreground));
-  background: var(--vscode-list-hoverBackground, var(--dsh-control-hover));
-  outline: none;
-}
-
-/* Official keyboard-highlight tier: aria-activedescendant drives this state,
-   the row itself is never focused (the textarea keeps focus). */
-.dsh-command-palette li button.dsh-command-palette__item--highlighted {
-  border-color: var(--vscode-focusBorder, var(--dsh-control-border));
-  color: var(--dsh-widget-foreground, var(--vscode-foreground));
-  background: var(--vscode-list-activeSelectionBackground, var(--dsh-control-hover));
-  outline: none;
-}
-
-.dsh-command-palette li button.dsh-command-palette__item > strong,
-.dsh-command-palette li button.dsh-command-palette__item > span,
-.dsh-command-palette li button.dsh-command-palette__item > small {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.dsh-command-palette li button.dsh-command-palette__item > strong {
-  color: var(--vscode-list-activeSelectionForeground, var(--dsh-control-foreground));
-  font-size: 0.78rem;
-}
-
-.dsh-command-palette li button.dsh-command-palette__item > span {
-  grid-column: auto;
-  color: var(--vscode-descriptionForeground, var(--dsh-muted));
-  font-size: 0.72rem;
-}
-
-.dsh-command-palette li button.dsh-command-palette__item > small {
-  grid-column: auto;
-  max-width: 88px;
-  color: var(--vscode-descriptionForeground, var(--dsh-muted));
-  font-size: 0.68rem;
-}
-
-.dsh-command-palette li button.dsh-command-palette__item--argument {
-  grid-template-columns: minmax(0, 1fr) auto;
-}
-
-.dsh-command-palette li button.dsh-command-palette__item--argument > strong {
-  font-size: 0.78rem;
-}
-
-.dsh-command-palette li button.dsh-command-palette__item--argument > span {
-  justify-self: end;
-  color: var(--vscode-descriptionForeground, var(--dsh-muted));
-  font-size: 0.68rem;
-}
-
 .dsh-session-controls__mode,
 .dsh-model-picker {
   min-width: 0;
@@ -2783,10 +2594,8 @@
   max-width: 112px;
 }
 
-/* Final overrides for the newly added session picker and composer risk prompt.
-   These stay at the end of the stylesheet so the existing surface rules are
-   untouched while the narrow headless layout gets the same geometry as the
-   regular picker. */
+/* Session picker and risk-surface compatibility: these rules complete the
+   shared row contract for headless and regular picker variants. */
 .dsh-session-switcher--headless .dsh-session-switcher__list > li {
   grid-template-columns: minmax(0, 1fr) max-content;
 }
@@ -2961,7 +2770,6 @@
   min-width: 0;
 }
 
-.dsh-settings__row-head,
 .dsh-settings__toolbar,
 .dsh-settings__risk-actions,
 .dsh-presets__dialog-actions {
@@ -2969,14 +2777,12 @@
   flex-wrap: wrap;
 }
 
-.dsh-settings__row-head > *,
 .dsh-settings__toolbar > *,
 .dsh-settings__risk-actions > *,
 .dsh-presets__dialog-actions > * {
   min-width: 0;
 }
 
-.dsh-settings__row-label,
 .dsh-settings__runtime-update-head > *,
 .dsh-settings__provider-editor-head > div,
 .dsh-settings__provider-editor-scope,
@@ -2989,7 +2795,6 @@
 
 .dsh-settings__note,
 .dsh-settings__empty,
-.dsh-settings__row-hint,
 .dsh-settings__error,
 .dsh-settings__model-editor-note,
 .dsh-settings__summary,
@@ -3134,35 +2939,6 @@
   overflow-y: auto;
 }
 
-/* rc.1 markdown parity: wide tables reveal their horizontal scroll affordance
-   on hover/focus while ordinary tables fill the available message width. */
-.dsh-markdown__copy-region--table-wide {
-  overflow-x: hidden;
-  padding-bottom: 8px;
-}
-
-.dsh-markdown__copy-region--table-wide:hover,
-.dsh-markdown__copy-region--table-wide:focus-visible {
-  overflow-x: auto;
-  padding-bottom: 0;
-}
-
-.dsh-markdown__copy-region--table-wide:focus-visible {
-  outline: none;
-  box-shadow: none;
-}
-
-.dsh-markdown__copy-region--table-wide table {
-  width: max-content;
-  max-width: max-content;
-  overflow: visible;
-}
-
-.dsh-markdown__copy-region--table-fill table {
-  width: 100%;
-  max-width: none;
-}
-
 /* rc.1 subagent parity: keep the parent breadcrumb compact in the header;
    known long titles must shrink and ellipsize instead of pushing actions out
    of the Webview. */
@@ -3235,9 +3011,8 @@
 .dsh-settings__provider-editor-field input,
 .dsh-settings__model-field input,
 .dsh-settings__custom-provider-grid input,
-.dsh-settings__connection-endpoint input,
-.dsh-settings__segment-item {
-  min-height: var(--dsh-settings-control-height);
+.dsh-settings__connection-endpoint input {
+  min-height: var(--dsh-control-height-compact);
   box-sizing: border-box;
 }
 
@@ -3255,7 +3030,7 @@
 .dsh-settings__runtime-update-version .dsh-select-menu__trigger {
   padding: 6px 8px;
   border: 1px solid var(--dsh-control-border);
-  border-radius: var(--dsh-settings-control-radius);
+  border-radius: var(--dsh-radius-md);
   font: inherit;
   font-size: 0.76rem;
   line-height: 1.2;
@@ -3268,7 +3043,7 @@
 
 .dsh-settings__runtime-update-version .dsh-select-menu__trigger {
   width: 100%;
-  min-height: var(--dsh-settings-control-height);
+  min-height: var(--dsh-control-height-compact);
   font-size: 0.76rem;
 }
 

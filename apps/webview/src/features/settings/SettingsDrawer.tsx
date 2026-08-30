@@ -747,7 +747,6 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                   </section>
                 ) : null}
                 <SettingCard
-                  className="dsh-settings__preferences"
                   ariaLabel={t('settings.preferences')}
                   title={t('settings.preferences')}
                 >
@@ -1225,18 +1224,17 @@ function GeneralSettingRow(props: GeneralSettingRowProps): ReactElement | null {
   return (
     <SettingRow
       as="li"
-      className="dsh-settings__row"
       title={props.row.label}
       description={props.row.hint}
       status={
         <>
           {field.restartRequired ? (
-            <span className="dsh-settings__row-note" title={t('settings.restartTitle')}>
+            <span className="dsh-setting-row__status-note" title={t('settings.restartTitle')}>
               {t('settings.restart')}
             </span>
           ) : null}
           {props.saving ? (
-            <span className="dsh-settings__row-saving" role="status">
+            <span className="dsh-setting-row__status-saving" role="status">
               {t('settings.saving')}
             </span>
           ) : null}

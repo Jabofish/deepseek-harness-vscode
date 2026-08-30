@@ -8,6 +8,7 @@
   --dsh-radius-sm: 0.375rem;
   --dsh-radius-md: 0.5rem;
   --dsh-radius-lg: 0.75rem;
+  --dsh-radius-pill: 999px;
   --dsh-border-color: var(
     --vscode-widget-border,
     var(--vscode-panel-border, transparent)
@@ -63,6 +64,13 @@
   --dsh-shadow: 0 0.375rem 1rem
     var(--vscode-widget-shadow, color-mix(in srgb, var(--dsh-bg) 54%, transparent));
   --dsh-control-height: 2rem;
+  --dsh-control-height-compact: 1.75rem;
+  --dsh-font-size-xs: 0.75rem;
+  --dsh-font-size-sm: 0.8125rem;
+  --dsh-font-size-md: 0.875rem;
+  --dsh-line-height-tight: 1.25;
+  --dsh-line-height-body: 1.45;
+  --dsh-line-height-relaxed: 1.55;
   --dsh-panel-gutter: 1rem;
   --dsh-menu-font-size: 0.875rem;
   --dsh-menu-line-height: 1.35;
