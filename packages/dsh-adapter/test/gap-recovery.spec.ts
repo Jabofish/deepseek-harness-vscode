@@ -62,8 +62,14 @@ function historyRow(seq: number): {
   return { event: { type: 'turn/start', seq, time: seq, data: { turn: 1 } } }
 }
 
+function parseRequestBody(init?: RequestInit): unknown {
+  const body = init?.body
+  if (typeof body !== 'string') throw new Error('the test request body must be a string')
+  return JSON.parse(body)
+}
+
 function requestRpcId(init?: RequestInit): string {
-  return (JSON.parse(String(init?.body)) as { rpcId: string }).rpcId
+  return (parseRequestBody(init) as { rpcId: string }).rpcId
 }
 
 function ok(init: RequestInit | undefined, value: unknown): Response {
@@ -90,7 +96,8 @@ describe('session gap recovery through paginated history', () => {
     const allEvents = Array.from({ length: 71 }, (_item, index) => historyRow(index))
     const historyAnchors: (number | undefined)[] = []
     const fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
-      const url = new URL(String(input)).pathname
+      const rawUrl = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+      const url = new URL(rawUrl).pathname
       if (url === '/api/session.list')
         return Promise.resolve(
           ok(init, {
@@ -102,7 +109,7 @@ describe('session gap recovery through paginated history', () => {
       if (url === '/api/workspace.list')
         return Promise.resolve(ok(init, { items: [], archivedSessionIds: [] }))
       if (url === '/api/session.history') {
-        const body = JSON.parse(String(init?.body)) as { rpcId: string; payload: { beforeSeq?: number } }
+        const body = parseRequestBody(init) as { rpcId: string; payload: { beforeSeq?: number } }
         const beforeSeq = body.payload?.beforeSeq
         historyAnchors.push(beforeSeq)
         const eligible =
@@ -117,7 +124,7 @@ describe('session gap recovery through paginated history', () => {
     const adapter = new Rc6VersionAdapter({
       requestTimeoutMs: 1_000,
       retryPolicy: { maximumAttempts: 1, baseDelayMs: 1, maximumDelayMs: 1 },
-      fetch: fetch as unknown as typeof globalThis.fetch,
+      fetch,
       webSocket: FakeWebSocket as unknown as typeof WebSocket,
     })
     const backend = await adapter.createBackend({
@@ -134,32 +141,12 @@ describe('session gap recovery through paginated history', () => {
       socket.open()
       socket.message(muxFrame(sessionEvent(10)))
       await waitFor(() => received.some((event) => event.sequence === 10))
-      console.log(
-        'FETCH CALLS:',
-        fetch.mock.calls.map((c) => String(c[0]).replace('http://127.0.0.1:4567', '')),
-      )
-      console.log(
-        'RECEIVED:',
-        received.map((e) => `${e.type}:${e.sequence ?? ''}`),
-      )
 
       // The host jumps from watermark 10 straight to 70: the recovery must
       // fill [11..69] from history, including events that live on the second
       // page (11..20), before the live event is delivered.
       socket.message(muxFrame(sessionEvent(70)))
       await waitFor(() => received.some((event) => event.sequence === 70))
-      console.log(
-        'AFTER-70 FETCH:',
-        fetch.mock.calls.map((c) => String(c[0]).replace('http://127.0.0.1:4567', '')),
-      )
-      console.log(
-        'AFTER-70 RECEIVED:',
-        received.map((e) =>
-          JSON.stringify(
-            e.type === 'session.gap' ? { gap: [e.fromSequence, e.toSequence] } : { t: e.type, s: e.sequence },
-          ),
-        ),
-      )
 
       const delivered = received
         .map((event) => event.sequence)

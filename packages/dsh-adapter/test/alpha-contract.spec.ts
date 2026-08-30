@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { BackendEndpoint, BackendEvent } from '@dsh-vscode/domain'
 
-import { AlphaEventSource } from '../src/versions/alpha/events.js'
+import type { AlphaEventSource } from '../src/versions/alpha/events.js'
 import { AlphaLoopbackApiClient, type AlphaWebSocket } from '../src/versions/alpha/transport.js'
 import { AlphaVersionAdapter } from '../src/versions/alpha/adapter.js'
 import { callRpc } from '../src/versions/rc6/rpc.js'
