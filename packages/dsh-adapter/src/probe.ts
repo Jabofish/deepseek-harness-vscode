@@ -29,6 +29,7 @@ export class VersionedBackendProbe implements BackendProbe {
     candidate: BackendCandidate,
     signal?: AbortSignal,
   ): Promise<ConnectedBackend | undefined> {
+    let incompatible: AppError | undefined
     for (const adapter of this.adapters) {
       try {
         const capabilities = await adapter.probe(candidate, signal)
@@ -45,8 +46,15 @@ export class VersionedBackendProbe implements BackendProbe {
         // legacy/fallback adapter unless the caller cancelled the operation.
         if (signal?.aborted === true || (error instanceof DOMException && error.name === 'AbortError'))
           throw error
+        // An endpoint that answered the pinned DSH handshake but reported no
+        // compatible host version is a DSH, not an unreachable service. Keep
+        // the classification, let later adapters try, and fail with it when
+        // none of them accepts the candidate.
+        if (error instanceof AppError && error.code === 'DSH_INCOMPATIBLE' && incompatible === undefined)
+          incompatible = error
       }
     }
+    if (incompatible !== undefined) throw incompatible
     return undefined
   }
 }

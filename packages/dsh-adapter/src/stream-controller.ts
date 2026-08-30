@@ -173,6 +173,13 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
             fromSequence: afterRecovery + 1,
             toSequence: event.lastSequence,
           })
+      } else if (event.lastSequence < previous) {
+        // The v1 mux has no client-side resume hook ("since" is ignored), so
+        // the host's subscribed frame is the authoritative log baseline. A
+        // lower value means the host log no longer contains what this cache
+        // holds; keeping the stale watermark would silently drop the host's
+        // new event epoch below it. Follow the baseline down instead.
+        this.lastSequences.set(event.sessionId, event.lastSequence)
       }
       this.retryAttempt = 0
       this.emit(event)

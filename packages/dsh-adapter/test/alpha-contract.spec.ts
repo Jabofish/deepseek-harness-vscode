@@ -484,6 +484,82 @@ describe('DSH 0.1.2-alpha.1 Connection/Gateway contract', () => {
     await transport.close()
   })
 
+  it('resolves a cancelled alpha waterfall event with the session that requested it', async () => {
+    FakeWebSocket.instances.length = 0
+    const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
+      Promise.resolve(response(init, undefined)),
+    )
+    const transport = client(fetch)
+    const iterator = transport.openEventStream(new AbortController().signal)[Symbol.asyncIterator]()
+    const next = iterator.next()
+    const socket = await waitForSocket()
+    socket.open()
+    await waitForSent(socket, 1)
+    socket.message(streamItem(socket, { type: 'ready', clientId: 'client-1', host: { home: '/home/test' } }))
+    socket.message(
+      streamItem(socket, {
+        type: 'emit',
+        event: 'api-session/activity',
+        args: ['s1', 1_700_000_000_000],
+      }),
+    )
+    await expect(next).resolves.toMatchObject({ done: false })
+    socket.message(
+      streamItem(socket, {
+        type: 'waterfall',
+        event: 'approval/request',
+        eventId: 'event-1',
+        agentId: 's1',
+        request: {
+          type: 'spoofed',
+          rpcId: 'spoofed',
+          sessionId: 'spoofed',
+          approvalId: 'spoofed',
+          toolName: 'shell',
+          reason: 'test',
+        },
+      }),
+    )
+    await expect(iterator.next()).resolves.toMatchObject({
+      value: { type: 'approval/requested', sessionId: 's1', approvalId: 'event-1' },
+    })
+    socket.message(streamItem(socket, { type: 'cancel', eventId: 'event-1' }))
+    // The cancel frame itself carries only the eventId; the resolved projection must
+    // recover the session from the waterfall that opened the interaction so
+    // replay bookkeeping can clear the matching pending request.
+    await expect(iterator.next()).resolves.toMatchObject({
+      value: {
+        type: 'approval/resolved',
+        sessionId: 's1',
+        approvalId: 'event-1',
+        outcome: 'cancelled',
+      },
+    })
+    socket.message(
+      streamItem(socket, {
+        type: 'waterfall',
+        event: 'user-questions/request',
+        eventId: 'event-2',
+        agentId: 's2',
+        request: { type: 'spoofed', rpcId: 'spoofed', sessionId: 'spoofed', prompt: 'test' },
+      }),
+    )
+    await expect(iterator.next()).resolves.toMatchObject({
+      value: { type: 'question/requested', sessionId: 's2' },
+    })
+    socket.message(streamItem(socket, { type: 'cancel', eventId: 'event-2' }))
+    await expect(iterator.next()).resolves.toMatchObject({
+      value: {
+        type: 'question/resolved',
+        sessionId: 's2',
+        questionRpcId: 'event-2',
+        outcome: 'cancelled',
+      },
+    })
+    await iterator.return?.()
+    await transport.close()
+  })
+
   it('rejects interaction responses that are not tied to a current alpha waterfall event', async () => {
     FakeWebSocket.instances.length = 0
     const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>

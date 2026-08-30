@@ -109,6 +109,53 @@ describe('DshStreamController', () => {
     expect(values).toEqual(['old', 'new'])
   })
 
+  it('resumes live events when the host re-subscribes below the cached watermark', async () => {
+    // The v1 mux ignores the client's `since` resume hook and re-subscribes
+    // from the host's own lastSeq baseline. When a host returns with a shorter
+    // session log (no session-removed notice), the cached watermark refers to
+    // entries the host no longer has: the controller must follow the host's
+    // baseline down instead of silently dropping the new event epoch.
+    const sessionId = 's1'
+    const transport = reconnectingTransport([
+      [
+        { payload: { type: 'session/subscribed', sessionId, lastSeq: 9 } },
+        {
+          payload: {
+            type: 'session/event',
+            sessionId,
+            event: { type: 'turn/end', seq: 9, time: 1, data: { turn: 1, reason: { kind: 'completed' } } },
+          },
+        },
+      ],
+      [
+        { payload: { type: 'session/subscribed', sessionId, lastSeq: 2 } },
+        {
+          payload: {
+            type: 'session/event',
+            sessionId,
+            event: { type: 'turn/end', seq: 3, time: 2, data: { turn: 2, reason: { kind: 'completed' } } },
+          },
+        },
+      ],
+    ])
+    const received: BackendEvent[] = []
+    const controller = new DshStreamController(transport)
+    controllers.push(controller)
+    controller.subscribe((event) => received.push(event))
+
+    await waitForAtMost(
+      () =>
+        received.some(
+          (event) =>
+            event.type === 'turn.ended' &&
+            event.sequence === 3 &&
+            'sessionId' in event &&
+            event.sessionId === sessionId,
+        ),
+      2_000,
+    )
+  })
+
   it('forwards the durable turn end and host idle status from rc.6 frames', async () => {
     const sessionId = 's1'
     const transport = streamTransport([
@@ -280,8 +327,41 @@ function streamTransport(frames: readonly unknown[]): DshTransport {
   }
 }
 
+/** Each mux (re)open yields the next generation's frames, then ends the stream. */
+function reconnectingTransport(generations: readonly (readonly unknown[])[]): DshTransport {
+  let nextGeneration = 0
+  const open = async function* (signal: AbortSignal): AsyncIterable<unknown> {
+    const index = nextGeneration
+    nextGeneration += 1
+    yield* generations[index] ?? generations[generations.length - 1] ?? []
+    if (index >= generations.length - 1) {
+      await new Promise<void>((resolve) => {
+        if (signal.aborted) {
+          resolve()
+          return
+        }
+        signal.addEventListener('abort', () => resolve(), { once: true })
+      })
+    }
+  }
+  return {
+    request: <T>() => Promise.reject<T>(new Error('request is not used by this test')),
+    remoteRequest: <T>() => Promise.reject<T>(new Error('remoteRequest is not used by this test')),
+    openEventStream: open,
+    openMuxStream: open,
+    close: () => Promise.resolve(),
+  }
+}
+
 async function waitFor(predicate: () => boolean): Promise<void> {
   for (let attempt = 0; attempt < 50 && !predicate(); attempt += 1)
     await new Promise((resolve) => setTimeout(resolve, 0))
+  expect(predicate()).toBe(true)
+}
+
+/** Waits long enough for a reconnect backoff to elapse before asserting. */
+async function waitForAtMost(predicate: () => boolean, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline && !predicate()) await new Promise((resolve) => setTimeout(resolve, 25))
   expect(predicate()).toBe(true)
 }

@@ -13,6 +13,19 @@ import { AppError, type BackendEndpoint } from '@dsh-vscode/domain'
 import type { DshTransport, RetryPolicy } from './contracts.js'
 import { cancelled as cancelledError, httpFailure, normalizeTransportError } from './transport-errors.js'
 
+/**
+ * Callers never read a non-2xx body, and an unconsumed fetch body pins its
+ * socket instead of returning it to the pool. Release it explicitly so
+ * discovery sweeps and retry loops cannot accumulate stalled connections.
+ */
+async function releaseUnreadBody(response: Response): Promise<void> {
+  try {
+    await response.body?.cancel()
+  } catch {
+    /* releasing the connection is best effort */
+  }
+}
+
 export interface LoopbackApiClientOptions {
   readonly endpoint: BackendEndpoint
   readonly requestTimeoutMs: number
@@ -100,7 +113,10 @@ export class LoopbackApiClient extends AbstractApiClient implements DshTransport
       body: JSON.stringify(message),
       ...(requestSignal === undefined ? {} : { signal: requestSignal }),
     })
-    if (!response.ok) throw httpFailure(String(method), response.status)
+    if (!response.ok) {
+      await releaseUnreadBody(response)
+      throw httpFailure(String(method), response.status)
+    }
     let full: ReturnType<typeof serverResponseSchema.parse>
     try {
       full = serverResponseSchema.parse(await response.json())
@@ -192,7 +208,10 @@ export class LoopbackApiClient extends AbstractApiClient implements DshTransport
     } catch (error) {
       throw normalizeTransportError('session.export', error, signal)
     }
-    if (!response.ok) throw httpFailure('session.export', response.status, 'EXPORT_FAILED')
+    if (!response.ok) {
+      await releaseUnreadBody(response)
+      throw httpFailure('session.export', response.status, 'EXPORT_FAILED')
+    }
     return response
   }
 
@@ -351,7 +370,10 @@ export class LoopbackApiClient extends AbstractApiClient implements DshTransport
       body: JSON.stringify(message),
       signal: requestSignal,
     })
-    if (!response.ok) throw httpFailure('host.describe', response.status)
+    if (!response.ok) {
+      await releaseUnreadBody(response)
+      throw httpFailure('host.describe', response.status)
+    }
     let full: ReturnType<typeof serverResponseSchema.parse>
     try {
       full = serverResponseSchema.parse(await response.json())
@@ -415,7 +437,10 @@ export class LoopbackApiClient extends AbstractApiClient implements DshTransport
       body: JSON.stringify(message),
       signal: requestSignal,
     })
-    if (!response.ok) throw httpFailure(endpoint, response.status)
+    if (!response.ok) {
+      await releaseUnreadBody(response)
+      throw httpFailure(endpoint, response.status)
+    }
     let full: ReturnType<typeof serverResponseSchema.parse>
     try {
       full = serverResponseSchema.parse(await response.json())

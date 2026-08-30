@@ -1,7 +1,8 @@
 /* The coordinator fixtures intentionally use minimal structural fakes. */
 /* eslint-disable @typescript-eslint/explicit-function-return-type, @typescript-eslint/require-await, @typescript-eslint/unbound-method, @typescript-eslint/no-unsafe-argument */
 import { describe, expect, it, vi } from 'vitest'
-import type { BackendCandidate, DshBackend, ManagedProcessHandle } from '@dsh-vscode/domain'
+import type { BackendCandidate, BackendState, DshBackend, ManagedProcessHandle } from '@dsh-vscode/domain'
+import { AppError } from '@dsh-vscode/domain'
 import { DshConnectionCoordinator } from '../src/connection/dsh-connection-coordinator.js'
 import type { ConnectionCoordinatorDependencies } from '../src/connection/dsh-connection-coordinator.js'
 
@@ -174,6 +175,54 @@ describe('DshConnectionCoordinator', () => {
     expect(deps.discovery.discover).not.toHaveBeenCalled()
     expect(deps.runtimeLocator.locate).not.toHaveBeenCalled()
     expect(deps.processSupervisor.start).not.toHaveBeenCalled()
+  })
+
+  it('surfaces a definitive DSH_INCOMPATIBLE classification for a custom endpoint', async () => {
+    const probe = {
+      probe: vi.fn(async () => {
+        throw new AppError({
+          code: 'DSH_INCOMPATIBLE',
+          message: 'The endpoint did not report a compatible DSH host version.',
+          retryable: false,
+        })
+      }),
+    }
+    const deps = dependencies({ probe })
+    const coordinator = new DshConnectionCoordinator(deps)
+    const states: BackendState[] = []
+    coordinator.subscribe((state) => states.push(state))
+
+    await expect(
+      coordinator.connect({ mode: 'custom', autoStart: true, endpoint: endpoint(4320) }),
+    ).rejects.toMatchObject({ code: 'DSH_INCOMPATIBLE' })
+    expect(deps.discovery.discover).not.toHaveBeenCalled()
+    expect(deps.processSupervisor.start).not.toHaveBeenCalled()
+    expect(states.at(-1)).toMatchObject({ kind: 'failed', retryable: false })
+  })
+
+  it('stops a managed process and reports DSH_INCOMPATIBLE when the probe classifies it incompatible', async () => {
+    const process = managedProcess(4322)
+    const deps = dependencies({
+      probe: {
+        probe: vi.fn(async () => {
+          throw new AppError({
+            code: 'DSH_INCOMPATIBLE',
+            message: 'The managed DSH process did not report a compatible host version.',
+            retryable: false,
+          })
+        }),
+      },
+      processSupervisor: { start: vi.fn(async () => process) },
+    })
+    const coordinator = new DshConnectionCoordinator(deps)
+    const states: BackendState[] = []
+    coordinator.subscribe((state) => states.push(state))
+
+    await expect(coordinator.connect({ mode: 'auto', autoStart: true })).rejects.toMatchObject({
+      code: 'DSH_INCOMPATIBLE',
+    })
+    expect(process.stop).toHaveBeenCalledTimes(1)
+    expect(states.at(-1)).toMatchObject({ kind: 'failed', retryable: false })
   })
 
   it('re-publishes connected state when a cached backend is reused', async () => {

@@ -3,6 +3,7 @@ import {
   type BackendCandidate,
   type BackendEndpoint,
   type BackendState,
+  type ConnectedBackend,
   type DshBackend,
   type ManagedProcessHandle,
 } from '@dsh-vscode/domain'
@@ -189,6 +190,13 @@ export class DshConnectionCoordinator {
         if (verified !== undefined) return this.attach(verified, undefined, signal, generation)
       } catch (error) {
         if (isAbort(error, signal)) throw cancelled(error)
+        // The user explicitly selected this endpoint, so a definitive
+        // DSH-incompatible classification from the probe chain must reach the
+        // caller instead of degrading into a generic unreachable error.
+        if (error instanceof AppError && error.code === 'DSH_INCOMPATIBLE') {
+          this.publish({ kind: 'failed', message: error.message, retryable: error.retryable })
+          throw error
+        }
       }
       const error = new AppError({
         code: 'BACKEND_UNREACHABLE',
@@ -291,7 +299,15 @@ export class DshConnectionCoordinator {
         pid: process.pid,
         confidence: 100,
       }
-      const verified = await this.dependencies.probe.probe(candidate, signal)
+      let verified: ConnectedBackend | undefined
+      try {
+        verified = await this.dependencies.probe.probe(candidate, signal)
+      } catch (error) {
+        if (error instanceof AppError && error.code === 'DSH_INCOMPATIBLE') {
+          this.publish({ kind: 'failed', message: error.message, retryable: error.retryable })
+        }
+        throw error
+      }
       if (verified === undefined) {
         await stopManagedProcess(process)
         this.managedProcess = undefined

@@ -167,7 +167,7 @@ export class AlphaLoopbackApiClient implements DshTransport {
 
   private readonly pendingEvents = new Map<
     string,
-    { readonly clientId: string; readonly kind: 'approval' | 'question' }
+    { readonly clientId: string; readonly kind: 'approval' | 'question'; readonly sessionId: string }
   >()
   private eventClientId: string | undefined
   private eventStreamGeneration = 0
@@ -606,7 +606,11 @@ export class AlphaLoopbackApiClient implements DshTransport {
           const request = frame.request
           if (frame.event === 'approval/request') {
             if (this.eventClientId !== undefined)
-              this.pendingEvents.set(frame.eventId, { clientId: this.eventClientId, kind: 'approval' })
+              this.pendingEvents.set(frame.eventId, {
+                clientId: this.eventClientId,
+                kind: 'approval',
+                sessionId: frame.agentId,
+              })
             yield {
               ...request,
               type: 'approval/requested',
@@ -616,7 +620,11 @@ export class AlphaLoopbackApiClient implements DshTransport {
             }
           } else if (frame.event === 'user-questions/request') {
             if (this.eventClientId !== undefined)
-              this.pendingEvents.set(frame.eventId, { clientId: this.eventClientId, kind: 'question' })
+              this.pendingEvents.set(frame.eventId, {
+                clientId: this.eventClientId,
+                kind: 'question',
+                sessionId: frame.agentId,
+              })
             yield {
               ...request,
               type: 'question/requested',
@@ -628,15 +636,23 @@ export class AlphaLoopbackApiClient implements DshTransport {
         }
         if (frame?.type === 'cancel' && validAlphaEventCancel(frame)) {
           const pending = this.pendingEvents.get(frame.eventId)
+          // The cancel frame itself carries only the eventId, but the resolved
+          // projection needs the requesting session so replay bookkeeping can
+          // clear the matching pending request.
           if (pending?.kind === 'approval')
             yield {
               type: 'approval/resolved',
-              sessionId: '',
+              sessionId: pending.sessionId,
               approvalId: frame.eventId,
               outcome: 'cancelled',
             }
           if (pending?.kind === 'question')
-            yield { type: 'question/resolved', questionRpcId: frame.eventId, outcome: 'cancelled' }
+            yield {
+              type: 'question/resolved',
+              sessionId: pending.sessionId,
+              questionRpcId: frame.eventId,
+              outcome: 'cancelled',
+            }
           this.pendingEvents.delete(frame.eventId)
           continue
         }

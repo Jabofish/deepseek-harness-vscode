@@ -101,6 +101,37 @@ VS Code 无文件夹 Webview 回放，因此该修复不提升能力矩阵中的
 - C3/C4：附件 base64/MIME/魔数与图片/文本 attachment projection 已集中到 adapter codec；composition-root 的 attachment 纯 helper 已迁入 `apps/extension/src/attachments`，保留 Host-only 授权边界。附件 codec、attachment store、session、rc.8 contract 定向回归通过；handler 分发表和 workspace scope 尚未拆分。
 - C5/C6：rc.6 agent/tool presentation projection 已移出 mapper；frame 类型从 pinned rc.2 schemas 的 `options` 派生；移除 `commands/list`、`session/title` 和 rc7/rc8 mapper 别名及 rc11/rc12 重复 override；mapper、loopback、stream 定向回归与 dsh-adapter typecheck 通过。全量门禁和真实 rc.2 WebSocket/VS Code 回放以本轮交付结果为准，能力状态继续为 `PARTIAL`。
 
+## 2026-08-30 backend review batch D evidence
+
+- CN-01/CN-02（probe 分类）：`VersionedBackendProbe` 此前把 rc6 家族 probe 刻意抛出的
+  `DSH_INCOMPATIBLE`（endpoint 应答了 DSH 握手但未报告兼容 host version）与普通"候选不适用"一并吞掉，
+  导致 custom 端点与受管进程路径把它误分类为可重试的 `BACKEND_UNREACHABLE`，与实现顺序阶段 0
+  "明确识别兼容/不兼容/非 DSH/不可达"的退出条件相悖。现在 probe 链在无 adapter 接受该候选时保留并抛出
+  该分类；coordinator 的 custom 路径原样透传（先发布 `failed`），受管路径先发布 `failed` 再停止本次受管进程，
+  auto 发现路径仍继续尝试其他候选。定向证据：`packages/dsh-adapter/test/probe.spec.ts` 4 例、
+  `packages/application/test/dsh-connection-coordinator.spec.ts` 17 例（新增 custom 透传与受管进程停止两条）。
+- CN-05/SC-01（传输资源释放）：loopback 传输的 4 处非 2xx 抛错点此前直接丢弃响应体；Node fetch 的
+  未消费 body 会占住 socket 直到 GC，发现扫描与重试循环会累积占用回环连接。现在统一在抛错前
+  `body.cancel()` 释放连接（成功路径与已消费的 PROTOCOL_ERROR 路径不受影响）。
+  红绿证据：`packages/dsh-adapter/test/loopback-api-client.spec.ts` 新增 2 例（RPC 重试 3 次均释放、
+  导出下载 404 释放），修复前 cancel 计数为 0（红），修复后为 3/1（绿）。
+- CN-05（重订阅水位）：上游固定 rc.2 类型明确 v1 mux 忽略客户端 `since`、重连 = reopen + refetch
+  history，`session/subscribed.lastSeq` 是服务端日志的权威基线（空日志约定 `-1`）。此前 host 以低于
+  本地缓存水位（如进程重启后日志丢失、无 `session-removed` 通知）的 lastSeq 重订阅时，控制器保留陈旧
+  高水位并把新纪元事件全部静默丢弃。现在按 host 基线向下收敛水位（projection 水位截断本已存在）。
+  红绿证据：`packages/dsh-adapter/test/stream-controller.spec.ts` 新增多代重连测试（重订阅 lastSeq=2
+  后 seq=3 事件必须送达），修复前超时失败（红），修复后通过（绿）。
+- IQ-01（alpha 取消投影）：alpha `$events` 的 cancel 帧只携带 `eventId`；此前 approval 取消投影
+  硬编码 `sessionId: ''`、question 取消投影完全缺失 sessionId，违反 domain 事件类型语义，且
+  `BackendService` 的重放清除按 `permission:<session>:<id>` 前缀匹配，取消后的交互在下一次
+  webview attach 时仍会作为 pending 重放。现在 pending 记录保存 waterfall 的 `agentId`，取消投影
+  回填真实会话 id（InteractionRepository 按 rpcId 匹配，行为不变）。
+  红绿证据：`packages/dsh-adapter/test/alpha-contract.spec.ts` 新增 approval/question 两条取消投影
+  断言，修复前 `sessionId: ''`/缺失（红），修复后为 waterfall 的真实 `agentId`（绿）。
+- 门禁状态：`typecheck`、`build` 通过；全量 `test` 为 97 文件/726 测试，除 `apps/webview` 已知的
+  6 个预存前端失败（已在干净树上复现，属进行中的前端工作）外全部通过。本批 4 项修复均已按
+  "红测试确认问题存在 → 修复 → 绿"流程完成。
+
 ## rc.8 适配增量与兼容证据
 
 - 版本层：`versions/rc6`、`versions/rc7`、`versions/rc8` 与受控 rc.6 fallback；运行时定位允许任何非空未知版本标签并把警告安全传给 Webview。
