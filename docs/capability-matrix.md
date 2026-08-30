@@ -265,6 +265,26 @@ VS Code 无文件夹 Webview 回放，因此该修复不提升能力矩阵中的
   且涉及安全边界放宽，未获运行证据前不改动。
 - 门禁状态：全量 `test` 741 测试中除既知 6 个预存前端失败外全部通过；typecheck/lint/format 通过。
 
+## 2026-08-30 backend review batch L evidence
+
+- IN-02（queue 帧降级语义）：rc.6 mapper 对畸形的 `session/queue` 帧（`items` 非数组或缺失）此前
+  静默映射为空队列，`Rc6SessionRepository.remember()` 随之清空队列与全部 queue-owner 条目，而 host
+  仍持有这些条目——后续 `session.queue.update/remove/steer` 全部 `STALE_INTERACTION`。同类的
+  `session/jobs` 帧早已 fail-closed（mapper 抛错 → 帧降级为脱敏 unknown 事件 → 保留最后已知状态）。
+  现在 `session/queue` 对 `items` 非数组同样抛错，与 jobs 语义对齐。
+  红绿证据：`packages/dsh-adapter/test/rc6-contract.spec.ts` 新增两条抛错断言，修复前静默通过（红），
+  修复后按 `/Malformed session\/queue items/` 抛出（绿）。
+- IN-02（入队失败重试路径回归锁定）：为 batch K 的 enqueuePrompt 修复补充失败路径测试——首个尝试
+  被 host 拒绝（receipt `ok:false`）时，共享身份 promise 立即 settle，并发等待者回退并发送自己的
+  `session.prompt` 而不是在 grace 窗口内挂起；host 接受后经 `session/queue` 事件交付队列身份。
+  测试证据：`session-repository.spec.ts` 新增失败重试路径（2 个 RPC、第二个获得 `rpc-2` 的队列身份）。
+- 审计记录（不改）：`replace()` 走 `describe()` 直接重取（无缓存读取），不存在 batch K 的陈旧
+  revision 重放路径（探索代理候选经验证排除）；`messageFeedback/delete` 的冷缓存 no-op 修复依赖
+  上游 delete 对 `ifVersion: null` 的接受度（put 有 `?? null` 先例但 delete 侧未证实），且可达性
+  未确认，维持现状并记录；`queuedInput` 逐条丢弃与上游帧 schema 的约束范围有关，全丢弃场景的
+  语义权衡缺乏上游证据，不扩大 fail-closed 范围。
+- 门禁状态：全量 `test` 743 测试中除既知 6 个预存前端失败外全部通过；typecheck/lint/format 通过。
+
 ## rc.8 适配增量与兼容证据
 
 - 版本层：`versions/rc6`、`versions/rc7`、`versions/rc8` 与受控 rc.6 fallback；运行时定位允许任何非空未知版本标签并把警告安全传给 Webview。

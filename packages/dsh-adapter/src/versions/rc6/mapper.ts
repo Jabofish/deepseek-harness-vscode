@@ -620,10 +620,14 @@ export const rc6Mapper = {
           : { type: 'team.updated', sessionId, activity }
       }
       case 'session/queue':
+        // A malformed frame must fail closed like session/jobs: mapping it to
+        // an empty queue would make the repository wipe the queue and every
+        // queue-owner entry while the host still holds the items.
+        if (!Array.isArray(data.items)) throw new Error('Malformed session/queue items')
         return {
           type: 'queue.updated',
           sessionId,
-          items: array(data.items).flatMap((entry) => queuedInput(entry, sessionId)),
+          items: data.items.flatMap((entry) => queuedInput(entry, sessionId)),
         }
       case 'session/subscribed':
         if (data.projections !== undefined && !validProjectionBlock(data.projections))
