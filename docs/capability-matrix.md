@@ -224,6 +224,27 @@ VS Code 无文件夹 Webview 回放，因此该修复不提升能力矩阵中的
   300 帧全部缓冲且 next() 正常返回（红），修复后拒绝并携带 `PROTOCOL_ERROR`/retryable=true（绿）。
 - 门禁状态：全量 `test` 737 测试中除既知 6 个预存前端失败外全部通过；typecheck/lint/format 通过。
 
+## 2026-08-30 backend review batch J evidence
+
+- PL-01（goal OCC 令牌新鲜度）：`Rc6GoalRepository.remember()` 消费 live `session.projection`/`session.subscribed`
+  更新 `goalCache`，但不更新 refs 的 `{id, revision}` 对（`rememberProjectionRefs` 此前只在 `list()` 的
+  历史回填路径调用）。goal edit/complete/resume/pause 是按 revision 的 compare-and-swap，令牌陈旧时
+  发送的是历史回填时刻的 revision 而非 host 已确认的最新值。现在 remember 的两个投影分支同步 harvest
+  refs，令牌与缓存视图保持同等新鲜；投影缺失 revision 字段时 harvest 为无操作（与既有 list 行为一致）。
+  红绿证据：`packages/dsh-adapter/test/goal-repository.spec.ts` 新增 OCC 断言，修复前 `goal.edit`
+  发送 revision 5（红），修复后发送 live 投影的 7（绿）。
+- SA-01（subagent 并发刷新竞态）：`Rc6SubagentRepository.list()` 对 `addresses` 路由表的提交按响应
+  解决顺序生效——同一父会话的两个并发刷新中，较旧的响应后解决会删除较新 catalog 刚路由的子代理或
+  回退其 mode，直到下一次刷新前 follow-up/interrupt 报 `CAPABILITY_UNAVAILABLE`。现在按父会话维护
+  刷新代计数，过期代仅返回其时间点视图而不触碰路由表。
+  红绿证据：`packages/dsh-adapter/test/subagent-repository.spec.ts` 新增旧响应后提交测试，修复前
+  `send` 报 `CAPABILITY_UNAVAILABLE`（红），修复后正常路由 `subagent.prompt`（绿）。
+- 审计记录（不改）：alpha jobs/queue 状态在 per-session 重订阅时按 rc.6 语义清空、而 alpha 的
+  session/follow 快照不携带该基线——是否需要 alpha 专用仓储行为取决于未发布 alpha host 是否在其他
+  通道补偿推送，缺乏上游证据前不改动；`walkHistoryPages` 以映射条目数组索引兜底 `beforeSeq` 仅影响
+  历史行缺失 `seq` 的 rc.6 时代 host，该 host 形状未获证实。
+- 门禁状态：全量 `test` 739 测试中除既知 6 个预存前端失败外全部通过；typecheck/lint/format 通过。
+
 ## rc.8 适配增量与兼容证据
 
 - 版本层：`versions/rc6`、`versions/rc7`、`versions/rc8` 与受控 rc.6 fallback；运行时定位允许任何非空未知版本标签并把警告安全传给 Webview。

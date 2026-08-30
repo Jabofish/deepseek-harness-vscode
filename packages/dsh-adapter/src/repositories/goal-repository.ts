@@ -20,10 +20,15 @@ export class Rc6GoalRepository implements GoalRepository {
     else if (event.type === 'session.projection' && event.key === 'goal') {
       const goals = goalViewsFromProjection(event.value)
       if (goals !== undefined) this.goalCache.set(event.sessionId, goals)
+      // Projection payloads carry the host-bumped {id, revision} pair; the
+      // edit/complete/resume/pause calls are compare-and-swap on that token,
+      // so it must stay as fresh as the cached view.
+      rememberProjectionRefs(this.refs, event.sessionId, event.value)
     } else if (event.type === 'session.subscribed') {
       this.goalCache.delete(event.sessionId)
       const goals = goalViewsFromProjection(event.projection?.values)
       if (goals !== undefined) this.goalCache.set(event.sessionId, goals)
+      rememberProjectionRefs(this.refs, event.sessionId, event.projection?.values)
     } else if (event.type === 'session.removed') this.goalCache.delete(event.sessionId)
   }
 

@@ -292,3 +292,49 @@ describe('Rc6SubagentRepository addressed operations', () => {
     })
   })
 })
+
+describe('Rc6SubagentRepository concurrent refreshes', () => {
+  it('does not let an older catalog response commit after a newer one', async () => {
+    const releases: Array<(value: unknown) => void> = []
+    const repository = new Rc6SubagentRepository({
+      request: <TResponse>(method: string) => {
+        if (method === 'subagent.prompt')
+          return Promise.resolve({ result: { ok: true, value: { messageId: 'message-1' } } } as TResponse)
+        if (method !== 'subagent.list') return Promise.reject(new Error('unexpected RPC'))
+        return new Promise<TResponse>((resolve) => {
+          releases.push((value) => resolve({ result: { ok: true, value } } as TResponse))
+        })
+      },
+      remoteRequest: () => Promise.reject(new Error('unexpected Remote')),
+      openEventStream: async function* () {
+        /* fixture stream */
+      },
+      close: () => Promise.resolve(),
+    })
+
+    // The refresh started first describes the parent BEFORE a child appeared;
+    // the refresh started second is the newer catalog.
+    const older = repository.list('parent')
+    const newer = repository.list('parent')
+    releases[1]?.({
+      entries: [
+        {
+          kind: 'child',
+          id: 'child-new',
+          label: 'new',
+          activity: 'running',
+          hasChildren: false,
+          mode: 'continuable',
+        },
+      ],
+      parentAvailable: true,
+    })
+    await newer
+    releases[0]?.({ entries: [], parentAvailable: true })
+    await older
+
+    // The older response committed last and deleted the child the newer
+    // catalog had just routed, breaking follow-ups until another refresh.
+    await expect(repository.send('child-new', 'follow-up')).resolves.toBeUndefined()
+  })
+})

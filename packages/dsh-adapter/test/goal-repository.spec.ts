@@ -122,3 +122,44 @@ describe('Rc6GoalRepository concurrent cache writes', () => {
     await expect(repository.list('session-1')).resolves.toEqual(delivered)
   })
 })
+
+describe('Rc6GoalRepository optimistic-concurrency tokens', () => {
+  it('sends the revision observed from live goal projections with goal edits', async () => {
+    const edits: unknown[] = []
+    const request = vi.fn((method: string, params: unknown) => {
+      if (method === 'goal.edit') {
+        edits.push(params)
+        return Promise.resolve({
+          result: { ok: true, value: { ref: { id: 'goal-1', revision: 8 } } },
+        } as never)
+      }
+      return Promise.resolve({
+        result: {
+          ok: true,
+          value: {
+            events: [],
+            hasMore: false,
+            projections: {
+              asOfSeq: 5,
+              values: { goal: { goal: { id: 'goal-1', revision: 5, objective: 'T', phase: 'active' } } },
+            },
+          },
+        } as never,
+      })
+    }) as unknown as DshTransport['request']
+    const repository = new Rc6GoalRepository(transport(request))
+    await repository.list('session-1')
+
+    // A live projection delivered after the history walk carries the host's
+    // bumped revision; the edit must use it, not the stale walk-time token.
+    repository.remember({
+      type: 'session.projection',
+      sessionId: 'session-1',
+      key: 'goal',
+      value: { goal: { goal: { id: 'goal-1', revision: 7, objective: 'T', phase: 'active' } } },
+    })
+
+    await repository.update('goal-1', { title: 'T2' })
+    expect(edits).toEqual([{ sessionId: 'session-1', ref: { id: 'goal-1', revision: 7 }, objective: 'T2' }])
+  })
+})
