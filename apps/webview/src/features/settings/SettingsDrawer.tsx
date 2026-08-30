@@ -16,6 +16,7 @@ import type {
 import type { DshSettingsSnapshot } from '../../app/store.js'
 import { ModalWrapper } from '../../components/common/PopoverCard.js'
 import { SettingCard, SettingRow } from '../../components/common/SettingCard.js'
+import { SelectMenu } from '../../components/common/SelectMenu.js'
 import { Icon } from '../../ui/Icon.js'
 import { PluginInventory } from '../plugins/PluginInventory.js'
 import { PluginConfiguration } from '../plugins/PluginConfiguration.js'
@@ -695,21 +696,26 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                           </p>
                         ) : null}
                         <div className="dsh-settings__runtime-update-controls">
-                          <label htmlFor="dsh-settings-update-version">
+                          <span>
                             {t('settings.dshUpdateVersion')}
-                          </label>
-                          <select
-                            id="dsh-settings-update-version"
+                          </span>
+                          <SelectMenu
+                            className="dsh-settings__runtime-update-version"
+                            icon="refresh"
+                            density="regular"
+                            displayLabel
+                            label={effectiveSelectedDshVersion ?? t('settings.dshUpdateUnavailable')}
+                            ariaLabel={t('settings.dshUpdateVersion')}
+                            title={t('settings.dshUpdateVersion')}
                             value={effectiveSelectedDshVersion ?? ''}
-                            disabled={dshUpdateBusy !== undefined || availableDshVersions.length === 0}
-                            onChange={(event) => setSelectedDshVersion(event.target.value)}
-                          >
-                            {availableDshVersions.map((version) => (
-                              <option key={version} value={version}>
-                                {version}
-                              </option>
-                            ))}
-                          </select>
+                            disabled={dshUpdateBusy !== undefined}
+                            options={availableDshVersions.map((version) => ({
+                              value: version,
+                              label: version,
+                            }))}
+                            placement="below"
+                            onChange={setSelectedDshVersion}
+                          />
                           <button
                             className="dsh-button dsh-button--primary dsh-button--compact"
                             type="button"

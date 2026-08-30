@@ -46,6 +46,7 @@ import {
 } from './app/store.js'
 import { useI18n, type Translate } from './i18n.js'
 import { Icon } from './ui/Icon.js'
+import { SelectMenu } from './components/common/SelectMenu.js'
 import { hasVsCodeApi } from './vscode-api.js'
 import { PopupSelectRegistry } from './features/commands/popupSelectRegistry.js'
 
@@ -1247,39 +1248,46 @@ function EmptySessionPosture(props: {
       <span className="dsh-app__eyebrow">{t('app.noActiveSession')}</span>
       <h2>{props.empty ? t('app.createSession') : t('app.chooseSession')}</h2>
       <p>{t('app.workspacePickerHint')}</p>
-      <label className="dsh-empty-session__picker">
+      <div className="dsh-empty-session__picker">
         <span>{t('app.workspacePicker')}</span>
-        <select
+        <SelectMenu
+          className="dsh-empty-session__select"
+          icon="folder"
+          density="regular"
+          displayLabel
+          label={selected?.name ?? t('app.workspacePicker')}
+          ariaLabel={t('app.workspacePicker')}
+          title={t('app.workspacePicker')}
           value={selected?.id ?? ''}
-          onChange={(event) => setSelectedWorkspaceId(event.currentTarget.value)}
-          aria-label={t('app.workspacePicker')}
-        >
-          {props.workspaces.map((workspace) => (
-            <option key={workspace.id} value={workspace.id}>
-              {workspace.name}
-            </option>
-          ))}
-        </select>
-      </label>
+          options={props.workspaces.map((workspace) => ({
+            value: workspace.id,
+            label: workspace.name,
+          }))}
+          placement="below"
+          onChange={setSelectedWorkspaceId}
+        />
+      </div>
       {availablePresets.length === 0 ? null : (
-        <label className="dsh-empty-session__preset">
+        <div className="dsh-empty-session__preset">
           <span>{t('app.presetPicker')}</span>
-          <span className="dsh-empty-session__preset-chip" data-staged-preset={stagedPresetId}>
-            <Icon name="sparkles" />
-            <select
-              value={stagedPresetId}
-              onChange={(event) => setSelectedPresetId(event.currentTarget.value)}
-              aria-label={t('app.presetPicker')}
-            >
-              {availablePresets.map((preset) => (
-                <option key={preset.id} value={preset.id}>
-                  {preset.name ?? preset.id}
-                </option>
-              ))}
-            </select>
-            <span className="dsh-sr-only">{t('app.presetStaged')}</span>
-          </span>
-        </label>
+          <SelectMenu
+            className="dsh-empty-session__select"
+            icon="sparkles"
+            density="regular"
+            displayLabel
+            label={stagedPreset?.name ?? stagedPreset?.id ?? t('app.presetPicker')}
+            ariaLabel={t('app.presetPicker')}
+            title={t('app.presetPicker')}
+            value={stagedPresetId}
+            options={availablePresets.map((preset) => ({
+              value: preset.id,
+              label: preset.name ?? preset.id,
+            }))}
+            placement="below"
+            onChange={setSelectedPresetId}
+          />
+          <span className="dsh-sr-only">{t('app.presetStaged')}</span>
+        </div>
       )}
       <button
         className="dsh-button dsh-button--primary"

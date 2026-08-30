@@ -137,11 +137,11 @@ export function ModelPicker(props: ModelPickerProps): ReactElement {
   return (
     <div
       ref={rootRef}
-      className={`dsh-compact-picker dsh-compact-picker--labelled dsh-model-picker${open ? ' dsh-compact-picker--open' : ''}`}
+      className={`dsh-select-menu dsh-select-menu--labelled dsh-model-picker${open ? ' dsh-select-menu--open' : ''}`}
     >
       <button
         ref={triggerRef}
-        className="dsh-compact-picker__trigger"
+        className="dsh-select-menu__trigger"
         type="button"
         aria-label={`${t('model.aria')}: ${currentLabel}`}
         aria-controls={menuId}
@@ -158,14 +158,15 @@ export function ModelPicker(props: ModelPickerProps): ReactElement {
         }}
       >
         <Icon name="model" />
-        <span className="dsh-compact-picker__trigger-text">{currentLabel}</span>
-        <span className="dsh-compact-picker__trigger-label">{currentLabel}</span>
+        <span className="dsh-select-menu__trigger-text">{currentLabel}</span>
+        <span className="dsh-select-menu__trigger-label">{currentLabel}</span>
+        <Icon name="chevron-down" className="dsh-select-menu__chevron" />
       </button>
       {open ? (
         <div
           ref={menuRef}
           id={menuId}
-          className="dsh-compact-picker__menu dsh-model-picker__menu"
+          className="dsh-select-menu__menu dsh-model-picker__menu"
           role="menu"
           aria-label={t('model.select')}
           style={menuPosition}
@@ -228,8 +229,8 @@ export function ModelPicker(props: ModelPickerProps): ReactElement {
                           model.providerId === props.value.providerId && model.id === props.value.modelId
                         return (
                           <button
-                            className={`dsh-compact-picker__option${
-                              isSelected ? ' dsh-compact-picker__option--selected' : ''
+                            className={`dsh-select-menu__option${
+                              isSelected ? ' dsh-select-menu__option--selected' : ''
                             }`}
                             key={model.id}
                             type="button"
@@ -254,8 +255,8 @@ export function ModelPicker(props: ModelPickerProps): ReactElement {
                   const isSelected = effectiveReasoningLevel === reasoningLevel
                   return (
                     <button
-                      className={`dsh-compact-picker__option${
-                        isSelected ? ' dsh-compact-picker__option--selected' : ''
+                      className={`dsh-select-menu__option${
+                        isSelected ? ' dsh-select-menu__option--selected' : ''
                       }`}
                       key={reasoningLevel}
                       type="button"

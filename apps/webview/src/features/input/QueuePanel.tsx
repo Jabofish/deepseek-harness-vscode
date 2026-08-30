@@ -2,6 +2,7 @@ import type { ReactElement } from 'react'
 import type { QueuedInput, RunningInputMode } from '@dsh-vscode/domain'
 import { useI18n } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
+import { SelectMenu } from '../../components/common/SelectMenu.js'
 
 export interface QueuePanelProps {
   readonly items: readonly QueuedInput[]
@@ -40,14 +41,24 @@ export function QueuePanel(props: QueuePanelProps): ReactElement {
                 />
               </div>
               <div className="dsh-queue__item-actions">
-                <select
-                  aria-label={t('queue.mode', { id: item.id })}
+                <SelectMenu
+                  className="dsh-queue__mode"
+                  icon="arrow-down"
+                  density="regular"
+                  displayLabel
+                  label={item.mode === 'queue' ? t('queue.mode.queue') : t('queue.mode.steer')}
+                  ariaLabel={t('queue.mode', { id: item.id })}
+                  title={t('queue.mode', { id: item.id })}
                   value={item.mode}
-                  onChange={(event) => props.onModeChange(item.id, event.target.value as RunningInputMode)}
-                >
-                  <option value="queue">{t('queue.mode.queue')}</option>
-                  <option value="steer">{t('queue.mode.steer')}</option>
-                </select>
+                  options={[
+                    { value: 'queue', label: t('queue.mode.queue') },
+                    { value: 'steer', label: t('queue.mode.steer') },
+                  ]}
+                  placement="below"
+                  onChange={(mode) => {
+                    if (mode === 'queue' || mode === 'steer') props.onModeChange(item.id, mode)
+                  }}
+                />
                 <button
                   className="dsh-icon-button"
                   type="button"
