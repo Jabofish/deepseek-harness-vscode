@@ -2,6 +2,8 @@ import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent, ty
 import type { ModelDescriptor, ModelSelection } from '@dsh-vscode/domain'
 import { useI18n } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
+import { useDismissibleLayer } from '../../components/common/useDismissibleLayer.js'
+import { useViewportMenuPosition } from '../../components/common/useViewportMenuPosition.js'
 
 type ModelPane = 'root' | 'models' | 'effort'
 
@@ -31,6 +33,7 @@ export function ModelPicker(props: ModelPickerProps): ReactElement {
   const [pane, setPane] = useState<ModelPane>('root')
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
   const menuId = useId()
   const selected = props.models.find(
     (model) => model.providerId === props.value.providerId && model.id === props.value.modelId,
@@ -46,21 +49,28 @@ export function ModelPicker(props: ModelPickerProps): ReactElement {
       : reasoningLevels.length === 0 || effectiveReasoningLevel === undefined
         ? selected.label
         : `${selected.label} · ${effectiveReasoningLevel}`
+  const menuPosition = useViewportMenuPosition({
+    open,
+    anchorRef: triggerRef,
+    menuRef,
+    refreshKey: pane,
+    placement: 'above',
+  })
 
   const close = useCallback((): void => {
     setOpen(false)
     setPane('root')
   }, [])
 
-  useEffect(() => {
-    if (!open) return
-    const closeOnOutsidePointer = (event: PointerEvent): void => {
-      const target = event.target
-      if (target instanceof Node && !rootRef.current?.contains(target)) close()
-    }
-    document.addEventListener('pointerdown', closeOnOutsidePointer)
-    return () => document.removeEventListener('pointerdown', closeOnOutsidePointer)
-  }, [close, open])
+  useDismissibleLayer({
+    open,
+    refs: [rootRef, menuRef],
+    onDismiss: close,
+    onEscape: () => {
+      close()
+      triggerRef.current?.focus()
+    },
+  })
 
   useEffect(() => {
     if ((props.openRequest ?? 0) <= 0 || props.disabled || props.models.length === 0) return
@@ -153,10 +163,12 @@ export function ModelPicker(props: ModelPickerProps): ReactElement {
       </button>
       {open ? (
         <div
+          ref={menuRef}
           id={menuId}
           className="dsh-compact-picker__menu dsh-model-picker__menu"
           role="menu"
           aria-label={t('model.select')}
+          style={menuPosition}
           onKeyDown={onMenuKeyDown}
         >
           {pane === 'root' ? (

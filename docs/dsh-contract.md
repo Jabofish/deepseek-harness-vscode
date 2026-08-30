@@ -22,6 +22,30 @@
 - [alpha.1 Connection RPC](https://github.com/deepseek-ai/deepseek-harness/blob/cd5ef8148158c3a752a658978873241fdf8e2bbc/packages/client/connection/src/rpc.ts)
 - [alpha.1 Gateway stream protocol](https://github.com/deepseek-ai/deepseek-harness/blob/cd5ef8148158c3a752a658978873241fdf8e2bbc/packages/api/gateway/src/stream-protocol.ts)
 
+## rc.6 固定契约核对记录
+
+Slice 0 重新核对了 DSH rc.6 固定提交 [`47f943859bef60e4160492346772ded9b24f765a`](https://github.com/deepseek-ai/deepseek-harness/tree/47f943859bef60e4160492346772ded9b24f765a)：
+
+- `packages/host/apiproxy/src/api/rpc-map.ts` 注册 52 个客户端请求方法；`packages/dsh-adapter/test/fixtures/rc6-contract-snapshot.ts` 脱敏固定了来源 commit、方法名和事件族，`packages/dsh-adapter/test/rc6-contract.spec.ts` 同时用该 snapshot 做来源/集合断言，并以 npm 类型派生的 `RpcMethodMap` 做编译期兼容检查。npm 类型包不是固定 commit 的替代证据。
+- `packages/host/apiproxy/src/api/events.ts` 将 mux 与 host 作为两个逻辑流，session 事件携带 `sessionId`/序号，订阅帧携带 `lastSeq`，审批/问题响应使用 `rpcId`，工具调用/结果使用结构化事件视图；扩展继续通过 Adapter 映射，不解析 TUI/ANSI 或模型文本状态。
+- 工具能力由 `packages/core/tools`、`packages/*/tool-*` 等包注册，并由生成的 `docs/tool-catalog.md` 汇总；扩展不硬编码第三方工具清单，只消费已知结构化投影或显式降级。
+
+本次核对只记录脱敏的名称、序号和结构边界，不把上游路径、Prompt、Secret、原始响应或运行时凭据写入 fixture/协议；Slice 0 的新 feature schema 也与 legacy `boundedUnknown` 事件 envelope 分离，避免未实现路由被提前接受。
+
+当前批次新增路由只在 Extension Host 装配后接受。checkpoint 路由是 Extension Host 本地能力：默认关闭；用户显式开启 `dsh.checkpoints.enabled` 后只列出/创建 metadata-only 记录，内容保存与 restore 还必须单独开启 `dsh.checkpoints.storeContent`。prompt template 路由同样是 Host 本地能力，不新增 DSH RPC：正文存放在 extension global storage 或受信工作区的固定 `.dsh-vscode/prompts` 根目录，使用 checksum manifest 和 atomic rename；Webview 只接收严格摘要/预览/插入 DTO，变量必须在白名单内且缺失变量要由用户明确处理。`Plan` 工作流模式仅在动态命令目录声明 `/plan` 时可用，其他语义模式不改变 DSH 权限或工具配置。
+
+## 托管 Web Profile 启动契约
+
+托管进程的 CLI 参数不是协议 Adapter 可以跨版本猜测的公共字段，必须由版本化启动契约生成。当前已核实的 Web Profile 参数如下：
+
+| DSH 版本                                                  | 托管参数                                    |
+| --------------------------------------------------------- | ------------------------------------------- |
+| `0.1.0-rc.6`、`0.1.0-rc.7`                                | `--profile web --host 127.0.0.1 --port <n>` |
+| `0.1.0-rc.8`、`0.1.1-rc.1`、`0.1.1-rc.2`、`0.1.2-alpha.1` | 上述参数加 `--no-open`                      |
+| 未知版本                                                  | 只使用公共参数，不猜测可选 flag             |
+
+rc.6/rc.7 的 Web Profile 未注册 `--no-open`；把该参数传给它会在 readiness endpoint 输出前以 CLI 参数解析错误退出。启动参数由 `packages/dsh-adapter/src/launch-contract.ts` 集中生成；新增版本必须先核对该版本的 Web Profile 源码/帮助文本并补充对应契约测试，不能在 `ProcessSupervisor` 中添加全局 flag。
+
 ## 支持范围
 
 | DSH 版本             | 适配方式         | 兼容说明                                                                                                                                                         |

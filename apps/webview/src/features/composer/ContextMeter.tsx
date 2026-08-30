@@ -1,7 +1,9 @@
 import { createPortal } from 'react-dom'
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactElement } from 'react'
+import { useRef, useState, type ReactElement } from 'react'
 import type { ContextBreakdown } from '@dsh-vscode/domain'
 import { useI18n } from '../../i18n.js'
+import { useDismissibleLayer } from '../../components/common/useDismissibleLayer.js'
+import { useViewportMenuPosition } from '../../components/common/useViewportMenuPosition.js'
 
 export interface ContextMeterProps {
   readonly tokens: number
@@ -23,88 +25,28 @@ export function ContextMeter(props: ContextMeterProps): ReactElement {
   const rootRef = useRef<HTMLSpanElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const detailsRef = useRef<HTMLDivElement>(null)
-  const [detailsPosition, setDetailsPosition] = useState<CSSProperties | undefined>()
   const current = Math.max(0, Math.floor(props.tokens))
   const maximum = positive(props.maximum)
   const ratio = maximum === undefined ? 0 : Math.min(1, current / maximum)
   const percent = maximum === undefined ? undefined : Math.round(ratio * 100)
   const segments = contextSegments(props.breakdown)
   const circumference = 2 * Math.PI * 8
+  const fullLabel = contextLabel(current, maximum)
+  const compactLabel = compactContextLabel(current, maximum, percent)
+  const detailsPosition = useViewportMenuPosition({
+    open,
+    anchorRef: triggerRef,
+    menuRef: detailsRef,
+    placement: 'above',
+    align: 'end',
+    refreshKey: `${current}:${maximum ?? ''}:${percent ?? ''}:${segments.length}`,
+  })
 
-  useEffect(() => {
-    if (!open) return
-    const onPointerDown = (event: PointerEvent): void => {
-      const root = rootRef.current
-      const details = detailsRef.current
-      if (
-        event.target instanceof Node &&
-        ((root !== null && root.contains(event.target)) ||
-          (details !== null && details.contains(event.target)))
-      )
-        return
-      setOpen(false)
-    }
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') setOpen(false)
-    }
-    document.addEventListener('pointerdown', onPointerDown, true)
-    document.addEventListener('keydown', onKeyDown)
-    return () => {
-      document.removeEventListener('pointerdown', onPointerDown, true)
-      document.removeEventListener('keydown', onKeyDown)
-    }
-  }, [open])
-
-  useLayoutEffect(() => {
-    if (!open) return
-
-    const updateDetailsPosition = (): void => {
-      const trigger = triggerRef.current
-      const details = detailsRef.current
-      if (trigger === null || details === null) return
-
-      const viewportWidth = document.documentElement.clientWidth || window.innerWidth
-      const viewportHeight = document.documentElement.clientHeight || window.innerHeight
-      const horizontalMargin = Math.min(8, viewportWidth / 2)
-      const verticalMargin = Math.min(8, viewportHeight / 2)
-      const availableWidth = Math.max(0, viewportWidth - horizontalMargin * 2)
-      const width = Math.min(264, availableWidth)
-      const maxLeft = Math.max(horizontalMargin, viewportWidth - width - horizontalMargin)
-      const triggerRect = trigger.getBoundingClientRect()
-      const left = Math.max(horizontalMargin, Math.min(maxLeft, triggerRect.right - width))
-      const maxHeight = Math.min(260, Math.max(0, viewportHeight - verticalMargin * 2))
-      const measuredHeight = Math.min(details.scrollHeight, maxHeight)
-      const aboveTop = triggerRect.top - measuredHeight - 8
-      const belowTop = triggerRect.bottom + 8
-      const top =
-        aboveTop >= verticalMargin
-          ? aboveTop
-          : Math.min(
-              Math.max(verticalMargin, belowTop),
-              Math.max(verticalMargin, viewportHeight - measuredHeight - verticalMargin),
-            )
-
-      setDetailsPosition({
-        position: 'fixed',
-        top: `${Math.max(verticalMargin, top)}px`,
-        left: `${left}px`,
-        right: 'auto',
-        bottom: 'auto',
-        width: `${width}px`,
-        maxWidth: `calc(100vw - ${horizontalMargin * 2}px)`,
-        maxHeight: `${maxHeight}px`,
-        visibility: 'visible',
-      })
-    }
-
-    updateDetailsPosition()
-    window.addEventListener('resize', updateDetailsPosition)
-    window.addEventListener('scroll', updateDetailsPosition, true)
-    return () => {
-      window.removeEventListener('resize', updateDetailsPosition)
-      window.removeEventListener('scroll', updateDetailsPosition, true)
-    }
-  }, [open, current, maximum, percent, segments.length])
+  useDismissibleLayer({
+    open,
+    refs: [rootRef, detailsRef],
+    onDismiss: () => setOpen(false),
+  })
 
   return (
     <span ref={rootRef} className="dsh-context-meter">
@@ -112,11 +54,10 @@ export function ContextMeter(props: ContextMeterProps): ReactElement {
         ref={triggerRef}
         type="button"
         className="dsh-context-meter__trigger"
-        aria-label={t('controls.contextAria', { value: contextLabel(current, maximum) })}
+        aria-label={t('controls.contextAria', { value: fullLabel })}
         aria-expanded={open}
         title={t('controls.contextDetails')}
         onClick={() => {
-          if (!open) setDetailsPosition(undefined)
           setOpen((value) => !value)
         }}
       >
@@ -131,14 +72,19 @@ export function ContextMeter(props: ContextMeterProps): ReactElement {
             strokeDashoffset={circumference * (1 - ratio)}
           />
         </svg>
-        <span>{contextLabel(current, maximum)}</span>
+        <span className="dsh-context-meter__label dsh-context-meter__label--full" aria-hidden="true">
+          {fullLabel}
+        </span>
+        <span className="dsh-context-meter__label dsh-context-meter__label--compact" aria-hidden="true">
+          {compactLabel}
+        </span>
       </button>
       {open && typeof document !== 'undefined'
         ? createPortal(
             <div
               ref={detailsRef}
               className="dsh-context-meter__details"
-              style={detailsPosition ?? { visibility: 'hidden' }}
+              style={detailsPosition}
               role="dialog"
               aria-label={t('controls.contextDetails')}
             >
@@ -258,6 +204,11 @@ function contextLabel(current: number, maximum: number | undefined): string {
   return maximum === undefined
     ? `~${formatCount(current)}`
     : `~${formatCount(current)} / ${formatCount(maximum)}`
+}
+
+function compactContextLabel(current: number, maximum: number | undefined, percent: number | undefined): string {
+  if (maximum === undefined || percent === undefined) return `~${formatCount(current)}`
+  return `~${formatCount(current)} · ${percent}%`
 }
 
 function formatCount(value: number): string {

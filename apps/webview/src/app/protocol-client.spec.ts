@@ -128,4 +128,79 @@ describe('ProtocolClient', () => {
     expect(setState).not.toHaveBeenCalled()
     client.dispose()
   })
+
+  it('rejects delayed feature events from an older connection generation', () => {
+    const client = new ProtocolClient({
+      postMessage: () => undefined,
+      getState: () => undefined,
+      setState: () => undefined,
+    })
+    const events: unknown[] = []
+    client.subscribeFeature((message) => events.push(message))
+    const event = (connectionGeneration: number, localSeq: number): unknown => ({
+      protocolVersion: PROTOCOL_VERSION,
+      message: {
+        type: 'feature.event',
+        name: 'editor.context.changed',
+        identity: {
+          backendInstanceId: 'backend-1',
+          connectionGeneration,
+          stream: 'local',
+          localSeq,
+        },
+        contextRef: 'dsh-context-context-00000001',
+        action: 'updated',
+      },
+    })
+
+    client.handle(event(2, 1))
+    client.handle(event(1, 99))
+    client.handle(event(2, 1))
+    client.handle(event(3, 1))
+    expect(events).toHaveLength(2)
+    client.dispose()
+  })
+
+  it('rejects delayed feature events from a replaced backend instance', () => {
+    const client = new ProtocolClient({
+      postMessage: () => undefined,
+      getState: () => undefined,
+      setState: () => undefined,
+    })
+    const events: unknown[] = []
+    client.subscribeFeature((message) => events.push(message))
+    const snapshot = (sequence: number, backendInstanceId: string): unknown => ({
+      protocolVersion: PROTOCOL_VERSION,
+      message: {
+        type: 'event',
+        name: 'connection.snapshot',
+        sequence,
+        payload: { kind: 'connected', backendInstanceId, connectionGeneration: 1 },
+      },
+    })
+    const event = (backendInstanceId: string, localSeq: number): unknown => ({
+      protocolVersion: PROTOCOL_VERSION,
+      message: {
+        type: 'feature.event',
+        name: 'editor.context.changed',
+        identity: {
+          backendInstanceId,
+          connectionGeneration: 1,
+          stream: 'local',
+          localSeq,
+        },
+        contextRef: 'dsh-context-context-00000001',
+        action: 'updated',
+      },
+    })
+
+    client.handle(snapshot(1, 'backend-1'))
+    client.handle(event('backend-1', 1))
+    client.handle(snapshot(2, 'backend-2'))
+    client.handle(event('backend-1', 2))
+    client.handle(event('backend-2', 1))
+
+    expect(events).toHaveLength(2)
+    client.dispose()
+  })
 })

@@ -33,6 +33,7 @@ import {
   type AlphaWebSocketConstructor,
 } from './transport.js'
 import { callRpc } from '../rc6/rpc.js'
+import { deriveFeatureCapabilityProfile } from '../../feature-capabilities.js'
 
 export type AlphaAdapterOptions = Omit<Rc6AdapterOptions, 'webSocket'> & {
   readonly authCookie?: (endpoint: BackendEndpoint) => string | undefined
@@ -63,7 +64,7 @@ export class AlphaVersionAdapter implements DshVersionAdapter {
     try {
       const value = await callRpc<unknown>(transport, 'session.list', {}, signal)
       if (!isSessionList(value)) return undefined
-      return {
+      const capabilities: BackendCapabilities = {
         protocolVersion: this.protocolVersion,
         dshVersion: this.supportedVersion,
         features: new Set([
@@ -82,6 +83,10 @@ export class AlphaVersionAdapter implements DshVersionAdapter {
           'references',
           'feedback',
         ]),
+      }
+      return {
+        ...capabilities,
+        featureProfile: deriveFeatureCapabilityProfile(capabilities),
       }
     } catch (error) {
       if (signal?.aborted === true) throw error

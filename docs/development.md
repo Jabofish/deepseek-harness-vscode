@@ -27,6 +27,11 @@ pnpm build
 4. 新 Extension Development Host 使用 `.test-workspace`，不会把测试文件混入仓库。
 5. 修改 Webview 时使用 `pnpm dev`；Vite 输出固定文件到 `apps/extension/media`，该目录不提交。
 
+如果 Extension Development Host 没有实际打开文件夹，扩展不会依赖
+`workspaceFolders` 推断工作区；连接 DSH 后，Host 会在扩展的 `globalStorageUri` 下创建或恢复
+一个受管理的 `workspace-*` 临时工作区，并把它作为 `workspace.list` 的唯一结果返回。
+该路径和 DSH workspace id 会持久化，DSH 重启后会按路径重新注册；用户工作区不会被当作临时目录删除。
+
 当前激活已经进入连接/Runtime Missing/会话基础切片；仍请以能力矩阵和门禁结果判断可用范围，不要把成功激活视为所有能力完成。
 
 ## DSH 联调模式
@@ -48,7 +53,7 @@ pnpm build
 
 1. 选择 `new-isolated`，或 `auto` 且确认没有可连接实例。
 2. `dsh.connection.managedPort=0` 使用随机空闲端口；固定端口用于可预测调试。
-3. 验证命令固定为参数数组 `--profile web --no-open --host 127.0.0.1 --port <n>`，避免受管 DSH 把系统浏览器当成启动界面。
+3. 托管启动使用版本化参数数组：rc.6/rc.7 为 `--profile web --host 127.0.0.1 --port <n>`；rc.8、rc.1、rc.2 和 alpha.1 在同一组参数中追加已由上游声明的 `--no-open`；未知版本不猜测该可选参数。
 4. 扩展关闭后只结束本次扩展创建的进程。
 
 ## Remote SSH/WSL/Dev Container

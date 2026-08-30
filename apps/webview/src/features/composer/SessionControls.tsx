@@ -1,17 +1,20 @@
-import type {
-  AgentConfiguration,
-  AgentPresetDescriptor,
-  ContextBreakdown,
-  DynamicCommand,
-  ModelDescriptor,
+import {
+  type AgentConfiguration,
+  type AgentPresetDescriptor,
+  type ContextBreakdown,
+  type DynamicCommand,
+  type ModelDescriptor,
+  PROMPT_MODES,
+  type PromptMode,
+  isPromptMode,
 } from '@dsh-vscode/domain'
-import { createPortal } from 'react-dom'
-import { useLayoutEffect, useRef, useState, type CSSProperties, type ReactElement } from 'react'
+import { useRef, useState, type ReactElement } from 'react'
 import { CompactPicker, type CompactPickerOption } from './CompactPicker.js'
 import { Icon, type IconName } from '../../ui/Icon.js'
 import { ModelPicker } from '../models/ModelPicker.js'
 import { useI18n, type Translate } from '../../i18n.js'
 import { ContextMeter } from './ContextMeter.js'
+import { useViewportMenuPosition } from '../../components/common/useViewportMenuPosition.js'
 
 export interface SessionControlsProps {
   readonly configuration: AgentConfiguration
@@ -23,15 +26,23 @@ export interface SessionControlsProps {
   readonly estimatedContextTokens?: number
   readonly contextWindowTokens?: number
   readonly contextBreakdown?: ContextBreakdown
+  /** Local semantic workflow profile; Plan is enabled only by an advertised DSH command. */
+  readonly promptMode?: PromptMode
   readonly disabled: boolean
   readonly presetMutable: boolean
   readonly modelPickerOpenRequest?: number
+  /** Keep the primary model selector in the toolbar and move secondary
+   * session switches into the composer's extras surface. */
+  readonly surface?: 'all' | 'primary' | 'secondary'
   readonly onChange: (configuration: AgentConfiguration) => void
   readonly onCommand: (command: string) => void
+  readonly onPromptModeChange?: (mode: PromptMode) => void
 }
 
 export function SessionControls(props: SessionControlsProps): ReactElement {
   const { t } = useI18n()
+  const showPrimary = props.surface !== 'secondary'
+  const showSecondary = props.surface !== 'primary'
   const selectorsRef = useRef<HTMLDivElement>(null)
   const riskContext = `${props.configuration.permissionPreset}:${props.disabled ? 'disabled' : 'enabled'}`
   const [riskState, setRiskState] = useState<{
@@ -43,7 +54,7 @@ export function SessionControls(props: SessionControlsProps): ReactElement {
     riskState.context === riskContext ? riskState : { context: riskContext, acknowledged: false as const }
   const riskPending = activeRiskState.pending
   const riskAcknowledged = activeRiskState.acknowledged
-  const [riskPosition, setRiskPosition] = useState<CSSProperties | undefined>()
+  const riskRef = useRef<HTMLDivElement>(null)
   const availablePresets = props.presets.filter((preset) => preset.broken === undefined)
   const selectedPreset = availablePresets.find((preset) => preset.id === props.configuration.preset)
   const modeOptions: CompactPickerOption[] = [
@@ -73,54 +84,35 @@ export function SessionControls(props: SessionControlsProps): ReactElement {
   const availablePermissionPresets = permissionOptions(permissionPreset, props.permissionPresets)
   const permissionCommandAvailable = hasCommand(props.commands, 'permission')
   const planCommandAvailable = hasCommand(props.commands, 'plan')
+  const promptModeOptions: CompactPickerOption[] = PROMPT_MODES.map((mode) => ({
+    value: mode,
+    label: t(`controls.workflowMode.${mode}`),
+    ...(mode === 'plan' && !planCommandAvailable ? { disabled: true } : {}),
+  }))
+  const promptModeLabel =
+    props.promptMode === undefined
+      ? t('controls.workflowMode.ask')
+      : t(`controls.workflowMode.${props.promptMode}`)
   const contextWindowTokens = positiveTokenCount(props.contextWindowTokens)
   const contextLabel =
     props.estimatedContextTokens === undefined || contextWindowTokens === undefined
       ? undefined
       : formatContextLabel(props.estimatedContextTokens, contextWindowTokens)
 
-  useLayoutEffect(() => {
-    if (riskPending === undefined) return
-    const updateRiskPosition = (): void => {
-      const anchor = selectorsRef.current
-      if (anchor === null) return
-      const rect = anchor.getBoundingClientRect()
-      const viewportWidth = document.documentElement.clientWidth || window.innerWidth
-      const viewportHeight = document.documentElement.clientHeight || window.innerHeight
-      const width = Math.min(320, Math.max(0, viewportWidth - 24))
-      const maxHeight = Math.min(260, Math.max(0, viewportHeight - 24))
-      const maxRight = Math.max(12, viewportWidth - width - 12)
-      const desiredRight = viewportWidth - rect.right
-      const right = Math.min(maxRight, Math.max(12, desiredRight))
-      const preferredBottom = viewportHeight - rect.top + 8
-      const maxBottom = Math.max(12, viewportHeight - 12 - maxHeight)
-      const bottom = Math.max(12, Math.min(maxBottom, preferredBottom))
-      setRiskPosition({
-        position: 'fixed',
-        left: 'auto',
-        right: `${right}px`,
-        insetInlineStart: 'auto',
-        insetInlineEnd: 'auto',
-        bottom: `${bottom}px`,
-        width: `${width}px`,
-        maxWidth: `calc(100vw - 24px)`,
-        visibility: 'visible',
-      })
-    }
-    updateRiskPosition()
-    window.addEventListener('resize', updateRiskPosition)
-    window.addEventListener('scroll', updateRiskPosition, true)
-    return () => {
-      window.removeEventListener('resize', updateRiskPosition)
-      window.removeEventListener('scroll', updateRiskPosition, true)
-    }
-  }, [riskPending])
+  const riskPosition = useViewportMenuPosition({
+    open: riskPending !== undefined,
+    anchorRef: selectorsRef,
+    menuRef: riskRef,
+    placement: 'above',
+    align: 'end',
+  })
 
   const riskPopover =
     riskPending === undefined ? null : (
       <div
+        ref={riskRef}
         className="dsh-session-controls__risk"
-        style={riskPosition ?? { visibility: 'hidden' }}
+        style={riskPosition}
         role="alertdialog"
         aria-label={t('controls.fullAccessQuestion')}
       >
@@ -167,75 +159,111 @@ export function SessionControls(props: SessionControlsProps): ReactElement {
     )
 
   return (
-    <div className="dsh-session-controls" aria-label={t('controls.aria')}>
+    <div
+      className={`dsh-session-controls dsh-session-controls--${props.surface ?? 'all'}`}
+      aria-label={t('controls.aria')}
+    >
       <div ref={selectorsRef} className="dsh-session-controls__selectors">
-        <CompactPicker
-          className="dsh-session-controls__mode"
-          icon={modeIcon(props.configuration.preset, modeLabel)}
-          displayLabel
-          label={modeLabel}
-          ariaLabel={t('controls.mode')}
-          title={props.presetMutable ? t('controls.modeSelect') : t('controls.modeLocked')}
-          value={props.configuration.preset}
-          options={modeOptions}
-          disabled={props.disabled || !props.presetMutable || availablePresets.length < 2}
-          onChange={(preset) => props.onChange({ ...props.configuration, preset })}
-        />
-        <ModelPicker
-          models={props.models}
-          value={props.configuration.model}
-          {...(props.modelPickerOpenRequest === undefined
-            ? {}
-            : { openRequest: props.modelPickerOpenRequest })}
-          displayLabel
-          disabled={props.disabled}
-          onChange={(model) => props.onChange({ ...props.configuration, model })}
-        />
-        <CompactPicker
-          className={`dsh-session-controls__access-picker${
-            isFullAccessPreset(permissionPreset) ? ' dsh-session-controls__access-picker--full-access' : ''
-          }`}
-          icon={permissionIcon(permissionPreset)}
-          label={formatPermissionLabel(permissionPreset, t)}
-          ariaLabel={t('controls.access')}
-          title={permissionCommandAvailable ? t('controls.accessChange') : t('controls.accessUnavailable')}
-          value={permissionPreset}
-          options={availablePermissionPresets.map((preset) => ({
-            value: preset,
-            label: formatPermissionLabel(preset, t),
-          }))}
-          disabled={props.disabled || availablePermissionPresets.length < 2 || !permissionCommandAvailable}
-          onChange={(preset) => {
-            if (isFullAccessPreset(preset)) {
-              setRiskState({ context: riskContext, pending: preset, acknowledged: false })
-              return
+        {showSecondary ? (
+          <CompactPicker
+            className="dsh-session-controls__mode"
+            icon={modeIcon(props.configuration.preset, modeLabel)}
+            displayLabel
+            label={modeLabel}
+            ariaLabel={t('controls.mode')}
+            title={props.presetMutable ? t('controls.modeSelect') : t('controls.modeLocked')}
+            value={props.configuration.preset}
+            options={modeOptions}
+            disabled={props.disabled || !props.presetMutable || availablePresets.length < 2}
+            onChange={(preset) => props.onChange({ ...props.configuration, preset })}
+          />
+        ) : null}
+        {showSecondary && props.promptMode !== undefined && props.onPromptModeChange !== undefined ? (
+          <CompactPicker
+            className="dsh-session-controls__workflow-mode"
+            icon="sparkles"
+            displayLabel
+            label={promptModeLabel}
+            ariaLabel={t('controls.workflowMode')}
+            title={
+              props.promptMode === 'plan' && !planCommandAvailable
+                ? t('controls.workflowModeUnavailable')
+                : t('controls.workflowModeHint')
             }
-            props.onCommand(`/permission ${preset}`)
-          }}
-        />
-        <button
-          className="dsh-session-controls__access dsh-session-controls__plan"
-          type="button"
-          aria-label={props.configuration.planMode ? t('controls.planOff') : t('controls.planOn')}
-          aria-pressed={props.configuration.planMode}
-          title={
-            planCommandAvailable
-              ? props.configuration.planMode
-                ? t('controls.planOff')
-                : t('controls.planOn')
-              : t('controls.planUnavailable')
-          }
-          disabled={props.disabled || !planCommandAvailable}
-          onClick={() => props.onCommand(props.configuration.planMode ? '/plan off' : '/plan')}
-        >
-          <Icon name="plan" />
-          <span className="dsh-sr-only">
-            {props.configuration.planMode ? t('controls.planOff') : t('controls.planOn')}
-          </span>
-        </button>
+            value={props.promptMode}
+            options={promptModeOptions}
+            disabled={props.disabled}
+            onChange={(mode) => {
+              if (isPromptMode(mode)) props.onPromptModeChange?.(mode)
+            }}
+          />
+        ) : null}
+        {showPrimary ? (
+          <ModelPicker
+            models={props.models}
+            value={props.configuration.model}
+            {...(props.modelPickerOpenRequest === undefined
+              ? {}
+              : { openRequest: props.modelPickerOpenRequest })}
+            displayLabel
+            disabled={props.disabled}
+            onChange={(model) => props.onChange({ ...props.configuration, model })}
+          />
+        ) : null}
+        {showPrimary ? (
+          <CompactPicker
+            className={`dsh-session-controls__access-picker${
+              isFullAccessPreset(permissionPreset) ? ' dsh-session-controls__access-picker--full-access' : ''
+            }`}
+            icon={permissionIcon(permissionPreset)}
+            displayLabel
+            label={formatPermissionLabel(permissionPreset, t)}
+            ariaLabel={t('controls.access')}
+            title={
+              permissionCommandAvailable ? t('controls.accessChange') : t('controls.accessUnavailable')
+            }
+            value={permissionPreset}
+            options={availablePermissionPresets.map((preset) => ({
+              value: preset,
+              label: formatPermissionLabel(preset, t),
+            }))}
+            disabled={props.disabled || availablePermissionPresets.length < 2 || !permissionCommandAvailable}
+            onChange={(preset) => {
+              if (isFullAccessPreset(preset)) {
+                setRiskState({ context: riskContext, pending: preset, acknowledged: false })
+                return
+              }
+              props.onCommand(`/permission ${preset}`)
+            }}
+          />
+        ) : null}
+        {showSecondary ? (
+          <>
+            <button
+              className="dsh-session-controls__access dsh-session-controls__plan"
+              type="button"
+              aria-label={props.configuration.planMode ? t('controls.planOff') : t('controls.planOn')}
+              aria-pressed={props.configuration.planMode}
+              title={
+                planCommandAvailable
+                  ? props.configuration.planMode
+                    ? t('controls.planOff')
+                    : t('controls.planOn')
+                  : t('controls.planUnavailable')
+              }
+              disabled={props.disabled || !planCommandAvailable}
+              onClick={() => props.onCommand(props.configuration.planMode ? '/plan off' : '/plan')}
+            >
+              <Icon name="plan" />
+              <span className="dsh-session-controls__plan-label">
+                {props.configuration.planMode ? t('controls.planOff') : t('controls.planOn')}
+              </span>
+            </button>
+          </>
+        ) : null}
       </div>
       <dl className="dsh-session-controls__metrics">
-        {contextLabel === undefined ? null : (
+        {showPrimary && contextLabel !== undefined ? (
           <div>
             <dt className="dsh-sr-only">{t('controls.context')}</dt>
             <dd className="dsh-session-controls__context-cell">
@@ -246,9 +274,9 @@ export function SessionControls(props: SessionControlsProps): ReactElement {
               />
             </dd>
           </div>
-        )}
+        ) : null}
       </dl>
-      {riskPopover === null ? null : createPortal(riskPopover, document.body)}
+      {riskPopover}
     </div>
   )
 }

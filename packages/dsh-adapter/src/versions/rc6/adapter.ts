@@ -33,6 +33,7 @@ import { Rc6SkillRepository } from '../../repositories/skill-repository.js'
 import { Rc6SubagentRepository } from '../../repositories/subagent-repository.js'
 import { Rc6WorkspaceRepository } from '../../repositories/workspace-repository.js'
 import { DshStreamController } from '../../stream-controller.js'
+import { deriveFeatureCapabilityProfile } from '../../feature-capabilities.js'
 import { callRpc } from './rpc.js'
 
 export type Rc6AdapterOptions = Omit<LoopbackApiClientOptions, 'endpoint'> & {
@@ -90,7 +91,7 @@ export class Rc6VersionAdapter implements DshVersionAdapter {
           : !isKnownDshVersion(hintedVersion)
             ? `DSH ${hintedVersion} is outside the tested compatibility range (${SUPPORTED_DSH_RANGE}); basic compatibility mode is active.`
             : undefined
-      return {
+      const capabilities: BackendCapabilities = {
         protocolVersion: this.protocolVersion,
         dshVersion: reportedVersion,
         features: new Set([
@@ -106,6 +107,10 @@ export class Rc6VersionAdapter implements DshVersionAdapter {
           'events',
         ]),
         ...(compatibilityWarning === undefined ? {} : { compatibilityWarning }),
+      }
+      return {
+        ...capabilities,
+        featureProfile: deriveFeatureCapabilityProfile(capabilities),
       }
     } catch (error) {
       if (error instanceof AppError && error.code === 'DSH_INCOMPATIBLE') throw error

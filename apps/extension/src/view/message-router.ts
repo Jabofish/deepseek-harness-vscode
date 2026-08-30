@@ -3,7 +3,11 @@ import { redactText } from '@dsh-vscode/dsh-adapter'
 import {
   hostMessageSchema,
   protocolValueWithinBudget,
+  featureHostMessageSchema,
+  featureWebviewEnvelopeSchema,
   webviewEnvelopeSchema,
+  type FeatureHostMessage,
+  type FeatureRequest,
   type HostMessage,
   type WebviewRequest,
 } from '@dsh-vscode/webview-protocol'
@@ -16,8 +20,9 @@ export interface UnexpectedErrorEntry {
 }
 
 export interface MessageRouterDependencies {
-  readonly postMessage: (message: HostMessage) => Thenable<boolean>
+  readonly postMessage: (message: HostMessage | FeatureHostMessage) => Thenable<boolean>
   readonly handleRequest?: (request: WebviewRequest, signal: AbortSignal) => Promise<unknown>
+  readonly handleFeatureRequest?: (request: FeatureRequest, signal: AbortSignal) => Promise<unknown>
   /**
    * Non-AppError handler failures are reduced to a generic INTERNAL_ERROR for
    * the Webview; this hook keeps the redacted cause reachable in the host
@@ -36,27 +41,53 @@ export class WebviewMessageRouter {
       await this.postError('invalid', 'The Webview request exceeds the protocol limits.', false)
       return
     }
-    const parsed = webviewEnvelopeSchema.safeParse(rawMessage)
-    if (!parsed.success) {
+    const legacy = webviewEnvelopeSchema.safeParse(rawMessage)
+    const feature = featureWebviewEnvelopeSchema.safeParse(rawMessage)
+    if (!legacy.success && !feature.success) {
       await this.postError('invalid', 'Invalid Webview request.', false)
       return
     }
-    const request = parsed.data.message
+    const isFeature = feature.success && !legacy.success
+    const request = (isFeature ? feature.data.message : legacy.success ? legacy.data.message : undefined) as
+      WebviewRequest | FeatureRequest
+    if (isFeature && request.type === 'feature.request.cancel') {
+      const target = this.inFlight.get(request.payload.targetRequestId)
+      if (target !== undefined) target.abort()
+      await this.postFeatureResponse(request.requestId, {
+        kind: 'operation',
+        operationId: request.payload.targetRequestId,
+        state: target === undefined ? 'completed' : 'accepted',
+        ...(target === undefined ? { message: 'The target request is no longer running.' } : {}),
+      })
+      return
+    }
     if (this.inFlight.has(request.requestId)) {
-      await this.postError(request.requestId, 'A request with this id is already running.', true)
+      await this.postError(request.requestId, 'A request with this id is already running.', true, isFeature)
       return
     }
     const controller = new AbortController()
     this.inFlight.set(request.requestId, controller)
     try {
-      const payload =
-        this.dependencies.handleRequest === undefined
+      const payload = isFeature
+        ? this.dependencies.handleFeatureRequest === undefined
+          ? (() => {
+              throw new AppError({
+                code: 'FEATURE_DISABLED',
+                message: 'The staged feature route is not enabled.',
+                retryable: false,
+              })
+            })()
+          : await this.dependencies.handleFeatureRequest(request as FeatureRequest, controller.signal)
+        : this.dependencies.handleRequest === undefined
           ? { accepted: true }
-          : await this.dependencies.handleRequest(request, controller.signal)
-      this.complete(request, response(request.requestId, true, payload))
+          : await this.dependencies.handleRequest(request as WebviewRequest, controller.signal)
+      this.complete(request, response(request.requestId, true, payload, undefined, isFeature))
     } catch (error) {
       if (!(error instanceof AppError)) this.reportUnexpectedError(unexpectedErrorEntry(request.type, error))
-      this.complete(request, response(request.requestId, false, undefined, publicError(error, request.type)))
+      this.complete(
+        request,
+        response(request.requestId, false, undefined, publicError(error, request.type), isFeature),
+      )
     }
   }
 
@@ -65,7 +96,10 @@ export class WebviewMessageRouter {
     this.inFlight.clear()
   }
 
-  private complete(request: WebviewRequest, message: HostMessage): void {
+  private complete(
+    request: WebviewRequest | FeatureRequest,
+    message: HostMessage | FeatureHostMessage,
+  ): void {
     if (!this.inFlight.delete(request.requestId)) return
     void Promise.resolve(this.dependencies.postMessage(message)).catch((error: unknown) => {
       // The Webview may disappear between request handling and response
@@ -75,12 +109,32 @@ export class WebviewMessageRouter {
     })
   }
 
-  private async postError(requestId: string, message: string, retryable: boolean): Promise<void> {
-    const value = response(requestId, false, undefined, { code: 'PROTOCOL_ERROR', message, retryable })
+  private async postError(
+    requestId: string,
+    message: string,
+    retryable: boolean,
+    feature = false,
+  ): Promise<void> {
+    const value = response(
+      requestId,
+      false,
+      undefined,
+      { code: 'PROTOCOL_ERROR', message, retryable },
+      feature,
+    )
     try {
       await this.dependencies.postMessage(value)
     } catch (error) {
       this.reportUnexpectedError(unexpectedErrorEntry('protocol.error', error))
+    }
+  }
+
+  private async postFeatureResponse(requestId: string, payload: unknown): Promise<void> {
+    const value = response(requestId, true, payload, undefined, true)
+    try {
+      await this.dependencies.postMessage(value)
+    } catch (error) {
+      this.reportUnexpectedError(unexpectedErrorEntry('feature.request.cancel', error))
     }
   }
 
@@ -99,22 +153,24 @@ function response(
   ok: boolean,
   payload?: unknown,
   error?: { code: string; message: string; retryable: boolean },
-): HostMessage {
+  feature = false,
+): HostMessage | FeatureHostMessage {
   const candidate = {
-    type: 'response' as const,
+    type: feature ? ('feature.response' as const) : ('response' as const),
     requestId,
     ok,
     ...(payload === undefined ? {} : { payload }),
     ...(error === undefined ? {} : { error }),
   }
-  const parsed = hostMessageSchema.safeParse(candidate)
+  const schema = feature ? featureHostMessageSchema : hostMessageSchema
+  const parsed = schema.safeParse(candidate)
   if (parsed.success) return parsed.data
   // A large historical transcript must never turn the response path itself
   // into an uncaught host exception. The adapter compacts streaming chunks,
   // but keep a precise protocol-level fallback for unusually large payloads.
-  if (!ok) return hostMessageSchema.parse(candidate)
-  return hostMessageSchema.parse({
-    type: 'response',
+  if (!ok) return schema.parse(candidate)
+  return schema.parse({
+    type: feature ? 'feature.response' : 'response',
     requestId,
     ok: false,
     error: {
@@ -225,6 +281,22 @@ function publicErrorMessage(
     PROTOCOL_ERROR: 'The DSH returned an invalid response.',
     REQUEST_CANCELLED: 'The DSH request was cancelled.',
     INVALID_CONFIGURATION: 'The DSH configuration is invalid.',
+    FEATURE_DISABLED: 'This feature is not enabled for the connected DSH instance.',
+    CONTEXT_LIMIT: 'The editor context is too large.',
+    CONTEXT_EXPIRED: 'The editor context has expired. Capture it again.',
+    CONTEXT_STALE: 'The editor context is stale. Refresh it before continuing.',
+    PATH_NOT_ALLOWED: 'Only a validated workspace-relative path is allowed.',
+    CHANGE_INCOMPLETE: 'The change record is incomplete and cannot be applied safely.',
+    CHANGE_PROPOSAL_ONLY: 'This change is only a proposal; no filesystem mutation was confirmed.',
+    CHECKPOINT_CONFLICT: 'The workspace changed after this checkpoint was created.',
+    CHECKPOINT_PARTIAL: 'The checkpoint restore completed only partially.',
+    CHECKPOINT_QUOTA: 'The checkpoint storage quota has been reached.',
+    TASK_NOT_OWNED: 'This task is not owned by the current extension session.',
+    TASK_STATE_STALE: 'The task changed before this action was applied. Refresh it and try again.',
+    STORAGE_CORRUPT: 'The local feature storage is corrupt and needs recovery.',
+    RESOURCE_NOT_OWNED: 'This resource is not owned by the current view or session.',
+    GENERATION_MISMATCH: 'This request belongs to an older connection generation.',
+    EVENT_GAP: 'Some DSH events were missed; the session is being synchronized.',
     INTERNAL_ERROR: 'DSH returned an internal error.',
   }
   const base = fallback[code] ?? `DSH operation failed (${code}).`

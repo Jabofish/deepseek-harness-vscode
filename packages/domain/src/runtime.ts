@@ -1,3 +1,5 @@
+import type { FeatureCapabilityProfile } from './feature-contracts.js'
+
 export type OperatingSystem = 'windows' | 'linux' | 'macos'
 export type ProcessOwnership = 'external' | 'managed'
 export type ConnectionMode = 'auto' | 'custom' | 'attach-only' | 'new-isolated'
@@ -69,12 +71,18 @@ export interface BackendCapabilities {
   readonly features: ReadonlySet<string>
   /** Set only when the runtime was outside the pinned compatibility range. */
   readonly compatibilityWarning?: string
+  /** Contract-readiness profile for the staged feature surface. */
+  readonly featureProfile?: FeatureCapabilityProfile
 }
 
 export interface ConnectedBackend {
   readonly endpoint: BackendEndpoint
   readonly ownership: ProcessOwnership
   readonly capabilities: BackendCapabilities
+  /** Opaque Host identity assigned once a connection is attached. */
+  readonly backendInstanceId?: string
+  /** Monotonic coordinator generation; probes may omit it before attach. */
+  readonly connectionGeneration?: number
   readonly pid?: number
 }
 

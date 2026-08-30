@@ -139,6 +139,66 @@ describe('SessionControls', () => {
     expect(screen.getByTitle('Plan mode is unavailable in this DSH session')).toBeDefined()
   })
 
+  it('offers bounded workflow profiles and accepts Plan only when DSH advertises it', () => {
+    const onPromptModeChange = vi.fn()
+    render(
+      <SessionControls
+        configuration={{
+          preset: 'standard',
+          toolMode: 'native',
+          permissionPreset: 'workspace-write',
+          planMode: false,
+          model: { providerId: 'deepseek', modelId: 'deepseek-chat' },
+        }}
+        models={[]}
+        presets={[{ id: 'standard', trust: 'system', isDefault: true }]}
+        permissionPresets={['workspace-write']}
+        commands={[{ name: 'plan', description: 'Toggle plan mode' }]}
+        promptMode="ask"
+        disabled={false}
+        presetMutable
+        onChange={vi.fn()}
+        onCommand={vi.fn()}
+        onPromptModeChange={onPromptModeChange}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Workflow: Ask' }))
+    expect(screen.getByRole('option', { name: 'Ask' })).toBeDefined()
+    expect(screen.getByRole('option', { name: 'Debug' })).toBeDefined()
+    fireEvent.click(screen.getByRole('option', { name: 'Plan' }))
+    expect(onPromptModeChange).toHaveBeenCalledWith('plan')
+  })
+
+  it('disables the workflow Plan profile when the command is not advertised', () => {
+    const onPromptModeChange = vi.fn()
+    render(
+      <SessionControls
+        configuration={{
+          preset: 'standard',
+          toolMode: 'native',
+          permissionPreset: 'workspace-write',
+          planMode: false,
+          model: { providerId: 'deepseek', modelId: 'deepseek-chat' },
+        }}
+        models={[]}
+        presets={[{ id: 'standard', trust: 'system', isDefault: true }]}
+        permissionPresets={['workspace-write']}
+        commands={[{ name: 'model', description: 'Select the model' }]}
+        promptMode="ask"
+        disabled={false}
+        presetMutable
+        onChange={vi.fn()}
+        onCommand={vi.fn()}
+        onPromptModeChange={onPromptModeChange}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Workflow: Ask' }))
+    expect(screen.getByRole<HTMLButtonElement>('option', { name: 'Plan' }).disabled).toBe(true)
+    expect(onPromptModeChange).not.toHaveBeenCalled()
+  })
+
   it('uses distinct mode icons and localized built-in mode labels', () => {
     expect(modeIcon('standard', 'Standard')).toBe('session')
     expect(modeIcon('plan', 'Plan')).toBe('plan')

@@ -281,6 +281,21 @@
           "default": "",
           "description": "Optional default reasoning level when supported by the selected model."
         },
+        "dsh.checkpoints.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable explicit local checkpoint metadata. Restore requires content storage to be enabled separately."
+        },
+        "dsh.checkpoints.storeContent": {
+          "type": "boolean",
+          "default": false,
+          "description": "Allow explicit checkpoint content snapshots in extension global storage. Source code remains sensitive and is not encrypted by this setting."
+        },
+        "dsh.promptTemplates.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable local prompt templates. Templates are user-authored text and are inserted into the composer only after explicit user action."
+        },
         "dsh.developer.logLevel": {
           "type": "string",
           "enum": [

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import type { TimelineNode } from '@dsh-vscode/timeline'
 import { buildTrajectory, searchTrajectoryRecords, type TrajectoryRecord } from '@dsh-vscode/timeline'
+import { ScrollToLatestButton } from '../../components/common/index.js'
 import { useI18n, type Translate } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
 
@@ -70,13 +71,16 @@ export function TrajectoryView(props: TrajectoryViewProps): ReactElement {
     const element = scrollRef.current
     if (element === null) return
     const timer = window.setTimeout(() => {
+      if (!stickToBottomRef.current) return
       element.scrollTop = element.scrollHeight
     }, 0)
     return () => window.clearTimeout(timer)
   }, [tailSignature, projection.recordCount, props.sessionId])
 
   return (
-    <div className="dsh-trajectory-shell">
+    <div
+      className={`dsh-trajectory-shell${selected === undefined ? '' : ' dsh-trajectory-shell--inspecting'}`}
+    >
       <div className="dsh-trajectory__toolbar">
         <input
           className="dsh-trajectory__search"
@@ -162,21 +166,12 @@ export function TrajectoryView(props: TrajectoryViewProps): ReactElement {
           </span>
         ) : null}
       </div>
+      {showJumpToLatest ? (
+        <ScrollToLatestButton label={t('timeline.jump')} onClick={scrollToLatest} />
+      ) : null}
       {selected === undefined ? null : (
         <TrajectoryInspector record={selected} onClose={() => setSelectedId(undefined)} t={t} />
       )}
-      {showJumpToLatest ? (
-        <button
-          className="dsh-trajectory__jump"
-          type="button"
-          aria-label={t('timeline.jump')}
-          title={t('timeline.jump')}
-          onClick={scrollToLatest}
-        >
-          <Icon name="arrow-down" />
-          <span>{t('timeline.jump')}</span>
-        </button>
-      ) : null}
     </div>
   )
 }
@@ -197,6 +192,10 @@ function TrajectoryRow(props: {
         title={record.text}
         onClick={props.onSelect}
       >
+        <span
+          className={`dsh-trajectory__marker dsh-trajectory__marker--${record.kind}`}
+          aria-hidden="true"
+        />
         <span className="dsh-trajectory__index">#{record.index}</span>
         <span className={`dsh-trajectory__kind dsh-trajectory__kind--${record.kind}`}>{record.kind}</span>
         <span className="dsh-trajectory__text">{record.text}</span>

@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { protocolAppErrorCodeSchema } from './feature-schemas.js'
 
 const id = z.string().min(1).max(256)
 const wireVersion = z.literal(1)
@@ -13,6 +14,7 @@ const MAX_PROMPT_ATTACHMENTS = 20
 const MAX_PROMPT_ATTACHMENT_TOTAL_BYTES = 200 * 1024 * 1024
 const session = { sessionId: id }
 const attachmentUri = z.string().regex(/^dsh-attachment:[A-Za-z0-9-]{16,128}$/)
+const contextRef = z.string().regex(/^dsh-context:[A-Za-z0-9-]{16,128}$/)
 const attachmentSchema = z
   .object({
     // The Extension Host owns the bytes. The Webview only sends back this
@@ -27,6 +29,13 @@ const promptSchema = z
     sessionId: id,
     text: z.string().max(1_000_000),
     attachments: z.array(attachmentSchema).max(MAX_PROMPT_ATTACHMENTS),
+    // Context refs are Host-owned opaque handles. Their bytes are resolved
+    // and frozen by the Extension Host before DSH receives the prompt.
+    contextRefs: z.array(contextRef).max(8).optional(),
+    // When context refs are attached, the Webview reports the one workspace
+    // folder represented by the chips. The Host still validates this against
+    // the session and the opaque refs; it is not an authority by itself.
+    contextWorkspaceFolderId: id.optional(),
   })
   .strict()
   .superRefine((value, context) => {
@@ -634,25 +643,7 @@ export const webviewRequestSchema = z.discriminatedUnion('type', [
 
 const hostError = z
   .object({
-    code: z.enum([
-      'DSH_NOT_FOUND',
-      'DSH_INCOMPATIBLE',
-      'BACKEND_UNREACHABLE',
-      'BACKEND_BUSY',
-      'NO_RUNNING_INSTANCE',
-      'PORT_CONFLICT',
-      'INVALID_ENDPOINT',
-      'CAPABILITY_UNAVAILABLE',
-      'AUTH_REQUIRED',
-      'PERMISSION_DENIED',
-      'STALE_INTERACTION',
-      'PROCESS_FAILED',
-      'EXPORT_FAILED',
-      'PROTOCOL_ERROR',
-      'REQUEST_CANCELLED',
-      'INVALID_CONFIGURATION',
-      'INTERNAL_ERROR',
-    ]),
+    code: protocolAppErrorCodeSchema,
     message: z.string().min(1).max(1024),
     retryable: z.boolean(),
   })
@@ -677,6 +668,11 @@ export const hostResponseSchema = z.discriminatedUnion('ok', [
     .strict(),
 ])
 
+/**
+ * Legacy compatibility envelope. New staged feature events must use the
+ * closed `featureHostEventSchema`; this generic payload is not evidence that
+ * a future feature route has been implemented.
+ */
 export const hostEventSchema = z
   .object({
     type: z.literal('event'),

@@ -141,7 +141,14 @@ describe('DshConnectionCoordinator', () => {
       endpoint: connected.endpoint,
     })
 
-    expect(connect).toHaveBeenCalledWith(connected, expect.any(AbortSignal))
+    expect(connect).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ...connected,
+        backendInstanceId: 'backend-1',
+        connectionGeneration: 1,
+      }),
+      expect.any(AbortSignal),
+    )
   })
 
   it('rejects custom mode without an endpoint before probing or starting DSH', async () => {

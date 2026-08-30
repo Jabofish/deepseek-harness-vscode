@@ -4,6 +4,61 @@ import { AppError } from '@dsh-vscode/domain'
 import { WebviewMessageRouter } from './message-router.js'
 
 describe('WebviewMessageRouter command diagnostics', () => {
+  it('routes a strict feature request to the feature handler', async () => {
+    const posted: unknown[] = []
+    const handleFeatureRequest = vi.fn().mockResolvedValue({ kind: 'empty' })
+    const router = new WebviewMessageRouter({
+      postMessage: (message) => {
+        posted.push(message)
+        return Promise.resolve(true)
+      },
+      handleFeatureRequest,
+    })
+
+    await router.handle({
+      protocolVersion: 1,
+      message: {
+        type: 'editor.context.list',
+        requestId: 'feature-route-1',
+        payload: { workspaceFolderId: 'workspace-1' },
+      },
+    })
+
+    expect(handleFeatureRequest).toHaveBeenCalledOnce()
+    expect(posted[0]).toMatchObject({
+      type: 'feature.response',
+      requestId: 'feature-route-1',
+      ok: true,
+      payload: { kind: 'empty' },
+    })
+  })
+
+  it('keeps an unconfigured feature route explicitly disabled', async () => {
+    const posted: unknown[] = []
+    const router = new WebviewMessageRouter({
+      postMessage: (message) => {
+        posted.push(message)
+        return Promise.resolve(true)
+      },
+    })
+
+    await router.handle({
+      protocolVersion: 1,
+      message: {
+        type: 'editor.context.list',
+        requestId: 'feature-disabled-1',
+        payload: {},
+      },
+    })
+
+    expect(posted[0]).toMatchObject({
+      type: 'feature.response',
+      requestId: 'feature-disabled-1',
+      ok: false,
+      error: { code: 'FEATURE_DISABLED' },
+    })
+  })
+
   it('keeps the DSH command failure reason visible without exposing credential values', async () => {
     const posted: unknown[] = []
     const router = new WebviewMessageRouter({

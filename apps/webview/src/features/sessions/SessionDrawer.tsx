@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type ReactElement } from 'react'
 import { createPortal } from 'react-dom'
 import type { SessionSummary, WorkspaceSummary } from '@dsh-vscode/domain'
+import { PopoverCard } from '../../components/common/PopoverCard.js'
 import { Icon } from '../../ui/Icon.js'
 import { displaySessionTitle } from './session-title.js'
 import { useI18n } from '../../i18n.js'
@@ -300,8 +301,10 @@ export function SessionDrawer(props: SessionDrawerProps): ReactElement {
           </span>
           <span
             className={`dsh-status-pill dsh-session-item__status dsh-session-item__status--${sessionStatusTone(session.status)}`}
+            title={statusLabel}
           >
-            {statusLabel}
+            <span className="dsh-session-item__status-dot" aria-hidden="true" />
+            <span className="dsh-session-item__status-label">{statusLabel}</span>
           </span>
         </button>
         <div className="dsh-session-item__actions">
@@ -373,8 +376,10 @@ export function SessionDrawer(props: SessionDrawerProps): ReactElement {
           <span className="dsh-session-switcher__workspace-icon" aria-hidden="true">
             <Icon name="folder" />
           </span>
-          <span title={workspace.name}>{workspace.name}</span>
-          <small>{workspace.sessionCount}</small>
+          <span className="dsh-session-switcher__workspace-name" title={workspace.name}>
+            {workspace.name}
+          </span>
+          <small className="dsh-session-switcher__workspace-count">{workspace.sessionCount}</small>
         </button>
         <div className="dsh-session-switcher__workspace-actions">
           <button
@@ -451,7 +456,7 @@ export function SessionDrawer(props: SessionDrawerProps): ReactElement {
           <span className="dsh-session-switcher__icon" aria-hidden="true">
             <Icon name="session" />
           </span>
-          <span className="dsh-sr-only">
+          <span className="dsh-session-switcher__trigger-label">
             {activeSession === undefined
               ? (activeWorkspace?.name ?? t('sessions.open'))
               : displaySessionTitle(activeSession.title, t)}
@@ -462,7 +467,7 @@ export function SessionDrawer(props: SessionDrawerProps): ReactElement {
         </button>
       ) : null}
       {open ? (
-        <div
+        <PopoverCard
           id={panelId}
           className="dsh-session-switcher__panel"
           role="dialog"
@@ -520,11 +525,6 @@ export function SessionDrawer(props: SessionDrawerProps): ReactElement {
               </button>
             </div>
           </header>
-          {props.workspaces.length === 0 ? null : (
-            <div className="dsh-session-switcher__workspaces" aria-label={t('sessions.workspaces')}>
-              {props.workspaces.map(renderWorkspaceCard)}
-            </div>
-          )}
           <div className="dsh-session-switcher__search">
             <input
               type="search"
@@ -534,6 +534,11 @@ export function SessionDrawer(props: SessionDrawerProps): ReactElement {
               onChange={(event) => setSearchQuery(event.target.value)}
             />
           </div>
+          {props.workspaces.length === 0 ? null : (
+            <div className="dsh-session-switcher__workspaces" aria-label={t('sessions.workspaces')}>
+              {props.workspaces.map(renderWorkspaceCard)}
+            </div>
+          )}
           {selectedWorkspace === undefined && query === '' ? (
             <p className="dsh-session-switcher__empty">{t('sessions.temporary')}</p>
           ) : workspaceDisplay === 'grouped' ? (
@@ -586,7 +591,7 @@ export function SessionDrawer(props: SessionDrawerProps): ReactElement {
               )}
             </>
           )}
-        </div>
+        </PopoverCard>
       ) : null}
       {renameTarget === undefined || typeof document === 'undefined'
         ? null

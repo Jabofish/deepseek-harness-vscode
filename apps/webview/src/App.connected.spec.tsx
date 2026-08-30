@@ -25,6 +25,7 @@ function connectedState(activeSession: boolean): AppState {
     backend: { kind: 'connected' } as AppState['backend'],
     connectedDshVersion: '0.1.0-rc.6',
     dshCompatibilityWarning: undefined,
+    featureProfile: undefined,
     dshUpdate: undefined,
     dshUpdateProgress: undefined,
     sessions: activeSession
@@ -81,6 +82,18 @@ function connectedState(activeSession: boolean): AppState {
     subagents: { entries: [], parentAvailable: false },
     activeSubagent: undefined,
     queue: [],
+    editorContext: [],
+    editorContextAvailableKinds: [],
+    editorContextLoading: false,
+    changes: [],
+    changesLoading: false,
+    tasks: [],
+    tasksLoading: false,
+    checkpoints: [],
+    checkpointsLoading: false,
+    promptTemplates: [],
+    promptTemplatesLoading: false,
+    promptMode: 'ask',
     permissions: [],
     questions: [],
     busyEnter: 'queue',
@@ -126,6 +139,30 @@ function storeFor(state: AppState): AppStore {
     respondToPermission: vi.fn(),
     respondToQuestion: vi.fn(),
     cancelQuestion: vi.fn(),
+    captureEditorContext: vi.fn().mockResolvedValue(undefined),
+    refreshEditorContext: vi.fn().mockResolvedValue(undefined),
+    previewEditorContext: vi.fn().mockResolvedValue(undefined),
+    releaseEditorContext: vi.fn().mockResolvedValue(undefined),
+    refreshChanges: vi.fn().mockResolvedValue(undefined),
+    getChangeDetail: vi.fn().mockResolvedValue(undefined),
+    markChangeReviewed: vi.fn().mockResolvedValue(undefined),
+    openChange: vi.fn().mockResolvedValue(undefined),
+    refreshTasks: vi.fn().mockResolvedValue(undefined),
+    getTask: vi.fn().mockResolvedValue(undefined),
+    stopTask: vi.fn().mockResolvedValue(undefined),
+    answerTask: vi.fn().mockResolvedValue(undefined),
+    refreshCheckpoints: vi.fn().mockResolvedValue(undefined),
+    createCheckpoint: vi.fn().mockResolvedValue(undefined),
+    previewCheckpoint: vi.fn().mockResolvedValue(undefined),
+    deleteCheckpoint: vi.fn().mockResolvedValue(undefined),
+    restoreCheckpoint: vi.fn().mockResolvedValue(undefined),
+    refreshPromptTemplates: vi.fn().mockResolvedValue(undefined),
+    readPromptTemplate: vi.fn().mockResolvedValue(undefined),
+    insertPromptTemplate: vi.fn().mockResolvedValue(undefined),
+    createPromptTemplate: vi.fn().mockResolvedValue(undefined),
+    updatePromptTemplate: vi.fn().mockResolvedValue(undefined),
+    deletePromptTemplate: vi.fn().mockResolvedValue(undefined),
+    setPromptMode: vi.fn().mockResolvedValue(true),
     pickAttachment: vi.fn().mockResolvedValue(undefined),
     ingestAttachment: vi.fn().mockResolvedValue(undefined),
     previewAttachment: vi.fn().mockResolvedValue(undefined),
@@ -176,6 +213,16 @@ describe('App connected rendering', () => {
     render(<App />)
     expect(screen.queryByText('DeepSeek Harness view failed')).toBeNull()
     expect(screen.getByRole('main')).toBeDefined()
+  })
+
+  it('renders the shared application header controls', () => {
+    currentStore = storeFor(connectedState(false))
+    render(<App />)
+
+    expect(screen.getByRole('banner')).toBeDefined()
+    expect(screen.getByRole('button', { name: 'Open sessions' })).toBeDefined()
+    expect(screen.getByRole('button', { name: 'New Session' })).toBeDefined()
+    expect(screen.getByRole('button', { name: 'Settings' })).toBeDefined()
   })
 
   it('does not render a duplicate in-webview settings trigger', () => {
@@ -298,9 +345,7 @@ describe('App connected rendering', () => {
 
     render(<App />)
 
-    expect(screen.getByRole('status').textContent).toContain(
-      'One-shot tasks do not accept follow-up messages.',
-    )
+    expect(screen.getByText('One-shot tasks do not accept follow-up messages.')).toBeDefined()
     expect(screen.queryByRole('button', { name: 'Send message' })).toBeNull()
   })
 

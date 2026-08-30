@@ -231,7 +231,26 @@ export function PluginConfiguration(props: PluginConfigurationProps): ReactEleme
                   onClick={() => toggle(namespace)}
                 >
                   <span className="dsh-plugin-configuration__header-copy">
-                    <strong>{t(plugin.definition.titleKey)}</strong>
+                    <span className="dsh-plugin-configuration__title-line">
+                      <span
+                        className={`dsh-plugin-status-dot dsh-plugin-status-dot--${
+                          plugin.credential === undefined
+                            ? 'available'
+                            : plugin.credential.configured
+                              ? 'configured'
+                              : 'missing'
+                        }`}
+                        data-state={
+                          plugin.credential === undefined
+                            ? 'available'
+                            : plugin.credential.configured
+                              ? 'configured'
+                              : 'missing'
+                        }
+                        aria-hidden="true"
+                      />
+                      <strong>{t(plugin.definition.titleKey)}</strong>
+                    </span>
                     <span>{t(plugin.definition.descriptionKey)}</span>
                   </span>
                   {dirty ? (

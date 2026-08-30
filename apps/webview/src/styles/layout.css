@@ -1,0 +1,2339 @@
+/*
+ * DSH conversation layout contract
+ *
+ * This file is the final owner of the shared shell geometry. Feature styles
+ * may skin a control, but they must not change the ownership rules below:
+ * compact chrome, one flexible timeline, one intrinsic composer, and one
+ * viewport-bounded actions surface for low-frequency controls.
+ */
+
+/* Shared layout primitives ------------------------------------------------ */
+
+.dsh-layout-surface,
+.dsh-layout-stack,
+.dsh-layout-inline {
+  min-width: 0;
+}
+
+.dsh-layout-stack {
+  display: flex;
+  flex-direction: column;
+}
+
+.dsh-layout-inline {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+}
+
+.dsh-layout-inline--wrap {
+  flex-wrap: wrap;
+}
+
+.dsh-layout-stack--none,
+.dsh-layout-inline--none {
+  gap: 0;
+}
+
+.dsh-layout-stack--xs,
+.dsh-layout-inline--xs {
+  gap: var(--dsh-space-1);
+}
+
+.dsh-layout-stack--sm,
+.dsh-layout-inline--sm {
+  gap: var(--dsh-space-2);
+}
+
+.dsh-layout-stack--md,
+.dsh-layout-inline--md {
+  gap: var(--dsh-space-3);
+}
+
+.dsh-layout-stack--lg,
+.dsh-layout-inline--lg {
+  gap: var(--dsh-space-4);
+}
+
+/* App frame ---------------------------------------------------------------- */
+
+.dsh-app {
+  gap: var(--dsh-space-2);
+  padding: var(--dsh-space-3);
+}
+
+.dsh-app__body {
+  flex: 1 1 0%;
+  gap: 0;
+}
+
+.dsh-conversation {
+  flex: 1 1 0%;
+  gap: var(--dsh-space-2);
+}
+
+/* The topbar is a single compact line. Low-frequency actions live in a
+ * viewport-bounded surface, so the timeline never loses height to a wrapped
+ * toolbar. */
+.dsh-conversation__topbar {
+  position: relative;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  min-width: 0;
+  min-height: 2.25rem;
+  gap: var(--dsh-space-2);
+  flex-wrap: nowrap;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  overflow: visible;
+}
+
+.dsh-conversation__views {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  min-width: 0;
+  gap: 0;
+  padding: 2px;
+}
+
+.dsh-conversation__views .dsh-conversation__view-tab {
+  min-width: 0;
+  padding-inline: var(--dsh-space-3);
+}
+
+.dsh-conversation__utility {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  min-width: 0;
+  gap: 2px;
+}
+
+.dsh-conversation__utility-session,
+.dsh-conversation__utility .dsh-session-header,
+.dsh-conversation__utility .dsh-session-header__switcher {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.dsh-conversation__utility .dsh-session-header {
+  border: 0;
+  background: transparent;
+}
+
+.dsh-conversation__utility .dsh-session-header__switcher {
+  width: var(--dsh-control-height);
+  max-width: var(--dsh-control-height);
+}
+
+.dsh-conversation__utility .dsh-session-switcher__trigger {
+  width: var(--dsh-control-height);
+  min-width: var(--dsh-control-height);
+  justify-content: center;
+  padding: var(--dsh-space-1);
+  border-color: transparent;
+  border-radius: var(--dsh-radius-sm);
+  background: transparent;
+}
+
+.dsh-conversation__utility .dsh-session-switcher__trigger-label,
+.dsh-conversation__utility .dsh-session-switcher__chevron {
+  display: none;
+}
+
+.dsh-conversation__utility .dsh-session-header__create {
+  width: var(--dsh-control-height);
+  min-width: var(--dsh-control-height);
+  padding: var(--dsh-space-1);
+  border-color: transparent;
+  border-radius: var(--dsh-radius-sm);
+}
+
+.dsh-conversation__utility .dsh-runtime-status {
+  display: inline-flex;
+  width: var(--dsh-control-height);
+  height: var(--dsh-control-height);
+  align-items: center;
+  justify-content: center;
+}
+
+.dsh-conversation__utility > .dsh-icon-button {
+  width: var(--dsh-control-height);
+  min-width: var(--dsh-control-height);
+}
+
+/* The switcher lives inside the compact chrome, but its card must not inherit
+ * that small icon button's containing block. A fixed, viewport-bounded card
+ * keeps the search/list surface usable on narrow webviews as well as wide
+ * editor panels. */
+.dsh-session-switcher__panel.dsh-popover-card {
+  position: fixed;
+  z-index: 60;
+  top: calc(var(--dsh-space-3) + var(--dsh-control-height) + var(--dsh-space-2));
+  right: max(var(--dsh-space-2), env(safe-area-inset-right));
+  left: auto;
+  width: min(31rem, calc(100vw - var(--dsh-space-4)));
+  min-width: min(24rem, calc(100vw - var(--dsh-space-4)));
+  max-height: min(34rem, calc(100vh - var(--dsh-space-5)));
+}
+
+/* The primary picker is anchored in the bottom composer. Its menu opens
+ * upward so the last row of the webview never becomes an unreachable popup. */
+.dsh-unified-composer
+  > .dsh-composer__toolbar
+  > .dsh-composer__toolbar-controls
+  .dsh-compact-picker__menu {
+  top: auto;
+  right: 0;
+  bottom: calc(100% + var(--dsh-space-2));
+  left: auto;
+  width: min(18rem, calc(100vw - var(--dsh-space-4)));
+  min-width: min(14rem, calc(100vw - var(--dsh-space-4)));
+  max-width: min(32rem, calc(100vw - var(--dsh-space-4)));
+}
+
+.dsh-unified-composer .dsh-composer__toolbar-controls {
+  /* Picker menus are positioned from this rail. Clipping the rail makes a
+   * menu look non-functional exactly when it is opened at the bottom edge. */
+  overflow: visible;
+}
+
+/* The timeline owns every remaining pixel. No right-side utility panel is
+ * allowed to become a sibling column and squeeze message content. */
+.dsh-timeline-shell {
+  position: relative;
+  display: flex;
+  flex: 1 1 0%;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  overflow: hidden;
+}
+
+.dsh-scroll-to-latest {
+  position: absolute;
+  inset-inline-start: 50%;
+  inset-block-end: var(--dsh-scroll-to-latest-bottom, var(--dsh-space-3));
+  z-index: 9;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: fit-content;
+  max-width: calc(100% - var(--dsh-space-4));
+  min-height: var(--dsh-control-height);
+  gap: var(--dsh-space-2);
+  padding: var(--dsh-space-1) var(--dsh-space-3);
+  transform: translateX(-50%);
+  border-color: color-mix(in srgb, var(--dsh-info) 54%, var(--dsh-border-color));
+  border-radius: 999px;
+  color: var(--dsh-text);
+  background: color-mix(in srgb, var(--dsh-info) 84%, var(--dsh-surface-raised));
+  box-shadow: var(--dsh-shadow);
+  white-space: nowrap;
+}
+
+.dsh-scroll-to-latest:hover:not(:disabled),
+.dsh-scroll-to-latest:focus-visible {
+  color: var(--dsh-text);
+  background: color-mix(in srgb, var(--dsh-info) 92%, var(--dsh-surface-raised));
+}
+
+.dsh-scroll-to-latest > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-timeline {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  /* Timeline content is measured incrementally by the virtualizer. Browser
+   * scroll anchoring otherwise competes with the explicit bottom-follow rule
+   * and nudges a reader back toward an older layout position. */
+  overflow-anchor: none;
+}
+
+/* A selected trajectory record is an inspector layer, not a second layout
+ * column. It floats above the ledger and ends at the composer boundary, so
+ * the ledger keeps all remaining vertical space. Its own scroll owner keeps
+ * long input/output details reachable without creating page overflow. */
+.dsh-trajectory-shell--inspecting {
+  --dsh-trajectory-inspector-max-height: min(50%, 24rem);
+  --dsh-scroll-to-latest-bottom: calc(var(--dsh-trajectory-inspector-max-height) + var(--dsh-space-2));
+}
+
+.dsh-trajectory-inspector {
+  position: absolute;
+  inset-inline: 0;
+  inset-block-end: 0;
+  z-index: 8;
+  width: 100%;
+  min-width: 0;
+  max-height: var(--dsh-trajectory-inspector-max-height, min(50%, 24rem));
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.dsh-timeline__canvas,
+.dsh-timeline__row {
+  min-width: 0;
+}
+
+.dsh-timeline__empty {
+  align-content: center;
+  gap: var(--dsh-space-2);
+  min-height: 100%;
+  padding: var(--dsh-space-5);
+  color: var(--dsh-muted);
+}
+
+.dsh-timeline__empty-icon {
+  display: grid;
+  width: 2.75rem;
+  height: 2.75rem;
+  place-items: center;
+  margin-bottom: var(--dsh-space-1);
+  border: 1px solid color-mix(in srgb, var(--dsh-info) 45%, var(--dsh-border-color));
+  border-radius: 50%;
+  color: var(--dsh-info);
+  background: color-mix(in srgb, var(--dsh-info) 10%, var(--dsh-surface-soft));
+}
+
+.dsh-timeline__empty-icon .dsh-icon {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
+.dsh-timeline__empty strong {
+  color: var(--dsh-text);
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.dsh-timeline__empty > span:last-child {
+  font-size: 0.82rem;
+}
+
+/* Composer frame ----------------------------------------------------------- */
+
+.dsh-compose-area {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  min-width: 0;
+  gap: var(--dsh-space-2);
+  padding-top: 0;
+}
+
+.dsh-compose-area__interactions {
+  display: grid;
+  min-width: 0;
+  gap: var(--dsh-space-2);
+}
+
+.dsh-unified-composer {
+  container: dsh-composer / inline-size;
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  min-width: 0;
+  gap: var(--dsh-space-1);
+  padding: var(--dsh-space-2);
+  border: 1px solid var(--vscode-input-border, var(--dsh-input-border));
+  border-radius: var(--dsh-radius-lg);
+  background: var(--vscode-input-background, var(--dsh-input-bg));
+  box-shadow: none;
+  overflow: visible;
+}
+
+.dsh-unified-composer:focus-within {
+  border-color: var(--vscode-input-border, var(--dsh-input-border));
+  box-shadow: none;
+}
+
+/* One quiet focus treatment for every control in the app. Feature styles may
+ * change the border colour for meaning, but never add a second halo. */
+.dsh-app :where(button, input, textarea, select, summary):focus-visible {
+  outline: 1px solid var(--dsh-focus-ring);
+  outline-offset: 1px;
+  box-shadow: none;
+}
+
+.dsh-app .dsh-plugin-inventory__search:focus-within {
+  box-shadow: none;
+}
+
+/* Safety actions remain visibly cautionary without turning the whole risk
+ * surface into a saturated warning block. */
+.dsh-session-controls__risk .dsh-button--danger {
+  border-color: color-mix(in srgb, var(--dsh-warning) 58%, var(--dsh-border-color));
+  color: var(--dsh-warning);
+  background: color-mix(in srgb, var(--dsh-warning) 12%, var(--dsh-surface-raised));
+}
+
+.dsh-session-controls__risk .dsh-button--danger:hover:not(:disabled),
+.dsh-session-controls__risk .dsh-button--danger:focus-visible {
+  border-color: color-mix(in srgb, var(--dsh-warning) 72%, var(--dsh-border-color));
+  color: var(--dsh-text);
+  background: color-mix(in srgb, var(--dsh-warning) 19%, var(--dsh-surface-hover));
+}
+
+.dsh-unified-composer .dsh-composer__attachment-rail,
+.dsh-unified-composer .dsh-composer__input-shell,
+.dsh-unified-composer .dsh-composer__toolbar,
+.dsh-unified-composer .dsh-composer__status {
+  min-width: 0;
+}
+
+.dsh-unified-composer .dsh-composer__attachment-rail {
+  flex: 0 0 auto;
+}
+
+.dsh-unified-composer .dsh-composer__input-shell {
+  position: relative;
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: var(--dsh-radius-md);
+  background: transparent;
+  overflow: visible;
+}
+
+.dsh-unified-composer .dsh-composer__textarea {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  /* Keep the empty state aligned with Composer's 42px intrinsic minimum. */
+  min-height: var(--dsh-composer-input-min-height);
+  max-height: 10rem;
+  padding: var(--dsh-space-2);
+  resize: none;
+  border: 0;
+  outline: 0;
+  color: var(--vscode-input-foreground, var(--dsh-input-text));
+  background: transparent;
+  line-height: 1.45;
+}
+
+.dsh-unified-composer .dsh-composer__textarea:focus-visible {
+  outline: 0;
+}
+
+.dsh-unified-composer .dsh-composer__toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr) auto;
+  grid-template-areas: 'start controls submit';
+  align-items: center;
+  flex: 0 0 auto;
+  min-width: 0;
+  gap: var(--dsh-space-1);
+  padding-top: var(--dsh-space-1);
+  border-top: 1px solid color-mix(in srgb, var(--dsh-border-color) 62%, transparent);
+}
+
+.dsh-unified-composer .dsh-composer__toolbar-start {
+  display: flex;
+  grid-area: start;
+  align-items: center;
+  min-width: 0;
+  flex-wrap: nowrap;
+  gap: var(--dsh-space-1);
+  overflow: visible;
+}
+
+.dsh-unified-composer .dsh-composer__toolbar-controls {
+  display: flex;
+  grid-area: controls;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 0;
+  /* Keep the primary picker menu visible when it opens above the composer. */
+  overflow: visible;
+}
+
+.dsh-unified-composer .dsh-session-controls--primary {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  flex-wrap: nowrap;
+  gap: var(--dsh-space-1);
+}
+
+.dsh-unified-composer .dsh-session-controls--primary .dsh-session-controls__selectors {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-wrap: nowrap;
+  gap: var(--dsh-space-1);
+  /* The primary rail contains one picker; it does not need a scrolling
+   * viewport and must let that picker's menu escape upward. */
+  overflow: visible;
+  scrollbar-width: none;
+}
+
+.dsh-unified-composer .dsh-session-controls--primary .dsh-session-controls__selectors::-webkit-scrollbar {
+  display: none;
+}
+
+.dsh-unified-composer .dsh-session-controls--primary .dsh-session-controls__selectors > * {
+  flex: 0 0 auto;
+}
+
+.dsh-unified-composer .dsh-session-controls--primary .dsh-model-picker {
+  flex: 0 1 auto;
+  width: fit-content;
+  min-width: 0;
+  max-width: min(22rem, 100%);
+}
+
+.dsh-unified-composer
+  .dsh-session-controls--primary
+  .dsh-model-picker
+  .dsh-compact-picker__trigger {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.dsh-unified-composer .dsh-session-controls--primary .dsh-session-controls__access-picker {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: min(12rem, 100%);
+}
+
+.dsh-unified-composer
+  .dsh-session-controls--primary
+  .dsh-session-controls__access-picker
+  .dsh-compact-picker__trigger {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.dsh-unified-composer .dsh-session-controls--primary .dsh-session-controls__metrics {
+  display: flex;
+  flex: 0 0 auto;
+  min-width: 0;
+  /* This is a dl. Reset the browser's default block margins or the metrics
+   * row adds an invisible 2em to the composer's height. */
+  margin: 0;
+  margin-inline-start: auto;
+}
+
+.dsh-unified-composer .dsh-session-controls--primary .dsh-session-controls__metrics > div,
+.dsh-unified-composer .dsh-session-controls--primary .dsh-session-controls__context-cell {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  margin: 0;
+  overflow: visible;
+}
+
+.dsh-unified-composer .dsh-composer__toolbar-balance {
+  display: none;
+}
+
+.dsh-unified-composer .dsh-composer__hint {
+  min-width: 0;
+  max-width: 10rem;
+  overflow: hidden;
+  color: var(--dsh-muted);
+  font-size: 0.72em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-unified-composer .dsh-composer__submit {
+  grid-area: submit;
+  align-self: center;
+  min-width: 2.25rem;
+  min-height: 2.25rem;
+  padding: var(--dsh-space-2);
+  border-radius: var(--dsh-radius-md);
+}
+
+.dsh-unified-composer .dsh-composer__status {
+  flex: 0 0 auto;
+  min-height: 0;
+  margin: 0;
+  padding: var(--dsh-space-1) var(--dsh-space-1) 0;
+  border-top: 1px solid color-mix(in srgb, var(--dsh-border-color) 54%, transparent);
+  overflow: hidden;
+}
+
+.dsh-unified-composer .dsh-composer__status:has(.dsh-stats-line[aria-hidden='true']) {
+  display: none;
+}
+
+/* Editor context is one compact composer rail. Capture actions and attached
+ * context share the same surface, so the rail never grows into a second
+ * toolbar or hides important context behind the plus menu. */
+.dsh-unified-composer .dsh-composer__context-rail {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  min-height: var(--dsh-control-height);
+  gap: var(--dsh-space-2);
+  padding: 0 var(--dsh-space-1);
+  color: var(--dsh-muted);
+}
+
+.dsh-unified-composer .dsh-composer__context-content {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: var(--dsh-space-1);
+  overflow: visible;
+}
+
+.dsh-unified-composer .dsh-composer__context-chips {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: var(--dsh-space-1);
+  overflow: auto hidden;
+  scrollbar-width: thin;
+}
+
+.dsh-unified-composer .dsh-composer__context-actions {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  min-width: 0;
+  gap: var(--dsh-space-1);
+}
+
+.dsh-unified-composer .dsh-composer__context-capture {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  min-width: 0;
+  min-height: var(--dsh-control-height);
+  gap: var(--dsh-space-1);
+  padding: var(--dsh-space-1) var(--dsh-space-2);
+  border: 1px solid var(--dsh-border-color);
+  border-radius: var(--dsh-radius-md);
+  color: var(--dsh-muted);
+  background: var(--dsh-surface-raised);
+  font-size: 0.82em;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.dsh-unified-composer .dsh-composer__context-capture:hover:not(:disabled),
+.dsh-unified-composer .dsh-composer__context-capture:focus-visible {
+  color: var(--dsh-text);
+  background: var(--dsh-surface-hover);
+}
+
+.dsh-unified-composer .dsh-composer__context-chip {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  max-width: min(24rem, 72%);
+  flex: 0 1 auto;
+  border: 1px solid var(--dsh-border-color);
+  border-radius: 999px;
+  color: var(--dsh-text);
+  background: var(--dsh-surface-raised);
+}
+
+.dsh-unified-composer .dsh-composer__context-preview {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: var(--dsh-space-1);
+  padding: var(--dsh-space-1) var(--dsh-space-2);
+  border: 0;
+  border-radius: inherit;
+  color: inherit;
+  background: transparent;
+  text-align: start;
+}
+
+.dsh-unified-composer .dsh-composer__context-preview:hover:not(:disabled),
+.dsh-unified-composer .dsh-composer__context-preview:focus-visible {
+  background: var(--dsh-surface-hover);
+}
+
+.dsh-unified-composer .dsh-composer__context-preview > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-unified-composer .dsh-composer__context-preview > small {
+  flex: 0 0 auto;
+  color: var(--dsh-muted);
+  font-size: 0.72em;
+  white-space: nowrap;
+}
+
+.dsh-unified-composer .dsh-composer__context-remove {
+  flex: 0 0 auto;
+  width: var(--dsh-control-height);
+  min-width: var(--dsh-control-height);
+  min-height: var(--dsh-control-height);
+  padding: var(--dsh-space-1);
+  border: 0;
+  border-radius: 50%;
+}
+
+.dsh-unified-composer .dsh-composer__context-chip--stale {
+  color: var(--dsh-warning);
+}
+
+.dsh-unified-composer .dsh-composer__context-preview-loading,
+.dsh-unified-composer .dsh-composer__context-status {
+  min-width: 0;
+  color: var(--dsh-muted);
+  font-size: 0.78em;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.dsh-unified-composer .dsh-composer__context-preview-loading {
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dsh-unified-composer .dsh-composer__context-status--error {
+  color: var(--dsh-danger);
+}
+
+.dsh-unified-composer .dsh-composer__context-preview-dialog {
+  position: absolute;
+  inset-inline: var(--dsh-space-2);
+  bottom: calc(100% + var(--dsh-space-2));
+  z-index: 70;
+  display: grid;
+  min-width: 0;
+  max-height: min(24rem, calc(100vh - var(--dsh-space-4)));
+  overflow: hidden;
+  border: 1px solid var(--vscode-widget-border, var(--dsh-border-color));
+  border-radius: var(--dsh-radius-lg);
+  color: var(--dsh-text);
+  background: var(--vscode-editorWidget-background, var(--dsh-widget-bg));
+  box-shadow: var(--dsh-shadow);
+}
+
+.dsh-unified-composer .dsh-composer__context-preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  gap: var(--dsh-space-2);
+  padding: var(--dsh-space-2) var(--dsh-space-3);
+  border-bottom: 1px solid var(--dsh-border-color);
+}
+
+.dsh-unified-composer .dsh-composer__context-preview-header > strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-unified-composer .dsh-composer__context-preview-dialog > pre {
+  min-width: 0;
+  margin: 0;
+  padding: var(--dsh-space-3);
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
+  font-size: 0.82em;
+}
+
+.dsh-unified-composer .dsh-stats-line {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dsh-muted);
+  font-size: 0.72em;
+  line-height: 1.35;
+  text-align: start;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* One menu owns every secondary composer action. The menu itself is a
+ * bounded surface; it cannot enlarge the composer or create page overflow. */
+
+.dsh-composer__extras {
+  position: relative;
+  z-index: 10;
+  flex: 0 0 auto;
+}
+
+.dsh-composer__extras-trigger {
+  position: relative;
+  width: 2.25rem;
+  min-width: 2.25rem;
+  min-height: 2.25rem;
+  padding: var(--dsh-space-2);
+  border-color: transparent;
+  border-radius: var(--dsh-radius-md);
+  color: var(--dsh-muted);
+  background: transparent;
+}
+
+.dsh-composer__extras-trigger:hover:not(:disabled),
+.dsh-composer__extras-trigger--open {
+  color: var(--dsh-text);
+  background: var(--dsh-surface-hover);
+}
+
+.dsh-composer__extras-count {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  display: inline-grid;
+  min-width: 0.9rem;
+  height: 0.9rem;
+  place-items: center;
+  padding-inline: 2px;
+  border-radius: 999px;
+  color: var(--dsh-primary-text);
+  background: var(--dsh-primary);
+  font-size: 0.62rem;
+  line-height: 1;
+}
+
+.dsh-composer__extras-panel {
+  position: absolute;
+  inset-inline-start: 0;
+  bottom: calc(100% + var(--dsh-space-2));
+  z-index: 50;
+  display: grid;
+  width: min(var(--dsh-menu-width), calc(100vw - var(--dsh-menu-viewport-inset)));
+  max-width: calc(100vw - var(--dsh-menu-viewport-inset));
+  max-height: min(var(--dsh-menu-max-height), calc(100vh - var(--dsh-menu-viewport-inset)));
+  gap: 0;
+  padding: var(--dsh-space-2);
+  font-size: var(--dsh-menu-font-size);
+  line-height: var(--dsh-menu-line-height);
+  /* Expanded command catalogs remain inside this bounded surface. Picker and
+   * risk menus use viewport positioning, so they are not clipped by this
+   * scroll owner. */
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.dsh-composer__extras-section {
+  min-width: 0;
+}
+
+.dsh-composer__extras-section + .dsh-composer__extras-section {
+  margin-top: var(--dsh-space-2);
+  padding-top: var(--dsh-space-2);
+  border-top: 1px solid color-mix(in srgb, var(--dsh-border-color) 72%, transparent);
+}
+
+.dsh-composer__attachment-actions {
+  display: grid;
+  min-width: 0;
+  gap: var(--dsh-space-1);
+}
+
+.dsh-composer__extra-action {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  width: 100%;
+  min-width: 0;
+  min-height: var(--dsh-menu-item-height);
+  gap: var(--dsh-space-2);
+  padding: var(--dsh-space-2);
+  border-color: transparent;
+  color: var(--dsh-text);
+  background: transparent;
+  font-size: inherit;
+  line-height: inherit;
+  text-align: start;
+}
+
+.dsh-composer__extra-action:hover:not(:disabled),
+.dsh-composer__extra-action:focus-visible {
+  background: var(--dsh-surface-hover);
+}
+
+.dsh-composer__extra-action > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-composer__command-actions {
+  min-width: 0;
+}
+
+.dsh-composer__command-summary {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  min-height: var(--dsh-menu-item-height);
+  gap: var(--dsh-space-2);
+  padding: var(--dsh-space-2);
+  border-radius: var(--dsh-radius-md);
+  color: var(--dsh-text);
+  cursor: pointer;
+  font-size: inherit;
+  line-height: inherit;
+  list-style: none;
+}
+
+.dsh-composer__command-summary::-webkit-details-marker {
+  display: none;
+}
+
+.dsh-composer__command-summary::marker {
+  content: '';
+}
+
+.dsh-composer__command-summary:hover,
+.dsh-composer__command-summary:focus-visible {
+  background: var(--dsh-surface-hover);
+}
+
+.dsh-composer__command-summary > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-composer__command-summary > .dsh-icon:last-child {
+  margin-inline-start: auto;
+  transition: transform 120ms ease;
+}
+
+.dsh-composer__command-actions[open] .dsh-composer__command-summary > .dsh-icon:last-child {
+  transform: rotate(180deg);
+}
+
+.dsh-composer__command-filter {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: var(--dsh-space-2);
+  margin-top: var(--dsh-space-1);
+  padding: 0 var(--dsh-space-2);
+  color: var(--dsh-muted);
+  font-size: inherit;
+  line-height: inherit;
+}
+
+.dsh-composer__command-filter input {
+  min-width: 0;
+  flex: 1 1 auto;
+  min-height: 1.9rem;
+  padding: var(--dsh-space-1) var(--dsh-space-2);
+}
+
+.dsh-composer__command-list {
+  display: grid;
+  max-height: 12rem;
+  gap: var(--dsh-space-1);
+  margin: var(--dsh-space-1) 0 0;
+  padding: 0 var(--dsh-space-1);
+  overflow: auto;
+  list-style: none;
+}
+
+.dsh-composer__command-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  min-width: 0;
+  gap: var(--dsh-space-2);
+  padding: var(--dsh-space-1) var(--dsh-space-2);
+  border-color: transparent;
+  color: var(--dsh-text);
+  background: transparent;
+  text-align: start;
+}
+
+.dsh-composer__command-item:hover:not(:disabled),
+.dsh-composer__command-item:focus-visible {
+  background: var(--dsh-surface-hover);
+}
+
+.dsh-composer__command-item strong,
+.dsh-composer__command-item > span,
+.dsh-composer__command-item > small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-composer__command-item > span,
+.dsh-composer__command-item > small,
+.dsh-composer__command-empty {
+  color: var(--dsh-muted);
+  font-size: 0.78em;
+}
+
+.dsh-composer__command-empty {
+  display: block;
+  padding: var(--dsh-space-2);
+}
+
+.dsh-session-controls--secondary {
+  display: grid;
+  min-width: 0;
+  gap: var(--dsh-space-2);
+}
+
+.dsh-session-controls--secondary .dsh-session-controls__selectors {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  min-width: 0;
+  gap: var(--dsh-space-1);
+}
+
+.dsh-session-controls--secondary .dsh-session-controls__selectors > .dsh-compact-picker,
+.dsh-session-controls--secondary .dsh-session-controls__selectors > .dsh-session-controls__plan {
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+}
+
+.dsh-session-controls--secondary .dsh-compact-picker__trigger,
+.dsh-session-controls--secondary .dsh-session-controls__plan {
+  display: inline-flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  min-height: var(--dsh-menu-item-height);
+  padding: var(--dsh-space-1) var(--dsh-space-2);
+  border: 1px solid var(--dsh-border-color);
+  border-radius: var(--dsh-radius-md);
+  color: var(--dsh-muted);
+  background: var(--dsh-surface-raised);
+  font-size: inherit;
+  line-height: inherit;
+  overflow: hidden;
+  justify-content: flex-start;
+}
+
+.dsh-session-controls--secondary .dsh-compact-picker--open {
+  position: relative;
+  z-index: 70;
+}
+
+.dsh-session-controls--secondary .dsh-compact-picker__menu {
+  top: auto;
+  right: auto;
+  bottom: calc(100% + var(--dsh-space-1));
+  left: 0;
+  z-index: 80;
+  width: min(18rem, calc(100vw - var(--dsh-space-4)));
+  min-width: min(12rem, calc(100vw - var(--dsh-space-4)));
+}
+
+/* The workflow picker occupies the right grid cell. Mirror its popup to the
+ * right edge so its full width remains inside the viewport on narrow panels. */
+.dsh-session-controls--secondary .dsh-session-controls__workflow-mode .dsh-compact-picker__menu {
+  right: 0;
+  left: auto;
+}
+
+.dsh-session-controls--secondary .dsh-session-controls__plan {
+  gap: var(--dsh-space-2);
+}
+
+.dsh-session-controls--secondary .dsh-session-controls__plan:hover:not(:disabled),
+.dsh-session-controls--secondary .dsh-session-controls__plan:focus-visible {
+  color: var(--dsh-text);
+  background: var(--dsh-surface-hover);
+}
+
+.dsh-session-controls__plan-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-composer__extras-panel .dsh-open-file-picker {
+  position: fixed;
+  display: grid;
+  min-width: 0;
+  width: min(24rem, calc(100vw - var(--dsh-space-4)));
+  max-width: calc(100vw - var(--dsh-space-4));
+  max-height: min(var(--dsh-menu-max-height), calc(100vh - var(--dsh-space-4)));
+  margin: 0;
+  padding: 0;
+  border-color: var(--dsh-border-color);
+  border-radius: var(--dsh-radius-md);
+  box-shadow: var(--dsh-shadow);
+}
+
+.dsh-composer__extras-panel .dsh-open-file-picker__header {
+  padding: var(--dsh-space-2);
+}
+
+.dsh-composer__extras-panel .dsh-open-file-picker__list {
+  max-height: 12rem;
+  overflow: auto;
+}
+
+.dsh-composer__extras-panel .dsh-open-file-picker__option {
+  min-height: 2.25rem;
+}
+
+/* The keyboard hint is secondary metadata. Give the model, permission and
+ * context status the space first in a narrow composer; the hint remains
+ * available through the input's accessible description/title. */
+@container dsh-composer (max-width: 36rem) {
+  .dsh-unified-composer .dsh-composer__context-capture {
+    width: var(--dsh-control-height);
+    min-width: var(--dsh-control-height);
+    justify-content: center;
+    padding-inline: var(--dsh-space-1);
+  }
+
+  .dsh-unified-composer .dsh-composer__context-action-label {
+    display: none;
+  }
+
+  /* The legacy viewport rule changes this toolbar to a wrapping flex column.
+   * The composer owns its responsive geometry, so keep the intrinsic rail in
+   * one row and let only labels collapse at narrow widths. */
+  .dsh-unified-composer .dsh-composer__toolbar {
+    display: grid;
+    grid-template-columns: minmax(0, auto) minmax(0, 1fr) auto;
+    grid-template-areas: 'start controls submit';
+    align-items: center;
+    flex-wrap: nowrap;
+  }
+
+  .dsh-unified-composer .dsh-composer__toolbar-start {
+    flex: 0 0 auto;
+  }
+
+  .dsh-unified-composer .dsh-composer__toolbar-controls {
+    width: auto;
+    flex: 1 1 auto;
+  }
+
+  .dsh-unified-composer .dsh-composer__hint {
+    display: none;
+  }
+}
+
+/* At the smallest composer widths, low-frequency selectors become icon
+ * buttons while the model and context status keep readable text. */
+@container dsh-composer (max-width: 32rem) {
+  .dsh-unified-composer .dsh-composer__send-label {
+    display: none;
+  }
+
+  .dsh-unified-composer .dsh-session-controls--primary .dsh-session-controls__selectors {
+    justify-content: flex-end;
+  }
+
+  .dsh-unified-composer
+    .dsh-session-controls--primary
+    .dsh-session-controls__selectors
+    > .dsh-compact-picker:not(.dsh-model-picker) {
+    width: 2rem;
+    min-width: 2rem;
+    max-width: 2rem;
+    flex-basis: 2rem;
+  }
+
+  .dsh-unified-composer
+    .dsh-session-controls--primary
+    .dsh-session-controls__selectors
+    > .dsh-compact-picker:not(.dsh-model-picker)
+    .dsh-compact-picker__trigger {
+    width: 2rem;
+    min-width: 2rem;
+    max-width: 2rem;
+    justify-content: center;
+    padding-inline: var(--dsh-space-1);
+  }
+
+  .dsh-unified-composer
+    .dsh-session-controls--primary
+    .dsh-session-controls__selectors
+    > .dsh-compact-picker:not(.dsh-model-picker)
+    .dsh-compact-picker__trigger-text,
+  .dsh-unified-composer
+    .dsh-composer__toolbar-controls
+    .dsh-session-controls__selectors
+    > .dsh-compact-picker:not(.dsh-model-picker)
+    .dsh-compact-picker__trigger-label {
+    display: none;
+  }
+
+  .dsh-unified-composer .dsh-session-controls--primary .dsh-model-picker {
+    flex: 0 1 auto;
+    width: fit-content;
+    min-width: 0;
+    max-width: min(22rem, 100%);
+    flex-basis: auto;
+  }
+
+  .dsh-unified-composer
+    .dsh-session-controls--primary
+    .dsh-model-picker
+    .dsh-compact-picker__trigger {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    justify-content: flex-start;
+    padding-inline: var(--dsh-space-2);
+  }
+
+  .dsh-unified-composer
+    .dsh-session-controls--primary
+    .dsh-model-picker
+    .dsh-compact-picker__trigger-label {
+    display: inline;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .dsh-unified-composer .dsh-session-controls--primary .dsh-session-controls__metrics {
+    display: flex;
+    flex: 0 0 auto;
+    margin-inline-start: auto;
+  }
+
+  .dsh-unified-composer .dsh-session-controls--primary .dsh-context-meter__label--full {
+    display: none;
+  }
+
+  .dsh-unified-composer .dsh-session-controls--primary .dsh-context-meter__label--compact {
+    display: inline;
+    max-width: 7.5rem;
+  }
+}
+
+@media (max-width: 36rem) {
+  .dsh-app {
+    padding: var(--dsh-space-2);
+  }
+
+  .dsh-conversation__topbar {
+    gap: var(--dsh-space-1);
+  }
+
+  .dsh-conversation__views .dsh-conversation__view-tab {
+    padding-inline: var(--dsh-space-2);
+  }
+
+  .dsh-composer__extras-panel {
+    width: min(var(--dsh-menu-width), calc(100vw - var(--dsh-menu-viewport-inset)));
+    max-width: calc(100vw - var(--dsh-menu-viewport-inset));
+  }
+}
+
+/* Session switcher contract -----------------------------------------------
+ *
+ * The session surface is one bounded popover with three stable regions:
+ * header, search, and a single scrolling result area. Workspace rows and
+ * session rows share the same grid rules, so long names can only consume the
+ * copy column and never push status or actions outside the card.
+ */
+
+.dsh-session-switcher__panel.dsh-popover-card {
+  container: dsh-session-switcher / inline-size;
+  position: fixed;
+  inset-block-start: calc(var(--dsh-space-3) + var(--dsh-control-height) + var(--dsh-space-2));
+  inset-inline-end: max(var(--dsh-space-2), env(safe-area-inset-right));
+  inset-inline-start: auto;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  width: min(var(--dsh-session-panel-width), calc(100vw - var(--dsh-space-4)));
+  min-width: min(var(--dsh-session-panel-min-width), calc(100vw - var(--dsh-space-4)));
+  max-width: calc(100vw - var(--dsh-space-4));
+  max-height: min(var(--dsh-session-panel-max-height), calc(100vh - var(--dsh-space-4)));
+  padding: 0;
+  overflow: hidden;
+  border: var(--dsh-border);
+  border-color: var(--vscode-widget-border, var(--dsh-border-color));
+  border-radius: var(--dsh-radius-lg);
+  background: var(--vscode-editorWidget-background, var(--dsh-widget-bg));
+  box-shadow: var(--dsh-shadow);
+}
+
+.dsh-session-switcher__panel-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  flex: 0 0 auto;
+  min-width: 0;
+  min-height: var(--dsh-control-height);
+  gap: var(--dsh-space-2);
+  padding: var(--dsh-space-2) var(--dsh-space-3);
+  border-bottom: var(--dsh-border);
+}
+
+.dsh-session-switcher__panel-title {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dsh-text);
+  font-size: 0.9em;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-session-switcher__panel-actions {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: var(--dsh-space-1);
+  min-width: 0;
+}
+
+.dsh-session-switcher__panel-actions .dsh-icon-button,
+.dsh-session-switcher__panel-actions .dsh-button {
+  width: var(--dsh-control-height);
+  min-width: var(--dsh-control-height);
+  height: var(--dsh-control-height);
+  min-height: var(--dsh-control-height);
+  padding: var(--dsh-space-1);
+  border-radius: var(--dsh-radius-sm);
+}
+
+.dsh-session-switcher__search {
+  flex: 0 0 auto;
+  min-width: 0;
+  padding: var(--dsh-space-2) var(--dsh-space-3);
+  border-bottom: var(--dsh-border);
+}
+
+.dsh-session-switcher__search input {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  min-height: var(--dsh-control-height);
+}
+
+.dsh-session-switcher__workspaces {
+  display: grid;
+  flex: 0 0 auto;
+  min-width: 0;
+  max-height: 9rem;
+  gap: var(--dsh-space-1);
+  margin: 0;
+  padding: var(--dsh-space-2) var(--dsh-space-3);
+  overflow: auto;
+  border-bottom: var(--dsh-border);
+  list-style: none;
+  scrollbar-width: thin;
+}
+
+.dsh-session-switcher__workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  min-width: 0;
+  min-height: var(--dsh-control-height);
+  gap: var(--dsh-space-2);
+  padding: var(--dsh-space-1) var(--dsh-space-2);
+  border: 1px solid transparent;
+  border-radius: var(--dsh-radius-md);
+  background: transparent;
+}
+
+.dsh-session-switcher__workspace--active,
+.dsh-session-switcher__workspace:hover {
+  border-color: var(--dsh-border-color);
+  background: var(--dsh-surface-hover);
+}
+
+.dsh-session-switcher__workspace-button {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  min-height: var(--dsh-control-height);
+  gap: var(--dsh-space-2);
+  padding: 0;
+  border: 0;
+  color: var(--dsh-text);
+  background: transparent;
+  text-align: start;
+}
+
+.dsh-session-switcher__workspace-icon {
+  display: grid;
+  width: var(--dsh-icon-size);
+  height: var(--dsh-icon-size);
+  flex: 0 0 var(--dsh-icon-size);
+  place-items: center;
+  color: var(--dsh-muted);
+}
+
+.dsh-session-switcher__workspace-icon .dsh-icon {
+  width: var(--dsh-icon-size-sm);
+  height: var(--dsh-icon-size-sm);
+}
+
+.dsh-session-switcher__workspace-name,
+.dsh-session-switcher__workspace-count {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-session-switcher__workspace-count {
+  color: var(--dsh-muted);
+  font-size: 0.78em;
+}
+
+.dsh-session-switcher__workspace-actions,
+.dsh-session-item__actions {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: var(--dsh-space-1);
+  min-width: 0;
+}
+
+.dsh-session-switcher__workspace-actions .dsh-icon-button,
+.dsh-session-item__actions .dsh-icon-button {
+  width: var(--dsh-control-height);
+  min-width: var(--dsh-control-height);
+  height: var(--dsh-control-height);
+  min-height: var(--dsh-control-height);
+  padding: var(--dsh-space-1);
+}
+
+.dsh-session-switcher__groups,
+.dsh-session-switcher__panel > .dsh-session-switcher__list {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding: var(--dsh-space-2) var(--dsh-space-3);
+  overflow: auto;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+}
+
+.dsh-session-switcher__groups {
+  display: grid;
+  gap: var(--dsh-space-3);
+}
+
+.dsh-session-switcher__group {
+  display: grid;
+  min-width: 0;
+  gap: var(--dsh-space-1);
+}
+
+.dsh-session-switcher__list {
+  display: grid;
+  gap: var(--dsh-space-1);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.dsh-session-switcher__list > li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  min-width: 0;
+  gap: var(--dsh-space-1);
+}
+
+.dsh-session-switcher__list .dsh-session-item__button {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  min-height: var(--dsh-control-height);
+  gap: var(--dsh-space-2);
+  padding: var(--dsh-space-1) var(--dsh-space-2);
+  border: 1px solid transparent;
+  border-radius: var(--dsh-radius-md);
+  color: var(--dsh-text);
+  background: transparent;
+  text-align: start;
+}
+
+.dsh-session-switcher__list .dsh-session-item__button--active,
+.dsh-session-switcher__list .dsh-session-item__button:hover:not(:disabled) {
+  border-color: var(--dsh-border-color);
+  background: var(--dsh-surface-hover);
+}
+
+.dsh-session-switcher__list .dsh-session-item__copy {
+  display: block;
+  min-width: 0;
+}
+
+.dsh-session-switcher__list .dsh-session-item__copy strong {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  font-size: inherit;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-session-switcher__list .dsh-session-item__status {
+  display: inline-flex;
+  align-items: center;
+  justify-self: end;
+  min-width: 0;
+  width: auto;
+  height: auto;
+  gap: var(--dsh-space-1);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  color: var(--dsh-muted);
+  background: transparent;
+  font-size: 0.78em;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.dsh-session-item__status-dot {
+  width: 0.45rem;
+  height: 0.45rem;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.dsh-session-item__status--green {
+  color: var(--dsh-success);
+}
+
+.dsh-session-item__status--blue {
+  color: var(--dsh-info);
+}
+
+.dsh-session-item__status--amber {
+  color: var(--dsh-warning);
+}
+
+.dsh-session-item__status--red {
+  color: var(--dsh-danger);
+}
+
+.dsh-session-item__status--muted {
+  color: var(--dsh-muted);
+}
+
+.dsh-session-item__icon {
+  display: grid;
+  width: var(--dsh-icon-size);
+  height: var(--dsh-icon-size);
+  flex: 0 0 var(--dsh-icon-size);
+  place-items: center;
+  color: var(--dsh-muted);
+}
+
+.dsh-session-item__icon .dsh-icon {
+  width: var(--dsh-icon-size-sm);
+  height: var(--dsh-icon-size-sm);
+}
+
+.dsh-session-item__icon--running,
+.dsh-session-item__icon--completed {
+  color: var(--dsh-info);
+}
+
+.dsh-session-item__icon--failed {
+  color: var(--dsh-danger);
+}
+
+.dsh-session-item__icon--awaiting-input {
+  color: var(--dsh-warning);
+}
+
+.dsh-session-switcher--headless {
+  position: static;
+  width: 0;
+  min-width: 0;
+  max-width: 0;
+  height: 0;
+  min-height: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.dsh-session-switcher--headless .dsh-session-switcher__panel {
+  pointer-events: auto;
+}
+
+@container dsh-session-switcher (max-width: 28rem) {
+  .dsh-session-switcher__panel {
+    min-width: 0;
+  }
+
+  .dsh-session-switcher__list .dsh-session-item__status-label {
+    display: none;
+  }
+}
+
+/* One compact entry point for low-frequency conversation tools. The panel is
+ * a shell surface; feature drawers inside it keep their own state and may
+ * open a viewport-level menu without being clipped by this card. */
+
+.dsh-conversation__actions {
+  position: relative;
+  z-index: 30;
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.dsh-conversation__actions-trigger {
+  width: var(--dsh-control-height);
+  min-width: var(--dsh-control-height);
+  min-height: var(--dsh-control-height);
+  padding: var(--dsh-space-1);
+  border-radius: var(--dsh-radius-sm);
+}
+
+.dsh-conversation__actions-trigger .dsh-icon {
+  width: 1rem;
+  height: 1rem;
+}
+
+.dsh-conversation__actions-panel {
+  position: fixed;
+  inset-block-start: calc(var(--dsh-space-3) + var(--dsh-control-height) + var(--dsh-space-1));
+  inset-inline-end: max(var(--dsh-space-2), env(safe-area-inset-right));
+  inset-inline-start: auto;
+  z-index: 55;
+  box-sizing: border-box;
+  width: min(28rem, calc(100vw - var(--dsh-space-4)));
+  max-width: calc(100vw - var(--dsh-space-4));
+  max-height: min(32rem, calc(100vh - 5rem));
+  padding: var(--dsh-space-2);
+  overflow: visible;
+  overflow-anchor: none;
+}
+
+.dsh-conversation__actions-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: stretch;
+  min-width: 0;
+  gap: var(--dsh-space-1);
+}
+
+.dsh-conversation__actions-grid > * {
+  min-width: 0;
+}
+
+.dsh-conversation__actions-grid
+  > .dsh-jobs-popover,
+.dsh-conversation__actions-grid
+  > .dsh-changes-popover,
+.dsh-conversation__actions-grid
+  > .dsh-tasks-popover,
+.dsh-conversation__actions-grid
+  > .dsh-checkpoints-popover,
+.dsh-conversation__actions-grid
+  > .dsh-prompt-templates-popover,
+.dsh-conversation__actions-grid
+  > .dsh-subagent-tree,
+.dsh-conversation__actions-grid > .dsh-conversation__locale-control {
+  display: flex;
+  align-items: stretch;
+}
+
+.dsh-conversation__actions-grid
+  .dsh-jobs-popover__trigger,
+.dsh-conversation__actions-grid
+  .dsh-changes-popover__trigger,
+.dsh-conversation__actions-grid
+  .dsh-tasks-popover__trigger,
+.dsh-conversation__actions-grid
+  .dsh-checkpoints-popover__trigger,
+.dsh-conversation__actions-grid
+  .dsh-prompt-templates-popover__trigger,
+.dsh-conversation__actions-grid
+  .dsh-subagent-tree__trigger,
+.dsh-conversation__actions-grid .dsh-conversation__export-trigger,
+.dsh-conversation__actions-grid .dsh-conversation__locale-switch {
+  justify-content: flex-start;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  border-radius: var(--dsh-radius-md);
+  text-align: start;
+}
+
+.dsh-conversation__actions-grid .dsh-conversation__export-trigger,
+.dsh-conversation__actions-grid .dsh-conversation__locale-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--dsh-space-1);
+  color: var(--dsh-muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.dsh-conversation__actions-grid .dsh-conversation__locale-control {
+  position: relative;
+}
+
+.dsh-conversation__actions-grid .dsh-conversation__locale-switch .dsh-icon {
+  width: 1rem;
+  height: 1rem;
+  margin-inline-start: auto;
+}
+
+.dsh-conversation__actions-grid .dsh-conversation__locale-menu {
+  position: fixed;
+}
+
+@media (max-width: 36rem) {
+  .dsh-conversation__actions-panel {
+    inset-inline-end: var(--dsh-space-2);
+    inset-inline-start: var(--dsh-space-2);
+    width: auto;
+    max-width: none;
+  }
+
+  .dsh-settings__tabs {
+    padding-inline: var(--dsh-space-2);
+  }
+
+  .dsh-settings__tab {
+    padding-inline: var(--dsh-space-2);
+    font-size: 0.78rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
+
+/* Structured conversation tools -------------------------------------------
+ *
+ * The feature drawers live in a horizontally scrollable chrome rail. Their
+ * menus must therefore never participate in that rail's layout: doing so
+ * makes a narrow webview grow vertically and clips the menu at the rail's
+ * edge. All of these menus use the same viewport-bounded surface contract.
+ */
+
+.dsh-jobs-popover,
+.dsh-changes-popover,
+.dsh-tasks-popover,
+.dsh-checkpoints-popover,
+.dsh-prompt-templates-popover,
+.dsh-subagent-tree {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.dsh-changes-popover__trigger,
+.dsh-tasks-popover__trigger,
+.dsh-checkpoints-popover__trigger,
+.dsh-prompt-templates-popover__trigger,
+.dsh-jobs-popover__trigger,
+.dsh-subagent-tree__trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--dsh-control-height);
+  min-height: var(--dsh-control-height);
+  gap: var(--dsh-space-1);
+  padding: var(--dsh-space-1) var(--dsh-space-2);
+  border: 1px solid var(--dsh-border-color);
+  border-radius: var(--dsh-radius-md);
+  color: var(--dsh-muted);
+  background: transparent;
+  font: inherit;
+  font-size: 0.78rem;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.dsh-changes-popover__trigger:hover,
+.dsh-changes-popover__trigger:focus-visible,
+.dsh-changes-popover__trigger[aria-expanded='true'],
+.dsh-tasks-popover__trigger:hover,
+.dsh-tasks-popover__trigger:focus-visible,
+.dsh-tasks-popover__trigger[aria-expanded='true'],
+.dsh-checkpoints-popover__trigger:hover,
+.dsh-checkpoints-popover__trigger:focus-visible,
+.dsh-checkpoints-popover__trigger[aria-expanded='true'],
+.dsh-prompt-templates-popover__trigger:hover,
+.dsh-prompt-templates-popover__trigger:focus-visible,
+.dsh-prompt-templates-popover__trigger[aria-expanded='true'],
+.dsh-jobs-popover__trigger:hover,
+.dsh-jobs-popover__trigger:focus-visible,
+.dsh-jobs-popover__trigger[aria-expanded='true'],
+.dsh-subagent-tree__trigger:hover,
+.dsh-subagent-tree__trigger:focus-visible,
+.dsh-subagent-tree__trigger[aria-expanded='true'] {
+  border-color: var(--dsh-border-color);
+  color: var(--dsh-text);
+  background: var(--dsh-surface-hover);
+  outline: none;
+}
+
+.dsh-changes-popover__trigger > span,
+.dsh-tasks-popover__trigger > span,
+.dsh-checkpoints-popover__trigger > span,
+.dsh-prompt-templates-popover__trigger > span,
+.dsh-jobs-popover__trigger > span,
+.dsh-subagent-tree__trigger > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-changes-popover__trigger > .dsh-icon,
+.dsh-tasks-popover__trigger > .dsh-icon,
+.dsh-checkpoints-popover__trigger > .dsh-icon,
+.dsh-prompt-templates-popover__trigger > .dsh-icon,
+.dsh-jobs-popover__trigger > .dsh-icon,
+.dsh-subagent-tree__trigger > .dsh-icon {
+  width: 1rem;
+  height: 1rem;
+  flex: 0 0 auto;
+}
+
+.dsh-jobs-popover__trigger,
+.dsh-subagent-tree__trigger {
+  border-radius: 999px;
+}
+
+.dsh-jobs-popover__dot,
+.dsh-tasks-popover__dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--dsh-muted);
+}
+
+.dsh-tasks-popover__dot[data-state='warning'],
+.dsh-jobs-popover__dot[data-state='warning'] {
+  background: var(--dsh-warning);
+}
+
+.dsh-jobs-popover__dot[data-state='ongoing'],
+.dsh-tasks-popover__dot[data-state='running'] {
+  background: var(--dsh-info);
+}
+
+.dsh-jobs-popover__dot[data-state='done'],
+.dsh-tasks-popover__dot[data-state='completed'] {
+  background: var(--dsh-success);
+}
+
+.dsh-jobs-popover__dot[data-state='error'],
+.dsh-tasks-popover__dot[data-state='failed'] {
+  background: var(--dsh-danger);
+}
+
+.dsh-changes-popover__menu,
+.dsh-tasks-popover__menu,
+.dsh-checkpoints-popover__menu,
+.dsh-prompt-templates-popover__menu,
+.dsh-jobs-popover__menu {
+  position: fixed;
+  inset-block-start: calc(var(--dsh-space-3) + var(--dsh-control-height) + var(--dsh-space-2));
+  inset-inline-end: max(var(--dsh-space-2), env(safe-area-inset-right));
+  inset-inline-start: auto;
+  z-index: 60;
+  box-sizing: border-box;
+  width: min(34rem, calc(100vw - var(--dsh-space-4)));
+  min-width: min(20rem, calc(100vw - var(--dsh-space-4)));
+  max-width: calc(100vw - var(--dsh-space-4));
+  max-height: min(34rem, calc(100vh - 5rem));
+  margin: 0;
+  padding: var(--dsh-space-2);
+  overflow: auto;
+  border: 1px solid var(--vscode-widget-border, var(--dsh-border-color));
+  border-radius: var(--dsh-radius-lg);
+  color: var(--dsh-text);
+  background: var(--vscode-editorWidget-background, var(--dsh-widget-bg));
+  box-shadow: var(--dsh-shadow);
+}
+
+.dsh-jobs-popover__menu {
+  display: grid;
+  gap: var(--dsh-space-1);
+  list-style: none;
+}
+
+.dsh-changes-popover__menu,
+.dsh-tasks-popover__menu,
+.dsh-checkpoints-popover__menu,
+.dsh-prompt-templates-popover__menu {
+  display: grid;
+  align-content: start;
+  gap: var(--dsh-space-2);
+}
+
+.dsh-changes-popover__header,
+.dsh-tasks-popover__header,
+.dsh-checkpoints-popover__header,
+.dsh-prompt-templates-popover__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  gap: var(--dsh-space-2);
+  padding-bottom: var(--dsh-space-2);
+  border-bottom: 1px solid var(--dsh-border-color);
+}
+
+.dsh-changes-popover__header > strong,
+.dsh-tasks-popover__header > strong,
+.dsh-checkpoints-popover__header > strong,
+.dsh-prompt-templates-popover__header > strong {
+  min-width: 0;
+  color: var(--dsh-text);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.dsh-checkpoints-popover__header-actions,
+.dsh-prompt-templates-popover__header-actions {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: var(--dsh-space-1);
+}
+
+.dsh-changes-popover__status,
+.dsh-tasks-popover__status,
+.dsh-checkpoints-popover__status,
+.dsh-prompt-templates-popover__status,
+.dsh-checkpoints-popover__error,
+.dsh-prompt-templates-popover__error {
+  min-width: 0;
+  padding: var(--dsh-space-2);
+  color: var(--dsh-muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.dsh-checkpoints-popover__error,
+.dsh-prompt-templates-popover__error {
+  color: var(--dsh-danger);
+}
+
+.dsh-changes-popover__rows,
+.dsh-tasks-popover__rows,
+.dsh-checkpoints-popover__rows,
+.dsh-prompt-templates-popover__rows {
+  display: grid;
+  align-content: start;
+  justify-content: stretch;
+  min-width: 0;
+  width: 100%;
+  gap: var(--dsh-space-1);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  list-style: none;
+}
+
+.dsh-changes-popover__row,
+.dsh-tasks-popover__row,
+.dsh-checkpoints-popover__row,
+.dsh-prompt-templates-popover__row {
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  gap: var(--dsh-space-2);
+  padding: var(--dsh-space-1);
+  border: 1px solid transparent;
+  border-radius: var(--dsh-radius-md);
+}
+
+.dsh-changes-popover__row:hover,
+.dsh-tasks-popover__row:hover,
+.dsh-checkpoints-popover__row:hover,
+.dsh-prompt-templates-popover__row:hover {
+  border-color: var(--dsh-border-color);
+  background: var(--dsh-surface-hover);
+}
+
+.dsh-changes-popover__row-main,
+.dsh-tasks-popover__main,
+.dsh-prompt-templates-popover__row-main {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: var(--dsh-space-2);
+  padding: var(--dsh-space-1);
+  border: 0;
+  color: var(--dsh-text);
+  background: transparent;
+  text-align: start;
+  cursor: pointer;
+}
+
+.dsh-changes-popover__row-main:hover,
+.dsh-changes-popover__row-main:focus-visible,
+.dsh-tasks-popover__main:hover,
+.dsh-tasks-popover__main:focus-visible,
+.dsh-prompt-templates-popover__row-main:hover,
+.dsh-prompt-templates-popover__row-main:focus-visible {
+  color: var(--dsh-text);
+  outline: none;
+}
+
+.dsh-changes-popover__row-main > .dsh-icon,
+.dsh-prompt-templates-popover__row-main > .dsh-icon {
+  width: 1rem;
+  height: 1rem;
+  flex: 0 0 auto;
+  color: var(--dsh-muted);
+}
+
+.dsh-changes-popover__path,
+.dsh-tasks-popover__title,
+.dsh-prompt-templates-popover__row-main > span,
+.dsh-checkpoints-popover__summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-changes-popover__path,
+.dsh-tasks-popover__title {
+  flex: 1 1 auto;
+}
+
+.dsh-changes-popover__status-label,
+.dsh-changes-popover__evidence,
+.dsh-tasks-popover__kind,
+.dsh-tasks-popover__status,
+.dsh-prompt-templates-popover__row-main em {
+  flex: 0 0 auto;
+  max-width: 10rem;
+  overflow: hidden;
+  color: var(--dsh-muted);
+  font-size: 0.72rem;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-tasks-popover__status-dot,
+.dsh-checkpoints-popover__state {
+  width: 0.5rem;
+  height: 0.5rem;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--dsh-muted);
+}
+
+.dsh-tasks-popover__status-dot[data-state='running'] {
+  background: var(--dsh-info);
+}
+
+.dsh-tasks-popover__status-dot[data-state='needs-input'],
+.dsh-tasks-popover__status-dot[data-state='blocked'] {
+  background: var(--dsh-warning);
+}
+
+.dsh-tasks-popover__status-dot[data-state='completed'] {
+  background: var(--dsh-success);
+}
+
+.dsh-tasks-popover__status-dot[data-state='failed'] {
+  background: var(--dsh-danger);
+}
+
+.dsh-checkpoints-popover__state[data-state='ready'],
+.dsh-checkpoints-popover__state[data-state='complete'] {
+  background: var(--dsh-success);
+}
+
+.dsh-checkpoints-popover__state[data-state='conflicted'],
+.dsh-checkpoints-popover__state[data-state='failed'] {
+  background: var(--dsh-danger);
+}
+
+.dsh-checkpoints-popover__summary {
+  display: grid;
+  flex: 1 1 auto;
+  gap: 2px;
+}
+
+.dsh-checkpoints-popover__summary strong,
+.dsh-prompt-templates-popover__row-main strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dsh-text);
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-checkpoints-popover__summary > span,
+.dsh-checkpoints-popover__time,
+.dsh-prompt-templates-popover__row-main small {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dsh-muted);
+  font-size: 0.7rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-checkpoints-popover__row-actions,
+.dsh-prompt-templates-popover__row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex: 0 0 auto;
+  gap: var(--dsh-space-1);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  overflow: visible;
+}
+
+.dsh-checkpoints-popover__header-actions,
+.dsh-prompt-templates-popover__header-actions,
+.dsh-checkpoints-popover__dialog-actions,
+.dsh-prompt-templates-popover__dialog-actions {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  overflow: visible;
+}
+
+.dsh-prompt-templates-popover__row-main > span {
+  display: grid;
+  flex: 1 1 auto;
+  gap: 2px;
+  text-align: start;
+}
+
+.dsh-prompt-templates-popover__search {
+  display: grid;
+  min-width: 0;
+  gap: var(--dsh-space-1);
+  color: var(--dsh-muted);
+  font-size: 0.72rem;
+}
+
+.dsh-prompt-templates-popover__search input,
+.dsh-tasks-popover__answer input,
+.dsh-checkpoints-popover__dialog input,
+.dsh-prompt-templates-popover__dialog input,
+.dsh-prompt-templates-popover__dialog textarea {
+  min-width: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--dsh-border-color);
+  border-radius: var(--dsh-radius-sm);
+  color: var(--dsh-text);
+  background: var(--dsh-input-bg);
+}
+
+.dsh-prompt-templates-popover__search input,
+.dsh-tasks-popover__answer input,
+.dsh-checkpoints-popover__dialog input,
+.dsh-prompt-templates-popover__dialog input {
+  min-height: 2rem;
+  padding: var(--dsh-space-1) var(--dsh-space-2);
+}
+
+.dsh-tasks-popover__answer {
+  display: flex;
+  flex: 1 1 100%;
+  min-width: 0;
+  gap: var(--dsh-space-1);
+}
+
+.dsh-tasks-popover__answer input {
+  flex: 1 1 auto;
+}
+
+.dsh-tasks-popover__answer-button {
+  flex: 0 0 auto;
+  min-height: 1.75rem;
+  padding: var(--dsh-space-1) var(--dsh-space-2);
+  border: 1px solid var(--dsh-border-color);
+  border-radius: var(--dsh-radius-sm);
+  color: var(--dsh-text);
+  background: var(--dsh-surface-raised);
+  cursor: pointer;
+}
+
+.dsh-tasks-popover__answer-button:hover:not(:disabled),
+.dsh-tasks-popover__answer-button:focus-visible {
+  background: var(--dsh-surface-hover);
+}
+
+.dsh-checkpoints-popover__dialog,
+.dsh-prompt-templates-popover__dialog,
+.dsh-prompt-templates-popover__preview {
+  display: grid;
+  min-width: 0;
+  gap: var(--dsh-space-2);
+  padding-top: var(--dsh-space-2);
+  border-top: 1px solid var(--dsh-border-color);
+}
+
+.dsh-checkpoints-popover__dialog > p,
+.dsh-prompt-templates-popover__dialog > p,
+.dsh-prompt-templates-popover__hint {
+  margin: 0;
+  color: var(--dsh-muted);
+  font-size: 0.76rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.dsh-checkpoints-popover__dialog > label,
+.dsh-prompt-templates-popover__dialog > label {
+  display: grid;
+  min-width: 0;
+  gap: var(--dsh-space-1);
+  color: var(--dsh-muted);
+  font-size: 0.74rem;
+}
+
+.dsh-checkpoints-popover__dialog-actions,
+.dsh-prompt-templates-popover__dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--dsh-space-1);
+}
+
+.dsh-checkpoints-popover__preview-list {
+  display: grid;
+  min-width: 0;
+  max-height: 10rem;
+  gap: var(--dsh-space-1);
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.dsh-checkpoints-popover__preview-list li {
+  display: flex;
+  justify-content: space-between;
+  min-width: 0;
+  gap: var(--dsh-space-2);
+  color: var(--dsh-muted);
+  font-size: 0.72rem;
+}
+
+.dsh-checkpoints-popover__preview-list li > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-prompt-templates-popover__preview-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  min-width: 0;
+  gap: var(--dsh-space-2);
+}
+
+.dsh-prompt-templates-popover__preview-header > div:first-child {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.dsh-prompt-templates-popover__preview-header span,
+.dsh-prompt-templates-popover__variables,
+.dsh-prompt-templates-popover__markdown {
+  min-width: 0;
+  color: var(--dsh-muted);
+  font-size: 0.74rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.dsh-prompt-templates-popover__markdown {
+  max-height: 12rem;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
+/* The language picker uses the same top-level rail, so it follows the same
+ * viewport contract instead of being clipped by the rail's scrollport. */
+.dsh-conversation__locale-menu {
+  position: fixed;
+  inset-block-start: calc(var(--dsh-space-3) + var(--dsh-control-height) + var(--dsh-space-2));
+  inset-inline-end: max(var(--dsh-space-2), env(safe-area-inset-right));
+  inset-inline-start: auto;
+  z-index: 60;
+  width: min(14rem, calc(100vw - var(--dsh-space-4)));
+  min-width: min(10rem, calc(100vw - var(--dsh-space-4)));
+  max-width: calc(100vw - var(--dsh-space-4));
+  max-height: min(20rem, calc(100vh - 5rem));
+  box-sizing: border-box;
+}
+
+@media (max-width: 36rem) {
+  .dsh-changes-popover__menu,
+  .dsh-tasks-popover__menu,
+  .dsh-checkpoints-popover__menu,
+  .dsh-prompt-templates-popover__menu,
+  .dsh-jobs-popover__menu {
+    inset-inline-end: var(--dsh-space-2);
+    inset-inline-start: var(--dsh-space-2);
+    width: auto;
+    min-width: 0;
+    max-width: none;
+  }
+}

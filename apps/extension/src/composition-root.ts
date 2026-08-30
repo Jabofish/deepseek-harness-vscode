@@ -8,27 +8,43 @@ import { promisify } from 'node:util'
 import path from 'node:path'
 import {
   AppError,
+  type CheckpointPreview,
+  type CheckpointSummary,
+  FEATURE_CAPABILITY_IDS,
   type AgentConfiguration,
+  type ChangeSetFile,
   type BackendEndpoint,
   type BackendState,
   type DshBackend,
   type DshRuntimeUpdateProgress,
   type ExtensionSettings,
   type ExtensionSettingsSummary,
+  type FeatureCapabilityProfile,
+  type EditorContextOwner,
+  type EditorContextAvailability,
+  type PromptTemplateSummary,
   type QuestionAnswer,
+  type EditorContextItem,
   type SessionDetail,
+  type TaskSummary,
   type WorkspaceSummary,
 } from '@dsh-vscode/domain'
 import {
   AdvancedAgentUseCases,
   BackendService,
+  ChangeUseCases,
+  CheckpointUseCases,
   DshConnectionCoordinator,
+  EditorContextUseCases,
   ExportUseCases,
   InteractionUseCases,
   ModelSettingsUseCases,
+  NavigationUseCases,
+  PromptTemplateUseCases,
   RuntimeUseCases,
   SessionUseCases,
   SettingsUseCases,
+  TaskUseCases,
   WorkspaceUseCases,
   type ConnectionRequest,
 } from '@dsh-vscode/application'
@@ -47,6 +63,12 @@ import {
 import {
   hostEnvelopeSchema,
   hostMessageSchema,
+  featureHostEnvelopeSchema,
+  featureHostMessageSchema,
+  type FeatureHostEvent,
+  type FeatureHostMessage,
+  type FeatureRequest,
+  type FeatureResponse,
   type HostMessage,
   type WebviewRequest,
 } from '@dsh-vscode/webview-protocol'
@@ -65,6 +87,7 @@ import { DshProcessSupervisor, type SpawnedChild } from './backend/process-super
 import { isManagedTemporaryWorkspacePath, isPathWithin } from './backend/path-safety.js'
 import { DshRuntimeLocator } from './backend/runtime-locator.js'
 import { resolveNpmExecutable, runtimePathEntries } from './backend/runtime-paths.js'
+import { TemporaryWorkspaceManager, type StoredTemporaryWorkspace } from './backend/temporary-workspace.js'
 import { resolveWindowsShim } from './backend/windows-shim.js'
 import { normalizeLoopbackUrl, VsCodeConfigurationSource } from './config/configuration-source.js'
 import { DSH_DOCUMENTATION_URL, DSH_PACKAGE, OUTPUT_CHANNEL_NAME } from './constants.js'
@@ -75,6 +98,21 @@ import { DshRuntimeUpdater } from './vscode/update-runtime.js'
 import { requestProviderSecret } from './vscode/credential-input.js'
 import { moveOrExplainSecondarySidebar } from './vscode/secondary-sidebar.js'
 import { updateContextKeys } from './vscode/context-keys.js'
+import { DSH_CHAT_VIEW_OWNER_ID, EditorContextProvider } from './editor/editor-context-provider.js'
+import { NavigationService } from './navigation/navigation-service.js'
+import { ChangeSetTracker } from './changes/change-set-tracker.js'
+import { CheckpointStore } from './checkpoints/checkpoint-store.js'
+import {
+  createVscodeCheckpointStorage,
+  createVscodeCheckpointWorkspace,
+} from './checkpoints/vscode-checkpoint-adapter.js'
+import { TaskCenterRegistry } from './tasks/task-center-registry.js'
+import { PromptTemplateStore } from './prompts/prompt-template-store.js'
+import {
+  createVscodePromptTemplateStorage,
+  createVscodeWorkspacePromptTemplateStorage,
+} from './prompts/vscode-prompt-template-adapter.js'
+import { workspaceFolderId, WorkspacePathGuard } from './editor/workspace-path-guard.js'
 import {
   AttachmentStore,
   decodeCanonicalBase64,
@@ -89,6 +127,9 @@ import {
   validImageBytes,
 } from './attachments/attachment-codec.js'
 
+type FeatureResponsePayload = Extract<FeatureResponse, { readonly ok: true }>['payload']
+type FeatureContextKind = 'selection' | 'open-document' | 'diagnostic' | 'symbol'
+
 const execFileAsync = promisify(execFile)
 const TEMPORARY_WORKSPACE_STATE_KEY = 'dsh.temporaryWorkspace'
 const TRANSPORT_CONFIGURATION_KEYS = [
@@ -99,11 +140,6 @@ const TRANSPORT_CONFIGURATION_KEYS = [
   'dsh.connection.discoveryTimeoutMs',
   'dsh.connection.requestTimeoutMs',
 ] as const
-
-interface StoredTemporaryWorkspace {
-  readonly id: string
-  readonly path: string
-}
 
 interface OpenLinkResult {
   readonly opened: boolean
@@ -154,8 +190,12 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
 
     const roots = [
       ...currentWorkspaceFolders().map((folder) => folder.uri.fsPath),
-      ...(temporaryWorkspace?.path === undefined ? [] : [temporaryWorkspace.path]),
-      ...(temporaryWorkspaceReference?.path === undefined ? [] : [temporaryWorkspaceReference.path]),
+      ...(temporaryWorkspaceManager.current?.path === undefined
+        ? []
+        : [temporaryWorkspaceManager.current.path]),
+      ...(temporaryWorkspaceManager.reference?.path === undefined
+        ? []
+        : [temporaryWorkspaceManager.reference.path]),
     ]
     const basePath = currentWorkspaceFolder()?.uri.fsPath ?? roots[0]
     if (basePath === undefined)
@@ -396,64 +436,42 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
   const settingsUseCases = new SettingsUseCases(backendService)
   const advancedUseCases = new AdvancedAgentUseCases(backendService)
   const exportUseCases = new ExportUseCases(backendService)
-  let temporaryWorkspace: WorkspaceSummary | undefined
-  let temporaryWorkspaceReference = readStoredTemporaryWorkspace(
+  const initialTemporaryWorkspaceReference = readStoredTemporaryWorkspace(
     context.globalState.get<unknown>(TEMPORARY_WORKSPACE_STATE_KEY),
   )
-  const rememberTemporaryWorkspace = async (
-    workspace: WorkspaceSummary,
-    fallbackPath?: string,
-  ): Promise<WorkspaceSummary> => {
-    const workspacePath = workspace.path ?? fallbackPath ?? temporaryWorkspaceReference?.path
-    const remembered = workspacePath === undefined ? workspace : { ...workspace, path: workspacePath }
-    temporaryWorkspace = remembered
-    if (workspacePath !== undefined) {
-      const nextReference: StoredTemporaryWorkspace = { id: remembered.id, path: workspacePath }
-      if (
-        temporaryWorkspaceReference === undefined ||
-        temporaryWorkspaceReference.id !== nextReference.id ||
-        !sameWorkspacePath(temporaryWorkspaceReference.path, nextReference.path)
-      ) {
-        temporaryWorkspaceReference = nextReference
-        await context.globalState.update(TEMPORARY_WORKSPACE_STATE_KEY, nextReference)
-      }
-    }
-    return remembered
-  }
-  const forgetTemporaryWorkspace = async (removeDirectory: boolean): Promise<void> => {
-    const temporaryPath = temporaryWorkspace?.path ?? temporaryWorkspaceReference?.path
-    temporaryWorkspace = undefined
-    temporaryWorkspaceReference = undefined
-    await context.globalState.update(TEMPORARY_WORKSPACE_STATE_KEY, undefined)
-    // Only remove directories created by this extension under its own storage
-    // root. The persisted reference is user state and may be stale, manually
-    // edited, or point at a real project folder; recursive deletion must never
-    // trust that value as an arbitrary path.
-    if (
-      removeDirectory &&
-      temporaryPath !== undefined &&
-      isManagedTemporaryWorkspacePath(context.globalStorageUri.fsPath, temporaryPath)
-    )
-      await rm(temporaryPath, { recursive: true, force: true }).catch(() => undefined)
-  }
+  const temporaryWorkspaceManager = new TemporaryWorkspaceManager({
+    rootPath: context.globalStorageUri.fsPath,
+    ...(initialTemporaryWorkspaceReference === undefined
+      ? {}
+      : { initialReference: initialTemporaryWorkspaceReference }),
+    createWorkspace: (input, signal) => workspaceUseCases.create(input, signal),
+    ensureDirectory: async (directoryPath) => {
+      await mkdir(directoryPath, { recursive: true })
+    },
+    createTemporaryDirectory: (prefix) => mkdtemp(prefix),
+    removeDirectory: (directoryPath) => rm(directoryPath, { recursive: true, force: true }),
+    isManagedPath: (candidatePath) =>
+      isManagedTemporaryWorkspacePath(context.globalStorageUri.fsPath, candidatePath),
+    samePath: sameWorkspacePath,
+    persistReference: async (reference) => {
+      await context.globalState.update(TEMPORARY_WORKSPACE_STATE_KEY, reference)
+    },
+  })
   const attachmentTokens = new AttachmentStore()
+  const editorContextProvider = new EditorContextProvider()
+  const editorContextUseCases = new EditorContextUseCases(editorContextProvider)
+  const navigationService = new NavigationService()
+  const navigationUseCases = new NavigationUseCases(navigationService)
+  const featureOwner = (): EditorContextOwner => ({
+    ownerId: DSH_CHAT_VIEW_OWNER_ID,
+    ownerViewId: DSH_CHAT_VIEW_OWNER_ID,
+    contextStoreGeneration: 1,
+  })
   const listCurrentWorkspaces = async (signal?: AbortSignal): Promise<readonly WorkspaceSummary[]> => {
     const folders = currentWorkspaceFolders()
     const workspaces = await workspaceUseCases.list(signal)
     if (folders.length === 0) {
-      const reference =
-        temporaryWorkspaceReference ??
-        (temporaryWorkspace?.path === undefined
-          ? undefined
-          : { id: temporaryWorkspace.id, path: temporaryWorkspace.path })
-      if (reference === undefined) return []
-      const refreshed = workspaces.find(
-        (workspace) =>
-          workspace.id === reference.id ||
-          (workspace.path !== undefined && sameWorkspacePath(workspace.path, reference.path)),
-      )
-      if (refreshed === undefined) return []
-      return [await rememberTemporaryWorkspace(refreshed, reference.path)]
+      return [await temporaryWorkspaceManager.resolve(workspaces, signal)]
     }
     const matching = workspaces.filter(
       (workspace) =>
@@ -517,27 +535,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       )
     }
 
-    if (temporaryWorkspaceReference !== undefined) {
-      await mkdir(temporaryWorkspaceReference.path, { recursive: true })
-      const reused = await workspaceUseCases.create(
-        { name: 'Temporary Workspace', path: temporaryWorkspaceReference.path },
-        signal,
-      )
-      return rememberTemporaryWorkspace(reused, temporaryWorkspaceReference.path)
-    }
-    if (temporaryWorkspace !== undefined) return temporaryWorkspace
-    await mkdir(context.globalStorageUri.fsPath, { recursive: true })
-    const temporaryPath = await mkdtemp(path.join(context.globalStorageUri.fsPath, 'workspace-'))
-    try {
-      const created = await workspaceUseCases.create(
-        { name: 'Temporary Workspace', path: temporaryPath },
-        signal,
-      )
-      return rememberTemporaryWorkspace(created, temporaryPath)
-    } catch (error) {
-      await rm(temporaryPath, { recursive: true, force: true }).catch(() => undefined)
-      throw error
-    }
+    return temporaryWorkspaceManager.ensure(signal)
   }
   const resolveSessionConfiguration = async (
     requested: AgentConfiguration,
@@ -558,14 +556,206 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     return { ...requested, preset: selected?.id ?? '' }
   }
   let sequence = 0
-  const post = (message: HostMessage): Thenable<boolean> => {
-    const parsed = hostMessageSchema.safeParse(message)
-    if (!parsed.success) {
-      diagnostics.log('warn', 'host-message-rejected', { code: 'PROTOCOL_ERROR' })
+  const post = (message: HostMessage | FeatureHostMessage): Thenable<boolean> => {
+    const legacy = hostMessageSchema.safeParse(message)
+    if (legacy.success)
+      return provider.postMessage(hostEnvelopeSchema.parse({ protocolVersion: 1, message: legacy.data }))
+    const feature = featureHostMessageSchema.safeParse(message)
+    if (feature.success)
+      return provider.postMessage(
+        featureHostEnvelopeSchema.parse({ protocolVersion: 1, message: feature.data }),
+      )
+    diagnostics.log('warn', 'host-message-rejected', { code: 'PROTOCOL_ERROR' })
+    return Promise.resolve(false)
+  }
+  let featureLocalSequence = 0
+  const postFeatureEvent = (
+    name: 'editor.context.changed' | 'editor.context.availability.changed',
+    payload:
+      | { readonly contextRef: string; readonly action: 'added' | 'updated' | 'released' }
+      | { readonly availableKinds: FeatureContextKind[] },
+  ): Promise<boolean> => {
+    let connection: DshBackend['connection']
+    try {
+      connection = backendService.requireBackend().connection
+    } catch {
       return Promise.resolve(false)
     }
-    return provider.postMessage(hostEnvelopeSchema.parse({ protocolVersion: 1, message: parsed.data }))
+    const backendInstanceId = connection.backendInstanceId
+    const connectionGeneration = connection.connectionGeneration
+    if (backendInstanceId === undefined || connectionGeneration === undefined) return Promise.resolve(false)
+    featureLocalSequence += 1
+    const identity = {
+      backendInstanceId,
+      connectionGeneration,
+      stream: 'local' as const,
+      localSeq: featureLocalSequence,
+    }
+    const event: FeatureHostEvent =
+      name === 'editor.context.changed'
+        ? {
+            type: 'feature.event',
+            name,
+            identity,
+            contextRef: (payload as { readonly contextRef: string }).contextRef,
+            action: (payload as { readonly action: 'added' | 'updated' | 'released' }).action,
+          }
+        : {
+            type: 'feature.event',
+            name,
+            identity,
+            availableKinds: (payload as { readonly availableKinds: FeatureContextKind[] }).availableKinds,
+          }
+    return Promise.resolve(post(event))
   }
+  const postEditorContextAvailabilityEvent = async (): Promise<void> => {
+    try {
+      const availability = await editorContextUseCases.availability(featureOwner())
+      await postFeatureEvent('editor.context.availability.changed', {
+        availableKinds: featureContextKinds(availability),
+      })
+    } catch {
+      // Capability refresh is best effort; the next feature list remains the
+      // authoritative recovery path when the view or backend is reconnecting.
+    }
+  }
+  const currentWorkspaceFolderId = (): string | undefined => {
+    const folder = currentWorkspaceFolder()
+    return folder === undefined ? undefined : workspaceFolderId(folder)
+  }
+  const workspaceFolderIdForSession = (session: SessionDetail): string | undefined => {
+    const folders = currentWorkspaceFolders()
+    if (folders.length === 0) return undefined
+    if (session.cwd !== undefined) {
+      const cwdFolder = folders.find((folder) => sameWorkspacePath(folder.uri.fsPath, session.cwd as string))
+      if (cwdFolder !== undefined) return workspaceFolderId(cwdFolder)
+    }
+    return folders.length === 1 && folders[0] !== undefined ? workspaceFolderId(folders[0]) : undefined
+  }
+  const changePathGuard = new WorkspacePathGuard(vscode.workspace)
+  const postChangeFeatureEvent = (change: ChangeSetFile): Promise<boolean> => {
+    let connection: DshBackend['connection']
+    try {
+      connection = backendService.requireBackend().connection
+    } catch {
+      return Promise.resolve(false)
+    }
+    if (connection.backendInstanceId === undefined || connection.connectionGeneration === undefined)
+      return Promise.resolve(false)
+    featureLocalSequence += 1
+    return Promise.resolve(
+      post({
+        type: 'feature.event',
+        name: 'changes.updated',
+        identity: {
+          backendInstanceId: connection.backendInstanceId,
+          connectionGeneration: connection.connectionGeneration,
+          stream: 'local',
+          sessionId: change.sessionId,
+          localSeq: featureLocalSequence,
+        },
+        change: featureChangeSummary(change),
+      }),
+    )
+  }
+  const changeTracker = new ChangeSetTracker({
+    resolveSessionWorkspaceFolderId: async (backend, sessionId) =>
+      workspaceFolderIdForSession(await backend.sessions.get(sessionId)),
+    readObservedHash: async (workspaceId, relativePath) => {
+      const resolved = changePathGuard.resolve(workspaceId, relativePath)
+      await changePathGuard.assertRegularFile(resolved)
+      const fileStat = await vscode.workspace.fs.stat(resolved.uri)
+      if (fileStat.size > 16 * 1024 * 1024) return undefined
+      const bytes = await vscode.workspace.fs.readFile(resolved.uri)
+      return createHash('sha256').update(bytes).digest('hex')
+    },
+    onChange: (change) => {
+      void postChangeFeatureEvent(change)
+    },
+  })
+  const changeUseCases = new ChangeUseCases(changeTracker)
+  const checkpointStore = new CheckpointStore({
+    rootPath: path.join(context.globalStorageUri.fsPath, 'dsh-checkpoints'),
+    storage: createVscodeCheckpointStorage(vscode.workspace),
+    workspace: createVscodeCheckpointWorkspace(vscode.workspace),
+    enabled: () => vscode.workspace.getConfiguration('dsh.checkpoints').get<boolean>('enabled', false),
+    contentEnabled: () =>
+      vscode.workspace.getConfiguration('dsh.checkpoints').get<boolean>('storeContent', false),
+  })
+  const checkpointUseCases = new CheckpointUseCases(checkpointStore)
+  const promptTemplateStore = new PromptTemplateStore({
+    global: createVscodePromptTemplateStorage(
+      path.join(context.globalStorageUri.fsPath, 'dsh-prompt-templates'),
+      vscode.workspace,
+    ),
+    workspace: (workspaceId) => createVscodeWorkspacePromptTemplateStorage(workspaceId, vscode.workspace),
+    enabled: () => vscode.workspace.getConfiguration('dsh.promptTemplates').get<boolean>('enabled', true),
+    workspaceTrusted: () => vscode.workspace.isTrusted,
+  })
+  const promptTemplateUseCases = new PromptTemplateUseCases(promptTemplateStore)
+  let taskSessionId: string | undefined
+  const postTaskFeatureEvent = (task: TaskSummary): Promise<boolean> => {
+    let connection: DshBackend['connection']
+    try {
+      connection = backendService.requireBackend().connection
+    } catch {
+      return Promise.resolve(false)
+    }
+    if (connection.backendInstanceId === undefined || connection.connectionGeneration === undefined)
+      return Promise.resolve(false)
+    featureLocalSequence += 1
+    return Promise.resolve(
+      post({
+        type: 'feature.event',
+        name: 'tasks.updated',
+        identity: {
+          backendInstanceId: connection.backendInstanceId,
+          connectionGeneration: connection.connectionGeneration,
+          stream: 'local',
+          ...(task.sessionId === undefined ? {} : { sessionId: task.sessionId }),
+          localSeq: featureLocalSequence,
+        },
+        task: featureTaskSummary(task),
+      }),
+    )
+  }
+  const postCheckpointFeatureEvent = (checkpoint: CheckpointSummary): Promise<boolean> => {
+    let connection: DshBackend['connection']
+    try {
+      connection = backendService.requireBackend().connection
+    } catch {
+      return Promise.resolve(false)
+    }
+    if (connection.backendInstanceId === undefined || connection.connectionGeneration === undefined)
+      return Promise.resolve(false)
+    featureLocalSequence += 1
+    return Promise.resolve(
+      post({
+        type: 'feature.event',
+        name: 'checkpoint.updated',
+        identity: {
+          backendInstanceId: connection.backendInstanceId,
+          connectionGeneration: connection.connectionGeneration,
+          stream: 'local',
+          sessionId: checkpoint.sessionId,
+          localSeq: featureLocalSequence,
+        },
+        checkpoint: featureCheckpointSummary(checkpoint),
+      }),
+    )
+  }
+  const taskRegistry = new TaskCenterRegistry({
+    onChange: (sessionId) => {
+      if (taskSessionId !== sessionId) return
+      const workspaceId = currentWorkspaceFolderId()
+      if (workspaceId === undefined) return
+      void taskRegistry
+        .list({ sessionId, workspaceFolderId: workspaceId, includeCompleted: true, limit: 200 })
+        .then((tasks) => Promise.all(tasks.map((task) => postTaskFeatureEvent(task))))
+        .catch(() => undefined)
+    },
+  })
+  const taskUseCases = new TaskUseCases(taskRegistry)
   let eventPostQueue = Promise.resolve()
   const postEvent = (name: string, payload: unknown): Promise<boolean> => {
     const task = eventPostQueue.then(async () => {
@@ -589,7 +779,15 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     void postEvent('connection.snapshot', payload)
   }
   const attach = (backend: DshBackend): void => {
+    changeTracker.attach(backend, currentWorkspaceFolderId)
+    taskRegistry.attach(backend, currentWorkspaceFolderId)
     backendService.attach(backend, (event) => {
+      if (event.type === 'connection.lost') {
+        changeTracker.detach()
+        taskRegistry.detach()
+        editorContextProvider.dispose()
+        taskSessionId = undefined
+      }
       void postEvent(event.type, sanitize(event))
     })
   }
@@ -621,6 +819,10 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
   const reconnect = async (signal?: AbortSignal): Promise<unknown> => {
     if (reconnectOperation !== undefined) return reconnectOperation
     const operation = (async (): Promise<unknown> => {
+      changeTracker.detach()
+      taskRegistry.detach()
+      editorContextProvider.dispose()
+      taskSessionId = undefined
       await coordinator.disconnect()
       return connect(signal)
     })()
@@ -755,6 +957,497 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     }
     await requireCurrentWorkspaceSession(owner, signal)
   }
+  const featureContextOwner = (workspaceFolderIdValue?: string): EditorContextOwner => {
+    if (
+      workspaceFolderIdValue !== undefined &&
+      !currentWorkspaceFolders().some((folder) => workspaceFolderId(folder) === workspaceFolderIdValue)
+    )
+      throw new AppError({
+        code: 'RESOURCE_NOT_OWNED',
+        message: 'The requested editor context workspace is not open in VS Code.',
+        retryable: false,
+      })
+    return {
+      ...featureOwner(),
+      ...(workspaceFolderIdValue === undefined ? {} : { workspaceFolderId: workspaceFolderIdValue }),
+    }
+  }
+  const currentFeatureSessionBinding = (
+    sessionId: string,
+  ): {
+    readonly sessionId: string
+    readonly backendInstanceId: string
+    readonly connectionGeneration: number
+  } => {
+    const connection = backendService.requireBackend().connection
+    if (connection.backendInstanceId === undefined || connection.connectionGeneration === undefined)
+      throw new AppError({
+        code: 'GENERATION_MISMATCH',
+        message: 'The DSH connection identity is not ready for editor context resolution.',
+        retryable: true,
+      })
+    return {
+      sessionId,
+      backendInstanceId: connection.backendInstanceId,
+      connectionGeneration: connection.connectionGeneration,
+    }
+  }
+  const contextOwnerForSession = (
+    session: SessionDetail,
+    requestedWorkspaceFolderId: string | undefined,
+    hasContext: boolean,
+  ): EditorContextOwner => {
+    if (!hasContext) return featureContextOwner()
+    const sessionWorkspaceFolderId = workspaceFolderIdForSession(session)
+    if (
+      requestedWorkspaceFolderId !== undefined &&
+      sessionWorkspaceFolderId !== undefined &&
+      requestedWorkspaceFolderId !== sessionWorkspaceFolderId
+    )
+      throw new AppError({
+        code: 'RESOURCE_NOT_OWNED',
+        message: 'The editor context belongs to a different workspace folder than this session.',
+        retryable: false,
+      })
+    const resolvedWorkspaceFolderId = requestedWorkspaceFolderId ?? sessionWorkspaceFolderId
+    if (resolvedWorkspaceFolderId === undefined)
+      throw new AppError({
+        code: 'RESOURCE_NOT_OWNED',
+        message: 'The session workspace folder could not be resolved safely.',
+        retryable: false,
+      })
+    if (!currentWorkspaceFolders().some((folder) => workspaceFolderId(folder) === resolvedWorkspaceFolderId))
+      throw new AppError({
+        code: 'RESOURCE_NOT_OWNED',
+        message: 'The requested editor context workspace is not open in VS Code.',
+        retryable: false,
+      })
+    return featureContextOwner(resolvedWorkspaceFolderId)
+  }
+  const featureWorkspaceFolderId = (
+    requestedWorkspaceFolderId: string | undefined,
+    session: SessionDetail | undefined,
+  ): string => {
+    const sessionWorkspaceFolderId = session === undefined ? undefined : workspaceFolderIdForSession(session)
+    if (
+      requestedWorkspaceFolderId !== undefined &&
+      sessionWorkspaceFolderId !== undefined &&
+      requestedWorkspaceFolderId !== sessionWorkspaceFolderId
+    )
+      throw new AppError({
+        code: 'RESOURCE_NOT_OWNED',
+        message: 'The requested feature workspace does not own this session.',
+        retryable: false,
+      })
+    const resolved = requestedWorkspaceFolderId ?? sessionWorkspaceFolderId ?? currentWorkspaceFolderId()
+    if (
+      resolved === undefined ||
+      !currentWorkspaceFolders().some((folder) => workspaceFolderId(folder) === resolved)
+    )
+      throw new AppError({
+        code: 'RESOURCE_NOT_OWNED',
+        message: 'The requested feature workspace is not open in VS Code.',
+        retryable: false,
+      })
+    return resolved
+  }
+  const promptTemplateOwner = async (
+    sessionId: string,
+    requestedWorkspaceFolderId: string,
+    signal: AbortSignal,
+  ): Promise<{ readonly sessionId: string; readonly workspaceFolderId: string }> => {
+    const session = await requireCurrentWorkspaceSession(sessionId, signal)
+    return {
+      sessionId: session.id,
+      workspaceFolderId: featureWorkspaceFolderId(requestedWorkspaceFolderId, session),
+    }
+  }
+  const handleFeatureRequest = async (request: FeatureRequest, signal: AbortSignal): Promise<unknown> => {
+    if (request.type === 'editor.context.capture') {
+      const owner = featureContextOwner(request.payload.workspaceFolderId)
+      const item = await editorContextUseCases.capture(
+        {
+          kind: request.payload.kind === 'open-document' ? 'file' : request.payload.kind,
+          ...(request.payload.workspaceFolderId === undefined
+            ? {}
+            : { workspaceFolderId: request.payload.workspaceFolderId }),
+        },
+        owner,
+        signal,
+      )
+      void postFeatureEvent('editor.context.changed', { contextRef: item.ref.contextRef, action: 'added' })
+      return {
+        kind: 'editor.context',
+        items: [featureContextItem(item)],
+        availableKinds: featureContextKinds(await editorContextUseCases.availability(owner, signal)),
+      }
+    }
+    if (request.type === 'editor.context.list') {
+      const owner = featureContextOwner(request.payload.workspaceFolderId)
+      const [items, availability] = await Promise.all([
+        editorContextUseCases.list(owner, signal),
+        editorContextUseCases.availability(owner, signal),
+      ])
+      return {
+        kind: 'editor.context',
+        items: items.map(featureContextItem),
+        availableKinds: featureContextKinds(availability),
+      }
+    }
+    if (request.type === 'editor.context.preview') {
+      const preview = await editorContextUseCases.preview(
+        request.payload.contextRef,
+        featureContextOwner(request.payload.workspaceFolderId),
+        signal,
+      )
+      return {
+        kind: 'editor.preview',
+        contextRef: preview.contextRef,
+        redactedPreviewText: redactText(preview.text, 32_768),
+        language: 'plaintext',
+        truncated: preview.truncated,
+        expiresAt: preview.expiresAt,
+      }
+    }
+    if (request.type === 'editor.context.release') {
+      const owner = featureContextOwner(request.payload.workspaceFolderId)
+      await editorContextUseCases.release(request.payload.contextRefs, owner, signal)
+      for (const contextRef of request.payload.contextRefs)
+        void postFeatureEvent('editor.context.changed', { contextRef, action: 'released' })
+      void postEditorContextAvailabilityEvent()
+      return { kind: 'empty' }
+    }
+    if (request.type === 'navigation.open') {
+      await navigationUseCases.openFile(
+        request.payload.workspaceFolderId,
+        request.payload.relativePath,
+        request.payload.range,
+        signal,
+        request.payload.reveal === 'preserve-focus',
+      )
+      return { kind: 'operation', operationId: request.requestId, state: 'completed' }
+    }
+    if (request.type === 'checkpoint.create') {
+      const session = await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
+      const workspaceId = featureWorkspaceFolderId(request.payload.workspaceFolderId, session)
+      const changes = await changeUseCases.list(
+        { workspaceFolderId: workspaceId, sessionId: session.id, limit: 200 },
+        signal,
+      )
+      const checkpoint = await checkpointUseCases.create(
+        {
+          sessionId: session.id,
+          workspaceFolderId: workspaceId,
+          ...(request.payload.label === undefined ? {} : { label: request.payload.label }),
+          files: changes,
+        },
+        signal,
+      )
+      void postCheckpointFeatureEvent(checkpoint)
+      return { kind: 'checkpoints', items: [featureCheckpointSummary(checkpoint)] }
+    }
+    if (request.type === 'checkpoint.list') {
+      const session =
+        request.payload.sessionId === undefined
+          ? undefined
+          : await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
+      const workspaceId = featureWorkspaceFolderId(request.payload.workspaceFolderId, session)
+      const checkpoints = await checkpointUseCases.list(
+        { workspaceFolderId: workspaceId, ...(session === undefined ? {} : { sessionId: session.id }) },
+        signal,
+      )
+      return { kind: 'checkpoints', items: checkpoints.map(featureCheckpointSummary) }
+    }
+    if (request.type === 'checkpoint.preview') {
+      const session = await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
+      const workspaceId = featureWorkspaceFolderId(request.payload.workspaceFolderId, session)
+      const checkpoint = await checkpointUseCases.get(request.payload.checkpointId, signal)
+      assertCheckpointOwnership(checkpoint, session.id, workspaceId)
+      const preview = await checkpointUseCases.preview(request.payload.checkpointId, signal)
+      return { kind: 'checkpoint.preview', preview: featureCheckpointPreview(preview) }
+    }
+    if (request.type === 'checkpoint.delete') {
+      const session = await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
+      const checkpoint = await checkpointUseCases.get(request.payload.checkpointId, signal)
+      assertCheckpointOwnership(
+        checkpoint,
+        session.id,
+        featureWorkspaceFolderId(request.payload.workspaceFolderId, session),
+      )
+      await checkpointUseCases.delete(request.payload.checkpointId, signal)
+      void postCheckpointFeatureEvent({ ...checkpoint, state: 'deleted', restoreAllowed: false })
+      return {
+        kind: 'checkpoints',
+        items: [{ ...featureCheckpointSummary(checkpoint), state: 'deleted', restoreAllowed: false }],
+      }
+    }
+    if (request.type === 'checkpoint.restore') {
+      const session = await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
+      const checkpoint = await checkpointUseCases.get(request.payload.checkpointId, signal)
+      assertCheckpointOwnership(
+        checkpoint,
+        session.id,
+        featureWorkspaceFolderId(request.payload.workspaceFolderId, session),
+      )
+      const restored = await checkpointUseCases.restore(
+        request.payload.checkpointId,
+        request.payload.expectedCurrentRevision,
+        request.payload.conflictPolicy,
+        signal,
+      )
+      void postCheckpointFeatureEvent(restored.summary)
+      return {
+        kind: 'operation',
+        operationId: request.requestId,
+        state: restored.state,
+        message:
+          restored.state === 'partial'
+            ? 'Checkpoint restore completed partially; conflicting files were left untouched.'
+            : 'Checkpoint restore completed.',
+      }
+    }
+    if (request.type === 'tasks.list') {
+      const sessionId = request.payload.sessionId ?? taskSessionId
+      if (sessionId === undefined)
+        throw new AppError({
+          code: 'CAPABILITY_UNAVAILABLE',
+          message: 'Open a session before viewing tasks.',
+          retryable: false,
+        })
+      const session = await requireCurrentWorkspaceSession(sessionId, signal)
+      const currentWorkspaceId = featureWorkspaceFolderId(request.payload.workspaceFolderId, session)
+      taskSessionId = sessionId
+      taskRegistry.setCurrentSession(sessionId)
+      const tasks = await taskUseCases.list(
+        {
+          workspaceFolderId: currentWorkspaceId,
+          sessionId,
+          ...(request.payload.includeCompleted === undefined
+            ? {}
+            : { includeCompleted: request.payload.includeCompleted }),
+          ...(request.payload.cursor === undefined ? {} : { cursor: request.payload.cursor }),
+          ...(request.payload.limit === undefined ? {} : { limit: request.payload.limit }),
+        },
+        signal,
+      )
+      return { kind: 'tasks', items: tasks.map(featureTaskSummary) }
+    }
+    if (request.type === 'tasks.open') {
+      const task = await taskUseCases.get(request.payload.taskId, signal)
+      if (!currentWorkspaceFolders().some((folder) => workspaceFolderId(folder) === task.workspaceFolderId))
+        throw taskResourceNotOwned()
+      if (task.sessionId !== undefined) {
+        const session = await requireCurrentWorkspaceSession(task.sessionId, signal)
+        featureWorkspaceFolderId(task.workspaceFolderId, session)
+      }
+      taskSessionId = task.sessionId
+      taskRegistry.setCurrentSession(task.sessionId)
+      return { kind: 'tasks', items: [featureTaskSummary(task)] }
+    }
+    if (request.type === 'tasks.stop') {
+      const current = await taskUseCases.get(request.payload.taskId, signal)
+      if (
+        !currentWorkspaceFolders().some((folder) => workspaceFolderId(folder) === current.workspaceFolderId)
+      )
+        throw taskResourceNotOwned()
+      if (current.sessionId !== undefined) {
+        const session = await requireCurrentWorkspaceSession(current.sessionId, signal)
+        featureWorkspaceFolderId(current.workspaceFolderId, session)
+      }
+      taskSessionId = current.sessionId
+      taskRegistry.setCurrentSession(current.sessionId)
+      const task = await taskUseCases.stop(
+        request.payload.taskId,
+        request.payload.mode,
+        request.payload.taskRevision,
+        signal,
+      )
+      return { kind: 'tasks', items: [featureTaskSummary(task)] }
+    }
+    if (request.type === 'tasks.answer') {
+      const current = await taskUseCases.get(request.payload.taskId, signal)
+      if (
+        !currentWorkspaceFolders().some((folder) => workspaceFolderId(folder) === current.workspaceFolderId)
+      )
+        throw taskResourceNotOwned()
+      if (current.sessionId !== undefined) {
+        const session = await requireCurrentWorkspaceSession(current.sessionId, signal)
+        featureWorkspaceFolderId(current.workspaceFolderId, session)
+      }
+      taskSessionId = current.sessionId
+      taskRegistry.setCurrentSession(current.sessionId)
+      const task = await taskUseCases.answer(
+        request.payload.taskId,
+        request.payload.interactionId,
+        request.payload.answer,
+        signal,
+      )
+      return { kind: 'tasks', items: [featureTaskSummary(task)] }
+    }
+    if (request.type === 'prompt.template.list') {
+      const owner = await promptTemplateOwner(
+        request.payload.sessionId,
+        request.payload.workspaceFolderId,
+        signal,
+      )
+      const templates = await promptTemplateUseCases.list(
+        { ...owner, ...(request.payload.scope === undefined ? {} : { scope: request.payload.scope }) },
+        signal,
+      )
+      return { kind: 'prompt.templates', items: templates.map(featurePromptTemplateSummary) }
+    }
+    if (request.type === 'prompt.template.read') {
+      const owner = await promptTemplateOwner(
+        request.payload.sessionId,
+        request.payload.workspaceFolderId,
+        signal,
+      )
+      const template = await promptTemplateUseCases.read(request.payload.templateId, owner, signal)
+      return {
+        kind: 'prompt.template',
+        template: {
+          summary: featurePromptTemplateSummary(template),
+          templateText: template.templateText,
+        },
+      }
+    }
+    if (request.type === 'prompt.template.insert') {
+      const owner = await promptTemplateOwner(
+        request.payload.sessionId,
+        request.payload.workspaceFolderId,
+        signal,
+      )
+      const inserted = await promptTemplateUseCases.insert(
+        request.payload.templateId,
+        request.payload.variables,
+        owner,
+        signal,
+      )
+      return {
+        kind: 'prompt.template.inserted',
+        templateId: inserted.templateId,
+        text: inserted.text,
+        unresolvedVariables: inserted.unresolvedVariables,
+      }
+    }
+    if (request.type === 'prompt.template.create') {
+      const owner = await promptTemplateOwner(
+        request.payload.sessionId,
+        request.payload.workspaceFolderId,
+        signal,
+      )
+      const template = await promptTemplateUseCases.create(
+        {
+          title: request.payload.title,
+          description: request.payload.description,
+          templateText: request.payload.templateText,
+          scope: request.payload.scope,
+          variables: request.payload.variables,
+        },
+        owner,
+        signal,
+      )
+      return { kind: 'prompt.templates', items: [featurePromptTemplateSummary(template)] }
+    }
+    if (request.type === 'prompt.template.update') {
+      const owner = await promptTemplateOwner(
+        request.payload.sessionId,
+        request.payload.workspaceFolderId,
+        signal,
+      )
+      const template = await promptTemplateUseCases.update(
+        request.payload.templateId,
+        {
+          ...(request.payload.title === undefined ? {} : { title: request.payload.title }),
+          ...(request.payload.description === undefined ? {} : { description: request.payload.description }),
+          ...(request.payload.templateText === undefined
+            ? {}
+            : { templateText: request.payload.templateText }),
+          ...(request.payload.variables === undefined ? {} : { variables: request.payload.variables }),
+        },
+        owner,
+        signal,
+      )
+      return { kind: 'prompt.templates', items: [featurePromptTemplateSummary(template)] }
+    }
+    if (request.type === 'prompt.template.delete') {
+      const owner = await promptTemplateOwner(
+        request.payload.sessionId,
+        request.payload.workspaceFolderId,
+        signal,
+      )
+      await promptTemplateUseCases.delete(request.payload.templateId, owner, signal)
+      return {
+        kind: 'operation',
+        operationId: request.requestId,
+        state: 'completed',
+        message: 'Prompt template deleted.',
+      }
+    }
+    if (request.type === 'changes.list') {
+      const session =
+        request.payload.sessionId === undefined
+          ? undefined
+          : await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
+      const currentWorkspaceId = featureWorkspaceFolderId(request.payload.workspaceFolderId, session)
+      const changes = await changeUseCases.list(
+        {
+          workspaceFolderId: currentWorkspaceId,
+          ...(request.payload.sessionId === undefined ? {} : { sessionId: request.payload.sessionId }),
+          ...(request.payload.status === undefined
+            ? {}
+            : { status: fromFeatureChangeStatus(request.payload.status) }),
+          ...(request.payload.cursor === undefined ? {} : { cursor: request.payload.cursor }),
+          ...(request.payload.limit === undefined ? {} : { limit: request.payload.limit }),
+        },
+        signal,
+      )
+      return { kind: 'changes', items: changes.map(featureChangeSummary) }
+    }
+    if (request.type === 'changes.detail') {
+      const detail = await changeUseCases.get(request.payload.changeId, signal)
+      if (!currentWorkspaceFolders().some((folder) => workspaceFolderId(folder) === detail.workspaceFolderId))
+        throw new AppError({
+          code: 'RESOURCE_NOT_OWNED',
+          message: 'The requested change is not owned by this workspace.',
+          retryable: false,
+        })
+      const session = await requireCurrentWorkspaceSession(detail.sessionId, signal)
+      featureWorkspaceFolderId(detail.workspaceFolderId, session)
+      return {
+        kind: 'change.detail',
+        change: featureChangeSummary(detail),
+        ...(detail.redactedDiff === undefined
+          ? {}
+          : { redactedDiff: redactText(detail.redactedDiff, 262_144) }),
+        truncated: detail.diffTruncated,
+      }
+    }
+    if (request.type === 'changes.markReviewed') {
+      const current = await changeUseCases.get(request.payload.changeId, signal)
+      if (
+        !currentWorkspaceFolders().some((folder) => workspaceFolderId(folder) === current.workspaceFolderId)
+      )
+        throw new AppError({
+          code: 'RESOURCE_NOT_OWNED',
+          message: 'The requested change is not owned by this workspace.',
+          retryable: false,
+        })
+      const session = await requireCurrentWorkspaceSession(current.sessionId, signal)
+      featureWorkspaceFolderId(current.workspaceFolderId, session)
+      const change = await changeUseCases.markReviewed(
+        request.payload.changeId,
+        fromFeatureReviewState(request.payload.reviewState),
+        signal,
+      )
+      return { kind: 'changes', items: [featureChangeSummary(change)] }
+    }
+    throw new AppError({
+      code: 'FEATURE_DISABLED',
+      message: `The staged feature route ${request.type} is not enabled yet.`,
+      retryable: false,
+    })
+  }
   const handleRequest = async (request: WebviewRequest, signal: AbortSignal): Promise<unknown> => {
     if (request.type === 'app.ready') return connect(signal)
     if (request.type === 'connection.configure')
@@ -810,10 +1503,10 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     if (request.type === 'workspace.remove') {
       await requireCurrentWorkspaceId(request.payload.workspaceId, signal)
       const removesTemporaryWorkspace =
-        request.payload.workspaceId === temporaryWorkspace?.id ||
-        request.payload.workspaceId === temporaryWorkspaceReference?.id
+        request.payload.workspaceId === temporaryWorkspaceManager.current?.id ||
+        request.payload.workspaceId === temporaryWorkspaceManager.reference?.id
       const result = await workspaceUseCases.remove(request.payload.workspaceId, signal)
-      if (removesTemporaryWorkspace) await forgetTemporaryWorkspace(true)
+      if (removesTemporaryWorkspace) await temporaryWorkspaceManager.forget(true)
       return result
     }
     if (request.type === 'workspace.move') {
@@ -941,10 +1634,31 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       return sessionUseCases.setArchived(request.payload.sessionId, request.payload.archived, signal)
     }
     if (request.type === 'session.sendPrompt') {
-      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
+      const session = await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
       const attachments = attachmentTokens.resolve(request.payload.attachments)
+      const contextRefs = request.payload.contextRefs ?? []
+      const contextOwner = contextOwnerForSession(
+        session,
+        request.payload.contextWorkspaceFolderId,
+        contextRefs.length > 0,
+      )
+      const resolvedContext =
+        contextRefs.length === 0
+          ? []
+          : await editorContextUseCases.resolveForPrompt(
+              {
+                ...contextOwner,
+                ...currentFeatureSessionBinding(request.payload.sessionId),
+                contextRefs,
+              },
+              signal,
+            )
       const result = await sessionUseCases.sendPrompt(
-        { sessionId: request.payload.sessionId, text: request.payload.text, attachments },
+        {
+          sessionId: request.payload.sessionId,
+          text: request.payload.text,
+          attachments: [...attachments, ...resolvedContext.map((entry) => entry.attachment)],
+        },
         request.payload.mode ?? 'queue',
         signal,
       )
@@ -952,17 +1666,40 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       // retain their opaque handles on that path as well. Successful admission
       // consumes them exactly once.
       attachmentTokens.release(request.payload.attachments)
+      if (contextRefs.length > 0) await editorContextUseCases.release(contextRefs, contextOwner)
       return result
     }
     if (request.type === 'session.enqueuePrompt') {
-      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
+      const session = await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
       const attachments = attachmentTokens.resolve(request.payload.attachments)
+      const contextRefs = request.payload.contextRefs ?? []
+      const contextOwner = contextOwnerForSession(
+        session,
+        request.payload.contextWorkspaceFolderId,
+        contextRefs.length > 0,
+      )
+      const resolvedContext =
+        contextRefs.length === 0
+          ? []
+          : await editorContextUseCases.resolveForPrompt(
+              {
+                ...contextOwner,
+                ...currentFeatureSessionBinding(request.payload.sessionId),
+                contextRefs,
+              },
+              signal,
+            )
       const queued = await sessionUseCases.enqueuePrompt(
-        { sessionId: request.payload.sessionId, text: request.payload.text, attachments },
+        {
+          sessionId: request.payload.sessionId,
+          text: request.payload.text,
+          attachments: [...attachments, ...resolvedContext.map((entry) => entry.attachment)],
+        },
         request.payload.mode,
         signal,
       )
       attachmentTokens.release(request.payload.attachments)
+      if (contextRefs.length > 0) await editorContextUseCases.release(contextRefs, contextOwner)
       return publicValue(queued)
     }
     if (request.type === 'session.cancel') {
@@ -1366,6 +2103,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
   const router = new WebviewMessageRouter({
     postMessage: post,
     handleRequest,
+    handleFeatureRequest,
     // Unexpected (non-AppError) handler failures must stay diagnosable: the
     // Webview only sees a generic INTERNAL_ERROR, so keep the redacted cause
     // in the output channel the error message points users at.
@@ -1374,6 +2112,10 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
   const provider = new DshWebviewViewProvider({
     extensionUri: context.extensionUri,
     onMessage: (message) => router.handle(message),
+    onViewDisposed: () => {
+      router.cancelAll()
+      editorContextProvider.dispose()
+    },
     onMessageError: (error) => {
       diagnostics.log('error', 'webview-message-unhandled', {
         message: error instanceof Error ? error.message : String(error),
@@ -1387,7 +2129,17 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     provider,
     diagnostics,
     vscode.workspace.onDidChangeWorkspaceFolders(() => {
+      editorContextProvider.dispose()
       void postEvent('workspace.changed', {})
+    }),
+    vscode.window.onDidChangeActiveTextEditor(() => {
+      void postEditorContextAvailabilityEvent()
+    }),
+    vscode.window.onDidChangeTextEditorSelection(() => {
+      void postEditorContextAvailabilityEvent()
+    }),
+    vscode.languages.onDidChangeDiagnostics(() => {
+      void postEditorContextAvailabilityEvent()
     }),
   ]
   const root: CompositionRoot = {
@@ -1467,6 +2219,8 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       router.cancelAll()
       stateSubscription()
       provider.dispose()
+      changeTracker.dispose()
+      taskRegistry.dispose()
       await backendService.detach()
       await coordinator.disconnect()
       attachmentTokens.clear()
@@ -1686,6 +2440,13 @@ function publicState(state: BackendState): unknown {
     ...(state.kind === 'connected'
       ? {
           dshVersion: state.backend.capabilities.dshVersion,
+          ...(state.backend.backendInstanceId === undefined
+            ? {}
+            : { backendInstanceId: state.backend.backendInstanceId }),
+          ...(state.backend.connectionGeneration === undefined
+            ? {}
+            : { connectionGeneration: state.backend.connectionGeneration }),
+          featureProfile: publicFeatureProfile(state.backend.capabilities.featureProfile),
           ...(state.backend.capabilities.compatibilityWarning === undefined
             ? {}
             : { compatibilityWarning: state.backend.capabilities.compatibilityWarning }),
@@ -1700,6 +2461,26 @@ function publicState(state: BackendState): unknown {
     ...(state.kind === 'runtime-missing'
       ? { searchedLocations: publicRuntimeLocations(state.searchedLocations) }
       : {}),
+  }
+}
+
+function publicFeatureProfile(profile: FeatureCapabilityProfile | undefined): unknown {
+  if (profile === undefined) return undefined
+  const capabilities: Record<string, unknown> = {}
+  for (const id of FEATURE_CAPABILITY_IDS) {
+    const capability = profile.capabilities[id]
+    if (capability === undefined) continue
+    capabilities[id] = {
+      state: capability.state,
+      upstream: capability.upstream,
+      ...(capability.reason === undefined ? {} : { reason: redactText(capability.reason, 512) }),
+    }
+  }
+  return {
+    dshVersion: profile.dshVersion,
+    protocolVersion: profile.protocolVersion,
+    source: profile.source,
+    capabilities,
   }
 }
 
@@ -1811,6 +2592,215 @@ function safeStateMessage(message: string): string {
 function publicList(value: readonly unknown[]): readonly unknown[] {
   return value.map(publicValue)
 }
+
+/** Project the domain ref into the flattened, schema-checked safe DTO. */
+function featureContextItem(item: EditorContextItem): unknown {
+  const ref = item.ref
+  return {
+    contextRef: ref.contextRef,
+    kind: ref.kind === 'file' ? 'open-document' : ref.kind,
+    label: item.label,
+    workspaceFolderId: ref.workspaceFolderId,
+    relativePath: ref.relativePath,
+    ...(ref.range === undefined ? {} : { range: ref.range }),
+    sizeBytes: ref.sizeBytes,
+    ...(ref.documentVersion === undefined ? {} : { documentVersion: ref.documentVersion }),
+    stale: item.stale,
+    previewAvailable: item.previewAvailable,
+    expiresAt: ref.expiresAt,
+    scope: {
+      ownerId: ref.ownerId,
+      workspaceFolderId: ref.workspaceFolderId,
+      ownerViewId: ref.ownerViewId,
+      ...(ref.sessionId === undefined ? {} : { sessionId: ref.sessionId }),
+      ...(ref.backendInstanceId === undefined ? {} : { backendInstanceId: ref.backendInstanceId }),
+      ...(ref.connectionGeneration === undefined ? {} : { connectionGeneration: ref.connectionGeneration }),
+      expiresAt: ref.expiresAt,
+    },
+  }
+}
+
+function featureContextKinds(availability: EditorContextAvailability): FeatureContextKind[] {
+  return availability.availableKinds.map((kind) => (kind === 'file' ? 'open-document' : kind))
+}
+
+function featureChangeSummary(
+  change: ChangeSetFile,
+): Extract<FeatureHostEvent, { readonly name: 'changes.updated' }>['change'] {
+  return {
+    changeId: change.changeId,
+    sessionId: change.sessionId,
+    workspaceFolderId: change.workspaceFolderId,
+    relativePath: change.relativePath,
+    ...(change.previousRelativePath === undefined
+      ? {}
+      : { previousRelativePath: change.previousRelativePath }),
+    status: change.status,
+    ...(change.additions === undefined ? {} : { additions: change.additions }),
+    ...(change.deletions === undefined ? {} : { deletions: change.deletions }),
+    evidence: featureChangeEvidence(change.evidence),
+    applicationState: featureChangeApplicationState(change.applicationState),
+    reviewState: change.reviewState,
+    sourceIds: [...change.sourceIds],
+    locations: change.locations.map((location) => ({
+      relativePath: location.path,
+      ...(location.line === undefined ? {} : { line: location.line }),
+    })),
+    firstSeenAt: change.firstSeenAt,
+    lastSeenAt: change.lastSeenAt,
+    identity: change.identity,
+    diffAvailable: change.diffAvailable,
+  }
+}
+
+function featureCheckpointSummary(
+  checkpoint: CheckpointSummary,
+): Extract<FeatureHostEvent, { readonly name: 'checkpoint.updated' }>['checkpoint'] {
+  return {
+    checkpointId: checkpoint.checkpointId,
+    sessionId: checkpoint.sessionId,
+    workspaceFolderId: checkpoint.workspaceFolderId,
+    createdAt: checkpoint.createdAt,
+    ...(checkpoint.label === undefined ? {} : { label: checkpoint.label }),
+    fileCount: checkpoint.fileCount,
+    totalBytes: checkpoint.totalBytes,
+    state: checkpoint.state,
+    restoreAllowed: checkpoint.restoreAllowed,
+    contentEnabled: checkpoint.contentEnabled,
+    ...(checkpoint.expectedRevision === undefined ? {} : { expectedRevision: checkpoint.expectedRevision }),
+  }
+}
+
+function featureCheckpointPreview(
+  preview: CheckpointPreview,
+): Extract<FeatureResponsePayload, { readonly kind: 'checkpoint.preview' }>['preview'] {
+  return {
+    summary: featureCheckpointSummary(preview.summary),
+    files: preview.files.map((file) => ({
+      relativePath: file.relativePath,
+      presentAtCheckpoint: file.presentAtCheckpoint,
+      ...(file.expectedCurrentHash === undefined ? {} : { expectedCurrentHash: file.expectedCurrentHash }),
+      ...(file.currentHash === undefined ? {} : { currentHash: file.currentHash }),
+      conflict: file.conflict,
+      byteSize: file.byteSize,
+    })),
+    conflictCount: preview.conflictCount,
+  }
+}
+
+function featurePromptTemplateSummary(
+  template: PromptTemplateSummary,
+): Extract<FeatureResponsePayload, { readonly kind: 'prompt.templates' }>['items'][number] {
+  return {
+    templateId: template.templateId,
+    title: template.title,
+    description: template.description,
+    scope: template.scope,
+    updatedAt: template.updatedAt,
+    variables: [...template.variables],
+    enabled: template.enabled,
+  }
+}
+
+function assertCheckpointOwnership(
+  checkpoint: Pick<CheckpointSummary, 'sessionId' | 'workspaceFolderId'>,
+  sessionId: string,
+  workspaceFolderId: string,
+): void {
+  if (checkpoint.sessionId === sessionId && checkpoint.workspaceFolderId === workspaceFolderId) return
+  throw new AppError({
+    code: 'RESOURCE_NOT_OWNED',
+    message: 'The requested checkpoint is not owned by the current session and workspace.',
+    retryable: false,
+  })
+}
+
+function featureTaskSummary(
+  task: TaskSummary,
+): Extract<FeatureHostEvent, { readonly name: 'tasks.updated' }>['task'] {
+  return {
+    taskId: task.taskId,
+    sourceId: task.sourceId,
+    ...(task.sessionId === undefined ? {} : { sessionId: task.sessionId }),
+    ...(task.parentTaskId === undefined ? {} : { parentTaskId: task.parentTaskId }),
+    workspaceFolderId: task.workspaceFolderId,
+    kind: task.kind === 'goal' || task.kind === 'interaction' ? task.kind : task.kind,
+    title: task.title,
+    status: task.status,
+    needsUserAction: task.needsUserAction,
+    ...(task.actionKind === undefined ? {} : { actionKind: task.actionKind }),
+    ...(task.interactionId === undefined ? {} : { interactionId: task.interactionId }),
+    ...(task.modelLabel === undefined ? {} : { modelLabel: task.modelLabel }),
+    ...(task.providerLabel === undefined ? {} : { providerLabel: task.providerLabel }),
+    startedAt: task.startedAt,
+    updatedAt: task.updatedAt,
+    ...(task.progress === undefined ? {} : { progress: task.progress }),
+    childCount: task.childCount,
+    canOpen: task.canOpen,
+    canAnswer: task.canAnswer,
+    canSessionCancel: task.canSessionCancel,
+    canProcessStop: task.canProcessStop,
+    ownerKind: task.ownerKind,
+    ...(task.backendInstanceId === undefined ? {} : { backendInstanceId: task.backendInstanceId }),
+    ...(task.connectionGeneration === undefined ? {} : { connectionGeneration: task.connectionGeneration }),
+    taskRevision: task.taskRevision,
+  }
+}
+
+function taskResourceNotOwned(): AppError {
+  return new AppError({
+    code: 'TASK_NOT_OWNED',
+    message: 'The requested task does not belong to the current workspace.',
+    retryable: false,
+  })
+}
+
+function featureChangeEvidence(
+  evidence: ChangeSetFile['evidence'],
+): Extract<FeatureHostEvent, { readonly name: 'changes.updated' }>['change']['evidence'] {
+  switch (evidence) {
+    case 'structuredProposal':
+      return 'structured-proposal'
+    case 'structuredToolSuccess':
+      return 'structured-tool-success'
+    case 'filesystemObserved':
+      return 'filesystem-observed'
+    case 'structuredLocationOnly':
+      return 'structured-location-only'
+    case 'failed':
+      return 'failed'
+    case 'incomplete':
+      return 'incomplete'
+  }
+}
+
+function featureChangeApplicationState(
+  state: ChangeSetFile['applicationState'],
+): Extract<FeatureHostEvent, { readonly name: 'changes.updated' }>['change']['applicationState'] {
+  switch (state) {
+    case 'proposed':
+      return 'proposed'
+    case 'appliedObserved':
+      return 'applied-observed'
+    case 'failed':
+      return 'failed'
+    case 'unknown':
+      return 'unknown'
+  }
+}
+
+function fromFeatureChangeStatus(
+  status: 'added' | 'modified' | 'deleted' | 'renamed' | 'unknown',
+): ChangeSetFile['status'] {
+  return status
+}
+
+function fromFeatureReviewState(
+  state: 'viewed' | 'accepted' | 'rejected' | 'needs-attention',
+): ChangeSetFile['reviewState'] {
+  return state
+}
+
 function publicValue(value: unknown): unknown {
   return sanitize(value)
 }

@@ -14,6 +14,8 @@ import type {
   PluginInventorySnapshot,
 } from '@dsh-vscode/domain'
 import type { DshSettingsSnapshot } from '../../app/store.js'
+import { ModalWrapper } from '../../components/common/PopoverCard.js'
+import { SettingCard, SettingRow } from '../../components/common/SettingCard.js'
 import { Icon } from '../../ui/Icon.js'
 import { PluginInventory } from '../plugins/PluginInventory.js'
 import { PluginConfiguration } from '../plugins/PluginConfiguration.js'
@@ -416,7 +418,7 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
       : props.providers.find((provider) => provider.id === removingProviderId)
 
   return (
-    <div
+    <ModalWrapper
       className="dsh-settings__backdrop"
       role="presentation"
       onClick={(event) => {
@@ -498,14 +500,12 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                             {settings.defaultAgent.model.providerId}/{settings.defaultAgent.model.modelId}
                           </dd>
                         </dl>
-                        <section
+                        <SettingCard
                           className="dsh-settings__connection"
-                          aria-label={t('settings.connectionTitle')}
+                          ariaLabel={t('settings.connectionTitle')}
+                          title={t('settings.connectionTitle')}
+                          description={t('settings.connectionHint')}
                         >
-                          <div className="dsh-settings__connection-head">
-                            <h3>{t('settings.connectionTitle')}</h3>
-                            <p>{t('settings.connectionHint')}</p>
-                          </div>
                           <div
                             className="dsh-settings__connection-options"
                             role="radiogroup"
@@ -598,7 +598,7 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                               {connectionNotice}
                             </p>
                           )}
-                        </section>
+                        </SettingCard>
                       </>
                     )
                   })()
@@ -740,8 +740,11 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                     )}
                   </section>
                 ) : null}
-                <section className="dsh-settings__preferences" aria-label={t('settings.preferences')}>
-                  <h3>{t('settings.preferences')}</h3>
+                <SettingCard
+                  className="dsh-settings__preferences"
+                  ariaLabel={t('settings.preferences')}
+                  title={t('settings.preferences')}
+                >
                   {dshState.status === 'loading' ? (
                     <p className="dsh-settings__empty" role="status">
                       {t('settings.loadingDsh')}
@@ -797,7 +800,7 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                       )}
                     </>
                   )}
-                </section>
+                </SettingCard>
                 <p className="dsh-settings__note">{t('settings.hostNote')}</p>
                 {dshState.status === 'ready' && dshState.snapshot.schema.hasDocument ? (
                   <div className="dsh-settings__document-action">
@@ -912,7 +915,7 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                               ) : null}
                               {(provider.settingsPath?.length ?? 0) > 0 ? (
                                 <button
-                                  className="dsh-button dsh-button--danger dsh-button--compact"
+                                  className="dsh-button dsh-button--secondary dsh-button--compact dsh-settings__provider-remove"
                                   type="button"
                                   disabled={busyField !== undefined}
                                   onClick={() => {
@@ -1137,7 +1140,7 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
           </div>
         </div>
       </section>
-    </div>
+    </ModalWrapper>
   )
 }
 
@@ -1214,70 +1217,78 @@ function GeneralSettingRow(props: GeneralSettingRowProps): ReactElement | null {
   const current = settingValueAt(props.values, props.row.path)
   const currentLabel = typeof current === 'string' ? current : undefined
   return (
-    <li className="dsh-settings__row">
-      <div className="dsh-settings__row-head">
-        <span className="dsh-settings__row-label">{props.row.label}</span>
-        {field.restartRequired ? (
-          <span className="dsh-settings__row-note" title={t('settings.restartTitle')}>
-            {t('settings.restart')}
-          </span>
-        ) : null}
-        {props.saving ? (
-          <span className="dsh-settings__row-saving" role="status">
-            {t('settings.saving')}
-          </span>
-        ) : null}
-      </div>
-      <p className="dsh-settings__row-hint">{props.row.hint}</p>
-      <div className="dsh-settings__segment" role="group" aria-label={props.row.label}>
-        {options.map((option) => (
-          <button
-            key={option}
-            className={`dsh-settings__segment-item${
-              option === currentLabel ? ' dsh-settings__segment-item--active' : ''
-            }`}
-            type="button"
-            aria-pressed={option === currentLabel}
-            disabled={props.disabled || option === currentLabel}
-            onClick={() => props.onPick(option)}
-          >
-            {formatSettingValue(option, t)}
-          </button>
-        ))}
-      </div>
-      {props.riskPending === undefined ? null : (
-        <div className="dsh-settings__risk" role="alertdialog" aria-label={t('settings.fullAccessAria')}>
-          <span>{t('settings.fullAccessPrompt')}</span>
-          <label>
-            <input
-              type="checkbox"
-              checked={props.riskAcknowledged}
-              disabled={props.disabled}
-              onChange={(event) => props.onRiskAcknowledgedChange(event.currentTarget.checked)}
-            />
-            {t('settings.fullAccessAck')}
-          </label>
-          <div className="dsh-settings__risk-actions">
+    <SettingRow
+      as="li"
+      className="dsh-settings__row"
+      title={props.row.label}
+      description={props.row.hint}
+      status={
+        <>
+          {field.restartRequired ? (
+            <span className="dsh-settings__row-note" title={t('settings.restartTitle')}>
+              {t('settings.restart')}
+            </span>
+          ) : null}
+          {props.saving ? (
+            <span className="dsh-settings__row-saving" role="status">
+              {t('settings.saving')}
+            </span>
+          ) : null}
+        </>
+      }
+      control={
+        <div className="dsh-settings__segment" role="group" aria-label={props.row.label}>
+          {options.map((option) => (
             <button
-              className="dsh-button dsh-button--danger dsh-button--compact"
+              key={option}
+              className={`dsh-settings__segment-item${
+                option === currentLabel ? ' dsh-settings__segment-item--active' : ''
+              }`}
               type="button"
-              disabled={props.disabled || !props.riskAcknowledged}
-              onClick={props.onConfirmRisk}
+              aria-pressed={option === currentLabel}
+              disabled={props.disabled || option === currentLabel}
+              onClick={() => props.onPick(option)}
             >
-              {t('settings.fullAccessConfirm')}
+              {formatSettingValue(option, t)}
             </button>
-            <button
-              className="dsh-button dsh-button--secondary dsh-button--compact"
-              type="button"
-              disabled={props.disabled}
-              onClick={props.onCancelRisk}
-            >
-              {t('settings.cancel')}
-            </button>
-          </div>
+          ))}
         </div>
-      )}
-    </li>
+      }
+      footer={
+        props.riskPending === undefined ? undefined : (
+          <div className="dsh-settings__risk" role="alertdialog" aria-label={t('settings.fullAccessAria')}>
+            <span>{t('settings.fullAccessPrompt')}</span>
+            <label>
+              <input
+                type="checkbox"
+                checked={props.riskAcknowledged}
+                disabled={props.disabled}
+                onChange={(event) => props.onRiskAcknowledgedChange(event.currentTarget.checked)}
+              />
+              {t('settings.fullAccessAck')}
+            </label>
+            <div className="dsh-settings__risk-actions">
+              <button
+                className="dsh-button dsh-button--danger dsh-button--compact"
+                type="button"
+                disabled={props.disabled || !props.riskAcknowledged}
+                onClick={props.onConfirmRisk}
+              >
+                {t('settings.fullAccessConfirm')}
+              </button>
+              <button
+                className="dsh-button dsh-button--secondary dsh-button--compact"
+                type="button"
+                disabled={props.disabled}
+                onClick={props.onCancelRisk}
+              >
+                {t('settings.cancel')}
+              </button>
+            </div>
+          </div>
+        )
+      }
+    />
   )
 }
 

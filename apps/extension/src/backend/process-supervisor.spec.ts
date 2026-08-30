@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import type { DshRuntime } from '@dsh-vscode/domain'
+import { managedWebArguments } from '@dsh-vscode/dsh-adapter'
 
 import { DshProcessSupervisor, type SpawnedChild } from './process-supervisor.js'
 
@@ -38,7 +39,15 @@ function child(onKill: (signal: NodeJS.Signals | undefined) => void): SpawnedChi
 }
 
 describe('DshProcessSupervisor', () => {
-  it('starts the managed Web Host without opening the system browser', async () => {
+  it.each([
+    '0.1.0-rc.6',
+    '0.1.0-rc.7',
+    '0.1.0-rc.8',
+    '0.1.1-rc.1',
+    '0.1.1-rc.2',
+    '0.1.2-alpha.1',
+    '0.1.0-rc.99',
+  ])('uses only the shared Web Profile flags for %s', async (version) => {
     let args: readonly string[] | undefined
     const kill = vi.fn<(signal: NodeJS.Signals | undefined) => void>()
     const supervisor = new DshProcessSupervisor({
@@ -49,9 +58,12 @@ describe('DshProcessSupervisor', () => {
       },
     })
 
-    const handle = await supervisor.start(runtime())
+    const handle = await supervisor.start({ ...runtime(), version })
 
-    expect(args).toEqual(['--profile', 'web', '--no-open', '--host', '127.0.0.1', '--port', '4317'])
+    expect(args).toEqual(managedWebArguments(version, 4317))
+    expect(args?.includes('--no-open')).toBe(
+      ['0.1.0-rc.8', '0.1.1-rc.1', '0.1.1-rc.2', '0.1.2-alpha.1'].includes(version),
+    )
     await expect(handle.stop()).resolves.toBeUndefined()
     expect(kill).toHaveBeenCalledWith('SIGTERM')
   })

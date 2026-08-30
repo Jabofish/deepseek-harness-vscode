@@ -1,5 +1,6 @@
 import {
   parseSlashCommand,
+  FEATURE_CAPABILITY_IDS,
   type AgentConfiguration,
   type AgentPresetDescriptor,
   type AgentPresetDocument,
@@ -7,11 +8,23 @@ import {
   type AgentPresetRoster,
   type BackendEvent,
   type BackendState,
+  type ChangeDetail,
+  type ChangeReviewState,
+  type ChangeSetFile,
+  type CheckpointPreview,
+  type CheckpointSummary,
   type DshSettingsSchema,
   type DshRuntimeUpdateProgress,
   type DshUpdateSnapshot,
   type DiscoveredModel,
   type DynamicCommand,
+  type EditorContextItem,
+  type EditorContextKind,
+  type EditorContextPreview,
+  type FeatureEventIdentity,
+  type FeatureCapabilityProfile,
+  isCanonicalWorkspaceRelativePath,
+  isValidEditorContextRange,
   type ExtensionSettingsSummary,
   type GoalView,
   type JobView,
@@ -25,6 +38,17 @@ import {
   type ModelSelection,
   type PermissionRequest,
   type PluginInventorySnapshot,
+  type PromptTemplate,
+  type PromptTemplateDraft,
+  type PromptTemplateInsertion,
+  type PromptMode,
+  type PromptTemplateScope,
+  type PromptTemplateSummary,
+  type PromptTemplateUpdate,
+  type PromptTemplateVariable,
+  isPromptMode,
+  isPromptTemplateVariable,
+  resolvePromptMode,
   type PromptAttachment,
   type QuestionAnswer,
   type QueuedInput,
@@ -36,6 +60,7 @@ import {
   type SessionSummary,
   type SkillDescriptor,
   type TeamActivityView,
+  type TaskSummary,
   type TurnEndFailure,
   type SubagentCatalog,
   type SubagentHistoryPage,
@@ -55,7 +80,8 @@ import {
   type WorkspaceSummary,
 } from '@dsh-vscode/domain'
 import { isInjectedUserMessage, reduceTimeline, type TimelineState } from '@dsh-vscode/timeline'
-import type { HostMessage, WebviewRequest } from '@dsh-vscode/webview-protocol'
+import { featureResponseSchema } from '@dsh-vscode/webview-protocol'
+import type { FeatureResponse, HostMessage, WebviewRequest } from '@dsh-vscode/webview-protocol'
 
 import { translate } from '../i18n.js'
 import { ProtocolClient } from './protocol-client.js'
@@ -100,6 +126,8 @@ export interface AppState {
   readonly connectedDshVersion: string | undefined
   /** Safe compatibility warning for an unknown/fallback DSH runtime. */
   readonly dshCompatibilityWarning: string | undefined
+  /** Host-projected feature readiness; no endpoint or credential data. */
+  readonly featureProfile: FeatureCapabilityProfile | undefined
   /** Latest Host-owned npm registry snapshot for the DSH runtime. */
   readonly dshUpdate: DshUpdateSnapshot | undefined
   /** Latest phase emitted by the Host while an update request is running. */
@@ -137,6 +165,20 @@ export interface AppState {
   /** Durable address facts retained when a catalog child is opened. */
   readonly activeSubagent: ActiveSubagent | undefined
   readonly queue: readonly QueuedInput[]
+  /** Host-owned editor context chips; captured bytes never enter this state. */
+  readonly editorContext: readonly EditorContextItem[]
+  readonly editorContextAvailableKinds: readonly EditorContextKind[]
+  readonly editorContextLoading: boolean
+  readonly changes: readonly ChangeSetFile[]
+  readonly changesLoading: boolean
+  readonly tasks: readonly TaskSummary[]
+  readonly tasksLoading: boolean
+  readonly checkpoints: readonly CheckpointSummary[]
+  readonly checkpointsLoading: boolean
+  readonly promptTemplates: readonly PromptTemplateSummary[]
+  readonly promptTemplatesLoading: boolean
+  /** Local semantic workflow profile; only DSH-advertised commands can change host state. */
+  readonly promptMode: PromptMode
   readonly permissions: readonly PermissionRequest[]
   readonly questions: readonly UserQuestion[]
   /** Host-side `ui-conversation.busyEnter` preference driving the composer. */
@@ -203,6 +245,40 @@ export interface AppActions {
   previewAttachment(uri: string): Promise<string | undefined>
   readSessionAttachment(sessionId: string, image: MessageImageReference): Promise<string | undefined>
   releaseAttachments(uris: readonly string[]): Promise<void>
+  captureEditorContext(kind: EditorContextKind, workspaceFolderId?: string): Promise<void>
+  refreshEditorContext(workspaceFolderId?: string): Promise<void>
+  previewEditorContext(contextRef: string): Promise<EditorContextPreview | undefined>
+  releaseEditorContext(contextRefs: readonly string[]): Promise<void>
+  refreshChanges(sessionId?: string): Promise<void>
+  getChangeDetail(changeId: string): Promise<ChangeDetail | undefined>
+  markChangeReviewed(changeId: string, reviewState: ChangeReviewState): Promise<ChangeSetFile | undefined>
+  openChange(changeId: string): Promise<void>
+  refreshTasks(sessionId?: string, includeCompleted?: boolean): Promise<void>
+  getTask(taskId: string): Promise<TaskSummary | undefined>
+  stopTask(
+    taskId: string,
+    mode: 'session-cancel' | 'process-stop',
+    taskRevision: number,
+  ): Promise<TaskSummary | undefined>
+  answerTask(taskId: string, interactionId: string, answer: string): Promise<TaskSummary | undefined>
+  refreshCheckpoints(sessionId?: string): Promise<void>
+  createCheckpoint(label?: string): Promise<CheckpointSummary | undefined>
+  previewCheckpoint(checkpointId: string): Promise<CheckpointPreview | undefined>
+  deleteCheckpoint(checkpointId: string): Promise<void>
+  restoreCheckpoint(checkpointId: string): Promise<'completed' | 'partial' | undefined>
+  refreshPromptTemplates(sessionId?: string, scope?: PromptTemplateScope): Promise<void>
+  readPromptTemplate(templateId: string): Promise<PromptTemplate | undefined>
+  insertPromptTemplate(
+    templateId: string,
+    variables?: Readonly<Record<string, string>>,
+  ): Promise<PromptTemplateInsertion | undefined>
+  createPromptTemplate(draft: PromptTemplateDraft): Promise<PromptTemplateSummary | undefined>
+  updatePromptTemplate(
+    templateId: string,
+    patch: PromptTemplateUpdate,
+  ): Promise<PromptTemplateSummary | undefined>
+  deletePromptTemplate(templateId: string): Promise<void>
+  setPromptMode(mode: PromptMode): Promise<boolean>
   listOpenFiles(): Promise<readonly OpenFileCandidate[]>
   attachOpenFile(candidateId: string): Promise<PromptAttachment | undefined>
   rememberOpenFile(candidateId: string): void
@@ -256,6 +332,7 @@ interface ComposerPreferences {
   readonly preset?: string
   readonly model?: ModelSelection
   readonly openFileId?: string
+  readonly promptMode?: PromptMode
 }
 
 interface PersistedWebviewState {
@@ -282,6 +359,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     backend: { kind: 'idle' },
     connectedDshVersion: undefined,
     dshCompatibilityWarning: undefined,
+    featureProfile: undefined,
     dshUpdate: undefined,
     dshUpdateProgress: undefined,
     sessions: [],
@@ -310,6 +388,18 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     subagents: EMPTY_SUBAGENT_CATALOG,
     activeSubagent: undefined,
     queue: [],
+    editorContext: [],
+    editorContextAvailableKinds: [],
+    editorContextLoading: false,
+    changes: [],
+    changesLoading: false,
+    tasks: [],
+    tasksLoading: false,
+    checkpoints: [],
+    checkpointsLoading: false,
+    promptTemplates: [],
+    promptTemplatesLoading: false,
+    promptMode: composerPreferences.promptMode ?? 'ask',
     permissions: [],
     questions: [],
     busyEnter: 'queue',
@@ -346,6 +436,11 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   const callbacks: { openCreatedSession?: (sessionId: string) => Promise<void> } = {}
   let refreshVersion = 0
   let openVersion = 0
+  let editorContextRefreshGeneration = 0
+  let changesRefreshGeneration = 0
+  let tasksRefreshGeneration = 0
+  let checkpointsRefreshGeneration = 0
+  let promptTemplatesRefreshGeneration = 0
   const pendingOpens = new Map<number, { readonly sessionId: string; readonly messages: HostMessage[] }>()
   let commandDirectoryGeneration = 0
   let configurationGeneration = 0
@@ -404,6 +499,138 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     await refreshSessions(client, setState, () => version === refreshVersion)
     if (version === refreshVersion) await refreshCommands()
   }
+  const refreshEditorContextState = async (workspaceFolderId?: string): Promise<void> => {
+    if (typeof client.featureRequest !== 'function') return
+    const generation = ++editorContextRefreshGeneration
+    setState((current) => ({ ...current, editorContextLoading: true }))
+    try {
+      const result = object(
+        await client.featureRequest({
+          type: 'editor.context.list',
+          requestId: requestId(),
+          payload: workspaceFolderId === undefined ? {} : { workspaceFolderId },
+        }),
+      )
+      const items = result?.kind === 'editor.context' ? parseEditorContextItems(result.items) : undefined
+      const availableKinds =
+        result?.kind === 'editor.context'
+          ? parseEditorContextAvailableKinds(result.availableKinds)
+          : undefined
+      if (items !== undefined && availableKinds !== undefined && generation === editorContextRefreshGeneration)
+        setState((current) => ({ ...current, editorContext: items, editorContextAvailableKinds: availableKinds }))
+    } finally {
+      if (generation === editorContextRefreshGeneration)
+        setState((current) => ({ ...current, editorContextLoading: false }))
+    }
+  }
+  const refreshChangesState = async (
+    sessionId: string | undefined = state.activeSessionId,
+  ): Promise<void> => {
+    if (typeof client.featureRequest !== 'function' || sessionId === undefined) return
+    const generation = ++changesRefreshGeneration
+    setState((current) => ({ ...current, changesLoading: true }))
+    try {
+      const result = await client.featureRequest({
+        type: 'changes.list',
+        requestId: requestId(),
+        payload: { sessionId, limit: 200 },
+      })
+      const changes = parseFeatureChangesResult(result)
+      if (changes !== undefined)
+        setState((current) =>
+          generation === changesRefreshGeneration && current.activeSessionId === sessionId
+            ? { ...current, changes }
+            : current,
+        )
+    } finally {
+      if (generation === changesRefreshGeneration)
+        setState((current) => ({ ...current, changesLoading: false }))
+    }
+  }
+  const refreshTasksState = async (
+    sessionId: string | undefined = state.activeSessionId,
+    includeCompleted = false,
+  ): Promise<void> => {
+    if (typeof client.featureRequest !== 'function' || sessionId === undefined) return
+    const generation = ++tasksRefreshGeneration
+    setState((current) => ({ ...current, tasksLoading: true }))
+    try {
+      const result = await client.featureRequest({
+        type: 'tasks.list',
+        requestId: requestId(),
+        payload: { sessionId, includeCompleted, limit: 200 },
+      })
+      const tasks = parseFeatureTasksResult(result)
+      if (tasks !== undefined)
+        setState((current) =>
+          generation === tasksRefreshGeneration && current.activeSessionId === sessionId
+            ? { ...current, tasks }
+            : current,
+        )
+    } finally {
+      if (generation === tasksRefreshGeneration) setState((current) => ({ ...current, tasksLoading: false }))
+    }
+  }
+  const sessionWorkspaceFolderId = (sessionId: string): string | undefined => {
+    const session = state.sessions.find((candidate) => candidate.id === sessionId)
+    if (session !== undefined && session.workspaceId.trim() !== '') return session.workspaceId
+    if (state.activeSubagent?.entry.id === sessionId && state.activeSubagent.workspaceId.trim() !== '')
+      return state.activeSubagent.workspaceId
+    return undefined
+  }
+  const refreshCheckpointsState = async (
+    sessionId: string | undefined = state.activeSessionId,
+  ): Promise<void> => {
+    if (typeof client.featureRequest !== 'function' || sessionId === undefined) return
+    const workspaceFolderId = sessionWorkspaceFolderId(sessionId)
+    if (workspaceFolderId === undefined) return
+    const generation = ++checkpointsRefreshGeneration
+    setState((current) => ({ ...current, checkpointsLoading: true }))
+    try {
+      const result = await client.featureRequest({
+        type: 'checkpoint.list',
+        requestId: requestId(),
+        payload: { sessionId, workspaceFolderId },
+      })
+      const checkpoints = parseFeatureCheckpointsResult(result)
+      if (checkpoints !== undefined)
+        setState((current) =>
+          generation === checkpointsRefreshGeneration && current.activeSessionId === sessionId
+            ? { ...current, checkpoints }
+            : current,
+        )
+    } finally {
+      if (generation === checkpointsRefreshGeneration)
+        setState((current) => ({ ...current, checkpointsLoading: false }))
+    }
+  }
+  const refreshPromptTemplatesState = async (
+    sessionId: string | undefined = state.activeSessionId,
+    scope?: PromptTemplateScope,
+  ): Promise<void> => {
+    if (typeof client.featureRequest !== 'function' || sessionId === undefined) return
+    const workspaceFolderId = sessionWorkspaceFolderId(sessionId)
+    if (workspaceFolderId === undefined) return
+    const generation = ++promptTemplatesRefreshGeneration
+    setState((current) => ({ ...current, promptTemplatesLoading: true }))
+    try {
+      const result = await client.featureRequest({
+        type: 'prompt.template.list',
+        requestId: requestId(),
+        payload: { sessionId, workspaceFolderId, ...(scope === undefined ? {} : { scope }) },
+      })
+      const templates = parseFeaturePromptTemplatesResult(result)
+      if (templates !== undefined)
+        setState((current) =>
+          generation === promptTemplatesRefreshGeneration && current.activeSessionId === sessionId
+            ? { ...current, promptTemplates: templates }
+            : current,
+        )
+    } finally {
+      if (generation === promptTemplatesRefreshGeneration)
+        setState((current) => ({ ...current, promptTemplatesLoading: false }))
+    }
+  }
   const applyBusyEnter = (values: Readonly<Record<string, unknown>>): void => {
     const conversation = object(values['ui-conversation'])
     const busyEnter = conversation?.busyEnter
@@ -418,6 +645,61 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       if (snapshot !== undefined) applyBusyEnter(snapshot.values)
     } catch {
       // A host that cannot serve settings yet keeps the official 'queue' default.
+    }
+  }
+  const releaseEditorContextRefs = async (
+    refs: readonly string[],
+    items: readonly EditorContextItem[],
+  ): Promise<void> => {
+    if (typeof client.featureRequest !== 'function') return
+    const itemsByRef = new Map(items.map((item) => [item.ref.contextRef, item]))
+    const grouped = new Map<string, string[]>()
+    for (const contextRef of refs) {
+      const item = itemsByRef.get(contextRef)
+      if (item === undefined) continue
+      const group = grouped.get(item.ref.workspaceFolderId) ?? []
+      group.push(contextRef)
+      grouped.set(item.ref.workspaceFolderId, group)
+    }
+    await Promise.all(
+      [...grouped].map(([workspaceFolderId, contextRefs]) =>
+        client.featureRequest({
+          type: 'editor.context.release',
+          requestId: requestId(),
+          payload: { contextRefs, workspaceFolderId },
+        }),
+      ),
+    )
+  }
+  const discardEditorContextForSessionSwitch = async (nextSessionId: string): Promise<void> => {
+    if (state.activeSessionId === undefined || state.activeSessionId === nextSessionId) return
+    const refs = state.editorContext.map((item) => item.ref.contextRef)
+    if (refs.length === 0) return
+    const items = [...state.editorContext]
+    // Clear the Webview immediately so a slow release cannot leave context
+    // chips visually attached to the next session. The Host remains the
+    // authority and will reject any stale in-flight resolution by generation
+    // or owner/session binding.
+    setState((current) => ({ ...current, editorContext: [], editorContextAvailableKinds: [], editorContextLoading: false }))
+    try {
+      await releaseEditorContextRefs(refs, items)
+    } catch {
+      // Expired or already-released handles are harmless during a view switch.
+    }
+  }
+  const discardEditorContextForWorkspaceChange = async (): Promise<void> => {
+    editorContextRefreshGeneration += 1
+    const refs = state.editorContext.map((item) => item.ref.contextRef)
+    if (refs.length === 0) {
+      setState((current) => ({ ...current, editorContext: [], editorContextAvailableKinds: [], editorContextLoading: false }))
+      return
+    }
+    const items = [...state.editorContext]
+    setState((current) => ({ ...current, editorContext: [], editorContextAvailableKinds: [], editorContextLoading: false }))
+    try {
+      await releaseEditorContextRefs(refs, items)
+    } catch {
+      // Workspace changes dispose the Host handles; stale releases are harmless.
     }
   }
   const executeCommandRequest = async (
@@ -437,8 +719,19 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     if (result !== undefined && result?.kind !== 'success') throw new Error(translate('app.error.dshMode'))
     setState((current) => {
       if (current.activeSessionId !== sessionId || current.configuration === undefined) return current
-      return { ...current, configuration: applyKnownCommand(current.configuration, command) }
+      const nextConfiguration = applyKnownCommand(current.configuration, command)
+      const nextPromptMode = promptModeAfterCommand(current.promptMode, command)
+      return {
+        ...current,
+        configuration: nextConfiguration,
+        ...(nextPromptMode === undefined ? {} : { promptMode: nextPromptMode }),
+      }
     })
+    const nextPromptMode = promptModeAfterCommand(state.promptMode, command)
+    if (nextPromptMode !== undefined) {
+      composerPreferences = { ...composerPreferences, promptMode: nextPromptMode }
+      persistWebviewState()
+    }
     return true
   }
   const unsubscribe = client.subscribe((message) => {
@@ -494,6 +787,11 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     }
     if (
       message.type === 'event' &&
+      (message.name === 'workspace.changed' || message.name === 'workspace.removed')
+    )
+      void discardEditorContextForWorkspaceChange()
+    if (
+      message.type === 'event' &&
       (message.name === 'workspace.changed' ||
         message.name === 'workspace.removed' ||
         message.name === 'workspace.order.changed' ||
@@ -537,11 +835,34 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         })
     }
   })
+  const unsubscribeFeature =
+    typeof client.subscribeFeature === 'function'
+      ? client.subscribeFeature((message) => {
+          if (message.name === 'editor.context.changed') void refreshEditorContextState()
+          if (message.name === 'editor.context.availability.changed') {
+            const availableKinds = parseEditorContextAvailableKinds(message.availableKinds)
+            if (availableKinds !== undefined)
+              setState((current) => ({ ...current, editorContextAvailableKinds: availableKinds }))
+          }
+          if (message.name === 'changes.updated' && message.change.sessionId === state.activeSessionId)
+            void refreshChangesState(message.change.sessionId)
+          if (message.name === 'tasks.updated' && message.task.sessionId === state.activeSessionId)
+            void refreshTasksState(message.task.sessionId)
+          if (message.name === 'checkpoint.updated' && message.checkpoint.sessionId === state.activeSessionId)
+            void refreshCheckpointsState(message.checkpoint.sessionId)
+        })
+      : () => undefined
   const open = async (sessionId: string): Promise<void> => {
     const version = ++openVersion
+    editorContextRefreshGeneration += 1
+    changesRefreshGeneration += 1
+    tasksRefreshGeneration += 1
+    checkpointsRefreshGeneration += 1
+    promptTemplatesRefreshGeneration += 1
     const pending = { sessionId, messages: [] as HostMessage[] }
     pendingOpens.set(version, pending)
     try {
+      await discardEditorContextForSessionSwitch(sessionId)
       const result = await client.request<unknown>({
         type: 'session.open',
         requestId: requestId(),
@@ -552,6 +873,10 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       const timeline = hydrateTimeline(sessionId, rawHistory)
       const history = parseSessionHistory(rawHistory)
       const permissionPresets = stringList(detail?.permissionPresets)
+      const workspaceFolderId =
+        typeof detail?.workspaceId === 'string' && detail.workspaceId.trim() !== ''
+          ? detail.workspaceId
+          : state.sessions.find((session) => session.id === sessionId)?.workspaceId || undefined
       const [queue, goals, jobs, feedback, subagents, commands, sessionModels] = await Promise.all([
         safeList<QueuedInput>(
           client,
@@ -601,6 +926,18 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
             feedbackUnavailable: feedback.unavailable,
             subagents: subagents ?? EMPTY_SUBAGENT_CATALOG,
             activeSubagent: undefined,
+            changes: [],
+            changesLoading: false,
+            tasks: [],
+            tasksLoading: false,
+            checkpoints: [],
+            checkpointsLoading: false,
+            promptTemplates: [],
+            promptTemplatesLoading: false,
+            promptMode: promptModeForConfiguration(
+              current.promptMode,
+              isAgentConfiguration(detail?.configuration) ? detail.configuration.planMode : false,
+            ),
             commands:
               commands ??
               commandDirectoryCache.get(sessionId) ??
@@ -610,12 +947,18 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         ),
       )
       persistWebviewState({ activeSessionId: sessionId })
+      void refreshChangesState(sessionId)
+      void refreshTasksState(sessionId)
+      void refreshCheckpointsState(sessionId)
+      void refreshPromptTemplatesState(sessionId)
+      void refreshEditorContextState(workspaceFolderId)
     } finally {
       pendingOpens.delete(version)
     }
   }
   const openSubagent = async (entry: SubagentView, parentAvailable: boolean): Promise<void> => {
     const version = ++openVersion
+    promptTemplatesRefreshGeneration += 1
     const pending = { sessionId: entry.id, messages: [] as HostMessage[] }
     pendingOpens.set(version, pending)
     const workspaceId =
@@ -623,6 +966,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       state.activeSubagent?.workspaceId ??
       ''
     try {
+      await discardEditorContextForSessionSwitch(entry.id)
       const [history, queue, goals, jobs, feedback, subagents] = await Promise.all([
         client
           .request<unknown>({
@@ -674,11 +1018,24 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
             feedbackUnavailable: feedback.unavailable,
             subagents: subagents ?? EMPTY_SUBAGENT_CATALOG,
             commands: [],
+            changes: [],
+            changesLoading: false,
+            tasks: [],
+            tasksLoading: false,
+            checkpoints: [],
+            checkpointsLoading: false,
+            promptTemplates: [],
+            promptTemplatesLoading: false,
+            promptMode: 'ask',
           },
           pending.messages,
         ),
       )
       persistWebviewState({ activeSessionId: entry.id })
+      void refreshChangesState(entry.id)
+      void refreshTasksState(entry.id)
+      void refreshCheckpointsState(entry.id)
+      void refreshPromptTemplatesState(entry.id)
     } finally {
       pendingOpens.delete(version)
     }
@@ -723,6 +1080,9 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     },
     get dshCompatibilityWarning() {
       return state.dshCompatibilityWarning
+    },
+    get featureProfile() {
+      return state.featureProfile
     },
     get dshUpdate() {
       return state.dshUpdate
@@ -805,6 +1165,42 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     get queue() {
       return state.queue
     },
+    get editorContext() {
+      return state.editorContext
+    },
+    get editorContextAvailableKinds() {
+      return state.editorContextAvailableKinds
+    },
+    get editorContextLoading() {
+      return state.editorContextLoading
+    },
+    get changes() {
+      return state.changes
+    },
+    get changesLoading() {
+      return state.changesLoading
+    },
+    get tasks() {
+      return state.tasks
+    },
+    get tasksLoading() {
+      return state.tasksLoading
+    },
+    get checkpoints() {
+      return state.checkpoints
+    },
+    get checkpointsLoading() {
+      return state.checkpointsLoading
+    },
+    get promptTemplates() {
+      return state.promptTemplates
+    },
+    get promptTemplatesLoading() {
+      return state.promptTemplatesLoading
+    },
+    get promptMode() {
+      return state.promptMode
+    },
     get permissions() {
       return state.permissions
     },
@@ -851,7 +1247,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         payload: { search: trimmed, archived: false },
       })
       const items = object(result)?.items
-      return Array.isArray(items) ? items.filter(isSessionSummary) : []
+      return Array.isArray(items) ? deduplicateSessionSummaries(items.filter(isSessionSummary)) : []
     },
     refreshCommands: (sessionId) => refreshCommands(sessionId),
     openSession: open,
@@ -1102,6 +1498,14 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     sendPrompt: async (sessionId, text, attachments, mode) => {
       const rpcRequestId = requestId()
       const optimisticId = `optimistic:user:${rpcRequestId}`
+      const contextRefs = state.editorContext.map((item) => item.ref.contextRef)
+      const contextWorkspaceIds = new Set(
+        state.editorContext
+          .filter((item) => contextRefs.includes(item.ref.contextRef))
+          .map((item) => item.ref.workspaceFolderId),
+      )
+      const contextWorkspaceFolderId =
+        contextWorkspaceIds.size === 1 ? [...contextWorkspaceIds][0] : undefined
       const subagent =
         state.activeSessionId === sessionId && state.activeSubagent?.entry.id === sessionId
           ? state.activeSubagent
@@ -1113,7 +1517,10 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         if (text.trim() === '') throw new Error(translate('app.error.subagentMessageRequired'))
       }
       const isSlashCommand =
-        subagent === undefined && attachments.length === 0 && parseSlashCommand(text) !== undefined
+        subagent === undefined &&
+        attachments.length === 0 &&
+        contextRefs.length === 0 &&
+        parseSlashCommand(text) !== undefined
       if (isSlashCommand) {
         // Slash commands are control-plane operations.  Sending them through
         // session.prompt turns /plan, /permission, /compact, and every plugin
@@ -1150,7 +1557,14 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
           await client.request<unknown>({
             type: 'session.sendPrompt',
             requestId: rpcRequestId,
-            payload: { sessionId, text, attachments: [...attachments], mode },
+            payload: {
+              sessionId,
+              text,
+              attachments: [...attachments],
+              ...(contextRefs.length === 0 ? {} : { contextRefs }),
+              ...(contextWorkspaceFolderId === undefined ? {} : { contextWorkspaceFolderId }),
+              mode,
+            },
           })
         else
           await client.request<unknown>({
@@ -1158,6 +1572,8 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
             requestId: rpcRequestId,
             payload: { sessionId, message: text },
           })
+        if (subagent === undefined && contextRefs.length > 0)
+          setState((current) => ({ ...current, editorContext: [] }))
       } catch (reason) {
         setState((current) => ({
           ...current,
@@ -1470,6 +1886,362 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         payload: { uris: [...uris] },
       })
     },
+    captureEditorContext: async (kind, workspaceFolderId) => {
+      if (typeof client.featureRequest !== 'function') throw new Error(translate('app.error.dshMode'))
+      const result = object(
+        await client.featureRequest<unknown>({
+          type: 'editor.context.capture',
+          requestId: requestId(),
+          payload:
+            workspaceFolderId === undefined
+              ? { kind: kind === 'file' ? 'open-document' : kind }
+              : { kind: kind === 'file' ? 'open-document' : kind, workspaceFolderId },
+        }),
+      )
+      const items = result?.kind === 'editor.context' ? parseEditorContextItems(result.items) : undefined
+      if (items === undefined) throw new Error(translate('app.error.dshMode'))
+      const availableKinds =
+        result?.kind === 'editor.context'
+          ? parseEditorContextAvailableKinds(result.availableKinds)
+          : undefined
+      setState((current) => ({
+        ...current,
+        editorContext: mergeEditorContext(current.editorContext, items),
+        ...(availableKinds === undefined ? {} : { editorContextAvailableKinds: availableKinds }),
+      }))
+    },
+    refreshEditorContext: refreshEditorContextState,
+    previewEditorContext: async (contextRef) => {
+      if (typeof client.featureRequest !== 'function') return undefined
+      const item = state.editorContext.find((candidate) => candidate.ref.contextRef === contextRef)
+      if (item === undefined) return undefined
+      const result = object(
+        await client.featureRequest<unknown>({
+          type: 'editor.context.preview',
+          requestId: requestId(),
+          payload: { contextRef, workspaceFolderId: item.ref.workspaceFolderId },
+        }),
+      )
+      if (result?.kind !== 'editor.preview' || typeof result.contextRef !== 'string') return undefined
+      if (typeof result.redactedPreviewText !== 'string') return undefined
+      return {
+        contextRef: result.contextRef,
+        text: result.redactedPreviewText,
+        truncated: result.truncated === true,
+        expiresAt: typeof result.expiresAt === 'number' ? result.expiresAt : 0,
+      }
+    },
+    releaseEditorContext: async (contextRefs) => {
+      if (contextRefs.length === 0 || typeof client.featureRequest !== 'function') return
+      const items = [...state.editorContext]
+      await releaseEditorContextRefs(contextRefs, items)
+      const released = new Set(contextRefs)
+      setState((current) => ({
+        ...current,
+        editorContext: current.editorContext.filter((item) => !released.has(item.ref.contextRef)),
+      }))
+    },
+    refreshChanges: refreshChangesState,
+    getChangeDetail: async (changeId) => {
+      if (typeof client.featureRequest !== 'function') return undefined
+      const result = await client.featureRequest<unknown>({
+        type: 'changes.detail',
+        requestId: requestId(),
+        payload: { changeId },
+      })
+      return parseFeatureChangeDetail(result)
+    },
+    markChangeReviewed: async (changeId, reviewState) => {
+      if (typeof client.featureRequest !== 'function') return undefined
+      const result = await client.featureRequest<unknown>({
+        type: 'changes.markReviewed',
+        requestId: requestId(),
+        payload: { changeId, reviewState: reviewState === 'unreviewed' ? 'viewed' : reviewState },
+      })
+      const changes = parseFeatureChangesResult(result)
+      const change = changes?.[0]
+      if (change !== undefined)
+        setState((current) => ({
+          ...current,
+          changes: current.changes.map((entry) => (entry.changeId === change.changeId ? change : entry)),
+        }))
+      return change
+    },
+    openChange: async (changeId) => {
+      if (typeof client.featureRequest !== 'function') return
+      const change = state.changes.find((entry) => entry.changeId === changeId)
+      if (change === undefined) return
+      const location = change.locations[0]
+      await client.featureRequest<unknown>({
+        type: 'navigation.open',
+        requestId: requestId(),
+        payload: {
+          workspaceFolderId: change.workspaceFolderId,
+          relativePath: change.relativePath,
+          reveal: 'focus',
+          ...(location?.line === undefined
+            ? {}
+            : {
+                range: {
+                  start: { line: location.line, column: 0 },
+                  end: { line: location.line, column: 0 },
+                },
+              }),
+        },
+      })
+    },
+    refreshTasks: refreshTasksState,
+    getTask: async (taskId) => {
+      if (typeof client.featureRequest !== 'function') return undefined
+      const result = await client.featureRequest<unknown>({
+        type: 'tasks.open',
+        requestId: requestId(),
+        payload: { taskId },
+      })
+      return parseFeatureTasksResult(result)?.[0]
+    },
+    stopTask: async (taskId, mode, taskRevision) => {
+      if (typeof client.featureRequest !== 'function') return undefined
+      const result = await client.featureRequest<unknown>({
+        type: 'tasks.stop',
+        requestId: requestId(),
+        payload: { taskId, mode, taskRevision },
+      })
+      const task = parseFeatureTasksResult(result)?.[0]
+      if (task !== undefined)
+        setState((current) => ({
+          ...current,
+          tasks: current.tasks.map((entry) => (entry.taskId === task.taskId ? task : entry)),
+        }))
+      return task
+    },
+    answerTask: async (taskId, interactionId, answer) => {
+      if (typeof client.featureRequest !== 'function') return undefined
+      const result = await client.featureRequest<unknown>({
+        type: 'tasks.answer',
+        requestId: requestId(),
+        payload: { taskId, interactionId, answer },
+      })
+      const task = parseFeatureTasksResult(result)?.[0]
+      if (task !== undefined)
+        setState((current) => ({
+          ...current,
+          tasks: current.tasks.map((entry) => (entry.taskId === task.taskId ? task : entry)),
+        }))
+      return task
+    },
+    refreshCheckpoints: refreshCheckpointsState,
+    createCheckpoint: async (label) => {
+      if (typeof client.featureRequest !== 'function') return undefined
+      const sessionId = state.activeSessionId
+      if (sessionId === undefined) return undefined
+      const workspaceFolderId = sessionWorkspaceFolderId(sessionId)
+      if (workspaceFolderId === undefined) return undefined
+      const normalizedLabel = label?.trim()
+      const result = await client.featureRequest<unknown>({
+        type: 'checkpoint.create',
+        requestId: requestId(),
+        payload: {
+          sessionId,
+          workspaceFolderId,
+          ...(normalizedLabel === undefined || normalizedLabel === '' ? {} : { label: normalizedLabel }),
+        },
+      })
+      const checkpoint = parseFeatureCheckpointsResult(result)?.[0]
+      if (checkpoint === undefined) throw new Error(translate('app.error.checkpoint'))
+      setState((current) =>
+        current.activeSessionId !== sessionId
+          ? current
+          : {
+              ...current,
+              checkpoints: [
+                checkpoint,
+                ...current.checkpoints.filter((entry) => entry.checkpointId !== checkpoint.checkpointId),
+              ],
+            },
+      )
+      return checkpoint
+    },
+    previewCheckpoint: async (checkpointId) => {
+      if (typeof client.featureRequest !== 'function') return undefined
+      const sessionId = state.activeSessionId
+      if (sessionId === undefined) return undefined
+      const workspaceFolderId = sessionWorkspaceFolderId(sessionId)
+      if (workspaceFolderId === undefined) return undefined
+      const result = await client.featureRequest<unknown>({
+        type: 'checkpoint.preview',
+        requestId: requestId(),
+        payload: { checkpointId, sessionId, workspaceFolderId },
+      })
+      return parseFeatureCheckpointPreviewResult(result)
+    },
+    deleteCheckpoint: async (checkpointId) => {
+      if (typeof client.featureRequest !== 'function') return
+      const sessionId = state.activeSessionId
+      if (sessionId === undefined) return
+      const workspaceFolderId = sessionWorkspaceFolderId(sessionId)
+      if (workspaceFolderId === undefined) return
+      const result = await client.featureRequest<unknown>({
+        type: 'checkpoint.delete',
+        requestId: requestId(),
+        payload: { checkpointId, sessionId, workspaceFolderId },
+      })
+      const deleted = parseFeatureCheckpointsResult(result)?.[0]
+      if (deleted === undefined) throw new Error(translate('app.error.checkpoint'))
+      setState((current) => ({
+        ...current,
+        checkpoints: current.checkpoints.filter((entry) => entry.checkpointId !== checkpointId),
+      }))
+    },
+    restoreCheckpoint: async (checkpointId) => {
+      if (typeof client.featureRequest !== 'function') return undefined
+      const sessionId = state.activeSessionId
+      if (sessionId === undefined) return undefined
+      const workspaceFolderId = sessionWorkspaceFolderId(sessionId)
+      if (workspaceFolderId === undefined) return undefined
+      const checkpoint = state.checkpoints.find((entry) => entry.checkpointId === checkpointId)
+      if (checkpoint?.expectedRevision === undefined) throw new Error(translate('app.error.checkpoint'))
+      const result = await client.featureRequest<unknown>({
+        type: 'checkpoint.restore',
+        requestId: requestId(),
+        payload: {
+          checkpointId,
+          sessionId,
+          workspaceFolderId,
+          expectedCurrentRevision: checkpoint.expectedRevision,
+          conflictPolicy: 'abort',
+        },
+      })
+      const operation = parseFeatureOperationResult(result)
+      if (operation === undefined) throw new Error(translate('app.error.checkpoint'))
+      await refreshCheckpointsState(sessionId)
+      return operation.state === 'completed' || operation.state === 'partial' ? operation.state : undefined
+    },
+    refreshPromptTemplates: refreshPromptTemplatesState,
+    readPromptTemplate: async (templateId) => {
+      if (typeof client.featureRequest !== 'function') return undefined
+      const sessionId = state.activeSessionId
+      if (sessionId === undefined) return undefined
+      const workspaceFolderId = sessionWorkspaceFolderId(sessionId)
+      if (workspaceFolderId === undefined) return undefined
+      const result = await client.featureRequest<unknown>({
+        type: 'prompt.template.read',
+        requestId: requestId(),
+        payload: { templateId, sessionId, workspaceFolderId },
+      })
+      return parseFeaturePromptTemplateResult(result)
+    },
+    insertPromptTemplate: async (templateId, variables) => {
+      if (typeof client.featureRequest !== 'function') return undefined
+      const sessionId = state.activeSessionId
+      if (sessionId === undefined) return undefined
+      const workspaceFolderId = sessionWorkspaceFolderId(sessionId)
+      if (workspaceFolderId === undefined) return undefined
+      const result = await client.featureRequest<unknown>({
+        type: 'prompt.template.insert',
+        requestId: requestId(),
+        payload: {
+          templateId,
+          sessionId,
+          workspaceFolderId,
+          ...(variables === undefined ? {} : { variables }),
+        },
+      })
+      return parseFeaturePromptTemplateInsertionResult(result)
+    },
+    createPromptTemplate: async (draft) => {
+      if (typeof client.featureRequest !== 'function') return undefined
+      const sessionId = state.activeSessionId
+      if (sessionId === undefined) return undefined
+      const workspaceFolderId = sessionWorkspaceFolderId(sessionId)
+      if (workspaceFolderId === undefined) return undefined
+      const result = await client.featureRequest<unknown>({
+        type: 'prompt.template.create',
+        requestId: requestId(),
+        payload: {
+          ...draft,
+          sessionId,
+          workspaceFolderId,
+          variables: promptTemplateVariables(draft.variables),
+        },
+      })
+      const template = parseFeaturePromptTemplatesResult(result)?.[0]
+      if (template === undefined) throw new Error(translate('app.error.promptTemplate'))
+      setState((current) => ({
+        ...current,
+        promptTemplates: [
+          template,
+          ...current.promptTemplates.filter((entry) => entry.templateId !== template.templateId),
+        ],
+      }))
+      return template
+    },
+    updatePromptTemplate: async (templateId, patch) => {
+      if (typeof client.featureRequest !== 'function') return undefined
+      const sessionId = state.activeSessionId
+      if (sessionId === undefined) return undefined
+      const workspaceFolderId = sessionWorkspaceFolderId(sessionId)
+      if (workspaceFolderId === undefined) return undefined
+      const result = await client.featureRequest<unknown>({
+        type: 'prompt.template.update',
+        requestId: requestId(),
+        payload: {
+          templateId,
+          sessionId,
+          workspaceFolderId,
+          ...(patch.title === undefined ? {} : { title: patch.title }),
+          ...(patch.description === undefined ? {} : { description: patch.description }),
+          ...(patch.templateText === undefined ? {} : { templateText: patch.templateText }),
+          ...(patch.variables === undefined ? {} : { variables: promptTemplateVariables(patch.variables) }),
+        },
+      })
+      const template = parseFeaturePromptTemplatesResult(result)?.[0]
+      if (template === undefined) throw new Error(translate('app.error.promptTemplate'))
+      setState((current) => ({
+        ...current,
+        promptTemplates: [
+          template,
+          ...current.promptTemplates.filter((entry) => entry.templateId !== template.templateId),
+        ],
+      }))
+      return template
+    },
+    deletePromptTemplate: async (templateId) => {
+      if (typeof client.featureRequest !== 'function') return
+      const sessionId = state.activeSessionId
+      if (sessionId === undefined) return
+      const workspaceFolderId = sessionWorkspaceFolderId(sessionId)
+      if (workspaceFolderId === undefined) return
+      const result = await client.featureRequest<unknown>({
+        type: 'prompt.template.delete',
+        requestId: requestId(),
+        payload: { templateId, sessionId, workspaceFolderId },
+      })
+      if (parseFeatureOperationResult(result) === undefined)
+        throw new Error(translate('app.error.promptTemplate'))
+      setState((current) => ({
+        ...current,
+        promptTemplates: current.promptTemplates.filter((entry) => entry.templateId !== templateId),
+      }))
+    },
+    setPromptMode: async (mode) => {
+      const sessionId = state.activeSessionId
+      const configuration = state.configuration
+      if (sessionId === undefined || configuration === undefined) return false
+      const resolution = resolvePromptMode(mode, {
+        planCommandAvailable: hasDynamicCommand(state.commands, 'plan'),
+      })
+      if (!resolution.supported) throw new Error(resolution.reason ?? translate('app.error.promptMode'))
+      if (resolution.planEnabled !== configuration.planMode)
+        await executeCommandRequest(sessionId, resolution.planEnabled ? '/plan' : '/plan off')
+      if (state.activeSessionId !== sessionId) return false
+      setState((current) =>
+        current.activeSessionId === sessionId ? { ...current, promptMode: mode } : current,
+      )
+      composerPreferences = { ...composerPreferences, promptMode: mode }
+      persistWebviewState()
+      return true
+    },
     listOpenFiles: async () => {
       return openFileCandidatesFromResult(
         await client.request<unknown>({ type: 'attachment.open.list', requestId: requestId() }),
@@ -1702,6 +2474,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     },
     dispose: () => {
       unsubscribe()
+      unsubscribeFeature()
       client.dispose()
       listeners.clear()
     },
@@ -1856,6 +2629,43 @@ function parseDshUpdateProgress(value: unknown): DshRuntimeUpdateProgress | unde
   }
 }
 
+function parseFeatureCapabilityProfile(value: unknown): FeatureCapabilityProfile | undefined {
+  const profile = object(value)
+  const capabilities = object(profile?.capabilities)
+  if (
+    profile === undefined ||
+    capabilities === undefined ||
+    typeof profile.dshVersion !== 'string' ||
+    typeof profile.protocolVersion !== 'string' ||
+    (profile.source !== 'pinned-adapter' && profile.source !== 'compatibility-fallback')
+  )
+    return undefined
+  const parsed: Record<
+    string,
+    FeatureCapabilityProfile['capabilities'][keyof FeatureCapabilityProfile['capabilities']]
+  > = {}
+  for (const id of FEATURE_CAPABILITY_IDS) {
+    const capability = object(capabilities[id])
+    if (
+      capability === undefined ||
+      !['verified-contract', 'compatibility-fallback', 'unavailable'].includes(String(capability.state)) ||
+      !['verified-contract', 'compatibility-fallback', 'unavailable'].includes(String(capability.upstream))
+    )
+      return undefined
+    parsed[id] = {
+      state: capability.state as FeatureCapabilityProfile['capabilities'][typeof id]['state'],
+      upstream: capability.upstream as FeatureCapabilityProfile['capabilities'][typeof id]['upstream'],
+      ...(typeof capability.reason === 'string' ? { reason: capability.reason.slice(0, 512) } : {}),
+    }
+  }
+  return {
+    dshVersion: profile.dshVersion.slice(0, 128),
+    protocolVersion: profile.protocolVersion.slice(0, 128),
+    source: profile.source,
+    capabilities: parsed as FeatureCapabilityProfile['capabilities'],
+  }
+}
+
 function parseDshSettingsSnapshot(value: unknown): DshSettingsSnapshot | undefined {
   const settings = object(value)
   const schema = object(settings?.schema)
@@ -1946,6 +2756,8 @@ async function refreshSessions(
   const workspacePayload = object(value(1))
   const archivedFromHost = stringList(workspacePayload?.archivedSessionIds)
   const rawSessions = Array.isArray(sessionItems) ? sessionItems.filter(isSessionSummary) : undefined
+  const rawWorkspaces =
+    results[1]?.status === 'fulfilled' ? listValues(value(1)).filter(isWorkspaceSummary) : undefined
   if (!isCurrent()) return
   setState((current) => {
     // Keep local archive knowledge monotonic while the host publishes the
@@ -1953,8 +2765,11 @@ async function refreshSessions(
     // reintroducing the row that was just archived.
     const archivedSessionIds = uniqueStrings([...current.archivedSessionIds, ...(archivedFromHost ?? [])])
     const archived = new Set(archivedSessionIds)
-    const sessions = rawSessions?.filter((session) => !archived.has(session.id))
-    const listedSessions = sessions ?? current.sessions.filter((session) => !archived.has(session.id))
+    const sessions = rawSessions
+      ?.filter((session) => !archived.has(session.id))
+      .reduce(appendUniqueSessionSummary, [])
+    const listedSessions =
+      sessions ?? deduplicateSessionSummaries(current.sessions.filter((session) => !archived.has(session.id)))
     // A DSH workspace attach and its session.list projection can commit in
     // adjacent turns. Do not discard the active conversation merely because a
     // refresh observed that short window without its row. The authoritative
@@ -1963,12 +2778,13 @@ async function refreshSessions(
       current.activeSessionId === undefined
         ? undefined
         : current.sessions.find((session) => session.id === current.activeSessionId)
-    const nextSessions =
+    const nextSessions = deduplicateSessionSummaries(
       activeSession !== undefined &&
-      !archived.has(activeSession.id) &&
-      !listedSessions.some((session) => session.id === activeSession.id)
+        !archived.has(activeSession.id) &&
+        !listedSessions.some((session) => session.id === activeSession.id)
         ? [...listedSessions, activeSession]
-        : listedSessions
+        : listedSessions,
+    )
     const activeSessionIsArchived =
       current.activeSessionId !== undefined && archived.has(current.activeSessionId)
     const hasVisibilitySnapshot = rawSessions !== undefined || archivedFromHost !== undefined
@@ -1976,7 +2792,11 @@ async function refreshSessions(
       ...current,
       sessions: nextSessions,
       archivedSessionIds,
-      workspaces: listValues(value(1)).filter(isWorkspaceSummary),
+      // A transient workspace.list failure must not turn a known temporary
+      // workspace into an apparently successful empty snapshot. The host is
+      // responsible for creating/restoring the no-folder workspace; retaining
+      // the last good value keeps the UI stable until that retry succeeds.
+      workspaces: rawWorkspaces ?? current.workspaces,
       providers: listValues(value(2)).filter(isModelProvider),
       models: listValues(value(3)).filter(isModelDescriptor),
       presets: parsePresetRoster(value(4))?.presets ?? current.presets,
@@ -2279,6 +3099,18 @@ function uniqueStrings(values: readonly string[]): readonly string[] {
   return [...new Set(values)]
 }
 
+function deduplicateSessionSummaries(sessions: readonly SessionSummary[]): readonly SessionSummary[] {
+  return sessions.reduce(appendUniqueSessionSummary, [])
+}
+
+function appendUniqueSessionSummary(
+  sessions: readonly SessionSummary[],
+  session: SessionSummary,
+): readonly SessionSummary[] {
+  if (sessions.some((candidate) => candidate.id === session.id)) return sessions
+  return [...sessions, session]
+}
+
 function upsertOpenedSession(
   sessions: readonly SessionSummary[],
   detail: Record<string, unknown> | undefined,
@@ -2317,6 +3149,7 @@ function applyHostMessage(message: HostMessage, state: AppState, setState: State
         backend: { kind, searchedLocations },
         connectedDshVersion: undefined,
         dshCompatibilityWarning: undefined,
+        featureProfile: undefined,
       })
     } else if (
       kind === 'idle' ||
@@ -2334,6 +3167,7 @@ function applyHostMessage(message: HostMessage, state: AppState, setState: State
           ...state,
           connectedDshVersion: undefined,
           dshCompatibilityWarning: undefined,
+          featureProfile: undefined,
           backend: {
             kind,
             message:
@@ -2348,6 +3182,7 @@ function applyHostMessage(message: HostMessage, state: AppState, setState: State
           ...state,
           connectedDshVersion: undefined,
           dshCompatibilityWarning: undefined,
+          featureProfile: undefined,
           backend: {
             kind,
             port: typeof snapshot?.port === 'number' ? snapshot.port : 0,
@@ -2368,6 +3203,8 @@ function applyHostMessage(message: HostMessage, state: AppState, setState: State
             kind === 'connected' && typeof snapshot?.compatibilityWarning === 'string'
               ? snapshot.compatibilityWarning
               : undefined,
+          featureProfile:
+            kind === 'connected' ? parseFeatureCapabilityProfile(snapshot?.featureProfile) : undefined,
         })
     }
     return
@@ -2582,10 +3419,21 @@ function applyHostMessage(message: HostMessage, state: AppState, setState: State
       backend: { kind: 'failed', message: event.reason, retryable: true },
       connectedDshVersion: undefined,
       dshCompatibilityWarning: undefined,
+      featureProfile: undefined,
       queue: [],
       jobs: [],
       feedback: {},
       feedbackUnavailable: false,
+      editorContext: [],
+      editorContextAvailableKinds: [],
+      editorContextLoading: false,
+      changes: [],
+      changesLoading: false,
+      tasks: [],
+      tasksLoading: false,
+      promptTemplates: [],
+      promptTemplatesLoading: false,
+      promptMode: 'ask',
       permissions: [],
       questions: [],
       subagents: EMPTY_SUBAGENT_CATALOG,
@@ -3468,6 +4316,430 @@ function object(value: unknown): Record<string, unknown> | undefined {
     : undefined
 }
 
+function promptTemplateVariables(values: readonly string[]): PromptTemplateVariable[] {
+  if (values.some((value) => !isPromptTemplateVariable(value)))
+    throw new Error(translate('app.error.promptTemplate'))
+  return values.map((value) => value as PromptTemplateVariable)
+}
+
+type FeatureSuccessResponse = Extract<FeatureResponse, { readonly ok: true }>
+type FeatureResponsePayload = FeatureSuccessResponse['payload']
+type FeatureChangeSummary = Extract<FeatureResponsePayload, { readonly kind: 'changes' }>['items'][number]
+type FeatureChangeDetailPayload = Extract<FeatureResponsePayload, { readonly kind: 'change.detail' }>
+type FeatureTaskSummary = Extract<FeatureResponsePayload, { readonly kind: 'tasks' }>['items'][number]
+type FeatureCheckpointSummary = Extract<
+  FeatureResponsePayload,
+  { readonly kind: 'checkpoints' }
+>['items'][number]
+type FeatureCheckpointPreview = Extract<
+  FeatureResponsePayload,
+  { readonly kind: 'checkpoint.preview' }
+>['preview']
+type FeaturePromptTemplateSummary = Extract<
+  FeatureResponsePayload,
+  { readonly kind: 'prompt.templates' }
+>['items'][number]
+type FeaturePromptTemplate = Extract<FeatureResponsePayload, { readonly kind: 'prompt.template' }>['template']
+type FeaturePromptTemplateInsertion = Extract<
+  FeatureResponsePayload,
+  { readonly kind: 'prompt.template.inserted' }
+>
+type FeatureOperationPayload = Extract<FeatureResponsePayload, { readonly kind: 'operation' }>
+
+function parseFeatureTasksResult(value: unknown): readonly TaskSummary[] | undefined {
+  const parsed = featureResponseSchema.safeParse({
+    type: 'feature.response',
+    requestId: 'store-parse',
+    ok: true,
+    payload: value,
+  })
+  if (!parsed.success || parsed.data.ok !== true || parsed.data.payload.kind !== 'tasks') return undefined
+  return parsed.data.payload.items.map(parseFeatureTaskSummary)
+}
+
+function parseFeatureCheckpointsResult(value: unknown): readonly CheckpointSummary[] | undefined {
+  const parsed = featureResponseSchema.safeParse({
+    type: 'feature.response',
+    requestId: 'store-parse',
+    ok: true,
+    payload: value,
+  })
+  if (!parsed.success || parsed.data.ok !== true || parsed.data.payload.kind !== 'checkpoints')
+    return undefined
+  return parsed.data.payload.items.map(parseFeatureCheckpointSummary)
+}
+
+function parseFeatureCheckpointSummary(item: FeatureCheckpointSummary): CheckpointSummary {
+  return {
+    checkpointId: item.checkpointId,
+    sessionId: item.sessionId,
+    workspaceFolderId: item.workspaceFolderId,
+    createdAt: item.createdAt,
+    fileCount: item.fileCount,
+    totalBytes: item.totalBytes,
+    state: item.state,
+    restoreAllowed: item.restoreAllowed,
+    contentEnabled: item.contentEnabled,
+    ...(item.expectedRevision === undefined ? {} : { expectedRevision: item.expectedRevision }),
+  }
+}
+
+function parseFeatureCheckpointPreviewResult(value: unknown): CheckpointPreview | undefined {
+  const parsed = featureResponseSchema.safeParse({
+    type: 'feature.response',
+    requestId: 'store-parse',
+    ok: true,
+    payload: value,
+  })
+  if (!parsed.success || parsed.data.ok !== true || parsed.data.payload.kind !== 'checkpoint.preview')
+    return undefined
+  const preview: FeatureCheckpointPreview = parsed.data.payload.preview
+  return {
+    summary: parseFeatureCheckpointSummary(preview.summary),
+    files: preview.files.map((file) => ({
+      relativePath: file.relativePath,
+      presentAtCheckpoint: file.presentAtCheckpoint,
+      ...(file.expectedCurrentHash === undefined ? {} : { expectedCurrentHash: file.expectedCurrentHash }),
+      ...(file.currentHash === undefined ? {} : { currentHash: file.currentHash }),
+      conflict: file.conflict,
+      byteSize: file.byteSize,
+    })),
+    conflictCount: preview.conflictCount,
+  }
+}
+
+function parseFeaturePromptTemplatesResult(value: unknown): readonly PromptTemplateSummary[] | undefined {
+  const parsed = featureResponseSchema.safeParse({
+    type: 'feature.response',
+    requestId: 'store-parse',
+    ok: true,
+    payload: value,
+  })
+  if (!parsed.success || parsed.data.ok !== true || parsed.data.payload.kind !== 'prompt.templates')
+    return undefined
+  return parsed.data.payload.items.map(parseFeaturePromptTemplateSummary)
+}
+
+function parseFeaturePromptTemplateSummary(item: FeaturePromptTemplateSummary): PromptTemplateSummary {
+  return {
+    templateId: item.templateId,
+    title: item.title,
+    description: item.description,
+    scope: item.scope,
+    updatedAt: item.updatedAt,
+    variables: [...item.variables],
+    enabled: item.enabled,
+  }
+}
+
+function parseFeaturePromptTemplateResult(value: unknown): PromptTemplate | undefined {
+  const parsed = featureResponseSchema.safeParse({
+    type: 'feature.response',
+    requestId: 'store-parse',
+    ok: true,
+    payload: value,
+  })
+  if (!parsed.success || parsed.data.ok !== true || parsed.data.payload.kind !== 'prompt.template')
+    return undefined
+  const template: FeaturePromptTemplate = parsed.data.payload.template
+  return {
+    ...parseFeaturePromptTemplateSummary(template.summary),
+    templateText: template.templateText,
+  }
+}
+
+function parseFeaturePromptTemplateInsertionResult(value: unknown): PromptTemplateInsertion | undefined {
+  const parsed = featureResponseSchema.safeParse({
+    type: 'feature.response',
+    requestId: 'store-parse',
+    ok: true,
+    payload: value,
+  })
+  if (!parsed.success || parsed.data.ok !== true || parsed.data.payload.kind !== 'prompt.template.inserted')
+    return undefined
+  const insertion: FeaturePromptTemplateInsertion = parsed.data.payload
+  return {
+    templateId: insertion.templateId,
+    text: insertion.text,
+    unresolvedVariables: [...insertion.unresolvedVariables],
+  }
+}
+
+function parseFeatureOperationResult(value: unknown): FeatureOperationPayload | undefined {
+  const parsed = featureResponseSchema.safeParse({
+    type: 'feature.response',
+    requestId: 'store-parse',
+    ok: true,
+    payload: value,
+  })
+  if (!parsed.success || parsed.data.ok !== true || parsed.data.payload.kind !== 'operation') return undefined
+  return parsed.data.payload
+}
+
+function parseFeatureTaskSummary(item: FeatureTaskSummary): TaskSummary {
+  return {
+    taskId: item.taskId,
+    sourceId: item.sourceId,
+    ...(item.sessionId === undefined ? {} : { sessionId: item.sessionId }),
+    ...(item.parentTaskId === undefined ? {} : { parentTaskId: item.parentTaskId }),
+    workspaceFolderId: item.workspaceFolderId,
+    kind: item.kind,
+    title: item.title,
+    status: item.status,
+    needsUserAction: item.needsUserAction,
+    ...(item.actionKind === undefined ? {} : { actionKind: item.actionKind }),
+    ...(item.interactionId === undefined ? {} : { interactionId: item.interactionId }),
+    ...(item.modelLabel === undefined ? {} : { modelLabel: item.modelLabel }),
+    ...(item.providerLabel === undefined ? {} : { providerLabel: item.providerLabel }),
+    startedAt: item.startedAt,
+    updatedAt: item.updatedAt,
+    ...(item.progress === undefined ? {} : { progress: item.progress }),
+    childCount: item.childCount,
+    canOpen: item.canOpen,
+    canAnswer: item.canAnswer,
+    canSessionCancel: item.canSessionCancel,
+    canProcessStop: item.canProcessStop,
+    ownerKind: item.ownerKind,
+    ...(item.backendInstanceId === undefined ? {} : { backendInstanceId: item.backendInstanceId }),
+    ...(item.connectionGeneration === undefined ? {} : { connectionGeneration: item.connectionGeneration }),
+    taskRevision: item.taskRevision,
+  }
+}
+
+function parseFeatureChangesResult(value: unknown): readonly ChangeSetFile[] | undefined {
+  const parsed = featureResponseSchema.safeParse({
+    type: 'feature.response',
+    requestId: 'store-parse',
+    ok: true,
+    payload: value,
+  })
+  if (!parsed.success || !('payload' in parsed.data) || parsed.data.ok !== true) return undefined
+  const payload = parsed.data.payload
+  if (payload.kind !== 'changes') return undefined
+  return payload.items.map(parseFeatureChangeSummary)
+}
+
+function parseFeatureChangeDetail(value: unknown): ChangeDetail | undefined {
+  const parsed = featureResponseSchema.safeParse({
+    type: 'feature.response',
+    requestId: 'store-parse',
+    ok: true,
+    payload: value,
+  })
+  if (!parsed.success || !('payload' in parsed.data) || parsed.data.ok !== true) return undefined
+  const responsePayload = parsed.data.payload
+  if (responsePayload.kind !== 'change.detail') return undefined
+  const payload: FeatureChangeDetailPayload = responsePayload
+  const summary = parseFeatureChangeSummary(payload.change)
+  return {
+    ...summary,
+    ...(payload.redactedDiff === undefined ? {} : { redactedDiff: payload.redactedDiff }),
+    diffTruncated: payload.truncated === true,
+  }
+}
+
+function parseFeatureChangeSummary(item: FeatureChangeSummary): ChangeSetFile {
+  return {
+    changeId: item.changeId,
+    sessionId: item.sessionId,
+    workspaceFolderId: item.workspaceFolderId,
+    relativePath: item.relativePath,
+    ...(item.previousRelativePath === undefined ? {} : { previousRelativePath: item.previousRelativePath }),
+    status: item.status,
+    ...(item.additions === undefined ? {} : { additions: item.additions }),
+    ...(item.deletions === undefined ? {} : { deletions: item.deletions }),
+    locations: item.locations.map((location) => ({
+      path: location.relativePath,
+      ...(location.line === undefined ? {} : { line: location.line }),
+    })),
+    evidence: fromFeatureChangeEvidence(item.evidence),
+    applicationState: fromFeatureChangeApplicationState(item.applicationState),
+    reviewState: item.reviewState,
+    sourceIds: [...item.sourceIds],
+    sourceInteractionIds: [],
+    sourceToolCallIds: [...item.sourceIds],
+    firstSeenAt: item.firstSeenAt,
+    lastSeenAt: item.lastSeenAt,
+    identity: featureEventIdentity(item.identity),
+    diffAvailable: item.diffAvailable,
+  }
+}
+
+function featureEventIdentity(value: FeatureChangeSummary['identity']): FeatureEventIdentity {
+  const optional = {
+    ...(value.eventId === undefined ? {} : { eventId: value.eventId }),
+    ...(value.rpcId === undefined ? {} : { rpcId: value.rpcId }),
+    ...(value.toolCallId === undefined ? {} : { toolCallId: value.toolCallId }),
+  }
+  if (value.stream === 'mux')
+    return {
+      ...optional,
+      backendInstanceId: value.backendInstanceId,
+      connectionGeneration: value.connectionGeneration,
+      stream: 'mux',
+      sessionId: value.sessionId,
+      serverSeq: value.serverSeq,
+    }
+  return {
+    ...optional,
+    backendInstanceId: value.backendInstanceId,
+    connectionGeneration: value.connectionGeneration,
+    stream: value.stream,
+    ...(value.sessionId === undefined ? {} : { sessionId: value.sessionId }),
+    localSeq: value.localSeq,
+  }
+}
+
+function fromFeatureChangeEvidence(evidence: FeatureChangeSummary['evidence']): ChangeSetFile['evidence'] {
+  switch (evidence) {
+    case 'structured-proposal':
+      return 'structuredProposal'
+    case 'structured-tool-success':
+      return 'structuredToolSuccess'
+    case 'filesystem-observed':
+      return 'filesystemObserved'
+    case 'structured-location-only':
+      return 'structuredLocationOnly'
+    case 'failed':
+      return 'failed'
+    case 'incomplete':
+      return 'incomplete'
+  }
+  return 'incomplete'
+}
+
+function fromFeatureChangeApplicationState(
+  state: FeatureChangeSummary['applicationState'],
+): ChangeSetFile['applicationState'] {
+  switch (state) {
+    case 'proposed':
+      return 'proposed'
+    case 'applied-observed':
+      return 'appliedObserved'
+    case 'failed':
+      return 'failed'
+    case 'unknown':
+      return 'unknown'
+  }
+  return 'unknown'
+}
+
+function parseEditorContextItems(value: unknown): readonly EditorContextItem[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const items = value.map(parseEditorContextItem)
+  return items.every((item): item is EditorContextItem => item !== undefined) ? items : undefined
+}
+
+function parseEditorContextAvailableKinds(value: unknown): readonly EditorContextKind[] | undefined {
+  if (value === undefined) return []
+  if (!Array.isArray(value)) return undefined
+  const kinds = value.map((entry): EditorContextKind | undefined => {
+    if (entry === 'open-document') return 'file'
+    if (entry === 'selection' || entry === 'diagnostic' || entry === 'symbol') return entry
+    return undefined
+  })
+  return kinds.every((kind): kind is EditorContextKind => kind !== undefined) ? [...new Set(kinds)] : undefined
+}
+
+function parseEditorContextItem(value: unknown): EditorContextItem | undefined {
+  const item = object(value)
+  const scope = object(item?.scope)
+  if (
+    item === undefined ||
+    scope === undefined ||
+    typeof item.contextRef !== 'string' ||
+    typeof item.kind !== 'string' ||
+    typeof item.label !== 'string' ||
+    typeof item.workspaceFolderId !== 'string' ||
+    typeof item.relativePath !== 'string' ||
+    !isCanonicalWorkspaceRelativePath(item.relativePath) ||
+    !['selection', 'open-document', 'diagnostic', 'symbol'].includes(item.kind) ||
+    typeof item.sizeBytes !== 'number' ||
+    !Number.isSafeInteger(item.sizeBytes) ||
+    item.sizeBytes < 0 ||
+    typeof item.stale !== 'boolean' ||
+    typeof item.previewAvailable !== 'boolean' ||
+    typeof item.expiresAt !== 'number' ||
+    !Number.isSafeInteger(item.expiresAt) ||
+    typeof scope.ownerId !== 'string' ||
+    typeof scope.workspaceFolderId !== 'string' ||
+    scope.workspaceFolderId !== item.workspaceFolderId ||
+    typeof scope.ownerViewId !== 'string' ||
+    typeof scope.expiresAt !== 'number' ||
+    scope.expiresAt !== item.expiresAt
+  )
+    return undefined
+  const range = parseEditorContextRange(item.range)
+  if (item.range !== undefined && range === undefined) return undefined
+  const kind = item.kind === 'open-document' ? 'file' : item.kind
+  if (kind !== 'selection' && kind !== 'file' && kind !== 'diagnostic' && kind !== 'symbol') return undefined
+  const sessionId = optionalString(scope.sessionId)
+  const backendInstanceId = optionalString(scope.backendInstanceId)
+  const connectionGeneration = optionalGeneration(scope.connectionGeneration)
+  const documentVersion = optionalGeneration(item.documentVersion)
+  return {
+    ref: {
+      contextRef: item.contextRef,
+      kind,
+      workspaceFolderId: item.workspaceFolderId,
+      ownerId: scope.ownerId,
+      ownerViewId: scope.ownerViewId,
+      contextStoreGeneration: 1,
+      relativePath: item.relativePath,
+      ...(range === undefined ? {} : { range }),
+      sizeBytes: item.sizeBytes,
+      capturedAt: item.expiresAt,
+      ...(documentVersion === undefined ? {} : { documentVersion }),
+      contentHash: '',
+      expiresAt: item.expiresAt,
+      ...(sessionId === undefined ? {} : { sessionId }),
+      ...(backendInstanceId === undefined ? {} : { backendInstanceId }),
+      ...(connectionGeneration === undefined ? {} : { connectionGeneration }),
+    },
+    label: item.label,
+    stale: item.stale,
+    previewAvailable: item.previewAvailable,
+  }
+}
+
+function parseEditorContextRange(value: unknown): EditorContextItem['ref']['range'] {
+  if (value === undefined) return undefined
+  const range = object(value)
+  const start = object(range?.start)
+  const end = object(range?.end)
+  if (
+    start === undefined ||
+    end === undefined ||
+    typeof start.line !== 'number' ||
+    typeof start.column !== 'number' ||
+    typeof end.line !== 'number' ||
+    typeof end.column !== 'number'
+  )
+    return undefined
+  const parsed = {
+    start: { line: start.line, column: start.column },
+    end: { line: end.line, column: end.column },
+  }
+  return isValidEditorContextRange(parsed) ? parsed : undefined
+}
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === 'string' && value !== '' ? value : undefined
+}
+
+function optionalGeneration(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined
+}
+
+function mergeEditorContext(
+  current: readonly EditorContextItem[],
+  next: readonly EditorContextItem[],
+): readonly EditorContextItem[] {
+  const byRef = new Map(current.map((item) => [item.ref.contextRef, item]))
+  for (const item of next) byRef.set(item.ref.contextRef, item)
+  return [...byRef.values()].sort((left, right) => right.ref.capturedAt - left.ref.capturedAt)
+}
+
 function attachmentFromResult(resultValue: unknown): PromptAttachment | undefined {
   const result = object(resultValue)
   const attachment = object(result?.attachment)
@@ -4129,12 +5401,15 @@ function readPersistedWebviewState(value: unknown): PersistedWebviewState {
   const model = normalizedModelSelection(raw?.model)
   const openFileId =
     typeof raw?.openFileId === 'string' && raw.openFileId.trim() !== '' ? raw.openFileId : undefined
+  const promptMode =
+    typeof raw?.promptMode === 'string' && isPromptMode(raw.promptMode) ? raw.promptMode : undefined
   return {
     version: 1,
     composerPreferences: {
       ...(preset === undefined ? {} : { preset }),
       ...(model === undefined ? {} : { model }),
       ...(openFileId === undefined ? {} : { openFileId }),
+      ...(promptMode === undefined ? {} : { promptMode }),
     },
     ...(typeof root?.activeSessionId === 'string' && root.activeSessionId.trim() !== ''
       ? { activeSessionId: root.activeSessionId }
@@ -4167,6 +5442,22 @@ function applyKnownCommand(configuration: AgentConfiguration, command: string): 
     return { ...configuration, permissionPreset: parts[1] }
   if (parts[0] === 'plan') return { ...configuration, planMode: parts[1] !== 'off' }
   return configuration
+}
+
+function hasDynamicCommand(commands: readonly DynamicCommand[], name: string): boolean {
+  const target = name.trim().toLocaleLowerCase()
+  return commands.some((command) => command.name.trim().toLocaleLowerCase() === target)
+}
+
+function promptModeAfterCommand(current: PromptMode, command: string): PromptMode | undefined {
+  const parts = command.trim().replace(/^\//u, '').split(/\s+/u)
+  if (parts[0]?.toLocaleLowerCase() !== 'plan') return undefined
+  return parts[1]?.toLocaleLowerCase() === 'off' ? (current === 'plan' ? 'ask' : current) : 'plan'
+}
+
+function promptModeForConfiguration(preferred: PromptMode, planMode: boolean): PromptMode {
+  if (planMode) return 'plan'
+  return preferred === 'plan' ? 'ask' : preferred
 }
 
 function isToolMode(value: unknown): value is AgentConfiguration['toolMode'] {

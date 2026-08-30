@@ -319,7 +319,14 @@ export class DshConnectionCoordinator {
     signal: AbortSignal | undefined,
     generation: number,
   ): Promise<ConnectionResult> {
-    const backend = await this.dependencies.backendFactory.connect(connected, signal)
+    const identifiedConnection: DshBackend['connection'] = {
+      ...connected,
+      // This opaque identity is scoped to this coordinator lifetime. It is
+      // deliberately not derived from the local endpoint or process command.
+      backendInstanceId: connected.backendInstanceId ?? `backend-${generation}`,
+      connectionGeneration: generation,
+    }
+    const backend = await this.dependencies.backendFactory.connect(identifiedConnection, signal)
     if (generation !== this.generation || signal?.aborted === true) {
       await backend.close().catch(() => undefined)
       if (managed !== undefined) await managed.stop().catch(() => undefined)
@@ -329,7 +336,7 @@ export class DshConnectionCoordinator {
     if (managed === undefined) this.managedProcess = undefined
     const state: Extract<BackendState, { readonly kind: 'connected' }> = {
       kind: 'connected',
-      backend: connected,
+      backend: identifiedConnection,
     }
     this.publish(state)
     return { backend, state }

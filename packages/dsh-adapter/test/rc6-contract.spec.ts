@@ -7,61 +7,13 @@ import { callRpc } from '../src/versions/rc6/rpc.js'
 import { rc6Mapper } from '../src/versions/rc6/mapper.js'
 import { Rc6CommandRepository } from '../src/repositories/command-repository.js'
 import { Rc6InteractionRepository } from '../src/repositories/interaction-repository.js'
+import {
+  RC6_PINNED_SOURCE_COMMIT,
+  RC6_RPC_METHOD_NAMES,
+  RC6_STRUCTURED_EVENT_FAMILIES,
+} from './fixtures/rc6-contract-snapshot.js'
 
-const rpcMethods = [
-  'session.list',
-  'session.search',
-  'session.create',
-  'session.history',
-  'session.models',
-  'session.selectModel',
-  'session.rename',
-  'session.fork',
-  'session.prompt',
-  'session.attachment',
-  'session.updateQueue',
-  'session.cancel',
-  'subagent.list',
-  'subagent.history',
-  'subagent.prompt',
-  'subagent.interrupt',
-  'host.describe',
-  'host.pickDirectory',
-  'host.listDirectory',
-  'host.createDirectory',
-  'host.openPath',
-  'workspace.list',
-  'workspace.create',
-  'workspace.rename',
-  'workspace.delete',
-  'workspace.insertBefore',
-  'workspace.insertSessionBefore',
-  'workspace.archiveSession',
-  'skill.list',
-  'agentPreset.list',
-  'agentPreset.select',
-  'agentPreset.read',
-  'agentPreset.copy',
-  'agentPreset.openDocument',
-  'agentPreset.remove',
-  'goal.create',
-  'goal.edit',
-  'goal.pause',
-  'goal.resume',
-  'goal.complete',
-  'goal.clear',
-  'settings.describe',
-  'settings.openDocument',
-  'settings.update',
-  'settings.replace',
-  'settings.mutate',
-  'credentials.describe',
-  'credentials.set',
-  'credentials.unset',
-  'llm.providers',
-  'llm.models',
-  'llm.discoverModels',
-] as const satisfies readonly (keyof RpcMethodMap)[]
+const rpcMethods = RC6_RPC_METHOD_NAMES satisfies readonly (keyof RpcMethodMap)[]
 
 const transport = (response: unknown): DshTransport => ({
   request: <TResponse>(_method: string, _params: unknown, _signal?: AbortSignal) =>
@@ -83,6 +35,27 @@ describe('DeepSeek Harness 0.1.0-rc.6 contract', () => {
     const noMissing: Missing extends never ? true : never = true
     expect(noMissing).toBe(true)
     expect(rpcMethods).toHaveLength(52)
+    expect(RC6_PINNED_SOURCE_COMMIT).toBe('47f943859bef60e4160492346772ded9b24f765a')
+    expect(new Set(rpcMethods).size).toBe(rpcMethods.length)
+  })
+
+  it('keeps the audited structured event family list explicit', () => {
+    expect(RC6_STRUCTURED_EVENT_FAMILIES).toEqual([
+      'session/subscribed',
+      'host/session-activity',
+      'approval/resolved',
+      'question/resolved',
+      'session/projection',
+      'host/session-added',
+      'host/workspace-removed',
+      'host/remote-event',
+      'assistant/chunk',
+      'assistant/message',
+      'tool/call',
+      'tool/result',
+      'question/requested',
+      'session/jobs',
+    ])
   })
 
   it('maps official host and mux event families without parsing terminal output', () => {

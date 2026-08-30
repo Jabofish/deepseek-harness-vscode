@@ -1,6 +1,8 @@
 import { useEffect, useId, useRef, useState, type ReactElement } from 'react'
 import type { IconName } from '../../ui/Icon.js'
 import { Icon } from '../../ui/Icon.js'
+import { useDismissibleLayer } from '../../components/common/useDismissibleLayer.js'
+import { useViewportMenuPosition } from '../../components/common/useViewportMenuPosition.js'
 
 export interface CompactPickerOption {
   readonly value: string
@@ -26,7 +28,15 @@ export function CompactPicker(props: CompactPickerProps): ReactElement {
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
   const listboxId = useId()
+  const menuPosition = useViewportMenuPosition({
+    open,
+    anchorRef: triggerRef,
+    menuRef,
+    placement: 'above',
+    refreshKey: props.value,
+  })
   const className = [
     'dsh-compact-picker',
     props.displayLabel === true ? 'dsh-compact-picker--labelled' : undefined,
@@ -35,22 +45,11 @@ export function CompactPicker(props: CompactPickerProps): ReactElement {
     .filter(Boolean)
     .join(' ')
 
-  useEffect(() => {
-    if (!open) return
-    const closeOnOutsidePointer = (event: PointerEvent): void => {
-      const target = event.target
-      if (target instanceof Node && !rootRef.current?.contains(target)) setOpen(false)
-    }
-    const closeOnEscape = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') setOpen(false)
-    }
-    document.addEventListener('pointerdown', closeOnOutsidePointer)
-    document.addEventListener('keydown', closeOnEscape)
-    return () => {
-      document.removeEventListener('pointerdown', closeOnOutsidePointer)
-      document.removeEventListener('keydown', closeOnEscape)
-    }
-  }, [open])
+  useDismissibleLayer({
+    open,
+    refs: [rootRef, menuRef],
+    onDismiss: () => setOpen(false),
+  })
 
   useEffect(() => {
     if ((props.openRequest ?? 0) <= 0 || props.disabled || props.options.length === 0) return
@@ -83,7 +82,14 @@ export function CompactPicker(props: CompactPickerProps): ReactElement {
         <span className="dsh-compact-picker__trigger-label">{props.label}</span>
       </button>
       {open ? (
-        <div id={listboxId} className="dsh-compact-picker__menu" role="listbox" aria-label={props.ariaLabel}>
+        <div
+          ref={menuRef}
+          id={listboxId}
+          className="dsh-compact-picker__menu"
+          role="listbox"
+          aria-label={props.ariaLabel}
+          style={menuPosition}
+        >
           {props.options.map((option) => (
             <button
               className={`dsh-compact-picker__option${

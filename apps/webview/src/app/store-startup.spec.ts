@@ -155,6 +155,64 @@ describe('AppStore startup session restoration', () => {
     store.dispose()
   })
 
+  it('keeps the last workspace snapshot when a refresh temporarily fails', async () => {
+    let failWorkspaceList = false
+    const client = new StartupClient((request) => {
+      if (request.type === 'workspace.list') {
+        if (failWorkspaceList) return Promise.reject(new Error('workspace list unavailable'))
+        return { items: [workspace] }
+      }
+      return startupResponse(request)
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+
+    await store.initialize()
+    expect(store.workspaces).toHaveLength(1)
+
+    failWorkspaceList = true
+    await store.refreshSessions()
+
+    expect(store.workspaces).toEqual([workspace])
+    store.dispose()
+  })
+
+  it('keeps session rows unique when a refresh snapshot repeats an id', async () => {
+    const duplicate = { ...activeSession, title: 'Repeated projection' }
+    const client = new StartupClient((request) => {
+      if (request.type === 'session.list') return { items: [activeSession, duplicate] }
+      return startupResponse(request)
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+
+    await store.refreshSessions()
+
+    expect(store.sessions).toEqual([activeSession])
+    store.dispose()
+  })
+
+  it('maps semantic workflow profiles to the advertised plan command without inventing a command', async () => {
+    const client = new StartupClient((request) => {
+      if (request.type === 'command.list')
+        return [{ name: 'plan', description: 'Toggle plan mode', source: 'builtin' }]
+      if (request.type === 'command.execute') return { kind: 'success' }
+      return startupResponse(request)
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+
+    await store.initialize()
+    await expect(store.setPromptMode('plan')).resolves.toBe(true)
+    await expect(store.setPromptMode('review')).resolves.toBe(true)
+
+    const commandRequests = client.requests.filter(
+      (request): request is Extract<WebviewRequest, { readonly type: 'command.execute' }> =>
+        request.type === 'command.execute',
+    )
+    expect(commandRequests.map((request) => request.payload.command)).toEqual(['/plan', '/plan off'])
+    expect(store.promptMode).toBe('review')
+    expect(store.configuration?.planMode).toBe(false)
+    store.dispose()
+  })
+
   it('applies alpha session activity timestamps without allowing an older event to reorder the list', async () => {
     const client = new StartupClient()
     const store = createAppStore(client as unknown as ProtocolClient)

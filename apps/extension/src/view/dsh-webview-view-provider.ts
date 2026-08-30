@@ -8,6 +8,8 @@ export interface DshWebviewDependencies {
   readonly onMessage: (message: unknown) => Promise<void>
   /** Observe a rejected Webview message task; event callbacks cannot await it. */
   readonly onMessageError?: (error: unknown) => void
+  /** Clear view-owned resources before a view is recreated or disposed. */
+  readonly onViewDisposed?: () => void
 }
 
 export class DshWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Disposable {
@@ -63,5 +65,6 @@ export class DshWebviewViewProvider implements vscode.WebviewViewProvider, vscod
 
   private disposeViewListeners(): void {
     while (this.disposables.length > 0) this.disposables.pop()?.dispose()
+    this.dependencies.onViewDisposed?.()
   }
 }

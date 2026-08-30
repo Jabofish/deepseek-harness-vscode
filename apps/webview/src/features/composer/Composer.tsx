@@ -8,14 +8,19 @@ import {
   type FormEvent,
   type KeyboardEvent,
   type ReactElement,
+  type ReactNode,
 } from 'react'
 import type {
   AgentConfiguration,
   AgentPresetDescriptor,
   ContextBreakdown,
   DynamicCommand,
+  EditorContextItem,
+  EditorContextKind,
+  EditorContextPreview,
   ImageAttachmentLimits,
   ModelDescriptor,
+  PromptMode,
   PromptAttachment,
   QueuedInput,
   RunningInputMode,
@@ -23,6 +28,7 @@ import type {
 import type { OpenFileCandidate, ReferenceCandidate } from '../../app/store.js'
 import { useI18n } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
+import { UnifiedComposer } from '../../components/common/UnifiedComposer.js'
 import { AttachmentLightbox } from '../attachments/AttachmentLightbox.js'
 import {
   COMMAND_MENU_ID,
@@ -35,8 +41,17 @@ import {
   type CommandPaletteSelection,
 } from '../commands/CommandPalette.js'
 import { commandDispatchKind, type PopupSelectRegistry } from '../commands/popupSelectRegistry.js'
-import { formatPermissionLabel, permissionOptions, SessionControls } from './SessionControls.js'
+import {
+  formatPermissionLabel,
+  permissionOptions,
+  SessionControls,
+  type SessionControlsProps,
+} from './SessionControls.js'
 import { REFERENCE_MENU_ID, ReferencePalette, referenceMenuOptionId } from './ReferencePalette.js'
+import { EditorContextRail } from './EditorContextRail.js'
+import { ComposerCommandActions } from './ComposerCommandActions.js'
+import { ComposerExtrasMenu } from './ComposerExtrasMenu.js'
+import { ComposerAttachmentActions } from './ComposerAttachmentActions.js'
 
 const COMPOSER_MIN_HEIGHT = 42
 const COMPOSER_MAX_HEIGHT = 132
@@ -50,6 +65,9 @@ export interface ComposerProps {
   readonly running: boolean
   readonly draft: string
   readonly attachments: readonly PromptAttachment[]
+  readonly editorContext?: readonly EditorContextItem[]
+  readonly editorContextAvailableKinds?: readonly EditorContextKind[]
+  readonly editorContextLoading?: boolean
   /** Optional DSH `imageLimits` projection; absent on older/partial hosts. */
   readonly imageLimits?: ImageAttachmentLimits
   readonly configuration?: AgentConfiguration | undefined
@@ -66,10 +84,12 @@ export interface ComposerProps {
   readonly estimatedContextTokens?: number
   readonly contextWindowTokens?: number
   readonly contextBreakdown?: ContextBreakdown
+  readonly promptMode?: PromptMode
   readonly configurationDisabled?: boolean
   readonly presetMutable?: boolean
   readonly attachmentPreviews?: Readonly<Record<string, string>>
   readonly onConfigurationChange?: (configuration: AgentConfiguration) => void
+  readonly onPromptModeChange?: (mode: PromptMode) => void
   readonly onCommand?: (command: string, attachments?: readonly PromptAttachment[]) => Promise<void> | void
   readonly onPopupSelect?: (command: string) => void
   readonly onCommandQueryChange?: (query: string | undefined) => void
@@ -86,8 +106,13 @@ export interface ComposerProps {
   readonly onToggleOpenFilePicker: () => void
   readonly onSelectOpenFile: (candidateId: string) => void
   readonly onRemoveAttachment: (uri: string) => void
+  readonly onCaptureEditorContext?: (kind: EditorContextKind) => Promise<void> | void
+  readonly onRemoveEditorContext?: (contextRef: string) => Promise<void> | void
+  readonly onPreviewEditorContext?: (contextRef: string) => Promise<EditorContextPreview | undefined>
   readonly onSubmit: (mode: RunningInputMode) => void
   readonly onCancel: () => void
+  /** Optional session telemetry rendered inside the unified card footer. */
+  readonly status?: ReactNode
   /** Steer every still-queued pending input into the running turn. */
   readonly onSteerQueue: () => void
   /** Pending inbox rows, used to gate the empty-draft accelerated Enter. */
@@ -98,6 +123,7 @@ export interface ComposerProps {
 
 export function Composer(props: ComposerProps): ReactElement {
   const { t } = useI18n()
+  const composerRef = useRef<HTMLFormElement>(null)
   const composing = useRef(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const pendingCursorRef = useRef<number | undefined>(undefined)
@@ -115,6 +141,7 @@ export function Composer(props: ComposerProps): ReactElement {
   const [dropState, setDropState] = useState<'ready' | 'blocked' | undefined>(undefined)
   const [attachmentRailScrollable, setAttachmentRailScrollable] = useState(false)
   const [previewUri, setPreviewUri] = useState<string | undefined>(undefined)
+  const [extrasOpen, setExtrasOpen] = useState(false)
   // Official input-trigger menu state: the highlight rides
   // aria-activedescendant, and Escape dismisses until the query changes.
   const [menuHighlight, setMenuHighlight] = useState<number | undefined>(undefined)
@@ -243,7 +270,34 @@ export function Composer(props: ComposerProps): ReactElement {
     openFileCandidates.some((candidate) => candidate.id === props.preferredOpenFileId)
       ? props.preferredOpenFileId
       : openFileCandidates.find((candidate) => candidate.active)?.id
-  const attachedOpenFileIds = new Set(props.attachedOpenFileIds)
+  const renderSessionControls = (surface: 'primary' | 'secondary'): ReactElement | null => {
+    if (configuration === undefined || onConfigurationChange === undefined) return null
+    const controlProps: SessionControlsProps = {
+      configuration,
+      models: props.models ?? [],
+      presets: props.presets ?? [],
+      permissionPresets: props.permissionPresets ?? [],
+      disabled: props.configurationDisabled ?? (props.disabled || props.running),
+      presetMutable: props.presetMutable === true,
+      surface,
+      ...(props.commands === undefined ? {} : { commands: props.commands }),
+      ...(props.estimatedContextTokens === undefined
+        ? {}
+        : { estimatedContextTokens: props.estimatedContextTokens }),
+      ...(props.contextWindowTokens === undefined ? {} : { contextWindowTokens: props.contextWindowTokens }),
+      ...(props.contextBreakdown === undefined ? {} : { contextBreakdown: props.contextBreakdown }),
+      ...(props.promptMode === undefined ? {} : { promptMode: props.promptMode }),
+      ...(props.modelPickerOpenRequest === undefined
+        ? {}
+        : { modelPickerOpenRequest: props.modelPickerOpenRequest }),
+      ...(props.onPromptModeChange === undefined ? {} : { onPromptModeChange: props.onPromptModeChange }),
+      onChange: onConfigurationChange,
+      onCommand: (command) => {
+        void Promise.resolve(onCommand?.(command)).catch(() => undefined)
+      },
+    }
+    return <SessionControls {...controlProps} />
+  }
   const submit = (mode: RunningInputMode): void => {
     if (
       props.disabled ||
@@ -527,6 +581,17 @@ export function Composer(props: ComposerProps): ReactElement {
       )
     else props.onDraftChange('')
   }
+  const insertCommand = (command: DynamicCommand): void => {
+    const nextDraft = `/${command.name}${command.input === undefined ? '' : ' '}`
+    pendingCursorRef.current = nextDraft.length
+    setReferenceCursor(nextDraft.length)
+    setReferenceDismissed(undefined)
+    props.onDraftChange(nextDraft)
+    props.onCommandQueryChange?.(slashCommandQuery(nextDraft))
+    props.onReferenceQueryChange?.(undefined, false)
+    setExtrasOpen(false)
+    window.requestAnimationFrame(() => textareaRef.current?.focus())
+  }
   const selectReference = (candidate: ReferenceCandidate): void => {
     if (referenceToken === undefined) return
     const inserted = referenceMention(candidate)
@@ -543,7 +608,8 @@ export function Composer(props: ComposerProps): ReactElement {
   const previewedAttachment =
     previewUri === undefined ? undefined : props.attachments.find((item) => item.uri === previewUri)
   return (
-    <form
+    <UnifiedComposer
+      ref={composerRef}
       className={`dsh-composer${dragging ? ' dsh-composer--dragging' : ''}`}
       onDragEnter={onDragEnter}
       onDragOver={onDragOver}
@@ -655,6 +721,15 @@ export function Composer(props: ComposerProps): ReactElement {
           ) : null}
         </div>
       ) : null}
+      <EditorContextRail
+        items={props.editorContext ?? []}
+        disabled={props.disabled || props.running || props.attachmentsDisabled === true}
+        availableKinds={props.editorContextAvailableKinds ?? []}
+        loading={props.editorContextLoading ?? false}
+        {...(props.onCaptureEditorContext === undefined ? {} : { onCapture: props.onCaptureEditorContext })}
+        {...(props.onRemoveEditorContext === undefined ? {} : { onRemove: props.onRemoveEditorContext })}
+        {...(props.onPreviewEditorContext === undefined ? {} : { onPreview: props.onPreviewEditorContext })}
+      />
       <div className="dsh-composer__input-shell">
         <textarea
           ref={textareaRef}
@@ -745,97 +820,53 @@ export function Composer(props: ComposerProps): ReactElement {
       </div>
       <div className="dsh-composer__toolbar">
         <div className="dsh-composer__toolbar-start">
-          <button
-            className="dsh-icon-button dsh-composer__attach"
-            type="button"
-            aria-label={t('composer.attach')}
-            title={t('composer.attach')}
+          <ComposerExtrasMenu
+            open={extrasOpen}
             disabled={props.disabled || props.running || props.attachmentsDisabled === true}
-            onClick={props.onPickAttachment}
+            {...(props.editorContext === undefined ? {} : { count: props.editorContext.length })}
+            label={t('composer.context')}
+            anchorRef={composerRef}
+            onOpenChange={setExtrasOpen}
           >
-            <Icon name="paperclip" />
-          </button>
-          <div className="dsh-composer__open-files">
-            <button
-              className="dsh-icon-button dsh-composer__current-file"
-              type="button"
-              aria-label={t('composer.chooseOpenFile')}
-              title={t('composer.chooseOpenFile')}
-              disabled={props.disabled || props.running || props.attachmentsDisabled === true}
-              aria-expanded={props.openFilePickerOpen}
-              onClick={props.onToggleOpenFilePicker}
-            >
-              <Icon name="file" />
-            </button>
-            {props.openFilePickerOpen ? (
-              <div className="dsh-open-file-picker" role="dialog" aria-label={t('composer.openFiles')}>
-                <div className="dsh-open-file-picker__header">
-                  <span>{t('composer.openFiles')}</span>
-                  <button
-                    className="dsh-icon-button dsh-open-file-picker__close"
-                    type="button"
-                    aria-label={t('composer.closeOpenFiles')}
-                    onClick={props.onToggleOpenFilePicker}
-                  >
-                    <Icon name="close" />
-                  </button>
-                </div>
-                {props.openFilePickerLoading ? (
-                  <p className="dsh-open-file-picker__empty">{t('composer.loading')}</p>
-                ) : openFileCandidates.length === 0 ? (
-                  <p className="dsh-open-file-picker__empty">{t('composer.noOpenFiles')}</p>
-                ) : (
-                  <ul
-                    className="dsh-open-file-picker__list"
-                    role="listbox"
-                    aria-label={t('composer.openFiles')}
-                  >
-                    {openFileCandidates.map((candidate) => {
-                      const attached = attachedOpenFileIds.has(candidate.id)
-                      const attaching = props.attachingOpenFileId === candidate.id
-                      const remembered = defaultOpenFileId === candidate.id
-                      return (
-                        <li key={candidate.id}>
-                          <button
-                            className={`dsh-open-file-picker__option${
-                              remembered ? ' dsh-open-file-picker__option--remembered' : ''
-                            }`}
-                            type="button"
-                            role="option"
-                            aria-selected={remembered}
-                            disabled={
-                              !candidate.supported || attached || props.attachingOpenFileId !== undefined
-                            }
-                            onClick={() => props.onSelectOpenFile(candidate.id)}
-                          >
-                            <span className="dsh-open-file-picker__icon" aria-hidden="true">
-                              <Icon
-                                name={candidate.mimeType?.startsWith('image/') === true ? 'image' : 'file'}
-                              />
-                            </span>
-                            <span className="dsh-open-file-picker__name" title={candidate.name}>
-                              {candidate.name}
-                            </span>
-                            <span className="dsh-open-file-picker__status">
-                              {attaching
-                                ? t('composer.adding')
-                                : attached
-                                  ? t('composer.added')
-                                  : !candidate.supported
-                                    ? t('composer.unsupported')
-                                    : candidate.active
-                                      ? t('composer.current')
-                                      : ''}
-                            </span>
-                          </button>
-                        </li>
-                      )
-                    })}
-                  </ul>
-                )}
+            <div className="dsh-composer__extras-section">
+              <ComposerAttachmentActions
+                disabled={props.disabled || props.running}
+                attachmentsDisabled={props.attachmentsDisabled === true}
+                openFileCandidates={openFileCandidates}
+                defaultOpenFileId={defaultOpenFileId}
+                openFilePickerOpen={props.openFilePickerOpen}
+                openFilePickerLoading={props.openFilePickerLoading}
+                attachedOpenFileIds={props.attachedOpenFileIds}
+                {...(props.attachingOpenFileId === undefined
+                  ? {}
+                  : { attachingOpenFileId: props.attachingOpenFileId })}
+                onPickAttachment={() => {
+                  setExtrasOpen(false)
+                  props.onPickAttachment()
+                }}
+                onToggleOpenFilePicker={props.onToggleOpenFilePicker}
+                onSelectOpenFile={(candidateId) => {
+                  setExtrasOpen(false)
+                  if (props.openFilePickerOpen) props.onToggleOpenFilePicker()
+                  props.onSelectOpenFile(candidateId)
+                }}
+              />
+            </div>
+            {props.commands === undefined || props.commands.length === 0 ? null : (
+              <div className="dsh-composer__extras-section">
+                <ComposerCommandActions
+                  commands={props.commands}
+                  disabled={props.disabled || props.running}
+                  onInsert={insertCommand}
+                />
               </div>
-            ) : null}
-          </div>
+            )}
+            {configuration === undefined || onConfigurationChange === undefined ? null : (
+              <div className="dsh-composer__extras-section">
+                {renderSessionControls('secondary')}
+              </div>
+            )}
+          </ComposerExtrasMenu>
           <span
             className="dsh-composer__hint"
             title={props.running ? t('composer.runningHint') : t('composer.idleHint')}
@@ -843,33 +874,10 @@ export function Composer(props: ComposerProps): ReactElement {
             {props.running ? t('composer.runningHintShort') : t('composer.idleHintShort')}
           </span>
         </div>
-        {configuration === undefined || onConfigurationChange === undefined ? (
-          <span className="dsh-composer__toolbar-spacer" aria-hidden="true" />
-        ) : (
-          <SessionControls
-            configuration={configuration}
-            models={props.models ?? []}
-            presets={props.presets ?? []}
-            permissionPresets={props.permissionPresets ?? []}
-            {...(props.commands === undefined ? {} : { commands: props.commands })}
-            {...(props.estimatedContextTokens === undefined
-              ? {}
-              : { estimatedContextTokens: props.estimatedContextTokens })}
-            {...(props.contextWindowTokens === undefined
-              ? {}
-              : { contextWindowTokens: props.contextWindowTokens })}
-            {...(props.contextBreakdown === undefined ? {} : { contextBreakdown: props.contextBreakdown })}
-            disabled={props.configurationDisabled ?? (props.disabled || props.running)}
-            presetMutable={props.presetMutable === true}
-            {...(props.modelPickerOpenRequest === undefined
-              ? {}
-              : { modelPickerOpenRequest: props.modelPickerOpenRequest })}
-            onChange={onConfigurationChange}
-            onCommand={(command) => {
-              void Promise.resolve(onCommand?.(command)).catch(() => undefined)
-            }}
-          />
+        {configuration === undefined || onConfigurationChange === undefined ? null : (
+          <div className="dsh-composer__toolbar-controls">{renderSessionControls('primary')}</div>
         )}
+        <span className="dsh-composer__toolbar-balance" aria-hidden="true" />
         <button
           className={`dsh-button dsh-composer__submit ${props.running ? 'dsh-button--danger' : 'dsh-button--primary'}`}
           type="submit"
@@ -888,6 +896,7 @@ export function Composer(props: ComposerProps): ReactElement {
           </span>
         </button>
       </div>
+      {props.status === undefined ? null : <div className="dsh-composer__status">{props.status}</div>}
       {previewedAttachment === undefined ? null : (
         <AttachmentLightbox
           name={previewedAttachment.name}
@@ -895,7 +904,7 @@ export function Composer(props: ComposerProps): ReactElement {
           onClose={() => setPreviewUri(undefined)}
         />
       )}
-    </form>
+    </UnifiedComposer>
   )
 }
 

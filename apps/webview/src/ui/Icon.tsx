@@ -19,6 +19,7 @@ export type IconName =
   | 'image'
   | 'list'
   | 'model'
+  | 'more'
   | 'paperclip'
   | 'plan'
   | 'person'
@@ -173,6 +174,14 @@ function renderIcon(name: IconName): ReactElement {
           <circle cx="16" cy="8" r="3" />
           <circle cx="12" cy="16" r="3" />
           <path d="m10.5 9.5 1.5 3M13.5 9.5 12 13M9.5 8h5" />
+        </>
+      )
+    case 'more':
+      return (
+        <>
+          <circle cx="5" cy="12" r="1" fill="currentColor" stroke="none" />
+          <circle cx="12" cy="12" r="1" fill="currentColor" stroke="none" />
+          <circle cx="19" cy="12" r="1" fill="currentColor" stroke="none" />
         </>
       )
     case 'paperclip':

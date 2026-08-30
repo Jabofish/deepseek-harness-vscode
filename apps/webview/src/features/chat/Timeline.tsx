@@ -12,6 +12,7 @@ import { MarkdownContent } from './MarkdownContent.js'
 import { MessageImages } from './MessageImages.js'
 import { MessageActions } from './MessageActions.js'
 import { WorkflowRunCard } from '../workflows/WorkflowDrawer.js'
+import { ScrollToLatestButton } from '../../components/common/index.js'
 import { Icon } from '../../ui/Icon.js'
 import { useI18n, type Translate } from '../../i18n.js'
 
@@ -105,6 +106,7 @@ export function Timeline(props: TimelineProps): ReactElement {
   const hasMoreHistory = props.hasMoreHistory
   const loadingOlderHistory = props.loadingOlderHistory
   const onLoadOlderHistory = props.onLoadOlderHistory
+
   const usingTool = props.nodes.some(
     (node) => node.kind === 'tool' && (node.tool.status === 'queued' || node.tool.status === 'running'),
   )
@@ -192,8 +194,14 @@ export function Timeline(props: TimelineProps): ReactElement {
 
     let followUpTimer: number | undefined
     const initialTimer = window.setTimeout(() => {
+      // A render can be followed by an intentional user scroll before the
+      // timer runs.  Never let a stale follow-up move the reader back to the
+      // bottom after that intent has been recorded by handleScroll.
+      if (!stickToBottomRef.current) return
       scrollToLatest()
-      followUpTimer = window.setTimeout(scrollToLatest, 80)
+      followUpTimer = window.setTimeout(() => {
+        if (stickToBottomRef.current) scrollToLatest()
+      }, 80)
     }, 0)
     return () => {
       window.clearTimeout(initialTimer)
@@ -266,6 +274,7 @@ export function Timeline(props: TimelineProps): ReactElement {
     overscan: 6,
     getItemKey: (index) => displayNodes[index]?.id ?? index,
   })
+  const virtualHeight = virtualizer.getTotalSize()
   return (
     <div className="dsh-timeline-shell">
       <div ref={scrollRef} className="dsh-timeline" aria-label={t('timeline.aria')} onScroll={handleScroll}>
@@ -301,11 +310,17 @@ export function Timeline(props: TimelineProps): ReactElement {
           </div>
         ) : null}
         {displayNodes.length === 0 && dshEventCount === 0 ? (
-          <p className="dsh-timeline__empty">{t('timeline.empty')}</p>
+          <div className="dsh-timeline__empty" role="status">
+            <span className="dsh-timeline__empty-icon" aria-hidden="true">
+              <Icon name="sparkles" />
+            </span>
+            <strong>{t('timeline.emptyTitle')}</strong>
+            <span>{t('timeline.emptyHint')}</span>
+          </div>
         ) : null}
         <div
           className="dsh-timeline__canvas"
-          style={{ height: `${virtualizer.getTotalSize()}px`, position: 'relative' }}
+          style={{ height: `${virtualHeight}px`, position: 'relative' }}
         >
           {virtualizer.getVirtualItems().map((item) => {
             const node = displayNodes[item.index]
@@ -354,16 +369,7 @@ export function Timeline(props: TimelineProps): ReactElement {
         ) : null}
       </div>
       {showJumpToLatest ? (
-        <button
-          className="dsh-timeline__jump"
-          type="button"
-          aria-label={t('timeline.jump')}
-          title={t('timeline.jump')}
-          onClick={scrollToLatest}
-        >
-          <Icon name="arrow-down" />
-          <span>{t('timeline.jump')}</span>
-        </button>
+        <ScrollToLatestButton label={t('timeline.jump')} onClick={scrollToLatest} />
       ) : null}
       {openLinkError === undefined ? null : (
         <ToolLinkErrorDialog

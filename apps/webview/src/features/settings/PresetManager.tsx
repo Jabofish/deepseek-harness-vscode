@@ -6,6 +6,7 @@ import type {
   AgentPresetLocation,
   AgentPresetRoster,
 } from '@dsh-vscode/domain'
+import { PresetCard } from '../../components/common/PresetCard.js'
 import { Icon } from '../../ui/Icon.js'
 import { useI18n } from '../../i18n.js'
 
@@ -321,45 +322,21 @@ export function PresetManager(props: PresetManagerProps): ReactElement | null {
             <h3>{t(heading)}</h3>
             <ul className="dsh-presets__cards">
               {group.map((row) => (
-                <li
+                <PresetCard
                   key={row.id}
-                  className={`dsh-presets__card${
+                  className={
                     row.broken !== undefined
-                      ? ' dsh-presets__card--broken'
+                      ? 'dsh-presets__card--broken'
                       : row.isDefault
-                        ? ' dsh-presets__card--active'
-                        : ''
-                  }`}
-                >
-                  <button
-                    className="dsh-presets__card-main"
-                    type="button"
-                    aria-pressed={row.isDefault}
-                    disabled={
-                      row.isDefault ||
-                      row.broken !== undefined ||
-                      !defaultWritable ||
-                      defaultingId !== undefined
-                    }
-                    aria-label={`${
-                      row.broken !== undefined
-                        ? t('presets.broken')
-                        : row.isDefault
-                          ? t('presets.inUse')
-                          : t('presets.setDefault')
-                    }: ${row.name ?? row.id}`}
-                    title={
-                      row.broken ??
-                      (row.isDefault
-                        ? t('presets.inUse')
-                        : defaultWritable
-                          ? t('presets.setDefault')
-                          : t('presets.defaultReadOnly'))
-                    }
-                    onClick={() => makeDefault(row.id)}
-                  >
-                    <span className="dsh-presets__card-head">
-                      <span className="dsh-presets__card-name">{row.name ?? row.id}</span>
+                        ? 'dsh-presets__card--active'
+                        : undefined
+                  }
+                  title={row.name ?? row.id}
+                  description={row.description ?? t('presets.noDescription')}
+                  id={row.id}
+                  reason={row.broken}
+                  tags={
+                    <>
                       {row.broken !== undefined ? (
                         <span className="dsh-presets__badge dsh-presets__badge--broken">
                           {t('presets.broken')}
@@ -369,91 +346,114 @@ export function PresetManager(props: PresetManagerProps): ReactElement | null {
                         {row.trust === 'user' ? t('presets.custom') : t('presets.builtIn')}
                       </span>
                       {row.isDefault ? (
-                        <span className="dsh-presets__badge--in-use">{t('presets.inUse')}</span>
+                        <span className="dsh-presets__badge dsh-presets__badge--in-use">
+                          {t('presets.inUse')}
+                        </span>
                       ) : null}
-                    </span>
-                    <span className="dsh-presets__card-desc">
-                      {row.description ?? t('presets.noDescription')}
-                    </span>
-                    {row.broken === undefined ? null : (
-                      <span className="dsh-presets__card-reason" role="alert">
-                        {row.broken}
-                      </span>
-                    )}
-                    <code className="dsh-presets__card-id">{row.id}</code>
-                  </button>
-                  <div className="dsh-presets__card-foot">
-                    {row.trust === 'system' ? (
-                      row.broken === undefined ? (
+                    </>
+                  }
+                  mainPressed={row.isDefault}
+                  mainDisabled={
+                    row.isDefault ||
+                    row.broken !== undefined ||
+                    !defaultWritable ||
+                    defaultingId !== undefined
+                  }
+                  mainLabel={`${
+                    row.broken !== undefined
+                      ? t('presets.broken')
+                      : row.isDefault
+                        ? t('presets.inUse')
+                        : t('presets.setDefault')
+                  }: ${row.name ?? row.id}`}
+                  mainTitle={
+                    row.broken ??
+                    (row.isDefault
+                      ? t('presets.inUse')
+                      : defaultWritable
+                        ? t('presets.setDefault')
+                        : t('presets.defaultReadOnly'))
+                  }
+                  onMainClick={() => makeDefault(row.id)}
+                  footer={
+                    <>
+                      {row.trust === 'system' ? (
+                        row.broken === undefined ? (
+                          <button
+                            className="dsh-icon-button"
+                            type="button"
+                            aria-label={t('presets.viewComposition', { name: row.name ?? row.id })}
+                            title={t('presets.viewCompositionTitle')}
+                            onClick={() => openComposition(row.id)}
+                          >
+                            <Icon name="file" />
+                          </button>
+                        ) : null
+                      ) : (
                         <button
                           className="dsh-icon-button"
                           type="button"
-                          aria-label={t('presets.viewComposition', { name: row.name ?? row.id })}
-                          title={t('presets.viewCompositionTitle')}
-                          onClick={() => openComposition(row.id)}
+                          aria-label={t(
+                            roster.hasDocument ? 'presets.openLocation' : 'presets.showLocation',
+                            {
+                              name: row.name ?? row.id,
+                            },
+                          )}
+                          title={roster.hasDocument ? t('presets.openDirectory') : t('presets.showPath')}
+                          onClick={() => openLocation(row.id)}
                         >
-                          <Icon name="file" />
+                          <Icon name="folder" />
                         </button>
-                      ) : null
-                    ) : (
+                      )}
                       <button
                         className="dsh-icon-button"
                         type="button"
-                        aria-label={t(roster.hasDocument ? 'presets.openLocation' : 'presets.showLocation', {
-                          name: row.name ?? row.id,
-                        })}
-                        title={roster.hasDocument ? t('presets.openDirectory') : t('presets.showPath')}
-                        onClick={() => openLocation(row.id)}
+                        disabled={!roster.authorable || row.broken !== undefined}
+                        aria-label={t('presets.copy', { name: row.name ?? row.id })}
+                        title={
+                          row.broken !== undefined
+                            ? t('presets.copyBroken')
+                            : roster.authorable
+                              ? t('presets.copyTitle')
+                              : t('presets.noWritableRoot')
+                        }
+                        onClick={() => {
+                          setView(undefined)
+                          setCopy({
+                            from: row.id,
+                            fromTitle: row.name ?? row.id,
+                            id: '',
+                            name: '',
+                            saving: false,
+                            error: undefined,
+                          })
+                        }}
                       >
-                        <Icon name="folder" />
+                        <Icon name="add" />
                       </button>
-                    )}
-                    <button
-                      className="dsh-icon-button"
-                      type="button"
-                      disabled={!roster.authorable || row.broken !== undefined}
-                      aria-label={t('presets.copy', { name: row.name ?? row.id })}
-                      title={
-                        row.broken !== undefined
-                          ? t('presets.copyBroken')
-                          : roster.authorable
-                            ? t('presets.copyTitle')
-                            : t('presets.noWritableRoot')
-                      }
-                      onClick={() => {
-                        setView(undefined)
-                        setCopy({
-                          from: row.id,
-                          fromTitle: row.name ?? row.id,
-                          id: '',
-                          name: '',
-                          saving: false,
-                          error: undefined,
-                        })
-                      }}
-                    >
-                      <Icon name="add" />
-                    </button>
-                    {row.trust === 'user' ? (
-                      <button
-                        className="dsh-icon-button"
-                        type="button"
-                        disabled={deleting}
-                        aria-label={t('presets.delete', { name: row.name ?? row.id })}
-                        title={t('presets.deleteTitle')}
-                        onClick={() => setPendingDelete(row.id)}
-                      >
-                        <Icon name="trash" />
-                      </button>
-                    ) : null}
-                  </div>
-                  {revealedPaths[row.id] === undefined ? null : (
-                    <p className="dsh-presets__revealed">
-                      <span>{t('presets.directory')}</span>
-                      <code>{revealedPaths[row.id]}</code>
-                    </p>
-                  )}
-                </li>
+                      {row.trust === 'user' ? (
+                        <button
+                          className="dsh-icon-button"
+                          type="button"
+                          disabled={deleting}
+                          aria-label={t('presets.delete', { name: row.name ?? row.id })}
+                          title={t('presets.deleteTitle')}
+                          onClick={() => setPendingDelete(row.id)}
+                        >
+                          <Icon name="trash" />
+                        </button>
+                      ) : null}
+                    </>
+                  }
+                  revealed={
+                    revealedPaths[row.id] === undefined ? undefined : (
+                      <p className="dsh-presets__revealed">
+                        <span>{t('presets.directory')}</span>
+                        <code>{revealedPaths[row.id]}</code>
+                      </p>
+                    )
+                  }
+                />
               ))}
             </ul>
             {trust === 'user' ? creatorCard : null}

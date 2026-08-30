@@ -3,6 +3,7 @@ import type {
   AgentConfiguration,
   AgentPresetDescriptor,
   ContextPressure,
+  EditorContextKind,
   ImageAttachmentLimits,
   ModelDescriptor,
   PromptAttachment,
@@ -24,6 +25,10 @@ import { GoalTodoStrip } from './features/goals/GoalTodoStrip.js'
 import { GoalBar } from './features/goals/GoalBar.js'
 import { TodoList } from './features/goals/TodoList.js'
 import { JobsDrawer } from './features/jobs/JobsDrawer.js'
+import { ChangesDrawer } from './features/changes/ChangesDrawer.js'
+import { CheckpointDrawer } from './features/checkpoints/CheckpointDrawer.js'
+import { PromptTemplatesDrawer } from './features/prompt-templates/PromptTemplatesDrawer.js'
+import { TasksDrawer } from './features/tasks/TasksDrawer.js'
 import { QueuePanel } from './features/input/QueuePanel.js'
 import { RuntimeMissingView } from './features/runtime/RuntimeMissingView.js'
 import { SessionDrawer } from './features/sessions/SessionDrawer.js'
@@ -31,7 +36,14 @@ import { SessionLineage } from './features/subagents/SessionLineage.js'
 import { SubagentDrawer } from './features/subagents/SubagentDrawer.js'
 import { SettingsDrawer } from './features/settings/SettingsDrawer.js'
 import { TrajectoryView } from './features/trajectory/TrajectoryView.js'
-import { createAppStore, type OpenFileCandidate, type ReferenceCandidate } from './app/store.js'
+import { AppHeader } from './features/shell/AppHeader.js'
+import { ConversationActionsMenu } from './features/shell/ConversationActionsMenu.js'
+import {
+  createAppStore,
+  type AppStore,
+  type OpenFileCandidate,
+  type ReferenceCandidate,
+} from './app/store.js'
 import { useI18n, type Translate } from './i18n.js'
 import { Icon } from './ui/Icon.js'
 import { hasVsCodeApi } from './vscode-api.js'
@@ -46,6 +58,8 @@ const MAX_PROMPT_IMAGE_BYTES = 200 * 1024 * 1024
 export function App(): ReactElement {
   const { locale, setLocale, t } = useI18n()
   const store = useMemo(() => createAppStore(), [])
+  const initializedStoreRef = useRef<AppStore | undefined>(undefined)
+  const disposeTimerRef = useRef<number | undefined>(undefined)
   const popupSelects = useMemo(() => new PopupSelectRegistry(), [])
   const state = useSyncExternalStore(
     (listener) => store.subscribe(listener),
@@ -85,12 +99,29 @@ export function App(): ReactElement {
 
   useEffect(() => {
     if (!hasVsCodeApi()) return
+    if (disposeTimerRef.current !== undefined) {
+      window.clearTimeout(disposeTimerRef.current)
+      disposeTimerRef.current = undefined
+    }
+    if (initializedStoreRef.current === store)
+      return () => {
+        disposeTimerRef.current = window.setTimeout(() => {
+          disposeTimerRef.current = undefined
+          store.dispose()
+        }, 0)
+      }
+    initializedStoreRef.current = store
     void store
       .initialize()
       .catch((reason: unknown) =>
         setError(reason instanceof Error ? reason.message : t('app.error.initialize')),
       )
-    return () => store.dispose()
+    return () => {
+      disposeTimerRef.current = window.setTimeout(() => {
+        disposeTimerRef.current = undefined
+        store.dispose()
+      }, 0)
+    }
     // t is stable per locale; re-running initialize on a locale change would
     // dispose the store while the view is still mounted.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -426,48 +457,6 @@ export function App(): ReactElement {
   return (
     <AppErrorBoundary>
       <main className="dsh-app">
-        <div className="dsh-app__session-drawer-anchor">
-          <SessionDrawer
-            sessions={state.sessions}
-            workspaces={state.workspaces}
-            activeSessionId={state.activeSessionId}
-            open={state.drawer === 'sessions'}
-            showTrigger={false}
-            onOpenChange={(open) => store.setDrawer(open ? 'sessions' : undefined)}
-            onOpen={(sessionId) => {
-              discardAttachmentDrafts()
-              void store
-                .openSession(sessionId)
-                .catch((reason: unknown) =>
-                  setError(reason instanceof Error ? reason.message : t('app.error.openSession')),
-                )
-            }}
-            onCreate={(workspaceId) => {
-              void store
-                .createSession(workspaceId)
-                .catch((reason: unknown) =>
-                  setError(reason instanceof Error ? reason.message : t('app.error.createSession')),
-                )
-            }}
-            onArchive={(sessionId) =>
-              store.removeSession(sessionId).catch((reason: unknown) => {
-                const message = reason instanceof Error ? reason.message : t('app.error.archiveSession')
-                setError(message)
-                throw reason
-              })
-            }
-            onRename={(sessionId, title) => store.renameSession(sessionId, title)}
-            onRenameWorkspace={(workspaceId, name) => store.renameWorkspace(workspaceId, name)}
-            onRemoveWorkspace={(workspaceId) => store.removeWorkspace(workspaceId)}
-            onMoveWorkspace={(workspaceId, beforeWorkspaceId) =>
-              store.moveWorkspace(workspaceId, beforeWorkspaceId)
-            }
-            onMoveSession={(workspaceId, sessionId, beforeSessionId) =>
-              store.moveSession(workspaceId, sessionId, beforeSessionId)
-            }
-            onSearch={(query) => store.searchSessions(query)}
-          />
-        </div>
         <SettingsDrawer
           open={state.drawer === 'settings'}
           onOpenChange={(open) => store.setDrawer(open ? 'settings' : undefined)}
@@ -668,6 +657,60 @@ export function App(): ReactElement {
                         {t('app.trajectory')}
                       </button>
                     </div>
+                    <AppHeader
+                      runtime={backend}
+                      sessionControl={
+                        <SessionDrawer
+                          sessions={state.sessions}
+                          workspaces={state.workspaces}
+                          activeSessionId={state.activeSessionId}
+                          open={state.drawer === 'sessions'}
+                          showTrigger
+                          onOpenChange={(open) => store.setDrawer(open ? 'sessions' : undefined)}
+                          onOpen={(sessionId) => {
+                            discardAttachmentDrafts()
+                            void store
+                              .openSession(sessionId)
+                              .catch((reason: unknown) =>
+                                setError(reason instanceof Error ? reason.message : t('app.error.openSession')),
+                              )
+                          }}
+                          onCreate={(workspaceId) => {
+                            void store
+                              .createSession(workspaceId)
+                              .catch((reason: unknown) =>
+                                setError(reason instanceof Error ? reason.message : t('app.error.createSession')),
+                              )
+                          }}
+                          onArchive={(sessionId) =>
+                            store.removeSession(sessionId).catch((reason: unknown) => {
+                              const message =
+                                reason instanceof Error ? reason.message : t('app.error.archiveSession')
+                              setError(message)
+                              throw reason
+                            })
+                          }
+                          onRename={(sessionId, title) => store.renameSession(sessionId, title)}
+                          onRenameWorkspace={(workspaceId, name) => store.renameWorkspace(workspaceId, name)}
+                          onRemoveWorkspace={(workspaceId) => store.removeWorkspace(workspaceId)}
+                          onMoveWorkspace={(workspaceId, beforeWorkspaceId) =>
+                            store.moveWorkspace(workspaceId, beforeWorkspaceId)
+                          }
+                          onMoveSession={(workspaceId, sessionId, beforeSessionId) =>
+                            store.moveSession(workspaceId, sessionId, beforeSessionId)
+                          }
+                          onSearch={(query) => store.searchSessions(query)}
+                        />
+                      }
+                      onNewSession={() => {
+                        void store
+                          .createSession(active.workspaceId ?? state.workspaces[0]?.id)
+                          .catch((reason: unknown) =>
+                            setError(reason instanceof Error ? reason.message : t('app.error.createSession')),
+                          )
+                      }}
+                      onOpenSettings={() => store.setDrawer('settings')}
+                    />
                     {activeSubagent !== undefined || active.parentSessionId !== undefined ? (
                       <SessionLineage
                         active={active}
@@ -693,10 +736,83 @@ export function App(): ReactElement {
                         }}
                       />
                     ) : null}
-                    <div className="dsh-conversation__popovers">
+                    <ConversationActionsMenu
+                      onClose={() => {
+                        setLocaleOpen(false)
+                        setExportOpen(false)
+                      }}
+                    >
                       {/* The keys reset popover state when the last entry disappears,
                     so a refilled catalog never reopens stale. */}
                       <JobsDrawer key={state.jobs.length > 0 ? 'jobs' : 'jobs-empty'} jobs={state.jobs} />
+                      <ChangesDrawer
+                        key={active.id}
+                        changes={state.changes}
+                        loading={state.changesLoading}
+                        onRefresh={() => store.refreshChanges(active.id)}
+                        onOpen={(changeId) => store.openChange(changeId)}
+                        onDetail={(changeId) => store.getChangeDetail(changeId)}
+                        onMarkReviewed={(changeId, reviewState) =>
+                          store.markChangeReviewed(changeId, reviewState)
+                        }
+                      />
+                      <TasksDrawer
+                        key={`tasks-${active.id}`}
+                        tasks={state.tasks}
+                        loading={state.tasksLoading}
+                        onRefresh={() => store.refreshTasks(active.id)}
+                        onOpen={async (task) => {
+                          if (task.sessionId === undefined) return
+                          const childId = task.kind === 'subagent' ? task.sourceId : undefined
+                          const child =
+                            childId === undefined
+                              ? undefined
+                              : state.subagents.entries.find(
+                                  (entry) => entry.kind === 'child' && entry.id === childId,
+                                )
+                          if (child?.kind === 'child') {
+                            await store.openSubagent(child, state.subagents.parentAvailable)
+                            return
+                          }
+                          await store.openSession(task.sessionId)
+                        }}
+                        onStop={async (task) => {
+                          await store.stopTask(task.taskId, 'session-cancel', task.taskRevision)
+                          await store.refreshTasks(active.id)
+                        }}
+                        onAnswer={async (task, answer) => {
+                          if (task.interactionId === undefined) return
+                          await store.answerTask(task.taskId, task.interactionId, answer)
+                          await store.refreshTasks(active.id)
+                        }}
+                      />
+                      <CheckpointDrawer
+                        key={`checkpoints-${active.id}`}
+                        checkpoints={state.checkpoints}
+                        loading={state.checkpointsLoading}
+                        onRefresh={() => store.refreshCheckpoints(active.id)}
+                        onCreate={(label) => store.createCheckpoint(label)}
+                        onPreview={(checkpointId) => store.previewCheckpoint(checkpointId)}
+                        onDelete={(checkpointId) => store.deleteCheckpoint(checkpointId)}
+                        onRestore={(checkpointId) => store.restoreCheckpoint(checkpointId)}
+                      />
+                      <PromptTemplatesDrawer
+                        key={`prompt-templates-${active.id}`}
+                        templates={state.promptTemplates}
+                        loading={state.promptTemplatesLoading}
+                        onRefresh={() => store.refreshPromptTemplates(active.id)}
+                        onRead={(templateId) => store.readPromptTemplate(templateId)}
+                        onInsert={(templateId, variables) =>
+                          store.insertPromptTemplate(templateId, variables)
+                        }
+                        onCreate={(draft) => store.createPromptTemplate(draft)}
+                        onUpdate={(templateId, patch) => store.updatePromptTemplate(templateId, patch)}
+                        onDelete={(templateId) => store.deletePromptTemplate(templateId)}
+                        onApply={(text) => {
+                          setDraft((current) => (current.trim() === '' ? text : `${current}\n\n${text}`))
+                          setError(undefined)
+                        }}
+                      />
                       <SubagentDrawer
                         key={active.id}
                         parentSessionId={active.id}
@@ -765,7 +881,7 @@ export function App(): ReactElement {
                           </div>
                         ) : null}
                       </span>
-                    </div>
+                    </ConversationActionsMenu>
                   </div>
                   {exportOpen && activeSubagent === undefined ? (
                     <ExportDialog
@@ -880,12 +996,6 @@ export function App(): ReactElement {
                   )}
                   <div className="dsh-compose-area">
                     <TodoList key={active?.id ?? 'todo-list'} todos={state.todos} />
-                    <StatsLine
-                      nodes={state.timeline.nodes}
-                      usage={projectedTokenUsage ?? state.timeline.tokenUsage}
-                      cacheHit={cacheHitRate(projectedTokenUsage ?? state.timeline.tokenUsage)}
-                      {...(sessionStats === undefined ? {} : { sessionStats })}
-                    />
                     {pendingPermissions.length === 0 && pendingQuestions.length === 0 ? (
                       subagentReadOnlyReason === undefined || activeRunning ? (
                         <Composer
@@ -898,6 +1008,19 @@ export function App(): ReactElement {
                           running={activeRunning}
                           draft={draft}
                           attachments={attachments}
+                          {...(activeSubagent === undefined
+                            ? {
+                                editorContext: state.editorContext,
+                                editorContextAvailableKinds: state.editorContextAvailableKinds,
+                                editorContextLoading: state.editorContextLoading,
+                                onCaptureEditorContext: (kind: EditorContextKind) =>
+                                  store.captureEditorContext(kind),
+                                onRemoveEditorContext: (contextRef: string) =>
+                                  store.releaseEditorContext([contextRef]),
+                                onPreviewEditorContext: (contextRef: string) =>
+                                  store.previewEditorContext(contextRef),
+                              }
+                            : {})}
                           configuration={state.configuration}
                           models={sessionModels}
                           presets={state.presets}
@@ -914,6 +1037,7 @@ export function App(): ReactElement {
                           {...(contextPressure?.breakdown === undefined
                             ? {}
                             : { contextBreakdown: contextPressure.breakdown })}
+                          promptMode={state.promptMode}
                           configurationDisabled={backend.kind !== 'connected' || activeRunning}
                           presetMutable={activeSubagent === undefined && active.status === 'idle'}
                           onConfigurationChange={(configuration) => {
@@ -922,6 +1046,15 @@ export function App(): ReactElement {
                               .catch((reason: unknown) =>
                                 setError(
                                   reason instanceof Error ? reason.message : t('app.error.sessionSettings'),
+                                ),
+                              )
+                          }}
+                          onPromptModeChange={(mode) => {
+                            void store
+                              .setPromptMode(mode)
+                              .catch((reason: unknown) =>
+                                setError(
+                                  reason instanceof Error ? reason.message : t('app.error.promptMode'),
                                 ),
                               )
                           }}
@@ -990,6 +1123,14 @@ export function App(): ReactElement {
                                 setError(reason instanceof Error ? reason.message : t('app.error.cancel')),
                               )
                           }}
+                          status={
+                            <StatsLine
+                              nodes={state.timeline.nodes}
+                              usage={projectedTokenUsage ?? state.timeline.tokenUsage}
+                              cacheHit={cacheHitRate(projectedTokenUsage ?? state.timeline.tokenUsage)}
+                              {...(sessionStats === undefined ? {} : { sessionStats })}
+                            />
+                          }
                           onSteerQueue={() => {
                             void store
                               .steerAllQueued()
