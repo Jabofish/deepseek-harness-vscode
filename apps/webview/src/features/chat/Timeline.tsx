@@ -1,14 +1,4 @@
-import {
-  Fragment,
-  useCallback,
-  useEffect,
-  useId,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactElement,
-} from 'react'
+import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState, type ReactElement } from 'react'
 import { isInjectedUserMessage, type AssistantTiming, type TimelineNode } from '@dsh-vscode/timeline'
 import type {
   MessageFeedbackItem,
@@ -172,7 +162,6 @@ export function Timeline(props: TimelineProps): ReactElement {
     contentRef,
     handleScroll: handleFollowScroll,
     scrollToLatest,
-    scheduleScrollToLatest,
     isPinnedToBottom,
     showJumpToLatest,
   } = useScrollFollow({
@@ -221,9 +210,6 @@ export function Timeline(props: TimelineProps): ReactElement {
     return () => window.clearTimeout(timer)
   }, [props.loadingOlderHistory, props.nodes.length])
 
-  useLayoutEffect(() => {
-    if (isPinnedToBottom && displayNodes.length > 0) scheduleScrollToLatest()
-  }, [displayNodes.length, isPinnedToBottom, scheduleScrollToLatest])
   return (
     <div className="dsh-timeline-shell">
       <div
