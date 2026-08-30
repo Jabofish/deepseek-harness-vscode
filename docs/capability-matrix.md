@@ -285,6 +285,66 @@ VS Code 无文件夹 Webview 回放，因此该修复不提升能力矩阵中的
   语义权衡缺乏上游证据，不扩大 fail-closed 范围。
 - 门禁状态：全量 `test` 743 测试中除既知 6 个预存前端失败外全部通过；typecheck/lint/format 通过。
 
+## 2026-08-30 backend review batch M evidence（搁置候选上游源码级交叉复核）
+
+本轮对四项搁置候选逐一核对上游源码（rc.6 固定提交 `47f9438`、rc.8 tag `dsh-v0.1.0-rc.8`、alpha.1
+固定提交 `cd5ef814` 与 pinned npm `@deepseek-ai/dsh-host-apiproxy@0.1.1-rc.2` /
+`@deepseek-ai/dsh-message-feedback` 类型），两项获证据支持并完成红→绿修复，两项证据不支持修复并
+记录边界。batch J/L 中对应的两条"不改"审计记录由本节结论取代。
+
+- JB-01（alpha 重订阅清空 control 流基线，修复）：alpha 的 jobs/queue 只由 `session/control` 流
+  承载——`control(signal)` 在每个流代建立时 yield 一次完整 `baseline`（queues/jobs/projections，
+  `packages/api/session-controller/src/control.ts`），之后仅变更增量；而 `session/follow` 快照只含
+  `{header, cursor, records, hasMore, projections}`（`packages/api/session-controller/src/history.ts`）。
+  alpha 装配复用的 `Rc6JobRepository`/`Rc6SessionRepository` 却按 rc.6 mux 语义在 `session.subscribed`
+  时清空 jobs/queue（rc.6 家族正确：mux 在订阅时重发 queue 快照、jobs "absent key means an empty
+  set"）。结果是首次 watch 与每次 follow 重连都会清空 control 流已基线的数据，直到下一次无关变更
+  增量或 control 流整体重连前一直 stale-empty。现在两个仓储各自增加显式选项
+  （`resetOnSubscribe` / `resetQueueOnSubscribe`，默认 `true` 保持 rc.6 语义），alpha 装配传 `false`，
+  版本差异收敛在 `versions/alpha/adapter.ts`，不在共享仓储中散落版本判断。
+  红绿证据：`packages/dsh-adapter/test/alpha-contract.spec.ts` 新增 adapter 级测试（经 FakeWebSocket
+  驱动 `$events`/`session/control`/`workspace/follow` 三条逻辑流注入 control baseline，再 `watchSession`
+  注入 follow snapshot），修复前 `jobs.list`/`listQueue` 在 subscribed 后变空（红），修复后保持
+  baseline 数据（绿）；rc.6 默认路径既有语义测试全部保持通过。
+- FB-01（messageFeedback/delete 冷缓存静默 no-op，修复）：上游 delete 契约是按 item 的 CAS——
+  `MessageFeedbackDeleteRequest.ifVersion` 为必填的"Observed item version; ignored when the item is
+  already absent"，"Absence is successful regardless of the supplied version; an existing item
+  requires an exact version match"（pinned `dsh-message-feedback` 类型与 rc.8 sidecar 设计笔记
+  "An already-absent delete is likewise successful"）。此前冷缓存（该 repository 实例未 list/put 过
+  该 session:message，如 Extension Host 重建后）的 `remove()` 直接 return，UI 报告删除成功而远端
+  条目原样保留——静默分叉；且版本 token 不可伪造/排序，`null` 不是 delete 的合法入参（batch L 审计
+  假设的 `ifVersion: null` 接受度被上游类型否定）。现在冷缓存先以唯一可用读 `messageFeedback/list`
+  观察：条目缺席即后成立返回（与上游"已缺席删除成功"语义一致），命中则携带观察到的版本 CAS 删除。
+  红绿证据：`packages/dsh-adapter/test/feedback-reference-repositories.spec.ts` 新增两例——冷缓存
+  先 list 后按 `ifVersion: 'v7'` delete（修复前 0 个 RPC，红）、观察到缺席时跳过 delete
+  （修复前连 list 都不发，红）；修复后均绿。
+- FB-02（version-conflict 丢弃权威 current，修复）：上游冲突响应携带
+  `MessageFeedbackVersionConflict.current: MessageFeedbackItem | null`（"Authoritative current item,
+  or null when it does not exist"，"so callers can reconcile without a second read"）。此前
+  `readBusinessValue` 把 `error.current` 直接丢弃并抛 `BACKEND_BUSY`（retryable），但被邀请的重试
+  仍携带同一过期版本，确定性再次冲突。现在 put/delete 的冲突路径先以 `current` 刷新版本缓存再抛错，
+  被邀请的重试即 CAS 有效。
+  红绿证据：同文件新增一例——首次 put 冲突（`current` 携带 v9）后，第二次 put 必须携带
+  `ifVersion: 'v9'` 才被接受；修复前第二次 put 重发 `ifVersion: null` 再次被拒（红），修复后返回
+  权威条目（绿）。
+- 审计记录（复核结论，不改）：composition-root 清洗器剥离 `commandLine` —— rc.6 `approval/requested`
+  MuxFrame 全字段为 `{type, sessionId, approvalId, toolName, callId?, reason?}`（rc.6
+  `events.ts`/`approvals.ts`/`approvals.schema.ts`，rc.2 pinned 树 grep `commandLine` 零命中），官方
+  审批面板的命令行经 `callId` 配对到正在运行的 tool call（`ApprovalPanel.tsx` 的 `commandOf(call)`
+  读取 bash 族 `args.command`），不从审批帧携带。因此 mapper 中有界的 `commandLine` 提取对固定契约
+  是永不触发的防御代码，清洗器剥离对审批链路无实际影响，而对进程发现链路（`DshProcessInfo.commandLine`
+  携带本机可执行路径）是必需的安全剥离；官方 callId 配对命令展示属功能增强而非缺陷修复，未纳入。
+  `queuedInput` 逐条丢弃 —— 上游 `QueuedInboxItem = {id: MessageId, placement: 'queued'|'steering'|
+'context', message: Message}` 三字段全必填；对合法帧唯一被丢弃的是 `placement: 'context'`，官方
+  语义即"context items stay invisible until claimed"，丢弃与官方渲染对齐（域 `QueuedInput` 仅
+  queue|steer，无法表示）；对违约畸形条目，数组级 fail-closed 已于 batch L 建立，逐条策略差异
+  （jobs 抛错 vs queue 丢弃）在上游 schema 保证字段存在的前提下构造不出用户可见缺陷，不扩大。
+- 门禁状态：全量 `test` 747 测试中除既知 6 个预存前端失败外全部通过（新增 4 例全绿）；typecheck
+  9 包 + tests tsconfig 通过；`pnpm build` 通过。`pnpm format:check`/`pnpm lint` 存在前端流提交
+  `d70dcdf` 带入的 16 个 prettier 违规与 6 个 eslint 错误、1 个警告，全部位于 `apps/webview`、
+  `apps/extension/src/editor/editor-context-provider.ts`、`packages/application/src/ports/feature-ports.ts`
+  等前端流文件，后端本批触碰文件均干净，按"不修改前端"纪律本批不处理。
+
 ## rc.8 适配增量与兼容证据
 
 - 版本层：`versions/rc6`、`versions/rc7`、`versions/rc8` 与受控 rc.6 fallback；运行时定位允许任何非空未知版本标签并把警告安全传给 Webview。

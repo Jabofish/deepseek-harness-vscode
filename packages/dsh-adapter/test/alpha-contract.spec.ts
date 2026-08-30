@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import type { BackendEndpoint } from '@dsh-vscode/domain'
+import type { BackendEndpoint, BackendEvent } from '@dsh-vscode/domain'
 
+import { AlphaEventSource } from '../src/versions/alpha/events.js'
 import { AlphaLoopbackApiClient, type AlphaWebSocket } from '../src/versions/alpha/transport.js'
+import { AlphaVersionAdapter } from '../src/versions/alpha/adapter.js'
 import { callRpc } from '../src/versions/rc6/rpc.js'
 
 class FakeWebSocket implements AlphaWebSocket {
@@ -782,6 +784,14 @@ async function waitForSent(socket: FakeWebSocket, count: number): Promise<void> 
   throw new Error(`the alpha mux socket sent ${socket.sent.length} frames; expected ${count}`)
 }
 
+async function waitForEvent(predicate: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (predicate()) return
+    await new Promise((resolve) => setTimeout(resolve, 25))
+  }
+  throw new Error('the expected alpha event was not observed')
+}
+
 describe('alpha remote mux receive queue', () => {
   it('fails a logical stream that buffers past the receive queue limit', async () => {
     FakeWebSocket.instances.length = 0
@@ -824,5 +834,90 @@ describe('alpha remote mux receive queue', () => {
       )
     await expect(iterator.next()).rejects.toMatchObject({ code: 'PROTOCOL_ERROR', retryable: true })
     await transport.close()
+  })
+})
+
+describe('alpha backend assembly baseline ownership', () => {
+  it('keeps control-stream jobs and queue baselines across a session follow subscription', async () => {
+    FakeWebSocket.instances.length = 0
+    const adapter = new AlphaVersionAdapter({
+      requestTimeoutMs: 1_000,
+      retryPolicy: { maximumAttempts: 1, baseDelayMs: 1, maximumDelayMs: 1 },
+      fetch: vi.fn((_input: RequestInfo | URL, init?: RequestInit) => Promise.resolve(response(init, {}))),
+      authCookie: () => 'dsh_session=test-cookie',
+      webSocket: FakeWebSocket,
+    })
+    const backend = await adapter.createBackend({
+      endpoint,
+      ownership: 'external',
+      capabilities: {
+        protocolVersion: 'alpha1',
+        dshVersion: '0.1.2-alpha.1',
+        features: new Set(['events']),
+      },
+    })
+    const received: BackendEvent[] = []
+    const unsubscribe = backend.events.subscribe((event) => received.push(event))
+    try {
+      const socket = await waitForSocket()
+      socket.open()
+      await waitForSent(socket, 3)
+      const openStreamId = (streamEndpoint: string): number => {
+        for (const sent of socket.sent) {
+          const frame = JSON.parse(sent) as { type?: string; endpoint?: string; streamId?: number }
+          if (frame.type === 'open' && frame.endpoint === streamEndpoint) return frame.streamId as number
+        }
+        throw new Error(`the alpha mux never opened ${streamEndpoint}`)
+      }
+      socket.message({
+        type: 'item',
+        streamId: openStreamId('$events'),
+        value: { type: 'ready', clientId: 'client-1', host: { home: '/home/tester' } },
+      })
+      socket.message({
+        type: 'item',
+        streamId: openStreamId('workspace/follow'),
+        value: { type: 'baseline', value: { items: [], archivedSessionIds: [] } },
+      })
+      socket.message({
+        type: 'item',
+        streamId: openStreamId('session/control'),
+        value: {
+          type: 'baseline',
+          value: {
+            queues: { s1: [{ id: 'q1', placement: 'queued', message: { text: 'queued prompt' } }] },
+            jobs: { s1: [{ id: 'j1', kind: 'build', label: 'build', status: 'running', startedAt: 1 }] },
+            projections: {},
+          },
+        },
+      })
+      await waitForEvent(() => received.some((event) => event.type === 'jobs.updated'))
+      await expect(backend.jobs.list('s1')).resolves.toHaveLength(1)
+      await expect(backend.sessions.listQueue('s1')).resolves.toHaveLength(1)
+
+      ;(backend.events as AlphaEventSource).watchSession('s1')
+      await waitForSent(socket, 4)
+      socket.message({
+        type: 'item',
+        streamId: openStreamId('session/follow'),
+        value: {
+          type: 'snapshot',
+          header: {},
+          cursor: 5,
+          records: [],
+          hasMore: false,
+          projections: { asOfSeq: 5, values: {} },
+        },
+      })
+      await waitForEvent(() => received.some((event) => event.type === 'session.subscribed'))
+      // The alpha session/follow snapshot carries no jobs or queue baseline;
+      // the session/control stream owns that state, so re-subscribing a
+      // session must not wipe what the control stream baselined.
+      await expect(backend.jobs.list('s1')).resolves.toHaveLength(1)
+      await expect(backend.sessions.listQueue('s1')).resolves.toHaveLength(1)
+    } finally {
+      unsubscribe()
+      await backend.close()
+    }
   })
 })

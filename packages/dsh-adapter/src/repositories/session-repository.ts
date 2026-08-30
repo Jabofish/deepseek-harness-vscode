@@ -61,6 +61,7 @@ export class Rc6SessionRepository implements SessionRepository {
       options.maxPromptAttachmentTotalBytes ?? MAX_PROMPT_ATTACHMENT_TOTAL_BYTES
     this.onSessionAccess = options.onSessionAccess
     this.deriveTitleFromCwd = options.deriveTitleFromCwd === true
+    this.resetQueueOnSubscribe = options.resetQueueOnSubscribe ?? true
   }
 
   private readonly supportsPreallocatedSessionId: boolean
@@ -70,12 +71,15 @@ export class Rc6SessionRepository implements SessionRepository {
   private readonly maxPromptAttachmentTotalBytes: number
   private readonly onSessionAccess: ((sessionId: string) => void) | undefined
   private readonly deriveTitleFromCwd: boolean
+  private readonly resetQueueOnSubscribe: boolean
 
   public remember(event: BackendEvent): void {
     if (event.type !== 'queue.updated') {
       if (event.type === 'session.subscribed') {
-        this.clearQueueState(event.sessionId)
-        this.queues.set(event.sessionId, [])
+        if (this.resetQueueOnSubscribe) {
+          this.clearQueueState(event.sessionId)
+          this.queues.set(event.sessionId, [])
+        }
         this.rememberProjectionValues(event.sessionId, event.projection?.values, true)
       } else if (event.type === 'session.removed') {
         this.clearQueueState(event.sessionId)
@@ -910,6 +914,13 @@ interface SessionRepositoryOptions {
   readonly onSessionAccess?: (sessionId: string) => void
   /** Alpha's list projection derives a display title from cwd when no title exists. */
   readonly deriveTitleFromCwd?: boolean
+  /**
+   * The rc.6-family mux re-baselines the queue snapshot on every subscription
+   * (absence means empty). Alpha carries no queue baseline on `session/follow`;
+   * its control stream owns the queue state, so wiping on subscribe would drop
+   * baselined data until the next unrelated queue commit.
+   */
+  readonly resetQueueOnSubscribe?: boolean
 }
 
 interface PromptContentLimits {

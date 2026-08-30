@@ -116,9 +116,12 @@ export class AlphaVersionAdapter implements DshVersionAdapter {
       maxPromptAttachmentTotalBytes: 200 * 1024 * 1024,
       onSessionAccess: (sessionId) => eventsHolder.value?.watchSession(sessionId),
       deriveTitleFromCwd: true,
+      // Alpha baselines queues on the session/control stream, not on
+      // `session/follow`; a subscription must not wipe that state.
+      resetQueueOnSubscribe: false,
     })
     const goals = new Rc6GoalRepository(transport)
-    const jobs = new Rc6JobRepository(transport)
+    const jobs = new Rc6JobRepository(transport, { resetOnSubscribe: false })
     const observe = (event: BackendEvent): void => {
       interactions.remember(event)
       sessions.remember(event)
