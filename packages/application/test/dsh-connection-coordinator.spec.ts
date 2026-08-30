@@ -225,6 +225,36 @@ describe('DshConnectionCoordinator', () => {
     expect(states.at(-1)).toMatchObject({ kind: 'failed', retryable: false })
   })
 
+  it('publishes a failed state when a managed probe fails without a classification', async () => {
+    // A probe timeout against the managed endpoint rejects with a retryable
+    // transport error. Every terminal connect failure publishes a failed
+    // state before throwing; skipping it would leave the last published
+    // snapshot on 'starting' while the operation already failed.
+    const process = managedProcess(4324)
+    const deps = dependencies({
+      probe: {
+        probe: vi.fn(async () => {
+          throw new AppError({
+            code: 'BACKEND_UNREACHABLE',
+            message: 'The DSH request host.describe timed out.',
+            retryable: true,
+            context: { method: 'host.describe', timedOut: true },
+          })
+        }),
+      },
+      processSupervisor: { start: vi.fn(async () => process) },
+    })
+    const coordinator = new DshConnectionCoordinator(deps)
+    const states: BackendState[] = []
+    coordinator.subscribe((state) => states.push(state))
+
+    await expect(coordinator.connect({ mode: 'auto', autoStart: true })).rejects.toMatchObject({
+      code: 'BACKEND_UNREACHABLE',
+    })
+    expect(process.stop).toHaveBeenCalledTimes(1)
+    expect(states.at(-1)).toMatchObject({ kind: 'failed', retryable: true })
+  })
+
   it('re-publishes connected state when a cached backend is reused', async () => {
     const connected = fakeConnectedBackend(4110)
     const deps = dependencies({

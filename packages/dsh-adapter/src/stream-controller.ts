@@ -135,11 +135,23 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
   }
 
   private async readStream(stream: AsyncIterable<unknown>, signal: AbortSignal): Promise<void> {
+    let receivedFrame = false
     try {
       for await (const envelope of stream) {
         if (this.closed || signal.aborted) return
         const event = normalizeEnvelope(envelope)
-        if (event !== undefined) await this.accept(event, signal)
+        if (event !== undefined) {
+          // A delivered frame proves this generation's transport is alive.
+          // Restart the reconnect ladder, or streamSource-based controllers
+          // (alpha workspace/session streams) that never see a
+          // session/subscribed frame would ratchet their backoff up across
+          // healthy generations.
+          if (!receivedFrame) {
+            receivedFrame = true
+            this.retryAttempt = 0
+          }
+          await this.accept(event, signal)
+        }
       }
       if (!this.closed && !signal.aborted) throw new Error('DSH event stream ended.')
     } catch (error) {

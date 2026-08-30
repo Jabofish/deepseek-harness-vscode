@@ -303,9 +303,11 @@ export class DshConnectionCoordinator {
       try {
         verified = await this.dependencies.probe.probe(candidate, signal)
       } catch (error) {
-        if (error instanceof AppError && error.code === 'DSH_INCOMPATIBLE') {
+        // Every terminal connect failure publishes a failed state before
+        // throwing; without this the last snapshot would stay on 'starting'
+        // while the operation already rejected.
+        if (error instanceof AppError)
           this.publish({ kind: 'failed', message: error.message, retryable: error.retryable })
-        }
         throw error
       }
       if (verified === undefined) {

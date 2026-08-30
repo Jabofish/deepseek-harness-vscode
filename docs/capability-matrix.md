@@ -148,6 +148,24 @@ VS Code 无文件夹 Webview 回放，因此该修复不提升能力矩阵中的
 - 门禁状态：`typecheck` 全仓通过、adapter 定向 lint/format 通过；全量 `test` 728 测试中除既知
   6 个预存前端失败外全部通过。
 
+## 2026-08-30 backend review batch F evidence
+
+- CN-05（重连退避状态机）：`DshStreamController` 的退避级别此前只在收到带序号的 session 事件或
+  `session.subscribed` 时重置；基于 `streamSource` 的控制器（alpha workspace/session 流）以及只收到
+  host 帧的 mux 读取器从不重置，退避级别跨"健康代际 → 干净结束"循环持续爬升，健康期后的下一次瞬断
+  也要等待数秒。现在任何代际收到首帧（证明传输存活）即重置退避阶梯；退避仍在每次失败后生效，
+  宕机 host 不会被热循环重连。红绿证据：`packages/dsh-adapter/test/stream-controller.spec.ts`
+  新增三健康代后退避测试，修复前 2s 内仅 3 次重开（红），修复后 5 次重开在 ~1.2s 内（绿）。
+- CN-01/CN-02（连接状态机一致性）：managed 路径的 probe 抛出非 `DSH_INCOMPATIBLE` AppError
+  （如 readiness 后 `host.describe` 超时映射的可重试 `BACKEND_UNREACHABLE`）时，coordinator 直接
+  重抛而不发布 `failed`，最后发布的状态快照停在 `starting`。现在 probe 抛出的任何 AppError 都先
+  发布 `failed`（携带其 message/retryable）再重抛，受管进程仍由既有外层清理停止一次。
+  红绿证据：`packages/dsh-adapter/../application/test/dsh-connection-coordinator.spec.ts` 新增
+  超时分类测试，修复前最后状态为 `starting`（红），修复后为 `failed`/retryable=true（绿）。
+- 审计记录：`CheckpointStore.restore` 冲突 abort 时把 manifest 标记为 `stale` 并永久拒绝后续 restore
+  是被 `checkpoint-store.spec.ts` 显式锁定的保守设计（冲突后保留外部编辑），不作为缺陷修改。
+- 门禁状态：全量 `test` 730 测试中除既知 6 个预存前端失败外全部通过；typecheck/lint/format 通过。
+
 ## rc.8 适配增量与兼容证据
 
 - 版本层：`versions/rc6`、`versions/rc7`、`versions/rc8` 与受控 rc.6 fallback；运行时定位允许任何非空未知版本标签并把警告安全传给 Webview。

@@ -65,6 +65,51 @@ describe('DshStreamController', () => {
     expect(received.filter((entry) => entry.startsWith('second:'))).toEqual(['second:session.subscribed'])
   })
 
+  it('restarts the reconnect backoff after a generation proved the stream alive', async () => {
+    // A streamSource-based controller (alpha workspace/session streams) never
+    // sees a session/subscribed frame, so its backoff level previously only
+    // ratcheted up across generations: a healthy generation followed by a
+    // clean end still waited seconds for the next reconnect. Any received
+    // frame proves the transport alive and must restart the backoff ladder.
+    const healthyGeneration = [{ payload: { type: 'host/workspace-changed', workspaceId: 'w1' } }]
+    let generation = 0
+    const open = (): AsyncIterable<unknown> => {
+      generation += 1
+      const frames = generation <= 3 ? healthyGeneration : []
+      return {
+        [Symbol.asyncIterator](): AsyncIterator<unknown> {
+          let index = 0
+          return {
+            async next() {
+              await Promise.resolve()
+              if (frames.length === 0) throw new Error('stream down after healthy generations')
+              return index < frames.length
+                ? { done: false as const, value: frames[index++] }
+                : { done: true as const, value: undefined }
+            },
+          }
+        },
+      }
+    }
+    const controller = new DshStreamController(
+      { ...streamTransport([]), close: () => Promise.resolve() },
+      undefined,
+      undefined,
+      {
+        streamSource: open,
+        closeTransport: false,
+      },
+    )
+    controllers.push(controller)
+    controller.subscribe(() => undefined)
+
+    // Three healthy generations plus the failing one open immediately or at
+    // the 250ms base backoff; without the reset the fourth open waits ~1s and
+    // the fifth ~2s, so five opens within 2s is only reachable with a reset.
+    await waitForAtMost(() => generation >= 5, 2_000)
+    await controller.close()
+  })
+
   it('keeps reconnect backoff instead of hot-looping a failing stream', async () => {
     const received: string[] = []
     const failingStream: NonNullable<DshTransport['openMuxStream']> = (_signal) => ({
