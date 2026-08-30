@@ -81,3 +81,44 @@ describe('Rc6GoalRepository live cache', () => {
     expect(request).not.toHaveBeenCalled()
   })
 })
+
+describe('Rc6GoalRepository concurrent cache writes', () => {
+  it('keeps live event state that arrives while the history walk is in flight', async () => {
+    let releaseHistory: ((value: unknown) => void) | undefined
+    const request = vi.fn(
+      (_method: string, _params: unknown) =>
+        new Promise<unknown>((resolve) => {
+          releaseHistory = (value) => resolve({ result: { ok: true, value } })
+        }),
+    ) as unknown as DshTransport['request']
+    const repository = new Rc6GoalRepository(transport(request))
+    const pending = repository.list('session-1')
+    const live = [{ id: 'goal-live', title: 'Fresh from the stream', status: 'in-progress' as const }]
+    repository.remember({ type: 'goal.updated', sessionId: 'session-1', goals: live })
+
+    await vi.waitFor(() => expect(releaseHistory).toBeDefined())
+    releaseHistory!({ events: [], hasMore: false, projections: { asOfSeq: 1, values: {} } })
+    // The walk started before the event arrived, so its history-derived
+    // result is staler than the state the mux observer already cached.
+    await expect(pending).resolves.toEqual(live)
+  })
+
+  it('does not duplicate a created goal that the live stream already delivered', async () => {
+    const request = vi.fn(
+      <TResponse>() =>
+        ({
+          result: { ok: true, value: { ref: { id: 'goal-3', revision: 1 } } },
+        }) as TResponse,
+    ) as unknown as DshTransport['request']
+    const repository = new Rc6GoalRepository(transport(request))
+    // The host can deliver the goal.updated event over the mux before the
+    // goal.create HTTP receipt resolves; ordering across the two channels is
+    // not guaranteed.
+    const delivered = [{ id: 'goal-3', title: 'Host goal', status: 'in-progress' as const }]
+    repository.remember({ type: 'goal.updated', sessionId: 'session-1', goals: delivered })
+
+    const created = await repository.create('session-1', 'Host goal')
+    expect(created.id).toBe('goal-3')
+    await expect(repository.list('session-1')).resolves.toEqual(delivered)
+  })
+})

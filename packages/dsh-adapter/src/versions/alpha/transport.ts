@@ -869,7 +869,7 @@ class AlphaRemoteMux {
 
     const state: AlphaMuxStream = {
       endpoint,
-      queue: new AsyncQueue<unknown>(),
+      queue: new AsyncQueue<unknown>(RECEIVE_QUEUE_LIMIT),
       terminal: false,
     }
     const streamId = randomUUID()
@@ -1835,6 +1835,9 @@ async function delay(ms: number, signal?: AbortSignal): Promise<void> {
   })
 }
 
+/** Matches the rc.6 transport's per-stream receive queue bound. */
+const RECEIVE_QUEUE_LIMIT = 256
+
 class AsyncQueue<T> implements AsyncIterable<T> {
   private readonly values: T[] = []
   private readonly waiters: Array<{
@@ -1844,11 +1847,32 @@ class AsyncQueue<T> implements AsyncIterable<T> {
   private finished = false
   private failure: unknown
 
+  public constructor(private readonly capacity: number) {}
+
   public push(value: T): void {
     if (this.finished) return
     const waiter = this.waiters.shift()
-    if (waiter === undefined) this.values.push(value)
-    else waiter.resolve({ value, done: false })
+    if (waiter === undefined) {
+      // The stream consumer awaits inside its read loop (history recovery on
+      // a seq gap), so the host can keep pushing frames while the generator
+      // is suspended at its yield. Fail the stream past the same bound the
+      // rc.6 transport enforces instead of buffering without limit; the
+      // stream controller reconnects and re-snapshots.
+      if (this.values.length >= this.capacity) {
+        this.values.length = 0
+        this.fail(
+          new AppError({
+            code: 'PROTOCOL_ERROR',
+            message: 'The DSH event stream exceeded its receive queue limit.',
+            retryable: true,
+          }),
+        )
+        return
+      }
+      this.values.push(value)
+      return
+    }
+    waiter.resolve({ value, done: false })
   }
 
   public end(): void {

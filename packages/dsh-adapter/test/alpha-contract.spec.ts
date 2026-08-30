@@ -781,3 +781,48 @@ async function waitForSent(socket: FakeWebSocket, count: number): Promise<void> 
   }
   throw new Error(`the alpha mux socket sent ${socket.sent.length} frames; expected ${count}`)
 }
+
+describe('alpha remote mux receive queue', () => {
+  it('fails a logical stream that buffers past the receive queue limit', async () => {
+    FakeWebSocket.instances.length = 0
+    const transport = client(
+      vi.fn((_input: RequestInfo | URL, init?: RequestInit) => Promise.resolve(response(init, undefined))),
+    )
+    const stream = transport.openSessionStream('s1', new AbortController().signal)
+    const iterator = stream[Symbol.asyncIterator]()
+    const first = iterator.next()
+    const socket = await waitForSocket()
+    socket.open()
+    await waitForSent(socket, 1)
+    // A session/follow stream opens directly with its snapshot; there is no
+    // ready handshake on this logical stream.
+    socket.message(
+      streamItem(socket, {
+        type: 'snapshot',
+        header: {},
+        cursor: 0,
+        records: [],
+        hasMore: false,
+        projections: { asOfSeq: 0, values: {} },
+      }),
+    )
+    await expect(first).resolves.toMatchObject({
+      done: false,
+      value: { type: 'session/subscribed', lastSeq: 0 },
+    })
+
+    // The stream consumer awaits inside its read loop (history recovery on a
+    // seq gap), so the host can keep pushing mid-turn delta frames while the
+    // generator is suspended at its yield. Without a bound the queue grows
+    // for the whole suspension; the rc6 transport fails the stream instead.
+    for (let index = 1; index <= 300; index += 1)
+      socket.message(
+        streamItem(socket, {
+          type: 'event',
+          event: { type: 'turn/start', seq: index, time: index, data: { turn: 1 } },
+        }),
+      )
+    await expect(iterator.next()).rejects.toMatchObject({ code: 'PROTOCOL_ERROR', retryable: true })
+    await transport.close()
+  })
+})

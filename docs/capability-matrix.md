@@ -206,6 +206,24 @@ VS Code 无文件夹 Webview 回放，因此该修复不提升能力矩阵中的
   `events.ts` 注释明示的设计，仅保留其与 `session.removed` 的对称清理（batch E 已修）。
 - 门禁状态：全量 `test` 734 测试中除既知 6 个预存前端失败外全部通过；typecheck/lint/format 通过。
 
+## 2026-08-30 backend review batch I evidence
+
+- PL-01（goal 缓存并发一致性）：`Rc6GoalRepository` 的 `remember()` 由 mux 观察者同步写 `goalCache`，
+  而 `list()` 的历史回填在多个 await 完成后无条件覆盖缓存——回填期间到达的 `goal.updated`/
+  `session.projection` 事件状态被陈旧的历史数据（可能为空）覆盖，且无补偿事件，直到下一次目标变更
+  或重订阅前投影一直错误。现在回填仅在缓存仍为空时写入，且返回缓存中较新的状态。同理 `create()`
+  在 host 的 `goal.updated` 事件先于 HTTP 回执到达（mux 与 HTTP 无顺序保证）时会向缓存追加重复行，
+  现在按 goal id 去重、保留事件投递的 host 权威版本。
+  红绿证据：`packages/dsh-adapter/test/goal-repository.spec.ts` 新增两例，修复前
+  `expected [] to deeply equal [goal-live]` 与重复行（红），修复后返回 live 状态且无重复（绿）。
+- CN-06（alpha 接收队列上限）：alpha `AsyncQueue` 此前无界缓冲，而 rc.6 传输对同类场景（消费方在
+  read loop 内 await 历史恢复时 host 持续推送 mid-turn delta 帧）以 256 帧上限 + `PROTOCOL_ERROR`
+  失败该流并触发重连/重新快照。现在 alpha 逻辑流队列采用相同的 `RECEIVE_QUEUE_LIMIT = 256` 上限，
+  溢出时清空缓冲并以同语义错误失败该逻辑流（共享 socket 与其他逻辑流不受影响）。
+  红绿证据：`packages/dsh-adapter/test/alpha-contract.spec.ts` 新增 session/follow 溢出测试，修复前
+  300 帧全部缓冲且 next() 正常返回（红），修复后拒绝并携带 `PROTOCOL_ERROR`/retryable=true（绿）。
+- 门禁状态：全量 `test` 737 测试中除既知 6 个预存前端失败外全部通过；typecheck/lint/format 通过。
+
 ## rc.8 适配增量与兼容证据
 
 - 版本层：`versions/rc6`、`versions/rc7`、`versions/rc8` 与受控 rc.6 fallback；运行时定位允许任何非空未知版本标签并把警告安全传给 Webview。
