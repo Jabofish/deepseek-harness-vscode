@@ -166,6 +166,25 @@ VS Code 无文件夹 Webview 回放，因此该修复不提升能力矩阵中的
   是被 `checkpoint-store.spec.ts` 显式锁定的保守设计（冲突后保留外部编辑），不作为缺陷修改。
 - 门禁状态：全量 `test` 730 测试中除既知 6 个预存前端失败外全部通过；typecheck/lint/format 通过。
 
+## 2026-08-30 backend review batch G evidence
+
+- CN-06（alpha 传输资源释放）：alpha transport 的 `post()` 与 `downloadSessionLog()` 此前在非 2xx 时
+  直接丢弃响应体，与 loopback 客户端已修复的同类问题一致；`withRetry` 对幂等方法的 5xx 重试会按次
+  占住回环 socket。现在两处抛错前先 `body.cancel()` 释放连接。红绿证据：
+  `packages/dsh-adapter/test/alpha-contract.spec.ts` 新增 RPC+导出双断言测试，修复前 cancel 计数 0（红），
+  修复后为 2（绿）。
+- CP-01（partial restore 存储回收）：显式 `allow-partial` 的部分恢复是终态（`restoreAllowed` 永久为
+  false），但此前 unlike committed/rolled-back 路径，未调用 `cleanupJournal`，每个已恢复文件的
+  `backup-*.bin` 与 `journal.json` 永久残留；配额统计只计 `manifest.totalBytes`，该占用不可见且无界
+  增长。回滚不完整（崩溃取证）路径的保留保持不变，因为那里的 backup 是恢复前字节的唯一记录。
+  红绿证据：`apps/extension/src/checkpoints/checkpoint-store.spec.ts` 新增回收断言，修复前 journal
+  残留（红），修复后无 `backup-*.bin`/`journal.json` 残留（绿）。
+- 审计记录（不改）：`Rc6InteractionRepository` 对并发提交按 rpcId 折叠、"先到者胜"是被
+  `interaction-repository.spec.ts` 锁定的设计（保证审批永不多发）；alpha `watchSession` 的惰性重看
+  是 `events.ts` 注释明示的既有设计。change-set-tracker 每工具事件的 `sessions.get()` RPC 放大
+  属效率优化候选，未在本轮改动。
+- 门禁状态：全量 `test` 732 测试中除既知 6 个预存前端失败外全部通过；typecheck/lint/format 通过。
+
 ## rc.8 适配增量与兼容证据
 
 - 版本层：`versions/rc6`、`versions/rc7`、`versions/rc8` 与受控 rc.6 fallback；运行时定位允许任何非空未知版本标签并把警告安全传给 Webview。

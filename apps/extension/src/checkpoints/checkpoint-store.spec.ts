@@ -349,6 +349,34 @@ describe('CheckpointStore', () => {
     expect((await store.get(summary.checkpointId)).state).toBe('partial-restore')
   })
 
+  it('reclaims journal and backup storage after an explicitly approved partial restore', async () => {
+    const storage = new MemoryStorage()
+    const workspace = new MemoryWorkspace()
+    workspace.files.set('src/one.ts', Buffer.from('new-one'))
+    workspace.files.set('src/two.ts', Buffer.from('new-two'))
+    const store = createStore(storage, workspace, true)
+    const summary = await store.create({
+      ...changeInput('old-one', 'new-one', 'src/one.ts'),
+      files: [
+        { relativePath: 'src/one.ts', diff: { oldText: 'old-one', newText: 'new-one' } },
+        { relativePath: 'src/two.ts', diff: { oldText: 'old-two', newText: 'new-two' } },
+      ],
+    })
+    await workspace.writeFile('workspace-1', 'src/two.ts', Buffer.from('external'))
+
+    await store.restore(summary.checkpointId, 1, 'allow-partial')
+
+    // A partial restore is terminal: no code path can restore again or read
+    // the retained pre-restore backups, and the quota accounting only sees
+    // manifest.totalBytes. Keeping one backup per applied file plus the
+    // journal would silently consume the storage quota forever, while the
+    // committed and rolled-back terminal paths both reclaim it.
+    const directory = checkpointDirectory('checkpoint-root', summary.checkpointId)
+    const leftover = Array.from(storage.files.keys()).filter((file) => file.startsWith(`${directory}`))
+    expect(leftover.filter((file) => file.endsWith('journal.json'))).toEqual([])
+    expect(leftover.filter((file) => /backup-\d+\.bin$/u.test(file))).toEqual([])
+  })
+
   it('rejects invalid paths and file-count quota before reading workspace bytes', async () => {
     const storage = new MemoryStorage()
     const workspace = new MemoryWorkspace()

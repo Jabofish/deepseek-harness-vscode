@@ -108,7 +108,10 @@ export class AlphaLoopbackApiClient implements DshTransport {
     } catch (error) {
       throw normalizeTransportError('session.export', error, signal)
     }
-    if (!response.ok) throw httpFailure('session.export', response.status)
+    if (!response.ok) {
+      await releaseUnreadBody(response)
+      throw httpFailure('session.export', response.status)
+    }
     return response
   }
 
@@ -379,7 +382,10 @@ export class AlphaLoopbackApiClient implements DshTransport {
     } catch (error) {
       throw normalizeTransportError(endpoint, error, signal)
     }
-    if (!response.ok) throw httpFailure(endpoint, response.status)
+    if (!response.ok) {
+      await releaseUnreadBody(response)
+      throw httpFailure(endpoint, response.status)
+    }
     let decoded: unknown
     try {
       decoded = await response.json()
@@ -1780,6 +1786,19 @@ function closedError(): AppError {
     message: 'The DSH connection is closed.',
     retryable: false,
   })
+}
+
+/**
+ * Callers never read a non-2xx body, and an unconsumed fetch body pins its
+ * socket instead of returning it to the pool. Release it explicitly so
+ * retry loops and export failures cannot accumulate stalled connections.
+ */
+async function releaseUnreadBody(response: Response): Promise<void> {
+  try {
+    await response.body?.cancel()
+  } catch {
+    /* releasing the connection is best effort */
+  }
 }
 
 function malformedResponse(method: string, cause?: unknown): AppError {

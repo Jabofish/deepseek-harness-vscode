@@ -370,6 +370,12 @@ export class CheckpointStore implements CheckpointRepository {
         const partial = { ...manifest, state: 'partial-restore' as const }
         await this.writeAtomic(path.join(directory, MANIFEST_FILE), encodePersisted(partial))
         this.manifests.set(partial.checkpointId, partial)
+        // A user-approved partial restore is terminal: nothing can restore
+        // this checkpoint again, so the per-file backups and journal would
+        // only consume quota invisibly. Reclaim them like the committed path
+        // does. A rollback that could not complete keeps its backups instead
+        // because they are the only record of the pre-restore bytes.
+        await this.cleanupJournal(directory, journal, manifest)
         return {
           summary: checkpointSummary(partial),
           state: 'partial',

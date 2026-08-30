@@ -560,6 +560,33 @@ describe('DSH 0.1.2-alpha.1 Connection/Gateway contract', () => {
     await transport.close()
   })
 
+  it('releases the unread body of failed alpha RPC and export responses', async () => {
+    FakeWebSocket.instances.length = 0
+    let cancelCalls = 0
+    const fetch = vi.fn(() => {
+      const body = new ReadableStream<Uint8Array>({
+        cancel() {
+          cancelCalls += 1
+        },
+      })
+      return Promise.resolve(new Response(body, { status: 503 }))
+    })
+    const transport = client(fetch)
+
+    await expect(transport.request('session.list', {})).rejects.toMatchObject({
+      code: 'BACKEND_UNREACHABLE',
+      context: { method: 'session/list', status: 503 },
+    })
+    await expect(transport.downloadSessionLog('s1', false)).rejects.toMatchObject({
+      code: 'BACKEND_UNREACHABLE',
+      context: { method: 'session.export', status: 503 },
+    })
+    // An unconsumed fetch body pins its socket; both failed responses must be
+    // released back to the pool.
+    expect(cancelCalls).toBe(2)
+    await transport.close()
+  })
+
   it('rejects interaction responses that are not tied to a current alpha waterfall event', async () => {
     FakeWebSocket.instances.length = 0
     const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
