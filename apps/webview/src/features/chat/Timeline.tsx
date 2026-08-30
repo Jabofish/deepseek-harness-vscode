@@ -12,7 +12,7 @@ import { MarkdownContent } from './MarkdownContent.js'
 import { MessageImages } from './MessageImages.js'
 import { MessageActions } from './MessageActions.js'
 import { WorkflowRunCard } from '../workflows/WorkflowDrawer.js'
-import { ScrollToLatestButton } from '../../components/common/index.js'
+import { ContentFlow, ScrollToLatestButton } from '../../components/common/index.js'
 import { Icon } from '../../ui/Icon.js'
 import { useI18n, type Translate } from '../../i18n.js'
 
@@ -995,10 +995,12 @@ function renderProducedFiles(
         {paths.map((path) => {
           const label = producedFileLabel(path)
           return onOpenLink === undefined ? (
-            <span className="dsh-timeline__produced-chip" key={path} title={path}>
-              <Icon name="file" />
-              <span>{label}</span>
-            </span>
+              <span className="dsh-timeline__produced-chip" key={path} title={path}>
+                <Icon name="file" />
+                <ContentFlow as="span" variant="truncate">
+                  {label}
+                </ContentFlow>
+              </span>
           ) : (
             <button
               className="dsh-timeline__produced-chip"
@@ -1009,7 +1011,9 @@ function renderProducedFiles(
               onClick={() => onOpenLink(path)}
             >
               <Icon name="file" />
-              <span>{label}</span>
+              <ContentFlow as="span" variant="truncate">
+                {label}
+              </ContentFlow>
             </button>
           )
         })}
@@ -1118,7 +1122,9 @@ function renderReasoningPreview(
         <span>{t('timeline.thinking')}</span>
         <span className="dsh-timeline__streaming" aria-hidden="true" />
       </div>
-      <span className="dsh-timeline__reasoning-preview-content">{preview}</span>
+      <ContentFlow as="span" variant="preserve-breaks" className="dsh-timeline__reasoning-preview-content">
+        {preview}
+      </ContentFlow>
     </section>
   )
 }
@@ -1175,9 +1181,14 @@ function renderToolCollection(
         <span className="dsh-timeline__tool-group-count" aria-hidden="true">
           {tools.length}
         </span>
-        <span className="dsh-timeline__tool-group-latest" title={toolSummary(latest.tool, t)}>
+        <ContentFlow
+          as="span"
+          variant="truncate"
+          className="dsh-timeline__tool-group-latest"
+          title={toolSummary(latest.tool, t)}
+        >
           {toolSummary(latest.tool, t)}
-        </span>
+        </ContentFlow>
         <span className="dsh-timeline__reasoning-meta">
           <span className="dsh-timeline__disclosure" aria-hidden="true">
             <Icon name="chevron-down" />

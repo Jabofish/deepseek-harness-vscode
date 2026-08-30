@@ -1,5 +1,6 @@
 import { useMemo, useState, type ReactElement } from 'react'
 import type { DshSettingsSnapshot } from '../../app/store.js'
+import { ContentFlow } from '../../components/common/ContentFlow.js'
 import { useI18n } from '../../i18n.js'
 
 export interface PluginConfigurationProps {
@@ -197,7 +198,7 @@ export function PluginConfiguration(props: PluginConfigurationProps): ReactEleme
     <section className="dsh-plugin-configuration" aria-label={t('plugins.config.heading')}>
       <div className="dsh-plugin-configuration__intro">
         <h3>{t('plugins.config.heading')}</h3>
-        <p>{t('plugins.config.intro')}</p>
+        <ContentFlow as="p">{t('plugins.config.intro')}</ContentFlow>
       </div>
       {cards.length === 0 ? (
         <p className="dsh-settings__empty">{t('plugins.config.empty')}</p>
@@ -302,15 +303,16 @@ export function PluginConfiguration(props: PluginConfigurationProps): ReactEleme
                             aria-invalid={fieldInvalid}
                             onChange={(event) => stage(namespace, field.field, event.currentTarget.value)}
                           />
-                          <span
-                            className={
-                              fieldInvalid
-                                ? 'dsh-plugin-configuration__hint dsh-plugin-configuration__hint--error'
-                                : 'dsh-plugin-configuration__hint'
-                            }
-                          >
-                            {fieldInvalid ? t('plugins.config.invalidNumber') : t(field.hintKey)}
-                          </span>
+                      <ContentFlow
+                        as="span"
+                        className={
+                          fieldInvalid
+                            ? 'dsh-plugin-configuration__hint dsh-plugin-configuration__hint--error'
+                            : 'dsh-plugin-configuration__hint'
+                        }
+                      >
+                        {fieldInvalid ? t('plugins.config.invalidNumber') : t(field.hintKey)}
+                      </ContentFlow>
                           {overridden ? (
                             <button
                               type="button"

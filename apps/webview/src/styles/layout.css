@@ -155,11 +155,8 @@
 }
 
 .dsh-conversation__utility .dsh-runtime-status {
-  display: inline-flex;
-  width: var(--dsh-control-height);
-  height: var(--dsh-control-height);
-  align-items: center;
-  justify-content: center;
+  width: auto;
+  height: auto;
 }
 
 .dsh-conversation__utility > .dsh-icon-button {
@@ -1241,6 +1238,17 @@
 
   .dsh-conversation__views .dsh-conversation__view-tab {
     padding-inline: var(--dsh-space-2);
+  }
+
+  .dsh-runtime-status__label {
+    display: none;
+  }
+
+  .dsh-runtime-status__trigger {
+    width: var(--dsh-control-height);
+    min-width: var(--dsh-control-height);
+    justify-content: center;
+    padding-inline: var(--dsh-space-1);
   }
 
   .dsh-composer__extras-panel {

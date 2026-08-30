@@ -6,6 +6,7 @@ import { createHighlighter, type BundledLanguage } from 'shiki'
 import { useEffect, useMemo, useRef, useState, type MouseEvent, type ReactElement } from 'react'
 import { useI18n } from '../../i18n.js'
 import { CopyButton } from './CopyButton.js'
+import { ContentFlow } from '../../components/common/ContentFlow.js'
 import 'katex/dist/katex.min.css'
 
 const markdownRenderer = new MarkdownIt({
@@ -151,7 +152,7 @@ export function MarkdownContent({
   }
 
   return (
-    <div
+    <ContentFlow
       ref={contentRef}
       className={`dsh-markdown${streaming ? ' dsh-markdown--streaming' : ''}`}
       onClick={handleClick}

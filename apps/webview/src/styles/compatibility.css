@@ -52,11 +52,6 @@
   color: var(--dsh-accent);
 }
 
-.dsh-runtime-status__label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 .dsh-message-avatar--system,
 .dsh-message-avatar--reasoning {
   color: var(--dsh-warning);
@@ -199,7 +194,8 @@
 .dsh-workflows h2 {
   min-width: 0;
   margin: 0;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
   font-size: 1rem;
 }
 
@@ -212,7 +208,8 @@
 .dsh-workflows > p {
   margin: 0;
   color: var(--dsh-muted);
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .dsh-export label,
@@ -273,7 +270,8 @@
 .dsh-skills > ul > li > strong,
 .dsh-workflows > ul > li > strong {
   min-width: 0;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .dsh-providers small,
@@ -347,7 +345,8 @@
 .dsh-subagents li strong {
   min-width: 0;
   flex: 1 1 140px;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .dsh-jobs li span,
@@ -694,8 +693,7 @@
 
 .dsh-session-switcher__icon,
 .dsh-session-switcher__chevron,
-.dsh-session-item__icon,
-.dsh-runtime-status__dot {
+.dsh-session-item__icon {
   display: grid;
   place-items: center;
 }
@@ -879,14 +877,12 @@
   overflow: hidden;
   color: var(--dsh-muted);
   opacity: 0.82;
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
-  word-break: break-word;
 }
 
 .dsh-timeline__turn-terminal-message {
   min-width: 0;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .dsh-empty-session {
@@ -1222,7 +1218,8 @@
 .dsh-todo-list__content {
   min-width: 0;
   flex: 1 1 auto;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .dsh-todo-list__item--completed .dsh-todo-list__content {
@@ -1363,7 +1360,8 @@
 
 .dsh-settings__runtime-update-progress-head > * {
   min-width: 0;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .dsh-settings__runtime-update-progress-head > :last-child {
@@ -2196,7 +2194,8 @@
   grid-column: 3;
   color: var(--dsh-muted);
   font-size: 0.68rem;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .dsh-subagent-tree__metrics {
@@ -2754,7 +2753,8 @@
   min-width: 0;
   max-width: 100%;
   white-space: normal;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .dsh-jobs-popover__menu {
@@ -2787,10 +2787,10 @@
 .dsh-settings__provider-editor-head > div,
 .dsh-settings__provider-editor-scope,
 .dsh-settings__model-picker h3,
-.dsh-settings__model-picker li label > span,
-.dsh-settings__model-picker li label > code {
+.dsh-settings__model-picker li label > span {
   min-width: 0;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .dsh-settings__note,
@@ -2805,7 +2805,8 @@
 .dsh-app__error,
 .dsh-interaction__risk {
   min-width: 0;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .dsh-settings__model-picker h3,
@@ -2830,14 +2831,16 @@
 .dsh-settings__header h2,
 .dsh-settings__model-picker header h3 {
   min-width: 0;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .dsh-settings__field-state,
 .dsh-settings__model-meta {
   min-width: 0;
   max-width: 100%;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .dsh-settings__provider-add,
@@ -2845,7 +2848,8 @@
   min-width: 0;
   max-width: 100%;
   white-space: normal;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .dsh-settings__custom-provider-head > *,
@@ -2869,13 +2873,15 @@
   min-width: 0;
   width: min(220px, 100%);
   max-width: 100%;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .dsh-session-switcher__panel-title,
 .dsh-session-switcher__group-header strong {
   min-width: 0;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .dsh-jobs-popover__menu {
@@ -2902,7 +2908,8 @@
 .dsh-settings__provider-remove-dialog {
   min-width: 0;
   max-width: 100%;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 /* rc.1 question parity: the mirror owns growth and the textarea owns the

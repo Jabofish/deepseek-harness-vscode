@@ -1,5 +1,6 @@
 import type { ReactElement, ReactNode } from 'react'
 import { Stack, Surface } from './Layout.js'
+import { ContentFlow } from './ContentFlow.js'
 
 export interface SettingCardProps {
   readonly title?: ReactNode
@@ -21,7 +22,9 @@ export function SettingCard(props: SettingCardProps): ReactElement {
         <header className="dsh-setting-card__header">
           {props.title === undefined ? null : <h3 className="dsh-setting-card__title">{props.title}</h3>}
           {props.description === undefined ? null : (
-            <p className="dsh-setting-card__description">{props.description}</p>
+            <ContentFlow as="p" className="dsh-setting-card__description">
+              {props.description}
+            </ContentFlow>
           )}
         </header>
       )}
@@ -59,7 +62,9 @@ export function SettingRow(props: SettingRowProps): ReactElement {
             )}
           </div>
           {props.description === undefined ? null : (
-            <p className="dsh-setting-row__description">{props.description}</p>
+            <ContentFlow as="p" className="dsh-setting-row__description">
+              {props.description}
+            </ContentFlow>
           )}
         </div>
         <div className="dsh-setting-row__control">{props.control}</div>

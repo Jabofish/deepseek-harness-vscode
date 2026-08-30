@@ -169,7 +169,7 @@ describe('SettingsDrawer', () => {
     expect(await screen.findByRole('heading', { name: '设置' })).toBeDefined()
     expect(screen.getByRole('tab', { name: '常规' })).toBeDefined()
     expect(screen.getByText('连接模式')).toBeDefined()
-    expect(screen.getByRole('group', { name: '语言' })).toBeDefined()
+    expect(screen.getByRole('group', { name: 'DSH 响应语言' })).toBeDefined()
     expect(screen.getByRole('button', { name: '中文' })).toBeDefined()
 
     fireEvent.click(screen.getByRole('tab', { name: '模型' }))
@@ -340,7 +340,7 @@ describe('SettingsDrawer', () => {
   it('renders the official General rows only for schema-advertised enum fields', async () => {
     renderDrawer()
     await waitFor(() => expect(screen.getByRole('group', { name: 'Permission' })).toBeDefined())
-    expect(screen.getByRole('group', { name: 'Language' })).toBeDefined()
+    expect(screen.getByRole('group', { name: 'DSH response language' })).toBeDefined()
     expect(screen.getByRole('group', { name: 'Appearance' })).toBeDefined()
     expect(screen.getByRole('group', { name: 'Composer Enter' })).toBeDefined()
     // Non-enum and non-General fields never gain a fabricated control.

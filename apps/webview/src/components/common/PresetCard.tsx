@@ -1,4 +1,5 @@
 import type { ReactElement, ReactNode } from 'react'
+import { ContentFlow } from './ContentFlow.js'
 
 export interface PresetCardProps {
   readonly title: ReactNode
@@ -36,16 +37,22 @@ export function PresetCard(props: PresetCardProps): ReactElement {
         onClick={props.onMainClick}
       >
         <span className="dsh-preset-card__head">
-          <span className="dsh-preset-card__name">{props.title}</span>
+          <ContentFlow as="span" className="dsh-preset-card__name">
+            {props.title}
+          </ContentFlow>
           {props.tags === undefined ? null : <span className="dsh-preset-card__tags">{props.tags}</span>}
         </span>
-        <span className="dsh-preset-card__description">{props.description}</span>
+        <ContentFlow as="span" className="dsh-preset-card__description">
+          {props.description}
+        </ContentFlow>
         {props.reason === undefined ? null : (
-          <span className="dsh-preset-card__reason" role="alert">
+          <ContentFlow as="span" className="dsh-preset-card__reason" role="alert">
             {props.reason}
-          </span>
+          </ContentFlow>
         )}
-        <code className="dsh-preset-card__id">{props.id}</code>
+        <ContentFlow as="code" variant="code" className="dsh-preset-card__id">
+          {props.id}
+        </ContentFlow>
       </button>
       <div className="dsh-preset-card__footer">{props.footer}</div>
       {props.revealed === undefined ? null : (

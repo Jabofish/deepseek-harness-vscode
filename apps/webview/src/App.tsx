@@ -49,6 +49,11 @@ import { Icon } from './ui/Icon.js'
 import { SelectMenu } from './components/common/SelectMenu.js'
 import { hasVsCodeApi } from './vscode-api.js'
 import { PopupSelectRegistry } from './features/commands/popupSelectRegistry.js'
+import {
+  attachmentDraftKey,
+  browserFileOrigin,
+  type AttachmentDraftOrigin,
+} from './features/composer/attachmentDrafts.js'
 
 const WELCOME_DISMISSED_KEY = 'dsh-welcome-dismissed'
 const RUNTIME_UPDATE_DISMISSED_KEY = 'dsh-runtime-update-dismissed-version'
@@ -80,6 +85,7 @@ export function App(): ReactElement {
   const [referenceQuoted, setReferenceQuoted] = useState(false)
   const [attachingOpenFileId, setAttachingOpenFileId] = useState<string | undefined>()
   const [openFileAttachmentIds, setOpenFileAttachmentIds] = useState<Record<string, string>>({})
+  const attachmentDraftKeysRef = useRef<Map<string, string>>(new Map())
   const attachingOpenFileRef = useRef<string | undefined>(undefined)
   const referenceRequestRef = useRef(0)
   const attachmentGenerationRef = useRef(0)
@@ -209,6 +215,11 @@ export function App(): ReactElement {
       )
       .finally(() => setBusyAction(undefined))
   }
+  const retryConnection = (): void => {
+    void store.reconnect().catch((reason: unknown) =>
+      setError(reason instanceof Error ? reason.message : t('app.error.reconnect')),
+    )
+  }
   const activeSession = state.sessions.find((session) => session.id === state.activeSessionId)
   let activeSubagentState = state.activeSubagent
   if (activeSubagentState?.entry.id !== state.activeSessionId) activeSubagentState = undefined
@@ -309,11 +320,25 @@ export function App(): ReactElement {
     attachment: PromptAttachment,
     openFileId?: string,
     generation = attachmentGenerationRef.current,
+    origin?: AttachmentDraftOrigin,
   ): void => {
     if (generation !== attachmentGenerationRef.current) {
       void store.releaseAttachments([attachment.uri]).catch(() => undefined)
       return
     }
+    if (attachmentDraftKeysRef.current.has(attachment.uri)) return
+    const draftKey = attachmentDraftKey(attachment, origin)
+    const existingUri = [...attachmentDraftKeysRef.current.entries()].find(
+      ([, key]) => key === draftKey,
+    )?.[0]
+    if (existingUri !== undefined) {
+      if (existingUri !== attachment.uri)
+        void store.releaseAttachments([attachment.uri]).catch((reason: unknown) =>
+          setError(reason instanceof Error ? reason.message : t('app.error.releaseAttachment')),
+        )
+      return
+    }
+    attachmentDraftKeysRef.current.set(attachment.uri, draftKey)
     setAttachments((current) =>
       current.some((item) => item.uri === attachment.uri) ? current : [...current, attachment],
     )
@@ -323,6 +348,7 @@ export function App(): ReactElement {
   const removeAttachmentDrafts = (uris: readonly string[], release: boolean): void => {
     if (uris.length === 0) return
     const removed = new Set(uris)
+    for (const uri of removed) attachmentDraftKeysRef.current.delete(uri)
     setAttachments((current) => current.filter((attachment) => !removed.has(attachment.uri)))
     setAttachmentPreviews((current) =>
       Object.fromEntries(Object.entries(current).filter(([uri]) => !removed.has(uri))),
@@ -373,10 +399,11 @@ export function App(): ReactElement {
     }
     const generation = attachmentGenerationRef.current
     for (const file of files) {
+      const origin = browserFileOrigin(file)
       void readFileAsBase64(file, t, imageLimits)
         .then((payload) => store.ingestAttachment(payload))
         .then((attachment) => {
-          if (attachment !== undefined) appendAttachment(attachment, undefined, generation)
+          if (attachment !== undefined) appendAttachment(attachment, undefined, generation, origin)
         })
         .catch((reason: unknown) =>
           setError(reason instanceof Error ? reason.message : t('app.error.attachPasted')),
@@ -434,7 +461,7 @@ export function App(): ReactElement {
           return
         }
         store.rememberOpenFile(candidateId)
-        appendAttachment(attachment, candidateId, generation)
+        appendAttachment(attachment, candidateId, generation, { kind: 'open-file', id: candidateId })
         setOpenFilePickerOpen(false)
       })
       .catch((reason: unknown) =>
@@ -575,13 +602,7 @@ export function App(): ReactElement {
               searchedLocations={backend.searchedLocations}
               busyAction={busyAction}
               onAction={runRuntimeAction}
-              onRetry={() => {
-                void store
-                  .reconnect()
-                  .catch((reason: unknown) =>
-                    setError(reason instanceof Error ? reason.message : t('app.error.reconnect')),
-                  )
-              }}
+              onRetry={retryConnection}
               onOpenSettings={() => store.setDrawer('settings')}
             />
           ) : (
@@ -660,6 +681,8 @@ export function App(): ReactElement {
                     </div>
                     <AppHeader
                       runtime={backend}
+                      connectedDshVersion={state.connectedDshVersion}
+                      compatibilityWarning={compatibilityWarning}
                       sessionControl={
                         <SessionDrawer
                           sessions={state.sessions}
@@ -711,6 +734,7 @@ export function App(): ReactElement {
                           )
                       }}
                       onOpenSettings={() => store.setDrawer('settings')}
+                      onRetryConnection={retryConnection}
                     />
                     {activeSubagent !== undefined || active.parentSessionId !== undefined ? (
                       <SessionLineage

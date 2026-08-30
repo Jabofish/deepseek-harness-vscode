@@ -7,7 +7,6 @@ import {
   type AgentPresetLocation,
   type AgentPresetRoster,
   type BackendEvent,
-  type BackendState,
   type ChangeDetail,
   type ChangeReviewState,
   type ChangeSetFile,
@@ -120,8 +119,30 @@ export interface IngestedFile {
   readonly dataBase64: string
 }
 
+/**
+ * Host-projected connection state. The Webview deliberately receives only
+ * lifecycle facts that are safe and useful to render; endpoint, process
+ * handles, command lines, and credentials stay in the Extension Host.
+ */
+export type WebviewBackendState =
+  | { readonly kind: 'idle' }
+  | { readonly kind: 'locating-runtime' }
+  | { readonly kind: 'discovering' }
+  | { readonly kind: 'connecting' }
+  | { readonly kind: 'connected' }
+  | { readonly kind: 'starting' }
+  | { readonly kind: 'runtime-missing'; readonly searchedLocations: readonly string[] }
+  | { readonly kind: 'failed'; readonly message: string; readonly retryable: boolean }
+  | {
+      readonly kind: 'port-conflict'
+      readonly port: number
+      readonly message: string
+      readonly retryable: boolean
+    }
+  | { readonly kind: 'stopping' }
+
 export interface AppState {
-  readonly backend: BackendState
+  readonly backend: WebviewBackendState
   /** Safe connected-host version copied from the Extension Host snapshot. */
   readonly connectedDshVersion: string | undefined
   /** Safe compatibility warning for an unknown/fallback DSH runtime. */
@@ -3194,7 +3215,7 @@ function applyHostMessage(message: HostMessage, state: AppState, setState: State
       else
         setState({
           ...state,
-          backend: { kind } as BackendState,
+          backend: { kind },
           connectedDshVersion:
             kind === 'connected' && typeof snapshot?.dshVersion === 'string'
               ? snapshot.dshVersion

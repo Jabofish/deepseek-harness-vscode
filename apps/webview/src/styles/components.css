@@ -262,17 +262,43 @@
   background: var(--dsh-surface-hover);
 }
 
-/* Markdown is a reusable content surface. Keep its line-breaking contract
- * here with the other shared components so feature cards cannot reintroduce
- * independent paragraph or code geometry. Soft source newlines are ordinary
- * whitespace; only Markdown hard breaks and block boundaries create a line. */
+/* Content flow ------------------------------------------------------------
+ *
+ * Normal prose must wrap at meaningful boundaries and keep its own width
+ * inside flex/grid parents. `anywhere` is reserved for explicit code and
+ * identifier surfaces; using it on ordinary copy creates the inconsistent
+ * mid-word breaks visible across feature cards.
+ */
 
-.dsh-markdown {
+.dsh-content-flow {
   min-width: 0;
+  max-width: 100%;
   overflow-wrap: break-word;
   word-break: normal;
   text-align: start;
 }
+
+.dsh-content-flow--preserve-breaks {
+  white-space: pre-wrap;
+}
+
+.dsh-content-flow--code {
+  font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.dsh-content-flow--truncate {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Markdown is a reusable content surface. Keep its line-breaking contract
+ * here with the other shared components so feature cards cannot reintroduce
+ * independent paragraph or code geometry. Soft source newlines are ordinary
+ * whitespace; only Markdown hard breaks and block boundaries create a line. */
 
 .dsh-markdown > :first-child {
   margin-top: 0;
@@ -736,7 +762,6 @@
   color: var(--dsh-muted);
   font-size: var(--dsh-font-size-xs);
   line-height: var(--dsh-line-height-body);
-  overflow-wrap: anywhere;
   text-align: start;
 }
 
@@ -795,7 +820,6 @@
   flex: 1 1 auto;
   font-size: var(--dsh-font-size-md);
   font-weight: 600;
-  overflow-wrap: anywhere;
   text-align: start;
 }
 
@@ -816,7 +840,6 @@
   display: block;
   min-width: 0;
   margin: 0;
-  overflow-wrap: anywhere;
   text-align: start;
 }
 

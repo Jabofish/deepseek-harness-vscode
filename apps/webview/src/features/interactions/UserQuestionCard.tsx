@@ -1,6 +1,7 @@
 import { useState, type ReactElement } from 'react'
 import type { QuestionAnswer, QuestionChoice, UserQuestion, UserQuestionItem } from '@dsh-vscode/domain'
 import { useI18n } from '../../i18n.js'
+import { ContentFlow } from '../../components/common/ContentFlow.js'
 
 export interface UserQuestionCardProps {
   readonly question: UserQuestion
@@ -50,15 +51,25 @@ export function UserQuestionCard(props: UserQuestionCardProps): ReactElement {
       {items.map((item, index) => (
         <div className="dsh-question__item" key={item.id}>
           {items.length > 1 || item.header === undefined ? null : (
-            <p className="dsh-question__header">{item.header}</p>
+            <ContentFlow as="p" className="dsh-question__header">
+              {item.header}
+            </ContentFlow>
           )}
           {items.length > 1 ? (
             <h3 className="dsh-question__item-title">
               {item.header === undefined ? item.prompt : item.header}
             </h3>
           ) : null}
-          {items.length > 1 ? <p className="dsh-question__prompt">{item.prompt}</p> : null}
-          {item.detail === undefined ? null : <p className="dsh-question__detail">{item.detail}</p>}
+          {items.length > 1 ? (
+            <ContentFlow as="p" className="dsh-question__prompt">
+              {item.prompt}
+            </ContentFlow>
+          ) : null}
+          {item.detail === undefined ? null : (
+            <ContentFlow as="p" className="dsh-question__detail">
+              {item.detail}
+            </ContentFlow>
+          )}
           {item.choices === undefined || item.choices.length === 0 ? null : (
             <div className="dsh-question__choices" role="group" aria-label={item.prompt}>
               {item.choices.map((choice) => {
@@ -93,13 +104,15 @@ export function UserQuestionCard(props: UserQuestionCardProps): ReactElement {
                       }}
                     />
                     <span>
-                      <span className="dsh-question__choice-label">
+                      <ContentFlow as="span" className="dsh-question__choice-label">
                         {planReview && isApproveChoice(item, choice) && item.multiSelect !== true
                           ? t('question.approveHint', { label: choice.label })
                           : choice.label}
-                      </span>
+                      </ContentFlow>
                       {choice.description === undefined ? null : (
-                        <span className="dsh-question__choice-description">{choice.description}</span>
+                        <ContentFlow as="span" className="dsh-question__choice-description">
+                          {choice.description}
+                        </ContentFlow>
                       )}
                     </span>
                   </label>

@@ -481,12 +481,38 @@ describe('App connected rendering', () => {
     }
 
     render(<App />)
-    fireEvent.click(screen.getByRole('button', { name: 'Attach file' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Attach file' }))
     const remove = await screen.findByRole('button', { name: 'Remove notes.txt' })
     fireEvent.click(remove)
 
     await waitFor(() => expect(releaseAttachments).toHaveBeenCalledWith([uri]))
     expect(screen.queryByRole('button', { name: 'Remove notes.txt' })).toBeNull()
+  })
+
+  it('keeps one draft chip when the same picker file is selected twice', async () => {
+    const state = connectedState(true)
+    const firstUri = 'dsh-attachment:00000000-0000-4000-8000-000000000001'
+    const secondUri = 'dsh-attachment:00000000-0000-4000-8000-000000000002'
+    const pickAttachment = vi
+      .fn()
+      .mockResolvedValueOnce({ uri: firstUri, name: 'notes.txt', mimeType: 'text/plain' })
+      .mockResolvedValueOnce({ uri: secondUri, name: 'notes.txt', mimeType: 'text/plain' })
+    const releaseAttachments = vi.fn().mockResolvedValue(undefined)
+    currentStore = {
+      ...storeFor(state),
+      pickAttachment,
+      releaseAttachments,
+    }
+
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Attach file' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Attach file' }))
+
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Remove notes.txt' })).toHaveLength(1))
+    expect(releaseAttachments).toHaveBeenCalledWith([secondUri])
   })
 
   it('applies the selected interface language across the conversation and export surfaces', () => {

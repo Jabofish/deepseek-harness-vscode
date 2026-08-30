@@ -1,5 +1,6 @@
 import type { ErrorInfo, ReactNode } from 'react'
 import { Component } from 'react'
+import { ContentFlow } from '../../components/common/ContentFlow.js'
 import { useI18n } from '../../i18n.js'
 
 export interface AppErrorBoundaryProps {
@@ -33,7 +34,7 @@ function ErrorFallback(): ReactNode {
   return (
     <section className="dsh-error-boundary" role="alert">
       <h1>{t('errorBoundary.title')}</h1>
-      <p>{t('errorBoundary.description')}</p>
+      <ContentFlow as="p">{t('errorBoundary.description')}</ContentFlow>
       <button type="button" onClick={() => window.location.reload()}>
         {t('errorBoundary.reload')}
       </button>

@@ -1,4 +1,5 @@
 import type { ReactElement } from 'react'
+import { ContentFlow } from '../../components/common/ContentFlow.js'
 import { useI18n } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
 
@@ -23,13 +24,15 @@ export function RuntimeMissingView(props: RuntimeMissingViewProps): ReactElement
           </span>
           <h1 id="runtime-missing-title">{t('runtime.title')}</h1>
         </div>
-        <p className="dsh-runtime-missing__description">{t('runtime.description')}</p>
+        <ContentFlow as="p" className="dsh-runtime-missing__description">
+          {t('runtime.description')}
+        </ContentFlow>
       </div>
-      <ol className="dsh-runtime-missing__steps" aria-label={t('runtime.steps')}>
+      <ContentFlow as="ol" className="dsh-runtime-missing__steps" aria-label={t('runtime.steps')}>
         <li>{t('runtime.step.install')}</li>
         <li>{t('runtime.step.reconnect')}</li>
         <li>{t('runtime.step.docs')}</li>
-      </ol>
+      </ContentFlow>
       <div className="dsh-runtime-missing__actions">
         <button
           className="dsh-button dsh-button--primary"

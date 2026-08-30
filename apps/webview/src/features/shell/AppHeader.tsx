@@ -1,15 +1,18 @@
 import type { ReactElement, ReactNode } from 'react'
-import type { BackendState } from '@dsh-vscode/domain'
+import type { WebviewBackendState } from '../../app/store.js'
 import { useI18n } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
 import { RuntimeStatus } from '../runtime/RuntimeStatus.js'
 import { SessionHeader } from './SessionHeader.js'
 
 export interface AppHeaderProps {
-  readonly runtime: BackendState
+  readonly runtime: WebviewBackendState
+  readonly connectedDshVersion?: string | undefined
+  readonly compatibilityWarning?: string | undefined
   readonly sessionControl: ReactNode
   readonly onNewSession: () => void
   readonly onOpenSettings: () => void
+  readonly onRetryConnection: () => void
 }
 
 /** Compact utility controls placed in the conversation toolbar. */
@@ -20,7 +23,13 @@ export function AppHeader(props: AppHeaderProps): ReactElement {
       <div className="dsh-conversation__utility-session">
         <SessionHeader sessionControl={props.sessionControl} onNewSession={props.onNewSession} />
       </div>
-      <RuntimeStatus state={props.runtime} />
+      <RuntimeStatus
+        state={props.runtime}
+        connectedDshVersion={props.connectedDshVersion}
+        compatibilityWarning={props.compatibilityWarning}
+        onOpenSettings={props.onOpenSettings}
+        onRetry={props.onRetryConnection}
+      />
       <button
         className="dsh-icon-button"
         type="button"
