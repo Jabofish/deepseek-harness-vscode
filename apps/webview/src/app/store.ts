@@ -537,8 +537,16 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         result?.kind === 'editor.context'
           ? parseEditorContextAvailableKinds(result.availableKinds)
           : undefined
-      if (items !== undefined && availableKinds !== undefined && generation === editorContextRefreshGeneration)
-        setState((current) => ({ ...current, editorContext: items, editorContextAvailableKinds: availableKinds }))
+      if (
+        items !== undefined &&
+        availableKinds !== undefined &&
+        generation === editorContextRefreshGeneration
+      )
+        setState((current) => ({
+          ...current,
+          editorContext: items,
+          editorContextAvailableKinds: availableKinds,
+        }))
     } finally {
       if (generation === editorContextRefreshGeneration)
         setState((current) => ({ ...current, editorContextLoading: false }))
@@ -701,7 +709,12 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     // chips visually attached to the next session. The Host remains the
     // authority and will reject any stale in-flight resolution by generation
     // or owner/session binding.
-    setState((current) => ({ ...current, editorContext: [], editorContextAvailableKinds: [], editorContextLoading: false }))
+    setState((current) => ({
+      ...current,
+      editorContext: [],
+      editorContextAvailableKinds: [],
+      editorContextLoading: false,
+    }))
     try {
       await releaseEditorContextRefs(refs, items)
     } catch {
@@ -712,11 +725,21 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     editorContextRefreshGeneration += 1
     const refs = state.editorContext.map((item) => item.ref.contextRef)
     if (refs.length === 0) {
-      setState((current) => ({ ...current, editorContext: [], editorContextAvailableKinds: [], editorContextLoading: false }))
+      setState((current) => ({
+        ...current,
+        editorContext: [],
+        editorContextAvailableKinds: [],
+        editorContextLoading: false,
+      }))
       return
     }
     const items = [...state.editorContext]
-    setState((current) => ({ ...current, editorContext: [], editorContextAvailableKinds: [], editorContextLoading: false }))
+    setState((current) => ({
+      ...current,
+      editorContext: [],
+      editorContextAvailableKinds: [],
+      editorContextLoading: false,
+    }))
     try {
       await releaseEditorContextRefs(refs, items)
     } catch {
@@ -4654,12 +4677,14 @@ function parseEditorContextItems(value: unknown): readonly EditorContextItem[] |
 function parseEditorContextAvailableKinds(value: unknown): readonly EditorContextKind[] | undefined {
   if (value === undefined) return []
   if (!Array.isArray(value)) return undefined
-  const kinds = value.map((entry): EditorContextKind | undefined => {
+  const kinds = value.map((entry: unknown): EditorContextKind | undefined => {
     if (entry === 'open-document') return 'file'
     if (entry === 'selection' || entry === 'diagnostic' || entry === 'symbol') return entry
     return undefined
   })
-  return kinds.every((kind): kind is EditorContextKind => kind !== undefined) ? [...new Set(kinds)] : undefined
+  return kinds.every((kind): kind is EditorContextKind => kind !== undefined)
+    ? [...new Set(kinds)]
+    : undefined
 }
 
 function parseEditorContextItem(value: unknown): EditorContextItem | undefined {

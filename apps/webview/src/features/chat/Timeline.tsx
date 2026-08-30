@@ -735,10 +735,7 @@ interface TimelineNodeRenderContext {
   readonly t: Translate
 }
 
-function renderTimelineNode(
-  node: DisplayTimelineNode,
-  context: TimelineNodeRenderContext,
-): ReactElement {
+function renderTimelineNode(node: DisplayTimelineNode, context: TimelineNodeRenderContext): ReactElement {
   const { props } = context
   return renderNode(
     node,

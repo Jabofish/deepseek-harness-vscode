@@ -22,7 +22,7 @@ function connectedState(activeSession: boolean): AppState {
     // The current connection.snapshot protocol intentionally exposes only
     // the connection kind to the Webview, so connected state may not carry
     // the full Extension Host backend object.
-    backend: { kind: 'connected' } as AppState['backend'],
+    backend: { kind: 'connected' },
     connectedDshVersion: '0.1.0-rc.6',
     dshCompatibilityWarning: undefined,
     featureProfile: undefined,
@@ -216,11 +216,11 @@ describe('App connected rendering', () => {
   })
 
   it('renders the shared application header controls', () => {
-    currentStore = storeFor(connectedState(false))
+    currentStore = storeFor(connectedState(true))
     render(<App />)
 
     expect(screen.getByRole('banner')).toBeDefined()
-    expect(screen.getByRole('button', { name: 'Open sessions' })).toBeDefined()
+    expect(screen.getByRole('button', { name: 'Switch session: Session' })).toBeDefined()
     expect(screen.getByRole('button', { name: 'New Session' })).toBeDefined()
     expect(screen.getByRole('button', { name: 'Settings' })).toBeDefined()
   })
@@ -318,6 +318,7 @@ describe('App connected rendering', () => {
       </I18nProvider>,
     )
 
+    fireEvent.click(screen.getByRole('button', { name: 'Conversation tools' }))
     expect(screen.getByRole('button', { name: 'Subagents: 1' })).toBeDefined()
     expect(screen.getByText('Subagents')).toBeDefined()
   })
@@ -410,7 +411,7 @@ describe('App connected rendering', () => {
     }
 
     render(<App />)
-    expect(screen.getByRole('button', { name: 'Attach file' }).hasAttribute('disabled')).toBe(true)
+    expect(screen.getByRole('button', { name: 'Editor context' }).hasAttribute('disabled')).toBe(true)
     fireEvent.change(screen.getByRole('textbox', { name: 'Prompt' }), {
       target: { value: 'continue' },
     })
@@ -523,6 +524,7 @@ describe('App connected rendering', () => {
       </I18nProvider>,
     )
 
+    fireEvent.click(screen.getByRole('button', { name: 'Conversation tools' }))
     fireEvent.click(screen.getByRole('button', { name: 'Interface language' }))
     fireEvent.click(screen.getByRole('option', { name: '中文' }))
 

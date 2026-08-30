@@ -303,16 +303,16 @@ export function PluginConfiguration(props: PluginConfigurationProps): ReactEleme
                             aria-invalid={fieldInvalid}
                             onChange={(event) => stage(namespace, field.field, event.currentTarget.value)}
                           />
-                      <ContentFlow
-                        as="span"
-                        className={
-                          fieldInvalid
-                            ? 'dsh-plugin-configuration__hint dsh-plugin-configuration__hint--error'
-                            : 'dsh-plugin-configuration__hint'
-                        }
-                      >
-                        {fieldInvalid ? t('plugins.config.invalidNumber') : t(field.hintKey)}
-                      </ContentFlow>
+                          <ContentFlow
+                            as="span"
+                            className={
+                              fieldInvalid
+                                ? 'dsh-plugin-configuration__hint dsh-plugin-configuration__hint--error'
+                                : 'dsh-plugin-configuration__hint'
+                            }
+                          >
+                            {fieldInvalid ? t('plugins.config.invalidNumber') : t(field.hintKey)}
+                          </ContentFlow>
                           {overridden ? (
                             <button
                               type="button"

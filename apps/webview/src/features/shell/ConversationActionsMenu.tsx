@@ -1,11 +1,4 @@
-import {
-  useCallback,
-  useRef,
-  useState,
-  type KeyboardEvent,
-  type ReactElement,
-  type ReactNode,
-} from 'react'
+import { useCallback, useRef, useState, type KeyboardEvent, type ReactElement, type ReactNode } from 'react'
 
 import { PopoverCard } from '../../components/common/PopoverCard.js'
 import { useDismissibleLayer } from '../../components/common/useDismissibleLayer.js'
@@ -26,14 +19,15 @@ export interface ConversationActionsMenuProps {
  */
 export function ConversationActionsMenu(props: ConversationActionsMenuProps): ReactElement {
   const { t } = useI18n()
+  const { children, onClose } = props
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
 
   const close = useCallback((): void => {
     setOpen(false)
-    props.onClose?.()
-  }, [props.onClose])
+    onClose?.()
+  }, [onClose])
 
   useDismissibleLayer({
     open,
@@ -75,7 +69,7 @@ export function ConversationActionsMenu(props: ConversationActionsMenuProps): Re
           role="dialog"
           aria-label={t('app.conversationActions')}
         >
-          <div className="dsh-conversation__actions-grid">{props.children}</div>
+          <div className="dsh-conversation__actions-grid">{children}</div>
         </PopoverCard>
       ) : null}
     </div>

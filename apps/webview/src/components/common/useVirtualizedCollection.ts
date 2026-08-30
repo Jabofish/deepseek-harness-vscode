@@ -42,18 +42,26 @@ export interface VirtualizedCollectionResult {
 export function useVirtualizedCollection<T>(
   options: VirtualizedCollectionOptions<T>,
 ): VirtualizedCollectionResult {
-  const enabled = options.enabled ?? options.items.length >= DEFAULT_VIRTUALIZATION_THRESHOLD
-  const count = enabled ? options.items.length : 0
-  const estimateSize = options.estimateSize ?? defaultEstimateSize
-  const overscan = options.overscan ?? DEFAULT_VIRTUALIZATION_OVERSCAN
+  const {
+    enabled: enabledOption,
+    estimateSize: estimateSizeOption,
+    getItemKey: getItemKeyOption,
+    items,
+    overscan: overscanOption,
+    scrollRef,
+  } = options
+  const enabled = enabledOption ?? items.length >= DEFAULT_VIRTUALIZATION_THRESHOLD
+  const count = enabled ? items.length : 0
+  const estimateSize = estimateSizeOption ?? defaultEstimateSize
+  const overscan = overscanOption ?? DEFAULT_VIRTUALIZATION_OVERSCAN
   const getItemKey = useCallback(
     (index: number): string | number => {
-      const item = options.items[index]
-      return item === undefined ? index : (options.getItemKey?.(item, index) ?? index)
+      const item = items[index]
+      return item === undefined ? index : (getItemKeyOption?.(item, index) ?? index)
     },
-    [options.getItemKey, options.items],
+    [getItemKeyOption, items],
   )
-  const getScrollElement = useCallback(() => options.scrollRef.current, [options.scrollRef])
+  const getScrollElement = useCallback(() => scrollRef.current, [scrollRef])
   // eslint-disable-next-line react-hooks/incompatible-library
   const virtualizer = useVirtualizer<HTMLDivElement, HTMLDivElement>({
     count,

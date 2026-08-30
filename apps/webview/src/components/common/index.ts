@@ -14,10 +14,7 @@ export {
   DEFAULT_VIRTUALIZATION_THRESHOLD,
   useVirtualizedCollection,
 } from './useVirtualizedCollection.js'
-export type {
-  VirtualizedCollectionOptions,
-  VirtualizedCollectionResult,
-} from './useVirtualizedCollection.js'
+export type { VirtualizedCollectionOptions, VirtualizedCollectionResult } from './useVirtualizedCollection.js'
 export { SelectMenu } from './SelectMenu.js'
 export type { SelectMenuOption, SelectMenuProps } from './SelectMenu.js'
 export { ContentFlow } from './ContentFlow.js'

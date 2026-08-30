@@ -1,16 +1,6 @@
 import { createElement, forwardRef, type HTMLAttributes, type ReactElement, type ReactNode } from 'react'
 
-type ContentFlowElement =
-  | 'code'
-  | 'dd'
-  | 'details'
-  | 'div'
-  | 'li'
-  | 'ol'
-  | 'p'
-  | 'small'
-  | 'span'
-  | 'strong'
+type ContentFlowElement = 'code' | 'dd' | 'details' | 'div' | 'li' | 'ol' | 'p' | 'small' | 'span' | 'strong'
 
 export type ContentFlowVariant = 'prose' | 'preserve-breaks' | 'code' | 'truncate'
 

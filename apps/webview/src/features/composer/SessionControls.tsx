@@ -219,9 +219,7 @@ export function SessionControls(props: SessionControlsProps): ReactElement {
             displayLabel
             label={formatPermissionLabel(permissionPreset, t)}
             ariaLabel={t('controls.access')}
-            title={
-              permissionCommandAvailable ? t('controls.accessChange') : t('controls.accessUnavailable')
-            }
+            title={permissionCommandAvailable ? t('controls.accessChange') : t('controls.accessUnavailable')}
             value={permissionPreset}
             options={availablePermissionPresets.map((preset) => ({
               value: preset,

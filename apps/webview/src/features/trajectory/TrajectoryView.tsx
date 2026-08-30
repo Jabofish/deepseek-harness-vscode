@@ -37,12 +37,11 @@ export function TrajectoryView(props: TrajectoryViewProps): ReactElement {
   const lastRecord = projection.sections.at(-1)?.records.at(-1)
   const tailSignature = lastRecord === undefined ? '' : `${lastRecord.id}:${lastRecord.text.length}`
 
-  const { scrollRef, contentRef, scrollToLatest, isPinnedToBottom, showJumpToLatest } =
-    useScrollFollow({
-      contentKey: tailSignature,
-      itemCount: projection.recordCount,
-      sessionId: props.sessionId,
-    })
+  const { scrollRef, contentRef, scrollToLatest, isPinnedToBottom, showJumpToLatest } = useScrollFollow({
+    contentKey: tailSignature,
+    itemCount: projection.recordCount,
+    sessionId: props.sessionId,
+  })
 
   useEffect(() => {
     if (previousSessionRef.current !== props.sessionId) {

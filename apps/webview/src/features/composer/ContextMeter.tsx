@@ -206,7 +206,11 @@ function contextLabel(current: number, maximum: number | undefined): string {
     : `~${formatCount(current)} / ${formatCount(maximum)}`
 }
 
-function compactContextLabel(current: number, maximum: number | undefined, percent: number | undefined): string {
+function compactContextLabel(
+  current: number,
+  maximum: number | undefined,
+  percent: number | undefined,
+): string {
   if (maximum === undefined || percent === undefined) return `~${formatCount(current)}`
   return `~${formatCount(current)} · ${percent}%`
 }

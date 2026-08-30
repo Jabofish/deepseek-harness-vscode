@@ -16,9 +16,7 @@ interface EditorContextAction {
   readonly icon: IconName
   readonly labelKey: 'composer.contextSelection' | 'composer.contextFile' | 'composer.contextDiagnostic'
   readonly descriptionKey:
-    | 'composer.addSelectionContext'
-    | 'composer.addFileContext'
-    | 'composer.addDiagnosticContext'
+    'composer.addSelectionContext' | 'composer.addFileContext' | 'composer.addDiagnosticContext'
 }
 
 const CONTEXT_ACTIONS: readonly EditorContextAction[] = [

@@ -48,8 +48,7 @@ export function ExportDialog(props: ExportDialogProps): ReactElement {
           ]}
           placement="below"
           onChange={(value) => {
-            if (value === 'markdown' || value === 'json' || value === 'zip')
-              setFormat(value as SessionExportOptions['format'])
+            if (value === 'markdown' || value === 'json' || value === 'zip') setFormat(value)
           }}
         />
       </div>

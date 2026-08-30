@@ -50,7 +50,13 @@ export interface InlineProps extends LayoutAttributes {
 }
 
 /** A one-line layout primitive; wrapping is opt-in instead of accidental. */
-export function Inline({ children, className, gap = 'sm', wrap = false, ...props }: InlineProps): ReactElement {
+export function Inline({
+  children,
+  className,
+  gap = 'sm',
+  wrap = false,
+  ...props
+}: InlineProps): ReactElement {
   return (
     <div
       {...props}

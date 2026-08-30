@@ -1,5 +1,10 @@
 import { useCallback, useRef, useState, type ReactElement } from 'react'
-import { ContentFlow, PopoverCard, useDismissibleLayer, useViewportMenuPosition } from '../../components/common/index.js'
+import {
+  ContentFlow,
+  PopoverCard,
+  useDismissibleLayer,
+  useViewportMenuPosition,
+} from '../../components/common/index.js'
 import type { WebviewBackendState } from '../../app/store.js'
 import { useI18n, type Translate } from '../../i18n.js'
 import { Icon, type IconName } from '../../ui/Icon.js'
@@ -50,9 +55,7 @@ export function RuntimeStatus({
   })
 
   const retryable =
-    onRetry !== undefined &&
-    (state.kind === 'failed' || state.kind === 'port-conflict') &&
-    state.retryable
+    onRetry !== undefined && (state.kind === 'failed' || state.kind === 'port-conflict') && state.retryable
   const message = state.kind === 'failed' || state.kind === 'port-conflict' ? state.message : undefined
   const details = runtimeDetails(state, connectedDshVersion, t)
 
@@ -168,8 +171,7 @@ export function RuntimeStatus({
 function runtimeStatusLabel(state: WebviewBackendState, t: Translate): string {
   if (state.kind === 'connected') return t('runtime.status.connected')
   if (state.kind === 'runtime-missing') return t('runtime.status.runtime-missing')
-  if (state.kind === 'failed' || state.kind === 'port-conflict')
-    return t('runtime.status.connection-failed')
+  if (state.kind === 'failed' || state.kind === 'port-conflict') return t('runtime.status.connection-failed')
   return t(`runtime.status.${state.kind}`)
 }
 

@@ -862,9 +862,7 @@ export function Composer(props: ComposerProps): ReactElement {
               </div>
             )}
             {configuration === undefined || onConfigurationChange === undefined ? null : (
-              <div className="dsh-composer__extras-section">
-                {renderSessionControls('secondary')}
-              </div>
+              <div className="dsh-composer__extras-section">{renderSessionControls('secondary')}</div>
             )}
           </ComposerExtrasMenu>
           <span

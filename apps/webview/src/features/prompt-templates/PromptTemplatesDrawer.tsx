@@ -489,7 +489,7 @@ export function PromptTemplatesDrawer(props: PromptTemplatesDrawerProps): ReactE
                   placement="below"
                   onChange={(scope) => {
                     if (scope === 'global' || scope === 'workspace' || scope === 'session')
-                      setForm((current) => ({ ...current, scope: scope as PromptTemplateScope }))
+                      setForm((current) => ({ ...current, scope }))
                   }}
                 />
               </div>

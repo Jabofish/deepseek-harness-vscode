@@ -36,10 +36,7 @@ export function useViewportMenuPosition({
   const [style, setStyle] = useState<CSSProperties | undefined>()
 
   useLayoutEffect(() => {
-    if (!open) {
-      setStyle(undefined)
-      return
-    }
+    if (!open) return
 
     const update = (): void => {
       const anchor = anchorRef.current

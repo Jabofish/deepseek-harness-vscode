@@ -134,10 +134,12 @@ export class EditorContextProvider implements EditorContextPort, vscode.Disposab
     }
 
     const selectedLine = selection.active.line
-    const diagnostics = this.languages.getDiagnostics(editor.document.uri).filter(
-      (diagnostic) =>
-        diagnostic.range.start.line <= selectedLine && diagnostic.range.end.line >= selectedLine,
-    )
+    const diagnostics = this.languages
+      .getDiagnostics(editor.document.uri)
+      .filter(
+        (diagnostic) =>
+          diagnostic.range.start.line <= selectedLine && diagnostic.range.end.line >= selectedLine,
+      )
     if (diagnostics.length > 0) {
       const diagnosticBytes = Buffer.byteLength(
         diagnostics.map((diagnostic) => `${diagnostic.severity}: ${diagnostic.message}`).join('\n'),

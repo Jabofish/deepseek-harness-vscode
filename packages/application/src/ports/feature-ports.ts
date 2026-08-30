@@ -22,10 +22,7 @@ export interface EditorContextPort {
     signal?: AbortSignal,
   ): Promise<EditorContextItem>
   list(owner: EditorContextOwner, signal?: AbortSignal): Promise<readonly EditorContextItem[]>
-  availability(
-    owner: EditorContextOwner,
-    signal?: AbortSignal,
-  ): Promise<EditorContextAvailability>
+  availability(owner: EditorContextOwner, signal?: AbortSignal): Promise<EditorContextAvailability>
   preview(contextRef: string, owner: EditorContextOwner, signal?: AbortSignal): Promise<EditorContextPreview>
   release(contextRefs: readonly string[], owner: EditorContextOwner, signal?: AbortSignal): Promise<void>
   resolveForPrompt(

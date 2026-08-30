@@ -35,12 +35,7 @@ describe('RuntimeStatus', () => {
   })
 
   it('exposes connected state as a compact live status with inspectable facts', () => {
-    render(
-      <RuntimeStatus
-        state={{ kind: 'connected' }}
-        connectedDshVersion="0.1.0-rc.6"
-      />,
-    )
+    render(<RuntimeStatus state={{ kind: 'connected' }} connectedDshVersion="0.1.0-rc.6" />)
 
     expect(screen.getByRole('status').textContent).toBe('Connected')
     expect(screen.getByRole('button', { name: 'Connected' })).toBeDefined()

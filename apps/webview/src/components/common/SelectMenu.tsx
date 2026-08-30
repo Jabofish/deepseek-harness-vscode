@@ -63,6 +63,8 @@ export function SelectMenu(props: SelectMenuProps): ReactElement {
   ]
     .filter(Boolean)
     .join(' ')
+  const requestedIndex = indexOfValue(props.options, props.value)
+  const activeOptionIndex = clampOptionIndex(props.options, activeIndex, props.value)
 
   useDismissibleLayer({
     open,
@@ -77,19 +79,17 @@ export function SelectMenu(props: SelectMenuProps): ReactElement {
   useEffect(() => {
     if ((props.openRequest ?? 0) <= 0 || props.disabled || enabledOptions.length === 0) return
     const openPicker = window.setTimeout(() => {
-      setActiveIndex(indexOfValue(props.options, props.value))
+      setActiveIndex(requestedIndex)
       setOpen(true)
       triggerRef.current?.focus()
     }, 0)
     return () => window.clearTimeout(openPicker)
-  }, [props.disabled, props.openRequest, enabledOptions.length, props.options.length, props.value])
+  }, [enabledOptions.length, props.disabled, props.openRequest, requestedIndex])
 
   useEffect(() => {
     if (!open) return
-    const nextIndex = clampOptionIndex(props.options, activeIndex, props.value)
-    setActiveIndex(nextIndex)
-    optionRefs.current[nextIndex]?.focus()
-  }, [activeIndex, open, props.options, props.value])
+    optionRefs.current[activeOptionIndex]?.focus()
+  }, [activeOptionIndex, open])
 
   function close(): void {
     setOpen(false)
@@ -123,7 +123,7 @@ export function SelectMenu(props: SelectMenuProps): ReactElement {
     }
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault()
-      focusOption(activeIndex + (event.key === 'ArrowDown' ? 1 : -1))
+      focusOption(activeOptionIndex + (event.key === 'ArrowDown' ? 1 : -1))
       return
     }
     if (event.key === 'Home' || event.key === 'End') {
@@ -133,7 +133,7 @@ export function SelectMenu(props: SelectMenuProps): ReactElement {
       return
     }
     if (event.key === 'Enter' || event.key === ' ') {
-      const option = props.options[activeIndex]
+      const option = props.options[activeOptionIndex]
       if (option !== undefined && option.disabled !== true) {
         event.preventDefault()
         props.onChange(option.value)
@@ -186,7 +186,7 @@ export function SelectMenu(props: SelectMenuProps): ReactElement {
               role="option"
               aria-selected={option.value === props.value}
               disabled={option.disabled}
-              tabIndex={index === activeIndex ? 0 : -1}
+              tabIndex={index === activeOptionIndex ? 0 : -1}
               onFocus={() => setActiveIndex(index)}
               onClick={() => {
                 if (option.disabled) return

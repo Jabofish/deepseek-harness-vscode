@@ -1,4 +1,4 @@
-import { useEffect, useRef, type RefObject } from 'react'
+import { useEffect, useLayoutEffect, useRef, type RefObject } from 'react'
 
 export interface DismissibleLayerOptions {
   readonly open: boolean
@@ -13,18 +13,16 @@ export interface DismissibleLayerOptions {
  * dialogs. Related surfaces are explicit refs instead of an assumption about
  * the DOM tree, so a portal or a nested popup remains clickable.
  */
-export function useDismissibleLayer({
-  open,
-  refs,
-  onDismiss,
-  onEscape,
-}: DismissibleLayerOptions): void {
+export function useDismissibleLayer({ open, refs, onDismiss, onEscape }: DismissibleLayerOptions): void {
   const refsRef = useRef(refs)
   const dismissRef = useRef(onDismiss)
   const escapeRef = useRef(onEscape)
-  refsRef.current = refs
-  dismissRef.current = onDismiss
-  escapeRef.current = onEscape
+
+  useLayoutEffect(() => {
+    refsRef.current = refs
+    dismissRef.current = onDismiss
+    escapeRef.current = onEscape
+  }, [onDismiss, onEscape, refs])
 
   useEffect(() => {
     if (!open) return

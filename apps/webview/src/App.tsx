@@ -77,7 +77,9 @@ export function App(): ReactElement {
   const [attachments, setAttachments] = useState<PromptAttachment[]>([])
   const [attachmentPreviews, setAttachmentPreviews] = useState<Record<string, string>>({})
   const [openFileCandidates, setOpenFileCandidates] = useState<readonly OpenFileCandidate[]>([])
+  const [openFileCandidatesSessionId, setOpenFileCandidatesSessionId] = useState<string | undefined>()
   const [openFilePickerOpen, setOpenFilePickerOpen] = useState(false)
+  const [openFilePickerSessionId, setOpenFilePickerSessionId] = useState<string | undefined>()
   const [openFilePickerLoading, setOpenFilePickerLoading] = useState(false)
   const [referenceCandidates, setReferenceCandidates] = useState<readonly ReferenceCandidate[]>([])
   const [referenceLoading, setReferenceLoading] = useState(false)
@@ -102,7 +104,10 @@ export function App(): ReactElement {
   const [dismissedConnection, setDismissedConnection] = useState<string | undefined>()
   const [modelPickerOpenRequest, setModelPickerOpenRequest] = useState(0)
   const [conversationView, setConversationView] = useState<'chat' | 'trajectory'>('chat')
-  const [showDshEvents, setShowDshEvents] = useState(false)
+  const [dshEventVisibility, setDshEventVisibility] = useState<{
+    readonly sessionId: string | undefined
+    readonly visible: boolean
+  }>({ sessionId: undefined, visible: false })
   const [exportOpen, setExportOpen] = useState(false)
   const [localeOpen, setLocaleOpen] = useState(false)
   const localeControlRef = useRef<HTMLSpanElement>(null)
@@ -246,29 +251,23 @@ export function App(): ReactElement {
     () => state.timeline.nodes.reduce((count, node) => (node.kind === 'event' ? count + 1 : count), 0),
     [state.timeline.nodes],
   )
-  useEffect(() => setShowDshEvents(false), [active?.id])
-  useEffect(() => {
-    const request = ++openFileRequestRef.current
-    setOpenFilePickerOpen(false)
-    setOpenFileCandidates([])
-    if (active?.id === undefined) {
-      setOpenFilePickerLoading(false)
-      return
-    }
-
-    setOpenFilePickerLoading(true)
-    void store
-      .listOpenFiles()
-      .then((candidates) => {
-        if (request === openFileRequestRef.current) setOpenFileCandidates(candidates)
-      })
-      .catch(() => {
-        if (request === openFileRequestRef.current) setOpenFileCandidates([])
-      })
-      .finally(() => {
-        if (request === openFileRequestRef.current) setOpenFilePickerLoading(false)
-      })
-  }, [active?.id, store])
+  const activeSessionId = active?.id
+  const showDshEvents =
+    dshEventVisibility.visible && dshEventVisibility.sessionId !== undefined
+      ? dshEventVisibility.sessionId === activeSessionId
+      : false
+  const visibleOpenFilePickerOpen =
+    openFilePickerOpen && openFilePickerSessionId !== undefined && openFilePickerSessionId === activeSessionId
+  const visibleOpenFileCandidates =
+    openFileCandidatesSessionId === activeSessionId ? openFileCandidates : ([] as const)
+  const visibleOpenFilePickerLoading =
+    openFilePickerLoading &&
+    openFilePickerSessionId !== undefined &&
+    openFilePickerSessionId === activeSessionId
+  const setShowDshEvents = (visible: boolean): void => {
+    if (activeSessionId === undefined) return
+    setDshEventVisibility({ sessionId: activeSessionId, visible })
+  }
   const sessionModels = state.sessionModels.length > 0 ? state.sessionModels : state.models
   const pendingPermissions =
     active === undefined ? [] : state.permissions.filter((request) => request.sessionId === active.id)
@@ -461,19 +460,31 @@ export function App(): ReactElement {
       .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : t('app.error.prompt')))
   }
   const toggleOpenFilePicker = (): void => {
-    if (openFilePickerOpen) {
+    if (visibleOpenFilePickerOpen) {
       setOpenFilePickerOpen(false)
       return
     }
+    if (activeSessionId === undefined) return
+    const request = ++openFileRequestRef.current
+    setOpenFilePickerSessionId(activeSessionId)
     setOpenFilePickerOpen(true)
     setOpenFilePickerLoading(true)
     void store
       .listOpenFiles()
-      .then(setOpenFileCandidates)
-      .catch((reason: unknown) =>
-        setError(reason instanceof Error ? reason.message : t('app.error.listOpenFiles')),
-      )
-      .finally(() => setOpenFilePickerLoading(false))
+      .then((candidates) => {
+        if (request !== openFileRequestRef.current) return
+        setOpenFileCandidatesSessionId(activeSessionId)
+        setOpenFileCandidates(candidates)
+      })
+      .catch((reason: unknown) => {
+        if (request !== openFileRequestRef.current) return
+        setOpenFileCandidatesSessionId(activeSessionId)
+        setOpenFileCandidates([])
+        setError(reason instanceof Error ? reason.message : t('app.error.listOpenFiles'))
+      })
+      .finally(() => {
+        if (request === openFileRequestRef.current) setOpenFilePickerLoading(false)
+      })
   }
   const selectOpenFile = (candidateId: string): void => {
     if (
@@ -1171,9 +1182,9 @@ export function App(): ReactElement {
                           }}
                           onIngestFiles={ingestFiles}
                           attachmentPreviews={attachmentPreviews}
-                          openFileCandidates={openFileCandidates}
-                          openFilePickerOpen={openFilePickerOpen}
-                          openFilePickerLoading={openFilePickerLoading}
+                          openFileCandidates={visibleOpenFileCandidates}
+                          openFilePickerOpen={visibleOpenFilePickerOpen}
+                          openFilePickerLoading={visibleOpenFilePickerLoading}
                           {...(state.preferredOpenFileId === undefined
                             ? {}
                             : { preferredOpenFileId: state.preferredOpenFileId })}

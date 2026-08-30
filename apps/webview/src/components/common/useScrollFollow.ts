@@ -70,7 +70,6 @@ export function useScrollFollow(options: ScrollFollowOptions): ScrollFollowResul
   const internalScrollTopRef = useRef<number | undefined>(undefined)
   const scrollHandlerRef = useRef<() => void>(() => undefined)
   const itemCountRef = useRef(options.itemCount)
-  itemCountRef.current = options.itemCount
   const [isPinnedToBottom, setIsPinnedToBottom] = useState(true)
   const [showJumpToLatest, setShowJumpToLatest] = useState(false)
   const bottomThreshold = options.bottomThreshold ?? DEFAULT_BOTTOM_THRESHOLD
@@ -202,7 +201,11 @@ export function useScrollFollow(options: ScrollFollowOptions): ScrollFollowResul
       return current === next ? current : next
     })
   }, [armUserScrollLock, bottomThreshold, cancelScheduledFollow, options.itemCount])
-  scrollHandlerRef.current = handleScroll
+
+  useLayoutEffect(() => {
+    itemCountRef.current = options.itemCount
+    scrollHandlerRef.current = handleScroll
+  }, [handleScroll, options.itemCount])
 
   const handleWheel = useCallback(
     (event: Pick<WheelEvent, 'deltaY'>): void => {
@@ -264,7 +267,7 @@ export function useScrollFollow(options: ScrollFollowOptions): ScrollFollowResul
       element.removeEventListener('scroll', onScroll, true)
       element.removeEventListener('scrollend', onScrollEnd, true)
     }
-  }, [armUserScrollLock, cancelScheduledFollow, handleWheel])
+  }, [armUserScrollLock, cancelScheduledFollow, clearUserScrollLock, handleWheel, scheduleScrollToLatest])
 
   useLayoutEffect(() => clearUserScrollLock, [clearUserScrollLock])
 
