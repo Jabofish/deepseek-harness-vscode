@@ -5,8 +5,7 @@
 English | [简体中文](README.zh-CN.md)
 
 [![CI](https://github.com/Jabofish/deepseek-harness-vscode/actions/workflows/ci.yml/badge.svg)](https://github.com/Jabofish/deepseek-harness-vscode/actions/workflows/ci.yml)
-[![Visual Studio Marketplace](https://img.shields.io/visual-studio-marketplace/v/Direwolf.deepseek-harness-client?label=marketplace)](https://marketplace.visualstudio.com/items?itemName=Direwolf.deepseek-harness-client)
-[![Installs](https://img.shields.io/visual-studio-marketplace/i/Direwolf.deepseek-harness-client)](https://marketplace.visualstudio.com/items?itemName=Direwolf.deepseek-harness-client)
+[![Marketplace listed](https://img.shields.io/badge/Marketplace-listed-0078D4?logo=visualstudiocode&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=Direwolf.deepseek-harness-client)
 [![GitHub Release](https://img.shields.io/github/v/release/Jabofish/deepseek-harness-vscode)](https://github.com/Jabofish/deepseek-harness-vscode/releases)
 [![License](https://img.shields.io/github/license/Jabofish/deepseek-harness-vscode)](LICENSE)
 
