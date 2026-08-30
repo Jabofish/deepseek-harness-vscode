@@ -132,6 +132,22 @@ VS Code 无文件夹 Webview 回放，因此该修复不提升能力矩阵中的
   6 个预存前端失败（已在干净树上复现，属进行中的前端工作）外全部通过。本批 4 项修复均已按
   "红测试确认问题存在 → 修复 → 绿"流程完成。
 
+## 2026-08-30 backend review batch E evidence
+
+- CN-06（alpha 会话生命周期）：alpha 事件源此前只处理 `session.added`；host 发布 `api-session/removed`
+  （映射为 `host/session-removed`）后，对应 per-session follow 控制器仍留在 `sessions` 表中，其
+  `session/follow` 流被服务端结束后按退避无限重连（红测试复现 700ms 内 3 次重开），并且长期驻留的
+  Extension Host 中 Map 无界增长。现在 `session.removed` 对称触发 unwatch：从表中移除、清理订阅并
+  close 控制器；后续对会话的读取仍按既有 `onSessionAccess` 惰性重看。
+  红绿证据：`packages/dsh-adapter/test/alpha-events.spec.ts`，修复前重开计数 3（红），修复后恒为 1（绿）。
+- CN-06（alpha 连接状态语义）：单个 per-session follow 流的瞬时失败此前会以全局 `connection.lost`
+  发布到所有监听者，而全局流仍然健康；Extension Host 据此拆掉 changeTracker/taskRegistry/editor
+  context 且无恢复路径。现在仅 host-wide 控制器有权发布 `connection.lost`，session 作用域控制器在
+  投影到共享监听者时过滤该事件（其自身重试循环不受影响，重开计数继续增长证明恢复仍在进行）。
+  红绿证据：同文件第二例，修复前监听者收到 `connection.lost`（红），修复后不再收到且重开 ≥2（绿）。
+- 门禁状态：`typecheck` 全仓通过、adapter 定向 lint/format 通过；全量 `test` 728 测试中除既知
+  6 个预存前端失败外全部通过。
+
 ## rc.8 适配增量与兼容证据
 
 - 版本层：`versions/rc6`、`versions/rc7`、`versions/rc8` 与受控 rc.6 fallback；运行时定位允许任何非空未知版本标签并把警告安全传给 Webview。
