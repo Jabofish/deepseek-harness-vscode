@@ -696,9 +696,7 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                           </p>
                         ) : null}
                         <div className="dsh-settings__runtime-update-controls">
-                          <span>
-                            {t('settings.dshUpdateVersion')}
-                          </span>
+                          <span>{t('settings.dshUpdateVersion')}</span>
                           <SelectMenu
                             className="dsh-settings__runtime-update-version"
                             icon="refresh"
@@ -746,10 +744,7 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                     )}
                   </section>
                 ) : null}
-                <SettingCard
-                  ariaLabel={t('settings.preferences')}
-                  title={t('settings.preferences')}
-                >
+                <SettingCard ariaLabel={t('settings.preferences')} title={t('settings.preferences')}>
                   {dshState.status === 'loading' ? (
                     <p className="dsh-settings__empty" role="status">
                       {t('settings.loadingDsh')}
@@ -1031,22 +1026,6 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                         }}
                       >
                         <Icon name="add" />
-                        {t('settings.addProvider')}
-                      </button>
-                      <button
-                        className="dsh-settings__provider-add"
-                        type="button"
-                        disabled={
-                          busyField !== undefined ||
-                          dshState.status !== 'ready' ||
-                          !dshState.snapshot.schema.writable
-                        }
-                        onClick={() => {
-                          setEditingProviderId(undefined)
-                          setAddingCustomProvider(true)
-                        }}
-                      >
-                        <Icon name="add" />
                         {t('settings.addCustomProvider')}
                       </button>
                     </div>
@@ -1056,6 +1035,7 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                         providers={props.providers}
                         writable={dshState.status === 'ready' && dshState.snapshot.schema.writable}
                         saving={busyField !== undefined}
+                        onClose={() => setAddingCustomProvider(false)}
                         onSave={saveCustomProvider}
                         onDiscover={props.onDiscoverModels}
                       />

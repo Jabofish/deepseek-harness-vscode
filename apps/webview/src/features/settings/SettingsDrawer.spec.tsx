@@ -632,6 +632,8 @@ describe('SettingsDrawer', () => {
         }),
       ),
     )
+    fireEvent.click(within(card).getByRole('button', { name: 'Close' }))
+    expect(screen.queryByRole('region', { name: 'Add custom provider' })).toBeNull()
   })
 
   it('exposes secret removal only for configured fields', async () => {

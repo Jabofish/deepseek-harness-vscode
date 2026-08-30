@@ -166,10 +166,7 @@
 
 /* The primary picker is anchored in the bottom composer. Its menu opens
  * upward so the last row of the webview never becomes an unreachable popup. */
-.dsh-unified-composer
-  > .dsh-composer__toolbar
-  > .dsh-composer__toolbar-controls
-  .dsh-select-menu__menu {
+.dsh-unified-composer > .dsh-composer__toolbar > .dsh-composer__toolbar-controls .dsh-select-menu__menu {
   top: auto;
   right: 0;
   bottom: calc(100% + var(--dsh-space-2));
@@ -484,10 +481,7 @@
   max-width: min(22rem, 100%);
 }
 
-.dsh-unified-composer
-  .dsh-session-controls--primary
-  .dsh-model-picker
-  .dsh-select-menu__trigger {
+.dsh-unified-composer .dsh-session-controls--primary .dsh-model-picker .dsh-select-menu__trigger {
   width: 100%;
   min-width: 0;
   max-width: 100%;
@@ -908,7 +902,7 @@
 
 .dsh-composer__command-summary > .dsh-icon:last-child {
   margin-inline-start: auto;
-  transition: transform 120ms ease;
+  transition: transform var(--dsh-motion-duration-fast) var(--dsh-motion-ease-standard);
 }
 
 .dsh-composer__command-actions[open] .dsh-composer__command-summary > .dsh-icon:last-child {
@@ -1181,10 +1175,7 @@
     flex-basis: auto;
   }
 
-  .dsh-unified-composer
-    .dsh-session-controls--primary
-    .dsh-model-picker
-    .dsh-select-menu__trigger {
+  .dsh-unified-composer .dsh-session-controls--primary .dsh-model-picker .dsh-select-menu__trigger {
     width: 100%;
     min-width: 0;
     max-width: 100%;
@@ -1192,10 +1183,7 @@
     padding-inline: var(--dsh-space-2);
   }
 
-  .dsh-unified-composer
-    .dsh-session-controls--primary
-    .dsh-model-picker
-    .dsh-select-menu__trigger-label {
+  .dsh-unified-composer .dsh-session-controls--primary .dsh-model-picker .dsh-select-menu__trigger-label {
     display: inline;
     min-width: 0;
     overflow: hidden;
@@ -1234,6 +1222,15 @@
 
   .dsh-conversation__topbar {
     gap: var(--dsh-space-1);
+  }
+
+  .dsh-conversation__events-toggle--compact {
+    width: var(--dsh-control-height-compact);
+    padding-inline: var(--dsh-space-1);
+  }
+
+  .dsh-conversation__events-toggle--compact .dsh-conversation__events-toggle-count {
+    display: none;
   }
 
   .dsh-conversation__views .dsh-conversation__view-tab {
@@ -1662,37 +1659,26 @@
   min-width: 0;
 }
 
-.dsh-conversation__actions-grid
-  > .dsh-jobs-popover,
-.dsh-conversation__actions-grid
-  > .dsh-changes-popover,
-.dsh-conversation__actions-grid
-  > .dsh-tasks-popover,
-.dsh-conversation__actions-grid
-  > .dsh-checkpoints-popover,
-.dsh-conversation__actions-grid
-  > .dsh-prompt-templates-popover,
-.dsh-conversation__actions-grid
-  > .dsh-subagent-tree,
+.dsh-conversation__actions-grid > .dsh-jobs-popover,
+.dsh-conversation__actions-grid > .dsh-changes-popover,
+.dsh-conversation__actions-grid > .dsh-tasks-popover,
+.dsh-conversation__actions-grid > .dsh-checkpoints-popover,
+.dsh-conversation__actions-grid > .dsh-prompt-templates-popover,
+.dsh-conversation__actions-grid > .dsh-subagent-tree,
 .dsh-conversation__actions-grid > .dsh-conversation__locale-control {
   display: flex;
   align-items: stretch;
 }
 
-.dsh-conversation__actions-grid
-  .dsh-jobs-popover__trigger,
-.dsh-conversation__actions-grid
-  .dsh-changes-popover__trigger,
-.dsh-conversation__actions-grid
-  .dsh-tasks-popover__trigger,
-.dsh-conversation__actions-grid
-  .dsh-checkpoints-popover__trigger,
-.dsh-conversation__actions-grid
-  .dsh-prompt-templates-popover__trigger,
-.dsh-conversation__actions-grid
-  .dsh-subagent-tree__trigger,
+.dsh-conversation__actions-grid .dsh-jobs-popover__trigger,
+.dsh-conversation__actions-grid .dsh-changes-popover__trigger,
+.dsh-conversation__actions-grid .dsh-tasks-popover__trigger,
+.dsh-conversation__actions-grid .dsh-checkpoints-popover__trigger,
+.dsh-conversation__actions-grid .dsh-prompt-templates-popover__trigger,
+.dsh-conversation__actions-grid .dsh-subagent-tree__trigger,
 .dsh-conversation__actions-grid .dsh-conversation__export-trigger,
-.dsh-conversation__actions-grid .dsh-conversation__locale-switch {
+.dsh-conversation__actions-grid .dsh-conversation__locale-switch,
+.dsh-conversation__actions-grid .dsh-conversation__events-toggle--menu {
   justify-content: flex-start;
   width: 100%;
   min-width: 0;

@@ -9,10 +9,7 @@
   --dsh-radius-md: 0.5rem;
   --dsh-radius-lg: 0.75rem;
   --dsh-radius-pill: 999px;
-  --dsh-border-color: var(
-    --vscode-widget-border,
-    var(--vscode-panel-border, transparent)
-  );
+  --dsh-border-color: var(--vscode-widget-border, var(--vscode-panel-border, transparent));
   --dsh-border: 1px solid var(--dsh-border-color);
   --dsh-focus: var(--vscode-focusBorder, var(--vscode-textLink-foreground, transparent));
   --dsh-focus-ring: color-mix(in srgb, var(--dsh-focus) 62%, var(--dsh-border-color));
@@ -41,14 +38,8 @@
     --vscode-inputValidation-errorBackground,
     color-mix(in srgb, var(--dsh-danger) 12%, transparent)
   );
-  --dsh-success: var(
-    --vscode-testing-iconPassed,
-    var(--vscode-activityBarBadge-background, var(--dsh-text))
-  );
-  --dsh-warning: var(
-    --vscode-warningForeground,
-    var(--vscode-editorWarning-foreground, var(--dsh-text))
-  );
+  --dsh-success: var(--vscode-testing-iconPassed, var(--vscode-activityBarBadge-background, var(--dsh-text)));
+  --dsh-warning: var(--vscode-warningForeground, var(--vscode-editorWarning-foreground, var(--dsh-text)));
   --dsh-warning-bg: var(
     --vscode-inputValidation-warningBackground,
     color-mix(in srgb, var(--dsh-warning) 12%, transparent)
@@ -65,12 +56,22 @@
     var(--vscode-widget-shadow, color-mix(in srgb, var(--dsh-bg) 54%, transparent));
   --dsh-control-height: 2rem;
   --dsh-control-height-compact: 1.75rem;
+  --dsh-tool-summary-height: calc(var(--dsh-control-height) + var(--dsh-space-1));
+  --dsh-tool-summary-padding: var(--dsh-space-2) var(--dsh-space-3);
   --dsh-font-size-xs: 0.75rem;
   --dsh-font-size-sm: 0.8125rem;
   --dsh-font-size-md: 0.875rem;
   --dsh-line-height-tight: 1.25;
   --dsh-line-height-body: 1.45;
   --dsh-line-height-relaxed: 1.55;
+  --dsh-motion-duration-fast: 120ms;
+  --dsh-motion-duration-standard: 180ms;
+  --dsh-motion-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --dsh-tool-detail-font-size: var(--dsh-font-size-xs);
+  --dsh-tool-detail-line-height: var(--dsh-line-height-body);
+  --dsh-tool-detail-max-height: 18rem;
+  --dsh-tool-detail-padding: var(--dsh-space-2);
+  --dsh-reasoning-max-height: 18rem;
   --dsh-panel-gutter: 1rem;
   --dsh-menu-font-size: 0.875rem;
   --dsh-menu-line-height: 1.35;
@@ -90,7 +91,17 @@
   --dsh-trajectory-marker-size: 0.5rem;
   --dsh-trajectory-index-width: 3rem;
   --dsh-trajectory-kind-width: 5.5rem;
+  --dsh-trajectory-time-track: minmax(0, max-content);
   --dsh-trajectory-row-height: 2.25rem;
+}
+
+@media (max-width: 38rem) {
+  :root {
+    --dsh-trajectory-index-width: 2.5rem;
+    --dsh-trajectory-kind-width: 4.75rem;
+    --dsh-trajectory-time-track: minmax(0, 4.75rem);
+    --dsh-trajectory-row-height: 2rem;
+  }
 }
 
 .dsh-empty-state {
@@ -213,9 +224,9 @@
   align-items: center;
   width: 100%;
   min-width: 0;
-  min-height: 2.25rem;
+  min-height: var(--dsh-tool-summary-height);
   gap: var(--dsh-space-2);
-  padding: var(--dsh-space-2) var(--dsh-space-3);
+  padding: var(--dsh-tool-summary-padding);
   border: 0;
   color: inherit;
   background: transparent;
@@ -329,7 +340,7 @@
   display: grid;
   gap: var(--dsh-space-2);
   min-width: 0;
-  padding: var(--dsh-space-3);
+  padding: var(--dsh-tool-detail-padding);
   border-top: var(--dsh-border);
 }
 
@@ -338,7 +349,7 @@
   display: grid;
   gap: var(--dsh-space-1);
   min-width: 0;
-  padding: var(--dsh-space-3);
+  padding: var(--dsh-tool-detail-padding);
   border-radius: var(--dsh-radius-sm);
   background: var(--dsh-code-surface);
 }
@@ -354,18 +365,19 @@
 .dsh-tool-card__section h4,
 .dsh-tool-row__section h4 {
   color: var(--dsh-muted);
-  font-size: 0.85em;
+  font-size: var(--dsh-tool-detail-font-size);
   font-weight: 600;
 }
 
 .dsh-tool-card__section p,
 .dsh-tool-row__section pre {
-  max-height: 18rem;
+  max-height: var(--dsh-tool-detail-max-height);
   overflow: auto;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   color: var(--vscode-textPreformat-foreground, var(--dsh-text));
-  line-height: 1.45;
+  font-size: var(--dsh-tool-detail-font-size);
+  line-height: var(--dsh-tool-detail-line-height);
 }
 
 .dsh-tool-card__section--error,
@@ -375,7 +387,7 @@
 
 .dsh-tool-row__chevron svg,
 .dsh-tool-card__disclosure svg {
-  transition: transform 120ms ease;
+  transition: transform var(--dsh-motion-duration-fast) var(--dsh-motion-ease-standard);
 }
 
 .dsh-tool-row__chevron--expanded svg,

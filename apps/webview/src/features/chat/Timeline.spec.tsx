@@ -3,7 +3,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { TimelineNode } from '@dsh-vscode/timeline'
-import { Timeline } from './Timeline.js'
+import { Timeline, TimelineEventToggle } from './Timeline.js'
 
 vi.mock('@tanstack/react-virtual', () => ({
   useVirtualizer: ({
@@ -107,6 +107,37 @@ describe('Timeline', () => {
     expect(loadOlder).toHaveBeenCalledTimes(1)
   })
 
+  it('keeps the DSH event visibility control in conversation chrome, outside the scroll owner', () => {
+    const onPressedChange = vi.fn()
+    const { container } = render(
+      <>
+        <Timeline
+          sessionId="session-1"
+          nodes={[{ kind: 'event', id: 'event-1', name: 'connection.snapshot', payload: { ok: true } }]}
+          streaming={false}
+          showDshEvents={false}
+          onShowDshEventsChange={onPressedChange}
+        />
+        <TimelineEventToggle count={1} pressed={false} onPressedChange={onPressedChange} />
+      </>,
+    )
+
+    const timeline = container.querySelector('.dsh-timeline')!
+    expect(timeline.querySelector('.dsh-conversation__events-toggle')).toBeNull()
+    expect(container.querySelector('.dsh-timeline__toolbar')).toBeNull()
+
+    const toggle = screen.getByRole('button', { name: 'Show DSH events' })
+    fireEvent.click(toggle)
+    expect(onPressedChange).toHaveBeenCalledWith(true)
+  })
+
+  it('uses a labeled event action when the control is placed in the tools menu', () => {
+    render(<TimelineEventToggle variant="menu" count={2} pressed={false} onPressedChange={() => undefined} />)
+
+    expect(screen.getByText('Show DSH events')).toBeDefined()
+    expect(screen.getByText('(2)')).toBeDefined()
+  })
+
   it('does not force the latest item after a resize when the user scrolled upward', () => {
     let resize: ResizeObserverCallback = () => undefined
     vi.stubGlobal(
@@ -141,7 +172,7 @@ describe('Timeline', () => {
     expect(screen.getByRole('button', { name: 'Jump to latest' })).toBeDefined()
   })
 
-  it('hides completed reasoning while rendering the latest response as Markdown', () => {
+  it('keeps completed reasoning collapsed until the reader opens it', () => {
     const nodes: readonly TimelineNode[] = [
       {
         kind: 'reasoning',
@@ -158,13 +189,19 @@ describe('Timeline', () => {
       },
     ]
 
-    render(<Timeline sessionId="session-1" nodes={nodes} streaming={false} />)
+    const { container } = render(<Timeline sessionId="session-1" nodes={nodes} streaming={false} />)
 
-    expect(screen.queryByText('Thinking')).toBeNull()
-    expect(screen.queryByText(/A long private chain/)).toBeNull()
+    const reasoningToggle = screen.getByRole('button', { name: 'Show reasoning' })
+    expect(container.querySelector('.dsh-timeline__reasoning-preview-content')).toBeNull()
     expect(screen.getByRole('heading', { name: 'Done' })).toBeDefined()
     expect(screen.getByText('result')).toBeDefined()
     expect(screen.getByText('Ran for 3m 08s')).toBeDefined()
+
+    fireEvent.click(reasoningToggle)
+    expect(container.querySelector('.dsh-timeline__reasoning-preview-content')?.textContent).toBe(
+      'A long private chain that should not take over the conversation.',
+    )
+    expect(screen.getByRole('button', { name: 'Hide reasoning' })).toBeDefined()
   })
 
   it('previews only the latest three reasoning lines while streaming', () => {
@@ -191,7 +228,7 @@ describe('Timeline', () => {
     expect(preview?.textContent).toBe('latest one\nlatest two\nlatest three')
     expect(preview?.textContent).not.toContain('old line')
     const answer = screen.getByText('The answer is ready.')
-    expect(answer.compareDocumentPosition(preview!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(answer.compareDocumentPosition(preview!)).toBe(Node.DOCUMENT_POSITION_PRECEDING)
 
     rerender(
       <Timeline
@@ -320,9 +357,91 @@ describe('Timeline', () => {
     expect(document.querySelectorAll('.dsh-timeline__card--assistant')).toHaveLength(1)
     expect(screen.getByText('Before the tool.')).toBeDefined()
     expect(screen.getByText('After the tool.')).toBeDefined()
-    expect(screen.getByRole('button', { name: 'Expand Read details' })).toBeDefined()
+    const tool = screen.getByRole('button', { name: 'Expand Read details' })
+    expect(tool).toBeDefined()
+    expect(screen.getByText('Before the tool.').compareDocumentPosition(tool)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    )
+    expect(tool.compareDocumentPosition(screen.getByText('After the tool.'))).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    )
     fireEvent.click(screen.getByRole('button', { name: 'Branch into a new conversation' }))
     expect(branch).toHaveBeenCalledWith(7)
+  })
+
+  it('renders reasoning first while preserving the tool position inside one assistant answer', () => {
+    const { container } = render(
+      <Timeline
+        sessionId="session-1"
+        nodes={[
+          {
+            kind: 'assistant-message',
+            id: 'assistant-before',
+            markdown: 'Before the tools.',
+            streaming: false,
+            turn: 1,
+            step: 0,
+            turnCompleted: false,
+          },
+          {
+            kind: 'reasoning',
+            id: 'reasoning-1',
+            markdown: 'First understand the request.',
+            streaming: false,
+          },
+          {
+            kind: 'tool',
+            id: 'tool:call-1',
+            tool: {
+              id: 'call-1',
+              turn: 1,
+              step: 0,
+              name: 'read',
+              category: 'filesystem',
+              title: 'Read',
+              status: 'completed',
+              inputSummary: 'one',
+              metadata: {},
+            },
+          },
+          {
+            kind: 'tool',
+            id: 'tool:call-2',
+            tool: {
+              id: 'call-2',
+              turn: 1,
+              step: 0,
+              name: 'search',
+              category: 'filesystem',
+              title: 'Search',
+              status: 'completed',
+              inputSummary: 'two',
+              metadata: {},
+            },
+          },
+          {
+            kind: 'assistant-message',
+            id: 'assistant-after',
+            markdown: 'After the tools.',
+            streaming: false,
+            turn: 1,
+            step: 1,
+            turnCompleted: true,
+          },
+        ]}
+        streaming={false}
+      />,
+    )
+
+    expect(document.querySelectorAll('.dsh-timeline__card--assistant')).toHaveLength(1)
+    const reasoning = screen.getByRole('button', { name: 'Show reasoning' })
+    const before = screen.getByText('Before the tools.')
+    const tools = container.querySelector<HTMLElement>('summary[aria-label="Show 2 tool calls"]')
+    const after = screen.getByText('After the tools.')
+    expect(tools).not.toBeNull()
+    expect(reasoning.compareDocumentPosition(before)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(before.compareDocumentPosition(tools!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(tools!.compareDocumentPosition(after)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
   })
 
   it('sends feedback for the durable message id after collapsing a tool turn', () => {

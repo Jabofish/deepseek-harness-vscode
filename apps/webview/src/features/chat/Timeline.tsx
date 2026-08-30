@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactElement } from 'react'
+import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState, type ReactElement } from 'react'
 import { isInjectedUserMessage, type AssistantTiming, type TimelineNode } from '@dsh-vscode/timeline'
 import type {
   MessageFeedbackItem,
@@ -25,6 +25,28 @@ interface DshEventGroupNode {
   readonly events: readonly DshEventNode[]
 }
 
+interface ReasoningBlock {
+  readonly kind: 'reasoning'
+  readonly id: string
+  readonly markdown: string
+  readonly streaming: boolean
+}
+
+interface MessageBlock {
+  readonly kind: 'message'
+  readonly id: string
+  readonly markdown: string
+  readonly streaming: boolean
+  readonly images?: readonly MessageImageReference[]
+}
+
+interface ToolBlock {
+  readonly kind: 'tool'
+  readonly node: ToolTimelineNode
+}
+
+type AssistantContentBlock = ReasoningBlock | MessageBlock | ToolBlock
+
 interface AssistantTurnNode {
   readonly kind: 'assistant-turn'
   readonly id: string
@@ -44,6 +66,8 @@ interface AssistantTurnNode {
   readonly step?: number
   readonly turnCompleted?: boolean
   readonly interrupted?: true
+  /** Ordered content blocks keep tools inside the answer they belong to. */
+  readonly blocks: readonly AssistantContentBlock[]
 }
 
 type DisplayTimelineNode =
@@ -58,6 +82,9 @@ export interface TimelineProps {
   readonly sessionId: string
   readonly nodes: readonly TimelineNode[]
   readonly streaming: boolean
+  /** Conversation chrome owns this preference when the Timeline is embedded in App. */
+  readonly showDshEvents?: boolean
+  readonly onShowDshEventsChange?: (show: boolean) => void
   /** Authoritative session-level running bit from the host status stream. */
   readonly running?: boolean
   readonly assistantLabel?: string
@@ -80,6 +107,40 @@ export interface TimelineProps {
   readonly onLoadOlderHistory?: () => Promise<void> | void
 }
 
+export interface TimelineEventToggleProps {
+  readonly count: number
+  readonly pressed: boolean
+  readonly variant?: 'compact' | 'menu'
+  readonly onPressedChange: (pressed: boolean) => void
+}
+
+/**
+ * Conversation-level event filter. It deliberately lives outside the scroll
+ * owner so toggling diagnostic events cannot overlay or resize the message
+ * stream. The same control is used by App and can be composed elsewhere.
+ */
+export function TimelineEventToggle(props: TimelineEventToggleProps): ReactElement {
+  const { t } = useI18n()
+  const variant = props.variant ?? 'compact'
+  const showLabel = variant === 'menu'
+  return (
+    <button
+      className={`dsh-conversation__events-toggle dsh-conversation__events-toggle--${variant}`}
+      type="button"
+      aria-pressed={props.pressed}
+      aria-label={props.pressed ? t('timeline.hideEvents') : t('timeline.showEvents')}
+      title={props.pressed ? t('timeline.hideEvents') : t('timeline.showEventsCount', { count: props.count })}
+      onClick={() => props.onPressedChange(!props.pressed)}
+    >
+      <Icon name="terminal" />
+      {showLabel ? <span>{props.pressed ? t('timeline.hideEvents') : t('timeline.showEvents')}</span> : null}
+      <span className="dsh-conversation__events-toggle-count" aria-hidden="true">
+        {showLabel ? `(${props.count})` : props.count}
+      </span>
+    </button>
+  )
+}
+
 export function Timeline(props: TimelineProps): ReactElement {
   const { t } = useI18n()
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -88,8 +149,16 @@ export function Timeline(props: TimelineProps): ReactElement {
   const prependAnchorRef = useRef<{ readonly height: number; readonly top: number } | undefined>(undefined)
   const olderHistoryRequestRef = useRef(false)
   const [showJumpToLatest, setShowJumpToLatest] = useState(false)
-  const [expandedTools, setExpandedTools] = useState<ReadonlySet<string>>(new Set())
-  const [showDshEvents, setShowDshEvents] = useState(false)
+  const [expandedDetails, setExpandedDetails] = useState<ReadonlySet<string>>(new Set())
+  const [localShowDshEvents, setLocalShowDshEvents] = useState(false)
+  const showDshEvents = props.showDshEvents ?? localShowDshEvents
+  const setShowDshEvents = useCallback(
+    (show: boolean): void => {
+      if (props.onShowDshEventsChange !== undefined) props.onShowDshEventsChange(show)
+      else setLocalShowDshEvents(show)
+    },
+    [props.onShowDshEventsChange],
+  )
   const dshEventCount = useMemo(
     () => props.nodes.reduce((count, node) => (node.kind === 'event' ? count + 1 : count), 0),
     [props.nodes],
@@ -290,25 +359,6 @@ export function Timeline(props: TimelineProps): ReactElement {
             </button>
           </div>
         ) : null}
-        {dshEventCount > 0 ? (
-          <div className="dsh-timeline__toolbar">
-            <button
-              className="dsh-timeline__events-toggle"
-              type="button"
-              aria-pressed={showDshEvents}
-              aria-label={showDshEvents ? t('timeline.hideEvents') : t('timeline.showEvents')}
-              title={
-                showDshEvents
-                  ? t('timeline.hideEvents')
-                  : t('timeline.showEventsCount', { count: dshEventCount })
-              }
-              onClick={() => setShowDshEvents((current) => !current)}
-            >
-              <Icon name="terminal" />
-              <span aria-hidden="true">{dshEventCount}</span>
-            </button>
-          </div>
-        ) : null}
         {displayNodes.length === 0 && dshEventCount === 0 ? (
           <div className="dsh-timeline__empty" role="status">
             <span className="dsh-timeline__empty-icon" aria-hidden="true">
@@ -318,10 +368,7 @@ export function Timeline(props: TimelineProps): ReactElement {
             <span>{t('timeline.emptyHint')}</span>
           </div>
         ) : null}
-        <div
-          className="dsh-timeline__canvas"
-          style={{ height: `${virtualHeight}px`, position: 'relative' }}
-        >
+        <div className="dsh-timeline__canvas" style={{ height: `${virtualHeight}px`, position: 'relative' }}>
           {virtualizer.getVirtualItems().map((item) => {
             const node = displayNodes[item.index]
             if (node === undefined) return null
@@ -335,8 +382,8 @@ export function Timeline(props: TimelineProps): ReactElement {
               >
                 {renderNode(
                   node,
-                  expandedTools,
-                  setExpandedTools,
+                  expandedDetails,
+                  setExpandedDetails,
                   props.assistantLabel,
                   props.onOpenLink === undefined ? undefined : requestOpenLink,
                   props.onLoadImage,
@@ -368,9 +415,7 @@ export function Timeline(props: TimelineProps): ReactElement {
           </span>
         ) : null}
       </div>
-      {showJumpToLatest ? (
-        <ScrollToLatestButton label={t('timeline.jump')} onClick={scrollToLatest} />
-      ) : null}
+      {showJumpToLatest ? <ScrollToLatestButton label={t('timeline.jump')} onClick={scrollToLatest} /> : null}
       {openLinkError === undefined ? null : (
         <ToolLinkErrorDialog
           href={openLinkError.href}
@@ -710,6 +755,8 @@ function renderNode(
     case 'assistant-message':
       return renderAssistantMessage(
         node,
+        expanded,
+        setExpanded,
         assistantLabel,
         onOpenLink,
         onLoadImage,
@@ -732,6 +779,14 @@ function renderNode(
           markdown: '',
           streaming: node.streaming,
           reasoning: node,
+          blocks: [
+            {
+              kind: 'reasoning',
+              id: node.id,
+              markdown: node.markdown,
+              streaming: node.streaming,
+            },
+          ],
         },
         expanded,
         setExpanded,
@@ -842,25 +897,7 @@ function renderAssistantTurn(
             </span>
           )}
         </header>
-        <MessageImages
-          images={node.images ?? []}
-          {...(onLoadImage === undefined ? {} : { loadImage: onLoadImage })}
-          translate={t}
-        />
-        {node.tools.length === 0 ? null : (
-          <div className="dsh-timeline__assistant-tools">
-            {renderToolCollection(node.tools, expanded, setExpanded, t, onOpenLink)}
-          </div>
-        )}
-        {node.markdown.trim() === '' ? null : (
-          <MarkdownContent
-            markdown={node.markdown}
-            streaming={node.streaming}
-            onOpenLink={onOpenLink}
-            producedFiles={producedFiles}
-          />
-        )}
-        {node.reasoning === undefined ? null : renderReasoningPreview(node.reasoning, t)}
+        {renderAssistantBlocks(node, expanded, setExpanded, onOpenLink, onLoadImage, t, producedFiles)}
         {renderProducedFiles(producedFiles, onOpenLink, onShowInFolder, t)}
       </article>
       {node.markdown.trim() === '' || actionsUnavailable ? null : (
@@ -886,6 +923,8 @@ function renderAssistantTurn(
 
 function renderAssistantMessage(
   node: Extract<DisplayTimelineNode, { readonly kind: 'assistant-message' }>,
+  expanded: ReadonlySet<string>,
+  setExpanded: (next: ReadonlySet<string>) => void,
   assistantLabel: string,
   onOpenLink: ((href: string) => void) | undefined,
   onLoadImage: ((image: MessageImageReference) => Promise<string | undefined>) | undefined,
@@ -921,6 +960,9 @@ function renderAssistantMessage(
             </span>
           )}
         </header>
+        {node.reasoning === undefined
+          ? null
+          : renderReasoningBlock(`reasoning:${node.id}`, node.reasoning, expanded, setExpanded, t)}
         <MessageImages
           images={node.images ?? []}
           {...(onLoadImage === undefined ? {} : { loadImage: onLoadImage })}
@@ -929,7 +971,6 @@ function renderAssistantMessage(
         {node.markdown.trim() === '' ? null : (
           <MarkdownContent markdown={node.markdown} streaming={node.streaming} onOpenLink={onOpenLink} />
         )}
-        {node.reasoning === undefined ? null : renderReasoningPreview(node.reasoning, t)}
       </article>
       {node.markdown.trim() === '' || actionsUnavailable ? null : (
         <MessageActions
@@ -944,6 +985,93 @@ function renderAssistantMessage(
       )}
     </div>
   )
+}
+
+function renderAssistantBlocks(
+  node: AssistantTurnNode,
+  expanded: ReadonlySet<string>,
+  setExpanded: (next: ReadonlySet<string>) => void,
+  onOpenLink: ((href: string) => void) | undefined,
+  onLoadImage: ((image: MessageImageReference) => Promise<string | undefined>) | undefined,
+  t: Translate,
+  producedFiles: readonly string[],
+): ReactElement[] {
+  const blocks = node.blocks.length === 0 ? assistantBlocksFromAggregates(node) : node.blocks
+  const lastMessageIndex = blocks.reduce(
+    (last, block, index) => (block.kind === 'message' ? index : last),
+    -1,
+  )
+  const rendered: ReactElement[] = []
+
+  for (let index = 0; index < blocks.length; index += 1) {
+    const block = blocks[index]
+    if (block === undefined) continue
+    if (block.kind === 'reasoning') {
+      rendered.push(
+        <Fragment key={`reasoning:${block.id}:${index}`}>
+          {renderReasoningBlock(`reasoning:${node.id}:${block.id}`, block, expanded, setExpanded, t)}
+        </Fragment>,
+      )
+      continue
+    }
+    if (block.kind === 'message') {
+      rendered.push(
+        <Fragment key={`message:${block.id}:${index}`}>
+          <MessageImages
+            images={block.images ?? []}
+            {...(onLoadImage === undefined ? {} : { loadImage: onLoadImage })}
+            translate={t}
+          />
+          {block.markdown.trim() === '' ? null : (
+            <MarkdownContent
+              markdown={block.markdown}
+              streaming={block.streaming}
+              onOpenLink={onOpenLink}
+              {...(index === lastMessageIndex ? { producedFiles } : {})}
+            />
+          )}
+        </Fragment>,
+      )
+      continue
+    }
+
+    const tools: ToolTimelineNode[] = [block.node]
+    while (index + 1 < blocks.length && blocks[index + 1]?.kind === 'tool') {
+      index += 1
+      const next = blocks[index]
+      if (next?.kind === 'tool') tools.push(next.node)
+    }
+    rendered.push(
+      <div className="dsh-timeline__assistant-tools" key={`tools:${tools.map((tool) => tool.id).join('|')}`}>
+        {renderToolCollection(tools, expanded, setExpanded, t, onOpenLink)}
+      </div>,
+    )
+  }
+
+  return rendered
+}
+
+function assistantBlocksFromAggregates(node: AssistantTurnNode): readonly AssistantContentBlock[] {
+  const blocks: AssistantContentBlock[] = []
+  if (node.reasoning !== undefined) {
+    blocks.push({
+      kind: 'reasoning',
+      id: `reasoning:${node.id}`,
+      markdown: node.reasoning.markdown,
+      streaming: node.reasoning.streaming,
+    })
+  }
+  if (node.markdown.trim() !== '' || (node.images?.length ?? 0) > 0) {
+    blocks.push({
+      kind: 'message',
+      id: node.id,
+      markdown: node.markdown,
+      streaming: node.streaming,
+      ...(node.images === undefined ? {} : { images: node.images }),
+    })
+  }
+  for (const tool of node.tools) blocks.push({ kind: 'tool', node: tool })
+  return blocks
 }
 
 function assistantMessageId(node: AssistantTurnNode): string | undefined {
@@ -995,12 +1123,12 @@ function renderProducedFiles(
         {paths.map((path) => {
           const label = producedFileLabel(path)
           return onOpenLink === undefined ? (
-              <span className="dsh-timeline__produced-chip" key={path} title={path}>
-                <Icon name="file" />
-                <ContentFlow as="span" variant="truncate">
-                  {label}
-                </ContentFlow>
-              </span>
+            <span className="dsh-timeline__produced-chip" key={path} title={path}>
+              <Icon name="file" />
+              <ContentFlow as="span" variant="truncate">
+                {label}
+              </ContentFlow>
+            </span>
           ) : (
             <button
               className="dsh-timeline__produced-chip"
@@ -1105,26 +1233,61 @@ function stableHash(value: string): number {
   return hash
 }
 
-function renderReasoningPreview(
-  reasoning: {
-    readonly markdown: string
-    readonly streaming: boolean
-  },
+function renderReasoningBlock(
+  id: string,
+  reasoning: Pick<ReasoningBlock, 'markdown' | 'streaming'>,
+  expanded: ReadonlySet<string>,
+  setExpanded: (next: ReadonlySet<string>) => void,
   t: Translate = (key) => key,
 ): ReactElement | null {
-  if (!reasoning.streaming) return null
-  const preview = latestReasoningLines(reasoning.markdown)
-  if (preview === '') return null
+  const content = reasoning.markdown.trim()
+  if (content === '') return null
+  const preview = latestReasoningLines(content)
+  const isExpanded = expanded.has(id)
+  const toggle = (): void => {
+    const next = new Set(expanded)
+    if (isExpanded) next.delete(id)
+    else next.add(id)
+    setExpanded(next)
+  }
 
   return (
-    <section className="dsh-timeline__reasoning-preview" aria-live="polite">
-      <div className="dsh-timeline__reasoning-preview-header">
-        <span>{t('timeline.thinking')}</span>
-        <span className="dsh-timeline__streaming" aria-hidden="true" />
-      </div>
-      <ContentFlow as="span" variant="preserve-breaks" className="dsh-timeline__reasoning-preview-content">
-        {preview}
-      </ContentFlow>
+    <section
+      className={`dsh-timeline__reasoning-preview${isExpanded ? ' dsh-timeline__reasoning-preview--expanded' : ''}`}
+      aria-live={reasoning.streaming ? 'polite' : undefined}
+    >
+      <button
+        className="dsh-timeline__reasoning-toggle"
+        type="button"
+        aria-expanded={isExpanded}
+        aria-label={isExpanded ? t('timeline.hideReasoning') : t('timeline.showReasoning')}
+        onClick={toggle}
+      >
+        <span className="dsh-timeline__reasoning-icon" aria-hidden="true">
+          <Icon name="sparkles" />
+        </span>
+        <span className="dsh-timeline__reasoning-heading">
+          <strong>{t('timeline.thinking')}</strong>
+          {!isExpanded && preview !== '' ? (
+            <ContentFlow as="span" variant="truncate" className="dsh-timeline__reasoning-summary">
+              {preview.replace(/\s+/gu, ' ')}
+            </ContentFlow>
+          ) : null}
+        </span>
+        {reasoning.streaming ? <span className="dsh-timeline__streaming" aria-hidden="true" /> : null}
+        <span className="dsh-timeline__disclosure" aria-hidden="true">
+          <Icon name="chevron-down" />
+        </span>
+      </button>
+      {isExpanded ? (
+        <ContentFlow as="div" variant="preserve-breaks" className="dsh-timeline__reasoning-preview-content">
+          {content}
+        </ContentFlow>
+      ) : reasoning.streaming && preview !== '' ? (
+        <ContentFlow as="div" variant="preserve-breaks" className="dsh-timeline__reasoning-preview-content">
+          {preview}
+        </ContentFlow>
+      ) : null}
     </section>
   )
 }
@@ -1166,11 +1329,16 @@ function renderToolCollection(
 ): ReactElement {
   if (tools.length === 1) {
     const tool = tools[0]
-    if (tool !== undefined) return renderToolCard(tool, expanded, setExpanded, t, onOpenLink)
+    if (tool !== undefined)
+      return (
+        <div className="dsh-timeline__tool-collection">
+          {renderToolCard(tool, expanded, setExpanded, t, onOpenLink)}
+        </div>
+      )
   }
   const latest = tools[tools.length - 1]!
   return (
-    <details className="dsh-timeline__reasoning dsh-timeline__tool-group">
+    <details className="dsh-timeline__reasoning dsh-timeline__tool-group dsh-timeline__tool-collection">
       <summary
         className="dsh-timeline__reasoning-summary dsh-timeline__tool-group-summary"
         aria-label={t('timeline.showToolCalls', { count: tools.length })}
@@ -1319,13 +1487,23 @@ function nodeSignature(node: DisplayTimelineNode | undefined): string {
   if (node === undefined) return ''
   if (node.kind === 'assistant-turn') {
     const latest = node.tools[node.tools.length - 1]
-    return `${node.id}:${node.markdown.length}:${node.streaming}:${node.interrupted === true}:${node.reasoning?.markdown.length ?? 0}:${node.reasoning?.streaming ?? false}:${node.images?.map((image) => image.attachmentId).join('|') ?? ''}:${node.tools.length}:${latest?.tool.status ?? ''}:${latest?.tool.locations?.map((location) => location.path).join('|') ?? ''}`
+    return `${node.id}:${node.markdown.length}:${node.streaming}:${node.interrupted === true}:${node.reasoning?.markdown.length ?? 0}:${node.reasoning?.streaming ?? false}:${node.images?.map((image) => image.attachmentId).join('|') ?? ''}:${node.tools.length}:${latest?.tool.status ?? ''}:${latest?.tool.locations?.map((location) => location.path).join('|') ?? ''}:${assistantBlockSignature(node.blocks)}`
   }
   if (node.kind === 'assistant-message')
     return `${node.id}:${node.markdown.length}:${node.streaming}:${node.interrupted === true}:${node.reasoning?.markdown.length ?? 0}:${node.reasoning?.streaming ?? false}:${node.images?.map((image) => image.attachmentId).join('|') ?? ''}`
   if (node.kind === 'reasoning') return `${node.id}:${node.markdown.length}:${node.streaming}`
   if (node.kind === 'event-group') return `${node.id}:${node.events.length}`
   return node.id
+}
+
+function assistantBlockSignature(blocks: readonly AssistantContentBlock[]): string {
+  return blocks
+    .map((block) =>
+      block.kind === 'tool'
+        ? `tool:${block.node.id}:${block.node.tool.status}`
+        : `${block.kind}:${block.id}:${block.markdown.length}:${block.streaming}`,
+    )
+    .join('|')
 }
 
 function branchUnavailableForNode(node: DisplayTimelineNode, branching: boolean): boolean {
@@ -1385,19 +1563,15 @@ function prepareDisplayNodes(
   return collapseAssistantTurns(display)
 }
 
-interface ReasoningBlock {
-  readonly markdown: string
-  readonly streaming: boolean
-}
-
 interface PendingAssistantWork {
   readonly id: string
   modelLabel?: string
   timing?: AssistantTiming
   usage?: TokenUsage
   images?: readonly MessageImageReference[]
-  reasoning?: ReasoningBlock | undefined
+  reasoning?: Pick<ReasoningBlock, 'markdown' | 'streaming'> | undefined
   readonly tools: ToolTimelineNode[]
+  readonly blocks: AssistantContentBlock[]
   markdown: string
   streaming: boolean
   sequence?: number
@@ -1422,6 +1596,7 @@ function collapseAssistantTurns(nodes: readonly DisplayTimelineNode[]): readonly
       ...(pending.images === undefined ? {} : { images: pending.images }),
       ...(pending.reasoning === undefined ? {} : { reasoning: pending.reasoning }),
       tools: pending.tools,
+      blocks: pending.blocks,
       markdown: pending.markdown,
       streaming: pending.streaming || pending.reasoning?.streaming === true,
       ...(pending.sequence === undefined ? {} : { sequence: pending.sequence }),
@@ -1435,9 +1610,20 @@ function collapseAssistantTurns(nodes: readonly DisplayTimelineNode[]): readonly
 
   for (const node of nodes) {
     if (node.kind === 'reasoning') {
-      if (pending === undefined)
-        pending = { id: node.id, reasoning: node, tools: [], markdown: '', streaming: node.streaming }
-      else pending.reasoning = appendReasoning(pending.reasoning, node)
+      if (pending === undefined) {
+        const previous = collapsed[collapsed.length - 1]
+        if (previous?.kind === 'assistant-message') {
+          collapsed.pop()
+          pending = pendingFromAssistantMessage(previous)
+        } else if (previous?.kind === 'assistant-turn') {
+          collapsed.pop()
+          pending = pendingFromAssistantTurn(previous)
+        } else {
+          pending = { id: node.id, tools: [], blocks: [], markdown: '', streaming: false }
+        }
+      }
+      pending.reasoning = appendReasoning(pending.reasoning, node)
+      appendReasoningContent(pending.blocks, node.id, node)
       continue
     }
     if (node.kind === 'tool') {
@@ -1456,6 +1642,7 @@ function collapseAssistantTurns(nodes: readonly DisplayTimelineNode[]): readonly
             ...(previous.images === undefined ? {} : { images: previous.images }),
             ...(previous.reasoning === undefined ? {} : { reasoning: previous.reasoning }),
             tools: [...previous.tools],
+            blocks: [...assistantBlocks(previous)],
             markdown: previous.markdown,
             streaming: previous.streaming,
             ...(previous.sequence === undefined ? {} : { sequence: previous.sequence }),
@@ -1464,9 +1651,10 @@ function collapseAssistantTurns(nodes: readonly DisplayTimelineNode[]): readonly
             ...(previous.turnCompleted === undefined ? {} : { turnCompleted: previous.turnCompleted }),
             ...(previous.interrupted === undefined ? {} : { interrupted: previous.interrupted }),
           }
-        } else pending = { id: node.id, tools: [], markdown: '', streaming: false }
+        } else pending = { id: node.id, tools: [], blocks: [], markdown: '', streaming: false }
       }
       pending.tools.push(node)
+      pending.blocks.push({ kind: 'tool', node })
       continue
     }
     if (node.kind === 'assistant-message') {
@@ -1482,6 +1670,8 @@ function collapseAssistantTurns(nodes: readonly DisplayTimelineNode[]): readonly
         if (node.turnCompleted !== undefined) pending.turnCompleted = node.turnCompleted
         if (node.interrupted !== undefined) pending.interrupted = node.interrupted
         pending.reasoning = appendReasoning(pending.reasoning, node.reasoning)
+        if (node.reasoning !== undefined) appendReasoningContent(pending.blocks, node.id, node.reasoning)
+        if (hasVisibleOutput) appendMessageContent(pending.blocks, node)
         pending.markdown = joinAssistantMarkdown(pending.markdown, node.markdown)
         pending.streaming = node.streaming
         if (!hasVisibleOutput) continue
@@ -1492,23 +1682,7 @@ function collapseAssistantTurns(nodes: readonly DisplayTimelineNode[]): readonly
       }
       if (node.reasoning !== undefined) {
         if (hasVisibleOutput) {
-          collapsed.push({
-            kind: 'assistant-turn',
-            id: `assistant-turn:${node.id}`,
-            ...(node.modelLabel === undefined ? {} : { modelLabel: node.modelLabel }),
-            ...(node.timing === undefined ? {} : { timing: node.timing }),
-            ...(node.usage === undefined ? {} : { usage: node.usage }),
-            ...(node.images === undefined ? {} : { images: node.images }),
-            reasoning: node.reasoning,
-            tools: [],
-            markdown: node.markdown,
-            streaming: node.streaming,
-            ...(node.sequence === undefined ? {} : { sequence: node.sequence }),
-            ...(node.turn === undefined ? {} : { turn: node.turn }),
-            ...(node.step === undefined ? {} : { step: node.step }),
-            ...(node.turnCompleted === undefined ? {} : { turnCompleted: node.turnCompleted }),
-            ...(node.interrupted === undefined ? {} : { interrupted: node.interrupted }),
-          })
+          collapsed.push(toAssistantTurn(pendingFromAssistantMessage(node), node.id))
         } else {
           pending = pendingFromAssistantMessage(node)
         }
@@ -1536,6 +1710,7 @@ function pendingFromAssistantMessage(
     ...(node.images === undefined ? {} : { images: node.images }),
     ...(node.reasoning === undefined ? {} : { reasoning: node.reasoning }),
     tools: [],
+    blocks: assistantContentBlocksFromMessage(node),
     markdown: node.markdown,
     streaming: node.streaming,
     ...(node.sequence === undefined ? {} : { sequence: node.sequence }),
@@ -1544,6 +1719,85 @@ function pendingFromAssistantMessage(
     ...(node.turnCompleted === undefined ? {} : { turnCompleted: node.turnCompleted }),
     ...(node.interrupted === undefined ? {} : { interrupted: node.interrupted }),
   }
+}
+
+function pendingFromAssistantTurn(node: AssistantTurnNode): PendingAssistantWork {
+  return {
+    id: node.id,
+    ...(node.modelLabel === undefined ? {} : { modelLabel: node.modelLabel }),
+    ...(node.timing === undefined ? {} : { timing: node.timing }),
+    ...(node.usage === undefined ? {} : { usage: node.usage }),
+    ...(node.images === undefined ? {} : { images: node.images }),
+    ...(node.reasoning === undefined ? {} : { reasoning: node.reasoning }),
+    tools: [...node.tools],
+    blocks: [...assistantBlocks(node)],
+    markdown: node.markdown,
+    streaming: node.streaming,
+    ...(node.sequence === undefined ? {} : { sequence: node.sequence }),
+    ...(node.turn === undefined ? {} : { turn: node.turn }),
+    ...(node.step === undefined ? {} : { step: node.step }),
+    ...(node.turnCompleted === undefined ? {} : { turnCompleted: node.turnCompleted }),
+    ...(node.interrupted === undefined ? {} : { interrupted: node.interrupted }),
+  }
+}
+
+function assistantBlocks(node: AssistantTurnNode): readonly AssistantContentBlock[] {
+  return node.blocks.length === 0 ? assistantBlocksFromAggregates(node) : node.blocks
+}
+
+function assistantContentBlocksFromMessage(
+  node: Extract<DisplayTimelineNode, { readonly kind: 'assistant-message' }>,
+): AssistantContentBlock[] {
+  const blocks: AssistantContentBlock[] = []
+  if (node.reasoning !== undefined) appendReasoningContent(blocks, node.id, node.reasoning)
+  if (node.markdown.trim() !== '' || (node.images?.length ?? 0) > 0) appendMessageContent(blocks, node)
+  return blocks
+}
+
+function appendReasoningContent(
+  blocks: AssistantContentBlock[],
+  id: string,
+  reasoning: Pick<ReasoningBlock, 'markdown' | 'streaming'>,
+): void {
+  const index = blocks.findIndex((block) => block.kind === 'reasoning')
+  if (index < 0) {
+    blocks.unshift({ kind: 'reasoning', id, markdown: reasoning.markdown, streaming: reasoning.streaming })
+    return
+  }
+  const current = blocks[index]
+  if (current?.kind !== 'reasoning') return
+  const merged = appendReasoning(current, reasoning)
+  if (merged === undefined) return
+  blocks[index] = { kind: 'reasoning', id: current.id, ...merged }
+  if (index !== 0) {
+    const [reasoningBlock] = blocks.splice(index, 1)
+    if (reasoningBlock !== undefined) blocks.unshift(reasoningBlock)
+  }
+}
+
+function appendMessageContent(
+  blocks: AssistantContentBlock[],
+  node: Extract<DisplayTimelineNode, { readonly kind: 'assistant-message' }>,
+): void {
+  const current = blocks[blocks.length - 1]
+  if (current?.kind === 'message' && current.id === node.id) {
+    const images = mergeImages(current.images, node.images ?? [])
+    blocks[blocks.length - 1] = {
+      kind: 'message',
+      id: current.id,
+      markdown: joinAssistantMarkdown(current.markdown, node.markdown),
+      streaming: node.streaming,
+      ...(images.length === 0 ? {} : { images }),
+    }
+    return
+  }
+  blocks.push({
+    kind: 'message',
+    id: node.id,
+    markdown: node.markdown,
+    streaming: node.streaming,
+    ...(node.images === undefined ? {} : { images: node.images }),
+  })
 }
 
 function toAssistantTurn(pending: PendingAssistantWork, id: string): AssistantTurnNode {
@@ -1556,6 +1810,7 @@ function toAssistantTurn(pending: PendingAssistantWork, id: string): AssistantTu
     ...(pending.images === undefined ? {} : { images: pending.images }),
     ...(pending.reasoning === undefined ? {} : { reasoning: pending.reasoning }),
     tools: pending.tools,
+    blocks: pending.blocks,
     markdown: pending.markdown,
     streaming: pending.streaming || pending.reasoning?.streaming === true,
     ...(pending.sequence === undefined ? {} : { sequence: pending.sequence }),
@@ -1592,9 +1847,9 @@ function joinAssistantMarkdown(left: string, right: string): string {
 }
 
 function appendReasoning(
-  left: ReasoningBlock | undefined,
-  right: ReasoningBlock | undefined,
-): ReasoningBlock | undefined {
+  left: Pick<ReasoningBlock, 'markdown' | 'streaming'> | undefined,
+  right: Pick<ReasoningBlock, 'markdown' | 'streaming'> | undefined,
+): Pick<ReasoningBlock, 'markdown' | 'streaming'> | undefined {
   if (left === undefined) return right
   if (right === undefined) return left
   return {

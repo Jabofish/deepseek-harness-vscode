@@ -17,7 +17,7 @@ import { EmptyState } from '@dsh-vscode/ui'
 import { Composer } from './features/composer/Composer.js'
 import { ExportDialog } from './features/export/ExportDialog.js'
 import { AppErrorBoundary } from './features/errors/AppErrorBoundary.js'
-import { Timeline } from './features/chat/Timeline.js'
+import { Timeline, TimelineEventToggle } from './features/chat/Timeline.js'
 import { StatsLine } from './features/chat/StatsLine.js'
 import { ApprovalCard } from './features/interactions/ApprovalCard.js'
 import { UserQuestionCard } from './features/interactions/UserQuestionCard.js'
@@ -100,6 +100,7 @@ export function App(): ReactElement {
   const [dismissedConnection, setDismissedConnection] = useState<string | undefined>()
   const [modelPickerOpenRequest, setModelPickerOpenRequest] = useState(0)
   const [conversationView, setConversationView] = useState<'chat' | 'trajectory'>('chat')
+  const [showDshEvents, setShowDshEvents] = useState(false)
   const [exportOpen, setExportOpen] = useState(false)
   const [localeOpen, setLocaleOpen] = useState(false)
   const localeControlRef = useRef<HTMLSpanElement>(null)
@@ -216,9 +217,11 @@ export function App(): ReactElement {
       .finally(() => setBusyAction(undefined))
   }
   const retryConnection = (): void => {
-    void store.reconnect().catch((reason: unknown) =>
-      setError(reason instanceof Error ? reason.message : t('app.error.reconnect')),
-    )
+    void store
+      .reconnect()
+      .catch((reason: unknown) =>
+        setError(reason instanceof Error ? reason.message : t('app.error.reconnect')),
+      )
   }
   const activeSession = state.sessions.find((session) => session.id === state.activeSessionId)
   let activeSubagentState = state.activeSubagent
@@ -237,6 +240,11 @@ export function App(): ReactElement {
           createdAt: '',
           updatedAt: '',
         })
+  const dshEventCount = useMemo(
+    () => state.timeline.nodes.reduce((count, node) => (node.kind === 'event' ? count + 1 : count), 0),
+    [state.timeline.nodes],
+  )
+  useEffect(() => setShowDshEvents(false), [active?.id])
   const sessionModels = state.sessionModels.length > 0 ? state.sessionModels : state.models
   const pendingPermissions =
     active === undefined ? [] : state.permissions.filter((request) => request.sessionId === active.id)
@@ -328,14 +336,14 @@ export function App(): ReactElement {
     }
     if (attachmentDraftKeysRef.current.has(attachment.uri)) return
     const draftKey = attachmentDraftKey(attachment, origin)
-    const existingUri = [...attachmentDraftKeysRef.current.entries()].find(
-      ([, key]) => key === draftKey,
-    )?.[0]
+    const existingUri = [...attachmentDraftKeysRef.current.entries()].find(([, key]) => key === draftKey)?.[0]
     if (existingUri !== undefined) {
       if (existingUri !== attachment.uri)
-        void store.releaseAttachments([attachment.uri]).catch((reason: unknown) =>
-          setError(reason instanceof Error ? reason.message : t('app.error.releaseAttachment')),
-        )
+        void store
+          .releaseAttachments([attachment.uri])
+          .catch((reason: unknown) =>
+            setError(reason instanceof Error ? reason.message : t('app.error.releaseAttachment')),
+          )
       return
     }
     attachmentDraftKeysRef.current.set(attachment.uri, draftKey)
@@ -696,14 +704,18 @@ export function App(): ReactElement {
                             void store
                               .openSession(sessionId)
                               .catch((reason: unknown) =>
-                                setError(reason instanceof Error ? reason.message : t('app.error.openSession')),
+                                setError(
+                                  reason instanceof Error ? reason.message : t('app.error.openSession'),
+                                ),
                               )
                           }}
                           onCreate={(workspaceId) => {
                             void store
                               .createSession(workspaceId)
                               .catch((reason: unknown) =>
-                                setError(reason instanceof Error ? reason.message : t('app.error.createSession')),
+                                setError(
+                                  reason instanceof Error ? reason.message : t('app.error.createSession'),
+                                ),
                               )
                           }}
                           onArchive={(sessionId) =>
@@ -857,6 +869,14 @@ export function App(): ReactElement {
                             )
                         }}
                       />
+                      {dshEventCount > 0 ? (
+                        <TimelineEventToggle
+                          variant="menu"
+                          count={dshEventCount}
+                          pressed={showDshEvents}
+                          onPressedChange={setShowDshEvents}
+                        />
+                      ) : null}
                       {activeSubagent === undefined ? (
                         <button
                           type="button"
@@ -936,6 +956,8 @@ export function App(): ReactElement {
                       sessionId={active.id}
                       nodes={state.timeline.nodes}
                       streaming={streaming}
+                      showDshEvents={showDshEvents}
+                      onShowDshEventsChange={setShowDshEvents}
                       running={activeRunning}
                       {...(state.timeline.activeTurn === undefined
                         ? {}

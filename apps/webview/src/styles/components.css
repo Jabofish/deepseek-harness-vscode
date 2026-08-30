@@ -5,6 +5,17 @@
  * overlays, configuration cards, and inline references.
  */
 
+@keyframes dsh-surface-enter {
+  from {
+    opacity: 0;
+    transform: translateY(calc(var(--dsh-space-1) * -1));
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .dsh-icon {
   display: block;
   width: var(--dsh-icon-size);
