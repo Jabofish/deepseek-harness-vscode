@@ -27,7 +27,7 @@ import { Rc6ModelRepository } from '../../repositories/model-repository.js'
 import { Rc6PluginRepository } from '../../repositories/plugin-repository.js'
 import { Rc6PresetRepository } from '../../repositories/preset-repository.js'
 import { Rc6ReferenceRepository } from '../../repositories/reference-repository.js'
-import { Rc6SessionRepository } from '../../repositories/session-repository.js'
+import { historyGapRecovery, Rc6SessionRepository } from '../../repositories/session-repository.js'
 import { Rc6SettingsRepository } from '../../repositories/settings-repository.js'
 import { Rc6SkillRepository } from '../../repositories/skill-repository.js'
 import { Rc6SubagentRepository } from '../../repositories/subagent-repository.js'
@@ -144,12 +144,7 @@ export class Rc6VersionAdapter implements DshVersionAdapter {
         goals.remember(event)
         jobs.remember(event)
       },
-      async (sessionId, fromSequence, toSequence, signal) => {
-        const detail = await sessions.get(sessionId, signal)
-        return (detail.history ?? [])
-          .filter((entry) => entry.sequence >= fromSequence && entry.sequence <= toSequence)
-          .map((entry) => entry.event)
-      },
+      historyGapRecovery(sessions),
     )
     let closed = false
     return Promise.resolve({

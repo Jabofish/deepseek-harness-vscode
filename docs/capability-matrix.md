@@ -364,6 +364,34 @@ VS Code 无文件夹 Webview 回放，因此该修复不提升能力矩阵中的
 - 门禁状态：全量 `test` 748 测试中除既知 6 个预存前端失败外全部通过；typecheck 9 包通过；
   触碰文件 prettier 干净。
 
+## 2026-08-30 backend review batch O evidence
+
+- EV-01（序号缺口恢复只读尾页，修复）：rc.6 与 alpha 两个 adapter 给 `DshStreamController` 的恢复
+  回调此前都经 `sessions.get()` 取 `detail.history` —— 该字段只含**最新一页**（固定 50 条/页，
+  `HISTORY_PAGE_MESSAGES`）。重连缺口宽于一页时（休眠唤醒、长 turn 产生数百 chunk 事件等），
+  较旧页的事件不可达：`recoverRange` 只能交付尾页命中的部分，剩余破洞经 `session.gap` 显式宣告，
+  而 `session.gap` 在 application/webview 无任何消费者——对话留下永久空洞且无任何用户可见信号。
+  这违反 dsh-contract.md 自身的事件恢复契约（"通过历史 RPC 补齐缺口"）。现在新增共享工厂
+  `historyGapRecovery(sessions)`：从缺口末端（`toSequence + 1`，排他语义）起向后走 `session.history`
+  分页（复用 `walkHistoryPages`，新增 `initialBeforeSequence` 起始锚），直到某页最老序号 ≤ 缺口起点
+  或日志耗尽；`recoverRange` 对仍不可达的残余（host 侧截断/清理）照旧宣告 `session.gap`。两个
+  adapter 的内联尾页回调统一替换为该工厂；顺带消除 `sessions.get()` 的多余重载（registry 提示 +
+  workspace 快照 + fallback 汇总在恢复路径上均为副作用）。
+  红绿证据：`packages/dsh-adapter/test/gap-recovery.spec.ts` 新增 adapter 级测试——经 fetch mock
+  （分页 `session.history`：尾页 21..70、第二页 1..20）与 fake WebSocket 注入 mux 帧，水位 10 直接
+  跳到 70；修复前只交付 21..69，11..20 仅以 `session.gap` 宣告（红），修复后 11..69 全部从两页
+  历史补齐且无 `session.gap`（绿）。rc.6 与 alpha 共用同一工厂，行为一致。
+- 审计记录（本轮扫描覆盖面，不改）：`credential-repository`（`credentials.set/unset` 回执与
+  `RpcResponse<{}>` 逐字段吻合、describe/幂等 unset 语义一致）、`workspace-repository`（list/create/
+  rename/delete/insertBefore/insertSessionBefore/archiveSession 响应形状与 rc.2 pinned
+  `workspace.d.ts` 逐一吻合，含 `workspace-name-conflict` 容忍与幂等 adoption）、`model-repository`
+  （catalog/failure/discovered 校验严密、credential 批量 describe 分批 64）、`skill-repository`、
+  `plugin-repository`（只读、`null` fiberPhase 保留）、`preset-repository`、`backend-service`（attach
+  重放/去重键设计）、`advanced-agent-use-cases`（能力探测委托）——均未发现可红测试复现的真实缺陷；
+  rc.6 RPC 错误映射对未识别上游码落入 `PROTOCOL_ERROR` 属保守降级策略，保留。
+- 门禁状态：全量 `test` 749 测试中除既知 6 个预存前端失败外全部通过；typecheck 9 包 + tests
+  tsconfig 通过；`pnpm build` 通过；触碰文件 prettier 干净。
+
 ## rc.8 适配增量与兼容证据
 
 - 版本层：`versions/rc6`、`versions/rc7`、`versions/rc8` 与受控 rc.6 fallback；运行时定位允许任何非空未知版本标签并把警告安全传给 Webview。

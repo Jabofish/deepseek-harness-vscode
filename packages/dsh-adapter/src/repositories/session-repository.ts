@@ -21,10 +21,11 @@ import type { DshTransport } from '../contracts.js'
 import { executeSessionConfigCommand } from './command-repository.js'
 import { callRpc, type RpcResponseLike, unavailable, unwrapRpcResult } from '../versions/rc6/rpc.js'
 import { clientTimeZoneField } from '../client-time-zone.js'
+import type { StreamRecovery } from '../stream-controller.js'
 import { rc6Mapper } from '../versions/rc6/mapper.js'
 import { permissionPresetIds } from '../projection/agent.js'
 import type { Rc6WorkspaceRepository } from './workspace-repository.js'
-import { recordOrUndefined, validProjectionBlock } from './shared/guards.js'
+import { recordOrUndefined, validProjectionBlock, walkHistoryPages } from './shared/guards.js'
 import {
   decodeCanonicalBase64,
   isCanonicalBase64,
@@ -898,6 +899,38 @@ export class Rc6SessionRepository implements SessionRepository {
           finish(undefined, error instanceof Error ? error : new Error('Queue identity failed.')),
       )
     })
+  }
+}
+
+/**
+ * Build the stream gap-recovery callback the version adapters share. The
+ * pinned hosts page `session.history` at 50 events, so a reconnect gap wider
+ * than the newest page must walk backward through history pages from the gap
+ * end until a page reaches the gap start. The stream controller announces any
+ * remainder (history evicted or truncated host-side) as an explicit
+ * `session.gap`, so consumers never mistake an incomplete replay for a
+ * contiguous stream — but a page-bounded read would turn every wide
+ * reconnect into one of those gaps even though the events are readable.
+ */
+export function historyGapRecovery(sessions: Pick<SessionRepository, 'history'>): StreamRecovery {
+  return async (sessionId, fromSequence, toSequence, signal) => {
+    const pages = await walkHistoryPages(
+      (beforeSequence) => sessions.history(sessionId, beforeSequence, signal),
+      {
+        initialBeforeSequence: toSequence + 1,
+        stopWhen: (page) => {
+          const sequences = page.events
+            .map((entry) => entry.sequence)
+            .filter((value) => Number.isSafeInteger(value) && value >= 0)
+          const oldest = sequences.length === 0 ? undefined : Math.min(...sequences)
+          return oldest !== undefined && oldest <= fromSequence
+        },
+      },
+    )
+    return pages
+      .flatMap((page) => page.events)
+      .filter((entry) => entry.sequence >= fromSequence && entry.sequence <= toSequence)
+      .map((entry) => entry.event)
   }
 }
 
