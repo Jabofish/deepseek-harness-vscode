@@ -1,4 +1,14 @@
-import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState, type ReactElement } from 'react'
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactElement,
+} from 'react'
 import { isInjectedUserMessage, type AssistantTiming, type TimelineNode } from '@dsh-vscode/timeline'
 import type {
   MessageFeedbackItem,
@@ -12,7 +22,12 @@ import { MessageActions } from './MessageActions.js'
 import { ReasoningDisclosure } from './ReasoningDisclosure.js'
 import { ToolCallCollection, type ToolTimelineNode } from './ToolCallCollection.js'
 import { WorkflowRunCard } from '../workflows/WorkflowDrawer.js'
-import { ContentFlow, ScrollToLatestButton, useScrollFollow } from '../../components/common/index.js'
+import {
+  ContentFlow,
+  ScrollToLatestButton,
+  useScrollFollow,
+  type ScrollAnchor,
+} from '../../components/common/index.js'
 import { Icon } from '../../ui/Icon.js'
 import { useI18n, type Translate } from '../../i18n.js'
 
@@ -105,7 +120,7 @@ export interface TimelineProps {
 
 export function Timeline(props: TimelineProps): ReactElement {
   const { t } = useI18n()
-  const prependAnchorRef = useRef<{ readonly height: number; readonly top: number } | undefined>(undefined)
+  const prependAnchorRef = useRef<ScrollAnchor | undefined>(undefined)
   const olderHistoryRequestRef = useRef(false)
   const [expandedDetails, setExpandedDetails] = useState<ReadonlySet<string>>(new Set())
   const showDshEvents = props.showDshEvents ?? false
@@ -162,6 +177,8 @@ export function Timeline(props: TimelineProps): ReactElement {
     contentRef,
     handleScroll: handleFollowScroll,
     scrollToLatest,
+    captureScrollAnchor,
+    restoreScrollAnchor,
     isPinnedToBottom,
     showJumpToLatest,
   } = useScrollFollow({
@@ -177,8 +194,8 @@ export function Timeline(props: TimelineProps): ReactElement {
       olderHistoryRequestRef.current
     )
       return
-    const element = scrollRef.current
-    if (element !== null) prependAnchorRef.current = { height: element.scrollHeight, top: element.scrollTop }
+    prependAnchorRef.current = captureScrollAnchor()
+    if (prependAnchorRef.current === undefined) return
     olderHistoryRequestRef.current = true
     const result = onLoadOlderHistory()
     if (result === undefined) {
@@ -188,27 +205,25 @@ export function Timeline(props: TimelineProps): ReactElement {
     void result.finally(() => {
       olderHistoryRequestRef.current = false
     })
-  }, [hasMoreHistory, loadingOlderHistory, onLoadOlderHistory])
+  }, [captureScrollAnchor, hasMoreHistory, loadingOlderHistory, onLoadOlderHistory])
   const handleScroll = useCallback((): void => {
     const element = scrollRef.current
     if (element !== null && element.scrollTop <= 24) loadOlderHistory()
     handleFollowScroll()
   }, [handleFollowScroll, loadOlderHistory, scrollRef])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const anchor = prependAnchorRef.current
     const element = scrollRef.current
     if (anchor === undefined || element === null || props.loadingOlderHistory === true) return
     const restore = (): void => {
       const current = prependAnchorRef.current
       if (current === undefined) return
-      element.scrollTop = element.scrollHeight - current.height + current.top
+      restoreScrollAnchor(current)
       prependAnchorRef.current = undefined
     }
     restore()
-    const timer = window.setTimeout(restore, 80)
-    return () => window.clearTimeout(timer)
-  }, [props.loadingOlderHistory, props.nodes.length])
+  }, [props.loadingOlderHistory, props.nodes.length, restoreScrollAnchor, scrollRef])
 
   return (
     <div className="dsh-timeline-shell">

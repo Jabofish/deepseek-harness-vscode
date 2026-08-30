@@ -34,15 +34,16 @@ describe('Timeline', () => {
       />,
     )
     const timeline = container.querySelector<HTMLDivElement>('.dsh-timeline')!
+    const canvas = container.querySelector<HTMLDivElement>('.dsh-timeline__canvas')!
     let scrollHeight = 1_000
     Object.defineProperty(timeline, 'scrollHeight', { configurable: true, get: () => scrollHeight })
     Object.defineProperty(timeline, 'clientHeight', { configurable: true, value: 300 })
     timeline.scrollTop = 700
     fireEvent.scroll(timeline)
 
-    act(() => resize([resizeEntry(timeline, 420)], {} as ResizeObserver))
+    act(() => resize([resizeEntry(canvas, 420, 420)], {} as ResizeObserver))
     scrollHeight = 1_600
-    act(() => resize([resizeEntry(timeline, 240)], {} as ResizeObserver))
+    act(() => resize([resizeEntry(canvas, 420, 240)], {} as ResizeObserver))
     act(() => {
       vi.runAllTimers()
     })
@@ -139,17 +140,46 @@ describe('Timeline', () => {
       />,
     )
     const timeline = container.querySelector<HTMLDivElement>('.dsh-timeline')!
+    const canvas = container.querySelector<HTMLDivElement>('.dsh-timeline__canvas')!
     let scrollHeight = 1_000
     Object.defineProperty(timeline, 'scrollHeight', { configurable: true, get: () => scrollHeight })
     Object.defineProperty(timeline, 'clientHeight', { configurable: true, value: 300 })
-    act(() => resize([resizeEntry(timeline, 420)], {} as ResizeObserver))
+    act(() => resize([resizeEntry(canvas, 420, 420)], {} as ResizeObserver))
     timeline.scrollTop = 180
     fireEvent.scroll(timeline)
     scrollHeight = 1_600
 
-    act(() => resize([resizeEntry(timeline, 240)], {} as ResizeObserver))
+    act(() => resize([resizeEntry(canvas, 420, 240)], {} as ResizeObserver))
 
     expect(timeline.scrollTop).toBe(180)
+    expect(screen.getByRole('button', { name: 'Jump to latest' })).toBeDefined()
+  })
+
+  it('does not snap a reader back after a small intentional scroll away from the tail', () => {
+    vi.useFakeTimers()
+    const { container } = render(
+      <Timeline
+        sessionId="session-1"
+        nodes={[{ kind: 'user-message', id: 'user-1', markdown: 'A long message' }]}
+        streaming={false}
+      />,
+    )
+    const timeline = container.querySelector<HTMLDivElement>('.dsh-timeline')!
+    let scrollHeight = 1_000
+    Object.defineProperty(timeline, 'scrollHeight', { configurable: true, get: () => scrollHeight })
+    Object.defineProperty(timeline, 'clientHeight', { configurable: true, value: 300 })
+    timeline.scrollTop = 700
+    fireEvent.scroll(timeline)
+
+    fireEvent.wheel(timeline, { deltaY: -24 })
+    timeline.scrollTop = 676
+    fireEvent.scroll(timeline)
+    scrollHeight = 1_200
+    act(() => {
+      vi.advanceTimersByTime(500)
+    })
+
+    expect(timeline.scrollTop).toBe(676)
     expect(screen.getByRole('button', { name: 'Jump to latest' })).toBeDefined()
   })
 
@@ -864,9 +894,9 @@ describe('Timeline', () => {
   })
 })
 
-function resizeEntry(target: Element, width: number): ResizeObserverEntry {
+function resizeEntry(target: Element, width: number, height: number): ResizeObserverEntry {
   return {
     target,
-    contentRect: { width } as DOMRectReadOnly,
+    contentRect: { width, height } as DOMRectReadOnly,
   } as ResizeObserverEntry
 }
