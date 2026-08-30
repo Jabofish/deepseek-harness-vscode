@@ -24,7 +24,10 @@ import { ToolCallCollection, type ToolTimelineNode } from './ToolCallCollection.
 import { WorkflowRunCard } from '../workflows/WorkflowDrawer.js'
 import {
   ContentFlow,
+  DEFAULT_VIRTUALIZATION_PAYLOAD_THRESHOLD,
+  DEFAULT_VIRTUALIZATION_THRESHOLD,
   ScrollToLatestButton,
+  useVirtualizedCollection,
   useScrollFollow,
   type ScrollAnchor,
 } from '../../components/common/index.js'
@@ -172,10 +175,12 @@ export function Timeline(props: TimelineProps): ReactElement {
   )
   const latestNode = displayNodes[displayNodes.length - 1]
   const latestSignature = nodeSignature(latestNode)
+  const virtualizeTimeline = shouldVirtualizeTimeline(displayNodes)
   const {
     scrollRef,
     contentRef,
     scrollToLatest,
+    scheduleScrollToLatest,
     captureScrollAnchor,
     restoreScrollAnchor,
     isPinnedToBottom,
@@ -184,7 +189,21 @@ export function Timeline(props: TimelineProps): ReactElement {
     contentKey: latestSignature,
     itemCount: displayNodes.length,
     sessionId: props.sessionId,
+    observeContentSize: !virtualizeTimeline,
   })
+  const virtualized = useVirtualizedCollection({
+    items: displayNodes,
+    scrollRef,
+    enabled: virtualizeTimeline,
+    getItemKey: timelineNodeKey,
+  })
+  useLayoutEffect(() => {
+    if (!virtualized.enabled || virtualized.totalSize <= 0) return
+    // Virtual rows refine the canvas height as they enter the measurement
+    // cache. Reconcile that estimate only through the shared scroll owner;
+    // native reader input cancels it before it can move the viewport.
+    scheduleScrollToLatest()
+  }, [scheduleScrollToLatest, virtualized.enabled, virtualized.totalSize])
   const loadOlderHistory = useCallback((): void => {
     if (
       hasMoreHistory !== true ||
@@ -253,37 +272,55 @@ export function Timeline(props: TimelineProps): ReactElement {
             <span>{t('timeline.emptyHint')}</span>
           </div>
         ) : null}
-        <div ref={contentRef} className="dsh-timeline__canvas">
-          {displayNodes.map((node) => (
-            <div key={node.id} className="dsh-timeline__row">
-              {renderNode(
-                node,
-                expandedDetails,
-                setExpandedDetails,
-                props.assistantLabel,
-                props.onOpenLink === undefined ? undefined : requestOpenLink,
-                props.onLoadImage,
-                props.onShowInFolder,
-                props.onOpenSession,
-                props.onBranch,
-                branchUnavailableForNode(node, props.branching === true),
-                running,
-                props.feedback,
-                props.onFeedback,
-                props.onFeedbackNote,
-                t,
-                props.feedbackUnavailable,
-              )}
-            </div>
-          ))}
+        <div ref={contentRef} className="dsh-timeline__content">
+          <div
+            className={`dsh-timeline__canvas${virtualized.enabled ? ' dsh-timeline__canvas--virtualized' : ''}`}
+            style={virtualized.enabled ? { height: `${virtualized.totalSize}px` } : undefined}
+          >
+            {virtualized.enabled
+              ? virtualized.virtualItems.map((item) => {
+                  const node = displayNodes[item.index]
+                  if (node === undefined) return null
+                  return (
+                    <div
+                      key={item.key}
+                      ref={virtualized.measureElement}
+                      data-index={item.index}
+                      className="dsh-timeline__row"
+                      style={{ transform: `translateY(${item.start}px)` }}
+                    >
+                      {renderTimelineNode(node, {
+                        expandedDetails,
+                        setExpandedDetails,
+                        props,
+                        requestOpenLink,
+                        running,
+                        t,
+                      })}
+                    </div>
+                  )
+                })
+              : displayNodes.map((node) => (
+                  <div key={node.id} className="dsh-timeline__row">
+                    {renderTimelineNode(node, {
+                      expandedDetails,
+                      setExpandedDetails,
+                      props,
+                      requestOpenLink,
+                      running,
+                      t,
+                    })}
+                  </div>
+                ))}
+          </div>
+          {running ? (
+            <StreamingActivity
+              id={`turn:${props.activeTurn ?? latestNode?.id ?? props.sessionId}`}
+              usingTool={usingTool}
+              translate={t}
+            />
+          ) : null}
         </div>
-        {running ? (
-          <StreamingActivity
-            id={`turn:${props.activeTurn ?? latestNode?.id ?? props.sessionId}`}
-            usingTool={usingTool}
-            translate={t}
-          />
-        ) : null}
         {props.streaming ? (
           <span className="dsh-sr-only" aria-live="polite">
             {t('timeline.streaming')}
@@ -686,6 +723,73 @@ function renderNode(
         undefined,
         feedbackUnavailable,
       )
+  }
+}
+
+interface TimelineNodeRenderContext {
+  readonly expandedDetails: ReadonlySet<string>
+  readonly setExpandedDetails: (next: ReadonlySet<string>) => void
+  readonly props: TimelineProps
+  readonly requestOpenLink: (href: string) => void
+  readonly running: boolean
+  readonly t: Translate
+}
+
+function renderTimelineNode(
+  node: DisplayTimelineNode,
+  context: TimelineNodeRenderContext,
+): ReactElement {
+  const { props } = context
+  return renderNode(
+    node,
+    context.expandedDetails,
+    context.setExpandedDetails,
+    props.assistantLabel,
+    props.onOpenLink === undefined ? undefined : context.requestOpenLink,
+    props.onLoadImage,
+    props.onShowInFolder,
+    props.onOpenSession,
+    props.onBranch,
+    branchUnavailableForNode(node, props.branching === true),
+    context.running,
+    props.feedback,
+    props.onFeedback,
+    props.onFeedbackNote,
+    context.t,
+    props.feedbackUnavailable,
+  )
+}
+
+function shouldVirtualizeTimeline(nodes: readonly DisplayTimelineNode[]): boolean {
+  if (nodes.length >= DEFAULT_VIRTUALIZATION_THRESHOLD) return true
+  // A single long answer can be more expensive than many compact rows. Keep
+  // its siblings windowed as soon as the rendered source crosses this policy
+  // limit; the Markdown block itself remains available when its row is shown.
+  return nodes.some((node) => displayNodeTextSize(node) >= DEFAULT_VIRTUALIZATION_PAYLOAD_THRESHOLD)
+}
+
+function timelineNodeKey(node: DisplayTimelineNode): string {
+  return node.id
+}
+
+function displayNodeTextSize(node: DisplayTimelineNode): number {
+  switch (node.kind) {
+    case 'assistant-turn':
+      return (
+        node.markdown.length +
+        (node.reasoning?.markdown.length ?? 0) +
+        node.blocks.reduce((total, block) => total + (block.kind === 'tool' ? 0 : block.markdown.length), 0)
+      )
+    case 'assistant-message':
+    case 'reasoning':
+    case 'user-message':
+      return node.markdown.length
+    case 'compaction':
+      return node.compaction.summary?.length ?? 0
+    case 'event-group':
+      return node.events.reduce((total, event) => total + formatEventPayload(event.payload).length, 0)
+    default:
+      return 0
   }
 }
 

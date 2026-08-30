@@ -8,6 +8,16 @@ export { useViewportMenuPosition } from './useViewportMenuPosition.js'
 export { useDismissibleLayer } from './useDismissibleLayer.js'
 export { useScrollFollow } from './useScrollFollow.js'
 export type { ScrollAnchor, ScrollFollowOptions, ScrollFollowResult } from './useScrollFollow.js'
+export {
+  DEFAULT_VIRTUALIZATION_PAYLOAD_THRESHOLD,
+  DEFAULT_VIRTUALIZATION_OVERSCAN,
+  DEFAULT_VIRTUALIZATION_THRESHOLD,
+  useVirtualizedCollection,
+} from './useVirtualizedCollection.js'
+export type {
+  VirtualizedCollectionOptions,
+  VirtualizedCollectionResult,
+} from './useVirtualizedCollection.js'
 export { SelectMenu } from './SelectMenu.js'
 export type { SelectMenuOption, SelectMenuProps } from './SelectMenu.js'
 export { ContentFlow } from './ContentFlow.js'

@@ -18,6 +18,12 @@ export interface ScrollFollowOptions {
   readonly sessionId?: string | undefined
   /** Distance from the tail at which the reader is still considered pinned. */
   readonly bottomThreshold?: number
+  /**
+   * Observe consumer content size changes for late layout growth. Long
+   * virtualized collections opt out because their measurement pass changes
+   * the estimated canvas height while the reader is moving.
+   */
+  readonly observeContentSize?: boolean
 }
 
 /** A reader position captured before an older history page is inserted. */
@@ -274,6 +280,7 @@ export function useScrollFollow(options: ScrollFollowOptions): ScrollFollowResul
   }, [options.contentKey, options.itemCount, options.sessionId, scheduleScrollToLatest])
 
   useLayoutEffect(() => {
+    if (options.observeContentSize === false) return
     const element = scrollRef.current
     if (element === null || typeof ResizeObserver === 'undefined') return
 
@@ -302,7 +309,7 @@ export function useScrollFollow(options: ScrollFollowOptions): ScrollFollowResul
       observer.disconnect()
       cancelScheduledFollow()
     }
-  }, [cancelScheduledFollow, scheduleScrollToLatest])
+  }, [cancelScheduledFollow, options.observeContentSize, scheduleScrollToLatest])
 
   useLayoutEffect(() => cancelScheduledFollow, [cancelScheduledFollow])
 
