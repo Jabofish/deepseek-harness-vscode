@@ -1,4 +1,14 @@
-import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState, type ReactElement } from 'react'
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactElement,
+} from 'react'
 import { isInjectedUserMessage, type AssistantTiming, type TimelineNode } from '@dsh-vscode/timeline'
 import type {
   MessageFeedbackItem,
@@ -6,14 +16,13 @@ import type {
   MessageImageReference,
   TokenUsage,
 } from '@dsh-vscode/domain'
-import { useVirtualizer } from '@tanstack/react-virtual'
 import { MarkdownContent } from './MarkdownContent.js'
 import { MessageImages } from './MessageImages.js'
 import { MessageActions } from './MessageActions.js'
 import { ReasoningDisclosure } from './ReasoningDisclosure.js'
 import { ToolCallCollection, type ToolTimelineNode } from './ToolCallCollection.js'
 import { WorkflowRunCard } from '../workflows/WorkflowDrawer.js'
-import { ContentFlow, ScrollToLatestButton } from '../../components/common/index.js'
+import { ContentFlow, ScrollToLatestButton, useScrollFollow } from '../../components/common/index.js'
 import { Icon } from '../../ui/Icon.js'
 import { useI18n, type Translate } from '../../i18n.js'
 
@@ -106,12 +115,8 @@ export interface TimelineProps {
 
 export function Timeline(props: TimelineProps): ReactElement {
   const { t } = useI18n()
-  const scrollRef = useRef<HTMLDivElement>(null)
-  const stickToBottomRef = useRef(true)
-  const previousSessionRef = useRef(props.sessionId)
   const prependAnchorRef = useRef<{ readonly height: number; readonly top: number } | undefined>(undefined)
   const olderHistoryRequestRef = useRef(false)
-  const [showJumpToLatest, setShowJumpToLatest] = useState(false)
   const [expandedDetails, setExpandedDetails] = useState<ReadonlySet<string>>(new Set())
   const showDshEvents = props.showDshEvents ?? false
   // The reducer keeps authoritative assistant step ids so separate visible
@@ -162,13 +167,19 @@ export function Timeline(props: TimelineProps): ReactElement {
   )
   const latestNode = displayNodes[displayNodes.length - 1]
   const latestSignature = nodeSignature(latestNode)
-  const scrollToLatest = useCallback((): void => {
-    const element = scrollRef.current
-    if (element === null) return
-    element.scrollTop = element.scrollHeight
-    stickToBottomRef.current = true
-    setShowJumpToLatest(false)
-  }, [])
+  const {
+    scrollRef,
+    contentRef,
+    handleScroll: handleFollowScroll,
+    scrollToLatest,
+    scheduleScrollToLatest,
+    isPinnedToBottom,
+    showJumpToLatest,
+  } = useScrollFollow({
+    contentKey: latestSignature,
+    itemCount: displayNodes.length,
+    sessionId: props.sessionId,
+  })
   const loadOlderHistory = useCallback((): void => {
     if (
       hasMoreHistory !== true ||
@@ -191,82 +202,9 @@ export function Timeline(props: TimelineProps): ReactElement {
   }, [hasMoreHistory, loadingOlderHistory, onLoadOlderHistory])
   const handleScroll = useCallback((): void => {
     const element = scrollRef.current
-    if (element === null) return
-    if (element.scrollTop <= 24) loadOlderHistory()
-    const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight
-    const atLatest = distanceFromBottom <= 64
-    stickToBottomRef.current = atLatest
-    setShowJumpToLatest((current) => {
-      const next = !atLatest && displayNodes.length > 0
-      return current === next ? current : next
-    })
-  }, [displayNodes.length, loadOlderHistory])
-
-  useEffect(() => {
-    const sessionChanged = previousSessionRef.current !== props.sessionId
-    if (sessionChanged) {
-      previousSessionRef.current = props.sessionId
-      stickToBottomRef.current = true
-      setShowJumpToLatest(false)
-    }
-    if (!stickToBottomRef.current || displayNodes.length === 0) return
-
-    let followUpTimer: number | undefined
-    const initialTimer = window.setTimeout(() => {
-      // A render can be followed by an intentional user scroll before the
-      // timer runs.  Never let a stale follow-up move the reader back to the
-      // bottom after that intent has been recorded by handleScroll.
-      if (!stickToBottomRef.current) return
-      scrollToLatest()
-      followUpTimer = window.setTimeout(() => {
-        if (stickToBottomRef.current) scrollToLatest()
-      }, 80)
-    }, 0)
-    return () => {
-      window.clearTimeout(initialTimer)
-      if (followUpTimer !== undefined) window.clearTimeout(followUpTimer)
-    }
-  }, [latestSignature, displayNodes.length, props.sessionId, scrollToLatest])
-
-  useEffect(() => {
-    const element = scrollRef.current
-    if (element === null || typeof ResizeObserver === 'undefined') return
-    let previousWidth: number | undefined
-    let settleTimer: number | undefined
-    let followUpTimer: number | undefined
-    const clearTimers = (): void => {
-      if (settleTimer !== undefined) window.clearTimeout(settleTimer)
-      if (followUpTimer !== undefined) window.clearTimeout(followUpTimer)
-    }
-    const observer = new ResizeObserver((entries) => {
-      const width = entries[0]?.contentRect.width
-      if (width === undefined) return
-      if (previousWidth === undefined) {
-        previousWidth = width
-        return
-      }
-      if (Math.abs(width - previousWidth) < 0.5) return
-      previousWidth = width
-      // Text reflows before the virtualizer finishes remeasuring every row.
-      // Correct immediately so a resize-generated scroll event still sees the
-      // viewport pinned, then settle twice for the asynchronous measurements.
-      if (!stickToBottomRef.current) return
-      clearTimers()
-      scrollToLatest()
-      settleTimer = window.setTimeout(() => {
-        if (!stickToBottomRef.current) return
-        scrollToLatest()
-        followUpTimer = window.setTimeout(() => {
-          if (stickToBottomRef.current) scrollToLatest()
-        }, 80)
-      }, 0)
-    })
-    observer.observe(element)
-    return () => {
-      observer.disconnect()
-      clearTimers()
-    }
-  }, [scrollToLatest])
+    if (element !== null && element.scrollTop <= 24) loadOlderHistory()
+    handleFollowScroll()
+  }, [handleFollowScroll, loadOlderHistory, scrollRef])
 
   useEffect(() => {
     const anchor = prependAnchorRef.current
@@ -283,20 +221,18 @@ export function Timeline(props: TimelineProps): ReactElement {
     return () => window.clearTimeout(timer)
   }, [props.loadingOlderHistory, props.nodes.length])
 
-  // TanStack Virtual owns scroll measurement; stable timeline ids keep
-  // streaming cards from remounting as their Markdown grows.
-  // eslint-disable-next-line react-hooks/incompatible-library
-  const virtualizer = useVirtualizer({
-    count: displayNodes.length,
-    getScrollElement: () => scrollRef.current,
-    estimateSize: () => 72,
-    overscan: 6,
-    getItemKey: (index) => displayNodes[index]?.id ?? index,
-  })
-  const virtualHeight = virtualizer.getTotalSize()
+  useLayoutEffect(() => {
+    if (isPinnedToBottom && displayNodes.length > 0) scheduleScrollToLatest()
+  }, [displayNodes.length, isPinnedToBottom, scheduleScrollToLatest])
   return (
     <div className="dsh-timeline-shell">
-      <div ref={scrollRef} className="dsh-timeline" aria-label={t('timeline.aria')} onScroll={handleScroll}>
+      <div
+        ref={scrollRef}
+        className="dsh-timeline"
+        data-scroll-follow={isPinnedToBottom ? 'pinned' : 'free'}
+        aria-label={t('timeline.aria')}
+        onScroll={handleScroll}
+      >
         {props.hasMoreHistory && props.onLoadOlderHistory !== undefined ? (
           <div className="dsh-timeline__history-more">
             <button
@@ -318,39 +254,29 @@ export function Timeline(props: TimelineProps): ReactElement {
             <span>{t('timeline.emptyHint')}</span>
           </div>
         ) : null}
-        <div className="dsh-timeline__canvas" style={{ height: `${virtualHeight}px`, position: 'relative' }}>
-          {virtualizer.getVirtualItems().map((item) => {
-            const node = displayNodes[item.index]
-            if (node === undefined) return null
-            return (
-              <div
-                key={item.key}
-                ref={virtualizer.measureElement}
-                data-index={item.index}
-                className="dsh-timeline__row"
-                style={{ transform: `translateY(${item.start}px)` }}
-              >
-                {renderNode(
-                  node,
-                  expandedDetails,
-                  setExpandedDetails,
-                  props.assistantLabel,
-                  props.onOpenLink === undefined ? undefined : requestOpenLink,
-                  props.onLoadImage,
-                  props.onShowInFolder,
-                  props.onOpenSession,
-                  props.onBranch,
-                  branchUnavailableForNode(node, props.branching === true),
-                  running,
-                  props.feedback,
-                  props.onFeedback,
-                  props.onFeedbackNote,
-                  t,
-                  props.feedbackUnavailable,
-                )}
-              </div>
-            )
-          })}
+        <div ref={contentRef} className="dsh-timeline__canvas">
+          {displayNodes.map((node) => (
+            <div key={node.id} className="dsh-timeline__row">
+              {renderNode(
+                node,
+                expandedDetails,
+                setExpandedDetails,
+                props.assistantLabel,
+                props.onOpenLink === undefined ? undefined : requestOpenLink,
+                props.onLoadImage,
+                props.onShowInFolder,
+                props.onOpenSession,
+                props.onBranch,
+                branchUnavailableForNode(node, props.branching === true),
+                running,
+                props.feedback,
+                props.onFeedback,
+                props.onFeedbackNote,
+                t,
+                props.feedbackUnavailable,
+              )}
+            </div>
+          ))}
         </div>
         {running ? (
           <StreamingActivity

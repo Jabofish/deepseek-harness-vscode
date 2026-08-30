@@ -957,15 +957,17 @@ ul {
 }
 
 .dsh-timeline__canvas {
-  width: min(100%, 64rem);
+  width: min(100%, var(--dsh-timeline-content-max-width));
   min-width: 0;
   margin: 0 auto;
   padding: 0 var(--dsh-space-1) var(--dsh-space-2);
 }
 
+.dsh-trajectory__content {
+  min-width: 0;
+}
+
 .dsh-timeline__row {
-  position: absolute;
-  inset-inline: 0;
   display: flex;
   width: 100%;
   min-width: 0;
@@ -982,7 +984,7 @@ ul {
   flex-direction: column;
   align-items: flex-start;
   gap: var(--dsh-space-1);
-  width: min(100%, 54rem);
+  width: min(100%, var(--dsh-message-content-max-width));
   min-width: 0;
 }
 
@@ -1003,7 +1005,7 @@ ul {
 }
 
 .dsh-timeline__card {
-  width: min(100%, 54rem);
+  width: min(100%, var(--dsh-message-content-max-width));
   overflow: hidden;
   padding: var(--dsh-space-2) var(--dsh-space-3);
 }

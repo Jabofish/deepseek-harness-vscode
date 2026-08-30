@@ -59,7 +59,7 @@
 
 .dsh-app {
   gap: var(--dsh-space-2);
-  padding: var(--dsh-space-3);
+  padding: var(--dsh-frame-inset);
 }
 
 .dsh-app__body {
@@ -242,9 +242,9 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
-  /* Timeline content is measured incrementally by the virtualizer. Browser
-   * scroll anchoring otherwise competes with the explicit bottom-follow rule
-   * and nudges a reader back toward an older layout position. */
+  /* The document flow is stable and useScrollFollow is the only owner of
+   * append-to-tail behavior. Native anchoring would move the reader when an
+   * older Markdown block or image changes height above the viewport. */
   overflow-anchor: none;
 }
 
@@ -1218,7 +1218,7 @@
 
 @media (max-width: 36rem) {
   .dsh-app {
-    padding: var(--dsh-space-2);
+    padding: var(--dsh-frame-inset);
   }
 
   .dsh-conversation__topbar {

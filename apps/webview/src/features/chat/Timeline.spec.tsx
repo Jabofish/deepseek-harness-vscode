@@ -6,25 +6,6 @@ import type { TimelineNode } from '@dsh-vscode/timeline'
 import { ConversationEventToggle } from '../shell/ConversationEventToggle.js'
 import { Timeline } from './Timeline.js'
 
-vi.mock('@tanstack/react-virtual', () => ({
-  useVirtualizer: ({
-    count,
-    getItemKey,
-  }: {
-    readonly count: number
-    readonly getItemKey: (index: number) => string | number
-  }) => ({
-    getTotalSize: () => count * 72,
-    getVirtualItems: () =>
-      Array.from({ length: count }, (_, index) => ({
-        index,
-        key: getItemKey(index),
-        start: index * 72,
-      })),
-    measureElement: () => undefined,
-  }),
-}))
-
 describe('Timeline', () => {
   afterEach(() => {
     cleanup()
@@ -62,12 +43,12 @@ describe('Timeline', () => {
     act(() => resize([resizeEntry(timeline, 420)], {} as ResizeObserver))
     scrollHeight = 1_600
     act(() => resize([resizeEntry(timeline, 240)], {} as ResizeObserver))
-
-    expect(timeline.scrollTop).toBe(1_600)
-    expect(screen.queryByRole('button', { name: 'Jump to latest' })).toBeNull()
     act(() => {
       vi.runAllTimers()
     })
+
+    expect(timeline.scrollTop).toBe(1_300)
+    expect(screen.queryByRole('button', { name: 'Jump to latest' })).toBeNull()
   })
 
   it('offers the bounded older-history page and invokes the host-backed loader', () => {

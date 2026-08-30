@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import type { TimelineNode } from '@dsh-vscode/timeline'
 import { buildTrajectory, searchTrajectoryRecords, type TrajectoryRecord } from '@dsh-vscode/timeline'
-import { ScrollToLatestButton } from '../../components/common/index.js'
+import { ScrollToLatestButton, useScrollFollow } from '../../components/common/index.js'
 import { useI18n, type Translate } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
 
@@ -21,10 +21,7 @@ export interface TrajectoryViewProps {
  */
 export function TrajectoryView(props: TrajectoryViewProps): ReactElement {
   const { t } = useI18n()
-  const scrollRef = useRef<HTMLDivElement>(null)
-  const stickToBottomRef = useRef(true)
   const previousSessionRef = useRef(props.sessionId)
-  const [showJumpToLatest, setShowJumpToLatest] = useState(false)
   const [query, setQuery] = useState('')
   const [selectedId, setSelectedId] = useState<string | undefined>(undefined)
 
@@ -40,42 +37,20 @@ export function TrajectoryView(props: TrajectoryViewProps): ReactElement {
   const lastRecord = projection.sections.at(-1)?.records.at(-1)
   const tailSignature = lastRecord === undefined ? '' : `${lastRecord.id}:${lastRecord.text.length}`
 
-  const scrollToLatest = (): void => {
-    const element = scrollRef.current
-    if (element === null) return
-    element.scrollTop = element.scrollHeight
-    stickToBottomRef.current = true
-    setShowJumpToLatest(false)
-  }
-
-  const handleScroll = (): void => {
-    const element = scrollRef.current
-    if (element === null) return
-    const atLatest = element.scrollHeight - element.scrollTop - element.clientHeight <= 64
-    stickToBottomRef.current = atLatest
-    setShowJumpToLatest((current) => {
-      const next = !atLatest && projection.recordCount > 0
-      return current === next ? current : next
+  const { scrollRef, contentRef, handleScroll, scrollToLatest, isPinnedToBottom, showJumpToLatest } =
+    useScrollFollow({
+      contentKey: tailSignature,
+      itemCount: projection.recordCount,
+      sessionId: props.sessionId,
     })
-  }
 
   useEffect(() => {
     if (previousSessionRef.current !== props.sessionId) {
       previousSessionRef.current = props.sessionId
-      stickToBottomRef.current = true
-      setShowJumpToLatest(false)
       setSelectedId(undefined)
       setQuery('')
     }
-    if (!stickToBottomRef.current || projection.recordCount === 0) return
-    const element = scrollRef.current
-    if (element === null) return
-    const timer = window.setTimeout(() => {
-      if (!stickToBottomRef.current) return
-      element.scrollTop = element.scrollHeight
-    }, 0)
-    return () => window.clearTimeout(timer)
-  }, [tailSignature, projection.recordCount, props.sessionId])
+  }, [props.sessionId])
 
   return (
     <div
@@ -107,47 +82,19 @@ export function TrajectoryView(props: TrajectoryViewProps): ReactElement {
       <div
         ref={scrollRef}
         className="dsh-trajectory"
+        data-scroll-follow={isPinnedToBottom ? 'pinned' : 'free'}
         aria-label={t('trajectory.ledger')}
         onScroll={handleScroll}
       >
-        {projection.recordCount === 0 ? (
-          <p className="dsh-trajectory__empty">{t('trajectory.empty')}</p>
-        ) : searching ? (
-          matches.length === 0 ? (
-            <p className="dsh-trajectory__empty">{t('trajectory.noMatch', { query: query.trim() })}</p>
-          ) : (
-            <ul className="dsh-trajectory__rows">
-              {matches.map((record) => (
-                <TrajectoryRow
-                  key={record.id}
-                  record={record}
-                  selected={selectedId === record.id}
-                  onSelect={() => setSelectedId(record.id)}
-                  t={t}
-                />
-              ))}
-            </ul>
-          )
-        ) : (
-          projection.sections.map((section, sectionIndex) => (
-            <section
-              className="dsh-trajectory__section"
-              key={
-                section.kind === 'turn' ? `turn:${section.turn ?? sectionIndex}` : `between:${sectionIndex}`
-              }
-              aria-label={
-                section.kind === 'turn'
-                  ? t('trajectory.turn', { turn: section.turn ?? 0 })
-                  : t('trajectory.betweenTurns')
-              }
-            >
-              <h3 className="dsh-trajectory__section-title">
-                {section.kind === 'turn'
-                  ? t('trajectory.turn', { turn: section.turn ?? 0 })
-                  : t('trajectory.betweenTurns')}
-              </h3>
+        <div ref={contentRef} className="dsh-trajectory__content">
+          {projection.recordCount === 0 ? (
+            <p className="dsh-trajectory__empty">{t('trajectory.empty')}</p>
+          ) : searching ? (
+            matches.length === 0 ? (
+              <p className="dsh-trajectory__empty">{t('trajectory.noMatch', { query: query.trim() })}</p>
+            ) : (
               <ul className="dsh-trajectory__rows">
-                {section.records.map((record) => (
+                {matches.map((record) => (
                   <TrajectoryRow
                     key={record.id}
                     record={record}
@@ -157,18 +104,47 @@ export function TrajectoryView(props: TrajectoryViewProps): ReactElement {
                   />
                 ))}
               </ul>
-            </section>
-          ))
-        )}
-        {props.streaming ? (
-          <span className="dsh-sr-only" aria-live="polite">
-            {t('timeline.streaming')}
-          </span>
-        ) : null}
+            )
+          ) : (
+            projection.sections.map((section, sectionIndex) => (
+              <section
+                className="dsh-trajectory__section"
+                key={
+                  section.kind === 'turn' ? `turn:${section.turn ?? sectionIndex}` : `between:${sectionIndex}`
+                }
+                aria-label={
+                  section.kind === 'turn'
+                    ? t('trajectory.turn', { turn: section.turn ?? 0 })
+                    : t('trajectory.betweenTurns')
+                }
+              >
+                <h3 className="dsh-trajectory__section-title">
+                  {section.kind === 'turn'
+                    ? t('trajectory.turn', { turn: section.turn ?? 0 })
+                    : t('trajectory.betweenTurns')}
+                </h3>
+                <ul className="dsh-trajectory__rows">
+                  {section.records.map((record) => (
+                    <TrajectoryRow
+                      key={record.id}
+                      record={record}
+                      selected={selectedId === record.id}
+                      onSelect={() => setSelectedId(record.id)}
+                      t={t}
+                    />
+                  ))}
+                </ul>
+              </section>
+            ))
+          )}
+          {props.streaming ? (
+            <span className="dsh-sr-only" aria-live="polite">
+              {t('timeline.streaming')}
+            </span>
+          ) : null}
+        </div>
       </div>
-      {showJumpToLatest ? (
-        <ScrollToLatestButton label={t('timeline.jump')} onClick={scrollToLatest} />
-      ) : null}
+      {showJumpToLatest ? <ScrollToLatestButton label={t('timeline.jump')} onClick={scrollToLatest} /> : null}
       {selected === undefined ? null : (
         <TrajectoryInspector record={selected} onClose={() => setSelectedId(undefined)} t={t} />
       )}

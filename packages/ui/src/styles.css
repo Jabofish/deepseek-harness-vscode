@@ -16,6 +16,9 @@
   --dsh-space-3: 0.75rem;
   --dsh-space-4: 1rem;
   --dsh-space-5: 1.5rem;
+  --dsh-frame-inset: var(--dsh-space-2);
+  --dsh-timeline-content-max-width: 72rem;
+  --dsh-message-content-max-width: 72rem;
   --dsh-radius-sm: 0.375rem;
   --dsh-radius-md: 0.5rem;
   --dsh-radius-lg: 0.75rem;
