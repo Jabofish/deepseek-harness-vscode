@@ -40,7 +40,8 @@ export class AlphaEventSource implements AsyncEventSource<BackendEvent> {
   public subscribe(listener: (event: BackendEvent) => void): () => void {
     if (this.closed) return () => undefined
     this.listeners.add(listener)
-    for (const controller of this.controllers()) this.attach(controller, listener)
+    for (const controller of this.controllers())
+      this.attach(controller, listener, controller !== this.global && controller !== this.workspace)
     let active = true
     return () => {
       if (!active) return
@@ -64,7 +65,7 @@ export class AlphaEventSource implements AsyncEventSource<BackendEvent> {
       },
     )
     this.sessions.set(sessionId, controller)
-    for (const listener of this.listeners) this.attach(controller, listener)
+    for (const listener of this.listeners) this.attach(controller, listener, true)
   }
 
   public async close(): Promise<void> {
@@ -81,10 +82,25 @@ export class AlphaEventSource implements AsyncEventSource<BackendEvent> {
     return [this.global, this.workspace, ...this.sessions.values()]
   }
 
-  private attach(controller: DshStreamController, listener: (event: BackendEvent) => void): void {
+  private attach(
+    controller: DshStreamController,
+    listener: (event: BackendEvent) => void,
+    sessionScoped: boolean,
+  ): void {
     const entries = this.subscriptions.get(controller) ?? new Map<(event: BackendEvent) => void, () => void>()
     if (entries.has(listener)) return
-    entries.set(listener, controller.subscribe(listener))
+    // A session-scoped follow stream failing is transport noise, not a backend
+    // connection loss: the host-wide stream stays healthy and the session
+    // controller runs its own recovery loop. Only the host-wide controller may
+    // announce connection.lost, or every per-session hiccup tears down
+    // connection-scoped consumers while the backend is still connected.
+    const deliver = sessionScoped
+      ? (event: BackendEvent): void => {
+          if (event.type === 'connection.lost') return
+          listener(event)
+        }
+      : listener
+    entries.set(listener, controller.subscribe(deliver))
     this.subscriptions.set(controller, entries)
   }
 
@@ -94,5 +110,18 @@ export class AlphaEventSource implements AsyncEventSource<BackendEvent> {
     // session announced by the host must also become live immediately so its
     // durable events are not missed between list refreshes.
     if (event.type === 'session.added') this.watchSession(event.sessionId)
+    // Symmetric lifecycle: a session the host removed must not keep a follow
+    // stream. Its server stream is gone, so the abandoned controller would
+    // reconnect (and report connection losses) forever against a session that
+    // no longer exists. SessionRepository.get() re-watches on later access.
+    if (event.type === 'session.removed') void this.unwatchSession(event.sessionId)
+  }
+
+  private async unwatchSession(sessionId: string): Promise<void> {
+    const controller = this.sessions.get(sessionId)
+    if (controller === undefined) return
+    this.sessions.delete(sessionId)
+    this.subscriptions.delete(controller)
+    await controller.close()
   }
 }

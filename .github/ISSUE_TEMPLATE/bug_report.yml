@@ -1,0 +1,76 @@
+name: Bug report
+description: Report a problem with the DeepSeek Harness extension
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug. Please **never include API keys, passwords,
+        access tokens, or prompt bodies**. For safe output, run the command
+        `DSH: Show Redacted Diagnostics` and paste that instead.
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - Linux
+        - macOS
+    validations:
+      required: true
+  - type: input
+    id: vscode-version
+    attributes:
+      label: VS Code version
+      placeholder: e.g. 1.125.0 (Help → About)
+    validations:
+      required: true
+  - type: input
+    id: extension-version
+    attributes:
+      label: Extension version
+      placeholder: e.g. 0.0.8
+    validations:
+      required: true
+  - type: input
+    id: dsh-version
+    attributes:
+      label: DSH version
+      description: 'Output of `dsh --version`, or "not installed".'
+      placeholder: e.g. 0.1.1-rc.2
+    validations:
+      required: true
+  - type: dropdown
+    id: connection-mode
+    attributes:
+      label: Connection mode (`dsh.connection.mode`)
+      options:
+        - auto
+        - attach-only
+        - new-isolated
+        - custom
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Minimal, deterministic steps starting from a clean VS Code window.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Expected vs actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Redacted diagnostics
+      description: 'Output of `DSH: Show Redacted Diagnostics`, if available.'
+  - type: textarea
+    id: logs
+    attributes:
+      label: Extension Host log excerpt
+      description: The `DeepSeek Harness` output channel. Redact anything sensitive; secrets and prompt bodies are already redacted by the extension.

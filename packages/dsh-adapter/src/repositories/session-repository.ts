@@ -21,10 +21,11 @@ import type { DshTransport } from '../contracts.js'
 import { executeSessionConfigCommand } from './command-repository.js'
 import { callRpc, type RpcResponseLike, unavailable, unwrapRpcResult } from '../versions/rc6/rpc.js'
 import { clientTimeZoneField } from '../client-time-zone.js'
+import type { StreamRecovery } from '../stream-controller.js'
 import { rc6Mapper } from '../versions/rc6/mapper.js'
 import { permissionPresetIds } from '../projection/agent.js'
 import type { Rc6WorkspaceRepository } from './workspace-repository.js'
-import { recordOrUndefined, validProjectionBlock } from './shared/guards.js'
+import { recordOrUndefined, validProjectionBlock, walkHistoryPages } from './shared/guards.js'
 import {
   decodeCanonicalBase64,
   isCanonicalBase64,
@@ -61,6 +62,7 @@ export class Rc6SessionRepository implements SessionRepository {
       options.maxPromptAttachmentTotalBytes ?? MAX_PROMPT_ATTACHMENT_TOTAL_BYTES
     this.onSessionAccess = options.onSessionAccess
     this.deriveTitleFromCwd = options.deriveTitleFromCwd === true
+    this.resetQueueOnSubscribe = options.resetQueueOnSubscribe ?? true
   }
 
   private readonly supportsPreallocatedSessionId: boolean
@@ -70,12 +72,15 @@ export class Rc6SessionRepository implements SessionRepository {
   private readonly maxPromptAttachmentTotalBytes: number
   private readonly onSessionAccess: ((sessionId: string) => void) | undefined
   private readonly deriveTitleFromCwd: boolean
+  private readonly resetQueueOnSubscribe: boolean
 
   public remember(event: BackendEvent): void {
     if (event.type !== 'queue.updated') {
       if (event.type === 'session.subscribed') {
-        this.clearQueueState(event.sessionId)
-        this.queues.set(event.sessionId, [])
+        if (this.resetQueueOnSubscribe) {
+          this.clearQueueState(event.sessionId)
+          this.queues.set(event.sessionId, [])
+        }
         this.rememberProjectionValues(event.sessionId, event.projection?.values, true)
       } else if (event.type === 'session.removed') {
         this.clearQueueState(event.sessionId)
@@ -508,36 +513,14 @@ export class Rc6SessionRepository implements SessionRepository {
     const beforeIds = new Set(
       (this.queues.get(input.sessionId) ?? []).filter((item) => item.mode === mode).map((item) => item.id),
     )
-    const response = await this.transport.request<RpcResponseLike<unknown>>(
-      'session.prompt',
-      {
-        sessionId: input.sessionId,
-        mode,
-        content: promptContent(input, limits),
-        ...clientTimeZoneField(),
-      },
-      signal,
-    )
-    const receipt = unwrapRpcResult(response, 'session.prompt')
-    assertAccepted(receipt, 'session prompt')
-    const queued = findNewQueuedInput(
-      this.queues.get(input.sessionId),
-      beforeIds,
-      input,
-      mode,
-      response.rpcId,
-    )
-    if (queued !== undefined) {
-      this.queueOwners.set(queued.id, input.sessionId)
-      return queued
-    }
-    const identityPromise = this.waitForQueuedIdentity(
-      input,
-      mode,
-      beforeIds,
-      response.rpcId,
-      QUEUE_IDENTITY_GRACE_MS,
-    )
+    // Register the shared identity promise before the network round trip: a
+    // concurrent identical enqueue issued while this request is in flight
+    // must wait for this attempt's outcome instead of sending a second
+    // session.prompt to the host.
+    let resolveIdentity!: (value: QueuedInput | undefined) => void
+    const identityPromise = new Promise<QueuedInput | undefined>((resolve) => {
+      resolveIdentity = resolve
+    })
     this.pendingQueueIdentities.set(promptKey, identityPromise)
     void identityPromise.then(
       (resolved) => {
@@ -549,6 +532,41 @@ export class Rc6SessionRepository implements SessionRepository {
         if (this.pendingQueueIdentities.get(promptKey) === identityPromise)
           this.pendingQueueIdentities.delete(promptKey)
       },
+    )
+    let response: RpcResponseLike<unknown>
+    try {
+      response = await this.transport.request<RpcResponseLike<unknown>>(
+        'session.prompt',
+        {
+          sessionId: input.sessionId,
+          mode,
+          content: promptContent(input, limits),
+          ...clientTimeZoneField(),
+        },
+        signal,
+      )
+      const receipt = unwrapRpcResult(response, 'session.prompt')
+      assertAccepted(receipt, 'session prompt')
+    } catch (error) {
+      // Settle the shared promise so concurrent waiters retry on their own
+      // instead of hanging for the whole grace window after a failed attempt.
+      resolveIdentity(undefined)
+      throw error
+    }
+    const queued = findNewQueuedInput(
+      this.queues.get(input.sessionId),
+      beforeIds,
+      input,
+      mode,
+      response.rpcId,
+    )
+    if (queued !== undefined) {
+      resolveIdentity(queued)
+      this.queueOwners.set(queued.id, input.sessionId)
+      return queued
+    }
+    void this.waitForQueuedIdentity(input, mode, beforeIds, response.rpcId, QUEUE_IDENTITY_GRACE_MS).then(
+      (value) => resolveIdentity(value),
     )
     const waited = await this.awaitQueueIdentity(identityPromise, signal, QUEUE_IDENTITY_TIMEOUT_MS)
     if (waited !== undefined) {
@@ -884,6 +902,38 @@ export class Rc6SessionRepository implements SessionRepository {
   }
 }
 
+/**
+ * Build the stream gap-recovery callback the version adapters share. The
+ * pinned hosts page `session.history` at 50 events, so a reconnect gap wider
+ * than the newest page must walk backward through history pages from the gap
+ * end until a page reaches the gap start. The stream controller announces any
+ * remainder (history evicted or truncated host-side) as an explicit
+ * `session.gap`, so consumers never mistake an incomplete replay for a
+ * contiguous stream — but a page-bounded read would turn every wide
+ * reconnect into one of those gaps even though the events are readable.
+ */
+export function historyGapRecovery(sessions: Pick<SessionRepository, 'history'>): StreamRecovery {
+  return async (sessionId, fromSequence, toSequence, signal) => {
+    const pages = await walkHistoryPages(
+      (beforeSequence) => sessions.history(sessionId, beforeSequence, signal),
+      {
+        initialBeforeSequence: toSequence + 1,
+        stopWhen: (page) => {
+          const sequences = page.events
+            .map((entry) => entry.sequence)
+            .filter((value) => Number.isSafeInteger(value) && value >= 0)
+          const oldest = sequences.length === 0 ? undefined : Math.min(...sequences)
+          return oldest !== undefined && oldest <= fromSequence
+        },
+      },
+    )
+    return pages
+      .flatMap((page) => page.events)
+      .filter((entry) => entry.sequence >= fromSequence && entry.sequence <= toSequence)
+      .map((entry) => entry.event)
+  }
+}
+
 interface SessionRepositoryOptions {
   /** rc.2 accepts an idempotency/preallocated sessionId without rc.1's reuse flag. */
   readonly preallocatedSessionId?: boolean
@@ -897,6 +947,13 @@ interface SessionRepositoryOptions {
   readonly onSessionAccess?: (sessionId: string) => void
   /** Alpha's list projection derives a display title from cwd when no title exists. */
   readonly deriveTitleFromCwd?: boolean
+  /**
+   * The rc.6-family mux re-baselines the queue snapshot on every subscription
+   * (absence means empty). Alpha carries no queue baseline on `session/follow`;
+   * its control stream owns the queue state, so wiping on subscribe would drop
+   * baselined data until the next unrelated queue commit.
+   */
+  readonly resetQueueOnSubscribe?: boolean
 }
 
 interface PromptContentLimits {

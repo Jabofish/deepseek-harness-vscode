@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions & discussions
+    url: https://github.com/Jabofish/deepseek-harness-vscode/discussions
+    about: Ask questions or share workflows instead of opening an issue.
+  - name: Upstream DeepSeek Harness
+    url: https://github.com/deepseek-ai/deepseek-harness
+    about: Issues with DSH itself (models, tools, agent behavior) belong upstream.

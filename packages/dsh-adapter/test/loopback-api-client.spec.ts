@@ -106,6 +106,48 @@ describe('LoopbackApiClient rc.6 event transport', () => {
     expect(malformedFetch).toHaveBeenCalledTimes(1)
   })
 
+  it('releases the unread body of every failed RPC response so the loopback connection returns to the pool', async () => {
+    // An unconsumed fetch body pins its socket until GC; a cancel callback is
+    // the observable the transport has for "the connection was released".
+    let cancelCalls = 0
+    const fetch = vi.fn(() => {
+      const body = new ReadableStream<Uint8Array>({
+        cancel() {
+          cancelCalls += 1
+        },
+      })
+      return Promise.resolve(new Response(body, { status: 503 }))
+    })
+    const client = createClient(fetch, 1_000, 3)
+
+    await expect(client.request('session.list', {})).rejects.toMatchObject({
+      code: 'BACKEND_UNREACHABLE',
+      retryable: true,
+      context: { method: 'session.list', status: 503 },
+    })
+    expect(fetch).toHaveBeenCalledTimes(3)
+    expect(cancelCalls).toBe(3)
+  })
+
+  it('releases the unread body of a failed session log download', async () => {
+    let cancelCalls = 0
+    const fetch = vi.fn(() => {
+      const body = new ReadableStream<Uint8Array>({
+        cancel() {
+          cancelCalls += 1
+        },
+      })
+      return Promise.resolve(new Response(body, { status: 404 }))
+    })
+
+    await expect(createClient(fetch).downloadSessionLog('session-1', false)).rejects.toMatchObject({
+      code: 'EXPORT_FAILED',
+      retryable: false,
+      context: { method: 'session.export', status: 404 },
+    })
+    expect(cancelCalls).toBe(1)
+  })
+
   it('distinguishes timeout, cancellation, and network failures', async () => {
     const timeout = vi.fn(() => Promise.reject(new DOMException('request timed out', 'TimeoutError')))
     await expect(createClient(timeout).request('session.history', {})).rejects.toMatchObject({

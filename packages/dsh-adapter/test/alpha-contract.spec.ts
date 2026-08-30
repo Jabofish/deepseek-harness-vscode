@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import type { BackendEndpoint } from '@dsh-vscode/domain'
+import type { BackendEndpoint, BackendEvent } from '@dsh-vscode/domain'
 
+import type { AlphaEventSource } from '../src/versions/alpha/events.js'
 import { AlphaLoopbackApiClient, type AlphaWebSocket } from '../src/versions/alpha/transport.js'
+import { AlphaVersionAdapter } from '../src/versions/alpha/adapter.js'
 import { callRpc } from '../src/versions/rc6/rpc.js'
 
 class FakeWebSocket implements AlphaWebSocket {
@@ -484,6 +486,109 @@ describe('DSH 0.1.2-alpha.1 Connection/Gateway contract', () => {
     await transport.close()
   })
 
+  it('resolves a cancelled alpha waterfall event with the session that requested it', async () => {
+    FakeWebSocket.instances.length = 0
+    const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
+      Promise.resolve(response(init, undefined)),
+    )
+    const transport = client(fetch)
+    const iterator = transport.openEventStream(new AbortController().signal)[Symbol.asyncIterator]()
+    const next = iterator.next()
+    const socket = await waitForSocket()
+    socket.open()
+    await waitForSent(socket, 1)
+    socket.message(streamItem(socket, { type: 'ready', clientId: 'client-1', host: { home: '/home/test' } }))
+    socket.message(
+      streamItem(socket, {
+        type: 'emit',
+        event: 'api-session/activity',
+        args: ['s1', 1_700_000_000_000],
+      }),
+    )
+    await expect(next).resolves.toMatchObject({ done: false })
+    socket.message(
+      streamItem(socket, {
+        type: 'waterfall',
+        event: 'approval/request',
+        eventId: 'event-1',
+        agentId: 's1',
+        request: {
+          type: 'spoofed',
+          rpcId: 'spoofed',
+          sessionId: 'spoofed',
+          approvalId: 'spoofed',
+          toolName: 'shell',
+          reason: 'test',
+        },
+      }),
+    )
+    await expect(iterator.next()).resolves.toMatchObject({
+      value: { type: 'approval/requested', sessionId: 's1', approvalId: 'event-1' },
+    })
+    socket.message(streamItem(socket, { type: 'cancel', eventId: 'event-1' }))
+    // The cancel frame itself carries only the eventId; the resolved projection must
+    // recover the session from the waterfall that opened the interaction so
+    // replay bookkeeping can clear the matching pending request.
+    await expect(iterator.next()).resolves.toMatchObject({
+      value: {
+        type: 'approval/resolved',
+        sessionId: 's1',
+        approvalId: 'event-1',
+        outcome: 'cancelled',
+      },
+    })
+    socket.message(
+      streamItem(socket, {
+        type: 'waterfall',
+        event: 'user-questions/request',
+        eventId: 'event-2',
+        agentId: 's2',
+        request: { type: 'spoofed', rpcId: 'spoofed', sessionId: 'spoofed', prompt: 'test' },
+      }),
+    )
+    await expect(iterator.next()).resolves.toMatchObject({
+      value: { type: 'question/requested', sessionId: 's2' },
+    })
+    socket.message(streamItem(socket, { type: 'cancel', eventId: 'event-2' }))
+    await expect(iterator.next()).resolves.toMatchObject({
+      value: {
+        type: 'question/resolved',
+        sessionId: 's2',
+        questionRpcId: 'event-2',
+        outcome: 'cancelled',
+      },
+    })
+    await iterator.return?.()
+    await transport.close()
+  })
+
+  it('releases the unread body of failed alpha RPC and export responses', async () => {
+    FakeWebSocket.instances.length = 0
+    let cancelCalls = 0
+    const fetch = vi.fn(() => {
+      const body = new ReadableStream<Uint8Array>({
+        cancel() {
+          cancelCalls += 1
+        },
+      })
+      return Promise.resolve(new Response(body, { status: 503 }))
+    })
+    const transport = client(fetch)
+
+    await expect(transport.request('session.list', {})).rejects.toMatchObject({
+      code: 'BACKEND_UNREACHABLE',
+      context: { method: 'session/list', status: 503 },
+    })
+    await expect(transport.downloadSessionLog('s1', false)).rejects.toMatchObject({
+      code: 'BACKEND_UNREACHABLE',
+      context: { method: 'session.export', status: 503 },
+    })
+    // An unconsumed fetch body pins its socket; both failed responses must be
+    // released back to the pool.
+    expect(cancelCalls).toBe(2)
+    await transport.close()
+  })
+
   it('rejects interaction responses that are not tied to a current alpha waterfall event', async () => {
     FakeWebSocket.instances.length = 0
     const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
@@ -678,3 +783,223 @@ async function waitForSent(socket: FakeWebSocket, count: number): Promise<void> 
   }
   throw new Error(`the alpha mux socket sent ${socket.sent.length} frames; expected ${count}`)
 }
+
+async function waitForEvent(predicate: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (predicate()) return
+    await new Promise((resolve) => setTimeout(resolve, 25))
+  }
+  throw new Error('the expected alpha event was not observed')
+}
+
+describe('alpha remote mux receive queue', () => {
+  it('fails a logical stream that buffers past the receive queue limit', async () => {
+    FakeWebSocket.instances.length = 0
+    const transport = client(
+      vi.fn((_input: RequestInfo | URL, init?: RequestInit) => Promise.resolve(response(init, undefined))),
+    )
+    const stream = transport.openSessionStream('s1', new AbortController().signal)
+    const iterator = stream[Symbol.asyncIterator]()
+    const first = iterator.next()
+    const socket = await waitForSocket()
+    socket.open()
+    await waitForSent(socket, 1)
+    // A session/follow stream opens directly with its snapshot; there is no
+    // ready handshake on this logical stream.
+    socket.message(
+      streamItem(socket, {
+        type: 'snapshot',
+        header: {},
+        cursor: 0,
+        records: [],
+        hasMore: false,
+        projections: { asOfSeq: 0, values: {} },
+      }),
+    )
+    await expect(first).resolves.toMatchObject({
+      done: false,
+      value: { type: 'session/subscribed', lastSeq: 0 },
+    })
+
+    // The stream consumer awaits inside its read loop (history recovery on a
+    // seq gap), so the host can keep pushing mid-turn delta frames while the
+    // generator is suspended at its yield. Without a bound the queue grows
+    // for the whole suspension; the rc6 transport fails the stream instead.
+    for (let index = 1; index <= 300; index += 1)
+      socket.message(
+        streamItem(socket, {
+          type: 'event',
+          event: { type: 'turn/start', seq: index, time: index, data: { turn: 1 } },
+        }),
+      )
+    await expect(iterator.next()).rejects.toMatchObject({ code: 'PROTOCOL_ERROR', retryable: true })
+    await transport.close()
+  })
+})
+
+describe('alpha backend assembly baseline ownership', () => {
+  it('keeps control-stream jobs and queue baselines across a session follow subscription', async () => {
+    FakeWebSocket.instances.length = 0
+    const adapter = new AlphaVersionAdapter({
+      requestTimeoutMs: 1_000,
+      retryPolicy: { maximumAttempts: 1, baseDelayMs: 1, maximumDelayMs: 1 },
+      fetch: vi.fn((_input: RequestInfo | URL, init?: RequestInit) => Promise.resolve(response(init, {}))),
+      authCookie: () => 'dsh_session=test-cookie',
+      webSocket: FakeWebSocket,
+    })
+    const backend = await adapter.createBackend({
+      endpoint,
+      ownership: 'external',
+      capabilities: {
+        protocolVersion: 'alpha1',
+        dshVersion: '0.1.2-alpha.1',
+        features: new Set(['events']),
+      },
+    })
+    const received: BackendEvent[] = []
+    const unsubscribe = backend.events.subscribe((event) => received.push(event))
+    try {
+      const socket = await waitForSocket()
+      socket.open()
+      await waitForSent(socket, 3)
+      const openStreamId = (streamEndpoint: string): number => {
+        for (const sent of socket.sent) {
+          const frame = JSON.parse(sent) as { type?: string; endpoint?: string; streamId?: number }
+          if (frame.type === 'open' && frame.endpoint === streamEndpoint) return frame.streamId as number
+        }
+        throw new Error(`the alpha mux never opened ${streamEndpoint}`)
+      }
+      socket.message({
+        type: 'item',
+        streamId: openStreamId('$events'),
+        value: { type: 'ready', clientId: 'client-1', host: { home: '/home/tester' } },
+      })
+      socket.message({
+        type: 'item',
+        streamId: openStreamId('workspace/follow'),
+        value: { type: 'baseline', value: { items: [], archivedSessionIds: [] } },
+      })
+      socket.message({
+        type: 'item',
+        streamId: openStreamId('session/control'),
+        value: {
+          type: 'baseline',
+          value: {
+            queues: { s1: [{ id: 'q1', placement: 'queued', message: { text: 'queued prompt' } }] },
+            jobs: { s1: [{ id: 'j1', kind: 'build', label: 'build', status: 'running', startedAt: 1 }] },
+            projections: {},
+          },
+        },
+      })
+      await waitForEvent(() => received.some((event) => event.type === 'jobs.updated'))
+      await expect(backend.jobs.list('s1')).resolves.toHaveLength(1)
+      await expect(backend.sessions.listQueue('s1')).resolves.toHaveLength(1)
+
+      ;(backend.events as AlphaEventSource).watchSession('s1')
+      await waitForSent(socket, 4)
+      socket.message({
+        type: 'item',
+        streamId: openStreamId('session/follow'),
+        value: {
+          type: 'snapshot',
+          header: {},
+          cursor: 5,
+          records: [],
+          hasMore: false,
+          projections: { asOfSeq: 5, values: {} },
+        },
+      })
+      await waitForEvent(() => received.some((event) => event.type === 'session.subscribed'))
+      // The alpha session/follow snapshot carries no jobs or queue baseline;
+      // the session/control stream owns that state, so re-subscribing a
+      // session must not wipe what the control stream baselined.
+      await expect(backend.jobs.list('s1')).resolves.toHaveLength(1)
+      await expect(backend.sessions.listQueue('s1')).resolves.toHaveLength(1)
+    } finally {
+      unsubscribe()
+      await backend.close()
+    }
+  })
+
+  it('keeps a pending approval answerable across a session follow re-subscription', async () => {
+    FakeWebSocket.instances.length = 0
+    const adapter = new AlphaVersionAdapter({
+      requestTimeoutMs: 1_000,
+      retryPolicy: { maximumAttempts: 1, baseDelayMs: 1, maximumDelayMs: 1 },
+      fetch: vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
+        Promise.resolve(response(init, undefined)),
+      ),
+      authCookie: () => 'dsh_session=test-cookie',
+      webSocket: FakeWebSocket,
+    })
+    const backend = await adapter.createBackend({
+      endpoint,
+      ownership: 'external',
+      capabilities: {
+        protocolVersion: 'alpha1',
+        dshVersion: '0.1.2-alpha.1',
+        features: new Set(['events']),
+      },
+    })
+    const received: BackendEvent[] = []
+    const unsubscribe = backend.events.subscribe((event) => received.push(event))
+    try {
+      const socket = await waitForSocket()
+      socket.open()
+      await waitForSent(socket, 3)
+      const openStreamId = (streamEndpoint: string): number => {
+        for (const sent of socket.sent) {
+          const frame = JSON.parse(sent) as { type?: string; endpoint?: string; streamId?: number }
+          if (frame.type === 'open' && frame.endpoint === streamEndpoint) return frame.streamId as number
+        }
+        throw new Error(`the alpha mux never opened ${streamEndpoint}`)
+      }
+      socket.message({
+        type: 'item',
+        streamId: openStreamId('$events'),
+        value: { type: 'ready', clientId: 'client-1', host: { home: '/home/tester' } },
+      })
+      socket.message({
+        type: 'item',
+        streamId: openStreamId('workspace/follow'),
+        value: { type: 'baseline', value: { items: [], archivedSessionIds: [] } },
+      })
+      // A pending approval arrives through the $events waterfall while the
+      // session has never been followed.
+      socket.message({
+        type: 'item',
+        streamId: openStreamId('$events'),
+        value: {
+          type: 'waterfall',
+          event: 'approval/request',
+          eventId: 'evt-1',
+          agentId: 's1',
+          request: { toolName: 'shell', reason: 'needs approval' },
+        },
+      })
+      await waitForEvent(() => received.some((event) => event.type === 'permission.requested'))
+
+      ;(backend.events as AlphaEventSource).watchSession('s1')
+      await waitForSent(socket, 4)
+      socket.message({
+        type: 'item',
+        streamId: openStreamId('session/follow'),
+        value: {
+          type: 'snapshot',
+          header: {},
+          cursor: 5,
+          records: [],
+          hasMore: false,
+          projections: { asOfSeq: 5, values: {} },
+        },
+      })
+      await waitForEvent(() => received.some((event) => event.type === 'session.subscribed'))
+      // Alpha delivers approvals as $events waterfalls; a session/follow
+      // subscription replays nothing, so the pending answer must survive it.
+      await expect(backend.interactions.respondToPermission('evt-1', 'allowed-once')).resolves.toBeUndefined()
+    } finally {
+      unsubscribe()
+      await backend.close()
+    }
+  })
+})

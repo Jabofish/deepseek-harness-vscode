@@ -1,0 +1,27 @@
+name: Feature request
+description: Suggest an idea for the DeepSeek Harness extension
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: What are you trying to do, and what stands in the way today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: markdown
+    attributes:
+      value: |
+        Note: capabilities that depend on upstream DSH (models, tools, agent features) follow the
+        connected DSH instance — the extension cannot invent RPCs that upstream does not provide.
+        See [docs/dsh-contract.md](https://github.com/Jabofish/deepseek-harness-vscode/blob/main/docs/dsh-contract.md).

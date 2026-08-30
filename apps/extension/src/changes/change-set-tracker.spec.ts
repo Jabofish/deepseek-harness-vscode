@@ -259,4 +259,38 @@ describe('ChangeSetTracker', () => {
     await vi.waitFor(async () => expect(await tracker.list()).toHaveLength(1))
     expect((await tracker.list())[0]?.sessionId).toBe('session-1')
   })
+
+  it('resolves each session workspace once per attachment instead of per event', async () => {
+    const events = eventSource()
+    let resolutions = 0
+    const tracker = new ChangeSetTracker({
+      resolveSessionWorkspaceFolderId: (_backend, sessionId) => {
+        resolutions += 1
+        return Promise.resolve(sessionId === 'session-1' ? 'workspace-1' : undefined)
+      },
+    })
+    tracker.attach(backend(events, 1), () => 'workspace-1')
+    for (let index = 0; index < 3; index += 1)
+      events.emit({
+        type: 'tool.updated',
+        sessionId: 'session-1',
+        sequence: index + 1,
+        tool: diffTool('running', 'call', { id: `tool-${index}` }),
+      })
+    await vi.waitFor(async () => expect(await tracker.list()).toHaveLength(3))
+    // The session-to-workspace mapping is stable for one attachment; a full
+    // session.list + session.history lookup per tool event multiplies RPC
+    // load across an active turn before the seen-events dedupe runs.
+    expect(resolutions).toBe(1)
+
+    // A new attachment starts a fresh resolution (mapping may have changed).
+    tracker.attach(backend(events, 2), () => 'workspace-1')
+    events.emit({
+      type: 'tool.updated',
+      sessionId: 'session-1',
+      sequence: 9,
+      tool: diffTool('running', 'call', { id: 'tool-after-reattach' }),
+    })
+    await vi.waitFor(() => expect(resolutions).toBe(2))
+  })
 })

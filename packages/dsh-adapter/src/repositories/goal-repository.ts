@@ -20,10 +20,15 @@ export class Rc6GoalRepository implements GoalRepository {
     else if (event.type === 'session.projection' && event.key === 'goal') {
       const goals = goalViewsFromProjection(event.value)
       if (goals !== undefined) this.goalCache.set(event.sessionId, goals)
+      // Projection payloads carry the host-bumped {id, revision} pair; the
+      // edit/complete/resume/pause calls are compare-and-swap on that token,
+      // so it must stay as fresh as the cached view.
+      rememberProjectionRefs(this.refs, event.sessionId, event.value)
     } else if (event.type === 'session.subscribed') {
       this.goalCache.delete(event.sessionId)
       const goals = goalViewsFromProjection(event.projection?.values)
       if (goals !== undefined) this.goalCache.set(event.sessionId, goals)
+      rememberProjectionRefs(this.refs, event.sessionId, event.projection?.values)
     } else if (event.type === 'session.removed') this.goalCache.delete(event.sessionId)
   }
 
@@ -66,8 +71,12 @@ export class Rc6GoalRepository implements GoalRepository {
       }
     }
     const goals = latest ?? []
-    this.goalCache.set(sessionId, goals)
-    return goals
+    // The mux observer (remember) can populate the cache while this walk is
+    // in flight. Delivered event state is newer than anything derived from a
+    // walk that started earlier; keep and return it instead of overwriting,
+    // or the projection would stay stale until the next goal change.
+    if (!this.goalCache.has(sessionId)) this.goalCache.set(sessionId, goals)
+    return this.goalCache.get(sessionId) ?? goals
   }
 
   public async create(sessionId: string, title: string, signal?: AbortSignal): Promise<GoalView> {
@@ -78,7 +87,10 @@ export class Rc6GoalRepository implements GoalRepository {
     this.refs.set(value.id, { sessionId, id: value.id, revision: value.revision })
     const goal = { id: value.id, title, status: 'in-progress' as const }
     const cached = this.goalCache.get(sessionId)
-    if (cached !== undefined) this.goalCache.set(sessionId, [...cached, goal])
+    // The host's goal.updated event can land before the HTTP receipt resolves
+    // (mux vs HTTP ordering is not guaranteed); never append a second copy.
+    if (cached !== undefined && !cached.some((existing) => existing.id === value.id))
+      this.goalCache.set(sessionId, [...cached, goal])
     return goal
   }
 

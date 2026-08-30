@@ -20,10 +20,13 @@ type Address = { readonly parentSessionId: string; readonly mode: 'one-shot' | '
 const HISTORY_PAGE_MESSAGES = 50
 export class Rc6SubagentRepository implements SubagentRepository {
   private readonly addresses = new Map<string, Address>()
+  private readonly refreshGenerations = new Map<string, number>()
 
   public constructor(private readonly transport: DshTransport) {}
 
   public async list(sessionId: string, signal?: AbortSignal): Promise<SubagentCatalog> {
+    const generation = (this.refreshGenerations.get(sessionId) ?? 0) + 1
+    this.refreshGenerations.set(sessionId, generation)
     const value = requiredRecord(
       await callRpc<unknown>(this.transport, 'subagent.list', { parentSessionId: sessionId }, signal),
     )
@@ -32,7 +35,13 @@ export class Rc6SubagentRepository implements SubagentRepository {
     const entries = value.entries.map((entry) => catalogEntry(entry, sessionId))
 
     // Commit routing only after the entire catalog validates. A malformed
-    // refresh must not leave a half-new address set behind.
+    // refresh must not leave a half-new address set behind. Concurrent
+    // refreshes of the same parent commit in resolution order, so an older
+    // response that resolves last must not commit: it would delete children
+    // the newer catalog had just routed or revert their modes. A stale
+    // refresh still returns its point-in-time view without touching routing.
+    if (this.refreshGenerations.get(sessionId) !== generation)
+      return { entries, parentAvailable: value.parentAvailable }
     for (const [childId, address] of this.addresses)
       if (address.parentSessionId === sessionId) this.addresses.delete(childId)
     for (const entry of entries)

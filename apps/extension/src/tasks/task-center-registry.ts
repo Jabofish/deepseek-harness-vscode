@@ -134,13 +134,26 @@ export class TaskCenterRegistry implements TaskRepository {
   public async get(taskId: string, signal?: AbortSignal): Promise<TaskSummary> {
     throwIfAborted(signal)
     const known = this.entries.get(taskId)
-    if (known !== undefined) return known
+    if (known !== undefined) {
+      // The projection is scoped to the current session: a task cached from a
+      // previously current session must not stay readable (or actionable via
+      // stop/answer) after the user switches sessions.
+      if (!this.isInCurrentSessionScope(known)) throw taskNotOwned()
+      return known
+    }
     if (this.currentSessionId !== undefined) {
       const tasks = await this.list({ sessionId: this.currentSessionId, includeCompleted: true }, signal)
       const task = tasks.find((candidate) => candidate.taskId === taskId)
       if (task !== undefined) return task
     }
     throw taskUnavailable()
+  }
+
+  private isInCurrentSessionScope(task: TaskSummary): boolean {
+    return (
+      this.currentSessionId !== undefined &&
+      (task.sessionId === this.currentSessionId || task.parentTaskId === `session:${this.currentSessionId}`)
+    )
   }
 
   public async stop(

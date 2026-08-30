@@ -147,6 +147,70 @@ describe('rc.8 optional reference and feedback remotes', () => {
     await expect(repository.remove('s1', 'm1')).resolves.toBeUndefined()
   })
 
+  it('observes the current item before deleting from a cold cache', async () => {
+    const item = {
+      messageId: 'm1',
+      rating: 'positive',
+      version: 'v7',
+      createdAt: 1,
+      updatedAt: 2,
+    } as const
+    const calls: string[] = []
+    const client = transport((endpoint, args) => {
+      calls.push(endpoint)
+      if (endpoint === 'messageFeedback/list')
+        return { ok: true, value: { ok: true, value: { items: [item] } } }
+      expect(endpoint).toBe('messageFeedback/delete')
+      // Upstream delete is a CAS on the observed version; absence is a
+      // successful no-op, so the observation must supply the exact token.
+      expect(args).toMatchObject({ request: { sessionId: 's1', messageId: 'm1', ifVersion: 'v7' } })
+      return { ok: true, value: { ok: true, value: { absent: true } } }
+    })
+    const repository = new Rc6MessageFeedbackRepository(client)
+
+    await expect(repository.remove('s1', 'm1')).resolves.toBeUndefined()
+    expect(calls).toEqual(['messageFeedback/list', 'messageFeedback/delete'])
+  })
+
+  it('skips the delete RPC when observation shows the item already absent', async () => {
+    const calls: string[] = []
+    const client = transport((endpoint) => {
+      calls.push(endpoint)
+      if (endpoint === 'messageFeedback/list') return { ok: true, value: { ok: true, value: { items: [] } } }
+      throw new Error(`unexpected ${endpoint} for an absent item`)
+    })
+    const repository = new Rc6MessageFeedbackRepository(client)
+
+    await expect(repository.remove('s1', 'm1')).resolves.toBeUndefined()
+    expect(calls).toEqual(['messageFeedback/list'])
+  })
+
+  it('adopts the authoritative current item from a version conflict before inviting a retry', async () => {
+    const current = {
+      messageId: 'm1',
+      rating: 'negative',
+      version: 'v9',
+      createdAt: 1,
+      updatedAt: 3,
+    } as const
+    let putCalls = 0
+    const client = transport((endpoint, args) => {
+      expect(endpoint).toBe('messageFeedback/put')
+      putCalls += 1
+      if (putCalls === 1)
+        return { ok: true, value: { ok: false, error: { code: 'version-conflict', current } } }
+      expect(args).toMatchObject({ request: { sessionId: 's1', messageId: 'm1', ifVersion: 'v9' } })
+      return { ok: true, value: { ok: true, value: current } }
+    })
+    const repository = new Rc6MessageFeedbackRepository(client)
+
+    await expect(repository.put('s1', 'm1', 'positive')).rejects.toMatchObject({
+      code: 'BACKEND_BUSY',
+      retryable: true,
+    })
+    await expect(repository.put('s1', 'm1', 'negative')).resolves.toEqual(current)
+  })
+
   it('treats an absent optional feedback remote as an empty list', async () => {
     const client = transport(() =>
       Promise.reject(

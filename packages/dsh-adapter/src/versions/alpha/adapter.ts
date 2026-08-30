@@ -21,7 +21,7 @@ import { Rc6ModelRepository } from '../../repositories/model-repository.js'
 import { Rc6PluginRepository } from '../../repositories/plugin-repository.js'
 import { Rc6PresetRepository } from '../../repositories/preset-repository.js'
 import { Rc6ReferenceRepository } from '../../repositories/reference-repository.js'
-import { Rc6SessionRepository } from '../../repositories/session-repository.js'
+import { historyGapRecovery, Rc6SessionRepository } from '../../repositories/session-repository.js'
 import { Rc6SettingsRepository } from '../../repositories/settings-repository.js'
 import { Rc6SkillRepository } from '../../repositories/skill-repository.js'
 import { Rc6SubagentRepository } from '../../repositories/subagent-repository.js'
@@ -106,7 +106,7 @@ export class AlphaVersionAdapter implements DshVersionAdapter {
 
   public createBackend(backend: ConnectedBackend): Promise<DshBackend> {
     const transport = this.createTransport(backend.endpoint) as AlphaLoopbackApiClient
-    const interactions = new Rc6InteractionRepository(transport)
+    const interactions = new Rc6InteractionRepository(transport, { resetPendingOnSubscribe: false })
     const workspaces = new Rc6WorkspaceRepository(transport)
     const eventsHolder: { value?: AlphaEventSource } = {}
     const sessions = new Rc6SessionRepository(transport, workspaces, this.options.samePath, {
@@ -116,25 +116,19 @@ export class AlphaVersionAdapter implements DshVersionAdapter {
       maxPromptAttachmentTotalBytes: 200 * 1024 * 1024,
       onSessionAccess: (sessionId) => eventsHolder.value?.watchSession(sessionId),
       deriveTitleFromCwd: true,
+      // Alpha baselines queues on the session/control stream, not on
+      // `session/follow`; a subscription must not wipe that state.
+      resetQueueOnSubscribe: false,
     })
     const goals = new Rc6GoalRepository(transport)
-    const jobs = new Rc6JobRepository(transport)
+    const jobs = new Rc6JobRepository(transport, { resetOnSubscribe: false })
     const observe = (event: BackendEvent): void => {
       interactions.remember(event)
       sessions.remember(event)
       goals.remember(event)
       jobs.remember(event)
     }
-    const events = new AlphaEventSource(
-      transport,
-      observe,
-      async (sessionId, fromSequence, toSequence, signal) => {
-        const detail = await sessions.get(sessionId, signal)
-        return (detail.history ?? [])
-          .filter((entry) => entry.sequence >= fromSequence && entry.sequence <= toSequence)
-          .map((entry) => entry.event)
-      },
-    )
+    const events = new AlphaEventSource(transport, observe, historyGapRecovery(sessions))
     eventsHolder.value = events
     let closed = false
     const backendValue: DshBackend = {

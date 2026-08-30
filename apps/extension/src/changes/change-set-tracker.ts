@@ -43,6 +43,7 @@ export interface ChangeSetTrackerOptions {
 export class ChangeSetTracker {
   private readonly entries = new Map<string, ChangeSetFile>()
   private readonly seenEvents = new Set<string>()
+  private readonly sessionWorkspaceResolutions = new Map<string, Promise<string | undefined>>()
   private readonly now: () => number
   private readonly readObservedHash: ChangeSetTrackerOptions['readObservedHash']
   private readonly resolveSessionWorkspaceFolderId: ChangeSetTrackerOptions['resolveSessionWorkspaceFolderId']
@@ -64,6 +65,7 @@ export class ChangeSetTracker {
     this.detach()
     this.entries.clear()
     this.seenEvents.clear()
+    this.sessionWorkspaceResolutions.clear()
     this.localSequence = 0
     this.backend = backend.connection
     this.workspaceFolderId = workspaceFolderId
@@ -82,6 +84,7 @@ export class ChangeSetTracker {
     this.workspaceFolderId = undefined
     this.entries.clear()
     this.seenEvents.clear()
+    this.sessionWorkspaceResolutions.clear()
     this.localSequence = 0
   }
 
@@ -203,7 +206,7 @@ export class ChangeSetTracker {
     const eventWorkspaceFolderId =
       this.resolveSessionWorkspaceFolderId === undefined
         ? currentWorkspaceFolderId
-        : await this.resolveSessionWorkspaceFolderId(backend, event.sessionId)
+        : await this.resolveSessionWorkspace(backend, event.sessionId)
     if (
       !isActive() ||
       eventWorkspaceFolderId === undefined ||
@@ -221,6 +224,32 @@ export class ChangeSetTracker {
       },
       isActive,
     )
+  }
+
+  /**
+   * The session-to-workspace mapping is stable for one backend attachment,
+   * and every tool event needs it before the seen-events dedupe. Cache the
+   * resolution per attachment (cleared in attach/detach) so an active turn's
+   * tool stream costs one lookup per session instead of a full
+   * session.list + session.history round trip per event. Unsettled outcomes
+   * (unattributable session, transient failure) are retried on the next event.
+   */
+  private resolveSessionWorkspace(backend: DshBackend, sessionId: string): Promise<string | undefined> {
+    const cached = this.sessionWorkspaceResolutions.get(sessionId)
+    if (cached !== undefined) return cached
+    const resolution = this.resolveSessionWorkspaceFolderId?.(backend, sessionId).then(
+      (value) => {
+        if (value === undefined) this.sessionWorkspaceResolutions.delete(sessionId)
+        return value
+      },
+      () => {
+        this.sessionWorkspaceResolutions.delete(sessionId)
+        return undefined
+      },
+    )
+    if (resolution === undefined) return Promise.resolve(undefined)
+    this.sessionWorkspaceResolutions.set(sessionId, resolution)
+    return resolution
   }
 
   private identity(

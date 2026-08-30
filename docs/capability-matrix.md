@@ -101,6 +101,332 @@ VS Code 无文件夹 Webview 回放，因此该修复不提升能力矩阵中的
 - C3/C4：附件 base64/MIME/魔数与图片/文本 attachment projection 已集中到 adapter codec；composition-root 的 attachment 纯 helper 已迁入 `apps/extension/src/attachments`，保留 Host-only 授权边界。附件 codec、attachment store、session、rc.8 contract 定向回归通过；handler 分发表和 workspace scope 尚未拆分。
 - C5/C6：rc.6 agent/tool presentation projection 已移出 mapper；frame 类型从 pinned rc.2 schemas 的 `options` 派生；移除 `commands/list`、`session/title` 和 rc7/rc8 mapper 别名及 rc11/rc12 重复 override；mapper、loopback、stream 定向回归与 dsh-adapter typecheck 通过。全量门禁和真实 rc.2 WebSocket/VS Code 回放以本轮交付结果为准，能力状态继续为 `PARTIAL`。
 
+## 2026-08-30 backend review batch D evidence
+
+- CN-01/CN-02（probe 分类）：`VersionedBackendProbe` 此前把 rc6 家族 probe 刻意抛出的
+  `DSH_INCOMPATIBLE`（endpoint 应答了 DSH 握手但未报告兼容 host version）与普通"候选不适用"一并吞掉，
+  导致 custom 端点与受管进程路径把它误分类为可重试的 `BACKEND_UNREACHABLE`，与实现顺序阶段 0
+  "明确识别兼容/不兼容/非 DSH/不可达"的退出条件相悖。现在 probe 链在无 adapter 接受该候选时保留并抛出
+  该分类；coordinator 的 custom 路径原样透传（先发布 `failed`），受管路径先发布 `failed` 再停止本次受管进程，
+  auto 发现路径仍继续尝试其他候选。定向证据：`packages/dsh-adapter/test/probe.spec.ts` 4 例、
+  `packages/application/test/dsh-connection-coordinator.spec.ts` 17 例（新增 custom 透传与受管进程停止两条）。
+- CN-05/SC-01（传输资源释放）：loopback 传输的 4 处非 2xx 抛错点此前直接丢弃响应体；Node fetch 的
+  未消费 body 会占住 socket 直到 GC，发现扫描与重试循环会累积占用回环连接。现在统一在抛错前
+  `body.cancel()` 释放连接（成功路径与已消费的 PROTOCOL_ERROR 路径不受影响）。
+  红绿证据：`packages/dsh-adapter/test/loopback-api-client.spec.ts` 新增 2 例（RPC 重试 3 次均释放、
+  导出下载 404 释放），修复前 cancel 计数为 0（红），修复后为 3/1（绿）。
+- CN-05（重订阅水位）：上游固定 rc.2 类型明确 v1 mux 忽略客户端 `since`、重连 = reopen + refetch
+  history，`session/subscribed.lastSeq` 是服务端日志的权威基线（空日志约定 `-1`）。此前 host 以低于
+  本地缓存水位（如进程重启后日志丢失、无 `session-removed` 通知）的 lastSeq 重订阅时，控制器保留陈旧
+  高水位并把新纪元事件全部静默丢弃。现在按 host 基线向下收敛水位（projection 水位截断本已存在）。
+  红绿证据：`packages/dsh-adapter/test/stream-controller.spec.ts` 新增多代重连测试（重订阅 lastSeq=2
+  后 seq=3 事件必须送达），修复前超时失败（红），修复后通过（绿）。
+- IQ-01（alpha 取消投影）：alpha `$events` 的 cancel 帧只携带 `eventId`；此前 approval 取消投影
+  硬编码 `sessionId: ''`、question 取消投影完全缺失 sessionId，违反 domain 事件类型语义，且
+  `BackendService` 的重放清除按 `permission:<session>:<id>` 前缀匹配，取消后的交互在下一次
+  webview attach 时仍会作为 pending 重放。现在 pending 记录保存 waterfall 的 `agentId`，取消投影
+  回填真实会话 id（InteractionRepository 按 rpcId 匹配，行为不变）。
+  红绿证据：`packages/dsh-adapter/test/alpha-contract.spec.ts` 新增 approval/question 两条取消投影
+  断言，修复前 `sessionId: ''`/缺失（红），修复后为 waterfall 的真实 `agentId`（绿）。
+- 门禁状态：`typecheck`、`build` 通过；全量 `test` 为 97 文件/726 测试，除 `apps/webview` 已知的
+  6 个预存前端失败（已在干净树上复现，属进行中的前端工作）外全部通过。本批 4 项修复均已按
+  "红测试确认问题存在 → 修复 → 绿"流程完成。
+
+## 2026-08-30 backend review batch E evidence
+
+- CN-06（alpha 会话生命周期）：alpha 事件源此前只处理 `session.added`；host 发布 `api-session/removed`
+  （映射为 `host/session-removed`）后，对应 per-session follow 控制器仍留在 `sessions` 表中，其
+  `session/follow` 流被服务端结束后按退避无限重连（红测试复现 700ms 内 3 次重开），并且长期驻留的
+  Extension Host 中 Map 无界增长。现在 `session.removed` 对称触发 unwatch：从表中移除、清理订阅并
+  close 控制器；后续对会话的读取仍按既有 `onSessionAccess` 惰性重看。
+  红绿证据：`packages/dsh-adapter/test/alpha-events.spec.ts`，修复前重开计数 3（红），修复后恒为 1（绿）。
+- CN-06（alpha 连接状态语义）：单个 per-session follow 流的瞬时失败此前会以全局 `connection.lost`
+  发布到所有监听者，而全局流仍然健康；Extension Host 据此拆掉 changeTracker/taskRegistry/editor
+  context 且无恢复路径。现在仅 host-wide 控制器有权发布 `connection.lost`，session 作用域控制器在
+  投影到共享监听者时过滤该事件（其自身重试循环不受影响，重开计数继续增长证明恢复仍在进行）。
+  红绿证据：同文件第二例，修复前监听者收到 `connection.lost`（红），修复后不再收到且重开 ≥2（绿）。
+- 门禁状态：`typecheck` 全仓通过、adapter 定向 lint/format 通过；全量 `test` 728 测试中除既知
+  6 个预存前端失败外全部通过。
+
+## 2026-08-30 backend review batch F evidence
+
+- CN-05（重连退避状态机）：`DshStreamController` 的退避级别此前只在收到带序号的 session 事件或
+  `session.subscribed` 时重置；基于 `streamSource` 的控制器（alpha workspace/session 流）以及只收到
+  host 帧的 mux 读取器从不重置，退避级别跨"健康代际 → 干净结束"循环持续爬升，健康期后的下一次瞬断
+  也要等待数秒。现在任何代际收到首帧（证明传输存活）即重置退避阶梯；退避仍在每次失败后生效，
+  宕机 host 不会被热循环重连。红绿证据：`packages/dsh-adapter/test/stream-controller.spec.ts`
+  新增三健康代后退避测试，修复前 2s 内仅 3 次重开（红），修复后 5 次重开在 ~1.2s 内（绿）。
+- CN-01/CN-02（连接状态机一致性）：managed 路径的 probe 抛出非 `DSH_INCOMPATIBLE` AppError
+  （如 readiness 后 `host.describe` 超时映射的可重试 `BACKEND_UNREACHABLE`）时，coordinator 直接
+  重抛而不发布 `failed`，最后发布的状态快照停在 `starting`。现在 probe 抛出的任何 AppError 都先
+  发布 `failed`（携带其 message/retryable）再重抛，受管进程仍由既有外层清理停止一次。
+  红绿证据：`packages/dsh-adapter/../application/test/dsh-connection-coordinator.spec.ts` 新增
+  超时分类测试，修复前最后状态为 `starting`（红），修复后为 `failed`/retryable=true（绿）。
+- 审计记录：`CheckpointStore.restore` 冲突 abort 时把 manifest 标记为 `stale` 并永久拒绝后续 restore
+  是被 `checkpoint-store.spec.ts` 显式锁定的保守设计（冲突后保留外部编辑），不作为缺陷修改。
+- 门禁状态：全量 `test` 730 测试中除既知 6 个预存前端失败外全部通过；typecheck/lint/format 通过。
+
+## 2026-08-30 backend review batch G evidence
+
+- CN-06（alpha 传输资源释放）：alpha transport 的 `post()` 与 `downloadSessionLog()` 此前在非 2xx 时
+  直接丢弃响应体，与 loopback 客户端已修复的同类问题一致；`withRetry` 对幂等方法的 5xx 重试会按次
+  占住回环 socket。现在两处抛错前先 `body.cancel()` 释放连接。红绿证据：
+  `packages/dsh-adapter/test/alpha-contract.spec.ts` 新增 RPC+导出双断言测试，修复前 cancel 计数 0（红），
+  修复后为 2（绿）。
+- CP-01（partial restore 存储回收）：显式 `allow-partial` 的部分恢复是终态（`restoreAllowed` 永久为
+  false），但此前 unlike committed/rolled-back 路径，未调用 `cleanupJournal`，每个已恢复文件的
+  `backup-*.bin` 与 `journal.json` 永久残留；配额统计只计 `manifest.totalBytes`，该占用不可见且无界
+  增长。回滚不完整（崩溃取证）路径的保留保持不变，因为那里的 backup 是恢复前字节的唯一记录。
+  红绿证据：`apps/extension/src/checkpoints/checkpoint-store.spec.ts` 新增回收断言，修复前 journal
+  残留（红），修复后无 `backup-*.bin`/`journal.json` 残留（绿）。
+- 审计记录（不改）：`Rc6InteractionRepository` 对并发提交按 rpcId 折叠、"先到者胜"是被
+  `interaction-repository.spec.ts` 锁定的设计（保证审批永不多发）；alpha `watchSession` 的惰性重看
+  是 `events.ts` 注释明示的既有设计。change-set-tracker 每工具事件的 `sessions.get()` RPC 放大
+  属效率优化候选，未在本轮改动。
+- 门禁状态：全量 `test` 732 测试中除既知 6 个预存前端失败外全部通过；typecheck/lint/format 通过。
+
+## 2026-08-30 backend review batch H evidence
+
+- RV-01（变更采集效率）：`ChangeSetTracker.observeBackendEvent` 此前对每个 `tool.updated` 事件都在
+  seen-events 去重之前 await `resolveSessionWorkspaceFolderId`，而该解析走完整的
+  `sessions.get()`（`session.list` + `session.history`，必要时还有 `workspace.list`）。活跃 turn 的
+  工具事件流因此被放大为每事件 2–3 个 RPC。现在按附件周期缓存每个会话的解析结果（attach/detach 清空；
+  解析失败或不可归属的会话在下一事件重试）。红绿证据：
+  `apps/extension/src/changes/change-set-tracker.spec.ts` 新增同会话 3 事件仅解析 1 次、重新 attach
+  后重新解析的断言，修复前 3 次（红），修复后 1 次再 2 次（绿）。
+- TC-01（任务中心作用域）：`TaskCenterRegistry` 的类契约是"当前会话任务投影"，但 `get()` 此前从
+  `entries` 缓存返回任意会话的任务，`stop()`/`answer()` 由此可对用户已切换离开的会话执行
+  `sessions.cancel` 或应答交互（entries 的裁剪谓词只按当前会话删除，前一会话的条目被保留）。现在
+  `get()` 按当前会话作用域（含 `session:<id>` 子任务谓词，与 list 的裁剪一致）校验缓存条目，越界
+  返回 `TASK_NOT_OWNED`；`stop()`/`answer()` 经 `get()` 传递性获得作用域。红绿证据：
+  `apps/extension/src/tasks/task-center-registry.spec.ts` 新增切换会话后的拒绝断言，修复前
+  `get` 解析出陈旧任务且 `stop` 会调用 cancel（红），修复后两个调用均拒绝且 cancel 未被调用（绿）。
+- 审计记录（不改）：`NavigationService.openDiff` 的 `after` 参数目前无生产调用方（staged 路由，
+  注释已声明临时实现），其静默忽略不构成用户可见缺陷；alpha `watchSession` 的按需创建为
+  `events.ts` 注释明示的设计，仅保留其与 `session.removed` 的对称清理（batch E 已修）。
+- 门禁状态：全量 `test` 734 测试中除既知 6 个预存前端失败外全部通过；typecheck/lint/format 通过。
+
+## 2026-08-30 backend review batch I evidence
+
+- PL-01（goal 缓存并发一致性）：`Rc6GoalRepository` 的 `remember()` 由 mux 观察者同步写 `goalCache`，
+  而 `list()` 的历史回填在多个 await 完成后无条件覆盖缓存——回填期间到达的 `goal.updated`/
+  `session.projection` 事件状态被陈旧的历史数据（可能为空）覆盖，且无补偿事件，直到下一次目标变更
+  或重订阅前投影一直错误。现在回填仅在缓存仍为空时写入，且返回缓存中较新的状态。同理 `create()`
+  在 host 的 `goal.updated` 事件先于 HTTP 回执到达（mux 与 HTTP 无顺序保证）时会向缓存追加重复行，
+  现在按 goal id 去重、保留事件投递的 host 权威版本。
+  红绿证据：`packages/dsh-adapter/test/goal-repository.spec.ts` 新增两例，修复前
+  `expected [] to deeply equal [goal-live]` 与重复行（红），修复后返回 live 状态且无重复（绿）。
+- CN-06（alpha 接收队列上限）：alpha `AsyncQueue` 此前无界缓冲，而 rc.6 传输对同类场景（消费方在
+  read loop 内 await 历史恢复时 host 持续推送 mid-turn delta 帧）以 256 帧上限 + `PROTOCOL_ERROR`
+  失败该流并触发重连/重新快照。现在 alpha 逻辑流队列采用相同的 `RECEIVE_QUEUE_LIMIT = 256` 上限，
+  溢出时清空缓冲并以同语义错误失败该逻辑流（共享 socket 与其他逻辑流不受影响）。
+  红绿证据：`packages/dsh-adapter/test/alpha-contract.spec.ts` 新增 session/follow 溢出测试，修复前
+  300 帧全部缓冲且 next() 正常返回（红），修复后拒绝并携带 `PROTOCOL_ERROR`/retryable=true（绿）。
+- 门禁状态：全量 `test` 737 测试中除既知 6 个预存前端失败外全部通过；typecheck/lint/format 通过。
+
+## 2026-08-30 backend review batch J evidence
+
+- PL-01（goal OCC 令牌新鲜度）：`Rc6GoalRepository.remember()` 消费 live `session.projection`/`session.subscribed`
+  更新 `goalCache`，但不更新 refs 的 `{id, revision}` 对（`rememberProjectionRefs` 此前只在 `list()` 的
+  历史回填路径调用）。goal edit/complete/resume/pause 是按 revision 的 compare-and-swap，令牌陈旧时
+  发送的是历史回填时刻的 revision 而非 host 已确认的最新值。现在 remember 的两个投影分支同步 harvest
+  refs，令牌与缓存视图保持同等新鲜；投影缺失 revision 字段时 harvest 为无操作（与既有 list 行为一致）。
+  红绿证据：`packages/dsh-adapter/test/goal-repository.spec.ts` 新增 OCC 断言，修复前 `goal.edit`
+  发送 revision 5（红），修复后发送 live 投影的 7（绿）。
+- SA-01（subagent 并发刷新竞态）：`Rc6SubagentRepository.list()` 对 `addresses` 路由表的提交按响应
+  解决顺序生效——同一父会话的两个并发刷新中，较旧的响应后解决会删除较新 catalog 刚路由的子代理或
+  回退其 mode，直到下一次刷新前 follow-up/interrupt 报 `CAPABILITY_UNAVAILABLE`。现在按父会话维护
+  刷新代计数，过期代仅返回其时间点视图而不触碰路由表。
+  红绿证据：`packages/dsh-adapter/test/subagent-repository.spec.ts` 新增旧响应后提交测试，修复前
+  `send` 报 `CAPABILITY_UNAVAILABLE`（红），修复后正常路由 `subagent.prompt`（绿）。
+- 审计记录（不改）：alpha jobs/queue 状态在 per-session 重订阅时按 rc.6 语义清空、而 alpha 的
+  session/follow 快照不携带该基线——是否需要 alpha 专用仓储行为取决于未发布 alpha host 是否在其他
+  通道补偿推送，缺乏上游证据前不改动；`walkHistoryPages` 以映射条目数组索引兜底 `beforeSeq` 仅影响
+  历史行缺失 `seq` 的 rc.6 时代 host，该 host 形状未获证实。
+- 门禁状态：全量 `test` 739 测试中除既知 6 个预存前端失败外全部通过；typecheck/lint/format 通过。
+
+## 2026-08-30 backend review batch K evidence
+
+- IN-02（并发入队防重）：`Rc6SessionRepository.enqueuePrompt` 的 `pendingQueueIdentities` 防重闸门此前
+  在 `session.prompt` 网络往返之后才注册——并发相同入队在该窗口内看到闸门为空并发送第二个
+  `session.prompt`，用户提示词被排队两次。现在共享身份 promise 在 RPC 发起前注册，失败路径立即
+  settle（并发等待者按既有语义自行重试），late-identity 等待与 30s grace 行为保持不变。
+  红绿证据：`packages/dsh-adapter/test/session-repository.spec.ts` 新增并发同文入队断言，修复前
+  2 个 RPC（红），修复后 1 个且两者获得同一队列身份（绿）；既有 late-identity/重试测试保持通过。
+- ST-01（settings 冲突重试）：`settings.mutate` 是按 revision 的 compare-and-swap；host 以可重试的
+  `settings-conflict`（`BACKEND_BUSY`，"reload and retry"）拒绝后，仓储的缓存描述此前不失效，
+  被邀请的重试会重新发送同一个被拒绝的 `expectedRevision` 并确定性再次失败（红测试复现
+  `expected 1 to be 2`）。现在 `update`/`unset` 的 mutate 失败即逐出缓存描述，重试重新 describe
+  并携带 host 当前 revision（`replace` 走 `describe()` 本就新鲜，无需改动）。
+  红绿证据：`packages/dsh-adapter/test/settings-repository.spec.ts` 新增冲突重试断言（绿）。
+- 审计记录（不改）：session.list 的 `nextCursor` 转发与 cursor 拒绝在 pinned 上游契约下均不可达
+  （响应类型无 `nextCursor` 字段，`cursor` 为"预留席位，v1 未实现"），不构成用户可见缺陷；
+  composition-root 清洗器剥离 `commandLine` 的影响以 host 实际发送该字段为前提（rc.6 通常省略），
+  且涉及安全边界放宽，未获运行证据前不改动。
+- 门禁状态：全量 `test` 741 测试中除既知 6 个预存前端失败外全部通过；typecheck/lint/format 通过。
+
+## 2026-08-30 backend review batch L evidence
+
+- IN-02（queue 帧降级语义）：rc.6 mapper 对畸形的 `session/queue` 帧（`items` 非数组或缺失）此前
+  静默映射为空队列，`Rc6SessionRepository.remember()` 随之清空队列与全部 queue-owner 条目，而 host
+  仍持有这些条目——后续 `session.queue.update/remove/steer` 全部 `STALE_INTERACTION`。同类的
+  `session/jobs` 帧早已 fail-closed（mapper 抛错 → 帧降级为脱敏 unknown 事件 → 保留最后已知状态）。
+  现在 `session/queue` 对 `items` 非数组同样抛错，与 jobs 语义对齐。
+  红绿证据：`packages/dsh-adapter/test/rc6-contract.spec.ts` 新增两条抛错断言，修复前静默通过（红），
+  修复后按 `/Malformed session\/queue items/` 抛出（绿）。
+- IN-02（入队失败重试路径回归锁定）：为 batch K 的 enqueuePrompt 修复补充失败路径测试——首个尝试
+  被 host 拒绝（receipt `ok:false`）时，共享身份 promise 立即 settle，并发等待者回退并发送自己的
+  `session.prompt` 而不是在 grace 窗口内挂起；host 接受后经 `session/queue` 事件交付队列身份。
+  测试证据：`session-repository.spec.ts` 新增失败重试路径（2 个 RPC、第二个获得 `rpc-2` 的队列身份）。
+- 审计记录（不改）：`replace()` 走 `describe()` 直接重取（无缓存读取），不存在 batch K 的陈旧
+  revision 重放路径（探索代理候选经验证排除）；`messageFeedback/delete` 的冷缓存 no-op 修复依赖
+  上游 delete 对 `ifVersion: null` 的接受度（put 有 `?? null` 先例但 delete 侧未证实），且可达性
+  未确认，维持现状并记录；`queuedInput` 逐条丢弃与上游帧 schema 的约束范围有关，全丢弃场景的
+  语义权衡缺乏上游证据，不扩大 fail-closed 范围。
+- 门禁状态：全量 `test` 743 测试中除既知 6 个预存前端失败外全部通过；typecheck/lint/format 通过。
+
+## 2026-08-30 backend review batch M evidence（搁置候选上游源码级交叉复核）
+
+本轮对四项搁置候选逐一核对上游源码（rc.6 固定提交 `47f9438`、rc.8 tag `dsh-v0.1.0-rc.8`、alpha.1
+固定提交 `cd5ef814` 与 pinned npm `@deepseek-ai/dsh-host-apiproxy@0.1.1-rc.2` /
+`@deepseek-ai/dsh-message-feedback` 类型），两项获证据支持并完成红→绿修复，两项证据不支持修复并
+记录边界。batch J/L 中对应的两条"不改"审计记录由本节结论取代。
+
+- JB-01（alpha 重订阅清空 control 流基线，修复）：alpha 的 jobs/queue 只由 `session/control` 流
+  承载——`control(signal)` 在每个流代建立时 yield 一次完整 `baseline`（queues/jobs/projections，
+  `packages/api/session-controller/src/control.ts`），之后仅变更增量；而 `session/follow` 快照只含
+  `{header, cursor, records, hasMore, projections}`（`packages/api/session-controller/src/history.ts`）。
+  alpha 装配复用的 `Rc6JobRepository`/`Rc6SessionRepository` 却按 rc.6 mux 语义在 `session.subscribed`
+  时清空 jobs/queue（rc.6 家族正确：mux 在订阅时重发 queue 快照、jobs "absent key means an empty
+  set"）。结果是首次 watch 与每次 follow 重连都会清空 control 流已基线的数据，直到下一次无关变更
+  增量或 control 流整体重连前一直 stale-empty。现在两个仓储各自增加显式选项
+  （`resetOnSubscribe` / `resetQueueOnSubscribe`，默认 `true` 保持 rc.6 语义），alpha 装配传 `false`，
+  版本差异收敛在 `versions/alpha/adapter.ts`，不在共享仓储中散落版本判断。
+  红绿证据：`packages/dsh-adapter/test/alpha-contract.spec.ts` 新增 adapter 级测试（经 FakeWebSocket
+  驱动 `$events`/`session/control`/`workspace/follow` 三条逻辑流注入 control baseline，再 `watchSession`
+  注入 follow snapshot），修复前 `jobs.list`/`listQueue` 在 subscribed 后变空（红），修复后保持
+  baseline 数据（绿）；rc.6 默认路径既有语义测试全部保持通过。
+- FB-01（messageFeedback/delete 冷缓存静默 no-op，修复）：上游 delete 契约是按 item 的 CAS——
+  `MessageFeedbackDeleteRequest.ifVersion` 为必填的"Observed item version; ignored when the item is
+  already absent"，"Absence is successful regardless of the supplied version; an existing item
+  requires an exact version match"（pinned `dsh-message-feedback` 类型与 rc.8 sidecar 设计笔记
+  "An already-absent delete is likewise successful"）。此前冷缓存（该 repository 实例未 list/put 过
+  该 session:message，如 Extension Host 重建后）的 `remove()` 直接 return，UI 报告删除成功而远端
+  条目原样保留——静默分叉；且版本 token 不可伪造/排序，`null` 不是 delete 的合法入参（batch L 审计
+  假设的 `ifVersion: null` 接受度被上游类型否定）。现在冷缓存先以唯一可用读 `messageFeedback/list`
+  观察：条目缺席即后成立返回（与上游"已缺席删除成功"语义一致），命中则携带观察到的版本 CAS 删除。
+  红绿证据：`packages/dsh-adapter/test/feedback-reference-repositories.spec.ts` 新增两例——冷缓存
+  先 list 后按 `ifVersion: 'v7'` delete（修复前 0 个 RPC，红）、观察到缺席时跳过 delete
+  （修复前连 list 都不发，红）；修复后均绿。
+- FB-02（version-conflict 丢弃权威 current，修复）：上游冲突响应携带
+  `MessageFeedbackVersionConflict.current: MessageFeedbackItem | null`（"Authoritative current item,
+  or null when it does not exist"，"so callers can reconcile without a second read"）。此前
+  `readBusinessValue` 把 `error.current` 直接丢弃并抛 `BACKEND_BUSY`（retryable），但被邀请的重试
+  仍携带同一过期版本，确定性再次冲突。现在 put/delete 的冲突路径先以 `current` 刷新版本缓存再抛错，
+  被邀请的重试即 CAS 有效。
+  红绿证据：同文件新增一例——首次 put 冲突（`current` 携带 v9）后，第二次 put 必须携带
+  `ifVersion: 'v9'` 才被接受；修复前第二次 put 重发 `ifVersion: null` 再次被拒（红），修复后返回
+  权威条目（绿）。
+- 审计记录（复核结论，不改）：composition-root 清洗器剥离 `commandLine` —— rc.6 `approval/requested`
+  MuxFrame 全字段为 `{type, sessionId, approvalId, toolName, callId?, reason?}`（rc.6
+  `events.ts`/`approvals.ts`/`approvals.schema.ts`，rc.2 pinned 树 grep `commandLine` 零命中），官方
+  审批面板的命令行经 `callId` 配对到正在运行的 tool call（`ApprovalPanel.tsx` 的 `commandOf(call)`
+  读取 bash 族 `args.command`），不从审批帧携带。因此 mapper 中有界的 `commandLine` 提取对固定契约
+  是永不触发的防御代码，清洗器剥离对审批链路无实际影响，而对进程发现链路（`DshProcessInfo.commandLine`
+  携带本机可执行路径）是必需的安全剥离；官方 callId 配对命令展示属功能增强而非缺陷修复，未纳入。
+  `queuedInput` 逐条丢弃 —— 上游 `QueuedInboxItem = {id: MessageId, placement: 'queued'|'steering'|
+'context', message: Message}` 三字段全必填；对合法帧唯一被丢弃的是 `placement: 'context'`，官方
+  语义即"context items stay invisible until claimed"，丢弃与官方渲染对齐（域 `QueuedInput` 仅
+  queue|steer，无法表示）；对违约畸形条目，数组级 fail-closed 已于 batch L 建立，逐条策略差异
+  （jobs 抛错 vs queue 丢弃）在上游 schema 保证字段存在的前提下构造不出用户可见缺陷，不扩大。
+- 门禁状态：全量 `test` 747 测试中除既知 6 个预存前端失败外全部通过（新增 4 例全绿）；typecheck
+  9 包 + tests tsconfig 通过；`pnpm build` 通过。`pnpm format:check`/`pnpm lint` 存在前端流提交
+  `d70dcdf` 带入的 16 个 prettier 违规与 6 个 eslint 错误、1 个警告，全部位于 `apps/webview`、
+  `apps/extension/src/editor/editor-context-provider.ts`、`packages/application/src/ports/feature-ports.ts`
+  等前端流文件，后端本批触碰文件均干净，按"不修改前端"纪律本批不处理。
+
+## 2026-08-30 backend review batch N evidence
+
+- IN-01（alpha 重订阅清空 pending 审批/问题，修复）：`Rc6InteractionRepository.remember` 对
+  `session.subscribed` 擦除该会话全部 pending permissions/questions。该语义源于 rc.6 mux 的刷新
+  恢复基线——mux 打开时对每个 attached session 先发 subscribed 再**重放**仍 pending 的
+  approval/question requested 帧（rpcId 原样复用，rc.6 `events.ts` 头注），擦除后由重放重新注册。
+  alpha 则按官方 remote-event 契约"Approval and Question use Agent-scoped waterfall"（remote-event
+  delivery 设计笔记）经 `$events` 载体投递，且 `session/follow` 快照不含任何审批/问题基线：首次
+  watch 或 follow 重连触发的 subscribed 之后没有任何重放，pending 审批被擦除后
+  `respondToPermission` 永远 `STALE_INTERACTION`，而 host 侧 waterfall 仍在等待应答。现在仓储增加
+  显式选项 `resetPendingOnSubscribe`（默认 `true` 保持 rc.6 重放语义），alpha 装配传 `false`；
+  alpha 的条目清理仍由 `permission.resolved`/`question.resolved`（经 `$events` 独立到达）完成。
+  红绿证据：`packages/dsh-adapter/test/alpha-contract.spec.ts` 新增 adapter 级测试——`$events`
+  waterfall 注入 `approval/request`（eventId `evt-1`）→ `watchSession` 注入 follow snapshot 触发
+  subscribed → `respondToPermission('evt-1', 'allowed-once')`；修复前拒绝 `STALE_INTERACTION`（红），
+  修复后经 `$events/result` 正常提交（绿）；rc.6 默认语义既有测试全部保持通过。
+- 门禁状态：全量 `test` 748 测试中除既知 6 个预存前端失败外全部通过；typecheck 9 包通过；
+  触碰文件 prettier 干净。
+
+## 2026-08-30 backend review batch O evidence
+
+- EV-01（序号缺口恢复只读尾页，修复）：rc.6 与 alpha 两个 adapter 给 `DshStreamController` 的恢复
+  回调此前都经 `sessions.get()` 取 `detail.history` —— 该字段只含**最新一页**（固定 50 条/页，
+  `HISTORY_PAGE_MESSAGES`）。重连缺口宽于一页时（休眠唤醒、长 turn 产生数百 chunk 事件等），
+  较旧页的事件不可达：`recoverRange` 只能交付尾页命中的部分，剩余破洞经 `session.gap` 显式宣告，
+  而 `session.gap` 在 application/webview 无任何消费者——对话留下永久空洞且无任何用户可见信号。
+  这违反 dsh-contract.md 自身的事件恢复契约（"通过历史 RPC 补齐缺口"）。现在新增共享工厂
+  `historyGapRecovery(sessions)`：从缺口末端（`toSequence + 1`，排他语义）起向后走 `session.history`
+  分页（复用 `walkHistoryPages`，新增 `initialBeforeSequence` 起始锚），直到某页最老序号 ≤ 缺口起点
+  或日志耗尽；`recoverRange` 对仍不可达的残余（host 侧截断/清理）照旧宣告 `session.gap`。两个
+  adapter 的内联尾页回调统一替换为该工厂；顺带消除 `sessions.get()` 的多余重载（registry 提示 +
+  workspace 快照 + fallback 汇总在恢复路径上均为副作用）。
+  红绿证据：`packages/dsh-adapter/test/gap-recovery.spec.ts` 新增 adapter 级测试——经 fetch mock
+  （分页 `session.history`：尾页 21..70、第二页 1..20）与 fake WebSocket 注入 mux 帧，水位 10 直接
+  跳到 70；修复前只交付 21..69，11..20 仅以 `session.gap` 宣告（红），修复后 11..69 全部从两页
+  历史补齐且无 `session.gap`（绿）。rc.6 与 alpha 共用同一工厂，行为一致。
+- 审计记录（本轮扫描覆盖面，不改）：`credential-repository`（`credentials.set/unset` 回执与
+  `RpcResponse<{}>` 逐字段吻合、describe/幂等 unset 语义一致）、`workspace-repository`（list/create/
+  rename/delete/insertBefore/insertSessionBefore/archiveSession 响应形状与 rc.2 pinned
+  `workspace.d.ts` 逐一吻合，含 `workspace-name-conflict` 容忍与幂等 adoption）、`model-repository`
+  （catalog/failure/discovered 校验严密、credential 批量 describe 分批 64）、`skill-repository`、
+  `plugin-repository`（只读、`null` fiberPhase 保留）、`preset-repository`、`backend-service`（attach
+  重放/去重键设计）、`advanced-agent-use-cases`（能力探测委托）——均未发现可红测试复现的真实缺陷；
+  rc.6 RPC 错误映射对未识别上游码落入 `PROTOCOL_ERROR` 属保守降级策略，保留。
+- 门禁状态：全量 `test` 749 测试中除既知 6 个预存前端失败外全部通过；typecheck 9 包 + tests
+  tsconfig 通过；`pnpm build` 通过；触碰文件 prettier 干净。
+
+## 2026-08-30 backend review batch P evidence（stream-controller 生命周期 / view 路由审计）
+
+- 审计记录（本轮扫描覆盖面，不改）：`stream-controller` 剩余路径——subscribe 重入与 stranded
+  subscriber 重启（unsubscribe 触发的 abort 期间新订阅者由 finally 检测重启，自然失败走 backoff，
+  防止 down host 热循环）、`scheduleReconnect` 的 `this.lifetime !== lifetime` 陈旧代次守卫、
+  `runGeneration` 的 `Promise.allSettled(tasks)` 防止慢旧读者与下一代重叠发布陈旧事件、close 与
+  重连计时器互斥、`session.subscribed` 三分支（基线上行恢复/下行跟随/相等幂等）与投影水位截断、
+  `retryAttempt` 在首个帧/订阅/每个有序事件三处重置——均与既有红绿测试对应，无新缺陷。
+  `view/message-router`：请求预算前置检查、双信封 schema 判别、requestId 单飞去重、cancel 的
+  `completed/accepted` 诚实状态、`complete()` 幂等删除与 postMessage 传输失败兜底、`response()`
+  超预算回退为受限 PROTOCOL_ERROR、非 AppError 失败归一为 INTERNAL_ERROR 并旁路脱敏诊断——
+  `!ok` 分支的 `schema.parse(candidate)` 重抛在公开错误消息全部有界的构造下不可达。配套
+  `dsh-webview-view-provider` 的 dispose/重建监听生命周期与 `onMessage` 未处理拒绝吸收正确。
+  `webview-protocol` 的 `protocolValueWithinBudget`（节点数/深度/字符串总量/环引用，WeakSet 去重
+  对 JSON 可达载荷无假阳性）、`temporary-workspace`（受管路径约束、单飞、失败清理、引用失效即清除）、
+  `feature-capabilities` 分级门控、rc.6 `withRetry` 仅对 15 个幂等读重试且 abort 优先——均无新缺陷。
+- 门禁状态：本轮为纯审计（无代码改动），门禁沿用 batch O 提交 `1f0de27` 的全绿结果。
+
+## 2026-08-30 backend review batch Q evidence（runtime/shim 与扩展本地能力审计）
+
+- 审计记录（本轮扫描覆盖面，不改）：`backend/windows-shim.ts`——npm `.cmd` shim 的静态解析
+  （自底向上取最后一个可解析 `.js` 引用、`SET` 行跳过、`FOR /F` 动态值经 `%%` 检测跳过并保留首个
+  静态可解析赋值、`%~dp0`/变量展开的 seen-set 环防护）与 node 查找三级回退（shim 同目录 node.exe →
+  Extension Host 可执行仅当确为 Node → PATH → `node.exe` 直名），全程无 shell，符合子进程红线。
+  `backend/runtime-locator.ts`——configured 存在即采纳（不兼容也如实上报，不静默换 PATH 二进制）、
+  npm 前端探测仅在 configured/PATH 未命中时发生、候 select 去重（Windows 大小写不敏感）、探针 3s
+  超时并取消底层执行、超时与取消错误分类保留、`findSupported` 记录"仅存在候选"供诊断。
+  `attachments/attachment-store.ts`——容量/10 分钟过期/魔数校验（PNG/JPEG/GIF/WebP）/canonical
+  Base64 边界。`prompts/prompt-template-store.ts`——索引 checksum 写读对称（`decodeIndex` 确实校验
+  sha256，键序固定）、body 完整性失败自动 disable、原子写 + 失败清理、create/update/delete 回滚路径
+  （update 的 oldBody 回写在同 hash 场景等价）、所有权/信任边界、重复 id 即 STORAGE_CORRUPT。
+  `navigation/navigation-service.ts`——WorkspacePathGuard 解析 + 规则文件断言 + 打开后 range 校验。
+  `commands/register-commands.ts`（30 行注册）无逻辑面。均未发现可红测试复现的真实缺陷。
+- 门禁状态：本轮为纯审计（无代码改动），门禁沿用 batch O 提交 `1f0de27` 的全绿结果。
+
 ## rc.8 适配增量与兼容证据
 
 - 版本层：`versions/rc6`、`versions/rc7`、`versions/rc8` 与受控 rc.6 fallback；运行时定位允许任何非空未知版本标签并把警告安全传给 Webview。

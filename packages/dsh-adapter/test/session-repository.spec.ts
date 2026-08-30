@@ -639,3 +639,109 @@ describe('Rc6SessionRepository history windows', () => {
     expect(page.items.map((item) => item.id)).toEqual(['session-a'])
   })
 })
+
+describe('Rc6SessionRepository concurrent identical enqueues', () => {
+  it('does not send a second session.prompt while the first round trip is in flight', async () => {
+    const calls: { method: string; params: unknown }[] = []
+    const resolvers: Array<(value: unknown) => void> = []
+    let rpcCounter = 0
+    const transport: DshTransport = {
+      request: <TResponse>(method: string, params: unknown) => {
+        calls.push({ method, params })
+        if (method !== 'session.prompt') return Promise.reject(new Error(`unexpected RPC ${method}`))
+        rpcCounter += 1
+        const rpcId = `rpc-${rpcCounter}`
+        return new Promise<TResponse>((resolve) => {
+          resolvers.push((value) => resolve({ rpcId, result: { ok: true, value } } as TResponse))
+        })
+      },
+      remoteRequest: <TResponse>() => Promise.reject<TResponse>(new Error('unexpected Remote')),
+      openEventStream: async function* () {
+        /* fixture stream */
+      },
+      close: () => Promise.resolve(),
+    }
+    const repository = new Rc6SessionRepository(transport)
+    const input = { sessionId: 'session-1', text: 'same text', attachments: [] }
+
+    const first = repository.enqueuePrompt(input, 'queue')
+    const second = repository.enqueuePrompt(input, 'queue')
+    // The identity guard must be registered before the network round trip, or
+    // a concurrent identical enqueue sends a duplicate prompt to the host.
+    expect(calls.filter((call) => call.method === 'session.prompt')).toHaveLength(1)
+
+    for (const resolve of resolvers) resolve({ accepted: true })
+    repository.remember({
+      type: 'queue.updated',
+      sessionId: 'session-1',
+      items: [
+        {
+          id: 'queued-1',
+          sessionId: 'session-1',
+          text: 'same text',
+          attachments: [],
+          mode: 'queue',
+          createdAt: new Date().toISOString(),
+          rpcId: 'rpc-1',
+        },
+      ],
+    })
+    await expect(first).resolves.toMatchObject({ id: 'queued-1' })
+    await expect(second).resolves.toMatchObject({ id: 'queued-1' })
+    expect(calls.filter((call) => call.method === 'session.prompt')).toHaveLength(1)
+  })
+})
+
+describe('Rc6SessionRepository failed enqueue retries', () => {
+  it('lets a concurrent identical enqueue retry after the first attempt is rejected', async () => {
+    const calls: { method: string; params: unknown }[] = []
+    const resolvers: Array<(value: unknown) => void> = []
+    let rpcCounter = 0
+    const transport: DshTransport = {
+      request: <TResponse>(method: string, params: unknown) => {
+        calls.push({ method, params })
+        if (method !== 'session.prompt') return Promise.reject(new Error(`unexpected RPC ${method}`))
+        rpcCounter += 1
+        const rpcId = `rpc-${rpcCounter}`
+        return new Promise<TResponse>((resolve) => {
+          resolvers.push((value) => resolve({ rpcId, result: { ok: true, value } } as TResponse))
+        })
+      },
+      remoteRequest: <TResponse>() => Promise.reject<TResponse>(new Error('unexpected Remote')),
+      openEventStream: async function* () {
+        /* fixture stream */
+      },
+      close: () => Promise.resolve(),
+    }
+    const repository = new Rc6SessionRepository(transport)
+    const input = { sessionId: 'session-1', text: 'same text', attachments: [] }
+
+    const first = repository.enqueuePrompt(input, 'queue')
+    const second = repository.enqueuePrompt(input, 'queue')
+
+    // The first attempt is rejected by the host; the concurrent waiter must
+    // fall through and send its own prompt instead of hanging on the shared
+    // identity promise.
+    resolvers[0]?.({ ok: false, error: { code: 'bad-request', message: 'rejected' } })
+    await expect(first).rejects.toBeTruthy()
+
+    resolvers[1]?.({ accepted: true })
+    repository.remember({
+      type: 'queue.updated',
+      sessionId: 'session-1',
+      items: [
+        {
+          id: 'queued-2',
+          sessionId: 'session-1',
+          text: 'same text',
+          attachments: [],
+          mode: 'queue',
+          createdAt: new Date().toISOString(),
+          rpcId: 'rpc-2',
+        },
+      ],
+    })
+    await expect(second).resolves.toMatchObject({ id: 'queued-2' })
+    expect(calls.filter((call) => call.method === 'session.prompt')).toHaveLength(2)
+  })
+})

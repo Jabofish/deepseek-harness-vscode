@@ -22,7 +22,7 @@ export class Rc6MessageFeedbackRepository implements MessageFeedbackRepository {
 
   public async list(sessionId: string, signal?: AbortSignal): Promise<readonly MessageFeedbackItem[]> {
     try {
-      const value = readBusinessValue(
+      const value = this.readBusinessValue(
         await this.transport.remoteRequest<unknown>(
           'messageFeedback/list',
           { request: { sessionId } },
@@ -59,7 +59,7 @@ export class Rc6MessageFeedbackRepository implements MessageFeedbackRepository {
     }
     try {
       const response = await this.transport.remoteRequest<unknown>('messageFeedback/put', { request }, signal)
-      const value = readBusinessValue(response, 'messageFeedback/put')
+      const value = this.readBusinessValue(response, 'messageFeedback/put', sessionId, messageId)
       const item = parseItem(value)
       if (item === undefined) throw malformed('message feedback item')
       this.versions.set(`${sessionId}:${messageId}`, item.version)
@@ -71,49 +71,67 @@ export class Rc6MessageFeedbackRepository implements MessageFeedbackRepository {
   }
 
   public async remove(sessionId: string, messageId: string, signal?: AbortSignal): Promise<void> {
-    const version = this.versions.get(`${sessionId}:${messageId}`)
-    if (version === undefined) return
+    const key = `${sessionId}:${messageId}`
+    let version = this.versions.get(key)
+    if (version === undefined) {
+      // Upstream delete is a compare-and-swap on the observed item version and
+      // an already-absent item is a successful no-op, so a cold cache must
+      // observe the session's feedback before it can truthfully delete — or
+      // truthfully report that there is nothing to delete.
+      const observed = (await this.list(sessionId, signal)).find((item) => item.messageId === messageId)
+      if (observed === undefined) return
+      version = observed.version
+    }
     try {
       const response = await this.transport.remoteRequest<unknown>(
         'messageFeedback/delete',
         { request: { sessionId, messageId, ifVersion: version } },
         signal,
       )
-      const value = readBusinessValue(response, 'messageFeedback/delete')
+      const value = this.readBusinessValue(response, 'messageFeedback/delete', sessionId, messageId)
       if (asRecord(value)?.absent !== true) throw malformed('message feedback delete receipt')
-      this.versions.delete(`${sessionId}:${messageId}`)
+      this.versions.delete(key)
     } catch (error) {
       if (isOptionalUnavailable(error)) throw unavailable('message feedback')
       throw error
     }
   }
-}
 
-function readBusinessValue(value: unknown, method: string): unknown {
-  const outer = unwrapRpcResultValue<unknown>(value, method)
-  const result = outer as FeedbackRemoteResult
-  if (typeof result === 'object' && result !== null && typeof result.ok === 'boolean') {
-    if (result.ok && 'value' in result) return result.value
-    if (!result.ok) {
-      const code = typeof result.error?.code === 'string' ? result.error.code : 'internal'
-      throw new AppError({
-        code:
-          code === 'version-conflict'
-            ? 'BACKEND_BUSY'
-            : code === 'target-not-found' || code === 'unknown-command'
-              ? 'CAPABILITY_UNAVAILABLE'
-              : 'INTERNAL_ERROR',
-        message:
-          code === 'version-conflict'
-            ? 'The DSH feedback changed; retry the action.'
-            : code === 'unknown-command'
-              ? 'This DSH host does not expose message feedback.'
-              : 'The DSH feedback action was rejected.',
-        retryable: code === 'version-conflict',
-      })
+  /**
+   * Unwrap the Remote business union. On a version conflict the Host returns
+   * the authoritative current item so callers can reconcile without a second
+   * read; adopting its version keeps the invited retry CAS-valid.
+   */
+  private readBusinessValue(value: unknown, method: string, sessionId?: string, messageId?: string): unknown {
+    const outer = unwrapRpcResultValue<unknown>(value, method)
+    const result = outer as FeedbackRemoteResult
+    if (typeof result === 'object' && result !== null && typeof result.ok === 'boolean') {
+      if (result.ok && 'value' in result) return result.value
+      if (!result.ok) {
+        const code = typeof result.error?.code === 'string' ? result.error.code : 'internal'
+        if (code === 'version-conflict' && sessionId !== undefined && messageId !== undefined) {
+          const current = parseItem(result.error?.current)
+          if (current !== undefined) this.versions.set(`${sessionId}:${messageId}`, current.version)
+        }
+        throw new AppError({
+          code:
+            code === 'version-conflict'
+              ? 'BACKEND_BUSY'
+              : code === 'target-not-found' || code === 'unknown-command'
+                ? 'CAPABILITY_UNAVAILABLE'
+                : 'INTERNAL_ERROR',
+          message:
+            code === 'version-conflict'
+              ? 'The DSH feedback changed; retry the action.'
+              : code === 'unknown-command'
+                ? 'This DSH host does not expose message feedback.'
+                : 'The DSH feedback action was rejected.',
+          retryable: code === 'version-conflict',
+        })
+      }
     }
+    return outer
   }
-  return outer
 }
 
 function parseItem(value: unknown): MessageFeedbackItem | undefined {

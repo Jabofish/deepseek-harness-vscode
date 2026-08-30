@@ -854,3 +854,20 @@ describe('DeepSeek Harness 0.1.0-rc.6 contract', () => {
     })
   })
 })
+
+describe('rc6 queue frame degradation', () => {
+  it('fails closed on a malformed session/queue frame instead of publishing an empty queue', () => {
+    // A malformed frame mapped to `items: []` would make the session
+    // repository wipe the queue and every queue-owner entry while the host
+    // still holds the items, turning later update/remove/steer calls into
+    // STALE_INTERACTION. Degrade it like the session/jobs case instead: the
+    // mapper throws, the stream frame becomes a redacted unknown event, and
+    // the last known queue state survives.
+    expect(() => rc6Mapper.event('session/queue', { sessionId: 's1', items: {} })).toThrow(
+      /Malformed session\/queue items/,
+    )
+    expect(() => rc6Mapper.event('session/queue', { sessionId: 's1' })).toThrow(
+      /Malformed session\/queue items/,
+    )
+  })
+})

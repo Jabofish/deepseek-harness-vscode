@@ -72,6 +72,8 @@ export interface HistoryWalkerOptions<TPage extends HistoryPageLike> {
   readonly maxPages?: number
   readonly stopWhen?: (page: TPage) => boolean
   readonly sequenceOf?: (entry: unknown) => number | undefined
+  /** Start the walk at an explicit exclusive anchor instead of the newest page. */
+  readonly initialBeforeSequence?: number
 }
 
 /**
@@ -87,7 +89,7 @@ export async function walkHistoryPages<TPage extends HistoryPageLike>(
   const pages: TPage[] = []
   const maxPages = options.maxPages ?? 100
   const sequenceOf = options.sequenceOf ?? historySequence
-  let beforeSequence: number | undefined
+  let beforeSequence: number | undefined = options.initialBeforeSequence
 
   for (let page = 0; page < maxPages; page += 1) {
     const current = await readPage(beforeSequence)

@@ -16,7 +16,7 @@
 ## 质量
 
 - [ ] clean checkout 执行 `pnpm install --frozen-lockfile && pnpm check && pnpm build`。
-- [ ] Windows、Linux、macOS 与 Node 22.19/24 CI 通过。
+- [ ] Windows、Linux、macOS 三平台 CI（Node `22.19`）通过。
 - [ ] VS Code 最低支持版本 E2E 通过。
 - [ ] 真实 DSH rc.6/rc.7/rc.8/rc.1/rc.2 smoke matrix 通过，且未知版本警告降级通过。
 - [ ] 未发布 alpha.1 对应 npm/运行包发布后完成真实 Connection、Cookie、remote.mux、Session/Workspace follow smoke；在此之前只能保留源码契约证据。

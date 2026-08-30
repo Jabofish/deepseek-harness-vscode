@@ -29,7 +29,13 @@ export class Rc6InteractionRepository implements InteractionRepository {
     }
   >()
   private readonly responding = new Map<string, Promise<void>>()
-  public constructor(private readonly transport: DshTransport) {}
+  private readonly resetPendingOnSubscribe: boolean
+  public constructor(
+    private readonly transport: DshTransport,
+    options?: { readonly resetPendingOnSubscribe?: boolean },
+  ) {
+    this.resetPendingOnSubscribe = options?.resetPendingOnSubscribe ?? true
+  }
 
   /** Return the session that owns a currently remembered permission request. */
   public sessionForPermission(requestId: string): string | undefined {
@@ -43,6 +49,14 @@ export class Rc6InteractionRepository implements InteractionRepository {
 
   public remember(event: BackendEvent): void {
     if (event.type === 'session.subscribed') {
+      // The rc.6-family mux replays each session's still-pending
+      // approval/question requested frames right after the subscribed frame
+      // (rpcId reused verbatim), so wiping here and letting the replay
+      // re-register is the refresh-recovery baseline. Alpha delivers
+      // approvals and questions as $events waterfalls and a session/follow
+      // (re)subscription replays nothing — wiping there would destroy a
+      // pending interaction the host still waits on.
+      if (!this.resetPendingOnSubscribe) return
       for (const [id, pending] of this.permissions)
         if (pending.sessionId === event.sessionId) this.permissions.delete(id)
       for (const [id, pending] of this.questions)

@@ -95,17 +95,29 @@ export class Rc6SettingsRepository implements SettingsRepository {
       descriptor.secrets.some((secret) => secret.path.join('.') === parts.join('.'))
     )
       throw new Error('Configured secrets must be changed through the credential surface.')
-    const response = await callRpc<Namespace>(
-      this.transport,
-      'settings.mutate',
-      {
-        ns: namespace,
-        ops: [{ op: 'set', path: parts, value }],
-        expectedRevision: descriptor.revision,
-      },
-      signal,
-    )
-    this.remember(normalizeNamespace(response))
+    let response: Namespace
+    try {
+      response = normalizeNamespace(
+        await callRpc<Namespace>(
+          this.transport,
+          'settings.mutate',
+          {
+            ns: namespace,
+            ops: [{ op: 'set', path: parts, value }],
+            expectedRevision: descriptor.revision,
+          },
+          signal,
+        ),
+      )
+    } catch (error) {
+      // The mutate is compare-and-swap on the descriptor revision. A failure
+      // (notably the retryable settings-conflict) means the cached snapshot
+      // may be stale; drop it so the invited retry re-describes instead of
+      // resending the same rejected expectedRevision.
+      this.description = undefined
+      throw error
+    }
+    this.remember(response)
   }
 
   public async unset(path: string, signal?: AbortSignal): Promise<void> {
@@ -114,17 +126,25 @@ export class Rc6SettingsRepository implements SettingsRepository {
       throw new Error('Settings path must be namespace.field')
     const descriptor = await this.namespace(namespace, signal)
     this.requireWritable()
-    const response = await callRpc<Namespace>(
-      this.transport,
-      'settings.mutate',
-      {
-        ns: namespace,
-        ops: [{ op: 'unset', path: parts }],
-        expectedRevision: descriptor.revision,
-      },
-      signal,
-    )
-    this.remember(normalizeNamespace(response))
+    let response: Namespace
+    try {
+      response = normalizeNamespace(
+        await callRpc<Namespace>(
+          this.transport,
+          'settings.mutate',
+          {
+            ns: namespace,
+            ops: [{ op: 'unset', path: parts }],
+            expectedRevision: descriptor.revision,
+          },
+          signal,
+        ),
+      )
+    } catch (error) {
+      this.description = undefined
+      throw error
+    }
+    this.remember(response)
   }
 
   public async replace(value: Readonly<Record<string, unknown>>, signal?: AbortSignal): Promise<void> {

@@ -108,7 +108,10 @@ export class AlphaLoopbackApiClient implements DshTransport {
     } catch (error) {
       throw normalizeTransportError('session.export', error, signal)
     }
-    if (!response.ok) throw httpFailure('session.export', response.status)
+    if (!response.ok) {
+      await releaseUnreadBody(response)
+      throw httpFailure('session.export', response.status)
+    }
     return response
   }
 
@@ -167,7 +170,7 @@ export class AlphaLoopbackApiClient implements DshTransport {
 
   private readonly pendingEvents = new Map<
     string,
-    { readonly clientId: string; readonly kind: 'approval' | 'question' }
+    { readonly clientId: string; readonly kind: 'approval' | 'question'; readonly sessionId: string }
   >()
   private eventClientId: string | undefined
   private eventStreamGeneration = 0
@@ -379,7 +382,10 @@ export class AlphaLoopbackApiClient implements DshTransport {
     } catch (error) {
       throw normalizeTransportError(endpoint, error, signal)
     }
-    if (!response.ok) throw httpFailure(endpoint, response.status)
+    if (!response.ok) {
+      await releaseUnreadBody(response)
+      throw httpFailure(endpoint, response.status)
+    }
     let decoded: unknown
     try {
       decoded = await response.json()
@@ -606,7 +612,11 @@ export class AlphaLoopbackApiClient implements DshTransport {
           const request = frame.request
           if (frame.event === 'approval/request') {
             if (this.eventClientId !== undefined)
-              this.pendingEvents.set(frame.eventId, { clientId: this.eventClientId, kind: 'approval' })
+              this.pendingEvents.set(frame.eventId, {
+                clientId: this.eventClientId,
+                kind: 'approval',
+                sessionId: frame.agentId,
+              })
             yield {
               ...request,
               type: 'approval/requested',
@@ -616,7 +626,11 @@ export class AlphaLoopbackApiClient implements DshTransport {
             }
           } else if (frame.event === 'user-questions/request') {
             if (this.eventClientId !== undefined)
-              this.pendingEvents.set(frame.eventId, { clientId: this.eventClientId, kind: 'question' })
+              this.pendingEvents.set(frame.eventId, {
+                clientId: this.eventClientId,
+                kind: 'question',
+                sessionId: frame.agentId,
+              })
             yield {
               ...request,
               type: 'question/requested',
@@ -628,15 +642,23 @@ export class AlphaLoopbackApiClient implements DshTransport {
         }
         if (frame?.type === 'cancel' && validAlphaEventCancel(frame)) {
           const pending = this.pendingEvents.get(frame.eventId)
+          // The cancel frame itself carries only the eventId, but the resolved
+          // projection needs the requesting session so replay bookkeeping can
+          // clear the matching pending request.
           if (pending?.kind === 'approval')
             yield {
               type: 'approval/resolved',
-              sessionId: '',
+              sessionId: pending.sessionId,
               approvalId: frame.eventId,
               outcome: 'cancelled',
             }
           if (pending?.kind === 'question')
-            yield { type: 'question/resolved', questionRpcId: frame.eventId, outcome: 'cancelled' }
+            yield {
+              type: 'question/resolved',
+              sessionId: pending.sessionId,
+              questionRpcId: frame.eventId,
+              outcome: 'cancelled',
+            }
           this.pendingEvents.delete(frame.eventId)
           continue
         }
@@ -847,7 +869,7 @@ class AlphaRemoteMux {
 
     const state: AlphaMuxStream = {
       endpoint,
-      queue: new AsyncQueue<unknown>(),
+      queue: new AsyncQueue<unknown>(RECEIVE_QUEUE_LIMIT),
       terminal: false,
     }
     const streamId = randomUUID()
@@ -1766,6 +1788,19 @@ function closedError(): AppError {
   })
 }
 
+/**
+ * Callers never read a non-2xx body, and an unconsumed fetch body pins its
+ * socket instead of returning it to the pool. Release it explicitly so
+ * retry loops and export failures cannot accumulate stalled connections.
+ */
+async function releaseUnreadBody(response: Response): Promise<void> {
+  try {
+    await response.body?.cancel()
+  } catch {
+    /* releasing the connection is best effort */
+  }
+}
+
 function malformedResponse(method: string, cause?: unknown): AppError {
   return new AppError({
     code: 'PROTOCOL_ERROR',
@@ -1800,6 +1835,9 @@ async function delay(ms: number, signal?: AbortSignal): Promise<void> {
   })
 }
 
+/** Matches the rc.6 transport's per-stream receive queue bound. */
+const RECEIVE_QUEUE_LIMIT = 256
+
 class AsyncQueue<T> implements AsyncIterable<T> {
   private readonly values: T[] = []
   private readonly waiters: Array<{
@@ -1809,11 +1847,32 @@ class AsyncQueue<T> implements AsyncIterable<T> {
   private finished = false
   private failure: unknown
 
+  public constructor(private readonly capacity: number) {}
+
   public push(value: T): void {
     if (this.finished) return
     const waiter = this.waiters.shift()
-    if (waiter === undefined) this.values.push(value)
-    else waiter.resolve({ value, done: false })
+    if (waiter === undefined) {
+      // The stream consumer awaits inside its read loop (history recovery on
+      // a seq gap), so the host can keep pushing frames while the generator
+      // is suspended at its yield. Fail the stream past the same bound the
+      // rc.6 transport enforces instead of buffering without limit; the
+      // stream controller reconnects and re-snapshots.
+      if (this.values.length >= this.capacity) {
+        this.values.length = 0
+        this.fail(
+          new AppError({
+            code: 'PROTOCOL_ERROR',
+            message: 'The DSH event stream exceeded its receive queue limit.',
+            retryable: true,
+          }),
+        )
+        return
+      }
+      this.values.push(value)
+      return
+    }
+    waiter.resolve({ value, done: false })
   }
 
   public end(): void {
