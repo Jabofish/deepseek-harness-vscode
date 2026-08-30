@@ -245,6 +245,26 @@ VS Code 无文件夹 Webview 回放，因此该修复不提升能力矩阵中的
   历史行缺失 `seq` 的 rc.6 时代 host，该 host 形状未获证实。
 - 门禁状态：全量 `test` 739 测试中除既知 6 个预存前端失败外全部通过；typecheck/lint/format 通过。
 
+## 2026-08-30 backend review batch K evidence
+
+- IN-02（并发入队防重）：`Rc6SessionRepository.enqueuePrompt` 的 `pendingQueueIdentities` 防重闸门此前
+  在 `session.prompt` 网络往返之后才注册——并发相同入队在该窗口内看到闸门为空并发送第二个
+  `session.prompt`，用户提示词被排队两次。现在共享身份 promise 在 RPC 发起前注册，失败路径立即
+  settle（并发等待者按既有语义自行重试），late-identity 等待与 30s grace 行为保持不变。
+  红绿证据：`packages/dsh-adapter/test/session-repository.spec.ts` 新增并发同文入队断言，修复前
+  2 个 RPC（红），修复后 1 个且两者获得同一队列身份（绿）；既有 late-identity/重试测试保持通过。
+- ST-01（settings 冲突重试）：`settings.mutate` 是按 revision 的 compare-and-swap；host 以可重试的
+  `settings-conflict`（`BACKEND_BUSY`，"reload and retry"）拒绝后，仓储的缓存描述此前不失效，
+  被邀请的重试会重新发送同一个被拒绝的 `expectedRevision` 并确定性再次失败（红测试复现
+  `expected 1 to be 2`）。现在 `update`/`unset` 的 mutate 失败即逐出缓存描述，重试重新 describe
+  并携带 host 当前 revision（`replace` 走 `describe()` 本就新鲜，无需改动）。
+  红绿证据：`packages/dsh-adapter/test/settings-repository.spec.ts` 新增冲突重试断言（绿）。
+- 审计记录（不改）：session.list 的 `nextCursor` 转发与 cursor 拒绝在 pinned 上游契约下均不可达
+  （响应类型无 `nextCursor` 字段，`cursor` 为"预留席位，v1 未实现"），不构成用户可见缺陷；
+  composition-root 清洗器剥离 `commandLine` 的影响以 host 实际发送该字段为前提（rc.6 通常省略），
+  且涉及安全边界放宽，未获运行证据前不改动。
+- 门禁状态：全量 `test` 741 测试中除既知 6 个预存前端失败外全部通过；typecheck/lint/format 通过。
+
 ## rc.8 适配增量与兼容证据
 
 - 版本层：`versions/rc6`、`versions/rc7`、`versions/rc8` 与受控 rc.6 fallback；运行时定位允许任何非空未知版本标签并把警告安全传给 Webview。

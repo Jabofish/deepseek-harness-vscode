@@ -273,3 +273,57 @@ describe('Rc6SettingsRepository document action', () => {
     await expect(repository.openDocument?.()).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
   })
 })
+
+describe('Rc6SettingsRepository revision conflicts', () => {
+  it('re-describes after a rejected mutate so the invited retry uses a fresh revision', async () => {
+    const calls: Call[] = []
+    let mutateCalls = 0
+    const shellNamespace = DESCRIBE_FIXTURE.namespaces[0]
+    if (shellNamespace === undefined) throw new Error('fixture namespace missing')
+    const describeValue = (revision: number): typeof DESCRIBE_FIXTURE => ({
+      writable: true,
+      hasDocument: true,
+      namespaces: [{ ...shellNamespace, revision }],
+    })
+    const transport: DshTransport = {
+      request: <TResponse>(method: string, params: unknown) => {
+        calls.push({ method, params })
+        if (method === 'settings.describe')
+          return Promise.resolve({
+            result: { ok: true, value: describeValue(mutateCalls === 0 ? 1 : 2) },
+          } as TResponse)
+        if (method === 'settings.mutate') {
+          mutateCalls += 1
+          if (mutateCalls === 1)
+            return Promise.resolve({
+              result: { ok: false, error: { code: 'settings-conflict', message: 'conflict' } },
+            } as TResponse)
+          const namespace = describeValue(2).namespaces[0]
+          return Promise.resolve({ result: { ok: true, value: namespace } } as TResponse)
+        }
+        return Promise.reject(new Error(`unexpected RPC ${method}`))
+      },
+      remoteRequest: <TResponse>() =>
+        Promise.reject<TResponse>(new Error('the Remote carrier is not part of this contract')),
+      openEventStream: async function* () {
+        /* fixture stream */
+      },
+      close: () => Promise.resolve(),
+    }
+    const repository = new Rc6SettingsRepository(transport)
+
+    // The host bumped the revision externally; the first compare-and-swap
+    // loses with the retryable settings-conflict classification.
+    await expect(repository.update('shell.timeoutMs', 15_000)).rejects.toMatchObject({
+      code: 'BACKEND_BUSY',
+    })
+
+    // The retryable flag invites an immediate retry; resending the cached
+    // descriptor's revision would deterministically lose again.
+    await repository.update('shell.timeoutMs', 15_000)
+
+    const mutates = calls.filter((call) => call.method === 'settings.mutate')
+    expect(mutates).toHaveLength(2)
+    expect((mutates[1]?.params as { expectedRevision: number }).expectedRevision).toBe(2)
+  })
+})

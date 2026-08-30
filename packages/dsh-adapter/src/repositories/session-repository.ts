@@ -508,36 +508,14 @@ export class Rc6SessionRepository implements SessionRepository {
     const beforeIds = new Set(
       (this.queues.get(input.sessionId) ?? []).filter((item) => item.mode === mode).map((item) => item.id),
     )
-    const response = await this.transport.request<RpcResponseLike<unknown>>(
-      'session.prompt',
-      {
-        sessionId: input.sessionId,
-        mode,
-        content: promptContent(input, limits),
-        ...clientTimeZoneField(),
-      },
-      signal,
-    )
-    const receipt = unwrapRpcResult(response, 'session.prompt')
-    assertAccepted(receipt, 'session prompt')
-    const queued = findNewQueuedInput(
-      this.queues.get(input.sessionId),
-      beforeIds,
-      input,
-      mode,
-      response.rpcId,
-    )
-    if (queued !== undefined) {
-      this.queueOwners.set(queued.id, input.sessionId)
-      return queued
-    }
-    const identityPromise = this.waitForQueuedIdentity(
-      input,
-      mode,
-      beforeIds,
-      response.rpcId,
-      QUEUE_IDENTITY_GRACE_MS,
-    )
+    // Register the shared identity promise before the network round trip: a
+    // concurrent identical enqueue issued while this request is in flight
+    // must wait for this attempt's outcome instead of sending a second
+    // session.prompt to the host.
+    let resolveIdentity!: (value: QueuedInput | undefined) => void
+    const identityPromise = new Promise<QueuedInput | undefined>((resolve) => {
+      resolveIdentity = resolve
+    })
     this.pendingQueueIdentities.set(promptKey, identityPromise)
     void identityPromise.then(
       (resolved) => {
@@ -549,6 +527,41 @@ export class Rc6SessionRepository implements SessionRepository {
         if (this.pendingQueueIdentities.get(promptKey) === identityPromise)
           this.pendingQueueIdentities.delete(promptKey)
       },
+    )
+    let response: RpcResponseLike<unknown>
+    try {
+      response = await this.transport.request<RpcResponseLike<unknown>>(
+        'session.prompt',
+        {
+          sessionId: input.sessionId,
+          mode,
+          content: promptContent(input, limits),
+          ...clientTimeZoneField(),
+        },
+        signal,
+      )
+      const receipt = unwrapRpcResult(response, 'session.prompt')
+      assertAccepted(receipt, 'session prompt')
+    } catch (error) {
+      // Settle the shared promise so concurrent waiters retry on their own
+      // instead of hanging for the whole grace window after a failed attempt.
+      resolveIdentity(undefined)
+      throw error
+    }
+    const queued = findNewQueuedInput(
+      this.queues.get(input.sessionId),
+      beforeIds,
+      input,
+      mode,
+      response.rpcId,
+    )
+    if (queued !== undefined) {
+      resolveIdentity(queued)
+      this.queueOwners.set(queued.id, input.sessionId)
+      return queued
+    }
+    void this.waitForQueuedIdentity(input, mode, beforeIds, response.rpcId, QUEUE_IDENTITY_GRACE_MS).then(
+      (value) => resolveIdentity(value),
     )
     const waited = await this.awaitQueueIdentity(identityPromise, signal, QUEUE_IDENTITY_TIMEOUT_MS)
     if (waited !== undefined) {
