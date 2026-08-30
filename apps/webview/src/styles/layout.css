@@ -251,12 +251,17 @@
   white-space: nowrap;
 }
 
-.dsh-timeline {
+.dsh-timeline,
+.dsh-trajectory {
+  position: relative;
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
+  padding: 0 var(--dsh-space-1) var(--dsh-space-2);
   overflow-x: hidden;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   /* Timeline content is measured incrementally by the virtualizer. Browser
    * scroll anchoring otherwise competes with the explicit bottom-follow rule
    * and nudges a reader back toward an older layout position. */

@@ -1,94 +1,5 @@
 @import './compatibility.css';
 
-:root {
-  color-scheme: light dark;
-  --dsh-space-1: 0.25rem;
-  --dsh-space-2: 0.5rem;
-  --dsh-space-3: 0.75rem;
-  --dsh-space-4: 1rem;
-  --dsh-space-5: 1.5rem;
-  --dsh-radius-sm: 0.375rem;
-  --dsh-radius-md: 0.5rem;
-  --dsh-radius-lg: 0.75rem;
-  --dsh-border-color: var(
-    --vscode-widget-border,
-    var(--vscode-panel-border, color-mix(in srgb, CanvasText 20%, Canvas))
-  );
-  --dsh-border: 1px solid var(--dsh-border-color);
-  --dsh-focus: var(--vscode-focusBorder, Highlight);
-  --dsh-focus-ring: color-mix(in srgb, var(--dsh-focus) 62%, var(--dsh-border-color));
-  --dsh-text: var(--vscode-foreground, CanvasText);
-  --dsh-muted: var(--vscode-descriptionForeground, color-mix(in srgb, CanvasText 70%, Canvas));
-  --dsh-bg: var(--vscode-editor-background, Canvas);
-  --dsh-surface: var(--vscode-sideBar-background, var(--dsh-bg));
-  --dsh-surface-raised: var(--vscode-editorWidget-background, var(--dsh-surface));
-  --dsh-surface-soft: var(--vscode-textBlockQuote-background, var(--dsh-surface-raised));
-  --dsh-surface-hover: var(--vscode-list-hoverBackground, color-mix(in srgb, CanvasText 8%, Canvas));
-  --dsh-input-bg: var(--vscode-input-background, var(--dsh-surface-raised));
-  --dsh-input-text: var(--vscode-input-foreground, var(--dsh-text));
-  --dsh-input-border: var(--vscode-input-border, var(--dsh-border-color));
-  --dsh-widget-bg: var(--vscode-editorWidget-background, var(--dsh-surface-raised));
-  --dsh-code-bg: var(--vscode-textCodeBlock-background, var(--dsh-surface-soft));
-  --dsh-link: var(--vscode-textLink-foreground, LinkText);
-  --dsh-primary: var(--vscode-button-background, Highlight);
-  --dsh-primary-hover: var(--vscode-button-hoverBackground, var(--dsh-primary));
-  --dsh-primary-text: var(--vscode-button-foreground, HighlightText);
-  --dsh-secondary: var(--vscode-button-secondaryBackground, var(--dsh-surface-soft));
-  --dsh-secondary-hover: var(--vscode-button-secondaryHoverBackground, var(--dsh-surface-hover));
-  --dsh-secondary-text: var(--vscode-button-secondaryForeground, var(--dsh-text));
-  --dsh-danger: var(--vscode-errorForeground, Mark);
-  --dsh-danger-bg: var(
-    --vscode-inputValidation-errorBackground,
-    color-mix(in srgb, var(--dsh-danger) 12%, transparent)
-  );
-  --dsh-warning: var(
-    --vscode-warningForeground,
-    var(--vscode-editorWarning-foreground, var(--vscode-charts-yellow, Mark))
-  );
-  --dsh-warning-bg: var(
-    --vscode-inputValidation-warningBackground,
-    color-mix(in srgb, var(--dsh-warning) 12%, transparent)
-  );
-  --dsh-success: var(
-    --vscode-testing-iconPassed,
-    var(--vscode-activityBarBadge-background, var(--vscode-charts-green, LinkText))
-  );
-  --dsh-info: var(--vscode-charts-blue, var(--dsh-link));
-  /* Compatibility aliases for older feature-level selectors. */
-  --dsh-accent: var(--dsh-primary);
-  --dsh-control-background: var(--dsh-input-bg);
-  --dsh-control-border: var(--dsh-input-border);
-  --dsh-control-foreground: var(--dsh-input-text);
-  --dsh-control-hover: var(--dsh-surface-hover);
-  --dsh-widget-foreground: var(--dsh-text);
-  --dsh-question-field-padding: var(--dsh-space-3);
-  /* One quiet elevation token. Surfaces get separation without the bright
-   * halo that previously made every card look like it was glowing. */
-  --dsh-shadow: 0 0.375rem 1rem
-    var(--vscode-widget-shadow, color-mix(in srgb, var(--dsh-bg) 54%, transparent));
-  --dsh-control-height: 2rem;
-  --dsh-panel-gutter: 1rem;
-  --dsh-menu-font-size: 0.875rem;
-  --dsh-menu-line-height: 1.35;
-  --dsh-menu-width: 31rem;
-  --dsh-menu-max-height: 28rem;
-  --dsh-menu-viewport-inset: var(--dsh-space-5);
-  --dsh-menu-item-height: 2.25rem;
-  --dsh-icon-size: 1rem;
-  --dsh-icon-size-sm: 0.875rem;
-  --dsh-session-panel-width: 31rem;
-  --dsh-session-panel-min-width: 18rem;
-  --dsh-session-panel-max-height: 34rem;
-  --dsh-composer-input-min-height: 2.625rem;
-  --dsh-risk-width: 20rem;
-  --dsh-risk-max-height: 16rem;
-  --dsh-trajectory-rail: color-mix(in srgb, var(--dsh-border-color) 82%, transparent);
-  --dsh-trajectory-marker-size: 0.5rem;
-  --dsh-trajectory-index-width: 3rem;
-  --dsh-trajectory-kind-width: 5.5rem;
-  --dsh-trajectory-row-height: 2.25rem;
-}
-
 *,
 *::before,
 *::after {
@@ -197,17 +108,6 @@ dl,
 ol,
 ul {
   min-width: 0;
-}
-
-.dsh-sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
 }
 
 .dsh-icon {
@@ -791,7 +691,6 @@ ul {
   color: var(--dsh-danger);
 }
 
-.dsh-timeline-shell,
 .dsh-trajectory-shell {
   display: flex;
   flex: 1 1 0%;
@@ -836,19 +735,6 @@ ul {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.dsh-timeline,
-.dsh-trajectory {
-  position: relative;
-  flex: 1 1 auto;
-  min-width: 0;
-  min-height: 0;
-  padding: 0 var(--dsh-space-1) var(--dsh-space-2);
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-gutter: stable;
 }
 
 .dsh-trajectory__rows,
@@ -2665,6 +2551,14 @@ summary.dsh-timeline__card-header,
   min-width: 0;
 }
 
+.dsh-settings__provider-credential {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  min-width: 0;
+  gap: var(--dsh-space-2);
+}
+
 .dsh-settings__field,
 .dsh-settings__provider-editor-field,
 .dsh-settings__model-field,
@@ -3706,6 +3600,18 @@ summary.dsh-timeline__card-header,
 .dsh-settings__provider-editor-actions {
   justify-content: flex-end;
   padding-top: var(--dsh-space-1);
+}
+
+.dsh-settings__provider-editor-customized {
+  display: grid;
+  gap: var(--dsh-space-2);
+  padding-top: var(--dsh-space-1);
+}
+
+.dsh-settings__provider-editor-customized > summary {
+  color: var(--dsh-muted);
+  font-size: 0.72rem;
+  cursor: pointer;
 }
 
 .dsh-settings__provider-remove {
