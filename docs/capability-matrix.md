@@ -392,6 +392,24 @@ VS Code 无文件夹 Webview 回放，因此该修复不提升能力矩阵中的
 - 门禁状态：全量 `test` 749 测试中除既知 6 个预存前端失败外全部通过；typecheck 9 包 + tests
   tsconfig 通过；`pnpm build` 通过；触碰文件 prettier 干净。
 
+## 2026-08-30 backend review batch P evidence（stream-controller 生命周期 / view 路由审计）
+
+- 审计记录（本轮扫描覆盖面，不改）：`stream-controller` 剩余路径——subscribe 重入与 stranded
+  subscriber 重启（unsubscribe 触发的 abort 期间新订阅者由 finally 检测重启，自然失败走 backoff，
+  防止 down host 热循环）、`scheduleReconnect` 的 `this.lifetime !== lifetime` 陈旧代次守卫、
+  `runGeneration` 的 `Promise.allSettled(tasks)` 防止慢旧读者与下一代重叠发布陈旧事件、close 与
+  重连计时器互斥、`session.subscribed` 三分支（基线上行恢复/下行跟随/相等幂等）与投影水位截断、
+  `retryAttempt` 在首个帧/订阅/每个有序事件三处重置——均与既有红绿测试对应，无新缺陷。
+  `view/message-router`：请求预算前置检查、双信封 schema 判别、requestId 单飞去重、cancel 的
+  `completed/accepted` 诚实状态、`complete()` 幂等删除与 postMessage 传输失败兜底、`response()`
+  超预算回退为受限 PROTOCOL_ERROR、非 AppError 失败归一为 INTERNAL_ERROR 并旁路脱敏诊断——
+  `!ok` 分支的 `schema.parse(candidate)` 重抛在公开错误消息全部有界的构造下不可达。配套
+  `dsh-webview-view-provider` 的 dispose/重建监听生命周期与 `onMessage` 未处理拒绝吸收正确。
+  `webview-protocol` 的 `protocolValueWithinBudget`（节点数/深度/字符串总量/环引用，WeakSet 去重
+  对 JSON 可达载荷无假阳性）、`temporary-workspace`（受管路径约束、单飞、失败清理、引用失效即清除）、
+  `feature-capabilities` 分级门控、rc.6 `withRetry` 仅对 15 个幂等读重试且 abort 优先——均无新缺陷。
+- 门禁状态：本轮为纯审计（无代码改动），门禁沿用 batch O 提交 `1f0de27` 的全绿结果。
+
 ## rc.8 适配增量与兼容证据
 
 - 版本层：`versions/rc6`、`versions/rc7`、`versions/rc8` 与受控 rc.6 fallback；运行时定位允许任何非空未知版本标签并把警告安全传给 Webview。
