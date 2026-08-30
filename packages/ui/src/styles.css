@@ -1,3 +1,14 @@
+@keyframes dsh-surface-enter {
+  from {
+    opacity: 0;
+    transform: translateY(calc(var(--dsh-space-1) * -1));
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 :root {
   color-scheme: light dark;
   --dsh-space-1: 0.25rem;
@@ -56,8 +67,8 @@
     var(--vscode-widget-shadow, color-mix(in srgb, var(--dsh-bg) 54%, transparent));
   --dsh-control-height: 2rem;
   --dsh-control-height-compact: 1.75rem;
-  --dsh-tool-summary-height: calc(var(--dsh-control-height) + var(--dsh-space-1));
-  --dsh-tool-summary-padding: var(--dsh-space-2) var(--dsh-space-3);
+  --dsh-tool-summary-height: var(--dsh-control-height-compact);
+  --dsh-tool-summary-padding: var(--dsh-space-1) var(--dsh-space-2);
   --dsh-font-size-xs: 0.75rem;
   --dsh-font-size-sm: 0.8125rem;
   --dsh-font-size-md: 0.875rem;
@@ -342,6 +353,7 @@
   min-width: 0;
   padding: var(--dsh-tool-detail-padding);
   border-top: var(--dsh-border);
+  animation: dsh-surface-enter var(--dsh-motion-duration-standard) var(--dsh-motion-ease-standard) both;
 }
 
 .dsh-tool-card__section,

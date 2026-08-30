@@ -1005,7 +1005,7 @@ ul {
 .dsh-timeline__card {
   width: min(100%, 54rem);
   overflow: hidden;
-  padding: var(--dsh-space-3);
+  padding: var(--dsh-space-2) var(--dsh-space-3);
 }
 
 .dsh-timeline__card--assistant {
@@ -1040,7 +1040,7 @@ ul {
 .dsh-timeline__card-header,
 .dsh-timeline__event-group-summary {
   justify-content: space-between;
-  margin: calc(var(--dsh-space-3) * -1) calc(var(--dsh-space-3) * -1) var(--dsh-space-2);
+  margin: calc(var(--dsh-space-2) * -1) calc(var(--dsh-space-3) * -1) var(--dsh-space-2);
   padding: var(--dsh-space-2) var(--dsh-space-3);
   border-bottom: var(--dsh-border);
 }
@@ -1067,7 +1067,6 @@ summary.dsh-timeline__card-header,
 .dsh-timeline__card-meta,
 .dsh-timeline__event-group-meta,
 .dsh-timeline__assistant-duration,
-.dsh-timeline__reasoning-meta,
 .dsh-timeline__produced-label {
   min-width: 0;
   overflow: hidden;
@@ -1254,6 +1253,10 @@ summary.dsh-timeline__card-header,
   transform: rotate(180deg);
 }
 
+.dsh-timeline__reasoning-preview--expanded > .dsh-timeline__reasoning-preview-content {
+  animation: dsh-surface-enter var(--dsh-motion-duration-standard) var(--dsh-motion-ease-standard) both;
+}
+
 .dsh-timeline__reasoning-preview-content {
   display: block;
   max-height: var(--dsh-reasoning-max-height);
@@ -1370,11 +1373,21 @@ summary.dsh-timeline__card-header,
   animation: dsh-surface-enter var(--dsh-motion-duration-standard) var(--dsh-motion-ease-standard) both;
 }
 
-.dsh-timeline__tool-group-summary .dsh-timeline__disclosure {
+.dsh-timeline__tool-group-disclosure {
+  display: inline-grid;
+  place-items: center;
+  width: var(--dsh-icon-size-sm);
+  height: var(--dsh-icon-size-sm);
+  color: var(--dsh-muted);
   transition: transform var(--dsh-motion-duration-fast) var(--dsh-motion-ease-standard);
 }
 
-.dsh-timeline__tool-group[open] .dsh-timeline__disclosure {
+.dsh-timeline__tool-group-disclosure .dsh-icon {
+  width: 100%;
+  height: 100%;
+}
+
+.dsh-timeline__tool-group[open] .dsh-timeline__tool-group-disclosure {
   transform: rotate(180deg);
 }
 
@@ -3081,17 +3094,8 @@ summary.dsh-timeline__card-header,
     align-self: flex-end;
   }
 
-  .dsh-timeline__card {
-    padding: var(--dsh-space-3);
-  }
-
   .dsh-trajectory-inspector__facts {
     grid-template-columns: auto minmax(0, 1fr);
-  }
-
-  .dsh-timeline__card-header {
-    margin: calc(var(--dsh-space-3) * -1) calc(var(--dsh-space-3) * -1) var(--dsh-space-3);
-    padding: var(--dsh-space-2) var(--dsh-space-3);
   }
 
   .dsh-queue__list li {

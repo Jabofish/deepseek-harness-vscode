@@ -5,17 +5,6 @@
  * overlays, configuration cards, and inline references.
  */
 
-@keyframes dsh-surface-enter {
-  from {
-    opacity: 0;
-    transform: translateY(calc(var(--dsh-space-1) * -1));
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
 .dsh-icon {
   display: block;
   width: var(--dsh-icon-size);
@@ -156,6 +145,20 @@
   border-radius: var(--dsh-radius-md);
   background: var(--dsh-widget-bg);
   box-shadow: var(--dsh-shadow);
+}
+
+/* Form-bound selectors may reserve their own space instead of covering the
+ * next action. This keeps stacked onboarding fields usable in short views
+ * while the default menu remains a viewport-bounded overlay. */
+.dsh-select-menu--flow .dsh-select-menu__menu {
+  position: static;
+  inset: auto;
+  z-index: auto;
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+  margin-top: var(--dsh-space-2);
+  animation: dsh-surface-enter var(--dsh-motion-duration-standard) var(--dsh-motion-ease-standard) both;
 }
 
 .dsh-select-menu__trigger {

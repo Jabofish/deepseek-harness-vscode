@@ -3,7 +3,8 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { TimelineNode } from '@dsh-vscode/timeline'
-import { Timeline, TimelineEventToggle } from './Timeline.js'
+import { ConversationEventToggle } from '../shell/ConversationEventToggle.js'
+import { Timeline } from './Timeline.js'
 
 vi.mock('@tanstack/react-virtual', () => ({
   useVirtualizer: ({
@@ -118,7 +119,7 @@ describe('Timeline', () => {
           showDshEvents={false}
           onShowDshEventsChange={onPressedChange}
         />
-        <TimelineEventToggle count={1} pressed={false} onPressedChange={onPressedChange} />
+        <ConversationEventToggle count={1} pressed={false} onPressedChange={onPressedChange} />
       </>,
     )
 
@@ -131,8 +132,8 @@ describe('Timeline', () => {
     expect(onPressedChange).toHaveBeenCalledWith(true)
   })
 
-  it('uses a labeled event action when the control is placed in the tools menu', () => {
-    render(<TimelineEventToggle variant="menu" count={2} pressed={false} onPressedChange={() => undefined} />)
+  it('uses a labeled event action in the conversation tools menu', () => {
+    render(<ConversationEventToggle count={2} pressed={false} onPressedChange={() => undefined} />)
 
     expect(screen.getByText('Show DSH events')).toBeDefined()
     expect(screen.getByText('(2)')).toBeDefined()

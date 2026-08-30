@@ -17,7 +17,7 @@ import { EmptyState } from '@dsh-vscode/ui'
 import { Composer } from './features/composer/Composer.js'
 import { ExportDialog } from './features/export/ExportDialog.js'
 import { AppErrorBoundary } from './features/errors/AppErrorBoundary.js'
-import { Timeline, TimelineEventToggle } from './features/chat/Timeline.js'
+import { Timeline } from './features/chat/Timeline.js'
 import { StatsLine } from './features/chat/StatsLine.js'
 import { ApprovalCard } from './features/interactions/ApprovalCard.js'
 import { UserQuestionCard } from './features/interactions/UserQuestionCard.js'
@@ -38,6 +38,7 @@ import { SettingsDrawer } from './features/settings/SettingsDrawer.js'
 import { TrajectoryView } from './features/trajectory/TrajectoryView.js'
 import { AppHeader } from './features/shell/AppHeader.js'
 import { ConversationActionsMenu } from './features/shell/ConversationActionsMenu.js'
+import { ConversationEventToggle } from './features/shell/ConversationEventToggle.js'
 import {
   createAppStore,
   type AppStore,
@@ -88,6 +89,7 @@ export function App(): ReactElement {
   const attachmentDraftKeysRef = useRef<Map<string, string>>(new Map())
   const attachingOpenFileRef = useRef<string | undefined>(undefined)
   const referenceRequestRef = useRef(0)
+  const openFileRequestRef = useRef(0)
   const attachmentGenerationRef = useRef(0)
   const [busyAction, setBusyAction] = useState<'install' | 'select' | undefined>()
   const [respondingInteractionId, setRespondingInteractionId] = useState<string | undefined>()
@@ -245,6 +247,28 @@ export function App(): ReactElement {
     [state.timeline.nodes],
   )
   useEffect(() => setShowDshEvents(false), [active?.id])
+  useEffect(() => {
+    const request = ++openFileRequestRef.current
+    setOpenFilePickerOpen(false)
+    setOpenFileCandidates([])
+    if (active?.id === undefined) {
+      setOpenFilePickerLoading(false)
+      return
+    }
+
+    setOpenFilePickerLoading(true)
+    void store
+      .listOpenFiles()
+      .then((candidates) => {
+        if (request === openFileRequestRef.current) setOpenFileCandidates(candidates)
+      })
+      .catch(() => {
+        if (request === openFileRequestRef.current) setOpenFileCandidates([])
+      })
+      .finally(() => {
+        if (request === openFileRequestRef.current) setOpenFilePickerLoading(false)
+      })
+  }, [active?.id, store])
   const sessionModels = state.sessionModels.length > 0 ? state.sessionModels : state.models
   const pendingPermissions =
     active === undefined ? [] : state.permissions.filter((request) => request.sessionId === active.id)
@@ -870,8 +894,7 @@ export function App(): ReactElement {
                         }}
                       />
                       {dshEventCount > 0 ? (
-                        <TimelineEventToggle
-                          variant="menu"
+                        <ConversationEventToggle
                           count={dshEventCount}
                           pressed={showDshEvents}
                           onPressedChange={setShowDshEvents}
@@ -1301,6 +1324,7 @@ function EmptySessionPosture(props: {
           icon="folder"
           density="regular"
           displayLabel
+          menuMode="flow"
           label={selected?.name ?? t('app.workspacePicker')}
           ariaLabel={t('app.workspacePicker')}
           title={t('app.workspacePicker')}
@@ -1309,7 +1333,6 @@ function EmptySessionPosture(props: {
             value: workspace.id,
             label: workspace.name,
           }))}
-          placement="below"
           onChange={setSelectedWorkspaceId}
         />
       </div>
@@ -1321,6 +1344,7 @@ function EmptySessionPosture(props: {
             icon="sparkles"
             density="regular"
             displayLabel
+            menuMode="flow"
             label={stagedPreset?.name ?? stagedPreset?.id ?? t('app.presetPicker')}
             ariaLabel={t('app.presetPicker')}
             title={t('app.presetPicker')}
@@ -1329,7 +1353,6 @@ function EmptySessionPosture(props: {
               value: preset.id,
               label: preset.name ?? preset.id,
             }))}
-            placement="below"
             onChange={setSelectedPresetId}
           />
           <span className="dsh-sr-only">{t('app.presetStaged')}</span>

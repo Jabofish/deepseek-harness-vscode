@@ -15,6 +15,8 @@ export interface SelectMenuProps {
   readonly icon: IconName
   readonly density?: 'compact' | 'regular'
   readonly displayLabel?: boolean
+  /** Overlay menus escape nearby layout; flow menus reserve room in forms. */
+  readonly menuMode?: 'overlay' | 'flow'
   readonly label: string
   readonly ariaLabel: string
   readonly title: string
@@ -43,8 +45,9 @@ export function SelectMenu(props: SelectMenuProps): ReactElement {
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([])
   const listboxId = useId()
   const enabledOptions = props.options.filter((option) => option.disabled !== true)
+  const menuMode = props.menuMode ?? 'overlay'
   const menuPosition = useViewportMenuPosition({
-    open,
+    open: open && menuMode === 'overlay',
     anchorRef: triggerRef,
     menuRef,
     placement: props.placement ?? 'above',
@@ -55,6 +58,7 @@ export function SelectMenu(props: SelectMenuProps): ReactElement {
     'dsh-select-menu',
     props.density === 'regular' ? 'dsh-select-menu--regular' : undefined,
     props.displayLabel === true ? 'dsh-select-menu--labelled' : undefined,
+    menuMode === 'flow' ? 'dsh-select-menu--flow' : undefined,
     props.className,
   ]
     .filter(Boolean)
@@ -106,9 +110,7 @@ export function SelectMenu(props: SelectMenuProps): ReactElement {
   function onTriggerKeyDown(event: KeyboardEvent<HTMLButtonElement>): void {
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault()
-      openMenu(
-        indexOfValue(props.options, props.value) + (event.key === 'ArrowDown' ? 1 : -1),
-      )
+      openMenu(indexOfValue(props.options, props.value) + (event.key === 'ArrowDown' ? 1 : -1))
     }
   }
 
@@ -168,7 +170,7 @@ export function SelectMenu(props: SelectMenuProps): ReactElement {
           className="dsh-select-menu__menu"
           role="listbox"
           aria-label={props.ariaLabel}
-          style={menuPosition}
+          style={menuMode === 'overlay' ? menuPosition : undefined}
           onKeyDown={onMenuKeyDown}
         >
           {props.options.map((option, index) => (
@@ -208,11 +210,7 @@ function indexOfValue(options: readonly SelectMenuOption[], value: string): numb
   return index >= 0 ? index : nextEnabledIndex(options, 0, 1)
 }
 
-function clampOptionIndex(
-  options: readonly SelectMenuOption[],
-  index: number,
-  value: string,
-): number {
+function clampOptionIndex(options: readonly SelectMenuOption[], index: number, value: string): number {
   if (index >= 0 && index < options.length && options[index]?.disabled !== true) return index
   return indexOfValue(options, value)
 }

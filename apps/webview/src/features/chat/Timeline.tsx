@@ -7,17 +7,17 @@ import type {
   TokenUsage,
 } from '@dsh-vscode/domain'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { ToolRendererRegistry, toolNameLabel } from '@dsh-vscode/ui'
 import { MarkdownContent } from './MarkdownContent.js'
 import { MessageImages } from './MessageImages.js'
 import { MessageActions } from './MessageActions.js'
+import { ReasoningDisclosure } from './ReasoningDisclosure.js'
+import { ToolCallCollection, type ToolTimelineNode } from './ToolCallCollection.js'
 import { WorkflowRunCard } from '../workflows/WorkflowDrawer.js'
 import { ContentFlow, ScrollToLatestButton } from '../../components/common/index.js'
 import { Icon } from '../../ui/Icon.js'
 import { useI18n, type Translate } from '../../i18n.js'
 
 type DshEventNode = Extract<TimelineNode, { readonly kind: 'event' }>
-type ToolTimelineNode = Extract<TimelineNode, { readonly kind: 'tool' }>
 
 interface DshEventGroupNode {
   readonly kind: 'event-group'
@@ -76,8 +76,6 @@ type DisplayTimelineNode =
   | DshEventGroupNode
   | AssistantTurnNode
 
-const toolRendererRegistry = new ToolRendererRegistry()
-
 export interface TimelineProps {
   readonly sessionId: string
   readonly nodes: readonly TimelineNode[]
@@ -105,40 +103,6 @@ export interface TimelineProps {
   readonly hasMoreHistory?: boolean
   readonly loadingOlderHistory?: boolean
   readonly onLoadOlderHistory?: () => Promise<void> | void
-}
-
-export interface TimelineEventToggleProps {
-  readonly count: number
-  readonly pressed: boolean
-  readonly variant?: 'compact' | 'menu'
-  readonly onPressedChange: (pressed: boolean) => void
-}
-
-/**
- * Conversation-level event filter. It deliberately lives outside the scroll
- * owner so toggling diagnostic events cannot overlay or resize the message
- * stream. The same control is used by App and can be composed elsewhere.
- */
-export function TimelineEventToggle(props: TimelineEventToggleProps): ReactElement {
-  const { t } = useI18n()
-  const variant = props.variant ?? 'compact'
-  const showLabel = variant === 'menu'
-  return (
-    <button
-      className={`dsh-conversation__events-toggle dsh-conversation__events-toggle--${variant}`}
-      type="button"
-      aria-pressed={props.pressed}
-      aria-label={props.pressed ? t('timeline.hideEvents') : t('timeline.showEvents')}
-      title={props.pressed ? t('timeline.hideEvents') : t('timeline.showEventsCount', { count: props.count })}
-      onClick={() => props.onPressedChange(!props.pressed)}
-    >
-      <Icon name="terminal" />
-      {showLabel ? <span>{props.pressed ? t('timeline.hideEvents') : t('timeline.showEvents')}</span> : null}
-      <span className="dsh-conversation__events-toggle-count" aria-hidden="true">
-        {showLabel ? `(${props.count})` : props.count}
-      </span>
-    </button>
-  )
 }
 
 export function Timeline(props: TimelineProps): ReactElement {
@@ -536,7 +500,15 @@ function renderNode(
 ): ReactElement {
   switch (node.kind) {
     case 'tool':
-      return renderToolCard(node, expanded, setExpanded, t, onOpenLink)
+      return (
+        <ToolCallCollection
+          tools={[node]}
+          expanded={expanded}
+          onExpandedChange={setExpanded}
+          translate={t}
+          {...(onOpenLink === undefined ? {} : { onOpenLink })}
+        />
+      )
     case 'assistant-turn':
       return renderAssistantTurn(
         node,
@@ -960,9 +932,16 @@ function renderAssistantMessage(
             </span>
           )}
         </header>
-        {node.reasoning === undefined
-          ? null
-          : renderReasoningBlock(`reasoning:${node.id}`, node.reasoning, expanded, setExpanded, t)}
+        {node.reasoning === undefined ? null : (
+          <ReasoningDisclosure
+            id={`reasoning:${node.id}`}
+            markdown={node.reasoning.markdown}
+            streaming={node.reasoning.streaming}
+            expanded={expanded.has(`reasoning:${node.id}`)}
+            onExpandedChange={(next) => updateExpanded(expanded, setExpanded, `reasoning:${node.id}`, next)}
+            translate={t}
+          />
+        )}
         <MessageImages
           images={node.images ?? []}
           {...(onLoadImage === undefined ? {} : { loadImage: onLoadImage })}
@@ -1009,7 +988,16 @@ function renderAssistantBlocks(
     if (block.kind === 'reasoning') {
       rendered.push(
         <Fragment key={`reasoning:${block.id}:${index}`}>
-          {renderReasoningBlock(`reasoning:${node.id}:${block.id}`, block, expanded, setExpanded, t)}
+          <ReasoningDisclosure
+            id={`reasoning:${node.id}:${block.id}`}
+            markdown={block.markdown}
+            streaming={block.streaming}
+            expanded={expanded.has(`reasoning:${node.id}:${block.id}`)}
+            onExpandedChange={(next) =>
+              updateExpanded(expanded, setExpanded, `reasoning:${node.id}:${block.id}`, next)
+            }
+            translate={t}
+          />
         </Fragment>,
       )
       continue
@@ -1043,7 +1031,13 @@ function renderAssistantBlocks(
     }
     rendered.push(
       <div className="dsh-timeline__assistant-tools" key={`tools:${tools.map((tool) => tool.id).join('|')}`}>
-        {renderToolCollection(tools, expanded, setExpanded, t, onOpenLink)}
+        <ToolCallCollection
+          tools={tools}
+          expanded={expanded}
+          onExpandedChange={setExpanded}
+          translate={t}
+          {...(onOpenLink === undefined ? {} : { onOpenLink })}
+        />
       </div>,
     )
   }
@@ -1233,155 +1227,16 @@ function stableHash(value: string): number {
   return hash
 }
 
-function renderReasoningBlock(
+function updateExpanded(
+  expanded: ReadonlySet<string>,
+  setExpanded: (next: ReadonlySet<string>) => void,
   id: string,
-  reasoning: Pick<ReasoningBlock, 'markdown' | 'streaming'>,
-  expanded: ReadonlySet<string>,
-  setExpanded: (next: ReadonlySet<string>) => void,
-  t: Translate = (key) => key,
-): ReactElement | null {
-  const content = reasoning.markdown.trim()
-  if (content === '') return null
-  const preview = latestReasoningLines(content)
-  const isExpanded = expanded.has(id)
-  const toggle = (): void => {
-    const next = new Set(expanded)
-    if (isExpanded) next.delete(id)
-    else next.add(id)
-    setExpanded(next)
-  }
-
-  return (
-    <section
-      className={`dsh-timeline__reasoning-preview${isExpanded ? ' dsh-timeline__reasoning-preview--expanded' : ''}`}
-      aria-live={reasoning.streaming ? 'polite' : undefined}
-    >
-      <button
-        className="dsh-timeline__reasoning-toggle"
-        type="button"
-        aria-expanded={isExpanded}
-        aria-label={isExpanded ? t('timeline.hideReasoning') : t('timeline.showReasoning')}
-        onClick={toggle}
-      >
-        <span className="dsh-timeline__reasoning-icon" aria-hidden="true">
-          <Icon name="sparkles" />
-        </span>
-        <span className="dsh-timeline__reasoning-heading">
-          <strong>{t('timeline.thinking')}</strong>
-          {!isExpanded && preview !== '' ? (
-            <ContentFlow as="span" variant="truncate" className="dsh-timeline__reasoning-summary">
-              {preview.replace(/\s+/gu, ' ')}
-            </ContentFlow>
-          ) : null}
-        </span>
-        {reasoning.streaming ? <span className="dsh-timeline__streaming" aria-hidden="true" /> : null}
-        <span className="dsh-timeline__disclosure" aria-hidden="true">
-          <Icon name="chevron-down" />
-        </span>
-      </button>
-      {isExpanded ? (
-        <ContentFlow as="div" variant="preserve-breaks" className="dsh-timeline__reasoning-preview-content">
-          {content}
-        </ContentFlow>
-      ) : reasoning.streaming && preview !== '' ? (
-        <ContentFlow as="div" variant="preserve-breaks" className="dsh-timeline__reasoning-preview-content">
-          {preview}
-        </ContentFlow>
-      ) : null}
-    </section>
-  )
-}
-
-function latestReasoningLines(markdown: string): string {
-  const lines = markdown.replace(/\r\n?/gu, '\n').split('\n')
-  while (lines.length > 0 && lines[lines.length - 1]?.trim() === '') lines.pop()
-  const preview = lines.slice(-3).join('\n')
-  return preview.trim() === '' ? '' : preview
-}
-
-function renderToolCard(
-  node: ToolTimelineNode,
-  expanded: ReadonlySet<string>,
-  setExpanded: (next: ReadonlySet<string>) => void,
-  t: Translate = (key) => key,
-  onOpenLink?: (href: string) => void,
-): ReactElement {
-  const onToggle = (): void => {
-    const next = new Set(expanded)
-    if (next.has(node.id)) next.delete(node.id)
-    else next.add(node.id)
-    setExpanded(next)
-  }
-  return toolRendererRegistry.render(node.tool, {
-    expanded: expanded.has(node.id),
-    translate: t,
-    onToggle,
-    ...(onOpenLink === undefined ? {} : { onOpenLink }),
-  })
-}
-
-function renderToolCollection(
-  tools: readonly ToolTimelineNode[],
-  expanded: ReadonlySet<string>,
-  setExpanded: (next: ReadonlySet<string>) => void,
-  t: Translate = (key) => key,
-  onOpenLink?: (href: string) => void,
-): ReactElement {
-  if (tools.length === 1) {
-    const tool = tools[0]
-    if (tool !== undefined)
-      return (
-        <div className="dsh-timeline__tool-collection">
-          {renderToolCard(tool, expanded, setExpanded, t, onOpenLink)}
-        </div>
-      )
-  }
-  const latest = tools[tools.length - 1]!
-  return (
-    <details className="dsh-timeline__reasoning dsh-timeline__tool-group dsh-timeline__tool-collection">
-      <summary
-        className="dsh-timeline__reasoning-summary dsh-timeline__tool-group-summary"
-        aria-label={t('timeline.showToolCalls', { count: tools.length })}
-      >
-        <span className="dsh-timeline__tool-group-icon" aria-hidden="true">
-          <Icon name="tool" />
-        </span>
-        <span className="dsh-timeline__tool-group-count" aria-hidden="true">
-          {tools.length}
-        </span>
-        <ContentFlow
-          as="span"
-          variant="truncate"
-          className="dsh-timeline__tool-group-latest"
-          title={toolSummary(latest.tool, t)}
-        >
-          {toolSummary(latest.tool, t)}
-        </ContentFlow>
-        <span className="dsh-timeline__reasoning-meta">
-          <span className="dsh-timeline__disclosure" aria-hidden="true">
-            <Icon name="chevron-down" />
-          </span>
-        </span>
-      </summary>
-      <div className="dsh-timeline__tool-group-list">
-        {tools.map((toolNode) => (
-          <div key={toolNode.id}>{renderToolCard(toolNode, expanded, setExpanded, t, onOpenLink)}</div>
-        ))}
-      </div>
-    </details>
-  )
-}
-
-function toolSummary(tool: ToolTimelineNode['tool'], t: Translate = (key) => key): string {
-  const title = tool.title.trim()
-  const name = tool.name.trim()
-  const normalizedTitle = title.toLowerCase()
-  const normalizedName = name.toLowerCase()
-  const label =
-    title !== '' && normalizedTitle !== 'tool' && normalizedTitle !== normalizedName
-      ? title
-      : (toolNameLabel(name, t) ?? (name || title || t('timeline.toolFallback')))
-  return `${label} · ${tool.status}`
+  nextExpanded: boolean,
+): void {
+  const next = new Set(expanded)
+  if (nextExpanded) next.add(id)
+  else next.delete(id)
+  setExpanded(next)
 }
 
 function compactionMeta(

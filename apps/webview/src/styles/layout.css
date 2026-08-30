@@ -108,6 +108,7 @@
 .dsh-conversation__utility {
   display: inline-flex;
   align-items: center;
+  margin-inline-start: auto;
   flex: 0 0 auto;
   min-width: 0;
   gap: 2px;
@@ -1224,17 +1225,8 @@
     gap: var(--dsh-space-1);
   }
 
-  .dsh-conversation__events-toggle--compact {
-    width: var(--dsh-control-height-compact);
-    padding-inline: var(--dsh-space-1);
-  }
-
-  .dsh-conversation__events-toggle--compact .dsh-conversation__events-toggle-count {
-    display: none;
-  }
-
   .dsh-conversation__views .dsh-conversation__view-tab {
-    padding-inline: var(--dsh-space-2);
+    padding-inline: var(--dsh-space-1);
   }
 
   .dsh-runtime-status__label {
