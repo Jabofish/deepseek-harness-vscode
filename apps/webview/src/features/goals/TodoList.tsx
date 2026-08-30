@@ -1,5 +1,6 @@
 import { useState, type ReactElement } from 'react'
 import type { TodoView } from '@dsh-vscode/domain'
+import { ContentFlow } from '../../components/common/ContentFlow.js'
 import { useI18n } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
 
@@ -57,7 +58,9 @@ export function TodoList({ todos }: TodoListProps): ReactElement | null {
             ) : (
               <>
                 <TodoStateIcon status={current.status} />
-                <span className="dsh-todo-list__current">{current.content}</span>
+                <ContentFlow as="span" className="dsh-todo-list__current">
+                  {current.content}
+                </ContentFlow>
                 <span className="dsh-todo-list__status">{t(`todo.status.${current.status}`)}</span>
               </>
             )}
@@ -72,7 +75,9 @@ export function TodoList({ todos }: TodoListProps): ReactElement | null {
           {todos.map((todo) => (
             <li className={`dsh-todo-list__item dsh-todo-list__item--${todo.status}`} key={todo.id}>
               <TodoStateIcon status={todo.status} />
-              <span className="dsh-todo-list__content">{todo.content}</span>
+              <ContentFlow as="span" className="dsh-todo-list__content">
+                {todo.content}
+              </ContentFlow>
               <span className="dsh-todo-list__status">{t(`todo.status.${todo.status}`)}</span>
             </li>
           ))}

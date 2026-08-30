@@ -68,11 +68,21 @@ describe('Composer', () => {
       />,
     )
 
-    expect(screen.getByRole('button', { name: 'Attach file' })).toBeDefined()
-    expect(screen.getByRole('button', { name: 'Choose an open file' })).toBeDefined()
+    fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
+    expect(screen.getByRole('menuitem', { name: 'Attach file' })).toBeDefined()
+    expect(screen.getByRole('menuitem', { name: 'Choose an open file' })).toBeDefined()
     expect(screen.getByRole('button', { name: `Remove ${name}` })).toBeDefined()
     expect(screen.getByText(name).getAttribute('title')).toBe(name)
     expect(screen.getByRole('textbox', { name: 'Prompt' }).className).toContain('dsh-composer__textarea')
+  })
+
+  it('does not render an open-file action when no supported file can be attached', () => {
+    render(<Composer {...baseProps()} openFileCandidates={[]} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
+
+    expect(screen.getByRole('menuitem', { name: 'Attach file' })).toBeDefined()
+    expect(screen.queryByRole('menuitem', { name: 'Choose an open file' })).toBeNull()
   })
 
   it('ingests pasted files instead of pasting their bytes into the draft', () => {

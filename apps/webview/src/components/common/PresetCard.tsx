@@ -1,4 +1,5 @@
 import type { ReactElement, ReactNode } from 'react'
+import { ContentFlow } from './ContentFlow.js'
 
 export interface PresetCardProps {
   readonly title: ReactNode
@@ -23,11 +24,11 @@ export interface PresetCardProps {
 export function PresetCard(props: PresetCardProps): ReactElement {
   return (
     <li
-      className={`dsh-preset-card dsh-presets__card${props.className === undefined ? '' : ` ${props.className}`}`}
+      className={`dsh-preset-card${props.className === undefined ? '' : ` ${props.className}`}`}
       data-component="preset-card"
     >
       <button
-        className="dsh-preset-card__main dsh-presets__card-main"
+        className="dsh-preset-card__main"
         type="button"
         aria-pressed={props.mainPressed}
         disabled={props.mainDisabled}
@@ -35,19 +36,25 @@ export function PresetCard(props: PresetCardProps): ReactElement {
         {...(props.mainTitle === undefined ? {} : { title: props.mainTitle })}
         onClick={props.onMainClick}
       >
-        <span className="dsh-preset-card__head dsh-presets__card-head">
-          <span className="dsh-preset-card__name dsh-presets__card-name">{props.title}</span>
+        <span className="dsh-preset-card__head">
+          <ContentFlow as="span" className="dsh-preset-card__name">
+            {props.title}
+          </ContentFlow>
           {props.tags === undefined ? null : <span className="dsh-preset-card__tags">{props.tags}</span>}
         </span>
-        <span className="dsh-preset-card__description dsh-presets__card-desc">{props.description}</span>
+        <ContentFlow as="span" className="dsh-preset-card__description">
+          {props.description}
+        </ContentFlow>
         {props.reason === undefined ? null : (
-          <span className="dsh-preset-card__reason dsh-presets__card-reason" role="alert">
+          <ContentFlow as="span" className="dsh-preset-card__reason" role="alert">
             {props.reason}
-          </span>
+          </ContentFlow>
         )}
-        <code className="dsh-preset-card__id dsh-presets__card-id">{props.id}</code>
+        <ContentFlow as="code" variant="code" className="dsh-preset-card__id">
+          {props.id}
+        </ContentFlow>
       </button>
-      <div className="dsh-preset-card__footer dsh-presets__card-foot">{props.footer}</div>
+      <div className="dsh-preset-card__footer">{props.footer}</div>
       {props.revealed === undefined ? null : (
         <div className="dsh-preset-card__revealed">{props.revealed}</div>
       )}

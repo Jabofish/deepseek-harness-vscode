@@ -8,6 +8,7 @@ import {
   type PresentationTranslate,
   type ToolDetailBlock,
 } from '../tool-presentation.js'
+import { toolStatusLabel } from '../tool-status.js'
 
 export type ToolRowVariant =
   'search' | 'read' | 'bash' | 'write' | 'edit' | 'code' | 'todo' | 'question' | 'web' | 'skill' | 'other'
@@ -111,7 +112,7 @@ export function ToolRow(props: ToolRowProps): ReactElement {
   const onToggle = props.onToggle ?? (() => setLocalExpanded((current) => !current))
   const model = toolRowModel(props.tool, props.translate)
   const hasDetails = model.sections.length > 0 || props.tool.error !== undefined
-  const status = statusLabel(model.state, props.translate)
+  const status = toolStatusLabel(props.tool.status, props.translate)
   const summary = model.errorSummary ?? model.summary
   const expand = label(props.translate, 'toolrow.expand', 'Expand')
   const collapse = label(props.translate, 'toolrow.collapse', 'Collapse')
@@ -759,19 +760,6 @@ function searchTotal(retained: number, total: number, truncated: boolean, t?: Pr
       total,
     },
   )
-}
-
-function statusLabel(state: ToolRowState, t?: PresentationTranslate): string {
-  switch (state) {
-    case 'running':
-      return label(t, 'toolrow.status.running', 'Running')
-    case 'error':
-      return label(t, 'toolrow.status.error', 'Failed')
-    case 'stopped':
-      return label(t, 'toolrow.status.stopped', 'Stopped')
-    default:
-      return label(t, 'toolrow.status.ok', 'Done')
-  }
 }
 
 function label(

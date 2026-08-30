@@ -38,6 +38,7 @@ import { SettingsDrawer } from './features/settings/SettingsDrawer.js'
 import { TrajectoryView } from './features/trajectory/TrajectoryView.js'
 import { AppHeader } from './features/shell/AppHeader.js'
 import { ConversationActionsMenu } from './features/shell/ConversationActionsMenu.js'
+import { ConversationEventToggle } from './features/shell/ConversationEventToggle.js'
 import {
   createAppStore,
   type AppStore,
@@ -46,8 +47,14 @@ import {
 } from './app/store.js'
 import { useI18n, type Translate } from './i18n.js'
 import { Icon } from './ui/Icon.js'
+import { SelectMenu } from './components/common/SelectMenu.js'
 import { hasVsCodeApi } from './vscode-api.js'
 import { PopupSelectRegistry } from './features/commands/popupSelectRegistry.js'
+import {
+  attachmentDraftKey,
+  browserFileOrigin,
+  type AttachmentDraftOrigin,
+} from './features/composer/attachmentDrafts.js'
 
 const WELCOME_DISMISSED_KEY = 'dsh-welcome-dismissed'
 const RUNTIME_UPDATE_DISMISSED_KEY = 'dsh-runtime-update-dismissed-version'
@@ -79,8 +86,10 @@ export function App(): ReactElement {
   const [referenceQuoted, setReferenceQuoted] = useState(false)
   const [attachingOpenFileId, setAttachingOpenFileId] = useState<string | undefined>()
   const [openFileAttachmentIds, setOpenFileAttachmentIds] = useState<Record<string, string>>({})
+  const attachmentDraftKeysRef = useRef<Map<string, string>>(new Map())
   const attachingOpenFileRef = useRef<string | undefined>(undefined)
   const referenceRequestRef = useRef(0)
+  const openFileRequestRef = useRef(0)
   const attachmentGenerationRef = useRef(0)
   const [busyAction, setBusyAction] = useState<'install' | 'select' | undefined>()
   const [respondingInteractionId, setRespondingInteractionId] = useState<string | undefined>()
@@ -93,6 +102,7 @@ export function App(): ReactElement {
   const [dismissedConnection, setDismissedConnection] = useState<string | undefined>()
   const [modelPickerOpenRequest, setModelPickerOpenRequest] = useState(0)
   const [conversationView, setConversationView] = useState<'chat' | 'trajectory'>('chat')
+  const [showDshEvents, setShowDshEvents] = useState(false)
   const [exportOpen, setExportOpen] = useState(false)
   const [localeOpen, setLocaleOpen] = useState(false)
   const localeControlRef = useRef<HTMLSpanElement>(null)
@@ -208,6 +218,13 @@ export function App(): ReactElement {
       )
       .finally(() => setBusyAction(undefined))
   }
+  const retryConnection = (): void => {
+    void store
+      .reconnect()
+      .catch((reason: unknown) =>
+        setError(reason instanceof Error ? reason.message : t('app.error.reconnect')),
+      )
+  }
   const activeSession = state.sessions.find((session) => session.id === state.activeSessionId)
   let activeSubagentState = state.activeSubagent
   if (activeSubagentState?.entry.id !== state.activeSessionId) activeSubagentState = undefined
@@ -225,6 +242,33 @@ export function App(): ReactElement {
           createdAt: '',
           updatedAt: '',
         })
+  const dshEventCount = useMemo(
+    () => state.timeline.nodes.reduce((count, node) => (node.kind === 'event' ? count + 1 : count), 0),
+    [state.timeline.nodes],
+  )
+  useEffect(() => setShowDshEvents(false), [active?.id])
+  useEffect(() => {
+    const request = ++openFileRequestRef.current
+    setOpenFilePickerOpen(false)
+    setOpenFileCandidates([])
+    if (active?.id === undefined) {
+      setOpenFilePickerLoading(false)
+      return
+    }
+
+    setOpenFilePickerLoading(true)
+    void store
+      .listOpenFiles()
+      .then((candidates) => {
+        if (request === openFileRequestRef.current) setOpenFileCandidates(candidates)
+      })
+      .catch(() => {
+        if (request === openFileRequestRef.current) setOpenFileCandidates([])
+      })
+      .finally(() => {
+        if (request === openFileRequestRef.current) setOpenFilePickerLoading(false)
+      })
+  }, [active?.id, store])
   const sessionModels = state.sessionModels.length > 0 ? state.sessionModels : state.models
   const pendingPermissions =
     active === undefined ? [] : state.permissions.filter((request) => request.sessionId === active.id)
@@ -308,11 +352,25 @@ export function App(): ReactElement {
     attachment: PromptAttachment,
     openFileId?: string,
     generation = attachmentGenerationRef.current,
+    origin?: AttachmentDraftOrigin,
   ): void => {
     if (generation !== attachmentGenerationRef.current) {
       void store.releaseAttachments([attachment.uri]).catch(() => undefined)
       return
     }
+    if (attachmentDraftKeysRef.current.has(attachment.uri)) return
+    const draftKey = attachmentDraftKey(attachment, origin)
+    const existingUri = [...attachmentDraftKeysRef.current.entries()].find(([, key]) => key === draftKey)?.[0]
+    if (existingUri !== undefined) {
+      if (existingUri !== attachment.uri)
+        void store
+          .releaseAttachments([attachment.uri])
+          .catch((reason: unknown) =>
+            setError(reason instanceof Error ? reason.message : t('app.error.releaseAttachment')),
+          )
+      return
+    }
+    attachmentDraftKeysRef.current.set(attachment.uri, draftKey)
     setAttachments((current) =>
       current.some((item) => item.uri === attachment.uri) ? current : [...current, attachment],
     )
@@ -322,6 +380,7 @@ export function App(): ReactElement {
   const removeAttachmentDrafts = (uris: readonly string[], release: boolean): void => {
     if (uris.length === 0) return
     const removed = new Set(uris)
+    for (const uri of removed) attachmentDraftKeysRef.current.delete(uri)
     setAttachments((current) => current.filter((attachment) => !removed.has(attachment.uri)))
     setAttachmentPreviews((current) =>
       Object.fromEntries(Object.entries(current).filter(([uri]) => !removed.has(uri))),
@@ -372,10 +431,11 @@ export function App(): ReactElement {
     }
     const generation = attachmentGenerationRef.current
     for (const file of files) {
+      const origin = browserFileOrigin(file)
       void readFileAsBase64(file, t, imageLimits)
         .then((payload) => store.ingestAttachment(payload))
         .then((attachment) => {
-          if (attachment !== undefined) appendAttachment(attachment, undefined, generation)
+          if (attachment !== undefined) appendAttachment(attachment, undefined, generation, origin)
         })
         .catch((reason: unknown) =>
           setError(reason instanceof Error ? reason.message : t('app.error.attachPasted')),
@@ -433,7 +493,7 @@ export function App(): ReactElement {
           return
         }
         store.rememberOpenFile(candidateId)
-        appendAttachment(attachment, candidateId, generation)
+        appendAttachment(attachment, candidateId, generation, { kind: 'open-file', id: candidateId })
         setOpenFilePickerOpen(false)
       })
       .catch((reason: unknown) =>
@@ -574,13 +634,7 @@ export function App(): ReactElement {
               searchedLocations={backend.searchedLocations}
               busyAction={busyAction}
               onAction={runRuntimeAction}
-              onRetry={() => {
-                void store
-                  .reconnect()
-                  .catch((reason: unknown) =>
-                    setError(reason instanceof Error ? reason.message : t('app.error.reconnect')),
-                  )
-              }}
+              onRetry={retryConnection}
               onOpenSettings={() => store.setDrawer('settings')}
             />
           ) : (
@@ -659,6 +713,8 @@ export function App(): ReactElement {
                     </div>
                     <AppHeader
                       runtime={backend}
+                      connectedDshVersion={state.connectedDshVersion}
+                      compatibilityWarning={compatibilityWarning}
                       sessionControl={
                         <SessionDrawer
                           sessions={state.sessions}
@@ -672,14 +728,18 @@ export function App(): ReactElement {
                             void store
                               .openSession(sessionId)
                               .catch((reason: unknown) =>
-                                setError(reason instanceof Error ? reason.message : t('app.error.openSession')),
+                                setError(
+                                  reason instanceof Error ? reason.message : t('app.error.openSession'),
+                                ),
                               )
                           }}
                           onCreate={(workspaceId) => {
                             void store
                               .createSession(workspaceId)
                               .catch((reason: unknown) =>
-                                setError(reason instanceof Error ? reason.message : t('app.error.createSession')),
+                                setError(
+                                  reason instanceof Error ? reason.message : t('app.error.createSession'),
+                                ),
                               )
                           }}
                           onArchive={(sessionId) =>
@@ -710,6 +770,7 @@ export function App(): ReactElement {
                           )
                       }}
                       onOpenSettings={() => store.setDrawer('settings')}
+                      onRetryConnection={retryConnection}
                     />
                     {activeSubagent !== undefined || active.parentSessionId !== undefined ? (
                       <SessionLineage
@@ -832,6 +893,13 @@ export function App(): ReactElement {
                             )
                         }}
                       />
+                      {dshEventCount > 0 ? (
+                        <ConversationEventToggle
+                          count={dshEventCount}
+                          pressed={showDshEvents}
+                          onPressedChange={setShowDshEvents}
+                        />
+                      ) : null}
                       {activeSubagent === undefined ? (
                         <button
                           type="button"
@@ -911,6 +979,7 @@ export function App(): ReactElement {
                       sessionId={active.id}
                       nodes={state.timeline.nodes}
                       streaming={streaming}
+                      showDshEvents={showDshEvents}
                       running={activeRunning}
                       {...(state.timeline.activeTurn === undefined
                         ? {}
@@ -1247,39 +1316,46 @@ function EmptySessionPosture(props: {
       <span className="dsh-app__eyebrow">{t('app.noActiveSession')}</span>
       <h2>{props.empty ? t('app.createSession') : t('app.chooseSession')}</h2>
       <p>{t('app.workspacePickerHint')}</p>
-      <label className="dsh-empty-session__picker">
+      <div className="dsh-empty-session__picker">
         <span>{t('app.workspacePicker')}</span>
-        <select
+        <SelectMenu
+          className="dsh-empty-session__select"
+          icon="folder"
+          density="regular"
+          displayLabel
+          menuMode="flow"
+          label={selected?.name ?? t('app.workspacePicker')}
+          ariaLabel={t('app.workspacePicker')}
+          title={t('app.workspacePicker')}
           value={selected?.id ?? ''}
-          onChange={(event) => setSelectedWorkspaceId(event.currentTarget.value)}
-          aria-label={t('app.workspacePicker')}
-        >
-          {props.workspaces.map((workspace) => (
-            <option key={workspace.id} value={workspace.id}>
-              {workspace.name}
-            </option>
-          ))}
-        </select>
-      </label>
+          options={props.workspaces.map((workspace) => ({
+            value: workspace.id,
+            label: workspace.name,
+          }))}
+          onChange={setSelectedWorkspaceId}
+        />
+      </div>
       {availablePresets.length === 0 ? null : (
-        <label className="dsh-empty-session__preset">
+        <div className="dsh-empty-session__preset">
           <span>{t('app.presetPicker')}</span>
-          <span className="dsh-empty-session__preset-chip" data-staged-preset={stagedPresetId}>
-            <Icon name="sparkles" />
-            <select
-              value={stagedPresetId}
-              onChange={(event) => setSelectedPresetId(event.currentTarget.value)}
-              aria-label={t('app.presetPicker')}
-            >
-              {availablePresets.map((preset) => (
-                <option key={preset.id} value={preset.id}>
-                  {preset.name ?? preset.id}
-                </option>
-              ))}
-            </select>
-            <span className="dsh-sr-only">{t('app.presetStaged')}</span>
-          </span>
-        </label>
+          <SelectMenu
+            className="dsh-empty-session__select"
+            icon="sparkles"
+            density="regular"
+            displayLabel
+            menuMode="flow"
+            label={stagedPreset?.name ?? stagedPreset?.id ?? t('app.presetPicker')}
+            ariaLabel={t('app.presetPicker')}
+            title={t('app.presetPicker')}
+            value={stagedPresetId}
+            options={availablePresets.map((preset) => ({
+              value: preset.id,
+              label: preset.name ?? preset.id,
+            }))}
+            onChange={setSelectedPresetId}
+          />
+          <span className="dsh-sr-only">{t('app.presetStaged')}</span>
+        </div>
       )}
       <button
         className="dsh-button dsh-button--primary"

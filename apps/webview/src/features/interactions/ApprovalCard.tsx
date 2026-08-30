@@ -2,6 +2,7 @@ import type { ReactElement } from 'react'
 import type { PermissionRequest } from '@dsh-vscode/domain'
 import { Icon } from '../../ui/Icon.js'
 import { useI18n } from '../../i18n.js'
+import { ContentFlow } from '../../components/common/ContentFlow.js'
 
 export interface ApprovalCardProps {
   readonly request: PermissionRequest
@@ -26,7 +27,9 @@ export function ApprovalCard(props: ApprovalCardProps): ReactElement {
           <h2 id={`approval-${props.request.id}`}>{props.request.title}</h2>
         </div>
       </header>
-      <p className="dsh-interaction__description">{props.request.description}</p>
+      <ContentFlow as="p" className="dsh-interaction__description">
+        {props.request.description}
+      </ContentFlow>
       <div className="dsh-approval__takeover" role="status">
         <span>{t('approval.takeover')}</span>
         {props.request.commandLine === undefined ? null : <code>{props.request.commandLine}</code>}

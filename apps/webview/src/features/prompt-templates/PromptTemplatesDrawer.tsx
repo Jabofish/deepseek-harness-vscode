@@ -21,6 +21,7 @@ import {
 import { useI18n } from '../../i18n.js'
 import { MarkdownContent } from '../chat/MarkdownContent.js'
 import { Icon } from '../../ui/Icon.js'
+import { SelectMenu } from '../../components/common/SelectMenu.js'
 
 export interface PromptTemplatesDrawerProps {
   readonly templates: readonly PromptTemplateSummary[]
@@ -469,20 +470,29 @@ export function PromptTemplatesDrawer(props: PromptTemplatesDrawerProps): ReactE
                   }
                 />
               </label>
-              <label>
+              <div className="dsh-prompt-templates-popover__field">
                 <span>{t('promptTemplates.scopeLabel')}</span>
-                <select
+                <SelectMenu
+                  icon="folder"
+                  density="regular"
+                  displayLabel
+                  label={t(`promptTemplates.scope.${form.scope}`)}
+                  ariaLabel={t('promptTemplates.scopeLabel')}
+                  title={t('promptTemplates.scopeLabel')}
                   value={form.scope}
                   disabled={dialog.templateId !== undefined}
-                  onChange={(event) =>
-                    setForm((current) => ({ ...current, scope: event.target.value as PromptTemplateScope }))
-                  }
-                >
-                  <option value="global">{t('promptTemplates.scope.global')}</option>
-                  <option value="workspace">{t('promptTemplates.scope.workspace')}</option>
-                  <option value="session">{t('promptTemplates.scope.session')}</option>
-                </select>
-              </label>
+                  options={[
+                    { value: 'global', label: t('promptTemplates.scope.global') },
+                    { value: 'workspace', label: t('promptTemplates.scope.workspace') },
+                    { value: 'session', label: t('promptTemplates.scope.session') },
+                  ]}
+                  placement="below"
+                  onChange={(scope) => {
+                    if (scope === 'global' || scope === 'workspace' || scope === 'session')
+                      setForm((current) => ({ ...current, scope: scope as PromptTemplateScope }))
+                  }}
+                />
+              </div>
               <fieldset>
                 <legend>{t('promptTemplates.variablesLabel')}</legend>
                 <div className="dsh-prompt-templates-popover__variable-options">

@@ -1,6 +1,7 @@
 import type { ReactElement } from 'react'
 import type { ToolCallView } from '@dsh-vscode/domain'
 import { formatToolText, toolPresentation, type PresentationTranslate } from '../tool-presentation.js'
+import { toolStatusLabel } from '../tool-status.js'
 
 export interface ToolCardProps {
   readonly tool: ToolCallView
@@ -40,7 +41,11 @@ export function ToolCard(props: ToolCardProps): ReactElement {
             <path d="m12.2 6.2 5.6 5.6" />
           </svg>
         </span>
-        <span className="dsh-tool-card__heading">
+        <span
+          className={`dsh-tool-card__heading${
+            presentation.summary === undefined ? '' : ' dsh-tool-card__heading--with-summary'
+          }`}
+        >
           <span className="dsh-tool-card__title" title={presentation.title}>
             {presentation.title}
           </span>
@@ -51,7 +56,7 @@ export function ToolCard(props: ToolCardProps): ReactElement {
           )}
         </span>
         <span className={`dsh-tool-card__status dsh-tool-card__status--${props.tool.status}`}>
-          {statusLabel(props.tool.status, props.translate)}
+          {toolStatusLabel(props.tool.status, props.translate)}
         </span>
         {hasDetails ? (
           <span
@@ -88,22 +93,6 @@ export function ToolCard(props: ToolCardProps): ReactElement {
       ) : null}
     </article>
   )
-}
-
-function statusLabel(status: ToolCallView['status'], t?: PresentationTranslate): string {
-  const localize = (key: string, english: string): string => (t === undefined ? english : t(key))
-  switch (status) {
-    case 'queued':
-      return localize('toolcard.status.queued', 'Queued')
-    case 'running':
-      return localize('toolcard.status.running', 'Running')
-    case 'completed':
-      return localize('toolcard.status.completed', 'Completed')
-    case 'failed':
-      return localize('toolcard.status.failed', 'Failed')
-    case 'cancelled':
-      return localize('toolcard.status.cancelled', 'Cancelled')
-  }
 }
 
 function bounded(value: string | undefined): string | undefined {

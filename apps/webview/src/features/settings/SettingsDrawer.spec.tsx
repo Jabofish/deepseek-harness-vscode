@@ -169,7 +169,7 @@ describe('SettingsDrawer', () => {
     expect(await screen.findByRole('heading', { name: '设置' })).toBeDefined()
     expect(screen.getByRole('tab', { name: '常规' })).toBeDefined()
     expect(screen.getByText('连接模式')).toBeDefined()
-    expect(screen.getByRole('group', { name: '语言' })).toBeDefined()
+    expect(screen.getByRole('group', { name: 'DSH 响应语言' })).toBeDefined()
     expect(screen.getByRole('button', { name: '中文' })).toBeDefined()
 
     fireEvent.click(screen.getByRole('tab', { name: '模型' }))
@@ -232,7 +232,8 @@ describe('SettingsDrawer', () => {
     expect(await screen.findByText('An upstream update is available: 0.1.0-rc.8.')).toBeDefined()
     fireEvent.click(screen.getByRole('button', { name: 'Check now' }))
     await waitFor(() => expect(onCheckDshUpdates).toHaveBeenCalledWith(true))
-    fireEvent.change(screen.getByLabelText('Version to install'), { target: { value: '0.1.0-rc.7' } })
+    fireEvent.click(screen.getByRole('button', { name: /Version to install: 0\.1\.0-rc\.8/u }))
+    fireEvent.click(screen.getByRole('option', { name: '0.1.0-rc.7' }))
     fireEvent.click(screen.getByRole('button', { name: 'Download and install' }))
     await waitFor(() => expect(onInstallDshVersion).toHaveBeenCalledWith('0.1.0-rc.7'))
   })
@@ -339,7 +340,7 @@ describe('SettingsDrawer', () => {
   it('renders the official General rows only for schema-advertised enum fields', async () => {
     renderDrawer()
     await waitFor(() => expect(screen.getByRole('group', { name: 'Permission' })).toBeDefined())
-    expect(screen.getByRole('group', { name: 'Language' })).toBeDefined()
+    expect(screen.getByRole('group', { name: 'DSH response language' })).toBeDefined()
     expect(screen.getByRole('group', { name: 'Appearance' })).toBeDefined()
     expect(screen.getByRole('group', { name: 'Composer Enter' })).toBeDefined()
     // Non-enum and non-General fields never gain a fabricated control.
@@ -631,6 +632,8 @@ describe('SettingsDrawer', () => {
         }),
       ),
     )
+    fireEvent.click(within(card).getByRole('button', { name: 'Close' }))
+    expect(screen.queryByRole('region', { name: 'Add custom provider' })).toBeNull()
   })
 
   it('exposes secret removal only for configured fields', async () => {

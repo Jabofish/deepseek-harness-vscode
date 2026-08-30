@@ -1,4 +1,5 @@
 import type { ReactElement } from 'react'
+import { ContentFlow } from '../../components/common/ContentFlow.js'
 
 export interface DiagnosticsSnapshot {
   readonly extensionVersion: string
@@ -29,10 +30,10 @@ export function DiagnosticsPanel({ snapshot }: { readonly snapshot: DiagnosticsS
         <dt>Ownership</dt>
         <dd>{snapshot.endpointKind ?? 'unknown'}</dd>
       </dl>
-      <details>
+      <ContentFlow as="details">
         <summary>Preview redacted report</summary>
         <pre>{report}</pre>
-      </details>
+      </ContentFlow>
       <button
         type="button"
         onClick={() => {

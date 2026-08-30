@@ -59,7 +59,7 @@
 
 .dsh-app {
   gap: var(--dsh-space-2);
-  padding: var(--dsh-space-3);
+  padding: var(--dsh-frame-inset);
 }
 
 .dsh-app__body {
@@ -108,6 +108,7 @@
 .dsh-conversation__utility {
   display: inline-flex;
   align-items: center;
+  margin-inline-start: auto;
   flex: 0 0 auto;
   min-width: 0;
   gap: 2px;
@@ -155,11 +156,8 @@
 }
 
 .dsh-conversation__utility .dsh-runtime-status {
-  display: inline-flex;
-  width: var(--dsh-control-height);
-  height: var(--dsh-control-height);
-  align-items: center;
-  justify-content: center;
+  width: auto;
+  height: auto;
 }
 
 .dsh-conversation__utility > .dsh-icon-button {
@@ -167,27 +165,9 @@
   min-width: var(--dsh-control-height);
 }
 
-/* The switcher lives inside the compact chrome, but its card must not inherit
- * that small icon button's containing block. A fixed, viewport-bounded card
- * keeps the search/list surface usable on narrow webviews as well as wide
- * editor panels. */
-.dsh-session-switcher__panel.dsh-popover-card {
-  position: fixed;
-  z-index: 60;
-  top: calc(var(--dsh-space-3) + var(--dsh-control-height) + var(--dsh-space-2));
-  right: max(var(--dsh-space-2), env(safe-area-inset-right));
-  left: auto;
-  width: min(31rem, calc(100vw - var(--dsh-space-4)));
-  min-width: min(24rem, calc(100vw - var(--dsh-space-4)));
-  max-height: min(34rem, calc(100vh - var(--dsh-space-5)));
-}
-
 /* The primary picker is anchored in the bottom composer. Its menu opens
  * upward so the last row of the webview never becomes an unreachable popup. */
-.dsh-unified-composer
-  > .dsh-composer__toolbar
-  > .dsh-composer__toolbar-controls
-  .dsh-compact-picker__menu {
+.dsh-unified-composer > .dsh-composer__toolbar > .dsh-composer__toolbar-controls .dsh-select-menu__menu {
   top: auto;
   right: 0;
   bottom: calc(100% + var(--dsh-space-2));
@@ -251,15 +231,20 @@
   white-space: nowrap;
 }
 
-.dsh-timeline {
+.dsh-timeline,
+.dsh-trajectory {
+  position: relative;
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
+  padding: 0 var(--dsh-space-1) var(--dsh-space-2);
   overflow-x: hidden;
   overflow-y: auto;
-  /* Timeline content is measured incrementally by the virtualizer. Browser
-   * scroll anchoring otherwise competes with the explicit bottom-follow rule
-   * and nudges a reader back toward an older layout position. */
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  /* The document flow is stable and useScrollFollow is the only owner of
+   * append-to-tail behavior. Native anchoring would move the reader when an
+   * older Markdown block or image changes height above the viewport. */
   overflow-anchor: none;
 }
 
@@ -287,6 +272,16 @@
 .dsh-timeline__canvas,
 .dsh-timeline__row {
   min-width: 0;
+}
+
+.dsh-timeline__canvas--virtualized {
+  position: relative;
+}
+
+.dsh-timeline__canvas--virtualized > .dsh-timeline__row {
+  position: absolute;
+  inset-inline: 0;
+  top: 0;
 }
 
 .dsh-timeline__empty {
@@ -364,7 +359,7 @@
 
 /* One quiet focus treatment for every control in the app. Feature styles may
  * change the border colour for meaning, but never add a second halo. */
-.dsh-app :where(button, input, textarea, select, summary):focus-visible {
+.dsh-app :where(button, input, textarea, summary):focus-visible {
   outline: 1px solid var(--dsh-focus-ring);
   outline-offset: 1px;
   box-shadow: none;
@@ -497,10 +492,7 @@
   max-width: min(22rem, 100%);
 }
 
-.dsh-unified-composer
-  .dsh-session-controls--primary
-  .dsh-model-picker
-  .dsh-compact-picker__trigger {
+.dsh-unified-composer .dsh-session-controls--primary .dsh-model-picker .dsh-select-menu__trigger {
   width: 100%;
   min-width: 0;
   max-width: 100%;
@@ -515,7 +507,7 @@
 .dsh-unified-composer
   .dsh-session-controls--primary
   .dsh-session-controls__access-picker
-  .dsh-compact-picker__trigger {
+  .dsh-select-menu__trigger {
   width: 100%;
   min-width: 0;
   max-width: 100%;
@@ -921,7 +913,7 @@
 
 .dsh-composer__command-summary > .dsh-icon:last-child {
   margin-inline-start: auto;
-  transition: transform 120ms ease;
+  transition: transform var(--dsh-motion-duration-fast) var(--dsh-motion-ease-standard);
 }
 
 .dsh-composer__command-actions[open] .dsh-composer__command-summary > .dsh-icon:last-child {
@@ -1009,14 +1001,14 @@
   gap: var(--dsh-space-1);
 }
 
-.dsh-session-controls--secondary .dsh-session-controls__selectors > .dsh-compact-picker,
+.dsh-session-controls--secondary .dsh-session-controls__selectors > .dsh-select-menu,
 .dsh-session-controls--secondary .dsh-session-controls__selectors > .dsh-session-controls__plan {
   width: 100%;
   min-width: 0;
   max-width: none;
 }
 
-.dsh-session-controls--secondary .dsh-compact-picker__trigger,
+.dsh-session-controls--secondary .dsh-select-menu__trigger,
 .dsh-session-controls--secondary .dsh-session-controls__plan {
   display: inline-flex;
   align-items: center;
@@ -1034,12 +1026,12 @@
   justify-content: flex-start;
 }
 
-.dsh-session-controls--secondary .dsh-compact-picker--open {
+.dsh-session-controls--secondary .dsh-select-menu--open {
   position: relative;
   z-index: 70;
 }
 
-.dsh-session-controls--secondary .dsh-compact-picker__menu {
+.dsh-session-controls--secondary .dsh-select-menu__menu {
   top: auto;
   right: auto;
   bottom: calc(100% + var(--dsh-space-1));
@@ -1051,7 +1043,7 @@
 
 /* The workflow picker occupies the right grid cell. Mirror its popup to the
  * right edge so its full width remains inside the viewport on narrow panels. */
-.dsh-session-controls--secondary .dsh-session-controls__workflow-mode .dsh-compact-picker__menu {
+.dsh-session-controls--secondary .dsh-session-controls__workflow-mode .dsh-select-menu__menu {
   right: 0;
   left: auto;
 }
@@ -1115,9 +1107,9 @@
     display: none;
   }
 
-  /* The legacy viewport rule changes this toolbar to a wrapping flex column.
-   * The composer owns its responsive geometry, so keep the intrinsic rail in
-   * one row and let only labels collapse at narrow widths. */
+  /* The responsive feature rule previously changed this toolbar to a
+   * wrapping flex column. The composer owns its intrinsic geometry, so keep
+   * the rail in one row and let only labels collapse at narrow widths. */
   .dsh-unified-composer .dsh-composer__toolbar {
     display: grid;
     grid-template-columns: minmax(0, auto) minmax(0, 1fr) auto;
@@ -1154,7 +1146,7 @@
   .dsh-unified-composer
     .dsh-session-controls--primary
     .dsh-session-controls__selectors
-    > .dsh-compact-picker:not(.dsh-model-picker) {
+    > .dsh-select-menu:not(.dsh-model-picker) {
     width: 2rem;
     min-width: 2rem;
     max-width: 2rem;
@@ -1164,8 +1156,8 @@
   .dsh-unified-composer
     .dsh-session-controls--primary
     .dsh-session-controls__selectors
-    > .dsh-compact-picker:not(.dsh-model-picker)
-    .dsh-compact-picker__trigger {
+    > .dsh-select-menu:not(.dsh-model-picker)
+    .dsh-select-menu__trigger {
     width: 2rem;
     min-width: 2rem;
     max-width: 2rem;
@@ -1176,13 +1168,13 @@
   .dsh-unified-composer
     .dsh-session-controls--primary
     .dsh-session-controls__selectors
-    > .dsh-compact-picker:not(.dsh-model-picker)
-    .dsh-compact-picker__trigger-text,
+    > .dsh-select-menu:not(.dsh-model-picker)
+    .dsh-select-menu__trigger-text,
   .dsh-unified-composer
     .dsh-composer__toolbar-controls
     .dsh-session-controls__selectors
-    > .dsh-compact-picker:not(.dsh-model-picker)
-    .dsh-compact-picker__trigger-label {
+    > .dsh-select-menu:not(.dsh-model-picker)
+    .dsh-select-menu__trigger-label {
     display: none;
   }
 
@@ -1194,10 +1186,7 @@
     flex-basis: auto;
   }
 
-  .dsh-unified-composer
-    .dsh-session-controls--primary
-    .dsh-model-picker
-    .dsh-compact-picker__trigger {
+  .dsh-unified-composer .dsh-session-controls--primary .dsh-model-picker .dsh-select-menu__trigger {
     width: 100%;
     min-width: 0;
     max-width: 100%;
@@ -1205,15 +1194,20 @@
     padding-inline: var(--dsh-space-2);
   }
 
-  .dsh-unified-composer
-    .dsh-session-controls--primary
-    .dsh-model-picker
-    .dsh-compact-picker__trigger-label {
+  .dsh-unified-composer .dsh-session-controls--primary .dsh-model-picker .dsh-select-menu__trigger-label {
     display: inline;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .dsh-unified-composer
+    .dsh-session-controls--primary
+    .dsh-session-controls__selectors
+    > .dsh-select-menu:not(.dsh-model-picker)
+    .dsh-select-menu__chevron {
+    display: none;
   }
 
   .dsh-unified-composer .dsh-session-controls--primary .dsh-session-controls__metrics {
@@ -1234,7 +1228,7 @@
 
 @media (max-width: 36rem) {
   .dsh-app {
-    padding: var(--dsh-space-2);
+    padding: var(--dsh-frame-inset);
   }
 
   .dsh-conversation__topbar {
@@ -1242,7 +1236,18 @@
   }
 
   .dsh-conversation__views .dsh-conversation__view-tab {
-    padding-inline: var(--dsh-space-2);
+    padding-inline: var(--dsh-space-1);
+  }
+
+  .dsh-runtime-status__label {
+    display: none;
+  }
+
+  .dsh-runtime-status__trigger {
+    width: var(--dsh-control-height);
+    min-width: var(--dsh-control-height);
+    justify-content: center;
+    padding-inline: var(--dsh-space-1);
   }
 
   .dsh-composer__extras-panel {
@@ -1656,37 +1661,26 @@
   min-width: 0;
 }
 
-.dsh-conversation__actions-grid
-  > .dsh-jobs-popover,
-.dsh-conversation__actions-grid
-  > .dsh-changes-popover,
-.dsh-conversation__actions-grid
-  > .dsh-tasks-popover,
-.dsh-conversation__actions-grid
-  > .dsh-checkpoints-popover,
-.dsh-conversation__actions-grid
-  > .dsh-prompt-templates-popover,
-.dsh-conversation__actions-grid
-  > .dsh-subagent-tree,
+.dsh-conversation__actions-grid > .dsh-jobs-popover,
+.dsh-conversation__actions-grid > .dsh-changes-popover,
+.dsh-conversation__actions-grid > .dsh-tasks-popover,
+.dsh-conversation__actions-grid > .dsh-checkpoints-popover,
+.dsh-conversation__actions-grid > .dsh-prompt-templates-popover,
+.dsh-conversation__actions-grid > .dsh-subagent-tree,
 .dsh-conversation__actions-grid > .dsh-conversation__locale-control {
   display: flex;
   align-items: stretch;
 }
 
-.dsh-conversation__actions-grid
-  .dsh-jobs-popover__trigger,
-.dsh-conversation__actions-grid
-  .dsh-changes-popover__trigger,
-.dsh-conversation__actions-grid
-  .dsh-tasks-popover__trigger,
-.dsh-conversation__actions-grid
-  .dsh-checkpoints-popover__trigger,
-.dsh-conversation__actions-grid
-  .dsh-prompt-templates-popover__trigger,
-.dsh-conversation__actions-grid
-  .dsh-subagent-tree__trigger,
+.dsh-conversation__actions-grid .dsh-jobs-popover__trigger,
+.dsh-conversation__actions-grid .dsh-changes-popover__trigger,
+.dsh-conversation__actions-grid .dsh-tasks-popover__trigger,
+.dsh-conversation__actions-grid .dsh-checkpoints-popover__trigger,
+.dsh-conversation__actions-grid .dsh-prompt-templates-popover__trigger,
+.dsh-conversation__actions-grid .dsh-subagent-tree__trigger,
 .dsh-conversation__actions-grid .dsh-conversation__export-trigger,
-.dsh-conversation__actions-grid .dsh-conversation__locale-switch {
+.dsh-conversation__actions-grid .dsh-conversation__locale-switch,
+.dsh-conversation__actions-grid .dsh-conversation__events-toggle--menu {
   justify-content: flex-start;
   width: 100%;
   min-width: 0;

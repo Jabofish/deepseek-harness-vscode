@@ -16,6 +16,7 @@ import type {
 import type { DshSettingsSnapshot } from '../../app/store.js'
 import { ModalWrapper } from '../../components/common/PopoverCard.js'
 import { SettingCard, SettingRow } from '../../components/common/SettingCard.js'
+import { SelectMenu } from '../../components/common/SelectMenu.js'
 import { Icon } from '../../ui/Icon.js'
 import { PluginInventory } from '../plugins/PluginInventory.js'
 import { PluginConfiguration } from '../plugins/PluginConfiguration.js'
@@ -695,21 +696,24 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                           </p>
                         ) : null}
                         <div className="dsh-settings__runtime-update-controls">
-                          <label htmlFor="dsh-settings-update-version">
-                            {t('settings.dshUpdateVersion')}
-                          </label>
-                          <select
-                            id="dsh-settings-update-version"
+                          <span>{t('settings.dshUpdateVersion')}</span>
+                          <SelectMenu
+                            className="dsh-settings__runtime-update-version"
+                            icon="refresh"
+                            density="regular"
+                            displayLabel
+                            label={effectiveSelectedDshVersion ?? t('settings.dshUpdateUnavailable')}
+                            ariaLabel={t('settings.dshUpdateVersion')}
+                            title={t('settings.dshUpdateVersion')}
                             value={effectiveSelectedDshVersion ?? ''}
-                            disabled={dshUpdateBusy !== undefined || availableDshVersions.length === 0}
-                            onChange={(event) => setSelectedDshVersion(event.target.value)}
-                          >
-                            {availableDshVersions.map((version) => (
-                              <option key={version} value={version}>
-                                {version}
-                              </option>
-                            ))}
-                          </select>
+                            disabled={dshUpdateBusy !== undefined}
+                            options={availableDshVersions.map((version) => ({
+                              value: version,
+                              label: version,
+                            }))}
+                            placement="below"
+                            onChange={setSelectedDshVersion}
+                          />
                           <button
                             className="dsh-button dsh-button--primary dsh-button--compact"
                             type="button"
@@ -740,11 +744,7 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                     )}
                   </section>
                 ) : null}
-                <SettingCard
-                  className="dsh-settings__preferences"
-                  ariaLabel={t('settings.preferences')}
-                  title={t('settings.preferences')}
-                >
+                <SettingCard ariaLabel={t('settings.preferences')} title={t('settings.preferences')}>
                   {dshState.status === 'loading' ? (
                     <p className="dsh-settings__empty" role="status">
                       {t('settings.loadingDsh')}
@@ -1026,22 +1026,6 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                         }}
                       >
                         <Icon name="add" />
-                        {t('settings.addProvider')}
-                      </button>
-                      <button
-                        className="dsh-settings__provider-add"
-                        type="button"
-                        disabled={
-                          busyField !== undefined ||
-                          dshState.status !== 'ready' ||
-                          !dshState.snapshot.schema.writable
-                        }
-                        onClick={() => {
-                          setEditingProviderId(undefined)
-                          setAddingCustomProvider(true)
-                        }}
-                      >
-                        <Icon name="add" />
                         {t('settings.addCustomProvider')}
                       </button>
                     </div>
@@ -1051,6 +1035,7 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                         providers={props.providers}
                         writable={dshState.status === 'ready' && dshState.snapshot.schema.writable}
                         saving={busyField !== undefined}
+                        onClose={() => setAddingCustomProvider(false)}
                         onSave={saveCustomProvider}
                         onDiscover={props.onDiscoverModels}
                       />
@@ -1219,18 +1204,17 @@ function GeneralSettingRow(props: GeneralSettingRowProps): ReactElement | null {
   return (
     <SettingRow
       as="li"
-      className="dsh-settings__row"
       title={props.row.label}
       description={props.row.hint}
       status={
         <>
           {field.restartRequired ? (
-            <span className="dsh-settings__row-note" title={t('settings.restartTitle')}>
+            <span className="dsh-setting-row__status-note" title={t('settings.restartTitle')}>
               {t('settings.restart')}
             </span>
           ) : null}
           {props.saving ? (
-            <span className="dsh-settings__row-saving" role="status">
+            <span className="dsh-setting-row__status-saving" role="status">
               {t('settings.saving')}
             </span>
           ) : null}

@@ -1,5 +1,6 @@
 import type { ReactElement } from 'react'
 import type { SkillDescriptor } from '@dsh-vscode/domain'
+import { ContentFlow } from '../../components/common/ContentFlow.js'
 
 export interface SkillPickerProps {
   readonly skills: readonly SkillDescriptor[]
@@ -22,11 +23,11 @@ export function SkillPicker(props: SkillPickerProps): ReactElement {
         <ul>
           {props.skills.map((skill) => (
             <li key={skill.id}>
-              <strong>{skill.name}</strong>
-              <span>
+              <ContentFlow as="strong">{skill.name}</ContentFlow>
+              <ContentFlow as="span">
                 {skill.source} · {skill.enabled ? 'enabled' : 'disabled'}
-              </span>
-              <p>{skill.description}</p>
+              </ContentFlow>
+              <ContentFlow as="p">{skill.description}</ContentFlow>
               <button type="button" disabled={!skill.enabled} onClick={() => props.onExecute(skill.id)}>
                 Use skill
               </button>

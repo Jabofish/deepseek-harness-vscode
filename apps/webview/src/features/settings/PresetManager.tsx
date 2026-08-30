@@ -326,9 +326,9 @@ export function PresetManager(props: PresetManagerProps): ReactElement | null {
                   key={row.id}
                   className={
                     row.broken !== undefined
-                      ? 'dsh-presets__card--broken'
+                      ? 'dsh-preset-card--broken'
                       : row.isDefault
-                        ? 'dsh-presets__card--active'
+                        ? 'dsh-preset-card--active'
                         : undefined
                   }
                   title={row.name ?? row.id}

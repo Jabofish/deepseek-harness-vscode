@@ -1,5 +1,6 @@
 import type { ReactElement } from 'react'
 import type { ModelProvider } from '@dsh-vscode/domain'
+import { ContentFlow } from '../../components/common/ContentFlow.js'
 
 export interface ProviderSettingsProps {
   readonly providers: readonly ModelProvider[]
@@ -16,8 +17,8 @@ export function ProviderSettings(props: ProviderSettingsProps): ReactElement {
         <ul>
           {props.providers.map((provider) => (
             <li key={provider.id}>
-              <strong>{provider.name}</strong>
-              <small>{provider.kind}</small>
+              <ContentFlow as="strong">{provider.name}</ContentFlow>
+              <ContentFlow as="small">{provider.kind}</ContentFlow>
               <ul>
                 {provider.fields.map((field) => (
                   <li key={field.key}>

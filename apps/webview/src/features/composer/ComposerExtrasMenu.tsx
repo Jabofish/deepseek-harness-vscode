@@ -28,7 +28,6 @@ export function ComposerExtrasMenu(props: ComposerExtrasMenuProps): ReactElement
     menuRef,
     placement: 'above',
     align: 'start',
-    observeMenuResize: false,
   })
 
   useDismissibleLayer({

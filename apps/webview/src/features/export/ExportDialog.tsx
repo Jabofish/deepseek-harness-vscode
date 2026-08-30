@@ -1,6 +1,7 @@
 import { useState, type ReactElement } from 'react'
 import type { SessionExportOptions } from '@dsh-vscode/domain'
 import { useI18n } from '../../i18n.js'
+import { SelectMenu } from '../../components/common/SelectMenu.js'
 
 export interface ExportDialogProps {
   readonly sessionId: string
@@ -30,17 +31,28 @@ export function ExportDialog(props: ExportDialogProps): ReactElement {
     >
       <h2>{t('export.title')}</h2>
       <p>{t('export.sensitive')}</p>
-      <label>
-        {t('export.format')}{' '}
-        <select
+      <div className="dsh-export__format">
+        <span>{t('export.format')}</span>
+        <SelectMenu
+          icon="file"
+          density="regular"
+          displayLabel
+          label={t(`export.format.${format}`)}
+          ariaLabel={t('export.format')}
+          title={t('export.format')}
           value={format}
-          onChange={(event) => setFormat(event.target.value as SessionExportOptions['format'])}
-        >
-          <option value="markdown">Markdown</option>
-          <option value="json">JSON</option>
-          <option value="zip">ZIP</option>
-        </select>
-      </label>
+          options={[
+            { value: 'markdown', label: t('export.format.markdown') },
+            { value: 'json', label: t('export.format.json') },
+            { value: 'zip', label: t('export.format.zip') },
+          ]}
+          placement="below"
+          onChange={(value) => {
+            if (value === 'markdown' || value === 'json' || value === 'zip')
+              setFormat(value as SessionExportOptions['format'])
+          }}
+        />
+      </div>
       {zipLocked ? <p className="dsh-export__zip-hint">{t('export.zipHint')}</p> : null}
       <label>
         <input

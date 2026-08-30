@@ -58,6 +58,8 @@ export interface TrajectoryProjection {
   readonly recordCount: number
 }
 
+const TRAJECTORY_SUMMARY_MAX_LENGTH = 240
+
 /** DSH reserves source.kind === "user" for a direct user turn. */
 function opensTurn(node: Extract<TimelineNode, { kind: 'user-message' }>): boolean {
   const source = node.source?.trim().toLowerCase()
@@ -65,8 +67,23 @@ function opensTurn(node: Extract<TimelineNode, { kind: 'user-message' }>): boole
 }
 
 function singleLine(value: string): string {
-  const flat = value.replace(/\s+/g, ' ').trim()
-  return flat.length === 0 ? '(empty)' : flat
+  let summary = ''
+  let pendingSpace = false
+  for (const character of value) {
+    if (/\s/u.test(character)) {
+      if (summary !== '') pendingSpace = true
+      continue
+    }
+    if (pendingSpace) {
+      summary += ' '
+      pendingSpace = false
+    }
+    summary += character
+    if (summary.length >= TRAJECTORY_SUMMARY_MAX_LENGTH) {
+      return `${summary.slice(0, TRAJECTORY_SUMMARY_MAX_LENGTH - 1)}…`
+    }
+  }
+  return summary === '' ? '(empty)' : summary
 }
 
 function toEpochMillis(value: string | undefined): number | undefined {

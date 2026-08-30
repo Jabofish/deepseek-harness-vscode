@@ -9,7 +9,7 @@ import {
   isPromptMode,
 } from '@dsh-vscode/domain'
 import { useRef, useState, type ReactElement } from 'react'
-import { CompactPicker, type CompactPickerOption } from './CompactPicker.js'
+import { SelectMenu, type SelectMenuOption } from '../../components/common/SelectMenu.js'
 import { Icon, type IconName } from '../../ui/Icon.js'
 import { ModelPicker } from '../models/ModelPicker.js'
 import { useI18n, type Translate } from '../../i18n.js'
@@ -57,7 +57,7 @@ export function SessionControls(props: SessionControlsProps): ReactElement {
   const riskRef = useRef<HTMLDivElement>(null)
   const availablePresets = props.presets.filter((preset) => preset.broken === undefined)
   const selectedPreset = availablePresets.find((preset) => preset.id === props.configuration.preset)
-  const modeOptions: CompactPickerOption[] = [
+  const modeOptions: SelectMenuOption[] = [
     ...(selectedPreset === undefined
       ? [
           {
@@ -84,7 +84,7 @@ export function SessionControls(props: SessionControlsProps): ReactElement {
   const availablePermissionPresets = permissionOptions(permissionPreset, props.permissionPresets)
   const permissionCommandAvailable = hasCommand(props.commands, 'permission')
   const planCommandAvailable = hasCommand(props.commands, 'plan')
-  const promptModeOptions: CompactPickerOption[] = PROMPT_MODES.map((mode) => ({
+  const promptModeOptions: SelectMenuOption[] = PROMPT_MODES.map((mode) => ({
     value: mode,
     label: t(`controls.workflowMode.${mode}`),
     ...(mode === 'plan' && !planCommandAvailable ? { disabled: true } : {}),
@@ -165,7 +165,7 @@ export function SessionControls(props: SessionControlsProps): ReactElement {
     >
       <div ref={selectorsRef} className="dsh-session-controls__selectors">
         {showSecondary ? (
-          <CompactPicker
+          <SelectMenu
             className="dsh-session-controls__mode"
             icon={modeIcon(props.configuration.preset, modeLabel)}
             displayLabel
@@ -179,7 +179,7 @@ export function SessionControls(props: SessionControlsProps): ReactElement {
           />
         ) : null}
         {showSecondary && props.promptMode !== undefined && props.onPromptModeChange !== undefined ? (
-          <CompactPicker
+          <SelectMenu
             className="dsh-session-controls__workflow-mode"
             icon="sparkles"
             displayLabel
@@ -211,7 +211,7 @@ export function SessionControls(props: SessionControlsProps): ReactElement {
           />
         ) : null}
         {showPrimary ? (
-          <CompactPicker
+          <SelectMenu
             className={`dsh-session-controls__access-picker${
               isFullAccessPreset(permissionPreset) ? ' dsh-session-controls__access-picker--full-access' : ''
             }`}

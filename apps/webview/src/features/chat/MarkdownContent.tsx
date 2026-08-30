@@ -6,10 +6,14 @@ import { createHighlighter, type BundledLanguage } from 'shiki'
 import { useEffect, useMemo, useRef, useState, type MouseEvent, type ReactElement } from 'react'
 import { useI18n } from '../../i18n.js'
 import { CopyButton } from './CopyButton.js'
+import { ContentFlow } from '../../components/common/ContentFlow.js'
 import 'katex/dist/katex.min.css'
 
 const markdownRenderer = new MarkdownIt({
-  breaks: true,
+  // Model output often contains soft-wrapped source lines. Standard Markdown
+  // whitespace keeps those wraps from becoming accidental visual line breaks;
+  // explicit hard breaks and blank lines still retain their meaning.
+  breaks: false,
   html: false,
   linkify: false,
   typographer: false,
@@ -112,7 +116,7 @@ export function MarkdownContent({
 
         const button = document.createElement('button')
         button.type = 'button'
-        button.className = 'dsh-markdown__file-mention'
+        button.className = 'dsh-inline-reference'
         button.title = path
         button.setAttribute('aria-label', t('timeline.openProduced', { name: path }))
         button.textContent = value
@@ -148,7 +152,7 @@ export function MarkdownContent({
   }
 
   return (
-    <div
+    <ContentFlow
       ref={contentRef}
       className={`dsh-markdown${streaming ? ' dsh-markdown--streaming' : ''}`}
       onClick={handleClick}

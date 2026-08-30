@@ -1,28 +1,194 @@
-import type { ReactElement } from 'react'
-import type { BackendState } from '@dsh-vscode/domain'
-import { useI18n } from '../../i18n.js'
-import { Icon } from '../../ui/Icon.js'
+import { useCallback, useRef, useState, type ReactElement } from 'react'
+import { ContentFlow, PopoverCard, useDismissibleLayer, useViewportMenuPosition } from '../../components/common/index.js'
+import type { WebviewBackendState } from '../../app/store.js'
+import { useI18n, type Translate } from '../../i18n.js'
+import { Icon, type IconName } from '../../ui/Icon.js'
 
-export function RuntimeStatus({ state }: { readonly state: BackendState }): ReactElement {
+export interface RuntimeStatusProps {
+  readonly state: WebviewBackendState
+  readonly connectedDshVersion?: string | undefined
+  readonly compatibilityWarning?: string | undefined
+  readonly onOpenSettings?: () => void
+  readonly onRetry?: () => void
+}
+
+interface RuntimeDetail {
+  readonly label: string
+  readonly value: string
+}
+
+export function RuntimeStatus({
+  state,
+  connectedDshVersion,
+  compatibilityWarning,
+  onOpenSettings,
+  onRetry,
+}: RuntimeStatusProps): ReactElement {
   const { t } = useI18n()
-  const label =
-    state.kind === 'connected'
-      ? t('runtime.status.connected')
-      : state.kind === 'runtime-missing'
-        ? t('runtime.status.runtime-missing')
-        : state.kind === 'failed' || state.kind === 'port-conflict'
-          ? t('runtime.status.connection-failed')
-          : t(`runtime.status.${state.kind}`)
+  const [open, setOpen] = useState(false)
+  const rootRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const label = runtimeStatusLabel(state, t)
+  const menuPosition = useViewportMenuPosition({
+    open,
+    anchorRef: triggerRef,
+    menuRef: panelRef,
+    placement: 'below',
+    align: 'end',
+  })
+  const close = useCallback((): void => setOpen(false), [])
+
+  useDismissibleLayer({
+    open,
+    refs: [rootRef, panelRef],
+    onDismiss: close,
+    onEscape: () => {
+      close()
+      triggerRef.current?.focus()
+    },
+  })
+
+  const retryable =
+    onRetry !== undefined &&
+    (state.kind === 'failed' || state.kind === 'port-conflict') &&
+    state.retryable
+  const message = state.kind === 'failed' || state.kind === 'port-conflict' ? state.message : undefined
+  const details = runtimeDetails(state, connectedDshVersion, t)
+
   return (
     <div
+      ref={rootRef}
       className={`dsh-runtime-status dsh-runtime-status--${state.kind}`}
       role="status"
       aria-live="polite"
       aria-label={label}
-      title={state.kind === 'failed' || state.kind === 'port-conflict' ? state.message : label}
     >
-      <Icon name="status" className="dsh-runtime-status__dot" />
-      <span className="dsh-sr-only">{label}</span>
+      <button
+        ref={triggerRef}
+        className="dsh-runtime-status__trigger"
+        type="button"
+        aria-label={label}
+        title={label}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <Icon name={runtimeStatusIcon(state)} className="dsh-runtime-status__icon" />
+        <ContentFlow as="span" variant="truncate" className="dsh-runtime-status__label">
+          {label}
+        </ContentFlow>
+      </button>
+      {open ? (
+        <PopoverCard
+          ref={panelRef}
+          className="dsh-runtime-status__panel"
+          role="dialog"
+          aria-label={t('runtime.connectionDetails')}
+          style={menuPosition}
+        >
+          <header className="dsh-runtime-status__panel-header">
+            <div className="dsh-runtime-status__panel-heading">
+              <strong>{t('runtime.connectionDetails')}</strong>
+              <ContentFlow as="span" variant="truncate" className="dsh-runtime-status__panel-state">
+                {label}
+              </ContentFlow>
+            </div>
+            <button
+              className="dsh-icon-button"
+              type="button"
+              aria-label={t('settings.close')}
+              title={t('settings.close')}
+              onClick={close}
+            >
+              <Icon name="close" />
+            </button>
+          </header>
+          {details.length === 0 && message === undefined ? (
+            <ContentFlow as="p" className="dsh-runtime-status__empty">
+              {t('runtime.noConnectionDetails')}
+            </ContentFlow>
+          ) : null}
+          {details.length === 0 ? null : (
+            <dl className="dsh-runtime-status__details">
+              {details.map((detail) => (
+                <div key={detail.label}>
+                  <dt>{detail.label}</dt>
+                  <ContentFlow as="dd" variant="truncate" title={detail.value}>
+                    {detail.value}
+                  </ContentFlow>
+                </div>
+              ))}
+            </dl>
+          )}
+          {message === undefined ? null : (
+            <ContentFlow as="p" className="dsh-runtime-status__message" role="alert">
+              {message}
+            </ContentFlow>
+          )}
+          {state.kind === 'connected' && compatibilityWarning !== undefined ? (
+            <ContentFlow as="p" className="dsh-runtime-status__warning" role="alert">
+              {compatibilityWarning}
+            </ContentFlow>
+          ) : null}
+          {retryable || onOpenSettings !== undefined ? (
+            <div className="dsh-runtime-status__actions">
+              {retryable ? (
+                <button
+                  className="dsh-button dsh-button--secondary dsh-button--compact"
+                  type="button"
+                  onClick={() => {
+                    close()
+                    onRetry()
+                  }}
+                >
+                  {t('runtime.retry')}
+                </button>
+              ) : null}
+              {onOpenSettings === undefined ? null : (
+                <button
+                  className="dsh-button dsh-button--primary dsh-button--compact"
+                  type="button"
+                  onClick={() => {
+                    close()
+                    onOpenSettings()
+                  }}
+                >
+                  {t('runtime.openConnectionSettings')}
+                </button>
+              )}
+            </div>
+          ) : null}
+        </PopoverCard>
+      ) : null}
     </div>
   )
+}
+
+function runtimeStatusLabel(state: WebviewBackendState, t: Translate): string {
+  if (state.kind === 'connected') return t('runtime.status.connected')
+  if (state.kind === 'runtime-missing') return t('runtime.status.runtime-missing')
+  if (state.kind === 'failed' || state.kind === 'port-conflict')
+    return t('runtime.status.connection-failed')
+  return t(`runtime.status.${state.kind}`)
+}
+
+function runtimeStatusIcon(state: WebviewBackendState): IconName {
+  if (state.kind === 'connected') return 'check'
+  if (state.kind === 'failed' || state.kind === 'port-conflict') return 'alert'
+  return 'status'
+}
+
+function runtimeDetails(
+  state: WebviewBackendState,
+  connectedDshVersion: string | undefined,
+  t: Translate,
+): readonly RuntimeDetail[] {
+  if (state.kind === 'connected' && connectedDshVersion !== undefined) {
+    return [{ label: t('runtime.dshVersion'), value: connectedDshVersion }]
+  }
+  if (state.kind === 'port-conflict') {
+    return [{ label: t('runtime.port'), value: String(state.port) }]
+  }
+  return []
 }

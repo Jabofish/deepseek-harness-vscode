@@ -15,6 +15,7 @@ export interface CustomProviderCardProps {
   readonly providers: readonly ModelProvider[]
   readonly writable: boolean
   readonly saving: boolean
+  readonly onClose: () => void
   readonly onSave: (path: string, value: Readonly<Record<string, unknown>>) => Promise<void>
   readonly onDiscover: (input: Omit<ModelDiscoveryInput, 'apiKey'>) => Promise<readonly DiscoveredModel[]>
 }
@@ -76,7 +77,16 @@ export function CustomProviderCard(props: CustomProviderCardProps): ReactElement
           <strong>{t('settings.customProvider')}</strong>
           <p>{t('settings.customProviderNote')}</p>
         </div>
-        <Icon name="add" />
+        <button
+          className="dsh-icon-button"
+          type="button"
+          aria-label={t('settings.closeEditor')}
+          title={t('settings.closeEditor')}
+          disabled={props.saving}
+          onClick={props.onClose}
+        >
+          <Icon name="close" />
+        </button>
       </div>
       <div className="dsh-settings__custom-provider-grid">
         <label>
