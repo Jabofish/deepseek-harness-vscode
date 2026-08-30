@@ -117,7 +117,6 @@ describe('Timeline', () => {
           nodes={[{ kind: 'event', id: 'event-1', name: 'connection.snapshot', payload: { ok: true } }]}
           streaming={false}
           showDshEvents={false}
-          onShowDshEventsChange={onPressedChange}
         />
         <ConversationEventToggle count={1} pressed={false} onPressedChange={onPressedChange} />
       </>,
@@ -443,6 +442,55 @@ describe('Timeline', () => {
     expect(reasoning.compareDocumentPosition(before)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
     expect(before.compareDocumentPosition(tools!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
     expect(tools!.compareDocumentPosition(after)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+  })
+
+  it('does not merge a later turn into the completed answer before it', () => {
+    const { container } = render(
+      <Timeline
+        sessionId="session-1"
+        nodes={[
+          {
+            kind: 'assistant-message',
+            id: 'assistant-turn-1',
+            markdown: 'First answer',
+            streaming: false,
+            turn: 1,
+            step: 0,
+            turnCompleted: true,
+          },
+          {
+            kind: 'tool',
+            id: 'tool:turn-2',
+            tool: {
+              id: 'call-turn-2',
+              turn: 2,
+              step: 0,
+              name: 'read',
+              category: 'filesystem',
+              title: 'Read',
+              status: 'completed',
+              inputSummary: 'next.json',
+              metadata: {},
+            },
+          },
+          {
+            kind: 'assistant-message',
+            id: 'assistant-turn-2',
+            markdown: 'Second answer',
+            streaming: false,
+            turn: 2,
+            step: 1,
+            turnCompleted: true,
+          },
+        ]}
+        streaming={false}
+      />,
+    )
+
+    expect(container.querySelectorAll('.dsh-timeline__card--assistant')).toHaveLength(2)
+    expect(screen.getByText('First answer')).toBeDefined()
+    expect(screen.getByText('Second answer')).toBeDefined()
+    expect(screen.getByRole('button', { name: 'Expand Read details' })).toBeDefined()
   })
 
   it('sends feedback for the durable message id after collapsing a tool turn', () => {

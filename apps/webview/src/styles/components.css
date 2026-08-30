@@ -334,6 +334,30 @@
   text-align: start;
 }
 
+.dsh-markdown h1 {
+  font-size: var(--dsh-markdown-heading-1);
+}
+
+.dsh-markdown h2 {
+  font-size: var(--dsh-markdown-heading-2);
+}
+
+.dsh-markdown h3 {
+  font-size: var(--dsh-markdown-heading-3);
+}
+
+.dsh-markdown h4 {
+  font-size: var(--dsh-markdown-heading-4);
+}
+
+.dsh-markdown h5 {
+  font-size: var(--dsh-markdown-heading-5);
+}
+
+.dsh-markdown h6 {
+  font-size: var(--dsh-markdown-heading-6);
+}
+
 .dsh-markdown p,
 .dsh-markdown ul,
 .dsh-markdown ol,

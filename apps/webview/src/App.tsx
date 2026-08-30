@@ -980,7 +980,6 @@ export function App(): ReactElement {
                       nodes={state.timeline.nodes}
                       streaming={streaming}
                       showDshEvents={showDshEvents}
-                      onShowDshEventsChange={setShowDshEvents}
                       running={activeRunning}
                       {...(state.timeline.activeTurn === undefined
                         ? {}

@@ -1,6 +1,6 @@
 import type { ReactElement } from 'react'
 import type { TimelineNode } from '@dsh-vscode/timeline'
-import { ToolRendererRegistry, toolNameLabel } from '@dsh-vscode/ui'
+import { ToolRendererRegistry, toolNameLabel, toolStatusLabel } from '@dsh-vscode/ui'
 import { ContentFlow } from '../../components/common/index.js'
 import { Icon } from '../../ui/Icon.js'
 import type { Translate } from '../../i18n.js'
@@ -93,5 +93,6 @@ function toolSummary(tool: ToolTimelineNode['tool'], translate: Translate): stri
     title !== '' && normalizedTitle !== 'tool' && normalizedTitle !== normalizedName
       ? title
       : (toolNameLabel(name, translate) ?? (name || title || translate('timeline.toolFallback')))
-  return `${label} · ${tool.status}`
+  const status = toolStatusLabel(tool.status, translate)
+  return label === '' ? status : `${label} · ${status}`
 }

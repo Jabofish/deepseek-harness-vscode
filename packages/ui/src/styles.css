@@ -72,6 +72,12 @@
   --dsh-font-size-xs: 0.75rem;
   --dsh-font-size-sm: 0.8125rem;
   --dsh-font-size-md: 0.875rem;
+  --dsh-markdown-heading-1: 1.35rem;
+  --dsh-markdown-heading-2: 1.15rem;
+  --dsh-markdown-heading-3: 1rem;
+  --dsh-markdown-heading-4: 0.9375rem;
+  --dsh-markdown-heading-5: var(--dsh-font-size-md);
+  --dsh-markdown-heading-6: var(--dsh-font-size-sm);
   --dsh-line-height-tight: 1.25;
   --dsh-line-height-body: 1.45;
   --dsh-line-height-relaxed: 1.55;
@@ -288,9 +294,9 @@
 
 .dsh-tool-card__heading {
   display: flex;
-  flex-direction: column;
+  align-items: baseline;
   min-width: 0;
-  gap: 0.125rem;
+  gap: var(--dsh-space-2);
 }
 
 .dsh-tool-card__title,
@@ -306,6 +312,19 @@
 .dsh-tool-card__title,
 .dsh-tool-row__title {
   font-weight: 600;
+}
+
+.dsh-tool-card__title {
+  flex: 0 1 auto;
+  max-width: 100%;
+}
+
+.dsh-tool-card__subtitle {
+  flex: 1 1 0%;
+}
+
+.dsh-tool-card__heading--with-summary .dsh-tool-card__title {
+  max-width: 52%;
 }
 
 .dsh-tool-card__subtitle,

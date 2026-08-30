@@ -82,7 +82,6 @@ export interface TimelineProps {
   readonly streaming: boolean
   /** Conversation chrome owns this preference when the Timeline is embedded in App. */
   readonly showDshEvents?: boolean
-  readonly onShowDshEventsChange?: (show: boolean) => void
   /** Authoritative session-level running bit from the host status stream. */
   readonly running?: boolean
   readonly assistantLabel?: string
@@ -114,19 +113,7 @@ export function Timeline(props: TimelineProps): ReactElement {
   const olderHistoryRequestRef = useRef(false)
   const [showJumpToLatest, setShowJumpToLatest] = useState(false)
   const [expandedDetails, setExpandedDetails] = useState<ReadonlySet<string>>(new Set())
-  const [localShowDshEvents, setLocalShowDshEvents] = useState(false)
-  const showDshEvents = props.showDshEvents ?? localShowDshEvents
-  const setShowDshEvents = useCallback(
-    (show: boolean): void => {
-      if (props.onShowDshEventsChange !== undefined) props.onShowDshEventsChange(show)
-      else setLocalShowDshEvents(show)
-    },
-    [props.onShowDshEventsChange],
-  )
-  const dshEventCount = useMemo(
-    () => props.nodes.reduce((count, node) => (node.kind === 'event' ? count + 1 : count), 0),
-    [props.nodes],
-  )
+  const showDshEvents = props.showDshEvents ?? false
   // The reducer keeps authoritative assistant step ids so separate visible
   // answers cannot be fused. Thinking-only steps are different: the official
   // conversation surface presents one collapsed thinking block for a
@@ -221,7 +208,6 @@ export function Timeline(props: TimelineProps): ReactElement {
       previousSessionRef.current = props.sessionId
       stickToBottomRef.current = true
       setShowJumpToLatest(false)
-      setShowDshEvents(false)
     }
     if (!stickToBottomRef.current || displayNodes.length === 0) return
 
@@ -323,7 +309,7 @@ export function Timeline(props: TimelineProps): ReactElement {
             </button>
           </div>
         ) : null}
-        {displayNodes.length === 0 && dshEventCount === 0 ? (
+        {displayNodes.length === 0 && !props.nodes.some((node) => node.kind === 'event') ? (
           <div className="dsh-timeline__empty" role="status">
             <span className="dsh-timeline__empty-icon" aria-hidden="true">
               <Icon name="sparkles" />
@@ -1464,13 +1450,14 @@ function collapseAssistantTurns(nodes: readonly DisplayTimelineNode[]): readonly
   }
 
   for (const node of nodes) {
+    if (pending !== undefined && isAssistantWorkNode(node) && !canJoinPending(pending, node)) flush()
     if (node.kind === 'reasoning') {
       if (pending === undefined) {
         const previous = collapsed[collapsed.length - 1]
-        if (previous?.kind === 'assistant-message') {
+        if (previous?.kind === 'assistant-message' && canJoinPrevious(previous, node)) {
           collapsed.pop()
           pending = pendingFromAssistantMessage(previous)
-        } else if (previous?.kind === 'assistant-turn') {
+        } else if (previous?.kind === 'assistant-turn' && canJoinPrevious(previous, node)) {
           collapsed.pop()
           pending = pendingFromAssistantTurn(previous)
         } else {
@@ -1484,10 +1471,10 @@ function collapseAssistantTurns(nodes: readonly DisplayTimelineNode[]): readonly
     if (node.kind === 'tool') {
       if (pending === undefined) {
         const previous = collapsed[collapsed.length - 1]
-        if (previous?.kind === 'assistant-message') {
+        if (previous?.kind === 'assistant-message' && canJoinPrevious(previous, node)) {
           collapsed.pop()
           pending = pendingFromAssistantMessage(previous)
-        } else if (previous?.kind === 'assistant-turn') {
+        } else if (previous?.kind === 'assistant-turn' && canJoinPrevious(previous, node)) {
           collapsed.pop()
           pending = {
             id: previous.id,
@@ -1552,6 +1539,49 @@ function collapseAssistantTurns(nodes: readonly DisplayTimelineNode[]): readonly
   }
   flush()
   return collapsed
+}
+
+function isAssistantWorkNode(node: DisplayTimelineNode): node is AssistantWorkNode {
+  return (
+    node.kind === 'assistant-message' ||
+    node.kind === 'assistant-turn' ||
+    node.kind === 'reasoning' ||
+    node.kind === 'tool'
+  )
+}
+
+type AssistantWorkNode =
+  | Extract<DisplayTimelineNode, { readonly kind: 'assistant-message' }>
+  | Extract<DisplayTimelineNode, { readonly kind: 'assistant-turn' }>
+  | Extract<DisplayTimelineNode, { readonly kind: 'reasoning' }>
+  | ToolTimelineNode
+
+function canJoinPrevious(
+  previous: Extract<DisplayTimelineNode, { readonly kind: 'assistant-message' }> | AssistantTurnNode,
+  next: AssistantWorkNode,
+): boolean {
+  return canJoinPending(
+    previous.kind === 'assistant-message'
+      ? pendingFromAssistantMessage(previous)
+      : pendingFromAssistantTurn(previous),
+    next,
+  )
+}
+
+function canJoinPending(pending: PendingAssistantWork, next: AssistantWorkNode): boolean {
+  const nextTurn = assistantWorkTurn(next)
+  if (pending.turn !== undefined && nextTurn !== undefined) return pending.turn === nextTurn
+  // A durable completed turn is a boundary even when a legacy reasoning node
+  // lacks turn metadata. The following assistant message can still adopt this
+  // pending reasoning block as its own turn because pending has no turn yet.
+  if (pending.turnCompleted === true && nextTurn === undefined) return false
+  return true
+}
+
+function assistantWorkTurn(node: AssistantWorkNode): number | undefined {
+  if (node.kind === 'tool') return node.tool.turn
+  if (node.kind === 'reasoning') return undefined
+  return node.turn
 }
 
 function pendingFromAssistantMessage(
