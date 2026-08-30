@@ -20,6 +20,9 @@ export interface AlphaWebSocketConstructor {
   new (url: string, options?: { readonly headers?: Readonly<Record<string, string>> }): AlphaWebSocket
 }
 
+/** Normalize one upstream alpha Remote code into the local compatibility vocabulary. */
+export type AlphaErrorCodeNormalizer = (code: string, details: Readonly<Record<string, unknown>>) => string
+
 export interface AlphaLoopbackApiClientOptions {
   readonly endpoint: BackendEndpoint
   readonly requestTimeoutMs: number
@@ -28,6 +31,8 @@ export interface AlphaLoopbackApiClientOptions {
   /** The Extension Host owns the browser-auth cookie; the Webview never sees it. */
   readonly authCookie?: (endpoint: BackendEndpoint) => string | undefined
   readonly webSocket?: AlphaWebSocketConstructor
+  /** Optional version-specific Remote error compatibility profile. */
+  readonly normalizeErrorCode?: AlphaErrorCodeNormalizer
 }
 
 type AlphaSuccess = { readonly ok: true; readonly value?: unknown }
@@ -44,7 +49,7 @@ type AlphaResponse = { readonly rpcId: string; readonly result: AlphaResult }
 type LegacyResponse = { readonly rpcId: string; readonly result: AlphaResult }
 
 /**
- * Adapter for the unpublished 0.1.2 alpha Connection/Gateway protocol.
+ * Shared transport for the 0.1.2 alpha Connection/Gateway protocol.
  *
  * The published rc adapters intentionally remain on the generated
  * host-apiproxy client. This class owns the alpha protocol's `/api` path,
@@ -399,7 +404,7 @@ export class AlphaLoopbackApiClient implements DshTransport {
       !validAlphaResult(envelope.result)
     )
       throw malformedResponse(endpoint)
-    const result = envelope.result
+    const result = normalizeAlphaResult(envelope.result, this.options.normalizeErrorCode)
     return { rpcId, result: result.ok && !Object.hasOwn(result, 'value') ? { ok: true, value: {} } : result }
   }
 
@@ -1107,7 +1112,7 @@ class AlphaRemoteMux {
         }
         if (state !== undefined && !state.terminal) {
           state.terminal = true
-          state.queue.fail(alphaStreamError(frame.error))
+          state.queue.fail(alphaStreamError(frame.error, this.options.normalizeErrorCode))
         }
         return
       default:
@@ -1532,6 +1537,7 @@ function validAlphaSessionEvent(value: Record<string, unknown>): boolean {
     typeof value.time === 'number' &&
     Number.isSafeInteger(value.time) &&
     value.time >= 0 &&
+    (value.ignorable === undefined || value.ignorable === true) &&
     isJsonLike(value.data)
   )
 }
@@ -1680,12 +1686,13 @@ function validAlphaStreamError(value: unknown): value is Record<string, unknown>
   )
 }
 
-function alphaStreamError(value: unknown): AppError {
+function alphaStreamError(value: unknown, normalizeErrorCode?: AlphaErrorCodeNormalizer): AppError {
   const error = recordOrUndefined(value) ?? {}
   if (typeof error.code === 'string' && typeof error.message === 'string' && isPlainRecord(error.details)) {
+    const code = normalizeErrorCode?.(error.code, error.details) ?? error.code
     try {
       unwrapRpcResultValue(
-        { ok: false, error: { code: error.code, message: error.message, details: error.details } },
+        { ok: false, error: { code, message: error.message, details: error.details } },
         'alpha stream',
       )
     } catch (cause) {
@@ -1696,8 +1703,28 @@ function alphaStreamError(value: unknown): AppError {
     code: 'BACKEND_UNREACHABLE',
     message: 'The alpha DSH stream failed.',
     retryable: true,
-    context: { rpcCode: typeof error.code === 'string' ? error.code : 'internal' },
+    context: {
+      rpcCode:
+        typeof error.code === 'string'
+          ? (normalizeErrorCode?.(error.code, isPlainRecord(error.details) ? error.details : {}) ??
+            error.code)
+          : 'internal',
+    },
   })
+}
+
+function normalizeAlphaResult(
+  result: AlphaResult,
+  normalizeErrorCode?: AlphaErrorCodeNormalizer,
+): AlphaResult {
+  if (result.ok || normalizeErrorCode === undefined) return result
+  return {
+    ...result,
+    error: {
+      ...result.error,
+      code: normalizeErrorCode(result.error.code, result.error.details),
+    },
+  }
 }
 
 function textOfSocketData(event: unknown): string {

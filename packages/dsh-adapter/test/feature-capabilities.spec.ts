@@ -42,7 +42,7 @@ describe('staged feature capability profile', () => {
     expect(missing.capabilities['RV-01'].state).toBe('unavailable')
   })
 
-  it('keeps every pinned release and the unpublished alpha on the same profile contract', () => {
+  it('keeps every pinned release and alpha adapter on the same profile contract', () => {
     for (const dshVersion of SUPPORTED_DSH_VERSIONS) {
       const profile = deriveFeatureCapabilityProfile({
         ...base,

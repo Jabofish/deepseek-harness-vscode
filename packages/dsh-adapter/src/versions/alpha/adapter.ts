@@ -41,14 +41,14 @@ export type AlphaAdapterOptions = Omit<Rc6AdapterOptions, 'webSocket'> & {
   readonly exportFileSystem?: ExportFileSystem
 }
 
-/** Adapter prepared for the unpublished upstream 0.1.2-alpha.1 protocol. */
+/** Shared adapter assembly for the upstream 0.1.2 alpha Connection/Gateway protocol. */
 export class AlphaVersionAdapter implements DshVersionAdapter {
-  public readonly id = 'dsh-0.1.2-alpha.1'
-  public readonly supportedVersion = '0.1.2-alpha.1'
-  public readonly protocolVersion = 'alpha1'
-  public readonly fallback = false
+  public readonly id: string = 'dsh-0.1.2-alpha.1'
+  public readonly supportedVersion: string = '0.1.2-alpha.1'
+  public readonly protocolVersion: string = 'alpha1'
+  public readonly fallback: boolean = false
 
-  public constructor(private readonly options: AlphaAdapterOptions) {}
+  public constructor(protected readonly options: AlphaAdapterOptions) {}
 
   public async probe(
     candidate: BackendCandidate,
@@ -58,7 +58,7 @@ export class AlphaVersionAdapter implements DshVersionAdapter {
     // Alpha removed the old host descriptor, so an unversioned endpoint has
     // no safe negotiation path. Let the published rc.6 fallback own unknown
     // candidates instead of treating a generic `{ items: [] }` response as
-    // proof of this unpublished wire family.
+    // proof of this distinct wire family.
     if (hintedVersion !== this.supportedVersion) return undefined
     const transport = this.createTransport(candidate.endpoint)
     try {
@@ -97,11 +97,15 @@ export class AlphaVersionAdapter implements DshVersionAdapter {
   }
 
   public createTransport(endpoint: BackendEndpoint): DshTransport {
+    return new AlphaLoopbackApiClient(this.createTransportOptions(endpoint))
+  }
+
+  protected createTransportOptions(endpoint: BackendEndpoint): AlphaLoopbackApiClientOptions {
     const options: AlphaLoopbackApiClientOptions = {
       ...this.options,
       endpoint,
     }
-    return new AlphaLoopbackApiClient(options)
+    return options
   }
 
   public createBackend(backend: ConnectedBackend): Promise<DshBackend> {

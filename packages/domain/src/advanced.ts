@@ -72,8 +72,31 @@ export interface PluginInventoryEntry {
   readonly fiberPhase: PluginFiberPhase
 }
 
+/** Effective enablement of one agent-preset composition row. */
+export type PresetPluginEnablement = boolean | 'conditional'
+
+/** One plugin row named by an agent-preset composition. */
+export interface AgentPresetPluginRow {
+  readonly entryId: string | null
+  readonly moduleName: string
+  readonly enabled: PresetPluginEnablement
+  readonly condition?: string
+  readonly fiberPhase: PluginFiberPhase
+}
+
+/** One agent-preset identity and its flattened plugin composition. */
+export interface AgentPresetPluginGroup {
+  readonly id: string
+  readonly trust: 'system' | 'user'
+  readonly name?: string
+  readonly isDefault: boolean
+  readonly broken?: string
+  readonly rows: readonly AgentPresetPluginRow[]
+}
+
 export interface PluginInventorySnapshot {
   readonly entries: readonly PluginInventoryEntry[]
+  readonly agentPresets?: readonly AgentPresetPluginGroup[]
 }
 
 export interface AgentPresetDescriptor {

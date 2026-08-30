@@ -283,7 +283,7 @@ function cancelled(cause: unknown): AppError {
 
 function toolEnvironment(mode: ToolMode | undefined, runtimeVersion: string): NodeJS.ProcessEnv | undefined {
   if (mode === undefined) return undefined
-  const alpha = runtimeVersion === '0.1.2-alpha.1'
+  const alpha = runtimeVersion === '0.1.2-alpha.1' || runtimeVersion === '0.1.2-alpha.2'
   const wireMode = mode === 'code' || mode === 'ptc' ? (alpha ? 'ptc' : 'code') : mode
   return { ...process.env, DSH_TOOLS_MODE: wireMode }
 }

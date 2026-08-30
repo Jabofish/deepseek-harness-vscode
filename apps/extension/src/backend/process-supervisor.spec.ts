@@ -46,6 +46,7 @@ describe('DshProcessSupervisor', () => {
     '0.1.1-rc.1',
     '0.1.1-rc.2',
     '0.1.2-alpha.1',
+    '0.1.2-alpha.2',
     '0.1.0-rc.99',
   ])('uses only the shared Web Profile flags for %s', async (version) => {
     let args: readonly string[] | undefined
@@ -62,7 +63,7 @@ describe('DshProcessSupervisor', () => {
 
     expect(args).toEqual(managedWebArguments(version, 4317))
     expect(args?.includes('--no-open')).toBe(
-      ['0.1.0-rc.8', '0.1.1-rc.1', '0.1.1-rc.2', '0.1.2-alpha.1'].includes(version),
+      ['0.1.0-rc.8', '0.1.1-rc.1', '0.1.1-rc.2', '0.1.2-alpha.1', '0.1.2-alpha.2'].includes(version),
     )
     await expect(handle.stop()).resolves.toBeUndefined()
     expect(kill).toHaveBeenCalledWith('SIGTERM')
@@ -94,22 +95,25 @@ describe('DshProcessSupervisor', () => {
     await handle.stop()
   })
 
-  it('translates the alpha user-facing ptc mode to DSH_TOOLS_MODE', async () => {
-    let environment: NodeJS.ProcessEnv | undefined
-    const supervisor = new DshProcessSupervisor({
-      managedPort: () => 4317,
-      toolMode: () => 'ptc',
-      spawn: (_executable, _args, _cwd, receivedEnvironment) => {
-        environment = receivedEnvironment
-        return child(vi.fn())
-      },
-    })
+  it.each(['0.1.2-alpha.1', '0.1.2-alpha.2'])(
+    'translates the alpha user-facing ptc mode to DSH_TOOLS_MODE for %s',
+    async (version) => {
+      let environment: NodeJS.ProcessEnv | undefined
+      const supervisor = new DshProcessSupervisor({
+        managedPort: () => 4317,
+        toolMode: () => 'ptc',
+        spawn: (_executable, _args, _cwd, receivedEnvironment) => {
+          environment = receivedEnvironment
+          return child(vi.fn())
+        },
+      })
 
-    const handle = await supervisor.start({ ...runtime(), version: '0.1.2-alpha.1' })
+      const handle = await supervisor.start({ ...runtime(), version })
 
-    expect(environment).toMatchObject({ DSH_TOOLS_MODE: 'ptc' })
-    await handle.stop()
-  })
+      expect(environment).toMatchObject({ DSH_TOOLS_MODE: 'ptc' })
+      await handle.stop()
+    },
+  )
 
   it('keeps the legacy code wire value for published runtimes', async () => {
     let environment: NodeJS.ProcessEnv | undefined

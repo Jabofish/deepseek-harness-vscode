@@ -8,7 +8,13 @@ import { normalizeDshVersion } from './contracts.js'
  * out until their CLI contract is verified, because an optional flag must
  * never be allowed to prevent the managed process from starting.
  */
-const WEB_NO_OPEN_VERSIONS = new Set(['0.1.0-rc.8', '0.1.1-rc.1', '0.1.1-rc.2', '0.1.2-alpha.1'])
+const WEB_NO_OPEN_VERSIONS = new Set([
+  '0.1.0-rc.8',
+  '0.1.1-rc.1',
+  '0.1.1-rc.2',
+  '0.1.2-alpha.1',
+  '0.1.2-alpha.2',
+])
 
 /**
  * Build the managed Web Profile argument vector for one DSH CLI version.

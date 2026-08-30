@@ -124,6 +124,86 @@ describe('Rc6PluginRepository inventory', () => {
     expect(snapshot.entries.map((entry) => entry.entryId)).toEqual(['b', 'b', 'a'])
   })
 
+  it('preserves the optional alpha.2 agent-preset composition inventory', async () => {
+    const repository = new Rc6PluginRepository(
+      transportFor({
+        'pluginInventory/list': {
+          kind: 'value',
+          value: {
+            entries: [],
+            agentPresets: [
+              {
+                id: 'standard',
+                trust: 'system',
+                name: 'Standard',
+                isDefault: true,
+                rows: [
+                  {
+                    entryId: 'bash',
+                    moduleName: '@deepseek-ai/dsh-host-bash',
+                    enabled: true,
+                    fiberPhase: 'active',
+                  },
+                  {
+                    entryId: null,
+                    moduleName: '@deepseek-ai/dsh-host-web',
+                    enabled: 'conditional',
+                    condition: 'settings.web.enabled',
+                    fiberPhase: null,
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      }),
+    )
+
+    await expect(repository.inventory()).resolves.toMatchObject({
+      entries: [],
+      agentPresets: [
+        {
+          id: 'standard',
+          trust: 'system',
+          name: 'Standard',
+          isDefault: true,
+          rows: [
+            { entryId: 'bash', enabled: true, fiberPhase: 'active' },
+            {
+              entryId: null,
+              enabled: 'conditional',
+              condition: 'settings.web.enabled',
+              fiberPhase: null,
+            },
+          ],
+        },
+      ],
+    })
+  })
+
+  it('rejects a malformed optional agent-preset composition inventory', async () => {
+    const repository = new Rc6PluginRepository(
+      transportFor({
+        'pluginInventory/list': {
+          kind: 'value',
+          value: {
+            entries: [],
+            agentPresets: [
+              {
+                id: 'broken',
+                trust: 'system',
+                isDefault: false,
+                rows: [{ entryId: 'x', moduleName: 'm', enabled: 'maybe', fiberPhase: null }],
+              },
+            ],
+          },
+        },
+      }),
+    )
+
+    await expect(repository.inventory()).rejects.toThrow(/malformed plugin inventory/i)
+  })
+
   it('rejects a malformed snapshot instead of guessing entries', async () => {
     const repository = new Rc6PluginRepository(
       transportFor({

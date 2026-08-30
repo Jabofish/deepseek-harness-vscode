@@ -1,7 +1,10 @@
 import {
   AppError,
+  type AgentPresetPluginGroup,
+  type AgentPresetPluginRow,
   type PluginFiberPhase,
   type PluginInventorySnapshot,
+  type PresetPluginEnablement,
   type PluginRepository,
 } from '@dsh-vscode/domain'
 
@@ -25,10 +28,24 @@ export class Rc6PluginRepository implements PluginRepository {
 
   public async inventory(signal?: AbortSignal): Promise<PluginInventorySnapshot> {
     const result = await this.transport.remoteRequest<unknown>('pluginInventory/list', {}, signal)
-    const value = unwrapRpcResultValue<{ entries?: unknown }>(result, 'pluginInventory/list')
+    const value = unwrapRpcResultValue<{ entries?: unknown; agentPresets?: unknown }>(
+      result,
+      'pluginInventory/list',
+    )
     if (typeof value !== 'object' || value === null || !Array.isArray(value.entries))
       throw malformedInventory()
-    return { entries: value.entries.map(toInventoryEntry) }
+    const agentPresets =
+      value.agentPresets === undefined
+        ? undefined
+        : Array.isArray(value.agentPresets)
+          ? value.agentPresets.map(toAgentPresetPluginGroup)
+          : (() => {
+              throw malformedInventory()
+            })()
+    return {
+      entries: value.entries.map(toInventoryEntry),
+      ...(agentPresets === undefined ? {} : { agentPresets }),
+    }
   }
 }
 
@@ -47,6 +64,54 @@ function toInventoryEntry(value: unknown): PluginInventorySnapshot['entries'][nu
     throw malformedInventory()
   // `null` is the contract's "no live root fiber" phase — keep it verbatim.
   return { entryId, moduleName, enabled, fiberPhase }
+}
+
+function toAgentPresetPluginGroup(value: unknown): AgentPresetPluginGroup {
+  if (typeof value !== 'object' || value === null) throw malformedInventory()
+  const record = value as Record<string, unknown>
+  if (
+    typeof record.id !== 'string' ||
+    record.id.length === 0 ||
+    (record.trust !== 'system' && record.trust !== 'user') ||
+    typeof record.isDefault !== 'boolean' ||
+    !Array.isArray(record.rows) ||
+    (record.name !== undefined && typeof record.name !== 'string') ||
+    (record.broken !== undefined && typeof record.broken !== 'string')
+  )
+    throw malformedInventory()
+  return {
+    id: record.id,
+    trust: record.trust,
+    isDefault: record.isDefault,
+    ...(record.name === undefined ? {} : { name: record.name }),
+    ...(record.broken === undefined ? {} : { broken: record.broken }),
+    rows: record.rows.map(toAgentPresetPluginRow),
+  }
+}
+
+function toAgentPresetPluginRow(value: unknown): AgentPresetPluginRow {
+  if (typeof value !== 'object' || value === null) throw malformedInventory()
+  const record = value as Record<string, unknown>
+  if (
+    !(record.entryId === null || (typeof record.entryId === 'string' && record.entryId.length > 0)) ||
+    typeof record.moduleName !== 'string' ||
+    record.moduleName.trim() === '' ||
+    !isPresetPluginEnablement(record.enabled) ||
+    !(record.fiberPhase === null || isFiberPhase(record.fiberPhase)) ||
+    (record.condition !== undefined && typeof record.condition !== 'string')
+  )
+    throw malformedInventory()
+  return {
+    entryId: record.entryId,
+    moduleName: record.moduleName,
+    enabled: record.enabled,
+    ...(record.condition === undefined ? {} : { condition: record.condition }),
+    fiberPhase: record.fiberPhase,
+  }
+}
+
+function isPresetPluginEnablement(value: unknown): value is PresetPluginEnablement {
+  return typeof value === 'boolean' || value === 'conditional'
 }
 
 function malformedInventory(): AppError {

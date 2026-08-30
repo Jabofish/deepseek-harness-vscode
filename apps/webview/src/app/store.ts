@@ -5550,11 +5550,48 @@ function isPluginInventoryEntry(value: unknown): value is PluginInventorySnapsho
   )
 }
 
-/** Parse the `pluginInventory/list` projection; malformed rows are dropped. */
+type AgentPresetPluginGroup = NonNullable<PluginInventorySnapshot['agentPresets']>[number]
+type AgentPresetPluginRow = AgentPresetPluginGroup['rows'][number]
+
+function isAgentPresetPluginGroup(value: unknown): value is AgentPresetPluginGroup {
+  const group = object(value)
+  return (
+    group !== undefined &&
+    typeof group.id === 'string' &&
+    group.id.length > 0 &&
+    (group.trust === 'system' || group.trust === 'user') &&
+    typeof group.isDefault === 'boolean' &&
+    Array.isArray(group.rows) &&
+    (group.name === undefined || typeof group.name === 'string') &&
+    (group.broken === undefined || typeof group.broken === 'string') &&
+    group.rows.every(isAgentPresetPluginRow)
+  )
+}
+
+function isAgentPresetPluginRow(value: unknown): value is AgentPresetPluginRow {
+  const row = object(value)
+  return (
+    row !== undefined &&
+    (row.entryId === null || (typeof row.entryId === 'string' && row.entryId.length > 0)) &&
+    typeof row.moduleName === 'string' &&
+    row.moduleName.trim() !== '' &&
+    (typeof row.enabled === 'boolean' || row.enabled === 'conditional') &&
+    (row.condition === undefined || typeof row.condition === 'string') &&
+    (row.fiberPhase === null || (typeof row.fiberPhase === 'string' && FIBER_PHASES.includes(row.fiberPhase)))
+  )
+}
+
+/** Parse the `pluginInventory/list` projection; malformed rows/groups are dropped. */
 function parsePluginInventory(value: unknown): PluginInventorySnapshot | undefined {
   const snapshot = object(value)
   if (snapshot === undefined || !Array.isArray(snapshot.entries)) return undefined
-  return { entries: snapshot.entries.filter(isPluginInventoryEntry) }
+  const agentPresets = snapshot.agentPresets
+  return {
+    entries: snapshot.entries.filter(isPluginInventoryEntry),
+    ...(agentPresets === undefined || !Array.isArray(agentPresets)
+      ? {}
+      : { agentPresets: agentPresets.filter(isAgentPresetPluginGroup) }),
+  }
 }
 
 function arraysEqual<T>(left: readonly T[], right: readonly T[]): boolean {

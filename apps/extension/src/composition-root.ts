@@ -49,6 +49,7 @@ import {
   type ConnectionRequest,
 } from '@dsh-vscode/application'
 import {
+  Alpha2VersionAdapter,
   AlphaVersionAdapter,
   Rc6VersionAdapter,
   Rc7VersionAdapter,
@@ -334,6 +335,10 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     }
     endpointCookies.set(endpoint.baseUrl, cookie)
   }
+  const alpha2Adapter = new Alpha2VersionAdapter({
+    ...adapterOptions,
+    authCookie: (endpoint) => endpointCookies.get(endpoint.baseUrl),
+  })
   const alphaAdapter = new AlphaVersionAdapter({
     ...adapterOptions,
     authCookie: (endpoint) => endpointCookies.get(endpoint.baseUrl),
@@ -343,7 +348,15 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
   const rc8Adapter = new Rc8VersionAdapter(adapterOptions)
   const rc7Adapter = new Rc7VersionAdapter(adapterOptions)
   const rc6Adapter = new Rc6VersionAdapter(adapterOptions)
-  const adapters = [alphaAdapter, rc12Adapter, rc11Adapter, rc8Adapter, rc7Adapter, rc6Adapter] as const
+  const adapters = [
+    alpha2Adapter,
+    alphaAdapter,
+    rc12Adapter,
+    rc11Adapter,
+    rc8Adapter,
+    rc7Adapter,
+    rc6Adapter,
+  ] as const
   const probe = new VersionedBackendProbe(adapters)
   const factory = new VersionedBackendFactory(adapters)
   const supervisor = new DshProcessSupervisor({
