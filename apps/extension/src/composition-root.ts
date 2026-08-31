@@ -86,7 +86,7 @@ import { MacOsProcessDiscoveryProvider } from './backend/discovery/macos-process
 import { WindowsProcessDiscoveryProvider } from './backend/discovery/windows-process-provider.js'
 import { DshProcessSupervisor, type SpawnedChild } from './backend/process-supervisor.js'
 import { isManagedTemporaryWorkspacePath, isPathWithin } from './backend/path-safety.js'
-import { DshRuntimeLocator } from './backend/runtime-locator.js'
+import { DshRuntimeLocator, type RuntimePathHint } from './backend/runtime-locator.js'
 import { resolveNpmExecutable, runtimePathEntries } from './backend/runtime-paths.js'
 import { TemporaryWorkspaceManager, type StoredTemporaryWorkspace } from './backend/temporary-workspace.js'
 import { resolveWindowsShim } from './backend/windows-shim.js'
@@ -133,6 +133,7 @@ type FeatureContextKind = 'selection' | 'open-document' | 'diagnostic' | 'symbol
 
 const execFileAsync = promisify(execFile)
 const TEMPORARY_WORKSPACE_STATE_KEY = 'dsh.temporaryWorkspace'
+const RUNTIME_PATH_STATE_KEY = 'dsh.runtime.lastKnownPath'
 const TRANSPORT_CONFIGURATION_KEYS = [
   'dsh.connection.mode',
   'dsh.connection.serverUrl',
@@ -235,6 +236,11 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     os: platform(),
     configuredPath: () => configuration.read().runtime.executablePath,
     pathEntries: () => extensionRuntimePathEntries(platform(), process.env),
+    lastKnownRuntimePath: () =>
+      readStoredRuntimePath(context.globalState.get<unknown>(RUNTIME_PATH_STATE_KEY)),
+    rememberRuntimePath: (hint) => {
+      void context.globalState.update(RUNTIME_PATH_STATE_KEY, hint)
+    },
     npmGlobalPrefix: async (signal) => {
       const os = platform()
       const npm = resolveNpmExecutable(os, extensionRuntimePathEntries(os, process.env))
@@ -357,7 +363,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     rc7Adapter,
     rc6Adapter,
   ] as const
-  const probe = new VersionedBackendProbe(adapters)
+  const probe = new VersionedBackendProbe(adapters, { fetch: globalThis.fetch })
   const factory = new VersionedBackendFactory(adapters)
   const supervisor = new DshProcessSupervisor({
     managedPort: () => configuration.read().connection.managedPort,
@@ -1470,13 +1476,23 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     if (request.type === 'view.showInFolder') return openMarkdownLink(request.payload.href, true)
     if (request.type === 'runtime.action') {
       await runtimeUseCases.execute(request.payload.action)
-      if (request.payload.action === 'install' || request.payload.action === 'select') return connect(signal)
+      if (request.payload.action === 'install' || request.payload.action === 'select') {
+        // Install or select may move or replace the executable; the memoized
+        // lookup and its persisted hint must not outlive that change.
+        runtimeLocator.invalidate()
+        return connect(signal)
+      }
       return undefined
     }
     if (request.type === 'runtime.update.check')
       return publicValue(await runtimeUseCases.checkForUpdates(request.payload.force === true, signal))
-    if (request.type === 'runtime.update.install')
-      return publicValue(await runtimeUseCases.installVersion(request.payload.version, signal))
+    if (request.type === 'runtime.update.install') {
+      const snapshot = await runtimeUseCases.installVersion(request.payload.version, signal)
+      // The global install replaced the executable behind the same path; drop
+      // the memoized version so the next connection reports the new one.
+      runtimeLocator.invalidate()
+      return publicValue(snapshot)
+    }
     if (request.type === 'view.moveRightGuide')
       return moveOrExplainSecondarySidebar(vscode.commands, vscode.window)
     if (request.type === 'diagnostics.show') {
@@ -2203,6 +2219,9 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       context.subscriptions.push(...subscriptions)
       context.subscriptions.push(
         configuration.onDidChange((affectsConfiguration) => {
+          // A new executable path only takes effect on the next locate; the
+          // memoized result would otherwise keep the previous one alive.
+          if (affectsConfiguration('dsh.runtime.executablePath')) runtimeLocator.invalidate()
           if (!TRANSPORT_CONFIGURATION_KEYS.some((key) => affectsConfiguration(key))) return
           const stateKind = coordinator.getState().kind
           if (
@@ -2221,10 +2240,20 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
           })
         }),
       )
-      // Check once per Extension Host activation. This is independent of
-      // connection startup and only probes the runtime/npm registry; the
-      // Webview receives the cached, safe version snapshot when it opens.
-      void runtimeUpdater.checkForUpdates(false, runtimeUpdateLifecycle.signal).catch(() => undefined)
+      // Warm the connection while VS Code is still settling after startup:
+      // discovery plus a managed start takes seconds, and the panel's
+      // app.ready then returns through the coordinator's cached-backend fast
+      // path instead of paying that chain while the user waits. The
+      // coordinator only spawns a process after discovery finished empty, and
+      // a concurrent app.ready request shares this same in-flight operation.
+      // A failed warm-up stays silent; the next app.ready retries the full
+      // chain exactly as it does today.
+      const connectionWarmup = connect().catch(() => undefined)
+      // The update check spawns npm subprocesses whose CPU cost stretches the
+      // startup window; chain it after the warm-up instead of racing it.
+      void connectionWarmup
+        .then(() => runtimeUpdater.checkForUpdates(false, runtimeUpdateLifecycle.signal))
+        .catch(() => undefined)
       return Promise.resolve()
     },
     dispose: async () => {
@@ -2317,6 +2346,17 @@ function readStoredTemporaryWorkspace(value: unknown): StoredTemporaryWorkspace 
 
 function isAbsoluteWorkspacePath(value: string): boolean {
   return path.isAbsolute(value) || /^[A-Za-z]:[\\/]/.test(value) || value.startsWith('\\\\')
+}
+
+function readStoredRuntimePath(value: unknown): RuntimePathHint | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+  const record = value as Record<string, unknown>
+  const storedPath = record.path
+  const source = record.source
+  if (typeof storedPath !== 'string' || storedPath.trim() === '' || !isAbsoluteFilePath(storedPath))
+    return undefined
+  if (source !== 'path' && source !== 'npm-global') return undefined
+  return { path: storedPath, source }
 }
 
 function isAbsoluteFilePath(value: string): boolean {

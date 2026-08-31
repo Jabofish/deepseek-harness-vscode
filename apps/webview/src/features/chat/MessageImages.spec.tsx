@@ -2,6 +2,7 @@
 
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { MessageImageReference } from '@dsh-vscode/domain'
 import { I18nProvider } from '../../i18n.js'
 import { MessageImages } from './MessageImages.js'
 
@@ -65,5 +66,37 @@ describe('MessageImages', () => {
     const placeholder = await screen.findByRole('alert')
     expect(placeholder.textContent).toContain('timeline.imageUnavailable')
     expect(placeholder.className).toContain('dsh-message-images__placeholder')
+  })
+
+  it('reuses a loaded image when it leaves and re-enters the rendered window', async () => {
+    const loadImage = vi.fn().mockResolvedValue('data:image/png;base64,cached')
+    const image: MessageImageReference = {
+      attachmentId: 'cached:image',
+      mediaType: 'image/png',
+      bytes: 12,
+      width: 16,
+      height: 16,
+      name: 'cached.png',
+    }
+    const { rerender } = render(
+      <I18nProvider>
+        <MessageImages images={[image]} loadImage={loadImage} translate={(key) => key} />
+      </I18nProvider>,
+    )
+
+    await screen.findByRole('button', { name: 'timeline.openImage' })
+    rerender(
+      <I18nProvider>
+        <MessageImages images={[]} loadImage={loadImage} translate={(key) => key} />
+      </I18nProvider>,
+    )
+    rerender(
+      <I18nProvider>
+        <MessageImages images={[image]} loadImage={loadImage} translate={(key) => key} />
+      </I18nProvider>,
+    )
+
+    await screen.findByRole('button', { name: 'timeline.openImage' })
+    expect(loadImage).toHaveBeenCalledTimes(1)
   })
 })

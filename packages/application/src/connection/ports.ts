@@ -20,6 +20,12 @@ export interface RuntimeLookupResult {
 
 export interface BackendDiscovery {
   discover(signal?: AbortSignal): Promise<readonly BackendCandidate[]>
+  /**
+   * Discover candidates from bounded, non-process sources before the full
+   * discovery pass. Implementations may omit this optimization; callers must
+   * still wait for `discover` before starting a managed DSH process.
+   */
+  discoverFast?(signal?: AbortSignal): Promise<readonly BackendCandidate[]>
 }
 
 export interface BackendProbe {

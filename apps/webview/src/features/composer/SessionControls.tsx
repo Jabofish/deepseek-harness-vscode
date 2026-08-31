@@ -4,11 +4,12 @@ import {
   type ContextBreakdown,
   type DynamicCommand,
   type ModelDescriptor,
+  type ModelSelection,
   PROMPT_MODES,
   type PromptMode,
   isPromptMode,
 } from '@dsh-vscode/domain'
-import { useRef, useState, type ReactElement } from 'react'
+import { memo, useCallback, useMemo, useRef, useState, type ReactElement } from 'react'
 import { SelectMenu, type SelectMenuOption } from '../../components/common/SelectMenu.js'
 import { Icon, type IconName } from '../../ui/Icon.js'
 import { ModelPicker } from '../models/ModelPicker.js'
@@ -39,8 +40,9 @@ export interface SessionControlsProps {
   readonly onPromptModeChange?: (mode: PromptMode) => void
 }
 
-export function SessionControls(props: SessionControlsProps): ReactElement {
+export const SessionControls = memo(function SessionControls(props: SessionControlsProps): ReactElement {
   const { t } = useI18n()
+  const { configuration, onChange, onCommand, onPromptModeChange } = props
   const showPrimary = props.surface !== 'secondary'
   const showSecondary = props.surface !== 'primary'
   const selectorsRef = useRef<HTMLDivElement>(null)
@@ -55,49 +57,110 @@ export function SessionControls(props: SessionControlsProps): ReactElement {
   const riskPending = activeRiskState.pending
   const riskAcknowledged = activeRiskState.acknowledged
   const riskRef = useRef<HTMLDivElement>(null)
-  const availablePresets = props.presets.filter((preset) => preset.broken === undefined)
-  const selectedPreset = availablePresets.find((preset) => preset.id === props.configuration.preset)
-  const modeOptions: SelectMenuOption[] = [
-    ...(selectedPreset === undefined
-      ? [
-          {
-            value: props.configuration.preset,
-            label: formatPresetLabel(props.configuration.preset, undefined, t),
-            disabled: true,
-          },
-        ]
-      : []),
-    ...availablePresets.map((preset) => ({
-      value: preset.id,
-      label: formatPresetLabel(preset.id, preset.name, t),
-    })),
-  ]
-  const modeLabel =
-    selectedPreset === undefined
-      ? formatPresetLabel(props.configuration.preset, undefined, t)
-      : formatPresetLabel(selectedPreset.id, selectedPreset.name, t)
+  const availablePresets = useMemo(
+    () => props.presets.filter((preset) => preset.broken === undefined),
+    [props.presets],
+  )
+  const selectedPreset = useMemo(
+    () => availablePresets.find((preset) => preset.id === props.configuration.preset),
+    [availablePresets, props.configuration.preset],
+  )
+  const modeOptions = useMemo<SelectMenuOption[]>(
+    () => [
+      ...(selectedPreset === undefined
+        ? [
+            {
+              value: props.configuration.preset,
+              label: formatPresetLabel(props.configuration.preset, undefined, t),
+              disabled: true,
+            },
+          ]
+        : []),
+      ...availablePresets.map((preset) => ({
+        value: preset.id,
+        label: formatPresetLabel(preset.id, preset.name, t),
+      })),
+    ],
+    [availablePresets, props.configuration.preset, selectedPreset, t],
+  )
+  const modeLabel = useMemo(
+    () =>
+      selectedPreset === undefined
+        ? formatPresetLabel(props.configuration.preset, undefined, t)
+        : formatPresetLabel(selectedPreset.id, selectedPreset.name, t),
+    [props.configuration.preset, selectedPreset, t],
+  )
   // Permission ids belong to the connected DSH composition. Preserve the
   // exact id returned by the host so the command registry receives the same
   // value that the permission plugin exposes (for example `full-access` or
   // `danger-full-access`).
   const permissionPreset = props.configuration.permissionPreset
-  const availablePermissionPresets = permissionOptions(permissionPreset, props.permissionPresets)
-  const permissionCommandAvailable = hasCommand(props.commands, 'permission')
-  const planCommandAvailable = hasCommand(props.commands, 'plan')
-  const promptModeOptions: SelectMenuOption[] = PROMPT_MODES.map((mode) => ({
-    value: mode,
-    label: t(`controls.workflowMode.${mode}`),
-    ...(mode === 'plan' && !planCommandAvailable ? { disabled: true } : {}),
-  }))
-  const promptModeLabel =
-    props.promptMode === undefined
-      ? t('controls.workflowMode.ask')
-      : t(`controls.workflowMode.${props.promptMode}`)
+  const availablePermissionPresets = useMemo(
+    () => permissionOptions(permissionPreset, props.permissionPresets),
+    [permissionPreset, props.permissionPresets],
+  )
+  const permissionCommandAvailable = useMemo(() => hasCommand(props.commands, 'permission'), [props.commands])
+  const planCommandAvailable = useMemo(() => hasCommand(props.commands, 'plan'), [props.commands])
+  const promptModeOptions = useMemo<SelectMenuOption[]>(
+    () =>
+      PROMPT_MODES.map((mode) => ({
+        value: mode,
+        label: t(`controls.workflowMode.${mode}`),
+        ...(mode === 'plan' && !planCommandAvailable ? { disabled: true } : {}),
+      })),
+    [planCommandAvailable, t],
+  )
+  const promptModeLabel = useMemo(
+    () =>
+      props.promptMode === undefined
+        ? t('controls.workflowMode.ask')
+        : t(`controls.workflowMode.${props.promptMode}`),
+    [props.promptMode, t],
+  )
+  const permissionMenuOptions = useMemo<SelectMenuOption[]>(
+    () =>
+      availablePermissionPresets.map((preset) => ({
+        value: preset,
+        label: formatPermissionLabel(preset, t),
+      })),
+    [availablePermissionPresets, t],
+  )
+  const handlePresetChange = useCallback(
+    (preset: string): void => onChange({ ...configuration, preset }),
+    [configuration, onChange],
+  )
+  const handlePromptModeChange = useCallback(
+    (mode: string): void => {
+      if (isPromptMode(mode)) onPromptModeChange?.(mode)
+    },
+    [onPromptModeChange],
+  )
+  const handleModelChange = useCallback(
+    (model: ModelSelection): void => onChange({ ...configuration, model }),
+    [configuration, onChange],
+  )
+  const handlePermissionChange = useCallback(
+    (preset: string): void => {
+      if (isFullAccessPreset(preset)) {
+        setRiskState({ context: riskContext, pending: preset, acknowledged: false })
+        return
+      }
+      onCommand(`/permission ${preset}`)
+    },
+    [onCommand, riskContext],
+  )
+  const handlePlanToggle = useCallback(
+    (): void => onCommand(configuration.planMode ? '/plan off' : '/plan'),
+    [configuration.planMode, onCommand],
+  )
   const contextWindowTokens = positiveTokenCount(props.contextWindowTokens)
-  const contextLabel =
-    props.estimatedContextTokens === undefined || contextWindowTokens === undefined
-      ? undefined
-      : formatContextLabel(props.estimatedContextTokens, contextWindowTokens)
+  const contextLabel = useMemo(
+    () =>
+      props.estimatedContextTokens === undefined || contextWindowTokens === undefined
+        ? undefined
+        : formatContextLabel(props.estimatedContextTokens, contextWindowTokens),
+    [contextWindowTokens, props.estimatedContextTokens],
+  )
 
   const riskPosition = useViewportMenuPosition({
     open: riskPending !== undefined,
@@ -175,7 +238,7 @@ export function SessionControls(props: SessionControlsProps): ReactElement {
             value={props.configuration.preset}
             options={modeOptions}
             disabled={props.disabled || !props.presetMutable || availablePresets.length < 2}
-            onChange={(preset) => props.onChange({ ...props.configuration, preset })}
+            onChange={handlePresetChange}
           />
         ) : null}
         {showSecondary && props.promptMode !== undefined && props.onPromptModeChange !== undefined ? (
@@ -193,9 +256,7 @@ export function SessionControls(props: SessionControlsProps): ReactElement {
             value={props.promptMode}
             options={promptModeOptions}
             disabled={props.disabled}
-            onChange={(mode) => {
-              if (isPromptMode(mode)) props.onPromptModeChange?.(mode)
-            }}
+            onChange={handlePromptModeChange}
           />
         ) : null}
         {showPrimary ? (
@@ -207,7 +268,7 @@ export function SessionControls(props: SessionControlsProps): ReactElement {
               : { openRequest: props.modelPickerOpenRequest })}
             displayLabel
             disabled={props.disabled}
-            onChange={(model) => props.onChange({ ...props.configuration, model })}
+            onChange={handleModelChange}
           />
         ) : null}
         {showPrimary ? (
@@ -221,18 +282,9 @@ export function SessionControls(props: SessionControlsProps): ReactElement {
             ariaLabel={t('controls.access')}
             title={permissionCommandAvailable ? t('controls.accessChange') : t('controls.accessUnavailable')}
             value={permissionPreset}
-            options={availablePermissionPresets.map((preset) => ({
-              value: preset,
-              label: formatPermissionLabel(preset, t),
-            }))}
+            options={permissionMenuOptions}
             disabled={props.disabled || availablePermissionPresets.length < 2 || !permissionCommandAvailable}
-            onChange={(preset) => {
-              if (isFullAccessPreset(preset)) {
-                setRiskState({ context: riskContext, pending: preset, acknowledged: false })
-                return
-              }
-              props.onCommand(`/permission ${preset}`)
-            }}
+            onChange={handlePermissionChange}
           />
         ) : null}
         {showSecondary ? (
@@ -250,7 +302,7 @@ export function SessionControls(props: SessionControlsProps): ReactElement {
                   : t('controls.planUnavailable')
               }
               disabled={props.disabled || !planCommandAvailable}
-              onClick={() => props.onCommand(props.configuration.planMode ? '/plan off' : '/plan')}
+              onClick={handlePlanToggle}
             >
               <Icon name="plan" />
               <span className="dsh-session-controls__plan-label">
@@ -277,7 +329,7 @@ export function SessionControls(props: SessionControlsProps): ReactElement {
       {riskPopover}
     </div>
   )
-}
+})
 
 export function formatPresetLabel(id: string, name: string | undefined, t: Translate = (key) => key): string {
   const translationKey = presetTranslationKey(id, name)

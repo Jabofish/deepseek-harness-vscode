@@ -78,13 +78,20 @@ import {
   type WorkflowSummary,
   type WorkspaceSummary,
 } from '@dsh-vscode/domain'
-import { isInjectedUserMessage, reduceTimeline, type TimelineState } from '@dsh-vscode/timeline'
+import {
+  isInjectedUserMessage,
+  reduceTimeline,
+  reduceTimelineBatch,
+  type TimelineState,
+} from '@dsh-vscode/timeline'
 import { featureResponseSchema } from '@dsh-vscode/webview-protocol'
 import type { FeatureResponse, HostMessage, WebviewRequest } from '@dsh-vscode/webview-protocol'
 
 import { translate } from '../i18n.js'
 import { ProtocolClient } from './protocol-client.js'
 import { getVsCodeApi } from '../vscode-api.js'
+
+const STORE_NOTIFY_BATCH_MS = 16
 
 export interface OpenFileCandidate {
   readonly id: string
@@ -348,6 +355,7 @@ export interface AppStore extends AppState, AppActions {
 }
 
 type StateSetter = (next: AppState | ((current: AppState) => AppState)) => void
+type LiveHistoryAppender = (sessionId: string, entry: SessionHistoryEvent) => void
 
 interface ComposerPreferences {
   readonly preset?: string
@@ -388,7 +396,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     workspaces: [],
     activeSessionId: undefined,
     preferredOpenFileId: composerPreferences.openFileId,
-    timeline: { sessionId: undefined, nodes: [], lastSequence: -1 },
+    timeline: { sessionId: undefined, nodes: [], lastSequence: -1, nodeChangeStart: 0, eventCount: 0 },
     history: [],
     historyHasMore: false,
     historyBeforeSequence: undefined,
@@ -427,12 +435,49 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     drawer: undefined,
   }
   const listeners = new Set<() => void>()
+  let notifyTimer: number | undefined
+  let pendingHistorySessionId: string | undefined
+  let pendingHistory: SessionHistoryEvent[] = []
   const notify = (): void => {
     for (const listener of listeners) listener()
   }
+  const flushPendingHistory = (): void => {
+    if (pendingHistory.length === 0) return
+    const sessionId = pendingHistorySessionId
+    const additions = pendingHistory
+    pendingHistory = []
+    pendingHistorySessionId = undefined
+    if (sessionId === undefined || state.activeSessionId !== sessionId) return
+    const history = mergeHistory(state.history, additions)
+    if (history !== state.history) state = { ...state, history }
+  }
+  const appendLiveHistory: LiveHistoryAppender = (sessionId, entry): void => {
+    if (pendingHistorySessionId !== undefined && pendingHistorySessionId !== sessionId) flushPendingHistory()
+    pendingHistorySessionId = sessionId
+    pendingHistory.push(entry)
+  }
+  const scheduleNotify = (): void => {
+    if (notifyTimer !== undefined) return
+    notifyTimer = window.setTimeout(() => {
+      notifyTimer = undefined
+      flushPendingHistory()
+      notify()
+    }, STORE_NOTIFY_BATCH_MS)
+  }
   const setState: StateSetter = (next): void => {
-    state = typeof next === 'function' ? next(state) : next
-    notify()
+    const nextState = typeof next === 'function' ? next(state) : next
+    if (nextState === state) {
+      // A guarded async refresh can legitimately produce the current object.
+      // Do not wake React for that no-op, but keep the coalesced history
+      // flush alive when a live event was appended before the guard ran.
+      if (pendingHistory.length > 0) scheduleNotify()
+      return
+    }
+    state = nextState
+    // Host streams can deliver hundreds of deltas for one answer. State is
+    // still reduced synchronously so ordering and reads stay authoritative;
+    // only the React subscriber notification is coalesced to one frame.
+    scheduleNotify()
   }
   const persistWebviewState = (overrides: { readonly activeSessionId?: string } = {}): void => {
     const activeSessionId = overrides.activeSessionId ?? state.activeSessionId
@@ -462,7 +507,18 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   let tasksRefreshGeneration = 0
   let checkpointsRefreshGeneration = 0
   let promptTemplatesRefreshGeneration = 0
-  const pendingOpens = new Map<number, { readonly sessionId: string; readonly messages: HostMessage[] }>()
+  const pendingOpens = new Map<
+    number,
+    { readonly sessionId: string; readonly messages: HostMessage[]; replayedMessages: number }
+  >()
+  const pendingMessagesAfterReplay = (pending: {
+    readonly messages: HostMessage[]
+    replayedMessages: number
+  }): readonly HostMessage[] => {
+    const messages = pending.messages.slice(pending.replayedMessages)
+    pending.replayedMessages = pending.messages.length
+    return messages
+  }
   let commandDirectoryGeneration = 0
   let configurationGeneration = 0
   const commandDirectoryCache = new Map<string, readonly DynamicCommand[]>()
@@ -498,7 +554,11 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     if (sessionId === undefined) return
     const commands = await loadCommandDirectory(sessionId, force)
     if (commands === undefined) return
-    setState((current) => (current.activeSessionId === sessionId ? { ...current, commands } : current))
+    setState((current) =>
+      current.activeSessionId === sessionId && current.commands !== commands
+        ? { ...current, commands }
+        : current,
+    )
   }
   const loadSubagentCatalog = async (sessionId: string): Promise<SubagentCatalog | undefined> => {
     try {
@@ -517,8 +577,14 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   }
   const refresh = async (): Promise<void> => {
     const version = ++refreshVersion
-    await refreshSessions(client, setState, () => version === refreshVersion)
-    if (version === refreshVersion) await refreshCommands()
+    // Session/workspace visibility is enough to choose the startup session.
+    // Global providers, models, and presets are merged in the background so
+    // their latency cannot delay opening the conversation.
+    await refreshSessions(client, setState, () => version === refreshVersion, false)
+    // The command directory is also advisory during startup. The session
+    // opener starts the same deduplicated load for the active session, while
+    // keeping slow command/skill providers off the first-paint critical path.
+    if (version === refreshVersion) void refreshCommands().catch(() => undefined)
   }
   const refreshEditorContextState = async (workspaceFolderId?: string): Promise<void> => {
     if (typeof client.featureRequest !== 'function') return
@@ -779,7 +845,9 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     return true
   }
   const unsubscribe = client.subscribe((message) => {
-    const messageSessionId = hostMessageSessionId(message)
+    const parsedEvent = parseHostDomainEvent(message)
+    const messageSessionId =
+      parsedEvent === undefined || parsedEvent === null ? undefined : backendEventSessionId(parsedEvent)
     let deferredToOpen = false
     if (messageSessionId !== undefined) {
       for (const pending of pendingOpens.values()) {
@@ -793,7 +861,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     // would duplicate deltas, queue rows, and interaction requests. Defer
     // only events addressed to an in-flight open; global connection/workspace
     // events continue to update the shell while the read is in progress.
-    if (!deferredToOpen) applyHostMessage(message, state, setState)
+    if (!deferredToOpen) applyHostMessage(message, state, setState, appendLiveHistory, parsedEvent)
     // The switcher only caches its rows, so a session whose title changed
     // while the drawer was closed (a missed live frame, a reconnect gap, or a
     // title generated before this client attached) would keep showing the
@@ -897,13 +965,14 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         })
       : () => undefined
   const open = async (sessionId: string): Promise<void> => {
+    flushPendingHistory()
     const version = ++openVersion
     editorContextRefreshGeneration += 1
     changesRefreshGeneration += 1
     tasksRefreshGeneration += 1
     checkpointsRefreshGeneration += 1
     promptTemplatesRefreshGeneration += 1
-    const pending = { sessionId, messages: [] as HostMessage[] }
+    const pending = { sessionId, messages: [] as HostMessage[], replayedMessages: 0 }
     pendingOpens.set(version, pending)
     try {
       await discardEditorContextForSessionSwitch(sessionId)
@@ -914,14 +983,24 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       })
       const detail = object(result)
       const rawHistory = Array.isArray(detail?.history) ? detail.history : []
-      const timeline = hydrateTimeline(sessionId, rawHistory)
-      const history = parseSessionHistory(rawHistory)
+      const parsedHistory = parseSessionHistoryWithTimeline(rawHistory)
+      const timeline = hydrateTimelineFromEntries(sessionId, parsedHistory.timeline)
+      const history = parsedHistory.history
       const permissionPresets = stringList(detail?.permissionPresets)
       const workspaceFolderId =
         typeof detail?.workspaceId === 'string' && detail.workspaceId.trim() !== ''
           ? detail.workspaceId
           : state.sessions.find((session) => session.id === sessionId)?.workspaceId || undefined
-      const [queue, goals, jobs, feedback, subagents, commands, sessionModels] = await Promise.all([
+      // History and configuration are the critical first-paint payload. Start
+      // the advisory reads immediately, but publish the conversation before
+      // they finish so a slow queue/catalog endpoint cannot blank the panel.
+      // The command and session-model directories are also advisory for the
+      // first paint: the composer can use the global model fallback and the
+      // command picker is opened explicitly. Keep their requests concurrent,
+      // but do not make their latency part of the session-open completion.
+      const commandDirectoryData = loadCommandDirectory(sessionId)
+      const sessionModelDirectoryData = loadSessionModelDirectory(client, sessionId)
+      const secondaryData = Promise.all([
         safeList<QueuedInput>(
           client,
           { type: 'session.queue.list', requestId: requestId(), payload: { sessionId } },
@@ -939,10 +1018,9 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         ),
         safeFeedbackList(client, sessionId),
         loadSubagentCatalog(sessionId),
-        loadCommandDirectory(sessionId),
-        loadSessionModelDirectory(client, sessionId),
       ])
       if (version !== openVersion) return
+      const initialMessages = pendingMessagesAfterReplay(pending)
       setState((current) =>
         replayHostMessages(
           {
@@ -960,15 +1038,15 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
             configuration: isAgentConfiguration(detail?.configuration)
               ? detail.configuration
               : createDefaultConfiguration(current, composerPreferences),
-            sessionModels: sessionModels ?? [],
+            sessionModels: [],
             permissionPresets: permissionPresets ?? [],
-            queue,
-            goals,
+            queue: [],
+            goals: [],
             todos: latestTodos(timeline),
-            jobs,
-            feedback: feedbackRecord(feedback.items),
-            feedbackUnavailable: feedback.unavailable,
-            subagents: subagents ?? EMPTY_SUBAGENT_CATALOG,
+            jobs: [],
+            feedback: {},
+            feedbackUnavailable: false,
+            subagents: EMPTY_SUBAGENT_CATALOG,
             activeSubagent: undefined,
             changes: [],
             changesLoading: false,
@@ -982,15 +1060,51 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
               current.promptMode,
               isAgentConfiguration(detail?.configuration) ? detail.configuration.planMode : false,
             ),
-            commands:
-              commands ??
-              commandDirectoryCache.get(sessionId) ??
-              (current.activeSessionId === sessionId ? current.commands : []),
+            commands: commandDirectoryCache.get(sessionId) ?? [],
           },
-          pending.messages,
+          initialMessages,
         ),
       )
       persistWebviewState({ activeSessionId: sessionId })
+
+      void commandDirectoryData
+        .then((commands) => {
+          if (version !== openVersion || commands === undefined) return
+          setState((current) =>
+            current.activeSessionId === sessionId && current.commands !== commands
+              ? { ...current, commands }
+              : current,
+          )
+        })
+        .catch(() => undefined)
+      void sessionModelDirectoryData
+        .then((sessionModels) => {
+          if (version !== openVersion || sessionModels === undefined) return
+          setState((current) =>
+            current.activeSessionId === sessionId && current.sessionModels !== sessionModels
+              ? { ...current, sessionModels }
+              : current,
+          )
+        })
+        .catch(() => undefined)
+
+      const [queue, goals, jobs, feedback, subagents] = await secondaryData
+      if (version !== openVersion) return
+      const pendingMessages = pendingMessagesAfterReplay(pending)
+      setState((current) =>
+        replayHostMessages(
+          {
+            ...current,
+            queue,
+            goals,
+            jobs,
+            feedback: feedbackRecord(feedback.items),
+            feedbackUnavailable: feedback.unavailable,
+            subagents: subagents ?? EMPTY_SUBAGENT_CATALOG,
+          },
+          pendingMessages,
+        ),
+      )
       void refreshChangesState(sessionId)
       void refreshTasksState(sessionId)
       void refreshCheckpointsState(sessionId)
@@ -1001,9 +1115,10 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     }
   }
   const openSubagent = async (entry: SubagentView, parentAvailable: boolean): Promise<void> => {
+    flushPendingHistory()
     const version = ++openVersion
     promptTemplatesRefreshGeneration += 1
-    const pending = { sessionId: entry.id, messages: [] as HostMessage[] }
+    const pending = { sessionId: entry.id, messages: [] as HostMessage[], replayedMessages: 0 }
     pendingOpens.set(version, pending)
     const workspaceId =
       state.sessions.find((session) => session.id === state.activeSessionId)?.workspaceId ??
@@ -1011,14 +1126,14 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       ''
     try {
       await discardEditorContextForSessionSwitch(entry.id)
-      const [history, queue, goals, jobs, feedback, subagents] = await Promise.all([
-        client
-          .request<unknown>({
-            type: 'subagent.history',
-            requestId: requestId(),
-            payload: { sessionId: entry.id },
-          })
-          .then(parseSubagentHistory),
+      const historyData = client
+        .request<unknown>({
+          type: 'subagent.history',
+          requestId: requestId(),
+          payload: { sessionId: entry.id },
+        })
+        .then(parseSubagentHistory)
+      const secondaryData = Promise.all([
         safeList<QueuedInput>(
           client,
           { type: 'session.queue.list', requestId: requestId(), payload: { sessionId: entry.id } },
@@ -1037,8 +1152,10 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         safeFeedbackList(client, entry.id),
         loadSubagentCatalog(entry.id),
       ])
+      const history = await historyData
       if (version !== openVersion) return
-      const timeline = hydrateTimeline(entry.id, history.events)
+      const timeline = hydrateTimelineFromHistoryEvents(entry.id, history.events)
+      const initialMessages = pendingMessagesAfterReplay(pending)
       setState((current) =>
         replayHostMessages(
           {
@@ -1054,13 +1171,13 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
             configuration: undefined,
             sessionModels: [],
             permissionPresets: [],
-            queue,
-            goals,
+            queue: [],
+            goals: [],
             todos: latestTodos(timeline),
-            jobs,
-            feedback: feedbackRecord(feedback.items),
-            feedbackUnavailable: feedback.unavailable,
-            subagents: subagents ?? EMPTY_SUBAGENT_CATALOG,
+            jobs: [],
+            feedback: {},
+            feedbackUnavailable: false,
+            subagents: EMPTY_SUBAGENT_CATALOG,
             commands: [],
             changes: [],
             changesLoading: false,
@@ -1072,10 +1189,28 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
             promptTemplatesLoading: false,
             promptMode: 'ask',
           },
-          pending.messages,
+          initialMessages,
         ),
       )
       persistWebviewState({ activeSessionId: entry.id })
+
+      const [queue, goals, jobs, feedback, subagents] = await secondaryData
+      if (version !== openVersion) return
+      const pendingMessages = pendingMessagesAfterReplay(pending)
+      setState((current) =>
+        replayHostMessages(
+          {
+            ...current,
+            queue,
+            goals,
+            jobs,
+            feedback: feedbackRecord(feedback.items),
+            feedbackUnavailable: feedback.unavailable,
+            subagents: subagents ?? EMPTY_SUBAGENT_CATALOG,
+          },
+          pendingMessages,
+        ),
+      )
       void refreshChangesState(entry.id)
       void refreshTasksState(entry.id)
       void refreshCheckpointsState(entry.id)
@@ -1268,11 +1403,14 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       // the result is intentionally not on the critical connection path.
       void checkDshUpdates(false).catch(() => undefined)
       await client.request<unknown>({ type: 'app.ready', requestId: requestId() })
-      await refresh()
       // Official ui-conversation row: the host-side busy-Enter preference is
-      // the composer's plain-Enter policy while a turn is running. A failed
-      // read keeps the official default ('queue').
-      await applyBusyEnterPreference()
+      // the composer's plain-Enter policy while a turn is running. It is
+      // independent of the session/catalog snapshot. Start it alongside the
+      // critical refresh, but keep the official default ('queue') on the
+      // first-paint path when the settings read is slow or unavailable.
+      const refreshPromise = refresh()
+      void applyBusyEnterPreference()
+      await refreshPromise
       const rememberedSessionId = persistedWebviewState.activeSessionId
       const startupSession = selectStartupSession(state.sessions, rememberedSessionId)
       if (startupSession !== undefined) await open(startupSession.id)
@@ -1296,6 +1434,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     refreshCommands: (sessionId) => refreshCommands(sessionId),
     openSession: open,
     loadOlderHistory: async () => {
+      flushPendingHistory()
       const sessionId = state.activeSessionId
       const beforeSeq = state.historyBeforeSequence
       if (
@@ -1323,7 +1462,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         if (pageNewest !== undefined && currentBase !== undefined && pageNewest >= currentBase)
           throw new Error(translate('app.error.historyDiscontinuous'))
         const history = mergeHistory(current.history, page.events)
-        const timeline = hydrateTimeline(sessionId, history)
+        const timeline = hydrateTimelineFromHistoryEvents(sessionId, history)
         const nextBefore = page.beforeSequence ?? oldestHistorySequence(page.events)
         const hasMore =
           page.hasMore && nextBefore !== undefined && (currentBase === undefined || nextBefore < currentBase)
@@ -1504,7 +1643,13 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         ...(wasActive
           ? {
               activeSessionId: undefined,
-              timeline: { sessionId: undefined, nodes: [], lastSequence: -1 },
+              timeline: {
+                sessionId: undefined,
+                nodes: [],
+                lastSequence: -1,
+                nodeChangeStart: 0,
+                eventCount: 0,
+              },
               history: [],
               historyHasMore: false,
               historyBeforeSequence: undefined,
@@ -1584,6 +1729,8 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
             ...current,
             timeline: {
               ...current.timeline,
+              nodeChangeBase: current.timeline.nodes,
+              nodeChangeStart: current.timeline.nodes.length,
               nodes: [
                 ...current.timeline.nodes,
                 {
@@ -1623,6 +1770,8 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
           ...current,
           timeline: {
             ...current.timeline,
+            nodeChangeBase: current.timeline.nodes,
+            nodeChangeStart: 0,
             nodes: current.timeline.nodes.filter((node) => node.id !== optimisticId),
           },
         }))
@@ -2272,6 +2421,12 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       const sessionId = state.activeSessionId
       const configuration = state.configuration
       if (sessionId === undefined || configuration === undefined) return false
+      // The command directory is advisory for session visibility, but it is
+      // authoritative for exposing the semantic Plan toggle. If the user
+      // reaches this action before the background directory read completes,
+      // join that in-flight read instead of treating a temporary empty list
+      // as an unsupported upstream capability.
+      if (mode === 'plan' && !hasDynamicCommand(state.commands, 'plan')) await refreshCommands(sessionId)
       const resolution = resolvePromptMode(mode, {
         planCommandAvailable: hasDynamicCommand(state.commands, 'plan'),
       })
@@ -2517,6 +2672,12 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       if (openingSessionsDrawer) void refresh()
     },
     dispose: () => {
+      if (notifyTimer !== undefined) {
+        window.clearTimeout(notifyTimer)
+        notifyTimer = undefined
+      }
+      pendingHistory = []
+      pendingHistorySessionId = undefined
       unsubscribe()
       unsubscribeFeature()
       client.dispose()
@@ -2536,11 +2697,16 @@ async function refreshProvidersAndModels(client: ProtocolClient, setState: State
       : undefined
   const models =
     modelsResult.status === 'fulfilled' ? listValues(modelsResult.value).filter(isModelDescriptor) : undefined
-  setState((current) => ({
-    ...current,
-    ...(providers === undefined ? {} : { providers }),
-    ...(models === undefined ? {} : { models }),
-  }))
+  setState((current) => {
+    const nextProviders =
+      providers === undefined || sameModelProviderList(current.providers, providers)
+        ? current.providers
+        : providers
+    const nextModels =
+      models === undefined || sameModelDescriptorList(current.models, models) ? current.models : models
+    if (nextProviders === current.providers && nextModels === current.models) return current
+    return { ...current, providers: nextProviders, models: nextModels }
+  })
 }
 
 function parseExtensionSettings(value: unknown): ExtensionSettingsSummary | undefined {
@@ -2780,38 +2946,43 @@ async function refreshSessions(
   client: ProtocolClient,
   setState: StateSetter,
   isCurrent: () => boolean = () => true,
+  awaitCatalogs = true,
 ): Promise<void> {
-  const results = await Promise.allSettled([
+  const criticalResults = Promise.allSettled([
     client.request<unknown>({
       type: 'session.list',
       requestId: requestId(),
       payload: { archived: false },
     }),
     client.request<unknown>({ type: 'workspace.list', requestId: requestId() }),
+  ])
+  const catalogResults = Promise.allSettled([
     client.request<unknown>({ type: 'providers.list', requestId: requestId() }),
     client.request<unknown>({ type: 'models.list', requestId: requestId(), payload: {} }),
     client.request<unknown>({ type: 'preset.list', requestId: requestId() }),
   ])
-  const value = (index: number): unknown => {
-    const result = results[index]
-    return result?.status === 'fulfilled' ? result.value : undefined
-  }
-  const sessionItems = object(value(0))?.items
-  const workspacePayload = object(value(1))
+  const [sessionResult, workspaceResult] = await criticalResults
+  const value = (result: PromiseSettledResult<unknown>): unknown =>
+    result.status === 'fulfilled' ? result.value : undefined
+  const sessionItems = object(value(sessionResult))?.items
+  const workspacePayload = object(value(workspaceResult))
   const archivedFromHost = stringList(workspacePayload?.archivedSessionIds)
   const rawSessions = Array.isArray(sessionItems) ? sessionItems.filter(isSessionSummary) : undefined
   const rawWorkspaces =
-    results[1]?.status === 'fulfilled' ? listValues(value(1)).filter(isWorkspaceSummary) : undefined
+    workspaceResult.status === 'fulfilled'
+      ? listValues(value(workspaceResult)).filter(isWorkspaceSummary)
+      : undefined
   if (!isCurrent()) return
   setState((current) => {
     // Keep local archive knowledge monotonic while the host publishes the
     // archive-set echo. This prevents a stale concurrent session.list from
     // reintroducing the row that was just archived.
-    const archivedSessionIds = uniqueStrings([...current.archivedSessionIds, ...(archivedFromHost ?? [])])
+    const archivedSessionIds = mergeUniqueStrings(current.archivedSessionIds, archivedFromHost ?? [])
     const archived = new Set(archivedSessionIds)
-    const sessions = rawSessions
-      ?.filter((session) => !archived.has(session.id))
-      .reduce(appendUniqueSessionSummary, [])
+    const sessions =
+      rawSessions === undefined
+        ? undefined
+        : deduplicateSessionSummaries(rawSessions.filter((session) => !archived.has(session.id)))
     const listedSessions =
       sessions ?? deduplicateSessionSummaries(current.sessions.filter((session) => !archived.has(session.id)))
     // A DSH workspace attach and its session.list projection can commit in
@@ -2829,25 +3000,44 @@ async function refreshSessions(
         ? [...listedSessions, activeSession]
         : listedSessions,
     )
+    const stableSessions = sameSessionSummaryList(current.sessions, nextSessions)
+      ? current.sessions
+      : nextSessions
+    const stableWorkspaces =
+      rawWorkspaces === undefined
+        ? current.workspaces
+        : sameWorkspaceSummaryList(current.workspaces, rawWorkspaces)
+          ? current.workspaces
+          : rawWorkspaces
     const activeSessionIsArchived =
       current.activeSessionId !== undefined && archived.has(current.activeSessionId)
     const hasVisibilitySnapshot = rawSessions !== undefined || archivedFromHost !== undefined
+    if (
+      stableSessions === current.sessions &&
+      archivedSessionIds === current.archivedSessionIds &&
+      stableWorkspaces === current.workspaces &&
+      !(hasVisibilitySnapshot && activeSessionIsArchived)
+    )
+      return current
     return {
       ...current,
-      sessions: nextSessions,
+      sessions: stableSessions,
       archivedSessionIds,
       // A transient workspace.list failure must not turn a known temporary
       // workspace into an apparently successful empty snapshot. The host is
       // responsible for creating/restoring the no-folder workspace; retaining
       // the last good value keeps the UI stable until that retry succeeds.
-      workspaces: rawWorkspaces ?? current.workspaces,
-      providers: listValues(value(2)).filter(isModelProvider),
-      models: listValues(value(3)).filter(isModelDescriptor),
-      presets: parsePresetRoster(value(4))?.presets ?? current.presets,
+      workspaces: stableWorkspaces,
       ...(hasVisibilitySnapshot && activeSessionIsArchived
         ? {
             activeSessionId: undefined,
-            timeline: { sessionId: undefined, nodes: [], lastSequence: -1 },
+            timeline: {
+              sessionId: undefined,
+              nodes: [],
+              lastSequence: -1,
+              nodeChangeStart: 0,
+              eventCount: 0,
+            },
             history: [],
             historyHasMore: false,
             historyBeforeSequence: undefined,
@@ -2869,6 +3059,35 @@ async function refreshSessions(
         : {}),
     }
   })
+  const applyCatalogs = (results: readonly PromiseSettledResult<unknown>[]): void => {
+    if (!isCurrent()) return
+    const catalogValue = (index: number): unknown => {
+      const result = results[index]
+      return result?.status === 'fulfilled' ? result.value : undefined
+    }
+    const providers = listValues(catalogValue(0)).filter(isModelProvider)
+    const models = listValues(catalogValue(1)).filter(isModelDescriptor)
+    const presets = parsePresetRoster(catalogValue(2))?.presets
+    setState((current) => {
+      const nextProviders = sameModelProviderList(current.providers, providers)
+        ? current.providers
+        : providers
+      const nextModels = sameModelDescriptorList(current.models, models) ? current.models : models
+      const nextPresets =
+        presets === undefined || samePresetDescriptorList(current.presets, presets)
+          ? current.presets
+          : presets
+      if (
+        nextProviders === current.providers &&
+        nextModels === current.models &&
+        nextPresets === current.presets
+      )
+        return current
+      return { ...current, providers: nextProviders, models: nextModels, presets: nextPresets }
+    })
+  }
+  if (awaitCatalogs) applyCatalogs(await catalogResults)
+  else void catalogResults.then(applyCatalogs)
 }
 
 /**
@@ -3143,16 +3362,197 @@ function uniqueStrings(values: readonly string[]): readonly string[] {
   return [...new Set(values)]
 }
 
-function deduplicateSessionSummaries(sessions: readonly SessionSummary[]): readonly SessionSummary[] {
-  return sessions.reduce(appendUniqueSessionSummary, [])
+function mergeUniqueStrings(current: readonly string[], additions: readonly string[]): readonly string[] {
+  const seen = new Set(current)
+  let next: string[] | undefined
+  for (const value of additions) {
+    if (seen.has(value)) continue
+    seen.add(value)
+    if (next === undefined) next = [...current]
+    next.push(value)
+  }
+  return next ?? current
 }
 
-function appendUniqueSessionSummary(
-  sessions: readonly SessionSummary[],
-  session: SessionSummary,
-): readonly SessionSummary[] {
-  if (sessions.some((candidate) => candidate.id === session.id)) return sessions
-  return [...sessions, session]
+function deduplicateSessionSummaries(sessions: readonly SessionSummary[]): readonly SessionSummary[] {
+  const seen = new Set<string>()
+  const unique: SessionSummary[] = []
+  for (const session of sessions) {
+    if (seen.has(session.id)) continue
+    seen.add(session.id)
+    unique.push(session)
+  }
+  return unique
+}
+
+function sameSessionSummaryList(left: readonly SessionSummary[], right: readonly SessionSummary[]): boolean {
+  if (left === right) return true
+  if (left.length !== right.length) return false
+  for (let index = 0; index < left.length; index += 1) {
+    const previous = left[index]
+    const next = right[index]
+    if (previous === undefined || next === undefined || !sameSessionSummary(previous, next)) return false
+  }
+  return true
+}
+
+function sameSessionSummary(left: SessionSummary, right: SessionSummary): boolean {
+  return (
+    left.id === right.id &&
+    left.workspaceId === right.workspaceId &&
+    left.cwd === right.cwd &&
+    left.title === right.title &&
+    left.blank === right.blank &&
+    left.parentSessionId === right.parentSessionId &&
+    left.origin === right.origin &&
+    left.status === right.status &&
+    left.createdAt === right.createdAt &&
+    left.updatedAt === right.updatedAt &&
+    left.modelLabel === right.modelLabel &&
+    left.agentPreset === right.agentPreset &&
+    sameSessionProjection(left.projection, right.projection)
+  )
+}
+
+function sameSessionProjection(
+  left: SessionSummary['projection'],
+  right: SessionSummary['projection'],
+): boolean {
+  if (left === right) return true
+  if (left === undefined || right === undefined || left.asOfSequence !== right.asOfSequence) return false
+  const leftKeys = Object.keys(left.values)
+  const rightKeys = Object.keys(right.values)
+  if (leftKeys.length !== rightKeys.length) return false
+  for (const key of leftKeys) if (!Object.is(left.values[key], right.values[key])) return false
+  return true
+}
+
+function sameWorkspaceSummaryList(
+  left: readonly WorkspaceSummary[],
+  right: readonly WorkspaceSummary[],
+): boolean {
+  if (left === right) return true
+  if (left.length !== right.length) return false
+  for (let index = 0; index < left.length; index += 1) {
+    const previous = left[index]
+    const next = right[index]
+    if (previous === undefined || next === undefined || !sameWorkspaceSummary(previous, next)) return false
+  }
+  return true
+}
+
+function sameWorkspaceSummary(left: WorkspaceSummary, right: WorkspaceSummary): boolean {
+  if (
+    left.id !== right.id ||
+    left.name !== right.name ||
+    left.path !== right.path ||
+    left.createdAt !== right.createdAt ||
+    left.updatedAt !== right.updatedAt ||
+    left.sessionCount !== right.sessionCount
+  )
+    return false
+  const leftSessionIds = left.sessionIds
+  const rightSessionIds = right.sessionIds
+  if (leftSessionIds === rightSessionIds) return true
+  if (leftSessionIds === undefined || rightSessionIds === undefined) return leftSessionIds === rightSessionIds
+  if (leftSessionIds.length !== rightSessionIds.length) return false
+  return leftSessionIds.every((sessionId, index) => sessionId === rightSessionIds[index])
+}
+
+function sameModelProviderList(left: readonly ModelProvider[], right: readonly ModelProvider[]): boolean {
+  if (left === right) return true
+  if (left.length !== right.length) return false
+  for (let index = 0; index < left.length; index += 1) {
+    const previous = left[index]
+    const next = right[index]
+    if (previous === undefined || next === undefined || !sameModelProvider(previous, next)) return false
+  }
+  return true
+}
+
+function sameModelProvider(left: ModelProvider, right: ModelProvider): boolean {
+  if (
+    left.id !== right.id ||
+    left.name !== right.name ||
+    left.kind !== right.kind ||
+    left.configurable !== right.configurable ||
+    left.active !== right.active ||
+    left.declared !== right.declared ||
+    left.settingsNs !== right.settingsNs ||
+    !sameStringList(left.settingsPath, right.settingsPath) ||
+    left.fields.length !== right.fields.length
+  )
+    return false
+  for (let index = 0; index < left.fields.length; index += 1) {
+    const previous = left.fields[index]
+    const next = right.fields[index]
+    if (
+      previous === undefined ||
+      next === undefined ||
+      previous.key !== next.key ||
+      previous.label !== next.label ||
+      previous.secret !== next.secret ||
+      previous.required !== next.required ||
+      previous.writable !== next.writable ||
+      previous.value !== next.value
+    )
+      return false
+  }
+  return true
+}
+
+function sameModelDescriptorList(
+  left: readonly ModelDescriptor[],
+  right: readonly ModelDescriptor[],
+): boolean {
+  if (left === right) return true
+  if (left.length !== right.length) return false
+  for (let index = 0; index < left.length; index += 1) {
+    const previous = left[index]
+    const next = right[index]
+    if (
+      previous === undefined ||
+      next === undefined ||
+      previous.id !== next.id ||
+      previous.providerId !== next.providerId ||
+      previous.label !== next.label ||
+      previous.contextWindow !== next.contextWindow ||
+      previous.supportsReasoning !== next.supportsReasoning ||
+      !sameStringList(previous.reasoningLevels, next.reasoningLevels)
+    )
+      return false
+  }
+  return true
+}
+
+function samePresetDescriptorList(
+  left: readonly AgentPresetDescriptor[],
+  right: readonly AgentPresetDescriptor[],
+): boolean {
+  if (left === right) return true
+  if (left.length !== right.length) return false
+  for (let index = 0; index < left.length; index += 1) {
+    const previous = left[index]
+    const next = right[index]
+    if (
+      previous === undefined ||
+      next === undefined ||
+      previous.id !== next.id ||
+      previous.trust !== next.trust ||
+      previous.isDefault !== next.isDefault ||
+      previous.name !== next.name ||
+      previous.description !== next.description ||
+      previous.broken !== next.broken
+    )
+      return false
+  }
+  return true
+}
+
+function sameStringList(left: readonly string[] | undefined, right: readonly string[] | undefined): boolean {
+  if (left === right) return true
+  if (left === undefined || right === undefined || left.length !== right.length) return false
+  return left.every((value, index) => value === right[index])
 }
 
 function upsertOpenedSession(
@@ -3166,7 +3566,28 @@ function upsertOpenedSession(
   return [...withoutOpened, opened]
 }
 
-function applyHostMessage(message: HostMessage, state: AppState, setState: StateSetter): void {
+function updateSessionById(
+  sessions: readonly SessionSummary[],
+  sessionId: string,
+  update: (session: SessionSummary) => SessionSummary,
+): readonly SessionSummary[] {
+  let changed = false
+  const next = sessions.map((session) => {
+    if (session.id !== sessionId) return session
+    const updated = update(session)
+    if (updated !== session) changed = true
+    return updated
+  })
+  return changed ? next : sessions
+}
+
+function applyHostMessage(
+  message: HostMessage,
+  state: AppState,
+  setState: StateSetter,
+  appendLiveHistory?: LiveHistoryAppender,
+  parsedEvent?: BackendEvent | null,
+): void {
   if (message.type !== 'event') return
   if (message.name === 'runtime.update.progress') {
     const progress = parseDshUpdateProgress(message.payload)
@@ -3253,30 +3674,31 @@ function applyHostMessage(message: HostMessage, state: AppState, setState: State
     }
     return
   }
-  const event = domainEvent(message.name, message.payload)
-  if (event === undefined) return
+  const event = parsedEvent === undefined ? domainEvent(message.name, message.payload) : parsedEvent
+  if (event === undefined || event === null) return
   const eventSessionId = backendEventSessionId(event)
   const belongsToActiveSession = eventSessionId === undefined || eventSessionId === state.activeSessionId
   const controlPlaneMessage = event.type === 'message.user' && isCommandMessageSource(event.source)
-  const history =
+  let history = state.history
+  if (
     state.activeSessionId !== undefined &&
     eventSessionId === state.activeSessionId &&
     event.sequence !== undefined
-      ? mergeHistory(state.history, [
-          {
-            sequence: event.sequence,
-            time: historyTime(event),
-            event,
-          },
-        ])
-      : state.history
+  ) {
+    const entry = {
+      sequence: event.sequence,
+      time: historyTime(event),
+      event,
+    }
+    if (appendLiveHistory === undefined) history = mergeHistory(state.history, [entry])
+    else appendLiveHistory(state.activeSessionId, entry)
+  }
   // Command records are control-plane history and stay out of both Chat and
   // Trajectory.  Other producer-owned user/message records are retained as
   // context nodes; Chat filters those nodes while Trajectory exposes their
   // provenance, matching the upstream target-specific projections.
-  const timeline = !belongsToActiveSession
-    ? state.timeline
-    : controlPlaneMessage
+  const timeline =
+    !belongsToActiveSession || controlPlaneMessage || !eventMayChangeTimelineState(event)
       ? state.timeline
       : reduceTimeline(state.timeline, {
           sequence: event.sequence ?? message.sequence,
@@ -3288,77 +3710,77 @@ function applyHostMessage(message: HostMessage, state: AppState, setState: State
           // sessions.
           ...(!advancesTimelineSequence(event) ? { advanceSequence: false } : {}),
         })
-  let next = { ...state, timeline, history }
+  let next: AppState =
+    timeline === state.timeline && history === state.history ? state : { ...state, timeline, history }
   if (event.type === 'session.status') {
-    const activity = event.status === 'running' ? 'running' : 'inactive'
-    next = {
-      ...next,
-      sessions: next.sessions.map((session) =>
-        session.id !== event.sessionId
-          ? session
-          : {
-              ...session,
-              status: sessionStatus(event.status),
-              ...(event.status === 'running' ? { blank: false } : {}),
-            },
-      ),
-      subagents: {
-        ...next.subagents,
-        entries: next.subagents.entries.map((entry) =>
-          entry.kind === 'child' && entry.id === event.sessionId ? { ...entry, activity } : entry,
-        ),
-      },
-      activeSubagent:
-        next.activeSubagent?.entry.id === event.sessionId
-          ? {
-              ...next.activeSubagent,
-              entry: { ...next.activeSubagent.entry, activity },
-            }
-          : next.activeSubagent,
+    const activity: 'running' | 'inactive' = event.status === 'running' ? 'running' : 'inactive'
+    const status = sessionStatus(event.status)
+    const sessions = updateSessionById(next.sessions, event.sessionId, (session) => {
+      if (session.status === status && (event.status !== 'running' || session.blank === false)) return session
+      return {
+        ...session,
+        status,
+        ...(event.status === 'running' ? { blank: false } : {}),
+      }
+    })
+    let subagents = next.subagents
+    const childIndex = subagents.entries.findIndex(
+      (entry) => entry.kind === 'child' && entry.id === event.sessionId && entry.activity !== activity,
+    )
+    if (childIndex >= 0) {
+      const entries = [...subagents.entries]
+      const child = entries[childIndex]
+      if (child?.kind === 'child') entries[childIndex] = { ...child, activity }
+      subagents = { ...subagents, entries }
     }
+    const activeSubagent =
+      next.activeSubagent?.entry.id === event.sessionId && next.activeSubagent.entry.activity !== activity
+        ? {
+            ...next.activeSubagent,
+            entry: { ...next.activeSubagent.entry, activity },
+          }
+        : next.activeSubagent
+    if (sessions !== next.sessions || subagents !== next.subagents || activeSubagent !== next.activeSubagent)
+      next = { ...next, sessions, subagents, activeSubagent }
   } else if (event.type === 'session.activity') {
     const updatedAt = new Date(event.updatedAt).toISOString()
-    next = {
-      ...next,
-      sessions: next.sessions.map((session) =>
-        session.id !== event.sessionId
-          ? session
-          : { ...session, updatedAt: laterSessionTimestamp(session.updatedAt, event.updatedAt, updatedAt) },
-      ),
-    }
+    const sessions = updateSessionById(next.sessions, event.sessionId, (session) => {
+      const nextUpdatedAt = laterSessionTimestamp(session.updatedAt, event.updatedAt, updatedAt)
+      return nextUpdatedAt === session.updatedAt ? session : { ...session, updatedAt: nextUpdatedAt }
+    })
+    if (sessions !== next.sessions) next = { ...next, sessions }
   } else if (event.type === 'session.title' && event.title.trim() !== '') {
-    next = {
-      ...next,
-      sessions: next.sessions.map((session) =>
-        session.id === event.sessionId && !session.blank ? { ...session, title: event.title } : session,
-      ),
-    }
+    const sessions = updateSessionById(next.sessions, event.sessionId, (session) =>
+      session.blank || session.title === event.title ? session : { ...session, title: event.title },
+    )
+    if (sessions !== next.sessions) next = { ...next, sessions }
   } else if (event.type === 'session.projection') {
-    next = {
-      ...next,
-      projections: updateSessionProjection(next.projections, event.sessionId, event.key, event.value),
-    }
+    const projections = updateSessionProjection(next.projections, event.sessionId, event.key, event.value)
+    if (projections !== next.projections) next = { ...next, projections }
     if (event.key === 'title' && typeof event.value === 'string') {
       const title = event.value.trim()
-      if (title !== '')
-        next = {
-          ...next,
-          sessions: next.sessions.map((session) =>
-            session.id === event.sessionId && !session.blank ? { ...session, title } : session,
-          ),
-        }
+      if (title !== '') {
+        const sessions = updateSessionById(next.sessions, event.sessionId, (session) =>
+          !session.blank && session.title !== title ? { ...session, title } : session,
+        )
+        if (sessions !== next.sessions) next = { ...next, sessions }
+      }
     }
   } else if (event.type === 'session.subscribed' && event.sessionId === next.activeSessionId) {
     // queue/jobs and pending interactions are process-local snapshots. The
     // pinned mux starts every subscription with `session/subscribed` and only
     // follows it with a queue/jobs frame when that snapshot is non-empty.
-    next = {
-      ...next,
-      queue: [],
-      jobs: [],
-      permissions: next.permissions.filter((request) => request.sessionId !== event.sessionId),
-      questions: next.questions.filter((question) => question.sessionId !== event.sessionId),
-    }
+    const queue = next.queue.length === 0 ? next.queue : []
+    const jobs = next.jobs.length === 0 ? next.jobs : []
+    const permissions = removeMatching(next.permissions, (request) => request.sessionId === event.sessionId)
+    const questions = removeMatching(next.questions, (question) => question.sessionId === event.sessionId)
+    if (
+      queue !== next.queue ||
+      jobs !== next.jobs ||
+      permissions !== next.permissions ||
+      questions !== next.questions
+    )
+      next = { ...next, queue, jobs, permissions, questions }
   } else if (event.type === 'session.configuration' && event.sessionId === next.activeSessionId) {
     next = {
       ...next,
@@ -3379,7 +3801,13 @@ function applyHostMessage(message: HostMessage, state: AppState, setState: State
       ...(wasActive
         ? {
             activeSessionId: undefined,
-            timeline: { sessionId: undefined, nodes: [], lastSequence: -1 },
+            timeline: {
+              sessionId: undefined,
+              nodes: [],
+              lastSequence: -1,
+              nodeChangeStart: 0,
+              eventCount: 0,
+            },
             history: [],
             historyHasMore: false,
             historyBeforeSequence: undefined,
@@ -3401,52 +3829,41 @@ function applyHostMessage(message: HostMessage, state: AppState, setState: State
         : {}),
     }
   } else if (event.type === 'session.added' && event.origin === 'subagent') {
-    next = {
-      ...next,
-      subagents: {
-        ...next.subagents,
-        entries: next.subagents.entries.map((entry) =>
-          entry.kind === 'child' && entry.id === event.parentSessionId
-            ? { ...entry, hasChildren: true }
-            : entry,
-        ),
-      },
-    }
+    let changed = false
+    const entries = next.subagents.entries.map((entry) => {
+      if (entry.kind !== 'child' || entry.id !== event.parentSessionId || entry.hasChildren) return entry
+      changed = true
+      return { ...entry, hasChildren: true }
+    })
+    if (changed) next = { ...next, subagents: { ...next.subagents, entries } }
   } else if (event.type === 'message.user') {
     // A command-only session remains blank. The first real user message is
     // the rc.6 boundary that turns the reusable placeholder into history.
-    next = {
-      ...next,
-      sessions: next.sessions.map((session) =>
-        session.id === event.sessionId &&
-        !isCommandMessageSource(event.source) &&
-        !isInjectedUserMessage(event)
-          ? { ...session, blank: false }
-          : session,
-      ),
-    }
+    const sessions = updateSessionById(next.sessions, event.sessionId, (session) =>
+      session.id === event.sessionId && !isCommandMessageSource(event.source) && !isInjectedUserMessage(event)
+        ? { ...session, blank: false }
+        : session,
+    )
+    if (sessions !== next.sessions) next = { ...next, sessions }
   } else if (event.type === 'queue.updated' && event.sessionId === next.activeSessionId) {
-    next = { ...next, queue: event.items }
+    if (!sameQueuedInputList(next.queue, event.items)) next = { ...next, queue: event.items }
   } else if (event.type === 'goal.updated' && event.sessionId === next.activeSessionId) {
-    next = { ...next, goals: event.goals }
+    if (!sameGoalList(next.goals, event.goals)) next = { ...next, goals: event.goals }
   } else if (event.type === 'todo.updated' && event.sessionId === next.activeSessionId) {
-    next = { ...next, todos: event.todos }
+    if (!sameTodoList(next.todos, event.todos)) next = { ...next, todos: event.todos }
   } else if (event.type === 'jobs.updated' && event.sessionId === next.activeSessionId) {
-    next = { ...next, jobs: event.jobs }
+    if (!sameJobList(next.jobs, event.jobs)) next = { ...next, jobs: event.jobs }
   } else if (event.type === 'permission.resolved' && event.sessionId === next.activeSessionId) {
-    next = {
-      ...next,
-      permissions: next.permissions.filter((request) => request.id !== event.requestId),
-    }
+    const permissions = removeMatching(next.permissions, (request) => request.id === event.requestId)
+    if (permissions !== next.permissions) next = { ...next, permissions }
   } else if (event.type === 'question.resolved' && event.sessionId === next.activeSessionId) {
-    next = {
-      ...next,
-      questions: next.questions.filter(
-        (question) =>
-          question.id !== event.questionId &&
-          (event.questionRpcId === undefined || question.rpcId !== event.questionRpcId),
-      ),
-    }
+    const questions = removeMatching(
+      next.questions,
+      (question) =>
+        question.id === event.questionId ||
+        (event.questionRpcId !== undefined && question.rpcId === event.questionRpcId),
+    )
+    if (questions !== next.questions) next = { ...next, questions }
   } else if (event.type === 'permission.requested' && event.request.sessionId === next.activeSessionId) {
     next = {
       ...next,
@@ -3486,23 +3903,39 @@ function applyHostMessage(message: HostMessage, state: AppState, setState: State
       commands: [],
     }
   }
-  setState(next)
+  if (next !== state) setState(next)
 }
 
 function replayHostMessages(state: AppState, messages: readonly HostMessage[]): AppState {
   let replayed = state
+  const pendingHistory = new Map<string, SessionHistoryEvent[]>()
+  const appendReplayHistory: LiveHistoryAppender = (sessionId, entry): void => {
+    const entries = pendingHistory.get(sessionId)
+    if (entries === undefined) pendingHistory.set(sessionId, [entry])
+    else entries.push(entry)
+  }
   const setReplayed: StateSetter = (next) => {
     replayed = typeof next === 'function' ? next(replayed) : next
   }
-  for (const message of messages) applyHostMessage(message, replayed, setReplayed)
+  for (const message of messages) applyHostMessage(message, replayed, setReplayed, appendReplayHistory)
+  const additions = pendingHistory.get(replayed.activeSessionId ?? '')
+  if (additions !== undefined) {
+    const history = mergeHistory(replayed.history, additions)
+    if (history !== replayed.history) replayed = { ...replayed, history }
+  }
   return replayed
 }
 
-function hostMessageSessionId(message: HostMessage): string | undefined {
+function parseHostDomainEvent(message: HostMessage): BackendEvent | null | undefined {
   if (message.type !== 'event') return undefined
-  const event = domainEvent(message.name, message.payload)
-  if (event === undefined) return undefined
-  return backendEventSessionId(event)
+  if (
+    message.name === 'runtime.update.progress' ||
+    message.name === 'ui.sessions.toggle' ||
+    message.name === 'ui.settings.toggle' ||
+    message.name === 'connection.snapshot'
+  )
+    return undefined
+  return domainEvent(message.name, message.payload) ?? null
 }
 
 function backendEventSessionId(event: BackendEvent): string | undefined {
@@ -3531,6 +3964,32 @@ function advancesTimelineSequence(event: BackendEvent): boolean {
     case 'workspace.removed':
     case 'remote.event':
     case 'notice':
+      return false
+    default:
+      return true
+  }
+}
+
+/** Session/catalog state events do not need a new TimelineState object. */
+function eventMayChangeTimelineState(event: BackendEvent): boolean {
+  switch (event.type) {
+    case 'archived.sessions.changed':
+    case 'jobs.updated':
+    case 'permission.resolved':
+    case 'question.resolved':
+    case 'queue.updated':
+    case 'session.activity':
+    case 'session.added':
+    case 'session.configuration':
+    case 'session.projection':
+    case 'session.removed':
+    case 'session.status':
+    case 'session.subscribed':
+    case 'session.title':
+    case 'workspace.changed':
+    case 'workspace.order.changed':
+    case 'workspace.removed':
+    case 'remote.event':
       return false
     default:
       return true
@@ -3610,9 +4069,12 @@ function updateSessionProjection(
   key: string,
   value: unknown,
 ): AppState['projections'] {
+  const current = projections[sessionId]
+  if (current !== undefined && Object.hasOwn(current, key) && Object.is(current[key], value))
+    return projections
   return {
     ...projections,
-    [sessionId]: { ...(projections[sessionId] ?? {}), [key]: value },
+    [sessionId]: { ...(current ?? {}), [key]: value },
   }
 }
 
@@ -4129,23 +4591,78 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
   }
 }
 
+interface ParsedHistoryPayload {
+  readonly history: readonly SessionHistoryEvent[]
+  readonly timeline: readonly HydratedTimelineEntry[]
+}
+
+interface HydratedTimelineEntry {
+  readonly event: BackendEvent
+  readonly sequence: number
+}
+
 function parseSessionHistory(value: unknown): readonly SessionHistoryEvent[] {
-  if (!Array.isArray(value)) return []
-  return value.flatMap((entry, index): SessionHistoryEvent[] => {
+  return parseHistoryPayload(value, false).history
+}
+
+/**
+ * Parse the ordinary session-open payload once for both durable history and
+ * timeline hydration. Malformed wrapped entries still become visible unknown
+ * timeline records, matching the defensive behavior of the old two-pass path.
+ */
+function parseSessionHistoryWithTimeline(value: unknown): ParsedHistoryPayload {
+  return parseHistoryPayload(value, true)
+}
+
+function parseHistoryPayload(value: unknown, includeTimeline: boolean): ParsedHistoryPayload {
+  if (!Array.isArray(value)) return { history: [], timeline: [] }
+  const history: SessionHistoryEvent[] = []
+  const timeline: HydratedTimelineEntry[] = []
+  for (const [index, entry] of value.entries()) {
     const record = object(entry)
-    const eventRecord = object(record?.event) ?? record
-    if (eventRecord === undefined || typeof eventRecord.type !== 'string') return []
-    const event = domainEvent(eventRecord.type, eventRecord)
-    if (event === undefined) return []
-    const sequence = finiteSequence(record?.sequence ?? eventRecord.sequence, index)
-    return [
-      {
+    if (record === undefined) {
+      if (includeTimeline)
+        timeline.push({
+          event: { type: 'unknown', name: 'history/invalid-entry', payload: { index } },
+          sequence: index,
+        })
+      continue
+    }
+    const eventRecord = object(record.event)
+    const historyEventRecord = eventRecord ?? record
+    const parsedEvent =
+      typeof historyEventRecord?.type === 'string'
+        ? domainEvent(historyEventRecord.type, historyEventRecord)
+        : undefined
+    if (parsedEvent !== undefined) {
+      const sequence = finiteSequence(record.sequence ?? historyEventRecord.sequence, index)
+      history.push({
         sequence,
-        time: typeof record?.time === 'string' ? record.time : historyTime(event),
-        event: { ...event, sequence },
-      },
-    ]
-  })
+        time: typeof record.time === 'string' ? record.time : historyTime(parsedEvent),
+        event: { ...parsedEvent, sequence },
+      })
+    }
+    if (!includeTimeline) continue
+    if (record.event === undefined || record.event === null || typeof record.event !== 'object') {
+      timeline.push({
+        event: { type: 'unknown', name: 'history/missing-event', payload: { index } },
+        sequence: finiteSequence(record.sequence, index),
+      })
+      continue
+    }
+    if (eventRecord === undefined || typeof eventRecord.type !== 'string') {
+      timeline.push({
+        event: { type: 'unknown', name: 'history/invalid-event', payload: { index } },
+        sequence: finiteSequence(record.sequence, index),
+      })
+      continue
+    }
+    timeline.push({
+      event: parsedEvent ?? { type: 'unknown', name: eventRecord.type, payload: { index } },
+      sequence: finiteSequence(record.sequence ?? eventRecord.sequence ?? eventRecord.seq, index),
+    })
+  }
+  return { history, timeline }
 }
 
 function parseSessionHistoryPage(value: unknown): {
@@ -4188,6 +4705,21 @@ function mergeHistory(
   current: readonly SessionHistoryEvent[],
   additions: readonly SessionHistoryEvent[],
 ): readonly SessionHistoryEvent[] {
+  if (additions.length === 0) return current
+  let previousSequence = current[current.length - 1]?.sequence
+  let appendOnly = true
+  for (const addition of additions) {
+    if (previousSequence !== undefined && addition.sequence <= previousSequence) {
+      appendOnly = false
+      break
+    }
+    previousSequence = addition.sequence
+  }
+  // Live stream frames are monotonic in the durable DSH sequence space. Keep
+  // the common path linear in the new entries; older-page merges and replay
+  // races still use the deduplicating sorted path below.
+  if (appendOnly) return current.concat(additions)
+
   const bySequence = new Map<number, SessionHistoryEvent>()
   for (const entry of [...current, ...additions]) {
     if (!bySequence.has(entry.sequence)) bySequence.set(entry.sequence, entry)
@@ -4220,65 +4752,55 @@ function historyTime(event: BackendEvent): string {
     : new Date().toISOString()
 }
 
-function hydrateTimeline(sessionId: string, history: readonly unknown[]): TimelineState {
-  const valid: Array<{ readonly event: BackendEvent; readonly sequence: number }> = history.flatMap(
-    (entry, index) => {
-      const record = object(entry)
-      if (record === undefined)
-        return [
-          {
-            event: { type: 'unknown', name: 'history/invalid-entry', payload: { index } },
-            sequence: index,
-          },
-        ]
-      if (typeof record.event !== 'object' || record.event === null)
-        return [
-          {
-            event: { type: 'unknown', name: 'history/missing-event', payload: { index } },
-            sequence: finiteSequence(record.sequence, index),
-          },
-        ]
-      const eventRecord = object(record.event)
-      if (eventRecord === undefined || typeof eventRecord.type !== 'string')
-        return [
-          {
-            event: { type: 'unknown', name: 'history/invalid-event', payload: { index } },
-            sequence: finiteSequence(record.sequence, index),
-          },
-        ]
-      const event = domainEvent(eventRecord.type, eventRecord)
-      if (event === undefined)
-        return [
-          {
-            event: { type: 'unknown', name: eventRecord.type, payload: { index } },
-            sequence: finiteSequence(record.sequence, index),
-          },
-        ]
-      const sequence = finiteSequence(record.sequence ?? eventRecord.sequence ?? eventRecord.seq, index)
-      return [{ event, sequence }]
-    },
-  )
+function hydrateTimelineFromHistoryEvents(
+  sessionId: string,
+  history: readonly SessionHistoryEvent[],
+): TimelineState {
+  return hydrateTimelineFromEntries(sessionId, history)
+}
+
+function hydrateTimelineFromEntries(
+  sessionId: string,
+  valid: readonly HydratedTimelineEntry[],
+): TimelineState {
   let timeline: TimelineState = {
     sessionId,
     nodes: [],
     lastSequence: valid.length === 0 ? -1 : Number.MIN_SAFE_INTEGER,
+    eventCount: 0,
   }
-  valid.sort((left, right) => left.sequence - right.sequence)
-  valid.forEach(({ event, sequence }) => {
-    timeline = reduceTimeline(timeline, {
+  // DSH history pages are already emitted in sequence order on the common
+  // path. Avoid an eager copy plus O(n log n) sort during every session open;
+  // retain the sort fallback for defensive handling of malformed or merged
+  // pages that arrive out of order.
+  const ordered = isNonDecreasingBySequence(valid)
+    ? valid
+    : [...valid].sort((left, right) => left.sequence - right.sequence)
+  timeline = reduceTimelineBatch(
+    timeline,
+    ordered.map(({ event, sequence }) => ({
       sequence,
       event,
       // Projection/lifecycle records carry durable sequence metadata but are
       // not conversation records. Keep their state updates while preventing
       // them from consuming the timeline cursor during history rehydration.
       ...(!advancesTimelineSequence(event) ? { advanceSequence: false } : {}),
-    })
-  })
-  const lastSequence = valid.reduce(
+    })),
+  )
+  const lastSequence = ordered.reduce(
     (maximum, entry) => (advancesTimelineSequence(entry.event) ? Math.max(maximum, entry.sequence) : maximum),
     -1,
   )
-  return valid.length === 0 ? timeline : { ...timeline, lastSequence }
+  return ordered.length === 0 ? timeline : { ...timeline, lastSequence }
+}
+
+function isNonDecreasingBySequence(entries: readonly HydratedTimelineEntry[]): boolean {
+  let previous: number | undefined
+  for (const entry of entries) {
+    if (previous !== undefined && entry.sequence < previous) return false
+    previous = entry.sequence
+  }
+  return true
 }
 
 function finiteSequence(value: unknown, fallback: number): number {
@@ -5596,6 +6118,87 @@ function parsePluginInventory(value: unknown): PluginInventorySnapshot | undefin
 
 function arraysEqual<T>(left: readonly T[], right: readonly T[]): boolean {
   return left.length === right.length && left.every((item, index) => item === right[index])
+}
+
+function removeMatching<T>(items: readonly T[], matches: (item: T) => boolean): readonly T[] {
+  const firstMatch = items.findIndex(matches)
+  if (firstMatch === -1) return items
+  return items.filter((item) => !matches(item))
+}
+
+function sameQueuedInputList(left: readonly QueuedInput[], right: readonly QueuedInput[]): boolean {
+  return sameList(
+    left,
+    right,
+    (previous, next) =>
+      previous.id === next.id &&
+      previous.sessionId === next.sessionId &&
+      previous.text === next.text &&
+      previous.mode === next.mode &&
+      previous.createdAt === next.createdAt &&
+      previous.rpcId === next.rpcId &&
+      samePromptAttachmentList(previous.attachments, next.attachments),
+  )
+}
+
+function samePromptAttachmentList(
+  left: readonly PromptAttachment[],
+  right: readonly PromptAttachment[],
+): boolean {
+  return sameList(
+    left,
+    right,
+    (previous, next) =>
+      previous.uri === next.uri && previous.name === next.name && previous.mimeType === next.mimeType,
+  )
+}
+
+function sameGoalList(left: readonly GoalView[], right: readonly GoalView[]): boolean {
+  return sameList(
+    left,
+    right,
+    (previous, next) =>
+      previous.id === next.id && previous.title === next.title && previous.status === next.status,
+  )
+}
+
+function sameTodoList(left: readonly TodoView[], right: readonly TodoView[]): boolean {
+  return sameList(
+    left,
+    right,
+    (previous, next) =>
+      previous.id === next.id && previous.content === next.content && previous.status === next.status,
+  )
+}
+
+function sameJobList(left: readonly JobView[], right: readonly JobView[]): boolean {
+  return sameList(
+    left,
+    right,
+    (previous, next) =>
+      previous.id === next.id &&
+      previous.kind === next.kind &&
+      previous.label === next.label &&
+      previous.status === next.status &&
+      previous.detail === next.detail &&
+      previous.startedAt === next.startedAt &&
+      previous.finishedAt === next.finishedAt,
+  )
+}
+
+function sameList<T>(
+  left: readonly T[],
+  right: readonly T[],
+  equal: (previous: T, next: T) => boolean,
+): boolean {
+  if (left === right) return true
+  if (left.length !== right.length) return false
+  for (let index = 0; index < left.length; index += 1) {
+    const previous = left[index]
+    const next = right[index]
+    if (previous === undefined || next === undefined || !equal(previous, next)) return false
+  }
+  return true
 }
 
 function isDynamicCommand(value: unknown): value is DynamicCommand {

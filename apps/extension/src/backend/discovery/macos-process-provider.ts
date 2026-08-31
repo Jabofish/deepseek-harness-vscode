@@ -5,6 +5,7 @@ import { parseDshProcessCandidates, runDiscoveryCommand } from './process-provid
 
 export class MacOsProcessDiscoveryProvider implements DiscoveryProvider {
   public readonly id = 'macos-process'
+  public readonly phase = 'fallback' as const
 
   public discover(signal?: AbortSignal): Promise<readonly BackendCandidate[]> {
     if (signal?.aborted === true) return Promise.reject(discoveryCancelled(signal.reason))

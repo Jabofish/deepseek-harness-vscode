@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactElement } from 'react'
+import { memo, useEffect, useId, useRef, useState, type KeyboardEvent, type ReactElement } from 'react'
 import type { IconName } from '../../ui/Icon.js'
 import { Icon } from '../../ui/Icon.js'
 import { useDismissibleLayer } from './useDismissibleLayer.js'
@@ -36,7 +36,7 @@ export interface SelectMenuProps {
  * platform. Native select popups are owned by the operating system and can
  * ignore Webview theme variables entirely, producing an unrelated light menu.
  */
-export function SelectMenu(props: SelectMenuProps): ReactElement {
+export const SelectMenu = memo(function SelectMenu(props: SelectMenuProps): ReactElement {
   const [open, setOpen] = useState(false)
   const [activeIndex, setActiveIndex] = useState(0)
   const rootRef = useRef<HTMLDivElement>(null)
@@ -203,7 +203,7 @@ export function SelectMenu(props: SelectMenuProps): ReactElement {
       ) : null}
     </div>
   )
-}
+})
 
 function indexOfValue(options: readonly SelectMenuOption[], value: string): number {
   const index = options.findIndex((option) => option.value === value && option.disabled !== true)

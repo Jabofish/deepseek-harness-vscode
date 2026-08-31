@@ -1,7 +1,11 @@
 import type { BackendCandidate } from '@dsh-vscode/domain'
 
+export type DiscoveryPhase = 'fast' | 'fallback'
+
 export interface DiscoveryProvider {
   readonly id: string
+  /** Process scans are fallback-only because they can invoke slow OS tools. */
+  readonly phase?: DiscoveryPhase
   discover(signal?: AbortSignal): Promise<readonly BackendCandidate[]>
 }
 

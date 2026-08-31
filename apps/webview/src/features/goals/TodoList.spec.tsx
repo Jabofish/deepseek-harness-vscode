@@ -25,6 +25,9 @@ describe('TodoList', () => {
     expect(toggle.textContent).not.toContain('查询系统信息')
     expect(toggle.textContent).not.toContain('整理最终答案')
     expect(toggle.getAttribute('aria-expanded')).toBe('false')
+
+    fireEvent.click(toggle)
+    expect(within(list).getByText('1 completed · 1 in progress · 1 pending')).toBeDefined()
   })
 
   it('renders nothing when no task exists', () => {
@@ -51,5 +54,23 @@ describe('TodoList', () => {
     expect(within(list).getByText('整理最终答案')).toBeDefined()
     expect(within(list).getByText('Pending')).toBeDefined()
     expect(screen.getByRole('button', { name: 'Collapse tasks' }).getAttribute('aria-expanded')).toBe('true')
+  })
+
+  it('falls back to the first pending task when no task is in progress', () => {
+    const pendingTodos: readonly TodoView[] = [
+      { id: 'todo-1', content: '完成第一项', status: 'pending' },
+      { id: 'todo-2', content: '完成第二项', status: 'pending' },
+      { id: 'todo-3', content: '已完成', status: 'completed' },
+    ]
+    render(<TodoList todos={pendingTodos} />)
+
+    const list = screen.getByRole('region', { name: 'Current to-do list' })
+    const toggle = screen.getByRole('button', { name: 'Expand tasks' })
+    expect(within(list).getByText('1/3 completed')).toBeDefined()
+    expect(toggle.textContent).toContain('完成第一项')
+    expect(toggle.textContent).toContain('Pending')
+
+    fireEvent.click(toggle)
+    expect(within(list).getByText('1 completed · 0 in progress · 2 pending')).toBeDefined()
   })
 })

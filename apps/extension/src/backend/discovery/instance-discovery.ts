@@ -7,8 +7,22 @@ export class CompositeInstanceDiscovery implements BackendDiscovery {
   public constructor(private readonly providers: readonly DiscoveryProvider[]) {}
 
   public async discover(signal?: AbortSignal): Promise<readonly BackendCandidate[]> {
+    return this.discoverProviders(this.providers, signal)
+  }
+
+  public async discoverFast(signal?: AbortSignal): Promise<readonly BackendCandidate[]> {
+    return this.discoverProviders(
+      this.providers.filter((provider) => provider.phase !== 'fallback'),
+      signal,
+    )
+  }
+
+  private async discoverProviders(
+    providers: readonly DiscoveryProvider[],
+    signal?: AbortSignal,
+  ): Promise<readonly BackendCandidate[]> {
     if (signal?.aborted) throw discoveryCancelled(signal.reason)
-    const results = await Promise.allSettled(this.providers.map((provider) => provider.discover(signal)))
+    const results = await Promise.allSettled(providers.map((provider) => provider.discover(signal)))
     // allSettled deliberately isolates stale optional discovery providers, but
     // it must not turn a caller cancellation into a successful empty result.
     if (signal?.aborted) throw discoveryCancelled(signal.reason)

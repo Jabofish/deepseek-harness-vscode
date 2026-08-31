@@ -1,4 +1,4 @@
-import type { ReactElement } from 'react'
+import { memo, type ReactElement } from 'react'
 import { useI18n } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
 
@@ -13,7 +13,9 @@ export interface ConversationEventToggleProps {
  * Keeping it in shell chrome prevents event visibility from becoming a
  * floating element inside the timeline's scroll and measurement system.
  */
-export function ConversationEventToggle(props: ConversationEventToggleProps): ReactElement {
+export const ConversationEventToggle = memo(function ConversationEventToggle(
+  props: ConversationEventToggleProps,
+): ReactElement {
   const { t } = useI18n()
   return (
     <button
@@ -31,4 +33,4 @@ export function ConversationEventToggle(props: ConversationEventToggleProps): Re
       </span>
     </button>
   )
-}
+})

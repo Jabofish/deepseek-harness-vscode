@@ -1,4 +1,4 @@
-import type { ReactElement } from 'react'
+import { memo, type ReactElement } from 'react'
 import type { EditorContextItem, EditorContextKind, EditorContextPreview } from '@dsh-vscode/domain'
 
 import { useI18n } from '../../i18n.js'
@@ -20,7 +20,9 @@ export interface EditorContextRailProps {
  * capture controls beside attached context instead of opening a second tall
  * menu, so important context remains visible without stealing prompt space.
  */
-export function EditorContextRail(props: EditorContextRailProps): ReactElement | null {
+export const EditorContextRail = memo(function EditorContextRail(
+  props: EditorContextRailProps,
+): ReactElement | null {
   const { t } = useI18n()
   const managedItems =
     props.onRemove === undefined || props.onPreview === undefined
@@ -54,4 +56,4 @@ export function EditorContextRail(props: EditorContextRailProps): ReactElement |
       </div>
     </div>
   )
-}
+})

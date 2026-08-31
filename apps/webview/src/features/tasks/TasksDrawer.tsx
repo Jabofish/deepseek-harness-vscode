@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactElement } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import type { TaskSummary } from '@dsh-vscode/domain'
 import { useI18n } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
@@ -39,9 +39,17 @@ export function TasksDrawer(props: TasksDrawerProps): ReactElement | null {
   }, [open])
 
   const visibleTasks = props.tasks
+  const taskCounts = useMemo(() => {
+    let liveCount = 0
+    let needsInputCount = 0
+    for (const task of visibleTasks) {
+      if (live(task)) liveCount += 1
+      if (task.needsUserAction) needsInputCount += 1
+    }
+    return { liveCount, needsInputCount }
+  }, [visibleTasks])
+  const { liveCount, needsInputCount } = taskCounts
   if (visibleTasks.length === 0 && !props.loading) return null
-  const liveCount = visibleTasks.filter(live).length
-  const needsInputCount = visibleTasks.filter((task) => task.needsUserAction).length
   const countLabel =
     needsInputCount > 0
       ? t('tasks.count.needsInput', { count: needsInputCount })

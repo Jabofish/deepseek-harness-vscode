@@ -209,34 +209,30 @@ export class DshConnectionCoordinator {
 
     if (request.mode !== 'new-isolated') {
       this.publish({ kind: 'discovering', attempt: 1 })
-      const candidates = await this.dependencies.discovery.discover(signal)
-      for (const candidate of candidates) {
-        this.throwIfAborted(signal)
-        this.publish({ kind: 'connecting', candidate })
+      const attemptedEndpoints = new Set<string>()
+      if (this.dependencies.discovery.discoverFast !== undefined) {
+        let fastCandidates: readonly BackendCandidate[] = []
         try {
-          const verified = await this.dependencies.probe.probe(candidate, signal)
-          if (verified !== undefined) return this.attach(verified, undefined, signal, generation)
+          fastCandidates = await this.dependencies.discovery.discoverFast(signal)
         } catch (error) {
           if (isAbort(error, signal)) throw cancelled(error)
-          // A bad candidate must not prevent a later, higher-confidence candidate
-          // from being tried. The probe owns the detailed redacted diagnostics.
+          // Fast discovery is an optimization. A stale registry or another
+          // optional source must not prevent the authoritative full pass.
         }
+        const fastResult = await this.tryCandidates(fastCandidates, signal, generation, attemptedEndpoints)
+        if (fastResult !== undefined) return fastResult
       }
+
+      const candidates = await this.dependencies.discovery.discover(signal)
+      const result = await this.tryCandidates(candidates, signal, generation, attemptedEndpoints)
+      if (result !== undefined) return result
       // Close the small race where another DSH appears while the first pass
       // is finishing. Only an empty first pass gets one bounded last chance;
       // failed candidates have already been fully probed.
       if (candidates.length === 0 && request.autoStart) {
         const lastChance = await this.dependencies.discovery.discover(signal)
-        for (const candidate of lastChance) {
-          this.throwIfAborted(signal)
-          this.publish({ kind: 'connecting', candidate })
-          try {
-            const verified = await this.dependencies.probe.probe(candidate, signal)
-            if (verified !== undefined) return this.attach(verified, undefined, signal, generation)
-          } catch (error) {
-            if (isAbort(error, signal)) throw cancelled(error)
-          }
-        }
+        const lastChanceResult = await this.tryCandidates(lastChance, signal, generation, attemptedEndpoints)
+        if (lastChanceResult !== undefined) return lastChanceResult
       }
     }
 
@@ -329,6 +325,30 @@ export class DshConnectionCoordinator {
       }
       throw error
     }
+  }
+
+  private async tryCandidates(
+    candidates: readonly BackendCandidate[],
+    signal: AbortSignal | undefined,
+    generation: number,
+    attemptedEndpoints: Set<string>,
+  ): Promise<ConnectionResult | undefined> {
+    for (const candidate of candidates) {
+      this.throwIfAborted(signal)
+      const key = `${candidate.endpoint.host}:${candidate.endpoint.port}`
+      if (attemptedEndpoints.has(key)) continue
+      attemptedEndpoints.add(key)
+      this.publish({ kind: 'connecting', candidate })
+      try {
+        const verified = await this.dependencies.probe.probe(candidate, signal)
+        if (verified !== undefined) return this.attach(verified, undefined, signal, generation)
+      } catch (error) {
+        if (isAbort(error, signal)) throw cancelled(error)
+        // A bad candidate must not prevent a later, higher-confidence candidate
+        // from being tried. The probe owns the detailed redacted diagnostics.
+      }
+    }
+    return undefined
   }
 
   private async attach(

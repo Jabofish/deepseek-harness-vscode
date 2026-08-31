@@ -1,4 +1,4 @@
-import type { ReactElement, ReactNode } from 'react'
+import { memo, type ReactElement, type ReactNode } from 'react'
 import type { WebviewBackendState } from '../../app/store.js'
 import { useI18n } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
@@ -16,7 +16,7 @@ export interface AppHeaderProps {
 }
 
 /** Compact utility controls placed in the conversation toolbar. */
-export function AppHeader(props: AppHeaderProps): ReactElement {
+export const AppHeader = memo(function AppHeader(props: AppHeaderProps): ReactElement {
   const { t } = useI18n()
   return (
     <header className="dsh-conversation__utility" aria-label={t('app.conversation')}>
@@ -41,4 +41,4 @@ export function AppHeader(props: AppHeaderProps): ReactElement {
       </button>
     </header>
   )
-}
+})

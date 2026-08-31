@@ -21,10 +21,9 @@ type TailEntranceAction =
  * therefore never animate a virtualized history window.
  */
 export function useTailEntrance(
-  ids: readonly string[],
+  tailId: string | undefined,
   resetKey: string | number | undefined,
 ): string | undefined {
-  const tailId = ids.at(-1)
   const [state, dispatch] = useReducer(tailEntranceReducer, {
     resetKey,
     tailId,

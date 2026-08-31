@@ -119,6 +119,173 @@ describe('AppStore subagent transport routing', () => {
     store.dispose()
   })
 
+  it('shows subagent history before advisory reads finish', async () => {
+    const queue = deferred<readonly unknown[]>()
+    const client = new FakeClient((request) => {
+      if (request.type === 'subagent.history') return answer(request)
+      if (request.type === 'session.queue.list') return queue.promise
+      return answer(request)
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+    let settled = false
+    const opening = store.openSubagent(child(), true).then(() => {
+      settled = true
+    })
+
+    await vi.waitFor(() => expect(store.activeSessionId).toBe('child'))
+    expect(store.timeline.sessionId).toBe('child')
+    expect(settled).toBe(false)
+
+    queue.resolve([])
+    await opening
+    expect(settled).toBe(true)
+    store.dispose()
+  })
+
+  it('replays buffered subagent events with the first history paint', async () => {
+    const history = deferred<unknown>()
+    const queue = deferred<readonly unknown[]>()
+    const client = new FakeClient((request) => {
+      if (request.type === 'subagent.history') return history.promise
+      if (request.type === 'session.queue.list') return queue.promise
+      return answer(request)
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+    const opening = store.openSubagent(child(), true)
+
+    await vi.waitFor(() =>
+      expect(client.requests.some((request) => request.type === 'subagent.history')).toBe(true),
+    )
+    client.emit({
+      type: 'event',
+      name: 'message.completed',
+      sequence: 1,
+      payload: { sessionId: 'child', messageId: 'assistant-1', markdown: 'buffered answer' },
+    })
+    history.resolve({ events: [], hasMore: false })
+
+    await vi.waitFor(() => expect(store.activeSessionId).toBe('child'))
+    expect(store.timeline.nodes).toContainEqual(
+      expect.objectContaining({ id: 'assistant-1', markdown: 'buffered answer' }),
+    )
+
+    queue.resolve([])
+    await opening
+    store.dispose()
+  })
+
+  it('does not notify when an unknown subagent parent is added', async () => {
+    const client = new FakeClient(answer)
+    const store = createAppStore(client as unknown as ProtocolClient)
+    const listener = vi.fn()
+    store.subscribe(listener)
+
+    client.emit({
+      type: 'event',
+      name: 'session.added',
+      sequence: 1,
+      payload: {
+        sessionId: 'child',
+        parentSessionId: 'unknown-parent',
+        origin: 'subagent',
+      },
+    })
+    await new Promise((resolve) => window.setTimeout(resolve, 24))
+
+    expect(listener).not.toHaveBeenCalled()
+    expect(store.subagents.entries).toHaveLength(0)
+    store.dispose()
+  })
+
+  it('preserves identity for equivalent transient queue, goal, todo, and job snapshots', async () => {
+    const client = new FakeClient(answer)
+    const store = createAppStore(client as unknown as ProtocolClient)
+    await store.openSubagent(child(), true)
+    const listener = vi.fn()
+    store.subscribe(listener)
+
+    const queueItem = {
+      id: 'queue-1',
+      sessionId: 'child',
+      text: 'queued prompt',
+      attachments: [{ uri: 'attachment-1', name: 'notes.txt', mimeType: 'text/plain' }],
+      mode: 'queue' as const,
+      createdAt: '2026-08-31T00:00:00.000Z',
+      rpcId: 'rpc-1',
+    }
+    const goal = { id: 'goal-1', title: 'Ship it', status: 'in-progress' as const }
+    const todo = { id: 'todo-1', content: 'Verify it', status: 'pending' as const }
+    const job = {
+      id: 'job-1',
+      kind: 'shell-1',
+      label: 'Build',
+      status: 'running' as const,
+      startedAt: 1,
+    }
+    client.emit({
+      type: 'event',
+      name: 'queue.updated',
+      sequence: 1,
+      payload: { sessionId: 'child', items: [queueItem] },
+    })
+    client.emit({
+      type: 'event',
+      name: 'goal.updated',
+      sequence: 2,
+      payload: { sessionId: 'child', goals: [goal] },
+    })
+    client.emit({
+      type: 'event',
+      name: 'todo.updated',
+      sequence: 3,
+      payload: { sessionId: 'child', todos: [todo] },
+    })
+    client.emit({
+      type: 'event',
+      name: 'jobs.updated',
+      sequence: 4,
+      payload: { sessionId: 'child', jobs: [job] },
+    })
+    await new Promise((resolve) => window.setTimeout(resolve, 24))
+    listener.mockClear()
+    const queueSnapshot = store.queue
+    const goalSnapshot = store.goals
+    const todoSnapshot = store.todos
+    const jobSnapshot = store.jobs
+
+    client.emit({
+      type: 'event',
+      name: 'queue.updated',
+      sequence: 5,
+      payload: { sessionId: 'child', items: [queueItem] },
+    })
+    client.emit({
+      type: 'event',
+      name: 'goal.updated',
+      sequence: 6,
+      payload: { sessionId: 'child', goals: [goal] },
+    })
+    client.emit({
+      type: 'event',
+      name: 'todo.updated',
+      sequence: 7,
+      payload: { sessionId: 'child', todos: [todo] },
+    })
+    client.emit({
+      type: 'event',
+      name: 'jobs.updated',
+      sequence: 8,
+      payload: { sessionId: 'child', jobs: [job] },
+    })
+    await new Promise((resolve) => window.setTimeout(resolve, 24))
+
+    expect(store.queue).toBe(queueSnapshot)
+    expect(store.goals).toBe(goalSnapshot)
+    expect(store.todos).toBe(todoSnapshot)
+    expect(store.jobs).toBe(jobSnapshot)
+    store.dispose()
+  })
+
   it('keeps an offline continuable child interruptible while refusing follow-up', async () => {
     const client = new FakeClient(answer)
     const store = createAppStore(client as unknown as ProtocolClient)
@@ -424,6 +591,22 @@ describe('AppStore subagent transport routing', () => {
 
     expect(store.queue).toEqual([])
     expect(store.jobs).toEqual([])
+    const queueAfterReset = store.queue
+    const jobsAfterReset = store.jobs
+    const permissionsAfterReset = store.permissions
+    const questionsAfterReset = store.questions
+
+    client.emit({
+      type: 'event',
+      name: 'session.subscribed',
+      sequence: 12,
+      payload: { sessionId: 'parent', lastSequence: 21 },
+    })
+
+    expect(store.queue).toBe(queueAfterReset)
+    expect(store.jobs).toBe(jobsAfterReset)
+    expect(store.permissions).toBe(permissionsAfterReset)
+    expect(store.questions).toBe(questionsAfterReset)
     store.dispose()
   })
 })

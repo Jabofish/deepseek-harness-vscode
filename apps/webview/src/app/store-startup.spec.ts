@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { HostMessage, WebviewRequest } from '@dsh-vscode/webview-protocol'
 import type { ProtocolClient } from './protocol-client.js'
 import { createAppStore } from './store.js'
@@ -113,6 +113,278 @@ function startupResponse(request: WebviewRequest): unknown {
 describe('AppStore startup session restoration', () => {
   afterEach(() => document.body.replaceChildren())
 
+  it('starts the independent settings read while the startup catalog is still loading', async () => {
+    let releaseSessions: (() => void) | undefined
+    const sessionsReady = new Promise<unknown>((resolve) => {
+      releaseSessions = () => resolve({ items: [activeSession] })
+    })
+    let settingsReadStarted = false
+    const client = new StartupClient((request) => {
+      if (request.type === 'session.list') return sessionsReady
+      if (request.type === 'settings.read') {
+        settingsReadStarted = true
+        return undefined
+      }
+      return startupResponse(request)
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+
+    const initialization = store.initialize()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(settingsReadStarted).toBe(true)
+    releaseSessions?.()
+    await initialization
+    store.dispose()
+  })
+
+  it('opens the remembered session before the busy-enter settings read finishes', async () => {
+    let releaseSettings: ((value: unknown) => void) | undefined
+    const settings = new Promise<unknown>((resolve) => {
+      releaseSettings = resolve
+    })
+    const client = new StartupClient((request) => {
+      if (request.type === 'settings.read') return settings
+      return startupResponse(request)
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+    const initialization = store.initialize()
+
+    await vi.waitFor(() =>
+      expect(client.requests.some((request) => request.type === 'session.open')).toBe(true),
+    )
+    expect(store.activeSessionId).toBe('session-active')
+
+    releaseSettings?.(undefined)
+    await initialization
+    store.dispose()
+  })
+
+  it('opens the remembered session before the startup command directory finishes', async () => {
+    let releaseCommands: ((value: readonly unknown[]) => void) | undefined
+    let releaseSkills: ((value: readonly unknown[]) => void) | undefined
+    const commands = new Promise<readonly unknown[]>((resolve) => {
+      releaseCommands = resolve
+    })
+    const skills = new Promise<readonly unknown[]>((resolve) => {
+      releaseSkills = resolve
+    })
+    const client = new StartupClient((request) => {
+      if (request.type === 'command.list') return commands
+      if (request.type === 'skill.list') return skills
+      return startupResponse(request)
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+    let settled = false
+    const initialization = store.initialize().then(() => {
+      settled = true
+    })
+
+    await vi.waitFor(() =>
+      expect(client.requests.some((request) => request.type === 'session.open')).toBe(true),
+    )
+    expect(store.activeSessionId).toBe('session-active')
+    expect(settled).toBe(true)
+
+    releaseCommands?.([])
+    releaseSkills?.([])
+    await initialization
+    store.dispose()
+  })
+
+  it('coalesces a burst of host state updates without losing the final state', async () => {
+    const client = new StartupClient()
+    const store = createAppStore(client as unknown as ProtocolClient)
+    const listener = vi.fn()
+    store.subscribe(listener)
+
+    client.emit({
+      type: 'event',
+      name: 'connection.snapshot',
+      sequence: 1,
+      payload: { kind: 'discovering' },
+    })
+    client.emit({
+      type: 'event',
+      name: 'connection.snapshot',
+      sequence: 2,
+      payload: { kind: 'connecting' },
+    })
+
+    expect(store.backend).toEqual({ kind: 'connecting' })
+    expect(listener).not.toHaveBeenCalled()
+    await new Promise((resolve) => window.setTimeout(resolve, 24))
+    expect(listener).toHaveBeenCalledTimes(1)
+    store.dispose()
+  })
+
+  it('does not wake subscribers for conversation events from an inactive session', async () => {
+    const client = new StartupClient()
+    const store = createAppStore(client as unknown as ProtocolClient)
+    const listener = vi.fn()
+    store.subscribe(listener)
+
+    client.emit({
+      type: 'event',
+      name: 'message.delta',
+      sequence: 1,
+      payload: { sessionId: 'session-not-active', messageId: 'assistant-1', delta: 'ignored' },
+    })
+    client.emit({
+      type: 'event',
+      name: 'message.user',
+      sequence: 2,
+      payload: { sessionId: 'session-not-active', messageId: 'user-1', markdown: 'ignored' },
+    })
+
+    await new Promise((resolve) => window.setTimeout(resolve, 24))
+    expect(listener).not.toHaveBeenCalled()
+    expect(store.timeline.nodes).toHaveLength(0)
+    store.dispose()
+  })
+
+  it('does not wake subscribers for metadata from an inactive session', async () => {
+    const client = new StartupClient()
+    const store = createAppStore(client as unknown as ProtocolClient)
+    await store.initialize()
+    await new Promise((resolve) => window.setTimeout(resolve, 24))
+    const listener = vi.fn()
+    store.subscribe(listener)
+
+    client.emit({
+      type: 'event',
+      name: 'session.status',
+      sequence: 1,
+      payload: { sessionId: 'session-not-active', status: 'running' },
+    })
+    client.emit({
+      type: 'event',
+      name: 'session.activity',
+      sequence: 2,
+      payload: { sessionId: 'session-not-active', updatedAt: Date.parse('2026-08-21T08:05:00.000Z') },
+    })
+    client.emit({
+      type: 'event',
+      name: 'session.title',
+      sequence: 3,
+      payload: { sessionId: 'session-not-active', title: 'Not loaded' },
+    })
+
+    await new Promise((resolve) => window.setTimeout(resolve, 24))
+    expect(listener).not.toHaveBeenCalled()
+    store.dispose()
+  })
+
+  it('does not notify subscribers when a guarded refresh keeps the same state object', async () => {
+    const client = new StartupClient()
+    const store = createAppStore(client as unknown as ProtocolClient)
+    const listener = vi.fn()
+    store.subscribe(listener)
+
+    await store.refreshCommands('session-not-active')
+    await new Promise((resolve) => window.setTimeout(resolve, 24))
+
+    expect(listener).not.toHaveBeenCalled()
+    store.dispose()
+  })
+
+  it('does not notify subscribers for an unchanged session projection value', async () => {
+    const client = new StartupClient()
+    const store = createAppStore(client as unknown as ProtocolClient)
+
+    const value = { turns: 1 }
+    client.emit({
+      type: 'event',
+      name: 'session.projection',
+      sequence: 1,
+      payload: { sessionId: 'session-active', key: 'sessionStats', value },
+    })
+    await new Promise((resolve) => window.setTimeout(resolve, 24))
+    const projection = store.projections['session-active']
+    expect(projection).toBeDefined()
+    expect(projection?.sessionStats).toBe(value)
+    const listener = vi.fn()
+    store.subscribe(listener)
+    await new Promise((resolve) => window.setTimeout(resolve, 24))
+    listener.mockClear()
+
+    client.emit({
+      type: 'event',
+      name: 'session.projection',
+      sequence: 2,
+      payload: { sessionId: 'session-active', key: 'sessionStats', value },
+    })
+    await new Promise((resolve) => window.setTimeout(resolve, 24))
+
+    expect(store.projections['session-active']).toBe(projection)
+    expect(listener).not.toHaveBeenCalled()
+    store.dispose()
+  })
+
+  it('does not notify when a projection title repeats the current session title', async () => {
+    const client = new StartupClient()
+    const store = createAppStore(client as unknown as ProtocolClient)
+    await store.initialize()
+    await new Promise((resolve) => window.setTimeout(resolve, 24))
+    const listener = vi.fn()
+    store.subscribe(listener)
+
+    client.emit({
+      type: 'event',
+      name: 'session.projection',
+      sequence: 1,
+      payload: { sessionId: 'session-active', key: 'title', value: activeSession.title },
+    })
+    await new Promise((resolve) => window.setTimeout(resolve, 24))
+    listener.mockClear()
+    await new Promise((resolve) => window.setTimeout(resolve, 24))
+    const projection = store.projections['session-active']
+
+    client.emit({
+      type: 'event',
+      name: 'session.projection',
+      sequence: 2,
+      payload: { sessionId: 'session-active', key: 'title', value: activeSession.title },
+    })
+    await new Promise((resolve) => window.setTimeout(resolve, 24))
+
+    expect(store.projections['session-active']).toBe(projection)
+    expect(listener).not.toHaveBeenCalled()
+    store.dispose()
+  })
+
+  it('flushes live history once with the coalesced host notification', async () => {
+    const client = new StartupClient()
+    const store = createAppStore(client as unknown as ProtocolClient)
+    await store.initialize()
+    await new Promise((resolve) => window.setTimeout(resolve, 24))
+
+    const listener = vi.fn()
+    store.subscribe(listener)
+    client.emit({
+      type: 'event',
+      name: 'message.delta',
+      sequence: 1,
+      payload: { sessionId: 'session-active', sequence: 1, messageId: 'assistant-1', delta: 'a' },
+    })
+    client.emit({
+      type: 'event',
+      name: 'message.delta',
+      sequence: 2,
+      payload: { sessionId: 'session-active', sequence: 2, messageId: 'assistant-1', delta: 'b' },
+    })
+
+    expect(store.timeline.nodes).toContainEqual(
+      expect.objectContaining({ id: 'assistant-1', markdown: 'ab', streaming: true }),
+    )
+    expect(store.history).toHaveLength(0)
+    await new Promise((resolve) => window.setTimeout(resolve, 24))
+    expect(store.history.map((entry) => entry.sequence)).toEqual([1, 2])
+    expect(listener).toHaveBeenCalledTimes(1)
+    store.dispose()
+  })
+
   it('retains Host-emitted DSH update phases for the settings progress surface', () => {
     const client = new StartupClient()
     const store = createAppStore(client as unknown as ProtocolClient)
@@ -155,6 +427,142 @@ describe('AppStore startup session restoration', () => {
     store.dispose()
   })
 
+  it('keeps sorted history on the zero-copy hydration path and reorders an out-of-order page', async () => {
+    const client = new StartupClient((request) => {
+      if (request.type === 'session.open')
+        return {
+          ...activeSession,
+          history: [
+            {
+              sequence: 2,
+              event: {
+                type: 'message.user',
+                sessionId: activeSession.id,
+                messageId: 'user-2',
+                markdown: 'second',
+              },
+            },
+            {
+              sequence: 1,
+              event: {
+                type: 'message.user',
+                sessionId: activeSession.id,
+                messageId: 'user-1',
+                markdown: 'first',
+              },
+            },
+          ],
+          permissionPresets: ['workspace-write'],
+          configuration: {
+            preset: 'standard',
+            toolMode: 'native',
+            permissionPreset: 'workspace-write',
+            planMode: false,
+            model: { providerId: 'deepseek', modelId: 'deepseek-chat' },
+          },
+        }
+      return startupResponse(request)
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+
+    await store.openSession(activeSession.id)
+
+    expect(store.timeline.nodes.map((node) => node.id)).toEqual(['user-1', 'user-2'])
+    expect(store.history.map((entry) => entry.sequence)).toEqual([2, 1])
+    store.dispose()
+  })
+
+  it('publishes the session history before advisory open reads finish', async () => {
+    let releaseQueue: ((value: readonly unknown[]) => void) | undefined
+    const queue = new Promise<readonly unknown[]>((resolve) => {
+      releaseQueue = resolve
+    })
+    const client = new StartupClient((request) => {
+      if (request.type === 'session.queue.list') return queue
+      return startupResponse(request)
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+    let settled = false
+    const opening = store.openSession('session-active').then(() => {
+      settled = true
+    })
+
+    await vi.waitFor(() => expect(store.activeSessionId).toBe('session-active'))
+    expect(store.timeline.sessionId).toBe('session-active')
+    expect(settled).toBe(false)
+
+    releaseQueue?.([])
+    await opening
+    expect(settled).toBe(true)
+    store.dispose()
+  })
+
+  it('completes session open before command and session-model directories finish', async () => {
+    let releaseCommands: ((value: readonly unknown[]) => void) | undefined
+    let releaseSkills: ((value: readonly unknown[]) => void) | undefined
+    let releaseSessionModels: ((value: { readonly models: readonly unknown[] }) => void) | undefined
+    const commands = new Promise<readonly unknown[]>((resolve) => {
+      releaseCommands = resolve
+    })
+    const skills = new Promise<readonly unknown[]>((resolve) => {
+      releaseSkills = resolve
+    })
+    const sessionModels = new Promise<{ readonly models: readonly unknown[] }>((resolve) => {
+      releaseSessionModels = resolve
+    })
+    const client = new StartupClient((request) => {
+      if (request.type === 'command.list') return commands
+      if (request.type === 'skill.list') return skills
+      if (request.type === 'models.session.list') return sessionModels
+      return startupResponse(request)
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+    let settled = false
+    const opening = store.openSession('session-active').then(() => {
+      settled = true
+    })
+
+    await vi.waitFor(() => expect(store.activeSessionId).toBe('session-active'))
+    expect(settled).toBe(true)
+    expect(client.requests.some((request) => request.type === 'command.list')).toBe(true)
+    expect(client.requests.some((request) => request.type === 'skill.list')).toBe(true)
+    expect(client.requests.some((request) => request.type === 'models.session.list')).toBe(true)
+
+    releaseCommands?.([])
+    releaseSkills?.([])
+    releaseSessionModels?.({ models: [] })
+    await opening
+    await vi.waitFor(() => expect(store.commands.some((command) => command.name === 'model')).toBe(true))
+    expect(store.sessionModels).toEqual([])
+    store.dispose()
+  })
+
+  it('opens the remembered session before global catalogs finish loading', async () => {
+    let releaseProviders: ((value: readonly unknown[]) => void) | undefined
+    const providers = new Promise<readonly unknown[]>((resolve) => {
+      releaseProviders = resolve
+    })
+    const client = new StartupClient((request) => {
+      if (request.type === 'providers.list') return providers
+      return startupResponse(request)
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+    let settled = false
+    const initialization = store.initialize().then(() => {
+      settled = true
+    })
+
+    await vi.waitFor(() => expect(store.activeSessionId).toBe('session-active'))
+    expect(client.requests.some((request) => request.type === 'providers.list')).toBe(true)
+    expect(settled).toBe(true)
+    expect(store.timeline.sessionId).toBe('session-active')
+
+    releaseProviders?.([])
+    await initialization
+    expect(settled).toBe(true)
+    store.dispose()
+  })
+
   it('keeps the last workspace snapshot when a refresh temporarily fails', async () => {
     let failWorkspaceList = false
     const client = new StartupClient((request) => {
@@ -187,6 +595,28 @@ describe('AppStore startup session restoration', () => {
     await store.refreshSessions()
 
     expect(store.sessions).toEqual([activeSession])
+    store.dispose()
+  })
+
+  it('reuses unchanged session and workspace snapshots across refreshes', async () => {
+    const client = new StartupClient((request) => {
+      if (request.type === 'workspace.list') return { items: [workspace] }
+      return startupResponse(request)
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+
+    await store.refreshSessions()
+    const sessions = store.sessions
+    const workspaces = store.workspaces
+    await new Promise((resolve) => window.setTimeout(resolve, 24))
+    const listener = vi.fn()
+    store.subscribe(listener)
+    await store.refreshSessions()
+    await new Promise((resolve) => window.setTimeout(resolve, 24))
+
+    expect(store.sessions).toBe(sessions)
+    expect(store.workspaces).toBe(workspaces)
+    expect(listener).not.toHaveBeenCalled()
     store.dispose()
   })
 
@@ -384,6 +814,37 @@ describe('AppStore startup session restoration', () => {
       ).length
       expect(after).toBe(before + 2)
     }
+    store.dispose()
+  })
+
+  it('does not notify when the model catalog refresh is unchanged', async () => {
+    const provider = { id: 'deepseek', name: 'DeepSeek', kind: 'builtin', configurable: false, fields: [] }
+    const model = {
+      id: 'deepseek-chat',
+      providerId: 'deepseek',
+      label: 'DeepSeek Chat',
+      supportsReasoning: false,
+    }
+    const client = new StartupClient((request) => {
+      if (request.type === 'providers.list') return [provider]
+      if (request.type === 'models.list') return [model]
+      return startupResponse(request)
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+
+    await store.refreshModelCatalog()
+    await new Promise((resolve) => window.setTimeout(resolve, 24))
+    const providers = store.providers
+    const models = store.models
+    const listener = vi.fn()
+    store.subscribe(listener)
+
+    await store.refreshModelCatalog()
+    await new Promise((resolve) => window.setTimeout(resolve, 24))
+
+    expect(store.providers).toBe(providers)
+    expect(store.models).toBe(models)
+    expect(listener).not.toHaveBeenCalled()
     store.dispose()
   })
 })

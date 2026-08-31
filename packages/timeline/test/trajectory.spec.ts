@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { TokenUsage } from '@dsh-vscode/domain'
 
 import type { TimelineNode } from '../src/nodes.js'
-import { buildTrajectory, searchTrajectoryRecords } from '../src/trajectory.js'
+import { buildTrajectory, createTrajectoryProjector, searchTrajectoryRecords } from '../src/trajectory.js'
 
 const usage: TokenUsage = {
   inputTokens: 120,
@@ -173,6 +173,27 @@ describe('buildTrajectory', () => {
     const projection = buildTrajectory(nodes)
     const texts = projection.sections.flatMap((section) => section.records).map((record) => record.text)
     expect(texts.some((text) => text.includes('not part of the ledger'))).toBe(false)
+  })
+
+  it('matches full folding while reusing a stable prefix for streaming updates', () => {
+    const project = createTrajectoryProjector()
+    const firstNodes = nodes
+      .slice(0, 2)
+      .map((node, index) =>
+        index === 1 && node.kind === 'assistant-message' ? { ...node, streaming: true } : node,
+      )
+    const first = project(firstNodes)
+    const nextNodes = nodes.map((node, index) =>
+      index === 1 && node.kind === 'assistant-message'
+        ? { ...node, markdown: `${node.markdown} Updated`, streaming: true }
+        : node,
+    )
+
+    const next = project(nextNodes, 1, firstNodes)
+
+    expect(next).toEqual(buildTrajectory(nextNodes))
+    expect(next.recordCount).toBe(7)
+    expect(first.sections[0]?.records[0]).toBe(next.sections[0]?.records[0])
   })
 })
 

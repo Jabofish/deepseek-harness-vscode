@@ -1,4 +1,4 @@
-import type { ReactElement } from 'react'
+import { useMemo, type ReactElement } from 'react'
 import type { ReferenceCandidate } from '../../app/store.js'
 import { useI18n } from '../../i18n.js'
 
@@ -19,6 +19,15 @@ export interface ReferencePaletteProps {
  * projected by the Extension Host; the Webview never searches the filesystem. */
 export function ReferencePalette(props: ReferencePaletteProps): ReactElement {
   const { t } = useI18n()
+  const groupedCandidates = useMemo(() => {
+    const files: ReferenceCandidate[] = []
+    const sessions: ReferenceCandidate[] = []
+    for (const candidate of props.candidates) {
+      if (candidate.kind === 'session') sessions.push(candidate)
+      else files.push(candidate)
+    }
+    return { files, sessions }
+  }, [props.candidates])
   return (
     <section className="dsh-command-palette dsh-reference-palette" id={REFERENCE_MENU_ID}>
       {props.loading ? (
@@ -32,11 +41,11 @@ export function ReferencePalette(props: ReferencePaletteProps): ReactElement {
             return [
               {
                 label: t('composer.referencesFiles'),
-                candidates: props.candidates.filter((candidate) => candidate.kind !== 'session'),
+                candidates: groupedCandidates.files,
               },
               {
                 label: t('composer.referencesSessions'),
-                candidates: props.candidates.filter((candidate) => candidate.kind === 'session'),
+                candidates: groupedCandidates.sessions,
               },
             ].flatMap((group) => {
               if (group.candidates.length === 0) return []

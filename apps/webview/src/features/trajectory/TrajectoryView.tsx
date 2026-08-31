@@ -1,6 +1,10 @@
-import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import type { TimelineNode } from '@dsh-vscode/timeline'
-import { buildTrajectory, searchTrajectoryRecords, type TrajectoryRecord } from '@dsh-vscode/timeline'
+import {
+  createTrajectoryProjector,
+  searchTrajectoryRecords,
+  type TrajectoryRecord,
+} from '@dsh-vscode/timeline'
 import { ScrollToLatestButton, useScrollFollow } from '../../components/common/index.js'
 import { useI18n, type Translate } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
@@ -8,6 +12,8 @@ import { Icon } from '../../ui/Icon.js'
 export interface TrajectoryViewProps {
   readonly sessionId: string | undefined
   readonly nodes: readonly TimelineNode[]
+  readonly nodeChangeStart?: number
+  readonly nodeChangeBase?: readonly TimelineNode[]
   readonly streaming: boolean
 }
 
@@ -19,20 +25,31 @@ export interface TrajectoryViewProps {
  * live state instead of a fabricated duration. The ledger follows the tail
  * while streaming and suspends following once the user scrolls up.
  */
-export function TrajectoryView(props: TrajectoryViewProps): ReactElement {
+export const TrajectoryView = memo(function TrajectoryView(props: TrajectoryViewProps): ReactElement {
   const { t } = useI18n()
   const previousSessionRef = useRef(props.sessionId)
   const [query, setQuery] = useState('')
   const [selectedId, setSelectedId] = useState<string | undefined>(undefined)
+  const selectRecord = useCallback((recordId: string): void => setSelectedId(recordId), [])
+  const trajectoryProjectorState = useMemo(
+    () => ({ sessionId: props.sessionId, project: createTrajectoryProjector() }),
+    [props.sessionId],
+  )
 
-  const projection = useMemo(() => buildTrajectory(props.nodes), [props.nodes])
+  const projection = useMemo(
+    () => trajectoryProjectorState.project(props.nodes, props.nodeChangeStart, props.nodeChangeBase),
+    [props.nodeChangeBase, props.nodeChangeStart, props.nodes, trajectoryProjectorState],
+  )
   const matches = useMemo(() => searchTrajectoryRecords(projection, query), [projection, query])
   const searching = query.trim() !== ''
-  const selected = useMemo(
-    () =>
-      projection.sections.flatMap((section) => section.records).find((record) => record.id === selectedId),
-    [projection, selectedId],
-  )
+  const selected = useMemo(() => {
+    if (selectedId === undefined) return undefined
+    for (const section of projection.sections) {
+      const record = section.records.find((candidate) => candidate.id === selectedId)
+      if (record !== undefined) return record
+    }
+    return undefined
+  }, [projection, selectedId])
 
   const lastRecord = projection.sections.at(-1)?.records.at(-1)
   const tailSignature = lastRecord === undefined ? '' : `${lastRecord.id}:${lastRecord.text.length}`
@@ -97,7 +114,7 @@ export function TrajectoryView(props: TrajectoryViewProps): ReactElement {
                     key={record.id}
                     record={record}
                     selected={selectedId === record.id}
-                    onSelect={() => setSelectedId(record.id)}
+                    onSelect={selectRecord}
                     t={t}
                   />
                 ))}
@@ -127,7 +144,7 @@ export function TrajectoryView(props: TrajectoryViewProps): ReactElement {
                       key={record.id}
                       record={record}
                       selected={selectedId === record.id}
-                      onSelect={() => setSelectedId(record.id)}
+                      onSelect={selectRecord}
                       t={t}
                     />
                   ))}
@@ -148,12 +165,12 @@ export function TrajectoryView(props: TrajectoryViewProps): ReactElement {
       )}
     </div>
   )
-}
+})
 
-function TrajectoryRow(props: {
+const TrajectoryRow = memo(function TrajectoryRow(props: {
   readonly record: TrajectoryRecord
   readonly selected: boolean
-  readonly onSelect: () => void
+  readonly onSelect: (recordId: string) => void
   readonly t: Translate
 }): ReactElement {
   const { record, t } = props
@@ -164,7 +181,7 @@ function TrajectoryRow(props: {
         type="button"
         aria-pressed={props.selected}
         title={record.text}
-        onClick={props.onSelect}
+        onClick={() => props.onSelect(record.id)}
       >
         <span
           className={`dsh-trajectory__marker dsh-trajectory__marker--${record.kind}`}
@@ -183,7 +200,7 @@ function TrajectoryRow(props: {
       </button>
     </li>
   )
-}
+})
 
 function TrajectoryInspector(props: {
   readonly record: TrajectoryRecord

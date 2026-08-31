@@ -1,4 +1,4 @@
-import type { ReactElement } from 'react'
+import { memo, type ReactElement } from 'react'
 import { ContentFlow } from '../../components/common/index.js'
 import { Icon } from '../../ui/Icon.js'
 import type { Translate } from '../../i18n.js'
@@ -17,7 +17,9 @@ export interface ReasoningDisclosureProps {
  * expansion set, while this component owns the disclosure semantics, preview
  * policy, and compact visual contract.
  */
-export function ReasoningDisclosure(props: ReasoningDisclosureProps): ReactElement | null {
+export const ReasoningDisclosure = memo(function ReasoningDisclosure(
+  props: ReasoningDisclosureProps,
+): ReactElement | null {
   const content = props.markdown.trim()
   if (content === '') return null
 
@@ -76,11 +78,42 @@ export function ReasoningDisclosure(props: ReasoningDisclosureProps): ReactEleme
       </div>
     </section>
   )
-}
+})
 
 function latestReasoningLines(markdown: string): string {
-  const lines = markdown.replace(/\r\n?/gu, '\n').split('\n')
-  while (lines.length > 0 && lines[lines.length - 1]?.trim() === '') lines.pop()
-  const preview = lines.slice(-3).join('\n')
+  let end = markdown.length
+  while (end > 0) {
+    const breakStart = previousLineBreakStart(markdown, end)
+    const lineStart = breakStart < 0 ? 0 : lineStartAfterBreak(markdown, breakStart)
+    if (markdown.slice(lineStart, end).trim() !== '') break
+    end = breakStart < 0 ? 0 : breakStart
+  }
+  if (end === 0) return ''
+
+  let start = 0
+  let cursor = end
+  for (let line = 0; line < 3; line += 1) {
+    const breakStart = previousLineBreakStart(markdown, cursor)
+    if (breakStart < 0) {
+      start = 0
+      break
+    }
+    start = lineStartAfterBreak(markdown, breakStart)
+    cursor = breakStart
+  }
+
+  const preview = markdown.slice(start, end).replace(/\r\n?/gu, '\n')
   return preview.trim() === '' ? '' : preview
+}
+
+function previousLineBreakStart(value: string, before: number): number {
+  const lineFeed = value.lastIndexOf('\n', before - 1)
+  const carriageReturn = value.lastIndexOf('\r', before - 1)
+  const index = Math.max(lineFeed, carriageReturn)
+  if (index < 0) return -1
+  return value[index] === '\n' && value[index - 1] === '\r' ? index - 1 : index
+}
+
+function lineStartAfterBreak(value: string, breakStart: number): number {
+  return value[breakStart] === '\r' && value[breakStart + 1] === '\n' ? breakStart + 2 : breakStart + 1
 }

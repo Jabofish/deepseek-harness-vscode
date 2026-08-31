@@ -152,8 +152,18 @@ describe('MarkdownContent', () => {
     expect(container.querySelectorAll('.shiki .line').length).toBeGreaterThan(0)
   })
 
+  it('defers copy controls until a streaming message reaches its terminal render', async () => {
+    const markdown = ['```ts', 'const value = 1', '```'].join('\n')
+    const view = render(<MarkdownContent markdown={markdown} streaming />)
+
+    expect(view.container.querySelector('.dsh-markdown__copy-region')).toBeNull()
+
+    view.rerender(<MarkdownContent markdown={markdown} />)
+    expect(await screen.findByRole('button', { name: 'Copy' })).toBeDefined()
+  })
+
   it('keeps completed streaming blocks in a frozen region', () => {
-    const { container } = render(
+    const { container, rerender } = render(
       <MarkdownContent streaming markdown={'First paragraph.\n\nSecond paragraph is still growing'} />,
     )
 
@@ -163,5 +173,22 @@ describe('MarkdownContent', () => {
     expect(container.querySelector('[data-dsh-markdown-tail="true"]')?.textContent).toContain(
       'Second paragraph',
     )
+
+    rerender(
+      <MarkdownContent streaming markdown={'First paragraph.\n\nSecond paragraph is still growing now'} />,
+    )
+    expect(container.querySelector('[data-dsh-markdown-frozen="true"]')?.textContent).toContain(
+      'First paragraph.',
+    )
+    expect(container.querySelector('[data-dsh-markdown-tail="true"]')?.textContent).toContain('growing now')
+  })
+
+  it('eventually catches up long streaming Markdown after deferred renders', async () => {
+    const initial = 'word '.repeat(1_000).trim()
+    const view = render(<MarkdownContent streaming markdown={initial} />)
+
+    view.rerender(<MarkdownContent streaming markdown={`${initial} latest`} />)
+
+    await waitFor(() => expect(view.container.textContent).toContain('latest'))
   })
 })

@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactElement } from 'react'
+import { memo, useRef, useState, type ReactElement } from 'react'
 import type { GoalView } from '@dsh-vscode/domain'
 import { useI18n } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
@@ -11,7 +11,7 @@ export interface GoalBarProps {
 
 /** Docked live-goal strip. Creation remains the host `/goal` command; this
  * surface owns only edit, pause/resume and clear mutations. */
-export function GoalBar(props: GoalBarProps): ReactElement | null {
+export const GoalBar = memo(function GoalBar(props: GoalBarProps): ReactElement | null {
   const { t } = useI18n()
   const goal = props.goals.find((entry) => entry.status !== 'completed')
   const [editingGoalId, setEditingGoalId] = useState<string | undefined>()
@@ -169,4 +169,4 @@ export function GoalBar(props: GoalBarProps): ReactElement | null {
       )}
     </div>
   )
-}
+})

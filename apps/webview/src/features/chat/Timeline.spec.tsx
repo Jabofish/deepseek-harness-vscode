@@ -52,6 +52,133 @@ describe('Timeline', () => {
     expect(screen.queryByRole('button', { name: 'Jump to latest' })).toBeNull()
   })
 
+  it('shows tool activity when a live tool is present in the transcript tail', () => {
+    render(
+      <Timeline
+        sessionId="session-1"
+        nodes={[
+          { kind: 'user-message', id: 'user-1', markdown: 'run it' },
+          {
+            kind: 'tool',
+            id: 'tool-1',
+            tool: {
+              id: 'tool-1',
+              name: 'shell',
+              category: 'execution',
+              title: 'Shell',
+              status: 'running',
+              metadata: {},
+            },
+          },
+        ]}
+        streaming
+        running
+      />,
+    )
+
+    expect(screen.getByText('Using a tool…')).toBeDefined()
+  })
+
+  it('refreshes incremental activity and event facts at the hinted raw boundary', () => {
+    const runningTool: TimelineNode = {
+      kind: 'tool',
+      id: 'tool-1',
+      tool: {
+        id: 'tool-1',
+        name: 'shell',
+        category: 'execution',
+        title: 'Shell',
+        status: 'running',
+        metadata: {},
+      },
+    }
+    const completedTool: TimelineNode = {
+      ...runningTool,
+      tool: { ...runningTool.tool, status: 'completed' },
+    }
+    const initialNodes: readonly TimelineNode[] = [runningTool]
+    const completedNodes: readonly TimelineNode[] = [completedTool]
+    const eventNodes: readonly TimelineNode[] = [
+      { kind: 'event', id: 'event-1', name: 'connection.snapshot', payload: { ok: true } },
+    ]
+    const { container, rerender } = render(
+      <Timeline sessionId="session-1" nodes={initialNodes} streaming running showDshEvents={false} />,
+    )
+
+    expect(screen.getByText('Using a tool…')).toBeDefined()
+
+    rerender(
+      <Timeline
+        sessionId="session-1"
+        nodes={completedNodes}
+        nodeChangeStart={0}
+        nodeChangeBase={initialNodes}
+        streaming
+        running
+        showDshEvents={false}
+      />,
+    )
+    expect(screen.queryByText('Using a tool…')).toBeNull()
+
+    rerender(
+      <Timeline
+        sessionId="session-1"
+        nodes={eventNodes}
+        nodeChangeStart={0}
+        nodeChangeBase={completedNodes}
+        streaming={false}
+        showDshEvents={false}
+      />,
+    )
+    expect(container.querySelector('.dsh-timeline__empty')).toBeNull()
+
+    rerender(
+      <Timeline
+        sessionId="session-1"
+        nodes={[]}
+        nodeChangeStart={0}
+        nodeChangeBase={eventNodes}
+        streaming={false}
+        showDshEvents={false}
+      />,
+    )
+    expect(container.querySelector('.dsh-timeline__empty')).not.toBeNull()
+  })
+
+  it('drops count-based virtualization when the hinted history window shrinks', () => {
+    const initialNodes: readonly TimelineNode[] = Array.from({ length: 24 }, (_, index) => ({
+      kind: 'user-message' as const,
+      id: `user-${index}`,
+      markdown: `message ${index}`,
+    }))
+    const shortenedNodes = initialNodes.slice(0, 1)
+    const { container, rerender } = render(
+      <Timeline sessionId="session-1" nodes={initialNodes} streaming={false} />,
+    )
+
+    expect(
+      container
+        .querySelector('.dsh-timeline__canvas')
+        ?.classList.contains('dsh-timeline__canvas--virtualized'),
+    ).toBe(true)
+
+    rerender(
+      <Timeline
+        sessionId="session-1"
+        nodes={shortenedNodes}
+        nodeChangeStart={1}
+        nodeChangeBase={initialNodes}
+        streaming={false}
+      />,
+    )
+
+    expect(
+      container
+        .querySelector('.dsh-timeline__canvas')
+        ?.classList.contains('dsh-timeline__canvas--virtualized'),
+    ).toBe(false)
+  })
+
   it('offers the bounded older-history page and invokes the host-backed loader', () => {
     const loadOlder = vi.fn(() => Promise.resolve())
     render(
@@ -68,6 +195,30 @@ describe('Timeline', () => {
     fireEvent.click(button)
 
     expect(loadOlder).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps memoized row actions wired to the latest parent callback', () => {
+    const nodes = [
+      {
+        kind: 'assistant-message' as const,
+        id: 'assistant-1',
+        markdown: 'answer',
+        streaming: false,
+      },
+    ]
+    const firstFeedback = vi.fn()
+    const latestFeedback = vi.fn()
+    const view = render(
+      <Timeline sessionId="session-1" nodes={nodes} streaming={false} onFeedback={firstFeedback} />,
+    )
+
+    view.rerender(
+      <Timeline sessionId="session-1" nodes={nodes} streaming={false} onFeedback={latestFeedback} />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Good response' }))
+
+    expect(firstFeedback).not.toHaveBeenCalled()
+    expect(latestFeedback).toHaveBeenCalledWith('assistant-1', 'positive')
   })
 
   it('loads an older page when the user scrolls to the top', () => {
@@ -118,6 +269,80 @@ describe('Timeline', () => {
 
     expect(screen.getByText('Show DSH events')).toBeDefined()
     expect(screen.getByText('(2)')).toBeDefined()
+  })
+
+  it('groups adjacent DSH events without duplicating the group card', () => {
+    const { container } = render(
+      <Timeline
+        sessionId="session-1"
+        nodes={[
+          { kind: 'event', id: 'event-1', name: 'first', payload: { index: 1 } },
+          { kind: 'event', id: 'event-2', name: 'second', payload: { index: 2 } },
+          { kind: 'event', id: 'event-3', name: 'third', payload: { index: 3 } },
+        ]}
+        streaming={false}
+        showDshEvents
+      />,
+    )
+
+    expect(container.querySelectorAll('.dsh-timeline__event-group')).toHaveLength(1)
+    expect(container.querySelectorAll('.dsh-timeline__event-group-item')).toHaveLength(3)
+  })
+
+  it('reuses formatted payloads for existing event rows as the group grows', () => {
+    const toJSON = vi.fn(() => ({ ok: true }))
+    const payload = { toJSON }
+    const firstEvent: TimelineNode = {
+      kind: 'event',
+      id: 'event-1',
+      name: 'first',
+      payload,
+    }
+    const { container, rerender } = render(
+      <Timeline sessionId="session-1" nodes={[firstEvent]} streaming={false} showDshEvents />,
+    )
+
+    expect(toJSON).toHaveBeenCalledTimes(1)
+    rerender(
+      <Timeline
+        sessionId="session-1"
+        nodes={[firstEvent, { kind: 'event', id: 'event-2', name: 'second', payload: { ok: true } }]}
+        streaming={false}
+        showDshEvents
+      />,
+    )
+
+    expect(container.querySelectorAll('.dsh-timeline__event-group-item')).toHaveLength(2)
+    expect(toJSON).toHaveBeenCalledTimes(1)
+  })
+
+  it('reuses an event prefix while an assistant response streams after it', () => {
+    const toJSON = vi.fn(() => ({ ok: true }))
+    const payload = { toJSON }
+    const event: TimelineNode = { kind: 'event', id: 'event-1', name: 'first', payload }
+    const assistant: TimelineNode = {
+      kind: 'assistant-message',
+      id: 'assistant-1',
+      markdown: 'a',
+      streaming: true,
+    }
+    const { container, rerender } = render(
+      <Timeline sessionId="session-1" nodes={[event, assistant]} streaming showDshEvents />,
+    )
+
+    expect(container.querySelectorAll('.dsh-timeline__event-group-item')).toHaveLength(1)
+    expect(toJSON).toHaveBeenCalledTimes(1)
+    rerender(
+      <Timeline
+        sessionId="session-1"
+        nodes={[event, { ...assistant, markdown: 'answer' }]}
+        streaming
+        showDshEvents
+      />,
+    )
+
+    expect(container.querySelectorAll('.dsh-timeline__event-group-item')).toHaveLength(1)
+    expect(toJSON).toHaveBeenCalledTimes(1)
   })
 
   it('does not force the latest item after a resize when the user scrolled upward', () => {

@@ -11,12 +11,38 @@ export interface RuntimeLocatorDependencies {
   readonly npmGlobalPrefix: (signal?: AbortSignal) => Promise<string | undefined>
   readonly fileExists: (path: string) => Promise<boolean>
   readonly executeVersion: (executable: string, signal?: AbortSignal) => Promise<string>
+  /**
+   * Last executable path that produced a supported runtime, persisted by the
+   * host across sessions. It only skips the candidate scan; a fresh version
+   * probe still runs against it, so an upgraded global install keeps
+   * reporting its new version.
+   */
+  readonly lastKnownRuntimePath?: () => RuntimePathHint | undefined
+  readonly rememberRuntimePath?: (hint: RuntimePathHint) => void
+}
+
+export interface RuntimePathHint {
+  readonly path: string
+  readonly source: Exclude<DshRuntime['source'], 'configured' | 'bundled'>
 }
 
 export class DshRuntimeLocator implements RuntimeLocator {
+  private cached: RuntimeLookupResult | undefined
+
   public constructor(private readonly dependencies: RuntimeLocatorDependencies) {}
 
+  /**
+   * Forget the memoized lookup result. The host must call this after anything
+   * that can move or replace the executable: a runtime setting change, a
+   * global reinstall, or a version switch. Failed and unsupported lookups are
+   * never memoized, so a missing runtime keeps rescanning until it exists.
+   */
+  public invalidate(): void {
+    this.cached = undefined
+  }
+
   public async locate(signal?: AbortSignal): Promise<RuntimeLookupResult> {
+    if (this.cached !== undefined) return this.cached
     if (signal?.aborted === true) throw runtimeDetectionCancelled(signal)
     const locations: string[] = []
     const candidates = this.candidates(undefined)
@@ -26,7 +52,29 @@ export class DshRuntimeLocator implements RuntimeLocator {
     // back to a different PATH binary.
     if (configured !== undefined && (await this.dependencies.fileExists(configured.path))) {
       this.rememberLocation(locations, configured.path)
-      return { runtime: await this.inspect(configured, signal), searchedLocations: [...locations] }
+      const result = {
+        runtime: await this.inspect(configured, signal),
+        searchedLocations: [...locations],
+      }
+      if (result.runtime.supported) this.memoize(result, configured.path, 'configured')
+      return result
+    }
+
+    // The persisted hint turns the repeated cold-start scan into one
+    // fileExists plus one version probe. An unsupported or vanished hint
+    // falls through to the ordinary scan below.
+    const hint = this.dependencies.lastKnownRuntimePath?.()
+    if (hint !== undefined && hint.path !== configured?.path) {
+      const hintPath = pathApi(this.dependencies.os).normalize(hint.path)
+      if (await this.dependencies.fileExists(hintPath)) {
+        this.rememberLocation(locations, hintPath)
+        const hinted = await this.inspect({ path: hintPath, source: hint.source }, signal)
+        if (hinted.supported) {
+          const result = { runtime: hinted, searchedLocations: [...locations] }
+          this.memoize(result, hintPath, hint.source)
+          return result
+        }
+      }
     }
 
     const initial = await this.findSupported(
@@ -34,8 +82,11 @@ export class DshRuntimeLocator implements RuntimeLocator {
       locations,
       signal,
     )
-    if (initial.runtime?.supported === true)
-      return { runtime: initial.runtime, searchedLocations: [...locations] }
+    if (initial.runtime?.supported === true) {
+      const result = { runtime: initial.runtime, searchedLocations: [...locations] }
+      this.memoize(result, initial.runtime.executable, initial.runtime.source)
+      return result
+    }
 
     // Explicit configuration and PATH take precedence over npm discovery.
     // This also avoids spawning npm on the common configured-runtime path.
@@ -57,7 +108,21 @@ export class DshRuntimeLocator implements RuntimeLocator {
       const timeout = initial.timeout ?? npmRuntime.timeout
       if (timeout !== undefined) throw timeout
     }
-    return { ...(runtime === undefined ? {} : { runtime }), searchedLocations: [...locations] }
+    const result: RuntimeLookupResult = {
+      ...(runtime === undefined ? {} : { runtime }),
+      searchedLocations: [...locations],
+    }
+    if (runtime?.supported === true) this.memoize(result, runtime.executable, runtime.source)
+    return result
+  }
+
+  private memoize(result: RuntimeLookupResult, executablePath: string, source: DshRuntime['source']): void {
+    this.cached = result
+    if (source === 'configured' || source === 'bundled') return
+    // A configured path is re-read from settings on every cold locate, so
+    // persisting it would keep a removed setting alive; only discovered
+    // executables benefit from the cross-session hint.
+    void this.dependencies.rememberRuntimePath?.({ path: executablePath, source })
   }
 
   public async inspectExecutable(executable: string, signal?: AbortSignal): Promise<DshRuntime> {

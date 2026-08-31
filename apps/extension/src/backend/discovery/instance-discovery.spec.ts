@@ -38,3 +38,33 @@ describe('CompositeInstanceDiscovery cancellation', () => {
     await expect(operation).rejects.toBeDefined()
   })
 })
+
+describe('CompositeInstanceDiscovery phases', () => {
+  it('keeps slow process providers out of the fast pass', async () => {
+    const fastCandidate: BackendCandidate = {
+      endpoint: { host: '127.0.0.1', port: 3940, baseUrl: 'http://127.0.0.1:3940' },
+      source: 'known',
+      confidence: 90,
+    }
+    const fallbackCandidate: BackendCandidate = {
+      endpoint: { host: '127.0.0.1', port: 3941, baseUrl: 'http://127.0.0.1:3941' },
+      source: 'process-scan',
+      confidence: 70,
+    }
+    const fast = { id: 'known', discover: vi.fn(() => Promise.resolve([fastCandidate])) }
+    const fallback = {
+      id: 'process',
+      phase: 'fallback' as const,
+      discover: vi.fn(() => Promise.resolve([fallbackCandidate])),
+    }
+    const discovery = new CompositeInstanceDiscovery([fast, fallback])
+
+    await expect(discovery.discoverFast()).resolves.toEqual([fastCandidate])
+    expect(fast.discover).toHaveBeenCalledTimes(1)
+    expect(fallback.discover).not.toHaveBeenCalled()
+
+    await expect(discovery.discover()).resolves.toEqual([fastCandidate, fallbackCandidate])
+    expect(fast.discover).toHaveBeenCalledTimes(2)
+    expect(fallback.discover).toHaveBeenCalledTimes(1)
+  })
+})

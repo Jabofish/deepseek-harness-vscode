@@ -1,4 +1,12 @@
-import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactElement } from 'react'
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent,
+  type ReactElement,
+} from 'react'
 import type { SessionSummary, SubagentCatalog, SubagentView } from '@dsh-vscode/domain'
 import { useI18n } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
@@ -33,6 +41,7 @@ const MENU_MAX_WIDTH = 360
 const MENU_MAX_HEIGHT = 300
 const VIEWPORT_GUTTER = 12
 const MENU_GAP = 6
+const EMPTY_SUMMARIES: readonly SessionSummary[] = []
 
 function isRunning(entry: SubagentView): boolean {
   return entry.activity === 'running'
@@ -145,7 +154,6 @@ function flatten(
 
 /** Compact session-header catalog for navigating direct and nested subagents. */
 export function SubagentDrawer(props: SubagentCatalogProps): ReactElement | null {
-  const children = childEntries(props.catalog)
   const { t } = useI18n()
   const [open, setOpen] = useState(false)
   const [catalogs, setCatalogs] = useState<Record<string, SubagentCatalog>>({})
@@ -156,9 +164,18 @@ export function SubagentDrawer(props: SubagentCatalogProps): ReactElement | null
   const [now, setNow] = useState(() => Date.now())
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
-  const summaries = props.summaries ?? []
+  const children = useMemo(() => childEntries(props.catalog), [props.catalog])
+  const summaries = props.summaries ?? EMPTY_SUMMARIES
+  const summariesById = useMemo(() => {
+    const result = new Map<string, SessionSummary>()
+    for (const summary of summaries) result.set(summary.id, summary)
+    return result
+  }, [summaries])
 
-  const loadedAggregate = aggregateLoadedChildren(props.catalog, catalogs)
+  const loadedAggregate = useMemo(
+    () => aggregateLoadedChildren(props.catalog, catalogs),
+    [catalogs, props.catalog],
+  )
   const runningCount = loadedAggregate.running
   const diagnosticCount = props.catalog.entries.length - children.length
 
@@ -256,6 +273,10 @@ export function SubagentDrawer(props: SubagentCatalogProps): ReactElement | null
     }
   }
 
+  const rows = useMemo(
+    () => flatten(props.catalog, catalogs, expanded, 1),
+    [catalogs, expanded, props.catalog],
+  )
   if (props.catalog.entries.length === 0) return null
 
   const count = loadedAggregate.total
@@ -267,7 +288,6 @@ export function SubagentDrawer(props: SubagentCatalogProps): ReactElement | null
     diagnosticCount === 0
       ? healthyLabel
       : `${healthyLabel}, ${t('subagents.diagnostics', { count: diagnosticCount })}`
-  const rows = flatten(props.catalog, catalogs, expanded, 1)
 
   return (
     <div ref={rootRef} className="dsh-subagent-tree" onKeyDown={navigate}>
@@ -334,7 +354,7 @@ export function SubagentDrawer(props: SubagentCatalogProps): ReactElement | null
               : t('subagents.activity.inactive')
             const availability =
               entry.mode === 'continuable' && !parentAvailable ? t('subagents.parentUnavailable') : undefined
-            const summary = summaries.find((item) => item.id === entry.id)
+            const summary = summariesById.get(entry.id)
             const totalTokens = subagentTokenTotal(summary)
             const durationMs = subagentDurationMs(summary, entry.activity, now)
             const tokenMetric =

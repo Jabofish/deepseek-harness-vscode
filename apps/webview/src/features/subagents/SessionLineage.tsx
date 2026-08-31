@@ -1,4 +1,4 @@
-import type { ReactElement } from 'react'
+import { memo, type ReactElement } from 'react'
 import type { SessionSummary } from '@dsh-vscode/domain'
 import { useI18n, type Translate } from '../../i18n.js'
 import { displaySessionTitle } from '../sessions/session-title.js'
@@ -25,7 +25,7 @@ export interface SessionLineageProps {
  * WebUI exposes the same parent/child lineage next to the session header;
  * the existing host-backed SubagentDrawer remains the full descendant tree.
  */
-export function SessionLineage(props: SessionLineageProps): ReactElement {
+export const SessionLineage = memo(function SessionLineage(props: SessionLineageProps): ReactElement {
   const { t } = useI18n()
   const entries = deriveLineage(props, t)
   return (
@@ -56,7 +56,7 @@ export function SessionLineage(props: SessionLineageProps): ReactElement {
       ))}
     </nav>
   )
-}
+})
 
 function deriveLineage(props: SessionLineageProps, t: Translate): readonly LineageEntry[] {
   const summaries = new Map(props.sessions.map((session) => [session.id, session]))

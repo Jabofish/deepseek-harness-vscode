@@ -1,11 +1,164 @@
 import { describe, expect, it } from 'vitest'
 import type { BackendEvent } from '@dsh-vscode/domain'
-import { reduceTimeline } from '../src/reducer.js'
+import { reduceTimeline, reduceTimelineBatch } from '../src/reducer.js'
 import type { TimelineState } from '../src/nodes.js'
 
 const initial: TimelineState = { sessionId: 'session-1', nodes: [], lastSequence: -1 }
 
 describe('reduceTimeline', () => {
+  it('matches sequential reduction while replaying a history batch', () => {
+    const inputs = [
+      {
+        sequence: 1,
+        event: { type: 'message.user', sessionId: 'session-1', messageId: 'u1', markdown: 'hello' } as const,
+      },
+      {
+        sequence: 2,
+        event: { type: 'message.delta', sessionId: 'session-1', messageId: 'a1', delta: 'answer' } as const,
+      },
+      {
+        sequence: 3,
+        event: {
+          type: 'message.completed',
+          sessionId: 'session-1',
+          messageId: 'a1',
+          markdown: 'answer',
+        } as const,
+      },
+    ]
+    const sequential = inputs.reduce((current, input) => reduceTimeline(current, input), initial)
+    const batched = reduceTimelineBatch(initial, inputs)
+
+    expect({ ...batched, nodeChangeBase: undefined }).toEqual({ ...sequential, nodeChangeBase: undefined })
+  })
+
+  it('reuses the timeline node array for session-only state events', () => {
+    const state: TimelineState = {
+      ...initial,
+      nodes: [{ kind: 'user-message', id: 'user-1', markdown: 'hello' }],
+      lastSequence: 4,
+    }
+
+    const status = reduceTimeline(state, {
+      sequence: 5,
+      event: { type: 'session.status', sessionId: 'session-1', status: 'running' },
+    })
+    const jobs = reduceTimeline(status, {
+      sequence: 6,
+      event: { type: 'jobs.updated', sessionId: 'session-1', jobs: [] },
+    })
+
+    expect(status.nodes).toBe(state.nodes)
+    expect(jobs.nodes).toBe(state.nodes)
+    expect(jobs.lastSequence).toBe(6)
+  })
+
+  it('reuses auxiliary reducer state when a delta carries no timing update', () => {
+    const commandModes = { 'command-1': 'plan' as const }
+    const stepTimings = {
+      '1:0': { stepStartTime: 1_000, firstTokenTime: 1_200, completedTime: null },
+    }
+    const closedTurns = [9]
+    const state: TimelineState = {
+      ...initial,
+      commandModes,
+      stepTimings,
+      closedTurns,
+    }
+
+    const next = reduceTimeline(state, {
+      sequence: 1,
+      event: { type: 'message.delta', sessionId: 'session-1', messageId: 'm1', delta: 'a' },
+    })
+
+    expect(next.commandModes).toBe(commandModes)
+    expect(next.stepTimings).toBe(stepTimings)
+    expect(next.closedTurns).toBe(closedTurns)
+  })
+
+  it('reuses nodes for empty open-turn deltas but invalidates a closed tail', () => {
+    const openState: TimelineState = {
+      ...initial,
+      nodes: [{ kind: 'assistant-message', id: 'm1', markdown: 'answer', streaming: false }],
+    }
+    const openNext = reduceTimeline(openState, {
+      sequence: 1,
+      event: {
+        type: 'message.delta',
+        sessionId: 'session-1',
+        messageId: 'm1',
+        turn: 1,
+        delta: '',
+      },
+    })
+    expect(openNext.nodes).toBe(openState.nodes)
+
+    const closedState: TimelineState = {
+      ...openState,
+      nodes: [
+        {
+          kind: 'assistant-message',
+          id: 'm1',
+          markdown: 'answer',
+          streaming: false,
+          turn: 1,
+          turnCompleted: true,
+        },
+      ],
+      closedTurns: [1],
+    }
+    const closedNext = reduceTimeline(closedState, {
+      sequence: 1,
+      event: {
+        type: 'reasoning.delta',
+        sessionId: 'session-1',
+        messageId: 'm1',
+        turn: 1,
+        delta: '',
+      },
+    })
+    expect(closedNext.nodes).not.toBe(closedState.nodes)
+    expect(closedNext.nodes[0]).toMatchObject({ turnCompleted: false })
+  })
+
+  it('publishes the delta change boundary with its source array identity', () => {
+    const user = reduceTimeline(initial, {
+      sequence: 1,
+      event: { type: 'message.user', sessionId: 'session-1', messageId: 'u1', markdown: 'run' },
+    })
+    const first = reduceTimeline(user, {
+      sequence: 2,
+      event: { type: 'message.delta', sessionId: 'session-1', messageId: 'a1', delta: 'A' },
+    })
+    const second = reduceTimeline(first, {
+      sequence: 3,
+      event: { type: 'message.delta', sessionId: 'session-1', messageId: 'a1', delta: 'B' },
+    })
+
+    expect(first.nodeChangeStart).toBe(1)
+    expect(first.nodeChangeBase).toBe(user.nodes)
+    expect(second.nodeChangeStart).toBe(1)
+    expect(second.nodeChangeBase).toBe(first.nodes)
+  })
+
+  it('maintains raw event counts incrementally across unknown events', () => {
+    const first = reduceTimeline(
+      { ...initial, eventCount: 0 },
+      {
+        sequence: 1,
+        event: { type: 'unknown', name: 'future.event', payload: { value: 1 } },
+      },
+    )
+    expect(first.eventCount).toBe(1)
+
+    const second = reduceTimeline(first, {
+      sequence: 2,
+      event: { type: 'session.status', sessionId: 'session-1', status: 'running' },
+    })
+    expect(second.eventCount).toBe(1)
+    expect(second.nodes).toBe(first.nodes)
+  })
+
   it('adds a visible terminal node for max-token and error turn endings', () => {
     let state = reduceTimeline(initial, {
       sequence: 1,
@@ -120,6 +273,7 @@ describe('reduceTimeline', () => {
         delta: 'Hello',
       },
     })
+    expect(streamed.stepTimings).not.toBe(started.stepTimings)
     const completed = reduceTimeline(streamed, {
       sequence: 3,
       event: {

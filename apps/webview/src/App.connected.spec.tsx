@@ -225,6 +225,15 @@ describe('App connected rendering', () => {
     expect(screen.getByRole('button', { name: 'Settings' })).toBeDefined()
   })
 
+  it('loads the trajectory surface when the user selects it', async () => {
+    currentStore = storeFor(connectedState(true))
+    render(<App />)
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Trajectory' }))
+
+    await waitFor(() => expect(screen.getByLabelText('Trajectory ledger')).toBeDefined())
+  })
+
   it('does not render a duplicate in-webview settings trigger', () => {
     currentStore = storeFor(connectedState(false))
     render(<App />)
@@ -294,7 +303,7 @@ describe('App connected rendering', () => {
     expect(setDrawer).toHaveBeenCalledWith('settings')
   })
 
-  it('keeps the subagent catalog trigger visible when the host reports children', () => {
+  it('keeps the subagent catalog trigger visible when the host reports children', async () => {
     const state = connectedState(true)
     currentStore = storeFor({
       ...state,
@@ -321,7 +330,7 @@ describe('App connected rendering', () => {
     )
 
     fireEvent.click(screen.getByRole('button', { name: 'Conversation tools' }))
-    expect(screen.getByRole('button', { name: 'Subagents: 1' })).toBeDefined()
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Subagents: 1' })).toBeDefined())
     expect(screen.getByText('Subagents')).toBeDefined()
   })
 
@@ -518,7 +527,7 @@ describe('App connected rendering', () => {
     expect(releaseAttachments).toHaveBeenCalledWith([secondUri])
   })
 
-  it('applies the selected interface language across the conversation and export surfaces', () => {
+  it('applies the selected interface language across the conversation and export surfaces', async () => {
     currentStore = storeFor(connectedState(true))
     render(
       <I18nProvider>
@@ -536,7 +545,7 @@ describe('App connected rendering', () => {
     expect(document.documentElement.lang).toBe('zh-CN')
 
     fireEvent.click(screen.getByRole('button', { name: '导出' }))
-    expect(screen.getByRole('heading', { name: '导出会话' })).toBeDefined()
+    await waitFor(() => expect(screen.getByRole('heading', { name: '导出会话' })).toBeDefined())
     expect(screen.getByText('包含附件')).toBeDefined()
     expect(screen.getByRole('button', { name: '选择保存位置并导出' })).toBeDefined()
   })

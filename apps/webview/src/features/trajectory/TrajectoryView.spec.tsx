@@ -89,6 +89,20 @@ describe('TrajectoryView', () => {
     expect(screen.getByText('running')).toBeDefined()
   })
 
+  it('preserves unchanged ledger rows when a later node streams an update', () => {
+    const view = renderView()
+    const firstRow = screen.getByText('Fix the failing test in parser.spec.ts')
+    const nextNodes = nodes.map((node, index) =>
+      index === nodes.length - 1 && node.kind === 'tool'
+        ? { ...node, tool: { ...node.tool, outputSummary: 'still running' } }
+        : node,
+    )
+
+    view.rerender(<TrajectoryView sessionId="session-1" nodes={nextNodes} streaming />)
+
+    expect(screen.getByText('Fix the failing test in parser.spec.ts')).toBe(firstRow)
+  })
+
   it('opens the inspector with usage and payload details on selection', () => {
     renderView()
     fireEvent.click(screen.getByText('I will inspect the test first.'))

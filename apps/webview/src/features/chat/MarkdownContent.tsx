@@ -2,9 +2,11 @@ import MarkdownIt from 'markdown-it'
 import * as katex from 'katex'
 import texmath from 'markdown-it-texmath'
 import { createRoot, type Root } from 'react-dom/client'
-import { createHighlighter, type BundledLanguage } from 'shiki'
+import type { BundledLanguage, Highlighter } from 'shiki'
 import {
+  useDeferredValue,
   useEffect,
+  memo,
   useMemo,
   useRef,
   useState,
@@ -16,6 +18,9 @@ import { useI18n } from '../../i18n.js'
 import { CopyButton } from './CopyButton.js'
 import { ContentFlow } from '../../components/common/ContentFlow.js'
 import 'katex/dist/katex.min.css'
+
+const STREAMING_HIGHLIGHT_DEBOUNCE_MS = 120
+const STREAMING_MARKDOWN_DEFER_THRESHOLD = 4_096
 
 const markdownRenderer = new MarkdownIt({
   // Model output often contains soft-wrapped source lines. Standard Markdown
@@ -69,7 +74,7 @@ export interface MarkdownContentProps {
   readonly producedFiles?: readonly string[]
 }
 
-export function MarkdownContent({
+export const MarkdownContent = memo(function MarkdownContent({
   markdown,
   streaming = false,
   onOpenLink,
@@ -77,7 +82,18 @@ export function MarkdownContent({
 }: MarkdownContentProps): ReactElement {
   const { t } = useI18n()
   const contentRef = useRef<HTMLDivElement>(null)
-  const rawHtml = useMemo(() => renderMarkdownDocument(markdown, streaming), [markdown, streaming])
+  const markdownProjector = useMemo(() => createMarkdownProjector(), [])
+  // MarkdownIt reparses the accumulated stream. Let React keep the latest
+  // input authoritative while lowering render priority for long messages so
+  // rapid deltas do not monopolize the Webview main thread. Short messages
+  // remain synchronous for responsive first paint and deterministic tail UI.
+  const deferredMarkdown = useDeferredValue(markdown)
+  const markdownForRender =
+    streaming && markdown.length > STREAMING_MARKDOWN_DEFER_THRESHOLD ? deferredMarkdown : markdown
+  const rawHtml = useMemo(
+    () => markdownProjector(markdownForRender, streaming),
+    [markdownForRender, markdownProjector, streaming],
+  )
   const [highlightedHtml, setHighlightedHtml] = useState<
     { readonly source: string; readonly html: string } | undefined
   >(undefined)
@@ -87,20 +103,29 @@ export function MarkdownContent({
   // This keeps the initial Webview bundle usable for ordinary chat messages.
   useEffect(() => {
     let cancelled = false
-    void highlightMarkdownHtml(rawHtml).then((html) => {
-      // Avoid a no-op state update for ordinary Markdown. It would tear down
-      // the DOM-mounted copy regions once and recreate them on the next
-      // effect pass, which can race React roots while a table is classified.
-      if (!cancelled && html !== rawHtml) setHighlightedHtml({ source: rawHtml, html })
-    })
+    if (!rawHtml.includes('language-')) return
+    const highlight = (): void => {
+      void highlightMarkdownHtml(rawHtml).then((html) => {
+        // Avoid a no-op state update for ordinary Markdown. It would tear down
+        // the DOM-mounted copy regions once and recreate them on the next
+        // effect pass, which can race React roots while a table is classified.
+        if (!cancelled && html !== rawHtml) setHighlightedHtml({ source: rawHtml, html })
+      })
+    }
+    // Streaming deltas can arrive faster than Shiki can parse a code block.
+    // Let a quiet stream settle before highlighting, while the terminal
+    // render remains eager so completed messages do not wait on this debounce.
+    const timer = window.setTimeout(highlight, streaming ? STREAMING_HIGHLIGHT_DEBOUNCE_MS : 0)
     return () => {
       cancelled = true
+      window.clearTimeout(timer)
     }
-  }, [rawHtml])
+  }, [rawHtml, streaming])
 
   useEffect(() => {
     const container = contentRef.current
     if (container === null) return
+    if (streaming) return
 
     const mounted: MountedCopyRegion[] = []
     for (const target of Array.from(container.querySelectorAll<HTMLElement>('pre, table'))) {
@@ -163,7 +188,7 @@ export function MarkdownContent({
           entry.region.replaceWith(entry.target)
       }
     }
-  }, [markdown, onOpenLink, producedFiles, rawHtml, highlightedHtml, t])
+  }, [markdown, onOpenLink, producedFiles, rawHtml, highlightedHtml, streaming, t])
 
   const handleClick = (event: MouseEvent<HTMLDivElement>): void => {
     const target = event.target
@@ -197,34 +222,78 @@ export function MarkdownContent({
       }}
     />
   )
-}
+})
 
-type MarkdownHighlighter = Awaited<ReturnType<typeof createHighlighter>>
+type MarkdownHighlighter = Highlighter
 
 let highlighterPromise: Promise<MarkdownHighlighter> | undefined
 
 function getMarkdownHighlighter(): Promise<MarkdownHighlighter> {
-  highlighterPromise ??= createHighlighter({ themes: ['github-dark'], langs: [] })
+  highlighterPromise ??= import('shiki').then(({ createHighlighter }) =>
+    createHighlighter({ themes: ['github-dark'], langs: [] }),
+  )
   return highlighterPromise
 }
 
-function renderMarkdownDocument(markdown: string, streaming: boolean): string {
-  if (!streaming) return markdownRenderer.render(markdown)
-  const blocks = splitMarkdownBlocks(markdown)
-  if (blocks.length <= 1) return markdownRenderer.render(markdown)
+function createMarkdownProjector(): (markdown: string, streaming: boolean) => string {
+  let previousFrozenSource: string | undefined
+  let previousFrozenHtml: string | undefined
+  let previousStreamingMarkdown: string | undefined
+  let previousStreamingBlocks: readonly string[] | undefined
 
-  // The last non-blank block is the only block that can still change as a
-  // delta arrives. Closed fenced blocks are stable even without a following
-  // blank line, so they can be frozen immediately.
-  const stableCount = stableBlockCount(markdown, blocks)
-  if (stableCount === 0)
-    return `<div data-dsh-markdown-tail="true">${markdownRenderer.render(markdown)}</div>`
-  const frozen = blocks.slice(0, stableCount).join('\n\n')
-  const tail = blocks.slice(stableCount).join('\n\n')
-  return [
-    `<div data-dsh-markdown-frozen="true">${markdownRenderer.render(frozen)}</div>`,
-    tail === '' ? '' : `<div data-dsh-markdown-tail="true">${markdownRenderer.render(tail)}</div>`,
-  ].join('')
+  return (markdown, streaming) => {
+    if (!streaming) {
+      previousStreamingMarkdown = undefined
+      previousStreamingBlocks = undefined
+      return markdownRenderer.render(markdown)
+    }
+    const blocks =
+      previousStreamingMarkdown === undefined || previousStreamingBlocks === undefined
+        ? splitMarkdownBlocks(markdown)
+        : (appendStreamingBlock(previousStreamingMarkdown, previousStreamingBlocks, markdown) ??
+          splitMarkdownBlocks(markdown))
+    previousStreamingMarkdown = markdown
+    previousStreamingBlocks = blocks
+    if (blocks.length <= 1) return markdownRenderer.render(markdown)
+
+    // The last non-blank block is the only block that can still change as a
+    // delta arrives. Closed fenced blocks are stable even without a following
+    // blank line, so they can be frozen immediately.
+    const stableCount = stableBlockCount(markdown, blocks)
+    if (stableCount === 0)
+      return `<div data-dsh-markdown-tail="true">${markdownRenderer.render(markdown)}</div>`
+
+    const frozen = blocks.slice(0, stableCount).join('\n\n')
+    const tail = blocks.slice(stableCount).join('\n\n')
+    if (previousFrozenSource !== frozen) {
+      previousFrozenSource = frozen
+      previousFrozenHtml = markdownRenderer.render(frozen)
+    }
+    return [
+      `<div data-dsh-markdown-frozen="true">${previousFrozenHtml ?? ''}</div>`,
+      tail === '' ? '' : `<div data-dsh-markdown-tail="true">${markdownRenderer.render(tail)}</div>`,
+    ].join('')
+  }
+}
+
+/**
+ * Most model deltas extend the current line. Reuse the already split block
+ * prefix for that path; any newline can change paragraph/fence boundaries, so
+ * those updates intentionally fall back to the complete splitter.
+ */
+function appendStreamingBlock(
+  previousMarkdown: string,
+  previousBlocks: readonly string[],
+  nextMarkdown: string,
+): readonly string[] | undefined {
+  if (!nextMarkdown.startsWith(previousMarkdown)) return undefined
+  if (nextMarkdown === previousMarkdown) return previousBlocks
+  const appended = nextMarkdown.slice(previousMarkdown.length)
+  if (appended.includes('\r') || appended.includes('\n') || /\n[ \t]*$/u.test(previousMarkdown))
+    return undefined
+  const last = previousBlocks[previousBlocks.length - 1]
+  if (last === undefined) return undefined
+  return [...previousBlocks.slice(0, -1), `${last}${appended}`]
 }
 
 function splitMarkdownBlocks(markdown: string): string[] {

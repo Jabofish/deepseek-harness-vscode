@@ -12,14 +12,15 @@ describe('useTailEntrance', () => {
 
   it('does not animate the initial, prepended, or reset collection', () => {
     const { result, rerender } = renderHook(
-      ({ ids, resetKey }: { ids: readonly string[]; resetKey: string }) => useTailEntrance(ids, resetKey),
-      { initialProps: { ids: ['one'], resetKey: 'session-1' } },
+      ({ tailId, resetKey }: { tailId: string | undefined; resetKey: string }) =>
+        useTailEntrance(tailId, resetKey),
+      { initialProps: { tailId: 'one', resetKey: 'session-1' } },
     )
 
     expect(result.current).toBeUndefined()
-    rerender({ ids: ['zero', 'one'], resetKey: 'session-1' })
+    rerender({ tailId: 'one', resetKey: 'session-1' })
     expect(result.current).toBeUndefined()
-    rerender({ ids: ['new-session'], resetKey: 'session-2' })
+    rerender({ tailId: 'new-session', resetKey: 'session-2' })
     expect(result.current).toBeUndefined()
   })
 
@@ -28,11 +29,12 @@ describe('useTailEntrance', () => {
     vi.stubGlobal('requestAnimationFrame', undefined)
 
     const { result, rerender } = renderHook(
-      ({ ids, resetKey }: { ids: readonly string[]; resetKey: string }) => useTailEntrance(ids, resetKey),
-      { initialProps: { ids: ['one'], resetKey: 'session-1' } },
+      ({ tailId, resetKey }: { tailId: string | undefined; resetKey: string }) =>
+        useTailEntrance(tailId, resetKey),
+      { initialProps: { tailId: 'one', resetKey: 'session-1' } },
     )
 
-    rerender({ ids: ['one', 'two'], resetKey: 'session-1' })
+    rerender({ tailId: 'two', resetKey: 'session-1' })
     expect(result.current).toBe('two')
 
     act(() => {
@@ -40,7 +42,7 @@ describe('useTailEntrance', () => {
     })
     expect(result.current).toBeUndefined()
 
-    rerender({ ids: ['one', 'two', 'three'], resetKey: 'session-1' })
+    rerender({ tailId: 'three', resetKey: 'session-1' })
     expect(result.current).toBe('three')
   })
 })

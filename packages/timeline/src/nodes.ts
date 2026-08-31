@@ -117,6 +117,12 @@ export interface TimelineState {
   readonly sessionId: string | undefined
   readonly nodes: readonly TimelineNode[]
   readonly lastSequence: number
+  /** First raw node that may differ from the previous reducer result. */
+  readonly nodeChangeStart?: number
+  /** Identity of the node array from which nodeChangeStart was derived. */
+  readonly nodeChangeBase?: readonly TimelineNode[]
+  /** Number of raw unknown-event nodes; maintained incrementally by the reducer. */
+  readonly eventCount?: number
   /** In-flight DSH command names used to classify command/done events. */
   readonly commandModes?: Readonly<Record<string, 'plan' | 'permission'>>
   readonly tokenUsage?: TokenUsage

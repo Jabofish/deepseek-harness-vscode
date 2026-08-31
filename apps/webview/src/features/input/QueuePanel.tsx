@@ -1,4 +1,4 @@
-import type { ReactElement } from 'react'
+import { memo, type ReactElement } from 'react'
 import type { QueuedInput, RunningInputMode } from '@dsh-vscode/domain'
 import { useI18n } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
@@ -11,7 +11,7 @@ export interface QueuePanelProps {
   readonly onModeChange: (id: string, mode: RunningInputMode) => void
 }
 
-export function QueuePanel(props: QueuePanelProps): ReactElement {
+export const QueuePanel = memo(function QueuePanel(props: QueuePanelProps): ReactElement {
   const { t } = useI18n()
   return (
     <section className="dsh-queue" aria-labelledby="queue-title">
@@ -26,11 +26,11 @@ export function QueuePanel(props: QueuePanelProps): ReactElement {
         <p className="dsh-queue__empty">{t('queue.empty')}</p>
       ) : (
         <ol className="dsh-queue__list">
-          {props.items.map((item) => (
+          {props.items.map((item, index) => (
             <li key={item.id}>
               <div className="dsh-queue__item-main">
                 <span className="dsh-queue__index" aria-hidden="true">
-                  {props.items.indexOf(item) + 1}
+                  {index + 1}
                 </span>
                 <input
                   aria-label={t('queue.edit', { id: item.id })}
@@ -74,4 +74,4 @@ export function QueuePanel(props: QueuePanelProps): ReactElement {
       )}
     </section>
   )
-}
+})

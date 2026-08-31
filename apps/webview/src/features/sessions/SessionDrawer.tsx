@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type ReactElement } from 'react'
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactElement,
+} from 'react'
 import { createPortal } from 'react-dom'
 import type { SessionSummary, WorkspaceSummary } from '@dsh-vscode/domain'
 import { PopoverCard } from '../../components/common/PopoverCard.js'
@@ -59,7 +68,7 @@ function readOrderDrag(dataTransfer: DataTransfer): OrderDrag | undefined {
   return undefined
 }
 
-export function SessionDrawer(props: SessionDrawerProps): ReactElement {
+export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerProps): ReactElement {
   const { t } = useI18n()
   const { onSearch } = props
   const [internalOpen, setInternalOpen] = useState(false)
@@ -134,17 +143,16 @@ export function SessionDrawer(props: SessionDrawerProps): ReactElement {
     return sortSessions(filtered, sorting, workspace.sessionIds, props.activeSessionId)
   }
 
-  const currentWorkspaceSessions = selectedWorkspace === undefined ? [] : filterSessions(selectedWorkspace)
-  const groupedWorkspaceSessions = props.workspaces.map((workspace) => ({
-    workspace,
-    sessions: filterSessions(workspace),
-  }))
-  const locallyVisibleIds = new Set(
-    (workspaceDisplay === 'grouped'
-      ? groupedWorkspaceSessions.flatMap((group) => group.sessions)
-      : currentWorkspaceSessions
-    ).map((session) => session.id),
-  )
+  const currentWorkspaceSessions =
+    workspaceDisplay === 'current' && selectedWorkspace !== undefined ? filterSessions(selectedWorkspace) : []
+  const groupedWorkspaceSessions =
+    workspaceDisplay === 'grouped'
+      ? props.workspaces.map((workspace) => ({
+          workspace,
+          sessions: filterSessions(workspace),
+        }))
+      : []
+  const locallyVisibleIds = new Set(currentWorkspaceSessions.map((session) => session.id))
 
   useEffect(() => {
     const sequence = searchSequence.current + 1
@@ -167,16 +175,19 @@ export function SessionDrawer(props: SessionDrawerProps): ReactElement {
     return () => window.clearTimeout(timer)
   }, [onSearch, trimmedSearchQuery])
 
-  const otherWorkspaceMatches = sortSessions(
-    contentMatches.filter(
-      (session) =>
-        !locallyVisibleIds.has(session.id) &&
-        session.origin !== 'subagent' &&
-        !session.blank &&
-        session.id !== props.activeSessionId,
-    ),
-    sorting,
-  )
+  const otherWorkspaceMatches =
+    workspaceDisplay === 'current'
+      ? sortSessions(
+          contentMatches.filter(
+            (session) =>
+              !locallyVisibleIds.has(session.id) &&
+              session.origin !== 'subagent' &&
+              !session.blank &&
+              session.id !== props.activeSessionId,
+          ),
+          sorting,
+        )
+      : []
 
   const openSession = (session: SessionSummary): void => {
     setSelectedWorkspaceId(session.workspaceId)
@@ -697,7 +708,7 @@ export function SessionDrawer(props: SessionDrawerProps): ReactElement {
           )}
     </section>
   )
-}
+})
 
 function sortSessions(
   sessions: readonly SessionSummary[],

@@ -1,5 +1,5 @@
 import { createPortal } from 'react-dom'
-import { useEffect, useRef, useState, type CSSProperties, type ReactElement } from 'react'
+import { memo, useEffect, useRef, useState, type CSSProperties, type ReactElement } from 'react'
 import type { MessageImageReference } from '@dsh-vscode/domain'
 import { Icon } from '../../ui/Icon.js'
 import type { Translate } from '../../i18n.js'
@@ -16,27 +16,37 @@ export interface MessageImagesProps {
 }
 
 /** Historical DSH images: bounded thumbnails with an explicit lightbox. */
-export function MessageImages(props: MessageImagesProps): ReactElement | null {
+export const MessageImages = memo(function MessageImages(props: MessageImagesProps): ReactElement | null {
   const [loaded, setLoaded] = useState<Readonly<Record<string, LoadedImage>>>({})
   const [loading, setLoading] = useState<ReadonlySet<string>>(new Set())
   const [failed, setFailed] = useState<ReadonlySet<string>>(new Set())
   const [lightbox, setLightbox] = useState<LoadedImage | undefined>(undefined)
   const requested = useRef(new Set<string>())
   const closeRef = useRef<HTMLButtonElement>(null)
-  const imageKey = props.images.map((image) => image.attachmentId).join('\u0000')
   const images = props.images
   const loadImage = props.loadImage
+  const imageKey = images.map((image) => image.attachmentId).join('\u0000')
+  const imagesRef = useRef(images)
+  imagesRef.current = images
+  const loadedRef = useRef(loaded)
+  loadedRef.current = loaded
 
   useEffect(() => {
     if (loadImage === undefined) return
-    for (const image of images) {
+    const pendingImages: MessageImageReference[] = []
+    for (const image of imagesRef.current) {
       if (requested.current.has(image.attachmentId)) continue
-      if (loaded[image.attachmentId] !== undefined) continue
+      if (loadedRef.current[image.attachmentId] !== undefined) continue
       requested.current.add(image.attachmentId)
-      // This is the async request-start marker for the image loader; the
-      // completion callbacks below own the actual result state transitions.
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setLoading((current) => new Set(current).add(image.attachmentId))
+      pendingImages.push(image)
+    }
+    if (pendingImages.length === 0) return
+    setLoading((current) => {
+      const next = new Set(current)
+      for (const image of pendingImages) next.add(image.attachmentId)
+      return next
+    })
+    for (const image of pendingImages) {
       void loadImage(image).then(
         (dataUri) => {
           setLoading((current) => without(current, image.attachmentId))
@@ -53,7 +63,7 @@ export function MessageImages(props: MessageImagesProps): ReactElement | null {
         },
       )
     }
-  }, [imageKey, loaded, images, loadImage])
+  }, [imageKey, loadImage])
 
   useEffect(() => {
     if (lightbox === undefined) return
@@ -160,6 +170,16 @@ export function MessageImages(props: MessageImagesProps): ReactElement | null {
           )}
     </>
   )
+}, areMessageImagesEqual)
+
+function areMessageImagesEqual(previous: MessageImagesProps, next: MessageImagesProps): boolean {
+  if (previous.loadImage !== next.loadImage || previous.translate !== next.translate) return false
+  if (previous.images === next.images) return true
+  if (previous.images.length !== next.images.length) return false
+  for (let index = 0; index < previous.images.length; index += 1) {
+    if (previous.images[index] !== next.images[index]) return false
+  }
+  return true
 }
 
 function imageRatioStyle(image: MessageImageReference): CSSProperties {

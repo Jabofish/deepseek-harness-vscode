@@ -1,4 +1,12 @@
-import { useCallback, useRef, useState, type KeyboardEvent, type ReactElement, type ReactNode } from 'react'
+import {
+  memo,
+  useCallback,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type ReactElement,
+  type ReactNode,
+} from 'react'
 
 import { PopoverCard } from '../../components/common/PopoverCard.js'
 import { useDismissibleLayer } from '../../components/common/useDismissibleLayer.js'
@@ -17,7 +25,9 @@ export interface ConversationActionsMenuProps {
  * the topbar stays one line at every width, while feature drawers retain
  * their own focus and outside-click behavior inside this surface.
  */
-export function ConversationActionsMenu(props: ConversationActionsMenuProps): ReactElement {
+export const ConversationActionsMenu = memo(function ConversationActionsMenu(
+  props: ConversationActionsMenuProps,
+): ReactElement {
   const { t } = useI18n()
   const { children, onClose } = props
   const [open, setOpen] = useState(false)
@@ -74,4 +84,4 @@ export function ConversationActionsMenu(props: ConversationActionsMenuProps): Re
       ) : null}
     </div>
   )
-}
+})

@@ -1,6 +1,9 @@
 import {
+  memo,
+  useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type ClipboardEvent,
@@ -8,7 +11,6 @@ import {
   type FormEvent,
   type KeyboardEvent,
   type ReactElement,
-  type ReactNode,
 } from 'react'
 import type {
   AgentConfiguration,
@@ -55,6 +57,14 @@ import { ComposerAttachmentActions } from './ComposerAttachmentActions.js'
 
 const COMPOSER_MIN_HEIGHT = 42
 const COMPOSER_MAX_HEIGHT = 132
+const EMPTY_COMMANDS: readonly DynamicCommand[] = []
+const EMPTY_COMMAND_MENU_ROWS: readonly CommandMenuRow[] = []
+const EMPTY_STRING_LIST: readonly string[] = []
+const EMPTY_ATTACHMENT_PREVIEWS: Readonly<Record<string, string>> = {}
+const EMPTY_MODELS: readonly ModelDescriptor[] = []
+const EMPTY_PRESETS: readonly AgentPresetDescriptor[] = []
+const EMPTY_EDITOR_CONTEXT: readonly EditorContextItem[] = []
+const EMPTY_EDITOR_CONTEXT_KINDS: readonly EditorContextKind[] = []
 
 export interface ComposerProps {
   readonly disabled: boolean
@@ -111,8 +121,6 @@ export interface ComposerProps {
   readonly onPreviewEditorContext?: (contextRef: string) => Promise<EditorContextPreview | undefined>
   readonly onSubmit: (mode: RunningInputMode) => void
   readonly onCancel: () => void
-  /** Optional session telemetry rendered inside the unified card footer. */
-  readonly status?: ReactNode
   /** Steer every still-queued pending input into the running turn. */
   readonly onSteerQueue: () => void
   /** Pending inbox rows, used to gate the empty-draft accelerated Enter. */
@@ -121,7 +129,7 @@ export interface ComposerProps {
   readonly busyEnter?: RunningInputMode
 }
 
-export function Composer(props: ComposerProps): ReactElement {
+export const Composer = memo(function Composer(props: ComposerProps): ReactElement {
   const { t } = useI18n()
   const composerRef = useRef<HTMLFormElement>(null)
   const composing = useRef(false)
@@ -217,29 +225,46 @@ export function Composer(props: ComposerProps): ReactElement {
   const configuration = props.configuration
   const onConfigurationChange = props.onConfigurationChange
   const onCommand = props.onCommand
-  const commandQuery = slashCommandQuery(props.draft)
-  const availableCommandPermissionPresets = permissionOptions(
-    configuration?.permissionPreset ?? '',
-    props.permissionPresets ?? [],
+  const models = props.models ?? EMPTY_MODELS
+  const presets = props.presets ?? EMPTY_PRESETS
+  const editorContext = props.editorContext ?? EMPTY_EDITOR_CONTEXT
+  const editorContextAvailableKinds = props.editorContextAvailableKinds ?? EMPTY_EDITOR_CONTEXT_KINDS
+  const commandQuery = useMemo(() => slashCommandQuery(props.draft), [props.draft])
+  const permissionPresets = props.permissionPresets ?? EMPTY_STRING_LIST
+  const availableCommandPermissionPresets = useMemo(
+    () => permissionOptions(configuration?.permissionPreset ?? '', permissionPresets),
+    [configuration?.permissionPreset, permissionPresets],
   )
-  const commandArgumentOptions = commandInputOptions(
-    commandQuery,
-    props.commands ?? [],
-    availableCommandPermissionPresets,
+  const commands = props.commands ?? EMPTY_COMMANDS
+  const commandArgumentOptions = useMemo(
+    () => commandInputOptions(commandQuery, commands, availableCommandPermissionPresets),
+    [availableCommandPermissionPresets, commandQuery, commands],
   )
-  const commandPaletteSelection =
-    commandQuery === undefined || props.commands === undefined
-      ? undefined
-      : firstCommandPaletteSelection(commandQuery, props.commands, commandArgumentOptions)
-  const menuRows =
-    commandQuery === undefined || props.commands === undefined
-      ? []
-      : commandMenuRows(commandQuery, props.commands, commandArgumentOptions)
-  const referenceToken = referenceQueryToken(props.draft, referenceCursor)
-  const referenceKey =
-    referenceToken === undefined
-      ? undefined
-      : `${referenceToken.start}:${referenceToken.end}:${referenceToken.quoted ? 'quoted' : 'plain'}:${referenceToken.query}`
+  const menuRows = useMemo(
+    () =>
+      commandQuery === undefined || props.commands === undefined
+        ? EMPTY_COMMAND_MENU_ROWS
+        : commandMenuRows(commandQuery, commands, commandArgumentOptions),
+    [commandArgumentOptions, commandQuery, commands, props.commands],
+  )
+  const commandPaletteSelection = useMemo(
+    () =>
+      commandQuery === undefined || props.commands === undefined
+        ? undefined
+        : firstCommandPaletteSelection(commandQuery, commands, commandArgumentOptions, menuRows),
+    [commandArgumentOptions, commandQuery, commands, menuRows, props.commands],
+  )
+  const referenceToken = useMemo(
+    () => referenceQueryToken(props.draft, referenceCursor),
+    [props.draft, referenceCursor],
+  )
+  const referenceKey = useMemo(
+    () =>
+      referenceToken === undefined
+        ? undefined
+        : `${referenceToken.start}:${referenceToken.end}:${referenceToken.quoted ? 'quoted' : 'plain'}:${referenceToken.query}`,
+    [referenceToken],
+  )
   const menuOpen =
     commandQuery !== undefined &&
     props.commands !== undefined &&
@@ -264,19 +289,31 @@ export function Composer(props: ComposerProps): ReactElement {
     referenceHighlight !== undefined && referenceHighlight < (props.references?.length ?? 0)
       ? referenceHighlight
       : undefined
-  const openFileCandidates = orderOpenFileCandidates(props.openFileCandidates, props.preferredOpenFileId)
-  const defaultOpenFileId =
-    props.preferredOpenFileId !== undefined &&
-    openFileCandidates.some((candidate) => candidate.id === props.preferredOpenFileId)
-      ? props.preferredOpenFileId
-      : openFileCandidates.find((candidate) => candidate.active)?.id
+  const openFileCandidates = useMemo(
+    () => orderOpenFileCandidates(props.openFileCandidates, props.preferredOpenFileId),
+    [props.openFileCandidates, props.preferredOpenFileId],
+  )
+  const defaultOpenFileId = useMemo(
+    () =>
+      props.preferredOpenFileId !== undefined &&
+      openFileCandidates.some((candidate) => candidate.id === props.preferredOpenFileId)
+        ? props.preferredOpenFileId
+        : openFileCandidates.find((candidate) => candidate.active)?.id,
+    [openFileCandidates, props.preferredOpenFileId],
+  )
+  const handleSessionCommand = useCallback(
+    (command: string): void => {
+      void Promise.resolve(onCommand?.(command)).catch(() => undefined)
+    },
+    [onCommand],
+  )
   const renderSessionControls = (surface: 'primary' | 'secondary'): ReactElement | null => {
     if (configuration === undefined || onConfigurationChange === undefined) return null
     const controlProps: SessionControlsProps = {
       configuration,
-      models: props.models ?? [],
-      presets: props.presets ?? [],
-      permissionPresets: props.permissionPresets ?? [],
+      models,
+      presets,
+      permissionPresets,
       disabled: props.configurationDisabled ?? (props.disabled || props.running),
       presetMutable: props.presetMutable === true,
       surface,
@@ -292,9 +329,7 @@ export function Composer(props: ComposerProps): ReactElement {
         : { modelPickerOpenRequest: props.modelPickerOpenRequest }),
       ...(props.onPromptModeChange === undefined ? {} : { onPromptModeChange: props.onPromptModeChange }),
       onChange: onConfigurationChange,
-      onCommand: (command) => {
-        void Promise.resolve(onCommand?.(command)).catch(() => undefined)
-      },
+      onCommand: handleSessionCommand,
     }
     return <SessionControls {...controlProps} />
   }
@@ -604,9 +639,11 @@ export function Composer(props: ComposerProps): ReactElement {
     const nextToken = referenceQueryToken(next, nextCursor)
     props.onReferenceQueryChange?.(nextToken?.query, nextToken?.quoted ?? false)
   }
-  const previews = props.attachmentPreviews ?? {}
-  const previewedAttachment =
-    previewUri === undefined ? undefined : props.attachments.find((item) => item.uri === previewUri)
+  const previews = props.attachmentPreviews ?? EMPTY_ATTACHMENT_PREVIEWS
+  const previewedAttachment = useMemo(
+    () => (previewUri === undefined ? undefined : props.attachments.find((item) => item.uri === previewUri)),
+    [previewUri, props.attachments],
+  )
   return (
     <UnifiedComposer
       ref={composerRef}
@@ -722,9 +759,9 @@ export function Composer(props: ComposerProps): ReactElement {
         </div>
       ) : null}
       <EditorContextRail
-        items={props.editorContext ?? []}
+        items={editorContext}
         disabled={props.disabled || props.running || props.attachmentsDisabled === true}
-        availableKinds={props.editorContextAvailableKinds ?? []}
+        availableKinds={editorContextAvailableKinds}
         loading={props.editorContextLoading ?? false}
         {...(props.onCaptureEditorContext === undefined ? {} : { onCapture: props.onCaptureEditorContext })}
         {...(props.onRemoveEditorContext === undefined ? {} : { onRemove: props.onRemoveEditorContext })}
@@ -805,6 +842,7 @@ export function Composer(props: ComposerProps): ReactElement {
           <CommandPalette
             commands={props.commands}
             query={commandQuery}
+            rows={menuRows}
             argumentOptions={commandArgumentOptions}
             {...(props.popupSelects === undefined ? {} : { popupSelects: props.popupSelects })}
             {...(menuDismissed === undefined ? {} : { dismissedFor: menuDismissed })}
@@ -894,7 +932,6 @@ export function Composer(props: ComposerProps): ReactElement {
           </span>
         </button>
       </div>
-      {props.status === undefined ? null : <div className="dsh-composer__status">{props.status}</div>}
       {previewedAttachment === undefined ? null : (
         <AttachmentLightbox
           name={previewedAttachment.name}
@@ -904,7 +941,7 @@ export function Composer(props: ComposerProps): ReactElement {
       )}
     </UnifiedComposer>
   )
-}
+})
 
 function formatByteSize(value: number): string {
   if (value >= 1024 * 1024)

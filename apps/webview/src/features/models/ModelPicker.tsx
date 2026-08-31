@@ -1,4 +1,14 @@
-import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent, type ReactElement } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  memo,
+  type KeyboardEvent,
+  type ReactElement,
+} from 'react'
 import type { ModelDescriptor, ModelSelection } from '@dsh-vscode/domain'
 import { useI18n } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
@@ -27,7 +37,7 @@ export interface ModelPickerProps {
  * read from the selected model's advertised metadata. No provider/model
  * vocabulary is maintained in the Webview.
  */
-export function ModelPicker(props: ModelPickerProps): ReactElement {
+export const ModelPicker = memo(function ModelPicker(props: ModelPickerProps): ReactElement {
   const { t } = useI18n()
   const [open, setOpen] = useState(false)
   const [pane, setPane] = useState<ModelPane>('root')
@@ -38,7 +48,7 @@ export function ModelPicker(props: ModelPickerProps): ReactElement {
   const selected = props.models.find(
     (model) => model.providerId === props.value.providerId && model.id === props.value.modelId,
   )
-  const groups = groupModels(props.models)
+  const groups = useMemo(() => groupModels(props.models), [props.models])
   const reasoningLevels = selected?.supportsReasoning ? (selected.reasoningLevels ?? []) : []
   const effectiveReasoningLevel = props.value.reasoningLevel ?? reasoningLevels[0]
   const currentLabel =
@@ -276,7 +286,7 @@ export function ModelPicker(props: ModelPickerProps): ReactElement {
       ) : null}
     </div>
   )
-}
+})
 
 function groupModels(models: readonly ModelDescriptor[]): readonly ProviderGroup[] {
   const groups: ProviderGroup[] = []

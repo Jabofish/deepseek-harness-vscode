@@ -6,6 +6,8 @@ import { commandDispatchKind, type PopupSelectRegistry } from './popupSelectRegi
 export interface CommandPaletteProps {
   readonly commands: readonly DynamicCommand[]
   readonly query: string
+  /** Pre-ranked rows from Composer; standalone callers may omit this. */
+  readonly rows?: readonly CommandMenuRow[]
   readonly argumentOptions?: readonly CommandArgumentOption[]
   readonly onExecute: (command: string, argument?: string) => void
   readonly popupSelects?: PopupSelectRegistry
@@ -69,21 +71,30 @@ export function firstCommandPaletteSelection(
   query: string,
   commands: readonly DynamicCommand[],
   argumentOptions: readonly CommandArgumentOption[] = [],
+  rows?: readonly CommandMenuRow[],
 ): CommandPaletteSelection | undefined {
   const parsed = parsePaletteQuery(query)
   if (parsed.argument !== undefined) {
     const command = commands.find((entry) => entry.name.toLocaleLowerCase() === parsed.name)
     if (command === undefined) return undefined
-    const argument = rankArgumentOptions(argumentOptions, parsed.argument)[0]?.value
+    const argument =
+      rows === undefined
+        ? rankArgumentOptions(argumentOptions, parsed.argument)[0]?.value
+        : rows.find((row) => row.kind === 'argument')?.option.value
     return argument === undefined ? { command } : { command, argument }
   }
-  const command = commands
-    .map((entry, index) => ({ command: entry, index, score: fuzzyScore(entry.name, parsed.name) }))
-    .filter(
-      (entry): entry is { command: DynamicCommand; index: number; score: number } =>
-        entry.score !== undefined,
-    )
-    .sort((left, right) => left.score - right.score || left.index - right.index)[0]?.command
+  const command =
+    rows === undefined
+      ? commands
+          .map((entry, index) => ({ command: entry, index, score: fuzzyScore(entry.name, parsed.name) }))
+          .filter(
+            (entry): entry is { command: DynamicCommand; index: number; score: number } =>
+              entry.score !== undefined,
+          )
+          .sort((left, right) => left.score - right.score || left.index - right.index)[0]?.command
+      : rows.find(
+          (row): row is Extract<CommandMenuRow, { readonly kind: 'command' }> => row.kind === 'command',
+        )?.command
   return command === undefined ? undefined : { command }
 }
 
@@ -103,6 +114,10 @@ export function CommandPalette(props: CommandPaletteProps): ReactElement {
       ? undefined
       : props.commands.find((command) => command.name.toLocaleLowerCase() === parsed.name)
   if (argument !== undefined && argumentCommand !== undefined) {
+    const rankedOptions =
+      props.rows === undefined
+        ? undefined
+        : props.rows.flatMap((row) => (row.kind === 'argument' ? [row.option] : []))
     return renderArgumentPalette(
       argumentCommand,
       argument,
@@ -110,17 +125,25 @@ export function CommandPalette(props: CommandPaletteProps): ReactElement {
       props.highlight,
       props.onExecute,
       t,
+      rankedOptions,
     )
   }
 
   const query = parsed.name
-  const matches = props.commands
-    .map((command, index) => ({ command, index, score: fuzzyScore(command.name, query) }))
-    .filter(
-      (entry): entry is { command: DynamicCommand; index: number; score: number } =>
-        entry.score !== undefined,
-    )
-    .sort((left, right) => left.score - right.score || left.index - right.index)
+  const matches =
+    props.rows === undefined
+      ? props.commands
+          .map((command, index) => ({ command, index, score: fuzzyScore(command.name, query) }))
+          .filter(
+            (entry): entry is { command: DynamicCommand; index: number; score: number } =>
+              entry.score !== undefined,
+          )
+          .sort((left, right) => left.score - right.score || left.index - right.index)
+      : props.rows
+          .filter(
+            (row): row is Extract<CommandMenuRow, { readonly kind: 'command' }> => row.kind === 'command',
+          )
+          .map((row) => ({ command: row.command }))
   return (
     <section className="dsh-command-palette" id={COMMAND_MENU_ID} aria-label={t('commands.aria')}>
       {matches.length === 0 ? (
@@ -179,8 +202,9 @@ function renderArgumentPalette(
   highlight: number | undefined,
   onExecute: (command: string, argument?: string) => void,
   t: (key: string, params?: Readonly<Record<string, string | number>>) => string,
+  rankedOptions?: readonly CommandArgumentOption[],
 ): ReactElement {
-  const matches = rankArgumentOptions(options, argument)
+  const matches = rankedOptions ?? rankArgumentOptions(options, argument)
 
   return (
     <section

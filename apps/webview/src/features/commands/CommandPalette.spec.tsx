@@ -10,6 +10,7 @@ import {
   firstCommandPaletteSelection,
   parsePaletteQuery,
   type CommandArgumentOption,
+  type CommandMenuRow,
 } from './CommandPalette.js'
 import { PopupSelectRegistry } from './popupSelectRegistry.js'
 
@@ -36,6 +37,14 @@ describe('CommandPalette', () => {
       expect.stringContaining('/plan'),
       expect.stringContaining('/permission'),
     ])
+  })
+
+  it('renders a supplied pre-ranked row model', () => {
+    const suppliedRows: readonly CommandMenuRow[] = [{ kind: 'command', command: commands[0]! }]
+    render(<CommandPalette commands={commands} query="/p" rows={suppliedRows} onExecute={vi.fn()} />)
+
+    expect(screen.getByText('/goal')).toBeDefined()
+    expect(screen.queryByText('/plan')).toBeNull()
   })
 
   it('reports status when no command matches the query', () => {
@@ -188,6 +197,16 @@ describe('firstCommandPaletteSelection', () => {
     const selection = firstCommandPaletteSelection('/permission zz', commands, permissionOptions)
     expect(selection?.command.name).toBe('permission')
     expect(selection?.argument).toBeUndefined()
+  })
+
+  it('uses supplied rows while preserving the bare-command argument fallback', () => {
+    const rows: readonly CommandMenuRow[] = [{ kind: 'command', command: commands[0]! }]
+    const selection = firstCommandPaletteSelection('/p', commands, [], rows)
+    expect(selection?.command.name).toBe('goal')
+
+    const fallback = firstCommandPaletteSelection('/permission zz', commands, permissionOptions, [])
+    expect(fallback?.command.name).toBe('permission')
+    expect(fallback?.argument).toBeUndefined()
   })
 
   it('answers undefined when nothing matches', () => {

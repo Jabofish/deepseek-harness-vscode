@@ -5,6 +5,7 @@ import { parseDshProcessCandidates, runDiscoveryCommand } from './process-provid
 
 export class WindowsProcessDiscoveryProvider implements DiscoveryProvider {
   public readonly id = 'windows-process'
+  public readonly phase = 'fallback' as const
 
   public discover(signal?: AbortSignal): Promise<readonly BackendCandidate[]> {
     if (signal?.aborted === true) return Promise.reject(discoveryCancelled(signal.reason))

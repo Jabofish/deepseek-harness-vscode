@@ -102,6 +102,59 @@ describe('DshConnectionCoordinator', () => {
     expect(deps.processSupervisor.start).not.toHaveBeenCalled()
   })
 
+  it('attaches from fast discovery without waiting for the slow full pass', async () => {
+    const candidate = fakeCandidate(4103)
+    const discovery = {
+      discoverFast: vi.fn(async () => [candidate]),
+      discover: vi.fn(() => new Promise<readonly BackendCandidate[]>(() => undefined)),
+    }
+    const deps = dependencies({
+      discovery,
+      probe: { probe: vi.fn(async () => fakeConnectedBackend(4103)) },
+    })
+
+    const result = await new DshConnectionCoordinator(deps).connect({ mode: 'auto', autoStart: true })
+
+    expect(result.state.backend.endpoint.port).toBe(4103)
+    expect(discovery.discoverFast).toHaveBeenCalledTimes(1)
+    expect(discovery.discover).not.toHaveBeenCalled()
+    expect(deps.runtimeLocator.locate).not.toHaveBeenCalled()
+    expect(deps.processSupervisor.start).not.toHaveBeenCalled()
+  })
+
+  it('waits for full discovery after a fast candidate fails before starting DSH', async () => {
+    const fastCandidate = fakeCandidate(4104)
+    const fallbackCandidate = fakeCandidate(4105)
+    let releaseFull: (() => void) | undefined
+    const fullDiscovery = new Promise<readonly BackendCandidate[]>((resolve) => {
+      releaseFull = () => resolve([fallbackCandidate])
+    })
+    const discovery = {
+      discoverFast: vi.fn(async () => [fastCandidate]),
+      discover: vi.fn(() => fullDiscovery),
+    }
+    const process = managedProcess(4106)
+    const probe = {
+      probe: vi.fn(async (candidate: BackendCandidate) =>
+        candidate.endpoint.port === 4106 ? fakeConnectedBackend(4106) : undefined,
+      ),
+    }
+    const deps = dependencies({
+      discovery,
+      probe,
+      processSupervisor: { start: vi.fn(async () => process) },
+    })
+    const operation = new DshConnectionCoordinator(deps).connect({ mode: 'auto', autoStart: true })
+
+    await vi.waitFor(() => expect(discovery.discover).toHaveBeenCalledTimes(1))
+    expect(deps.processSupervisor.start).not.toHaveBeenCalled()
+    releaseFull?.()
+    await operation
+
+    expect(probe.probe).toHaveBeenCalledTimes(3)
+    expect(deps.processSupervisor.start).toHaveBeenCalledTimes(1)
+  })
+
   it('probes only the user-selected custom endpoint and never discovers or starts DSH', async () => {
     const selected = endpoint(4310)
     const connected = fakeConnectedBackend(4310)

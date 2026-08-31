@@ -1,9 +1,9 @@
-import type { ReactElement } from 'react'
+import { memo, type ReactElement } from 'react'
 import type { GoalView } from '@dsh-vscode/domain'
 import { useI18n } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
 
-export function GoalTodoStrip({
+export const GoalTodoStrip = memo(function GoalTodoStrip({
   goals,
   label,
 }: {
@@ -42,4 +42,4 @@ export function GoalTodoStrip({
       )}
     </details>
   )
-}
+})

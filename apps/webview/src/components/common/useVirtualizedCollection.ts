@@ -1,4 +1,4 @@
-import { useCallback, useMemo, type RefObject } from 'react'
+import { useCallback, useMemo, useRef, type RefObject } from 'react'
 import { useVirtualizer, type VirtualItem } from '@tanstack/react-virtual'
 
 /**
@@ -54,13 +54,14 @@ export function useVirtualizedCollection<T>(
   const count = enabled ? items.length : 0
   const estimateSize = estimateSizeOption ?? defaultEstimateSize
   const overscan = overscanOption ?? DEFAULT_VIRTUALIZATION_OVERSCAN
-  const getItemKey = useCallback(
-    (index: number): string | number => {
-      const item = items[index]
-      return item === undefined ? index : (getItemKeyOption?.(item, index) ?? index)
-    },
-    [getItemKeyOption, items],
-  )
+  const itemsRef = useRef(items)
+  itemsRef.current = items
+  const getItemKeyOptionRef = useRef(getItemKeyOption)
+  getItemKeyOptionRef.current = getItemKeyOption
+  const getItemKey = useCallback((index: number): string | number => {
+    const item = itemsRef.current[index]
+    return item === undefined ? index : (getItemKeyOptionRef.current?.(item, index) ?? index)
+  }, [])
   const getScrollElement = useCallback(() => scrollRef.current, [scrollRef])
   // eslint-disable-next-line react-hooks/incompatible-library
   const virtualizer = useVirtualizer<HTMLDivElement, HTMLDivElement>({

@@ -66,8 +66,16 @@ export function JobsDrawer(props: JobsPopoverProps): ReactElement | null {
   const triggerRef = useRef<HTMLButtonElement>(null)
 
   const rows = useMemo(() => ordered(jobs), [jobs])
-  const runningCount = useMemo(() => jobs.filter((job) => job.status === 'running').length, [jobs])
-  const stoppingCount = useMemo(() => jobs.filter((job) => job.status === 'stopping').length, [jobs])
+  const liveCounts = useMemo(() => {
+    let running = 0
+    let stopping = 0
+    for (const job of jobs) {
+      if (job.status === 'running') running += 1
+      else if (job.status === 'stopping') stopping += 1
+    }
+    return { running, stopping }
+  }, [jobs])
+  const { running: runningCount, stopping: stoppingCount } = liveCounts
   const liveCount = runningCount + stoppingCount
 
   useEffect(() => {

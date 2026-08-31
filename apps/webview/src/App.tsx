@@ -1,15 +1,32 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactElement } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactElement,
+} from 'react'
 import type {
   AgentConfiguration,
   AgentPresetDescriptor,
   ContextPressure,
   EditorContextKind,
+  EditorContextPreview,
+  GoalView,
   ImageAttachmentLimits,
+  MessageFeedbackRating,
+  MessageImageReference,
   ModelDescriptor,
+  PermissionRequest,
   PromptAttachment,
+  PromptMode,
   SessionSummary,
   SessionStatsProjection,
   TokenUsage,
+  UserQuestion,
+  RunningInputMode,
   WorkspaceSummary,
 } from '@dsh-vscode/domain'
 import { cacheHitRate } from '@dsh-vscode/timeline'
@@ -61,6 +78,38 @@ const RUNTIME_UPDATE_DISMISSED_KEY = 'dsh-runtime-update-dismissed-version'
 const DEFAULT_ATTACHMENT_BYTES = 8 * 1024 * 1024
 const MAX_IMAGE_ATTACHMENT_BYTES = 20 * 1024 * 1024
 const MAX_PROMPT_IMAGE_BYTES = 200 * 1024 * 1024
+const EMPTY_OPEN_FILE_CANDIDATES: readonly OpenFileCandidate[] = []
+const EMPTY_REFERENCE_CANDIDATES: readonly ReferenceCandidate[] = []
+const EMPTY_PERMISSION_REQUESTS: readonly PermissionRequest[] = []
+const EMPTY_USER_QUESTIONS: readonly UserQuestion[] = []
+
+/** Keep host-backed child actions stable while still reading current App state. */
+function useStableCallback<Args extends unknown[], Result>(
+  callback: (...args: Args) => Result,
+): (...args: Args) => Result {
+  const callbackRef = useRef(callback)
+  useLayoutEffect(() => {
+    callbackRef.current = callback
+  }, [callback])
+  return useCallback((...args: Args): Result => callbackRef.current(...args), [])
+}
+
+// VS Code Webviews can restore from a cached document while extension files
+// are being replaced during an update. Root-level dynamic imports then point
+// at hashed chunks from the previous build and reject inside React.lazy,
+// replacing the entire conversation with the error boundary. Keep all
+// required application surfaces in the stable `webview.js` entry; Shiki's
+// optional language payloads remain lazy inside MarkdownContent.
+const DeferredSettingsDrawer = SettingsDrawer
+const DeferredTrajectoryView = TrajectoryView
+const DeferredTimeline = Timeline
+const DeferredPromptTemplatesDrawer = PromptTemplatesDrawer
+const DeferredJobsDrawer = JobsDrawer
+const DeferredChangesDrawer = ChangesDrawer
+const DeferredTasksDrawer = TasksDrawer
+const DeferredCheckpointDrawer = CheckpointDrawer
+const DeferredSubagentDrawer = SubagentDrawer
+const DeferredExportDialog = ExportDialog
 
 export function App(): ReactElement {
   const { locale, setLocale, t } = useI18n()
@@ -223,33 +272,59 @@ export function App(): ReactElement {
       )
       .finally(() => setBusyAction(undefined))
   }
-  const retryConnection = (): void => {
+  const retryConnection = useStableCallback((): void => {
     void store
       .reconnect()
       .catch((reason: unknown) =>
         setError(reason instanceof Error ? reason.message : t('app.error.reconnect')),
       )
-  }
-  const activeSession = state.sessions.find((session) => session.id === state.activeSessionId)
-  let activeSubagentState = state.activeSubagent
-  if (activeSubagentState?.entry.id !== state.activeSessionId) activeSubagentState = undefined
+  })
+  const activeSession = useMemo(
+    () => state.sessions.find((session) => session.id === state.activeSessionId),
+    [state.activeSessionId, state.sessions],
+  )
+  const activeSubagentState = useMemo(() => {
+    const candidate = state.activeSubagent
+    return candidate?.entry.id === state.activeSessionId ? candidate : undefined
+  }, [state.activeSessionId, state.activeSubagent])
   const activeSubagent = activeSubagentState?.entry
-  const active: SessionSummary | undefined =
-    activeSession ??
-    (activeSubagent === undefined
-      ? undefined
-      : {
-          id: activeSubagent.id,
-          workspaceId: activeSubagentState?.workspaceId ?? '',
-          title: activeSubagent.label?.trim() || t('subagents.unnamed'),
-          blank: false,
-          status: activeSubagent.activity === 'running' ? 'running' : 'idle',
-          createdAt: '',
-          updatedAt: '',
-        })
+  const active = useMemo<SessionSummary | undefined>(
+    () =>
+      activeSession ??
+      (activeSubagent === undefined
+        ? undefined
+        : {
+            id: activeSubagent.id,
+            workspaceId: activeSubagentState?.workspaceId ?? '',
+            title: activeSubagent.label?.trim() || t('subagents.unnamed'),
+            blank: false,
+            status: activeSubagent.activity === 'running' ? 'running' : 'idle',
+            createdAt: '',
+            updatedAt: '',
+          }),
+    [activeSession, activeSubagent, activeSubagentState?.workspaceId, t],
+  )
+  const activeSubagentId = activeSubagent?.id
+  const activeSubagentLabel = activeSubagent?.label
+  const activeSubagentParentId = activeSubagent?.parentSessionId
+  const lineageActiveSubagent = useMemo(
+    () =>
+      activeSubagentId === undefined || activeSubagentParentId === undefined
+        ? undefined
+        : {
+            id: activeSubagentId,
+            parentSessionId: activeSubagentParentId,
+            ...(activeSubagentLabel === undefined ? {} : { label: activeSubagentLabel }),
+          },
+    [activeSubagentId, activeSubagentLabel, activeSubagentParentId],
+  )
+  const eventCountNodes = state.timeline.eventCount === undefined ? state.timeline.nodes : undefined
   const dshEventCount = useMemo(
-    () => state.timeline.nodes.reduce((count, node) => (node.kind === 'event' ? count + 1 : count), 0),
-    [state.timeline.nodes],
+    () =>
+      state.timeline.eventCount ??
+      eventCountNodes?.reduce((count, node) => (node.kind === 'event' ? count + 1 : count), 0) ??
+      0,
+    [eventCountNodes, state.timeline.eventCount],
   )
   const activeSessionId = active?.id
   const showDshEvents =
@@ -258,32 +333,59 @@ export function App(): ReactElement {
       : false
   const visibleOpenFilePickerOpen =
     openFilePickerOpen && openFilePickerSessionId !== undefined && openFilePickerSessionId === activeSessionId
-  const visibleOpenFileCandidates =
-    openFileCandidatesSessionId === activeSessionId ? openFileCandidates : ([] as const)
+  const visibleOpenFileCandidates = useMemo(
+    () => (openFileCandidatesSessionId === activeSessionId ? openFileCandidates : EMPTY_OPEN_FILE_CANDIDATES),
+    [activeSessionId, openFileCandidates, openFileCandidatesSessionId],
+  )
   const visibleOpenFilePickerLoading =
     openFilePickerLoading &&
     openFilePickerSessionId !== undefined &&
     openFilePickerSessionId === activeSessionId
-  const setShowDshEvents = (visible: boolean): void => {
+  const setShowDshEvents = useStableCallback((visible: boolean): void => {
     if (activeSessionId === undefined) return
     setDshEventVisibility({ sessionId: activeSessionId, visible })
-  }
+  })
   const sessionModels = state.sessionModels.length > 0 ? state.sessionModels : state.models
-  const pendingPermissions =
-    active === undefined ? [] : state.permissions.filter((request) => request.sessionId === active.id)
-  const pendingQuestions =
-    active === undefined ? [] : state.questions.filter((question) => question.sessionId === active.id)
-  const assistantLabel = resolveAssistantModelLabel(active, state.configuration, sessionModels, t)
-  const activeProjection = active === undefined ? undefined : state.projections[active.id]
-  const imageLimits = readImageAttachmentLimits(activeProjection?.imageLimits)
-  const contextPressure = readContextPressure(
-    activeProjection?.contextPressure,
-    activeProjection?.contextBreakdown,
+  const pendingPermissions = useMemo(
+    () =>
+      activeSessionId === undefined || state.permissions.length === 0
+        ? EMPTY_PERMISSION_REQUESTS
+        : state.permissions.filter((request) => request.sessionId === activeSessionId),
+    [activeSessionId, state.permissions],
+  )
+  const pendingQuestions = useMemo(
+    () =>
+      activeSessionId === undefined || state.questions.length === 0
+        ? EMPTY_USER_QUESTIONS
+        : state.questions.filter((question) => question.sessionId === activeSessionId),
+    [activeSessionId, state.questions],
+  )
+  const assistantLabel = useMemo(
+    () => resolveAssistantModelLabel(active, state.configuration, sessionModels, t),
+    [active, sessionModels, state.configuration, t],
+  )
+  const activeProjection = useMemo(
+    () => (activeSessionId === undefined ? undefined : state.projections[activeSessionId]),
+    [activeSessionId, state.projections],
+  )
+  const imageLimits = useMemo(
+    () => readImageAttachmentLimits(activeProjection?.imageLimits),
+    [activeProjection?.imageLimits],
+  )
+  const contextPressure = useMemo(
+    () => readContextPressure(activeProjection?.contextPressure, activeProjection?.contextBreakdown),
+    [activeProjection?.contextBreakdown, activeProjection?.contextPressure],
   )
   const estimatedContextTokens = contextPressure?.projectedTokens ?? contextPressure?.pressureTokens
   const contextWindowTokens = contextPressure?.contextWindow
-  const projectedTokenUsage = readTokenUsageProjection(activeProjection?.tokenUsage)
-  const sessionStats = readSessionStatsProjection(activeProjection?.sessionStats)
+  const projectedTokenUsage = useMemo(
+    () => readTokenUsageProjection(activeProjection?.tokenUsage),
+    [activeProjection?.tokenUsage],
+  )
+  const sessionStats = useMemo(
+    () => readSessionStatsProjection(activeProjection?.sessionStats),
+    [activeProjection?.sessionStats],
+  )
   const activeRunning =
     activeSubagent === undefined ? active?.status === 'running' : activeSubagent.activity === 'running'
   const updateReferenceQuery = (query: string | undefined, quoted: boolean): void => {
@@ -316,26 +418,31 @@ export function App(): ReactElement {
           setReferenceLoading(false)
       })
   }
-  const localSubagentReferences: readonly ReferenceCandidate[] =
-    referenceQuoted || active === undefined
-      ? []
-      : state.subagents.entries.flatMap((entry) => {
-          if (entry.kind !== 'child') return []
-          const label = entry.label?.trim() || t('subagents.unnamed')
-          if (!label.toLocaleLowerCase().includes(referenceQuery.trim().toLocaleLowerCase())) return []
-          return [
-            {
-              id: `subagent:${entry.id}`,
-              kind: 'session' as const,
-              sessionId: entry.id,
-              label,
-              description: t('composer.referenceSubagent'),
-              mention: `@[${label}](dsh-session:${entry.id})`,
-            },
-          ]
-        })
-  const visibleReferenceCandidates =
-    referenceSessionId === active?.id ? [...referenceCandidates, ...localSubagentReferences] : []
+  const localSubagentReferences = useMemo<readonly ReferenceCandidate[]>(() => {
+    if (referenceQuoted || activeSessionId === undefined) return EMPTY_REFERENCE_CANDIDATES
+    const needle = referenceQuery.trim().toLocaleLowerCase()
+    const candidates: ReferenceCandidate[] = []
+    for (const entry of state.subagents.entries) {
+      if (entry.kind !== 'child') continue
+      const label = entry.label?.trim() || t('subagents.unnamed')
+      if (!label.toLocaleLowerCase().includes(needle)) continue
+      candidates.push({
+        id: `subagent:${entry.id}`,
+        kind: 'session',
+        sessionId: entry.id,
+        label,
+        description: t('composer.referenceSubagent'),
+        mention: `@[${label}](dsh-session:${entry.id})`,
+      })
+    }
+    return candidates
+  }, [activeSessionId, referenceQuery, referenceQuoted, state.subagents.entries, t])
+  const visibleReferenceCandidates = useMemo(() => {
+    if (referenceSessionId !== activeSessionId) return EMPTY_REFERENCE_CANDIDATES
+    if (referenceCandidates.length === 0) return localSubagentReferences
+    if (localSubagentReferences.length === 0) return referenceCandidates
+    return [...referenceCandidates, ...localSubagentReferences]
+  }, [activeSessionId, localSubagentReferences, referenceCandidates, referenceSessionId])
   const visibleReferenceLoading = referenceSessionId === active?.id && referenceLoading
   // DSH's host/session-status is the authoritative running bit. Timeline
   // nodes describe durable content, but a settled assistant step can remain
@@ -394,14 +501,14 @@ export function App(): ReactElement {
           setError(reason instanceof Error ? reason.message : t('app.error.releaseAttachment')),
         )
   }
-  const discardAttachmentDrafts = (): void => {
+  const discardAttachmentDrafts = useStableCallback((): void => {
     attachmentGenerationRef.current += 1
     removeAttachmentDrafts(
       attachments.map((attachment) => attachment.uri),
       true,
     )
     setOpenFilePickerOpen(false)
-  }
+  })
   const ingestFiles = (files: readonly File[]): void => {
     const imageFiles = files.filter((file) => file.type.startsWith('image/'))
     if (imageLimits !== undefined && imageFiles.length > 0) {
@@ -525,10 +632,467 @@ export function App(): ReactElement {
       )
       .finally(() => setBranching(false))
   }
+  const timelineOnOpenLink = useStableCallback((href: string): Promise<void> => store.openLink(href))
+  const timelineOnLoadImage = useStableCallback(
+    (image: MessageImageReference): Promise<string | undefined> =>
+      activeSessionId === undefined
+        ? Promise.resolve(undefined)
+        : store.readSessionAttachment(activeSessionId, image),
+  )
+  const timelineOnShowInFolder = useStableCallback((href: string): void => {
+    void store
+      .showInFolder(href)
+      .catch((reason: unknown) =>
+        setError(reason instanceof Error ? reason.message : t('app.error.openLink')),
+      )
+  })
+  const timelineOnOpenSession = useStableCallback((sessionId: string): void => {
+    discardAttachmentDrafts()
+    void store
+      .openSession(sessionId)
+      .catch((reason: unknown) =>
+        setError(reason instanceof Error ? reason.message : t('app.error.openSession')),
+      )
+  })
+  const timelineOnLoadOlderHistory = useStableCallback((): Promise<void> =>
+    store.loadOlderHistory().catch((reason: unknown) => {
+      setError(reason instanceof Error ? reason.message : t('app.error.loadOlderHistory'))
+    }),
+  )
+  const timelineOnFeedback = useStableCallback((messageId: string, rating: MessageFeedbackRating): void => {
+    if (activeSessionId === undefined) return
+    void store
+      .toggleFeedback(activeSessionId, messageId, rating)
+      .catch((reason: unknown) =>
+        setError(reason instanceof Error ? reason.message : t('app.error.feedback')),
+      )
+  })
+  const timelineOnFeedbackNote = useStableCallback(
+    async (messageId: string, note: string | undefined): Promise<void> => {
+      if (activeSessionId === undefined) return
+      try {
+        await store.setFeedbackNote(activeSessionId, messageId, note)
+      } catch (reason: unknown) {
+        setError(reason instanceof Error ? reason.message : t('app.error.feedback'))
+        throw reason
+      }
+    },
+  )
+  const timelineOnBranch = useStableCallback((atSeq: number): void => branchSession(atSeq))
+  const lineageOnOpenSession = useStableCallback((sessionId: string): void => {
+    discardAttachmentDrafts()
+    void store
+      .openSession(sessionId)
+      .catch((reason: unknown) =>
+        setError(reason instanceof Error ? reason.message : t('app.error.openSession')),
+      )
+  })
+  const goalOnUpdate = useStableCallback(
+    (goalId: string, update: Partial<Pick<GoalView, 'title' | 'status'>>) => store.updateGoal(goalId, update),
+  )
+  const goalOnClear = useStableCallback((goalId: string) => store.clearGoal(goalId))
+  const queueOnEdit = useStableCallback((inputId: string, text: string): void => {
+    void store
+      .updateQueue(inputId, text)
+      .catch((reason: unknown) =>
+        setError(reason instanceof Error ? reason.message : t('app.error.editQueue')),
+      )
+  })
+  const queueOnRemove = useStableCallback((inputId: string): void => {
+    void store
+      .removeQueue(inputId)
+      .catch((reason: unknown) =>
+        setError(reason instanceof Error ? reason.message : t('app.error.removeQueue')),
+      )
+  })
+  const queueOnModeChange = useStableCallback((inputId: string, mode: RunningInputMode): void => {
+    if (mode !== 'steer') return
+    void store
+      .steerQueue(inputId)
+      .catch((reason: unknown) =>
+        setError(reason instanceof Error ? reason.message : t('app.error.steerQueue')),
+      )
+  })
+  const sessionOnOpenChange = useStableCallback((open: boolean): void => {
+    store.setDrawer(open ? 'sessions' : undefined)
+  })
+  const sessionOnOpen = useStableCallback((sessionId: string): void => {
+    discardAttachmentDrafts()
+    void store
+      .openSession(sessionId)
+      .catch((reason: unknown) =>
+        setError(reason instanceof Error ? reason.message : t('app.error.openSession')),
+      )
+  })
+  const sessionOnCreate = useStableCallback((workspaceId: string | undefined): void => {
+    void store
+      .createSession(workspaceId)
+      .catch((reason: unknown) =>
+        setError(reason instanceof Error ? reason.message : t('app.error.createSession')),
+      )
+  })
+  const sessionOnArchive = useStableCallback((sessionId: string): Promise<void> =>
+    store.removeSession(sessionId).catch((reason: unknown) => {
+      const message = reason instanceof Error ? reason.message : t('app.error.archiveSession')
+      setError(message)
+      throw reason
+    }),
+  )
+  const sessionOnRename = useStableCallback((sessionId: string, title: string): Promise<void> =>
+    store.renameSession(sessionId, title),
+  )
+  const sessionOnRenameWorkspace = useStableCallback((workspaceId: string, name: string): Promise<void> =>
+    store.renameWorkspace(workspaceId, name),
+  )
+  const sessionOnRemoveWorkspace = useStableCallback((workspaceId: string): Promise<void> =>
+    store.removeWorkspace(workspaceId),
+  )
+  const sessionOnMoveWorkspace = useStableCallback(
+    (workspaceId: string, beforeWorkspaceId?: string): Promise<void> =>
+      store.moveWorkspace(workspaceId, beforeWorkspaceId),
+  )
+  const sessionOnMoveSession = useStableCallback(
+    (workspaceId: string, sessionId: string, beforeSessionId?: string): Promise<void> =>
+      store.moveSession(workspaceId, sessionId, beforeSessionId),
+  )
+  const sessionOnSearch = useStableCallback((query: string): Promise<readonly SessionSummary[]> =>
+    store.searchSessions(query),
+  )
+  const composerOnCaptureEditorContext = useStableCallback((kind: EditorContextKind): Promise<void> =>
+    store.captureEditorContext(kind),
+  )
+  const composerOnRemoveEditorContext = useStableCallback((contextRef: string): Promise<void> =>
+    store.releaseEditorContext([contextRef]),
+  )
+  const composerOnPreviewEditorContext = useStableCallback(
+    (contextRef: string): Promise<EditorContextPreview | undefined> => store.previewEditorContext(contextRef),
+  )
+  const composerOnConfigurationChange = useStableCallback((configuration: AgentConfiguration): void => {
+    if (active === undefined) return
+    void store
+      .configureSession(active.id, configuration)
+      .catch((reason: unknown) =>
+        setError(reason instanceof Error ? reason.message : t('app.error.sessionSettings')),
+      )
+  })
+  const composerOnPromptModeChange = useStableCallback((mode: PromptMode): void => {
+    void store
+      .setPromptMode(mode)
+      .catch((reason: unknown) =>
+        setError(reason instanceof Error ? reason.message : t('app.error.promptMode')),
+      )
+  })
+  const composerOnCommand = useStableCallback(
+    async (command: string, commandAttachments: readonly PromptAttachment[] = []): Promise<void> => {
+      if (active === undefined) return
+      if (command.trim() === '/model') {
+        if (commandAttachments.length > 0)
+          throw new Error(t('app.error.commandImagesUnsupported', { command: 'model' }))
+        setModelPickerOpenRequest((current) => current + 1)
+        return
+      }
+      try {
+        await store.executeCommand(active.id, command, commandAttachments)
+        if (commandAttachments.length > 0)
+          removeAttachmentDrafts(
+            commandAttachments.map((attachment) => attachment.uri),
+            true,
+          )
+      } catch (reason: unknown) {
+        setError(reason instanceof Error ? reason.message : t('app.error.dshMode'))
+        throw reason
+      }
+    },
+  )
+  const composerOnPopupSelect = useStableCallback((command: string): void => {
+    popupSelects.get(command)?.onOpen()
+  })
+  const composerOnCommandQueryChange = useStableCallback((query: string | undefined): void => {
+    if (query === undefined || state.commands.length > 0 || active === undefined) return
+    void store.refreshCommands(active.id)
+  })
+  const composerOnReferenceQueryChange = useStableCallback(
+    (query: string | undefined, quoted: boolean): void => updateReferenceQuery(query, quoted),
+  )
+  const composerOnPickAttachment = useStableCallback((): void => {
+    const generation = attachmentGenerationRef.current
+    void store
+      .pickAttachment()
+      .then((attachment) => {
+        if (attachment !== undefined) appendAttachment(attachment, undefined, generation)
+      })
+      .catch((reason: unknown) =>
+        setError(reason instanceof Error ? reason.message : t('app.error.attachmentSelection')),
+      )
+  })
+  const composerOnIngestFiles = useStableCallback((files: readonly File[]): void => ingestFiles(files))
+  const composerOnToggleOpenFilePicker = useStableCallback((): void => toggleOpenFilePicker())
+  const composerOnSelectOpenFile = useStableCallback((candidateId: string): void =>
+    selectOpenFile(candidateId),
+  )
+  const composerOnRemoveAttachment = useStableCallback((uri: string): void => {
+    removeAttachmentDrafts([uri], true)
+  })
+  const composerOnSubmit = useStableCallback((mode: RunningInputMode): void => submitPrompt(mode))
+  const composerOnCancel = useStableCallback((): void => {
+    if (active === undefined) return
+    void store
+      .cancelSession(active.id)
+      .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : t('app.error.cancel')))
+  })
+  const composerOnSteerQueue = useStableCallback((): void => {
+    void store
+      .steerAllQueued()
+      .catch((reason: unknown) =>
+        setError(reason instanceof Error ? reason.message : t('app.error.steerAll')),
+      )
+  })
+  const composerUsage = projectedTokenUsage ?? state.timeline.tokenUsage
+  const composerStatus = useMemo(
+    () => (
+      <StatsLine
+        nodes={state.timeline.nodes}
+        {...(state.timeline.nodeChangeStart === undefined
+          ? {}
+          : { nodeChangeStart: state.timeline.nodeChangeStart })}
+        {...(state.timeline.nodeChangeBase === undefined
+          ? {}
+          : { nodeChangeBase: state.timeline.nodeChangeBase })}
+        usage={composerUsage}
+        cacheHit={cacheHitRate(composerUsage)}
+        {...(sessionStats === undefined ? {} : { sessionStats })}
+      />
+    ),
+    [
+      composerUsage,
+      sessionStats,
+      state.timeline.nodeChangeBase,
+      state.timeline.nodeChangeStart,
+      state.timeline.nodes,
+    ],
+  )
+  const sessionControl = useMemo(
+    () => (
+      <SessionDrawer
+        sessions={state.sessions}
+        workspaces={state.workspaces}
+        activeSessionId={state.activeSessionId}
+        open={state.drawer === 'sessions'}
+        showTrigger
+        onOpenChange={sessionOnOpenChange}
+        onOpen={sessionOnOpen}
+        onCreate={sessionOnCreate}
+        onArchive={sessionOnArchive}
+        onRename={sessionOnRename}
+        onRenameWorkspace={sessionOnRenameWorkspace}
+        onRemoveWorkspace={sessionOnRemoveWorkspace}
+        onMoveWorkspace={sessionOnMoveWorkspace}
+        onMoveSession={sessionOnMoveSession}
+        onSearch={sessionOnSearch}
+      />
+    ),
+    [
+      sessionOnArchive,
+      sessionOnCreate,
+      sessionOnMoveSession,
+      sessionOnMoveWorkspace,
+      sessionOnOpen,
+      sessionOnOpenChange,
+      sessionOnRemoveWorkspace,
+      sessionOnRename,
+      sessionOnRenameWorkspace,
+      sessionOnSearch,
+      state.activeSessionId,
+      state.drawer,
+      state.sessions,
+      state.workspaces,
+    ],
+  )
+  const headerOnNewSession = useStableCallback((): void => {
+    void store
+      .createSession(active?.workspaceId ?? state.workspaces[0]?.id)
+      .catch((reason: unknown) =>
+        setError(reason instanceof Error ? reason.message : t('app.error.createSession')),
+      )
+  })
+  const headerOnOpenSettings = useStableCallback((): void => {
+    store.setDrawer('settings')
+  })
+  const attachedOpenFileIds = useMemo(() => Object.values(openFileAttachmentIds), [openFileAttachmentIds])
+  const closeConversationActions = useCallback((): void => {
+    setLocaleOpen(false)
+    setExportOpen(false)
+  }, [])
+  const activeId = active?.id
+  const conversationActionItems = useMemo<ReactElement | null>(() => {
+    if (activeId === undefined) return null
+    return (
+      <>
+        {/* The keys reset popover state when the last entry disappears,
+        so a refilled catalog never reopens stale. */}
+        <DeferredJobsDrawer key={state.jobs.length > 0 ? 'jobs' : 'jobs-empty'} jobs={state.jobs} />
+        <DeferredChangesDrawer
+          key={`changes-${activeId}`}
+          changes={state.changes}
+          loading={state.changesLoading}
+          onRefresh={() => store.refreshChanges(activeId)}
+          onOpen={(changeId) => store.openChange(changeId)}
+          onDetail={(changeId) => store.getChangeDetail(changeId)}
+          onMarkReviewed={(changeId, reviewState) => store.markChangeReviewed(changeId, reviewState)}
+        />
+        <DeferredTasksDrawer
+          key={`tasks-${activeId}`}
+          tasks={state.tasks}
+          loading={state.tasksLoading}
+          onRefresh={() => store.refreshTasks(activeId)}
+          onOpen={async (task) => {
+            if (task.sessionId === undefined) return
+            const childId = task.kind === 'subagent' ? task.sourceId : undefined
+            const child =
+              childId === undefined
+                ? undefined
+                : state.subagents.entries.find((entry) => entry.kind === 'child' && entry.id === childId)
+            if (child?.kind === 'child') {
+              await store.openSubagent(child, state.subagents.parentAvailable)
+              return
+            }
+            await store.openSession(task.sessionId)
+          }}
+          onStop={async (task) => {
+            await store.stopTask(task.taskId, 'session-cancel', task.taskRevision)
+            await store.refreshTasks(activeId)
+          }}
+          onAnswer={async (task, answer) => {
+            if (task.interactionId === undefined) return
+            await store.answerTask(task.taskId, task.interactionId, answer)
+            await store.refreshTasks(activeId)
+          }}
+        />
+        <DeferredCheckpointDrawer
+          key={`checkpoints-${activeId}`}
+          checkpoints={state.checkpoints}
+          loading={state.checkpointsLoading}
+          onRefresh={() => store.refreshCheckpoints(activeId)}
+          onCreate={(label) => store.createCheckpoint(label)}
+          onPreview={(checkpointId) => store.previewCheckpoint(checkpointId)}
+          onDelete={(checkpointId) => store.deleteCheckpoint(checkpointId)}
+          onRestore={(checkpointId) => store.restoreCheckpoint(checkpointId)}
+        />
+        <DeferredPromptTemplatesDrawer
+          key={`prompt-templates-${activeId}`}
+          templates={state.promptTemplates}
+          loading={state.promptTemplatesLoading}
+          onRefresh={() => store.refreshPromptTemplates(activeId)}
+          onRead={(templateId) => store.readPromptTemplate(templateId)}
+          onInsert={(templateId, variables) => store.insertPromptTemplate(templateId, variables)}
+          onCreate={(draft) => store.createPromptTemplate(draft)}
+          onUpdate={(templateId, patch) => store.updatePromptTemplate(templateId, patch)}
+          onDelete={(templateId) => store.deletePromptTemplate(templateId)}
+          onApply={(text) => {
+            setDraft((current) => (current.trim() === '' ? text : `${current}\n\n${text}`))
+            setError(undefined)
+          }}
+        />
+        <DeferredSubagentDrawer
+          key={`subagents-${activeId}`}
+          parentSessionId={activeId}
+          catalog={state.subagents}
+          summaries={state.sessions}
+          onLoadChildren={(sessionId) => store.loadSubagentChildren(sessionId)}
+          onOpenChild={(entry, parentAvailable) => {
+            // subagent.prompt accepts text ContentBlocks only. Clear
+            // ordinary-session attachment handles at navigation time.
+            discardAttachmentDrafts()
+            void store
+              .openSubagent(entry, parentAvailable)
+              .catch((reason: unknown) =>
+                setError(reason instanceof Error ? reason.message : t('app.error.openSubagent')),
+              )
+          }}
+        />
+        {dshEventCount > 0 ? (
+          <ConversationEventToggle
+            count={dshEventCount}
+            pressed={showDshEvents}
+            onPressedChange={setShowDshEvents}
+          />
+        ) : null}
+        {activeSubagent === undefined ? (
+          <button
+            type="button"
+            className="dsh-conversation__export-trigger"
+            aria-expanded={exportOpen}
+            onClick={() => setExportOpen((current) => !current)}
+          >
+            {t('export.trigger')}
+          </button>
+        ) : null}
+        <span ref={localeControlRef} className="dsh-conversation__locale-control">
+          <button
+            type="button"
+            className="dsh-conversation__locale-switch"
+            aria-label={t('locale.label')}
+            title={t('locale.label')}
+            aria-haspopup="listbox"
+            aria-expanded={localeOpen}
+            onClick={() => setLocaleOpen((current) => !current)}
+          >
+            <span>{locale === 'zh' ? t('locale.chinese') : t('locale.english')}</span>
+            <Icon name="chevron-down" />
+          </button>
+          {localeOpen ? (
+            <div className="dsh-conversation__locale-menu" role="listbox" aria-label={t('locale.label')}>
+              {(['en', 'zh'] as const).map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  role="option"
+                  aria-selected={locale === option}
+                  className={`dsh-conversation__locale-option${
+                    locale === option ? ' dsh-conversation__locale-option--selected' : ''
+                  }`}
+                  onClick={() => {
+                    setLocale(option)
+                    setLocaleOpen(false)
+                  }}
+                >
+                  {option === 'zh' ? t('locale.chinese') : t('locale.english')}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </span>
+      </>
+    )
+  }, [
+    activeId,
+    activeSubagent,
+    discardAttachmentDrafts,
+    dshEventCount,
+    exportOpen,
+    locale,
+    localeOpen,
+    setLocale,
+    setShowDshEvents,
+    state.changes,
+    state.changesLoading,
+    state.checkpoints,
+    state.checkpointsLoading,
+    state.jobs,
+    state.promptTemplates,
+    state.promptTemplatesLoading,
+    state.sessions,
+    state.subagents,
+    state.tasks,
+    state.tasksLoading,
+    store,
+    t,
+    showDshEvents,
+  ])
   return (
     <AppErrorBoundary>
       <main className="dsh-app">
-        <SettingsDrawer
+        <DeferredSettingsDrawer
           open={state.drawer === 'settings'}
           onOpenChange={(open) => store.setDrawer(open ? 'settings' : undefined)}
           connected={backend.kind === 'connected'}
@@ -726,244 +1290,27 @@ export function App(): ReactElement {
                       runtime={backend}
                       connectedDshVersion={state.connectedDshVersion}
                       compatibilityWarning={compatibilityWarning}
-                      sessionControl={
-                        <SessionDrawer
-                          sessions={state.sessions}
-                          workspaces={state.workspaces}
-                          activeSessionId={state.activeSessionId}
-                          open={state.drawer === 'sessions'}
-                          showTrigger
-                          onOpenChange={(open) => store.setDrawer(open ? 'sessions' : undefined)}
-                          onOpen={(sessionId) => {
-                            discardAttachmentDrafts()
-                            void store
-                              .openSession(sessionId)
-                              .catch((reason: unknown) =>
-                                setError(
-                                  reason instanceof Error ? reason.message : t('app.error.openSession'),
-                                ),
-                              )
-                          }}
-                          onCreate={(workspaceId) => {
-                            void store
-                              .createSession(workspaceId)
-                              .catch((reason: unknown) =>
-                                setError(
-                                  reason instanceof Error ? reason.message : t('app.error.createSession'),
-                                ),
-                              )
-                          }}
-                          onArchive={(sessionId) =>
-                            store.removeSession(sessionId).catch((reason: unknown) => {
-                              const message =
-                                reason instanceof Error ? reason.message : t('app.error.archiveSession')
-                              setError(message)
-                              throw reason
-                            })
-                          }
-                          onRename={(sessionId, title) => store.renameSession(sessionId, title)}
-                          onRenameWorkspace={(workspaceId, name) => store.renameWorkspace(workspaceId, name)}
-                          onRemoveWorkspace={(workspaceId) => store.removeWorkspace(workspaceId)}
-                          onMoveWorkspace={(workspaceId, beforeWorkspaceId) =>
-                            store.moveWorkspace(workspaceId, beforeWorkspaceId)
-                          }
-                          onMoveSession={(workspaceId, sessionId, beforeSessionId) =>
-                            store.moveSession(workspaceId, sessionId, beforeSessionId)
-                          }
-                          onSearch={(query) => store.searchSessions(query)}
-                        />
-                      }
-                      onNewSession={() => {
-                        void store
-                          .createSession(active.workspaceId ?? state.workspaces[0]?.id)
-                          .catch((reason: unknown) =>
-                            setError(reason instanceof Error ? reason.message : t('app.error.createSession')),
-                          )
-                      }}
-                      onOpenSettings={() => store.setDrawer('settings')}
+                      sessionControl={sessionControl}
+                      onNewSession={headerOnNewSession}
+                      onOpenSettings={headerOnOpenSettings}
                       onRetryConnection={retryConnection}
                     />
                     {activeSubagent !== undefined || active.parentSessionId !== undefined ? (
                       <SessionLineage
                         active={active}
-                        {...(activeSubagent === undefined
+                        {...(lineageActiveSubagent === undefined
                           ? {}
-                          : {
-                              activeSubagent: {
-                                id: activeSubagent.id,
-                                parentSessionId: activeSubagent.parentSessionId,
-                                ...(activeSubagent.label === undefined
-                                  ? {}
-                                  : { label: activeSubagent.label }),
-                              },
-                            })}
+                          : { activeSubagent: lineageActiveSubagent })}
                         sessions={state.sessions}
-                        onOpenSession={(sessionId) => {
-                          discardAttachmentDrafts()
-                          void store
-                            .openSession(sessionId)
-                            .catch((reason: unknown) =>
-                              setError(reason instanceof Error ? reason.message : t('app.error.openSession')),
-                            )
-                        }}
+                        onOpenSession={lineageOnOpenSession}
                       />
                     ) : null}
-                    <ConversationActionsMenu
-                      onClose={() => {
-                        setLocaleOpen(false)
-                        setExportOpen(false)
-                      }}
-                    >
-                      {/* The keys reset popover state when the last entry disappears,
-                    so a refilled catalog never reopens stale. */}
-                      <JobsDrawer key={state.jobs.length > 0 ? 'jobs' : 'jobs-empty'} jobs={state.jobs} />
-                      <ChangesDrawer
-                        key={active.id}
-                        changes={state.changes}
-                        loading={state.changesLoading}
-                        onRefresh={() => store.refreshChanges(active.id)}
-                        onOpen={(changeId) => store.openChange(changeId)}
-                        onDetail={(changeId) => store.getChangeDetail(changeId)}
-                        onMarkReviewed={(changeId, reviewState) =>
-                          store.markChangeReviewed(changeId, reviewState)
-                        }
-                      />
-                      <TasksDrawer
-                        key={`tasks-${active.id}`}
-                        tasks={state.tasks}
-                        loading={state.tasksLoading}
-                        onRefresh={() => store.refreshTasks(active.id)}
-                        onOpen={async (task) => {
-                          if (task.sessionId === undefined) return
-                          const childId = task.kind === 'subagent' ? task.sourceId : undefined
-                          const child =
-                            childId === undefined
-                              ? undefined
-                              : state.subagents.entries.find(
-                                  (entry) => entry.kind === 'child' && entry.id === childId,
-                                )
-                          if (child?.kind === 'child') {
-                            await store.openSubagent(child, state.subagents.parentAvailable)
-                            return
-                          }
-                          await store.openSession(task.sessionId)
-                        }}
-                        onStop={async (task) => {
-                          await store.stopTask(task.taskId, 'session-cancel', task.taskRevision)
-                          await store.refreshTasks(active.id)
-                        }}
-                        onAnswer={async (task, answer) => {
-                          if (task.interactionId === undefined) return
-                          await store.answerTask(task.taskId, task.interactionId, answer)
-                          await store.refreshTasks(active.id)
-                        }}
-                      />
-                      <CheckpointDrawer
-                        key={`checkpoints-${active.id}`}
-                        checkpoints={state.checkpoints}
-                        loading={state.checkpointsLoading}
-                        onRefresh={() => store.refreshCheckpoints(active.id)}
-                        onCreate={(label) => store.createCheckpoint(label)}
-                        onPreview={(checkpointId) => store.previewCheckpoint(checkpointId)}
-                        onDelete={(checkpointId) => store.deleteCheckpoint(checkpointId)}
-                        onRestore={(checkpointId) => store.restoreCheckpoint(checkpointId)}
-                      />
-                      <PromptTemplatesDrawer
-                        key={`prompt-templates-${active.id}`}
-                        templates={state.promptTemplates}
-                        loading={state.promptTemplatesLoading}
-                        onRefresh={() => store.refreshPromptTemplates(active.id)}
-                        onRead={(templateId) => store.readPromptTemplate(templateId)}
-                        onInsert={(templateId, variables) =>
-                          store.insertPromptTemplate(templateId, variables)
-                        }
-                        onCreate={(draft) => store.createPromptTemplate(draft)}
-                        onUpdate={(templateId, patch) => store.updatePromptTemplate(templateId, patch)}
-                        onDelete={(templateId) => store.deletePromptTemplate(templateId)}
-                        onApply={(text) => {
-                          setDraft((current) => (current.trim() === '' ? text : `${current}\n\n${text}`))
-                          setError(undefined)
-                        }}
-                      />
-                      <SubagentDrawer
-                        key={active.id}
-                        parentSessionId={active.id}
-                        catalog={state.subagents}
-                        summaries={state.sessions}
-                        onLoadChildren={(sessionId) => store.loadSubagentChildren(sessionId)}
-                        onOpenChild={(entry, parentAvailable) => {
-                          // subagent.prompt accepts text ContentBlocks only. Clear
-                          // ordinary-session attachment handles at navigation time.
-                          discardAttachmentDrafts()
-                          void store
-                            .openSubagent(entry, parentAvailable)
-                            .catch((reason: unknown) =>
-                              setError(
-                                reason instanceof Error ? reason.message : t('app.error.openSubagent'),
-                              ),
-                            )
-                        }}
-                      />
-                      {dshEventCount > 0 ? (
-                        <ConversationEventToggle
-                          count={dshEventCount}
-                          pressed={showDshEvents}
-                          onPressedChange={setShowDshEvents}
-                        />
-                      ) : null}
-                      {activeSubagent === undefined ? (
-                        <button
-                          type="button"
-                          className="dsh-conversation__export-trigger"
-                          aria-expanded={exportOpen}
-                          onClick={() => setExportOpen((current) => !current)}
-                        >
-                          {t('export.trigger')}
-                        </button>
-                      ) : null}
-                      <span ref={localeControlRef} className="dsh-conversation__locale-control">
-                        <button
-                          type="button"
-                          className="dsh-conversation__locale-switch"
-                          aria-label={t('locale.label')}
-                          title={t('locale.label')}
-                          aria-haspopup="listbox"
-                          aria-expanded={localeOpen}
-                          onClick={() => setLocaleOpen((current) => !current)}
-                        >
-                          <span>{locale === 'zh' ? t('locale.chinese') : t('locale.english')}</span>
-                          <Icon name="chevron-down" />
-                        </button>
-                        {localeOpen ? (
-                          <div
-                            className="dsh-conversation__locale-menu"
-                            role="listbox"
-                            aria-label={t('locale.label')}
-                          >
-                            {(['en', 'zh'] as const).map((option) => (
-                              <button
-                                key={option}
-                                type="button"
-                                role="option"
-                                aria-selected={locale === option}
-                                className={`dsh-conversation__locale-option${
-                                  locale === option ? ' dsh-conversation__locale-option--selected' : ''
-                                }`}
-                                onClick={() => {
-                                  setLocale(option)
-                                  setLocaleOpen(false)
-                                }}
-                              >
-                                {option === 'zh' ? t('locale.chinese') : t('locale.english')}
-                              </button>
-                            ))}
-                          </div>
-                        ) : null}
-                      </span>
+                    <ConversationActionsMenu onClose={closeConversationActions}>
+                      {conversationActionItems}
                     </ConversationActionsMenu>
                   </div>
                   {exportOpen && activeSubagent === undefined ? (
-                    <ExportDialog
+                    <DeferredExportDialog
                       sessionId={active.id}
                       onExport={(options) => {
                         setExportOpen(false)
@@ -977,18 +1324,20 @@ export function App(): ReactElement {
                   ) : null}
                   {state.goals.length > 0 ? (
                     <>
-                      <GoalBar
-                        goals={state.goals}
-                        onUpdate={(goalId, update) => store.updateGoal(goalId, update)}
-                        onClear={(goalId) => store.clearGoal(goalId)}
-                      />
+                      <GoalBar goals={state.goals} onUpdate={goalOnUpdate} onClear={goalOnClear} />
                       <GoalTodoStrip goals={state.goals} />
                     </>
                   ) : null}
                   {conversationView === 'chat' ? (
-                    <Timeline
+                    <DeferredTimeline
                       sessionId={active.id}
                       nodes={state.timeline.nodes}
+                      {...(state.timeline.nodeChangeStart === undefined
+                        ? {}
+                        : { nodeChangeStart: state.timeline.nodeChangeStart })}
+                      {...(state.timeline.nodeChangeBase === undefined
+                        ? {}
+                        : { nodeChangeBase: state.timeline.nodeChangeBase })}
                       streaming={streaming}
                       showDshEvents={showDshEvents}
                       running={activeRunning}
@@ -996,230 +1345,113 @@ export function App(): ReactElement {
                         ? {}
                         : { activeTurn: state.timeline.activeTurn })}
                       assistantLabel={assistantLabel}
-                      {...(activeSubagent === undefined ? { onBranch: branchSession } : {})}
+                      {...(activeSubagent === undefined ? { onBranch: timelineOnBranch } : {})}
                       branching={branching}
-                      onOpenLink={(href) => store.openLink(href)}
-                      onLoadImage={(image) => store.readSessionAttachment(active.id, image)}
-                      onShowInFolder={(href) => {
-                        void store
-                          .showInFolder(href)
-                          .catch((reason: unknown) =>
-                            setError(reason instanceof Error ? reason.message : t('app.error.openLink')),
-                          )
-                      }}
-                      onOpenSession={(sessionId) => {
-                        discardAttachmentDrafts()
-                        void store
-                          .openSession(sessionId)
-                          .catch((reason: unknown) =>
-                            setError(reason instanceof Error ? reason.message : t('app.error.openSession')),
-                          )
-                      }}
+                      onOpenLink={timelineOnOpenLink}
+                      onLoadImage={timelineOnLoadImage}
+                      onShowInFolder={timelineOnShowInFolder}
+                      onOpenSession={timelineOnOpenSession}
                       feedback={state.feedback}
                       feedbackUnavailable={state.feedbackUnavailable}
                       hasMoreHistory={state.historyHasMore}
                       loadingOlderHistory={state.historyLoading}
-                      onLoadOlderHistory={() =>
-                        store.loadOlderHistory().catch((reason: unknown) => {
-                          setError(reason instanceof Error ? reason.message : t('app.error.loadOlderHistory'))
-                        })
-                      }
-                      onFeedback={(messageId, rating) => {
-                        void store
-                          .toggleFeedback(active.id, messageId, rating)
-                          .catch((reason: unknown) =>
-                            setError(reason instanceof Error ? reason.message : t('app.error.feedback')),
-                          )
-                      }}
-                      onFeedbackNote={async (messageId, note) => {
-                        try {
-                          await store.setFeedbackNote(active.id, messageId, note)
-                        } catch (reason: unknown) {
-                          setError(reason instanceof Error ? reason.message : t('app.error.feedback'))
-                          throw reason
-                        }
-                      }}
+                      onLoadOlderHistory={timelineOnLoadOlderHistory}
+                      onFeedback={timelineOnFeedback}
+                      onFeedbackNote={timelineOnFeedbackNote}
                     />
                   ) : (
-                    <TrajectoryView
+                    <DeferredTrajectoryView
                       sessionId={active.id}
                       nodes={state.timeline.nodes}
+                      {...(state.timeline.nodeChangeStart === undefined
+                        ? {}
+                        : { nodeChangeStart: state.timeline.nodeChangeStart })}
+                      {...(state.timeline.nodeChangeBase === undefined
+                        ? {}
+                        : { nodeChangeBase: state.timeline.nodeChangeBase })}
                       streaming={streaming}
                     />
                   )}
                   {state.queue.length === 0 ? null : (
                     <QueuePanel
                       items={state.queue}
-                      onEdit={(inputId, text) => {
-                        void store
-                          .updateQueue(inputId, text)
-                          .catch((reason: unknown) =>
-                            setError(reason instanceof Error ? reason.message : t('app.error.editQueue')),
-                          )
-                      }}
-                      onRemove={(inputId) => {
-                        void store
-                          .removeQueue(inputId)
-                          .catch((reason: unknown) =>
-                            setError(reason instanceof Error ? reason.message : t('app.error.removeQueue')),
-                          )
-                      }}
-                      onModeChange={(inputId, mode) => {
-                        if (mode !== 'steer') return
-                        void store
-                          .steerQueue(inputId)
-                          .catch((reason: unknown) =>
-                            setError(reason instanceof Error ? reason.message : t('app.error.steerQueue')),
-                          )
-                      }}
+                      onEdit={queueOnEdit}
+                      onRemove={queueOnRemove}
+                      onModeChange={queueOnModeChange}
                     />
                   )}
                   <div className="dsh-compose-area">
                     <TodoList key={active?.id ?? 'todo-list'} todos={state.todos} />
                     {pendingPermissions.length === 0 && pendingQuestions.length === 0 ? (
                       subagentReadOnlyReason === undefined || activeRunning ? (
-                        <Composer
-                          disabled={backend.kind !== 'connected'}
-                          inputDisabled={
-                            subagentReadOnlyReason !== undefined ||
-                            (activeSubagent !== undefined && activeSubagentState?.parentAvailable === false)
-                          }
-                          attachmentsDisabled={activeSubagent !== undefined}
-                          running={activeRunning}
-                          draft={draft}
-                          attachments={attachments}
-                          {...(activeSubagent === undefined
-                            ? {
-                                editorContext: state.editorContext,
-                                editorContextAvailableKinds: state.editorContextAvailableKinds,
-                                editorContextLoading: state.editorContextLoading,
-                                onCaptureEditorContext: (kind: EditorContextKind) =>
-                                  store.captureEditorContext(kind),
-                                onRemoveEditorContext: (contextRef: string) =>
-                                  store.releaseEditorContext([contextRef]),
-                                onPreviewEditorContext: (contextRef: string) =>
-                                  store.previewEditorContext(contextRef),
-                              }
-                            : {})}
-                          configuration={state.configuration}
-                          models={sessionModels}
-                          presets={state.presets}
-                          permissionPresets={state.permissionPresets}
-                          commands={state.commands}
-                          popupSelects={popupSelects}
-                          references={visibleReferenceCandidates}
-                          referenceLoading={visibleReferenceLoading}
-                          {...(imageLimits === undefined ? {} : { imageLimits })}
-                          busyEnter={state.busyEnter}
-                          modelPickerOpenRequest={modelPickerOpenRequest}
-                          {...(estimatedContextTokens === undefined ? {} : { estimatedContextTokens })}
-                          {...(contextWindowTokens === undefined ? {} : { contextWindowTokens })}
-                          {...(contextPressure?.breakdown === undefined
-                            ? {}
-                            : { contextBreakdown: contextPressure.breakdown })}
-                          promptMode={state.promptMode}
-                          configurationDisabled={backend.kind !== 'connected' || activeRunning}
-                          presetMutable={activeSubagent === undefined && active.status === 'idle'}
-                          onConfigurationChange={(configuration) => {
-                            void store
-                              .configureSession(active.id, configuration)
-                              .catch((reason: unknown) =>
-                                setError(
-                                  reason instanceof Error ? reason.message : t('app.error.sessionSettings'),
-                                ),
-                              )
-                          }}
-                          onPromptModeChange={(mode) => {
-                            void store
-                              .setPromptMode(mode)
-                              .catch((reason: unknown) =>
-                                setError(
-                                  reason instanceof Error ? reason.message : t('app.error.promptMode'),
-                                ),
-                              )
-                          }}
-                          onCommand={async (command, commandAttachments = []) => {
-                            if (command.trim() === '/model') {
-                              if (commandAttachments.length > 0)
-                                throw new Error(t('app.error.commandImagesUnsupported', { command: 'model' }))
-                              setModelPickerOpenRequest((current) => current + 1)
-                              return
+                        <>
+                          <Composer
+                            disabled={backend.kind !== 'connected'}
+                            inputDisabled={
+                              subagentReadOnlyReason !== undefined ||
+                              (activeSubagent !== undefined && activeSubagentState?.parentAvailable === false)
                             }
-                            try {
-                              await store.executeCommand(active.id, command, commandAttachments)
-                              if (commandAttachments.length > 0)
-                                removeAttachmentDrafts(
-                                  commandAttachments.map((attachment) => attachment.uri),
-                                  true,
-                                )
-                            } catch (reason: unknown) {
-                              setError(reason instanceof Error ? reason.message : t('app.error.dshMode'))
-                              throw reason
-                            }
-                          }}
-                          onPopupSelect={(command) => popupSelects.get(command)?.onOpen()}
-                          onCommandQueryChange={(query) => {
-                            if (query === undefined || state.commands.length > 0) return
-                            void store.refreshCommands(active.id)
-                          }}
-                          onReferenceQueryChange={updateReferenceQuery}
-                          onDraftChange={setDraft}
-                          onPickAttachment={() => {
-                            const generation = attachmentGenerationRef.current
-                            void store
-                              .pickAttachment()
-                              .then((attachment) => {
-                                if (attachment !== undefined)
-                                  appendAttachment(attachment, undefined, generation)
-                              })
-                              .catch((reason: unknown) =>
-                                setError(
-                                  reason instanceof Error
-                                    ? reason.message
-                                    : t('app.error.attachmentSelection'),
-                                ),
-                              )
-                          }}
-                          onIngestFiles={ingestFiles}
-                          attachmentPreviews={attachmentPreviews}
-                          openFileCandidates={visibleOpenFileCandidates}
-                          openFilePickerOpen={visibleOpenFilePickerOpen}
-                          openFilePickerLoading={visibleOpenFilePickerLoading}
-                          {...(state.preferredOpenFileId === undefined
-                            ? {}
-                            : { preferredOpenFileId: state.preferredOpenFileId })}
-                          attachedOpenFileIds={Object.values(openFileAttachmentIds)}
-                          {...(attachingOpenFileId === undefined ? {} : { attachingOpenFileId })}
-                          onToggleOpenFilePicker={toggleOpenFilePicker}
-                          onSelectOpenFile={selectOpenFile}
-                          onRemoveAttachment={(uri) => {
-                            removeAttachmentDrafts([uri], true)
-                          }}
-                          onSubmit={submitPrompt}
-                          onCancel={() => {
-                            void store
-                              .cancelSession(active.id)
-                              .catch((reason: unknown) =>
-                                setError(reason instanceof Error ? reason.message : t('app.error.cancel')),
-                              )
-                          }}
-                          status={
-                            <StatsLine
-                              nodes={state.timeline.nodes}
-                              usage={projectedTokenUsage ?? state.timeline.tokenUsage}
-                              cacheHit={cacheHitRate(projectedTokenUsage ?? state.timeline.tokenUsage)}
-                              {...(sessionStats === undefined ? {} : { sessionStats })}
-                            />
-                          }
-                          onSteerQueue={() => {
-                            void store
-                              .steerAllQueued()
-                              .catch((reason: unknown) =>
-                                setError(reason instanceof Error ? reason.message : t('app.error.steerAll')),
-                              )
-                          }}
-                          queue={state.queue}
-                        />
+                            attachmentsDisabled={activeSubagent !== undefined}
+                            running={activeRunning}
+                            draft={draft}
+                            attachments={attachments}
+                            {...(activeSubagent === undefined
+                              ? {
+                                  editorContext: state.editorContext,
+                                  editorContextAvailableKinds: state.editorContextAvailableKinds,
+                                  editorContextLoading: state.editorContextLoading,
+                                  onCaptureEditorContext: composerOnCaptureEditorContext,
+                                  onRemoveEditorContext: composerOnRemoveEditorContext,
+                                  onPreviewEditorContext: composerOnPreviewEditorContext,
+                                }
+                              : {})}
+                            configuration={state.configuration}
+                            models={sessionModels}
+                            presets={state.presets}
+                            permissionPresets={state.permissionPresets}
+                            commands={state.commands}
+                            popupSelects={popupSelects}
+                            references={visibleReferenceCandidates}
+                            referenceLoading={visibleReferenceLoading}
+                            {...(imageLimits === undefined ? {} : { imageLimits })}
+                            busyEnter={state.busyEnter}
+                            modelPickerOpenRequest={modelPickerOpenRequest}
+                            {...(estimatedContextTokens === undefined ? {} : { estimatedContextTokens })}
+                            {...(contextWindowTokens === undefined ? {} : { contextWindowTokens })}
+                            {...(contextPressure?.breakdown === undefined
+                              ? {}
+                              : { contextBreakdown: contextPressure.breakdown })}
+                            promptMode={state.promptMode}
+                            configurationDisabled={backend.kind !== 'connected' || activeRunning}
+                            presetMutable={activeSubagent === undefined && active.status === 'idle'}
+                            onConfigurationChange={composerOnConfigurationChange}
+                            onPromptModeChange={composerOnPromptModeChange}
+                            onCommand={composerOnCommand}
+                            onPopupSelect={composerOnPopupSelect}
+                            onCommandQueryChange={composerOnCommandQueryChange}
+                            onReferenceQueryChange={composerOnReferenceQueryChange}
+                            onDraftChange={setDraft}
+                            onPickAttachment={composerOnPickAttachment}
+                            onIngestFiles={composerOnIngestFiles}
+                            attachmentPreviews={attachmentPreviews}
+                            openFileCandidates={visibleOpenFileCandidates}
+                            openFilePickerOpen={visibleOpenFilePickerOpen}
+                            openFilePickerLoading={visibleOpenFilePickerLoading}
+                            {...(state.preferredOpenFileId === undefined
+                              ? {}
+                              : { preferredOpenFileId: state.preferredOpenFileId })}
+                            attachedOpenFileIds={attachedOpenFileIds}
+                            {...(attachingOpenFileId === undefined ? {} : { attachingOpenFileId })}
+                            onToggleOpenFilePicker={composerOnToggleOpenFilePicker}
+                            onSelectOpenFile={composerOnSelectOpenFile}
+                            onRemoveAttachment={composerOnRemoveAttachment}
+                            onSubmit={composerOnSubmit}
+                            onCancel={composerOnCancel}
+                            onSteerQueue={composerOnSteerQueue}
+                            queue={state.queue}
+                          />
+                          <div className="dsh-composer__status">{composerStatus}</div>
+                        </>
                       ) : (
                         <div className="dsh-subagent-readonly" role="status">
                           <strong>{t('subagents.readOnly.title')}</strong>

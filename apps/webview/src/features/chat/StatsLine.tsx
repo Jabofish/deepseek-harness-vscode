@@ -1,4 +1,4 @@
-import { useMemo, type ReactElement } from 'react'
+import { memo, useMemo, type ReactElement } from 'react'
 import type { SessionStatsProjection, TokenUsage } from '@dsh-vscode/domain'
 import { billedInputTokens, cacheHitPercent } from '@dsh-vscode/timeline'
 import type { TimelineNode } from '@dsh-vscode/timeline'
@@ -6,6 +6,9 @@ import { useI18n } from '../../i18n.js'
 
 export interface StatsLineProps {
   readonly nodes: readonly TimelineNode[]
+  /** Optional reducer boundary for incremental fallback statistics. */
+  readonly nodeChangeStart?: number
+  readonly nodeChangeBase?: readonly TimelineNode[]
   readonly usage: TokenUsage | undefined
   readonly cacheHit: number
   /** Whole-log DSH projection; the visible-node fold is only a fallback. */
@@ -14,17 +17,44 @@ export interface StatsLineProps {
 
 type WindowStats = SessionStatsProjection
 
+interface NodeStats {
+  readonly turns: number
+  readonly assistantSteps: number
+  readonly toolSteps: number
+  readonly llmMs: number
+  readonly toolMs: number
+  readonly ttftMs: number
+  readonly ttftSteps: number
+  readonly decodeMs: number
+  readonly decodeTokens: number
+}
+
+const EMPTY_NODE_STATS: NodeStats = {
+  turns: 0,
+  assistantSteps: 0,
+  toolSteps: 0,
+  llmMs: 0,
+  toolMs: 0,
+  ttftMs: 0,
+  ttftSteps: 0,
+  decodeMs: 0,
+  decodeTokens: 0,
+}
+
+const nodeStatsCache = new WeakMap<object, NodeStats>()
+
 /**
  * Sticky session statistics above the composer, mirroring the official Web
  * UI's StatsLine: counts, DSH wall-time/speed metrics, cache hit, and token
  * totals. The projection is authoritative because the visible timeline can be
  * paged or compacted.
  */
-export function StatsLine(props: StatsLineProps): ReactElement {
+export const StatsLine = memo(function StatsLine(props: StatsLineProps): ReactElement {
   const { t } = useI18n()
+  const statsProjector = useMemo(() => createStatsProjector(), [])
   const stats = useMemo(
-    () => props.sessionStats ?? computeStats(props.nodes),
-    [props.nodes, props.sessionStats],
+    () => props.sessionStats ?? statsProjector(props.nodes, props.nodeChangeStart, props.nodeChangeBase),
+    [props.nodeChangeBase, props.nodeChangeStart, props.nodes, props.sessionStats, statsProjector],
   )
   if (stats.turns === 0 && props.usage === undefined)
     return <div className="dsh-stats-line" aria-hidden="true" />
@@ -83,64 +113,128 @@ export function StatsLine(props: StatsLineProps): ReactElement {
       )}
     </div>
   )
+})
+
+function createStatsProjector(): (
+  nodes: readonly TimelineNode[],
+  nodeChangeStart?: number,
+  nodeChangeBase?: readonly TimelineNode[],
+) => WindowStats {
+  let previous: StatsCache | undefined
+  return (nodes, nodeChangeStart, nodeChangeBase) => {
+    const previousCache = previous
+    if (previousCache?.sourceNodes === nodes) return previousCache.stats
+
+    const commonPrefix =
+      previousCache === undefined
+        ? 0
+        : nodeChangeStart === undefined || nodeChangeBase !== previousCache.sourceNodes
+          ? commonNodePrefixLength(previousCache.sourceNodes, nodes)
+          : Math.max(0, Math.min(previousCache.sourceNodes.length, nodes.length, nodeChangeStart))
+    const cumulative = previousCache?.cumulative ?? []
+    cumulative.length = commonPrefix
+    let aggregate = cumulative[commonPrefix - 1] ?? EMPTY_NODE_STATS
+    for (let index = commonPrefix; index < nodes.length; index += 1) {
+      const node = nodes[index]
+      if (node !== undefined) aggregate = addNodeStats(aggregate, statsForNode(node))
+      cumulative.push(aggregate)
+    }
+
+    const stats = toWindowStats(aggregate)
+    previous = { sourceNodes: nodes, cumulative, stats }
+    return stats
+  }
 }
 
-function computeStats(nodes: readonly TimelineNode[]): WindowStats {
-  let turns = 0
-  let assistantSteps = 0
-  let toolSteps = 0
-  let llmMs = 0
-  let toolMs = 0
-  let ttftMs = 0
-  let ttftSteps = 0
-  let decodeMs = 0
-  let decodeTokens = 0
-  for (const node of nodes) {
-    if (node.kind === 'user-message') {
-      turns += 1
-      continue
-    }
-    if (node.kind === 'assistant-message') {
-      assistantSteps += 1
-      const timing = node.timing
-      if (timing?.stepStartTime !== null && timing?.stepStartTime !== undefined) {
-        if (timing.completedTime !== null && timing.completedTime !== undefined)
-          llmMs += Math.max(0, timing.completedTime - timing.stepStartTime)
-        if (timing.firstTokenTime !== null && timing.firstTokenTime !== undefined) {
-          ttftMs += Math.max(0, timing.firstTokenTime - timing.stepStartTime)
-          ttftSteps += 1
-          if (
-            timing.completedTime !== null &&
-            timing.completedTime !== undefined &&
-            node.usage !== undefined
-          ) {
-            decodeMs += Math.max(0, timing.completedTime - timing.firstTokenTime)
-            decodeTokens += node.usage.outputTokens
-          }
-        }
-      }
-      continue
-    }
-    if (node.kind === 'tool') {
-      toolSteps += 1
-      const startedAt = parseTime(node.tool.startedAt)
-      const completedAt = parseTime(node.tool.completedAt)
-      if (startedAt !== undefined && completedAt !== undefined) toolMs += Math.max(0, completedAt - startedAt)
-    }
+interface StatsCache {
+  readonly sourceNodes: readonly TimelineNode[]
+  readonly cumulative: NodeStats[]
+  readonly stats: WindowStats
+}
+
+function commonNodePrefixLength(previous: readonly TimelineNode[], next: readonly TimelineNode[]): number {
+  const length = Math.min(previous.length, next.length)
+  let index = 0
+  while (index < length && previous[index] === next[index]) index += 1
+  return index
+}
+
+function addNodeStats(left: NodeStats, right: NodeStats): NodeStats {
+  return {
+    turns: left.turns + right.turns,
+    assistantSteps: left.assistantSteps + right.assistantSteps,
+    toolSteps: left.toolSteps + right.toolSteps,
+    llmMs: left.llmMs + right.llmMs,
+    toolMs: left.toolMs + right.toolMs,
+    ttftMs: left.ttftMs + right.ttftMs,
+    ttftSteps: left.ttftSteps + right.ttftSteps,
+    decodeMs: left.decodeMs + right.decodeMs,
+    decodeTokens: left.decodeTokens + right.decodeTokens,
   }
+}
+
+function toWindowStats(aggregate: NodeStats): WindowStats {
   // A fully represented DSH step has an assistant node. Keep the old tool-only
   // fallback for partial histories that contain a call but no assistant node;
   // a live sessionStats projection supersedes this fallback whenever present.
   return {
-    turns,
-    steps: assistantSteps > 0 ? assistantSteps : toolSteps,
-    llmMs,
-    toolMs,
-    ttftMs,
-    ttftSteps,
-    decodeMs,
-    decodeTokens,
+    turns: aggregate.turns,
+    steps: aggregate.assistantSteps > 0 ? aggregate.assistantSteps : aggregate.toolSteps,
+    llmMs: aggregate.llmMs,
+    toolMs: aggregate.toolMs,
+    ttftMs: aggregate.ttftMs,
+    ttftSteps: aggregate.ttftSteps,
+    decodeMs: aggregate.decodeMs,
+    decodeTokens: aggregate.decodeTokens,
   }
+}
+
+function statsForNode(node: TimelineNode): NodeStats {
+  const cached = nodeStatsCache.get(node)
+  if (cached !== undefined) return cached
+
+  let contribution = EMPTY_NODE_STATS
+  if (node.kind === 'user-message') {
+    contribution = { ...EMPTY_NODE_STATS, turns: 1 }
+  } else if (node.kind === 'assistant-message') {
+    let llmMs = 0
+    let ttftMs = 0
+    let ttftSteps = 0
+    let decodeMs = 0
+    let decodeTokens = 0
+    const timing = node.timing
+    if (timing?.stepStartTime !== null && timing?.stepStartTime !== undefined) {
+      if (timing.completedTime !== null && timing.completedTime !== undefined)
+        llmMs = Math.max(0, timing.completedTime - timing.stepStartTime)
+      if (timing.firstTokenTime !== null && timing.firstTokenTime !== undefined) {
+        ttftMs = Math.max(0, timing.firstTokenTime - timing.stepStartTime)
+        ttftSteps = 1
+        if (timing.completedTime !== null && timing.completedTime !== undefined && node.usage !== undefined) {
+          decodeMs = Math.max(0, timing.completedTime - timing.firstTokenTime)
+          decodeTokens = node.usage.outputTokens
+        }
+      }
+    }
+    contribution = {
+      ...EMPTY_NODE_STATS,
+      assistantSteps: 1,
+      llmMs,
+      ttftMs,
+      ttftSteps,
+      decodeMs,
+      decodeTokens,
+    }
+  } else if (node.kind === 'tool') {
+    const startedAt = parseTime(node.tool.startedAt)
+    const completedAt = parseTime(node.tool.completedAt)
+    contribution = {
+      ...EMPTY_NODE_STATS,
+      toolSteps: 1,
+      toolMs: startedAt !== undefined && completedAt !== undefined ? Math.max(0, completedAt - startedAt) : 0,
+    }
+  }
+  nodeStatsCache.set(node, contribution)
+  return contribution
 }
 
 function parseTime(value: string | undefined): number | undefined {

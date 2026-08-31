@@ -1,4 +1,4 @@
-import { useState, type ReactElement } from 'react'
+import { memo, useMemo, useState, type ReactElement } from 'react'
 import type { TodoView } from '@dsh-vscode/domain'
 import { ContentFlow } from '../../components/common/ContentFlow.js'
 import { useI18n } from '../../i18n.js'
@@ -9,16 +9,12 @@ export interface TodoListProps {
 }
 
 /** Persistent task progress directly above the composer. */
-export function TodoList({ todos }: TodoListProps): ReactElement | null {
+export const TodoList = memo(function TodoList({ todos }: TodoListProps): ReactElement | null {
   const { t } = useI18n()
   const [open, setOpen] = useState(false)
+  const { completed, inProgress, pending, current } = useMemo(() => summarizeTodos(todos), [todos])
   if (todos.length === 0) return null
-  const completed = todos.filter((todo) => todo.status === 'completed').length
-  const inProgress = todos.filter((todo) => todo.status === 'in-progress').length
-  const pending = todos.filter((todo) => todo.status === 'pending').length
   const summary = t('todo.summary', { completed, inProgress, pending })
-  const current =
-    todos.find((todo) => todo.status === 'in-progress') ?? todos.find((todo) => todo.status === 'pending')
   return (
     <section
       className={`dsh-todo-list${open ? '' : ' dsh-todo-list--collapsed'}`}
@@ -87,6 +83,40 @@ export function TodoList({ todos }: TodoListProps): ReactElement | null {
       </div>
     </section>
   )
+})
+
+interface TodoSummary {
+  readonly completed: number
+  readonly inProgress: number
+  readonly pending: number
+  readonly current: TodoView | undefined
+}
+
+function summarizeTodos(todos: readonly TodoView[]): TodoSummary {
+  let completed = 0
+  let inProgress = 0
+  let pending = 0
+  let firstInProgress: TodoView | undefined
+  let firstPending: TodoView | undefined
+
+  for (const todo of todos) {
+    if (todo.status === 'completed') {
+      completed += 1
+    } else if (todo.status === 'in-progress') {
+      inProgress += 1
+      firstInProgress ??= todo
+    } else {
+      pending += 1
+      firstPending ??= todo
+    }
+  }
+
+  return {
+    completed,
+    inProgress,
+    pending,
+    current: firstInProgress ?? firstPending,
+  }
 }
 
 function TodoStateIcon({ status }: { readonly status: TodoView['status'] }): ReactElement {

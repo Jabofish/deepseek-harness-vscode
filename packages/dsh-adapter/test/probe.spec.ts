@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { BackendCandidate } from '@dsh-vscode/domain'
+import type { BackendCandidate, BackendCapabilities, BackendEndpoint } from '@dsh-vscode/domain'
 import { AppError } from '@dsh-vscode/domain'
 
+import type { DshTransport } from '../src/contracts.js'
 import { VersionedBackendProbe } from '../src/probe.js'
 
 function candidate(port: number): BackendCandidate {
@@ -80,5 +81,95 @@ describe('VersionedBackendProbe version classification', () => {
     }
 
     expect(await new VersionedBackendProbe([declining]).probe(candidate(3943))).toBeUndefined()
+  })
+})
+
+describe('VersionedBackendProbe reachability pre-flight', () => {
+  // Property-signature function types (instead of DshVersionAdapter's method
+  // syntax) keep the `expect(adapter.probe)` references lint-clean.
+  function fixtureAdapter(id: string): {
+    id: string
+    supportedVersion: string
+    probe: (candidate: BackendCandidate, signal?: AbortSignal) => Promise<BackendCapabilities | undefined>
+    createTransport: (endpoint: BackendEndpoint) => DshTransport
+  } {
+    return {
+      id,
+      supportedVersion: id,
+      probe: vi.fn((_candidate: BackendCandidate, _signal?: AbortSignal) => Promise.resolve(undefined)),
+      createTransport: vi.fn(),
+    }
+  }
+
+  it('declines a refusing endpoint without invoking any adapter', async () => {
+    const adapter = fixtureAdapter('fixture')
+    const probe = new VersionedBackendProbe([adapter], {
+      fetch: vi.fn(() => Promise.reject(new TypeError('fetch failed ECONNREFUSED'))),
+    })
+
+    expect(await probe.probe(candidate(3944))).toBeUndefined()
+    expect(adapter.probe).not.toHaveBeenCalled()
+  })
+
+  it('runs the adapter chain when the endpoint answers, whatever the status', async () => {
+    const declining = fixtureAdapter('declining')
+    const probe = new VersionedBackendProbe([declining], {
+      fetch: vi.fn(() => Promise.resolve(new Response(null, { status: 404 }))),
+    })
+
+    expect(await probe.probe(candidate(3945))).toBeUndefined()
+    expect(declining.probe).toHaveBeenCalledTimes(1)
+  })
+
+  it('declines an endpoint whose pre-flight exceeds its own timeout', async () => {
+    const adapter = fixtureAdapter('fixture')
+    const probe = new VersionedBackendProbe([adapter], {
+      fetch: vi.fn(
+        (_input: unknown, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), {
+              once: true,
+            })
+          }),
+      ),
+      preflightTimeoutMs: 10,
+    })
+
+    expect(await probe.probe(candidate(3946))).toBeUndefined()
+    expect(adapter.probe).not.toHaveBeenCalled()
+  })
+
+  it('propagates the caller cancellation raised during the pre-flight', async () => {
+    const adapter = fixtureAdapter('fixture')
+    const controller = new AbortController()
+    const probe = new VersionedBackendProbe([adapter], {
+      fetch: vi.fn(
+        (_input: unknown, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), {
+              once: true,
+            })
+          }),
+      ),
+    })
+
+    const pending = probe.probe(candidate(3947), controller.signal)
+    controller.abort()
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+    expect(adapter.probe).not.toHaveBeenCalled()
+  })
+
+  it('still surfaces DSH_INCOMPATIBLE from the adapter chain after a live pre-flight', async () => {
+    const incompatible = {
+      id: 'incompatible',
+      supportedVersion: 'incompatible',
+      probe: vi.fn((): Promise<never> => Promise.reject(incompatibleError())),
+      createTransport: vi.fn(),
+    }
+    const probe = new VersionedBackendProbe([incompatible], {
+      fetch: vi.fn(() => Promise.resolve(new Response(null, { status: 200 }))),
+    })
+
+    await expect(probe.probe(candidate(3948))).rejects.toMatchObject({ code: 'DSH_INCOMPATIBLE' })
   })
 })

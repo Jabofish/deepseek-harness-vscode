@@ -1,5 +1,6 @@
 import {
   Fragment,
+  memo,
   useCallback,
   useEffect,
   useId,
@@ -41,6 +42,7 @@ interface DshEventGroupNode {
   readonly kind: 'event-group'
   readonly id: string
   readonly events: readonly DshEventNode[]
+  readonly textSize: number
 }
 
 interface ReasoningBlock {
@@ -94,9 +96,17 @@ type DisplayTimelineNode =
   | DshEventGroupNode
   | AssistantTurnNode
 
+type ExpandedDetailsSetter = (
+  next: ReadonlySet<string> | ((current: ReadonlySet<string>) => ReadonlySet<string>),
+) => void
+
 export interface TimelineProps {
   readonly sessionId: string
   readonly nodes: readonly TimelineNode[]
+  /** Reducer-provided first changed raw node; absent callers use identity scan. */
+  readonly nodeChangeStart?: number
+  /** Guards the reducer hint when React skips an intermediate snapshot. */
+  readonly nodeChangeBase?: readonly TimelineNode[]
   readonly streaming: boolean
   /** Conversation chrome owns this preference when the Timeline is embedded in App. */
   readonly showDshEvents?: boolean
@@ -122,7 +132,21 @@ export interface TimelineProps {
   readonly onLoadOlderHistory?: () => Promise<void> | void
 }
 
-export function Timeline(props: TimelineProps): ReactElement {
+/** Keep row handlers stable while still dispatching to the latest parent callback. */
+function useStableOptionalCallback<Args extends unknown[], Result>(
+  callback: ((...args: Args) => Result) | undefined,
+): (...args: Args) => Result {
+  const callbackRef = useRef(callback)
+  useLayoutEffect(() => {
+    callbackRef.current = callback
+  }, [callback])
+  return useCallback((...args: Args): Result => {
+    const current = callbackRef.current
+    return current === undefined ? (undefined as Result) : current(...args)
+  }, [])
+}
+
+export const Timeline = memo(function Timeline(props: TimelineProps): ReactElement {
   const { t } = useI18n()
   const prependAnchorRef = useRef<ScrollAnchor | undefined>(undefined)
   const olderHistoryRequestRef = useRef(false)
@@ -132,31 +156,46 @@ export function Timeline(props: TimelineProps): ReactElement {
   // answers cannot be fused. Thinking-only steps are different: the official
   // conversation surface presents one collapsed thinking block for a
   // continuous run, then attaches it to the following visible answer.
-  const displayNodes = useMemo(
-    () => prepareDisplayNodes(props.nodes, showDshEvents),
-    [props.nodes, showDshEvents],
+  const displayProjector = useMemo(() => createDisplayNodeProjector(), [])
+  const nodeSignatureProjector = useMemo(() => createNodeSignatureProjector(), [])
+  const displayProjection = useMemo(
+    () => displayProjector(props.nodes, showDshEvents, props.nodeChangeStart, props.nodeChangeBase),
+    [displayProjector, props.nodeChangeBase, props.nodeChangeStart, props.nodes, showDshEvents],
   )
+  const displayNodes = displayProjection.nodes
   const running = props.running ?? props.streaming
   const hasMoreHistory = props.hasMoreHistory
   const loadingOlderHistory = props.loadingOlderHistory
   const onLoadOlderHistory = props.onLoadOlderHistory
-
-  const usingTool = props.nodes.some(
-    (node) => node.kind === 'tool' && (node.tool.status === 'queued' || node.tool.status === 'running'),
+  const displayNodeTextSizeProjector = useMemo(() => createDisplayNodeTextSizeProjector(), [])
+  const timelineFactsProjector = useMemo(() => createTimelineFactsProjector(), [])
+  const timelineFacts = useMemo(
+    () => timelineFactsProjector(props.nodes, props.nodeChangeStart, props.nodeChangeBase),
+    [timelineFactsProjector, props.nodeChangeBase, props.nodeChangeStart, props.nodes],
   )
-  const onOpenLink = props.onOpenLink
+  const virtualizationProjector = useMemo(() => createVirtualizationProjector(), [])
+
+  const usingTool = timelineFacts.hasActiveTool
+  const hasOpenLink = props.onOpenLink !== undefined
+  const stableOnOpenLink = useStableOptionalCallback(props.onOpenLink)
+  const stableOnLoadImage = useStableOptionalCallback(props.onLoadImage)
+  const stableOnShowInFolder = useStableOptionalCallback(props.onShowInFolder)
+  const stableOnOpenSession = useStableOptionalCallback(props.onOpenSession)
+  const stableOnBranch = useStableOptionalCallback(props.onBranch)
+  const stableOnFeedback = useStableOptionalCallback(props.onFeedback)
+  const stableOnFeedbackNote = useStableOptionalCallback(props.onFeedbackNote)
   const [openLinkError, setOpenLinkError] = useState<{ readonly href: string; readonly message: string }>()
   const [openLinkBusy, setOpenLinkBusy] = useState(false)
   const requestOpenLink = useCallback(
     (href: string): void => {
-      if (onOpenLink === undefined) return
+      if (!hasOpenLink) return
       const normalized = href.trim()
       if (normalized === '') return
       setOpenLinkError(undefined)
       setOpenLinkBusy(true)
       let operation: void | Promise<void>
       try {
-        operation = onOpenLink(normalized)
+        operation = stableOnOpenLink(normalized)
       } catch (reason: unknown) {
         setOpenLinkError({
           href: normalized,
@@ -174,11 +213,11 @@ export function Timeline(props: TimelineProps): ReactElement {
         })
         .finally(() => setOpenLinkBusy(false))
     },
-    [onOpenLink, t],
+    [hasOpenLink, stableOnOpenLink, t],
   )
   const latestNode = displayNodes[displayNodes.length - 1]
-  const latestSignature = nodeSignature(latestNode)
-  const virtualizeTimeline = shouldVirtualizeTimeline(displayNodes)
+  const latestSignature = nodeSignatureProjector(latestNode)
+  const virtualizeTimeline = virtualizationProjector(displayNodes, displayNodeTextSizeProjector)
   const {
     scrollRef,
     contentRef,
@@ -200,10 +239,7 @@ export function Timeline(props: TimelineProps): ReactElement {
     enabled: virtualizeTimeline,
     getItemKey: timelineNodeKey,
   })
-  const enteredId = useTailEntrance(
-    displayNodes.map((node) => node.id),
-    props.sessionId,
-  )
+  const enteredId = useTailEntrance(latestNode?.id, props.sessionId)
   useLayoutEffect(() => {
     if (!virtualized.enabled || virtualized.totalSize <= 0) return
     // Virtual rows refine the canvas height as they enter the measurement
@@ -235,6 +271,56 @@ export function Timeline(props: TimelineProps): ReactElement {
     const element = scrollRef.current
     if (element !== null && element.scrollTop <= 24) loadOlderHistory()
   }, [loadOlderHistory, scrollRef])
+
+  const hasLoadImage = props.onLoadImage !== undefined
+  const hasShowInFolder = props.onShowInFolder !== undefined
+  const hasOpenSession = props.onOpenSession !== undefined
+  const hasBranch = props.onBranch !== undefined
+  const hasFeedback = props.onFeedback !== undefined
+  const hasFeedbackNote = props.onFeedbackNote !== undefined
+  const nodeRenderContext = useMemo<TimelineNodeRenderContext>(
+    () => ({
+      expandedDetails,
+      setExpandedDetails,
+      assistantLabel: props.assistantLabel,
+      onOpenLink: hasOpenLink ? requestOpenLink : undefined,
+      onLoadImage: hasLoadImage ? stableOnLoadImage : undefined,
+      onShowInFolder: hasShowInFolder ? stableOnShowInFolder : undefined,
+      onOpenSession: hasOpenSession ? stableOnOpenSession : undefined,
+      onBranch: hasBranch ? stableOnBranch : undefined,
+      branching: props.branching === true,
+      running,
+      feedback: props.feedback,
+      feedbackUnavailable: props.feedbackUnavailable,
+      onFeedback: hasFeedback ? stableOnFeedback : undefined,
+      onFeedbackNote: hasFeedbackNote ? stableOnFeedbackNote : undefined,
+      requestOpenLink,
+      t,
+    }),
+    [
+      expandedDetails,
+      hasBranch,
+      hasFeedback,
+      hasFeedbackNote,
+      hasLoadImage,
+      hasOpenLink,
+      hasOpenSession,
+      hasShowInFolder,
+      props.assistantLabel,
+      props.branching,
+      props.feedback,
+      props.feedbackUnavailable,
+      requestOpenLink,
+      running,
+      stableOnBranch,
+      stableOnFeedback,
+      stableOnFeedbackNote,
+      stableOnLoadImage,
+      stableOnOpenSession,
+      stableOnShowInFolder,
+      t,
+    ],
+  )
 
   useLayoutEffect(() => {
     const anchor = prependAnchorRef.current
@@ -277,7 +363,7 @@ export function Timeline(props: TimelineProps): ReactElement {
             </button>
           </div>
         ) : null}
-        {displayNodes.length === 0 && !props.nodes.some((node) => node.kind === 'event') ? (
+        {displayNodes.length === 0 && !timelineFacts.hasEvents ? (
           <div className="dsh-timeline__empty" role="status">
             <span className="dsh-timeline__empty-icon" aria-hidden="true">
               <Icon name="sparkles" />
@@ -307,14 +393,7 @@ export function Timeline(props: TimelineProps): ReactElement {
                       className={`dsh-timeline__row${node.id === enteredId ? ' dsh-timeline__row--enter' : ''}`}
                       style={{ transform: `translateY(${item.start}px)` }}
                     >
-                      {renderTimelineNode(node, {
-                        expandedDetails,
-                        setExpandedDetails,
-                        props,
-                        requestOpenLink,
-                        running,
-                        t,
-                      })}
+                      <TimelineRow node={node} context={nodeRenderContext} />
                     </div>
                   )
                 })
@@ -323,14 +402,7 @@ export function Timeline(props: TimelineProps): ReactElement {
                     key={node.id}
                     className={`dsh-timeline__row${node.id === enteredId ? ' dsh-timeline__row--enter' : ''}`}
                   >
-                    {renderTimelineNode(node, {
-                      expandedDetails,
-                      setExpandedDetails,
-                      props,
-                      requestOpenLink,
-                      running,
-                      t,
-                    })}
+                    <TimelineRow node={node} context={nodeRenderContext} />
                   </div>
                 ))}
           </div>
@@ -363,7 +435,7 @@ export function Timeline(props: TimelineProps): ReactElement {
       )}
     </div>
   )
-}
+})
 
 /** Host/OS refusal while opening a file or URL from a tool card. The retry
  * repeats the sanctioned Host open operation; it never replays a tool call. */
@@ -454,7 +526,7 @@ function ToolLinkErrorDialog({
 function renderNode(
   node: DisplayTimelineNode,
   expanded: ReadonlySet<string>,
-  setExpanded: (next: ReadonlySet<string>) => void,
+  setExpanded: ExpandedDetailsSetter,
   assistantLabel = 'Model',
   onOpenLink?: (href: string) => void,
   onLoadImage?: (image: MessageImageReference) => Promise<string | undefined>,
@@ -751,45 +823,236 @@ function renderNode(
 
 interface TimelineNodeRenderContext {
   readonly expandedDetails: ReadonlySet<string>
-  readonly setExpandedDetails: (next: ReadonlySet<string>) => void
-  readonly props: TimelineProps
+  readonly setExpandedDetails: ExpandedDetailsSetter
+  readonly assistantLabel: string | undefined
+  readonly onOpenLink: ((href: string) => void) | undefined
+  readonly onLoadImage: ((image: MessageImageReference) => Promise<string | undefined>) | undefined
+  readonly onShowInFolder: ((href: string) => void) | undefined
+  readonly onOpenSession: ((sessionId: string) => void) | undefined
+  readonly onBranch: ((atSeq: number) => void) | undefined
+  readonly branching: boolean
   readonly requestOpenLink: (href: string) => void
   readonly running: boolean
+  readonly feedback: Readonly<Record<string, MessageFeedbackItem>> | undefined
+  readonly feedbackUnavailable: boolean | undefined
+  readonly onFeedback: ((messageId: string, rating: MessageFeedbackRating) => void) | undefined
+  readonly onFeedbackNote: ((messageId: string, note: string | undefined) => Promise<void> | void) | undefined
   readonly t: Translate
 }
 
 function renderTimelineNode(node: DisplayTimelineNode, context: TimelineNodeRenderContext): ReactElement {
-  const { props } = context
   return renderNode(
     node,
     context.expandedDetails,
     context.setExpandedDetails,
-    props.assistantLabel,
-    props.onOpenLink === undefined ? undefined : context.requestOpenLink,
-    props.onLoadImage,
-    props.onShowInFolder,
-    props.onOpenSession,
-    props.onBranch,
-    branchUnavailableForNode(node, props.branching === true),
+    context.assistantLabel,
+    context.onOpenLink === undefined ? undefined : context.requestOpenLink,
+    context.onLoadImage,
+    context.onShowInFolder,
+    context.onOpenSession,
+    context.onBranch,
+    branchUnavailableForNode(node, context.branching),
     context.running,
-    props.feedback,
-    props.onFeedback,
-    props.onFeedbackNote,
+    context.feedback,
+    context.onFeedback,
+    context.onFeedbackNote,
     context.t,
-    props.feedbackUnavailable,
+    context.feedbackUnavailable,
   )
 }
 
-function shouldVirtualizeTimeline(nodes: readonly DisplayTimelineNode[]): boolean {
-  if (nodes.length >= DEFAULT_VIRTUALIZATION_THRESHOLD) return true
-  // A single long answer can be more expensive than many compact rows. Keep
-  // its siblings windowed as soon as the rendered source crosses this policy
-  // limit; the Markdown block itself remains available when its row is shown.
-  return nodes.some((node) => displayNodeTextSize(node) >= DEFAULT_VIRTUALIZATION_PAYLOAD_THRESHOLD)
+const TimelineRow = memo(
+  function TimelineRow(props: {
+    readonly node: DisplayTimelineNode
+    readonly context: TimelineNodeRenderContext
+  }): ReactElement {
+    return renderTimelineNode(props.node, props.context)
+  },
+  (previous, next) =>
+    previous.node === next.node && timelineRowContextEqual(previous.node, previous.context, next.context),
+)
+
+function timelineRowContextEqual(
+  node: DisplayTimelineNode,
+  previous: TimelineNodeRenderContext,
+  next: TimelineNodeRenderContext,
+): boolean {
+  if (previous === next) return true
+  if (
+    previous.assistantLabel !== next.assistantLabel ||
+    previous.setExpandedDetails !== next.setExpandedDetails ||
+    previous.onOpenLink !== next.onOpenLink ||
+    previous.requestOpenLink !== next.requestOpenLink ||
+    previous.onLoadImage !== next.onLoadImage ||
+    previous.onShowInFolder !== next.onShowInFolder ||
+    previous.onOpenSession !== next.onOpenSession ||
+    previous.onBranch !== next.onBranch ||
+    previous.branching !== next.branching ||
+    previous.running !== next.running ||
+    previous.onFeedback !== next.onFeedback ||
+    previous.onFeedbackNote !== next.onFeedbackNote ||
+    previous.feedbackUnavailable !== next.feedbackUnavailable ||
+    previous.t !== next.t
+  )
+    return false
+
+  if (!expandedDetailsEqualForNode(node, previous.expandedDetails, next.expandedDetails)) return false
+  return feedbackEqualForNode(node, previous.feedback, next.feedback)
+}
+
+function expandedDetailsEqualForNode(
+  node: DisplayTimelineNode,
+  previous: ReadonlySet<string>,
+  next: ReadonlySet<string>,
+): boolean {
+  if (previous === next) return true
+  const check = (key: string): boolean => previous.has(key) === next.has(key)
+  switch (node.kind) {
+    case 'tool':
+      return check(node.id)
+    case 'assistant-message':
+      return node.reasoning === undefined || check(`reasoning:${node.id}`)
+    case 'reasoning':
+      return check(`reasoning:assistant-turn:${node.id}:${node.id}`)
+    case 'assistant-turn': {
+      const blocks = node.blocks.length === 0 ? assistantBlocksFromAggregates(node) : node.blocks
+      for (const block of blocks) {
+        const key = block.kind === 'tool' ? block.node.id : `reasoning:${node.id}:${block.id}`
+        if (!check(key)) return false
+      }
+      return true
+    }
+    default:
+      return true
+  }
+}
+
+function feedbackEqualForNode(
+  node: DisplayTimelineNode,
+  previous: Readonly<Record<string, MessageFeedbackItem>> | undefined,
+  next: Readonly<Record<string, MessageFeedbackItem>> | undefined,
+): boolean {
+  if (previous === next) return true
+  const messageId =
+    node.kind === 'assistant-message'
+      ? node.id
+      : node.kind === 'assistant-turn'
+        ? assistantMessageId(node)
+        : undefined
+  return messageId === undefined ? true : previous?.[messageId] === next?.[messageId]
+}
+
+interface VirtualizationCache {
+  readonly sourceNodes: readonly DisplayTimelineNode[]
+  readonly firstLargeNodeIndex: number
+}
+
+function createVirtualizationProjector(): (
+  nodes: readonly DisplayTimelineNode[],
+  textSize?: (node: DisplayTimelineNode) => number,
+) => boolean {
+  let previous: VirtualizationCache | undefined
+  return (nodes, textSize = displayNodeTextSize) => {
+    const previousCache = previous
+    if (previousCache?.sourceNodes === nodes) {
+      return nodes.length >= DEFAULT_VIRTUALIZATION_THRESHOLD || previousCache.firstLargeNodeIndex >= 0
+    }
+
+    const commonPrefix =
+      previousCache === undefined ? 0 : commonDisplayNodePrefixLength(previousCache.sourceNodes, nodes)
+    let firstLargeNodeIndex =
+      previousCache !== undefined &&
+      previousCache.firstLargeNodeIndex >= 0 &&
+      previousCache.firstLargeNodeIndex < commonPrefix
+        ? previousCache.firstLargeNodeIndex
+        : -1
+
+    for (let index = commonPrefix; index < nodes.length; index += 1) {
+      const node = nodes[index]
+      if (node !== undefined && textSize(node) >= DEFAULT_VIRTUALIZATION_PAYLOAD_THRESHOLD) {
+        firstLargeNodeIndex = firstLargeNodeIndex < 0 ? index : Math.min(firstLargeNodeIndex, index)
+        break
+      }
+    }
+
+    previous = { sourceNodes: nodes, firstLargeNodeIndex }
+    return nodes.length >= DEFAULT_VIRTUALIZATION_THRESHOLD || firstLargeNodeIndex >= 0
+  }
+}
+
+function commonDisplayNodePrefixLength(
+  previous: readonly DisplayTimelineNode[],
+  next: readonly DisplayTimelineNode[],
+): number {
+  const length = Math.min(previous.length, next.length)
+  let index = 0
+  while (index < length && previous[index] === next[index]) index += 1
+  return index
 }
 
 function timelineNodeKey(node: DisplayTimelineNode): string {
   return node.id
+}
+
+interface TimelineFacts {
+  readonly hasActiveTool: boolean
+  readonly hasEvents: boolean
+}
+
+interface TimelineFactsCache extends TimelineFacts {
+  readonly sourceNodes: readonly TimelineNode[]
+  readonly firstActiveToolIndex: number
+  readonly firstEventIndex: number
+}
+
+function createTimelineFactsProjector(): (
+  nodes: readonly TimelineNode[],
+  nodeChangeStart?: number,
+  nodeChangeBase?: readonly TimelineNode[],
+) => TimelineFacts {
+  let previous: TimelineFactsCache | undefined
+  return (nodes, nodeChangeStart, nodeChangeBase) => {
+    const previousCache = previous
+    if (previousCache?.sourceNodes === nodes) return previousCache
+
+    const commonPrefix =
+      previousCache === undefined
+        ? 0
+        : nodeChangeStart === undefined || nodeChangeBase !== previousCache.sourceNodes
+          ? commonNodePrefixLength(previousCache.sourceNodes, nodes)
+          : Math.max(0, Math.min(nodeChangeStart, previousCache.sourceNodes.length, nodes.length))
+    const stableActiveTool =
+      previousCache !== undefined &&
+      previousCache.firstActiveToolIndex >= 0 &&
+      previousCache.firstActiveToolIndex < commonPrefix
+    const stableEvent =
+      previousCache !== undefined &&
+      previousCache.firstEventIndex >= 0 &&
+      previousCache.firstEventIndex < commonPrefix
+    let firstActiveToolIndex = stableActiveTool ? (previousCache?.firstActiveToolIndex ?? -1) : -1
+    let firstEventIndex = stableEvent ? (previousCache?.firstEventIndex ?? -1) : -1
+
+    for (let index = commonPrefix; index < nodes.length; index += 1) {
+      const node = nodes[index]
+      if (
+        firstActiveToolIndex < 0 &&
+        node?.kind === 'tool' &&
+        (node.tool.status === 'queued' || node.tool.status === 'running')
+      )
+        firstActiveToolIndex = index
+      if (firstEventIndex < 0 && node?.kind === 'event') firstEventIndex = index
+      if (firstActiveToolIndex >= 0 && firstEventIndex >= 0) break
+    }
+
+    previous = {
+      sourceNodes: nodes,
+      firstActiveToolIndex,
+      firstEventIndex,
+      hasActiveTool: firstActiveToolIndex >= 0,
+      hasEvents: firstEventIndex >= 0,
+    }
+    return previous
+  }
 }
 
 function displayNodeTextSize(node: DisplayTimelineNode): number {
@@ -807,9 +1070,20 @@ function displayNodeTextSize(node: DisplayTimelineNode): number {
     case 'compaction':
       return node.compaction.summary?.length ?? 0
     case 'event-group':
-      return node.events.reduce((total, event) => total + formatEventPayload(event.payload).length, 0)
+      return node.textSize
     default:
       return 0
+  }
+}
+
+function createDisplayNodeTextSizeProjector(): (node: DisplayTimelineNode) => number {
+  const cache = new WeakMap<object, number>()
+  return (node) => {
+    const cached = cache.get(node)
+    if (cached !== undefined) return cached
+    const size = displayNodeTextSize(node)
+    cache.set(node, size)
+    return size
   }
 }
 
@@ -867,7 +1141,7 @@ function renderTeamActivity(
 function renderAssistantTurn(
   node: AssistantTurnNode,
   expanded: ReadonlySet<string>,
-  setExpanded: (next: ReadonlySet<string>) => void,
+  setExpanded: ExpandedDetailsSetter,
   assistantLabel: string,
   onOpenLink?: (href: string) => void,
   onLoadImage?: (image: MessageImageReference) => Promise<string | undefined>,
@@ -884,6 +1158,8 @@ function renderAssistantTurn(
   const inProgress = assistantNodeInProgress(node)
   const actionsUnavailable = running || inProgress || (node.turn !== undefined && node.turnCompleted !== true)
   const producedFiles = producedFilePaths(node.tools)
+  const durationLabel = assistantDurationLabel(node.timing, t)
+  const metricsLabel = assistantMetricsLabel(node.timing, node.usage, t)
   return (
     <div className="dsh-timeline__message-stack">
       <article className="dsh-timeline__card dsh-timeline__card--assistant">
@@ -892,15 +1168,12 @@ function renderAssistantTurn(
           {node.interrupted === true ? (
             <span className="dsh-timeline__card-meta">{t('timeline.interrupted')}</span>
           ) : null}
-          {assistantDurationLabel(node.timing, t) === undefined ? null : (
-            <span className="dsh-timeline__assistant-duration">{assistantDurationLabel(node.timing, t)}</span>
+          {durationLabel === undefined ? null : (
+            <span className="dsh-timeline__assistant-duration">{durationLabel}</span>
           )}
-          {assistantMetricsLabel(node.timing, node.usage, t) === undefined ? null : (
-            <span
-              className="dsh-timeline__assistant-metrics"
-              title={assistantMetricsLabel(node.timing, node.usage, t)}
-            >
-              {assistantMetricsLabel(node.timing, node.usage, t)}
+          {metricsLabel === undefined ? null : (
+            <span className="dsh-timeline__assistant-metrics" title={metricsLabel}>
+              {metricsLabel}
             </span>
           )}
         </header>
@@ -931,7 +1204,7 @@ function renderAssistantTurn(
 function renderAssistantMessage(
   node: Extract<DisplayTimelineNode, { readonly kind: 'assistant-message' }>,
   expanded: ReadonlySet<string>,
-  setExpanded: (next: ReadonlySet<string>) => void,
+  setExpanded: ExpandedDetailsSetter,
   assistantLabel: string,
   onOpenLink: ((href: string) => void) | undefined,
   onLoadImage: ((image: MessageImageReference) => Promise<string | undefined>) | undefined,
@@ -947,6 +1220,8 @@ function renderAssistantMessage(
 ): ReactElement {
   const inProgress = assistantNodeInProgress(node)
   const actionsUnavailable = running || inProgress || (node.turn !== undefined && node.turnCompleted !== true)
+  const durationLabel = assistantDurationLabel(node.timing, t)
+  const metricsLabel = assistantMetricsLabel(node.timing, node.usage, t)
   return (
     <div className="dsh-timeline__message-stack">
       <article className="dsh-timeline__card dsh-timeline__card--assistant">
@@ -955,15 +1230,12 @@ function renderAssistantMessage(
           {node.interrupted === true ? (
             <span className="dsh-timeline__card-meta">{t('timeline.interrupted')}</span>
           ) : null}
-          {assistantDurationLabel(node.timing, t) === undefined ? null : (
-            <span className="dsh-timeline__assistant-duration">{assistantDurationLabel(node.timing, t)}</span>
+          {durationLabel === undefined ? null : (
+            <span className="dsh-timeline__assistant-duration">{durationLabel}</span>
           )}
-          {assistantMetricsLabel(node.timing, node.usage, t) === undefined ? null : (
-            <span
-              className="dsh-timeline__assistant-metrics"
-              title={assistantMetricsLabel(node.timing, node.usage, t)}
-            >
-              {assistantMetricsLabel(node.timing, node.usage, t)}
+          {metricsLabel === undefined ? null : (
+            <span className="dsh-timeline__assistant-metrics" title={metricsLabel}>
+              {metricsLabel}
             </span>
           )}
         </header>
@@ -973,7 +1245,7 @@ function renderAssistantMessage(
             markdown={node.reasoning.markdown}
             streaming={node.reasoning.streaming}
             expanded={expanded.has(`reasoning:${node.id}`)}
-            onExpandedChange={(next) => updateExpanded(expanded, setExpanded, `reasoning:${node.id}`, next)}
+            onExpandedChange={reasoningExpandedChange(setExpanded, `reasoning:${node.id}`)}
             translate={t}
           />
         )}
@@ -1004,7 +1276,7 @@ function renderAssistantMessage(
 function renderAssistantBlocks(
   node: AssistantTurnNode,
   expanded: ReadonlySet<string>,
-  setExpanded: (next: ReadonlySet<string>) => void,
+  setExpanded: ExpandedDetailsSetter,
   onOpenLink: ((href: string) => void) | undefined,
   onLoadImage: ((image: MessageImageReference) => Promise<string | undefined>) | undefined,
   t: Translate,
@@ -1028,9 +1300,7 @@ function renderAssistantBlocks(
             markdown={block.markdown}
             streaming={block.streaming}
             expanded={expanded.has(`reasoning:${node.id}:${block.id}`)}
-            onExpandedChange={(next) =>
-              updateExpanded(expanded, setExpanded, `reasoning:${node.id}:${block.id}`, next)
-            }
+            onExpandedChange={reasoningExpandedChange(setExpanded, `reasoning:${node.id}:${block.id}`)}
             translate={t}
           />
         </Fragment>,
@@ -1189,6 +1459,9 @@ function renderProducedFiles(
 }
 
 function producedFilePaths(tools: readonly ToolTimelineNode[]): readonly string[] {
+  const cached = producedFilePathsCache.get(tools)
+  if (cached !== undefined) return cached
+
   const paths: string[] = []
   const seen = new Set<string>()
   for (const node of tools) {
@@ -1198,11 +1471,21 @@ function producedFilePaths(tools: readonly ToolTimelineNode[]): readonly string[
       if (seen.has(location.path)) continue
       seen.add(location.path)
       paths.push(location.path)
-      if (paths.length >= 6) return paths
+      if (paths.length >= 6) {
+        producedFilePathsCache.set(tools, paths)
+        return paths
+      }
     }
   }
-  return paths
+  const result = paths.length === 0 ? EMPTY_PRODUCED_FILE_PATHS : paths
+  producedFilePathsCache.set(tools, result)
+  return result
 }
+
+// Timeline snapshots are immutable, so the tool-array identity safely scopes
+// this projection cache without retaining completed conversations forever.
+const producedFilePathsCache = new WeakMap<readonly ToolTimelineNode[], readonly string[]>()
+const EMPTY_PRODUCED_FILE_PATHS: readonly string[] = []
 
 function isMutationTool(tool: ToolTimelineNode['tool']): boolean {
   const metadata = tool.metadata
@@ -1262,16 +1545,32 @@ function stableHash(value: string): number {
   return hash
 }
 
-function updateExpanded(
-  expanded: ReadonlySet<string>,
-  setExpanded: (next: ReadonlySet<string>) => void,
+const reasoningExpandedChangeCache = new WeakMap<
+  ExpandedDetailsSetter,
+  Map<string, (expanded: boolean) => void>
+>()
+
+function reasoningExpandedChange(
+  setExpanded: ExpandedDetailsSetter,
   id: string,
-  nextExpanded: boolean,
-): void {
-  const next = new Set(expanded)
-  if (nextExpanded) next.add(id)
-  else next.delete(id)
-  setExpanded(next)
+): (expanded: boolean) => void {
+  let callbacks = reasoningExpandedChangeCache.get(setExpanded)
+  if (callbacks === undefined) {
+    callbacks = new Map()
+    reasoningExpandedChangeCache.set(setExpanded, callbacks)
+  }
+  const cached = callbacks.get(id)
+  if (cached !== undefined) return cached
+  const callback = (nextExpanded: boolean): void => {
+    setExpanded((current) => {
+      const next = new Set(current)
+      if (nextExpanded) next.add(id)
+      else next.delete(id)
+      return next
+    })
+  }
+  callbacks.set(id, callback)
+  return callback
 }
 
 function compactionMeta(
@@ -1373,7 +1672,19 @@ function formatMetricRate(value: number): string {
   return `${Math.round(value * 10) / 10} tok/s`
 }
 
-function nodeSignature(node: DisplayTimelineNode | undefined): string {
+function createNodeSignatureProjector(): (node: DisplayTimelineNode | undefined) => string {
+  const cache = new WeakMap<object, string>()
+  return (node) => {
+    if (node === undefined) return ''
+    const cached = cache.get(node)
+    if (cached !== undefined) return cached
+    const signature = nodeSignature(node)
+    cache.set(node, signature)
+    return signature
+  }
+}
+
+function nodeSignature(node: DisplayTimelineNode): string {
   if (node === undefined) return ''
   if (node.kind === 'assistant-turn') {
     const latest = node.tools[node.tools.length - 1]
@@ -1406,7 +1717,21 @@ function branchUnavailableForNode(node: DisplayTimelineNode, branching: boolean)
   )
 }
 
+const formattedEventPayloadCache = new WeakMap<object, string>()
+
 function formatEventPayload(value: unknown, t: Translate = (key) => key): string {
+  if (typeof value === 'object' && value !== null) {
+    const cached = formattedEventPayloadCache.get(value)
+    if (cached !== undefined) return cached
+    try {
+      const json = JSON.stringify(value, null, 2)
+      const formatted = (json ?? '').slice(0, 8_192)
+      formattedEventPayloadCache.set(value, formatted)
+      return formatted
+    } catch {
+      return t('timeline.payloadUnavailable')
+    }
+  }
   try {
     const json = JSON.stringify(value, null, 2)
     return (json ?? '').slice(0, 8_192)
@@ -1415,42 +1740,156 @@ function formatEventPayload(value: unknown, t: Translate = (key) => key): string
   }
 }
 
-function prepareDisplayNodes(
+interface DisplayNodeProjectionCache {
+  readonly sourceNodes: readonly TimelineNode[]
+  readonly showDshEvents: boolean
+  /** Raw-node prefix that ends at a collapse/event boundary. */
+  readonly stableRawLength: number
+  /** Display nodes corresponding to the stable raw prefix. */
+  readonly stableDisplayNodes: readonly DisplayTimelineNode[]
+}
+
+interface DisplayNodeProjection {
+  readonly nodes: readonly DisplayTimelineNode[]
+  readonly cache: DisplayNodeProjectionCache
+}
+
+function createDisplayNodeProjector(): (
+  nodes: readonly TimelineNode[],
+  showDshEvents: boolean,
+  nodeChangeStart?: number,
+  nodeChangeBase?: readonly TimelineNode[],
+) => DisplayNodeProjection {
+  let previous: DisplayNodeProjectionCache | undefined
+  return (nodes, showDshEvents, nodeChangeStart, nodeChangeBase) => {
+    const projection = projectDisplayNodes(nodes, showDshEvents, previous, nodeChangeStart, nodeChangeBase)
+    previous = projection.cache
+    return projection
+  }
+}
+
+function projectDisplayNodes(
+  nodes: readonly TimelineNode[],
+  showDshEvents: boolean,
+  previous: DisplayNodeProjectionCache | undefined,
+  nodeChangeStart?: number,
+  nodeChangeBase?: readonly TimelineNode[],
+): DisplayNodeProjection {
+  let start = 0
+  let prefix: readonly DisplayTimelineNode[] = []
+  if (previous?.showDshEvents === showDshEvents) {
+    const commonPrefix =
+      nodeChangeStart === undefined || nodeChangeBase !== previous.sourceNodes
+        ? commonNodePrefixLength(previous.sourceNodes, nodes)
+        : Math.max(0, Math.min(nodeChangeStart, previous.sourceNodes.length, nodes.length))
+    if (commonPrefix >= previous.stableRawLength && nodes.length >= previous.stableRawLength) {
+      start = previous.stableRawLength
+      prefix = previous.stableDisplayNodes
+    }
+  }
+
+  const suffix = nodes.slice(start)
+  const display = prepareVisibleNodes(suffix, showDshEvents)
+  const projected = collapseAssistantTurns(display, prefix)
+  const stableRawLength = latestDisplayBoundary(nodes, start)
+  let stableDisplayNodes = prefix
+  if (stableRawLength === nodes.length) stableDisplayNodes = projected
+  else if (stableRawLength > start) {
+    stableDisplayNodes = collapseAssistantTurns(
+      prepareVisibleNodes(nodes.slice(start, stableRawLength), showDshEvents),
+      prefix,
+    )
+  }
+
+  return {
+    nodes: projected,
+    cache: {
+      sourceNodes: nodes,
+      showDshEvents,
+      stableRawLength,
+      stableDisplayNodes,
+    },
+  }
+}
+
+function commonNodePrefixLength(previous: readonly TimelineNode[], next: readonly TimelineNode[]): number {
+  const length = Math.min(previous.length, next.length)
+  let index = 0
+  while (index < length && previous[index] === next[index]) index += 1
+  return index
+}
+
+function latestDisplayBoundary(nodes: readonly TimelineNode[], start: number): number {
+  let assistantWorkAfterBoundary = false
+  for (let index = nodes.length; index > start; index -= 1) {
+    const node = nodes[index - 1]
+    if (node === undefined) continue
+    if (node.kind === 'event') {
+      // An event run immediately before assistant work cannot be changed by
+      // a later streaming update. Keep it in the stable display prefix so
+      // event grouping does not rebuild the whole run on every delta.
+      if (assistantWorkAfterBoundary) return index
+      continue
+    }
+    if (isAssistantWorkNode(node)) {
+      assistantWorkAfterBoundary = true
+      continue
+    }
+    if (isDisplayBoundary(node)) return index
+  }
+  return start
+}
+
+function isDisplayBoundary(node: TimelineNode): boolean {
+  if (node.kind === 'event' || isAssistantWorkNode(node)) return false
+  if (node.kind !== 'user-message') return true
+  return !isInjectedUserTimelineNode(node)
+}
+
+function prepareVisibleNodes(
   nodes: readonly TimelineNode[],
   showDshEvents: boolean,
 ): readonly DisplayTimelineNode[] {
   const display: DisplayTimelineNode[] = []
+  let activeEventGroup: (DshEventGroupNode & { events: DshEventNode[]; textSize: number }) | undefined
 
   for (const node of nodes) {
-    if (
-      node.kind === 'user-message' &&
-      isInjectedUserMessage({
-        type: 'message.user',
-        sessionId: '',
-        messageId: node.id,
-        markdown: node.markdown,
-        ...(node.source === undefined ? {} : { source: node.source }),
-      })
-    )
-      continue
+    if (node.kind === 'user-message' && isInjectedUserTimelineNode(node)) continue
     if (node.kind !== 'event') {
+      activeEventGroup = undefined
       display.push(node)
       continue
     }
-    if (!showDshEvents) continue
-
-    const previous = display[display.length - 1]
-    if (previous?.kind === 'event-group') {
-      display[display.length - 1] = {
-        ...previous,
-        events: [...previous.events, node],
-      }
-    } else {
-      display.push({ kind: 'event-group', id: `event-group:${node.id}`, events: [node] })
+    if (!showDshEvents) {
+      activeEventGroup = undefined
+      continue
     }
+    const eventTextSize = formatEventPayload(node.payload).length
+    if (activeEventGroup !== undefined) {
+      activeEventGroup.events.push(node)
+      activeEventGroup.textSize += eventTextSize
+      continue
+    }
+    activeEventGroup = {
+      kind: 'event-group',
+      id: `event-group:${node.id}`,
+      events: [node],
+      textSize: eventTextSize,
+    }
+    display.push(activeEventGroup)
   }
 
-  return collapseAssistantTurns(display)
+  return display
+}
+
+function isInjectedUserTimelineNode(node: Extract<TimelineNode, { readonly kind: 'user-message' }>): boolean {
+  return isInjectedUserMessage({
+    type: 'message.user',
+    sessionId: '',
+    messageId: node.id,
+    markdown: node.markdown,
+    ...(node.source === undefined ? {} : { source: node.source }),
+  })
 }
 
 interface PendingAssistantWork {
@@ -1471,8 +1910,11 @@ interface PendingAssistantWork {
   interrupted?: true
 }
 
-function collapseAssistantTurns(nodes: readonly DisplayTimelineNode[]): readonly DisplayTimelineNode[] {
-  const collapsed: DisplayTimelineNode[] = []
+function collapseAssistantTurns(
+  nodes: readonly DisplayTimelineNode[],
+  initial: readonly DisplayTimelineNode[] = [],
+): readonly DisplayTimelineNode[] {
+  const collapsed: DisplayTimelineNode[] = [...initial]
   let pending: PendingAssistantWork | undefined
 
   const flush = (): void => {

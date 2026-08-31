@@ -289,3 +289,112 @@ describe('DshRuntimeLocator compatibility policy', () => {
     })
   })
 })
+
+describe('DshRuntimeLocator caching', () => {
+  function countingLocator(
+    version: string,
+    overrides?: {
+      fileExists?: (candidate: string) => Promise<boolean>
+      npmGlobalPrefix?: () => Promise<string | undefined>
+      lastKnownRuntimePath?: () => { path: string; source: 'path' | 'npm-global' } | undefined
+      rememberRuntimePath?: (hint: { path: string; source: 'path' | 'npm-global' }) => void
+    },
+  ): { locator: DshRuntimeLocator; versionCalls: () => number } {
+    let versionCalls = 0
+    const locator = new DshRuntimeLocator({
+      os: testPlatform.os,
+      configuredPath: () => undefined,
+      pathEntries: () => [testPlatform.existingDirectory],
+      npmGlobalPrefix: overrides?.npmGlobalPrefix ?? (() => Promise.resolve(undefined)),
+      fileExists:
+        overrides?.fileExists ??
+        ((candidate) =>
+          Promise.resolve(
+            candidate ===
+              testPlatform.pathApi.join(testPlatform.existingDirectory, testPlatform.executableName),
+          )),
+      executeVersion: () => {
+        versionCalls += 1
+        return Promise.resolve(version)
+      },
+      ...(overrides?.lastKnownRuntimePath === undefined
+        ? {}
+        : { lastKnownRuntimePath: overrides.lastKnownRuntimePath }),
+      ...(overrides?.rememberRuntimePath === undefined
+        ? {}
+        : { rememberRuntimePath: overrides.rememberRuntimePath }),
+    })
+    return { locator, versionCalls: () => versionCalls }
+  }
+
+  it('memoizes a supported lookup so repeated connects skip the scan and the version probe', async () => {
+    const { locator, versionCalls } = countingLocator('0.1.1-rc.2')
+    const first = await locator.locate()
+    const second = await locator.locate()
+    expect(second).toEqual(first)
+    expect(versionCalls()).toBe(1)
+  })
+
+  it('re-scans after invalidate so a moved or replaced executable is honored', async () => {
+    const { locator, versionCalls } = countingLocator('0.1.1-rc.2')
+    await locator.locate()
+    locator.invalidate()
+    await locator.locate()
+    expect(versionCalls()).toBe(2)
+  })
+
+  it('does not memoize an unsupported executable', async () => {
+    let version = '   '
+    const locator = new DshRuntimeLocator({
+      os: testPlatform.os,
+      configuredPath: () => undefined,
+      pathEntries: () => [testPlatform.existingDirectory],
+      npmGlobalPrefix: () => Promise.resolve(undefined),
+      fileExists: () => Promise.resolve(true),
+      executeVersion: () => Promise.resolve(version),
+    })
+    await expect(locator.locate()).resolves.toMatchObject({ runtime: { supported: false } })
+    version = '0.1.1-rc.2'
+    await expect(locator.locate()).resolves.toMatchObject({ runtime: { supported: true } })
+  })
+
+  it('keeps rescanning while no runtime exists instead of caching the miss', async () => {
+    let runtimeInstalled = false
+    const { locator } = countingLocator('0.1.1-rc.2', {
+      fileExists: () => Promise.resolve(runtimeInstalled),
+    })
+    await expect(locator.locate()).resolves.toMatchObject({ searchedLocations: [] })
+    runtimeInstalled = true
+    await expect(locator.locate()).resolves.toMatchObject({ runtime: { supported: true } })
+  })
+
+  it('uses the persisted path hint and re-probes its version before trusting it', async () => {
+    const hintPath = testPlatform.pathApi.join(testPlatform.existingDirectory, testPlatform.executableName)
+    const remembered: { path: string; source: 'path' | 'npm-global' }[] = []
+    const { locator, versionCalls } = countingLocator('0.1.1-rc.2', {
+      fileExists: (candidate) => Promise.resolve(candidate === hintPath),
+      lastKnownRuntimePath: () => ({ path: hintPath, source: 'path' }),
+      rememberRuntimePath: (hint) => remembered.push(hint),
+    })
+
+    await expect(locator.locate()).resolves.toMatchObject({
+      runtime: { executable: hintPath, source: 'path', supported: true },
+    })
+    expect(versionCalls()).toBe(1)
+    expect(remembered).toEqual([{ path: hintPath, source: 'path' }])
+  })
+
+  it('falls through to the ordinary scan when the persisted hint has vanished', async () => {
+    const hintPath = testPlatform.pathApi.join(testPlatform.missingDirectory, testPlatform.executableName)
+    const { locator } = countingLocator('0.1.1-rc.2', {
+      fileExists: (candidate) =>
+        Promise.resolve(
+          candidate ===
+            testPlatform.pathApi.join(testPlatform.existingDirectory, testPlatform.executableName),
+        ),
+      lastKnownRuntimePath: () => ({ path: hintPath, source: 'npm-global' }),
+    })
+
+    await expect(locator.locate()).resolves.toMatchObject({ runtime: { supported: true } })
+  })
+})
