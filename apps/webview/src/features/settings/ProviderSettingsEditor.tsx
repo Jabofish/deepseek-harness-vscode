@@ -13,6 +13,8 @@ export interface ProviderSettingsEditorProps {
   readonly settings: DshSettingsSnapshot
   readonly writable: boolean
   readonly saving: boolean
+  /** Materialize a dormant catalog provider even when no field changed yet. */
+  readonly forceSave?: boolean
   readonly onSave: (changes: readonly ProviderSettingChange[]) => Promise<void>
   readonly onDiscover: (input: Omit<ModelDiscoveryInput, 'apiKey'>) => Promise<readonly DiscoveredModel[]>
   readonly onClose: (changed: boolean) => void
@@ -82,7 +84,7 @@ export function ProviderSettingsEditor(props: ProviderSettingsEditorProps): Reac
     if (hasModelList && JSON.stringify(normalizedModels) !== JSON.stringify(initialModels)) {
       changes.push({ kind: 'set', path: modelsPath, value: normalizedModels })
     }
-    if (changes.length === 0) {
+    if (changes.length === 0 && props.forceSave !== true) {
       props.onClose(false)
       return
     }

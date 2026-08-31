@@ -372,6 +372,219 @@ function streamTransport(frames: readonly unknown[]): DshTransport {
   }
 }
 
+/** A pushable stream source so tests can drive gaps and recovery interactively. */
+class ControlledStream {
+  private readonly pending: unknown[] = []
+  private wake: (() => void) | undefined
+  private finished = false
+  public signal: AbortSignal | undefined
+
+  public push(frame: unknown): void {
+    if (this.finished) return
+    this.pending.push(frame)
+    const resume = this.wake
+    this.wake = undefined
+    resume?.()
+  }
+
+  public end(): void {
+    this.finished = true
+    this.wake?.()
+  }
+
+  public readonly source = (signal: AbortSignal): AsyncIterable<unknown> => {
+    this.signal = signal
+    return {
+      [Symbol.asyncIterator]: (): AsyncIterator<unknown> => {
+        return {
+          next: async (): Promise<IteratorResult<unknown>> => {
+            for (;;) {
+              if (this.pending.length > 0) return { done: false as const, value: this.pending.shift() }
+              if (this.finished || signal.aborted) return { done: true as const, value: undefined }
+              await new Promise<void>((resolve) => {
+                this.wake = resolve
+                if (signal.aborted) resolve()
+                else signal.addEventListener('abort', () => resolve(), { once: true })
+              })
+            }
+          },
+        }
+      },
+    }
+  }
+}
+
+function subscribeFrame(sessionId: string, lastSeq: number): unknown {
+  return { payload: { type: 'session/subscribed', sessionId, lastSeq } }
+}
+
+function liveTurnFrame(sessionId: string, seq: number): unknown {
+  return {
+    payload: {
+      type: 'session/event',
+      sessionId,
+      event: { type: 'turn/start', seq, time: seq, data: { turn: 1 } },
+    },
+  }
+}
+
+function recoveredTurn(sessionId: string, sequence: number): BackendEvent {
+  return { type: 'turn.started', sessionId, turn: 1, sequence } as unknown as BackendEvent
+}
+
+describe('DshStreamController detached gap recovery', () => {
+  const controllers: DshStreamController[] = []
+
+  afterEach(async () => {
+    await Promise.all(controllers.splice(0).map((controller) => controller.close()))
+  })
+
+  it('delivers the live event first and replays the hole below the watermark', async () => {
+    const stream = new ControlledStream()
+    const recovered: Array<[string, number, number]> = []
+    const controller = new DshStreamController(
+      streamTransport([]),
+      undefined,
+      async (sessionId, fromSequence, toSequence) => {
+        recovered.push([sessionId, fromSequence, toSequence])
+        return Promise.resolve([6, 7, 8, 9].map((sequence) => recoveredTurn('s1', sequence)))
+      },
+      { streamSource: stream.source, closeTransport: false },
+    )
+    controllers.push(controller)
+    const received: BackendEvent[] = []
+    controller.subscribe((event) => received.push(event))
+
+    stream.push(subscribeFrame('s1', 5))
+    await waitFor(() => received.some((event) => event.type === 'session.subscribed'))
+    stream.push(liveTurnFrame('s1', 10))
+    // The live event must not wait for the history replay; recovery runs
+    // detached so the read loop keeps draining the host's frames.
+    await waitFor(() => received.some((event) => event.sequence === 10))
+    await waitFor(() => received.some((event) => event.sequence === 6))
+    await waitFor(() => received.some((event) => event.sequence === 9))
+
+    expect(recovered).toEqual([['s1', 6, 9]])
+    expect(received.findIndex((event) => event.sequence === 10)).toBeLessThan(
+      received.findIndex((event) => event.sequence === 6),
+    )
+    expect(received.some((event) => event.type === 'session.gap')).toBe(false)
+    // The watermark stays at the live edge: a redelivered older frame is
+    // still deduplicated, and recovery never rewinds it.
+    stream.push(liveTurnFrame('s1', 9))
+    stream.push(liveTurnFrame('s1', 11))
+    await waitFor(() => received.some((event) => event.sequence === 11))
+    expect(received.filter((event) => event.sequence === 9)).toHaveLength(1)
+  })
+
+  it('announces the whole hole as a gap when history recovery fails', async () => {
+    const stream = new ControlledStream()
+    const controller = new DshStreamController(
+      streamTransport([]),
+      undefined,
+      () => Promise.reject(new Error('history is unavailable')),
+      { streamSource: stream.source, closeTransport: false },
+    )
+    controllers.push(controller)
+    const received: BackendEvent[] = []
+    controller.subscribe((event) => received.push(event))
+
+    stream.push(subscribeFrame('s1', 5))
+    await waitFor(() => received.some((event) => event.type === 'session.subscribed'))
+    stream.push(liveTurnFrame('s1', 10))
+    await waitFor(() => received.some((event) => event.type === 'session.gap'))
+    const gap = received.find((event) => event.type === 'session.gap')
+    expect(gap).toMatchObject({
+      type: 'session.gap',
+      sessionId: 's1',
+      fromSequence: 6,
+      toSequence: 9,
+    })
+    // The live event still reached consumers despite the failed replay.
+    expect(received.some((event) => event.sequence === 10)).toBe(true)
+  })
+
+  it('announces the uncovered remainder after a partial history replay', async () => {
+    const stream = new ControlledStream()
+    const controller = new DshStreamController(
+      streamTransport([]),
+      undefined,
+      () => Promise.resolve([recoveredTurn('s1', 6)]),
+      { streamSource: stream.source, closeTransport: false },
+    )
+    controllers.push(controller)
+    const received: BackendEvent[] = []
+    controller.subscribe((event) => received.push(event))
+
+    stream.push(subscribeFrame('s1', 5))
+    await waitFor(() => received.some((event) => event.type === 'session.subscribed'))
+    stream.push(liveTurnFrame('s1', 10))
+    await waitFor(() => received.some((event) => event.type === 'session.gap'))
+    expect(received.find((event) => event.type === 'session.gap')).toMatchObject({
+      type: 'session.gap',
+      sessionId: 's1',
+      fromSequence: 7,
+      toSequence: 9,
+    })
+  })
+
+  it('emits the gap synchronously when no recovery callback is configured', async () => {
+    const stream = new ControlledStream()
+    const controller = new DshStreamController(streamTransport([]), undefined, undefined, {
+      streamSource: stream.source,
+      closeTransport: false,
+    })
+    controllers.push(controller)
+    const received: BackendEvent[] = []
+    controller.subscribe((event) => received.push(event))
+
+    stream.push(subscribeFrame('s1', 5))
+    await waitFor(() => received.some((event) => event.type === 'session.subscribed'))
+    stream.push(liveTurnFrame('s1', 10))
+    await waitFor(() => received.some((event) => event.sequence === 10))
+    const gapIndex = received.findIndex((event) => event.type === 'session.gap')
+    expect(gapIndex).toBeGreaterThanOrEqual(0)
+    expect(received.findIndex((event) => event.sequence === 10)).toBeGreaterThan(gapIndex)
+    expect(received[gapIndex]).toMatchObject({ fromSequence: 6, toSequence: 9 })
+  })
+
+  it('serializes recoveries per session and aborts them on close', async () => {
+    const stream = new ControlledStream()
+    const releaseFirst = { resolve: (): void => undefined }
+    const firstBarrier = new Promise<void>((resolve) => {
+      releaseFirst.resolve = resolve
+    })
+    const recoverSignals: AbortSignal[] = []
+    const controller = new DshStreamController(
+      streamTransport([]),
+      undefined,
+      async (_sessionId, _from, _to, signal) => {
+        recoverSignals.push(signal)
+        if (recoverSignals.length === 1) await firstBarrier
+        return []
+      },
+      { streamSource: stream.source, closeTransport: false },
+    )
+    controllers.push(controller)
+    controller.subscribe(() => undefined)
+
+    stream.push(subscribeFrame('s1', 0))
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    stream.push(liveTurnFrame('s1', 10))
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    stream.push(liveTurnFrame('s1', 20))
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    // Both holes queued for one session; only the first recovery is running.
+    expect(recoverSignals).toHaveLength(1)
+    releaseFirst.resolve()
+    await waitFor(() => recoverSignals.length === 2)
+    await controller.close()
+    expect(recoverSignals.every((signal) => signal.aborted)).toBe(true)
+    // Closing while the second recovery runs must not leave it hanging.
+    stream.end()
+  })
+})
+
 /** Each mux (re)open yields the next generation's frames, then ends the stream. */
 function reconnectingTransport(generations: readonly (readonly unknown[])[]): DshTransport {
   let nextGeneration = 0

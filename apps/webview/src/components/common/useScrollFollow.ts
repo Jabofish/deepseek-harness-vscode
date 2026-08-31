@@ -44,21 +44,37 @@ export interface ScrollFollowResult {
   readonly captureScrollAnchor: () => ScrollAnchor | undefined
   /** Restore a captured prepend position only while the reader is still there. */
   readonly restoreScrollAnchor: (anchor: ScrollAnchor) => boolean
+  /** Apply a virtualizer's measured-height delta without changing reader mode. */
+  readonly applyScrollAdjustment: (delta: number) => void
+  /** Whether the latest scroll was caused by an active reader gesture. */
+  readonly isUserScrollActive: () => boolean
   /** Reconcile after a consumer-owned layout measurement changes its height. */
-  readonly scheduleScrollToLatest: () => void
+  readonly scheduleScrollToLatest: (options?: ScrollFollowScheduleOptions) => void
   /** Whether the browser is currently following the append-only tail. */
   readonly isPinnedToBottom: boolean
   readonly showJumpToLatest: boolean
 }
 
+export interface ScrollFollowScheduleOptions {
+  /**
+   * Preserve an already pinned reader while a consumer changes layout. The
+   * next native scroll event can be caused by browser clamping rather than a
+   * physical reader gesture, so keep the tail intent until reconciliation.
+   */
+  readonly preserveBottom?: boolean
+  /** Correct a known layout transition before the browser paints it. */
+  readonly immediate?: boolean
+}
+
 /**
  * Owns the scroll contract shared by append-only conversation surfaces.
  *
- * There is deliberately one scheduled writer for the scroll position. Resize
- * and content updates coalesce into one delayed reconciliation, while native
- * reader intent cancels a pending follow immediately. The grace period gives
- * wheel, pointer, and keyboard gestures time to arrive before an append-only
- * update is allowed to move the viewport.
+ * There is deliberately one scroll-position writer. Ordinary resize and
+ * content updates coalesce into one delayed reconciliation; known layout
+ * transitions are corrected synchronously before paint. Native reader intent
+ * cancels a pending follow immediately, and the grace period gives wheel,
+ * pointer, and keyboard gestures time to arrive before an append-only update
+ * is allowed to move the viewport.
  */
 export function useScrollFollow(options: ScrollFollowOptions): ScrollFollowResult {
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -70,6 +86,9 @@ export function useScrollFollow(options: ScrollFollowOptions): ScrollFollowResul
   const userScrollActiveRef = useRef(false)
   const interactionGenerationRef = useRef(0)
   const internalScrollTopRef = useRef<number | undefined>(undefined)
+  const lastReaderScrollTopRef = useRef<number | undefined>(undefined)
+  const preserveBottomOnLayoutRef = useRef(false)
+  const layoutProtectionTimerRef = useRef<number | undefined>(undefined)
   const smoothScrollActiveRef = useRef(false)
   const scrollHandlerRef = useRef<() => void>(() => undefined)
   const itemCountRef = useRef(options.itemCount)
@@ -93,6 +112,69 @@ export function useScrollFollow(options: ScrollFollowOptions): ScrollFollowResul
     smoothScrollActiveRef.current = false
   }, [])
 
+  const clearLayoutProtection = useCallback((): void => {
+    if (layoutProtectionTimerRef.current !== undefined) {
+      window.clearTimeout(layoutProtectionTimerRef.current)
+      layoutProtectionTimerRef.current = undefined
+    }
+    preserveBottomOnLayoutRef.current = false
+  }, [])
+
+  const armLayoutProtection = useCallback((): void => {
+    if (layoutProtectionTimerRef.current !== undefined) window.clearTimeout(layoutProtectionTimerRef.current)
+    layoutProtectionTimerRef.current = window.setTimeout(() => {
+      layoutProtectionTimerRef.current = undefined
+      preserveBottomOnLayoutRef.current = false
+    }, USER_SCROLL_IDLE_MS)
+  }, [])
+
+  const restoreReaderPosition = useCallback((allowDuringGesture = false): boolean => {
+    const element = scrollRef.current
+    const savedScrollTop = lastReaderScrollTopRef.current
+    if (
+      element === null ||
+      savedScrollTop === undefined ||
+      stickToBottomRef.current ||
+      (userScrollActiveRef.current && !allowDuringGesture)
+    )
+      return false
+
+    const maxScrollTop = Math.max(0, element.scrollHeight - element.clientHeight)
+    if (savedScrollTop > 1 && maxScrollTop <= 1) return false
+    const nextScrollTop = Math.min(maxScrollTop, Math.max(0, savedScrollTop))
+    if (Math.abs(element.scrollTop - nextScrollTop) > 0.5) {
+      internalScrollTopRef.current = nextScrollTop
+      element.scrollTop = nextScrollTop
+    } else internalScrollTopRef.current = undefined
+    lastReaderScrollTopRef.current = nextScrollTop
+    return true
+  }, [])
+
+  const applyScrollAdjustment = useCallback((delta: number): void => {
+    if (!Number.isFinite(delta) || Math.abs(delta) <= 0.5) return
+    const element = scrollRef.current
+    if (element === null) return
+
+    // If a virtualized canvas was briefly collapsed, the DOM can report zero
+    // even though the reader was stably in the middle. Continue from the last
+    // reader position so a measurement delta cannot turn that clamp into a
+    // jump to the top. During an active gesture, the live DOM value wins.
+    const savedScrollTop = lastReaderScrollTopRef.current
+    const isCollapsedFreeReader =
+      !stickToBottomRef.current &&
+      !userScrollActiveRef.current &&
+      element.scrollTop <= 1 &&
+      savedScrollTop !== undefined &&
+      savedScrollTop > 1
+    const baseScrollTop = isCollapsedFreeReader ? (savedScrollTop ?? 0) : element.scrollTop
+    const maxScrollTop = Math.max(0, element.scrollHeight - element.clientHeight)
+    if (isCollapsedFreeReader && maxScrollTop <= 1) return
+    const nextScrollTop = Math.min(maxScrollTop, Math.max(0, baseScrollTop + delta))
+    internalScrollTopRef.current = nextScrollTop
+    element.scrollTop = nextScrollTop
+    lastReaderScrollTopRef.current = nextScrollTop
+  }, [])
+
   const scrollToLatest = useCallback((): void => {
     clearUserScrollLock()
     cancelScheduledFollow()
@@ -106,10 +188,12 @@ export function useScrollFollow(options: ScrollFollowOptions): ScrollFollowResul
       internalScrollTopRef.current = maxScrollTop
       element.scrollTop = maxScrollTop
     } else internalScrollTopRef.current = undefined
+    lastReaderScrollTopRef.current = maxScrollTop
     setShowJumpToLatest(false)
   }, [cancelScheduledFollow, clearUserScrollLock])
 
   const userScrollToLatest = useCallback((): void => {
+    clearLayoutProtection()
     clearUserScrollLock()
     cancelScheduledFollow()
     const element = scrollRef.current
@@ -129,40 +213,73 @@ export function useScrollFollow(options: ScrollFollowOptions): ScrollFollowResul
     ) {
       internalScrollTopRef.current = maxScrollTop
       element.scrollTop = maxScrollTop
+      lastReaderScrollTopRef.current = maxScrollTop
       return
     }
 
     internalScrollTopRef.current = undefined
     smoothScrollActiveRef.current = true
     element.scrollTo({ top: maxScrollTop, behavior: 'smooth' })
-  }, [cancelScheduledFollow, clearUserScrollLock])
+  }, [cancelScheduledFollow, clearLayoutProtection, clearUserScrollLock])
 
-  const scheduleScrollToLatest = useCallback((): void => {
-    if (userScrollActiveRef.current || !stickToBottomRef.current || itemCountRef.current === 0) return
-    // Keep one coalesced reconciliation alive. Streaming updates can arrive
-    // faster than a frame; resetting the timer for every update creates a
-    // moving target and increases the chance of racing a native gesture.
-    if (scheduledFrameRef.current !== undefined) return
-    const scheduledGeneration = interactionGenerationRef.current
-
-    const run = (): void => {
-      scheduledFrameRef.current = undefined
-      if (
-        scheduledGeneration === interactionGenerationRef.current &&
+  const scheduleScrollToLatest = useCallback(
+    (scheduleOptions?: ScrollFollowScheduleOptions): void => {
+      // A free reader may be clamped by a normal-flow/virtualized-canvas
+      // transition. Restore the last observed reader position first; this
+      // path never changes a free reader into tail-following mode.
+      restoreReaderPosition(scheduleOptions?.preserveBottom === true)
+      const preserveBottom =
+        scheduleOptions?.preserveBottom === true &&
+        stickToBottomRef.current &&
         !userScrollActiveRef.current &&
-        stickToBottomRef.current
-      )
+        itemCountRef.current > 0
+      if (preserveBottom) preserveBottomOnLayoutRef.current = true
+      if (preserveBottom && scheduleOptions?.immediate === true) {
+        // A known layout transition runs from a layout effect or a
+        // ResizeObserver callback. Correct synchronously so the browser never
+        // paints its transient clamped offset before the delayed streaming
+        // reconciliation can run.
+        cancelScheduledFollow()
         scrollToLatest()
-    }
+        armLayoutProtection()
+        return
+      }
+      const shouldFollow = stickToBottomRef.current || preserveBottomOnLayoutRef.current
+      if (userScrollActiveRef.current || !shouldFollow || itemCountRef.current === 0) return
+      // Keep one coalesced reconciliation alive. Streaming updates can arrive
+      // faster than a frame; resetting the timer for every update creates a
+      // moving target and increases the chance of racing a native gesture.
+      if (scheduledFrameRef.current !== undefined) return
+      const scheduledGeneration = interactionGenerationRef.current
 
-    const id = window.setTimeout(run, FOLLOW_INPUT_GRACE_MS)
-    scheduledFrameRef.current = { cancel: () => window.clearTimeout(id) }
-  }, [scrollToLatest])
+      const run = (): void => {
+        scheduledFrameRef.current = undefined
+        const preserveBottom = preserveBottomOnLayoutRef.current
+        if (
+          scheduledGeneration === interactionGenerationRef.current &&
+          !userScrollActiveRef.current &&
+          (stickToBottomRef.current || preserveBottom)
+        ) {
+          if (preserveBottom) {
+            stickToBottomRef.current = true
+            setIsPinnedToBottom(true)
+          }
+          scrollToLatest()
+          if (preserveBottom) armLayoutProtection()
+        }
+      }
+
+      const id = window.setTimeout(run, FOLLOW_INPUT_GRACE_MS)
+      scheduledFrameRef.current = { cancel: () => window.clearTimeout(id) }
+    },
+    [armLayoutProtection, cancelScheduledFollow, restoreReaderPosition, scrollToLatest],
+  )
 
   const captureScrollAnchor = useCallback((): ScrollAnchor | undefined => {
     const element = scrollRef.current
     if (element === null) return undefined
     cancelScheduledFollow()
+    lastReaderScrollTopRef.current = element.scrollTop
     return {
       contentHeight: element.scrollHeight,
       scrollTop: element.scrollTop,
@@ -186,10 +303,14 @@ export function useScrollFollow(options: ScrollFollowOptions): ScrollFollowResul
       internalScrollTopRef.current = nextScrollTop
       element.scrollTop = nextScrollTop
     } else internalScrollTopRef.current = undefined
+    lastReaderScrollTopRef.current = nextScrollTop
     return true
   }, [])
 
+  const isUserScrollActive = useCallback((): boolean => userScrollActiveRef.current, [])
+
   const armUserScrollLock = useCallback((): void => {
+    clearLayoutProtection()
     internalScrollTopRef.current = undefined
     if (!userScrollActiveRef.current) interactionGenerationRef.current += 1
     userScrollActiveRef.current = true
@@ -199,7 +320,7 @@ export function useScrollFollow(options: ScrollFollowOptions): ScrollFollowResul
       userScrollActiveRef.current = false
       if (stickToBottomRef.current && itemCountRef.current > 0) scheduleScrollToLatest()
     }, USER_SCROLL_IDLE_MS)
-  }, [scheduleScrollToLatest])
+  }, [clearLayoutProtection, scheduleScrollToLatest])
 
   const handleScroll = useCallback((): void => {
     const element = scrollRef.current
@@ -213,7 +334,13 @@ export function useScrollFollow(options: ScrollFollowOptions): ScrollFollowResul
     const isInternalScroll =
       expectedScrollTop !== undefined && Math.abs(element.scrollTop - expectedScrollTop) <= 1
     internalScrollTopRef.current = undefined
-    if (!isInternalScroll) {
+    if (isInternalScroll) lastReaderScrollTopRef.current = element.scrollTop
+    // A layout replacement can only be identified safely when the browser
+    // clamps a previously pinned reader all the way to the start. Any other
+    // offset may be an intentional reader position and must release follow.
+    const isLayoutScroll =
+      preserveBottomOnLayoutRef.current && !userScrollActiveRef.current && element.scrollTop <= 1
+    if (!isInternalScroll && !isLayoutScroll) {
       // Scroll events are the final source of truth. They also cover input
       // paths that do not reliably expose wheel/pointer intent in a Webview.
       cancelScheduledFollow()
@@ -222,6 +349,7 @@ export function useScrollFollow(options: ScrollFollowOptions): ScrollFollowResul
       // allowing the first timer to expire during that sequence hands control
       // back to the append follower while the reader is still moving.
       armUserScrollLock()
+      lastReaderScrollTopRef.current = element.scrollTop
     }
     const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight
     // During a native gesture, only an actual arrival at the tail can
@@ -229,17 +357,22 @@ export function useScrollFollow(options: ScrollFollowOptions): ScrollFollowResul
     // turn a small intentional scroll-away into a delayed snap-back when the
     // gesture lock expires.
     const pinThreshold = userScrollActiveRef.current ? 1 : bottomThreshold
-    const atLatest = distanceFromBottom <= pinThreshold
+    const atLatest = isLayoutScroll || distanceFromBottom <= pinThreshold
     stickToBottomRef.current = atLatest
     setIsPinnedToBottom((current) => (current === atLatest ? current : atLatest))
     if (!atLatest) cancelScheduledFollow()
+    if (isLayoutScroll && itemCountRef.current > 0)
+      scheduleScrollToLatest({ preserveBottom: true, immediate: distanceFromBottom > 1 })
     setShowJumpToLatest((current) => {
       const next = !atLatest && options.itemCount > 0
       return current === next ? current : next
     })
-  }, [armUserScrollLock, bottomThreshold, cancelScheduledFollow, options.itemCount])
+  }, [armUserScrollLock, bottomThreshold, cancelScheduledFollow, options.itemCount, scheduleScrollToLatest])
 
   useLayoutEffect(() => {
+    const element = scrollRef.current
+    if (element !== null && lastReaderScrollTopRef.current === undefined)
+      lastReaderScrollTopRef.current = element.scrollTop
     itemCountRef.current = options.itemCount
     scrollHandlerRef.current = handleScroll
   }, [handleScroll, options.itemCount])
@@ -274,7 +407,6 @@ export function useScrollFollow(options: ScrollFollowOptions): ScrollFollowResul
     const onWheel = (event: WheelEvent): void => handleWheel(event)
     const onPointerDown = (event: PointerEvent): void => {
       if (event.button !== 0) return
-      if (event.pointerType === 'mouse' && event.target !== element) return
       smoothScrollActiveRef.current = false
       cancelScheduledFollow()
       armUserScrollLock()
@@ -310,7 +442,13 @@ export function useScrollFollow(options: ScrollFollowOptions): ScrollFollowResul
     }
   }, [armUserScrollLock, cancelScheduledFollow, clearUserScrollLock, handleWheel, scheduleScrollToLatest])
 
-  useLayoutEffect(() => clearUserScrollLock, [clearUserScrollLock])
+  useLayoutEffect(
+    () => () => {
+      clearLayoutProtection()
+      clearUserScrollLock()
+    },
+    [clearLayoutProtection, clearUserScrollLock],
+  )
 
   useLayoutEffect(() => {
     const sessionChanged = previousSessionRef.current !== options.sessionId
@@ -319,9 +457,16 @@ export function useScrollFollow(options: ScrollFollowOptions): ScrollFollowResul
       stickToBottomRef.current = true
       setIsPinnedToBottom(true)
       setShowJumpToLatest(false)
-    }
-    if (stickToBottomRef.current && options.itemCount > 0) scheduleScrollToLatest()
-  }, [options.contentKey, options.itemCount, options.sessionId, scheduleScrollToLatest])
+    } else restoreReaderPosition(true)
+    if (stickToBottomRef.current && options.itemCount > 0)
+      scheduleScrollToLatest({ preserveBottom: true, immediate: sessionChanged })
+  }, [
+    options.contentKey,
+    options.itemCount,
+    options.sessionId,
+    restoreReaderPosition,
+    scheduleScrollToLatest,
+  ])
 
   useLayoutEffect(() => {
     if (options.observeContentSize === false) return
@@ -341,7 +486,8 @@ export function useScrollFollow(options: ScrollFollowOptions): ScrollFollowResul
         observedSizes.height = rect.height
         const widthChanged = Math.abs(rect.width - previous.width) >= 0.5
         const heightChanged = Math.abs(rect.height - previous.height) >= 0.5
-        if (previous.width > 0 && heightChanged && !widthChanged) scheduleScrollToLatest()
+        if (previous.width > 0 && heightChanged && !widthChanged)
+          scheduleScrollToLatest({ preserveBottom: true, immediate: true })
       }
     })
     // Only content changes can require append-to-tail reconciliation. The
@@ -365,6 +511,8 @@ export function useScrollFollow(options: ScrollFollowOptions): ScrollFollowResul
     userScrollToLatest,
     captureScrollAnchor,
     restoreScrollAnchor,
+    applyScrollAdjustment,
+    isUserScrollActive,
     scheduleScrollToLatest,
     isPinnedToBottom,
     showJumpToLatest,

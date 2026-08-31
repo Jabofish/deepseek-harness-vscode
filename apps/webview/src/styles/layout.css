@@ -68,6 +68,7 @@
 }
 
 .dsh-conversation {
+  position: relative;
   flex: 1 1 0%;
   gap: var(--dsh-space-2);
 }
@@ -282,11 +283,11 @@
   min-width: 0;
 }
 
-.dsh-timeline__canvas--virtualized {
+.dsh-timeline__canvas--virtualized-ready {
   position: relative;
 }
 
-.dsh-timeline__canvas--virtualized > .dsh-timeline__row {
+.dsh-timeline__canvas--virtualized-ready > .dsh-timeline__row {
   position: absolute;
   inset-inline: 0;
   top: 0;
@@ -338,10 +339,30 @@
   padding-top: 0;
 }
 
-.dsh-compose-area__interactions {
+/* Pending approvals and questions are blocking overlays. They stay anchored
+ * below the topbar while the timeline keeps its full height; long batches
+ * scroll inside this surface instead of extending the conversation. */
+.dsh-conversation__interactions {
+  position: absolute;
+  inset-block-start: calc(2.25rem + var(--dsh-space-2));
+  inset-inline: 0;
+  z-index: 25;
   display: grid;
   min-width: 0;
+  width: 100%;
+  max-height: min(70vh, 42rem);
   gap: var(--dsh-space-2);
+  padding-block-end: var(--dsh-space-2);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.dsh-conversation__interactions > .dsh-interaction {
+  width: min(100%, 56rem);
+  margin-inline: auto;
+  box-shadow: var(--dsh-shadow);
 }
 
 .dsh-unified-composer {
@@ -353,15 +374,15 @@
   min-width: 0;
   gap: var(--dsh-space-1);
   padding: var(--dsh-space-2);
-  border: 1px solid var(--vscode-input-border, var(--dsh-input-border));
+  border: 1px solid var(--dsh-input-border);
   border-radius: var(--dsh-radius-lg);
-  background: var(--vscode-input-background, var(--dsh-input-bg));
+  background: var(--dsh-input-bg);
   box-shadow: none;
   overflow: visible;
 }
 
 .dsh-unified-composer:focus-within {
-  border-color: var(--vscode-input-border, var(--dsh-input-border));
+  border-color: var(--dsh-input-border);
   box-shadow: none;
 }
 
@@ -423,7 +444,7 @@
   resize: none;
   border: 0;
   outline: 0;
-  color: var(--vscode-input-foreground, var(--dsh-input-text));
+  color: var(--dsh-input-text);
   background: transparent;
   line-height: 1.45;
 }
@@ -725,10 +746,10 @@
   min-width: 0;
   max-height: min(24rem, calc(100vh - var(--dsh-space-4)));
   overflow: hidden;
-  border: 1px solid var(--vscode-widget-border, var(--dsh-border-color));
+  border: 1px solid var(--dsh-border-color);
   border-radius: var(--dsh-radius-lg);
   color: var(--dsh-text);
-  background: var(--vscode-editorWidget-background, var(--dsh-widget-bg));
+  background: var(--dsh-widget-bg);
   box-shadow: var(--dsh-shadow);
 }
 
@@ -1288,9 +1309,9 @@
   padding: 0;
   overflow: hidden;
   border: var(--dsh-border);
-  border-color: var(--vscode-widget-border, var(--dsh-border-color));
+  border-color: var(--dsh-border-color);
   border-radius: var(--dsh-radius-lg);
-  background: var(--vscode-editorWidget-background, var(--dsh-widget-bg));
+  background: var(--dsh-widget-bg);
   box-shadow: var(--dsh-shadow);
 }
 
@@ -1881,10 +1902,10 @@
   margin: 0;
   padding: var(--dsh-space-2);
   overflow: auto;
-  border: 1px solid var(--vscode-widget-border, var(--dsh-border-color));
+  border: 1px solid var(--dsh-border-color);
   border-radius: var(--dsh-radius-lg);
   color: var(--dsh-text);
-  background: var(--vscode-editorWidget-background, var(--dsh-widget-bg));
+  background: var(--dsh-widget-bg);
   box-shadow: var(--dsh-shadow);
 }
 

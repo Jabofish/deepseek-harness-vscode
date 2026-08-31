@@ -42,6 +42,10 @@ const MAX_PROMPT_ATTACHMENT_BYTES = 8 * 1024 * 1024
 const MAX_PROMPT_ATTACHMENT_TOTAL_BYTES = 100 * 1024 * 1024
 
 export class Rc6SessionRepository implements SessionRepository {
+  /** The list projection is a hint that can be reused by the following open.
+   * The history page remains the authoritative payload; keeping this local
+   * hint avoids issuing a second session.list just to recover title/status. */
+  private readonly sessionSummaries = new Map<string, SessionSummary>()
   private readonly queueOwners = new Map<string, string>()
   private readonly queues = new Map<string, readonly QueuedInput[]>()
   private readonly queueWaiters = new Map<string, Set<(items: readonly QueuedInput[]) => void>>()
@@ -85,6 +89,7 @@ export class Rc6SessionRepository implements SessionRepository {
       } else if (event.type === 'session.removed') {
         this.clearQueueState(event.sessionId)
         this.imageLimitsBySession.delete(event.sessionId)
+        this.sessionSummaries.delete(event.sessionId)
       } else if (event.type === 'session.projection' && event.key === 'imageLimits') {
         this.rememberImageLimitsValue(event.sessionId, event.value)
       }
@@ -178,6 +183,7 @@ export class Rc6SessionRepository implements SessionRepository {
       items = items.filter((item) => allowed.has(item.id))
     }
     if (query?.limit !== undefined) items = items.slice(0, query.limit)
+    for (const item of items) this.sessionSummaries.set(item.id, item)
     return {
       items,
       ...(typeof list.nextCursor === 'string' && list.nextCursor.length > 0
@@ -188,14 +194,10 @@ export class Rc6SessionRepository implements SessionRepository {
 
   public async get(sessionId: string, signal?: AbortSignal): Promise<SessionDetail> {
     this.onSessionAccess?.(sessionId)
-    let summary: SessionSummary | undefined
-    try {
-      const page = await this.list(undefined, signal)
-      summary = page.items.find((item) => item.id === sessionId)
-    } catch {
-      // The history endpoint is the authoritative open/read path. Keep going
-      // when only the registry hint is temporarily unavailable.
-    }
+    // Do not turn session.open into session.list + session.history. The
+    // upstream history endpoint is the authoritative read path, and the list
+    // projection is already cached when the switcher has loaded it.
+    let summary = this.sessionSummaries.get(sessionId)
     const firstPage = await this.readHistoryPage(sessionId, undefined, signal)
     const history = firstPage.page
     const rawHistory = firstPage.rawEvents

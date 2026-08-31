@@ -87,7 +87,7 @@ describe('MarkdownContent', () => {
     await waitFor(() => expect(writeText).toHaveBeenCalledWith('Field\tValue\none\ttwo'))
   })
 
-  it('uses a focusable reveal-on-hover scroll region for wide tables', async () => {
+  it('keeps the copy action fixed while wide tables scroll horizontally', async () => {
     const { container } = render(
       <MarkdownContent
         markdown={[
@@ -108,7 +108,13 @@ describe('MarkdownContent', () => {
     })
     const wide = container.querySelector<HTMLElement>('.dsh-markdown__copy-region--table-wide')
     expect(wide).not.toBeNull()
-    expect(wide?.getAttribute('tabindex')).toBe('0')
+    const scrollPort = wide?.querySelector<HTMLElement>('.dsh-markdown__table-scroll')
+    const copyButton = wide?.querySelector<HTMLButtonElement>('.dsh-markdown__copy-button')
+    expect(scrollPort?.getAttribute('tabindex')).toBe('0')
+    expect(scrollPort?.querySelector('table')).not.toBeNull()
+    expect(copyButton).not.toBeNull()
+    expect(scrollPort?.contains(copyButton ?? null)).toBe(false)
+    expect(wide?.contains(copyButton ?? null)).toBe(true)
   })
 
   it('turns unique produced-file mentions into safe open actions', async () => {
@@ -142,7 +148,7 @@ describe('MarkdownContent', () => {
     expect(container.textContent).toContain('a')
   })
 
-  it('lazily highlights a fenced language and preserves the source text', async () => {
+  it('lazily highlights a fenced language with light and dark variants', async () => {
     const { container } = render(
       <MarkdownContent markdown={'```typescript\nconst answer: number = 42\n```'} />,
     )
@@ -150,6 +156,11 @@ describe('MarkdownContent', () => {
     await waitFor(() => expect(container.querySelector('pre.shiki')).not.toBeNull())
     expect(container.textContent).toContain('const answer')
     expect(container.querySelectorAll('.shiki .line').length).toBeGreaterThan(0)
+    const highlighted = container.querySelector('pre.shiki')
+    expect(highlighted?.className).toContain('github-light-default')
+    expect(highlighted?.className).toContain('github-dark-default')
+    expect(highlighted?.getAttribute('style')).toBeNull()
+    expect(highlighted?.querySelector('[style*="light-dark("]')).not.toBeNull()
   })
 
   it('defers copy controls until a streaming message reaches its terminal render', async () => {

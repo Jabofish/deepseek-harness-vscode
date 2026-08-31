@@ -8,7 +8,12 @@ export { useViewportMenuPosition } from './useViewportMenuPosition.js'
 export { useDismissibleLayer } from './useDismissibleLayer.js'
 export { useScrollFollow } from './useScrollFollow.js'
 export { useTailEntrance } from './useTailEntrance.js'
-export type { ScrollAnchor, ScrollFollowOptions, ScrollFollowResult } from './useScrollFollow.js'
+export type {
+  ScrollAnchor,
+  ScrollFollowOptions,
+  ScrollFollowResult,
+  ScrollFollowScheduleOptions,
+} from './useScrollFollow.js'
 export {
   DEFAULT_VIRTUALIZATION_PAYLOAD_THRESHOLD,
   DEFAULT_VIRTUALIZATION_OVERSCAN,

@@ -1,14 +1,11 @@
 // @vitest-environment jsdom
 
-import { act, renderHook } from '@testing-library/react'
+import { renderHook } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useTailEntrance } from './useTailEntrance.js'
 
 describe('useTailEntrance', () => {
-  afterEach(() => {
-    vi.useRealTimers()
-    vi.unstubAllGlobals()
-  })
+  afterEach(() => vi.unstubAllGlobals())
 
   it('does not animate the initial, prepended, or reset collection', () => {
     const { result, rerender } = renderHook(
@@ -24,10 +21,7 @@ describe('useTailEntrance', () => {
     expect(result.current).toBeUndefined()
   })
 
-  it('marks only a newly appended tail and clears it on the next frame', () => {
-    vi.useFakeTimers()
-    vi.stubGlobal('requestAnimationFrame', undefined)
-
+  it('marks a newly appended tail until a later tail replaces it', () => {
     const { result, rerender } = renderHook(
       ({ tailId, resetKey }: { tailId: string | undefined; resetKey: string }) =>
         useTailEntrance(tailId, resetKey),
@@ -37,12 +31,24 @@ describe('useTailEntrance', () => {
     rerender({ tailId: 'two', resetKey: 'session-1' })
     expect(result.current).toBe('two')
 
-    act(() => {
-      vi.runOnlyPendingTimers()
-    })
+    rerender({ tailId: 'three', resetKey: 'session-1' })
+    expect(result.current).toBe('three')
+  })
+
+  it('does not animate tail changes while the stream is active', () => {
+    const { result, rerender } = renderHook(
+      ({ tailId, resetKey, suppress }: { tailId: string | undefined; resetKey: string; suppress: boolean }) =>
+        useTailEntrance(tailId, resetKey, suppress),
+      { initialProps: { tailId: 'one', resetKey: 'session-1', suppress: true } },
+    )
+
+    rerender({ tailId: 'two', resetKey: 'session-1', suppress: true })
     expect(result.current).toBeUndefined()
 
-    rerender({ tailId: 'three', resetKey: 'session-1' })
+    rerender({ tailId: 'two', resetKey: 'session-1', suppress: false })
+    expect(result.current).toBeUndefined()
+
+    rerender({ tailId: 'three', resetKey: 'session-1', suppress: false })
     expect(result.current).toBe('three')
   })
 })

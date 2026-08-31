@@ -10,8 +10,6 @@ export const DEFAULT_VIRTUALIZATION_THRESHOLD = 24
 export const DEFAULT_VIRTUALIZATION_PAYLOAD_THRESHOLD = 96_000
 export const DEFAULT_VIRTUALIZATION_OVERSCAN = 4
 const DEFAULT_ESTIMATED_ITEM_SIZE = 96
-const NEVER_ADJUST_SCROLL_POSITION = (): boolean => false
-
 function defaultEstimateSize(): number {
   return DEFAULT_ESTIMATED_ITEM_SIZE
 }
@@ -23,10 +21,14 @@ export interface VirtualizedCollectionOptions<T> {
   readonly estimateSize?: (index: number) => number
   readonly overscan?: number
   readonly getItemKey?: (item: T, index: number) => string | number
+  /** Apply a measured-height anchor delta through the shared scroll owner. */
+  readonly onScrollAdjustment?: (delta: number) => void
 }
 
 export interface VirtualizedCollectionResult {
   readonly enabled: boolean
+  /** Whether the virtualizer has a usable viewport range for this render. */
+  readonly ready: boolean
   readonly totalSize: number
   readonly virtualItems: readonly VirtualItem[]
   readonly measureElement: (element: HTMLDivElement | null) => void
@@ -35,9 +37,10 @@ export interface VirtualizedCollectionResult {
 /**
  * Shared windowing primitive for long append-only surfaces.
  *
- * The virtualizer only reads and measures the scroll owner. It does not own
- * scrollTop writes; that remains the responsibility of useScrollFollow. This
- * separation is what prevents a list update from competing with reader input.
+ * The virtualizer only reads and measures the scroll owner. It forwards
+ * measured-height anchor deltas to useScrollFollow and never performs a
+ * lifecycle/target scroll write itself, so a list update cannot compete with
+ * reader input.
  */
 export function useVirtualizedCollection<T>(
   options: VirtualizedCollectionOptions<T>,
@@ -63,6 +66,23 @@ export function useVirtualizedCollection<T>(
     return item === undefined ? index : (getItemKeyOptionRef.current?.(item, index) ?? index)
   }, [])
   const getScrollElement = useCallback(() => scrollRef.current, [scrollRef])
+  const onScrollAdjustmentRef = useRef(options.onScrollAdjustment)
+  onScrollAdjustmentRef.current = options.onScrollAdjustment
+  const scrollToFn = useCallback(
+    (_offset: number, scrollOptions: { readonly adjustments?: number }): void => {
+      const adjustments = scrollOptions.adjustments
+      if (adjustments === undefined || Math.abs(adjustments) <= 0.5) return
+      // Ignore ordinary virtualizer lifecycle/target writes. Only forward the
+      // measured-height delta; the shared scroll owner decides how to apply it.
+      onScrollAdjustmentRef.current?.(adjustments)
+    },
+    [],
+  )
+  // virtual-core synchronizes its offset when it attaches and whenever the
+  // collection is enabled again. Seed that offset from the scroll owner so an
+  // internal lifecycle write cannot reset a reader who is already at the
+  // bottom (or intentionally reading elsewhere) to zero.
+  const initialOffset = useCallback(() => scrollRef.current?.scrollTop ?? 0, [scrollRef])
   // eslint-disable-next-line react-hooks/incompatible-library
   const virtualizer = useVirtualizer<HTMLDivElement, HTMLDivElement>({
     count,
@@ -70,21 +90,26 @@ export function useVirtualizedCollection<T>(
     getScrollElement,
     estimateSize,
     getItemKey,
+    initialOffset,
     overscan,
+    scrollToFn,
   })
-  // The current virtual-core adapter exposes this as an instance strategy
-  // rather than a React hook option. Keep the collection read/measure-only:
-  // useScrollFollow is the sole scrollTop writer, so a late row measurement
-  // can never compete with a native reader gesture or create a correction loop.
-  virtualizer.shouldAdjustScrollPositionOnItemSizeChange = NEVER_ADJUST_SCROLL_POSITION
   const virtualItems = virtualizer.getVirtualItems()
+  // A Webview can commit the conversation before flex layout has produced a
+  // non-zero viewport. In that frame the virtualizer intentionally exposes no
+  // range; treating that as an empty conversation makes the whole chat vanish
+  // until an unrelated rerender (for example switching tasks) occurs. Keep
+  // the virtualizer subscribed and let the caller render its normal flow until
+  // a real range is available.
+  const ready = !enabled || virtualItems.length > 0
   return useMemo(
     () => ({
       enabled,
+      ready,
       totalSize: enabled ? virtualizer.getTotalSize() : 0,
       virtualItems,
       measureElement: virtualizer.measureElement,
     }),
-    [enabled, virtualItems, virtualizer],
+    [enabled, ready, virtualItems, virtualizer],
   )
 }

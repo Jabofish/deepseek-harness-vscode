@@ -29,7 +29,7 @@ export interface ModelRetryNode {
   readonly message?: string
 }
 
-/** The durable DSH boundaries used by chat and trajectory timing displays. */
+/** The durable DSH boundaries used by chat timing displays. */
 export interface AssistantTiming {
   readonly stepStartTime: number | null
   readonly firstTokenTime: number | null

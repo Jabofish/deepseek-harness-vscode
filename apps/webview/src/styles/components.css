@@ -480,26 +480,49 @@
   contain: content;
 }
 
-/* Wide tables reveal their horizontal scroll affordance on interaction;
- * ordinary tables remain filled to the message width. */
+/* Wide tables keep a scrollport from their first paint. The scrollbar itself
+ * stays transparent until interaction, so revealing the affordance cannot
+ * change the table's block size and move the conversation below it. The
+ * scrollport is separate from the copy-region so its button stays fixed while
+ * the table moves. Ordinary tables remain filled to the message width. */
 
 .dsh-markdown__copy-region--table-wide {
-  overflow-x: hidden;
-  padding-bottom: var(--dsh-space-2);
+  overflow: visible;
 }
 
-.dsh-markdown__copy-region--table-wide:hover,
-.dsh-markdown__copy-region--table-wide:focus-visible {
+.dsh-markdown__table-scroll {
+  min-width: 0;
+  max-width: 100%;
   overflow-x: auto;
-  padding-bottom: 0;
+  scrollbar-gutter: stable;
+  scrollbar-color: transparent transparent;
 }
 
-.dsh-markdown__copy-region--table-wide:focus-visible {
+.dsh-markdown__table-scroll:hover,
+.dsh-markdown__table-scroll:focus-visible {
+  scrollbar-color: var(--dsh-muted) transparent;
+}
+
+.dsh-markdown__table-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.dsh-markdown__table-scroll::-webkit-scrollbar-thumb {
+  border-radius: var(--dsh-radius-pill);
+  background: transparent;
+}
+
+.dsh-markdown__table-scroll:hover::-webkit-scrollbar-thumb,
+.dsh-markdown__table-scroll:focus-visible::-webkit-scrollbar-thumb {
+  background: var(--dsh-muted);
+}
+
+.dsh-markdown__table-scroll:focus-visible {
   outline: none;
   box-shadow: none;
 }
 
-.dsh-markdown__copy-region--table-wide table {
+.dsh-markdown__table-scroll table {
   width: max-content;
   max-width: max-content;
   overflow: visible;
@@ -570,7 +593,7 @@
 .dsh-command-palette li button.dsh-command-palette__item--highlighted {
   border-color: var(--dsh-control-border);
   color: var(--dsh-widget-foreground);
-  background: var(--vscode-list-activeSelectionBackground, var(--dsh-control-hover));
+  background: var(--dsh-selection-bg);
   outline: none;
 }
 
@@ -584,7 +607,7 @@
 }
 
 .dsh-command-palette li button.dsh-command-palette__item > strong {
-  color: var(--vscode-list-activeSelectionForeground, var(--dsh-control-foreground));
+  color: var(--dsh-selection-text);
   font-size: var(--dsh-font-size-sm);
 }
 
@@ -621,10 +644,10 @@
 .dsh-popover-card {
   min-width: 0;
   border: var(--dsh-border);
-  border-color: var(--vscode-widget-border, var(--dsh-border-color));
+  border-color: var(--dsh-border-color);
   border-radius: var(--dsh-radius-lg);
   color: var(--dsh-text);
-  background: var(--vscode-editorWidget-background, var(--dsh-widget-bg));
+  background: var(--dsh-widget-bg);
   box-shadow: var(--dsh-shadow);
   transform-origin: top left;
   animation: dsh-pop-in var(--dsh-motion-duration-standard) var(--dsh-motion-ease-enter) both;
@@ -811,9 +834,9 @@
 .dsh-setting-row__status-note {
   padding: var(--dsh-space-1) var(--dsh-space-2);
   border: var(--dsh-border);
-  border-color: var(--vscode-editorWarning-border, var(--dsh-control-border));
+  border-color: var(--dsh-warning-border);
   border-radius: var(--dsh-radius-sm);
-  color: var(--vscode-editorWarning-foreground, var(--dsh-muted));
+  color: var(--dsh-warning);
   font-size: var(--dsh-font-size-xs);
   line-height: var(--dsh-line-height-tight);
 }

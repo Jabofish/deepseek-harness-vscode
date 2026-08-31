@@ -225,6 +225,8 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
     scheduleScrollToLatest,
     captureScrollAnchor,
     restoreScrollAnchor,
+    applyScrollAdjustment,
+    isUserScrollActive,
     isPinnedToBottom,
     showJumpToLatest,
   } = useScrollFollow({
@@ -238,15 +240,17 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
     scrollRef,
     enabled: virtualizeTimeline,
     getItemKey: timelineNodeKey,
+    onScrollAdjustment: applyScrollAdjustment,
   })
-  const enteredId = useTailEntrance(latestNode?.id, props.sessionId)
+  const virtualizedReady = virtualized.enabled && virtualized.ready
+  const enteredId = useTailEntrance(latestNode?.id, props.sessionId, props.streaming || running)
   useLayoutEffect(() => {
-    if (!virtualized.enabled || virtualized.totalSize <= 0) return
+    if (!virtualizedReady || virtualized.totalSize <= 0) return
     // Virtual rows refine the canvas height as they enter the measurement
     // cache. Reconcile that estimate only through the shared scroll owner;
     // native reader input cancels it before it can move the viewport.
-    scheduleScrollToLatest()
-  }, [scheduleScrollToLatest, virtualized.enabled, virtualized.totalSize])
+    scheduleScrollToLatest({ preserveBottom: true, immediate: true })
+  }, [scheduleScrollToLatest, virtualizedReady, virtualized.totalSize])
   const loadOlderHistory = useCallback((): void => {
     if (
       hasMoreHistory !== true ||
@@ -269,8 +273,8 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
   }, [captureScrollAnchor, hasMoreHistory, loadingOlderHistory, onLoadOlderHistory])
   const handleScroll = useCallback((): void => {
     const element = scrollRef.current
-    if (element !== null && element.scrollTop <= 24) loadOlderHistory()
-  }, [loadOlderHistory, scrollRef])
+    if (element !== null && element.scrollTop <= 24 && isUserScrollActive()) loadOlderHistory()
+  }, [isUserScrollActive, loadOlderHistory, scrollRef])
 
   const hasLoadImage = props.onLoadImage !== undefined
   const hasShowInFolder = props.onShowInFolder !== undefined
@@ -378,10 +382,10 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
           className="dsh-timeline__content dsh-timeline__content--session-enter"
         >
           <div
-            className={`dsh-timeline__canvas${virtualized.enabled ? ' dsh-timeline__canvas--virtualized' : ''}`}
-            style={virtualized.enabled ? { height: `${virtualized.totalSize}px` } : undefined}
+            className={`dsh-timeline__canvas${virtualized.enabled ? ' dsh-timeline__canvas--virtualized' : ''}${virtualizedReady ? ' dsh-timeline__canvas--virtualized-ready' : ''}`}
+            style={virtualizedReady ? { height: `${virtualized.totalSize}px` } : undefined}
           >
-            {virtualized.enabled
+            {virtualizedReady
               ? virtualized.virtualItems.map((item) => {
                   const node = displayNodes[item.index]
                   if (node === undefined) return null
@@ -1688,11 +1692,12 @@ function nodeSignature(node: DisplayTimelineNode): string {
   if (node === undefined) return ''
   if (node.kind === 'assistant-turn') {
     const latest = node.tools[node.tools.length - 1]
-    return `${node.id}:${node.markdown.length}:${node.streaming}:${node.interrupted === true}:${node.reasoning?.markdown.length ?? 0}:${node.reasoning?.streaming ?? false}:${node.images?.map((image) => image.attachmentId).join('|') ?? ''}:${node.tools.length}:${latest?.tool.status ?? ''}:${latest?.tool.locations?.map((location) => location.path).join('|') ?? ''}:${assistantBlockSignature(node.blocks)}`
+    return `${node.id}:${node.markdown.length}:${node.streaming}:${node.interrupted === true}:${node.reasoning?.markdown.length ?? 0}:${node.reasoning?.streaming ?? false}:${node.images?.map((image) => image.attachmentId).join('|') ?? ''}:${node.tools.length}:${latest === undefined ? '' : toolNodeSignature(latest)}:${assistantBlockSignature(node.blocks)}`
   }
   if (node.kind === 'assistant-message')
     return `${node.id}:${node.markdown.length}:${node.streaming}:${node.interrupted === true}:${node.reasoning?.markdown.length ?? 0}:${node.reasoning?.streaming ?? false}:${node.images?.map((image) => image.attachmentId).join('|') ?? ''}`
   if (node.kind === 'reasoning') return `${node.id}:${node.markdown.length}:${node.streaming}`
+  if (node.kind === 'tool') return toolNodeSignature(node)
   if (node.kind === 'event-group') return `${node.id}:${node.events.length}`
   return node.id
 }
@@ -1701,10 +1706,16 @@ function assistantBlockSignature(blocks: readonly AssistantContentBlock[]): stri
   return blocks
     .map((block) =>
       block.kind === 'tool'
-        ? `tool:${block.node.id}:${block.node.tool.status}`
+        ? `tool:${toolNodeSignature(block.node)}`
         : `${block.kind}:${block.id}:${block.markdown.length}:${block.streaming}`,
     )
     .join('|')
+}
+
+function toolNodeSignature(node: ToolTimelineNode): string {
+  const tool = node.tool
+  const presentation = tool.presentation
+  return `${node.id}:${tool.status}:${tool.inputSummary?.length ?? 0}:${tool.outputSummary?.length ?? 0}:${tool.error?.length ?? 0}:${tool.locations?.map((location) => `${location.path}:${location.line ?? ''}`).join('|') ?? ''}:${presentation?.phase ?? ''}:${presentation?.card ?? ''}`
 }
 
 function branchUnavailableForNode(node: DisplayTimelineNode, branching: boolean): boolean {

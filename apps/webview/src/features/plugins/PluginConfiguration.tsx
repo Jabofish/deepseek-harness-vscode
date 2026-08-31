@@ -2,6 +2,7 @@ import { useMemo, useState, type ReactElement } from 'react'
 import type { DshSettingsSnapshot } from '../../app/store.js'
 import { ContentFlow } from '../../components/common/ContentFlow.js'
 import { useI18n } from '../../i18n.js'
+import { Icon } from '../../ui/Icon.js'
 
 export interface PluginConfigurationProps {
   readonly snapshot: DshSettingsSnapshot | undefined
@@ -261,7 +262,7 @@ export function PluginConfiguration(props: PluginConfigurationProps): ReactEleme
                     className={`dsh-plugin-configuration__chevron${open ? ' dsh-plugin-configuration__chevron--open' : ''}`}
                     aria-hidden="true"
                   >
-                    ⌄
+                    <Icon name="chevron-down" />
                   </span>
                 </button>
                 {open ? (

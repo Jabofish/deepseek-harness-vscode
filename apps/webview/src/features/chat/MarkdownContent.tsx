@@ -140,12 +140,26 @@ export const MarkdownContent = memo(function MarkdownContent({
         region.classList.add(
           wide ? 'dsh-markdown__copy-region--table-wide' : 'dsh-markdown__copy-region--table-fill',
         )
-        if (wide) region.tabIndex = 0
+        if (wide) {
+          // Keep the copy action in the fixed region while only the table
+          // itself participates in horizontal scrolling.
+          const scrollPort = document.createElement('div')
+          scrollPort.className = 'dsh-markdown__table-scroll'
+          scrollPort.tabIndex = 0
+          target.replaceWith(region)
+          scrollPort.append(target)
+          region.append(scrollPort)
+        } else {
+          target.replaceWith(region)
+          region.append(target)
+        }
+      } else {
+        target.replaceWith(region)
+        region.append(target)
       }
       const mount = document.createElement('span')
       mount.className = 'dsh-markdown__copy-mount'
-      target.replaceWith(region)
-      region.append(target, mount)
+      region.append(mount)
 
       const root = createRoot(mount)
       root.render(
@@ -228,9 +242,14 @@ type MarkdownHighlighter = Highlighter
 
 let highlighterPromise: Promise<MarkdownHighlighter> | undefined
 
+const MARKDOWN_HIGHLIGHT_THEMES = {
+  light: 'github-light-default',
+  dark: 'github-dark-default',
+} as const
+
 function getMarkdownHighlighter(): Promise<MarkdownHighlighter> {
   highlighterPromise ??= import('shiki').then(({ createHighlighter }) =>
-    createHighlighter({ themes: ['github-dark'], langs: [] }),
+    createHighlighter({ themes: Object.values(MARKDOWN_HIGHLIGHT_THEMES), langs: [] }),
   )
   return highlighterPromise
 }
@@ -347,7 +366,12 @@ async function highlightMarkdownHtml(html: string): Promise<string> {
       await highlighter.loadLanguage(language)
       const highlighted = highlighter.codeToHtml(code.textContent ?? '', {
         lang: language,
-        theme: 'github-dark',
+        themes: MARKDOWN_HIGHLIGHT_THEMES,
+        defaultColor: 'light-dark()',
+        // The surrounding Markdown CSS owns the surface. Shiki's default
+        // root background is an opaque theme color and would otherwise turn
+        // a light Webview code block into a dark rectangle.
+        rootStyle: false,
       })
       const template = parsed.createElement('template')
       template.innerHTML = highlighted

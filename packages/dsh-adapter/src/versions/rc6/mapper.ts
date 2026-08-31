@@ -398,6 +398,7 @@ export const rc6Mapper = {
       case 'tool/call':
       case 'tool/result': {
         const time = eventTimestamp(envelope.time ?? data.time)
+        const message = objectOrUndefined(data.message)
         return {
           type: 'tool.updated',
           sessionId,
@@ -415,9 +416,7 @@ export const rc6Mapper = {
                   ? { completedAt: time }
                   : {}),
               ...(envelope.view === undefined ? {} : { view: envelope.view }),
-              ...(objectOrUndefined(data.message) === undefined
-                ? {}
-                : { outputSummary: bounded(data.message) }),
+              ...(message === undefined ? {} : { outputSummary: bounded(messageText(message)) }),
             },
             name === 'tool/call' ? 'call' : 'result',
           ),
@@ -857,6 +856,7 @@ function mapHistoryEntry(value: unknown, index: number, sessionId: string): Sess
 function tool(value: Record<string, unknown>, phase: 'call' | 'result' = 'result'): ToolCallView {
   const message = objectOrUndefined(value.message)
   const source = objectOrUndefined(message?.source)
+  const messageIsError = messageHasToolError(message)
   const viewEnvelope = objectOrUndefined(value.view)
   const view = objectOrUndefined(viewEnvelope?.view) ?? viewEnvelope
   const presentation = projectToolPresentation(viewEnvelope, phase, contentText)
@@ -869,6 +869,7 @@ function tool(value: Record<string, unknown>, phase: 'call' | 'result' = 'result
     view?.description ??
     view?.content
   const messageOutput = message === undefined ? undefined : messageText(message)
+  const messageError = message === undefined ? '' : messageToolErrorText(message)
   const output =
     value.outputSummary ??
     messageOutput ??
@@ -876,15 +877,23 @@ function tool(value: Record<string, unknown>, phase: 'call' | 'result' = 'result
     view?.rawOutput ??
     view?.output ??
     view?.content
+  const errorText =
+    value.error === undefined
+      ? messageIsError
+        ? bounded(messageError || messageOutput)
+        : undefined
+      : bounded(error?.message ?? value.error)
+  const mappedStatus = enumValue(
+    value.status,
+    ['queued', 'running', 'completed', 'failed', 'cancelled'] as const,
+    message === undefined ? 'running' : errorText !== undefined || messageIsError ? 'failed' : 'completed',
+  )
   const name = firstString(value.toolName, value.name, view?.name, view?.toolName)
   const title = firstString(value.title, view?.title, name)
   const category = firstString(value.category, view?.category, view?.kind, view?.card)
   const locations = toolLocations(value.locations ?? view?.locations)
-  const status = enumValue(
-    value.status,
-    ['queued', 'running', 'completed', 'failed', 'cancelled'] as const,
-    message === undefined ? 'running' : error !== undefined ? 'failed' : 'completed',
-  )
+  const status =
+    (errorText !== undefined || messageIsError) && mappedStatus !== 'cancelled' ? 'failed' : mappedStatus
   const turn = eventIndex(value.turn)
   const step = eventIndex(value.step)
   return {
@@ -899,7 +908,7 @@ function tool(value: Record<string, unknown>, phase: 'call' | 'result' = 'result
     ...(value.completedAt === undefined ? {} : { completedAt: date(value.completedAt) }),
     ...(input === undefined ? {} : { inputSummary: bounded(input) }),
     ...(output === undefined ? {} : { outputSummary: bounded(output) }),
-    ...(value.error === undefined ? {} : { error: bounded(error?.message ?? value.error) }),
+    ...(errorText === undefined || errorText === '' ? {} : { error: errorText }),
     ...(locations === undefined ? {} : { locations }),
     ...(presentation === undefined ? {} : { presentation }),
     metadata: objectOrUndefined(safePayload(view)) ?? {},
@@ -1240,9 +1249,30 @@ function indexToken(value: unknown): string | undefined {
 
 function messageText(value: Record<string, unknown> | undefined): string {
   if (value === undefined) return ''
-  const content = array(value.content)
+  const content = contentEntries(value.content)
   if (content.length === 0) return stringOr(value.text ?? value.markdown ?? value.content, '')
   return contentText(content, false)
+}
+
+function messageHasToolError(value: Record<string, unknown> | undefined): boolean {
+  if (value?.isError === true) return true
+  return contentEntries(value?.content).some((entry) => {
+    const block = objectOrUndefined(entry)
+    return block?.type === 'tool-result' && block.isError === true
+  })
+}
+
+function messageToolErrorText(value: Record<string, unknown>): string {
+  const errorBlock = contentEntries(value.content)
+    .map((entry) => objectOrUndefined(entry))
+    .find((block) => block?.type === 'tool-result' && block.isError === true)
+  if (errorBlock !== undefined) {
+    const content = contentText(contentEntries(errorBlock.content), false)
+    if (content !== '') return content
+    const direct = stringOr(errorBlock.text ?? errorBlock.message, '')
+    if (direct !== '') return direct
+  }
+  return messageText(value)
 }
 
 interface UserMessageContent {
@@ -1370,7 +1400,7 @@ function attachedFileBlock(value: string): AttachedFileBlock | undefined {
 function reasoningText(value: Record<string, unknown> | undefined): string {
   if (value === undefined) return ''
   return (
-    contentText(array(value.content), true) ||
+    contentText(contentEntries(value.content), true) ||
     stringOr(value.reasoning ?? value.reasoningContent ?? value.reasoning_content, '')
   )
 }
@@ -1378,6 +1408,7 @@ function reasoningText(value: Record<string, unknown> | undefined): string {
 function contentText(content: readonly unknown[], reasoningOnly: boolean): string {
   return content
     .map((entry) => {
+      if (typeof entry === 'string') return reasoningOnly ? '' : entry
       const block = objectOrUndefined(entry)
       if (block === undefined) return ''
       if (block.type === 'reasoning') return reasoningOnly ? stringOr(block.text, '') : ''
@@ -1385,11 +1416,11 @@ function contentText(content: readonly unknown[], reasoningOnly: boolean): strin
       if (block.type === 'text') return stringOr(block.text, '')
       if (block.type === 'image') return imageReference(block.attachment) === undefined ? '[image]' : ''
       if (block.type === 'tool-result') {
-        const nested = contentText(array(block.content), false)
-        return nested || stringOr(block.text, '[tool result]')
+        const nested = contentText(contentEntries(block.content), false)
+        return nested || stringOr(block.text ?? block.message, '[tool result]')
       }
       if (block.type === 'tool-call') return ''
-      return stringOr(block.text ?? block.value, '') || contentText(array(block.content), false)
+      return stringOr(block.text ?? block.value, '') || contentText(contentEntries(block.content), false)
     })
     .filter(Boolean)
     .join('\n')
@@ -1445,6 +1476,11 @@ function object(value: unknown, label: string): Record<string, unknown> {
 
 function array(value: unknown): readonly unknown[] {
   return Array.isArray(value) ? value : []
+}
+
+function contentEntries(value: unknown): readonly unknown[] {
+  if (Array.isArray(value)) return value
+  return typeof value === 'string' ? [value] : []
 }
 
 function string(value: unknown, label: string): string {

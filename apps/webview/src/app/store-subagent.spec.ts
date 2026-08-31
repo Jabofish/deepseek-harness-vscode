@@ -393,6 +393,67 @@ describe('AppStore subagent transport routing', () => {
     store.dispose()
   })
 
+  it('replays live tool updates immediately after the first history paint', async () => {
+    const queue = deferred<readonly unknown[]>()
+    const client = new FakeClient((request) => {
+      switch (request.type) {
+        case 'session.open':
+          return {
+            id: 'parent',
+            workspaceId: 'workspace',
+            title: 'Parent',
+            blank: false,
+            status: 'running',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+            history: [],
+          }
+        case 'session.queue.list':
+          return queue.promise
+        case 'goal.list':
+        case 'job.list':
+          return []
+        case 'subagent.list':
+          return { entries: [], parentAvailable: true }
+        case 'command.list':
+        case 'skill.list':
+          return []
+        default:
+          throw new Error(`unexpected request ${request.type}`)
+      }
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+    const opening = store.openSession('parent')
+
+    await vi.waitFor(() => expect(store.activeSessionId).toBe('parent'))
+    expect(client.requests.some((request) => request.type === 'session.queue.list')).toBe(true)
+    client.emit({
+      type: 'event',
+      name: 'tool.updated',
+      sequence: 12,
+      payload: {
+        sessionId: 'parent',
+        sequence: 12,
+        tool: {
+          id: 'tool-live',
+          name: 'web_search',
+          category: 'network',
+          title: 'web_search',
+          status: 'running',
+          inputSummary: 'latest AI news',
+          metadata: {},
+        },
+      },
+    })
+
+    expect(store.timeline.nodes.some((node) => node.kind === 'tool' && node.tool.id === 'tool-live')).toBe(
+      true,
+    )
+    queue.resolve([])
+    await opening
+    store.dispose()
+  })
+
   it('does not append a live delta already covered by the hydrated history', async () => {
     const queue = deferred<readonly unknown[]>()
     const client = new FakeClient((request) => {
@@ -579,6 +640,10 @@ describe('AppStore subagent transport routing', () => {
     })
     const store = createAppStore(client as unknown as ProtocolClient)
     await store.openSession('parent')
+    await vi.waitFor(() => {
+      expect(store.queue).toHaveLength(1)
+      expect(store.jobs).toHaveLength(1)
+    })
     expect(store.queue).toHaveLength(1)
     expect(store.jobs).toHaveLength(1)
 

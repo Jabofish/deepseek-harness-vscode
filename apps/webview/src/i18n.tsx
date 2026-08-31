@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 
-/** UI languages, mirroring the upstream locale axis (en is the base). */
+/** Shared extension/DSH UI languages, mirroring the upstream locale axis (en is the base). */
 export type Locale = 'en' | 'zh'
 
 const LOCALE_STORAGE_KEY = 'dsh-webview-locale'
@@ -13,6 +13,8 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'app.noActiveSession': 'No active session',
     'app.createSession': 'Create a session to begin.',
     'app.chooseSession': 'Choose a session from the session menu.',
+    'app.workspaceLoading': 'Loading workspaces and sessions…',
+    'app.workspaceLoadingDescription': 'The connected DSH is preparing the workspace list.',
     'app.workspacePicker': 'Workspace',
     'app.workspacePickerHint': 'Choose where the new conversation should live.',
     'app.presetPicker': 'Agent preset',
@@ -285,6 +287,26 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'runtime.title': "DeepSeek Harness isn't ready yet",
     'runtime.description':
       'DSH runs locally in the VS Code Extension Host. Install @deepseek-ai/dsh with Node.js 22.19+ or use an existing executable.',
+    'runtime.connectionProgress.eyebrow': 'DSH CONNECTION',
+    'runtime.connectionProgress.stages': 'DSH connection progress',
+    'runtime.connectionProgress.idleTitle': 'Preparing DSH connection',
+    'runtime.connectionProgress.discoveringTitle': 'Finding DSH',
+    'runtime.connectionProgress.locatingTitle': 'Locating DSH runtime',
+    'runtime.connectionProgress.startingTitle': 'Opening DSH',
+    'runtime.connectionProgress.connectingTitle': 'Connecting to DSH',
+    'runtime.connectionProgress.stoppingTitle': 'Closing DSH',
+    'runtime.connectionProgress.sessionsTitle': 'Loading sessions',
+    'runtime.connectionProgress.stage.discovering': 'Find a running DSH instance',
+    'runtime.connectionProgress.stage.locating-runtime': 'Locate DSH runtime',
+    'runtime.connectionProgress.stage.starting': 'Open DSH',
+    'runtime.connectionProgress.stage.connecting': 'Connect to DSH',
+    'runtime.connectionProgress.stage.sessions': 'Load sessions',
+    'runtime.connectionProgress.loadingDescription':
+      'The extension will load your sessions as soon as the DSH connection is ready.',
+    'runtime.connectionProgress.sessionsDescription':
+      'DSH is connected. The extension is loading workspaces and sessions.',
+    'runtime.connectionProgress.failureTitle': 'DSH connection failed',
+    'runtime.connectionProgress.failureDescription': 'The connection could not be completed.',
     'runtime.steps': 'Setup steps',
     'runtime.step.install': 'Install DSH, or select the dsh executable you already use.',
     'runtime.step.reconnect': 'After installation, the extension reconnects automatically.',
@@ -590,6 +612,10 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
       'The package was updated. Reconnect or restart the selected runtime before using the new version.',
     'settings.permissionPreset': 'Permission preset',
     'settings.defaultAgent': 'Default agent',
+    'settings.conversationAppearance': 'Conversation appearance',
+    'settings.conversationFontSize': 'Conversation font size',
+    'settings.conversationFontSizeHint': 'Adjust text size inside the conversation area.',
+    'settings.extensionPreferences': 'Extension preferences',
     'settings.preferences': 'DSH preferences',
     'settings.loadingDsh': 'Loading DSH settings…',
     'settings.dshUnavailable': 'DSH preferences are unavailable until the host connection is established.',
@@ -634,6 +660,8 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'settings.invalidCapacity': '{field} must be a positive integer, optionally using K or M.',
     'settings.selectAllModels': 'Select all',
     'settings.deselectAllModels': 'Deselect all',
+    'settings.addProvider': 'Add provider',
+    'settings.addProviderSelect': 'Provider',
     'settings.addCustomProvider': 'Add custom provider',
     'settings.editProvider': 'Edit',
     'settings.closeEditor': 'Close',
@@ -683,8 +711,8 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'settings.cancel': 'Cancel',
     'settings.permission.label': 'Permission',
     'settings.permission.hint': 'Default permission preset for new sessions',
-    'settings.language.label': 'DSH response language',
-    'settings.language.hint': 'Controls DSH replies; the interface language is changed from the top menu.',
+    'settings.language.label': 'Interface language',
+    'settings.language.hint': 'Controls the extension interface and DSH response language.',
     'settings.appearance.label': 'Appearance',
     'settings.appearance.hint': 'Light, dark, or follow the system theme',
     'settings.enter.label': 'Composer Enter',
@@ -699,6 +727,9 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'settings.value.system': 'system',
     'settings.value.queue': 'queue',
     'settings.value.steer': 'steer',
+    'settings.value.small': 'Small',
+    'settings.value.medium': 'Medium',
+    'settings.value.large': 'Large',
     'plugins.reading': 'Reading plugins…',
     'plugins.unavailable': 'Plugins are temporarily unavailable.',
     'plugins.retry': 'Retry',
@@ -1060,6 +1091,8 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'app.noActiveSession': '没有活动会话',
     'app.createSession': '创建会话即可开始。',
     'app.chooseSession': '请从会话菜单中选择一个会话。',
+    'app.workspaceLoading': '正在加载工作区和会话…',
+    'app.workspaceLoadingDescription': 'DSH 已连接，正在准备工作区列表。',
     'app.workspacePicker': '工作区',
     'app.workspacePickerHint': '选择新会话所属的工作区。',
     'app.presetPicker': '代理预设',
@@ -1327,6 +1360,24 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'runtime.title': 'DeepSeek Harness 尚未就绪',
     'runtime.description':
       'DSH 在 VS Code 扩展宿主中本地运行。请使用 Node.js 22.19+ 安装 @deepseek-ai/dsh，或选择已有的可执行文件。',
+    'runtime.connectionProgress.eyebrow': 'DSH 连接',
+    'runtime.connectionProgress.stages': 'DSH 连接进度',
+    'runtime.connectionProgress.idleTitle': '正在准备连接 DSH',
+    'runtime.connectionProgress.discoveringTitle': '正在发现 DSH',
+    'runtime.connectionProgress.locatingTitle': '正在定位 DSH 运行时',
+    'runtime.connectionProgress.startingTitle': '正在打开 DSH',
+    'runtime.connectionProgress.connectingTitle': '正在连接 DSH',
+    'runtime.connectionProgress.stoppingTitle': '正在关闭 DSH',
+    'runtime.connectionProgress.sessionsTitle': '正在加载会话',
+    'runtime.connectionProgress.stage.discovering': '发现可用的 DSH 实例',
+    'runtime.connectionProgress.stage.locating-runtime': '定位 DSH 运行时',
+    'runtime.connectionProgress.stage.starting': '打开 DSH',
+    'runtime.connectionProgress.stage.connecting': '连接 DSH',
+    'runtime.connectionProgress.stage.sessions': '加载会话',
+    'runtime.connectionProgress.loadingDescription': 'DSH 连接就绪后会自动加载会话。',
+    'runtime.connectionProgress.sessionsDescription': 'DSH 已连接，正在加载工作区和会话。',
+    'runtime.connectionProgress.failureTitle': 'DSH 连接失败',
+    'runtime.connectionProgress.failureDescription': '连接未能完成。',
     'runtime.steps': '设置步骤',
     'runtime.step.install': '安装 DSH，或选择你已经在使用的 dsh 可执行文件。',
     'runtime.step.reconnect': '安装完成后，扩展会自动重新连接。',
@@ -1622,6 +1673,10 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'settings.dshUpdateRestart': '安装包已更新；使用新版本前请重新连接或重启所选运行时。',
     'settings.permissionPreset': '权限预设',
     'settings.defaultAgent': '默认代理',
+    'settings.conversationAppearance': '对话外观',
+    'settings.conversationFontSize': '对话字体大小',
+    'settings.conversationFontSizeHint': '调整对话区域内的文字大小。',
+    'settings.extensionPreferences': '扩展偏好设置',
     'settings.preferences': 'DSH 偏好设置',
     'settings.loadingDsh': '正在加载 DSH 设置…',
     'settings.dshUnavailable': '建立宿主连接后才能使用 DSH 偏好设置。',
@@ -1665,6 +1720,8 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'settings.invalidCapacity': '{field} 必须是正整数，也可以使用 K 或 M 后缀。',
     'settings.selectAllModels': '全选',
     'settings.deselectAllModels': '取消全选',
+    'settings.addProvider': '添加 Provider',
+    'settings.addProviderSelect': 'Provider',
     'settings.addCustomProvider': '添加自定义 Provider',
     'settings.editProvider': '编辑',
     'settings.closeEditor': '关闭',
@@ -1711,8 +1768,8 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'settings.cancel': '取消',
     'settings.permission.label': '权限',
     'settings.permission.hint': '新会话的默认权限预设',
-    'settings.language.label': 'DSH 响应语言',
-    'settings.language.hint': '仅控制 DSH 生成的回复语言；插件界面语言请使用顶部菜单。',
+    'settings.language.label': '界面语言',
+    'settings.language.hint': '同时控制扩展界面和 DSH 回复的语言。',
     'settings.appearance.label': '外观',
     'settings.appearance.hint': '浅色、深色或跟随系统主题',
     'settings.enter.label': '输入框 Enter',
@@ -1727,6 +1784,9 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'settings.value.system': '跟随系统',
     'settings.value.queue': '排队',
     'settings.value.steer': '引导',
+    'settings.value.small': '小',
+    'settings.value.medium': '中',
+    'settings.value.large': '大',
     'plugins.reading': '正在读取插件…',
     'plugins.unavailable': '插件暂时不可用。',
     'plugins.retry': '重试',
@@ -2120,9 +2180,8 @@ function storedLocale(): Locale {
 }
 
 /**
- * UI locale provider. The choice is intentionally separate from DSH's
- * `locale.preference`: this controls extension chrome, while the upstream
- * preference controls DSH behavior. The UI choice persists in localStorage.
+ * UI locale provider. The Webview keeps the shared preference in localStorage
+ * for first paint; App mirrors user changes to DSH's `locale.preference`.
  */
 export function I18nProvider(props: { readonly children: ReactNode }): React.JSX.Element {
   const [locale, setLocaleState] = useState<Locale>(storedLocale)

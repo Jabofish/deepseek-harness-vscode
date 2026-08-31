@@ -179,6 +179,91 @@ describe('Timeline', () => {
     ).toBe(false)
   })
 
+  it('keeps a long conversation visible before the virtualizer has a viewport rect', () => {
+    const nodes: readonly TimelineNode[] = Array.from({ length: 24 }, (_, index) => ({
+      kind: 'user-message' as const,
+      id: `user-${index}`,
+      markdown: `message ${index}`,
+    }))
+
+    const { container } = render(<Timeline sessionId="session-1" nodes={nodes} streaming={false} />)
+
+    expect(container.querySelectorAll('.dsh-timeline__row').length).toBeGreaterThan(0)
+  })
+
+  it('does not reset the reader position when virtualization is enabled after a short history', () => {
+    vi.useFakeTimers()
+    const initialNodes: readonly TimelineNode[] = [{ kind: 'user-message', id: 'user-0', markdown: 'first' }]
+    const longNodes: readonly TimelineNode[] = Array.from({ length: 24 }, (_, index) => ({
+      kind: 'user-message' as const,
+      id: `user-${index}`,
+      markdown: `message ${index}`,
+    }))
+    const { container, rerender } = render(
+      <Timeline sessionId="session-1" nodes={initialNodes} streaming={false} />,
+    )
+    const timeline = container.querySelector<HTMLDivElement>('.dsh-timeline')!
+    let scrollTop = 0
+    let writes = 0
+    Object.defineProperty(timeline, 'scrollTop', {
+      configurable: true,
+      get: () => scrollTop,
+      set: (value: number) => {
+        writes += 1
+        scrollTop = value
+      },
+    })
+    Object.defineProperty(timeline, 'scrollHeight', { configurable: true, value: 2_000 })
+    Object.defineProperty(timeline, 'clientHeight', { configurable: true, value: 400 })
+    fireEvent.wheel(timeline, { deltaY: -30 })
+    timeline.scrollTop = 640
+    fireEvent.scroll(timeline)
+
+    rerender(<Timeline sessionId="session-1" nodes={longNodes} streaming={false} />)
+
+    expect(timeline.scrollTop).toBe(640)
+    expect(writes).toBe(1)
+  })
+
+  it('restores a middle reader position when a long timeline layout clamps to the top', () => {
+    vi.useFakeTimers()
+    const nodes: readonly TimelineNode[] = [
+      ...Array.from({ length: 23 }, (_, index) => ({
+        kind: 'user-message' as const,
+        id: `user-${index}`,
+        markdown: `message ${index}`,
+      })),
+      { kind: 'assistant-message', id: 'assistant-23', markdown: 'answer', streaming: true },
+    ]
+    const updatedNodes = nodes.map((node, index) =>
+      index === nodes.length - 1 && node.kind === 'assistant-message'
+        ? { ...node, markdown: `${node.markdown} updated` }
+        : node,
+    )
+    const { container, rerender } = render(<Timeline sessionId="session-1" nodes={nodes} streaming={false} />)
+    const timeline = container.querySelector<HTMLDivElement>('.dsh-timeline')!
+    let scrollTop = 640
+    Object.defineProperty(timeline, 'scrollTop', {
+      configurable: true,
+      get: () => scrollTop,
+      set: (value: number) => {
+        scrollTop = value
+      },
+    })
+    Object.defineProperty(timeline, 'scrollHeight', { configurable: true, value: 2_000 })
+    Object.defineProperty(timeline, 'clientHeight', { configurable: true, value: 400 })
+    fireEvent.wheel(timeline, { deltaY: -30 })
+    fireEvent.scroll(timeline)
+
+    // Simulate the browser clamp that can happen while the virtualized canvas
+    // is replaced. The next streamed update must restore the middle position.
+    timeline.scrollTop = 0
+    rerender(<Timeline sessionId="session-1" nodes={updatedNodes} streaming={false} />)
+
+    expect(timeline.scrollTop).toBe(640)
+    expect(screen.getByRole('button', { name: 'Jump to latest' })).toBeDefined()
+  })
+
   it('offers the bounded older-history page and invokes the host-backed loader', () => {
     const loadOlder = vi.fn(() => Promise.resolve())
     render(
@@ -236,9 +321,46 @@ describe('Timeline', () => {
     Object.defineProperty(timeline, 'scrollHeight', { configurable: true, value: 1_000 })
     Object.defineProperty(timeline, 'clientHeight', { configurable: true, value: 300 })
     timeline.scrollTop = 0
+    fireEvent.wheel(timeline, { deltaY: -30 })
     fireEvent.scroll(timeline)
 
     expect(loadOlder).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not load older history when layout temporarily clamps a pinned reader to the top', () => {
+    vi.useFakeTimers()
+    const loadOlder = vi.fn(() => Promise.resolve())
+    const { container } = render(
+      <Timeline
+        sessionId="session-1"
+        nodes={[{ kind: 'user-message', id: 'user-1', markdown: 'latest' }]}
+        streaming={false}
+        hasMoreHistory
+        onLoadOlderHistory={loadOlder}
+      />,
+    )
+    const timeline = container.querySelector<HTMLDivElement>('.dsh-timeline')!
+    let scrollTop = 600
+    Object.defineProperty(timeline, 'scrollTop', {
+      configurable: true,
+      get: () => scrollTop,
+      set: (value: number) => {
+        scrollTop = value
+      },
+    })
+    Object.defineProperty(timeline, 'scrollHeight', { configurable: true, value: 1_000 })
+    Object.defineProperty(timeline, 'clientHeight', { configurable: true, value: 400 })
+
+    // Simulate the browser's transient clamp while the content layout is
+    // being replaced. It must not be mistaken for a request to load history.
+    timeline.scrollTop = 0
+    fireEvent.scroll(timeline)
+    act(() => {
+      vi.runAllTimers()
+    })
+
+    expect(loadOlder).not.toHaveBeenCalled()
+    expect(timeline.scrollTop).toBe(600)
   })
 
   it('keeps the DSH event visibility control in conversation chrome, outside the scroll owner', () => {
@@ -370,6 +492,7 @@ describe('Timeline', () => {
     Object.defineProperty(timeline, 'scrollHeight', { configurable: true, get: () => scrollHeight })
     Object.defineProperty(timeline, 'clientHeight', { configurable: true, value: 300 })
     act(() => resize([resizeEntry(canvas, 420, 420)], {} as ResizeObserver))
+    fireEvent.wheel(timeline, { deltaY: -24 })
     timeline.scrollTop = 180
     fireEvent.scroll(timeline)
     scrollHeight = 1_600
@@ -1173,7 +1296,7 @@ describe('Timeline', () => {
           {
             kind: 'user-message',
             id: 'context-1',
-            markdown: 'Injected context should only appear in Trajectory.',
+            markdown: 'Injected context should not appear as a chat bubble.',
             source: 'plugin',
           },
         ]}
@@ -1181,7 +1304,7 @@ describe('Timeline', () => {
       />,
     )
 
-    expect(screen.queryByText('Injected context should only appear in Trajectory.')).toBeNull()
+    expect(screen.queryByText('Injected context should not appear as a chat bubble.')).toBeNull()
   })
 })
 

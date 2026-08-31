@@ -32,6 +32,12 @@ interface FeatureBackendIdentity {
 const RUNTIME_UPDATE_CHECK_TIMEOUT_MS = 45_000
 const RUNTIME_UPDATE_INSTALL_TIMEOUT_MS = 180_000
 
+const timeoutError = (): Error => {
+  const error = new Error(translate('app.error.timeout'))
+  Object.assign(error, { retryable: true })
+  return error
+}
+
 export class ProtocolClient {
   private readonly pending = new Map<string, Pending>()
   private readonly listeners = new Set<(message: HostMessage) => void>()
@@ -65,7 +71,7 @@ export class ProtocolClient {
             : this.timeoutMs
       const timer = window.setTimeout(() => {
         this.pending.delete(parsed.requestId)
-        reject(new Error(translate('app.error.timeout')))
+        reject(timeoutError())
       }, timeoutMs)
       this.pending.set(parsed.requestId, { resolve: (value) => resolve(value as T), reject, timer })
       try {
@@ -90,7 +96,7 @@ export class ProtocolClient {
     return new Promise<T>((resolve, reject) => {
       const timer = window.setTimeout(() => {
         this.pending.delete(parsed.requestId)
-        reject(new Error(translate('app.error.timeout')))
+        reject(timeoutError())
       }, this.timeoutMs)
       this.pending.set(parsed.requestId, { resolve: (value) => resolve(value as T), reject, timer })
       try {

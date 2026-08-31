@@ -25,6 +25,21 @@ body {
   line-height: 1.45;
 }
 
+/* Code also appears as a compact identifier in provider, preset, and plugin
+ * cards. Give those ordinary code elements the same themed surface as code
+ * blocks; pre-owned code resets to the surrounding pre surface below. */
+.dsh-app code {
+  padding: 0.1em 0.3em;
+  border-radius: var(--dsh-radius-sm);
+  background: var(--dsh-code-bg);
+  font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
+}
+
+.dsh-app pre code {
+  padding: 0;
+  background: transparent;
+}
+
 button,
 input,
 textarea {
@@ -316,6 +331,25 @@ ul {
   min-height: 0;
   gap: var(--dsh-space-3);
   overflow: hidden;
+  --dsh-conversation-font-scale: 1;
+  --dsh-font-size-xs: calc(0.75rem * var(--dsh-conversation-font-scale));
+  --dsh-font-size-sm: calc(0.8125rem * var(--dsh-conversation-font-scale));
+  --dsh-font-size-md: calc(0.875rem * var(--dsh-conversation-font-scale));
+  --dsh-markdown-heading-1: calc(1.35rem * var(--dsh-conversation-font-scale));
+  --dsh-markdown-heading-2: calc(1.15rem * var(--dsh-conversation-font-scale));
+  --dsh-markdown-heading-3: calc(1rem * var(--dsh-conversation-font-scale));
+  --dsh-markdown-heading-4: calc(0.9375rem * var(--dsh-conversation-font-scale));
+  --dsh-markdown-heading-5: var(--dsh-font-size-md);
+  --dsh-markdown-heading-6: var(--dsh-font-size-sm);
+  font-size: calc(var(--vscode-font-size, 13px) * var(--dsh-conversation-font-scale));
+}
+
+.dsh-conversation[data-conversation-font-size='small'] {
+  --dsh-conversation-font-scale: 0.9;
+}
+
+.dsh-conversation[data-conversation-font-size='large'] {
+  --dsh-conversation-font-scale: 1.15;
 }
 
 .dsh-conversation__views,
@@ -1513,10 +1547,56 @@ summary.dsh-timeline__card-header,
 
 .dsh-goal-bar,
 .dsh-goal-strip,
-.dsh-queue,
 .dsh-interaction,
 .dsh-sessions {
   padding: var(--dsh-space-3);
+}
+
+/* The queue is a dock above the composer, not a full-size content card. A
+ * single running item and the multi-item header should stay within one
+ * compact control row; the backlog itself is bounded and collapsible. */
+.dsh-queue {
+  display: block;
+  padding: var(--dsh-space-1) 0;
+  overflow: hidden;
+}
+
+.dsh-queue__header {
+  width: 100%;
+  min-height: var(--dsh-control-height-compact);
+  padding: var(--dsh-space-1) var(--dsh-space-3);
+  border-color: transparent;
+  border-radius: var(--dsh-radius-sm);
+  color: var(--dsh-text);
+  background: transparent;
+  text-align: start;
+}
+
+.dsh-queue__header:hover:not(:disabled),
+.dsh-queue__header:focus-visible {
+  color: var(--dsh-text);
+  background: var(--dsh-surface-hover);
+}
+
+.dsh-queue__header-icon,
+.dsh-queue__header-chevron {
+  width: var(--dsh-icon-size-sm);
+  height: var(--dsh-icon-size-sm);
+  flex: 0 0 auto;
+  color: var(--dsh-muted);
+}
+
+.dsh-queue__header-label {
+  min-width: 0;
+  overflow: hidden;
+  color: inherit;
+  font-size: var(--dsh-font-size-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-queue__header-chevron {
+  margin-inline-start: auto;
 }
 
 .dsh-goal-bar__content,
@@ -1602,6 +1682,17 @@ summary.dsh-timeline__card-header,
   list-style: none;
 }
 
+.dsh-queue__list {
+  max-height: 11.25rem;
+  gap: 0;
+  margin: 0;
+  overflow-y: auto;
+}
+
+.dsh-queue__list[hidden] {
+  display: none;
+}
+
 .dsh-goal-strip__list li,
 .dsh-queue__list li {
   min-width: 0;
@@ -1619,7 +1710,15 @@ summary.dsh-timeline__card-header,
 
 .dsh-queue__list li {
   justify-content: space-between;
-  gap: var(--dsh-space-3);
+  min-height: 2.25rem;
+  gap: var(--dsh-space-2);
+  padding: var(--dsh-space-1) var(--dsh-space-2) var(--dsh-space-1) var(--dsh-space-3);
+  border: 0;
+  border-radius: 0;
+}
+
+.dsh-queue__list li + li {
+  border-top: var(--dsh-border);
 }
 
 .dsh-queue__item-main {
@@ -1631,20 +1730,39 @@ summary.dsh-timeline__card-header,
 .dsh-queue__item-main input {
   width: 100%;
   min-width: 0;
+  min-height: var(--dsh-control-height-compact);
+  padding: var(--dsh-space-1) var(--dsh-space-2);
+  font-size: var(--dsh-font-size-sm);
 }
 
 .dsh-queue__item-actions {
   flex: 0 0 auto;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   justify-content: flex-end;
-  gap: var(--dsh-space-2);
+  gap: var(--dsh-space-1);
+}
+
+.dsh-queue__mode .dsh-select-menu__trigger,
+.dsh-queue .dsh-icon-button {
+  min-height: var(--dsh-control-height-compact);
+}
+
+.dsh-queue__mode .dsh-select-menu__trigger {
+  padding: var(--dsh-space-1) var(--dsh-space-2);
+  font-size: var(--dsh-font-size-sm);
+}
+
+.dsh-queue .dsh-icon-button {
+  width: var(--dsh-control-height-compact);
+  min-width: var(--dsh-control-height-compact);
+  height: var(--dsh-control-height-compact);
 }
 
 .dsh-queue__index {
   display: grid;
   place-items: center;
-  width: 1.5rem;
-  height: 1.5rem;
+  width: 1.25rem;
+  height: 1.25rem;
   flex: 0 0 auto;
   border-radius: 50%;
   color: var(--dsh-muted);
@@ -1916,12 +2034,6 @@ summary.dsh-timeline__card-header,
   min-width: 0;
   gap: var(--dsh-space-3);
   padding-top: var(--dsh-space-2);
-}
-
-.dsh-compose-area__interactions {
-  display: grid;
-  min-width: 0;
-  gap: var(--dsh-space-3);
 }
 
 .dsh-composer {
@@ -2426,6 +2538,138 @@ summary.dsh-timeline__card-header,
   resize: vertical;
 }
 
+.dsh-runtime-connection {
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: var(--dsh-space-2);
+  width: 100%;
+  max-width: 30rem;
+  min-width: 0;
+  padding: var(--dsh-space-5) var(--dsh-space-4);
+  border: 1px solid color-mix(in srgb, var(--dsh-info) 36%, var(--dsh-border-color));
+  border-radius: var(--dsh-radius-lg);
+  background: color-mix(in srgb, var(--dsh-surface-raised) 72%, transparent);
+  text-align: center;
+  animation: dsh-surface-enter var(--dsh-motion-duration-standard) var(--dsh-motion-ease-enter) both;
+}
+
+.dsh-runtime-connection--failure {
+  border-color: color-mix(in srgb, var(--dsh-danger) 42%, var(--dsh-border-color));
+}
+
+.dsh-runtime-connection__icon {
+  display: grid;
+  place-items: center;
+  width: calc(var(--dsh-control-height) + var(--dsh-space-2));
+  height: calc(var(--dsh-control-height) + var(--dsh-space-2));
+  border-radius: 50%;
+  color: var(--dsh-info);
+  background: color-mix(in srgb, var(--dsh-info) 12%, transparent);
+}
+
+.dsh-runtime-connection--failure .dsh-runtime-connection__icon {
+  color: var(--dsh-danger);
+  background: color-mix(in srgb, var(--dsh-danger) 12%, transparent);
+}
+
+.dsh-runtime-connection__icon > .dsh-icon {
+  width: var(--dsh-icon-size);
+  height: var(--dsh-icon-size);
+}
+
+.dsh-runtime-connection:not(.dsh-runtime-connection--failure) .dsh-runtime-connection__icon > .dsh-icon {
+  animation: dsh-breathe var(--dsh-motion-duration-loop-breathe) var(--dsh-motion-ease-standard) infinite;
+}
+
+.dsh-runtime-connection h2,
+.dsh-runtime-connection p {
+  margin: 0;
+}
+
+.dsh-runtime-connection p {
+  max-width: 38ch;
+  color: var(--dsh-muted);
+  font-size: 0.86rem;
+}
+
+.dsh-runtime-connection__message {
+  max-width: 44ch;
+  color: var(--dsh-danger) !important;
+  overflow-wrap: anywhere;
+}
+
+.dsh-runtime-connection__steps {
+  display: grid;
+  gap: var(--dsh-space-1);
+  width: min(100%, 22rem);
+  margin: var(--dsh-space-2) 0 0;
+  padding: 0;
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-sm);
+  list-style: none;
+  text-align: start;
+}
+
+.dsh-runtime-connection__step {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: var(--dsh-space-2);
+  min-height: var(--dsh-control-height-compact);
+}
+
+.dsh-runtime-connection__step-marker {
+  display: grid;
+  place-items: center;
+  width: var(--dsh-space-4);
+  height: var(--dsh-space-4);
+  flex: 0 0 auto;
+  border: 1px solid var(--dsh-border-color);
+  border-radius: 50%;
+  color: var(--dsh-muted);
+}
+
+.dsh-runtime-connection__step-marker > .dsh-icon {
+  width: var(--dsh-icon-size-sm);
+  height: var(--dsh-icon-size-sm);
+}
+
+.dsh-runtime-connection__step--active {
+  color: var(--dsh-text);
+}
+
+.dsh-runtime-connection__step--active .dsh-runtime-connection__step-marker {
+  border-color: var(--dsh-info);
+  color: var(--dsh-info);
+  background: color-mix(in srgb, var(--dsh-info) 12%, transparent);
+}
+
+.dsh-runtime-connection__step--active .dsh-runtime-connection__step-marker > span {
+  width: 0.375rem;
+  height: 0.375rem;
+  border-radius: 50%;
+  background: currentColor;
+  animation: dsh-pulse-dot var(--dsh-motion-duration-loop-pulse) var(--dsh-motion-ease-standard) infinite;
+}
+
+.dsh-runtime-connection__step--complete {
+  color: var(--dsh-text);
+}
+
+.dsh-runtime-connection__step--complete .dsh-runtime-connection__step-marker {
+  border-color: var(--dsh-success);
+  color: var(--dsh-success);
+}
+
+.dsh-runtime-connection__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--dsh-space-2);
+  margin-top: var(--dsh-space-2);
+}
+
 .dsh-runtime-missing,
 .dsh-error-boundary,
 .dsh-diagnostics,
@@ -2685,10 +2929,16 @@ summary.dsh-timeline__card-header,
 .dsh-settings__provider-summary,
 .dsh-settings__fields,
 .dsh-settings__custom-provider-grid,
-.dsh-settings__model-editor,
-.dsh-settings__runtime-update-facts {
+.dsh-settings__model-editor {
   display: grid;
   gap: var(--dsh-space-3);
+  min-width: 0;
+}
+
+.dsh-settings__runtime-update-facts {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  gap: var(--dsh-space-2) var(--dsh-space-4);
   min-width: 0;
 }
 
@@ -2775,6 +3025,10 @@ summary.dsh-timeline__card-header,
   justify-content: space-between;
   min-width: 0;
   gap: var(--dsh-space-2);
+}
+
+.dsh-plugin-inventory__card-trailing {
+  align-items: center;
 }
 
 .dsh-plugin-configuration__hint,
@@ -2972,6 +3226,20 @@ summary.dsh-timeline__card-header,
   margin-top: var(--dsh-space-2);
 }
 
+@media (hover: hover) and (pointer: fine) {
+  .dsh-message-actions {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .dsh-timeline__message-stack:hover .dsh-message-actions,
+  .dsh-timeline__message-stack:focus-within .dsh-message-actions,
+  .dsh-message-actions:focus-within {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
 .dsh-message-actions__note-panel {
   display: grid;
   gap: var(--dsh-space-2);
@@ -3124,19 +3392,6 @@ summary.dsh-timeline__card-header,
     align-self: flex-end;
   }
 
-  .dsh-trajectory-inspector__facts {
-    grid-template-columns: auto minmax(0, 1fr);
-  }
-
-  .dsh-queue__list li {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .dsh-queue__item-actions {
-    justify-content: flex-start;
-  }
-
   .dsh-runtime-missing,
   .dsh-error-boundary,
   .dsh-diagnostics,
@@ -3278,8 +3533,33 @@ summary.dsh-timeline__card-header,
 
 .dsh-settings__provider-add-actions {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--dsh-space-3);
+}
+
+.dsh-settings__provider-add-card {
+  display: grid;
+  min-width: 0;
+  gap: var(--dsh-space-3);
+  margin-top: var(--dsh-space-3);
+  padding: var(--dsh-space-3);
+  border: var(--dsh-border);
+  border-radius: var(--dsh-radius-md);
+  background: var(--dsh-surface-soft);
+}
+
+.dsh-settings__provider-add-select {
+  display: grid;
+  min-width: 0;
+  gap: var(--dsh-space-1);
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-xs);
+}
+
+.dsh-settings__provider-add-picker,
+.dsh-settings__provider-add-picker .dsh-select-menu__trigger {
+  width: 100%;
+  min-width: 0;
 }
 
 .dsh-settings__custom-provider {
@@ -3334,6 +3614,10 @@ summary.dsh-timeline__card-header,
   color: var(--dsh-muted);
   background: transparent;
   text-align: center;
+}
+
+.dsh-settings__provider-add:not(:disabled) {
+  color: var(--dsh-text);
 }
 
 .dsh-settings__provider-add:hover:not(:disabled),

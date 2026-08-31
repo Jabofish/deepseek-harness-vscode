@@ -142,17 +142,16 @@ export class AlphaLoopbackApiClient implements DshTransport {
 
   public async respondEnvelope(rpcId: string, result: unknown, signal?: AbortSignal): Promise<unknown> {
     const pending = this.pendingEvents.get(rpcId)
-    const clientId = pending?.clientId
-    if (clientId === undefined || clientId !== this.eventClientId)
+    if (pending === undefined || pending.clientId !== this.eventClientId)
       throw new AppError({
         code: 'STALE_INTERACTION',
         message: 'The DSH interaction stream is no longer active.',
         retryable: true,
       })
-    const outcome = alphaEventOutcome(result)
+    const outcome = alphaEventOutcome(result, pending.kind)
     const response = await this.post(
       '$events/result',
-      { args: { clientId, eventId: rpcId, outcome } },
+      { args: { clientId: pending.clientId, eventId: rpcId, outcome } },
       signal,
     )
     if (!response.result.ok)
@@ -538,26 +537,44 @@ export class AlphaLoopbackApiClient implements DshTransport {
     const byProvider = new Map<string, Record<string, unknown>>()
     for (const entry of configs) {
       const row = asRecord(entry)
-      if (typeof row?.provider === 'string') byProvider.set(row.provider, row)
+      if (isNonEmptyString(row.provider)) byProvider.set(row.provider, row)
     }
-    const mapped = listed.flatMap((entry) => {
+    const mapped = new Map<string, Record<string, unknown>>()
+    for (const entry of listed) {
       const row = asRecord(entry)
-      if (typeof row?.id !== 'string' || typeof row.name !== 'string') return []
+      if (typeof row.id !== 'string' || typeof row.name !== 'string') continue
       const config = byProvider.get(row.id)
-      return [
-        {
-          provider: row.id,
-          displayName: row.name,
-          settingsNs: typeof config?.settingsNs === 'string' ? config.settingsNs : row.id,
-          settingsPath: Array.isArray(config?.settingsPath) ? config.settingsPath : [],
-          active: true,
-          ...(config?.declared === undefined ? {} : { declared: config.declared }),
-        },
-      ]
-    })
+      mapped.set(row.id, {
+        provider: row.id,
+        displayName: row.name,
+        settingsNs: typeof config?.settingsNs === 'string' ? config.settingsNs : row.id,
+        settingsPath: Array.isArray(config?.settingsPath) ? config.settingsPath : [],
+        active: true,
+        ...(typeof config?.declared === 'boolean' ? { declared: config.declared } : {}),
+      })
+    }
+    for (const entry of configs) {
+      const row = asRecord(entry)
+      if (
+        !isNonEmptyString(row.provider) ||
+        !isNonEmptyString(row.displayName) ||
+        typeof row.settingsNs !== 'string' ||
+        !isNonEmptyStringArray(row.settingsPath) ||
+        mapped.has(row.provider)
+      )
+        continue
+      mapped.set(row.provider, {
+        provider: row.provider,
+        displayName: row.displayName,
+        settingsNs: row.settingsNs,
+        settingsPath: row.settingsPath,
+        active: false,
+        ...(typeof row.declared === 'boolean' ? { declared: row.declared } : {}),
+      })
+    }
     return {
       rpcId: providers.rpcId,
-      result: { ok: true, value: { providers: mapped } },
+      result: { ok: true, value: { providers: [...mapped.values()] } },
     }
   }
 
@@ -1330,7 +1347,19 @@ function expandHistoryRecords(
     } else if (record?.type === 'chunks') out.push(...expandChunkRow(record.event, sessionId))
     else throw malformedResponse('session history record')
   }
+  // The Gateway snapshot is a set of history records, not the stream's
+  // delivery order. A packed chunk row can expand to many sequence values,
+  // and different rows may arrive interleaved. DshStreamController uses the
+  // durable sequence as its de-duplication watermark, so forwarding a higher
+  // row before an earlier one would make the earlier conversation/tool data
+  // look stale and drop it until the next history reload.
   return out
+    .map((event, index) => ({ event, index }))
+    .sort((left, right) => {
+      const sequenceDelta = (left.event.seq as number) - (right.event.seq as number)
+      return sequenceDelta === 0 ? left.index - right.index : sequenceDelta
+    })
+    .map(({ event }) => event)
 }
 
 function expandChunkRow(value: unknown, sessionId: string): readonly Record<string, unknown>[] {
@@ -1414,10 +1443,12 @@ function expandChunkRow(value: unknown, sessionId: string): readonly Record<stri
   return out
 }
 
-function alphaEventOutcome(result: unknown): Record<string, unknown> {
+function alphaEventOutcome(result: unknown, kind: 'approval' | 'question'): Record<string, unknown> {
   const value = asRecord(result)
-  if (value?.ok === true)
-    return { kind: 'result', ...(value.value === undefined ? {} : { value: value.value }) }
+  if (value?.ok === true) {
+    const resultValue = alphaInteractionResult(value.value, kind)
+    return { kind: 'result', ...(resultValue === undefined ? {} : { value: resultValue }) }
+  }
   if (value?.ok === false) {
     const error = asRecord(value.error) ?? {}
     return {
@@ -1439,6 +1470,19 @@ function alphaEventOutcome(result: unknown): Record<string, unknown> {
       details: {},
     },
   }
+}
+
+/**
+ * The interaction repository uses the rc.6 client-response value for every
+ * transport. Alpha Remote Events resolve the original Cordis waterfall
+ * directly, so remove that compatibility envelope at this version boundary.
+ */
+function alphaInteractionResult(value: unknown, kind: 'approval' | 'question'): unknown {
+  const record = asRecord(value)
+  if (record === undefined) return value
+  if (kind === 'question' && asRecord(record.answer) !== undefined) return record.answer
+  if (kind === 'approval' && typeof record.outcome === 'string') return record.outcome
+  return value
 }
 
 function presetRoster(value: unknown): unknown {
@@ -1880,22 +1924,15 @@ class AsyncQueue<T> implements AsyncIterable<T> {
     if (this.finished) return
     const waiter = this.waiters.shift()
     if (waiter === undefined) {
-      // The stream consumer awaits inside its read loop (history recovery on
-      // a seq gap), so the host can keep pushing frames while the generator
-      // is suspended at its yield. Fail the stream past the same bound the
-      // rc.6 transport enforces instead of buffering without limit; the
-      // stream controller reconnects and re-snapshots.
-      if (this.values.length >= this.capacity) {
-        this.values.length = 0
-        this.fail(
-          new AppError({
-            code: 'PROTOCOL_ERROR',
-            message: 'The DSH event stream exceeded its receive queue limit.',
-            retryable: true,
-          }),
-        )
-        return
-      }
+      // The stream consumer can await inside its read loop (history recovery
+      // on a seq gap), so the host can keep pushing frames while the
+      // generator is suspended at its yield. Bound the buffer like the rc.6
+      // transport does, but keep the stream alive past the bound: dropping
+      // the buffered frames turns into an ordinary sequence hole that the
+      // stream controller's gap detection and history recovery heal, while
+      // failing the stream here tore down the mux generation mid-answer and
+      // cascaded into reconnect storms that lost whole turns.
+      if (this.values.length >= this.capacity) this.values.length = 0
       this.values.push(value)
       return
     }

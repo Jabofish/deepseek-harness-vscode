@@ -133,4 +133,18 @@ describe('PluginConfiguration', () => {
     fireEvent.click(screen.getByRole('button', { name: '配置 API Key' }))
     await waitFor(() => expect(onConfigureCredential).toHaveBeenCalledWith('DEEPSEEK_API_KEY'))
   })
+
+  it('uses the shared SVG chevron for expandable plugin cards', () => {
+    renderConfiguration()
+
+    const card = screen.getByRole('button', { name: /Shell/u })
+    const chevron = card.querySelector('.dsh-plugin-configuration__chevron')
+
+    expect(chevron?.querySelector('svg.dsh-icon')).not.toBeNull()
+    expect(chevron?.textContent).toBe('')
+
+    fireEvent.click(card)
+
+    expect(chevron?.classList.contains('dsh-plugin-configuration__chevron--open')).toBe(true)
+  })
 })

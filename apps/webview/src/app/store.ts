@@ -93,6 +93,17 @@ import { getVsCodeApi } from '../vscode-api.js'
 
 const STORE_NOTIFY_BATCH_MS = 16
 
+// A transient session.open failure (request timeout, BACKEND_UNREACHABLE while
+// the backend is still settling) leaves the panel without any conversation at
+// all. Retry the open request a bounded number of times with a short backoff;
+// the host marks definitive rejections with retryable: false and those surface
+// to the error banner immediately.
+const OPEN_RETRY_ATTEMPTS = 3
+const OPEN_RETRY_BASE_DELAY_MS = 300
+
+const isRetryableOpenFailure = (reason: unknown): boolean =>
+  reason instanceof Error && (reason as { retryable?: unknown }).retryable === true
+
 export interface OpenFileCandidate {
   readonly id: string
   readonly name: string
@@ -357,6 +368,14 @@ export interface AppStore extends AppState, AppActions {
 type StateSetter = (next: AppState | ((current: AppState) => AppState)) => void
 type LiveHistoryAppender = (sessionId: string, entry: SessionHistoryEvent) => void
 
+interface PendingSessionOpen {
+  readonly version: number
+  readonly sessionId: string
+  readonly messages: HostMessage[]
+  replayedMessages: number
+  ready: boolean
+}
+
 interface ComposerPreferences {
   readonly preset?: string
   readonly model?: ModelSelection
@@ -451,11 +470,6 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     const history = mergeHistory(state.history, additions)
     if (history !== state.history) state = { ...state, history }
   }
-  const appendLiveHistory: LiveHistoryAppender = (sessionId, entry): void => {
-    if (pendingHistorySessionId !== undefined && pendingHistorySessionId !== sessionId) flushPendingHistory()
-    pendingHistorySessionId = sessionId
-    pendingHistory.push(entry)
-  }
   const scheduleNotify = (): void => {
     if (notifyTimer !== undefined) return
     notifyTimer = window.setTimeout(() => {
@@ -463,6 +477,16 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       flushPendingHistory()
       notify()
     }, STORE_NOTIFY_BATCH_MS)
+  }
+  const appendLiveHistory: LiveHistoryAppender = (sessionId, entry): void => {
+    if (pendingHistorySessionId !== undefined && pendingHistorySessionId !== sessionId) flushPendingHistory()
+    pendingHistorySessionId = sessionId
+    pendingHistory.push(entry)
+    // History-only events (for example an unchanged projection) can leave
+    // applyHostMessage with the same AppState object. They still need the
+    // normal frame notification so the history ledger is published without a
+    // later session switch or unrelated state update.
+    scheduleNotify()
   }
   const setState: StateSetter = (next): void => {
     const nextState = typeof next === 'function' ? next(state) : next
@@ -478,6 +502,110 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     // still reduced synchronously so ordering and reads stay authoritative;
     // only the React subscriber notification is coalesced to one frame.
     scheduleNotify()
+  }
+  // Sequence holes reach the store as `session.gap` events. The timeline gate
+  // drops anything at or below its cursor, so a healed hole can only become
+  // visible through a rebuild from the history ledger, and anything history
+  // itself is missing has to be refetched through session.history pages.
+  const gapBackfills = new Map<
+    string,
+    { ranges: Array<{ readonly from: number; readonly to: number }>; running: boolean }
+  >()
+  let ledgerRebuildTimer: number | undefined
+  const MAX_GAP_BACKFILL_PAGES = 4
+  const GAP_BACKFILL_PAGE_MESSAGES = 200
+  const rebuildTimelineFromLedger = (sessionId: string): void => {
+    flushPendingHistory()
+    setState((current) => {
+      if (current.activeSessionId !== sessionId) return current
+      return { ...current, timeline: hydrateTimelineFromHistoryEvents(sessionId, current.history) }
+    })
+  }
+  const scheduleLedgerRebuild = (sessionId: string): void => {
+    // Out-of-order live frames (detached stream recovery, re-snapshot
+    // redelivery) land in the ledger but are dropped by the timeline cursor.
+    // One coalesced rebuild republishes the ledger; a newer open() rebuilds
+    // its own baseline anyway, so a stale rebuild just bows out.
+    const version = openVersion
+    if (ledgerRebuildTimer !== undefined) clearTimeout(ledgerRebuildTimer)
+    ledgerRebuildTimer = window.setTimeout(() => {
+      ledgerRebuildTimer = undefined
+      if (openVersion !== version) return
+      rebuildTimelineFromLedger(sessionId)
+    }, STORE_NOTIFY_BATCH_MS)
+  }
+  const runGapBackfill = async (
+    sessionId: string,
+    entry: { ranges: Array<{ readonly from: number; readonly to: number }>; running: boolean },
+  ): Promise<void> => {
+    const version = openVersion
+    try {
+      while (entry.ranges.length > 0) {
+        const range = entry.ranges.shift()
+        if (range === undefined) break
+        let beforeSeq = range.to + 1
+        for (let page = 0; page < MAX_GAP_BACKFILL_PAGES; page += 1) {
+          if (state.activeSessionId !== sessionId || openVersion !== version) return
+          let payload: unknown
+          try {
+            payload = await client.request<unknown>({
+              type: 'session.history',
+              requestId: requestId(),
+              payload: { sessionId, beforeSeq, maxMessages: GAP_BACKFILL_PAGE_MESSAGES },
+            })
+          } catch {
+            return
+          }
+          let events: readonly SessionHistoryEvent[]
+          let hasMore = false
+          let nextBefore: number | undefined
+          try {
+            const parsed = parseSessionHistoryPage(payload)
+            events = parsed.events
+            hasMore = parsed.hasMore
+            nextBefore = parsed.beforeSequence ?? oldestHistorySequence(parsed.events)
+          } catch {
+            return
+          }
+          if (state.activeSessionId !== sessionId || openVersion !== version) return
+          if (events.length === 0) break
+          setState((current) =>
+            current.activeSessionId === sessionId
+              ? { ...current, history: mergeHistory(current.history, events) }
+              : current,
+          )
+          rebuildTimelineFromLedger(sessionId)
+          const oldest = oldestHistorySequence(events)
+          if (!hasMore || oldest === undefined || oldest <= range.from) break
+          if (nextBefore === undefined || nextBefore <= 0) break
+          beforeSeq = nextBefore
+        }
+      }
+    } finally {
+      entry.running = false
+      if (entry.ranges.length === 0) gapBackfills.delete(sessionId)
+    }
+  }
+  const scheduleGapBackfill = (event: Extract<BackendEvent, { type: 'session.gap' }>): void => {
+    const sessionId = event.sessionId
+    const entry = gapBackfills.get(sessionId) ?? { ranges: [], running: false }
+    // Merge overlapping/adjacent announcements so a re-announced hole cannot
+    // multiply identical page fetches; the merged range still re-fetches once
+    // when a previous attempt failed, which keeps the heal self-retrying.
+    let from = event.fromSequence
+    let to = event.toSequence
+    const unmerged: Array<{ readonly from: number; readonly to: number }> = []
+    for (const range of entry.ranges) {
+      if (range.from <= to + 1 && range.to + 1 >= from) {
+        from = Math.min(from, range.from)
+        to = Math.max(to, range.to)
+      } else unmerged.push(range)
+    }
+    entry.ranges = [...unmerged, { from, to }]
+    gapBackfills.set(sessionId, entry)
+    if (entry.running) return
+    entry.running = true
+    void runGapBackfill(sessionId, entry)
   }
   const persistWebviewState = (overrides: { readonly activeSessionId?: string } = {}): void => {
     const activeSessionId = overrides.activeSessionId ?? state.activeSessionId
@@ -502,19 +630,79 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   const callbacks: { openCreatedSession?: (sessionId: string) => Promise<void> } = {}
   let refreshVersion = 0
   let openVersion = 0
+  // A newly-created store has not yet made its one automatic session choice.
+  // Keep that decision pending when the first registry snapshot is empty: the
+  // DSH workspace/session registries can publish in adjacent turns.
+  let startupRestorePending = true
+  let startupRestoreArmed = false
+  let startupRestorePromise: Promise<void> | undefined
   let editorContextRefreshGeneration = 0
   let changesRefreshGeneration = 0
   let tasksRefreshGeneration = 0
   let checkpointsRefreshGeneration = 0
   let promptTemplatesRefreshGeneration = 0
-  const pendingOpens = new Map<
-    number,
-    { readonly sessionId: string; readonly messages: HostMessage[]; replayedMessages: number }
-  >()
-  const pendingMessagesAfterReplay = (pending: {
-    readonly messages: HostMessage[]
-    replayedMessages: number
-  }): readonly HostMessage[] => {
+  const pendingOpens = new Map<number, PendingSessionOpen>()
+  const latestPendingOpen = new Map<string, PendingSessionOpen>()
+  const deferredOpenMessages = new Map<string, HostMessage[]>()
+  const MAX_PENDING_OPEN_MESSAGES = 4096
+  const sameHostEvent = (left: HostMessage, right: HostMessage): boolean => {
+    if (left.type !== 'event' || right.type !== 'event') return false
+    return left.sequence === right.sequence
+  }
+  const hostMessageSequence = (message: HostMessage): number =>
+    message.type === 'event' ? message.sequence : Number.MAX_SAFE_INTEGER
+  const appendPendingMessage = (pending: PendingSessionOpen, message: HostMessage): void => {
+    if (pending.messages.some((candidate) => sameHostEvent(candidate, message))) return
+    pending.messages.push(message)
+    if (pending.messages.length > MAX_PENDING_OPEN_MESSAGES) {
+      const removed = pending.messages.length - MAX_PENDING_OPEN_MESSAGES
+      pending.messages.splice(0, removed)
+      pending.replayedMessages = Math.max(0, pending.replayedMessages - removed)
+    }
+  }
+  const appendDeferredMessage = (sessionId: string, message: HostMessage): void => {
+    const messages = deferredOpenMessages.get(sessionId) ?? []
+    if (!messages.some((candidate) => sameHostEvent(candidate, message))) messages.push(message)
+    if (messages.length > MAX_PENDING_OPEN_MESSAGES)
+      messages.splice(0, messages.length - MAX_PENDING_OPEN_MESSAGES)
+    deferredOpenMessages.set(sessionId, messages)
+  }
+  const createPendingOpen = (sessionId: string, version: number): PendingSessionOpen => {
+    const pending: PendingSessionOpen = {
+      version,
+      sessionId,
+      messages: [],
+      replayedMessages: 0,
+      ready: false,
+    }
+    const deferred = deferredOpenMessages.get(sessionId)
+    if (deferred !== undefined) {
+      for (const message of deferred) appendPendingMessage(pending, message)
+      deferredOpenMessages.delete(sessionId)
+    }
+    const previous = latestPendingOpen.get(sessionId)
+    if (previous !== undefined)
+      for (const message of previous.messages) appendPendingMessage(pending, message)
+    pending.messages.sort((left, right) => hostMessageSequence(left) - hostMessageSequence(right))
+    pendingOpens.set(version, pending)
+    latestPendingOpen.set(sessionId, pending)
+    return pending
+  }
+  const settlePendingOpen = (pending: PendingSessionOpen, completed: boolean): void => {
+    pendingOpens.delete(pending.version)
+    const latest = latestPendingOpen.get(pending.sessionId)
+    const ownsLatest = latest === pending
+    const keepMessages = !completed || !ownsLatest || pending.version !== openVersion
+    if (keepMessages) {
+      if (latest !== undefined && latest !== pending) {
+        for (const message of pending.messages) appendPendingMessage(latest, message)
+      } else {
+        for (const message of pending.messages) appendDeferredMessage(pending.sessionId, message)
+      }
+    }
+    if (ownsLatest) latestPendingOpen.delete(pending.sessionId)
+  }
+  const pendingMessagesAfterReplay = (pending: PendingSessionOpen): readonly HostMessage[] => {
     const messages = pending.messages.slice(pending.replayedMessages)
     pending.replayedMessages = pending.messages.length
     return messages
@@ -581,6 +769,10 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     // Global providers, models, and presets are merged in the background so
     // their latency cannot delay opening the conversation.
     await refreshSessions(client, setState, () => version === refreshVersion, false)
+    // The first session.list can legitimately be an empty projection while a
+    // workspace attach is still being committed. Retry the automatic restore
+    // after every authoritative refresh until a session has been opened.
+    if (startupRestoreArmed) void attemptStartupRestore().catch(() => undefined)
     // The command directory is also advisory during startup. The session
     // opener starts the same deduplicated load for the active session, while
     // keeping slow command/skill providers off the first-paint critical path.
@@ -848,12 +1040,21 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     const parsedEvent = parseHostDomainEvent(message)
     const messageSessionId =
       parsedEvent === undefined || parsedEvent === null ? undefined : backendEventSessionId(parsedEvent)
+    const previousLastSequence = state.timeline.lastSequence
     let deferredToOpen = false
+    let pendingOpenReady = false
     if (messageSessionId !== undefined) {
-      for (const pending of pendingOpens.values()) {
-        if (pending.sessionId !== messageSessionId) continue
-        pending.messages.push(message)
+      const pending = latestPendingOpen.get(messageSessionId)
+      if (pending !== undefined) {
+        appendPendingMessage(pending, message)
         deferredToOpen = true
+        pendingOpenReady = pending.ready
+        // History/configuration is the open barrier; advisory reads must not
+        // keep live model/tool events hidden after the first conversation
+        // paint. Retain the message in the queue so the final advisory
+        // snapshot can replay it after its potentially stale list response.
+        if (pending.ready && pending.version === openVersion && state.activeSessionId === pending.sessionId)
+          applyHostMessage(message, state, setState, appendLiveHistory, parsedEvent, scheduleGapBackfill)
       }
     }
     // A session can be reopened while it is still active. Applying its live
@@ -861,7 +1062,22 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     // would duplicate deltas, queue rows, and interaction requests. Defer
     // only events addressed to an in-flight open; global connection/workspace
     // events continue to update the shell while the read is in progress.
-    if (!deferredToOpen) applyHostMessage(message, state, setState, appendLiveHistory, parsedEvent)
+    if (!deferredToOpen)
+      applyHostMessage(message, state, setState, appendLiveHistory, parsedEvent, scheduleGapBackfill)
+    // Content frames that history recovery redelivers below the timeline
+    // cursor are absorbed into the ledger but ignored by the reduce gate.
+    // Republish the ledger once so the healed range becomes visible.
+    if (
+      parsedEvent !== undefined &&
+      parsedEvent !== null &&
+      (!deferredToOpen || pendingOpenReady) &&
+      state.activeSessionId !== undefined &&
+      messageSessionId === state.activeSessionId &&
+      parsedEvent.sequence !== undefined &&
+      advancesTimelineSequence(parsedEvent) &&
+      parsedEvent.sequence <= previousLastSequence
+    )
+      scheduleLedgerRebuild(state.activeSessionId)
     // The switcher only caches its rows, so a session whose title changed
     // while the drawer was closed (a missed live frame, a reconnect gap, or a
     // title generated before this client attached) would keep showing the
@@ -916,6 +1132,9 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       const created = object(message.payload)
       const createdId = typeof created?.id === 'string' ? created.id : undefined
       if (createdId !== undefined) {
+        // This is an explicit creation path. It owns the startup choice and
+        // must not race the fallback selected from a concurrent refresh.
+        startupRestorePending = false
         void refresh()
           .then(() => callbacks.openCreatedSession?.(createdId))
           .catch(() => undefined)
@@ -964,7 +1183,25 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
             void refreshCheckpointsState(message.checkpoint.sessionId)
         })
       : () => undefined
-  const open = async (sessionId: string): Promise<void> => {
+  const requestSessionOpen = async (sessionId: string, version: number): Promise<unknown> => {
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        return await client.request<unknown>({
+          type: 'session.open',
+          requestId: requestId(),
+          payload: { sessionId },
+        })
+      } catch (reason) {
+        if (attempt >= OPEN_RETRY_ATTEMPTS || version !== openVersion || !isRetryableOpenFailure(reason))
+          throw reason
+        await new Promise((resolve) => setTimeout(resolve, OPEN_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1)))
+        // A newer open() owns the panel now; do not re-request the stale one.
+        if (version !== openVersion) throw reason
+      }
+    }
+  }
+  const open = async (sessionId: string, options: { readonly startup?: boolean } = {}): Promise<void> => {
+    if (options.startup !== true) startupRestorePending = false
     flushPendingHistory()
     const version = ++openVersion
     editorContextRefreshGeneration += 1
@@ -972,15 +1209,19 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     tasksRefreshGeneration += 1
     checkpointsRefreshGeneration += 1
     promptTemplatesRefreshGeneration += 1
-    const pending = { sessionId, messages: [] as HostMessage[], replayedMessages: 0 }
-    pendingOpens.set(version, pending)
+    const pending = createPendingOpen(sessionId, version)
+    let completed = false
+    let advisoryPending = false
     try {
       await discardEditorContextForSessionSwitch(sessionId)
-      const result = await client.request<unknown>({
-        type: 'session.open',
-        requestId: requestId(),
-        payload: { sessionId },
-      })
+      let result: unknown
+      try {
+        result = await requestSessionOpen(sessionId, version)
+      } catch (reason) {
+        // A newer open() owns the panel; a stale failure is irrelevant noise.
+        if (version !== openVersion) return
+        throw reason
+      }
       const detail = object(result)
       const rawHistory = Array.isArray(detail?.history) ? detail.history : []
       const parsedHistory = parseSessionHistoryWithTimeline(rawHistory)
@@ -1065,6 +1306,12 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
           initialMessages,
         ),
       )
+      pending.ready = true
+      // Keep the open barrier registered until the advisory snapshots merge.
+      // Events arriving after first paint must be replayed over those
+      // snapshots; otherwise a stale queue/job response can overwrite a live
+      // update that arrived while the reads were in flight.
+      advisoryPending = true
       persistWebviewState({ activeSessionId: sessionId })
 
       void commandDirectoryData
@@ -1088,38 +1335,56 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         })
         .catch(() => undefined)
 
-      const [queue, goals, jobs, feedback, subagents] = await secondaryData
-      if (version !== openVersion) return
-      const pendingMessages = pendingMessagesAfterReplay(pending)
-      setState((current) =>
-        replayHostMessages(
-          {
-            ...current,
-            queue,
-            goals,
-            jobs,
-            feedback: feedbackRecord(feedback.items),
-            feedbackUnavailable: feedback.unavailable,
-            subagents: subagents ?? EMPTY_SUBAGENT_CATALOG,
-          },
-          pendingMessages,
-        ),
-      )
-      void refreshChangesState(sessionId)
-      void refreshTasksState(sessionId)
-      void refreshCheckpointsState(sessionId)
-      void refreshPromptTemplatesState(sessionId)
-      void refreshEditorContextState(workspaceFolderId)
+      // Queue/goal/job/feedback/subagent data is advisory. It must not keep
+      // the session-open promise (and therefore startup/manual navigation)
+      // hostage to any one slow endpoint. The first paint above is complete;
+      // merge these surfaces when they arrive and replay any events that were
+      // delivered during this short hydration window.
+      void secondaryData
+        .then(([queue, goals, jobs, feedback, subagents]) => {
+          if (version !== openVersion) return
+          // A gap event has already been applied live and may have triggered
+          // an asynchronous history rebuild. Replaying it over the advisory
+          // baseline would re-add a gap notice after the backfill removed it.
+          const pendingMessages = pendingMessagesAfterReplay(pending).filter(
+            (message) => message.type !== 'event' || message.name !== 'session.gap',
+          )
+          setState((current) =>
+            replayHostMessages(
+              {
+                ...current,
+                queue,
+                goals,
+                jobs,
+                feedback: feedbackRecord(feedback.items),
+                feedbackUnavailable: feedback.unavailable,
+                subagents: subagents ?? EMPTY_SUBAGENT_CATALOG,
+              },
+              pendingMessages,
+            ),
+          )
+          void refreshChangesState(sessionId)
+          void refreshTasksState(sessionId)
+          void refreshCheckpointsState(sessionId)
+          void refreshPromptTemplatesState(sessionId)
+          void refreshEditorContextState(workspaceFolderId)
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          advisoryPending = false
+          settlePendingOpen(pending, version === openVersion)
+        })
+      completed = true
     } finally {
-      pendingOpens.delete(version)
+      if (!advisoryPending) settlePendingOpen(pending, completed)
     }
   }
   const openSubagent = async (entry: SubagentView, parentAvailable: boolean): Promise<void> => {
     flushPendingHistory()
     const version = ++openVersion
     promptTemplatesRefreshGeneration += 1
-    const pending = { sessionId: entry.id, messages: [] as HostMessage[], replayedMessages: 0 }
-    pendingOpens.set(version, pending)
+    const pending = createPendingOpen(entry.id, version)
+    let completed = false
     const workspaceId =
       state.sessions.find((session) => session.id === state.activeSessionId)?.workspaceId ??
       state.activeSubagent?.workspaceId ??
@@ -1192,6 +1457,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
           initialMessages,
         ),
       )
+      pending.ready = true
       persistWebviewState({ activeSessionId: entry.id })
 
       const [queue, goals, jobs, feedback, subagents] = await secondaryData
@@ -1215,11 +1481,32 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       void refreshTasksState(entry.id)
       void refreshCheckpointsState(entry.id)
       void refreshPromptTemplatesState(entry.id)
+      completed = true
     } finally {
-      pendingOpens.delete(version)
+      settlePendingOpen(pending, completed)
     }
   }
   callbacks.openCreatedSession = open
+  const attemptStartupRestore = (): Promise<void> => {
+    if (!startupRestorePending || state.activeSessionId !== undefined) return Promise.resolve()
+    if (startupRestorePromise !== undefined) return startupRestorePromise
+    const sessionId = selectStartupSessionId(
+      state.sessions,
+      state.workspaces,
+      state.archivedSessionIds,
+      persistedWebviewState.activeSessionId,
+    )
+    if (sessionId === undefined) return Promise.resolve()
+    const restore = open(sessionId, { startup: true })
+      .then(() => {
+        if (state.activeSessionId === sessionId) startupRestorePending = false
+      })
+      .finally(() => {
+        if (startupRestorePromise === restore) startupRestorePromise = undefined
+      })
+    startupRestorePromise = restore
+    return restore
+  }
   const checkDshUpdates = async (force = false): Promise<DshUpdateSnapshot | undefined> => {
     setState((current) => ({
       ...current,
@@ -1408,12 +1695,11 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       // independent of the session/catalog snapshot. Start it alongside the
       // critical refresh, but keep the official default ('queue') on the
       // first-paint path when the settings read is slow or unavailable.
+      startupRestoreArmed = true
       const refreshPromise = refresh()
       void applyBusyEnterPreference()
       await refreshPromise
-      const rememberedSessionId = persistedWebviewState.activeSessionId
-      const startupSession = selectStartupSession(state.sessions, rememberedSessionId)
-      if (startupSession !== undefined) await open(startupSession.id)
+      await attemptStartupRestore()
     },
     reconnect: async () => {
       await client.request<unknown>({ type: 'connection.retry', requestId: requestId() })
@@ -1699,6 +1985,13 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         state.activeSessionId === sessionId && state.activeSubagent?.entry.id === sessionId
           ? state.activeSubagent
           : undefined
+      // A queued prompt is not a conversation turn yet.  DSH publishes the
+      // durable `message.user` event only when the queue admits it; rendering
+      // a local preview here makes the same text appear both in the timeline
+      // and in the queue dock.  Subagent sends bypass the session queue, and
+      // steer is already admitted to the running turn, so those retain the
+      // optimistic preview.
+      const showOptimisticPreview = subagent !== undefined || mode === 'steer'
       if (subagent !== undefined) {
         if (subagent.entry.mode === 'one-shot') throw new Error(translate('app.error.subagentReadOnly'))
         if (!subagent.parentAvailable) throw new Error(translate('app.error.subagentParentUnavailable'))
@@ -1722,7 +2015,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         name: attachment.name,
         ...(attachment.mimeType === undefined ? {} : { mimeType: attachment.mimeType }),
       }))
-      if (text !== '' || messageAttachments.length > 0)
+      if (showOptimisticPreview && (text !== '' || messageAttachments.length > 0))
         setState((current) => {
           if (current.activeSessionId !== sessionId) return current
           return {
@@ -1766,15 +2059,16 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         if (subagent === undefined && contextRefs.length > 0)
           setState((current) => ({ ...current, editorContext: [] }))
       } catch (reason) {
-        setState((current) => ({
-          ...current,
-          timeline: {
-            ...current.timeline,
-            nodeChangeBase: current.timeline.nodes,
-            nodeChangeStart: 0,
-            nodes: current.timeline.nodes.filter((node) => node.id !== optimisticId),
-          },
-        }))
+        if (showOptimisticPreview)
+          setState((current) => ({
+            ...current,
+            timeline: {
+              ...current.timeline,
+              nodeChangeBase: current.timeline.nodes,
+              nodeChangeStart: 0,
+              nodes: current.timeline.nodes.filter((node) => node.id !== optimisticId),
+            },
+          }))
         throw reason
       }
     },
@@ -3095,29 +3389,45 @@ async function refreshSessions(
  * its persisted id while the DSH session registry is already populated, so
  * fall back to the most recent active root session and then the most recent
  * non-blank root session instead of presenting a misleading "new session"
- * posture.
+ * posture. The workspace membership list is also an intentional fallback:
+ * during an attach, workspace.list can know a durable session before the
+ * session.list projection includes its summary.
  */
-function selectStartupSession(
+function selectStartupSessionId(
   sessions: readonly SessionSummary[],
+  workspaces: readonly WorkspaceSummary[],
+  archivedSessionIds: readonly string[],
   rememberedSessionId: string | undefined,
-): SessionSummary | undefined {
+): string | undefined {
+  const archived = new Set(archivedSessionIds)
+  const workspaceSessionIds = workspaces
+    .flatMap((workspace) => workspace.sessionIds ?? [])
+    .filter((sessionId, index, all) => !archived.has(sessionId) && all.indexOf(sessionId) === index)
   const remembered =
     rememberedSessionId === undefined
       ? undefined
-      : sessions.find((session) => session.id === rememberedSessionId)
+      : sessions.some((session) => session.id === rememberedSessionId) ||
+          workspaceSessionIds.includes(rememberedSessionId)
+        ? rememberedSessionId
+        : undefined
   if (remembered !== undefined) return remembered
 
   const rootSessions = sessions
-    .filter((session) => session.origin !== 'subagent')
+    .filter((session) => session.origin !== 'subagent' && !archived.has(session.id))
     .sort((left, right) => sessionRecency(right) - sessionRecency(left))
   const nonBlankRootSessions = rootSessions.filter((session) => !session.blank)
-  return (
+  const selected =
     nonBlankRootSessions.find(
       (session) => session.status === 'running' || session.status === 'awaiting-input',
     ) ??
     nonBlankRootSessions[0] ??
     rootSessions[0]
-  )
+  if (selected !== undefined) return selected.id
+
+  // sessionIds is the only durable membership evidence available when the
+  // summary projection is temporarily empty. Do not synthesize a SessionSummary;
+  // session.open will fetch the authoritative detail from DSH.
+  return workspaceSessionIds[0]
 }
 
 function findReusableBlankSession(
@@ -3587,6 +3897,7 @@ function applyHostMessage(
   setState: StateSetter,
   appendLiveHistory?: LiveHistoryAppender,
   parsedEvent?: BackendEvent | null,
+  onSessionGap?: (event: Extract<BackendEvent, { type: 'session.gap' }>) => void,
 ): void {
   if (message.type !== 'event') return
   if (message.name === 'runtime.update.progress') {
@@ -3693,12 +4004,27 @@ function applyHostMessage(
     if (appendLiveHistory === undefined) history = mergeHistory(state.history, [entry])
     else appendLiveHistory(state.activeSessionId, entry)
   }
-  // Command records are control-plane history and stay out of both Chat and
-  // Trajectory.  Other producer-owned user/message records are retained as
-  // context nodes; Chat filters those nodes while Trajectory exposes their
-  // provenance, matching the upstream target-specific projections.
+  if (event.type === 'session.gap') {
+    if (belongsToActiveSession && onSessionGap !== undefined) onSessionGap(event)
+    // Recovery backfills the hole from history and rebuilds the timeline, so
+    // repeated announcements of the same range must not stack notice nodes.
+    // Until the rebuild, the notice carries the "some events were recovered"
+    // feedback while the backfill is in flight.
+  }
+  // Command records are control-plane history and stay out of the rendered
+  // Chat surface. Other producer-owned user/message records remain available
+  // as context nodes without being rendered as ordinary chat bubbles.
+  const gapNodeId =
+    event.type === 'session.gap'
+      ? `gap:${event.sessionId}:${event.fromSequence}:${event.toSequence}`
+      : undefined
+  const duplicateGapNotice =
+    gapNodeId !== undefined && state.timeline.nodes.some((node) => node.id === gapNodeId)
   const timeline =
-    !belongsToActiveSession || controlPlaneMessage || !eventMayChangeTimelineState(event)
+    !belongsToActiveSession ||
+    controlPlaneMessage ||
+    !eventMayChangeTimelineState(event) ||
+    duplicateGapNotice
       ? state.timeline
       : reduceTimeline(state.timeline, {
           sequence: event.sequence ?? message.sequence,
@@ -3845,6 +4171,14 @@ function applyHostMessage(
         : session,
     )
     if (sessions !== next.sessions) next = { ...next, sessions }
+    if (
+      event.sessionId === next.activeSessionId &&
+      !isCommandMessageSource(event.source) &&
+      !isInjectedUserMessage(event)
+    ) {
+      const queue = removeAdmittedQueueInput(next.queue, event)
+      if (queue !== next.queue) next = { ...next, queue }
+    }
   } else if (event.type === 'queue.updated' && event.sessionId === next.activeSessionId) {
     if (!sameQueuedInputList(next.queue, event.items)) next = { ...next, queue: event.items }
   } else if (event.type === 'goal.updated' && event.sessionId === next.activeSessionId) {
@@ -4548,6 +4882,22 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
     return {
       type: 'archived.sessions.changed',
       sessionIds: value.sessionIds.filter((entry): entry is string => typeof entry === 'string'),
+    }
+  if (
+    name === 'session.gap' &&
+    typeof value.sessionId === 'string' &&
+    typeof value.fromSequence === 'number' &&
+    Number.isSafeInteger(value.fromSequence) &&
+    value.fromSequence >= 0 &&
+    typeof value.toSequence === 'number' &&
+    Number.isSafeInteger(value.toSequence) &&
+    value.toSequence >= value.fromSequence
+  )
+    return {
+      type: 'session.gap',
+      sessionId: value.sessionId,
+      fromSequence: value.fromSequence,
+      toSequence: value.toSequence,
     }
   if (name === 'remote.event' && typeof value.name === 'string' && Array.isArray(value.args))
     return { type: 'remote.event', name: value.name, args: value.args }
@@ -6138,6 +6488,36 @@ function sameQueuedInputList(left: readonly QueuedInput[], right: readonly Queue
       previous.createdAt === next.createdAt &&
       previous.rpcId === next.rpcId &&
       samePromptAttachmentList(previous.attachments, next.attachments),
+  )
+}
+
+function removeAdmittedQueueInput(
+  queue: readonly QueuedInput[],
+  event: Extract<BackendEvent, { readonly type: 'message.user' }>,
+): readonly QueuedInput[] {
+  const byRpcId = event.rpcId === undefined ? -1 : queue.findIndex((item) => item.rpcId === event.rpcId)
+  const index =
+    byRpcId >= 0
+      ? byRpcId
+      : queue.findIndex(
+          (item) =>
+            item.text === event.markdown && sameMessageAttachmentList(item.attachments, event.attachments),
+        )
+  if (index < 0) return queue
+  return [...queue.slice(0, index), ...queue.slice(index + 1)]
+}
+
+function sameMessageAttachmentList(
+  queued: readonly PromptAttachment[],
+  message: readonly MessageAttachment[] | undefined,
+): boolean {
+  const attachments = message ?? []
+  return (
+    queued.length === attachments.length &&
+    queued.every(
+      (attachment, index) =>
+        attachment.name === attachments[index]?.name && attachment.mimeType === attachments[index]?.mimeType,
+    )
   )
 }
 

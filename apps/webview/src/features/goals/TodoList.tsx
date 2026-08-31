@@ -19,6 +19,12 @@ export const TodoList = memo(function TodoList({ todos }: TodoListProps): ReactE
     <section
       className={`dsh-todo-list${open ? '' : ' dsh-todo-list--collapsed'}`}
       aria-label={t('todo.aria')}
+      onClick={(event) => {
+        // The collapsed card has intentional outer padding around the header.
+        // Treat that otherwise empty surface as part of the same hit target;
+        // clicks on the header or expanded task rows keep their own behavior.
+        if (event.target === event.currentTarget) setOpen((currentOpen) => !currentOpen)
+      }}
     >
       <button
         className="dsh-todo-list__toggle"

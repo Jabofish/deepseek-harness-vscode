@@ -158,6 +158,64 @@ describe('DSH 0.1.2-alpha.1 Connection/Gateway contract', () => {
     })
   })
 
+  it('joins the live provider list with the dormant configurable provider catalog', async () => {
+    const fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const pathname =
+        input instanceof URL
+          ? input.pathname
+          : new URL(typeof input === 'string' ? input : input.url).pathname
+      if (pathname === '/api/llm/listProviders')
+        return Promise.resolve(response(init, [{ id: 'deepseek-official', name: 'DeepSeek' }]))
+      if (pathname === '/api/llm/listConfigurableProviders')
+        return Promise.resolve(
+          response(init, [
+            {
+              provider: 'deepseek-official',
+              displayName: 'DeepSeek',
+              settingsNs: 'llm-deepseek',
+              settingsPath: [],
+              declared: true,
+            },
+            {
+              provider: 'openai',
+              displayName: 'OpenAI',
+              settingsNs: 'llm-pi-ai',
+              settingsPath: ['providers', 'openai'],
+              declared: false,
+            },
+          ]),
+        )
+      return Promise.reject(new Error(`unexpected alpha endpoint ${pathname}`))
+    })
+    const transport = client(fetch)
+
+    await expect(
+      callRpc<{
+        readonly providers: readonly Record<string, unknown>[]
+      }>(transport, 'llm.providers', {}),
+    ).resolves.toEqual({
+      providers: [
+        {
+          provider: 'deepseek-official',
+          displayName: 'DeepSeek',
+          settingsNs: 'llm-deepseek',
+          settingsPath: [],
+          active: true,
+          declared: true,
+        },
+        {
+          provider: 'openai',
+          displayName: 'OpenAI',
+          settingsNs: 'llm-pi-ai',
+          settingsPath: ['providers', 'openai'],
+          active: false,
+          declared: false,
+        },
+      ],
+    })
+    await transport.close()
+  })
+
   it('maps a Gateway stream snapshot and expands packed chunk rows without parsing rendered text', async () => {
     FakeWebSocket.instances.length = 0
     const transport = client(
@@ -214,6 +272,60 @@ describe('DSH 0.1.2-alpha.1 Connection/Gateway contract', () => {
     })
     await expect(iterator.next()).resolves.toMatchObject({
       value: { type: 'session/subscribed', sessionId: 's1', lastSeq: 2 },
+    })
+    await iterator.return?.()
+    await transport.close()
+  })
+
+  it('orders mixed snapshot records by durable sequence before exposing the session stream', async () => {
+    FakeWebSocket.instances.length = 0
+    const transport = client(
+      vi.fn((_input: RequestInfo | URL, init?: RequestInit) => Promise.resolve(response(init, {}))),
+    )
+    const iterator = transport.openSessionStream('s1', new AbortController().signal)[Symbol.asyncIterator]()
+    const first = iterator.next()
+    const socket = await waitForSocket()
+    socket.open()
+    await waitForSent(socket, 1)
+    socket.message(
+      streamItem(socket, {
+        type: 'snapshot',
+        header: {},
+        cursor: 3,
+        // The server may interleave a later event and an expanded chunk row.
+        // The logical stream must still expose 1, 2, 3 so its sequence
+        // watermark cannot discard the earlier conversation records.
+        records: [
+          {
+            type: 'event',
+            event: { type: 'future/telemetry', seq: 3, time: 30, data: {}, ignorable: true },
+          },
+          {
+            type: 'chunks',
+            event: {
+              type: 'chunkrow/text-chunks',
+              seq: 1,
+              time: 10,
+              data: { turn: 1, step: 1, index: 7, dt: [1], texts: ['a', 'b'] },
+            },
+          },
+        ],
+        hasMore: false,
+        projections: { asOfSeq: 3, values: {} },
+      }),
+    )
+
+    await expect(first).resolves.toMatchObject({
+      value: { type: 'session/event', event: { seq: 1, type: 'assistant/chunk' } },
+    })
+    await expect(iterator.next()).resolves.toMatchObject({
+      value: { type: 'session/event', event: { seq: 2, type: 'assistant/chunk' } },
+    })
+    await expect(iterator.next()).resolves.toMatchObject({
+      value: { type: 'session/event', event: { seq: 3, type: 'future/telemetry' } },
+    })
+    await expect(iterator.next()).resolves.toMatchObject({
+      value: { type: 'session/subscribed', sessionId: 's1', lastSeq: 3 },
     })
     await iterator.return?.()
     await transport.close()
@@ -474,13 +586,16 @@ describe('DSH 0.1.2-alpha.1 Connection/Gateway contract', () => {
       },
     })
     await expect(
-      transport.respondEnvelope('event-1', { ok: true, value: { outcome: 'allowed-once' } }),
+      transport.respondEnvelope('event-1', {
+        ok: true,
+        value: { sessionId: 's1', approvalId: 'event-1', outcome: 'allowed-once' },
+      }),
     ).resolves.toEqual({ accepted: true })
     const body = JSON.parse(bodyText(fetch.mock.calls[0]?.[1])) as { payload: { args: unknown } }
     expect(body.payload.args).toEqual({
       clientId: 'client-1',
       eventId: 'event-1',
-      outcome: { kind: 'result', value: { outcome: 'allowed-once' } },
+      outcome: { kind: 'result', value: 'allowed-once' },
     })
     await iterator.return?.()
     await transport.close()
@@ -793,7 +908,7 @@ async function waitForEvent(predicate: () => boolean): Promise<void> {
 }
 
 describe('alpha remote mux receive queue', () => {
-  it('fails a logical stream that buffers past the receive queue limit', async () => {
+  it('keeps a logical stream alive when its buffer passes the receive queue limit', async () => {
     FakeWebSocket.instances.length = 0
     const transport = client(
       vi.fn((_input: RequestInfo | URL, init?: RequestInit) => Promise.resolve(response(init, undefined))),
@@ -821,10 +936,13 @@ describe('alpha remote mux receive queue', () => {
       value: { type: 'session/subscribed', lastSeq: 0 },
     })
 
-    // The stream consumer awaits inside its read loop (history recovery on a
-    // seq gap), so the host can keep pushing mid-turn delta frames while the
-    // generator is suspended at its yield. Without a bound the queue grows
-    // for the whole suspension; the rc6 transport fails the stream instead.
+    // The stream consumer can await inside its read loop (history recovery on
+    // a seq gap), so the host can keep pushing mid-turn delta frames while the
+    // generator is suspended at its yield. The queue stays bounded, but
+    // overflowing it drops only the buffered frames: failing the stream here
+    // tore down the mux generation mid-answer and cascaded into reconnect
+    // storms. The dropped range resurfaces as an ordinary sequence hole that
+    // stream-controller gap detection heals from history.
     for (let index = 1; index <= 300; index += 1)
       socket.message(
         streamItem(socket, {
@@ -832,7 +950,19 @@ describe('alpha remote mux receive queue', () => {
           event: { type: 'turn/start', seq: index, time: index, data: { turn: 1 } },
         }),
       )
-    await expect(iterator.next()).rejects.toMatchObject({ code: 'PROTOCOL_ERROR', retryable: true })
+    // The buffered frames beyond the bound were dropped, so the first frame
+    // the consumer observes after resuming is a later one from the burst.
+    const resumed = await iterator.next()
+    expect(resumed).toMatchObject({ done: false, value: { type: 'session/event' } })
+    expect((resumed.value as { readonly event?: { readonly seq?: number } }).event?.seq ?? 0).toBeGreaterThan(
+      0,
+    )
+    // The stream itself survives the overflow; the next frame still arrives
+    // instead of the previous PROTOCOL_ERROR teardown.
+    await expect(iterator.next()).resolves.toMatchObject({
+      done: false,
+      value: { type: 'session/event' },
+    })
     await transport.close()
   })
 })

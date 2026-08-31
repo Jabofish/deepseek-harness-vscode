@@ -312,10 +312,15 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     exportFileSystem: createExportFileSystem(vscode),
   }
   const endpointCookies = new Map<string, string>()
+  // Keep the process launch URL in the Extension Host so the browser can
+  // perform its own cookie exchange. The URL is never included in Webview
+  // state or messages.
+  const endpointLaunchUrls = new Map<string, string>()
   const rememberReadyEndpoint = async (endpoint: BackendEndpoint, launchUrl?: string): Promise<void> => {
     // A managed port can be reused by a fresh DSH process. Never let a cookie
     // from the previous process authorize the new endpoint.
     endpointCookies.delete(endpoint.baseUrl)
+    endpointLaunchUrls.delete(endpoint.baseUrl)
     if (launchUrl === undefined) return
     let response: Response
     try {
@@ -340,6 +345,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       })
     }
     endpointCookies.set(endpoint.baseUrl, cookie)
+    endpointLaunchUrls.set(endpoint.baseUrl, launchUrl)
   }
   const alpha2Adapter = new Alpha2VersionAdapter({
     ...adapterOptions,
@@ -521,6 +527,23 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       }
     }
     return registered
+  }
+  // Opening one session fans out into several advisory reads (queue, goals,
+  // jobs, feedback, subagents, commands, and model settings). They all need
+  // the same workspace ownership check, but each request used to repeat the
+  // full workspace/archive/session-history chain. Keep one validated detail
+  // per current backend generation and share in-flight reads across those
+  // requests. `session.open` can opt into a fresh read below.
+  const currentWorkspaceSessionDetails = new Map<
+    string,
+    { readonly generation: number; readonly detail: SessionDetail }
+  >()
+  const currentWorkspaceSessionLoads = new Map<string, Promise<SessionDetail>>()
+  let currentWorkspaceSessionGeneration = 0
+  const invalidateCurrentWorkspaceSessionDetails = (): void => {
+    currentWorkspaceSessionGeneration += 1
+    currentWorkspaceSessionDetails.clear()
+    currentWorkspaceSessionLoads.clear()
   }
   const listCurrentArchivedSessionIds = async (
     workspaces: readonly WorkspaceSummary[],
@@ -798,10 +821,21 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     void postEvent('connection.snapshot', payload)
   }
   const attach = (backend: DshBackend): void => {
+    invalidateCurrentWorkspaceSessionDetails()
     changeTracker.attach(backend, currentWorkspaceFolderId)
     taskRegistry.attach(backend, currentWorkspaceFolderId)
     backendService.attach(backend, (event) => {
+      if (
+        event.type === 'workspace.changed' ||
+        event.type === 'workspace.removed' ||
+        event.type === 'workspace.order.changed' ||
+        event.type === 'archived.sessions.changed' ||
+        event.type === 'session.added' ||
+        event.type === 'session.removed'
+      )
+        invalidateCurrentWorkspaceSessionDetails()
       if (event.type === 'connection.lost') {
+        invalidateCurrentWorkspaceSessionDetails()
         changeTracker.detach()
         taskRegistry.detach()
         editorContextProvider.dispose()
@@ -842,6 +876,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       taskRegistry.detach()
       editorContextProvider.dispose()
       taskSessionId = undefined
+      endpointLaunchUrls.clear()
       await coordinator.disconnect()
       return connect(signal)
     })()
@@ -882,46 +917,71 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
   const requireCurrentWorkspaceSession = async (
     sessionId: string,
     signal: AbortSignal,
+    options: { readonly fresh?: boolean } = {},
   ): Promise<SessionDetail> => {
-    let workspaces: readonly WorkspaceSummary[]
-    try {
-      workspaces = await listCurrentWorkspaces(signal)
-    } catch (error) {
-      throw sessionOpenFailure('workspace discovery', error)
+    if (options.fresh !== true) {
+      const cached = currentWorkspaceSessionDetails.get(sessionId)
+      if (cached?.generation === currentWorkspaceSessionGeneration) return cached.detail
     }
+    const pending = currentWorkspaceSessionLoads.get(sessionId)
+    if (pending !== undefined) return pending
 
-    let archivedSessionIds: readonly string[]
-    try {
-      archivedSessionIds = await backendService.requireBackend().workspaces.listArchivedSessionIds(signal)
-    } catch (error) {
-      throw sessionOpenFailure('archive state lookup', error)
-    }
-    if (archivedSessionIds.includes(sessionId))
-      throw sessionOpenFailure(
-        'archive state lookup',
-        new AppError({
-          code: 'PERMISSION_DENIED',
-          message: 'The requested session is archived.',
-          retryable: false,
-        }),
-      )
+    const generation = currentWorkspaceSessionGeneration
+    const load = (async (): Promise<SessionDetail> => {
+      let workspaces: readonly WorkspaceSummary[]
+      try {
+        workspaces = await listCurrentWorkspaces(signal)
+      } catch (error) {
+        throw sessionOpenFailure('workspace discovery', error)
+      }
 
-    let detail: SessionDetail
-    try {
-      detail = await backendService.requireBackend().sessions.get(sessionId, signal)
-    } catch (error) {
-      throw sessionOpenFailure('session summary and history read', error)
-    }
-    if (!sessionBelongsToWorkspaces(detail, workspaces, currentWorkspaceFolders()))
-      throw sessionOpenFailure(
-        'current workspace ownership check',
-        new AppError({
-          code: 'PERMISSION_DENIED',
-          message: 'The requested session is not part of the current VS Code workspace.',
-          retryable: false,
-        }),
-      )
-    return detail
+      let archivedSessionIds: readonly string[]
+      try {
+        archivedSessionIds = await backendService.requireBackend().workspaces.listArchivedSessionIds(signal)
+      } catch (error) {
+        throw sessionOpenFailure('archive state lookup', error)
+      }
+      if (archivedSessionIds.includes(sessionId))
+        throw sessionOpenFailure(
+          'archive state lookup',
+          new AppError({
+            code: 'PERMISSION_DENIED',
+            message: 'The requested session is archived.',
+            retryable: false,
+          }),
+        )
+
+      let detail: SessionDetail
+      try {
+        detail = await backendService.requireBackend().sessions.get(sessionId, signal)
+      } catch (error) {
+        throw sessionOpenFailure('session summary and history read', error)
+      }
+      if (!sessionBelongsToWorkspaces(detail, workspaces, currentWorkspaceFolders()))
+        throw sessionOpenFailure(
+          'current workspace ownership check',
+          new AppError({
+            code: 'PERMISSION_DENIED',
+            message: 'The requested session is not part of the current VS Code workspace.',
+            retryable: false,
+          }),
+        )
+      if (generation === currentWorkspaceSessionGeneration)
+        currentWorkspaceSessionDetails.set(sessionId, { generation, detail })
+      return detail
+    })()
+    currentWorkspaceSessionLoads.set(sessionId, load)
+    void load.then(
+      () => {
+        if (currentWorkspaceSessionLoads.get(sessionId) === load)
+          currentWorkspaceSessionLoads.delete(sessionId)
+      },
+      () => {
+        if (currentWorkspaceSessionLoads.get(sessionId) === load)
+          currentWorkspaceSessionLoads.delete(sessionId)
+      },
+    )
+    return load
   }
   const requireCurrentWorkspaceId = async (workspaceId: string, signal: AbortSignal): Promise<void> => {
     const workspaces = await listCurrentWorkspaces(signal)
@@ -1597,7 +1657,9 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       })
     }
     if (request.type === 'session.open') {
-      return publicValue(await requireCurrentWorkspaceSession(request.payload.sessionId, signal))
+      return publicValue(
+        await requireCurrentWorkspaceSession(request.payload.sessionId, signal, { fresh: true }),
+      )
     }
     if (request.type === 'session.history') {
       await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
@@ -2158,6 +2220,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     provider,
     diagnostics,
     vscode.workspace.onDidChangeWorkspaceFolders(() => {
+      invalidateCurrentWorkspaceSessionDetails()
       editorContextProvider.dispose()
       void postEvent('workspace.changed', {})
     }),
@@ -2204,7 +2267,9 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
               )
               return
             }
-            const opened = await vscode.env.openExternal(vscode.Uri.parse(state.backend.endpoint.baseUrl))
+            const target =
+              endpointLaunchUrls.get(state.backend.endpoint.baseUrl) ?? state.backend.endpoint.baseUrl
+            const opened = await vscode.env.openExternal(vscode.Uri.parse(target))
             if (!opened)
               void vscode.window.showWarningMessage('Unable to open the DSH Web UI in your browser.')
           },
@@ -2265,6 +2330,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       taskRegistry.dispose()
       await backendService.detach()
       await coordinator.disconnect()
+      endpointLaunchUrls.clear()
       attachmentTokens.clear()
       channel.dispose()
     },

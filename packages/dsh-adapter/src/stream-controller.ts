@@ -24,6 +24,8 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
   private readonly lastSequences = new Map<string, number>()
   /** Projection frames share the durable event sequence, so dedupe them per key. */
   private readonly lastProjectionSequences = new Map<string, Map<string, number>>()
+  /** One detached history recovery at a time per session, in detection order. */
+  private readonly recoveries = new Map<string, Promise<void>>()
   private lifetime: AbortController | undefined
   private reading: Promise<void> | undefined
   private retryTimer: ReturnType<typeof setTimeout> | undefined
@@ -150,7 +152,7 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
             receivedFrame = true
             this.retryAttempt = 0
           }
-          await this.accept(event, signal)
+          this.accept(event, signal)
         }
       }
       if (!this.closed && !signal.aborted) throw new Error('DSH event stream ended.')
@@ -159,7 +161,7 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
     }
   }
 
-  private async accept(event: BackendEvent, signal: AbortSignal): Promise<void> {
+  private accept(event: BackendEvent, signal: AbortSignal): void {
     if (signal.aborted) return
     if (event.type === 'session.removed') {
       this.lastSequences.delete(event.sessionId)
@@ -171,20 +173,13 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
       if (previous === undefined) {
         this.lastSequences.set(event.sessionId, event.lastSequence)
       } else if (event.lastSequence > previous) {
-        const afterRecovery = await this.recoverRange(
-          event.sessionId,
-          previous + 1,
-          event.lastSequence,
-          signal,
-        )
-        if (signal.aborted) return
-        if (afterRecovery + 1 < event.lastSequence)
-          this.emit({
-            type: 'session.gap',
-            sessionId: event.sessionId,
-            fromSequence: afterRecovery + 1,
-            toSequence: event.lastSequence,
-          })
+        // The v1 mux has no client-side resume hook ("since" is ignored), so a
+        // re-subscribe above the cached watermark means the missed range is
+        // only reachable through history. Recover off the read loop: blocking
+        // here suspends the follow consumer while the host keeps streaming,
+        // which used to overflow the receive queue and kill the stream
+        // mid-answer.
+        this.scheduleRecovery(event.sessionId, previous + 1, event.lastSequence, signal)
       } else if (event.lastSequence < previous) {
         // The v1 mux has no client-side resume hook ("since" is ignored), so
         // the host's subscribed frame is the authoritative log baseline. A
@@ -214,27 +209,48 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
     }
     const previous = this.lastSequences.get(sessionId) ?? -1
     if (sequence <= previous) return
-    if (sequence > previous + 1 && this.recover !== undefined) {
-      const afterRecovery = await this.recoverRange(sessionId, previous + 1, sequence - 1, signal)
-      if (signal.aborted) return
-      if (afterRecovery + 1 < sequence)
-        this.emit({
-          type: 'session.gap',
-          sessionId,
-          fromSequence: afterRecovery + 1,
-          toSequence: sequence - 1,
-        })
-    } else if (sequence > previous + 1) {
-      this.emit({
-        type: 'session.gap',
-        sessionId,
-        fromSequence: previous + 1,
-        toSequence: sequence - 1,
-      })
-    }
+    if (sequence > previous + 1) this.scheduleRecovery(sessionId, previous + 1, sequence - 1, signal)
     this.lastSequences.set(sessionId, sequence)
     this.retryAttempt = 0
     this.emit(event)
+  }
+
+  /**
+   * Heal a detected sequence hole without suspending the read loop. The
+   * current event is delivered immediately and the history replay for the
+   * hole runs detached; consumers observe the recovered events (below the
+   * watermark) plus a `session.gap` for whatever history could not cover.
+   */
+  private scheduleRecovery(
+    sessionId: string,
+    fromSequence: number,
+    toSequence: number,
+    signal: AbortSignal,
+  ): void {
+    if (fromSequence > toSequence) return
+    if (this.recover === undefined) {
+      this.emit({
+        type: 'session.gap',
+        sessionId,
+        fromSequence,
+        toSequence,
+      })
+      return
+    }
+    const previousTail = this.recoveries.get(sessionId)
+    const task = (async () => {
+      try {
+        await previousTail
+      } catch {
+        /* the queued predecessor already announced its own gap */
+      }
+      if (signal.aborted || this.closed) return
+      await this.recoverRange(sessionId, fromSequence, toSequence, signal)
+    })()
+    const tail = task.finally(() => {
+      if (this.recoveries.get(sessionId) === tail) this.recoveries.delete(sessionId)
+    })
+    this.recoveries.set(sessionId, tail)
   }
 
   private truncateProjectionSequences(sessionId: string, lastSequence: number): void {
@@ -244,22 +260,30 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
     if (perSession.size === 0) this.lastProjectionSequences.delete(sessionId)
   }
 
+  /**
+   * Replay one sequence hole from history. Runs detached from the read loop,
+   * so it must not touch `lastSequences`: the watermark already moved past the
+   * hole when the hole was detected. Recovered events are emitted below the
+   * watermark (consumers dedupe by sequence), and whatever history could not
+   * cover is announced as `session.gap` so consumers can heal it themselves.
+   */
   private async recoverRange(
     sessionId: string,
     fromSequence: number,
     toSequence: number,
     signal: AbortSignal,
-  ): Promise<number> {
-    let cursor = this.lastSequences.get(sessionId) ?? fromSequence - 1
-    if (this.recover === undefined || fromSequence > toSequence) return cursor
+  ): Promise<void> {
+    if (this.recover === undefined || fromSequence > toSequence) return
+    let cursor = fromSequence - 1
     try {
       const recovered = await this.recover(sessionId, fromSequence, toSequence, signal)
       for (const candidate of [...recovered].sort(
         (left, right) => (left.sequence ?? 0) - (right.sequence ?? 0),
       )) {
-        if (signal.aborted) return cursor
+        if (signal.aborted) break
         const recoveredSequence = candidate.sequence
         if (recoveredSequence === undefined || recoveredSequence <= cursor) continue
+        if (recoveredSequence > toSequence) break
         if (recoveredSequence > cursor + 1)
           this.emit({
             type: 'session.gap',
@@ -268,15 +292,19 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
             toSequence: recoveredSequence - 1,
           })
         cursor = recoveredSequence
-        this.lastSequences.set(sessionId, cursor)
         this.emit(candidate)
       }
     } catch {
-      // A recovery read is advisory. The caller emits an explicit gap so
-      // projection consumers cannot mistake an incomplete replay for a
-      // contiguous stream.
+      // A recovery read is advisory. The explicit gap below keeps projection
+      // consumers from mistaking an incomplete replay for a contiguous stream.
     }
-    return cursor
+    if (!signal.aborted && cursor < toSequence)
+      this.emit({
+        type: 'session.gap',
+        sessionId,
+        fromSequence: cursor + 1,
+        toSequence,
+      })
   }
 
   private emit(event: BackendEvent): void {

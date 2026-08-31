@@ -14,6 +14,12 @@ import type {
   PluginInventorySnapshot,
 } from '@dsh-vscode/domain'
 import type { DshSettingsSnapshot } from '../../app/store.js'
+import {
+  CONVERSATION_FONT_SIZE_OPTIONS,
+  isThemePreference,
+  type ConversationFontSize,
+  type ThemePreference,
+} from '../../app/ui-preferences.js'
 import { ModalWrapper } from '../../components/common/PopoverCard.js'
 import { SettingCard, SettingRow } from '../../components/common/SettingCard.js'
 import { SelectMenu } from '../../components/common/SelectMenu.js'
@@ -23,7 +29,7 @@ import { PluginConfiguration } from '../plugins/PluginConfiguration.js'
 import { PresetManager } from './PresetManager.js'
 import { CustomProviderCard, type CustomProviderTemplate } from './CustomProviderCard.js'
 import { ProviderSettingsEditor, type ProviderSettingChange } from './ProviderSettingsEditor.js'
-import { useI18n, type Translate } from '../../i18n.js'
+import { useI18n, type Locale, type Translate } from '../../i18n.js'
 
 export interface SettingsDrawerProps {
   readonly open: boolean
@@ -35,6 +41,15 @@ export interface SettingsDrawerProps {
   readonly dshUpdateProgress?: DshRuntimeUpdateProgress | undefined
   readonly onCheckDshUpdates?: (force?: boolean) => Promise<DshUpdateSnapshot | undefined>
   readonly onInstallDshVersion?: (version: string) => Promise<DshUpdateSnapshot | undefined>
+  readonly theme: ThemePreference
+  readonly onThemeChange: (value: ThemePreference) => void
+  readonly locale: Locale
+  /** Apply the shared extension/DSH language preference from a user action. */
+  readonly onLocaleChange: (value: Locale) => void
+  /** Adopt the authoritative DSH locale without issuing a second write. */
+  readonly onLocaleFromDsh: (value: Locale) => void
+  readonly conversationFontSize: ConversationFontSize
+  readonly onConversationFontSizeChange: (value: ConversationFontSize) => void
   readonly providers: readonly ModelProvider[]
   readonly models: readonly ModelDescriptor[]
   readonly onLoadSettings: () => Promise<ExtensionSettingsSummary | undefined>
@@ -64,6 +79,7 @@ type SettingsTab = 'general' | 'models' | 'presets' | 'plugins'
 type ConnectionChoice = 'auto' | 'custom'
 
 const SETTINGS_TABS: readonly SettingsTab[] = ['general', 'models', 'presets', 'plugins']
+const LOCALE_OPTIONS: readonly Locale[] = ['en', 'zh']
 
 interface LoadedSettings {
   readonly value: ExtensionSettingsSummary | undefined
@@ -94,11 +110,6 @@ const GENERAL_SETTING_ROWS: readonly {
     hintKey: 'settings.permission.hint',
   },
   {
-    path: 'locale.preference',
-    labelKey: 'settings.language.label',
-    hintKey: 'settings.language.hint',
-  },
-  {
     path: 'ui-theme.preference',
     labelKey: 'settings.appearance.label',
     hintKey: 'settings.appearance.hint',
@@ -125,6 +136,7 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
     onInstallDshVersion,
     onLoadSettings,
     onLoadDshSettings,
+    onLocaleFromDsh,
     onUpdateDshSetting,
     onOpenChange,
   } = props
@@ -142,6 +154,7 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
   const [selectedDshVersion, setSelectedDshVersion] = useState<string | undefined>(undefined)
   const dshUpdateCheckStarted = useRef(false)
   const [editingProviderId, setEditingProviderId] = useState<string | undefined>(undefined)
+  const [addingProviderId, setAddingProviderId] = useState<string | undefined>(undefined)
   const [addingCustomProvider, setAddingCustomProvider] = useState(false)
   const [removingProviderId, setRemovingProviderId] = useState<string | undefined>(undefined)
   const [connectionChoice, setConnectionChoice] = useState<ConnectionChoice>('auto')
@@ -179,13 +192,18 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
     void onLoadDshSettings()
       .catch(() => undefined)
       .then((snapshot) => {
-        if (!cancelled)
+        if (!cancelled) {
+          if (snapshot !== undefined) {
+            const hostLocale = settingValueAt(snapshot.values, 'locale.preference')
+            if (isLocale(hostLocale)) onLocaleFromDsh(hostLocale)
+          }
           setDshState(snapshot === undefined ? { status: 'unavailable' } : { status: 'ready', snapshot })
+        }
       })
     return () => {
       cancelled = true
     }
-  }, [open, onLoadDshSettings, dshState.status])
+  }, [open, onLoadDshSettings, onLocaleFromDsh, dshState.status])
 
   useEffect(() => {
     if (!open) {
@@ -199,12 +217,16 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
 
   const saveSetting = (path: string, value: unknown): void => {
     if (savingPath !== undefined) return
+    const themeValue = path === 'ui-theme.preference' && isThemePreference(value) ? value : undefined
+    const previousTheme = props.theme
     setSaveError(undefined)
     setRiskPending(undefined)
     setRiskAcknowledged(false)
     setSavingPath(path)
+    if (themeValue !== undefined) props.onThemeChange(themeValue)
     void onUpdateDshSetting(path, value)
       .catch((reason: unknown) => {
+        if (themeValue !== undefined) props.onThemeChange(previousTheme)
         setSaveError(reason instanceof Error ? reason.message : t('settings.updateFailed'))
         return undefined
       })
@@ -214,7 +236,12 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
         onLoadDshSettings()
           .catch(() => undefined)
           .then((snapshot) => {
-            if (snapshot !== undefined) setDshState({ status: 'ready', snapshot })
+            if (snapshot !== undefined) {
+              setDshState({ status: 'ready', snapshot })
+              const authoritativeTheme = settingValueAt(snapshot.values, 'ui-theme.preference')
+              if (themeValue !== undefined && isThemePreference(authoritativeTheme))
+                props.onThemeChange(authoritativeTheme)
+            }
           }),
       )
       .finally(() => setSavingPath(undefined))
@@ -342,14 +369,21 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
   const saveProviderChanges = async (
     provider: ModelProvider,
     changes: readonly ProviderSettingChange[],
+    ensureProvider = false,
   ): Promise<void> => {
     if (busyField !== undefined) throw new Error(t('settings.updateFailed'))
     setSaveError(undefined)
     setBusyField(`provider:${provider.id}`)
     try {
-      for (const change of changes) {
-        if (change.kind === 'set') await onUpdateDshSetting(change.path, change.value)
-        else await props.onUnsetDshSetting(change.path)
+      if (changes.length === 0 && ensureProvider) {
+        const path = providerSettingsPath(provider)
+        if (path === undefined) throw new Error(t('settings.updateFailed'))
+        await onUpdateDshSetting(path, {})
+      } else {
+        for (const change of changes) {
+          if (change.kind === 'set') await onUpdateDshSetting(change.path, change.value)
+          else await props.onUnsetDshSetting(change.path)
+        }
       }
       const snapshot = await onLoadDshSettings()
       if (snapshot !== undefined) setDshState({ status: 'ready', snapshot })
@@ -407,6 +441,15 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
 
   const customProviderTemplate: CustomProviderTemplate | undefined =
     dshState.status === 'ready' ? deriveCustomProviderTemplate(props.providers, dshState.snapshot) : undefined
+  const addableProviders =
+    dshState.status === 'ready'
+      ? props.providers.filter((provider) => isAddableProvider(provider, dshState.snapshot))
+      : []
+  const addingProvider =
+    addingProviderId === undefined
+      ? undefined
+      : addableProviders.find((provider) => provider.id === addingProviderId)
+  const canAddCustomProvider = customProviderTemplate !== undefined
   const providerRows =
     dshState.status === 'ready'
       ? props.providers.filter((provider) => isConfiguredProvider(provider, dshState.snapshot))
@@ -744,6 +787,37 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                     )}
                   </section>
                 ) : null}
+                <SettingCard
+                  ariaLabel={t('settings.extensionPreferences')}
+                  title={t('settings.extensionPreferences')}
+                >
+                  <SettingRow
+                    title={t('settings.language.label')}
+                    description={t('settings.language.hint')}
+                    control={
+                      <div
+                        className="dsh-settings__segment"
+                        role="group"
+                        aria-label={t('settings.language.label')}
+                      >
+                        {LOCALE_OPTIONS.map((option) => (
+                          <button
+                            key={option}
+                            className={`dsh-settings__segment-item${
+                              option === props.locale ? ' dsh-settings__segment-item--active' : ''
+                            }`}
+                            type="button"
+                            aria-pressed={option === props.locale}
+                            disabled={option === props.locale}
+                            onClick={() => props.onLocaleChange(option)}
+                          >
+                            {option === 'zh' ? t('locale.chinese') : t('locale.english')}
+                          </button>
+                        ))}
+                      </div>
+                    }
+                  />
+                </SettingCard>
                 <SettingCard ariaLabel={t('settings.preferences')} title={t('settings.preferences')}>
                   {dshState.status === 'loading' ? (
                     <p className="dsh-settings__empty" role="status">
@@ -769,6 +843,7 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                             }}
                             fields={dshState.snapshot.schema.fields}
                             values={dshState.snapshot.values}
+                            selectedValue={row.path === 'ui-theme.preference' ? props.theme : undefined}
                             saving={savingPath === row.path}
                             disabled={!dshState.snapshot.schema.writable || savingPath !== undefined}
                             riskPending={riskPending?.path === row.path ? riskPending : undefined}
@@ -800,6 +875,37 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                       )}
                     </>
                   )}
+                </SettingCard>
+                <SettingCard
+                  ariaLabel={t('settings.conversationAppearance')}
+                  title={t('settings.conversationAppearance')}
+                >
+                  <SettingRow
+                    title={t('settings.conversationFontSize')}
+                    description={t('settings.conversationFontSizeHint')}
+                    control={
+                      <div
+                        className="dsh-settings__segment"
+                        role="group"
+                        aria-label={t('settings.conversationFontSize')}
+                      >
+                        {CONVERSATION_FONT_SIZE_OPTIONS.map((size) => (
+                          <button
+                            key={size}
+                            className={`dsh-settings__segment-item${
+                              size === props.conversationFontSize ? ' dsh-settings__segment-item--active' : ''
+                            }`}
+                            type="button"
+                            aria-pressed={size === props.conversationFontSize}
+                            disabled={size === props.conversationFontSize}
+                            onClick={() => props.onConversationFontSizeChange(size)}
+                          >
+                            {t(`settings.value.${size}`)}
+                          </button>
+                        ))}
+                      </div>
+                    }
+                  />
                 </SettingCard>
                 <p className="dsh-settings__note">{t('settings.hostNote')}</p>
                 {dshState.status === 'ready' && dshState.snapshot.schema.hasDocument ? (
@@ -907,6 +1013,7 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                                   onClick={() => {
                                     setSaveError(undefined)
                                     setAddingCustomProvider(false)
+                                    setAddingProviderId(undefined)
                                     setEditingProviderId(isEditing ? undefined : provider.id)
                                   }}
                                 >
@@ -1009,7 +1116,7 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                     })}
                   </ul>
                 )}
-                {customProviderTemplate === undefined ? null : (
+                {addableProviders.length === 0 && !canAddCustomProvider ? null : (
                   <>
                     <div className="dsh-settings__provider-add-actions">
                       <button
@@ -1018,10 +1125,36 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                         disabled={
                           busyField !== undefined ||
                           dshState.status !== 'ready' ||
-                          !dshState.snapshot.schema.writable
+                          !dshState.snapshot.schema.writable ||
+                          addableProviders.length === 0
                         }
                         onClick={() => {
+                          const firstProvider = addableProviders[0]
+                          if (firstProvider === undefined) return
+                          setSaveError(undefined)
                           setEditingProviderId(undefined)
+                          setAddingCustomProvider(false)
+                          setAddingProviderId((current) =>
+                            current === undefined ? firstProvider.id : undefined,
+                          )
+                        }}
+                      >
+                        <Icon name="add" />
+                        {t('settings.addProvider')}
+                      </button>
+                      <button
+                        className="dsh-settings__provider-add"
+                        type="button"
+                        disabled={
+                          busyField !== undefined ||
+                          dshState.status !== 'ready' ||
+                          !dshState.snapshot.schema.writable ||
+                          !canAddCustomProvider
+                        }
+                        onClick={() => {
+                          setSaveError(undefined)
+                          setEditingProviderId(undefined)
+                          setAddingProviderId(undefined)
                           setAddingCustomProvider((current) => !current)
                         }}
                       >
@@ -1029,7 +1162,54 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                         {t('settings.addCustomProvider')}
                       </button>
                     </div>
-                    {addingCustomProvider ? (
+                    {addingProvider === undefined || dshState.status !== 'ready' ? null : (
+                      <section
+                        className="dsh-settings__provider-add-card"
+                        role="region"
+                        aria-label={t('settings.addProvider')}
+                      >
+                        <div className="dsh-settings__provider-add-select">
+                          <span>{t('settings.addProviderSelect')}</span>
+                          <SelectMenu
+                            className="dsh-settings__provider-add-picker"
+                            icon="box"
+                            density="regular"
+                            label={addingProvider.name}
+                            ariaLabel={t('settings.addProviderSelect')}
+                            title={t('settings.addProviderSelect')}
+                            value={addingProvider.id}
+                            disabled={busyField !== undefined}
+                            options={addableProviders.map((provider) => ({
+                              value: provider.id,
+                              label: provider.name,
+                            }))}
+                            placement="below"
+                            align="start"
+                            onChange={(value) => {
+                              const next = addableProviders.find((provider) => provider.id === value)
+                              if (next === undefined) return
+                              setSaveError(undefined)
+                              setAddingProviderId(next.id)
+                            }}
+                          />
+                        </div>
+                        <ProviderSettingsEditor
+                          key={addingProvider.id}
+                          provider={addingProvider}
+                          settings={dshState.snapshot}
+                          writable={dshState.snapshot.schema.writable}
+                          saving={busyField === `provider:${addingProvider.id}`}
+                          forceSave={(addingProvider.settingsPath?.length ?? 0) > 0}
+                          onSave={(changes) => saveProviderChanges(addingProvider, changes, true)}
+                          onDiscover={props.onDiscoverModels}
+                          onClose={(changed) => {
+                            setAddingProviderId(undefined)
+                            if (!changed) setSaveError(undefined)
+                          }}
+                        />
+                      </section>
+                    )}
+                    {addingCustomProvider && customProviderTemplate !== undefined ? (
                       <CustomProviderCard
                         template={customProviderTemplate}
                         providers={props.providers}
@@ -1177,10 +1357,41 @@ function isConfiguredProvider(provider: ModelProvider, settings: DshSettingsSnap
   )
 }
 
+function isAddableProvider(provider: ModelProvider, settings: DshSettingsSnapshot): boolean {
+  if (provider.configurable === false || isConfiguredProvider(provider, settings)) return false
+  const namespace = provider.settingsNs?.trim()
+  const settingsPath = provider.settingsPath
+  // A whole-section provider (for example the shipped DeepSeek namespace) is
+  // also an upstream-supported setup target. Its editor writes individual
+  // fields below the namespace; nested provider profiles can additionally be
+  // materialized as an empty object on Apply.
+  return (
+    namespace !== undefined &&
+    namespace !== '' &&
+    settingsPath !== undefined &&
+    settingsPath.every((part) => part.trim() !== '')
+  )
+}
+
+function providerSettingsPath(provider: ModelProvider): string | undefined {
+  const namespace = provider.settingsNs?.trim()
+  const settingsPath = provider.settingsPath
+  if (
+    namespace === undefined ||
+    namespace === '' ||
+    settingsPath === undefined ||
+    settingsPath.length === 0 ||
+    settingsPath.some((part) => part.trim() === '')
+  )
+    return undefined
+  return [namespace, ...settingsPath].join('.')
+}
+
 interface GeneralSettingRowProps {
   readonly row: { readonly path: string; readonly label: string; readonly hint: string }
   readonly fields: readonly DshSettingsSchema['fields'][number][]
   readonly values: Readonly<Record<string, unknown>>
+  readonly selectedValue?: string | undefined
   readonly saving: boolean
   readonly disabled: boolean
   readonly riskPending: RiskPending | undefined
@@ -1199,7 +1410,7 @@ function GeneralSettingRow(props: GeneralSettingRowProps): ReactElement | null {
   const field = props.fields.find((entry) => entry.path === props.row.path)
   const options = field?.enumValues
   if (field === undefined || options === undefined || options.length === 0) return null
-  const current = settingValueAt(props.values, props.row.path)
+  const current = props.selectedValue ?? settingValueAt(props.values, props.row.path)
   const currentLabel = typeof current === 'string' ? current : undefined
   return (
     <SettingRow
@@ -1354,6 +1565,10 @@ function settingValueAt(values: Readonly<Record<string, unknown>>, path: string)
     cursor = record[part]
   }
   return cursor
+}
+
+function isLocale(value: unknown): value is Locale {
+  return value === 'en' || value === 'zh'
 }
 
 /** Same permission label formatting the session controls use. */

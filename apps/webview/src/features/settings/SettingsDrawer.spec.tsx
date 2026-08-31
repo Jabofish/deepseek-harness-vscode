@@ -140,6 +140,13 @@ function renderDrawer(
       onOpenDshSettingsDocument={vi.fn().mockResolvedValue(undefined)}
       onUpdateDshSetting={vi.fn().mockResolvedValue(undefined)}
       onUnsetDshSetting={vi.fn().mockResolvedValue(undefined)}
+      theme="system"
+      onThemeChange={vi.fn()}
+      locale="en"
+      onLocaleChange={vi.fn()}
+      onLocaleFromDsh={vi.fn()}
+      conversationFontSize="medium"
+      onConversationFontSizeChange={vi.fn()}
       onDiscoverModels={vi.fn().mockResolvedValue([])}
       onConfigureSecret={vi.fn().mockResolvedValue(true)}
       onRemoveSecret={vi.fn().mockResolvedValue(undefined)}
@@ -169,7 +176,7 @@ describe('SettingsDrawer', () => {
     expect(await screen.findByRole('heading', { name: '设置' })).toBeDefined()
     expect(screen.getByRole('tab', { name: '常规' })).toBeDefined()
     expect(screen.getByText('连接模式')).toBeDefined()
-    expect(screen.getByRole('group', { name: 'DSH 响应语言' })).toBeDefined()
+    expect(screen.getByRole('group', { name: '界面语言' })).toBeDefined()
     expect(screen.getByRole('button', { name: '中文' })).toBeDefined()
 
     fireEvent.click(screen.getByRole('tab', { name: '模型' }))
@@ -183,6 +190,82 @@ describe('SettingsDrawer', () => {
     await waitFor(() => expect(screen.getByText('new-isolated')).toBeDefined())
     expect(screen.getByText('0.6.0')).toBeDefined()
     expect(screen.getByText('deepseek/deepseek-chat')).toBeDefined()
+  })
+
+  it('offers local conversation font size presets', async () => {
+    const onConversationFontSizeChange = vi.fn()
+    renderDrawer({ onConversationFontSizeChange })
+
+    const group = await screen.findByRole('group', { name: 'Conversation font size' })
+    expect(group).toBeDefined()
+    expect(screen.getByRole('button', { name: 'Medium', pressed: true })).toBeDefined()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Large' }))
+    expect(onConversationFontSizeChange).toHaveBeenCalledWith('large')
+  })
+
+  it('changes the extension language even when DSH settings are unavailable', async () => {
+    const onLocaleChange = vi.fn()
+    const onUpdateDshSetting = vi.fn().mockResolvedValue(undefined)
+    renderDrawer({
+      onLocaleChange,
+      onUpdateDshSetting,
+      onLoadDshSettings: vi.fn().mockResolvedValue(undefined),
+    })
+
+    const group = await screen.findByRole('group', { name: 'Interface language' })
+    fireEvent.click(within(group).getByRole('button', { name: '中文' }))
+
+    expect(onLocaleChange).toHaveBeenCalledWith('zh')
+    expect(onUpdateDshSetting).not.toHaveBeenCalled()
+  })
+
+  it('adopts the authoritative DSH language when settings are loaded', async () => {
+    const onLocaleFromDsh = vi.fn()
+    const fixture = dshSettingsFixture()
+    renderDrawer({
+      onLocaleFromDsh,
+      onLoadDshSettings: vi.fn().mockResolvedValue({
+        ...fixture,
+        values: { ...fixture.values, locale: { preference: 'zh' } },
+      }),
+    })
+
+    await waitFor(() => expect(onLocaleFromDsh).toHaveBeenCalledWith('zh'))
+  })
+
+  it('applies the appearance choice locally while updating the DSH preference', async () => {
+    const onThemeChange = vi.fn()
+    const onUpdateDshSetting = vi.fn().mockResolvedValue(undefined)
+    renderDrawer({ onThemeChange, onUpdateDshSetting })
+
+    await waitFor(() => expect(screen.getByRole('group', { name: 'Appearance' })).toBeDefined())
+    expect(screen.getByRole('button', { name: 'system', pressed: true })).toBeDefined()
+
+    fireEvent.click(screen.getByRole('button', { name: 'light' }))
+
+    expect(onThemeChange).toHaveBeenCalledWith('light')
+    await waitFor(() => expect(onUpdateDshSetting).toHaveBeenCalledWith('ui-theme.preference', 'light'))
+  })
+
+  it('keeps general settings sections in a predictable order', async () => {
+    renderDrawer({
+      onCheckDshUpdates: vi.fn().mockResolvedValue(undefined),
+      onInstallDshVersion: vi.fn().mockResolvedValue(undefined),
+    })
+
+    const panel = await screen.findByRole('tabpanel')
+    const connection = await within(panel).findByRole('region', { name: 'DSH connection' })
+    const updates = within(panel).getByRole('region', { name: 'DSH updates' })
+    const extensionPreferences = within(panel).getByRole('region', { name: 'Extension preferences' })
+    const preferences = within(panel).getByRole('region', { name: 'DSH preferences' })
+    const appearance = within(panel).getByRole('region', { name: 'Conversation appearance' })
+    const position = (element: Element): number => Array.from(panel.children).indexOf(element)
+
+    expect(position(connection)).toBeLessThan(position(updates))
+    expect(position(updates)).toBeLessThan(position(extensionPreferences))
+    expect(position(extensionPreferences)).toBeLessThan(position(preferences))
+    expect(position(preferences)).toBeLessThan(position(appearance))
   })
 
   it('applies a custom loopback endpoint and reconnects through the Host', async () => {
@@ -340,7 +423,7 @@ describe('SettingsDrawer', () => {
   it('renders the official General rows only for schema-advertised enum fields', async () => {
     renderDrawer()
     await waitFor(() => expect(screen.getByRole('group', { name: 'Permission' })).toBeDefined())
-    expect(screen.getByRole('group', { name: 'DSH response language' })).toBeDefined()
+    expect(screen.getByRole('group', { name: 'Interface language' })).toBeDefined()
     expect(screen.getByRole('group', { name: 'Appearance' })).toBeDefined()
     expect(screen.getByRole('group', { name: 'Composer Enter' })).toBeDefined()
     // Non-enum and non-General fields never gain a fabricated control.
@@ -433,7 +516,7 @@ describe('SettingsDrawer', () => {
     expect(await screen.findByRole('button', { name: 'Configure' })).toBeDefined()
   })
 
-  it('matches the official provider join: configured rows stay visible, dormant catalog rows stay hidden', async () => {
+  it('matches the official provider join: configured rows stay visible, dormant catalog rows stay hidden until added', async () => {
     const deepseek: ModelProvider = {
       ...baseProvider,
       settingsNs: 'llm-deepseek',
@@ -473,6 +556,64 @@ describe('SettingsDrawer', () => {
     expect(screen.getByText('minimax-cn')).toBeDefined()
     expect(screen.queryByText('amazon-bedrock')).toBeNull()
     expect(screen.getAllByRole('button', { name: 'Edit' })).toHaveLength(2)
+  })
+
+  it('restores separate catalog-provider and custom-provider add actions', async () => {
+    const wholeSection: ModelProvider = {
+      ...baseProvider,
+      id: 'deepseek-official',
+      name: 'DeepSeek',
+      settingsNs: 'llm-deepseek',
+      settingsPath: [],
+      fields: [],
+    }
+    const dormant: ModelProvider = {
+      ...baseProvider,
+      id: 'amazon-bedrock',
+      name: 'Amazon Bedrock',
+      settingsNs: 'llm-pi-ai',
+      settingsPath: ['providers', 'amazon-bedrock'],
+      fields: [],
+    }
+    const secondDormant: ModelProvider = {
+      ...dormant,
+      id: 'openai',
+      name: 'OpenAI',
+      settingsPath: ['providers', 'openai'],
+    }
+    const snapshot: DshSettingsSnapshot = {
+      ...dshSettingsFixture(),
+      values: { ...dshSettingsFixture().values, 'llm-pi-ai': { providers: {} } },
+    }
+    const onUpdateDshSetting = vi.fn().mockResolvedValue(undefined)
+    renderDrawer({
+      providers: [baseProvider, wholeSection, dormant, secondDormant],
+      onUpdateDshSetting,
+      onLoadDshSettings: vi.fn().mockResolvedValue(snapshot),
+    })
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Models' }))
+    const addProvider = await screen.findByRole('button', { name: 'Add provider' })
+    expect((addProvider as HTMLButtonElement).disabled).toBe(false)
+    const addCustomProvider = screen.getByRole<HTMLButtonElement>('button', {
+      name: 'Add custom provider',
+    })
+    expect(addCustomProvider.disabled).toBe(false)
+    fireEvent.click(addProvider)
+
+    const card = screen.getByRole('region', { name: 'Add provider' })
+    const selector = within(card).getByRole('button', { name: 'Provider: DeepSeek' })
+    fireEvent.click(selector)
+    expect(within(card).getAllByRole('option')).toHaveLength(3)
+    fireEvent.click(within(card).getByRole('option', { name: 'OpenAI' }))
+    expect(screen.getByRole('button', { name: 'Provider: OpenAI' })).toBeDefined()
+    fireEvent.click(within(card).getByRole('button', { name: 'Apply' }))
+    await waitFor(() => expect(onUpdateDshSetting).toHaveBeenCalledWith('llm-pi-ai.providers.openai', {}))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add provider' }))
+    const reopenedCard = screen.getByRole('region', { name: 'Add provider' })
+    fireEvent.click(within(reopenedCard).getByRole('button', { name: 'Cancel' }))
+    expect(onUpdateDshSetting).toHaveBeenCalledTimes(1)
   })
 
   it('does not render the provider directory before the settings join is ready', () => {

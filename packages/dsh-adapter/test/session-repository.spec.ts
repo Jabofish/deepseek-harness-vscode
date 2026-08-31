@@ -524,6 +524,36 @@ describe('Rc6SessionRepository configuration safety', () => {
 })
 
 describe('Rc6SessionRepository history windows', () => {
+  it('opens from the authoritative history page without a redundant session.list read', async () => {
+    const calls: { method: string; params: unknown }[] = []
+    const transport: DshTransport = {
+      request: <TResponse>(method: string, params: unknown) => {
+        calls.push({ method, params })
+        if (method !== 'session.history')
+          return Promise.reject<TResponse>(new Error('unexpected session.list'))
+        return Promise.resolve({
+          result: { ok: true, value: { events: [], hasMore: false } },
+        } as TResponse)
+      },
+      remoteRequest: <TResponse>() => Promise.reject<TResponse>(new Error('unexpected Remote')),
+      openEventStream: async function* () {
+        /* fixture stream */
+      },
+      close: () => Promise.resolve(),
+    }
+
+    await expect(new Rc6SessionRepository(transport).get('session-1')).resolves.toMatchObject({
+      id: 'session-1',
+      history: [],
+    })
+    expect(calls).toEqual([
+      {
+        method: 'session.history',
+        params: { sessionId: 'session-1', maxMessages: 50 },
+      },
+    ])
+  })
+
   it('uses the official tail-page and beforeSeq contract without reading the whole log', async () => {
     const calls: { method: string; params: unknown }[] = []
     const transport: DshTransport = {

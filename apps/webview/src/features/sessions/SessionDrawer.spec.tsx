@@ -157,6 +157,17 @@ describe('SessionDrawer', () => {
     expect(screen.queryByTitle('Inspect the project layout')).toBeNull()
   })
 
+  it('opens an existing root session when no session is active yet', () => {
+    const onOpen = vi.fn()
+    renderDrawer({ activeSessionId: undefined, onOpen })
+
+    const sessionButton = screen.getByText('Fix login bug').closest('button')
+    expect(sessionButton).not.toBeNull()
+    fireEvent.click(sessionButton!)
+
+    expect(onOpen).toHaveBeenCalledWith('s1')
+  })
+
   it('opens a session rename dialog, warns about a duplicate, and saves the edited title', async () => {
     const onRename = vi.fn().mockResolvedValue(undefined)
     renderDrawer({ onRename })

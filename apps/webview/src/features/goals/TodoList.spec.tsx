@@ -30,6 +30,18 @@ describe('TodoList', () => {
     expect(within(list).getByText('1 completed · 1 in progress · 1 pending')).toBeDefined()
   })
 
+  it('toggles when the outer card surface is clicked', () => {
+    render(<TodoList todos={todos} />)
+
+    const list = screen.getByRole('region', { name: 'Current to-do list' })
+    const toggle = screen.getByRole('button', { name: 'Expand tasks' })
+
+    fireEvent.click(list)
+
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    expect(screen.getByRole('button', { name: 'Collapse tasks' })).toBeDefined()
+  })
+
   it('renders nothing when no task exists', () => {
     const { container } = render(<TodoList todos={[]} />)
     expect(container.firstChild).toBeNull()

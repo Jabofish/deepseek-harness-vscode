@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AppState, AppStore } from './app/store.js'
 
@@ -15,6 +15,7 @@ vi.mock('./features/chat/Timeline.js', () => ({
 }))
 
 import { App } from './App.js'
+import { CONVERSATION_FONT_SIZE_STORAGE_KEY, THEME_PREFERENCE_STORAGE_KEY } from './app/ui-preferences.js'
 import { I18nProvider } from './i18n.js'
 
 function connectedState(activeSession: boolean): AppState {
@@ -215,6 +216,37 @@ describe('App connected rendering', () => {
     expect(screen.getByRole('main')).toBeDefined()
   })
 
+  it('shows the create-session page when DSH is connected without an active session', () => {
+    currentStore = storeFor(connectedState(false))
+    render(<App />)
+
+    expect(screen.getByRole('heading', { name: 'Create a session to begin.' })).toBeDefined()
+    expect(screen.getByRole('button', { name: 'New session here' })).toBeDefined()
+    expect(screen.queryByText('Create a session to begin.')).toBeDefined()
+    expect(document.querySelector('.dsh-empty-state')).toBeNull()
+  })
+
+  it.each([
+    ['idle', 'Preparing DSH connection'],
+    ['starting', 'Opening DSH'],
+    ['connecting', 'Connecting to DSH'],
+  ] as const)('shows connection progress instead of an empty-session message (%s)', (kind, title) => {
+    currentStore = storeFor({ ...connectedState(false), backend: { kind } })
+    render(<App />)
+
+    expect(screen.getByRole('heading', { name: title })).toBeDefined()
+    expect(screen.queryByText('No active session')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'New session here' })).toBeNull()
+  })
+
+  it('shows catalog loading after DSH connects before workspace data arrives', () => {
+    currentStore = storeFor({ ...connectedState(false), workspaces: [] })
+    render(<App />)
+
+    expect(screen.getByRole('heading', { name: 'Loading sessions' })).toBeDefined()
+    expect(screen.queryByText('No active session')).toBeNull()
+  })
+
   it('renders the shared application header controls', () => {
     currentStore = storeFor(connectedState(true))
     render(<App />)
@@ -223,6 +255,64 @@ describe('App connected rendering', () => {
     expect(screen.getByRole('button', { name: 'Switch session: Session' })).toBeDefined()
     expect(screen.getByRole('button', { name: 'New Session' })).toBeDefined()
     expect(screen.getByRole('button', { name: 'Settings' })).toBeDefined()
+  })
+
+  it('restores and applies the conversation font size from General settings', () => {
+    window.localStorage.setItem(CONVERSATION_FONT_SIZE_STORAGE_KEY, 'large')
+    currentStore = storeFor({ ...connectedState(true), drawer: 'settings' })
+    render(<App />)
+
+    expect(document.querySelector('.dsh-conversation')?.getAttribute('data-conversation-font-size')).toBe(
+      'large',
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Small' }))
+
+    expect(document.querySelector('.dsh-conversation')?.getAttribute('data-conversation-font-size')).toBe(
+      'small',
+    )
+    expect(window.localStorage.getItem(CONVERSATION_FONT_SIZE_STORAGE_KEY)).toBe('small')
+  })
+
+  it('restores the selected Webview theme on the application root', () => {
+    window.localStorage.setItem(THEME_PREFERENCE_STORAGE_KEY, 'light')
+    currentStore = storeFor(connectedState(true))
+
+    render(<App />)
+
+    expect(document.documentElement.dataset.dshTheme).toBe('light')
+    expect(screen.getByRole('main').getAttribute('data-dsh-theme')).toBe('light')
+  })
+
+  it('keeps the session picker available while an existing session is not active', () => {
+    const state = connectedState(false)
+    const existingSession = {
+      id: 's1',
+      title: 'Existing session',
+      workspaceId: 'w1',
+      blank: false,
+      status: 'completed' as const,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    }
+    currentStore = storeFor({
+      ...state,
+      sessions: [existingSession],
+      workspaces: [
+        {
+          ...state.workspaces[0]!,
+          sessionIds: ['s1'],
+          sessionCount: 1,
+        },
+      ],
+      drawer: 'sessions',
+    })
+
+    render(<App />)
+
+    expect(document.querySelector('.dsh-conversation__utility')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Open sessions' })).toBeNull()
+    expect(screen.getByRole('dialog', { name: 'Sessions' })).toBeDefined()
+    expect(screen.getByText('Existing session')).toBeDefined()
   })
 
   it('loads the trajectory surface when the user selects it', async () => {
@@ -528,7 +618,8 @@ describe('App connected rendering', () => {
   })
 
   it('applies the selected interface language across the conversation and export surfaces', async () => {
-    currentStore = storeFor(connectedState(true))
+    const updateDshSetting = vi.fn().mockResolvedValue(undefined)
+    currentStore = { ...storeFor(connectedState(true)), updateDshSetting }
     render(
       <I18nProvider>
         <App />
@@ -539,7 +630,7 @@ describe('App connected rendering', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Interface language' }))
     fireEvent.click(screen.getByRole('option', { name: '中文' }))
 
-    expect(screen.getByRole('tab', { name: '对话' })).toBeDefined()
+    expect(screen.getByRole('banner', { name: '对话' })).toBeDefined()
     expect(screen.getByPlaceholderText('输入消息…')).toBeDefined()
     expect(screen.getByRole('button', { name: '发送消息' })).toBeDefined()
     expect(document.documentElement.lang).toBe('zh-CN')
@@ -548,6 +639,27 @@ describe('App connected rendering', () => {
     await waitFor(() => expect(screen.getByRole('heading', { name: '导出会话' })).toBeDefined())
     expect(screen.getByText('包含附件')).toBeDefined()
     expect(screen.getByRole('button', { name: '选择保存位置并导出' })).toBeDefined()
+    await waitFor(() => expect(updateDshSetting).toHaveBeenCalledWith('locale.preference', 'zh'))
+  })
+
+  it('uses the Settings language control for the shared extension and DSH preference', async () => {
+    const updateDshSetting = vi.fn().mockResolvedValue(undefined)
+    currentStore = {
+      ...storeFor({ ...connectedState(true), drawer: 'settings' }),
+      updateDshSetting,
+    }
+
+    render(
+      <I18nProvider>
+        <App />
+      </I18nProvider>,
+    )
+
+    const group = await screen.findByRole('group', { name: 'Interface language' })
+    fireEvent.click(within(group).getByRole('button', { name: '中文' }))
+
+    expect(document.documentElement.lang).toBe('zh-CN')
+    await waitFor(() => expect(updateDshSetting).toHaveBeenCalledWith('locale.preference', 'zh'))
   })
 
   it('keeps structured todo content directly above the composer', () => {
@@ -568,5 +680,28 @@ describe('App connected rendering', () => {
     expect(todoToggle?.textContent).toContain('执行子代理调研')
     expect(todoToggle?.textContent).not.toContain('查询系统信息')
     expect(container.querySelector('.dsh-conversation > .dsh-goal-strip')).toBeNull()
+  })
+
+  it('floats pending questions outside the composer layout', () => {
+    const state = connectedState(true)
+    currentStore = storeFor({
+      ...state,
+      questions: [
+        {
+          id: 'question-1',
+          sessionId: 's1',
+          prompt: 'Choose a mode',
+          choices: [{ id: 'chat', label: 'Chat' }],
+          allowFreeText: false,
+        },
+      ],
+    })
+    const { container } = render(<App />)
+
+    const interactions = container.querySelector('.dsh-conversation__interactions')
+    expect(interactions).not.toBeNull()
+    expect(interactions?.parentElement?.classList.contains('dsh-conversation')).toBe(true)
+    expect(interactions?.getAttribute('aria-live')).toBe('polite')
+    expect(container.querySelector('.dsh-compose-area .dsh-interaction')).toBeNull()
   })
 })

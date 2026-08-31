@@ -47,6 +47,7 @@ import { CheckpointDrawer } from './features/checkpoints/CheckpointDrawer.js'
 import { PromptTemplatesDrawer } from './features/prompt-templates/PromptTemplatesDrawer.js'
 import { TasksDrawer } from './features/tasks/TasksDrawer.js'
 import { QueuePanel } from './features/input/QueuePanel.js'
+import { RuntimeConnectionView } from './features/runtime/RuntimeConnectionView.js'
 import { RuntimeMissingView } from './features/runtime/RuntimeMissingView.js'
 import { SessionDrawer } from './features/sessions/SessionDrawer.js'
 import { SessionLineage } from './features/subagents/SessionLineage.js'
@@ -62,7 +63,15 @@ import {
   type OpenFileCandidate,
   type ReferenceCandidate,
 } from './app/store.js'
-import { useI18n, type Translate } from './i18n.js'
+import {
+  readConversationFontSize,
+  rememberConversationFontSize,
+  readThemePreference,
+  rememberThemePreference,
+  type ConversationFontSize,
+  type ThemePreference,
+} from './app/ui-preferences.js'
+import { useI18n, type Locale, type Translate } from './i18n.js'
 import { Icon } from './ui/Icon.js'
 import { SelectMenu } from './components/common/SelectMenu.js'
 import { hasVsCodeApi } from './vscode-api.js'
@@ -82,6 +91,7 @@ const EMPTY_OPEN_FILE_CANDIDATES: readonly OpenFileCandidate[] = []
 const EMPTY_REFERENCE_CANDIDATES: readonly ReferenceCandidate[] = []
 const EMPTY_PERMISSION_REQUESTS: readonly PermissionRequest[] = []
 const EMPTY_USER_QUESTIONS: readonly UserQuestion[] = []
+const DSH_LOCALE_SETTING_PATH = 'locale.preference'
 
 /** Keep host-backed child actions stable while still reading current App state. */
 function useStableCallback<Args extends unknown[], Result>(
@@ -159,7 +169,38 @@ export function App(): ReactElement {
   }>({ sessionId: undefined, visible: false })
   const [exportOpen, setExportOpen] = useState(false)
   const [localeOpen, setLocaleOpen] = useState(false)
+  const [conversationFontSize, setConversationFontSizeState] = useState<ConversationFontSize>(() =>
+    readConversationFontSize(),
+  )
+  const [themePreference, setThemePreferenceState] = useState<ThemePreference>(() => readThemePreference())
   const localeControlRef = useRef<HTMLSpanElement>(null)
+
+  const setConversationFontSize = useCallback((next: ConversationFontSize): void => {
+    setConversationFontSizeState(next)
+    rememberConversationFontSize(next)
+  }, [])
+
+  const setThemePreference = useCallback((next: ThemePreference): void => {
+    setThemePreferenceState(next)
+    rememberThemePreference(next)
+  }, [])
+
+  const applyLocale = useCallback(
+    (next: Locale): void => {
+      setLocale(next)
+      if (state.backend.kind !== 'connected') return
+      void store.updateDshSetting(DSH_LOCALE_SETTING_PATH, next).catch((reason: unknown) => {
+        // The extension UI remains usable even when an older/read-only DSH
+        // cannot persist its matching response-language preference.
+        setError(reason instanceof Error ? reason.message : t('settings.updateFailed'))
+      })
+    },
+    [setLocale, state.backend.kind, store, t],
+  )
+
+  useLayoutEffect(() => {
+    document.documentElement.dataset.dshTheme = themePreference
+  }, [themePreference])
 
   useEffect(() => {
     if (!hasVsCodeApi()) return
@@ -878,7 +919,7 @@ export function App(): ReactElement {
         workspaces={state.workspaces}
         activeSessionId={state.activeSessionId}
         open={state.drawer === 'sessions'}
-        showTrigger
+        showTrigger={state.activeSessionId !== undefined}
         onOpenChange={sessionOnOpenChange}
         onOpen={sessionOnOpen}
         onCreate={sessionOnCreate}
@@ -1052,7 +1093,7 @@ export function App(): ReactElement {
                     locale === option ? ' dsh-conversation__locale-option--selected' : ''
                   }`}
                   onClick={() => {
-                    setLocale(option)
+                    applyLocale(option)
                     setLocaleOpen(false)
                   }}
                 >
@@ -1072,7 +1113,7 @@ export function App(): ReactElement {
     exportOpen,
     locale,
     localeOpen,
-    setLocale,
+    applyLocale,
     setShowDshEvents,
     state.changes,
     state.changesLoading,
@@ -1091,7 +1132,7 @@ export function App(): ReactElement {
   ])
   return (
     <AppErrorBoundary>
-      <main className="dsh-app">
+      <main className="dsh-app" data-dsh-theme={themePreference}>
         <DeferredSettingsDrawer
           open={state.drawer === 'settings'}
           onOpenChange={(open) => store.setDrawer(open ? 'settings' : undefined)}
@@ -1102,6 +1143,13 @@ export function App(): ReactElement {
           dshUpdateProgress={state.dshUpdateProgress}
           onCheckDshUpdates={(force) => store.checkDshUpdates(force)}
           onInstallDshVersion={(version) => store.installDshVersion(version)}
+          theme={themePreference}
+          onThemeChange={setThemePreference}
+          locale={locale}
+          onLocaleChange={applyLocale}
+          onLocaleFromDsh={setLocale}
+          conversationFontSize={conversationFontSize}
+          onConversationFontSizeChange={setConversationFontSize}
           providers={state.providers}
           models={state.models}
           onLoadSettings={() => store.readSettings()}
@@ -1217,6 +1265,7 @@ export function App(): ReactElement {
               {backend.kind === 'connected' &&
               active === undefined &&
               state.sessions.length === 0 &&
+              state.workspaces.length > 0 &&
               welcomeVisible ? (
                 <div className="dsh-welcome-notice dsh-toast" role="status">
                   <div>
@@ -1238,23 +1287,38 @@ export function App(): ReactElement {
                 </div>
               ) : null}
               {active === undefined ? (
-                <div className="dsh-app__empty">
-                  <EmptySessionPosture
-                    workspaces={state.workspaces}
-                    presets={state.presets}
-                    empty={state.sessions.length === 0}
-                    onCreate={(workspaceId, presetId) => {
-                      void store
-                        .createSession(workspaceId, presetId)
-                        .catch((reason: unknown) =>
-                          setError(reason instanceof Error ? reason.message : t('app.error.createSession')),
-                        )
-                    }}
-                  />
-                </div>
+                <>
+                  {sessionControl}
+                  <div className="dsh-app__empty">
+                    {backend.kind === 'connected' && state.workspaces.length > 0 ? (
+                      <EmptySessionPosture
+                        workspaces={state.workspaces}
+                        presets={state.presets}
+                        empty={state.sessions.length === 0}
+                        onCreate={(workspaceId, presetId) => {
+                          void store
+                            .createSession(workspaceId, presetId)
+                            .catch((reason: unknown) =>
+                              setError(
+                                reason instanceof Error ? reason.message : t('app.error.createSession'),
+                              ),
+                            )
+                        }}
+                      />
+                    ) : (
+                      <RuntimeConnectionView
+                        state={backend}
+                        loadingSessionCatalog={backend.kind === 'connected'}
+                        onRetry={retryConnection}
+                        onOpenSettings={() => store.setDrawer('settings')}
+                      />
+                    )}
+                  </div>
+                </>
               ) : (
                 <section
                   className="dsh-conversation"
+                  data-conversation-font-size={conversationFontSize}
                   aria-label={active.title.trim() === '' ? t('app.conversation') : active.title}
                 >
                   <div className="dsh-conversation__topbar">
@@ -1309,6 +1373,57 @@ export function App(): ReactElement {
                       {conversationActionItems}
                     </ConversationActionsMenu>
                   </div>
+                  {pendingPermissions.length > 0 || pendingQuestions.length > 0 ? (
+                    <div className="dsh-conversation__interactions" aria-live="polite">
+                      {pendingPermissions.map((request) => (
+                        <ApprovalCard
+                          key={request.id}
+                          request={request}
+                          disabled={respondingInteractionId !== undefined}
+                          onRespond={(optionId) => {
+                            setRespondingInteractionId(request.id)
+                            void store
+                              .respondToPermission(request.id, optionId)
+                              .catch((reason: unknown) =>
+                                setError(
+                                  reason instanceof Error ? reason.message : t('app.error.answerApproval'),
+                                ),
+                              )
+                              .finally(() => setRespondingInteractionId(undefined))
+                          }}
+                        />
+                      ))}
+                      {pendingQuestions.map((question) => (
+                        <UserQuestionCard
+                          key={question.id}
+                          question={question}
+                          disabled={respondingInteractionId !== undefined}
+                          onRespond={(response) => {
+                            setRespondingInteractionId(question.id)
+                            void store
+                              .respondToQuestion(question.id, response)
+                              .catch((reason: unknown) =>
+                                setError(
+                                  reason instanceof Error ? reason.message : t('app.error.answerQuestion'),
+                                ),
+                              )
+                              .finally(() => setRespondingInteractionId(undefined))
+                          }}
+                          onCancel={() => {
+                            setRespondingInteractionId(question.id)
+                            void store
+                              .cancelQuestion(question.id)
+                              .catch((reason: unknown) =>
+                                setError(
+                                  reason instanceof Error ? reason.message : t('app.error.cancelQuestion'),
+                                ),
+                              )
+                              .finally(() => setRespondingInteractionId(undefined))
+                          }}
+                        />
+                      ))}
+                    </div>
+                  ) : null}
                   {exportOpen && activeSubagent === undefined ? (
                     <DeferredExportDialog
                       sessionId={active.id}
@@ -1372,14 +1487,13 @@ export function App(): ReactElement {
                       streaming={streaming}
                     />
                   )}
-                  {state.queue.length === 0 ? null : (
-                    <QueuePanel
-                      items={state.queue}
-                      onEdit={queueOnEdit}
-                      onRemove={queueOnRemove}
-                      onModeChange={queueOnModeChange}
-                    />
-                  )}
+                  <QueuePanel
+                    items={state.queue}
+                    running={activeRunning}
+                    onEdit={queueOnEdit}
+                    onRemove={queueOnRemove}
+                    onModeChange={queueOnModeChange}
+                  />
                   <div className="dsh-compose-area">
                     <TodoList key={active?.id ?? 'todo-list'} todos={state.todos} />
                     {pendingPermissions.length === 0 && pendingQuestions.length === 0 ? (
@@ -1464,57 +1578,7 @@ export function App(): ReactElement {
                           </span>
                         </div>
                       )
-                    ) : (
-                      <div className="dsh-compose-area__interactions" aria-live="polite">
-                        {pendingPermissions.map((request) => (
-                          <ApprovalCard
-                            key={request.id}
-                            request={request}
-                            disabled={respondingInteractionId !== undefined}
-                            onRespond={(optionId) => {
-                              setRespondingInteractionId(request.id)
-                              void store
-                                .respondToPermission(request.id, optionId)
-                                .catch((reason: unknown) =>
-                                  setError(
-                                    reason instanceof Error ? reason.message : t('app.error.answerApproval'),
-                                  ),
-                                )
-                                .finally(() => setRespondingInteractionId(undefined))
-                            }}
-                          />
-                        ))}
-                        {pendingQuestions.map((question) => (
-                          <UserQuestionCard
-                            key={question.id}
-                            question={question}
-                            disabled={respondingInteractionId !== undefined}
-                            onRespond={(response) => {
-                              setRespondingInteractionId(question.id)
-                              void store
-                                .respondToQuestion(question.id, response)
-                                .catch((reason: unknown) =>
-                                  setError(
-                                    reason instanceof Error ? reason.message : t('app.error.answerQuestion'),
-                                  ),
-                                )
-                                .finally(() => setRespondingInteractionId(undefined))
-                            }}
-                            onCancel={() => {
-                              setRespondingInteractionId(question.id)
-                              void store
-                                .cancelQuestion(question.id)
-                                .catch((reason: unknown) =>
-                                  setError(
-                                    reason instanceof Error ? reason.message : t('app.error.cancelQuestion'),
-                                  ),
-                                )
-                                .finally(() => setRespondingInteractionId(undefined))
-                            }}
-                          />
-                        ))}
-                      </div>
-                    )}
+                    ) : null}
                   </div>
                 </section>
               )}
@@ -1544,12 +1608,7 @@ function EmptySessionPosture(props: {
   const stagedPresetId = stagedPreset?.id ?? ''
 
   if (props.workspaces.length === 0)
-    return (
-      <EmptyState
-        title={t('app.noActiveSession')}
-        description={props.empty ? t('app.createSession') : t('app.chooseSession')}
-      />
-    )
+    return <EmptyState title={t('app.workspaceLoading')} description={t('app.workspaceLoadingDescription')} />
 
   return (
     <section className="dsh-empty-session" aria-live="polite">

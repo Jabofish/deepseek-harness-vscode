@@ -385,6 +385,36 @@ describe('AppStore startup session restoration', () => {
     store.dispose()
   })
 
+  it('notifies for history appended by an otherwise unchanged event', async () => {
+    const client = new StartupClient()
+    const store = createAppStore(client as unknown as ProtocolClient)
+    await store.initialize()
+    await new Promise((resolve) => window.setTimeout(resolve, 24))
+
+    const value = { turns: 1 }
+    client.emit({
+      type: 'event',
+      name: 'session.projection',
+      sequence: 1,
+      payload: { sessionId: 'session-active', sequence: 1, key: 'sessionStats', value },
+    })
+    await new Promise((resolve) => window.setTimeout(resolve, 24))
+
+    const listener = vi.fn()
+    store.subscribe(listener)
+    client.emit({
+      type: 'event',
+      name: 'session.projection',
+      sequence: 2,
+      payload: { sessionId: 'session-active', sequence: 2, key: 'sessionStats', value },
+    })
+    await new Promise((resolve) => window.setTimeout(resolve, 24))
+
+    expect(store.history.map((entry) => entry.sequence)).toEqual([1, 2])
+    expect(listener).toHaveBeenCalledTimes(1)
+    store.dispose()
+  })
+
   it('retains Host-emitted DSH update phases for the settings progress surface', () => {
     const client = new StartupClient()
     const store = createAppStore(client as unknown as ProtocolClient)
@@ -424,6 +454,72 @@ describe('AppStore startup session restoration', () => {
       }),
     )
 
+    store.dispose()
+  })
+
+  it('opens a durable workspace session when the session summary projection is temporarily empty', async () => {
+    const client = new StartupClient((request) => {
+      if (request.type === 'session.list') return { items: [] }
+      if (request.type === 'workspace.list') return { items: [workspace] }
+      if (request.type === 'session.open')
+        return {
+          ...blankSession,
+          history: [],
+          permissionPresets: [],
+          configuration: {
+            preset: 'standard',
+            toolMode: 'native',
+            permissionPreset: 'workspace-write',
+            planMode: false,
+            model: { providerId: 'deepseek', modelId: 'deepseek-chat' },
+          },
+        }
+      return startupResponse(request)
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+
+    await store.initialize()
+
+    expect(store.activeSessionId).toBe('session-blank')
+    expect(client.requests).toContainEqual(
+      expect.objectContaining({ type: 'session.open', payload: { sessionId: 'session-blank' } }),
+    )
+    store.dispose()
+  })
+
+  it('retries startup restoration when a later workspace refresh reveals a session', async () => {
+    let visible = false
+    const client = new StartupClient((request) => {
+      if (request.type === 'session.list') return visible ? { items: [activeSession] } : { items: [] }
+      if (request.type === 'workspace.list')
+        return visible
+          ? {
+              items: [
+                {
+                  ...workspace,
+                  sessionIds: [activeSession.id],
+                  sessionCount: 1,
+                },
+              ],
+            }
+          : { items: [] }
+      return startupResponse(request)
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+
+    await store.initialize()
+    expect(store.activeSessionId).toBeUndefined()
+
+    visible = true
+    client.emit({
+      type: 'event',
+      name: 'workspace.changed',
+      sequence: 1,
+      payload: {},
+    })
+
+    await vi.waitFor(() => expect(store.activeSessionId).toBe('session-active'))
+    expect(client.requests.filter((request) => request.type === 'session.open')).toHaveLength(1)
     store.dispose()
   })
 
@@ -489,7 +585,7 @@ describe('AppStore startup session restoration', () => {
 
     await vi.waitFor(() => expect(store.activeSessionId).toBe('session-active'))
     expect(store.timeline.sessionId).toBe('session-active')
-    expect(settled).toBe(false)
+    expect(settled).toBe(true)
 
     releaseQueue?.([])
     await opening

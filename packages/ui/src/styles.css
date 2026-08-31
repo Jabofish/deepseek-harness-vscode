@@ -535,7 +535,7 @@
 .dsh-tool-card__status--running,
 .dsh-tool-card__status--queued,
 .dsh-tool-row--running .dsh-tool-row__status {
-  color: var(--vscode-progressBar-background, var(--dsh-muted));
+  color: var(--dsh-primary);
 }
 
 .dsh-tool-card__status--running::before,
@@ -590,7 +590,7 @@
   overflow: auto;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  color: var(--vscode-textPreformat-foreground, var(--dsh-text));
+  color: var(--dsh-text);
   font-size: var(--dsh-tool-detail-font-size);
   line-height: var(--dsh-tool-detail-line-height);
 }
@@ -753,14 +753,14 @@
 
 .dsh-tool-row__line-number {
   padding-inline: var(--dsh-space-2);
-  color: var(--vscode-editorLineNumber-foreground, var(--dsh-muted));
+  color: var(--dsh-muted);
   text-align: end;
   user-select: none;
 }
 
 .dsh-tool-row__read-line code {
   padding-inline: var(--dsh-space-2);
-  color: var(--vscode-textPreformat-foreground, var(--dsh-text));
+  color: var(--dsh-text);
 }
 
 .dsh-tool-row__source-list {

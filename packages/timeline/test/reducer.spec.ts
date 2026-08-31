@@ -735,7 +735,7 @@ describe('reduceTimeline', () => {
     ])
   })
 
-  it('retains producer-owned user messages for Trajectory context projection', () => {
+  it('retains producer-owned user messages as non-chat context nodes', () => {
     const next = reduceTimeline(initial, {
       sequence: 1,
       event: {

@@ -5,6 +5,7 @@ import type { BackendCandidate, BackendEndpoint } from '@dsh-vscode/domain'
 import { Alpha2VersionAdapter } from '../src/versions/alpha2/adapter.js'
 import type { AlphaLoopbackApiClient, AlphaWebSocket } from '../src/versions/alpha/transport.js'
 import { callRpc, unwrapRpcResultValue } from '../src/versions/rc6/rpc.js'
+import { Rc6InteractionRepository } from '../src/repositories/interaction-repository.js'
 
 class FakeWebSocket implements AlphaWebSocket {
   public static readonly instances: FakeWebSocket[] = []
@@ -282,6 +283,92 @@ describe('DSH 0.1.2-alpha.2 Connection/Gateway contract', () => {
       code: 'BACKEND_BUSY',
       context: { rpcCode: 'agent-busy' },
     })
+    await transport.close()
+  })
+
+  it('unwraps the shared question response before resolving the alpha.2 waterfall', async () => {
+    FakeWebSocket.instances.length = 0
+    const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
+      Promise.resolve(successResponse(init, undefined)),
+    )
+    const transport = client(fetch)
+    const repository = new Rc6InteractionRepository(transport, { resetPendingOnSubscribe: false })
+    const iterator = transport.openEventStream(new AbortController().signal)[Symbol.asyncIterator]()
+    const first = iterator.next()
+    const socket = await waitForSocket()
+    socket.open()
+    await waitForSent(socket, 1)
+    socket.message(streamItem(socket, { type: 'ready', clientId: 'client-1', host: { home: '/home/test' } }))
+    socket.message(
+      streamItem(socket, {
+        type: 'waterfall',
+        event: 'user-questions/request',
+        eventId: 'event-question',
+        agentId: 's1',
+        request: {
+          questions: [
+            {
+              id: 'purpose',
+              question: '主要用途?',
+              options: [{ label: 'Agent/工具调用' }],
+            },
+            {
+              id: 'quality',
+              question: '质量偏好?',
+              options: [{ label: '均衡 (推荐)' }],
+            },
+          ],
+        },
+      }),
+    )
+    await expect(first).resolves.toMatchObject({
+      value: { type: 'question/requested', rpcId: 'event-question', sessionId: 's1' },
+      done: false,
+    })
+
+    repository.remember({
+      type: 'question.requested',
+      question: {
+        id: 'purpose',
+        rpcId: 'event-question',
+        sessionId: 's1',
+        prompt: '主要用途?',
+        choices: [{ id: 'Agent/工具调用', label: 'Agent/工具调用' }],
+        allowFreeText: false,
+        items: [
+          {
+            id: 'purpose',
+            prompt: '主要用途?',
+            choices: [{ id: 'Agent/工具调用', label: 'Agent/工具调用' }],
+            allowFreeText: false,
+          },
+          {
+            id: 'quality',
+            prompt: '质量偏好?',
+            choices: [{ id: '均衡 (推荐)', label: '均衡 (推荐)' }],
+            allowFreeText: false,
+          },
+        ],
+      },
+    })
+    await repository.respondToQuestion('purpose', [
+      { id: 'purpose', response: 'Agent/工具调用' },
+      { id: 'quality', response: '均衡 (推荐)' },
+    ])
+
+    const request = JSON.parse(bodyText(fetch.mock.calls[0]?.[1])) as {
+      readonly payload: { readonly args: { readonly outcome: unknown } }
+    }
+    expect(request.payload.args.outcome).toEqual({
+      kind: 'result',
+      value: {
+        answers: [
+          { id: 'purpose', selected: ['Agent/工具调用'] },
+          { id: 'quality', selected: ['均衡 (推荐)'] },
+        ],
+      },
+    })
+    await iterator.return?.()
     await transport.close()
   })
 })

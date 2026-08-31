@@ -194,6 +194,48 @@ describe('DeepSeek Harness 0.1.0-rc.6 contract', () => {
         },
       }),
     ).toMatchObject({ type: 'tool.updated', tool: { completedAt: '1970-01-01T00:00:05.600Z' } })
+    expect(
+      rc6Mapper.event('tool/result', {
+        sessionId: 's1',
+        data: {
+          callId: 'call-error',
+          name: 'ask_user_question',
+          message: { isError: true, content: [{ type: 'text', text: 'the answer was rejected' }] },
+        },
+      }),
+    ).toMatchObject({
+      type: 'tool.updated',
+      tool: { id: 'call-error', status: 'failed', error: 'the answer was rejected' },
+    })
+    expect(
+      rc6Mapper.event('tool/result', {
+        sessionId: 's1',
+        data: {
+          callId: 'call-error-nested',
+          message: {
+            source: { kind: 'tool', callId: 'call-error-nested' },
+            content: [
+              {
+                type: 'tool-result',
+                toolCallId: 'call-error-nested',
+                content: ['[truncated]'],
+                isError: true,
+              },
+            ],
+            role: 'user',
+            id: 'message-error-nested',
+          },
+        },
+      }),
+    ).toMatchObject({
+      type: 'tool.updated',
+      tool: {
+        id: 'call-error-nested',
+        status: 'failed',
+        error: '[truncated]',
+        outputSummary: '[truncated]',
+      },
+    })
   })
 
   it('projects the pinned upstream image attachment reference without leaking image bytes', () => {
