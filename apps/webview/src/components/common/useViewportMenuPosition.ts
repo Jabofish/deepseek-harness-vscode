@@ -46,11 +46,15 @@ export function useViewportMenuPosition({
       const viewportWidth = document.documentElement.clientWidth || window.innerWidth
       const viewportHeight = document.documentElement.clientHeight || window.innerHeight
       const anchorRect = anchor.getBoundingClientRect()
-      const menuRect = menu.getBoundingClientRect()
       const availableWidth = Math.max(0, viewportWidth - margin * 2)
       const availableHeight = Math.max(0, viewportHeight - margin * 2)
-      const width = Math.min(Math.max(menuRect.width, 1), availableWidth)
-      const height = Math.min(Math.max(menuRect.height, 1), availableHeight)
+      // The menu's entry animation scales the visual box, so
+      // getBoundingClientRect() would read the mid-animation size and fold
+      // it into the inline width — every reopen would then shrink the menu
+      // again on top of the previous open. offsetWidth/offsetHeight are
+      // layout sizes and ignore transforms entirely.
+      const width = Math.min(Math.max(menu.offsetWidth, 1), availableWidth)
+      const height = Math.min(Math.max(menu.offsetHeight, 1), availableHeight)
       const direction = getComputedStyle(anchor).direction
       const alignedLeft =
         align === 'start'
