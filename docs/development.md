@@ -5,7 +5,7 @@
 - Node.js：`>=22.19.0 <27`，CI 使用 `22.19.0`。
 - pnpm：`11.19.0`，由根 `packageManager` 固定。
 - VS Code：扩展 `engines.vscode` 为 `^1.125.0`。
-- DSH：已发布 `0.1.0-rc.6` 至 `0.1.1-rc.2`，保留源码级 `0.1.2-alpha.1` 适配并适配已发布 `0.1.2-alpha.2`；任何非空未知版本标签会走兼容降级；真实联调前用 `dsh --version` 确认。alpha 尚未进入安装默认值。
+- DSH：已发布 `0.1.0-rc.6` 至 `0.1.1-rc.2`，保留源码级 `0.1.2-alpha.1` 适配并适配已发布 `0.1.2-alpha.2`、`0.1.2-alpha.3`；任何非空未知版本标签会按最新已验证 Adapter 优先进行只读兼容探测，成功后保留真实版本并显示警告；真实联调前用 `dsh --version` 确认。alpha 尚未进入安装默认值。
 
 ## 首次安装
 
@@ -53,7 +53,7 @@ pnpm build
 
 1. 选择 `new-isolated`，或 `auto` 且确认没有可连接实例。
 2. `dsh.connection.managedPort=0` 使用随机空闲端口；固定端口用于可预测调试。
-3. 托管启动使用版本化参数数组：rc.6/rc.7 为 `--profile web --host 127.0.0.1 --port <n>`；rc.8、rc.1、rc.2、alpha.1 和 alpha.2 在同一组参数中追加已由上游声明的 `--no-open`；未知版本不猜测该可选参数。
+3. 托管启动使用版本化参数数组：rc.6/rc.7 为 `--profile web --host 127.0.0.1 --port <n>`；rc.8、rc.1、rc.2、alpha.1、alpha.2 和 alpha.3 在同一组参数中追加已由上游声明的 `--no-open`；未知版本不猜测该可选参数。
 4. 扩展关闭后只结束本次扩展创建的进程。
 
 ## Remote SSH/WSL/Dev Container

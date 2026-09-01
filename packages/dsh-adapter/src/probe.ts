@@ -2,7 +2,8 @@ import type { BackendCandidate, ConnectedBackend } from '@dsh-vscode/domain'
 import { AppError } from '@dsh-vscode/domain'
 
 import type { BackendProbe } from '@dsh-vscode/application'
-import type { DshVersionAdapter } from './contracts.js'
+import { isKnownDshVersion, normalizeDshVersion, type DshVersionAdapter } from './contracts.js'
+import { withBestEffortAdapterCapabilities, withExactAdapterCapabilities } from './compatibility.js'
 
 export interface VersionedBackendProbeOptions {
   /**
@@ -42,23 +43,51 @@ export class VersionedBackendProbe implements BackendProbe {
     candidate: BackendCandidate,
     signal?: AbortSignal,
   ): Promise<ConnectedBackend | undefined> {
+    throwIfProbeAborted(signal)
     if (!(await this.preflight(candidate, signal))) return undefined
+    throwIfProbeAborted(signal)
+    const hintedVersion = normalizeDshVersion(candidate.runtimeVersion)
+    const compatibilityProbe = hintedVersion !== undefined && !isKnownDshVersion(hintedVersion)
+    const adapters = compatibilityProbe ? orderCompatibilityAdapters(this.adapters) : this.adapters
     let incompatible: AppError | undefined
-    for (const adapter of this.adapters) {
+    for (const adapter of adapters) {
+      throwIfProbeAborted(signal)
       try {
-        const capabilities = await adapter.probe(candidate, signal)
+        const capabilities = compatibilityProbe
+          ? adapter.probeCompatibility === undefined
+            ? undefined
+            : await adapter.probeCompatibility(candidate, signal)
+          : await adapter.probe(candidate, signal)
+        throwIfProbeAborted(signal)
         if (capabilities !== undefined) {
+          // A legacy adapter may already have classified an unversioned
+          // candidate as best-effort. Preserve that classification instead of
+          // letting the outer probe label it exact merely because no runtime
+          // string was available to trigger the unknown-version branch.
+          const bestEffort =
+            compatibilityProbe ||
+            capabilities.compatibilityMode === 'best-effort' ||
+            capabilities.compatibilityWarning !== undefined
+          const selectedCapabilities = bestEffort
+            ? withBestEffortAdapterCapabilities(capabilities, hintedVersion, adapter.id)
+            : withExactAdapterCapabilities(capabilities, adapter.id)
           return {
             endpoint: candidate.endpoint,
             ownership: 'external',
-            capabilities,
+            capabilities: selectedCapabilities,
             ...(candidate.pid === undefined ? {} : { pid: candidate.pid }),
           }
         }
       } catch (error) {
-        // A version-specific probe may decline a candidate. Continue with the
-        // legacy/fallback adapter unless the caller cancelled the operation.
-        if (signal?.aborted === true || (error instanceof DOMException && error.name === 'AbortError'))
+        // A version-specific or compatibility probe may decline a candidate.
+        // Continue with the next newest verified adapter unless the caller
+        // cancelled the operation.
+        if (
+          signal?.aborted === true ||
+          (error instanceof AppError && error.code === 'REQUEST_CANCELLED') ||
+          (error instanceof DOMException && error.name === 'AbortError') ||
+          (error instanceof Error && error.name === 'AbortError')
+        )
           throw error
         // An endpoint that answered the pinned DSH handshake but reported no
         // compatible host version is a DSH, not an unreachable service. Keep
@@ -101,6 +130,22 @@ export class VersionedBackendProbe implements BackendProbe {
       clearTimeout(timer)
     }
   }
+}
+
+function throwIfProbeAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted !== true) return
+  throw signal.reason ?? new DOMException('The DSH compatibility probe was cancelled.', 'AbortError')
+}
+
+function orderCompatibilityAdapters(adapters: readonly DshVersionAdapter[]): readonly DshVersionAdapter[] {
+  return adapters
+    .map((adapter, index) => ({ adapter, index }))
+    .sort(
+      (left, right) =>
+        (right.adapter.compatibilityPriority ?? 0) - (left.adapter.compatibilityPriority ?? 0) ||
+        left.index - right.index,
+    )
+    .map(({ adapter }) => adapter)
 }
 
 async function releasePreflightBody(response: Response): Promise<void> {

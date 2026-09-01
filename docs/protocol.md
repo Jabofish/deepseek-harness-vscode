@@ -8,7 +8,7 @@
 - 长期状态变化使用递增 `sequence` 的 event；UI 忽略重复/旧序号。
 - Webview 不获得 DSH endpoint、pid、命令行、绝对工作区路径、Secret 或原始诊断 body。
 - Host 不信任 Webview：所有 enum、id、port、path、数组长度和字符串长度在 Host 再验证。
-- 协议只传可序列化 DTO，不传 Error、Map、Set、AbortSignal、VS Code 对象或上游 rc.6–0.1.1-rc.2/0.1.2-alpha.1/0.1.2-alpha.2 类。
+- 协议只传可序列化 DTO，不传 Error、Map、Set、AbortSignal、VS Code 对象或上游 rc.6–0.1.1-rc.2/0.1.2-alpha.1/0.1.2-alpha.2/0.1.2-alpha.3 类。
 
 ## 生命周期
 
@@ -33,7 +33,7 @@ Schema 已为以下域定义严格 discriminated union：应用/连接/Runtime�
 
 当前 Webview 已使用的关键通路包括 `app.ready`、`connection.configure/retry`、`runtime.update.check/install`、`session.list/open/create/sendPrompt/cancel`、队列操作、`providers.list`、`models.list`、`preset.list/select`、附件选择、已打开文件列表/添加、`reference.list`、`feedback.*` 和审批/问题响应。`connection.configure` 只接收模式与用户输入的端点，Host 校验并持久化 loopback URL；端点本身不会回传 Webview。`runtime.update.*` 只传递脱敏版本标签；npm 元数据查询、精确版本校验和全局安装均由 Extension Host 完成，Webview 不直接联网或执行命令。更新期间 Host 通过 `runtime.update.progress` 事件发送 `checking`、`downloading`、`verifying`、`completed` 或 `failed` 阶段；npm 不提供跨版本稳定的字节百分比，因此 Webview 显示有阶段文字的非确定进度条，不伪造下载百分比。rc.8/rc.1/rc.2 的 `imageLimits` 会话投影用于附件数量/大小的 Host 对齐预检；支持图片输入的动态斜杠命令通过 Host 转换为上游 `EncodedImageAttachment`，命令不支持图片或执行失败时保留草稿和附件句柄；工具 mutation 的 `locations` 会映射为产出文件 chips 及回复正文中的安全文件提及。中断回复、结构化 `turn/end` 失败和 Agent Teams 事件以安全 Domain DTO 展示。rc.1 的工作区连接会在满足官方四项条件时复用空白会话；rc.2 仅保留官方 `session.create.sessionId` 幂等语义，不发送已删除的 `reuseWorkspaceBlank` 字段；旧版本缺少这些字段时沿用基础创建流程。旧版本没有可选反馈、引用或 locations 契约时，Adapter 返回空结果或安全降级。rc.6–0.1.1-rc.2 不包含的动态命令、Plugin、Workflow 和部分 Job 控制由 Adapter 明确返回不可用，不会退化成任意模型 Prompt。
 
-`0.1.2-alpha.1` 与已发布的 `0.1.2-alpha.2` 由 Extension Host 内的版本化 alpha 适配处理：新 `/api/<namespace>/<method>` Connection RPC、Cookie 握手和 `/api/remote.mux` 流均在 Host 处理，再投影为同一组 Domain/Application DTO；alpha.2 的命名空间 Remote 错误在版本边界归一化，`ignorable` 事件和可选 agent-preset 插件组合只以严格 DTO 向上投影。Webview 不接收 launch token、Cookie、endpoint 或原始上游错误。该适配不改变 Webview 协议版本，也不把 alpha 加入安装默认值。
+`0.1.2-alpha.1`、`0.1.2-alpha.2` 与已发布的 `0.1.2-alpha.3` 由 Extension Host 内的版本化 alpha 适配处理：新 `/api/<namespace>/<method>` Connection RPC、Cookie 握手和 `/api/remote.mux` 流均在 Host 处理，再投影为同一组 Domain/Application DTO；alpha.2/alpha.3 的命名空间 Remote 错误在版本边界归一化，`ignorable` 事件和可选 agent-preset 插件组合只以严格 DTO 向上投影。Webview 不接收 launch token、Cookie、endpoint 或原始上游错误。该适配不改变 Webview 协议版本，也不把 alpha 加入安装默认值。
 
 实现各能力时必须扩展 discriminated union，而不是发送通用 `{ action: string, payload: any }`。新增消息同时更新：Schema、类型、Router 测试、ProtocolClient 测试和本文件。
 

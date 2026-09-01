@@ -50,6 +50,7 @@ const models: readonly ModelDescriptor[] = [
 
 function settingsFixture(): ExtensionSettingsSummary {
   return {
+    extensionVersion: '0.1.3',
     connection: { mode: 'new-isolated', customEndpointConfigured: false },
     runtime: { customExecutableConfigured: false, autoStart: true },
     security: { defaultPermissionPreset: 'workspace-write' },
@@ -188,6 +189,7 @@ describe('SettingsDrawer', () => {
   it('loads and renders general settings facts', async () => {
     renderDrawer()
     await waitFor(() => expect(screen.getByText('new-isolated')).toBeDefined())
+    expect(screen.getByText('0.1.3')).toBeDefined()
     expect(screen.getByText('0.6.0')).toBeDefined()
     expect(screen.getByText('deepseek/deepseek-chat')).toBeDefined()
   })

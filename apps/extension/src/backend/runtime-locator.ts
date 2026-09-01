@@ -263,7 +263,7 @@ function normalizeVersion(output: string): string {
 function isDshVersion(output: string): boolean {
   // Version syntax is intentionally not a gate.  Future DSH builds may use a
   // different label; the adapter probe is the compatibility boundary and can
-  // surface a warning while retaining basic functionality.
+  // surface a warning while retaining best-effort functionality.
   return normalizeVersion(output) !== ''
 }
 

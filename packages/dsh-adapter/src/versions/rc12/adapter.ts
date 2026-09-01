@@ -14,6 +14,7 @@ const RC12_MAX_PROMPT_ATTACHMENT_TOTAL_BYTES = 200 * 1024 * 1024
 export class Rc12VersionAdapter extends Rc8VersionAdapter {
   public override readonly id = 'dsh-0.1.1-rc.2'
   public override readonly supportedVersion = '0.1.1-rc.2'
+  public override readonly compatibilityPriority: number = 70
   public override readonly fallback = false
   public override readonly protocolVersion = 'rc12'
 

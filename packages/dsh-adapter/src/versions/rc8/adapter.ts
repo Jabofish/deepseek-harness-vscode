@@ -8,14 +8,15 @@ import { Rc8CommandRepository } from '../../repositories/command-repository.js'
 export class Rc8VersionAdapter extends Rc6VersionAdapter {
   public override readonly id: string = 'dsh-0.1.0-rc.8'
   public override readonly supportedVersion: string = '0.1.0-rc.8'
+  public override readonly compatibilityPriority: number = 50
   public override readonly fallback = false
   public override readonly protocolVersion: string = 'rc8'
   protected override readonly requiresHome = true
 
   protected override acceptsRuntimeHint(version: string | undefined): boolean {
     // A missing or unknown runtime hint cannot prove that the rc.8-only
-    // handshake/event additions are present. Let the rc.6 fallback own that
-    // compatibility path instead of silently selecting the newest mapper.
+    // handshake/event additions are present. The explicit compatibility probe
+    // bypasses this exact-version check and verifies the contract separately.
     return version === this.supportedVersion
   }
 

@@ -49,6 +49,7 @@ import {
   type ConnectionRequest,
 } from '@dsh-vscode/application'
 import {
+  Alpha3VersionAdapter,
   Alpha2VersionAdapter,
   AlphaVersionAdapter,
   Rc6VersionAdapter,
@@ -154,6 +155,7 @@ export interface CompositionRoot extends vscode.Disposable {
 
 export function createCompositionRoot(context: vscode.ExtensionContext): CompositionRoot {
   const configuration = new VsCodeConfigurationSource(vscode.workspace)
+  const extensionVersion = readExtensionVersion(context)
   const channel = vscode.window.createOutputChannel(OUTPUT_CHANNEL_NAME)
   const diagnostics = new RedactedDiagnostics(channel)
   const currentWorkspaceFolders = (): readonly vscode.WorkspaceFolder[] => {
@@ -351,6 +353,10 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     ...adapterOptions,
     authCookie: (endpoint) => endpointCookies.get(endpoint.baseUrl),
   })
+  const alpha3Adapter = new Alpha3VersionAdapter({
+    ...adapterOptions,
+    authCookie: (endpoint) => endpointCookies.get(endpoint.baseUrl),
+  })
   const alphaAdapter = new AlphaVersionAdapter({
     ...adapterOptions,
     authCookie: (endpoint) => endpointCookies.get(endpoint.baseUrl),
@@ -361,6 +367,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
   const rc7Adapter = new Rc7VersionAdapter(adapterOptions)
   const rc6Adapter = new Rc6VersionAdapter(adapterOptions)
   const adapters = [
+    alpha3Adapter,
     alpha2Adapter,
     alphaAdapter,
     rc12Adapter,
@@ -2069,7 +2076,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     if (request.type === 'settings.read') return publicValue(await settingsUseCases.read(signal))
     if (request.type === 'settings.openDocument') return settingsUseCases.openDocument(signal)
     if (request.type === 'extensionSettings.read')
-      return publicValue(publicExtensionSettings(configuration.read()))
+      return publicValue(publicExtensionSettings(configuration.read(), extensionVersion))
     if (request.type === 'settings.update')
       return settingsUseCases.update(request.payload.path, request.payload.value, signal)
     if (request.type === 'settings.unset') return settingsUseCases.unset(request.payload.path, signal)
@@ -2924,8 +2931,12 @@ function publicValue(value: unknown): unknown {
   return sanitize(value)
 }
 
-function publicExtensionSettings(settings: ExtensionSettings): ExtensionSettingsSummary {
+function publicExtensionSettings(
+  settings: ExtensionSettings,
+  extensionVersion: string,
+): ExtensionSettingsSummary {
   return {
+    extensionVersion,
     connection: {
       mode: settings.connection.mode,
       customEndpointConfigured: settings.connection.serverUrl !== undefined,
@@ -2937,6 +2948,12 @@ function publicExtensionSettings(settings: ExtensionSettings): ExtensionSettings
     security: { defaultPermissionPreset: settings.security.defaultPermissionPreset },
     defaultAgent: settings.defaultAgent,
   }
+}
+
+function readExtensionVersion(context: vscode.ExtensionContext): string {
+  const packageJson = context.extension.packageJSON as unknown as { readonly version?: unknown }
+  const version = packageJson.version
+  return typeof version === 'string' && version.trim() !== '' ? version : 'unknown'
 }
 
 /** Zod-inferred optional fields carry `| undefined`; the domain's

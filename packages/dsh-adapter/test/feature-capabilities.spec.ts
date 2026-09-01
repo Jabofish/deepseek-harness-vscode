@@ -42,6 +42,17 @@ describe('staged feature capability profile', () => {
     expect(missing.capabilities['RV-01'].state).toBe('unavailable')
   })
 
+  it('does not become pinned when a best-effort adapter reports a known wire version', () => {
+    const profile = deriveFeatureCapabilityProfile({
+      ...base,
+      dshVersion: '0.1.2-alpha.3',
+      compatibilityMode: 'best-effort',
+    })
+
+    expect(profile.source).toBe('compatibility-fallback')
+    expect(profile.capabilities['ED-01'].state).toBe('compatibility-fallback')
+  })
+
   it('keeps every pinned release and alpha adapter on the same profile contract', () => {
     for (const dshVersion of SUPPORTED_DSH_VERSIONS) {
       const profile = deriveFeatureCapabilityProfile({

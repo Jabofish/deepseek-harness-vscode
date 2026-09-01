@@ -10,17 +10,20 @@ import { isKnownDshVersion } from './contracts.js'
 
 type CapabilityInput = Pick<
   BackendCapabilities,
-  'dshVersion' | 'protocolVersion' | 'features' | 'compatibilityWarning'
+  'dshVersion' | 'protocolVersion' | 'features' | 'compatibilityMode' | 'compatibilityWarning'
 >
 
 /**
  * Derive the staged feature readiness profile without inferring support from
- * a method name or from a UI response. Unknown runtimes retain the existing
- * rc.6 basic fallback, but every new surface is explicitly downgraded until
- * its own contract is verified.
+ * a method name or from a UI response. Unknown runtimes may use the newest
+ * verified adapter implementation in best-effort mode, but every new surface
+ * is explicitly downgraded until its own contract is verified.
  */
 export function deriveFeatureCapabilityProfile(input: CapabilityInput): FeatureCapabilityProfile {
-  const pinned = input.compatibilityWarning === undefined && isKnownDshVersion(input.dshVersion)
+  const pinned =
+    input.compatibilityMode !== 'best-effort' &&
+    input.compatibilityWarning === undefined &&
+    isKnownDshVersion(input.dshVersion)
   const source: FeatureCapabilityProfile['source'] = pinned ? 'pinned-adapter' : 'compatibility-fallback'
 
   const upstream = (

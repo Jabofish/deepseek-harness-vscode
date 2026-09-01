@@ -7,7 +7,13 @@ import {
   type BackendEvent,
 } from '@dsh-vscode/domain'
 
-import { normalizeDshVersion, type DshTransport, type DshVersionAdapter } from '../../contracts.js'
+import {
+  isKnownDshVersion,
+  normalizeDshVersion,
+  type DshTransport,
+  type DshVersionAdapter,
+} from '../../contracts.js'
+import { withBestEffortAdapterCapabilities, withExactAdapterCapabilities } from '../../compatibility.js'
 import type { Rc6AdapterOptions } from '../rc6/adapter.js'
 import type { ExportFileSystem } from '../../repositories/export-repository.js'
 import { Rc8CommandRepository } from '../../repositories/command-repository.js'
@@ -41,11 +47,12 @@ export type AlphaAdapterOptions = Omit<Rc6AdapterOptions, 'webSocket'> & {
   readonly exportFileSystem?: ExportFileSystem
 }
 
-/** Shared adapter assembly for the upstream 0.1.2 alpha Connection/Gateway protocol. */
+/** Shared adapter assembly for the verified 0.1.2 alpha Connection/Gateway contract. */
 export class AlphaVersionAdapter implements DshVersionAdapter {
   public readonly id: string = 'dsh-0.1.2-alpha.1'
   public readonly supportedVersion: string = '0.1.2-alpha.1'
   public readonly protocolVersion: string = 'alpha1'
+  public readonly compatibilityPriority: number = 80
   public readonly fallback: boolean = false
 
   public constructor(protected readonly options: AlphaAdapterOptions) {}
@@ -54,12 +61,32 @@ export class AlphaVersionAdapter implements DshVersionAdapter {
     candidate: BackendCandidate,
     signal?: AbortSignal,
   ): Promise<BackendCapabilities | undefined> {
+    return this.probeAlpha(candidate, signal, false)
+  }
+
+  public async probeCompatibility(
+    candidate: BackendCandidate,
+    signal?: AbortSignal,
+  ): Promise<BackendCapabilities | undefined> {
+    return this.probeAlpha(candidate, signal, true)
+  }
+
+  private async probeAlpha(
+    candidate: BackendCandidate,
+    signal: AbortSignal | undefined,
+    compatibility: boolean,
+  ): Promise<BackendCapabilities | undefined> {
     const hintedVersion = normalizeDshVersion(candidate.runtimeVersion)
-    // Alpha removed the old host descriptor, so an unversioned endpoint has
-    // no safe negotiation path. Let the published rc.6 fallback own unknown
-    // candidates instead of treating a generic `{ items: [] }` response as
-    // proof of this distinct wire family.
-    if (hintedVersion !== this.supportedVersion) return undefined
+    // Exact probes are still strict. Compatibility probes are a separate,
+    // read-only path for a non-empty unknown runtime label; the successful
+    // response, not the release suffix, is what permits reuse of this
+    // adapter's known contract.
+    if (
+      compatibility
+        ? hintedVersion === undefined || isKnownDshVersion(hintedVersion)
+        : hintedVersion !== this.supportedVersion
+    )
+      return undefined
     const transport = this.createTransport(candidate.endpoint)
     try {
       const value = await callRpc<unknown>(transport, 'session.list', {}, signal)
@@ -84,10 +111,12 @@ export class AlphaVersionAdapter implements DshVersionAdapter {
           'feedback',
         ]),
       }
-      return {
-        ...capabilities,
-        featureProfile: deriveFeatureCapabilityProfile(capabilities),
-      }
+      return compatibility
+        ? withBestEffortAdapterCapabilities(capabilities, hintedVersion, this.id)
+        : withExactAdapterCapabilities(
+            { ...capabilities, featureProfile: deriveFeatureCapabilityProfile(capabilities) },
+            this.id,
+          )
     } catch (error) {
       if (signal?.aborted === true) throw error
       return undefined

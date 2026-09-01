@@ -4,6 +4,7 @@ import { Rc6VersionAdapter } from '../rc6/adapter.js'
 export class Rc7VersionAdapter extends Rc6VersionAdapter {
   public override readonly id = 'dsh-0.1.0-rc.7'
   public override readonly supportedVersion = '0.1.0-rc.7'
+  public override readonly compatibilityPriority: number = 40
   public override readonly fallback = false
   public override readonly protocolVersion = 'rc7'
 

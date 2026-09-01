@@ -9,8 +9,11 @@
 | 默认源码提交               | `b150a551b8`                                |
 | Node 最低版本              | `22.19.0`                                   |
 | 已发布 alpha.2 npm         | `@deepseek-ai/dsh@0.1.2-alpha.2`            |
+| 已发布 alpha.3 npm         | `@deepseek-ai/dsh@0.1.2-alpha.3`            |
 | alpha.2 源码 tag           | `dsh-v0.1.2-alpha.2`                        |
 | alpha.2 源码提交           | `0a53fb55bea101816fa226bb964ae2bed71c343b`  |
+| alpha.3 源码 tag           | `dsh-v0.1.2-alpha.3`                        |
+| alpha.3 源码提交           | `dd6322d604e00eec1ba5e0c8541159906a21094a`  |
 | alpha.1 源码 tag（未发布） | `dsh-v0.1.2-alpha.1`                        |
 | alpha.1 源码提交（未发布） | `cd5ef8148158c3a752a658978873241fdf8e2bbc`  |
 
@@ -29,6 +32,11 @@
 - [alpha.2 npm package](https://www.npmjs.com/package/@deepseek-ai/dsh/v/0.1.2-alpha.2)
 - [alpha.2 Gateway error vocabulary](https://github.com/deepseek-ai/deepseek-harness/blob/0a53fb55bea101816fa226bb964ae2bed71c343b/packages/api/gateway/src/remote-error-codes.ts)
 - [alpha.2 plugin inventory projection](https://github.com/deepseek-ai/deepseek-harness/blob/0a53fb55bea101816fa226bb964ae2bed71c343b/packages/host/plugin-inventory/src/types.ts)
+- [alpha.3 release tag](https://github.com/deepseek-ai/deepseek-harness/tree/dsh-v0.1.2-alpha.3)
+- [alpha.3 commit](https://github.com/deepseek-ai/deepseek-harness/commit/dd6322d604e00eec1ba5e0c8541159906a21094a)
+- [alpha.3 Connection package](https://github.com/deepseek-ai/deepseek-harness/blob/dd6322d604e00eec1ba5e0c8541159906a21094a/packages/client/connection/src/client/connection.ts)
+- [alpha.3 Gateway heartbeat](https://github.com/deepseek-ai/deepseek-harness/blob/dd6322d604e00eec1ba5e0c8541159906a21094a/packages/api/gateway/src/stream-server.ts)
+- [alpha.3 Session Controller](https://github.com/deepseek-ai/deepseek-harness/blob/dd6322d604e00eec1ba5e0c8541159906a21094a/packages/api/session-controller/src/commands.ts)
 
 ## rc.6 固定契约核对记录
 
@@ -46,26 +54,27 @@ Slice 0 重新核对了 DSH rc.6 固定提交 [`47f943859bef60e4160492346772ded9
 
 托管进程的 CLI 参数不是协议 Adapter 可以跨版本猜测的公共字段，必须由版本化启动契约生成。当前已核实的 Web Profile 参数如下：
 
-| DSH 版本                                                                   | 托管参数                                    |
-| -------------------------------------------------------------------------- | ------------------------------------------- |
-| `0.1.0-rc.6`、`0.1.0-rc.7`                                                 | `--profile web --host 127.0.0.1 --port <n>` |
-| `0.1.0-rc.8`、`0.1.1-rc.1`、`0.1.1-rc.2`、`0.1.2-alpha.1`、`0.1.2-alpha.2` | 上述参数加 `--no-open`                      |
-| 未知版本                                                                   | 只使用公共参数，不猜测可选 flag             |
+| DSH 版本                                                                                    | 托管参数                                    |
+| ------------------------------------------------------------------------------------------- | ------------------------------------------- |
+| `0.1.0-rc.6`、`0.1.0-rc.7`                                                                  | `--profile web --host 127.0.0.1 --port <n>` |
+| `0.1.0-rc.8`、`0.1.1-rc.1`、`0.1.1-rc.2`、`0.1.2-alpha.1`、`0.1.2-alpha.2`、`0.1.2-alpha.3` | 上述参数加 `--no-open`                      |
+| 未知版本                                                                                    | 只使用公共参数，不猜测可选 flag             |
 
 rc.6/rc.7 的 Web Profile 未注册 `--no-open`；把该参数传给它会在 readiness endpoint 输出前以 CLI 参数解析错误退出。启动参数由 `packages/dsh-adapter/src/launch-contract.ts` 集中生成；新增版本必须先核对该版本的 Web Profile 源码/帮助文本并补充对应契约测试，不能在 `ProcessSupervisor` 中添加全局 flag。
 
 ## 支持范围
 
-| DSH 版本             | 适配方式          | 兼容说明                                                                                                                                                         |
-| -------------------- | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0.1.0-rc.6`         | `versions/rc6`    | 固定基线；允许旧 Host 在 `host.describe` 中不返回 `home`。                                                                                                       |
-| `0.1.0-rc.7`         | `versions/rc7`    | 复用 rc.6 wire mapper，保留明确的版本身份。                                                                                                                      |
-| `0.1.0-rc.8`         | `versions/rc8`    | 支持 `home`、`imageLimits.maxImageDimension`、中断回复和 Agent Teams 事件。                                                                                      |
-| `0.1.1-rc.1`         | `versions/rc11`   | 复用 rc.8 wire/event mapper；按官方 WebUI 条件启用 `session.create` 空白会话复用。                                                                               |
-| `0.1.1-rc.2`         | `versions/rc12`   | 复用 rc.8 wire/event mapper；按官方 WebUI 先在客户端打开匹配的空白会话，否则使用 `session.create.sessionId` 幂等语义，不发送 rc.1 专用的 `reuseWorkspaceBlank`。 |
-| `0.1.2-alpha.1`      | `versions/alpha`  | 基于源码 tag `dsh-v0.1.2-alpha.1`/提交 `cd5ef814` 的 `/api` Connection、Cookie 握手和 `remote.mux` 预适配；未发布、未作为安装默认，等待运行包 smoke。            |
-| `0.1.2-alpha.2`      | `versions/alpha2` | 基于已发布 tag `dsh-v0.1.2-alpha.2`/提交 `0a53fb55`；复用 alpha 传输，补充命名空间错误、可忽略事件和 agent-preset 插件组合；未作为安装默认，等待 live smoke。    |
-| 任意非空未知版本标签 | rc.6 fallback     | 先完成通用握手，再以基础功能兼容模式连接并显示警告；版本特有字段只在安全识别后使用。                                                                             |
+| DSH 版本             | 适配方式                      | 兼容说明                                                                                                                                                                                                          |
+| -------------------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0.1.0-rc.6`         | `versions/rc6`                | 固定基线；允许旧 Host 在 `host.describe` 中不返回 `home`。                                                                                                                                                        |
+| `0.1.0-rc.7`         | `versions/rc7`                | 复用 rc.6 wire mapper，保留明确的版本身份。                                                                                                                                                                       |
+| `0.1.0-rc.8`         | `versions/rc8`                | 支持 `home`、`imageLimits.maxImageDimension`、中断回复和 Agent Teams 事件。                                                                                                                                       |
+| `0.1.1-rc.1`         | `versions/rc11`               | 复用 rc.8 wire/event mapper；按官方 WebUI 条件启用 `session.create` 空白会话复用。                                                                                                                                |
+| `0.1.1-rc.2`         | `versions/rc12`               | 复用 rc.8 wire/event mapper；按官方 WebUI 先在客户端打开匹配的空白会话，否则使用 `session.create.sessionId` 幂等语义，不发送 rc.1 专用的 `reuseWorkspaceBlank`。                                                  |
+| `0.1.2-alpha.1`      | `versions/alpha`              | 基于源码 tag `dsh-v0.1.2-alpha.1`/提交 `cd5ef814` 的 `/api` Connection、Cookie 握手和 `remote.mux` 预适配；未发布、未作为安装默认，等待运行包 smoke。                                                             |
+| `0.1.2-alpha.2`      | `versions/alpha2`             | 基于已发布 tag `dsh-v0.1.2-alpha.2`/提交 `0a53fb55`；复用 alpha 传输，补充命名空间错误、可忽略事件和 agent-preset 插件组合；未作为安装默认，等待 live smoke。                                                     |
+| `0.1.2-alpha.3`      | `versions/alpha3`             | 基于已发布 tag `dsh-v0.1.2-alpha.3`/提交 `dd6322d6`；上游调整 Gateway 心跳容错、Connection readiness 与 Session Controller 内部准入/展示，但保持扩展消费的 wire contract；复用 alpha.2 错误映射，未作为安装默认。 |
+| 任意非空未知版本标签 | 最新已验证 Adapter 的兼容探测 | 按显式优先级从最新实现向旧实现逐一进行只读契约探测；成功后保留真实运行时版本、所选 Adapter 身份并显示警告，失败的候选不会阻断后续候选。                                                                           |
 
 rc.6 与 rc.7 的 `rpc-map`/事件外壳仍可由 rc.6 mapper 处理。rc.8/rc.1/rc.2 的生成 Host schema 将 `host.describe.home` 设为必填，因此握手请求在 Extension Host 内按通用 RPC envelope 读取，再由版本 Adapter 检查字段，避免新 schema 把旧 Host 拒绝。rc.1 的 `session.create({ workspaceId, sessionId, reuseWorkspaceBlank: true })` 只有在空白、同一工作区成员、cwd 精确相等且未归档时才发送；rc.2 按官方 WebUI 行为在满足同样条件时先由 Webview 打开已有空白会话，只有没有可复用会话时才创建；其官方 schema 已删除 `reuseWorkspaceBlank`，因此 rc.2 Adapter 不发送该字段。rc.2 仍保留通用 `sessionId` 预分配/幂等创建语义，并将图片输入上限提升为单图 20 MiB、单条消息 200 MiB；插件只在 rc.2 的 Webview/Host/Adapter 链路放宽输入边界，图片规范化和 Files API 仍由 DSH 内部完成。rc.6–rc.8 和未知版本继续使用 8 MiB/100 MiB 的保守边界。结构化 `turn/end` 失败只保留脱敏、限长的 code/message，畸形失败回退为通用终止原因。
 
@@ -102,11 +111,37 @@ rc.6 与 rc.7 的 `rpc-map`/事件外壳仍可由 rc.6 mapper 处理。rc.8/rc.1
 `pluginInventory/list` 的 149 个 entries/4 个 agent-preset 组合，以及 `remote.mux` `$events` ready/cancel。
 真实 Session/Workspace follow 和 VS Code Webview 回放仍未完成，因此 alpha.2 保持 `PARTIAL`。
 
+## 0.1.2-alpha.3 已发布契约增量
+
+上游已发布 npm `@deepseek-ai/dsh@0.1.2-alpha.3`，对应 tag
+`dsh-v0.1.2-alpha.3`/提交 `dd6322d604e00eec1ba5e0c8541159906a21094a`。逐文件对照 alpha.2
+与 alpha.3 后，确认变化分为三类，但都没有改变扩展实际消费的 RPC、事件帧或 Remote 错误词汇：
+
+- `packages/api/gateway/src/stream-server.ts` 将未收到 Pong 的容错提高为连续两次心跳，并在最终
+  检查前用异步检查避免延迟到达的 Pong 被误断开；这是服务端 carrier 生命周期变化，标准 Node
+  `ws`/浏览器 WebSocket 客户端仍自动回应 Ping，`AlphaRemoteMux` 不需要伪造应用层心跳。
+- `packages/client/connection/src/client/connection.ts` 将 readiness 超时改为告警并继续等待，
+  由 source settlement 或显式取消负责终止 generation；这是 DSH Web UI 自身的连接状态机，
+  不等同于扩展负责的 CLI stdout endpoint 解析。扩展的受管进程启动超时仍保持独立的进程所有权边界。
+- `packages/api/session-controller` 新增历史跳转/提交位置投影，并将图片准入复用共享 attachment
+  API；这些是 DSH Web UI 的客户端/Host 内部状态与准入实现，alpha.3 的 `session.prompt` 仍接受
+  同一 mixed prompt content，扩展继续把内容留在 Extension Host 的 alpha transport 中发送。
+
+本地新增独立 `versions/alpha3` 身份入口，复用 alpha.2 的 `/api`、Cookie、`remote.mux` 和错误
+归一化，不改变 alpha.2 或已发布 rc 适配器，也不把预发行版设为安装默认。Web Profile 仍声明
+`--no-open`，因此启动契约也单独纳入 alpha.3。
+
+契约 fixture 位于 `packages/dsh-adapter/test/alpha3-contract.spec.ts`，覆盖精确版本选择、
+协议身份、namespaced error 映射和 mixed prompt content；共享 alpha.2 契约测试继续覆盖畸形响应、
+超时、取消、事件和资源释放。真实 alpha.3 已完成 Web Profile endpoint、token-to-Cookie 登录和
+`session/list` 合法 envelope smoke；Session/Workspace follow、长回答断线恢复与 VS Code Webview
+回放尚未完成，因此保持 `PARTIAL`。
+
 ## 主通道决策
 
 主通道是 `dsh --profile web` 的 Web Host API 与 Host/Mux 事件，不是 ACP，也不是从 CLI stdout 解析状态。ACP/SDK 在会话恢复/列表/分叉、图片、推理、工具活动、计划、标题、设置和完整 UI 交互方面并不等价，不能满足本项目能力矩阵。
 
-rc.6 的 `host.describe.version` 是 Host 应用版本，不是独立的协议版本；实际运行中它可以与 CLI npm 版本不同。因此 Probe 以固定 Host API 成功和非空 Host 版本建立兼容性，优先选择带运行时版本提示的 rc.2/rc.1/rc.8/rc.7/rc.6 Adapter。未知运行时不在启动前被版本号拦截；握手成功后使用 rc.6 fallback，并把兼容性警告传到 Webview。未来若出现独立协议协商，必须新增版本 Adapter。
+rc.6 的 `host.describe.version` 是 Host 应用版本，不是独立的协议版本；实际运行中它可以与 CLI npm 版本不同。因此 Probe 以固定 Host API 成功和非空 Host 版本建立兼容性。对已知版本，按精确版本选择 Adapter；对任意非空未知版本（例如 `0.1.2-alpha.4`），不根据后缀推断“alpha 家族”或继承关系，而是按显式优先级从最新已验证 Adapter 开始调用其只读 `probeCompatibility`，成功后使用该 Adapter 的实际 mapper，并把真实版本、Adapter 身份和兼容性警告传到 Webview。某个候选拒绝或契约不匹配时继续尝试下一个候选；所有候选都失败才拒绝连接。兼容模式不发送未验证的版本专有字段，运行中的未知 RPC/Remote/事件错误继续按既有脱敏错误和 `CAPABILITY_UNAVAILABLE` 边界处理。未来若出现独立协议协商，必须新增版本 Adapter。
 
 ## 实现契约的固定流程
 
@@ -144,4 +179,4 @@ rc.6 的 `host.describe.version` 是 Host 应用版本，不是独立的协议�
 1. 新增 `versions/<new-version>` Adapter 和契约 fixture；可复用未改变的 mapper，但必须保留版本入口。
 2. 在 Probe 中按真实协议协商或受控运行时提示选择 Adapter；不要把 Host 应用版本误当成协议版本。
 3. Domain/Protocol 只有真实产品语义改变时才更新；未知字段必须走安全 generic/unknown 降级。
-4. 每次升级都保留 rc.6 回归，并至少完成当前版本的握手、事件和真实 DSH smoke；未知版本必须验证只显示警告且不阻断打开插件。
+4. 每次升级都保留旧版本回归，并至少完成当前版本的握手、事件和真实 DSH smoke；未知版本必须验证“最新已验证 Adapter 优先、候选失败继续尝试、真实版本保留、只显示警告且不阻断打开插件”。

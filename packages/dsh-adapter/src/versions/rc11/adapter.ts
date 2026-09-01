@@ -10,6 +10,7 @@ import { Rc8VersionAdapter } from '../rc8/adapter.js'
 export class Rc11VersionAdapter extends Rc8VersionAdapter {
   public override readonly id = 'dsh-0.1.1-rc.1'
   public override readonly supportedVersion = '0.1.1-rc.1'
+  public override readonly compatibilityPriority: number = 60
   public override readonly fallback = false
   public override readonly protocolVersion = 'rc11'
 

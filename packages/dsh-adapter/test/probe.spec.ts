@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { BackendCandidate, BackendCapabilities, BackendEndpoint } from '@dsh-vscode/domain'
 import { AppError } from '@dsh-vscode/domain'
 
-import type { DshTransport } from '../src/contracts.js'
+import type { DshTransport, DshVersionAdapter } from '../src/contracts.js'
 import { VersionedBackendProbe } from '../src/probe.js'
 
 function candidate(port: number): BackendCandidate {
@@ -82,7 +82,250 @@ describe('VersionedBackendProbe version classification', () => {
 
     expect(await new VersionedBackendProbe([declining]).probe(candidate(3943))).toBeUndefined()
   })
+
+  it('tries the newest compatibility probe first for an unknown future runtime', async () => {
+    const newest = compatibilityAdapter('newest', undefined, undefined, 20)
+    const older = compatibilityAdapter(
+      'older',
+      {
+        protocolVersion: 'known-contract',
+        dshVersion: 'known-version',
+        features: new Set(['session']),
+      },
+      undefined,
+      10,
+    )
+
+    const connected = await new VersionedBackendProbe([newest, older]).probe({
+      ...candidate(3949),
+      runtimeVersion: '0.1.2-alpha.4',
+    })
+
+    expect(connected?.capabilities).toMatchObject({
+      protocolVersion: 'known-contract',
+      dshVersion: '0.1.2-alpha.4',
+      adapterId: 'older',
+      compatibilityMode: 'best-effort',
+      featureProfile: { source: 'compatibility-fallback' },
+    })
+    expect(newest.probe.mock.calls).toHaveLength(0)
+    expect(newest.probeCompatibility.mock.calls).toHaveLength(1)
+    expect(older.probe.mock.calls).toHaveLength(0)
+    expect(older.probeCompatibility.mock.calls).toHaveLength(1)
+  })
+
+  it('uses explicit compatibility priority instead of relying on adapter array order', async () => {
+    const older = compatibilityAdapter(
+      'older',
+      {
+        protocolVersion: 'older-contract',
+        dshVersion: 'older',
+        features: new Set(['session']),
+      },
+      undefined,
+      10,
+    )
+    const newest = compatibilityAdapter(
+      'newest',
+      {
+        protocolVersion: 'newest-contract',
+        dshVersion: 'newest',
+        features: new Set(['session']),
+      },
+      undefined,
+      20,
+    )
+
+    const connected = await new VersionedBackendProbe([older, newest]).probe({
+      ...candidate(3954),
+      runtimeVersion: '0.1.2-alpha.4',
+    })
+
+    expect(connected?.capabilities.adapterId).toBe('newest')
+    expect(newest.probeCompatibility.mock.calls).toHaveLength(1)
+    expect(older.probeCompatibility.mock.calls).toHaveLength(0)
+  })
+
+  it('does not call exact-only adapters for an unknown runtime', async () => {
+    const exactOnly = {
+      id: 'exact-only',
+      supportedVersion: '0.1.2-alpha.3',
+      probe: vi.fn(() => Promise.resolve(undefined)),
+      createTransport: vi.fn(),
+    }
+
+    await expect(
+      new VersionedBackendProbe([exactOnly]).probe({
+        ...candidate(3950),
+        runtimeVersion: '0.1.2-alpha.4',
+      }),
+    ).resolves.toBeUndefined()
+    expect(exactOnly.probe.mock.calls).toHaveLength(0)
+  })
+
+  it('keeps exact probing for a known runtime and never enters compatibility mode', async () => {
+    const adapter = compatibilityAdapter('dsh-0.1.2-alpha.3', undefined, {
+      protocolVersion: 'alpha3',
+      dshVersion: '0.1.2-alpha.3',
+      features: new Set(['session']),
+    })
+
+    const connected = await new VersionedBackendProbe([adapter]).probe({
+      ...candidate(3951),
+      runtimeVersion: '0.1.2-alpha.3',
+    })
+
+    expect(connected?.capabilities).toMatchObject({
+      dshVersion: '0.1.2-alpha.3',
+      adapterId: 'dsh-0.1.2-alpha.3',
+      compatibilityMode: 'exact',
+    })
+    expect(adapter.probe.mock.calls).toHaveLength(1)
+    expect(adapter.probeCompatibility.mock.calls).toHaveLength(0)
+  })
+
+  it('preserves a legacy adapter best-effort result when the runtime has no version label', async () => {
+    const adapter = compatibilityAdapter('legacy-fallback', undefined, {
+      protocolVersion: 'legacy-contract',
+      dshVersion: 'unknown',
+      features: new Set(['session']),
+      compatibilityMode: 'best-effort',
+      compatibilityWarning: 'runtime version missing',
+    })
+
+    const connected = await new VersionedBackendProbe([adapter]).probe(candidate(3957))
+
+    expect(connected?.capabilities).toMatchObject({
+      dshVersion: 'unknown',
+      adapterId: 'legacy-fallback',
+      compatibilityMode: 'best-effort',
+      featureProfile: { source: 'compatibility-fallback' },
+    })
+  })
+
+  it('continues after a compatibility candidate reports an incompatible contract', async () => {
+    const incompatible = compatibilityAdapter('incompatible', Promise.reject(incompatibleError()))
+    const accepting = compatibilityAdapter('accepting', {
+      protocolVersion: 'future-contract',
+      dshVersion: 'ignored-by-selection',
+      features: new Set(['session']),
+    })
+
+    const connected = await new VersionedBackendProbe([incompatible, accepting]).probe({
+      ...candidate(3952),
+      runtimeVersion: 'dsh-next-development',
+    })
+
+    expect(connected?.capabilities.adapterId).toBe('accepting')
+    expect(incompatible.probeCompatibility.mock.calls).toHaveLength(1)
+    expect(accepting.probeCompatibility.mock.calls).toHaveLength(1)
+  })
+
+  it('propagates cancellation from a compatibility probe without trying older adapters', async () => {
+    const controller = new AbortController()
+    const cancelled = compatibilityAdapter(
+      'cancelled',
+      Promise.reject(new DOMException('aborted', 'AbortError')),
+    )
+    const older = compatibilityAdapter('older', {
+      protocolVersion: 'older-contract',
+      dshVersion: 'older',
+      features: new Set(),
+    })
+
+    const pending = new VersionedBackendProbe([cancelled, older]).probe(
+      { ...candidate(3953), runtimeVersion: '0.1.2-alpha.4' },
+      controller.signal,
+    )
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+    expect(older.probeCompatibility.mock.calls).toHaveLength(0)
+  })
+
+  it('propagates a normalized cancellation from a compatibility probe', async () => {
+    const cancelled = compatibilityAdapter(
+      'cancelled',
+      Promise.reject(new AppError({ code: 'REQUEST_CANCELLED', message: 'cancelled', retryable: false })),
+    )
+    const older = compatibilityAdapter('older', {
+      protocolVersion: 'older-contract',
+      dshVersion: 'older',
+      features: new Set(),
+    })
+
+    await expect(
+      new VersionedBackendProbe([cancelled, older]).probe({
+        ...candidate(3956),
+        runtimeVersion: '0.1.2-alpha.4',
+      }),
+    ).rejects.toMatchObject({ code: 'REQUEST_CANCELLED' })
+    expect(older.probeCompatibility.mock.calls).toHaveLength(0)
+  })
+
+  it('stops before the next adapter when cancellation arrives between probes', async () => {
+    const controller = new AbortController()
+    const first = {
+      id: 'first',
+      supportedVersion: 'first',
+      compatibilityPriority: 20,
+      probe: vi.fn(() => Promise.resolve(undefined)),
+      probeCompatibility: vi.fn(() => {
+        controller.abort()
+        return Promise.resolve(undefined)
+      }),
+      createTransport: vi.fn(() => ({}) as DshTransport),
+    }
+    const second = compatibilityAdapter('second', {
+      protocolVersion: 'second-contract',
+      dshVersion: 'second',
+      features: new Set(),
+    })
+
+    await expect(
+      new VersionedBackendProbe([first, second]).probe(
+        { ...candidate(3958), runtimeVersion: '0.1.2-alpha.4' },
+        controller.signal,
+      ),
+    ).rejects.toMatchObject({ name: 'AbortError' })
+    expect(second.probeCompatibility.mock.calls).toHaveLength(0)
+  })
+
+  it('does not let an already-cancelled caller reach an adapter when no pre-flight fetch is configured', async () => {
+    const controller = new AbortController()
+    controller.abort()
+    const adapter = compatibilityAdapter('adapter', {
+      protocolVersion: 'contract',
+      dshVersion: 'version',
+      features: new Set(),
+    })
+
+    await expect(
+      new VersionedBackendProbe([adapter]).probe(
+        { ...candidate(3959), runtimeVersion: '0.1.2-alpha.4' },
+        controller.signal,
+      ),
+    ).rejects.toMatchObject({ name: 'AbortError' })
+    expect(adapter.probeCompatibility.mock.calls).toHaveLength(0)
+  })
 })
+
+function compatibilityAdapter(
+  id: string,
+  result: BackendCapabilities | undefined | Promise<BackendCapabilities | undefined>,
+  exactResult: BackendCapabilities | undefined = undefined,
+  compatibilityPriority = 0,
+): DshVersionAdapter & {
+  readonly probe: ReturnType<typeof vi.fn>
+  readonly probeCompatibility: ReturnType<typeof vi.fn>
+} {
+  return {
+    id,
+    supportedVersion: id,
+    compatibilityPriority,
+    probe: vi.fn(() => Promise.resolve(exactResult)),
+    probeCompatibility: vi.fn(() => Promise.resolve(result)),
+    createTransport: vi.fn(() => ({}) as DshTransport),
+  }
+}
 
 describe('VersionedBackendProbe reachability pre-flight', () => {
   // Property-signature function types (instead of DshVersionAdapter's method

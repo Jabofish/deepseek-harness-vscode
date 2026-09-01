@@ -12,15 +12,15 @@ export const SUPPORTED_DSH_VERSIONS = [
   '0.1.0-rc.8',
   '0.1.1-rc.1',
   '0.1.1-rc.2',
-  // Upstream alpha releases use the Connection/Gateway `/api` protocol. Keep
-  // each exact release in the negotiated set so the rc.6 compatibility
-  // fallback never claims that wire family.
+  // Keep every verified upstream snapshot in the exact set. Unknown releases
+  // are handled only by an adapter's explicit compatibility probe.
   '0.1.2-alpha.1',
   '0.1.2-alpha.2',
+  '0.1.2-alpha.3',
 ] as const
 
 export const SUPPORTED_DSH_RANGE =
-  '0.1.0-rc.6 through 0.1.1-rc.2; upstream 0.1.2-alpha.1 and 0.1.2-alpha.2' as const
+  '0.1.0-rc.6 through 0.1.1-rc.2; upstream 0.1.2-alpha.1 through 0.1.2-alpha.3' as const
 
 export const DSH_PACKAGE_NAME = '@deepseek-ai/dsh' as const
 
@@ -29,6 +29,9 @@ export const LATEST_PUBLISHED_DSH_VERSION = '0.1.1-rc.2' as const
 
 /** Do not make a prerelease upstream snapshot the install default. */
 export const LATEST_SUPPORTED_DSH_VERSION = LATEST_PUBLISHED_DSH_VERSION
+
+/** Newest upstream snapshot for which this checkout has a verified adapter. */
+export const LATEST_VERIFIED_DSH_VERSION = SUPPORTED_DSH_VERSIONS[SUPPORTED_DSH_VERSIONS.length - 1]
 
 export function isKnownDshVersion(version: string): boolean {
   return (SUPPORTED_DSH_VERSIONS as readonly string[]).includes(version)
@@ -43,11 +46,22 @@ export function normalizeDshVersion(value: string | undefined): string | undefin
 export interface DshVersionAdapter {
   readonly id: string
   readonly supportedVersion: string
-  /** Wire family selected during probing; preserves the shape for unknown versions. */
+  /** Local contract identity selected during probing; it is not an upstream release branch. */
   readonly protocolVersion?: string
-  /** A legacy adapter may service an unknown future version after probing succeeds. */
+  /** Explicit newest-to-oldest priority used only for unknown runtime probes. */
+  readonly compatibilityPriority?: number
+  /** An adapter may service an unknown runtime after its own compatibility probe succeeds. */
   readonly fallback?: boolean
   probe(candidate: BackendCandidate, signal?: AbortSignal): Promise<BackendCapabilities | undefined>
+  /**
+   * Probe an unknown, non-empty runtime label without assuming that its release
+   * suffix is compatible. The probe must be read-only and return only the
+   * contract capabilities it can safely serve.
+   */
+  probeCompatibility?(
+    candidate: BackendCandidate,
+    signal?: AbortSignal,
+  ): Promise<BackendCapabilities | undefined>
   createTransport(endpoint: BackendEndpoint): DshTransport
   createBackend?(backend: ConnectedBackend, signal?: AbortSignal): Promise<DshBackend>
 }

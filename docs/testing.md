@@ -2,18 +2,18 @@
 
 ## 层次
 
-| 层          | 目标                                                            | 禁止替代                     |
-| ----------- | --------------------------------------------------------------- | ---------------------------- |
-| Contract    | rc.6–0.1.1-rc.2 与 alpha.1/alpha.2 RPC/Event/Tool 形状与 mapper | 不能只 mock Domain           |
-| Unit        | 状态机、排序、去重、reducer、错误映射                           | 不能靠 E2E 才发现竞态        |
-| Integration | Fake DSH socket/server、spawn 依赖、重连/资源释放               | 不能调用真实用户实例         |
-| VS Code E2E | View、命令、设置、Webview 协议、焦点和布局                      | 不能只测 React DOM           |
-| Live smoke  | 固定 DSH 版本真实运行                                           | 不能声称自动测试等于真实兼容 |
+| 层          | 目标                                                                    | 禁止替代                     |
+| ----------- | ----------------------------------------------------------------------- | ---------------------------- |
+| Contract    | rc.6–0.1.1-rc.2 与 alpha.1/alpha.2/alpha.3 RPC/Event/Tool 形状与 mapper | 不能只 mock Domain           |
+| Unit        | 状态机、排序、去重、reducer、错误映射                                   | 不能靠 E2E 才发现竞态        |
+| Integration | Fake DSH socket/server、spawn 依赖、重连/资源释放                       | 不能调用真实用户实例         |
+| VS Code E2E | View、命令、设置、Webview 协议、焦点和布局                              | 不能只测 React DOM           |
+| Live smoke  | 固定 DSH 版本真实运行                                                   | 不能声称自动测试等于真实兼容 |
 
 ## 必测负面路径
 
 - 无 DSH、版本不兼容、连接拒绝、端口被非 DSH 服务占用；
-- 候选 1 失败候选 2 成功、并发 connect、connect 中取消；
+- 候选 1 失败候选 2 成功、未知版本按优先级选择最新已验证 Adapter、兼容探测全部拒绝、并发 connect、connect 中取消；
 - 子进程早退、启动输出分段、端口占用、readiness 超时；
 - RPC timeout、Abort、5xx、业务错误、畸形 JSON/Frame；
 - 事件重复、乱序、缺口、重连、unknown event；
@@ -27,9 +27,9 @@
 
 - 只保留结构必需字段；名称、路径、Prompt、模型输出和 key 全部使用假值。
 - 每个 fixture 标注上游 commit、文件和类型名。
-- 未发布版本（如 alpha.1）的 fixture 必须同时标注源码 tag/commit，并在能力矩阵中注明尚无真实运行包证据；已发布预发行版本（如 alpha.2）也要记录 npm/tag/commit 与 live smoke 边界。
+- 未发布版本（如 alpha.1）的 fixture 必须同时标注源码 tag/commit，并在能力矩阵中注明尚无真实运行包证据；已发布预发行版本（如 alpha.2、alpha.3）也要记录 npm/tag/commit 与 live smoke 边界。
 - 大流量 fixture 由生成器产生，避免提交真实会话日志。
-- 更新 DSH 依赖时先运行漂移测试，再更新 fixture；禁止直接更新 snapshot 接受未知差异。
+- 更新 DSH 依赖时先运行漂移测试，再更新 fixture；禁止直接更新 snapshot 接受未知差异。未知版本 fixture 必须覆盖真实版本标签保留、兼容模式警告、最新候选优先、候选拒绝后继续、全部候选拒绝和取消边界。
 
 ## 性能预算
 

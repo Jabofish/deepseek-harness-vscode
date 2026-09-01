@@ -59,7 +59,7 @@ describe('DeepSeek Harness rc.8 compatibility contract', () => {
     })
   })
 
-  it('defers an unknown version to the rc.6 fallback instead of selecting rc.8', async () => {
+  it('keeps an unknown version out of the exact rc.8 probe', async () => {
     const adapter = new Rc8VersionAdapter(options({ home: 'fixture-home' }))
     await expect(
       adapter.probe({ ...candidate, runtimeVersion: 'dsh-next-development' }),

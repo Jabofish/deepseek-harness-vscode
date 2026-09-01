@@ -8,7 +8,7 @@ export interface DshRuntime {
   readonly executable: string
   readonly version: string
   readonly supported: boolean
-  /** `known` means covered by a pinned adapter; `unknown` remains launchable in fallback mode. */
+  /** `known` means covered by a pinned adapter; `unknown` remains launchable in best-effort mode. */
   readonly compatibility?: 'known' | 'unknown'
   readonly source: 'configured' | 'path' | 'npm-global' | 'bundled'
 }
@@ -69,6 +69,10 @@ export interface BackendCapabilities {
   readonly protocolVersion: string
   readonly dshVersion: string
   readonly features: ReadonlySet<string>
+  /** Adapter selected by the Extension Host for this connection generation. */
+  readonly adapterId?: string
+  /** Exact uses a pinned adapter; best-effort uses the newest verified adapter candidate. */
+  readonly compatibilityMode?: 'exact' | 'best-effort'
   /** Set only when the runtime was outside the pinned compatibility range. */
   readonly compatibilityWarning?: string
   /** Contract-readiness profile for the staged feature surface. */

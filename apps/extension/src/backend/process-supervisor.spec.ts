@@ -47,6 +47,7 @@ describe('DshProcessSupervisor', () => {
     '0.1.1-rc.2',
     '0.1.2-alpha.1',
     '0.1.2-alpha.2',
+    '0.1.2-alpha.3',
     '0.1.0-rc.99',
   ])('uses only the shared Web Profile flags for %s', async (version) => {
     let args: readonly string[] | undefined
@@ -63,7 +64,9 @@ describe('DshProcessSupervisor', () => {
 
     expect(args).toEqual(managedWebArguments(version, 4317))
     expect(args?.includes('--no-open')).toBe(
-      ['0.1.0-rc.8', '0.1.1-rc.1', '0.1.1-rc.2', '0.1.2-alpha.1', '0.1.2-alpha.2'].includes(version),
+      ['0.1.0-rc.8', '0.1.1-rc.1', '0.1.1-rc.2', '0.1.2-alpha.1', '0.1.2-alpha.2', '0.1.2-alpha.3'].includes(
+        version,
+      ),
     )
     await expect(handle.stop()).resolves.toBeUndefined()
     expect(kill).toHaveBeenCalledWith('SIGTERM')
@@ -95,7 +98,7 @@ describe('DshProcessSupervisor', () => {
     await handle.stop()
   })
 
-  it.each(['0.1.2-alpha.1', '0.1.2-alpha.2'])(
+  it.each(['0.1.2-alpha.1', '0.1.2-alpha.2', '0.1.2-alpha.3'])(
     'translates the alpha user-facing ptc mode to DSH_TOOLS_MODE for %s',
     async (version) => {
       let environment: NodeJS.ProcessEnv | undefined

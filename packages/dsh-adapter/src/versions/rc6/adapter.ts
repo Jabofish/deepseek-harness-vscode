@@ -9,7 +9,7 @@ import {
 
 import {
   isKnownDshVersion,
-  LATEST_SUPPORTED_DSH_VERSION,
+  LATEST_VERIFIED_DSH_VERSION,
   normalizeDshVersion,
   SUPPORTED_DSH_RANGE,
   type DshTransport,
@@ -34,6 +34,7 @@ import { Rc6SubagentRepository } from '../../repositories/subagent-repository.js
 import { Rc6WorkspaceRepository } from '../../repositories/workspace-repository.js'
 import { DshStreamController } from '../../stream-controller.js'
 import { deriveFeatureCapabilityProfile } from '../../feature-capabilities.js'
+import { withBestEffortAdapterCapabilities, withExactAdapterCapabilities } from '../../compatibility.js'
 import { callRpc } from './rpc.js'
 
 export type Rc6AdapterOptions = Omit<LoopbackApiClientOptions, 'endpoint'> & {
@@ -46,6 +47,7 @@ export type Rc6AdapterOptions = Omit<LoopbackApiClientOptions, 'endpoint'> & {
 export class Rc6VersionAdapter implements DshVersionAdapter {
   public readonly id: string = 'dsh-0.1.0-rc.6'
   public readonly supportedVersion: string = '0.1.0-rc.6'
+  public readonly compatibilityPriority: number = 30
   public readonly fallback: boolean = true
 
   public readonly protocolVersion: string = 'rc6'
@@ -57,6 +59,26 @@ export class Rc6VersionAdapter implements DshVersionAdapter {
     candidate: BackendCandidate,
     signal?: AbortSignal,
   ): Promise<BackendCapabilities | undefined> {
+    return this.probeLegacy(candidate, signal, false)
+  }
+
+  public async probeCompatibility(
+    candidate: BackendCandidate,
+    signal?: AbortSignal,
+  ): Promise<BackendCapabilities | undefined> {
+    return this.probeLegacy(candidate, signal, true)
+  }
+
+  private async probeLegacy(
+    candidate: BackendCandidate,
+    signal: AbortSignal | undefined,
+    compatibilityProbe: boolean,
+  ): Promise<BackendCapabilities | undefined> {
+    const hintedVersion = normalizeDshVersion(candidate.runtimeVersion)
+    // Reject a known version before opening a transport. Unknown compatibility
+    // probes intentionally bypass this exact-version guard and establish
+    // compatibility from the read-only legacy handshake below.
+    if (!compatibilityProbe && !this.acceptsRuntimeHint(hintedVersion)) return undefined
     const transport = this.createTransport(candidate.endpoint)
     try {
       const described = await callRpc<{
@@ -82,15 +104,9 @@ export class Rc6VersionAdapter implements DshVersionAdapter {
       }
       if (this.requiresHome && (typeof described.home !== 'string' || described.home.trim() === ''))
         return undefined
-      const hintedVersion = normalizeDshVersion(candidate.runtimeVersion)
-      if (!this.acceptsRuntimeHint(hintedVersion)) return undefined
       const reportedVersion = hintedVersion ?? 'unknown'
-      const compatibilityWarning =
-        hintedVersion === undefined
-          ? `The DSH runtime did not expose its package version; compatibility is being checked against ${LATEST_SUPPORTED_DSH_VERSION} (${SUPPORTED_DSH_RANGE}).`
-          : !isKnownDshVersion(hintedVersion)
-            ? `DSH ${hintedVersion} is outside the tested compatibility range (${SUPPORTED_DSH_RANGE}); basic compatibility mode is active.`
-            : undefined
+      const unknownRuntime = hintedVersion === undefined || !isKnownDshVersion(hintedVersion)
+      const compatibilityMode = compatibilityProbe || (this.fallback && unknownRuntime)
       const capabilities: BackendCapabilities = {
         protocolVersion: this.protocolVersion,
         dshVersion: reportedVersion,
@@ -106,12 +122,19 @@ export class Rc6VersionAdapter implements DshVersionAdapter {
           'subagents',
           'events',
         ]),
-        ...(compatibilityWarning === undefined ? {} : { compatibilityWarning }),
+        ...(unknownRuntime
+          ? {
+              compatibilityWarning:
+                hintedVersion === undefined
+                  ? `The DSH runtime did not expose its package version; compatibility is being checked against the newest verified adapter for ${LATEST_VERIFIED_DSH_VERSION} (${SUPPORTED_DSH_RANGE}).`
+                  : `DSH ${hintedVersion} is outside the tested compatibility range (${SUPPORTED_DSH_RANGE}); the newest verified adapter is ${LATEST_VERIFIED_DSH_VERSION}, and best-effort compatibility mode is active.`,
+            }
+          : {}),
       }
-      return {
-        ...capabilities,
-        featureProfile: deriveFeatureCapabilityProfile(capabilities),
-      }
+      const profiled = { ...capabilities, featureProfile: deriveFeatureCapabilityProfile(capabilities) }
+      return compatibilityMode
+        ? withBestEffortAdapterCapabilities(profiled, hintedVersion, this.id)
+        : withExactAdapterCapabilities(profiled, this.id)
     } catch (error) {
       if (error instanceof AppError && error.code === 'DSH_INCOMPATIBLE') throw error
       return undefined
@@ -120,7 +143,7 @@ export class Rc6VersionAdapter implements DshVersionAdapter {
     }
   }
 
-  /** rc.6 is the protocol-compatible fallback for unknown future runtimes. */
+  /** rc.6 may serve unknown runtimes only after its legacy probe succeeds. */
   protected acceptsRuntimeHint(version: string | undefined): boolean {
     return version === undefined || version === this.supportedVersion || !isKnownDshVersion(version)
   }

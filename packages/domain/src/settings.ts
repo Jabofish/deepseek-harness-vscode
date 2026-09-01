@@ -34,6 +34,8 @@ export interface ExtensionSettings {
 /** Browser-safe allowlist of extension configuration facts. Host addresses,
  * ports, executable paths, and every credential stay in the Extension Host. */
 export interface ExtensionSettingsSummary {
+  /** The installed VS Code extension version, sourced from its manifest. */
+  readonly extensionVersion: string
   readonly connection: Pick<ConnectionSettings, 'mode'> & {
     /** The endpoint is deliberately not returned to the Webview. */
     readonly customEndpointConfigured: boolean

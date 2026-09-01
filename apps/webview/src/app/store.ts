@@ -3005,11 +3005,15 @@ async function refreshProvidersAndModels(client: ProtocolClient, setState: State
 
 function parseExtensionSettings(value: unknown): ExtensionSettingsSummary | undefined {
   const settings = object(value)
+  const extensionVersion = settings?.extensionVersion
   const connection = object(settings?.connection)
   const runtime = object(settings?.runtime)
   const security = object(settings?.security)
   const defaultAgent = object(settings?.defaultAgent)
   if (
+    typeof extensionVersion !== 'string' ||
+    extensionVersion.length === 0 ||
+    extensionVersion.length > 128 ||
     connection === undefined ||
     runtime === undefined ||
     security === undefined ||
@@ -3025,6 +3029,7 @@ function parseExtensionSettings(value: unknown): ExtensionSettingsSummary | unde
   )
     return undefined
   return {
+    extensionVersion,
     connection: {
       mode: connection.mode,
       customEndpointConfigured: connection.customEndpointConfigured,

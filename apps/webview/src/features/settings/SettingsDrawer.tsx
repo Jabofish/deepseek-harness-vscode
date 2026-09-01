@@ -522,6 +522,8 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                     return (
                       <>
                         <dl className="dsh-settings__facts">
+                          <dt>{t('settings.extensionVersion')}</dt>
+                          <dd>{settings.extensionVersion}</dd>
                           <dt>{t('settings.connectionMode')}</dt>
                           <dd>{connectionModeLabel(settings.connection.mode, t)}</dd>
                           <dt>{t('settings.runtime')}</dt>
