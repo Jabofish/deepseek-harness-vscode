@@ -17,10 +17,12 @@ export const SUPPORTED_DSH_VERSIONS = [
   '0.1.2-alpha.1',
   '0.1.2-alpha.2',
   '0.1.2-alpha.3',
+  '0.1.2-alpha.4',
+  '0.1.2-alpha.5',
 ] as const
 
 export const SUPPORTED_DSH_RANGE =
-  '0.1.0-rc.6 through 0.1.1-rc.2; upstream 0.1.2-alpha.1 through 0.1.2-alpha.3' as const
+  '0.1.0-rc.6 through 0.1.1-rc.2; upstream 0.1.2-alpha.1 through 0.1.2-alpha.5' as const
 
 export const DSH_PACKAGE_NAME = '@deepseek-ai/dsh' as const
 
@@ -35,6 +37,11 @@ export const LATEST_VERIFIED_DSH_VERSION = SUPPORTED_DSH_VERSIONS[SUPPORTED_DSH_
 
 export function isKnownDshVersion(version: string): boolean {
   return (SUPPORTED_DSH_VERSIONS as readonly string[]).includes(version)
+}
+
+export function isKnownDshAlphaVersion(version: string): boolean {
+  const normalized = normalizeDshVersion(version)
+  return normalized !== undefined && isKnownDshVersion(normalized) && normalized.includes('-alpha.')
 }
 
 export function normalizeDshVersion(value: string | undefined): string | undefined {

@@ -4,7 +4,7 @@ import type { BackendCandidate, BackendEndpoint } from '@dsh-vscode/domain'
 
 import type { DshTransport } from '../src/contracts.js'
 import { VersionedBackendProbe } from '../src/probe.js'
-import { Alpha3VersionAdapter } from '../src/versions/alpha3/adapter.js'
+import { Alpha5VersionAdapter } from '../src/versions/alpha5/adapter.js'
 import { callRpc } from '../src/versions/rc6/rpc.js'
 
 const endpoint: BackendEndpoint = {
@@ -42,30 +42,30 @@ function requestBody(init: RequestInit | undefined): {
   }
 }
 
-function adapter(fetch: typeof globalThis.fetch): Alpha3VersionAdapter {
-  return new Alpha3VersionAdapter({
+function adapter(fetch: typeof globalThis.fetch): Alpha5VersionAdapter {
+  return new Alpha5VersionAdapter({
     requestTimeoutMs: 1_000,
     retryPolicy: { maximumAttempts: 1, baseDelayMs: 1, maximumDelayMs: 1 },
     fetch,
   })
 }
 
-describe('DSH 0.1.2-alpha.3 Connection/Gateway contract', () => {
-  it('selects only the exact alpha.3 runtime and keeps its protocol identity', async () => {
+describe('DSH 0.1.2-alpha.5 Connection/Gateway contract', () => {
+  it('selects only the exact alpha.5 runtime and keeps its independent identity', async () => {
     const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
       Promise.resolve(response(init, { ok: true, value: { items: [] } })),
     )
     const versioned = adapter(fetch)
 
-    await expect(versioned.probe(candidate('0.1.2-alpha.3'))).resolves.toMatchObject({
-      protocolVersion: 'alpha3',
-      dshVersion: '0.1.2-alpha.3',
+    await expect(versioned.probe(candidate('0.1.2-alpha.5'))).resolves.toMatchObject({
+      protocolVersion: 'alpha5',
+      dshVersion: '0.1.2-alpha.5',
     })
-    await expect(versioned.probe(candidate('0.1.2-alpha.2'))).resolves.toBeUndefined()
+    await expect(versioned.probe(candidate('0.1.2-alpha.4'))).resolves.toBeUndefined()
     expect(fetch).toHaveBeenCalledOnce()
   })
 
-  it('uses the supplied alpha.3 implementation for an unknown future runtime', async () => {
+  it('uses alpha.5 as the newest verified implementation for an unknown future runtime', async () => {
     const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
       Promise.resolve(response(init, { ok: true, value: { items: [] } })),
     )
@@ -74,9 +74,9 @@ describe('DSH 0.1.2-alpha.3 Connection/Gateway contract', () => {
     expect(connected).toMatchObject({
       ownership: 'external',
       capabilities: {
-        protocolVersion: 'alpha3',
+        protocolVersion: 'alpha5',
         dshVersion: '0.1.2-alpha.6',
-        adapterId: 'dsh-0.1.2-alpha.3',
+        adapterId: 'dsh-0.1.2-alpha.5',
         compatibilityMode: 'best-effort',
         featureProfile: { source: 'compatibility-fallback' },
       },
@@ -84,7 +84,7 @@ describe('DSH 0.1.2-alpha.3 Connection/Gateway contract', () => {
     expect(connected?.capabilities.compatibilityWarning).toContain('0.1.2-alpha.6')
   })
 
-  it('retains alpha.2 namespaced error mapping while using the alpha.3 entry point', async () => {
+  it('retains the alpha Remote error mapper at the alpha.5 version boundary', async () => {
     const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
       Promise.resolve(
         response(init, {
@@ -102,7 +102,7 @@ describe('DSH 0.1.2-alpha.3 Connection/Gateway contract', () => {
     await transport.close()
   })
 
-  it('passes mixed prompt content through for alpha.3 attachment admission', async () => {
+  it('passes the current mixed prompt content through the unchanged session.prompt wire', async () => {
     const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
       Promise.resolve(response(init, { ok: true, value: { accepted: true } })),
     )
@@ -126,8 +126,38 @@ describe('DSH 0.1.2-alpha.3 Connection/Gateway contract', () => {
     expect(request.payload?.args?.request?.content).toEqual(content)
     await transport.close()
   })
+
+  it('rejects a malformed session.list value and releases the probe transport', async () => {
+    const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
+      Promise.resolve(response(init, { ok: true, value: { items: 'not-an-array' } })),
+    )
+
+    await expect(adapter(fetch).probe(candidate('0.1.2-alpha.5'))).resolves.toBeUndefined()
+    expect(fetch).toHaveBeenCalledOnce()
+  })
+
+  it('propagates caller cancellation through the alpha.5 probe', async () => {
+    const controller = new AbortController()
+    let observedSignal: AbortSignal | undefined
+    const fetch = vi.fn(
+      (_input: RequestInfo | URL, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          observedSignal = init?.signal ?? undefined
+          observedSignal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), {
+            once: true,
+          })
+        }),
+    )
+
+    const pending = adapter(fetch).probe(candidate('0.1.2-alpha.5'), controller.signal)
+    await vi.waitFor(() => expect(observedSignal).toBeDefined())
+    controller.abort(new DOMException('cancelled', 'AbortError'))
+
+    await expect(pending).rejects.toMatchObject({ code: 'REQUEST_CANCELLED' })
+    expect(observedSignal?.aborted).toBe(true)
+  })
 })
 
-function versionedTransport(adapter: Alpha3VersionAdapter): DshTransport {
+function versionedTransport(adapter: Alpha5VersionAdapter): DshTransport {
   return adapter.createTransport(endpoint)
 }

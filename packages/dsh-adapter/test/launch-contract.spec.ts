@@ -12,6 +12,8 @@ describe('managed Web Profile launch contract', () => {
     ['0.1.2-alpha.1', true],
     ['0.1.2-alpha.2', true],
     ['0.1.2-alpha.3', true],
+    ['0.1.2-alpha.4', true],
+    ['0.1.2-alpha.5', true],
     ['0.1.0-rc.99', false],
   ])('selects the verified optional flags for %s', (version, noOpen) => {
     const args = managedWebArguments(version, 4317)

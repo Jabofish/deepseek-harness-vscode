@@ -2,7 +2,7 @@
 
 只有全部必需项满足才可发布。
 
-当前发布版本是 `0.1.3`（稳定版），运行时契约覆盖已发布 DSH `0.1.0-rc.6` 至 `0.1.1-rc.2`，并包含 `0.1.2-alpha.1` 源码预适配和已发布 `0.1.2-alpha.2`、`0.1.2-alpha.3` 适配；alpha 不作为安装默认。任何非空未知版本标签按最新已验证 Adapter 优先进行兼容探测，成功后保留真实版本并显示警告。能力矩阵仍有 `PARTIAL`，以下未勾选项代表真实缺口，不应被“构建成功”替代。
+当前发布版本是 `0.1.4`（稳定版），运行时契约覆盖已发布 DSH `0.1.0-rc.6` 至 `0.1.1-rc.2`，并包含 `0.1.2-alpha.1` 源码预适配和已发布 `0.1.2-alpha.2`、`0.1.2-alpha.3`、`0.1.2-alpha.4`、`0.1.2-alpha.5` 适配；alpha 不作为安装默认。任何非空未知版本标签按最新已验证 Adapter 优先进行兼容探测，成功后保留真实版本并显示警告。能力矩阵仍有 `PARTIAL`，以下未勾选项代表真实缺口，不应被“构建成功”替代。
 
 ## 功能
 
@@ -22,6 +22,8 @@
 - [ ] 未发布 alpha.1 对应 npm/运行包发布后完成真实 Connection、Cookie、remote.mux、Session/Workspace follow smoke；在此之前只能保留源码契约证据。
 - [ ] 已发布 alpha.2 完成真实 Connection、Cookie、remote.mux、Session/Workspace follow smoke，并把结果记录到能力矩阵；当前适配仍不作为安装默认。
 - [ ] 已发布 alpha.3 完成真实 Connection、Cookie、remote.mux、Session/Workspace follow smoke，并把结果记录到能力矩阵；当前适配仍不作为安装默认。
+- [ ] 已发布 alpha.4 完成真实 Connection、Cookie、remote.mux、Session/Workspace follow smoke，并把结果记录到能力矩阵；当前适配仍不作为安装默认。
+- [ ] 已发布 alpha.5 完成真实 Connection、Cookie、remote.mux、Session/Workspace follow smoke，并把结果记录到能力矩阵；当前适配仍不作为安装默认。
 - [ ] 性能、长会话、断流恢复、资源泄漏基线通过。
 - [ ] 键盘、屏幕阅读器、亮/暗/高对比、240px、Reduced Motion 通过。
 

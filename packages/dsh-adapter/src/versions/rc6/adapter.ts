@@ -13,8 +13,8 @@ import {
   normalizeDshVersion,
   SUPPORTED_DSH_RANGE,
   type DshTransport,
-  type DshVersionAdapter,
 } from '../../contracts.js'
+import { DshVersionAdapterBase, type VersionAdapterIdentity } from '../../adapter-base.js'
 import { LoopbackApiClient, type LoopbackApiClientOptions } from '../../loopback-api-client.js'
 import { Rc6CommandRepository } from '../../repositories/command-repository.js'
 import { Rc6CredentialRepository } from '../../repositories/credential-repository.js'
@@ -44,16 +44,20 @@ export type Rc6AdapterOptions = Omit<LoopbackApiClientOptions, 'endpoint'> & {
   readonly exportFileSystem?: ExportFileSystem
 }
 
-export class Rc6VersionAdapter implements DshVersionAdapter {
-  public readonly id: string = 'dsh-0.1.0-rc.6'
-  public readonly supportedVersion: string = '0.1.0-rc.6'
-  public readonly compatibilityPriority: number = 30
-  public readonly fallback: boolean = true
+export class Rc6VersionAdapter extends DshVersionAdapterBase {
+  protected override readonly identity: VersionAdapterIdentity = {
+    id: 'dsh-0.1.0-rc.6',
+    supportedVersion: '0.1.0-rc.6',
+    protocolVersion: 'rc6',
+    compatibilityPriority: 30,
+    fallback: true,
+  }
 
-  public readonly protocolVersion: string = 'rc6'
   protected readonly requiresHome: boolean = false
 
-  public constructor(protected readonly options: Rc6AdapterOptions) {}
+  public constructor(protected readonly options: Rc6AdapterOptions) {
+    super()
+  }
 
   public async probe(
     candidate: BackendCandidate,

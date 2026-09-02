@@ -4,7 +4,7 @@ import type { BackendEndpoint, BackendEvent } from '@dsh-vscode/domain'
 
 import type { AlphaEventSource } from '../src/versions/alpha/events.js'
 import { AlphaLoopbackApiClient, type AlphaWebSocket } from '../src/versions/alpha/transport.js'
-import { AlphaVersionAdapter } from '../src/versions/alpha/adapter.js'
+import { Alpha1VersionAdapter } from '../src/versions/alpha/adapter.js'
 import { callRpc } from '../src/versions/rc6/rpc.js'
 
 class FakeWebSocket implements AlphaWebSocket {
@@ -970,7 +970,7 @@ describe('alpha remote mux receive queue', () => {
 describe('alpha backend assembly baseline ownership', () => {
   it('keeps control-stream jobs and queue baselines across a session follow subscription', async () => {
     FakeWebSocket.instances.length = 0
-    const adapter = new AlphaVersionAdapter({
+    const adapter = new Alpha1VersionAdapter({
       requestTimeoutMs: 1_000,
       retryPolicy: { maximumAttempts: 1, baseDelayMs: 1, maximumDelayMs: 1 },
       fetch: vi.fn((_input: RequestInfo | URL, init?: RequestInit) => Promise.resolve(response(init, {}))),
@@ -1053,7 +1053,7 @@ describe('alpha backend assembly baseline ownership', () => {
 
   it('keeps a pending approval answerable across a session follow re-subscription', async () => {
     FakeWebSocket.instances.length = 0
-    const adapter = new AlphaVersionAdapter({
+    const adapter = new Alpha1VersionAdapter({
       requestTimeoutMs: 1_000,
       retryPolicy: { maximumAttempts: 1, baseDelayMs: 1, maximumDelayMs: 1 },
       fetch: vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>

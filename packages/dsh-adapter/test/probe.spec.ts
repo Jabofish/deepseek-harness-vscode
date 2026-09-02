@@ -98,12 +98,12 @@ describe('VersionedBackendProbe version classification', () => {
 
     const connected = await new VersionedBackendProbe([newest, older]).probe({
       ...candidate(3949),
-      runtimeVersion: '0.1.2-alpha.4',
+      runtimeVersion: '0.1.2-alpha.6',
     })
 
     expect(connected?.capabilities).toMatchObject({
       protocolVersion: 'known-contract',
-      dshVersion: '0.1.2-alpha.4',
+      dshVersion: '0.1.2-alpha.6',
       adapterId: 'older',
       compatibilityMode: 'best-effort',
       featureProfile: { source: 'compatibility-fallback' },
@@ -138,7 +138,7 @@ describe('VersionedBackendProbe version classification', () => {
 
     const connected = await new VersionedBackendProbe([older, newest]).probe({
       ...candidate(3954),
-      runtimeVersion: '0.1.2-alpha.4',
+      runtimeVersion: '0.1.2-alpha.6',
     })
 
     expect(connected?.capabilities.adapterId).toBe('newest')
@@ -157,7 +157,7 @@ describe('VersionedBackendProbe version classification', () => {
     await expect(
       new VersionedBackendProbe([exactOnly]).probe({
         ...candidate(3950),
-        runtimeVersion: '0.1.2-alpha.4',
+        runtimeVersion: '0.1.2-alpha.6',
       }),
     ).resolves.toBeUndefined()
     expect(exactOnly.probe.mock.calls).toHaveLength(0)
@@ -234,7 +234,7 @@ describe('VersionedBackendProbe version classification', () => {
     })
 
     const pending = new VersionedBackendProbe([cancelled, older]).probe(
-      { ...candidate(3953), runtimeVersion: '0.1.2-alpha.4' },
+      { ...candidate(3953), runtimeVersion: '0.1.2-alpha.6' },
       controller.signal,
     )
     await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
@@ -255,7 +255,7 @@ describe('VersionedBackendProbe version classification', () => {
     await expect(
       new VersionedBackendProbe([cancelled, older]).probe({
         ...candidate(3956),
-        runtimeVersion: '0.1.2-alpha.4',
+        runtimeVersion: '0.1.2-alpha.6',
       }),
     ).rejects.toMatchObject({ code: 'REQUEST_CANCELLED' })
     expect(older.probeCompatibility.mock.calls).toHaveLength(0)
@@ -282,7 +282,7 @@ describe('VersionedBackendProbe version classification', () => {
 
     await expect(
       new VersionedBackendProbe([first, second]).probe(
-        { ...candidate(3958), runtimeVersion: '0.1.2-alpha.4' },
+        { ...candidate(3958), runtimeVersion: '0.1.2-alpha.6' },
         controller.signal,
       ),
     ).rejects.toMatchObject({ name: 'AbortError' })
@@ -300,7 +300,7 @@ describe('VersionedBackendProbe version classification', () => {
 
     await expect(
       new VersionedBackendProbe([adapter]).probe(
-        { ...candidate(3959), runtimeVersion: '0.1.2-alpha.4' },
+        { ...candidate(3959), runtimeVersion: '0.1.2-alpha.6' },
         controller.signal,
       ),
     ).rejects.toMatchObject({ name: 'AbortError' })

@@ -1,10 +1,7 @@
-import type { BackendEndpoint } from '@dsh-vscode/domain'
+import type { VersionAdapterIdentity } from '../../adapter-base.js'
+import { Alpha2VersionAdapter, type Alpha2AdapterOptions } from '../alpha2/adapter.js'
 
-import { AlphaVersionAdapter, type AlphaAdapterOptions } from '../alpha/adapter.js'
-import type { AlphaLoopbackApiClientOptions } from '../alpha/transport.js'
-import { normalizeAlpha2ErrorCode } from '../alpha2/error-vocabulary.js'
-
-export type Alpha3AdapterOptions = AlphaAdapterOptions
+export type Alpha3AdapterOptions = Alpha2AdapterOptions
 
 /**
  * Adapter for DSH 0.1.2-alpha.3. The upstream alpha.2 → alpha.3 source diff
@@ -13,17 +10,12 @@ export type Alpha3AdapterOptions = AlphaAdapterOptions
  * keeps the Connection/Gateway wire shapes and Remote error vocabulary. The
  * transport therefore remains shared while the runtime identity stays exact.
  */
-export class Alpha3VersionAdapter extends AlphaVersionAdapter {
-  public override readonly id = 'dsh-0.1.2-alpha.3'
-  public override readonly supportedVersion = '0.1.2-alpha.3'
-  public override readonly protocolVersion = 'alpha3'
-  public override readonly compatibilityPriority: number = 100
-  public override readonly fallback = false
-
-  protected override createTransportOptions(endpoint: BackendEndpoint): AlphaLoopbackApiClientOptions {
-    return {
-      ...super.createTransportOptions(endpoint),
-      normalizeErrorCode: normalizeAlpha2ErrorCode,
-    }
+export class Alpha3VersionAdapter extends Alpha2VersionAdapter {
+  protected override readonly identity: VersionAdapterIdentity = {
+    id: 'dsh-0.1.2-alpha.3',
+    supportedVersion: '0.1.2-alpha.3',
+    protocolVersion: 'alpha3',
+    compatibilityPriority: 100,
+    fallback: false,
   }
 }

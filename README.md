@@ -70,12 +70,12 @@ global package update requires selecting or reconnecting the runtime before it i
 
 ## Compatibility
 
-| Requirement      | Version                                                                                                                                                                                                           |
-| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| VS Code          | `1.125+` on Windows, Linux, or macOS; Remote SSH, WSL, and Dev Containers are supported                                                                                                                           |
-| DeepSeek Harness | Published Host/Web API `0.1.0-rc.6` through `0.1.1-rc.2`, plus compatibility adapters for source-level `0.1.2-alpha.1` and published `0.1.2-alpha.2`/`0.1.2-alpha.3` (alpha releases are not the install default) |
-| Unknown versions | Any non-empty label is probed with the newest verified adapter first; a successful best-effort connection preserves the real version and surfaces a warning                                                       |
-| Node.js          | `22.19+`, required only when installing DSH from within the extension                                                                                                                                             |
+| Requirement      | Version                                                                                                                                                                                                                                        |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| VS Code          | `1.125+` on Windows, Linux, or macOS; Remote SSH, WSL, and Dev Containers are supported                                                                                                                                                        |
+| DeepSeek Harness | Published Host/Web API `0.1.0-rc.6` through `0.1.1-rc.2`, plus compatibility adapters for source-level `0.1.2-alpha.1`, published `0.1.2-alpha.2`/`0.1.2-alpha.3`/`0.1.2-alpha.4`/`0.1.2-alpha.5` (alpha releases are not the install default) |
+| Unknown versions | Any non-empty label is probed with the newest verified adapter first; a successful best-effort connection preserves the real version and surfaces a warning                                                                                    |
+| Node.js          | `22.19+`, required only when installing DSH from within the extension                                                                                                                                                                          |
 
 Available models, tools, and advanced agent capabilities follow the connected DSH instance;
 unsupported capabilities are surfaced clearly instead of failing silently.

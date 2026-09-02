@@ -7,12 +7,8 @@ import {
   type BackendEvent,
 } from '@dsh-vscode/domain'
 
-import {
-  isKnownDshVersion,
-  normalizeDshVersion,
-  type DshTransport,
-  type DshVersionAdapter,
-} from '../../contracts.js'
+import { DshVersionAdapterBase, type VersionAdapterIdentity } from '../../adapter-base.js'
+import { isKnownDshVersion, normalizeDshVersion, type DshTransport } from '../../contracts.js'
 import { withBestEffortAdapterCapabilities, withExactAdapterCapabilities } from '../../compatibility.js'
 import type { Rc6AdapterOptions } from '../rc6/adapter.js'
 import type { ExportFileSystem } from '../../repositories/export-repository.js'
@@ -48,14 +44,18 @@ export type AlphaAdapterOptions = Omit<Rc6AdapterOptions, 'webSocket'> & {
 }
 
 /** Shared adapter assembly for the verified 0.1.2 alpha Connection/Gateway contract. */
-export class AlphaVersionAdapter implements DshVersionAdapter {
-  public readonly id: string = 'dsh-0.1.2-alpha.1'
-  public readonly supportedVersion: string = '0.1.2-alpha.1'
-  public readonly protocolVersion: string = 'alpha1'
-  public readonly compatibilityPriority: number = 80
-  public readonly fallback: boolean = false
+export class Alpha1VersionAdapter extends DshVersionAdapterBase {
+  protected override readonly identity: VersionAdapterIdentity = {
+    id: 'dsh-0.1.2-alpha.1',
+    supportedVersion: '0.1.2-alpha.1',
+    protocolVersion: 'alpha1',
+    compatibilityPriority: 80,
+    fallback: false,
+  }
 
-  public constructor(protected readonly options: AlphaAdapterOptions) {}
+  public constructor(protected readonly options: AlphaAdapterOptions) {
+    super()
+  }
 
   public async probe(
     candidate: BackendCandidate,
@@ -202,3 +202,6 @@ function isSessionList(value: unknown): boolean {
     Array.isArray((value as { readonly items?: unknown }).items)
   )
 }
+
+/** @deprecated Use {@link Alpha1VersionAdapter}; retained for source compatibility. */
+export { Alpha1VersionAdapter as AlphaVersionAdapter }

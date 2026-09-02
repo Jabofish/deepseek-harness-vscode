@@ -1,16 +1,19 @@
 import type { DshTransport } from '../../contracts.js'
-import { Rc6VersionAdapter } from '../rc6/adapter.js'
+import { Rc7VersionAdapter } from '../rc7/adapter.js'
+import type { VersionAdapterIdentity } from '../../adapter-base.js'
 import { Rc6SessionRepository } from '../../repositories/session-repository.js'
 import type { Rc6WorkspaceRepository } from '../../repositories/workspace-repository.js'
 import { Rc8CommandRepository } from '../../repositories/command-repository.js'
 
 /** rc.8 adds the `home` host-describe field and new durable event families. */
-export class Rc8VersionAdapter extends Rc6VersionAdapter {
-  public override readonly id: string = 'dsh-0.1.0-rc.8'
-  public override readonly supportedVersion: string = '0.1.0-rc.8'
-  public override readonly compatibilityPriority: number = 50
-  public override readonly fallback = false
-  public override readonly protocolVersion: string = 'rc8'
+export class Rc8VersionAdapter extends Rc7VersionAdapter {
+  protected override readonly identity: VersionAdapterIdentity = {
+    id: 'dsh-0.1.0-rc.8',
+    supportedVersion: '0.1.0-rc.8',
+    protocolVersion: 'rc8',
+    compatibilityPriority: 50,
+    fallback: false,
+  }
   protected override readonly requiresHome = true
 
   protected override acceptsRuntimeHint(version: string | undefined): boolean {
