@@ -69,6 +69,8 @@ export interface BackendCapabilities {
   readonly protocolVersion: string
   readonly dshVersion: string
   readonly features: ReadonlySet<string>
+  /** Alpha hosts accept browser-uploaded image parts on subagent continuations. */
+  readonly subagentImagePrompts?: boolean
   /** Adapter selected by the Extension Host for this connection generation. */
   readonly adapterId?: string
   /** Exact uses a pinned adapter; best-effort uses the newest verified adapter candidate. */

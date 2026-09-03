@@ -60,6 +60,7 @@ describe('DSH 0.1.2-alpha.3 Connection/Gateway contract', () => {
     await expect(versioned.probe(candidate('0.1.2-alpha.3'))).resolves.toMatchObject({
       protocolVersion: 'alpha3',
       dshVersion: '0.1.2-alpha.3',
+      subagentImagePrompts: true,
     })
     await expect(versioned.probe(candidate('0.1.2-alpha.2'))).resolves.toBeUndefined()
     expect(fetch).toHaveBeenCalledOnce()
@@ -98,6 +99,34 @@ describe('DSH 0.1.2-alpha.3 Connection/Gateway contract', () => {
     await expect(callRpc(transport, 'session.list', {})).rejects.toMatchObject({
       code: 'BACKEND_BUSY',
       context: { rpcCode: 'agent-busy' },
+    })
+    await transport.close()
+  })
+
+  it('maps the alpha.3 subagent attachment-invalid vocabulary with its actionable reason', async () => {
+    const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
+      Promise.resolve(
+        response(init, {
+          ok: false,
+          error: {
+            code: 'subagent/attachment-invalid',
+            message: 'the selected model does not accept images',
+            details: { reason: 'MODEL_DOES_NOT_SUPPORT_IMAGES' },
+          },
+        }),
+      ),
+    )
+    const transport = versionedTransport(adapter(fetch))
+
+    await expect(
+      callRpc(transport, 'subagent.prompt', { parentSessionId: 'p1', childSessionId: 'c1', content: [] }),
+    ).rejects.toMatchObject({
+      code: 'INVALID_CONFIGURATION',
+      message: 'The selected DSH model does not support image input.',
+      context: {
+        rpcCode: 'attachment-error',
+        attachmentReason: 'MODEL_DOES_NOT_SUPPORT_IMAGES',
+      },
     })
     await transport.close()
   })

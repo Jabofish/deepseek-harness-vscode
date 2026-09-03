@@ -2,6 +2,7 @@ import { AppError, type ExportRepository, type SessionExportOptions } from '@dsh
 
 import type { DshTransport } from '../contracts.js'
 import { callRpc, unavailable } from '../versions/rc6/rpc.js'
+import { assertCanonicalSessionEvent } from '../versions/rc6/mapper.js'
 
 export interface ExportFileSystem {
   stat(path: string): Promise<{ isDirectory(): boolean }>
@@ -134,13 +135,14 @@ async function readExportHistory(
       typeof value !== 'object' ||
       value === null ||
       !Array.isArray(value.events) ||
-      (value.hasMore !== undefined && typeof value.hasMore !== 'boolean')
+      typeof value.hasMore !== 'boolean'
     )
       throw new AppError({
         code: 'PROTOCOL_ERROR',
         message: 'DSH returned an invalid session history for export.',
         retryable: false,
       })
+    for (const entry of value.events) validateExportHistoryEntry(entry)
     pages.push(value.events)
     if (!value.hasMore) return pages.reverse().flat()
     const sequences = value.events.flatMap((entry) => {
@@ -161,6 +163,43 @@ async function readExportHistory(
   throw new AppError({
     code: 'CAPABILITY_UNAVAILABLE',
     message: 'The session is too large for the bounded export reader.',
+    retryable: false,
+  })
+}
+
+/** Keep malformed history rows from being serialized as a successful export. */
+function validateExportHistoryEntry(value: unknown): void {
+  const record = asRecordOrUndefined(value)
+  if (record === undefined) throw malformedExportHistoryEntry()
+  const nested = record.event
+  if (nested !== undefined) {
+    const event = asRecordOrUndefined(nested)
+    if (
+      event === undefined ||
+      typeof event.type !== 'string' ||
+      event.type.trim() === '' ||
+      !Number.isSafeInteger(event.seq) ||
+      (event.seq as number) < 0 ||
+      typeof event.time !== 'number' ||
+      !Number.isFinite(event.time)
+    )
+      throw malformedExportHistoryEntry()
+    try {
+      assertCanonicalSessionEvent(event.type, event)
+    } catch {
+      throw malformedExportHistoryEntry()
+    }
+    return
+  }
+  // Older rc.6-compatible fixtures returned the raw event object directly.
+  // Preserve that compatibility while still requiring an identifiable row.
+  if (typeof record.type !== 'string' || record.type.trim() === '') throw malformedExportHistoryEntry()
+}
+
+function malformedExportHistoryEntry(): AppError {
+  return new AppError({
+    code: 'PROTOCOL_ERROR',
+    message: 'DSH returned an invalid session history event for export.',
     retryable: false,
   })
 }
@@ -342,6 +381,12 @@ function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {}
+}
+
+function asRecordOrUndefined(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined
 }
 
 function indent(value: string, spaces: number): string {

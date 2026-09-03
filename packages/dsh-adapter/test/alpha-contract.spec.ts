@@ -216,6 +216,56 @@ describe('DSH 0.1.2-alpha.1 Connection/Gateway contract', () => {
     await transport.close()
   })
 
+  it('keeps a live-only provider addressless instead of fabricating a settings namespace', async () => {
+    const fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const pathname =
+        input instanceof URL
+          ? input.pathname
+          : new URL(typeof input === 'string' ? input : input.url).pathname
+      if (pathname === '/api/llm/listProviders')
+        return Promise.resolve(response(init, [{ id: 'runtime-only', name: 'Runtime only' }]))
+      if (pathname === '/api/llm/listConfigurableProviders') return Promise.resolve(response(init, []))
+      return Promise.reject(new Error(`unexpected alpha endpoint ${pathname}`))
+    })
+    const transport = client(fetch)
+
+    await expect(
+      callRpc<{ readonly providers: readonly Record<string, unknown>[] }>(transport, 'llm.providers', {}),
+    ).resolves.toEqual({
+      providers: [
+        {
+          provider: 'runtime-only',
+          displayName: 'Runtime only',
+          settingsNs: '',
+          settingsPath: [],
+          active: true,
+        },
+      ],
+    })
+    await transport.close()
+  })
+
+  it.each([
+    ['a non-array live provider result', {}, []],
+    ['a malformed live provider entry', [{}], []],
+    ['a non-array configurable provider result', [], {}],
+    ['a malformed configurable provider entry', [], [{}]],
+  ])('fails closed for %s instead of silently hiding provider state', async (_label, listed, configs) => {
+    const fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const pathname =
+        input instanceof URL
+          ? input.pathname
+          : new URL(typeof input === 'string' ? input : input.url).pathname
+      if (pathname === '/api/llm/listProviders') return Promise.resolve(response(init, listed))
+      if (pathname === '/api/llm/listConfigurableProviders') return Promise.resolve(response(init, configs))
+      return Promise.reject(new Error(`unexpected alpha endpoint ${pathname}`))
+    })
+    const transport = client(fetch)
+
+    await expect(callRpc(transport, 'llm.providers', {})).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
+    await transport.close()
+  })
+
   it('maps a Gateway stream snapshot and expands packed chunk rows without parsing rendered text', async () => {
     FakeWebSocket.instances.length = 0
     const transport = client(
@@ -272,6 +322,59 @@ describe('DSH 0.1.2-alpha.1 Connection/Gateway contract', () => {
     })
     await expect(iterator.next()).resolves.toMatchObject({
       value: { type: 'session/subscribed', sessionId: 's1', lastSeq: 2 },
+    })
+    await iterator.return?.()
+    await transport.close()
+  })
+
+  it('keeps live canonical goal changes lossless instead of turning malformed changes into clears', async () => {
+    FakeWebSocket.instances.length = 0
+    const transport = client(
+      vi.fn((_input: RequestInfo | URL, init?: RequestInit) => Promise.resolve(response(init, {}))),
+    )
+    const iterator = transport.openSessionStream('s1', new AbortController().signal)[Symbol.asyncIterator]()
+    const first = iterator.next()
+    const socket = await waitForSocket()
+    socket.open()
+    await waitForSent(socket, 1)
+    socket.message(
+      streamItem(socket, {
+        type: 'snapshot',
+        header: {},
+        cursor: 0,
+        records: [],
+        hasMore: false,
+        projections: { asOfSeq: 0, values: {} },
+      }),
+    )
+    await expect(first).resolves.toMatchObject({
+      value: { type: 'session/subscribed', sessionId: 's1', lastSeq: 0 },
+    })
+
+    const next = iterator.next()
+    socket.message(
+      streamItem(socket, {
+        type: 'event',
+        event: {
+          type: 'goal/change',
+          seq: 1,
+          time: 1,
+          data: {
+            kind: 'goal/change',
+            version: 1,
+            operation: 'edit',
+          },
+        },
+      }),
+    )
+    await expect(next).resolves.toMatchObject({
+      value: {
+        type: 'session/event',
+        event: {
+          type: 'goal/change',
+          data: { kind: 'goal/change', version: 1, operation: 'edit' },
+        },
+      },
     })
     await iterator.return?.()
     await transport.close()
@@ -454,6 +557,55 @@ describe('DSH 0.1.2-alpha.1 Connection/Gateway contract', () => {
     }
     expect(catalogBody.payload.args).toEqual({})
     await transport.close()
+  })
+
+  it('normalizes and validates alpha goal mutation receipts at the version boundary', async () => {
+    const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
+      Promise.resolve(response(init, { ref: { id: 'goal-1', revision: 2 } })),
+    )
+    const transport = client(fetch)
+
+    await expect(
+      transport.request('goal.create', { sessionId: 's1', objective: 'bounded work' }),
+    ).resolves.toMatchObject({ result: { ok: true, value: { ref: { id: 'goal-1', revision: 2 } } } })
+    await expect(
+      transport.request('goal.edit', {
+        sessionId: 's1',
+        ref: { id: 'goal-1', revision: 1 },
+        objective: 'updated work',
+      }),
+    ).resolves.toMatchObject({ result: { ok: true, value: { ref: { id: 'goal-1', revision: 2 } } } })
+
+    await transport.close()
+
+    const malformedFetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
+      Promise.resolve(response(init, { ref: { id: 'goal-1', revision: 0 } })),
+    )
+    const malformedTransport = client(malformedFetch)
+    await expect(
+      malformedTransport.request('goal.create', { sessionId: 's1', objective: 'bounded work' }),
+    ).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
+    await malformedTransport.close()
+  })
+
+  it.each([
+    [{ default: { provider: 'p', model: 'm' } }],
+    [{ default: { provider: 'p', model: 'm' }, routableProviders: 'p' }],
+    [{ default: { provider: 'p', model: 'm' }, routableProviders: [1] }],
+  ])('fails closed when the alpha model catalog omits or corrupts routableProviders', async (catalog) => {
+    const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
+      Promise.resolve(response(init, catalog)),
+    )
+    const transport = client(fetch)
+
+    await expect(transport.request('session.models', {})).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
+    await transport.close()
+
+    const secondTransport = client(fetch)
+    await expect(secondTransport.request('llm.models', {})).rejects.toMatchObject({
+      code: 'PROTOCOL_ERROR',
+    })
+    await secondTransport.close()
   })
 
   it('projects alpha credential descriptions into the legacy repository envelope', async () => {
@@ -755,6 +907,29 @@ describe('DSH 0.1.2-alpha.1 Connection/Gateway contract', () => {
     await transport.close()
   })
 
+  it('rejects an api-session/added event that omits the required blank bit', async () => {
+    FakeWebSocket.instances.length = 0
+    const transport = client(
+      vi.fn((_input: RequestInfo | URL, init?: RequestInit) => Promise.resolve(response(init, undefined))),
+    )
+    const iterator = transport.openEventStream(new AbortController().signal)[Symbol.asyncIterator]()
+    const next = iterator.next()
+    const socket = await waitForSocket()
+    socket.open()
+    await waitForSent(socket, 1)
+    socket.message(streamItem(socket, { type: 'ready', clientId: 'client-1', host: { home: '/home/test' } }))
+    socket.message(
+      streamItem(socket, {
+        type: 'emit',
+        event: 'api-session/added',
+        args: [{ sessionId: 's1' }],
+      }),
+    )
+
+    await expect(next).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
+    await transport.close()
+  })
+
   it('fails on a valid but unsupported alpha waterfall event instead of dropping it', async () => {
     FakeWebSocket.instances.length = 0
     const transport = client(
@@ -1015,7 +1190,21 @@ describe('alpha backend assembly baseline ownership', () => {
         value: {
           type: 'baseline',
           value: {
-            queues: { s1: [{ id: 'q1', placement: 'queued', message: { text: 'queued prompt' } }] },
+            queues: {
+              s1: [
+                {
+                  id: 'q1',
+                  placement: 'queued',
+                  message: {
+                    id: 'message-q1',
+                    role: 'user',
+                    content: [{ type: 'text', text: 'queued prompt' }],
+                    source: { kind: 'user' },
+                  },
+                  createdAt: 1,
+                },
+              ],
+            },
             jobs: { s1: [{ id: 'j1', kind: 'build', label: 'build', status: 'running', startedAt: 1 }] },
             projections: {},
           },

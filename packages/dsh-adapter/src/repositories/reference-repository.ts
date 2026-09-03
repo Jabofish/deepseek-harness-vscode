@@ -51,8 +51,9 @@ export class Rc6ReferenceRepository implements ReferenceRepository {
 
 function parseFiles(value: unknown): readonly FileReferenceCandidate[] {
   if (!Array.isArray(value)) throw malformed('file reference candidates')
-  return value.flatMap((entry) => {
-    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) return []
+  return value.map((entry) => {
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry))
+      throw malformed('file reference candidate')
     const record = entry as Record<string, unknown>
     if (
       typeof record.path !== 'string' ||
@@ -61,8 +62,8 @@ function parseFiles(value: unknown): readonly FileReferenceCandidate[] {
       hasUnsafePathCharacters(record.path) ||
       (record.kind !== 'file' && record.kind !== 'directory')
     )
-      return []
-    return [{ path: record.path, kind: record.kind }]
+      throw malformed('file reference candidate')
+    return { path: record.path, kind: record.kind }
   })
 }
 
@@ -76,14 +77,16 @@ function hasUnsafePathCharacters(value: string): boolean {
 
 function parseSessions(value: unknown): readonly SessionReferenceCandidate[] {
   if (!Array.isArray(value)) throw malformed('session reference candidates')
-  return value.flatMap((entry) => {
-    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) return []
+  return value.map((entry) => {
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry))
+      throw malformed('session reference candidate')
     const record = entry as Record<string, unknown>
     if (
       typeof record.sessionId !== 'string' ||
       record.sessionId.trim() === '' ||
       typeof record.label !== 'string' ||
       record.label.trim() === '' ||
+      typeof record.sameWorkspace !== 'boolean' ||
       typeof record.mention !== 'string' ||
       !/^@\[[^\]\r\n]{1,512}\]\(dsh-session:[A-Za-z0-9_-]{1,512}\)$/u.test(record.mention) ||
       typeof record.createdAt !== 'number' ||
@@ -91,16 +94,15 @@ function parseSessions(value: unknown): readonly SessionReferenceCandidate[] {
       record.createdAt < 0 ||
       (record.cwd !== undefined && (typeof record.cwd !== 'string' || record.cwd.length > 4_096))
     )
-      return []
-    return [
-      {
-        sessionId: record.sessionId,
-        label: record.label,
-        ...(record.cwd === undefined ? {} : { cwd: record.cwd }),
-        createdAt: record.createdAt,
-        mention: record.mention,
-      },
-    ]
+      throw malformed('session reference candidate')
+    return {
+      sessionId: record.sessionId,
+      label: record.label,
+      ...(record.cwd === undefined ? {} : { cwd: record.cwd }),
+      sameWorkspace: record.sameWorkspace,
+      createdAt: record.createdAt,
+      mention: record.mention,
+    }
   })
 }
 

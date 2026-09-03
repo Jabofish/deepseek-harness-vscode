@@ -28,6 +28,7 @@ export function SkillPicker(props: SkillPickerProps): ReactElement {
                 {skill.source} · {skill.enabled ? 'enabled' : 'disabled'}
               </ContentFlow>
               <ContentFlow as="p">{skill.description}</ContentFlow>
+              {skill.whenToUse === undefined ? null : <ContentFlow as="p">{skill.whenToUse}</ContentFlow>}
               <button type="button" disabled={!skill.enabled} onClick={() => props.onExecute(skill.id)}>
                 Use skill
               </button>

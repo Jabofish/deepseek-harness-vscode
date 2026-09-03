@@ -12,6 +12,8 @@ import {
   type ChangeSetFile,
   type CheckpointPreview,
   type CheckpointSummary,
+  type CustomProviderCreateResult,
+  type CustomProviderDraft,
   type DshSettingsSchema,
   type DshRuntimeUpdateProgress,
   type DshUpdateSnapshot,
@@ -36,6 +38,7 @@ import {
   type ModelProvider,
   type ModelSelection,
   type PermissionRequest,
+  type PermissionOption,
   type PluginInventorySnapshot,
   type PromptTemplate,
   type PromptTemplateDraft,
@@ -50,6 +53,8 @@ import {
   resolvePromptMode,
   type PromptAttachment,
   type QuestionAnswer,
+  type QuestionChoice,
+  type QuestionIntent,
   type QueuedInput,
   type RunningInputMode,
   type SessionConfigurationPatch,
@@ -74,6 +79,7 @@ import {
   type ToolPresentationView,
   type TurnEndReasonKind,
   type UserQuestion,
+  type UserQuestionItem,
   type WorkflowMember,
   type WorkflowSummary,
   type WorkspaceSummary,
@@ -128,6 +134,8 @@ export type ReferenceCandidate =
       readonly label: string
       readonly description: string
       readonly mention: string
+      /** Host session candidates carry this; synthetic child references may omit it. */
+      readonly sameWorkspace?: boolean
     }
 
 /** A paste/drop payload whose bytes the Webview already holds as base64. */
@@ -163,6 +171,8 @@ export interface AppState {
   readonly backend: WebviewBackendState
   /** Safe connected-host version copied from the Extension Host snapshot. */
   readonly connectedDshVersion: string | undefined
+  /** True only when the selected pinned adapter accepts inline subagent images. */
+  readonly subagentImagePrompts: boolean
   /** Safe compatibility warning for an unknown/fallback DSH runtime. */
   readonly dshCompatibilityWarning: string | undefined
   /** Host-projected feature readiness; no endpoint or credential data. */
@@ -261,7 +271,10 @@ export interface AppActions {
     mode: RunningInputMode,
   ): Promise<void>
   cancelSession(sessionId: string): Promise<void>
-  updateGoal(goalId: string, update: Partial<Pick<GoalView, 'title' | 'status'>>): Promise<void>
+  updateGoal(
+    goalId: string,
+    update: Partial<Pick<GoalView, 'title' | 'status' | 'maxGoalRounds'>>,
+  ): Promise<void>
   clearGoal(goalId: string): Promise<void>
   updateQueue(inputId: string, text: string): Promise<void>
   removeQueue(inputId: string): Promise<void>
@@ -332,6 +345,7 @@ export interface AppActions {
   openDshSettingsDocument(): Promise<void>
   updateDshSetting(path: string, value: unknown): Promise<void>
   unsetDshSetting(path: string): Promise<void>
+  createCustomProvider(draft: CustomProviderDraft): Promise<CustomProviderCreateResult>
   configureProviderSecret(providerId: string, field: string): Promise<boolean>
   removeProviderSecret(providerId: string, field: string): Promise<void>
   /** Configure a plugin-owned credential without carrying the secret in the Webview. */
@@ -340,6 +354,10 @@ export interface AppActions {
   refreshModelCatalog(): Promise<void>
   /** Discover provider models through the Host without carrying credentials in the Webview. */
   discoverModels(input: Omit<ModelDiscoveryInput, 'apiKey'>): Promise<readonly DiscoveredModel[]>
+  /** Discover models for a new provider through a Host-only optional key prompt. */
+  discoverCustomProviderModels(
+    input: Omit<ModelDiscoveryInput, 'apiKey'>,
+  ): Promise<readonly DiscoveredModel[]>
   /** Read the full preset roster with its authorable/hasDocument facts. */
   loadPresetRoster(): Promise<AgentPresetRoster | undefined>
   /** Open one shipped preset's composition in the read-only viewer. */
@@ -406,6 +424,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   let state: AppState = {
     backend: { kind: 'idle' },
     connectedDshVersion: undefined,
+    subagentImagePrompts: false,
     dshCompatibilityWarning: undefined,
     featureProfile: undefined,
     dshUpdate: undefined,
@@ -514,6 +533,19 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   let ledgerRebuildTimer: number | undefined
   const MAX_GAP_BACKFILL_PAGES = 4
   const GAP_BACKFILL_PAGE_MESSAGES = 200
+  const publishUnhealedGap = (sessionId: string, fromSequence: number, toSequence: number): void => {
+    setState((current) => {
+      if (current.activeSessionId !== sessionId) return current
+      const id = `gap:${sessionId}:${fromSequence}:${toSequence}`
+      if (current.timeline.nodes.some((node) => node.id === id)) return current
+      const timeline = reduceTimeline(current.timeline, {
+        sequence: current.timeline.lastSequence,
+        event: { type: 'session.gap', sessionId, fromSequence, toSequence },
+        advanceSequence: false,
+      })
+      return timeline === current.timeline ? current : { ...current, timeline }
+    })
+  }
   const rebuildTimelineFromLedger = (sessionId: string): void => {
     flushPendingHistory()
     setState((current) => {
@@ -554,7 +586,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
               payload: { sessionId, beforeSeq, maxMessages: GAP_BACKFILL_PAGE_MESSAGES },
             })
           } catch {
-            return
+            break
           }
           let events: readonly SessionHistoryEvent[]
           let hasMore = false
@@ -565,7 +597,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
             hasMore = parsed.hasMore
             nextBefore = parsed.beforeSequence ?? oldestHistorySequence(parsed.events)
           } catch {
-            return
+            break
           }
           if (state.activeSessionId !== sessionId || openVersion !== version) return
           if (events.length === 0) break
@@ -580,6 +612,12 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
           if (nextBefore === undefined || nextBefore <= 0) break
           beforeSeq = nextBefore
         }
+        if (
+          state.activeSessionId === sessionId &&
+          openVersion === version &&
+          !historyCoversSequenceRange(state.history, range.from, range.to)
+        )
+          publishUnhealedGap(sessionId, range.from, range.to)
       }
     } finally {
       entry.running = false
@@ -1223,7 +1261,8 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         throw reason
       }
       const detail = object(result)
-      const rawHistory = Array.isArray(detail?.history) ? detail.history : []
+      if (!isSessionOpenDetail(detail, sessionId)) throw new Error(translate('app.error.openSession'))
+      const rawHistory = detail.history
       const parsedHistory = parseSessionHistoryWithTimeline(rawHistory)
       const timeline = hydrateTimelineFromEntries(sessionId, parsedHistory.timeline)
       const history = parsedHistory.history
@@ -1304,6 +1343,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
             commands: commandDirectoryCache.get(sessionId) ?? [],
           },
           initialMessages,
+          scheduleGapBackfill,
         ),
       )
       pending.ready = true
@@ -1353,14 +1393,15 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
             replayHostMessages(
               {
                 ...current,
-                queue,
-                goals,
-                jobs,
-                feedback: feedbackRecord(feedback.items),
-                feedbackUnavailable: feedback.unavailable,
-                subagents: subagents ?? EMPTY_SUBAGENT_CATALOG,
+                ...(queue === undefined ? {} : { queue }),
+                ...(goals === undefined ? {} : { goals }),
+                ...(jobs === undefined ? {} : { jobs }),
+                ...(feedback.items === undefined ? {} : { feedback: feedbackRecord(feedback.items) }),
+                ...(feedback.unavailable === undefined ? {} : { feedbackUnavailable: feedback.unavailable }),
+                ...(subagents === undefined ? {} : { subagents }),
               },
               pendingMessages,
+              scheduleGapBackfill,
             ),
           )
           void refreshChangesState(sessionId)
@@ -1455,6 +1496,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
             promptMode: 'ask',
           },
           initialMessages,
+          scheduleGapBackfill,
         ),
       )
       pending.ready = true
@@ -1467,14 +1509,15 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         replayHostMessages(
           {
             ...current,
-            queue,
-            goals,
-            jobs,
-            feedback: feedbackRecord(feedback.items),
-            feedbackUnavailable: feedback.unavailable,
-            subagents: subagents ?? EMPTY_SUBAGENT_CATALOG,
+            ...(queue === undefined ? {} : { queue }),
+            ...(goals === undefined ? {} : { goals }),
+            ...(jobs === undefined ? {} : { jobs }),
+            ...(feedback.items === undefined ? {} : { feedback: feedbackRecord(feedback.items) }),
+            ...(feedback.unavailable === undefined ? {} : { feedbackUnavailable: feedback.unavailable }),
+            ...(subagents === undefined ? {} : { subagents }),
           },
           pendingMessages,
+          scheduleGapBackfill,
         ),
       )
       void refreshChangesState(entry.id)
@@ -1543,6 +1586,9 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     },
     get connectedDshVersion() {
       return state.connectedDshVersion
+    },
+    get subagentImagePrompts() {
+      return state.subagentImagePrompts
     },
     get dshCompatibilityWarning() {
       return state.dshCompatibilityWarning
@@ -1621,6 +1667,9 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     },
     get feedback() {
       return state.feedback
+    },
+    get feedbackUnavailable() {
+      return state.feedbackUnavailable ?? false
     },
     get subagents() {
       return state.subagents
@@ -1714,8 +1763,8 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         requestId: requestId(),
         payload: { search: trimmed, archived: false },
       })
-      const items = object(result)?.items
-      return Array.isArray(items) ? deduplicateSessionSummaries(items.filter(isSessionSummary)) : []
+      const items = strictListValues(result, isSessionSummary)
+      return items === undefined ? [] : deduplicateSessionSummaries(items)
     },
     refreshCommands: (sessionId) => refreshCommands(sessionId),
     openSession: open,
@@ -1995,7 +2044,8 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       if (subagent !== undefined) {
         if (subagent.entry.mode === 'one-shot') throw new Error(translate('app.error.subagentReadOnly'))
         if (!subagent.parentAvailable) throw new Error(translate('app.error.subagentParentUnavailable'))
-        if (attachments.length > 0) throw new Error(translate('app.error.subagentAttachments'))
+        if (attachments.length > 0 && state.subagentImagePrompts !== true)
+          throw new Error(translate('app.error.subagentAttachments'))
         if (text.trim() === '') throw new Error(translate('app.error.subagentMessageRequired'))
       }
       const isSlashCommand =
@@ -2054,7 +2104,11 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
           await client.request<unknown>({
             type: 'subagent.send',
             requestId: rpcRequestId,
-            payload: { sessionId, message: text },
+            payload: {
+              sessionId,
+              message: text,
+              ...(attachments.length === 0 ? {} : { attachments: [...attachments] }),
+            },
           })
         if (subagent === undefined && contextRefs.length > 0)
           setState((current) => ({ ...current, editorContext: [] }))
@@ -2085,7 +2139,8 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       )
     },
     updateGoal: async (goalId, update) => {
-      if (update.title === undefined && update.status === undefined) return
+      if (update.title === undefined && update.status === undefined && update.maxGoalRounds === undefined)
+        return
       await client.request<unknown>({
         type: 'goal.update',
         requestId: requestId(),
@@ -2151,15 +2206,14 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     },
     loadFeedback: async (sessionId) => {
       const result = await safeFeedbackList(client, sessionId)
-      setState((current) =>
-        current.activeSessionId === sessionId
-          ? {
-              ...current,
-              feedback: feedbackRecord(result.items),
-              feedbackUnavailable: result.unavailable,
-            }
-          : current,
-      )
+      setState((current) => {
+        if (current.activeSessionId !== sessionId) return current
+        return {
+          ...current,
+          ...(result.items === undefined ? {} : { feedback: feedbackRecord(result.items) }),
+          ...(result.unavailable === undefined ? {} : { feedbackUnavailable: result.unavailable }),
+        }
+      })
     },
     toggleFeedback: async (sessionId, messageId, rating) => {
       try {
@@ -2820,6 +2874,21 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         payload: { path },
       })
     },
+    createCustomProvider: async (draft) => {
+      const result = parseCustomProviderCreateResult(
+        await client.request<unknown>({
+          type: 'provider.custom.create',
+          requestId: requestId(),
+          payload: {
+            ...draft,
+            collectionPath: [...draft.collectionPath],
+            models: draft.models.map((model) => ({ ...model })),
+          },
+        }),
+      )
+      if (result === undefined) throw new Error(translate('settings.providerCreateMalformed'))
+      return result
+    },
     configureProviderSecret: async (providerId, field) => {
       const result = object(
         await client.request<unknown>({
@@ -2860,6 +2929,16 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     discoverModels: async (input) => {
       const value = await client.request<unknown>({
         type: 'models.discover',
+        requestId: requestId(),
+        payload: input,
+      })
+      const models = parseDiscoveredModels(value)
+      if (models === undefined) throw new Error(translate('settings.discoveryMalformed'))
+      return models
+    },
+    discoverCustomProviderModels: async (input) => {
+      const value = await client.request<unknown>({
+        type: 'models.discover.custom',
         requestId: requestId(),
         payload: input,
       })
@@ -2990,7 +3069,7 @@ async function refreshProvidersAndModels(client: ProtocolClient, setState: State
       ? listValues(providersResult.value).filter(isModelProvider)
       : undefined
   const models =
-    modelsResult.status === 'fulfilled' ? listValues(modelsResult.value).filter(isModelDescriptor) : undefined
+    modelsResult.status === 'fulfilled' ? strictListValues(modelsResult.value, isModelDescriptor) : undefined
   setState((current) => {
     const nextProviders =
       providers === undefined || sameModelProviderList(current.providers, providers)
@@ -3209,6 +3288,8 @@ function isSettingsNamespace(value: unknown): value is DshSettingsSchema['namesp
     namespace !== undefined &&
     typeof namespace.ns === 'string' &&
     (namespace.applies === 'live' || namespace.applies === 'restart') &&
+    Number.isSafeInteger(namespace.revision) &&
+    (namespace.revision as number) >= 0 &&
     Array.isArray(namespace.userFields) &&
     namespace.userFields.every((field) => typeof field === 'string') &&
     Array.isArray(namespace.secrets) &&
@@ -3266,10 +3347,10 @@ async function refreshSessions(
   const sessionItems = object(value(sessionResult))?.items
   const workspacePayload = object(value(workspaceResult))
   const archivedFromHost = stringList(workspacePayload?.archivedSessionIds)
-  const rawSessions = Array.isArray(sessionItems) ? sessionItems.filter(isSessionSummary) : undefined
+  const rawSessions = strictListValues(sessionItems, isSessionSummary)
   const rawWorkspaces =
     workspaceResult.status === 'fulfilled'
-      ? listValues(value(workspaceResult)).filter(isWorkspaceSummary)
+      ? strictListValues(value(workspaceResult), isWorkspaceSummary)
       : undefined
   if (!isCurrent()) return
   setState((current) => {
@@ -3365,13 +3446,15 @@ async function refreshSessions(
       return result?.status === 'fulfilled' ? result.value : undefined
     }
     const providers = listValues(catalogValue(0)).filter(isModelProvider)
-    const models = listValues(catalogValue(1)).filter(isModelDescriptor)
+    const models = strictListValues(catalogValue(1), isModelDescriptor)
     const presets = parsePresetRoster(catalogValue(2))?.presets
     setState((current) => {
-      const nextProviders = sameModelProviderList(current.providers, providers)
-        ? current.providers
-        : providers
-      const nextModels = sameModelDescriptorList(current.models, models) ? current.models : models
+      const nextProviders =
+        providers === undefined || sameModelProviderList(current.providers, providers)
+          ? current.providers
+          : providers
+      const nextModels =
+        models === undefined || sameModelDescriptorList(current.models, models) ? current.models : models
       const nextPresets =
         presets === undefined || samePresetDescriptorList(current.presets, presets)
           ? current.presets
@@ -3462,18 +3545,18 @@ async function safeList<T>(
   client: ProtocolClient,
   request: WebviewRequest,
   guard: (value: unknown) => value is T,
-): Promise<readonly T[]> {
+): Promise<readonly T[] | undefined> {
   try {
     const result = await client.request<unknown>(request)
-    return listValues(result).filter(guard)
+    return strictListValues(result, guard)
   } catch {
-    return []
+    return undefined
   }
 }
 
 interface FeedbackListResult {
-  readonly items: readonly MessageFeedbackItem[]
-  readonly unavailable: boolean
+  readonly items: readonly MessageFeedbackItem[] | undefined
+  readonly unavailable: boolean | undefined
 }
 
 async function safeFeedbackList(client: ProtocolClient, sessionId: string): Promise<FeedbackListResult> {
@@ -3483,12 +3566,13 @@ async function safeFeedbackList(client: ProtocolClient, sessionId: string): Prom
       requestId: requestId(),
       payload: { sessionId },
     })
-    return {
-      items: listValues(result).filter(isMessageFeedbackItem),
-      unavailable: false,
-    }
+    const items = strictListValues(result, isMessageFeedbackItem)
+    return items === undefined ? { items: undefined, unavailable: undefined } : { items, unavailable: false }
   } catch (error) {
-    return { items: [], unavailable: isFeedbackCapabilityUnavailable(error) }
+    return {
+      items: undefined,
+      unavailable: isFeedbackCapabilityUnavailable(error) ? true : undefined,
+    }
   }
 }
 
@@ -3577,9 +3661,22 @@ async function readCommandList(
     return undefined
   }
   const commands =
-    commandsResult.status === 'fulfilled' ? listValues(commandsResult.value).filter(isDynamicCommand) : []
+    commandsResult.status === 'fulfilled'
+      ? strictListValues(commandsResult.value, isDynamicCommand)
+      : ([] as readonly DynamicCommand[])
   const skills =
-    skillsResult.status === 'fulfilled' ? listValues(skillsResult.value).filter(isSkillDescriptor) : []
+    skillsResult.status === 'fulfilled'
+      ? strictListValues(skillsResult.value, isSkillDescriptor)
+      : ([] as readonly SkillDescriptor[])
+  // Each fulfilled endpoint returned a complete directory fragment. A
+  // malformed fragment must not be reduced to an empty/partial fragment and
+  // merged into the other one; preserve the last complete directory instead.
+  if (
+    (commandsResult.status === 'fulfilled' && commands === undefined) ||
+    (skillsResult.status === 'fulfilled' && skills === undefined)
+  )
+    return undefined
+  if (commands === undefined || skills === undefined) return undefined
   return withClientCommandContributions(mergeSkillCommands(commands, skills))
 }
 
@@ -3599,6 +3696,7 @@ function mergeSkillCommands(
         description: skill.enabled
           ? skill.description
           : `${translate('commands.skillUserOnly')} · ${skill.description}`,
+        ...(skill.whenToUse === undefined ? {} : { whenToUse: skill.whenToUse }),
         source: 'skill' as const,
       },
     ]
@@ -3619,7 +3717,7 @@ async function loadSessionModelDirectory(
       }),
     )
     if (result === undefined || !Array.isArray(result.models)) return undefined
-    return result.models.filter(isModelDescriptor)
+    return result.models.every(isModelDescriptor) ? result.models : undefined
   } catch {
     return undefined
   }
@@ -3662,6 +3760,20 @@ function isModelCatalogRefresh(value: unknown): boolean {
   )
 }
 
+function strictListValues<T>(
+  value: unknown,
+  guard: (value: unknown) => value is T,
+): readonly T[] | undefined {
+  const values = Array.isArray(value) ? value : object(value)?.items
+  if (!Array.isArray(values) || !values.every(guard)) return undefined
+  return values
+}
+
+/**
+ * Provider discovery is a mixed live/configurable directory. Keep valid rows
+ * when an optional catalog row is malformed so one bad upstream entry cannot
+ * hide the live providers that the user can actually use.
+ */
 function listValues(value: unknown): readonly unknown[] {
   if (Array.isArray(value)) return value
   const record = object(value)
@@ -3808,6 +3920,7 @@ function sameModelProvider(left: ModelProvider, right: ModelProvider): boolean {
       previous.label !== next.label ||
       previous.secret !== next.secret ||
       previous.required !== next.required ||
+      !sameStringList(previous.enumValues, next.enumValues) ||
       previous.writable !== next.writable ||
       previous.value !== next.value
     )
@@ -3929,6 +4042,7 @@ function applyHostMessage(
         ...state,
         backend: { kind, searchedLocations },
         connectedDshVersion: undefined,
+        subagentImagePrompts: false,
         dshCompatibilityWarning: undefined,
         featureProfile: undefined,
       })
@@ -3947,6 +4061,7 @@ function applyHostMessage(
         setState({
           ...state,
           connectedDshVersion: undefined,
+          subagentImagePrompts: false,
           dshCompatibilityWarning: undefined,
           featureProfile: undefined,
           backend: {
@@ -3962,6 +4077,7 @@ function applyHostMessage(
         setState({
           ...state,
           connectedDshVersion: undefined,
+          subagentImagePrompts: false,
           dshCompatibilityWarning: undefined,
           featureProfile: undefined,
           backend: {
@@ -3980,6 +4096,7 @@ function applyHostMessage(
             kind === 'connected' && typeof snapshot?.dshVersion === 'string'
               ? snapshot.dshVersion
               : undefined,
+          subagentImagePrompts: kind === 'connected' && snapshot?.subagentImagePrompts === true,
           dshCompatibilityWarning:
             kind === 'connected' && typeof snapshot?.compatibilityWarning === 'string'
               ? snapshot.compatibilityWarning
@@ -4013,8 +4130,8 @@ function applyHostMessage(
     if (belongsToActiveSession && onSessionGap !== undefined) onSessionGap(event)
     // Recovery backfills the hole from history and rebuilds the timeline, so
     // repeated announcements of the same range must not stack notice nodes.
-    // Until the rebuild, the notice carries the "some events were recovered"
-    // feedback while the backfill is in flight.
+    // The active-session path defers the notice until recovery confirms that
+    // history still cannot cover the announced range.
   }
   // Command records are control-plane history and stay out of the rendered
   // Chat surface. Other producer-owned user/message records remain available
@@ -4025,11 +4142,13 @@ function applyHostMessage(
       : undefined
   const duplicateGapNotice =
     gapNodeId !== undefined && state.timeline.nodes.some((node) => node.id === gapNodeId)
+  const deferGapNotice = event.type === 'session.gap' && onSessionGap !== undefined && belongsToActiveSession
   const timeline =
     !belongsToActiveSession ||
     controlPlaneMessage ||
     !eventMayChangeTimelineState(event) ||
-    duplicateGapNotice
+    duplicateGapNotice ||
+    deferGapNotice
       ? state.timeline
       : reduceTimeline(state.timeline, {
           sequence: event.sequence ?? message.sequence,
@@ -4109,9 +4228,19 @@ function applyHostMessage(
       queue !== next.queue ||
       jobs !== next.jobs ||
       permissions !== next.permissions ||
-      questions !== next.questions
+      questions !== next.questions ||
+      event.projection !== undefined
     )
-      next = { ...next, queue, jobs, permissions, questions }
+      next = {
+        ...next,
+        queue,
+        jobs,
+        permissions,
+        questions,
+        ...(event.projection === undefined
+          ? {}
+          : { projections: setSessionProjection(next.projections, event.sessionId, event.projection) }),
+      }
   } else if (event.type === 'session.configuration' && event.sessionId === next.activeSessionId) {
     next = {
       ...next,
@@ -4218,6 +4347,7 @@ function applyHostMessage(
       ...next,
       backend: { kind: 'failed', message: event.reason, retryable: true },
       connectedDshVersion: undefined,
+      subagentImagePrompts: false,
       dshCompatibilityWarning: undefined,
       featureProfile: undefined,
       queue: [],
@@ -4245,7 +4375,11 @@ function applyHostMessage(
   if (next !== state) setState(next)
 }
 
-function replayHostMessages(state: AppState, messages: readonly HostMessage[]): AppState {
+function replayHostMessages(
+  state: AppState,
+  messages: readonly HostMessage[],
+  onSessionGap?: (event: Extract<BackendEvent, { type: 'session.gap' }>) => void,
+): AppState {
   let replayed = state
   const pendingHistory = new Map<string, SessionHistoryEvent[]>()
   const appendReplayHistory: LiveHistoryAppender = (sessionId, entry): void => {
@@ -4256,7 +4390,8 @@ function replayHostMessages(state: AppState, messages: readonly HostMessage[]): 
   const setReplayed: StateSetter = (next) => {
     replayed = typeof next === 'function' ? next(replayed) : next
   }
-  for (const message of messages) applyHostMessage(message, replayed, setReplayed, appendReplayHistory)
+  for (const message of messages)
+    applyHostMessage(message, replayed, setReplayed, appendReplayHistory, undefined, onSessionGap)
   const additions = pendingHistory.get(replayed.activeSessionId ?? '')
   if (additions !== undefined) {
     const history = mergeHistory(replayed.history, additions)
@@ -4363,13 +4498,31 @@ function mergeConfigurationPatch(
   }
 }
 
-function configurationPatch(value: Record<string, unknown>): SessionConfigurationPatch {
-  const model = isRecord(value.model)
+function configurationPatch(value: Record<string, unknown>): SessionConfigurationPatch | undefined {
+  const modelValue = value.model
+  if (
+    (value.preset !== undefined && typeof value.preset !== 'string') ||
+    (value.toolMode !== undefined && !isToolMode(value.toolMode)) ||
+    (value.permissionPreset !== undefined && typeof value.permissionPreset !== 'string') ||
+    (value.planMode !== undefined && typeof value.planMode !== 'boolean') ||
+    (value.sandboxMode !== undefined && typeof value.sandboxMode !== 'string') ||
+    (value.approvalPolicy !== undefined && typeof value.approvalPolicy !== 'string') ||
+    (modelValue !== undefined && !isRecord(modelValue))
+  )
+    return undefined
+  if (
+    isRecord(modelValue) &&
+    ((modelValue.providerId !== undefined && typeof modelValue.providerId !== 'string') ||
+      (modelValue.modelId !== undefined && typeof modelValue.modelId !== 'string') ||
+      (modelValue.reasoningLevel !== undefined && typeof modelValue.reasoningLevel !== 'string'))
+  )
+    return undefined
+  const model = isRecord(modelValue)
     ? {
-        ...(typeof value.model.providerId === 'string' ? { providerId: value.model.providerId } : {}),
-        ...(typeof value.model.modelId === 'string' ? { modelId: value.model.modelId } : {}),
-        ...(typeof value.model.reasoningLevel === 'string'
-          ? { reasoningLevel: value.model.reasoningLevel }
+        ...(typeof modelValue.providerId === 'string' ? { providerId: modelValue.providerId } : {}),
+        ...(typeof modelValue.modelId === 'string' ? { modelId: modelValue.modelId } : {}),
+        ...(typeof modelValue.reasoningLevel === 'string'
+          ? { reasoningLevel: modelValue.reasoningLevel }
           : {}),
       }
     : undefined
@@ -4427,6 +4580,14 @@ function removeSessionProjection(
 }
 
 function domainEvent(name: string, payload: unknown): BackendEvent | undefined {
+  const raw = object(payload)
+  if (raw !== undefined && raw.sequence !== undefined && finiteEventSequence(raw.sequence) === undefined)
+    return {
+      type: 'unknown',
+      ...(typeof raw.sessionId === 'string' ? { sessionId: raw.sessionId } : {}),
+      name,
+      payload,
+    }
   const event = parseDomainEvent(name, payload)
   if (event === undefined) return undefined
   const sequence = finiteEventSequence(object(payload)?.sequence)
@@ -4438,12 +4599,23 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
   if (value === undefined) return { type: 'unknown', name, payload }
   if (
     name === 'message.user' &&
-    typeof value.sessionId === 'string' &&
-    typeof value.messageId === 'string' &&
+    nonEmptyString(value.sessionId) &&
+    nonEmptyString(value.messageId) &&
     typeof value.markdown === 'string'
   ) {
-    const attachments = messageAttachments(value.attachments)
-    const images = messageImages(value.images)
+    const hasAttachments = Object.hasOwn(value, 'attachments')
+    const hasImages = Object.hasOwn(value, 'images')
+    const attachments = hasAttachments ? messageAttachments(value.attachments) : undefined
+    const images = hasImages ? messageImages(value.images) : undefined
+    if (
+      (hasAttachments && attachments === undefined) ||
+      (hasImages && images === undefined) ||
+      (value.rpcId !== undefined && typeof value.rpcId !== 'string') ||
+      (value.source !== undefined && typeof value.source !== 'string') ||
+      (value.sourceForm !== undefined && typeof value.sourceForm !== 'string') ||
+      (value.sourceSummary !== undefined && typeof value.sourceSummary !== 'string')
+    )
+      return { type: 'unknown', name, payload }
     return {
       type: 'message.user',
       sessionId: value.sessionId,
@@ -4457,11 +4629,13 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
       ...(typeof value.sourceSummary === 'string' ? { sourceSummary: value.sourceSummary } : {}),
     }
   }
-  if ((name === 'turn.started' || name === 'turn.ended') && typeof value.sessionId === 'string') {
+  if ((name === 'turn.started' || name === 'turn.ended') && nonEmptyString(value.sessionId)) {
     const turn = finiteEventIndex(value.turn)
     if (turn === undefined) return { type: 'unknown', name, payload }
     if (name === 'turn.started') return { type: 'turn.started', sessionId: value.sessionId, turn }
+    const hasFailure = Object.hasOwn(value, 'failure')
     const failure = turnEndFailure(value.failure ?? value.reason)
+    if (hasFailure && failure === undefined) return { type: 'unknown', name, payload }
     return {
       type: 'turn.ended',
       sessionId: value.sessionId,
@@ -4470,11 +4644,12 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
       ...(failure === undefined ? {} : { failure }),
     }
   }
-  if ((name === 'step.started' || name === 'step.ended') && typeof value.sessionId === 'string') {
+  if ((name === 'step.started' || name === 'step.ended') && nonEmptyString(value.sessionId)) {
     const turn = finiteEventIndex(value.turn)
     const step = finiteEventIndex(value.step)
     if (turn === undefined || step === undefined) return { type: 'unknown', name, payload }
     const time = finiteEventTimestamp(value.time)
+    if (value.time !== undefined && time === undefined) return { type: 'unknown', name, payload }
     return name === 'step.started'
       ? {
           type: 'step.started',
@@ -4493,13 +4668,20 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
   }
   if (
     name === 'message.delta' &&
-    typeof value.sessionId === 'string' &&
-    typeof value.messageId === 'string' &&
+    nonEmptyString(value.sessionId) &&
+    nonEmptyString(value.messageId) &&
     typeof value.delta === 'string'
   ) {
     const turn = finiteEventIndex(value.turn)
     const step = finiteEventIndex(value.step)
     const time = finiteEventTimestamp(value.time)
+    if (
+      (value.turn !== undefined && turn === undefined) ||
+      (value.step !== undefined && step === undefined) ||
+      (value.time !== undefined && time === undefined) ||
+      (Object.hasOwn(value, 'interrupted') && value.interrupted !== true)
+    )
+      return { type: 'unknown', name, payload }
     return {
       type: 'message.delta',
       sessionId: value.sessionId,
@@ -4513,13 +4695,20 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
   }
   if (
     name === 'reasoning.delta' &&
-    typeof value.sessionId === 'string' &&
-    typeof value.messageId === 'string' &&
+    nonEmptyString(value.sessionId) &&
+    nonEmptyString(value.messageId) &&
     typeof value.delta === 'string'
   ) {
     const turn = finiteEventIndex(value.turn)
     const step = finiteEventIndex(value.step)
     const time = finiteEventTimestamp(value.time)
+    if (
+      (value.turn !== undefined && turn === undefined) ||
+      (value.step !== undefined && step === undefined) ||
+      (value.time !== undefined && time === undefined) ||
+      (Object.hasOwn(value, 'interrupted') && value.interrupted !== true)
+    )
+      return { type: 'unknown', name, payload }
     return {
       type: 'reasoning.delta',
       sessionId: value.sessionId,
@@ -4530,16 +4719,24 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
       ...(time === undefined ? {} : { time }),
     }
   }
-  if (
-    name === 'message.completed' &&
-    typeof value.sessionId === 'string' &&
-    typeof value.messageId === 'string'
-  ) {
+  if (name === 'message.completed' && nonEmptyString(value.sessionId) && nonEmptyString(value.messageId)) {
     const usage = parseTokenUsage(value.usage)
-    const images = messageImages(value.images)
+    const hasImages = Object.hasOwn(value, 'images')
+    const images = hasImages ? messageImages(value.images) : undefined
     const turn = finiteEventIndex(value.turn)
     const step = finiteEventIndex(value.step)
     const time = finiteEventTimestamp(value.time)
+    if (
+      (hasImages && images === undefined) ||
+      (Object.hasOwn(value, 'interrupted') && value.interrupted !== true) ||
+      (value.markdown !== undefined && typeof value.markdown !== 'string') ||
+      (value.reasoning !== undefined && typeof value.reasoning !== 'string') ||
+      (value.modelLabel !== undefined && typeof value.modelLabel !== 'string') ||
+      (value.turn !== undefined && turn === undefined) ||
+      (value.step !== undefined && step === undefined) ||
+      (value.time !== undefined && time === undefined)
+    )
+      return { type: 'unknown', name, payload }
     return {
       type: 'message.completed',
       sessionId: value.sessionId,
@@ -4552,13 +4749,14 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
       ...(turn === undefined ? {} : { turn }),
       ...(step === undefined ? {} : { step }),
       ...(time === undefined ? {} : { time }),
+      ...(value.interrupted === true ? { interrupted: true as const } : {}),
     }
   }
-  if (name === 'session.status' && typeof value.sessionId === 'string' && typeof value.status === 'string')
+  if (name === 'session.status' && nonEmptyString(value.sessionId) && typeof value.status === 'string')
     return { type: 'session.status', sessionId: value.sessionId, status: value.status }
   if (
     name === 'session.activity' &&
-    typeof value.sessionId === 'string' &&
+    nonEmptyString(value.sessionId) &&
     typeof value.updatedAt === 'number' &&
     Number.isSafeInteger(value.updatedAt) &&
     value.updatedAt >= 0
@@ -4566,51 +4764,94 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
     return { type: 'session.activity', sessionId: value.sessionId, updatedAt: value.updatedAt }
   if (
     name === 'session.subscribed' &&
-    typeof value.sessionId === 'string' &&
+    nonEmptyString(value.sessionId) &&
     typeof value.lastSequence === 'number' &&
-    Number.isSafeInteger(value.lastSequence)
-  )
+    Number.isSafeInteger(value.lastSequence) &&
+    value.lastSequence >= -1
+  ) {
+    const hasProjection = Object.hasOwn(value, 'projection')
+    let projection: SessionProjectionSnapshot | undefined
+    if (hasProjection) {
+      try {
+        projection = parseSessionProjection(value.projection)
+      } catch {
+        return { type: 'unknown', name, payload }
+      }
+    }
+    if (hasProjection && projection === undefined) return { type: 'unknown', name, payload }
     return {
       type: 'session.subscribed',
       sessionId: value.sessionId,
       lastSequence: value.lastSequence,
+      ...(projection === undefined ? {} : { projection }),
     }
-  if (name === 'session.title' && typeof value.sessionId === 'string' && typeof value.title === 'string')
+  }
+  if (name === 'session.title' && nonEmptyString(value.sessionId) && typeof value.title === 'string')
     return { type: 'session.title', sessionId: value.sessionId, title: value.title }
-  if (name === 'session.configuration' && typeof value.sessionId === 'string' && isRecord(value.patch))
-    return {
-      type: 'session.configuration',
-      sessionId: value.sessionId,
-      patch: configurationPatch(value.patch),
-    }
-  if (name === 'session.added' && typeof value.sessionId === 'string')
+  if (name === 'session.configuration' && nonEmptyString(value.sessionId) && isRecord(value.patch)) {
+    const patch = configurationPatch(value.patch)
+    if (patch !== undefined) return { type: 'session.configuration', sessionId: value.sessionId, patch }
+  }
+  if (name === 'session.added' && nonEmptyString(value.sessionId)) {
+    const hasParentSessionId = Object.hasOwn(value, 'parentSessionId')
+    const hasOrigin = Object.hasOwn(value, 'origin')
+    const hasCwd = Object.hasOwn(value, 'cwd')
+    const hasAgentPreset = Object.hasOwn(value, 'agentPreset')
+    if (
+      typeof value.blank !== 'boolean' ||
+      (hasParentSessionId &&
+        (typeof value.parentSessionId !== 'string' || value.parentSessionId.trim() === '')) ||
+      (hasOrigin && value.origin !== 'subagent') ||
+      (hasCwd && typeof value.cwd !== 'string') ||
+      (hasAgentPreset && typeof value.agentPreset !== 'string')
+    )
+      return { type: 'unknown', name, payload }
     return {
       type: 'session.added',
       sessionId: value.sessionId,
-      ...(typeof value.blank === 'boolean' ? { blank: value.blank } : {}),
+      blank: value.blank,
       ...(typeof value.parentSessionId === 'string' ? { parentSessionId: value.parentSessionId } : {}),
       ...(value.origin === 'subagent' ? { origin: 'subagent' as const } : {}),
-      ...(typeof value.cwd === 'string' && value.cwd.trim() !== '' ? { cwd: value.cwd } : {}),
-      ...(typeof value.agentPreset === 'string' && value.agentPreset.trim() !== ''
-        ? { agentPreset: value.agentPreset }
-        : {}),
+      ...(typeof value.cwd === 'string' ? { cwd: value.cwd } : {}),
+      ...(typeof value.agentPreset === 'string' ? { agentPreset: value.agentPreset } : {}),
     }
-  if (name === 'session.removed' && typeof value.sessionId === 'string')
+  }
+  if (name === 'session.removed' && nonEmptyString(value.sessionId))
     return { type: 'session.removed', sessionId: value.sessionId }
-  if (name === 'session.projection' && typeof value.sessionId === 'string' && typeof value.key === 'string')
+  if (
+    name === 'session.projection' &&
+    nonEmptyString(value.sessionId) &&
+    nonEmptyString(value.key) &&
+    Object.hasOwn(value, 'value')
+  )
     return { type: 'session.projection', sessionId: value.sessionId, key: value.key, value: value.value }
   if (
     name === 'tool.updated' &&
-    typeof value.sessionId === 'string' &&
+    nonEmptyString(value.sessionId) &&
     isRecord(value.tool) &&
     typeof value.tool.id === 'string' &&
+    value.tool.id.trim() !== '' &&
     typeof value.tool.name === 'string' &&
+    value.tool.name.trim() !== '' &&
     isToolStatus(value.tool.status)
   ) {
     const turn = finiteEventIndex(value.tool.turn)
     const step = finiteEventIndex(value.tool.step)
     const locations = parseToolLocations(value.tool.locations)
     const presentation = parseToolPresentation(value.tool.presentation)
+    if (
+      (value.tool.turn !== undefined && turn === undefined) ||
+      (value.tool.step !== undefined && step === undefined) ||
+      (value.tool.category !== undefined && typeof value.tool.category !== 'string') ||
+      (value.tool.title !== undefined && typeof value.tool.title !== 'string') ||
+      (value.tool.startedAt !== undefined && typeof value.tool.startedAt !== 'string') ||
+      (value.tool.completedAt !== undefined && typeof value.tool.completedAt !== 'string') ||
+      (value.tool.inputSummary !== undefined && typeof value.tool.inputSummary !== 'string') ||
+      (value.tool.outputSummary !== undefined && typeof value.tool.outputSummary !== 'string') ||
+      (value.tool.error !== undefined && typeof value.tool.error !== 'string') ||
+      (value.tool.metadata !== undefined && !isRecord(value.tool.metadata))
+    )
+      return { type: 'unknown', name, payload }
     return {
       type: 'tool.updated',
       sessionId: value.sessionId,
@@ -4633,77 +4874,67 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
       },
     }
   }
-  if (name === 'team.updated' && typeof value.sessionId === 'string') {
+  if (name === 'team.updated' && nonEmptyString(value.sessionId)) {
     const activity = parseTeamActivity(value.activity)
     return activity === undefined
       ? { type: 'unknown', sessionId: value.sessionId, name, payload }
       : { type: 'team.updated', sessionId: value.sessionId, activity }
   }
-  if (name === 'goal.updated' && typeof value.sessionId === 'string' && Array.isArray(value.goals)) {
-    const goals = value.goals.flatMap((entry) => {
-      const goal = object(entry)
-      if (
-        goal === undefined ||
-        typeof goal.id !== 'string' ||
-        typeof goal.title !== 'string' ||
-        !isGoalStatus(goal.status)
-      )
-        return []
-      return [{ id: goal.id, title: goal.title, status: goal.status }]
-    })
-    return { type: 'goal.updated', sessionId: value.sessionId, goals }
+  if (name === 'goal.updated' && nonEmptyString(value.sessionId)) {
+    const goals = parseGoalViews(value.goals)
+    if (goals !== undefined) return { type: 'goal.updated', sessionId: value.sessionId, goals }
   }
-  if (name === 'todo.updated' && typeof value.sessionId === 'string' && Array.isArray(value.todos)) {
-    return {
-      type: 'todo.updated',
-      sessionId: value.sessionId,
-      todos: value.todos.flatMap((entry, index) => {
-        const todo = object(entry)
-        if (todo === undefined || typeof todo.content !== 'string') return []
-        const status = todo.status
-        return [
-          {
-            id: typeof todo.id === 'string' ? todo.id : `todo:${index}`,
-            content: todo.content,
-            status:
-              status === 'completed' ? 'completed' : status === 'in-progress' ? 'in-progress' : 'pending',
-          },
-        ]
-      }),
-    }
+  if (name === 'todo.updated' && nonEmptyString(value.sessionId)) {
+    const todos = parseTodoViews(value.todos)
+    if (todos !== undefined) return { type: 'todo.updated', sessionId: value.sessionId, todos }
   }
   if (
     name === 'compaction.updated' &&
-    typeof value.sessionId === 'string' &&
+    nonEmptyString(value.sessionId) &&
     isRecord(value.compaction) &&
-    typeof value.compaction.id === 'string'
+    nonEmptyString(value.compaction.id)
   ) {
     const phase = value.compaction.phase
-    if (phase === 'start' || phase === 'summary' || phase === 'prune' || phase === 'end')
-      return {
-        type: 'compaction.updated',
-        sessionId: value.sessionId,
-        compaction: {
-          id: value.compaction.id,
-          phase,
-          ...(typeof value.compaction.summary === 'string' ? { summary: value.compaction.summary } : {}),
-          ...(typeof value.compaction.replacedCount === 'number'
-            ? { replacedCount: value.compaction.replacedCount }
-            : {}),
-          ...(typeof value.compaction.estimatedTokens === 'number'
-            ? { estimatedTokens: value.compaction.estimatedTokens }
-            : {}),
-        },
-      }
+    const summary = value.compaction.summary
+    const replacedCount = value.compaction.replacedCount
+    const estimatedTokens = value.compaction.estimatedTokens
+    const parsedReplacedCount = nonNegativeSafeInteger(replacedCount)
+    const parsedEstimatedTokens = nonNegativeSafeInteger(estimatedTokens)
+    if (
+      (phase !== 'start' && phase !== 'summary' && phase !== 'prune' && phase !== 'end') ||
+      (summary !== undefined && typeof summary !== 'string') ||
+      (replacedCount !== undefined && parsedReplacedCount === undefined) ||
+      (estimatedTokens !== undefined && parsedEstimatedTokens === undefined)
+    )
+      return { type: 'unknown', sessionId: value.sessionId, name, payload }
+    return {
+      type: 'compaction.updated',
+      sessionId: value.sessionId,
+      compaction: {
+        id: value.compaction.id,
+        phase,
+        ...(summary === undefined ? {} : { summary }),
+        ...(parsedReplacedCount === undefined ? {} : { replacedCount: parsedReplacedCount }),
+        ...(parsedEstimatedTokens === undefined ? {} : { estimatedTokens: parsedEstimatedTokens }),
+      },
+    }
   }
   if (name === 'model.retry' && isRecord(value.retry)) {
     const retry = value.retry
+    const turn = finiteEventIndex(retry.turn)
+    const step = finiteEventIndex(retry.step)
+    const attempt = positiveSafeInteger(retry.attempt)
+    const delayMs = retry.delayMs === undefined ? undefined : nonNegativeSafeInteger(retry.delayMs)
+    const maxRetries = retry.maxRetries === undefined ? undefined : positiveSafeInteger(retry.maxRetries)
     if (
-      typeof retry.sessionId === 'string' &&
-      typeof retry.id === 'string' &&
-      typeof retry.turn === 'number' &&
-      typeof retry.step === 'number' &&
-      typeof retry.attempt === 'number' &&
+      nonEmptyString(retry.sessionId) &&
+      nonEmptyString(retry.id) &&
+      turn !== undefined &&
+      step !== undefined &&
+      attempt !== undefined &&
+      (retry.delayMs === undefined || delayMs !== undefined) &&
+      (retry.maxRetries === undefined || maxRetries !== undefined) &&
+      (retry.message === undefined || typeof retry.message === 'string') &&
       (retry.state === 'scheduled' || retry.state === 'started')
     )
       return {
@@ -4711,19 +4942,19 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
         retry: {
           sessionId: retry.sessionId,
           id: retry.id,
-          turn: retry.turn,
-          step: retry.step,
-          attempt: retry.attempt,
+          turn,
+          step,
+          attempt,
           state: retry.state,
-          ...(typeof retry.delayMs === 'number' ? { delayMs: retry.delayMs } : {}),
-          ...(typeof retry.maxRetries === 'number' ? { maxRetries: retry.maxRetries } : {}),
+          ...(delayMs === undefined ? {} : { delayMs }),
+          ...(maxRetries === undefined ? {} : { maxRetries }),
           ...(typeof retry.message === 'string' ? { message: retry.message } : {}),
         },
       }
   }
   if (
     name === 'jobs.updated' &&
-    typeof value.sessionId === 'string' &&
+    nonEmptyString(value.sessionId) &&
     Array.isArray(value.jobs) &&
     value.jobs.every(isJobView)
   ) {
@@ -4733,14 +4964,11 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
       jobs: value.jobs,
     }
   }
-  if (name === 'queue.updated' && typeof value.sessionId === 'string' && Array.isArray(value.items)) {
-    return {
-      type: 'queue.updated',
-      sessionId: value.sessionId,
-      items: value.items.flatMap((entry) => (isQueuedInput(entry) ? [entry] : [])),
-    }
+  if (name === 'queue.updated' && nonEmptyString(value.sessionId)) {
+    const items = parseQueuedInputs(value.items, value.sessionId)
+    if (items !== undefined) return { type: 'queue.updated', sessionId: value.sessionId, items }
   }
-  if (name === 'workflow.started' && typeof value.sessionId === 'string' && isWorkflowSummary(value.workflow))
+  if (name === 'workflow.started' && nonEmptyString(value.sessionId) && isWorkflowSummary(value.workflow))
     return {
       type: 'workflow.started',
       sessionId: value.sessionId,
@@ -4748,8 +4976,8 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
     }
   if (
     name === 'workflow.member.started' &&
-    typeof value.sessionId === 'string' &&
-    typeof value.runId === 'string' &&
+    nonEmptyString(value.sessionId) &&
+    nonEmptyString(value.runId) &&
     (typeof value.phase === 'string' || value.phase === null) &&
     isWorkflowMember(value.member) &&
     value.member.status === 'running'
@@ -4763,8 +4991,8 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
     }
   if (
     name === 'workflow.member.ended' &&
-    typeof value.sessionId === 'string' &&
-    typeof value.runId === 'string' &&
+    nonEmptyString(value.sessionId) &&
+    nonEmptyString(value.runId) &&
     Number.isSafeInteger(value.seq) &&
     (value.seq as number) > 0 &&
     (value.outcome === 'completed' || value.outcome === 'failed' || value.outcome === 'cancelled')
@@ -4778,8 +5006,8 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
     }
   if (
     name === 'workflow.ended' &&
-    typeof value.sessionId === 'string' &&
-    typeof value.runId === 'string' &&
+    nonEmptyString(value.sessionId) &&
+    nonEmptyString(value.runId) &&
     (value.stopReason === 'completed' || value.stopReason === 'cancelled' || value.stopReason === 'error')
   )
     return {
@@ -4789,108 +5017,88 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
       stopReason: value.stopReason,
     }
   if (name === 'permission.requested' && isRecord(value.request)) {
-    const request = value.request
-    if (
-      typeof request.id === 'string' &&
-      typeof request.sessionId === 'string' &&
-      typeof request.title === 'string' &&
-      typeof request.description === 'string' &&
-      (request.risk === 'low' || request.risk === 'medium' || request.risk === 'high') &&
-      Array.isArray(request.options)
-    )
-      return {
-        type: 'permission.requested',
-        request: {
-          id: request.id,
-          ...(typeof request.rpcId === 'string' ? { rpcId: request.rpcId } : {}),
-          sessionId: request.sessionId,
-          title: request.title,
-          description: request.description,
-          risk: request.risk,
-          options: request.options.flatMap((entry) => {
-            const option = object(entry)
-            if (
-              option === undefined ||
-              typeof option.id !== 'string' ||
-              typeof option.label !== 'string' ||
-              !isPermissionKind(option.kind)
-            )
-              return []
-            return [{ id: option.id, label: option.label, kind: option.kind }]
-          }),
-        },
-      }
+    const request = parsePermissionRequest(value.request)
+    if (request !== undefined) return { type: 'permission.requested', request }
   }
   if (name === 'question.requested' && isRecord(value.question)) {
-    const question = value.question
+    const question = parseUserQuestion(value.question)
+    if (question !== undefined) return { type: 'question.requested', question }
+  }
+  if (name === 'permission.resolved') {
+    const hasOutcome = Object.hasOwn(value, 'outcome')
     if (
-      typeof question.id === 'string' &&
-      typeof question.sessionId === 'string' &&
-      typeof question.prompt === 'string' &&
-      typeof question.allowFreeText === 'boolean'
+      nonEmptyString(value.sessionId) &&
+      nonEmptyString(value.requestId) &&
+      (!hasOutcome || typeof value.outcome === 'string')
     )
       return {
-        type: 'question.requested',
-        question: {
-          id: question.id,
-          ...(typeof question.rpcId === 'string' ? { rpcId: question.rpcId } : {}),
-          sessionId: question.sessionId,
-          prompt: question.prompt,
-          ...(typeof question.detail === 'string' ? { detail: question.detail } : {}),
-          ...(typeof question.header === 'string' ? { header: question.header } : {}),
-          ...(Array.isArray(question.choices) ? { choices: questionChoices(question.choices) } : {}),
-          ...(typeof question.multiSelect === 'boolean' ? { multiSelect: question.multiSelect } : {}),
-          allowFreeText: question.allowFreeText,
-          ...questionIntent(question.intent),
-          ...(Array.isArray(question.items)
-            ? {
-                items: question.items.flatMap((entry) => {
-                  const item = object(entry)
-                  if (
-                    item === undefined ||
-                    typeof item.id !== 'string' ||
-                    typeof item.prompt !== 'string' ||
-                    typeof item.allowFreeText !== 'boolean'
-                  )
-                    return []
-                  const intent = questionIntent(item.intent)
-                  return [
-                    {
-                      id: item.id,
-                      prompt: item.prompt,
-                      ...(typeof item.detail === 'string' ? { detail: item.detail } : {}),
-                      ...(typeof item.header === 'string' ? { header: item.header } : {}),
-                      ...(Array.isArray(item.choices) ? { choices: questionChoices(item.choices) } : {}),
-                      ...(typeof item.multiSelect === 'boolean' ? { multiSelect: item.multiSelect } : {}),
-                      allowFreeText: item.allowFreeText,
-                      ...(intent === undefined ? {} : { intent }),
-                    },
-                  ]
-                }),
-              }
-            : {}),
-        },
+        type: 'permission.resolved',
+        sessionId: value.sessionId,
+        requestId: value.requestId,
+        ...(typeof value.outcome === 'string' ? { outcome: value.outcome } : {}),
       }
   }
-  if (name === 'workspace.changed' && typeof value.workspaceId === 'string')
-    return { type: 'workspace.changed', workspaceId: value.workspaceId }
-  if (name === 'workspace.changed') return { type: 'workspace.changed' }
-  if (name === 'workspace.removed' && typeof value.workspaceId === 'string')
-    return { type: 'workspace.removed', workspaceId: value.workspaceId }
-  if (name === 'workspace.removed') return { type: 'workspace.removed' }
-  if (name === 'workspace.order.changed' && Array.isArray(value.workspaceIds))
+  if (name === 'question.resolved') {
+    const hasQuestionRpcId = Object.hasOwn(value, 'questionRpcId')
+    const hasQuestionId = Object.hasOwn(value, 'questionId')
+    const questionRpcId =
+      hasQuestionRpcId && nonEmptyString(value.questionRpcId) ? value.questionRpcId : undefined
+    const questionId = hasQuestionId && nonEmptyString(value.questionId) ? value.questionId : undefined
+    const hasOutcome = Object.hasOwn(value, 'outcome')
+    if (
+      nonEmptyString(value.sessionId) &&
+      (!hasQuestionRpcId || questionRpcId !== undefined) &&
+      (!hasQuestionId || questionId !== undefined) &&
+      (questionRpcId !== undefined || questionId !== undefined) &&
+      (!hasOutcome || typeof value.outcome === 'string')
+    )
+      return {
+        type: 'question.resolved',
+        sessionId: value.sessionId,
+        ...(questionRpcId === undefined ? {} : { questionRpcId }),
+        ...(questionId === undefined ? {} : { questionId }),
+        ...(typeof value.outcome === 'string' ? { outcome: value.outcome } : {}),
+      }
+  }
+  if (name === 'workspace.changed') {
+    const hasWorkspaceId = Object.hasOwn(value, 'workspaceId')
+    const workspaceId = hasWorkspaceId && nonEmptyString(value.workspaceId) ? value.workspaceId : undefined
+    if (hasWorkspaceId && workspaceId === undefined) return { type: 'unknown', name, payload }
+    return {
+      type: 'workspace.changed',
+      ...(workspaceId === undefined ? {} : { workspaceId }),
+    }
+  }
+  if (name === 'workspace.removed') {
+    const hasWorkspaceId = Object.hasOwn(value, 'workspaceId')
+    const workspaceId = hasWorkspaceId && nonEmptyString(value.workspaceId) ? value.workspaceId : undefined
+    if (hasWorkspaceId && workspaceId === undefined) return { type: 'unknown', name, payload }
+    return {
+      type: 'workspace.removed',
+      ...(workspaceId === undefined ? {} : { workspaceId }),
+    }
+  }
+  if (
+    name === 'workspace.order.changed' &&
+    Array.isArray(value.workspaceIds) &&
+    value.workspaceIds.every((entry) => nonEmptyString(entry))
+  )
     return {
       type: 'workspace.order.changed',
-      workspaceIds: value.workspaceIds.filter((entry): entry is string => typeof entry === 'string'),
+      workspaceIds: value.workspaceIds,
     }
-  if (name === 'archived.sessions.changed' && Array.isArray(value.sessionIds))
+  if (
+    name === 'archived.sessions.changed' &&
+    Array.isArray(value.sessionIds) &&
+    value.sessionIds.every((entry) => nonEmptyString(entry))
+  )
     return {
       type: 'archived.sessions.changed',
-      sessionIds: value.sessionIds.filter((entry): entry is string => typeof entry === 'string'),
+      sessionIds: value.sessionIds,
     }
   if (
     name === 'session.gap' &&
-    typeof value.sessionId === 'string' &&
+    nonEmptyString(value.sessionId) &&
     typeof value.fromSequence === 'number' &&
     Number.isSafeInteger(value.fromSequence) &&
     value.fromSequence >= 0 &&
@@ -4904,7 +5112,7 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
       fromSequence: value.fromSequence,
       toSequence: value.toSequence,
     }
-  if (name === 'remote.event' && typeof value.name === 'string' && Array.isArray(value.args))
+  if (name === 'remote.event' && nonEmptyString(value.name) && Array.isArray(value.args))
     return { type: 'remote.event', name: value.name, args: value.args }
   if (name === 'unknown')
     return {
@@ -4917,7 +5125,20 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
     name === 'notice' &&
     typeof value.text === 'string' &&
     (value.level === 'info' || value.level === 'warning' || value.level === 'error')
-  )
+  ) {
+    const hasSessionId = Object.hasOwn(value, 'sessionId')
+    const hasCommandName = Object.hasOwn(value, 'commandName')
+    const hasCommandId = Object.hasOwn(value, 'commandId')
+    const hasCommandPhase = Object.hasOwn(value, 'commandPhase')
+    const hasCommandInput = Object.hasOwn(value, 'commandInput')
+    if (
+      (hasSessionId && !nonEmptyString(value.sessionId)) ||
+      (hasCommandName && !nonEmptyString(value.commandName)) ||
+      (hasCommandId && !nonEmptyString(value.commandId)) ||
+      (hasCommandPhase && value.commandPhase !== 'run' && value.commandPhase !== 'done') ||
+      (hasCommandInput && !nonEmptyString(value.commandInput))
+    )
+      return { type: 'unknown', name, payload }
     return {
       type: 'notice',
       ...(typeof value.sessionId === 'string' ? { sessionId: value.sessionId } : {}),
@@ -4936,6 +5157,7 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
         ? { commandInput: value.commandInput.slice(0, 4_096) }
         : {}),
     }
+  }
   if (name === 'connection.lost' && typeof value.reason === 'string')
     return { type: 'connection.lost', reason: value.reason }
   return {
@@ -4985,15 +5207,32 @@ function parseHistoryPayload(value: unknown, includeTimeline: boolean): ParsedHi
     }
     const eventRecord = object(record.event)
     const historyEventRecord = eventRecord ?? record
+    const hasRecordSequence = Object.hasOwn(record, 'sequence')
+    const hasEventSequence = Object.hasOwn(historyEventRecord, 'sequence')
+    const hasEventSeq = Object.hasOwn(historyEventRecord, 'seq')
+    const hasRecordTime = Object.hasOwn(record, 'time')
+    const recordTimeValue = record.time
+    const recordTime = hasRecordTime && nonEmptyString(recordTimeValue) ? recordTimeValue : undefined
+    const rawSequence = hasRecordSequence
+      ? record.sequence
+      : hasEventSequence
+        ? historyEventRecord.sequence
+        : hasEventSeq
+          ? historyEventRecord.seq
+          : undefined
+    const hasExplicitSequence = hasRecordSequence || hasEventSequence || hasEventSeq
+    if (hasExplicitSequence && optionalSequence(rawSequence) === undefined)
+      throw new Error(translate('app.error.malformedHistory'))
+    if (hasRecordTime && !nonEmptyString(recordTime)) throw new Error(translate('app.error.malformedHistory'))
+    const sequence = optionalSequence(rawSequence) ?? index
     const parsedEvent =
       typeof historyEventRecord?.type === 'string'
         ? domainEvent(historyEventRecord.type, historyEventRecord)
         : undefined
     if (parsedEvent !== undefined) {
-      const sequence = finiteSequence(record.sequence ?? historyEventRecord.sequence, index)
       history.push({
         sequence,
-        time: typeof record.time === 'string' ? record.time : historyTime(parsedEvent),
+        time: recordTime === undefined ? historyTime(parsedEvent) : recordTime,
         event: { ...parsedEvent, sequence },
       })
     }
@@ -5001,20 +5240,20 @@ function parseHistoryPayload(value: unknown, includeTimeline: boolean): ParsedHi
     if (record.event === undefined || record.event === null || typeof record.event !== 'object') {
       timeline.push({
         event: { type: 'unknown', name: 'history/missing-event', payload: { index } },
-        sequence: finiteSequence(record.sequence, index),
+        sequence,
       })
       continue
     }
     if (eventRecord === undefined || typeof eventRecord.type !== 'string') {
       timeline.push({
         event: { type: 'unknown', name: 'history/invalid-event', payload: { index } },
-        sequence: finiteSequence(record.sequence, index),
+        sequence,
       })
       continue
     }
     timeline.push({
       event: parsedEvent ?? { type: 'unknown', name: eventRecord.type, payload: { index } },
-      sequence: finiteSequence(record.sequence ?? eventRecord.sequence ?? eventRecord.seq, index),
+      sequence,
     })
   }
   return { history, timeline }
@@ -5030,7 +5269,11 @@ function parseSessionHistoryPage(value: unknown): {
   if (page === undefined || !Array.isArray(page.events) || typeof page.hasMore !== 'boolean')
     throw new Error(translate('app.error.malformedHistory'))
   const events = parseSessionHistory(page.events)
-  const beforeSequence = optionalSequence(page.beforeSeq) ?? oldestHistorySequence(events)
+  const hasBeforeSequence = Object.hasOwn(page, 'beforeSeq')
+  const parsedBeforeSequence = optionalSequence(page.beforeSeq)
+  if (hasBeforeSequence && parsedBeforeSequence === undefined)
+    throw new Error(translate('app.error.malformedHistory'))
+  const beforeSequence = parsedBeforeSequence ?? oldestHistorySequence(events)
   const projection = parseSessionProjection(page.projection)
   return {
     events,
@@ -5089,6 +5332,26 @@ function oldestHistorySequence(history: readonly SessionHistoryEvent[]): number 
   )
 }
 
+function historyCoversSequenceRange(
+  history: readonly SessionHistoryEvent[],
+  fromSequence: number,
+  toSequence: number,
+): boolean {
+  if (fromSequence > toSequence) return true
+  const sequences = history
+    .map((entry) => entry.sequence)
+    .filter((sequence) => sequence >= fromSequence && sequence <= toSequence)
+    .sort((left, right) => left - right)
+  let expected = fromSequence
+  for (const sequence of sequences) {
+    if (sequence < expected) continue
+    if (sequence !== expected) return false
+    if (expected === toSequence) return true
+    expected += 1
+  }
+  return false
+}
+
 function newestHistorySequence(history: readonly SessionHistoryEvent[]): number | undefined {
   return history.reduce<number | undefined>(
     (newest, entry) => (newest === undefined ? entry.sequence : Math.max(newest, entry.sequence)),
@@ -5098,6 +5361,10 @@ function newestHistorySequence(history: readonly SessionHistoryEvent[]): number 
 
 function optionalSequence(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined
+}
+
+function nonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim() !== ''
 }
 
 function historyTime(event: BackendEvent): string {
@@ -5158,10 +5425,6 @@ function isNonDecreasingBySequence(entries: readonly HydratedTimelineEntry[]): b
   return true
 }
 
-function finiteSequence(value: unknown, fallback: number): number {
-  return typeof value === 'number' && Number.isSafeInteger(value) ? value : fallback
-}
-
 function finiteEventSequence(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined
 }
@@ -5212,12 +5475,21 @@ function turnEndFailure(value: unknown): TurnEndFailure | undefined {
 function parseTokenUsage(value: unknown): TokenUsage | undefined {
   const record = object(value)
   if (record === undefined) return undefined
-  const inputTokens = tokenCount(record.inputTokens ?? record.uncachedInputTokens)
+  const inputValue = Object.prototype.hasOwnProperty.call(record, 'inputTokens')
+    ? record.inputTokens
+    : record.uncachedInputTokens
+  const inputTokens = tokenCount(inputValue)
   const outputTokens = tokenCount(record.outputTokens)
   if (inputTokens === undefined || outputTokens === undefined) return undefined
   const cacheReadTokens = tokenCount(record.cacheReadTokens)
   const cacheWriteTokens = tokenCount(record.cacheWriteTokens)
   const reasoningTokens = tokenCount(record.reasoningTokens)
+  if (
+    (Object.prototype.hasOwnProperty.call(record, 'cacheReadTokens') && cacheReadTokens === undefined) ||
+    (Object.prototype.hasOwnProperty.call(record, 'cacheWriteTokens') && cacheWriteTokens === undefined) ||
+    (Object.prototype.hasOwnProperty.call(record, 'reasoningTokens') && reasoningTokens === undefined)
+  )
+    return undefined
   return {
     inputTokens,
     outputTokens,
@@ -5688,22 +5960,30 @@ function imageDataUri(value: unknown): string | undefined {
 
 function messageAttachments(value: unknown): readonly MessageAttachment[] | undefined {
   if (!Array.isArray(value)) return undefined
-  const attachments = value.slice(0, 32).flatMap((entry): MessageAttachment[] => {
+  if (value.length > 32) return undefined
+  const attachments: MessageAttachment[] = []
+  for (const entry of value) {
     const record = object(entry)
-    if (record === undefined || typeof record.name !== 'string' || record.name.trim() === '') return []
-    return [
-      {
-        name: record.name,
-        ...(typeof record.mimeType === 'string' ? { mimeType: record.mimeType } : {}),
-      },
-    ]
-  })
-  return attachments.length === 0 ? undefined : attachments
+    if (
+      record === undefined ||
+      typeof record.name !== 'string' ||
+      record.name.trim() === '' ||
+      (Object.prototype.hasOwnProperty.call(record, 'mimeType') && typeof record.mimeType !== 'string')
+    )
+      return undefined
+    attachments.push({
+      name: record.name,
+      ...(typeof record.mimeType === 'string' ? { mimeType: record.mimeType } : {}),
+    })
+  }
+  return attachments
 }
 
 function messageImages(value: unknown): readonly MessageImageReference[] | undefined {
   if (!Array.isArray(value)) return undefined
-  const images = value.slice(0, 32).flatMap((entry): MessageImageReference[] => {
+  if (value.length > 32) return undefined
+  const images: MessageImageReference[] = []
+  for (const entry of value) {
     const record = object(entry)
     const attachmentId = typeof record?.attachmentId === 'string' ? record.attachmentId.trim() : ''
     const mediaType = record?.mediaType
@@ -5718,20 +5998,21 @@ function messageImages(value: unknown): readonly MessageImageReference[] | undef
         mediaType !== 'image/gif') ||
       bytes === undefined ||
       width === undefined ||
-      height === undefined
+      height === undefined ||
+      (Object.prototype.hasOwnProperty.call(record ?? {}, 'name') &&
+        record?.name !== undefined &&
+        (typeof record.name !== 'string' || record.name.trim() === ''))
     )
-      return []
-    return [
-      {
-        attachmentId,
-        mediaType,
-        bytes,
-        width,
-        height,
-        ...(typeof record?.name === 'string' && record.name.trim() !== '' ? { name: record.name } : {}),
-      },
-    ]
-  })
+      return undefined
+    images.push({
+      attachmentId,
+      mediaType,
+      bytes,
+      width,
+      height,
+      ...(typeof record?.name === 'string' ? { name: record.name } : {}),
+    })
+  }
   const unique: MessageImageReference[] = []
   const seen = new Set<string>()
   for (const image of images) {
@@ -5739,11 +6020,15 @@ function messageImages(value: unknown): readonly MessageImageReference[] | undef
     seen.add(image.attachmentId)
     unique.push(image)
   }
-  return unique.length === 0 ? undefined : unique
+  return unique
 }
 
 function positiveSafeInteger(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined
+}
+
+function nonNegativeSafeInteger(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined
 }
 
 function openFileCandidatesFromResult(resultValue: unknown): readonly OpenFileCandidate[] {
@@ -6136,6 +6421,16 @@ function isToolStatus(value: unknown): value is 'queued' | 'running' | 'complete
   )
 }
 
+function isSessionStatus(value: unknown): value is SessionSummary['status'] {
+  return (
+    value === 'idle' ||
+    value === 'running' ||
+    value === 'awaiting-input' ||
+    value === 'failed' ||
+    value === 'completed'
+  )
+}
+
 function isGoalStatus(value: unknown): value is 'pending' | 'in-progress' | 'completed' | 'blocked' {
   return value === 'pending' || value === 'in-progress' || value === 'completed' || value === 'blocked'
 }
@@ -6154,31 +6449,152 @@ function isPermissionKind(value: unknown): value is 'allow-once' | 'deny' {
   return value === 'allow-once' || value === 'deny'
 }
 
-function questionChoices(entries: readonly unknown[]): {
-  id: string
-  label: string
-  description?: string
-}[] {
-  return entries.flatMap((entry) => {
-    const choice = object(entry)
-    return choice !== undefined && typeof choice.id === 'string' && typeof choice.label === 'string'
-      ? [
-          {
-            id: choice.id,
-            label: choice.label,
-            ...(typeof choice.description === 'string' ? { description: choice.description } : {}),
-          },
-        ]
-      : []
-  })
+function parsePermissionRequest(value: Record<string, unknown>): PermissionRequest | undefined {
+  const options = parsePermissionOptions(value.options)
+  if (
+    !nonEmptyString(value.id) ||
+    !nonEmptyString(value.sessionId) ||
+    typeof value.title !== 'string' ||
+    typeof value.description !== 'string' ||
+    !isPermissionRisk(value.risk) ||
+    options === undefined ||
+    (value.rpcId !== undefined && typeof value.rpcId !== 'string') ||
+    (value.commandLine !== undefined && typeof value.commandLine !== 'string')
+  )
+    return undefined
+  return {
+    id: value.id,
+    ...(value.rpcId === undefined ? {} : { rpcId: value.rpcId }),
+    sessionId: value.sessionId,
+    title: value.title,
+    description: value.description,
+    ...(value.commandLine === undefined ? {} : { commandLine: value.commandLine }),
+    risk: value.risk,
+    options,
+  }
 }
 
-/** Upstream intents are tagged; unknown tags render the generic option flow. */
-function questionIntent(value: unknown): UserQuestion['intent'] | undefined {
+function parsePermissionOptions(value: unknown): readonly PermissionOption[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const options: PermissionOption[] = []
+  for (const entry of value) {
+    const option = object(entry)
+    if (
+      option === undefined ||
+      typeof option.id !== 'string' ||
+      typeof option.label !== 'string' ||
+      !isPermissionKind(option.kind)
+    )
+      return undefined
+    options.push({ id: option.id, label: option.label, kind: option.kind })
+  }
+  return options
+}
+
+function parseUserQuestion(value: Record<string, unknown>): UserQuestion | undefined {
+  const choices = value.choices === undefined ? undefined : questionChoices(value.choices)
+  const intent = questionIntent(value.intent)
+  const items = value.items === undefined ? undefined : questionItems(value.items)
+  if (
+    !nonEmptyString(value.id) ||
+    !nonEmptyString(value.sessionId) ||
+    typeof value.prompt !== 'string' ||
+    typeof value.allowFreeText !== 'boolean' ||
+    (value.rpcId !== undefined && typeof value.rpcId !== 'string') ||
+    (value.detail !== undefined && typeof value.detail !== 'string') ||
+    (value.header !== undefined && typeof value.header !== 'string') ||
+    (value.choices !== undefined && choices === undefined) ||
+    (value.multiSelect !== undefined && typeof value.multiSelect !== 'boolean') ||
+    (value.intent !== undefined && intent === undefined) ||
+    (value.items !== undefined && items === undefined)
+  )
+    return undefined
+  return {
+    id: value.id,
+    ...(value.rpcId === undefined ? {} : { rpcId: value.rpcId }),
+    sessionId: value.sessionId,
+    prompt: value.prompt,
+    ...(value.detail === undefined ? {} : { detail: value.detail }),
+    ...(value.header === undefined ? {} : { header: value.header }),
+    ...(choices === undefined ? {} : { choices }),
+    ...(value.multiSelect === undefined ? {} : { multiSelect: value.multiSelect }),
+    allowFreeText: value.allowFreeText,
+    ...(intent === undefined ? {} : { intent }),
+    ...(items === undefined ? {} : { items }),
+  }
+}
+
+function questionChoices(value: unknown): readonly QuestionChoice[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const choices: QuestionChoice[] = []
+  for (const entry of value) {
+    const choice = object(entry)
+    if (
+      choice === undefined ||
+      typeof choice.id !== 'string' ||
+      typeof choice.label !== 'string' ||
+      (choice.description !== undefined && typeof choice.description !== 'string')
+    )
+      return undefined
+    choices.push({
+      id: choice.id,
+      label: choice.label,
+      ...(choice.description === undefined ? {} : { description: choice.description }),
+    })
+  }
+  return choices
+}
+
+function questionItems(value: unknown): readonly UserQuestionItem[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  if (value.length === 0) return undefined
+  const items: UserQuestionItem[] = []
+  for (const entry of value) {
+    const item = questionItem(entry)
+    if (item === undefined) return undefined
+    items.push(item)
+  }
+  return items
+}
+
+function questionItem(value: unknown): UserQuestionItem | undefined {
+  const item = object(value)
+  if (item === undefined) return undefined
+  const choices = item.choices === undefined ? undefined : questionChoices(item.choices)
+  const intent = questionIntent(item.intent)
+  if (
+    typeof item.id !== 'string' ||
+    typeof item.prompt !== 'string' ||
+    typeof item.allowFreeText !== 'boolean' ||
+    (item.detail !== undefined && typeof item.detail !== 'string') ||
+    (item.header !== undefined && typeof item.header !== 'string') ||
+    (item.choices !== undefined && choices === undefined) ||
+    (item.multiSelect !== undefined && typeof item.multiSelect !== 'boolean') ||
+    (item.intent !== undefined && intent === undefined)
+  )
+    return undefined
+  return {
+    id: item.id,
+    prompt: item.prompt,
+    ...(item.detail === undefined ? {} : { detail: item.detail }),
+    ...(item.header === undefined ? {} : { header: item.header }),
+    ...(choices === undefined ? {} : { choices }),
+    ...(item.multiSelect === undefined ? {} : { multiSelect: item.multiSelect }),
+    allowFreeText: item.allowFreeText,
+    ...(intent === undefined ? {} : { intent }),
+  }
+}
+
+function questionIntent(value: unknown): QuestionIntent | undefined {
+  if (value === undefined) return undefined
   const intent = object(value)
-  if (intent === undefined) return undefined
-  if (intent.kind !== 'plan-review' || typeof intent.approve !== 'string') return undefined
+  if (intent === undefined || intent.kind !== 'plan-review' || typeof intent.approve !== 'string')
+    return undefined
   return { kind: 'plan-review', approve: intent.approve }
+}
+
+function isPermissionRisk(value: unknown): value is PermissionRequest['risk'] {
+  return value === 'low' || value === 'medium' || value === 'high'
 }
 
 function isQuestionAnswerList(
@@ -6207,18 +6623,80 @@ function questionResponsePayload(
 
 function isSessionSummary(value: unknown): value is SessionSummary {
   const item = object(value)
+  let projectionValid = true
+  if (item?.projection !== undefined) {
+    try {
+      projectionValid = parseSessionProjection(item.projection) !== undefined
+    } catch {
+      projectionValid = false
+    }
+  }
   return (
     item !== undefined &&
     typeof item.id === 'string' &&
+    item.id.trim() !== '' &&
+    typeof item.workspaceId === 'string' &&
     typeof item.title === 'string' &&
     typeof item.blank === 'boolean' &&
-    typeof item.status === 'string'
+    isSessionStatus(item.status) &&
+    typeof item.createdAt === 'string' &&
+    typeof item.updatedAt === 'string' &&
+    (item.cwd === undefined || typeof item.cwd === 'string') &&
+    (item.parentSessionId === undefined ||
+      (typeof item.parentSessionId === 'string' && item.parentSessionId.trim() !== '')) &&
+    (item.origin === undefined || item.origin === 'subagent') &&
+    (item.modelLabel === undefined || typeof item.modelLabel === 'string') &&
+    (item.agentPreset === undefined || typeof item.agentPreset === 'string') &&
+    projectionValid
+  )
+}
+
+/**
+ * The Extension Host owns the session-open response, but the Webview still
+ * treats it as an untrusted protocol boundary. Optional fields are allowed to
+ * remain absent for older hosts; once present, critical fields must not be
+ * silently converted into empty/default state.
+ */
+function isSessionOpenDetail(value: unknown, sessionId: string): value is Record<string, unknown> {
+  const detail = object(value)
+  if (detail === undefined || detail.id !== sessionId) return false
+  try {
+    if (!isSessionSummary(detail)) return false
+  } catch {
+    return false
+  }
+  const permissionPresets = detail.permissionPresets
+  const goalIds = detail.goalIds
+  return (
+    (detail.configuration === undefined || isAgentConfiguration(detail.configuration)) &&
+    (detail.history === undefined || Array.isArray(detail.history)) &&
+    (detail.historyHasMore === undefined || typeof detail.historyHasMore === 'boolean') &&
+    (detail.historyBeforeSequence === undefined ||
+      optionalSequence(detail.historyBeforeSequence) !== undefined) &&
+    (permissionPresets === undefined ||
+      (Array.isArray(permissionPresets) &&
+        permissionPresets.every((entry) => typeof entry === 'string' && entry.trim() !== ''))) &&
+    (goalIds === undefined ||
+      (Array.isArray(goalIds) && goalIds.every((entry) => typeof entry === 'string' && entry.trim() !== '')))
   )
 }
 
 function isWorkspaceSummary(value: unknown): value is WorkspaceSummary {
   const item = object(value)
-  return item !== undefined && typeof item.id === 'string' && typeof item.name === 'string'
+  return (
+    item !== undefined &&
+    typeof item.id === 'string' &&
+    item.id.trim() !== '' &&
+    typeof item.name === 'string' &&
+    typeof item.createdAt === 'string' &&
+    typeof item.updatedAt === 'string' &&
+    Number.isSafeInteger(item.sessionCount) &&
+    (item.sessionCount as number) >= 0 &&
+    (item.path === undefined || typeof item.path === 'string') &&
+    (item.sessionIds === undefined ||
+      (Array.isArray(item.sessionIds) &&
+        item.sessionIds.every((sessionId) => typeof sessionId === 'string' && sessionId.trim() !== '')))
+  )
 }
 
 function isModelProvider(value: unknown): value is ModelProvider {
@@ -6229,7 +6707,28 @@ function isModelProvider(value: unknown): value is ModelProvider {
     typeof item.name === 'string' &&
     typeof item.kind === 'string' &&
     typeof item.configurable === 'boolean' &&
-    Array.isArray(item.fields)
+    (item.active === undefined || typeof item.active === 'boolean') &&
+    (item.declared === undefined || typeof item.declared === 'boolean') &&
+    (item.settingsNs === undefined || typeof item.settingsNs === 'string') &&
+    (item.settingsPath === undefined ||
+      (Array.isArray(item.settingsPath) && item.settingsPath.every((part) => typeof part === 'string'))) &&
+    Array.isArray(item.fields) &&
+    item.fields.every(isProviderField)
+  )
+}
+
+function isProviderField(value: unknown): boolean {
+  const field = object(value)
+  return (
+    field !== undefined &&
+    typeof field.key === 'string' &&
+    typeof field.label === 'string' &&
+    typeof field.secret === 'boolean' &&
+    typeof field.required === 'boolean' &&
+    (field.enumValues === undefined ||
+      (Array.isArray(field.enumValues) && field.enumValues.every((entry) => typeof entry === 'string'))) &&
+    (field.writable === undefined || typeof field.writable === 'boolean') &&
+    (field.value === undefined || typeof field.value === 'string')
   )
 }
 
@@ -6267,7 +6766,25 @@ function parseDiscoveredModels(value: unknown): readonly DiscoveredModel[] | und
   const root = object(value)
   const rows = Array.isArray(value) ? value : root?.models
   if (!Array.isArray(rows)) return undefined
-  return rows.length > 512 ? undefined : rows.filter(isDiscoveredModel)
+  return rows.length > 512 || !rows.every(isDiscoveredModel) ? undefined : rows
+}
+
+function parseCustomProviderCreateResult(value: unknown): CustomProviderCreateResult | undefined {
+  const result = object(value)
+  if (
+    result === undefined ||
+    typeof result.profileCommitted !== 'boolean' ||
+    typeof result.credentialConfigured !== 'boolean' ||
+    (result.credentialError !== undefined && typeof result.credentialError !== 'string')
+  )
+    return undefined
+  return {
+    profileCommitted: result.profileCommitted,
+    credentialConfigured: result.credentialConfigured,
+    ...(typeof result.credentialError === 'string' && result.credentialError !== ''
+      ? { credentialError: result.credentialError.slice(0, 512) }
+      : {}),
+  }
 }
 
 function isAgentConfiguration(value: unknown): value is AgentConfiguration {
@@ -6404,11 +6921,18 @@ function isPresetDescriptor(value: unknown): value is AgentPresetDescriptor {
 /** Parse the `agentPreset.list` answer: roster rows plus the deployment facts. */
 function parsePresetRoster(value: unknown): AgentPresetRoster | undefined {
   const roster = object(value)
-  if (roster === undefined || !Array.isArray(roster.presets)) return undefined
+  if (
+    roster === undefined ||
+    !Array.isArray(roster.presets) ||
+    !roster.presets.every(isPresetDescriptor) ||
+    typeof roster.authorable !== 'boolean' ||
+    typeof roster.hasDocument !== 'boolean'
+  )
+    return undefined
   return {
-    presets: roster.presets.filter(isPresetDescriptor),
-    authorable: roster.authorable === true,
-    hasDocument: roster.hasDocument === true,
+    presets: roster.presets,
+    authorable: roster.authorable,
+    hasDocument: roster.hasDocument,
   }
 }
 
@@ -6458,16 +6982,28 @@ function isAgentPresetPluginRow(value: unknown): value is AgentPresetPluginRow {
   )
 }
 
-/** Parse the `pluginInventory/list` projection; malformed rows/groups are dropped. */
+/** Parse the `pluginInventory/list` projection as one complete snapshot. */
 function parsePluginInventory(value: unknown): PluginInventorySnapshot | undefined {
   const snapshot = object(value)
   if (snapshot === undefined || !Array.isArray(snapshot.entries)) return undefined
+  const entries: PluginInventorySnapshot['entries'][number][] = []
+  for (const entry of snapshot.entries) {
+    if (!isPluginInventoryEntry(entry)) return undefined
+    entries.push(entry)
+  }
   const agentPresets = snapshot.agentPresets
+  let parsedAgentPresets: AgentPresetPluginGroup[] | undefined
+  if (agentPresets !== undefined) {
+    if (!Array.isArray(agentPresets)) return undefined
+    parsedAgentPresets = []
+    for (const group of agentPresets) {
+      if (!isAgentPresetPluginGroup(group)) return undefined
+      parsedAgentPresets.push(group)
+    }
+  }
   return {
-    entries: snapshot.entries.filter(isPluginInventoryEntry),
-    ...(agentPresets === undefined || !Array.isArray(agentPresets)
-      ? {}
-      : { agentPresets: agentPresets.filter(isAgentPresetPluginGroup) }),
+    entries,
+    ...(parsedAgentPresets === undefined ? {} : { agentPresets: parsedAgentPresets }),
   }
 }
 
@@ -6492,7 +7028,8 @@ function sameQueuedInputList(left: readonly QueuedInput[], right: readonly Queue
       previous.mode === next.mode &&
       previous.createdAt === next.createdAt &&
       previous.rpcId === next.rpcId &&
-      samePromptAttachmentList(previous.attachments, next.attachments),
+      samePromptAttachmentList(previous.attachments, next.attachments) &&
+      sameMessageImageList(previous.images, next.images),
   )
 }
 
@@ -6506,7 +7043,9 @@ function removeAdmittedQueueInput(
       ? byRpcId
       : queue.findIndex(
           (item) =>
-            item.text === event.markdown && sameMessageAttachmentList(item.attachments, event.attachments),
+            item.text === event.markdown &&
+            sameMessageAttachmentList(item.attachments, event.attachments) &&
+            sameMessageImageList(item.images, event.images),
         )
   if (index < 0) return queue
   return [...queue.slice(0, index), ...queue.slice(index + 1)]
@@ -6538,12 +7077,35 @@ function samePromptAttachmentList(
   )
 }
 
+function sameMessageImageList(
+  queued: readonly MessageImageReference[] | undefined,
+  message: readonly MessageImageReference[] | undefined,
+): boolean {
+  const left = queued ?? []
+  const right = message ?? []
+  return (
+    left.length === right.length &&
+    left.every(
+      (image, index) =>
+        image.attachmentId === right[index]?.attachmentId &&
+        image.mediaType === right[index]?.mediaType &&
+        image.bytes === right[index]?.bytes &&
+        image.width === right[index]?.width &&
+        image.height === right[index]?.height &&
+        image.name === right[index]?.name,
+    )
+  )
+}
+
 function sameGoalList(left: readonly GoalView[], right: readonly GoalView[]): boolean {
   return sameList(
     left,
     right,
     (previous, next) =>
-      previous.id === next.id && previous.title === next.title && previous.status === next.status,
+      previous.id === next.id &&
+      previous.title === next.title &&
+      previous.status === next.status &&
+      previous.maxGoalRounds === next.maxGoalRounds,
   )
 }
 
@@ -6591,7 +7153,9 @@ function isDynamicCommand(value: unknown): value is DynamicCommand {
   return (
     item !== undefined &&
     typeof item.name === 'string' &&
+    /^[a-z][a-z0-9_-]*$/u.test(item.name) &&
     typeof item.description === 'string' &&
+    (item.whenToUse === undefined || typeof item.whenToUse === 'string') &&
     (item.input === undefined ||
       (isRecord(item.input) &&
         typeof item.input.hint === 'string' &&
@@ -6608,8 +7172,11 @@ function isSkillDescriptor(value: unknown): value is SkillDescriptor {
   return (
     item !== undefined &&
     typeof item.id === 'string' &&
+    item.id.trim() !== '' &&
     typeof item.name === 'string' &&
+    item.name.trim() !== '' &&
     typeof item.description === 'string' &&
+    (item.whenToUse === undefined || typeof item.whenToUse === 'string') &&
     (item.source === 'project' || item.source === 'user' || item.source === 'plugin') &&
     typeof item.enabled === 'boolean'
   )
@@ -6621,8 +7188,48 @@ function isGoalView(value: unknown): value is GoalView {
     item !== undefined &&
     typeof item.id === 'string' &&
     typeof item.title === 'string' &&
-    isGoalStatus(item.status)
+    isGoalStatus(item.status) &&
+    (item.maxGoalRounds === undefined || positiveSafeInteger(item.maxGoalRounds) !== undefined)
   )
+}
+
+function parseGoalViews(value: unknown): readonly GoalView[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const goals: GoalView[] = []
+  for (const entry of value) {
+    if (!isGoalView(entry)) return undefined
+    goals.push(entry)
+  }
+  return goals
+}
+
+function parseTodoViews(value: unknown): readonly TodoView[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const todos: TodoView[] = []
+  for (const entry of value) {
+    const item = object(entry)
+    if (
+      item === undefined ||
+      typeof item.id !== 'string' ||
+      item.id.length === 0 ||
+      typeof item.content !== 'string' ||
+      (item.status !== 'pending' && item.status !== 'in-progress' && item.status !== 'completed')
+    )
+      return undefined
+    todos.push({ id: item.id, content: item.content, status: item.status })
+  }
+  return todos
+}
+
+function parseQueuedInputs(value: unknown, sessionId: string): readonly QueuedInput[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const items: QueuedInput[] = []
+  for (const entry of value) {
+    if (!isQueuedInput(entry)) return undefined
+    if (entry.sessionId !== sessionId) return undefined
+    items.push(entry)
+  }
+  return items
 }
 
 function isJobView(value: unknown): value is JobView {
@@ -6712,6 +7319,7 @@ function referenceCandidates(value: unknown): readonly ReferenceCandidate[] {
         item.sessionId.trim() === '' ||
         typeof item.label !== 'string' ||
         item.label.trim() === '' ||
+        typeof item.sameWorkspace !== 'boolean' ||
         typeof item.mention !== 'string' ||
         !/^@\[[^\]\r\n]{1,512}\]\(dsh-session:[A-Za-z0-9_-]{1,512}\)$/u.test(item.mention)
       )
@@ -6726,6 +7334,7 @@ function referenceCandidates(value: unknown): readonly ReferenceCandidate[] {
         label: item.label,
         description: typeof item.cwd === 'string' && item.cwd !== '' ? item.cwd : item.sessionId,
         mention: item.mention,
+        sameWorkspace: item.sameWorkspace,
       })
     }
   return candidates.slice(0, 100)
@@ -6814,11 +7423,44 @@ function isQueuedInput(value: unknown): value is QueuedInput {
   return (
     item !== undefined &&
     typeof item.id === 'string' &&
+    item.id.trim() !== '' &&
     typeof item.sessionId === 'string' &&
+    item.sessionId.trim() !== '' &&
     typeof item.text === 'string' &&
     Array.isArray(item.attachments) &&
+    item.attachments.every(isPromptAttachment) &&
+    (item.images === undefined ||
+      (Array.isArray(item.images) && item.images.every(isMessageImageReference))) &&
     (item.mode === 'queue' || item.mode === 'steer') &&
-    typeof item.createdAt === 'string'
+    typeof item.createdAt === 'string' &&
+    (item.rpcId === undefined || typeof item.rpcId === 'string')
+  )
+}
+
+function isPromptAttachment(value: unknown): value is PromptAttachment {
+  const attachment = object(value)
+  return (
+    attachment !== undefined &&
+    typeof attachment.uri === 'string' &&
+    typeof attachment.name === 'string' &&
+    (attachment.mimeType === undefined || typeof attachment.mimeType === 'string')
+  )
+}
+
+function isMessageImageReference(value: unknown): value is MessageImageReference {
+  const image = object(value)
+  return (
+    image !== undefined &&
+    typeof image.attachmentId === 'string' &&
+    image.attachmentId.trim() !== '' &&
+    (image.mediaType === 'image/png' ||
+      image.mediaType === 'image/jpeg' ||
+      image.mediaType === 'image/webp' ||
+      image.mediaType === 'image/gif') &&
+    positiveSafeInteger(image.bytes) !== undefined &&
+    positiveSafeInteger(image.width) !== undefined &&
+    positiveSafeInteger(image.height) !== undefined &&
+    (image.name === undefined || typeof image.name === 'string')
   )
 }
 

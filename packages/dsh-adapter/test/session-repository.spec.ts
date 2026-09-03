@@ -84,6 +84,135 @@ describe('SessionRepository workspace blank reuse compatibility', () => {
   })
 })
 
+describe('Rc6SessionRepository session listing', () => {
+  it('omits an empty pagination cursor from the pinned request', async () => {
+    const calls: { method: string; params: unknown }[] = []
+    const repository = new Rc6SessionRepository(sessionCreateTransport(calls))
+
+    await repository.list({ cursor: '' })
+    await repository.list({ cursor: '   ' })
+
+    expect(calls.filter((call) => call.method === 'session.list').map((call) => call.params)).toEqual([
+      {},
+      {},
+    ])
+  })
+
+  it('does not let a partial list projection erase a valid image-limit cell', async () => {
+    const calls: { method: string; params: unknown }[] = []
+    const repository = new Rc6SessionRepository({
+      request: <TResponse>(method: string, params: unknown) => {
+        calls.push({ method, params })
+        return Promise.resolve({
+          result: {
+            ok: true,
+            value: {
+              items: [
+                {
+                  sessionId: 'session-1',
+                  updatedAt: 1,
+                  running: false,
+                  blank: false,
+                  projections: {
+                    asOfSeq: 1,
+                    values: { sessionListMetadata: { blank: false, lastPromptAt: 1 } },
+                  },
+                },
+              ],
+            },
+          },
+        } as TResponse)
+      },
+      remoteRequest: <TResponse>() => Promise.reject<TResponse>(new Error('unexpected Remote')),
+      openEventStream: async function* () {
+        /* fixture stream */
+      },
+      close: () => Promise.resolve(),
+    })
+    repository.remember({
+      type: 'session.projection',
+      sessionId: 'session-1',
+      key: 'imageLimits',
+      value: {
+        maxImageBytes: 8,
+        maxImagesPerMessage: 1,
+        maxMessageImageBytes: 8,
+        maxImagePixels: 1_000,
+        mediaTypes: ['image/jpeg'],
+      },
+    })
+
+    await repository.list()
+
+    const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).toString('base64')
+    await expect(
+      repository.sendPrompt({
+        sessionId: 'session-1',
+        text: 'list hint must not widen admission',
+        attachments: [{ uri: `data:image/png;base64,${png}`, name: 'preview.png', mimeType: 'image/png' }],
+      }),
+    ).rejects.toMatchObject({ code: 'INVALID_CONFIGURATION' })
+    expect(calls.map((call) => call.method)).toEqual(['session.list'])
+  })
+
+  it('does not treat a partial list projection as authoritative during open', async () => {
+    const calls: { method: string; params: unknown }[] = []
+    const repository = new Rc6SessionRepository({
+      request: <TResponse>(method: string, params: unknown) => {
+        calls.push({ method, params })
+        const value =
+          method === 'session.list'
+            ? {
+                items: [
+                  {
+                    sessionId: 'session-1',
+                    updatedAt: 1,
+                    running: false,
+                    blank: false,
+                    projections: {
+                      asOfSeq: 1,
+                      values: { sessionListMetadata: { blank: false, lastPromptAt: 1 } },
+                    },
+                  },
+                ],
+              }
+            : { events: [], hasMore: false }
+        return Promise.resolve({ result: { ok: true, value } } as TResponse)
+      },
+      remoteRequest: <TResponse>() => Promise.reject<TResponse>(new Error('unexpected Remote')),
+      openEventStream: async function* () {
+        /* fixture stream */
+      },
+      close: () => Promise.resolve(),
+    })
+    repository.remember({
+      type: 'session.projection',
+      sessionId: 'session-1',
+      key: 'imageLimits',
+      value: {
+        maxImageBytes: 8,
+        maxImagesPerMessage: 1,
+        maxMessageImageBytes: 8,
+        maxImagePixels: 1_000,
+        mediaTypes: ['image/jpeg'],
+      },
+    })
+
+    await repository.list()
+    await repository.get('session-1')
+
+    const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).toString('base64')
+    await expect(
+      repository.sendPrompt({
+        sessionId: 'session-1',
+        text: 'open hint must not widen admission',
+        attachments: [{ uri: `data:image/png;base64,${png}`, name: 'preview.png', mimeType: 'image/png' }],
+      }),
+    ).rejects.toMatchObject({ code: 'INVALID_CONFIGURATION' })
+    expect(calls.map((call) => call.method)).toEqual(['session.list', 'session.history'])
+  })
+})
+
 describe('Rc6SessionRepository session removal', () => {
   it('maps removal to the pinned rc.6 archive RPC', async () => {
     const requestImplementation = <TResponse>(
@@ -238,6 +367,41 @@ describe('Rc6SessionRepository prompt delivery modes', () => {
     expect(calls).toHaveLength(1)
   })
 
+  it('preserves the last valid image limits when a later projection is malformed', async () => {
+    const calls: { method: string; params: unknown }[] = []
+    const repository = new Rc6SessionRepository(recordingTransport(calls))
+    const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).toString('base64')
+    const image = { uri: `data:image/png;base64,${png}`, name: 'preview.png', mimeType: 'image/png' }
+    const limits = {
+      maxImageBytes: 8,
+      maxImagesPerMessage: 2,
+      maxMessageImageBytes: 8,
+      maxImagePixels: 1_000,
+      mediaTypes: ['image/jpeg'],
+    }
+
+    repository.remember({
+      type: 'session.projection',
+      sessionId: 'session-1',
+      key: 'imageLimits',
+      value: limits,
+    })
+    await expect(
+      repository.sendPrompt({ sessionId: 'session-1', text: 'wrong type', attachments: [image] }),
+    ).rejects.toMatchObject({ code: 'INVALID_CONFIGURATION' })
+
+    repository.remember({
+      type: 'session.projection',
+      sessionId: 'session-1',
+      key: 'imageLimits',
+      value: { ...limits, mediaTypes: ['image/jpeg', {}] },
+    })
+    await expect(
+      repository.sendPrompt({ sessionId: 'session-1', text: 'still wrong type', attachments: [image] }),
+    ).rejects.toMatchObject({ code: 'INVALID_CONFIGURATION' })
+    expect(calls).toHaveLength(0)
+  })
+
   it('rejects a malformed prompt receipt instead of consuming attachment handles as success', async () => {
     const transport = recordingTransport([])
     transport.request = <TResponse>() => Promise.resolve({ result: { ok: true, value: {} } } as TResponse)
@@ -327,6 +491,39 @@ describe('Rc6SessionRepository prompt delivery modes', () => {
     })
   })
 
+  it('does not replace a queued image message with a text-only edit', async () => {
+    const calls: { method: string; params: unknown }[] = []
+    const repository = new Rc6SessionRepository(recordingTransport(calls))
+    repository.remember({
+      type: 'queue.updated',
+      sessionId: 'session-1',
+      items: [
+        {
+          id: 'image-queued',
+          sessionId: 'session-1',
+          text: 'describe this',
+          attachments: [],
+          images: [
+            {
+              attachmentId: 'image-1',
+              mediaType: 'image/png',
+              bytes: 4,
+              width: 2,
+              height: 2,
+            },
+          ],
+          mode: 'queue',
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    })
+
+    await expect(repository.updateQueuedInput('image-queued', 'new text')).rejects.toMatchObject({
+      code: 'CAPABILITY_UNAVAILABLE',
+    })
+    expect(calls).toEqual([])
+  })
+
   it('rejects decoder-tolerated non-canonical prompt Base64', async () => {
     const repository = new Rc6SessionRepository(recordingTransport([]))
 
@@ -395,7 +592,10 @@ describe('Rc6SessionRepository historical attachments', () => {
 })
 
 describe('Rc6SessionRepository configuration safety', () => {
-  function configurationTransport(failingCommand?: string): {
+  function configurationTransport(
+    failingCommand?: string,
+    permissionOptions: readonly unknown[] = [{ value: 'workspace-write' }, { value: 'read-only' }],
+  ): {
     readonly transport: DshTransport
     readonly calls: { method: string; params: unknown }[]
   } {
@@ -444,7 +644,7 @@ describe('Rc6SessionRepository configuration safety', () => {
                 projections: {
                   asOfSeq: 1,
                   values: {
-                    permissions: { options: [{ value: 'workspace-write' }, { value: 'read-only' }] },
+                    permissions: { options: permissionOptions },
                   },
                 },
               },
@@ -499,6 +699,27 @@ describe('Rc6SessionRepository configuration safety', () => {
       }),
     ).rejects.toMatchObject({ code: 'INVALID_CONFIGURATION' })
     expect(calls.some((call) => call.method === 'session.selectModel')).toBe(false)
+  })
+
+  it('fails closed when a permission roster contains a malformed option', async () => {
+    const { transport, calls } = configurationTransport(undefined, [
+      { value: 'workspace-write' },
+      { value: { unexpected: true } },
+    ])
+    const repository = new Rc6SessionRepository(transport)
+
+    await expect(
+      repository.setConfiguration('session-1', {
+        preset: 'standard',
+        toolMode: 'native',
+        permissionPreset: 'read-only',
+        planMode: false,
+        model: { providerId: 'provider-new', modelId: 'model-new', reasoningLevel: 'high' },
+      }),
+    ).rejects.toMatchObject({ code: 'INVALID_CONFIGURATION' })
+    expect(
+      calls.some((call) => call.method === 'commands/execute' || call.method === 'session.selectModel'),
+    ).toBe(false)
   })
 
   it('rolls back a permission change when a later configuration command fails', async () => {

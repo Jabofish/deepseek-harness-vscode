@@ -84,6 +84,45 @@ const boundedUnknown = z.unknown().superRefine((value, context) => {
   const failure = budgetFailure(value)
   if (failure !== undefined) context.addIssue({ code: 'custom', message: failure })
 })
+const sensitiveCustomProviderModelKeys = new Set(
+  [
+    'apiKey',
+    'accessToken',
+    'authorization',
+    'password',
+    'secret',
+    'secretKey',
+    'privateKey',
+    'token',
+    'credential',
+    'credentials',
+    'auth',
+    'headers',
+    'cookies',
+  ].map(normalizeCustomProviderModelKey),
+)
+const customProviderModelSchema = z
+  .record(z.string().min(1).max(128), boundedUnknown)
+  .superRefine((value, context) => {
+    if (containsSensitiveCustomProviderModelKey(value))
+      context.addIssue({ code: 'custom', message: 'Provider model metadata must not contain credentials.' })
+  })
+
+function normalizeCustomProviderModelKey(key: string): string {
+  return key.replace(/[-_]/gu, '').toLowerCase()
+}
+
+function containsSensitiveCustomProviderModelKey(value: unknown, seen = new WeakSet<object>()): boolean {
+  if (typeof value !== 'object' || value === null) return false
+  if (seen.has(value)) return false
+  seen.add(value)
+  if (Array.isArray(value)) return value.some((entry) => containsSensitiveCustomProviderModelKey(entry, seen))
+  return Object.entries(value).some(
+    ([key, child]) =>
+      sensitiveCustomProviderModelKeys.has(normalizeCustomProviderModelKey(key)) ||
+      containsSensitiveCustomProviderModelKey(child, seen),
+  )
+}
 
 export const webviewRequestSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('app.ready'), ...requestBase }).strict(),
@@ -405,6 +444,20 @@ export const webviewRequestSchema = z.discriminatedUnion('type', [
         .strict(),
     })
     .strict(),
+  z
+    .object({
+      type: z.literal('models.discover.custom'),
+      ...requestBase,
+      payload: z
+        .object({
+          settingsNamespace: id,
+          providerId: id.optional(),
+          baseUrl: z.string().max(2048).optional(),
+          api: z.string().max(128).optional(),
+        })
+        .strict(),
+    })
+    .strict(),
   z.object({ type: z.literal('providers.list'), ...requestBase }).strict(),
   z
     .object({
@@ -418,6 +471,24 @@ export const webviewRequestSchema = z.discriminatedUnion('type', [
       type: z.literal('provider.secret.remove'),
       ...requestBase,
       payload: z.object({ providerId: id, field: id }).strict(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('provider.custom.create'),
+      ...requestBase,
+      payload: z
+        .object({
+          settingsNamespace: id,
+          collectionPath: z.array(id).min(1).max(32),
+          providerId: id,
+          displayName: z.string().max(512).optional(),
+          api: z.string().min(1).max(128),
+          baseUrl: z.string().min(1).max(2048),
+          models: z.array(customProviderModelSchema).min(1).max(1024),
+          expectedRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+        })
+        .strict(),
     })
     .strict(),
   z
@@ -495,7 +566,13 @@ export const webviewRequestSchema = z.discriminatedUnion('type', [
     .object({
       type: z.literal('goal.create'),
       ...requestBase,
-      payload: z.object({ sessionId: id, title: z.string().min(1).max(1024) }).strict(),
+      payload: z
+        .object({
+          sessionId: id,
+          title: z.string().min(1).max(1024),
+          maxGoalRounds: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+        })
+        .strict(),
     })
     .strict(),
   z
@@ -507,6 +584,7 @@ export const webviewRequestSchema = z.discriminatedUnion('type', [
           goalId: id,
           title: z.string().min(1).max(1024).optional(),
           status: z.enum(['pending', 'in-progress', 'completed', 'blocked']).optional(),
+          maxGoalRounds: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
         })
         .strict(),
     })
@@ -529,7 +607,13 @@ export const webviewRequestSchema = z.discriminatedUnion('type', [
     .object({
       type: z.literal('subagent.send'),
       ...requestBase,
-      payload: z.object({ sessionId: id, message: z.string().min(1).max(1_000_000) }).strict(),
+      payload: z
+        .object({
+          sessionId: id,
+          message: z.string().min(1).max(1_000_000),
+          attachments: z.array(attachmentSchema).max(MAX_PROMPT_ATTACHMENTS).optional(),
+        })
+        .strict(),
     })
     .strict(),
   z

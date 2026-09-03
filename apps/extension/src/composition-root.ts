@@ -41,6 +41,7 @@ import {
   ModelSettingsUseCases,
   NavigationUseCases,
   PromptTemplateUseCases,
+  ProviderSettingsUseCases,
   RuntimeUseCases,
   SessionUseCases,
   SettingsUseCases,
@@ -99,7 +100,7 @@ import { WebviewMessageRouter } from './view/message-router.js'
 import { DshWebviewViewProvider } from './view/dsh-webview-view-provider.js'
 import { RuntimeInstaller } from './vscode/install-runtime.js'
 import { DshRuntimeUpdater } from './vscode/update-runtime.js'
-import { requestProviderSecret } from './vscode/credential-input.js'
+import { requestOptionalProviderApiKey, requestProviderSecret } from './vscode/credential-input.js'
 import { moveOrExplainSecondarySidebar } from './vscode/secondary-sidebar.js'
 import { updateContextKeys } from './vscode/context-keys.js'
 import { DSH_CHAT_VIEW_OWNER_ID, EditorContextProvider } from './editor/editor-context-provider.js'
@@ -478,6 +479,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
   const modelUseCases = new ModelSettingsUseCases(backendService)
   const interactionUseCases = new InteractionUseCases(backendService)
   const settingsUseCases = new SettingsUseCases(backendService)
+  const providerSettingsUseCases = new ProviderSettingsUseCases(backendService)
   const advancedUseCases = new AdvancedAgentUseCases(backendService)
   const exportUseCases = new ExportUseCases(backendService)
   const initialTemporaryWorkspaceReference = readStoredTemporaryWorkspace(
@@ -2041,6 +2043,25 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
           signal,
         ),
       )
+    if (request.type === 'models.discover.custom') {
+      backendService.requireBackend()
+      const apiKey = await requestOptionalProviderApiKey(
+        vscode.window,
+        request.payload.providerId ?? 'custom provider',
+      )
+      return publicList(
+        await modelUseCases.discoverModels(
+          {
+            settingsNamespace: request.payload.settingsNamespace,
+            ...(request.payload.providerId === undefined ? {} : { providerId: request.payload.providerId }),
+            ...(request.payload.baseUrl === undefined ? {} : { baseUrl: request.payload.baseUrl }),
+            ...(request.payload.api === undefined ? {} : { api: request.payload.api }),
+            ...(apiKey === undefined ? {} : { apiKey }),
+          },
+          signal,
+        ),
+      )
+    }
     if (request.type === 'providers.list') return publicList(await modelUseCases.listProviders(signal))
     if (request.type === 'provider.secret.configure') {
       const backend = backendService.requireBackend()
@@ -2057,6 +2078,28 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       return backendService
         .requireBackend()
         .credentials.removeSecret(request.payload.providerId, request.payload.field, signal)
+    if (request.type === 'provider.custom.create') {
+      backendService.requireBackend()
+      const apiKey = await requestOptionalProviderApiKey(vscode.window, request.payload.providerId)
+      return publicValue(
+        await providerSettingsUseCases.createCustomProvider(
+          {
+            settingsNamespace: request.payload.settingsNamespace,
+            collectionPath: request.payload.collectionPath,
+            providerId: request.payload.providerId,
+            ...(request.payload.displayName === undefined
+              ? {}
+              : { displayName: request.payload.displayName }),
+            api: request.payload.api,
+            baseUrl: request.payload.baseUrl,
+            models: request.payload.models,
+            expectedRevision: request.payload.expectedRevision,
+          },
+          apiKey,
+          signal,
+        ),
+      )
+    }
     if (request.type === 'plugin.credential.configure') {
       const value = await requestProviderSecret(vscode.window, 'plugin', request.payload.ref)
       if (value === undefined) return { configured: false, cancelled: true }
@@ -2103,7 +2146,12 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       return publicValue(
         await backendService
           .requireBackend()
-          .goals.create(request.payload.sessionId, request.payload.title, signal),
+          .goals.create(
+            request.payload.sessionId,
+            request.payload.title,
+            signal,
+            request.payload.maxGoalRounds,
+          ),
       )
     }
     if (request.type === 'goal.update') {
@@ -2113,6 +2161,9 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
         {
           ...(request.payload.title === undefined ? {} : { title: request.payload.title }),
           ...(request.payload.status === undefined ? {} : { status: request.payload.status }),
+          ...(request.payload.maxGoalRounds === undefined
+            ? {}
+            : { maxGoalRounds: request.payload.maxGoalRounds }),
         },
         signal,
       )
@@ -2141,7 +2192,14 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     }
     if (request.type === 'subagent.send') {
       await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
-      return advancedUseCases.execute('subagent.send', request.payload, signal)
+      const attachments = attachmentTokens.resolve(request.payload.attachments ?? [])
+      const result = await advancedUseCases.execute(
+        'subagent.send',
+        { ...request.payload, attachments },
+        signal,
+      )
+      attachmentTokens.release(request.payload.attachments ?? [])
+      return result
     }
     if (request.type === 'subagent.interrupt') {
       await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
@@ -2169,9 +2227,15 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     if (request.type === 'command.execute') {
       await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
       const attachments = attachmentTokens.resolve(request.payload.attachments ?? [])
-      return publicValue(
-        await advancedUseCases.execute('command.execute', { ...request.payload, attachments }, signal),
+      const result = await advancedUseCases.execute(
+        'command.execute',
+        { ...request.payload, attachments },
+        signal,
       )
+      // Keep attachment chips available for retry after a failed command, but
+      // consume the opaque Host handles once command admission succeeds.
+      attachmentTokens.release(request.payload.attachments ?? [])
+      return publicValue(result)
     }
     if (request.type === 'plugin.inventory')
       return publicValue(await advancedUseCases.pluginInventory(signal))
@@ -2578,6 +2642,7 @@ function publicState(state: BackendState): unknown {
     ...(state.kind === 'connected'
       ? {
           dshVersion: state.backend.capabilities.dshVersion,
+          ...(state.backend.capabilities.subagentImagePrompts === true ? { subagentImagePrompts: true } : {}),
           ...(state.backend.backendInstanceId === undefined
             ? {}
             : { backendInstanceId: state.backend.backendInstanceId }),
@@ -3029,8 +3094,10 @@ function requiresTrustedWorkspace(type: WebviewRequest['type']): boolean {
     case 'feedback.toggle':
     case 'feedback.note':
     case 'feedback.remove':
+    case 'models.discover.custom':
     case 'provider.secret.configure':
     case 'provider.secret.remove':
+    case 'provider.custom.create':
     case 'plugin.credential.configure':
     case 'plugin.credential.remove':
     case 'interaction.permission.respond':
@@ -3092,15 +3159,19 @@ function sanitize(value: unknown, parentKey?: string): unknown {
   if (typeof value !== 'object' || value === null) return value
   const result: Record<string, unknown> = {}
   for (const [key, entry] of Object.entries(value)) {
-    if (isSensitivePublicField(parentKey, key)) continue
+    if (isSensitivePublicField(parentKey, key, entry)) continue
     result[key] = sanitize(entry, key)
   }
   return result
 }
 
-function isSensitivePublicField(parentKey: string | undefined, key: string): boolean {
+function isSensitivePublicField(parentKey: string | undefined, key: string, value: unknown): boolean {
   const normalizedParent = parentKey?.toLocaleLowerCase()
   const normalizedKey = key.toLocaleLowerCase()
+
+  // Provider catalog rows use `secret: boolean` as field metadata. Preserve
+  // that structural flag while continuing to redact secret-bearing values.
+  if (normalizedKey === 'secret' && typeof value === 'boolean') return false
 
   // These counters are intentionally public UI telemetry. The previous
   // broad `/token|input|output/` filter silently removed the DSH token meter

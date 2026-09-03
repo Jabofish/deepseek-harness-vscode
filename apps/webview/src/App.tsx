@@ -92,7 +92,6 @@ const EMPTY_REFERENCE_CANDIDATES: readonly ReferenceCandidate[] = []
 const EMPTY_PERMISSION_REQUESTS: readonly PermissionRequest[] = []
 const EMPTY_USER_QUESTIONS: readonly UserQuestion[] = []
 const DSH_LOCALE_SETTING_PATH = 'locale.preference'
-
 /** Keep host-backed child actions stable while still reading current App state. */
 function useStableCallback<Args extends unknown[], Result>(
   callback: (...args: Args) => Result,
@@ -729,7 +728,8 @@ export function App(): ReactElement {
       )
   })
   const goalOnUpdate = useStableCallback(
-    (goalId: string, update: Partial<Pick<GoalView, 'title' | 'status'>>) => store.updateGoal(goalId, update),
+    (goalId: string, update: Partial<Pick<GoalView, 'title' | 'status' | 'maxGoalRounds'>>) =>
+      store.updateGoal(goalId, update),
   )
   const goalOnClear = useStableCallback((goalId: string) => store.clearGoal(goalId))
   const queueOnEdit = useStableCallback((inputId: string, text: string): void => {
@@ -1041,9 +1041,10 @@ export function App(): ReactElement {
           summaries={state.sessions}
           onLoadChildren={(sessionId) => store.loadSubagentChildren(sessionId)}
           onOpenChild={(entry, parentAvailable) => {
-            // subagent.prompt accepts text ContentBlocks only. Clear
-            // ordinary-session attachment handles at navigation time.
-            discardAttachmentDrafts()
+            // rc.6 requires already-durable image blocks and therefore does
+            // not advertise inline subagent image prompts. Alpha hosts do;
+            // preserve those opaque drafts across child navigation.
+            if (!state.subagentImagePrompts) discardAttachmentDrafts()
             void store
               .openSubagent(entry, parentAvailable)
               .catch((reason: unknown) =>
@@ -1123,6 +1124,7 @@ export function App(): ReactElement {
     state.promptTemplates,
     state.promptTemplatesLoading,
     state.sessions,
+    state.subagentImagePrompts,
     state.subagents,
     state.tasks,
     state.tasksLoading,
@@ -1157,7 +1159,9 @@ export function App(): ReactElement {
           onOpenDshSettingsDocument={() => store.openDshSettingsDocument()}
           onUpdateDshSetting={(path, value) => store.updateDshSetting(path, value)}
           onUnsetDshSetting={(path) => store.unsetDshSetting(path)}
+          onCreateCustomProvider={(draft) => store.createCustomProvider(draft)}
           onDiscoverModels={(input) => store.discoverModels(input)}
+          onDiscoverCustomModels={(input) => store.discoverCustomProviderModels(input)}
           onConfigureSecret={(providerId, field) => store.configureProviderSecret(providerId, field)}
           onRemoveSecret={(providerId, field) => store.removeProviderSecret(providerId, field)}
           onConfigurePluginCredential={(ref) => store.configurePluginCredential(ref)}
@@ -1493,6 +1497,7 @@ export function App(): ReactElement {
                     onEdit={queueOnEdit}
                     onRemove={queueOnRemove}
                     onModeChange={queueOnModeChange}
+                    onLoadImage={timelineOnLoadImage}
                   />
                   <div className="dsh-compose-area">
                     <TodoList key={active?.id ?? 'todo-list'} todos={state.todos} />
@@ -1505,7 +1510,7 @@ export function App(): ReactElement {
                               subagentReadOnlyReason !== undefined ||
                               (activeSubagent !== undefined && activeSubagentState?.parentAvailable === false)
                             }
-                            attachmentsDisabled={activeSubagent !== undefined}
+                            attachmentsDisabled={activeSubagent !== undefined && !state.subagentImagePrompts}
                             running={activeRunning}
                             draft={draft}
                             attachments={attachments}
@@ -1676,9 +1681,17 @@ function EmptySessionPosture(props: {
 
 function readContextPressure(value: unknown, breakdownValue?: unknown): ContextPressure | undefined {
   const record = object(value)
-  const pressureTokens = nonNegativeTokenCount(record?.pressureTokens)
-  const projectedTokens = nonNegativeTokenCount(record?.projectedTokens)
-  const contextWindow = positiveTokenCount(record?.contextWindow)
+  const pressureValid =
+    record === undefined ||
+    ((!Object.prototype.hasOwnProperty.call(record, 'pressureTokens') ||
+      nonNegativeTokenCount(record.pressureTokens) !== undefined) &&
+      (!Object.prototype.hasOwnProperty.call(record, 'projectedTokens') ||
+        nonNegativeTokenCount(record.projectedTokens) !== undefined) &&
+      (!Object.prototype.hasOwnProperty.call(record, 'contextWindow') ||
+        positiveTokenCount(record.contextWindow) !== undefined))
+  const pressureTokens = pressureValid ? nonNegativeTokenCount(record?.pressureTokens) : undefined
+  const projectedTokens = pressureValid ? nonNegativeTokenCount(record?.projectedTokens) : undefined
+  const contextWindow = pressureValid ? positiveTokenCount(record?.contextWindow) : undefined
   // DSH publishes these as two independent projections. Keep accepting the
   // nested shape used by early fixtures so rc.6/rc.7 deployments remain safe.
   const breakdown = readContextBreakdown(breakdownValue) ?? readContextBreakdown(record?.contextBreakdown)
@@ -1715,15 +1728,15 @@ function readTokenUsageProjection(value: unknown): TokenUsage | undefined {
   const cacheReadTokens = nonNegativeTokenCount(record.cacheReadTokens)
   const cacheWriteTokens = nonNegativeTokenCount(record.cacheWriteTokens)
   if (
-    inputTokens === undefined &&
-    outputTokens === undefined &&
-    cacheReadTokens === undefined &&
-    cacheWriteTokens === undefined
+    inputTokens === undefined ||
+    outputTokens === undefined ||
+    (record.cacheReadTokens !== undefined && cacheReadTokens === undefined) ||
+    (record.cacheWriteTokens !== undefined && cacheWriteTokens === undefined)
   )
     return undefined
   return {
-    inputTokens: inputTokens ?? 0,
-    outputTokens: outputTokens ?? 0,
+    inputTokens,
+    outputTokens,
     ...(cacheReadTokens === undefined ? {} : { cacheReadTokens }),
     ...(cacheWriteTokens === undefined ? {} : { cacheWriteTokens }),
   }
@@ -1804,19 +1817,19 @@ function readImageAttachmentLimits(value: unknown): ImageAttachmentLimits | unde
   const maxMessageImageBytes = positiveInteger(record.maxMessageImageBytes)
   const maxImagePixels = positiveInteger(record.maxImagePixels)
   const maxImageDimension = positiveInteger(record.maxImageDimension)
-  const mediaTypes = Array.isArray(record.mediaTypes)
-    ? record.mediaTypes.filter(
-        (entry): entry is string => typeof entry === 'string' && entry.startsWith('image/'),
-      )
-    : []
+  const hasMaxImageDimension = Object.prototype.hasOwnProperty.call(record, 'maxImageDimension')
   if (
     maxImageBytes === undefined ||
     maxImagesPerMessage === undefined ||
     maxMessageImageBytes === undefined ||
     maxImagePixels === undefined ||
-    mediaTypes.length === 0
+    (hasMaxImageDimension && maxImageDimension === undefined) ||
+    !Array.isArray(record.mediaTypes) ||
+    record.mediaTypes.length === 0 ||
+    !record.mediaTypes.every(isSupportedImageMediaType)
   )
     return undefined
+  const mediaTypes = record.mediaTypes
   return {
     // Keep future hosts from advertising a limit beyond the opaque attachment
     // store and prompt boundary implemented by this extension.
@@ -1831,6 +1844,10 @@ function readImageAttachmentLimits(value: unknown): ImageAttachmentLimits | unde
 
 function positiveInteger(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined
+}
+
+function isSupportedImageMediaType(value: unknown): value is ImageAttachmentLimits['mediaTypes'][number] {
+  return value === 'image/png' || value === 'image/jpeg' || value === 'image/webp' || value === 'image/gif'
 }
 
 function formatByteSize(value: number): string {

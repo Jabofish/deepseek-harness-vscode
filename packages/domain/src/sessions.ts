@@ -1,5 +1,6 @@
 import type { AgentConfiguration } from './models.js'
 import type { BackendEvent } from './events.js'
+import type { MessageImageReference } from './events.js'
 
 export type SessionStatus = 'idle' | 'running' | 'awaiting-input' | 'failed' | 'completed'
 
@@ -124,6 +125,8 @@ export interface QueuedInput {
   readonly sessionId: string
   readonly text: string
   readonly attachments: readonly PromptAttachment[]
+  /** Durable image references in the pending upstream message. */
+  readonly images?: readonly MessageImageReference[]
   readonly mode: RunningInputMode
   readonly createdAt: string
   /** Opaque host request correlation used to reconcile an accepted prompt. */

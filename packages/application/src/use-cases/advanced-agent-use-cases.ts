@@ -112,6 +112,7 @@ export class AdvancedAgentUseCases {
         await backend.subagents.send(
           requiredString(input, 'sessionId'),
           requiredString(input, 'message'),
+          promptAttachments(input.attachments),
           signal,
         )
         return undefined

@@ -283,6 +283,7 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'queue.mode.queue': 'Queue',
     'queue.mode.steer': 'Steer',
     'queue.remove': 'Remove queued prompt {id}',
+    'queue.editWithImages': 'Queued prompts containing images cannot be edited; remove and resend.',
     'runtime.eyebrow': 'RUNTIME CHECK',
     'runtime.title': "DeepSeek Harness isn't ready yet",
     'runtime.description':
@@ -696,6 +697,8 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'settings.customProvider': 'Add custom provider',
     'settings.customProviderNote':
       'Add a provider route advertised by the connected DSH settings schema. Configure credentials through Host controls after it appears.',
+    'settings.customProviderCredentialHint':
+      'When you save, the Host may ask for an optional API key. The key never enters the Webview.',
     'settings.providerId': 'Provider ID',
     'settings.providerDisplayName': 'Provider display name',
     'settings.providerBaseUrl': 'Provider base URL',
@@ -704,6 +707,10 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'settings.providerSaved': 'Provider saved. Refreshing the catalog…',
     'settings.providerRouteInvalid': 'Use lowercase letters, digits, and dashes; start with a letter.',
     'settings.providerRouteTaken': 'This provider ID is already in use.',
+    'settings.providerCredentialCancelled': 'The API key was not configured. Try again or close the card.',
+    'settings.providerCreateIncomplete': 'The provider profile was not committed.',
+    'settings.providerCreateMalformed': 'The host returned an invalid provider-create result.',
+    'settings.retryProviderCredential': 'Retry API key',
     'settings.fullAccessAria': 'Confirm full access',
     'settings.fullAccessPrompt':
       'Full access lets the agent use every tool without asking. Confirm this default?',
@@ -1357,6 +1364,7 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'queue.mode.queue': '排队',
     'queue.mode.steer': '引导',
     'queue.remove': '移除排队提示 {id}',
+    'queue.editWithImages': '含图片的排队提示无法编辑，请移除后重新发送。',
     'runtime.eyebrow': '运行环境检查',
     'runtime.title': 'DeepSeek Harness 尚未就绪',
     'runtime.description':
@@ -1755,6 +1763,7 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'settings.customProvider': '添加自定义 Provider',
     'settings.customProviderNote':
       '根据已连接 DSH 设置 schema 添加 Provider 路由。创建后通过 Host 控件配置凭据。',
+    'settings.customProviderCredentialHint': '保存时 Host 可能会询问可选 API Key。密钥不会进入 Webview。',
     'settings.providerId': 'Provider ID',
     'settings.providerDisplayName': 'Provider 显示名称',
     'settings.providerBaseUrl': 'Provider Base URL',
@@ -1763,6 +1772,10 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'settings.providerSaved': 'Provider 已保存，正在刷新目录…',
     'settings.providerRouteInvalid': '只能使用小写字母、数字和连字符，且必须以字母开头。',
     'settings.providerRouteTaken': '此 Provider ID 已被使用。',
+    'settings.providerCredentialCancelled': '尚未配置 API Key。可以重试，或关闭此卡片。',
+    'settings.providerCreateIncomplete': 'Provider 配置未完成写入。',
+    'settings.providerCreateMalformed': 'Host 返回了无效的供应商创建结果。',
+    'settings.retryProviderCredential': '重试 API Key',
     'settings.fullAccessAria': '确认完全访问',
     'settings.fullAccessPrompt': '完全访问允许代理无需询问即可使用所有工具。确认设为默认值吗？',
     'settings.fullAccessAck': '我了解完全访问将移除权限询问。',

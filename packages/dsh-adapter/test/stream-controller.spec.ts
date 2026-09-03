@@ -220,7 +220,16 @@ describe('DshStreamController', () => {
             type: 'assistant/message',
             seq: 2,
             time: 2,
-            data: { turn: 1, step: 0, markdown: 'done' },
+            data: {
+              turn: 1,
+              step: 0,
+              message: {
+                id: 'assistant-1',
+                role: 'assistant',
+                content: [{ type: 'text', text: 'done' }],
+                source: { kind: 'model', provider: 'provider-1', model: 'model-1' },
+              },
+            },
           },
         },
       },
@@ -246,6 +255,52 @@ describe('DshStreamController', () => {
       'turn.ended',
       'session.status',
     ])
+  })
+
+  it('does not replay malformed canonical session events as synthetic domain state', async () => {
+    const sessionId = 's1'
+    const malformed = [
+      { type: 'turn/end', data: { turn: 1 } },
+      { type: 'assistant/chunk', data: { turn: 1, step: 1, chunk: { type: 'text-delta' } } },
+      { type: 'assistant/message', data: { turn: 1, step: 1, markdown: 'not canonical' } },
+      { type: 'user/message', data: { id: 'user-1', content: [] } },
+      {
+        type: 'assistant/message',
+        data: {
+          turn: 1,
+          step: 2,
+          message: {
+            id: 'assistant-image-1',
+            role: 'assistant',
+            content: [{ type: 'image', attachment: { attachmentId: 'missing-metadata' } }],
+            source: { kind: 'model', provider: 'provider-1', model: 'model-1' },
+          },
+        },
+      },
+      { type: 'tool/call', data: { turn: 1, step: 1, name: 'shell', arguments: '{}' } },
+      { type: 'tool/result', data: { turn: 1, step: 1, callId: 'call-1' } },
+      { type: 'request/context', data: { provider: 'provider-1' } },
+    ] as const
+    const transport = streamTransport(
+      malformed.map((event, index) => ({
+        payload: {
+          type: 'session/event',
+          sessionId,
+          event: { ...event, seq: index + 1, time: index + 1 },
+        },
+      })),
+    )
+    const received: BackendEvent[] = []
+    const controller = new DshStreamController(transport)
+    controllers.push(controller)
+    controller.subscribe((event) => received.push(event))
+
+    await waitFor(() => received.filter((event) => event.type === 'unknown').length === malformed.length)
+    const unknown = received.filter((event) => event.type === 'unknown')
+    expect(unknown.map((event) => event.type)).toEqual(Array(malformed.length).fill('unknown'))
+    expect(unknown.map((event) => ('name' in event ? event.name : undefined))).toEqual(
+      malformed.map((event) => event.type),
+    )
   })
 
   it('keeps future frame types as redacted unknown events', async () => {
@@ -475,6 +530,28 @@ describe('DshStreamController detached gap recovery', () => {
     stream.push(liveTurnFrame('s1', 11))
     await waitFor(() => received.some((event) => event.sequence === 11))
     expect(received.filter((event) => event.sequence === 9)).toHaveLength(1)
+  })
+
+  it('does not treat a pre-subscription history snapshot as a live gap', async () => {
+    const stream = new ControlledStream()
+    const controller = new DshStreamController(streamTransport([]), undefined, undefined, {
+      streamSource: stream.source,
+      closeTransport: false,
+    })
+    controllers.push(controller)
+    const received: BackendEvent[] = []
+    controller.subscribe((event) => received.push(event))
+
+    // Alpha session/follow can return a bounded tail beginning above zero,
+    // followed by the cursor that makes the snapshot's boundary explicit.
+    stream.push(liveTurnFrame('s1', 1))
+    stream.push(liveTurnFrame('s1', 2))
+    stream.push(subscribeFrame('s1', 2))
+    await waitFor(() => received.some((event) => event.type === 'session.subscribed'))
+
+    expect(received.some((event) => event.type === 'session.gap')).toBe(false)
+    expect(received.filter((event) => event.sequence === 1)).toHaveLength(1)
+    expect(received.filter((event) => event.sequence === 2)).toHaveLength(1)
   })
 
   it('announces the whole hole as a gap when history recovery fails', async () => {

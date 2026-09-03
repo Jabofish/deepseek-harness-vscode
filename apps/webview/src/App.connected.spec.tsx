@@ -25,6 +25,7 @@ function connectedState(activeSession: boolean): AppState {
     // the full Extension Host backend object.
     backend: { kind: 'connected' },
     connectedDshVersion: '0.1.0-rc.6',
+    subagentImagePrompts: false,
     dshCompatibilityWarning: undefined,
     featureProfile: undefined,
     dshUpdate: undefined,
@@ -182,7 +183,12 @@ function storeFor(state: AppState): AppStore {
     openDshSettingsDocument: vi.fn().mockResolvedValue(undefined),
     updateDshSetting: vi.fn().mockResolvedValue(undefined),
     unsetDshSetting: vi.fn().mockResolvedValue(undefined),
+    createCustomProvider: vi.fn().mockResolvedValue({
+      profileCommitted: true,
+      credentialConfigured: false,
+    }),
     discoverModels: vi.fn().mockResolvedValue([]),
+    discoverCustomProviderModels: vi.fn().mockResolvedValue([]),
     configureProviderSecret: vi.fn().mockResolvedValue(false),
     removeProviderSecret: vi.fn().mockResolvedValue(undefined),
     configurePluginCredential: vi.fn().mockResolvedValue(false),
@@ -540,6 +546,28 @@ describe('App connected rendering', () => {
     expect(screen.getByRole('dialog').textContent).toContain('Conversation messages')
   })
 
+  it('does not render a partial token-usage projection as a complete total', () => {
+    const state = connectedState(true)
+    currentStore = storeFor({
+      ...state,
+      projections: { s1: { tokenUsage: { outputTokens: 100 } } },
+    })
+    render(<App />)
+
+    expect(screen.queryByText('↓100')).toBeNull()
+  })
+
+  it('does not render a partial context-pressure projection as complete', () => {
+    const state = connectedState(true)
+    currentStore = storeFor({
+      ...state,
+      projections: { s1: { contextPressure: { pressureTokens: 1_024, contextWindow: 'broken' } } },
+    })
+    render(<App />)
+
+    expect(screen.queryByRole('button', { name: /Context/u })).toBeNull()
+  })
+
   it('pre-checks rc.8 image limits before sending bytes to the Extension Host', () => {
     const state = connectedState(true)
     const ingestAttachment = vi.fn().mockResolvedValue(undefined)
@@ -569,6 +597,35 @@ describe('App connected rendering', () => {
 
     expect(screen.getByRole('alert').textContent).toContain('DSH image limit of 2 B')
     expect(ingestAttachment).not.toHaveBeenCalled()
+  })
+
+  it('does not use a partially malformed image-limit projection as an admission policy', async () => {
+    const state = connectedState(true)
+    const ingestAttachment = vi.fn().mockResolvedValue(undefined)
+    currentStore = {
+      ...storeFor({
+        ...state,
+        projections: {
+          s1: {
+            imageLimits: {
+              maxImageBytes: 2,
+              maxImagesPerMessage: 20,
+              maxMessageImageBytes: 100,
+              maxImagePixels: 100,
+              mediaTypes: ['image/png', 'text/plain'],
+            },
+          },
+        },
+      }),
+      ingestAttachment,
+    }
+    render(<App />)
+    fireEvent.paste(screen.getByRole('textbox', { name: 'Prompt' }), {
+      clipboardData: { files: [new File(['small'], 'screenshot.png', { type: 'image/png' })] },
+    })
+
+    await waitFor(() => expect(ingestAttachment).toHaveBeenCalled())
+    expect(screen.queryByText(/DSH image limit/u)).toBeNull()
   })
 
   it('releases an opaque Host attachment handle when its draft chip is removed', async () => {

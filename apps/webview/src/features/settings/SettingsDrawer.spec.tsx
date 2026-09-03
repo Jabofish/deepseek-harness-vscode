@@ -112,8 +112,9 @@ function dshSettingsFixture(): DshSettingsSnapshot {
         },
       ],
       namespaces: [
-        { ns: 'permission', applies: 'live', userFields: ['defaultPreset'], secrets: [] },
-        { ns: 'shell', applies: 'restart', userFields: ['timeoutMs'], secrets: [] },
+        { ns: 'permission', applies: 'live', revision: 1, userFields: ['defaultPreset'], secrets: [] },
+        { ns: 'shell', applies: 'restart', revision: 2, userFields: ['timeoutMs'], secrets: [] },
+        { ns: 'llm-pi-ai', applies: 'live', revision: 7, userFields: [], secrets: [] },
       ],
     },
     values: {
@@ -141,6 +142,10 @@ function renderDrawer(
       onOpenDshSettingsDocument={vi.fn().mockResolvedValue(undefined)}
       onUpdateDshSetting={vi.fn().mockResolvedValue(undefined)}
       onUnsetDshSetting={vi.fn().mockResolvedValue(undefined)}
+      onCreateCustomProvider={vi.fn().mockResolvedValue({
+        profileCommitted: true,
+        credentialConfigured: false,
+      })}
       theme="system"
       onThemeChange={vi.fn()}
       locale="en"
@@ -149,6 +154,7 @@ function renderDrawer(
       conversationFontSize="medium"
       onConversationFontSizeChange={vi.fn()}
       onDiscoverModels={vi.fn().mockResolvedValue([])}
+      onDiscoverCustomModels={vi.fn().mockResolvedValue([])}
       onConfigureSecret={vi.fn().mockResolvedValue(true)}
       onRemoveSecret={vi.fn().mockResolvedValue(undefined)}
       onRefreshCatalog={vi.fn().mockResolvedValue(undefined)}
@@ -184,6 +190,28 @@ describe('SettingsDrawer', () => {
     expect(screen.getByText('1 个 Provider · 2 个模型')).toBeDefined()
     expect(screen.getByText('缺失')).toBeDefined()
     expect(screen.getByRole('button', { name: '配置' })).toBeDefined()
+  })
+
+  it('keeps a live-only provider visible when DSH reports no settings namespace', async () => {
+    renderDrawer({
+      providers: [
+        {
+          id: 'runtime-only',
+          name: 'Runtime only',
+          kind: 'provider',
+          configurable: true,
+          active: true,
+          settingsNs: '',
+          settingsPath: [],
+          fields: [],
+        },
+      ],
+    })
+
+    fireEvent.click(await screen.findByRole('tab', { name: 'Models' }))
+    expect(await screen.findByText('Runtime only')).toBeDefined()
+    expect(screen.getByText('1 provider · 2 models')).toBeDefined()
+    expect(screen.queryByText('No providers reported by DSH.')).toBeNull()
   })
 
   it('loads and renders general settings facts', async () => {
@@ -582,6 +610,16 @@ describe('SettingsDrawer', () => {
       id: 'openai',
       name: 'OpenAI',
       settingsPath: ['providers', 'openai'],
+      fields: [
+        {
+          key: 'api',
+          label: 'API protocol',
+          secret: false,
+          required: true,
+          enumValues: ['openai-completions', 'anthropic-messages'],
+          value: 'openai-completions',
+        },
+      ],
     }
     const snapshot: DshSettingsSnapshot = {
       ...dshSettingsFixture(),
@@ -722,6 +760,17 @@ describe('SettingsDrawer', () => {
     const provider: ModelProvider = {
       ...baseProvider,
       id: 'openai',
+      fields: [
+        ...baseProvider.fields,
+        {
+          key: 'api',
+          label: 'API protocol',
+          secret: false,
+          required: true,
+          enumValues: ['openai-completions', 'anthropic-messages'],
+          value: 'openai-completions',
+        },
+      ],
       settingsNs: 'llm-pi-ai',
       settingsPath: ['providers', 'openai'],
     }
@@ -746,12 +795,75 @@ describe('SettingsDrawer', () => {
         'llm-pi-ai': { providers: { openai: { api: 'openai-completions', models: [] } } },
       },
     }
-    const onUpdateDshSetting = vi.fn().mockResolvedValue(undefined)
+    const onCreateCustomProvider = vi.fn().mockResolvedValue({
+      profileCommitted: true,
+      credentialConfigured: false,
+    })
     renderDrawer({
       providers: [provider],
-      onUpdateDshSetting,
+      onCreateCustomProvider,
       onLoadDshSettings: vi.fn().mockResolvedValue(snapshot),
     })
+    await waitFor(() => expect(screen.getByText('new-isolated')).toBeDefined())
+    fireEvent.click(screen.getByRole('tab', { name: 'Models' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add custom provider' }))
+    const card = screen.getByRole('region', { name: 'Add custom provider' })
+    expect(within(card).queryByRole('combobox')).toBeNull()
+    const apiMenu = within(card).getByRole('button', { name: 'API protocol: openai-completions' })
+    fireEvent.click(apiMenu)
+    expect(within(card).getByRole('listbox', { name: 'API protocol' })).toBeDefined()
+    fireEvent.click(within(card).getByRole('option', { name: 'openai-completions' }))
+    fireEvent.change(within(card).getByRole('textbox', { name: 'Provider ID' }), {
+      target: { value: 'gateway' },
+    })
+    fireEvent.change(within(card).getByRole('textbox', { name: 'Provider base URL' }), {
+      target: { value: 'http://127.0.0.1:9000/v1' },
+    })
+    fireEvent.click(within(card).getByRole('button', { name: 'Add model' }))
+    fireEvent.change(within(card).getByRole('textbox', { name: 'Model ID' }), {
+      target: { value: 'gateway-chat' },
+    })
+    fireEvent.click(within(card).getByRole('button', { name: 'Save provider' }))
+    await waitFor(() =>
+      expect(onCreateCustomProvider).toHaveBeenCalledWith({
+        settingsNamespace: 'llm-pi-ai',
+        collectionPath: ['providers'],
+        providerId: 'gateway',
+        api: 'openai-completions',
+        baseUrl: 'http://127.0.0.1:9000/v1',
+        models: [{ id: 'gateway-chat' }],
+        expectedRevision: 7,
+      }),
+    )
+    fireEvent.click(within(card).getByRole('button', { name: 'Close' }))
+    expect(screen.queryByRole('region', { name: 'Add custom provider' })).toBeNull()
+  })
+
+  it('retries only the credential after a committed custom profile reports a key failure', async () => {
+    const provider: ModelProvider = {
+      ...baseProvider,
+      id: 'openai',
+      fields: [
+        ...baseProvider.fields,
+        {
+          key: 'api',
+          label: 'API protocol',
+          secret: false,
+          required: true,
+          enumValues: ['openai-completions'],
+          value: 'openai-completions',
+        },
+      ],
+      settingsNs: 'llm-pi-ai',
+      settingsPath: ['providers', 'openai'],
+    }
+    const onCreateCustomProvider = vi.fn().mockResolvedValue({
+      profileCommitted: true,
+      credentialConfigured: false,
+      credentialError: 'The API key could not be stored. Try again from the provider row.',
+    })
+    const onConfigureSecret = vi.fn().mockResolvedValue(true)
+    renderDrawer({ providers: [provider], onCreateCustomProvider, onConfigureSecret })
     await waitFor(() => expect(screen.getByText('new-isolated')).toBeDefined())
     fireEvent.click(screen.getByRole('tab', { name: 'Models' }))
     fireEvent.click(screen.getByRole('button', { name: 'Add custom provider' }))
@@ -763,20 +875,63 @@ describe('SettingsDrawer', () => {
       target: { value: 'http://127.0.0.1:9000/v1' },
     })
     fireEvent.click(within(card).getByRole('button', { name: 'Add model' }))
-    fireEvent.change(within(card).getAllByRole('textbox')[4]!, { target: { value: 'gateway-chat' } })
+    fireEvent.change(within(card).getByRole('textbox', { name: 'Model ID' }), {
+      target: { value: 'gateway-chat' },
+    })
     fireEvent.click(within(card).getByRole('button', { name: 'Save provider' }))
-    await waitFor(() =>
-      expect(onUpdateDshSetting).toHaveBeenCalledWith(
-        'llm-pi-ai.providers.gateway',
-        expect.objectContaining({
-          api: 'openai-completions',
-          baseURL: 'http://127.0.0.1:9000/v1',
-          models: [{ id: 'gateway-chat' }],
-        }),
-      ),
-    )
-    fireEvent.click(within(card).getByRole('button', { name: 'Close' }))
-    expect(screen.queryByRole('region', { name: 'Add custom provider' })).toBeNull()
+
+    await waitFor(() => expect(onCreateCustomProvider).toHaveBeenCalledOnce())
+    expect(within(card).getByRole('button', { name: 'Retry API key' })).toBeDefined()
+    fireEvent.click(within(card).getByRole('button', { name: 'Retry API key' }))
+
+    await waitFor(() => expect(onConfigureSecret).toHaveBeenCalledWith('gateway', 'apiKeyEnv'))
+    expect(onCreateCustomProvider).toHaveBeenCalledOnce()
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Add custom provider' })).toBeNull())
+  })
+
+  it('does not repeat a committed custom profile when catalog refresh fails', async () => {
+    const provider: ModelProvider = {
+      ...baseProvider,
+      id: 'openai',
+      fields: [
+        ...baseProvider.fields,
+        {
+          key: 'api',
+          label: 'API protocol',
+          secret: false,
+          required: true,
+          enumValues: ['openai-completions'],
+          value: 'openai-completions',
+        },
+      ],
+      settingsNs: 'llm-pi-ai',
+      settingsPath: ['providers', 'openai'],
+    }
+    const onCreateCustomProvider = vi.fn().mockResolvedValue({
+      profileCommitted: true,
+      credentialConfigured: false,
+    })
+    const onRefreshCatalog = vi.fn().mockRejectedValue(new Error('catalog refresh unavailable'))
+    renderDrawer({ providers: [provider], onCreateCustomProvider, onRefreshCatalog })
+    await waitFor(() => expect(screen.getByText('new-isolated')).toBeDefined())
+    fireEvent.click(screen.getByRole('tab', { name: 'Models' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add custom provider' }))
+    const card = screen.getByRole('region', { name: 'Add custom provider' })
+    fireEvent.change(within(card).getByRole('textbox', { name: 'Provider ID' }), {
+      target: { value: 'gateway' },
+    })
+    fireEvent.change(within(card).getByRole('textbox', { name: 'Provider base URL' }), {
+      target: { value: 'http://127.0.0.1:9000/v1' },
+    })
+    fireEvent.click(within(card).getByRole('button', { name: 'Add model' }))
+    fireEvent.change(within(card).getByRole('textbox', { name: 'Model ID' }), {
+      target: { value: 'gateway-chat' },
+    })
+    fireEvent.click(within(card).getByRole('button', { name: 'Save provider' }))
+
+    await waitFor(() => expect(onCreateCustomProvider).toHaveBeenCalledOnce())
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Add custom provider' })).toBeNull())
+    expect(screen.getByText('catalog refresh unavailable')).toBeDefined()
   })
 
   it('exposes secret removal only for configured fields', async () => {

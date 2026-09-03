@@ -946,6 +946,41 @@ describe('reduceTimeline', () => {
     expect(next.nodes).toEqual([])
   })
 
+  it('keeps live permission and question requests out of the durable timeline', () => {
+    const permission = reduceTimeline(initial, {
+      sequence: 1,
+      event: {
+        type: 'permission.requested',
+        request: {
+          id: 'permission-1',
+          sessionId: 'session-1',
+          title: 'Allow the command?',
+          description: 'The command needs approval.',
+          risk: 'medium',
+          options: [{ id: 'allow', label: 'Allow once', kind: 'allow-once' }],
+        },
+      },
+    })
+    const question = reduceTimeline(initial, {
+      sequence: 1,
+      event: {
+        type: 'question.requested',
+        question: {
+          id: 'question-1',
+          sessionId: 'session-1',
+          prompt: 'Choose a mode',
+          choices: [{ id: 'chat', label: 'Chat' }],
+          allowFreeText: false,
+        },
+      },
+    })
+
+    expect(permission.nodes).toEqual([])
+    expect(question.nodes).toEqual([])
+    expect(permission.nodes).toBe(initial.nodes)
+    expect(question.nodes).toBe(initial.nodes)
+  })
+
   it('replays the same event log to the same immutable state', () => {
     const events = [
       {

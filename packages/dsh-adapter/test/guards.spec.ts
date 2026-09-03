@@ -21,6 +21,24 @@ describe('shared repository guards', () => {
       }),
     ).toBe(true)
     expect(
+      validProviderView({
+        provider: 'openai',
+        displayName: 'OpenAI',
+        settingsNs: 'llm.openai',
+        settingsPath: ['providers', ''],
+        active: true,
+      }),
+    ).toBe(false)
+    expect(
+      validProviderView({
+        provider: 'openai',
+        displayName: 'OpenAI',
+        settingsNs: ' ',
+        settingsPath: [],
+        active: true,
+      }),
+    ).toBe(false)
+    expect(
       validSettingsNamespace({
         ns: 'llm.openai',
         schema: {},

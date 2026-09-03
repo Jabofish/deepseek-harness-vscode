@@ -29,9 +29,41 @@ export interface ProviderField {
   readonly label: string
   readonly secret: boolean
   readonly required: boolean
+  /** Values advertised by the provider schema for enum-like fields. */
+  readonly enumValues?: readonly string[]
   /** Credential-reference fields carry the host's write capability. */
   readonly writable?: boolean
   readonly value?: string
+}
+
+/** Non-secret draft sent to the Host for a new provider route. */
+export interface CustomProviderDraft {
+  readonly settingsNamespace: string
+  readonly collectionPath: readonly string[]
+  readonly providerId: string
+  readonly displayName?: string
+  readonly api: string
+  readonly baseUrl: string
+  readonly models: readonly Readonly<Record<string, unknown>>[]
+  readonly expectedRevision: number
+}
+
+/** Result of the Host-owned two-stage provider create flow. */
+export interface CustomProviderCreateResult {
+  readonly profileCommitted: boolean
+  readonly credentialConfigured: boolean
+  /** Present only when the profile landed but credential storage failed. */
+  readonly credentialError?: string
+}
+
+/** DSH route grammar shared by the Webview gate and Host-side validation. */
+export function isValidCustomProviderId(value: string): boolean {
+  return /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u.test(value)
+}
+
+/** Conventional credential reference used when a custom route supplies a key. */
+export function deriveProviderCredentialReference(providerId: string): string {
+  return `${providerId.toUpperCase().replace(/[^A-Z0-9]+/gu, '_')}_API_KEY`
 }
 
 export interface ModelDescriptor {

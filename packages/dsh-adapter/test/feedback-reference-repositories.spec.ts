@@ -41,6 +41,7 @@ describe('rc.8 optional reference and feedback remotes', () => {
                 sessionId: 's2',
                 label: 'Review',
                 cwd: 'workspace',
+                sameWorkspace: true,
                 createdAt: 10,
                 mention: '@[Review](dsh-session:s2)',
               },
@@ -53,8 +54,15 @@ describe('rc.8 optional reference and feedback remotes', () => {
       { path: 'src/app.ts', kind: 'file' },
       { path: 'src', kind: 'directory' },
     ])
-    await expect(repository.listSessions('s1', 'Review')).resolves.toMatchObject([
-      { sessionId: 's2', mention: '@[Review](dsh-session:s2)' },
+    await expect(repository.listSessions('s1', 'Review')).resolves.toEqual([
+      {
+        sessionId: 's2',
+        label: 'Review',
+        cwd: 'workspace',
+        sameWorkspace: true,
+        createdAt: 10,
+        mention: '@[Review](dsh-session:s2)',
+      },
     ])
     expect(client.remoteRequestMock).toHaveBeenNthCalledWith(
       1,
@@ -70,20 +78,33 @@ describe('rc.8 optional reference and feedback remotes', () => {
     )
   })
 
-  it('drops malformed reference rows and rejects malformed outer values', async () => {
+  it('fails closed on malformed reference rows and rejects malformed outer values', async () => {
     const client = transport((endpoint) =>
       endpoint === 'fileReferences/list'
         ? {
             ok: true,
-            value: [
-              { path: 'safe.md', kind: 'file' },
-              { path: '\u0000secret', kind: 'file' },
-            ],
+            value: [{ path: 'safe.md', kind: 'file' }, { path: 'broken.md' }],
           }
         : { ok: true, value: { not: 'an array' } },
     )
     const repository = new Rc6ReferenceRepository(client)
-    await expect(repository.listFiles('s1', '')).resolves.toEqual([{ path: 'safe.md', kind: 'file' }])
+    await expect(repository.listFiles('s1', '')).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
+    await expect(repository.listSessions('s1', '')).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
+  })
+
+  it('fails closed when a session candidate omits a required field', async () => {
+    const client = transport(() => ({
+      ok: true,
+      value: [
+        {
+          sessionId: 's2',
+          label: 'Review',
+          createdAt: 10,
+          mention: '@[Review](dsh-session:s2)',
+        },
+      ],
+    }))
+    const repository = new Rc6ReferenceRepository(client)
     await expect(repository.listSessions('s1', '')).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
   })
 
@@ -145,6 +166,32 @@ describe('rc.8 optional reference and feedback remotes', () => {
       undefined,
     )
     await expect(repository.remove('s1', 'm1')).resolves.toBeUndefined()
+  })
+
+  it('fails closed on malformed feedback rows instead of dropping or weakening them', async () => {
+    const valid = {
+      messageId: 'm1',
+      rating: 'positive',
+      version: 'v1',
+      createdAt: 10,
+      updatedAt: 20,
+    } as const
+    const malformedRows: readonly unknown[] = [
+      { ...valid, createdAt: undefined },
+      { ...valid, createdAt: 30, updatedAt: 20 },
+      { ...valid, note: '   ' },
+      { ...valid, rating: 'unknown' },
+      null,
+    ]
+
+    for (const item of malformedRows) {
+      const client = transport((endpoint) => {
+        expect(endpoint).toBe('messageFeedback/list')
+        return { ok: true, value: { ok: true, value: { items: [item] } } }
+      })
+      const repository = new Rc6MessageFeedbackRepository(client)
+      await expect(repository.list('s1')).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
+    }
   })
 
   it('observes the current item before deleting from a cold cache', async () => {

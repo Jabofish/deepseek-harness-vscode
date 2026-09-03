@@ -30,9 +30,9 @@ export function validProviderView(value: unknown): boolean {
     record !== undefined &&
     nonEmptyString(record.provider) &&
     nonEmptyString(record.displayName) &&
-    typeof record.settingsNs === 'string' &&
+    (record.settingsNs === '' || nonEmptyString(record.settingsNs)) &&
     Array.isArray(record.settingsPath) &&
-    record.settingsPath.every((part): part is string => typeof part === 'string') &&
+    record.settingsPath.every((part): part is string => typeof part === 'string' && part.length > 0) &&
     typeof record.active === 'boolean' &&
     (record.declared === undefined || typeof record.declared === 'boolean')
   )

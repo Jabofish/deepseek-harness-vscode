@@ -28,12 +28,12 @@ import type { Rc6WorkspaceRepository } from './workspace-repository.js'
 import { recordOrUndefined, validProjectionBlock, walkHistoryPages } from './shared/guards.js'
 import {
   decodeCanonicalBase64,
-  isCanonicalBase64,
+  encodePromptContent,
   isSupportedImageMimeType,
-  isTextAttachment,
   matchesImageSignature,
   parseBase64DataUri,
   safeAttachmentName,
+  type PromptContentLimits,
 } from '../attachment-codec.js'
 
 /** The official web client pages session.history at 50 messages per read. */
@@ -114,7 +114,9 @@ export class Rc6SessionRepository implements SessionRepository {
     const value = await callRpc<unknown>(
       this.transport,
       'session.list',
-      { ...(query?.cursor === undefined ? {} : { cursor: query.cursor }) },
+      {
+        ...(query?.cursor === undefined || query.cursor.trim() === '' ? {} : { cursor: query.cursor }),
+      },
       signal,
     )
     const list = requiredRecord(value, 'session list')
@@ -126,7 +128,9 @@ export class Rc6SessionRepository implements SessionRepository {
       throw malformedSessionResponse('session list')
     let items = list.items.map((item) => {
       const mapped = rc6Mapper.sessionSummary(item)
-      this.rememberProjectionValues(mapped.id, mapped.projection?.values, true)
+      // session.list carries a partial, possibly stale hint. Only a history
+      // baseline or session.subscribed projection may clear omitted cells.
+      this.rememberProjectionValues(mapped.id, mapped.projection?.values)
       return mapped
     })
     let archivedSessionIds: ReadonlySet<string> | undefined
@@ -239,18 +243,14 @@ export class Rc6SessionRepository implements SessionRepository {
     // older list hint: omitted keys in the authoritative baseline mean that
     // the capability is absent at this cut, not that the hint should survive.
     const projectionValues = history.projection?.values ?? summary.projection?.values ?? {}
-    this.rememberProjectionValues(
-      sessionId,
-      projectionValues,
-      history.projection !== undefined || summary.projection !== undefined,
-    )
+    this.rememberProjectionValues(sessionId, projectionValues, history.projection !== undefined)
     const permissionPresets = permissionPresetIds(projectionValues)
     const agentPreset = firstString(summary.agentPreset, projectionValues.agentPreset)
     const projection = history.projection ?? summary.projection
     return {
       ...summary,
       configuration: configurationFromRawHistory(rawHistory, agentPreset, projectionValues),
-      ...(permissionPresets.length === 0 ? {} : { permissionPresets }),
+      ...(permissionPresets === undefined ? {} : { permissionPresets }),
       goalIds: [],
       history: history.events,
       historyHasMore: history.hasMore,
@@ -487,7 +487,7 @@ export class Rc6SessionRepository implements SessionRepository {
       {
         sessionId: input.sessionId,
         mode,
-        content: promptContent(input, limits),
+        content: encodePromptContent(input.text, input.attachments, limits),
         ...clientTimeZoneField(),
       },
       signal,
@@ -542,7 +542,7 @@ export class Rc6SessionRepository implements SessionRepository {
         {
           sessionId: input.sessionId,
           mode,
-          content: promptContent(input, limits),
+          content: encodePromptContent(input.text, input.attachments, limits),
           ...clientTimeZoneField(),
         },
         signal,
@@ -598,11 +598,15 @@ export class Rc6SessionRepository implements SessionRepository {
   }
 
   public async updateQueuedInput(inputId: string, text: string, signal?: AbortSignal): Promise<void> {
+    const sessionId = this.ownerOf(inputId)
+    const queued = this.queues.get(sessionId)?.find((item) => item.id === inputId)
+    if (queued?.images !== undefined && queued.images.length > 0)
+      throw unavailable('editing a queued prompt with images')
     const receipt = await callRpc<unknown>(
       this.transport,
       'session.updateQueue',
       {
-        sessionId: this.ownerOf(inputId),
+        sessionId,
         itemId: inputId,
         action: { kind: 'edit', content: [{ type: 'text', text }] },
       },
@@ -663,7 +667,6 @@ export class Rc6SessionRepository implements SessionRepository {
     if (
       requestedPermission !== currentPermission &&
       current.permissionPresets !== undefined &&
-      current.permissionPresets.length > 0 &&
       !current.permissionPresets.includes(requestedPermission)
     )
       throw new AppError({
@@ -824,8 +827,9 @@ export class Rc6SessionRepository implements SessionRepository {
 
   private rememberImageLimitsValue(sessionId: string, value: unknown): void {
     const limits = parseImageAttachmentLimits(value)
-    if (limits === undefined) this.imageLimitsBySession.delete(sessionId)
-    else this.imageLimitsBySession.set(sessionId, limits)
+    // A malformed advisory projection must not erase a previously valid limit and
+    // make prompt admission fall back to the less restrictive local defaults.
+    if (limits !== undefined) this.imageLimitsBySession.set(sessionId, limits)
   }
 
   private clearQueueState(sessionId: string): void {
@@ -956,14 +960,6 @@ interface SessionRepositoryOptions {
    * baselined data until the next unrelated queue commit.
    */
   readonly resetQueueOnSubscribe?: boolean
-}
-
-interface PromptContentLimits {
-  readonly maxImageBytes: number
-  readonly maxAttachmentTotalBytes: number
-  readonly maxImageTotalBytes: number
-  readonly maxImagesPerMessage?: number
-  readonly mediaTypes?: ReadonlySet<string>
 }
 
 function samePath(
@@ -1123,96 +1119,6 @@ function historyCwd(history: readonly unknown[]): string | undefined {
   return undefined
 }
 
-function promptContent(input: PromptInput, limits: PromptContentLimits): readonly Record<string, string>[] {
-  let totalBytes = 0
-  let imageBytes = 0
-  let imageCount = 0
-  const content: Record<string, string>[] = [{ type: 'text', text: input.text }]
-  for (const attachment of input.attachments) {
-    const parsed = parseBase64DataUri(attachment.uri)
-    if (parsed === undefined)
-      throw new AppError({
-        code: 'INVALID_CONFIGURATION',
-        message: 'The attachment must be a supported base64 data URI.',
-        retryable: false,
-      })
-    const mediaType = parsed.mediaType
-    const encoded = parsed.encoded
-    if (!isCanonicalBase64(encoded))
-      throw new AppError({
-        code: 'INVALID_CONFIGURATION',
-        message: 'The attachment encoding is invalid.',
-        retryable: false,
-      })
-    const image = isSupportedImageMimeType(mediaType)
-    if (image && limits.mediaTypes !== undefined && !limits.mediaTypes.has(mediaType))
-      throw new AppError({
-        code: 'INVALID_CONFIGURATION',
-        message: 'The attachment image type is not accepted by DSH.',
-        retryable: false,
-      })
-    const bytes = decodeCanonicalBase64(encoded, image ? limits.maxImageBytes : MAX_PROMPT_ATTACHMENT_BYTES)
-    if (bytes === undefined)
-      throw new AppError({
-        code: 'INVALID_CONFIGURATION',
-        message: 'The attachment encoding is not canonical Base64.',
-        retryable: false,
-      })
-    if (image && limits.maxImagesPerMessage !== undefined) {
-      imageCount += 1
-      if (imageCount > limits.maxImagesPerMessage)
-        throw new AppError({
-          code: 'INVALID_CONFIGURATION',
-          message: 'The message contains too many images for DSH.',
-          retryable: false,
-        })
-    }
-    if (image && bytes.length > limits.maxImageBytes)
-      throw new AppError({
-        code: 'INVALID_CONFIGURATION',
-        message: 'The attachment is too large.',
-        retryable: false,
-      })
-    totalBytes += bytes.length
-    if (totalBytes > limits.maxAttachmentTotalBytes)
-      throw new AppError({
-        code: 'INVALID_CONFIGURATION',
-        message: 'The combined attachment size is too large.',
-        retryable: false,
-      })
-    if (image) {
-      imageBytes += bytes.length
-      if (imageBytes > limits.maxImageTotalBytes)
-        throw new AppError({
-          code: 'INVALID_CONFIGURATION',
-          message: 'The combined image size is too large for DSH.',
-          retryable: false,
-        })
-      if (bytes.length === 0 || !matchesImageSignature(mediaType, bytes))
-        throw new AppError({
-          code: 'INVALID_CONFIGURATION',
-          message: 'The attachment contents do not match a supported image.',
-          retryable: false,
-        })
-      content.push({ type: 'image', mediaType, data: encoded, name: safeAttachmentName(attachment.name) })
-      continue
-    }
-    if (!isTextAttachment(mediaType, attachment.name, bytes))
-      throw new AppError({
-        code: 'INVALID_CONFIGURATION',
-        message: 'This DSH integration supports images and text-based files only.',
-        retryable: false,
-      })
-    const name = safeAttachmentName(attachment.name)
-    const text = bytes.toString('utf8')
-    content.push({
-      type: 'text',
-      text: `\n\nAttached file: ${name}\n\n${text}\n\nEnd of attached file: ${name}`,
-    })
-  }
-  return content
-}
-
 function defaultConfiguration(): AgentConfiguration {
   return {
     preset: 'standard',
@@ -1329,13 +1235,7 @@ function parseImageAttachmentLimits(value: unknown): ImageAttachmentLimits | und
   const maxImageDimension =
     record.maxImageDimension === undefined ? undefined : positiveSafeInteger(record.maxImageDimension)
   const mediaTypes = Array.isArray(record.mediaTypes)
-    ? [
-        ...new Set(
-          record.mediaTypes
-            .filter((entry): entry is string => typeof entry === 'string' && entry.trim() !== '')
-            .map((entry) => entry.toLowerCase()),
-        ),
-      ]
+    ? [...new Set(record.mediaTypes.map((entry) => (typeof entry === 'string' ? entry.toLowerCase() : '')))]
     : []
   if (
     maxImageBytes === undefined ||
@@ -1343,6 +1243,7 @@ function parseImageAttachmentLimits(value: unknown): ImageAttachmentLimits | und
     maxMessageImageBytes === undefined ||
     maxImagePixels === undefined ||
     mediaTypes.length === 0 ||
+    mediaTypes.some((mediaType) => !isSupportedImageMimeType(mediaType)) ||
     (record.maxImageDimension !== undefined && maxImageDimension === undefined)
   )
     return undefined

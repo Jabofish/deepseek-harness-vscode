@@ -32,6 +32,99 @@ import {
 import { mapConfiguration, mapModelPatch, mapTodo, permissionPresetIds } from '../../projection/agent.js'
 import { projectToolPresentation } from '../../projection/tool-presentation.js'
 
+const CANONICAL_SESSION_EVENT_NAMES = new Set([
+  'turn/start',
+  'turn/end',
+  'step/start',
+  'step/end',
+  'user/message',
+  'assistant/chunk',
+  'assistant/message',
+  'tool/call',
+  'tool/result',
+  'todo/write',
+  'request/header',
+  'request/context',
+])
+
+/**
+ * The pinned session-event carrier validates only the common envelope because
+ * the event vocabulary is merge-extensible. Validate the fixed event payloads
+ * at the adapter boundary before mapping them into timeline state; otherwise a
+ * malformed known event can become a synthetic id, empty message, or generic
+ * tool and look like durable user activity.
+ */
+export function assertCanonicalSessionEvent(name: string, value: unknown): void {
+  if (!CANONICAL_SESSION_EVENT_NAMES.has(name)) return
+  const envelope = objectOrUndefined(value)
+  const data = objectOrUndefined(envelope?.data)
+  if (data === undefined) throw new Error(`Malformed ${name} data`)
+  switch (name) {
+    case 'turn/start':
+      assertCanonicalEventIndex(data.turn, `${name} turn`)
+      return
+    case 'turn/end':
+      assertCanonicalEventIndex(data.turn, `${name} turn`)
+      assertCanonicalTurnEndReason(data.reason, name)
+      return
+    case 'step/start':
+    case 'step/end':
+      assertCanonicalEventIndex(data.turn, `${name} turn`)
+      assertCanonicalEventIndex(data.step, `${name} step`)
+      return
+    case 'user/message':
+      assertCanonicalMessage(data, 'user/message')
+      return
+    case 'assistant/chunk':
+      assertCanonicalEventIndex(data.turn, `${name} turn`)
+      assertCanonicalEventIndex(data.step, `${name} step`)
+      assertCanonicalStreamChunk(data.chunk)
+      return
+    case 'assistant/message':
+      assertCanonicalEventIndex(data.turn, `${name} turn`)
+      assertCanonicalEventIndex(data.step, `${name} step`)
+      assertCanonicalMessage(data.message, name)
+      if (data.usage !== undefined) assertCanonicalTokenUsage(data.usage, `${name} usage`)
+      return
+    case 'tool/call':
+      assertCanonicalEventIndex(data.turn, `${name} turn`)
+      assertCanonicalEventIndex(data.step, `${name} step`)
+      assertCanonicalNonEmptyString(data.callId, `${name} callId`)
+      assertCanonicalString(data.name, `${name} name`)
+      assertCanonicalString(data.arguments, `${name} arguments`)
+      return
+    case 'tool/result':
+      assertCanonicalEventIndex(data.turn, `${name} turn`)
+      assertCanonicalEventIndex(data.step, `${name} step`)
+      assertCanonicalMessage(data.message, name)
+      if (data.error !== undefined) {
+        const error = objectOrUndefined(data.error)
+        if (error === undefined) throw new Error(`Malformed ${name} error`)
+        assertCanonicalString(error.name, `${name} error name`)
+        assertCanonicalString(error.code, `${name} error code`)
+      }
+      return
+    case 'todo/write':
+      if (!Array.isArray(data.todos)) throw new Error(`Malformed ${name} todos`)
+      return
+    case 'request/header': {
+      const header = object(data.header, `${name} header`)
+      const config = object(header.config, `${name} config`)
+      assertCanonicalNonEmptyString(config.provider, `${name} provider`)
+      assertCanonicalNonEmptyString(config.model, `${name} model`)
+      if (data.reason !== 'initial' && data.reason !== 'resume' && data.reason !== 'change')
+        throw new Error(`Malformed ${name} reason`)
+      return
+    }
+    case 'request/context':
+      assertCanonicalNonEmptyString(data.provider, `${name} provider`)
+      assertCanonicalNonEmptyString(data.model, `${name} model`)
+      if (data.contextWindow !== undefined && !isFiniteNumber(data.contextWindow))
+        throw new Error(`Malformed ${name} contextWindow`)
+      return
+  }
+}
+
 export const rc6Mapper = {
   sessionSummary(value: unknown): SessionSummary {
     const record = object(value, 'session summary')
@@ -87,10 +180,8 @@ export const rc6Mapper = {
     return {
       ...summary,
       configuration: mapConfiguration(record.configuration),
-      ...(permissionPresets.length === 0 ? {} : { permissionPresets }),
-      goalIds: array(record.goalIds)
-        .map((entry) => stringOr(entry, ''))
-        .filter(Boolean),
+      ...(permissionPresets === undefined ? {} : { permissionPresets }),
+      goalIds: record.goalIds === undefined ? [] : requiredStringArray(record.goalIds, 'session goalIds'),
       ...(record.parentSessionId === undefined
         ? {}
         : { parentSessionId: string(record.parentSessionId, 'parentSessionId') }),
@@ -148,6 +239,13 @@ export const rc6Mapper = {
   provider(value: unknown): ModelProvider {
     const record = object(value, 'provider')
     const id = string(record.provider ?? record.id, 'provider')
+    // The pinned provider directory treats settingsPath as an atomic path.
+    // Never filter malformed segments: changing the path changes which
+    // settings object (and potentially which credential) the caller edits.
+    const settingsPath = requiredArray(record.settingsPath, 'provider settingsPath').map((entry) => {
+      if (typeof entry !== 'string' || entry.length === 0) throw new Error('Malformed provider settingsPath')
+      return entry
+    })
     const fields = array(record.fields).map((entry) => {
       const field = object(entry, 'provider field')
       const secret = boolean(field.secret, false)
@@ -162,7 +260,9 @@ export const rc6Mapper = {
     return {
       id,
       name: stringOr(record.displayName ?? record.name, id),
-      kind: stringOr(record.kind ?? record.settingsNs, 'provider'),
+      // Addressless live routes have an intentional empty settingsNs marker;
+      // do not let that marker become an empty UI kind.
+      kind: firstString(record.kind, record.settingsNs) ?? 'provider',
       // `declared` means that the route was hand-declared by the deployment;
       // it does not mean that a shipped provider is read-only.  Upstream's
       // provider directory exposes every configured route to the Models page,
@@ -171,9 +271,7 @@ export const rc6Mapper = {
       ...(typeof record.active === 'boolean' ? { active: record.active } : {}),
       ...(typeof record.declared === 'boolean' ? { declared: record.declared } : {}),
       ...(typeof record.settingsNs === 'string' ? { settingsNs: record.settingsNs } : {}),
-      ...(Array.isArray(record.settingsPath)
-        ? { settingsPath: record.settingsPath.filter((entry): entry is string => typeof entry === 'string') }
-        : {}),
+      settingsPath,
       fields,
     }
   },
@@ -209,12 +307,19 @@ export const rc6Mapper = {
     const sessionId = stringOr(envelope.sessionId ?? data.sessionId, '')
     switch (name) {
       case 'session/status':
-      case 'host/session-status':
         return {
           type: 'session.status',
           sessionId,
           status:
             typeof data.status === 'string' ? data.status : boolean(data.running, false) ? 'running' : 'idle',
+        }
+      case 'host/session-status':
+        if (sessionId === '' || typeof data.running !== 'boolean')
+          throw new Error('Malformed host/session-status')
+        return {
+          type: 'session.status',
+          sessionId,
+          status: data.running ? 'running' : 'idle',
         }
       case 'session/activity':
       case 'host/session-activity': {
@@ -423,6 +528,15 @@ export const rc6Mapper = {
         }
       }
       case 'approval/requested':
+        if (
+          sessionId === '' ||
+          typeof data.approvalId !== 'string' ||
+          data.approvalId.length === 0 ||
+          typeof data.toolName !== 'string' ||
+          (data.callId !== undefined && typeof data.callId !== 'string') ||
+          (data.reason !== undefined && typeof data.reason !== 'string')
+        )
+          throw new Error('Malformed approval/requested')
         return {
           type: 'permission.requested',
           request: permission({
@@ -432,11 +546,18 @@ export const rc6Mapper = {
           }),
         }
       case 'approval/resolved':
+        if (
+          sessionId === '' ||
+          typeof data.approvalId !== 'string' ||
+          data.approvalId.length === 0 ||
+          !approvalOutcome(data.outcome)
+        )
+          throw new Error('Malformed approval/resolved')
         return {
           type: 'permission.resolved',
           sessionId,
-          requestId: stringOr(data.approvalId ?? data.id, ''),
-          ...(typeof data.outcome === 'string' ? { outcome: data.outcome } : {}),
+          requestId: data.approvalId,
+          outcome: data.outcome,
         }
       case 'question/requested':
         return {
@@ -448,22 +569,30 @@ export const rc6Mapper = {
           }),
         }
       case 'question/resolved':
+        if (
+          sessionId === '' ||
+          typeof data.questionRpcId !== 'string' ||
+          data.questionRpcId.length === 0 ||
+          (data.outcome !== 'answered' && data.outcome !== 'cancelled')
+        )
+          throw new Error('Malformed question/resolved')
         return {
           type: 'question.resolved',
           sessionId,
-          ...(typeof data.questionRpcId === 'string' ? { questionRpcId: data.questionRpcId } : {}),
-          ...(typeof data.id === 'string' ? { questionId: data.id } : {}),
-          ...(typeof data.outcome === 'string' ? { outcome: data.outcome } : {}),
+          questionRpcId: data.questionRpcId,
+          outcome: data.outcome,
         }
       case 'goal/updated':
       case 'goal':
       case 'goal/change':
-        return { type: 'goal.updated', sessionId, goals: array(data.goals).map(goal) }
+        return { type: 'goal.updated', sessionId, goals: goalEventGoals(name, data) }
       case 'todo/write':
         return {
           type: 'todo.updated',
           sessionId,
-          todos: array(data.todos ?? data.items).map((entry, index) => mapTodo(entry, index)),
+          todos: requiredArray(data.todos ?? data.items, 'todo/write todos').map((entry, index) =>
+            mapTodo(entry, index),
+          ),
         }
       case 'compaction/start':
       case 'compaction/summary':
@@ -629,6 +758,8 @@ export const rc6Mapper = {
           items: data.items.flatMap((entry) => queuedInput(entry, sessionId)),
         }
       case 'session/subscribed':
+        if (sessionId === '' || !safeSubscriptionSequence(data.lastSeq))
+          throw new Error('Malformed session/subscribed lastSeq')
         if (data.projections !== undefined && !validProjectionBlock(data.projections))
           throw new Error('Malformed session/subscribed projections')
         if (data.projection !== undefined && !validProjectionBlock(data.projection))
@@ -638,7 +769,7 @@ export const rc6Mapper = {
           return {
             type: 'session.subscribed',
             sessionId,
-            lastSequence: number(data.lastSeq, -1),
+            lastSequence: data.lastSeq,
             ...(projection === undefined
               ? {}
               : {
@@ -650,25 +781,42 @@ export const rc6Mapper = {
           }
         }
       case 'session/projection':
+        if (
+          sessionId === '' ||
+          typeof data.key !== 'string' ||
+          data.key.length === 0 ||
+          !nonNegativeSafeSequence(data.seq) ||
+          !Object.hasOwn(data, 'value')
+        )
+          throw new Error('Malformed session/projection')
         return {
           type: 'session.projection',
           sessionId,
-          key: stringOr(data.key, 'unknown'),
+          key: data.key,
           value: data.value,
         }
       case 'host/session-added':
+        if (
+          sessionId === '' ||
+          typeof data.blank !== 'boolean' ||
+          (data.parentSessionId !== undefined &&
+            (typeof data.parentSessionId !== 'string' || data.parentSessionId.trim() === '')) ||
+          (data.origin !== undefined && data.origin !== 'subagent') ||
+          (data.cwd !== undefined && typeof data.cwd !== 'string') ||
+          (data.agentPreset !== undefined && typeof data.agentPreset !== 'string')
+        )
+          throw new Error('Malformed host/session-added')
         return {
           type: 'session.added',
           sessionId,
-          ...(typeof data.blank === 'boolean' ? { blank: data.blank } : {}),
-          ...(typeof data.parentSessionId === 'string' ? { parentSessionId: data.parentSessionId } : {}),
-          ...(data.origin === 'subagent' ? { origin: 'subagent' as const } : {}),
-          ...(typeof data.cwd === 'string' && data.cwd.trim() !== '' ? { cwd: data.cwd } : {}),
-          ...(typeof data.agentPreset === 'string' && data.agentPreset.trim() !== ''
-            ? { agentPreset: data.agentPreset }
-            : {}),
+          blank: data.blank,
+          ...(data.parentSessionId === undefined ? {} : { parentSessionId: data.parentSessionId }),
+          ...(data.origin === undefined ? {} : { origin: data.origin }),
+          ...(data.cwd === undefined ? {} : { cwd: data.cwd }),
+          ...(data.agentPreset === undefined ? {} : { agentPreset: data.agentPreset }),
         }
       case 'host/session-removed':
+        if (sessionId === '') throw new Error('Malformed host/session-removed')
         return { type: 'session.removed', sessionId }
       case 'host/workspace-changed': {
         const id = workspaceId(data)
@@ -683,24 +831,33 @@ export const rc6Mapper = {
           : { type: 'workspace.removed', workspaceId: id }
       }
       case 'host/workspace-order-changed':
-        return { type: 'workspace.order.changed', workspaceIds: stringArray(data.workspaceIds ?? data.order) }
+        return {
+          type: 'workspace.order.changed',
+          workspaceIds: requiredStringArray(data.workspaceIds ?? data.order, 'workspace order'),
+        }
       case 'host/archived-sessions-changed':
         return {
           type: 'archived.sessions.changed',
-          sessionIds: stringArray(data.sessionIds ?? data.archivedSessionIds),
+          sessionIds: requiredStringArray(data.sessionIds ?? data.archivedSessionIds, 'archived session ids'),
         }
-      case 'host/remote-event':
+      case 'host/remote-event': {
+        const eventName = data.event ?? data.name
+        if (typeof eventName !== 'string' || eventName.length === 0 || !Array.isArray(data.args))
+          throw new Error('Malformed host/remote-event')
         return {
           type: 'remote.event',
-          name: stringOr(data.event ?? data.name, 'unknown'),
-          args: array(data.args).map(safePayload),
+          name: eventName,
+          args: data.args.map(safePayload),
         }
+      }
       case 'host/agent-error':
+        if (sessionId === '' || typeof data.message !== 'string')
+          throw new Error('Malformed host/agent-error')
         return {
           type: 'notice',
-          ...(sessionId === '' ? {} : { sessionId }),
+          sessionId,
           level: 'error',
-          text: stringOr(data.message, 'DSH agent error.'),
+          text: data.message.slice(0, 512),
         }
       case 'stream/error':
         return { type: 'connection.lost', reason: 'DSH event stream reported an error.' }
@@ -815,8 +972,24 @@ function workspaceId(data: Record<string, unknown>): string | undefined {
   return firstString(data.workspaceId, data.id, workspace?.workspaceId, workspace?.id)
 }
 
-function stringArray(value: unknown): readonly string[] {
-  return array(value).filter((entry): entry is string => typeof entry === 'string' && entry.trim() !== '')
+function requiredStringArray(value: unknown, label: string): readonly string[] {
+  if (!Array.isArray(value)) throw new Error(`Malformed ${label}`)
+  const entries: readonly unknown[] = value
+  if (!entries.every((entry) => typeof entry === 'string' && entry.trim() !== ''))
+    throw new Error(`Malformed ${label}`)
+  return entries as readonly string[]
+}
+
+function approvalOutcome(value: unknown): value is 'allowed-once' | 'rejected' | 'cancelled' | 'unavailable' {
+  return value === 'allowed-once' || value === 'rejected' || value === 'cancelled' || value === 'unavailable'
+}
+
+function safeSubscriptionSequence(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= -1
+}
+
+function nonNegativeSafeSequence(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
 }
 
 function mapHistoryEntry(value: unknown, index: number, sessionId: string): SessionHistoryEvent {
@@ -825,10 +998,48 @@ function mapHistoryEntry(value: unknown, index: number, sessionId: string): Sess
   // keeps history reopening compatible with older rc.6 hosts that returned the
   // event object directly.
   const rawEvent = objectOrUndefined(historyEntry?.event) ?? historyEntry
-  const sequence = number(rawEvent?.seq ?? rawEvent?.sequence, index)
-  const time = date(rawEvent?.time ?? rawEvent?.timestamp ?? rawEvent?.createdAt)
+  const sequenceKey =
+    rawEvent === undefined
+      ? undefined
+      : Object.hasOwn(rawEvent, 'seq')
+        ? 'seq'
+        : Object.hasOwn(rawEvent, 'sequence')
+          ? 'sequence'
+          : undefined
+  const rawSequence = rawEvent?.[sequenceKey ?? 'seq']
+  const sequence =
+    sequenceKey === undefined
+      ? index
+      : nonNegativeSafeSequence(rawSequence)
+        ? rawSequence
+        : (() => {
+            throw new Error('Malformed session history sequence')
+          })()
+  const timeKey =
+    rawEvent === undefined
+      ? undefined
+      : Object.hasOwn(rawEvent, 'time')
+        ? 'time'
+        : Object.hasOwn(rawEvent, 'timestamp')
+          ? 'timestamp'
+          : Object.hasOwn(rawEvent, 'createdAt')
+            ? 'createdAt'
+            : undefined
+  const parsedTime = validHistoryTime(rawEvent?.[timeKey ?? 'time'])
+  const time =
+    timeKey === undefined
+      ? date(undefined)
+      : parsedTime === undefined
+        ? (() => {
+            throw new Error('Malformed session history time')
+          })()
+        : parsedTime
   const type = stringOr(rawEvent?.type ?? rawEvent?.name, 'unknown')
   try {
+    assertCanonicalSessionEvent(type, {
+      ...(rawEvent ?? {}),
+      sessionId,
+    })
     const mapped = rc6Mapper.event(type, {
       ...(rawEvent ?? {}),
       sessionId,
@@ -838,8 +1049,9 @@ function mapHistoryEntry(value: unknown, index: number, sessionId: string): Sess
     })
     return { sequence, time, event: { ...mapped, sequence } }
   } catch {
-    // A single historical event must never make the whole session unusable.
-    // Unknown rows are intentionally redacted by safePayload below.
+    // A malformed event payload must never make the whole session unusable.
+    // Structural sequence/time corruption was rejected above; unknown rows
+    // here are intentionally redacted by safePayload below.
     return {
       sequence,
       time,
@@ -851,6 +1063,181 @@ function mapHistoryEntry(value: unknown, index: number, sessionId: string): Sess
       },
     }
   }
+}
+
+function assertCanonicalEventIndex(value: unknown, label: string): void {
+  if (eventIndex(value) === undefined) throw new Error(`Malformed ${label}`)
+}
+
+function assertCanonicalString(value: unknown, label: string): void {
+  if (typeof value !== 'string') throw new Error(`Malformed ${label}`)
+}
+
+function assertCanonicalNonEmptyString(value: unknown, label: string): void {
+  if (typeof value !== 'string' || value.length === 0) throw new Error(`Malformed ${label}`)
+}
+
+function assertCanonicalTurnEndReason(value: unknown, name: string): void {
+  const reason = objectOrUndefined(value)
+  if (reason === undefined || typeof reason.kind !== 'string' || reason.kind.length === 0)
+    throw new Error(`Malformed ${name} reason`)
+  if (reason.kind === 'aborted') {
+    const cancellation = objectOrUndefined(reason.reason)
+    if (cancellation === undefined || typeof cancellation.kind !== 'string' || cancellation.kind.length === 0)
+      throw new Error(`Malformed ${name} reason`)
+  }
+  if (reason.kind === 'error') {
+    const failure = objectOrUndefined(reason.error)
+    if (
+      failure === undefined ||
+      typeof failure.message !== 'string' ||
+      typeof failure.code !== 'string' ||
+      failure.code.length === 0
+    )
+      throw new Error(`Malformed ${name} reason`)
+  }
+}
+
+function assertCanonicalMessage(value: unknown, name: string): void {
+  const message = objectOrUndefined(value)
+  if (message === undefined || typeof message.id !== 'string' || message.id.length === 0)
+    throw new Error(`Malformed ${name} message`)
+  const expectedRole = name === 'assistant/message' ? 'assistant' : 'user'
+  if (message.role !== expectedRole) throw new Error(`Malformed ${name} message role`)
+  const source = objectOrUndefined(message.source)
+  if (source === undefined || typeof source.kind !== 'string' || source.kind.length === 0)
+    throw new Error(`Malformed ${name} message source`)
+  assertCanonicalContentBlocks(message.content, `${name} message content`)
+  if (name === 'assistant/message') {
+    if (source.kind !== 'model') throw new Error(`Malformed ${name} message source`)
+    assertCanonicalNonEmptyString(source.provider, `${name} message provider`)
+    assertCanonicalNonEmptyString(source.model, `${name} message model`)
+    return
+  }
+  if (name !== 'tool/result') return
+  if (source.kind !== 'tool') throw new Error(`Malformed ${name} message source`)
+  assertCanonicalNonEmptyString(source.callId, `${name} message callId`)
+  const block = objectOrUndefined(message.content[0])
+  if (
+    message.content.length !== 1 ||
+    block === undefined ||
+    block.type !== 'tool-result' ||
+    !Array.isArray(block.content) ||
+    block.toolCallId !== source.callId
+  )
+    throw new Error(`Malformed ${name} message content`)
+}
+
+/**
+ * Validate the core content blocks without closing the merge-extensible
+ * content vocabulary. Unknown block types are left opaque for forward
+ * compatibility, while a known image/tool block must not be accepted and
+ * then silently disappear in the presentation mapper.
+ */
+function assertCanonicalContentBlocks(value: unknown, label: string): asserts value is readonly unknown[] {
+  if (!Array.isArray(value)) throw new Error(`Malformed ${label}`)
+  for (const entry of value) {
+    const block = objectOrUndefined(entry)
+    if (block === undefined || typeof block.type !== 'string' || block.type.length === 0)
+      throw new Error(`Malformed ${label}`)
+    switch (block.type) {
+      case 'text':
+      case 'reasoning':
+        assertCanonicalString(block.text, `${label} ${block.type} text`)
+        break
+      case 'image':
+        assertCanonicalImageReference(block.attachment, `${label} image attachment`)
+        break
+      case 'tool-call':
+        assertCanonicalNonEmptyString(block.id, `${label} tool-call id`)
+        assertCanonicalString(block.name, `${label} tool-call name`)
+        assertCanonicalString(block.arguments, `${label} tool-call arguments`)
+        break
+      case 'tool-result':
+        assertCanonicalNonEmptyString(block.toolCallId, `${label} tool-result call id`)
+        assertCanonicalContentBlocks(block.content, `${label} tool-result content`)
+        if (block.isError !== undefined && typeof block.isError !== 'boolean')
+          throw new Error(`Malformed ${label} tool-result isError`)
+        break
+    }
+  }
+}
+
+function assertCanonicalImageReference(value: unknown, label: string): void {
+  const attachment = objectOrUndefined(value)
+  if (
+    attachment === undefined ||
+    typeof attachment.attachmentId !== 'string' ||
+    attachment.attachmentId.trim() === '' ||
+    (attachment.mediaType !== 'image/png' &&
+      attachment.mediaType !== 'image/jpeg' &&
+      attachment.mediaType !== 'image/webp' &&
+      attachment.mediaType !== 'image/gif') ||
+    positiveSafeNumber(attachment.bytes) === undefined ||
+    positiveSafeNumber(attachment.width) === undefined ||
+    positiveSafeNumber(attachment.height) === undefined ||
+    (attachment.name !== undefined && typeof attachment.name !== 'string')
+  )
+    throw new Error(`Malformed ${label}`)
+}
+
+function assertCanonicalStreamChunk(value: unknown): void {
+  const chunk = objectOrUndefined(value)
+  if (chunk === undefined || typeof chunk.type !== 'string')
+    throw new Error('Malformed assistant/chunk chunk')
+  switch (chunk.type) {
+    case 'block-start':
+      assertCanonicalEventIndex(chunk.index, 'assistant/chunk index')
+      assertCanonicalString(chunk.blockType, 'assistant/chunk blockType')
+      return
+    case 'text-delta':
+    case 'reasoning-delta':
+      assertCanonicalEventIndex(chunk.index, 'assistant/chunk index')
+      assertCanonicalString(chunk.text, `assistant/chunk ${chunk.type} text`)
+      return
+    case 'tool-call-delta':
+      assertCanonicalEventIndex(chunk.index, 'assistant/chunk index')
+      assertCanonicalNonEmptyString(chunk.id, 'assistant/chunk tool call id')
+      assertCanonicalString(chunk.argumentsDelta, 'assistant/chunk argumentsDelta')
+      if (chunk.name !== undefined) assertCanonicalString(chunk.name, 'assistant/chunk tool name')
+      return
+    case 'block-end': {
+      assertCanonicalEventIndex(chunk.index, 'assistant/chunk index')
+      const block = objectOrUndefined(chunk.block)
+      if (block === undefined || typeof block.type !== 'string')
+        throw new Error('Malformed assistant/chunk block')
+      return
+    }
+    case 'usage':
+      assertCanonicalTokenUsage(chunk.usage, 'assistant/chunk usage')
+      return
+    case 'finish': {
+      const reason = objectOrUndefined(chunk.reason)
+      if (reason === undefined || typeof reason.kind !== 'string' || reason.kind.length === 0)
+        throw new Error('Malformed assistant/chunk finish reason')
+      return
+    }
+    default:
+      throw new Error('Malformed assistant/chunk chunk')
+  }
+}
+
+function assertCanonicalTokenUsage(value: unknown, label: string): void {
+  const usage = objectOrUndefined(value)
+  if (
+    usage === undefined ||
+    tokenCount(usage.inputTokens) === undefined ||
+    tokenCount(usage.outputTokens) === undefined
+  )
+    throw new Error(`Malformed ${label}`)
+  for (const key of ['cacheReadTokens', 'cacheWriteTokens', 'reasoningTokens'] as const) {
+    if (usage[key] !== undefined && tokenCount(usage[key]) === undefined)
+      throw new Error(`Malformed ${label}`)
+  }
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value)
 }
 
 function tool(value: Record<string, unknown>, phase: 'call' | 'result' = 'result'): ToolCallView {
@@ -877,12 +1264,7 @@ function tool(value: Record<string, unknown>, phase: 'call' | 'result' = 'result
     view?.rawOutput ??
     view?.output ??
     view?.content
-  const errorText =
-    value.error === undefined
-      ? messageIsError
-        ? bounded(messageError || messageOutput)
-        : undefined
-      : bounded(error?.message ?? value.error)
+  const errorText = toolErrorText(value.error, error, messageIsError, messageError, messageOutput)
   const mappedStatus = enumValue(
     value.status,
     ['queued', 'running', 'completed', 'failed', 'cancelled'] as const,
@@ -913,6 +1295,36 @@ function tool(value: Record<string, unknown>, phase: 'call' | 'result' = 'result
     ...(presentation === undefined ? {} : { presentation }),
     metadata: objectOrUndefined(safePayload(view)) ?? {},
   }
+}
+
+/**
+ * DSH persists a tool failure as a small identity object and keeps the
+ * human-readable text in the error-marked tool-result message. Prefer that
+ * replay-authoritative text; only fall back to a single identity field so
+ * `{name, code}` never becomes a misleading JSON sentence in the timeline.
+ */
+function toolErrorText(
+  value: unknown,
+  identity: Record<string, unknown> | undefined,
+  messageIsError: boolean,
+  messageError: string,
+  messageOutput: string | undefined,
+): string | undefined {
+  if (value !== undefined) {
+    const explicit = typeof value === 'string' ? value : identity?.message
+    const explicitText = optionalText(explicit)
+    if (explicitText !== undefined) return explicitText
+    if (messageIsError) {
+      const messageTextValue = optionalText(messageError) ?? optionalText(messageOutput)
+      if (messageTextValue !== undefined) return messageTextValue
+    }
+    const identityText = optionalText(identity?.code) ?? optionalText(identity?.name)
+    if (identityText !== undefined) return identityText
+    if (typeof value === 'number' || typeof value === 'boolean') return bounded(value)
+    return undefined
+  }
+  if (!messageIsError) return undefined
+  return optionalText(messageError) ?? optionalText(messageOutput)
 }
 
 function toolLocations(
@@ -992,10 +1404,139 @@ function safeFailureCode(value: unknown): string | undefined {
 
 function goal(value: unknown): GoalView {
   const record = object(value, 'goal')
+  const maxGoalRounds =
+    record.maxGoalRounds === undefined ? undefined : positiveSafeNumber(record.maxGoalRounds)
+  if (record.maxGoalRounds !== undefined && maxGoalRounds === undefined)
+    throw new Error('Malformed goal maxGoalRounds')
+  const status =
+    record.status === undefined
+      ? goalPhaseStatus(record.phase)
+      : enumValue(record.status, ['pending', 'in-progress', 'completed', 'blocked'] as const, 'pending')
   return {
     id: stringOr(record.id, 'goal'),
     title: stringOr(record.title ?? record.objective, 'Goal'),
-    status: enumValue(record.status, ['pending', 'in-progress', 'completed', 'blocked'] as const, 'pending'),
+    status,
+    ...(maxGoalRounds === undefined ? {} : { maxGoalRounds }),
+  }
+}
+
+/**
+ * Project both the legacy whole-list goal event and the pinned goal/change
+ * full-snapshot event into the small GoalView used by the UI. The rc.6 host
+ * emits one post-mutation snapshot (or a clear tombstone), never `goals[]`.
+ */
+function goalEventGoals(name: string, data: Record<string, unknown>): readonly GoalView[] {
+  if (name === 'goal/change') {
+    validateCanonicalGoalChange(data)
+    if (data.operation === 'clear') {
+      return []
+    }
+    return [goal(data.goal)]
+  }
+  if (data.cleared === true) return []
+  if (Array.isArray(data.goals)) return data.goals.map(goal)
+  if (data.goal !== undefined) return [goal(data.goal)]
+  return []
+}
+
+function validateCanonicalGoalChange(data: Record<string, unknown>): void {
+  if (data.kind !== 'goal/change' || data.version !== 1) throw new Error('Malformed goal/change envelope')
+  if (data.operation === 'clear') {
+    if (!hasOnlyKeys(data, ['cleared', 'clearedAt', 'kind', 'operation', 'version']))
+      throw new Error('Malformed goal/change clear tombstone')
+    const cleared = objectOrUndefined(data.cleared)
+    const clearedAt = nonNegativeSafeNumber(data.clearedAt)
+    if (
+      cleared === undefined ||
+      !hasOnlyKeys(cleared, ['id', 'revision']) ||
+      typeof cleared.id !== 'string' ||
+      cleared.id.length === 0 ||
+      positiveSafeNumber(cleared.revision) === undefined ||
+      clearedAt === undefined
+    )
+      throw new Error('Malformed goal/change clear tombstone')
+    return
+  }
+  if (
+    data.operation !== 'create' &&
+    data.operation !== 'edit' &&
+    data.operation !== 'pause' &&
+    data.operation !== 'resume' &&
+    data.operation !== 'complete' &&
+    data.operation !== 'block'
+  )
+    throw new Error('Malformed goal/change operation')
+  if (!hasOnlyKeys(data, ['createdAt', 'goal', 'kind', 'operation', 'roundsStarted', 'updatedAt', 'version']))
+    throw new Error('Malformed goal/change envelope')
+  const createdAt = nonNegativeSafeNumber(data.createdAt)
+  const updatedAt = nonNegativeSafeNumber(data.updatedAt)
+  const roundsStarted = nonNegativeSafeNumber(data.roundsStarted)
+  if (
+    createdAt === undefined ||
+    updatedAt === undefined ||
+    roundsStarted === undefined ||
+    updatedAt < createdAt
+  )
+    throw new Error('Malformed goal/change timestamps')
+  validateCanonicalGoalSnapshot(data.goal)
+}
+
+function validateCanonicalGoalSnapshot(value: unknown): void {
+  const record = objectOrUndefined(value)
+  if (
+    record === undefined ||
+    typeof record.id !== 'string' ||
+    record.id.length === 0 ||
+    typeof record.objective !== 'string' ||
+    record.objective.trim() === '' ||
+    record.objective !== record.objective.trim() ||
+    (record.phase !== 'active' &&
+      record.phase !== 'paused' &&
+      record.phase !== 'blocked' &&
+      record.phase !== 'complete') ||
+    positiveSafeNumber(record.revision) === undefined ||
+    positiveSafeNumber(record.maxGoalRounds) === undefined
+  )
+    throw new Error('Malformed goal/change goal')
+  const expectedKeys =
+    record.phase === 'blocked'
+      ? ['blockedReason', 'id', 'maxGoalRounds', 'objective', 'phase', 'revision']
+      : ['id', 'maxGoalRounds', 'objective', 'phase', 'revision']
+  if (!hasOnlyKeys(record, expectedKeys)) throw new Error('Malformed goal/change goal')
+  if (record.phase !== 'blocked') return
+  const reason = objectOrUndefined(record.blockedReason)
+  if (
+    reason === undefined ||
+    !hasOnlyKeys(reason, ['code', 'message']) ||
+    typeof reason.code !== 'string' ||
+    !/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u.test(reason.code) ||
+    typeof reason.message !== 'string' ||
+    reason.message.trim() === '' ||
+    reason.message !== reason.message.trim()
+  )
+    throw new Error('Malformed goal/change goal')
+}
+
+function hasOnlyKeys(record: Record<string, unknown>, expected: readonly string[]): boolean {
+  const actualKeys = Object.keys(record).sort()
+  const expectedKeys = [...expected].sort()
+  return (
+    actualKeys.length === expectedKeys.length && actualKeys.every((key, index) => key === expectedKeys[index])
+  )
+}
+
+function goalPhaseStatus(value: unknown): GoalView['status'] {
+  switch (value) {
+    case 'active':
+      return 'in-progress'
+    case 'paused':
+      return 'pending'
+    case 'complete':
+      return 'completed'
+    case 'blocked':
+      return 'blocked'
+    default:
+      return 'pending'
   }
 }
 
@@ -1130,22 +1671,53 @@ function stringArrayValue(value: unknown): value is readonly string[] {
 
 function queuedInput(value: unknown, sessionId: string): QueuedInput[] {
   const record = objectOrUndefined(value)
-  if (record === undefined || (record.placement !== 'queued' && record.placement !== 'steering')) return []
+  if (
+    record === undefined ||
+    (record.placement !== 'queued' && record.placement !== 'steering' && record.placement !== 'context')
+  )
+    throw new Error('Malformed session/queue item')
   const message = objectOrUndefined(record.message)
-  if (message === undefined || typeof record.id !== 'string') return []
+  if (
+    message === undefined ||
+    typeof record.id !== 'string' ||
+    record.id.length === 0 ||
+    typeof message.id !== 'string' ||
+    message.id.length === 0 ||
+    (message.role !== 'system' && message.role !== 'user' && message.role !== 'assistant') ||
+    !Array.isArray(message.content) ||
+    !message.content.every((entry) => {
+      const block = objectOrUndefined(entry)
+      return block !== undefined && typeof block.type === 'string'
+    }) ||
+    !isMessageSource(message.source)
+  )
+    throw new Error('Malformed session/queue item')
+  try {
+    assertCanonicalContentBlocks(message.content, 'session/queue message content')
+  } catch {
+    throw new Error('Malformed session/queue item')
+  }
+  if (record.placement === 'context') return []
   const source = objectOrUndefined(message.source)
   const rpcId = firstString(message.rpcId, source?.rpcId)
+  const images = messageImages(message)
   return [
     {
       id: record.id,
       sessionId,
       text: messageText(message),
       attachments: [],
+      ...(images.length === 0 ? {} : { images }),
       mode: record.placement === 'steering' ? 'steer' : 'queue',
       createdAt: date(record.createdAt),
       ...(rpcId === undefined ? {} : { rpcId }),
     },
   ]
+}
+
+function isMessageSource(value: unknown): value is Record<string, unknown> {
+  const source = objectOrUndefined(value)
+  return source !== undefined && typeof source.kind === 'string'
 }
 
 function permission(value: Record<string, unknown>): PermissionRequest {
@@ -1167,15 +1739,14 @@ function permission(value: Record<string, unknown>): PermissionRequest {
 }
 
 function question(value: Record<string, unknown>): UserQuestion {
-  const questionRecords = array(value.questions)
-    .map((entry) => objectOrUndefined(entry))
-    .filter((entry): entry is Record<string, unknown> => entry !== undefined)
-  const first = questionRecords[0] ?? value
-  const items = questionRecords.map(questionItem)
-  const firstItem = questionItem(first)
+  const rawQuestions = requiredArray(value.questions, 'question/requested questions')
+  if (rawQuestions.length === 0) throw new Error('Malformed question/requested questions')
+  const items = rawQuestions.map((entry) => questionItem(object(entry, 'question item')))
+  const firstItem = items[0]
+  if (firstItem === undefined) throw new Error('Malformed question/requested questions')
   const choices = firstItem.choices ?? []
   return {
-    id: stringOr(first.id ?? value.id, 'question'),
+    id: firstItem.id,
     ...(typeof value.questionRpcId === 'string' || typeof value.rpcId === 'string'
       ? { rpcId: stringOr(value.questionRpcId ?? value.rpcId, '') }
       : {}),
@@ -1192,23 +1763,39 @@ function question(value: Record<string, unknown>): UserQuestion {
 }
 
 function questionItem(value: Record<string, unknown>): UserQuestionItem {
-  const choices = array(value.options ?? value.choices)
-    .map((entry) => objectOrUndefined(entry))
-    .filter((entry): entry is Record<string, unknown> => entry !== undefined)
-    .map((entry) => ({
-      // rc.6 validates selected answers against option labels.
-      id: stringOr(entry.label ?? entry.title, 'Choice'),
-      label: stringOr(entry.label ?? entry.title, 'Choice'),
-      ...(typeof entry.description === 'string' ? { description: entry.description } : {}),
-    }))
+  const rawOptions = Object.hasOwn(value, 'options') ? value.options : value.choices
+  const choices =
+    rawOptions === undefined
+      ? []
+      : requiredArray(rawOptions, 'question options').map((entry) => {
+          const option = object(entry, 'question option')
+          const label = requiredQuestionString(option.label ?? option.title, 'question option label')
+          return {
+            // rc.6 validates selected answers against option labels.
+            id: label,
+            label,
+            ...(option.description === undefined
+              ? {}
+              : { description: requiredQuestionString(option.description, 'question option description') }),
+          }
+        })
   const intent = planReviewIntent(value.intent)
   return {
-    id: stringOr(value.id, 'question'),
-    prompt: stringOr(value.question ?? value.prompt, 'DSH needs an answer.'),
-    ...(typeof value.detail === 'string' ? { detail: value.detail } : {}),
-    ...(typeof value.header === 'string' ? { header: value.header } : {}),
+    id: requiredQuestionString(value.id, 'question id'),
+    prompt: requiredQuestionString(
+      Object.hasOwn(value, 'question') ? value.question : value.prompt,
+      'question id or question',
+    ),
+    ...(value.detail === undefined
+      ? {}
+      : { detail: requiredQuestionString(value.detail, 'question detail') }),
+    ...(value.header === undefined
+      ? {}
+      : { header: requiredQuestionString(value.header, 'question header') }),
     ...(choices.length === 0 ? {} : { choices }),
-    ...(value.multiSelect === undefined ? {} : { multiSelect: boolean(value.multiSelect, false) }),
+    ...(value.multiSelect === undefined
+      ? {}
+      : { multiSelect: requiredQuestionBoolean(value.multiSelect, 'question multiSelect') }),
     // rc.6 has no allowFreeText wire flag. The official generic question UI
     // always offers custom input; plan-review narrowing is presentation-only.
     allowFreeText: true,
@@ -1216,14 +1803,26 @@ function questionItem(value: Record<string, unknown>): UserQuestionItem {
   }
 }
 
-/** Upstream intents are tagged; only known tags may reach the UI — an
- * unknown tag renders the generic option flow (answer encoding is
- * identical either way, so dropping it is presentation-only). */
+/** Upstream intents are a strict tagged union; unknown tags must not be
+ * silently rendered as a generic question. */
 function planReviewIntent(value: unknown): UserQuestionItem['intent'] | undefined {
-  if (value === null || typeof value !== 'object') return undefined
+  if (value === undefined) return undefined
+  if (value === null || typeof value !== 'object' || Array.isArray(value))
+    throw new Error('Malformed question intent')
   const intent = value as Record<string, unknown>
-  if (intent.kind !== 'plan-review' || typeof intent.approve !== 'string') return undefined
+  if (intent.kind !== 'plan-review' || typeof intent.approve !== 'string')
+    throw new Error('Malformed question intent')
   return { kind: 'plan-review', approve: intent.approve }
+}
+
+function requiredQuestionString(value: unknown, label: string): string {
+  if (typeof value !== 'string') throw new Error(`Malformed ${label}`)
+  return value
+}
+
+function requiredQuestionBoolean(value: unknown, label: string): boolean {
+  if (typeof value !== 'boolean') throw new Error(`Malformed ${label}`)
+  return value
 }
 
 function assistantMessageId(data: Record<string, unknown>, message?: Record<string, unknown>): string {
@@ -1478,6 +2077,11 @@ function array(value: unknown): readonly unknown[] {
   return Array.isArray(value) ? value : []
 }
 
+function requiredArray(value: unknown, label: string): readonly unknown[] {
+  if (!Array.isArray(value)) throw new Error(`Malformed ${label}`)
+  return value
+}
+
 function contentEntries(value: unknown): readonly unknown[] {
   if (Array.isArray(value)) return value
   return typeof value === 'string' ? [value] : []
@@ -1512,6 +2116,15 @@ function boolean(value: unknown, fallback: boolean): boolean {
 
 function number(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback
+}
+
+function validHistoryTime(value: unknown): string | undefined {
+  if (typeof value === 'string' && value.trim() !== '') return value
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const dateValue = new Date(value)
+    return Number.isFinite(dateValue.getTime()) ? dateValue.toISOString() : undefined
+  }
+  return undefined
 }
 
 function date(value: unknown): string {

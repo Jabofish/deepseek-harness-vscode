@@ -119,6 +119,38 @@ describe('AppStore subagent transport routing', () => {
     store.dispose()
   })
 
+  it('forwards opaque attachment handles when the host advertises alpha subagent images', async () => {
+    const client = new FakeClient(answer)
+    const store = createAppStore(client as unknown as ProtocolClient)
+    client.emit({
+      type: 'event',
+      name: 'connection.snapshot',
+      sequence: 1,
+      payload: { kind: 'connected', dshVersion: '0.1.2-alpha.5', subagentImagePrompts: true },
+    })
+    await store.openSubagent(child(), true)
+    await store.sendPrompt(
+      'child',
+      '看这张图',
+      [{ uri: 'dsh-attachment:0123456789abcdef', name: 'screen.png', mimeType: 'image/png' }],
+      'queue',
+    )
+
+    expect(client.requests).toContainEqual(
+      expect.objectContaining({
+        type: 'subagent.send',
+        payload: {
+          sessionId: 'child',
+          message: '看这张图',
+          attachments: [
+            { uri: 'dsh-attachment:0123456789abcdef', name: 'screen.png', mimeType: 'image/png' },
+          ],
+        },
+      }),
+    )
+    store.dispose()
+  })
+
   it('shows subagent history before advisory reads finish', async () => {
     const queue = deferred<readonly unknown[]>()
     const client = new FakeClient((request) => {
@@ -186,6 +218,7 @@ describe('AppStore subagent transport routing', () => {
       sequence: 1,
       payload: {
         sessionId: 'child',
+        blank: false,
         parentSessionId: 'unknown-parent',
         origin: 'subagent',
       },
@@ -651,11 +684,16 @@ describe('AppStore subagent transport routing', () => {
       type: 'event',
       name: 'session.subscribed',
       sequence: 11,
-      payload: { sessionId: 'parent', lastSequence: 20 },
+      payload: {
+        sessionId: 'parent',
+        lastSequence: 20,
+        projection: { asOfSequence: 20, values: { title: 'Parent', sessionStats: { turns: 2 } } },
+      },
     })
 
     expect(store.queue).toEqual([])
     expect(store.jobs).toEqual([])
+    expect(store.projections.parent).toEqual({ title: 'Parent', sessionStats: { turns: 2 } })
     const queueAfterReset = store.queue
     const jobsAfterReset = store.jobs
     const permissionsAfterReset = store.permissions
@@ -800,6 +838,59 @@ describe('AppStore history paging', () => {
     expect(store.getState().projections.parent).toEqual({
       sessionStats: { turns: 1, steps: 1, llmMs: 10, toolMs: 5 },
     })
+    expect(store.historyLoading).toBe(false)
+    store.dispose()
+  })
+
+  it('rejects a history page whose explicit beforeSeq is malformed instead of inferring a boundary', async () => {
+    const client = new FakeClient((request) => {
+      switch (request.type) {
+        case 'session.open':
+          return {
+            id: 'parent',
+            workspaceId: 'workspace',
+            title: 'Parent',
+            blank: false,
+            status: 'completed',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+            historyHasMore: true,
+            historyBeforeSequence: 20,
+            history: [
+              {
+                sequence: 20,
+                time: '2026-01-01T00:00:02.000Z',
+                event: {
+                  type: 'message.completed',
+                  sessionId: 'parent',
+                  messageId: 'newer',
+                  markdown: 'newer',
+                },
+              },
+            ],
+          }
+        case 'session.history':
+          return { beforeSeq: 'not-a-sequence', hasMore: false, events: [] }
+        case 'session.queue.list':
+        case 'goal.list':
+        case 'job.list':
+        case 'command.list':
+        case 'skill.list':
+          return []
+        case 'subagent.list':
+          return { entries: [], parentAvailable: true }
+        default:
+          throw new Error(`unexpected request ${request.type}`)
+      }
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+
+    await store.openSession('parent')
+    await expect(store.loadOlderHistory()).rejects.toThrow()
+
+    expect(store.history.map((entry) => entry.sequence)).toEqual([20])
+    expect(store.historyBeforeSequence).toBe(20)
+    expect(store.historyHasMore).toBe(true)
     expect(store.historyLoading).toBe(false)
     store.dispose()
   })

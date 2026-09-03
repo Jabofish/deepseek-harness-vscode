@@ -148,6 +148,7 @@ describe('DSH 0.1.2-alpha.2 Connection/Gateway contract', () => {
     await expect(adapter.probe(candidate('0.1.2-alpha.2'))).resolves.toMatchObject({
       protocolVersion: 'alpha2',
       dshVersion: '0.1.2-alpha.2',
+      subagentImagePrompts: false,
     })
     await expect(adapter.probe(candidate('0.1.2-alpha.1'))).resolves.toBeUndefined()
     expect(fetch).toHaveBeenCalledOnce()

@@ -1,8 +1,9 @@
 import { memo, useEffect, useId, useState, type ReactElement } from 'react'
-import type { QueuedInput, RunningInputMode } from '@dsh-vscode/domain'
+import type { MessageImageReference, QueuedInput, RunningInputMode } from '@dsh-vscode/domain'
 import { useI18n } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
 import { SelectMenu } from '../../components/common/SelectMenu.js'
+import { MessageImages } from '../chat/MessageImages.js'
 
 export interface QueuePanelProps {
   readonly items: readonly QueuedInput[]
@@ -10,6 +11,7 @@ export interface QueuePanelProps {
   readonly onEdit: (id: string, text: string) => void
   readonly onRemove: (id: string) => void
   readonly onModeChange: (id: string, mode: RunningInputMode) => void
+  readonly onLoadImage?: (image: MessageImageReference) => Promise<string | undefined>
 }
 
 export const QueuePanel = memo(function QueuePanel(props: QueuePanelProps): ReactElement | null {
@@ -55,9 +57,22 @@ export const QueuePanel = memo(function QueuePanel(props: QueuePanelProps): Reac
                   <span className="dsh-queue__index" aria-hidden="true">
                     {index + 1}
                   </span>
+                  {item.images !== undefined && item.images.length > 0 ? (
+                    <MessageImages
+                      images={item.images}
+                      translate={t}
+                      {...(props.onLoadImage === undefined ? {} : { loadImage: props.onLoadImage })}
+                    />
+                  ) : null}
                   <input
                     aria-label={t('queue.edit', { id: item.id })}
                     defaultValue={item.text}
+                    readOnly={item.images !== undefined && item.images.length > 0}
+                    title={
+                      item.images !== undefined && item.images.length > 0
+                        ? t('queue.editWithImages')
+                        : undefined
+                    }
                     onBlur={(event) => {
                       if (event.target.value !== item.text) props.onEdit(item.id, event.target.value)
                     }}

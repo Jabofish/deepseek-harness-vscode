@@ -4,6 +4,7 @@ import {
   type SubagentDiagnosticView,
   type SubagentHistoryPage,
   type SubagentHistoryQuery,
+  type PromptAttachment,
   type SubagentRepository,
   type SubagentView,
 } from '@dsh-vscode/domain'
@@ -12,17 +13,28 @@ import type { DshTransport } from '../contracts.js'
 import { callRpc, unavailable } from '../versions/rc6/rpc.js'
 import { clientTimeZoneField } from '../client-time-zone.js'
 import { rc6Mapper } from '../versions/rc6/mapper.js'
+import { encodePromptContent } from '../attachment-codec.js'
 import { recordOrUndefined, validProjectionBlock } from './shared/guards.js'
 
 type Address = { readonly parentSessionId: string; readonly mode: 'one-shot' | 'continuable' }
 
 /** Match the official web client's 50-message history pages. */
 const HISTORY_PAGE_MESSAGES = 50
+export interface SubagentRepositoryOptions {
+  /** Alpha.3+ admits inline image parts; rc.6/alpha.1-2 accept text parts only. */
+  readonly inlineImagePrompts?: boolean
+  readonly maxPromptAttachmentBytes?: number
+  readonly maxPromptAttachmentTotalBytes?: number
+}
+
 export class Rc6SubagentRepository implements SubagentRepository {
   private readonly addresses = new Map<string, Address>()
   private readonly refreshGenerations = new Map<string, number>()
 
-  public constructor(private readonly transport: DshTransport) {}
+  public constructor(
+    private readonly transport: DshTransport,
+    private readonly options: SubagentRepositoryOptions = {},
+  ) {}
 
   public async list(sessionId: string, signal?: AbortSignal): Promise<SubagentCatalog> {
     const generation = (this.refreshGenerations.get(sessionId) ?? 0) + 1
@@ -51,9 +63,25 @@ export class Rc6SubagentRepository implements SubagentRepository {
     return { entries, parentAvailable: value.parentAvailable }
   }
 
-  public async send(sessionId: string, message: string, signal?: AbortSignal): Promise<void> {
+  public async send(
+    sessionId: string,
+    message: string,
+    attachmentsOrSignal: readonly PromptAttachment[] | AbortSignal = [],
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const attachments = Array.isArray(attachmentsOrSignal) ? attachmentsOrSignal : []
+    const requestSignal: AbortSignal | undefined = Array.isArray(attachmentsOrSignal)
+      ? signal
+      : (attachmentsOrSignal as AbortSignal | undefined)
     const address = this.addresses.get(sessionId)
     if (address?.mode !== 'continuable') throw unavailable('one-shot subagent follow-up')
+    const content = encodePromptContent(message, attachments, {
+      maxImageBytes: this.options.maxPromptAttachmentBytes ?? 20 * 1024 * 1024,
+      maxAttachmentTotalBytes: this.options.maxPromptAttachmentTotalBytes ?? 200 * 1024 * 1024,
+      maxImageTotalBytes: this.options.maxPromptAttachmentTotalBytes ?? 200 * 1024 * 1024,
+    })
+    if (content.some((part) => part.type === 'image') && this.options.inlineImagePrompts !== true)
+      throw unavailable('subagent image prompts')
     const value = requiredRecord(
       await callRpc<unknown>(
         this.transport,
@@ -62,10 +90,10 @@ export class Rc6SubagentRepository implements SubagentRepository {
           parentSessionId: address.parentSessionId,
           childSessionId: sessionId,
           mode: address.mode,
-          content: [{ type: 'text', text: message }],
+          content,
           ...clientTimeZoneField(),
         },
-        signal,
+        requestSignal,
       ),
     )
     if (typeof value.messageId !== 'string' || value.messageId.length === 0)

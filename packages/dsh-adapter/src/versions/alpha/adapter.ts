@@ -53,6 +53,9 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
     fallback: false,
   }
 
+  /** Alpha.1/2 accept only text/content blocks on the subagent wire. */
+  protected readonly supportsInlineSubagentImages: boolean = false
+
   public constructor(protected readonly options: AlphaAdapterOptions) {
     super()
   }
@@ -94,6 +97,7 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
       const capabilities: BackendCapabilities = {
         protocolVersion: this.protocolVersion,
         dshVersion: this.supportedVersion,
+        subagentImagePrompts: this.supportsInlineSubagentImages && !compatibility,
         features: new Set([
           'host',
           'workspace',
@@ -173,7 +177,11 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
       interactions,
       goals,
       jobs,
-      subagents: new Rc6SubagentRepository(transport),
+      subagents: new Rc6SubagentRepository(transport, {
+        inlineImagePrompts: backend.capabilities.subagentImagePrompts === true,
+        maxPromptAttachmentBytes: 20 * 1024 * 1024,
+        maxPromptAttachmentTotalBytes: 200 * 1024 * 1024,
+      }),
       settings: new Rc6SettingsRepository(transport),
       skills: new Rc6SkillRepository(transport),
       commands: new Rc8CommandRepository(transport),

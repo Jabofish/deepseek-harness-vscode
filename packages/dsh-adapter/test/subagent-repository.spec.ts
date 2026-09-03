@@ -183,6 +183,87 @@ describe('Rc6SubagentRepository catalog', () => {
 })
 
 describe('Rc6SubagentRepository addressed operations', () => {
+  it('forwards text attachments on every alpha generation without treating them as images', async () => {
+    const calls: Call[] = []
+    const repository = new Rc6SubagentRepository(
+      transportFor((method) => {
+        if (method === 'subagent.list') return healthyCatalog
+        if (method === 'subagent.prompt') return { messageId: 'message-text-file' }
+        throw new Error(`unexpected RPC ${method}`)
+      }, calls),
+    )
+    await repository.list('parent')
+
+    await expect(
+      repository.send('continuable-child', '请阅读附件', [
+        { uri: 'data:text/plain;base64,aGk=', name: 'note.txt', mimeType: 'text/plain' },
+      ]),
+    ).resolves.toBeUndefined()
+    expect(calls.at(-1)).toEqual({
+      method: 'subagent.prompt',
+      params: {
+        parentSessionId: 'parent',
+        childSessionId: 'continuable-child',
+        mode: 'continuable',
+        content: [
+          { type: 'text', text: '请阅读附件' },
+          { type: 'text', text: '\n\nAttached file: note.txt\n\nhi\n\nEnd of attached file: note.txt' },
+        ],
+        clientTimeZone: expect.stringMatching(/^[A-Za-z_]+\/[A-Za-z_0-9+-]+$|^UTC$/u) as unknown,
+      },
+    })
+  })
+
+  it('preserves alpha inline image parts when the adapter explicitly enables them', async () => {
+    const calls: Call[] = []
+    const repository = new Rc6SubagentRepository(
+      transportFor((method) => {
+        if (method === 'subagent.list') return healthyCatalog
+        if (method === 'subagent.prompt') return { messageId: 'message-image' }
+        throw new Error(`unexpected RPC ${method}`)
+      }, calls),
+      { inlineImagePrompts: true },
+    )
+    await repository.list('parent')
+
+    await expect(
+      repository.send('continuable-child', '看这张图', [
+        { uri: 'data:image/png;base64,iVBORw0KGgo=', name: 'screen.png', mimeType: 'image/png' },
+      ]),
+    ).resolves.toBeUndefined()
+    expect(calls.at(-1)).toEqual({
+      method: 'subagent.prompt',
+      params: {
+        parentSessionId: 'parent',
+        childSessionId: 'continuable-child',
+        mode: 'continuable',
+        content: [
+          { type: 'text', text: '看这张图' },
+          { type: 'image', mediaType: 'image/png', data: 'iVBORw0KGgo=', name: 'screen.png' },
+        ],
+        clientTimeZone: expect.stringMatching(/^[A-Za-z_]+\/[A-Za-z_0-9+-]+$|^UTC$/u) as unknown,
+      },
+    })
+  })
+
+  it('rejects inline images on the rc.6 contract before sending a fabricated durable block', async () => {
+    const calls: Call[] = []
+    const repository = new Rc6SubagentRepository(
+      transportFor((method) => {
+        if (method === 'subagent.list') return healthyCatalog
+        throw new Error(`unexpected RPC ${method}`)
+      }, calls),
+    )
+    await repository.list('parent')
+
+    await expect(
+      repository.send('continuable-child', '看这张图', [
+        { uri: 'data:image/png;base64,iVBORw0KGgo=', name: 'screen.png', mimeType: 'image/png' },
+      ]),
+    ).rejects.toMatchObject({ code: 'CAPABILITY_UNAVAILABLE' })
+    expect(calls).toHaveLength(1)
+  })
+
   it('routes follow-up, history and interrupt through the exact catalog address', async () => {
     const calls: Call[] = []
     const repository = new Rc6SubagentRepository(

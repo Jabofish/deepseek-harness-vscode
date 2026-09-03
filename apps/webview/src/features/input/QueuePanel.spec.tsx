@@ -49,6 +49,30 @@ describe('QueuePanel', () => {
     expect(screen.queryByRole('button', { name: /Queued prompts/u })).toBeNull()
   })
 
+  it('shows queued images and prevents an edit that the pinned host cannot preserve', () => {
+    const item: QueuedInput = {
+      ...queuedInput('q-image', 'describe this'),
+      images: [
+        {
+          attachmentId: 'image-1',
+          mediaType: 'image/png',
+          bytes: 4,
+          width: 2,
+          height: 2,
+        },
+      ],
+    }
+    renderQueue([item], true)
+
+    expect(screen.getByLabelText('Attached images')).toBeTruthy()
+    expect(screen.getByRole('textbox', { name: 'Edit queued prompt q-image' }).hasAttribute('readonly')).toBe(
+      true,
+    )
+    expect(
+      screen.getByRole('textbox', { name: 'Edit queued prompt q-image' }).getAttribute('title'),
+    ).toContain('cannot be edited')
+  })
+
   it('collapses a multi-prompt backlog until the user opens it', () => {
     renderQueue([queuedInput('q1', 'first'), queuedInput('q2', 'second')])
 

@@ -3562,6 +3562,26 @@ summary.dsh-timeline__card-header,
   min-width: 0;
 }
 
+.dsh-settings__provider-api-select,
+.dsh-settings__provider-api-select .dsh-select-menu__trigger {
+  width: 100%;
+  min-width: 0;
+}
+
+.dsh-settings__provider-api-select .dsh-select-menu__trigger {
+  box-sizing: border-box;
+  border-color: var(--dsh-control-border);
+  color: var(--dsh-control-foreground);
+  background: var(--dsh-control-background);
+  font-size: 0.76rem;
+}
+
+.dsh-settings__provider-api-select .dsh-select-menu__trigger:hover:not(:disabled),
+.dsh-settings__provider-api-select.dsh-select-menu--open .dsh-select-menu__trigger {
+  color: var(--dsh-control-foreground);
+  background: var(--dsh-control-hover);
+}
+
 .dsh-settings__custom-provider {
   gap: var(--dsh-space-3);
   padding: var(--dsh-space-3);

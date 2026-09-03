@@ -122,10 +122,10 @@ export interface InteractionRepository {
 
 export interface GoalRepository {
   list(sessionId: string, signal?: AbortSignal): Promise<readonly GoalView[]>
-  create(sessionId: string, title: string, signal?: AbortSignal): Promise<GoalView>
+  create(sessionId: string, title: string, signal?: AbortSignal, maxGoalRounds?: number): Promise<GoalView>
   update(
     goalId: string,
-    update: Partial<Pick<GoalView, 'title' | 'status'>>,
+    update: Partial<Pick<GoalView, 'title' | 'status' | 'maxGoalRounds'>>,
     signal?: AbortSignal,
   ): Promise<void>
   readonly clear?: (this: GoalRepository, goalId: string, signal?: AbortSignal) => Promise<void>
@@ -145,7 +145,12 @@ export interface SubagentRepository {
     query?: SubagentHistoryQuery,
     signal?: AbortSignal,
   ) => Promise<SubagentHistoryPage>
-  send(sessionId: string, message: string, signal?: AbortSignal): Promise<void>
+  send(
+    sessionId: string,
+    message: string,
+    attachmentsOrSignal?: readonly PromptAttachment[] | AbortSignal,
+    signal?: AbortSignal,
+  ): Promise<void>
   interrupt(sessionId: string, signal?: AbortSignal): Promise<void>
 }
 
@@ -157,8 +162,20 @@ export interface SettingsRepository {
   update(path: string, value: unknown, signal?: AbortSignal): Promise<void>
   /** Remove one field's user override (`settings.mutate` op `unset`); the composition base resurfaces. */
   unset(path: string, signal?: AbortSignal): Promise<void>
+  /** Apply one atomic ordered operation batch against a namespace. */
+  mutate(
+    namespace: string,
+    operations: readonly SettingsPathOperation[],
+    expectedRevision?: number,
+    signal?: AbortSignal,
+  ): Promise<void>
   replace(value: Readonly<Record<string, unknown>>, signal?: AbortSignal): Promise<void>
 }
+
+/** One strict path operation accepted by the pinned DSH `settings.mutate` RPC. */
+export type SettingsPathOperation =
+  | { readonly op: 'set'; readonly path: readonly string[]; readonly value: unknown }
+  | { readonly op: 'unset'; readonly path: readonly string[] }
 
 export interface SkillRepository {
   list(sessionId?: string, signal?: AbortSignal): Promise<readonly SkillDescriptor[]>

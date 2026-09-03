@@ -5,7 +5,10 @@ import { Icon } from '../../ui/Icon.js'
 
 export interface GoalBarProps {
   readonly goals: readonly GoalView[]
-  readonly onUpdate?: (goalId: string, update: Partial<Pick<GoalView, 'title' | 'status'>>) => Promise<void>
+  readonly onUpdate?: (
+    goalId: string,
+    update: Partial<Pick<GoalView, 'title' | 'status' | 'maxGoalRounds'>>,
+  ) => Promise<void>
   readonly onClear?: (goalId: string) => Promise<void>
 }
 

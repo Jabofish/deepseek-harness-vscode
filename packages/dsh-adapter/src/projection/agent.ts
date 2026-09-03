@@ -3,17 +3,30 @@ import type { ModelSelection, SessionDetail, TodoView } from '@dsh-vscode/domain
 import { recordOrUndefined } from '../repositories/shared/guards.js'
 
 /** Projection of the host's permissions face into the settings UI contract. */
-export function permissionPresetIds(value: unknown): readonly string[] {
-  const permissions = recordOrUndefined(recordOrUndefined(value)?.permissions)
-  const options = Array.isArray(permissions?.options) ? permissions.options : []
+export function permissionPresetIds(value: unknown): readonly string[] | undefined {
+  const projectionValues = recordOrUndefined(value)
+  if (
+    projectionValues === undefined ||
+    !Object.prototype.hasOwnProperty.call(projectionValues, 'permissions')
+  )
+    return undefined
+  const permissions = recordOrUndefined(projectionValues.permissions)
+  if (permissions === undefined || !Array.isArray(permissions.options)) return []
+  // Do not turn a partially malformed authoritative roster into a smaller
+  // allowlist. An empty result is still present (and therefore fail-closed),
+  // while `undefined` means that the host did not compose this capability.
+  if (
+    permissions.options.some((entry) => {
+      const option = recordOrUndefined(entry)
+      return typeof option?.value !== 'string' || option.value.trim() === ''
+    })
+  )
+    return []
   return [
     ...new Set(
-      options.flatMap((entry) => {
-        const option = recordOrUndefined(entry)
-        return typeof option?.value === 'string' && option.value !== '' && option.value !== 'custom'
-          ? [option.value]
-          : []
-      }),
+      permissions.options
+        .map((entry) => (recordOrUndefined(entry) as { readonly value: string }).value)
+        .filter((value) => value !== 'custom'),
     ),
   ]
 }
@@ -56,12 +69,21 @@ export function mapModelPatch(data: Record<string, unknown>): Partial<ModelSelec
 }
 
 export function mapTodo(value: unknown, index: number): TodoView {
-  const record = recordOrUndefined(value) ?? {}
-  const status = stringOr(record.status, 'pending')
+  const record = recordOrUndefined(value)
+  if (record === undefined) throw new Error('Malformed todo')
+  const content = firstString(record.content, record.title, record.text)
+  if (content === undefined) throw new Error('Malformed todo content')
+  if (record.status !== 'pending' && record.status !== 'in_progress' && record.status !== 'completed')
+    throw new Error('Malformed todo status')
   return {
     id: stringOr(record.id, `todo:${index}`),
-    content: firstString(record.content, record.title, record.text) ?? 'Todo',
-    status: status === 'completed' ? 'completed' : status === 'in_progress' ? 'in-progress' : 'pending',
+    content,
+    status:
+      record.status === 'completed'
+        ? 'completed'
+        : record.status === 'in_progress'
+          ? 'in-progress'
+          : 'pending',
   }
 }
 

@@ -19,17 +19,28 @@ export class Rc6GoalRepository implements GoalRepository {
     if (event.type === 'goal.updated') this.goalCache.set(event.sessionId, event.goals)
     else if (event.type === 'session.projection' && event.key === 'goal') {
       const goals = goalViewsFromProjection(event.value)
-      if (goals !== undefined) this.goalCache.set(event.sessionId, goals)
+      if (goals === undefined) return
+      this.goalCache.set(event.sessionId, goals)
       // Projection payloads carry the host-bumped {id, revision} pair; the
       // edit/complete/resume/pause calls are compare-and-swap on that token,
       // so it must stay as fresh as the cached view.
-      rememberProjectionRefs(this.refs, event.sessionId, event.value)
+      replaceProjectionRefs(this.refs, event.sessionId, event.value)
     } else if (event.type === 'session.subscribed') {
+      if (event.projection === undefined) {
+        this.goalCache.delete(event.sessionId)
+        clearProjectionRefs(this.refs, event.sessionId)
+        return
+      }
+      const goals = goalViewsFromProjection(event.projection.values)
+      // Keep the last usable state when a reconnect carries a malformed
+      // projection. A bad advisory frame must not erase a valid cache.
+      if (goals === undefined) return
+      this.goalCache.set(event.sessionId, goals)
+      replaceProjectionRefs(this.refs, event.sessionId, event.projection.values)
+    } else if (event.type === 'session.removed') {
       this.goalCache.delete(event.sessionId)
-      const goals = goalViewsFromProjection(event.projection?.values)
-      if (goals !== undefined) this.goalCache.set(event.sessionId, goals)
-      rememberProjectionRefs(this.refs, event.sessionId, event.projection?.values)
-    } else if (event.type === 'session.removed') this.goalCache.delete(event.sessionId)
+      clearProjectionRefs(this.refs, event.sessionId)
+    }
   }
 
   public sessionForGoal(goalId: string): string | undefined {
@@ -54,7 +65,11 @@ export class Rc6GoalRepository implements GoalRepository {
           signal,
         )
         const mapped = rc6Mapper.history(value, sessionId)
-        rememberProjectionRefs(this.refs, sessionId, mapped.projection?.values)
+        if (
+          mapped.projection !== undefined &&
+          goalViewsFromProjection(mapped.projection.values) !== undefined
+        )
+          replaceProjectionRefs(this.refs, sessionId, mapped.projection.values)
         return mapped
       },
       {
@@ -79,13 +94,28 @@ export class Rc6GoalRepository implements GoalRepository {
     return this.goalCache.get(sessionId) ?? goals
   }
 
-  public async create(sessionId: string, title: string, signal?: AbortSignal): Promise<GoalView> {
+  public async create(
+    sessionId: string,
+    title: string,
+    signal?: AbortSignal,
+    maxGoalRounds?: number,
+  ): Promise<GoalView> {
     const value = assertGoalRefReceipt(
-      await callRpc<unknown>(this.transport, 'goal.create', { sessionId, objective: title }, signal),
+      await callRpc<unknown>(
+        this.transport,
+        'goal.create',
+        { sessionId, objective: title, ...(maxGoalRounds === undefined ? {} : { maxGoalRounds }) },
+        signal,
+      ),
       'create',
     )
     this.refs.set(value.id, { sessionId, id: value.id, revision: value.revision })
-    const goal = { id: value.id, title, status: 'in-progress' as const }
+    const goal = {
+      id: value.id,
+      title,
+      status: 'in-progress' as const,
+      ...(maxGoalRounds === undefined ? {} : { maxGoalRounds }),
+    }
     const cached = this.goalCache.get(sessionId)
     // The host's goal.updated event can land before the HTTP receipt resolves
     // (mux vs HTTP ordering is not guaranteed); never append a second copy.
@@ -96,14 +126,15 @@ export class Rc6GoalRepository implements GoalRepository {
 
   public async update(
     goalId: string,
-    update: Partial<Pick<GoalView, 'title' | 'status'>>,
+    update: Partial<Pick<GoalView, 'title' | 'status' | 'maxGoalRounds'>>,
     signal?: AbortSignal,
   ): Promise<void> {
     const ref = this.refs.get(goalId)
     if (ref === undefined) throw unavailable('goal update without a current session revision')
-    if (update.title !== undefined && update.status !== undefined)
+    const editRequested = update.title !== undefined || update.maxGoalRounds !== undefined
+    if (editRequested && update.status !== undefined)
       throw unavailable('combined goal title and status edits')
-    if (update.title !== undefined) {
+    if (editRequested) {
       const value = assertGoalRefReceipt(
         await callRpc<unknown>(
           this.transport,
@@ -111,7 +142,8 @@ export class Rc6GoalRepository implements GoalRepository {
           {
             sessionId: ref.sessionId,
             ref: { id: ref.id, revision: ref.revision },
-            objective: update.title,
+            ...(update.title === undefined ? {} : { objective: update.title }),
+            ...(update.maxGoalRounds === undefined ? {} : { maxGoalRounds: update.maxGoalRounds }),
           },
           signal,
         ),
@@ -119,7 +151,10 @@ export class Rc6GoalRepository implements GoalRepository {
       )
       assertSameGoalRef(ref, value, 'edit')
       ref.revision = value.revision
-      this.patchCachedGoal(ref.sessionId, ref.id, { title: update.title })
+      this.patchCachedGoal(ref.sessionId, ref.id, {
+        ...(update.title === undefined ? {} : { title: update.title }),
+        ...(update.maxGoalRounds === undefined ? {} : { maxGoalRounds: update.maxGoalRounds }),
+      })
     }
     if (update.status === 'completed') {
       const value = assertGoalRefReceipt(
@@ -195,15 +230,8 @@ export class Rc6GoalRepository implements GoalRepository {
 }
 
 function goalViewsFromProjection(value: unknown): readonly GoalView[] | undefined {
-  if (value === null) return []
-  const values = asRecord(value)
-  if (values === undefined) return undefined
-  if (values.goal === null) return []
-  const projection = asRecord(values.goal)
-  if (projection === undefined) return undefined
-  const goalValue = projection.goal === null ? null : (projection.goal ?? projection)
-  if (goalValue === null) return []
-  const goal = asRecord(goalValue)
+  const goal = goalSnapshotFromProjection(value)
+  if (goal === null) return []
   if (goal === undefined) return undefined
   const id = typeof goal.id === 'string' ? goal.id : undefined
   const title =
@@ -214,7 +242,9 @@ function goalViewsFromProjection(value: unknown): readonly GoalView[] | undefine
         : undefined
   const phase = goal.phase
   const status = goal.status
+  const maxGoalRounds = goal.maxGoalRounds === undefined ? undefined : positiveSafeInteger(goal.maxGoalRounds)
   if (id === undefined || id.trim() === '' || title === undefined || title.trim() === '') return undefined
+  if (goal.maxGoalRounds !== undefined && maxGoalRounds === undefined) return undefined
   if (
     status !== undefined &&
     status !== 'pending' &&
@@ -235,7 +265,11 @@ function goalViewsFromProjection(value: unknown): readonly GoalView[] | undefine
             ? 'completed'
             : undefined)
   if (mappedStatus === undefined) return undefined
-  return [{ id, title, status: mappedStatus }]
+  return [{ id, title, status: mappedStatus, ...(maxGoalRounds === undefined ? {} : { maxGoalRounds }) }]
+}
+
+function positiveSafeInteger(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined
 }
 
 function assertGoalRefReceipt(
@@ -278,30 +312,39 @@ function malformedGoalResponse(part: string): AppError {
   })
 }
 
-function rememberProjectionRefs(
+function replaceProjectionRefs(
   refs: Map<string, { readonly sessionId: string; readonly id: string; revision: number }>,
   sessionId: string,
   value: unknown,
-  depth = 0,
 ): void {
-  if (depth > 4 || value === null || typeof value !== 'object') return
-  if (Array.isArray(value)) {
-    for (const entry of value) rememberProjectionRefs(refs, sessionId, entry, depth + 1)
-    return
-  }
-  const record = value as Record<string, unknown>
-  if (depth === 0) {
-    for (const [key, entry] of Object.entries(record))
-      if (/^goals?$/i.test(key)) rememberProjectionRefs(refs, sessionId, entry, depth + 1)
-    return
-  }
-  const revision = record.revision
+  clearProjectionRefs(refs, sessionId)
+  const goal = goalSnapshotFromProjection(value)
+  if (goal === undefined || goal === null) return
+  const revision = goal.revision
   if (
-    typeof record.id === 'string' &&
+    typeof goal.id === 'string' &&
     typeof revision === 'number' &&
     Number.isInteger(revision) &&
     revision >= 1
   )
-    refs.set(record.id, { sessionId, id: record.id, revision })
-  for (const entry of Object.values(record)) rememberProjectionRefs(refs, sessionId, entry, depth + 1)
+    refs.set(goal.id, { sessionId, id: goal.id, revision })
+}
+
+function clearProjectionRefs(
+  refs: Map<string, { readonly sessionId: string; readonly id: string; revision: number }>,
+  sessionId: string,
+): void {
+  for (const [goalId, ref] of refs) if (ref.sessionId === sessionId) refs.delete(goalId)
+}
+
+function goalSnapshotFromProjection(value: unknown): Record<string, unknown> | null | undefined {
+  if (value === null) return null
+  const values = asRecord(value)
+  if (values === undefined || !Object.prototype.hasOwnProperty.call(values, 'goal')) return undefined
+  if (values.goal === null) return null
+  const projection = asRecord(values.goal)
+  if (projection === undefined) return undefined
+  if (!Object.prototype.hasOwnProperty.call(projection, 'goal')) return projection
+  if (projection.goal === null) return null
+  return asRecord(projection.goal)
 }

@@ -46,6 +46,7 @@ describe('DeepSeek Harness 0.1.0-rc.6 contract', () => {
       'approval/resolved',
       'question/resolved',
       'session/projection',
+      'goal/change',
       'host/session-added',
       'host/workspace-removed',
       'host/remote-event',
@@ -56,6 +57,145 @@ describe('DeepSeek Harness 0.1.0-rc.6 contract', () => {
       'question/requested',
       'session/jobs',
     ])
+  })
+
+  it('maps the pinned goal/change full snapshot and clear tombstone', () => {
+    const phases = [
+      ['active', 'in-progress'],
+      ['paused', 'pending'],
+      ['blocked', 'blocked'],
+      ['complete', 'completed'],
+    ] as const
+
+    for (const [phase, status] of phases) {
+      expect(
+        rc6Mapper.event('goal/change', {
+          sessionId: 's1',
+          data: {
+            kind: 'goal/change',
+            version: 1,
+            operation: 'edit',
+            goal: {
+              id: 'goal-1',
+              revision: 2,
+              objective: 'Finish the adapter',
+              phase,
+              maxGoalRounds: 3,
+              ...(phase === 'blocked'
+                ? { blockedReason: { code: 'awaiting-input', message: 'Waiting for user input' } }
+                : {}),
+            },
+            roundsStarted: 1,
+            createdAt: 1,
+            updatedAt: 2,
+          },
+        }),
+      ).toEqual({
+        type: 'goal.updated',
+        sessionId: 's1',
+        goals: [{ id: 'goal-1', title: 'Finish the adapter', status, maxGoalRounds: 3 }],
+      })
+    }
+
+    expect(
+      rc6Mapper.event('goal/change', {
+        sessionId: 's1',
+        data: {
+          kind: 'goal/change',
+          version: 1,
+          operation: 'clear',
+          cleared: { id: 'goal-1', revision: 3 },
+          clearedAt: 3,
+        },
+      }),
+    ).toEqual({ type: 'goal.updated', sessionId: 's1', goals: [] })
+
+    expect(() =>
+      rc6Mapper.event('goal/change', {
+        sessionId: 's1',
+        data: { kind: 'goal/change', version: 1, operation: 'edit' },
+      }),
+    ).toThrow(/goal\/change envelope/)
+
+    expect(() =>
+      rc6Mapper.event('goal/change', {
+        sessionId: 's1',
+        data: { operation: 'edit', goal: { id: 'goal-1', objective: 'missing envelope' } },
+      }),
+    ).toThrow(/goal\/change envelope/)
+
+    expect(() =>
+      rc6Mapper.event('goal/change', {
+        sessionId: 's1',
+        data: {
+          kind: 'goal/change',
+          version: 1,
+          operation: 'clear',
+          cleared: { id: 'goal-1', revision: 3 },
+          clearedAt: -1,
+        },
+      }),
+    ).toThrow(/clear tombstone/)
+
+    const malformedGoal = {
+      id: 'goal-1',
+      revision: 2,
+      objective: 'Finish the adapter',
+      phase: 'active',
+      maxGoalRounds: 3,
+    }
+    for (const goal of [
+      { ...malformedGoal, objective: undefined },
+      { ...malformedGoal, phase: 'future' },
+      { ...malformedGoal, maxGoalRounds: 0 },
+      { ...malformedGoal, phase: 'blocked' },
+    ]) {
+      expect(() =>
+        rc6Mapper.event('goal/change', {
+          sessionId: 's1',
+          data: {
+            kind: 'goal/change',
+            version: 1,
+            operation: 'edit',
+            goal,
+            roundsStarted: 1,
+            createdAt: 1,
+            updatedAt: 2,
+          },
+        }),
+      ).toThrow(/Malformed goal\/change goal/)
+    }
+  })
+
+  it('fails closed on malformed session queue items instead of silently dropping them', () => {
+    const validMessage = {
+      id: 'message-1',
+      role: 'user',
+      content: [{ type: 'text', text: 'queued' }],
+      source: { kind: 'user' },
+    }
+    const malformedItems = [
+      { id: '', placement: 'queued', message: validMessage },
+      { id: 'queue-1', placement: 'queued', message: { ...validMessage, content: 'queued' } },
+      { id: 'queue-1', placement: 'unknown', message: validMessage },
+      { id: 'queue-1', placement: 'queued', message: { ...validMessage, source: undefined } },
+      {
+        id: 'queue-1',
+        placement: 'queued',
+        message: {
+          ...validMessage,
+          content: [{ type: 'image', attachment: { attachmentId: 'image-1' } }],
+        },
+      },
+    ]
+    for (const item of malformedItems) {
+      expect(() =>
+        rc6Mapper.event('session/queue', {
+          sessionId: 's1',
+          data: { items: [item] },
+        }),
+      ).toThrow(/Malformed session\/queue item/)
+    }
   })
 
   it('maps official host and mux event families without parsing terminal output', () => {
@@ -106,6 +246,17 @@ describe('DeepSeek Harness 0.1.0-rc.6 contract', () => {
         declared: false,
       }),
     ).toMatchObject({ configurable: true, declared: false })
+  })
+
+  it('does not filter malformed provider settingsPath segments', () => {
+    expect(() =>
+      rc6Mapper.provider({
+        provider: 'gateway',
+        displayName: 'Gateway',
+        settingsNs: 'llm-pi-ai',
+        settingsPath: ['providers', {}],
+      }),
+    ).toThrow(/provider settingsPath/)
   })
 
   it('preserves official step and event timestamps for timing consumers', () => {
@@ -236,6 +387,36 @@ describe('DeepSeek Harness 0.1.0-rc.6 contract', () => {
         outputSummary: '[truncated]',
       },
     })
+  })
+
+  it('uses replayed tool-result text instead of rendering a structured error identity as JSON', () => {
+    const mapped = rc6Mapper.event('tool/result', {
+      sessionId: 's1',
+      data: {
+        callId: 'call-structured-error',
+        error: { name: 'AttachmentError', code: 'MODEL_DOES_NOT_SUPPORT_IMAGES' },
+        message: {
+          content: [
+            {
+              type: 'tool-result',
+              toolCallId: 'call-structured-error',
+              isError: true,
+              content: [{ type: 'text', text: 'The selected DSH model does not support image input.' }],
+            },
+          ],
+        },
+      },
+    })
+
+    expect(mapped).toMatchObject({
+      type: 'tool.updated',
+      tool: {
+        id: 'call-structured-error',
+        status: 'failed',
+        error: 'The selected DSH model does not support image input.',
+      },
+    })
+    expect(JSON.stringify(mapped)).not.toContain('AttachmentError')
   })
 
   it('projects the pinned upstream image attachment reference without leaking image bytes', () => {
@@ -508,7 +689,12 @@ describe('DeepSeek Harness 0.1.0-rc.6 contract', () => {
               type: 'user/message',
               seq: 4,
               time: '2026-01-01T00:00:00.000Z',
-              data: { message: { id: 'm1', content: [{ type: 'text', text: 'Hello' }] } },
+              data: {
+                id: 'm1',
+                role: 'user',
+                content: [{ type: 'text', text: 'Hello' }],
+                source: { kind: 'user' },
+              },
             },
           },
         ],
@@ -521,6 +707,23 @@ describe('DeepSeek Harness 0.1.0-rc.6 contract', () => {
       messageId: 'm1',
       markdown: 'Hello',
     })
+    const malformed = rc6Mapper.history(
+      {
+        events: [
+          {
+            event: {
+              type: 'assistant/message',
+              seq: 5,
+              time: '2026-01-01T00:00:01.000Z',
+              data: { turn: 1, step: 1, markdown: 'not canonical' },
+            },
+          },
+        ],
+        hasMore: false,
+      },
+      's1',
+    )
+    expect(malformed.events[0]?.event).toMatchObject({ type: 'unknown', name: 'assistant/message' })
     expect(
       rc6Mapper.event('question/requested', {
         rpcId: 'rpc-question',
@@ -571,20 +774,37 @@ describe('DeepSeek Harness 0.1.0-rc.6 contract', () => {
         ],
       },
     })
-    // Unknown intent tags degrade to the generic flow (upstream contract:
-    // a UI that does not know a tag renders the generic option list).
-    const unknownIntent = rc6Mapper.event('question/requested', {
-      rpcId: 'rpc-unknown-intent',
-      sessionId: 's1',
-      questions: [{ id: 'q9', question: 'Pick', intent: { kind: 'future-tag' } }],
-    })
-    expect(unknownIntent).toMatchObject({
-      type: 'question.requested',
-      question: { id: 'q9', items: [{ id: 'q9' }] },
-    })
-    expect(
-      unknownIntent.type === 'question.requested' && unknownIntent.question.items?.[0]?.intent,
-    ).toBeUndefined()
+    expect(() => rc6Mapper.event('question/requested', { rpcId: 'rpc-missing', sessionId: 's1' })).toThrow(
+      /Malformed question\/requested questions/,
+    )
+    expect(() =>
+      rc6Mapper.event('question/requested', {
+        rpcId: 'rpc-empty',
+        sessionId: 's1',
+        questions: [],
+      }),
+    ).toThrow(/Malformed question\/requested questions/)
+    expect(() =>
+      rc6Mapper.event('question/requested', {
+        rpcId: 'rpc-item',
+        sessionId: 's1',
+        questions: [{ id: 'q1' }],
+      }),
+    ).toThrow(/Malformed question id or question/)
+    expect(() =>
+      rc6Mapper.event('question/requested', {
+        rpcId: 'rpc-options',
+        sessionId: 's1',
+        questions: [{ id: 'q1', question: 'Pick', options: [{}] }],
+      }),
+    ).toThrow(/Malformed question option label/)
+    expect(() =>
+      rc6Mapper.event('question/requested', {
+        rpcId: 'rpc-intent',
+        sessionId: 's1',
+        questions: [{ id: 'q1', question: 'Pick', intent: { kind: 'future-tag' } }],
+      }),
+    ).toThrow(/Malformed question intent/)
     expect(
       rc6Mapper.event('session/jobs', {
         sessionId: 's1',
@@ -670,11 +890,79 @@ describe('DeepSeek Harness 0.1.0-rc.6 contract', () => {
           {
             id: 'queued-1',
             placement: 'steering',
-            message: { content: [{ type: 'text', text: 'Steer' }] },
+            message: {
+              id: 'queued-message-1',
+              role: 'user',
+              content: [
+                { type: 'text', text: 'Steer' },
+                {
+                  type: 'image',
+                  attachment: {
+                    attachmentId: 'image-1',
+                    mediaType: 'image/png',
+                    bytes: 4,
+                    width: 2,
+                    height: 2,
+                    name: 'diagram.png',
+                  },
+                },
+              ],
+              source: { kind: 'user' },
+            },
           },
         ],
       }),
-    ).toMatchObject({ type: 'queue.updated', items: [{ id: 'queued-1', mode: 'steer', text: 'Steer' }] })
+    ).toMatchObject({
+      type: 'queue.updated',
+      items: [
+        {
+          id: 'queued-1',
+          mode: 'steer',
+          text: 'Steer',
+          images: [
+            {
+              attachmentId: 'image-1',
+              mediaType: 'image/png',
+              bytes: 4,
+              width: 2,
+              height: 2,
+              name: 'diagram.png',
+            },
+          ],
+        },
+      ],
+    })
+  })
+
+  it('does not filter malformed session detail goal IDs into a smaller list', () => {
+    expect(() =>
+      rc6Mapper.sessionDetail({
+        sessionId: 's1',
+        updatedAt: 1_700_000_000_000,
+        running: false,
+        blank: false,
+        configuration: {
+          preset: 'standard',
+          toolMode: 'native',
+          permissionPreset: 'workspace-write',
+          planMode: false,
+          model: { providerId: 'provider-1', modelId: 'model-1' },
+        },
+        goalIds: ['goal-1', 42],
+      }),
+    ).toThrow(/Malformed session goalIds/)
+  })
+
+  it('does not synthesize history sequence or time when those fields are explicitly malformed', () => {
+    for (const event of [
+      { type: 'turn/start', seq: '1', time: 1 },
+      { type: 'turn/start', seq: 1, time: null },
+      { type: 'turn/start', seq: 1, time: Number.MAX_VALUE },
+    ]) {
+      expect(() => rc6Mapper.history({ events: [{ event }], hasMore: false }, 's1')).toThrow(
+        /Malformed session history (sequence|time)/,
+      )
+    }
   })
 
   it('answers a pending question with the server rpc id and option label only once', async () => {
@@ -911,5 +1199,129 @@ describe('rc6 queue frame degradation', () => {
     expect(() => rc6Mapper.event('session/queue', { sessionId: 's1' })).toThrow(
       /Malformed session\/queue items/,
     )
+  })
+
+  it('rejects malformed host/session-added frames instead of dropping required fields', () => {
+    expect(() => rc6Mapper.event('host/session-added', { sessionId: 's1' })).toThrow(
+      'Malformed host/session-added',
+    )
+    expect(() =>
+      rc6Mapper.event('host/session-added', { sessionId: 's1', blank: true, parentSessionId: '' }),
+    ).toThrow('Malformed host/session-added')
+    expect(() =>
+      rc6Mapper.event('host/session-added', { sessionId: 's1', blank: true, origin: 'other' }),
+    ).toThrow('Malformed host/session-added')
+  })
+})
+
+describe('rc6 host snapshot frame degradation', () => {
+  it('rejects malformed order and archive snapshots instead of filtering them into partial state', () => {
+    expect(() => rc6Mapper.event('host/workspace-order-changed', { workspaceIds: ['w1', 3] })).toThrow(
+      /Malformed workspace order/,
+    )
+    expect(() => rc6Mapper.event('host/archived-sessions-changed', { sessionIds: ['s1', ''] })).toThrow(
+      /Malformed archived session ids/,
+    )
+    expect(() => rc6Mapper.event('host/workspace-order-changed', {})).toThrow(/Malformed workspace order/)
+  })
+})
+
+describe('rc6 stateful frame degradation', () => {
+  it('rejects malformed subscription and projection coordinates instead of manufacturing defaults', () => {
+    expect(rc6Mapper.event('session/subscribed', { sessionId: 's1', lastSeq: -1 })).toMatchObject({
+      type: 'session.subscribed',
+      lastSequence: -1,
+    })
+    for (const value of [
+      { sessionId: 's1', lastSeq: undefined },
+      { sessionId: 's1', lastSeq: '2' },
+      { sessionId: 's1', lastSeq: -2 },
+      { lastSeq: 2 },
+    ]) {
+      expect(() => rc6Mapper.event('session/subscribed', value)).toThrow(
+        /Malformed session\/subscribed lastSeq/,
+      )
+    }
+    for (const value of [
+      { sessionId: 's1', key: '', seq: 1, value: {} },
+      { sessionId: 's1', key: 'goal', seq: '1', value: {} },
+      { sessionId: 's1', key: 'goal', seq: -1, value: {} },
+      { sessionId: 's1', key: 'goal', value: {} },
+      { sessionId: 's1', key: 'goal', seq: 1 },
+    ]) {
+      expect(() => rc6Mapper.event('session/projection', value)).toThrow(/Malformed session\/projection/)
+    }
+  })
+
+  it('rejects malformed interaction and host notice frames instead of clearing or inventing state', () => {
+    expect(() =>
+      rc6Mapper.event('approval/requested', { sessionId: 's1', approvalId: '', toolName: 'shell' }),
+    ).toThrow(/Malformed approval\/requested/)
+    expect(() =>
+      rc6Mapper.event('approval/requested', { sessionId: 's1', approvalId: 'a1', toolName: 1 }),
+    ).toThrow(/Malformed approval\/requested/)
+    expect(() =>
+      rc6Mapper.event('approval/resolved', { sessionId: 's1', approvalId: 'a1', outcome: 'future' }),
+    ).toThrow(/Malformed approval\/resolved/)
+    expect(() => rc6Mapper.event('approval/resolved', { sessionId: 's1', outcome: 'rejected' })).toThrow(
+      /Malformed approval\/resolved/,
+    )
+    expect(() =>
+      rc6Mapper.event('question/resolved', { sessionId: 's1', questionRpcId: '', outcome: 'answered' }),
+    ).toThrow(/Malformed question\/resolved/)
+    expect(() =>
+      rc6Mapper.event('question/resolved', { sessionId: 's1', questionRpcId: 'q1', outcome: 'future' }),
+    ).toThrow(/Malformed question\/resolved/)
+    expect(() => rc6Mapper.event('host/session-status', { sessionId: 's1' })).toThrow(
+      /Malformed host\/session-status/,
+    )
+    expect(() => rc6Mapper.event('host/session-removed', {})).toThrow(/Malformed host\/session-removed/)
+    expect(() => rc6Mapper.event('host/remote-event', { event: '', args: [] })).toThrow(
+      /Malformed host\/remote-event/,
+    )
+    expect(() => rc6Mapper.event('host/remote-event', { event: 'safe', args: {} })).toThrow(
+      /Malformed host\/remote-event/,
+    )
+    expect(() => rc6Mapper.event('host/agent-error', { sessionId: 's1' })).toThrow(
+      /Malformed host\/agent-error/,
+    )
+  })
+})
+
+describe('rc6 todo frame degradation', () => {
+  it('maps the whole-list snapshot and fails closed on malformed lists or entries', () => {
+    expect(
+      rc6Mapper.event('todo/write', {
+        sessionId: 's1',
+        todos: [
+          { content: 'Inspect the contract', status: 'in_progress' },
+          { content: 'Write the regression', status: 'pending' },
+        ],
+      }),
+    ).toEqual({
+      type: 'todo.updated',
+      sessionId: 's1',
+      todos: [
+        { id: 'todo:0', content: 'Inspect the contract', status: 'in-progress' },
+        { id: 'todo:1', content: 'Write the regression', status: 'pending' },
+      ],
+    })
+
+    expect(() => rc6Mapper.event('todo/write', { sessionId: 's1' })).toThrow(/Malformed todo\/write todos/)
+    expect(() => rc6Mapper.event('todo/write', { sessionId: 's1', todos: {} })).toThrow(
+      /Malformed todo\/write todos/,
+    )
+    expect(() =>
+      rc6Mapper.event('todo/write', {
+        sessionId: 's1',
+        todos: [{ status: 'pending' }],
+      }),
+    ).toThrow(/Malformed todo content/)
+    expect(() =>
+      rc6Mapper.event('todo/write', {
+        sessionId: 's1',
+        todos: [{ content: 'broken', status: 'future' }],
+      }),
+    ).toThrow(/Malformed todo status/)
   })
 })

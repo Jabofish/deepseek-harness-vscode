@@ -457,6 +457,30 @@ describe('AppStore startup session restoration', () => {
     store.dispose()
   })
 
+  it('does not apply a partially malformed session configuration patch', async () => {
+    const client = new StartupClient()
+    const store = createAppStore(client as unknown as ProtocolClient)
+    await store.initialize()
+
+    const configuration = store.configuration
+    client.emit({
+      type: 'event',
+      name: 'session.configuration',
+      sequence: 1,
+      payload: {
+        sessionId: 'session-active',
+        patch: { model: { providerId: 3, modelId: 'wrong-provider-shape' } },
+      },
+    })
+    await new Promise((resolve) => window.setTimeout(resolve, 24))
+
+    expect(store.configuration).toBe(configuration)
+    expect(store.configuration).toMatchObject({
+      model: { providerId: 'deepseek', modelId: 'deepseek-chat' },
+    })
+    store.dispose()
+  })
+
   it('opens a durable workspace session when the session summary projection is temporarily empty', async () => {
     const client = new StartupClient((request) => {
       if (request.type === 'session.list') return { items: [] }
@@ -633,6 +657,68 @@ describe('AppStore startup session restoration', () => {
     store.dispose()
   })
 
+  it('preserves a skill whenToUse hint when building the command directory', async () => {
+    const client = new StartupClient((request) => {
+      if (request.type === 'command.list') return []
+      if (request.type === 'skill.list')
+        return [
+          {
+            id: 'code-review',
+            name: 'code-review',
+            description: 'Review changes.',
+            whenToUse: 'Use for focused review requests.',
+            source: 'project',
+            enabled: true,
+          },
+        ]
+      return startupResponse(request)
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+
+    await store.openSession('session-active')
+    await vi.waitFor(() =>
+      expect(store.commands.find((command) => command.name === 'code-review')).toMatchObject({
+        whenToUse: 'Use for focused review requests.',
+      }),
+    )
+    store.dispose()
+  })
+
+  it('does not publish a partial command directory when a returned row is malformed', async () => {
+    const client = new StartupClient((request) => {
+      if (request.type === 'command.list')
+        return [
+          { name: 'valid-command', description: 'Valid command.' },
+          { name: 'broken-command', description: 3 },
+        ]
+      if (request.type === 'skill.list')
+        return [
+          {
+            id: 'valid-skill',
+            name: 'valid-skill',
+            description: 'Valid skill.',
+            source: 'project',
+            enabled: true,
+          },
+          {
+            id: 'broken-skill',
+            name: '',
+            description: 'Broken skill.',
+            source: 'project',
+            enabled: true,
+          },
+        ]
+      return startupResponse(request)
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+
+    await store.openSession('session-active')
+    await new Promise((resolve) => window.setTimeout(resolve, 0))
+
+    expect(store.commands).toEqual([])
+    store.dispose()
+  })
+
   it('opens the remembered session before global catalogs finish loading', async () => {
     let releaseProviders: ((value: readonly unknown[]) => void) | undefined
     const providers = new Promise<readonly unknown[]>((resolve) => {
@@ -691,6 +777,26 @@ describe('AppStore startup session restoration', () => {
     await store.refreshSessions()
 
     expect(store.sessions).toEqual([activeSession])
+    store.dispose()
+  })
+
+  it('does not partially apply malformed session or workspace snapshots', async () => {
+    const client = new StartupClient((request) => {
+      if (request.type === 'session.list')
+        return { items: [activeSession, { ...activeSession, id: 'malformed', status: 'future' }] }
+      if (request.type === 'workspace.list')
+        return {
+          items: [workspace, { ...workspace, id: 'malformed', sessionCount: -1 }],
+          archivedSessionIds: [],
+        }
+      return startupResponse(request)
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+
+    await store.refreshSessions()
+
+    expect(store.sessions).toEqual([])
+    expect(store.workspaces).toEqual([])
     store.dispose()
   })
 
@@ -941,6 +1047,37 @@ describe('AppStore startup session restoration', () => {
     expect(store.providers).toBe(providers)
     expect(store.models).toBe(models)
     expect(listener).not.toHaveBeenCalled()
+    store.dispose()
+  })
+
+  it('keeps valid live providers when one upstream directory row is malformed', async () => {
+    const liveProvider = {
+      id: 'deepseek-official',
+      name: 'DeepSeek',
+      kind: 'llm-deepseek',
+      configurable: true,
+      active: true,
+      settingsNs: 'llm-deepseek',
+      settingsPath: [],
+      fields: [],
+    }
+    const malformedProvider = {
+      id: 'broken-catalog-row',
+      name: 'Broken catalog row',
+      kind: 'llm-pi-ai',
+      configurable: true,
+      fields: [{ key: 'api', label: 'API', secret: false, required: 'yes' }],
+    }
+    const client = new StartupClient((request) => {
+      if (request.type === 'providers.list') return [liveProvider, malformedProvider]
+      if (request.type === 'models.list') return []
+      return startupResponse(request)
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+
+    await store.refreshModelCatalog()
+
+    expect(store.providers).toEqual([liveProvider])
     store.dispose()
   })
 })

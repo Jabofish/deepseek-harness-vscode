@@ -26,6 +26,8 @@ export interface SkillDescriptor {
   readonly id: string
   readonly name: string
   readonly description: string
+  /** Optional host-provided routing guidance for when the skill applies. */
+  readonly whenToUse?: string
   readonly source: 'project' | 'user' | 'plugin'
   readonly enabled: boolean
 }
@@ -33,6 +35,8 @@ export interface SkillDescriptor {
 export interface DynamicCommand {
   readonly name: string
   readonly description: string
+  /** Optional routing guidance preserved when a skill becomes a command. */
+  readonly whenToUse?: string
   readonly input?: { readonly hint: string; readonly images?: boolean }
   /** Optional client-side origin; the official command directory does not require it. */
   readonly source?: 'builtin' | 'skill' | 'plugin'
@@ -163,6 +167,8 @@ export interface DshSettingsSchema {
 export interface DshSettingsNamespaceMeta {
   readonly ns: string
   readonly applies: 'live' | 'restart'
+  /** Compare-and-swap token returned by the pinned settings descriptor. */
+  readonly revision: number
   readonly userFields: readonly string[]
   readonly secrets: readonly { readonly field: string; readonly set: boolean }[]
 }

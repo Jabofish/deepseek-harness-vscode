@@ -81,6 +81,7 @@ describe('Rc6SettingsRepository schema namespaces', () => {
     expect(shell).toEqual({
       ns: 'shell',
       applies: 'live',
+      revision: 4,
       userFields: ['timeoutMs'],
       secrets: [],
     })
@@ -122,7 +123,9 @@ describe('Rc6SettingsRepository schema namespaces', () => {
 
     const schema = await repository.schema()
 
-    expect(schema.namespaces).toEqual([{ ns: 'agent-loop', applies: 'restart', userFields: [], secrets: [] }])
+    expect(schema.namespaces).toEqual([
+      { ns: 'agent-loop', applies: 'restart', revision: 1, userFields: [], secrets: [] },
+    ])
   })
 
   it('decodes the pinned Schemastery union envelope into a required enum row', async () => {
@@ -251,6 +254,48 @@ describe('Rc6SettingsRepository unset', () => {
     await expect(repository.update('shell.timeoutMs', 30_000)).rejects.toMatchObject({
       code: 'PERMISSION_DENIED',
     })
+    expect(calls.map((call) => call.method)).toEqual(['settings.describe'])
+  })
+})
+
+describe('Rc6SettingsRepository mutate', () => {
+  it('forwards an atomic set batch and the caller supplied compare-and-swap revision', async () => {
+    const calls: Call[] = []
+    const repository = new Rc6SettingsRepository(
+      transportFor(
+        {
+          'settings.describe': DESCRIBE_FIXTURE,
+          'settings.mutate': DESCRIBE_FIXTURE.namespaces[0],
+        },
+        calls,
+      ),
+    )
+
+    await repository.mutate(
+      'shell',
+      [{ op: 'set', path: ['provider', 'gateway'], value: { api: 'openai-completions' } }],
+      12,
+    )
+
+    expect(calls.at(-1)).toEqual({
+      method: 'settings.mutate',
+      params: {
+        ns: 'shell',
+        ops: [{ op: 'set', path: ['provider', 'gateway'], value: { api: 'openai-completions' } }],
+        expectedRevision: 12,
+      },
+    })
+  })
+
+  it('rejects a secret marker in a generic mutation before writing it', async () => {
+    const calls: Call[] = []
+    const repository = new Rc6SettingsRepository(
+      transportFor({ 'settings.describe': DESCRIBE_FIXTURE }, calls),
+    )
+
+    await expect(
+      repository.mutate('web-search-deepseek', [{ op: 'set', path: ['apiKeyEnv'], value: '[configured]' }]),
+    ).rejects.toThrow(/credential surface/i)
     expect(calls.map((call) => call.method)).toEqual(['settings.describe'])
   })
 })

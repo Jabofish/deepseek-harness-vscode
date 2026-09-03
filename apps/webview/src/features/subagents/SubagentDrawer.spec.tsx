@@ -91,6 +91,34 @@ describe('SubagentDrawer tree', () => {
     await waitFor(() => expect(screen.getByText('2K tok · 2m 05s')).toBeDefined())
   })
 
+  it('does not use settled time when the active timing interval is malformed', async () => {
+    const summary: SessionSummary = {
+      id: 'c1',
+      workspaceId: 'w1',
+      title: 'Researcher',
+      blank: false,
+      status: 'completed',
+      createdAt: '',
+      updatedAt: '',
+      projection: {
+        asOfSequence: 8,
+        values: { subagentTiming: { settledMs: 125_000, active: { since: 1_000 } } },
+      },
+    }
+    render(
+      <SubagentDrawer
+        parentSessionId="root"
+        catalog={catalog([child({ id: 'c1', label: 'Researcher' })])}
+        summaries={[summary]}
+        onLoadChildren={vi.fn()}
+        onOpenChild={vi.fn()}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Subagents: 1' }))
+    await waitFor(() => expect(screen.queryByText('2m 05s')).toBeNull())
+  })
+
   it('positions the catalog as a viewport-clamped floating menu', () => {
     render(
       <SubagentDrawer

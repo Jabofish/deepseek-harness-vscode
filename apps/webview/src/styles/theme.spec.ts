@@ -41,4 +41,11 @@ describe('Webview theme contract', () => {
     expect(themeStyles).toContain('::-webkit-scrollbar-thumb:hover')
     expect(themeStyles).toContain('--dsh-theme-scrollbar-thumb: #b7bec9;')
   })
+
+  it('keeps provider protocol menus inside the themed control surface', () => {
+    expect(appStyles).toMatch(
+      /\.dsh-settings__provider-api-select,\s*\.dsh-settings__provider-api-select \.dsh-select-menu__trigger\s*\{\s*width: 100%;/u,
+    )
+    expect(appStyles).toContain('background: var(--dsh-control-background);')
+  })
 })

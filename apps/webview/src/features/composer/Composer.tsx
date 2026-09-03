@@ -70,7 +70,7 @@ export interface ComposerProps {
   readonly disabled: boolean
   /** Disable human input while leaving an active turn's Stop action enabled. */
   readonly inputDisabled?: boolean
-  /** The pinned subagent continuation contract accepts text only. */
+  /** Disable inline attachments when the selected subagent contract cannot accept them. */
   readonly attachmentsDisabled?: boolean
   readonly running: boolean
   readonly draft: string

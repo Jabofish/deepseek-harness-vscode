@@ -32,10 +32,11 @@ export class Rc6MessageFeedbackRepository implements MessageFeedbackRepository {
       )
       const record = asRecord(value)
       if (!Array.isArray(record?.items)) throw malformed('message feedback list')
-      return record.items.flatMap((item) => {
+      return record.items.map((item) => {
         const parsed = parseItem(item)
-        if (parsed !== undefined) this.versions.set(`${sessionId}:${parsed.messageId}`, parsed.version)
-        return parsed === undefined ? [] : [parsed]
+        if (parsed === undefined) throw malformed('message feedback item')
+        this.versions.set(`${sessionId}:${parsed.messageId}`, parsed.version)
+        return parsed
       })
     } catch (error) {
       if (isOptionalUnavailable(error)) return []
@@ -135,7 +136,10 @@ export class Rc6MessageFeedbackRepository implements MessageFeedbackRepository {
 }
 
 function parseItem(value: unknown): MessageFeedbackItem | undefined {
+  if (value === null || value === undefined) return undefined
   const record = asRecord(value)
+  const createdAt = record?.createdAt
+  const updatedAt = record?.updatedAt
   if (
     record === undefined ||
     typeof record.messageId !== 'string' ||
@@ -143,18 +147,19 @@ function parseItem(value: unknown): MessageFeedbackItem | undefined {
     (record.rating !== 'positive' && record.rating !== 'negative') ||
     typeof record.version !== 'string' ||
     record.version.trim() === '' ||
-    (record.note !== undefined && typeof record.note !== 'string') ||
-    (record.createdAt !== undefined && !safeTime(record.createdAt)) ||
-    (record.updatedAt !== undefined && !safeTime(record.updatedAt))
+    (record.note !== undefined && (typeof record.note !== 'string' || record.note.trim() === '')) ||
+    !safeTime(createdAt) ||
+    !safeTime(updatedAt) ||
+    updatedAt < createdAt
   )
-    return undefined
+    throw malformed('message feedback item')
   return {
     messageId: record.messageId,
     rating: record.rating,
     ...(record.note === undefined ? {} : { note: record.note }),
     version: record.version,
-    ...(record.createdAt === undefined ? {} : { createdAt: record.createdAt }),
-    ...(record.updatedAt === undefined ? {} : { updatedAt: record.updatedAt }),
+    createdAt,
+    updatedAt,
   }
 }
 

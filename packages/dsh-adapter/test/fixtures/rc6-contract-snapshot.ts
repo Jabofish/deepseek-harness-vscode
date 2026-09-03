@@ -66,6 +66,7 @@ export const RC6_STRUCTURED_EVENT_FAMILIES = [
   'approval/resolved',
   'question/resolved',
   'session/projection',
+  'goal/change',
   'host/session-added',
   'host/workspace-removed',
   'host/remote-event',

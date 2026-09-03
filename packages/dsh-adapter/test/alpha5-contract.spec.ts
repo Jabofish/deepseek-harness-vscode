@@ -18,11 +18,15 @@ function candidate(runtimeVersion: string): BackendCandidate {
 }
 
 function response(init: RequestInit | undefined, result: unknown): Response {
-  if (typeof init?.body !== 'string') throw new Error('test request body is not a string')
-  const request = JSON.parse(init.body) as { readonly rpcId?: string }
+  const request = JSON.parse(bodyText(init)) as { readonly rpcId?: string }
   return new Response(JSON.stringify({ type: 'server-response', rpcId: request.rpcId, result }), {
     headers: { 'content-type': 'application/json' },
   })
+}
+
+function bodyText(init: RequestInit | undefined): string {
+  if (typeof init?.body !== 'string') throw new Error('test request body is not a string')
+  return init.body
 }
 
 function requestBody(init: RequestInit | undefined): {
@@ -32,8 +36,7 @@ function requestBody(init: RequestInit | undefined): {
     readonly args?: { readonly request?: { readonly content?: unknown } }
   }
 } {
-  if (typeof init?.body !== 'string') throw new Error('test request body is not a string')
-  return JSON.parse(init.body) as {
+  return JSON.parse(bodyText(init)) as {
     readonly type?: string
     readonly method?: string
     readonly payload?: {
@@ -60,6 +63,7 @@ describe('DSH 0.1.2-alpha.5 Connection/Gateway contract', () => {
     await expect(versioned.probe(candidate('0.1.2-alpha.5'))).resolves.toMatchObject({
       protocolVersion: 'alpha5',
       dshVersion: '0.1.2-alpha.5',
+      subagentImagePrompts: true,
     })
     await expect(versioned.probe(candidate('0.1.2-alpha.4'))).resolves.toBeUndefined()
     expect(fetch).toHaveBeenCalledOnce()
@@ -78,6 +82,7 @@ describe('DSH 0.1.2-alpha.5 Connection/Gateway contract', () => {
         dshVersion: '0.1.2-alpha.6',
         adapterId: 'dsh-0.1.2-alpha.5',
         compatibilityMode: 'best-effort',
+        subagentImagePrompts: false,
         featureProfile: { source: 'compatibility-fallback' },
       },
     })
@@ -99,6 +104,113 @@ describe('DSH 0.1.2-alpha.5 Connection/Gateway contract', () => {
       code: 'BACKEND_BUSY',
       context: { rpcCode: 'agent-busy' },
     })
+    await transport.close()
+  })
+
+  it('projects the void agentPresets/copy success using the requested destination id', async () => {
+    const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
+      Promise.resolve(response(init, { ok: true, value: undefined })),
+    )
+    const transport = versionedTransport(adapter(fetch))
+
+    await expect(
+      transport.request('agentPreset.copy', {
+        from: 'standard',
+        agentPreset: 'my-copy',
+        name: 'My copy',
+      }),
+    ).resolves.toMatchObject({ result: { ok: true, value: { agentPreset: 'my-copy' } } })
+
+    const request = JSON.parse(bodyText(fetch.mock.calls[0]?.[1])) as {
+      readonly method?: string
+      readonly payload?: { readonly args?: Record<string, unknown> }
+    }
+    expect(request).toMatchObject({
+      method: 'agentPresets/copy',
+      payload: { args: { from: 'standard', id: 'my-copy', name: 'My copy' } },
+    })
+    await transport.close()
+  })
+
+  it('joins the alpha preset roster with the independent native-opener capability', async () => {
+    const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+      const request = JSON.parse(bodyText(init)) as { readonly method?: string }
+      if (request.method === 'agentPresets/list')
+        return Promise.resolve(response(init, { ok: true, value: { presets: [], authorable: false } }))
+      if (request.method === 'settings/canOpenAgentPresetDirectory')
+        return Promise.resolve(response(init, { ok: true, value: true }))
+      throw new Error(`unexpected alpha.5 endpoint: ${request.method ?? '<missing>'}`)
+    })
+    const transport = versionedTransport(adapter(fetch))
+
+    await expect(transport.request('agentPreset.list', {})).resolves.toMatchObject({
+      result: { ok: true, value: { presets: [], authorable: false, hasDocument: true } },
+    })
+    expect(
+      fetch.mock.calls.map((call) => (JSON.parse(bodyText(call[1])) as { readonly method?: string }).method),
+    ).toEqual(['agentPresets/list', 'settings/canOpenAgentPresetDirectory'])
+    await transport.close()
+  })
+
+  it('keeps the alpha preset roster usable when the optional native-opener probe fails', async () => {
+    const fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const request = JSON.parse(bodyText(init)) as { readonly method?: string }
+      if (request.method === 'agentPresets/list')
+        return Promise.resolve(response(init, { ok: true, value: { presets: [], authorable: false } }))
+      if (request.method === 'settings/canOpenAgentPresetDirectory')
+        return Promise.reject(new Error('settings controller is unavailable'))
+      throw new Error(`unexpected alpha.5 endpoint: ${request.method ?? '<missing>'}`)
+    })
+    const transport = versionedTransport(adapter(fetch))
+
+    await expect(transport.request('agentPreset.list', {})).resolves.toMatchObject({
+      result: { ok: true, value: { presets: [], authorable: false, hasDocument: false } },
+    })
+    await transport.close()
+  })
+
+  it('does not coerce a malformed preset hasDocument capability into false', async () => {
+    const fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const request = JSON.parse(bodyText(init)) as { readonly method?: string }
+      if (request.method === 'agentPresets/list')
+        return Promise.resolve(
+          response(init, { ok: true, value: { presets: [], authorable: false, hasDocument: 'yes' } }),
+        )
+      if (request.method === 'settings/canOpenAgentPresetDirectory')
+        return Promise.resolve(response(init, { ok: true, value: true }))
+      throw new Error(`unexpected alpha.5 endpoint: ${request.method ?? '<missing>'}`)
+    })
+    const transport = versionedTransport(adapter(fetch))
+
+    await expect(transport.request('agentPreset.list', {})).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
+    await transport.close()
+  })
+
+  it('forwards the optional goal round cap through both alpha goal mutations', async () => {
+    const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(bodyText(init)) as { readonly method?: string }
+      const value =
+        body.method === 'goals/create'
+          ? { ref: { id: 'goal-1', revision: 1 } }
+          : { ref: { id: 'goal-1', revision: 2 } }
+      return Promise.resolve(response(init, { ok: true, value }))
+    })
+    const transport = versionedTransport(adapter(fetch))
+
+    await transport.request('goal.create', { sessionId: 's1', objective: 'Bounded work', maxGoalRounds: 7 })
+    await transport.request('goal.edit', {
+      sessionId: 's1',
+      ref: { id: 'goal-1', revision: 1 },
+      maxGoalRounds: 9,
+    })
+
+    const requests = fetch.mock.calls.map(
+      (call) => JSON.parse(bodyText(call[1])) as { payload?: { args?: unknown } },
+    )
+    expect(requests.map((request) => request.payload?.args)).toEqual([
+      { agentId: 's1', request: { objective: 'Bounded work', maxGoalRounds: 7 } },
+      { agentId: 's1', ref: { id: 'goal-1', revision: 1 }, request: { maxGoalRounds: 9 } },
+    ])
     await transport.close()
   })
 

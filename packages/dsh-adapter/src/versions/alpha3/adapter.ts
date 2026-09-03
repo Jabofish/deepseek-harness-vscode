@@ -18,4 +18,7 @@ export class Alpha3VersionAdapter extends Alpha2VersionAdapter {
     compatibilityPriority: 100,
     fallback: false,
   }
+
+  /** Alpha.3 introduced the upload-shaped PromptContentPart subagent wire. */
+  protected override readonly supportsInlineSubagentImages = true
 }

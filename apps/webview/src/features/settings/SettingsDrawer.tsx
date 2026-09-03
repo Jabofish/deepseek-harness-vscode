@@ -3,6 +3,8 @@ import type {
   AgentPresetDocument,
   AgentPresetLocation,
   AgentPresetRoster,
+  CustomProviderCreateResult,
+  CustomProviderDraft,
   DshSettingsSchema,
   DshRuntimeUpdateProgress,
   DshUpdateSnapshot,
@@ -57,7 +59,11 @@ export interface SettingsDrawerProps {
   readonly onOpenDshSettingsDocument: () => Promise<void>
   readonly onUpdateDshSetting: (path: string, value: unknown) => Promise<void>
   readonly onUnsetDshSetting: (path: string) => Promise<void>
+  readonly onCreateCustomProvider: (draft: CustomProviderDraft) => Promise<CustomProviderCreateResult>
   readonly onDiscoverModels: (
+    input: Omit<ModelDiscoveryInput, 'apiKey'>,
+  ) => Promise<readonly DiscoveredModel[]>
+  readonly onDiscoverCustomModels: (
     input: Omit<ModelDiscoveryInput, 'apiKey'>,
   ) => Promise<readonly DiscoveredModel[]>
   readonly onConfigureSecret: (providerId: string, field: string) => Promise<boolean>
@@ -396,18 +402,45 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
     }
   }
 
-  const saveCustomProvider = async (
-    path: string,
-    value: Readonly<Record<string, unknown>>,
-  ): Promise<void> => {
+  const saveCustomProvider = async (draft: CustomProviderDraft): Promise<CustomProviderCreateResult> => {
     if (busyField !== undefined) throw new Error(t('settings.updateFailed'))
     setSaveError(undefined)
+    const path = [draft.settingsNamespace, ...draft.collectionPath, draft.providerId].join('.')
     setBusyField(`provider:${path}`)
     try {
-      await onUpdateDshSetting(path, value)
-      const snapshot = await onLoadDshSettings()
-      if (snapshot !== undefined) setDshState({ status: 'ready', snapshot })
-      await props.onRefreshCatalog()
+      const result = await props.onCreateCustomProvider(draft)
+      // The Host operation is CAS-protected and may already have committed the
+      // profile when a follow-up refresh fails. Keep the committed result so
+      // the card can enter its credential-only retry state instead of asking
+      // the user to repeat a profile write with a stale revision.
+      try {
+        const snapshot = await onLoadDshSettings()
+        if (snapshot !== undefined) setDshState({ status: 'ready', snapshot })
+        await props.onRefreshCatalog()
+      } catch (reason: unknown) {
+        setSaveError(reason instanceof Error ? reason.message : t('settings.updateFailed'))
+      }
+      return result
+    } catch (reason: unknown) {
+      setSaveError(reason instanceof Error ? reason.message : t('settings.updateFailed'))
+      throw reason
+    } finally {
+      setBusyField(undefined)
+    }
+  }
+
+  const configureCustomProviderSecret = async (providerId: string, field: string): Promise<boolean> => {
+    if (busyField !== undefined) throw new Error(t('settings.updateFailed'))
+    setSaveError(undefined)
+    setBusyField(`provider:${providerId}:credential`)
+    try {
+      const configured = await props.onConfigureSecret(providerId, field)
+      if (configured) {
+        const snapshot = await onLoadDshSettings()
+        if (snapshot !== undefined) setDshState({ status: 'ready', snapshot })
+        await props.onRefreshCatalog()
+      }
+      return configured
     } catch (reason: unknown) {
       setSaveError(reason instanceof Error ? reason.message : t('settings.updateFailed'))
       throw reason
@@ -1217,9 +1250,13 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                         providers={props.providers}
                         writable={dshState.status === 'ready' && dshState.snapshot.schema.writable}
                         saving={busyField !== undefined}
-                        onClose={() => setAddingCustomProvider(false)}
-                        onSave={saveCustomProvider}
-                        onDiscover={props.onDiscoverModels}
+                        onClose={(changed) => {
+                          setAddingCustomProvider(false)
+                          if (!changed) setSaveError(undefined)
+                        }}
+                        onCreate={saveCustomProvider}
+                        onConfigureSecret={configureCustomProviderSecret}
+                        onDiscover={props.onDiscoverCustomModels}
                       />
                     ) : null}
                   </>
@@ -1315,25 +1352,40 @@ function deriveCustomProviderTemplate(
   providers: readonly ModelProvider[],
   settings: DshSettingsSnapshot,
 ): CustomProviderTemplate | undefined {
-  const candidate = providers.find(
-    (provider) =>
-      provider.settingsNs !== undefined &&
-      provider.settingsNs.trim() !== '' &&
-      provider.settingsPath !== undefined &&
-      provider.settingsPath.length >= 2,
-  )
+  const candidate = providers.find((provider) => {
+    if (
+      provider.settingsNs === undefined ||
+      provider.settingsNs.trim() === '' ||
+      provider.settingsPath === undefined ||
+      provider.settingsPath.length < 2
+    )
+      return false
+    const namespace = settings.schema.namespaces.find((entry) => entry.ns === provider.settingsNs)
+    const protocols = provider.fields.find((field) => field.key === 'api')?.enumValues
+    return namespace !== undefined && protocols !== undefined && protocols.length > 0
+  })
   if (candidate?.settingsNs === undefined || candidate.settingsPath === undefined) return undefined
+  const namespace = settings.schema.namespaces.find((entry) => entry.ns === candidate.settingsNs)
+  const protocols = uniqueStrings(candidate.fields.find((field) => field.key === 'api')?.enumValues)
+  if (namespace === undefined || protocols.length === 0) return undefined
   const profilePath = [candidate.settingsNs, ...candidate.settingsPath].join('.')
   const profile = settingValueAt(settings.values, profilePath)
-  const api =
+  const configuredApi =
     typeof profile === 'object' && profile !== null && !Array.isArray(profile)
       ? (profile as Record<string, unknown>).api
       : undefined
   return {
     settingsNamespace: candidate.settingsNs,
     collectionPath: candidate.settingsPath.slice(0, -1),
-    ...(typeof api === 'string' && api.trim() !== '' ? { api } : {}),
+    protocols,
+    revision: namespace.revision,
+    ...(typeof configuredApi === 'string' && protocols.includes(configuredApi) ? { api: configuredApi } : {}),
   }
+}
+
+function uniqueStrings(values: readonly string[] | undefined): readonly string[] {
+  if (values === undefined) return []
+  return [...new Set(values.filter((value) => value.trim() !== ''))]
 }
 
 /** Hide dormant directory entries; the upstream page lists configured rows only. */

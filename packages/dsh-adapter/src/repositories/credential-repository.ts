@@ -1,4 +1,9 @@
-import { AppError, type CredentialReferenceState, type CredentialRepository } from '@dsh-vscode/domain'
+import {
+  AppError,
+  deriveProviderCredentialReference,
+  type CredentialReferenceState,
+  type CredentialRepository,
+} from '@dsh-vscode/domain'
 
 import type { DshTransport } from '../contracts.js'
 import { callRpc } from '../versions/rc6/rpc.js'
@@ -18,15 +23,28 @@ export class Rc6CredentialRepository implements CredentialRepository {
     signal?: AbortSignal,
   ): Promise<void> {
     if (value.length === 0) throw new Error('Credential value cannot be empty')
-    const ref = await this.resolveReference(providerId, field, signal)
+    const resolved = await this.resolveReference(providerId, field, true, signal)
+    if (resolved.bind !== undefined) {
+      const receipt = await callRpc<unknown>(
+        this.transport,
+        'settings.mutate',
+        {
+          ns: resolved.bind.namespace,
+          ops: [{ op: 'set', path: resolved.bind.path, value: resolved.ref }],
+          expectedRevision: resolved.bind.revision,
+        },
+        signal,
+      )
+      if (!validSettingsNamespace(receipt)) throw malformedCredentialSchema()
+    }
     assertEmptyReceipt(
-      await callRpc<unknown>(this.transport, 'credentials.set', { ref, value }, signal),
+      await callRpc<unknown>(this.transport, 'credentials.set', { ref: resolved.ref, value }, signal),
       'credentials.set',
     )
   }
 
   public async removeSecret(providerId: string, field: string, signal?: AbortSignal): Promise<void> {
-    const ref = await this.resolveReference(providerId, field, signal)
+    const { ref } = await this.resolveReference(providerId, field, false, signal)
     assertEmptyReceipt(
       await callRpc<unknown>(this.transport, 'credentials.unset', { ref }, signal),
       'credentials.unset',
@@ -76,7 +94,12 @@ export class Rc6CredentialRepository implements CredentialRepository {
     )
   }
 
-  private async resolveReference(providerId: string, field: string, signal?: AbortSignal): Promise<string> {
+  private async resolveReference(
+    providerId: string,
+    field: string,
+    bindMissing: boolean,
+    signal?: AbortSignal,
+  ): Promise<ResolvedCredentialReference> {
     if (!/^[A-Za-z0-9_.-]{1,256}$/.test(providerId) || !/^[A-Za-z0-9_.-]{1,256}$/.test(field))
       throw invalidCredentialField()
 
@@ -91,15 +114,13 @@ export class Rc6CredentialRepository implements CredentialRepository {
       .map((entry) => recordOrUndefined(entry) as Record<string, unknown>)
       .find((entry) => entry.provider === providerId)
     const namespace = typeof provider?.settingsNs === 'string' ? provider.settingsNs : undefined
-    const settingsPath = Array.isArray(provider?.settingsPath)
-      ? provider.settingsPath.filter((part): part is string => typeof part === 'string' && part !== '')
-      : undefined
-    if (
-      namespace === undefined ||
-      namespace.trim() === '' ||
-      settingsPath === undefined ||
-      settingsPath.length !== (provider?.settingsPath as readonly unknown[]).length
-    )
+    const rawSettingsPath = provider?.settingsPath
+    const settingsPath =
+      Array.isArray(rawSettingsPath) &&
+      rawSettingsPath.every((part): part is string => typeof part === 'string' && part.length > 0)
+        ? rawSettingsPath
+        : undefined
+    if (namespace === undefined || namespace.trim() === '' || settingsPath === undefined)
       throw unavailableCredentialReference()
 
     const described = recordOrUndefined(
@@ -117,6 +138,7 @@ export class Rc6CredentialRepository implements CredentialRepository {
       .map((entry) => recordOrUndefined(entry) as Record<string, unknown>)
       .find((entry) => entry.ns === namespace)
     const credentialPath = [...settingsPath, ...field.split('.')]
+    let credentialRole = false
     if (settings !== undefined && 'schema' in settings) {
       const schema = settings.schema
       let schemaNode
@@ -131,19 +153,67 @@ export class Rc6CredentialRepository implements CredentialRepository {
           ? (role as { readonly role?: unknown }).role
           : undefined
       if (roleName !== 'credential-ref') throw unavailableCredentialReference()
+      credentialRole = true
     }
     const reference = readPath(settings?.value, credentialPath)
-    if (typeof reference !== 'string' || reference === '') throw unavailableCredentialReference()
+    if (typeof reference !== 'string' || reference === '') {
+      // A new pi-ai route may intentionally omit apiKeyEnv so provider-native
+      // authentication remains available. When the user later presses the
+      // existing Host-only Configure action, bind the conventional reference
+      // atomically before storing the secret. This is the missing bridge
+      // between upstream's blank-key create path and the local credential UI.
+      if (
+        !bindMissing ||
+        namespace !== 'llm-pi-ai' ||
+        field !== 'apiKeyEnv' ||
+        !credentialRole ||
+        settings === undefined ||
+        typeof settings.revision !== 'number' ||
+        !Number.isSafeInteger(settings.revision) ||
+        settings.revision < 0
+      )
+        throw unavailableCredentialReference()
+      const derived = deriveProviderCredentialReference(providerId)
+      assertReference(derived)
+      // The reference may not be present in credentials.describe yet. That
+      // absence is exactly the expected first-write state for a keyless custom
+      // route, and the credentials.set RPC remains the authority on whether a
+      // new reference may be stored. Do not treat an absent description as a
+      // read-only environment shadow.
+      return {
+        ref: derived,
+        bind: {
+          namespace,
+          path: credentialPath,
+          revision: settings.revision,
+        },
+      }
+    }
     assertReference(reference)
 
     const view = await this.describeReference(reference, signal)
-    if (!view.writable)
+    const conventionalCustomReference =
+      namespace === 'llm-pi-ai' &&
+      field === 'apiKeyEnv' &&
+      credentialRole &&
+      reference === deriveProviderCredentialReference(providerId) &&
+      !view.configured
+    if (!view.writable && !conventionalCustomReference)
       throw new AppError({
         code: 'PERMISSION_DENIED',
         message: 'The DSH credential reference is not writable.',
         retryable: false,
       })
-    return reference
+    return { ref: reference }
+  }
+}
+
+interface ResolvedCredentialReference {
+  readonly ref: string
+  readonly bind?: {
+    readonly namespace: string
+    readonly path: readonly string[]
+    readonly revision: number
   }
 }
 

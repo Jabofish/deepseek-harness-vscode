@@ -1,4 +1,9 @@
-import { AppError, type DshSettingsSchema, type SettingsRepository } from '@dsh-vscode/domain'
+import {
+  AppError,
+  type DshSettingsSchema,
+  type SettingsPathOperation,
+  type SettingsRepository,
+} from '@dsh-vscode/domain'
 
 import type { DshTransport } from '../contracts.js'
 import { callRpc, unavailable } from '../versions/rc6/rpc.js'
@@ -58,6 +63,7 @@ export class Rc6SettingsRepository implements SettingsRepository {
       namespaces: value.namespaces.map((namespace) => ({
         ns: namespace.ns,
         applies: namespace.applies,
+        revision: namespace.revision,
         userFields: Object.keys(asObject(namespace.user)),
         secrets: namespace.secrets.map((secret) => ({
           field: secret.path.join('.'),
@@ -89,43 +95,52 @@ export class Rc6SettingsRepository implements SettingsRepository {
     if (namespace === undefined || namespace === '' || parts.length === 0)
       throw new Error('Settings path must be namespace.field')
     const descriptor = await this.namespace(namespace, signal)
-    this.requireWritable()
     if (
       value === '[configured]' &&
       descriptor.secrets.some((secret) => secret.path.join('.') === parts.join('.'))
     )
       throw new Error('Configured secrets must be changed through the credential surface.')
-    let response: Namespace
-    try {
-      response = normalizeNamespace(
-        await callRpc<Namespace>(
-          this.transport,
-          'settings.mutate',
-          {
-            ns: namespace,
-            ops: [{ op: 'set', path: parts, value }],
-            expectedRevision: descriptor.revision,
-          },
-          signal,
-        ),
-      )
-    } catch (error) {
-      // The mutate is compare-and-swap on the descriptor revision. A failure
-      // (notably the retryable settings-conflict) means the cached snapshot
-      // may be stale; drop it so the invited retry re-describes instead of
-      // resending the same rejected expectedRevision.
-      this.description = undefined
-      throw error
-    }
-    this.remember(response)
+    await this.mutate(namespace, [{ op: 'set', path: parts, value }], descriptor.revision, signal)
   }
 
   public async unset(path: string, signal?: AbortSignal): Promise<void> {
     const [namespace, ...parts] = path.split('.')
     if (namespace === undefined || namespace === '' || parts.length === 0)
       throw new Error('Settings path must be namespace.field')
+    await this.mutate(namespace, [{ op: 'unset', path: parts }], undefined, signal)
+  }
+
+  public async mutate(
+    namespace: string,
+    operations: readonly SettingsPathOperation[],
+    expectedRevision?: number,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    if (namespace.trim() === '') throw new Error('Settings namespace is required')
+    if (operations.length === 0) throw new Error('At least one settings operation is required')
+    for (const operation of operations) {
+      // The pinned settings service also accepts [] for a whole-namespace set
+      // or unset. Preserve that contract; provider creation uses a nested path.
+      if (operation.path.some((part) => typeof part !== 'string' || part.trim() === ''))
+        throw new Error('Settings operation paths must contain non-empty segments')
+      if (operation.op !== 'set' && operation.op !== 'unset') throw new Error('Unknown settings operation')
+    }
+    if (expectedRevision !== undefined && (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0))
+      throw new AppError({
+        code: 'INVALID_CONFIGURATION',
+        message: 'The settings revision is invalid.',
+        retryable: false,
+      })
     const descriptor = await this.namespace(namespace, signal)
     this.requireWritable()
+    for (const operation of operations) {
+      if (
+        operation.op === 'set' &&
+        operation.value === '[configured]' &&
+        descriptor.secrets.some((secret) => secret.path.join('.') === operation.path.join('.'))
+      )
+        throw new Error('Configured secrets must be changed through the credential surface.')
+    }
     let response: Namespace
     try {
       response = normalizeNamespace(
@@ -134,13 +149,16 @@ export class Rc6SettingsRepository implements SettingsRepository {
           'settings.mutate',
           {
             ns: namespace,
-            ops: [{ op: 'unset', path: parts }],
-            expectedRevision: descriptor.revision,
+            ops: operations,
+            expectedRevision: expectedRevision ?? descriptor.revision,
           },
           signal,
         ),
       )
     } catch (error) {
+      // A rejected compare-and-swap invalidates the cached descriptor. The
+      // next attempt must observe a fresh revision rather than repeat a stale
+      // write, which is especially important for provider creation cards.
       this.description = undefined
       throw error
     }

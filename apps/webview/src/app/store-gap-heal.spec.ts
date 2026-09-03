@@ -178,6 +178,9 @@ describe('AppStore session gap healing', () => {
     expect(userMessageNodes(store.getState())).toHaveLength(5)
 
     client.emit(gapMessage(6, 9))
+    expect(store.getState().timeline.nodes.some((node) => node.id === `gap:${activeSession.id}:6:9`)).toBe(
+      false,
+    )
     await flushAsync()
 
     const requests = historyRequests(client)
@@ -200,6 +203,9 @@ describe('AppStore session gap healing', () => {
     })
     await store.openSession(activeSession.id)
     client.emit(gapMessage(6, 9))
+    expect(store.getState().timeline.nodes.some((node) => node.id === `gap:${activeSession.id}:6:9`)).toBe(
+      false,
+    )
     await flushAsync()
 
     expect(historyRequests(client)).toHaveLength(1)

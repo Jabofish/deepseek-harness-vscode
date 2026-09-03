@@ -248,7 +248,7 @@ export class AlphaLoopbackApiClient implements DshTransport {
       case 'skill.list':
         return this.legacy('skills/list', { request: { sessionId: value.sessionId } }, signal)
       case 'agentPreset.list':
-        return this.legacy('agentPresets/list', {}, signal, presetRoster)
+        return this.presetList(signal)
       case 'agentPreset.select':
         return this.legacy(
           'agentPresets/select',
@@ -267,7 +267,7 @@ export class AlphaLoopbackApiClient implements DshTransport {
             ...(value.name === undefined ? {} : { name: value.name }),
           },
           signal,
-          (result) => ({ agentPreset: result }),
+          (result) => presetCopyReceipt(result, value.agentPreset),
         )
       case 'agentPreset.openDocument':
         return this.legacy('settings/openAgentPresetDirectory', { agentPreset: value.agentPreset }, signal)
@@ -276,13 +276,27 @@ export class AlphaLoopbackApiClient implements DshTransport {
       case 'goal.create':
         return this.legacy(
           'goals/create',
-          { agentId: value.sessionId, request: { objective: value.objective } },
+          {
+            agentId: value.sessionId,
+            request: {
+              objective: value.objective,
+              ...(value.maxGoalRounds === undefined ? {} : { maxGoalRounds: value.maxGoalRounds }),
+            },
+          },
           signal,
+          goalReceipt,
         )
       case 'goal.edit':
         return this.legacy(
           'goals/edit',
-          { agentId: value.sessionId, ref: value.ref, request: { objective: value.objective } },
+          {
+            agentId: value.sessionId,
+            ref: value.ref,
+            request: {
+              ...(value.objective === undefined ? {} : { objective: value.objective }),
+              ...(value.maxGoalRounds === undefined ? {} : { maxGoalRounds: value.maxGoalRounds }),
+            },
+          },
           signal,
           goalReceipt,
         )
@@ -351,6 +365,42 @@ export class AlphaLoopbackApiClient implements DshTransport {
         retryable: false,
         cause,
       })
+    }
+  }
+
+  private async presetList(signal?: AbortSignal): Promise<LegacyResponse> {
+    // Alpha keeps the roster and native-opener capability on separate Remote
+    // methods. Joining them here prevents `authorable` (a write capability)
+    // from being mistaken for the unrelated ability to open a directory.
+    const rosterPromise = this.legacy('agentPresets/list', {}, signal, presetRoster)
+    const openerPromise = this.legacy('settings/canOpenAgentPresetDirectory', {}, signal).catch(
+      (error: unknown) => {
+        // The roster is still useful when an optional native opener is not
+        // composed or temporarily unavailable. Preserve cancellation and a
+        // client close so an in-flight request cannot resolve after teardown.
+        if (
+          this.isClosed ||
+          signal?.aborted === true ||
+          (error instanceof AppError && error.code === 'REQUEST_CANCELLED')
+        )
+          throw error
+        return undefined
+      },
+    )
+    const [roster, opener] = await Promise.all([rosterPromise, openerPromise])
+    if (!roster.result.ok) return roster
+    const value = recordOrUndefined(roster.result.value)
+    if (value === undefined) throw malformedResponse('agentPresets/list')
+    if (opener === undefined || !opener.result.ok)
+      return {
+        ...roster,
+        result: { ok: true, value: { ...value, hasDocument: false } },
+      }
+    if (typeof opener.result.value !== 'boolean')
+      throw malformedResponse('settings/canOpenAgentPresetDirectory')
+    return {
+      ...roster,
+      result: { ok: true, value: { ...value, hasDocument: opener.result.value } },
     }
   }
 
@@ -506,18 +556,16 @@ export class AlphaLoopbackApiClient implements DshTransport {
   private async sessionModels(value: Record<string, unknown>, signal?: AbortSignal): Promise<LegacyResponse> {
     const response = await this.post('session/modelCatalog', { args: {} }, signal)
     if (!response.result.ok) return response
-    const catalog = recordOrUndefined(response.result.value)
-    if (catalog === undefined) throw malformedResponse('session/modelCatalog')
-    const selected = recordOrUndefined(catalog.default)
-    if (selected === undefined) throw malformedResponse('session/modelCatalog default')
+    const catalog = response.result.value
+    if (!validAlphaModelCatalog(catalog)) throw malformedResponse('session/modelCatalog')
+    const selected = catalog.default
     return {
       ...response,
       result: {
         ok: true,
         value: {
           current: selected,
-          routable:
-            Array.isArray(catalog.routableProviders) && catalog.routableProviders.includes(selected.provider),
+          routable: catalog.routableProviders.includes(selected.provider),
           groups: catalog.groups,
           failures: catalog.failures,
         },
@@ -532,37 +580,33 @@ export class AlphaLoopbackApiClient implements DshTransport {
     ])
     if (!providers.result.ok) return providers
     if (!configurable.result.ok) return configurable
-    const listed = Array.isArray(providers.result.value) ? providers.result.value : []
-    const configs = Array.isArray(configurable.result.value) ? configurable.result.value : []
-    const byProvider = new Map<string, Record<string, unknown>>()
+    const listed = alphaProviderInfoList(providers.result.value)
+    const configs = alphaConfigurableProviderList(configurable.result.value)
+    const byProvider = new Map<string, AlphaConfigurableProvider>()
     for (const entry of configs) {
-      const row = asRecord(entry)
+      const row = entry
       if (isNonEmptyString(row.provider)) byProvider.set(row.provider, row)
     }
     const mapped = new Map<string, Record<string, unknown>>()
     for (const entry of listed) {
-      const row = asRecord(entry)
-      if (typeof row.id !== 'string' || typeof row.name !== 'string') continue
+      const row = entry
       const config = byProvider.get(row.id)
       mapped.set(row.id, {
         provider: row.id,
         displayName: row.name,
-        settingsNs: typeof config?.settingsNs === 'string' ? config.settingsNs : row.id,
-        settingsPath: Array.isArray(config?.settingsPath) ? config.settingsPath : [],
+        // A live route without a configurable-directory entry has no settings
+        // address. Preserve the upstream join contract's empty marker rather
+        // than inventing a namespace from the route id; the Webview uses this
+        // distinction to avoid hiding a real registered provider.
+        settingsNs: config === undefined ? '' : config.settingsNs,
+        settingsPath: config?.settingsPath ?? [],
         active: true,
         ...(typeof config?.declared === 'boolean' ? { declared: config.declared } : {}),
       })
     }
     for (const entry of configs) {
-      const row = asRecord(entry)
-      if (
-        !isNonEmptyString(row.provider) ||
-        !isNonEmptyString(row.displayName) ||
-        typeof row.settingsNs !== 'string' ||
-        !isNonEmptyStringArray(row.settingsPath) ||
-        mapped.has(row.provider)
-      )
-        continue
+      const row = entry
+      if (mapped.has(row.provider)) continue
       mapped.set(row.provider, {
         provider: row.provider,
         displayName: row.displayName,
@@ -1229,6 +1273,7 @@ const ALPHA_IDEMPOTENT_METHODS = new Set([
   'agentPresets/list',
   'agentPresets/read',
   'settings/describe',
+  'settings/canOpenAgentPresetDirectory',
   'credentials/describe',
   'llm/listProviders',
   'llm/listConfigurableProviders',
@@ -1252,9 +1297,28 @@ function mapEmit(event: unknown, args: readonly unknown[]): readonly unknown[] {
   switch (event) {
     case 'api-session/added': {
       const summary = recordOrUndefined(args[0])
-      if (args.length !== 1 || summary === undefined || !isNonEmptyString(summary.sessionId))
+      if (
+        args.length !== 1 ||
+        summary === undefined ||
+        !isNonEmptyString(summary.sessionId) ||
+        typeof summary.blank !== 'boolean' ||
+        (summary.parentSessionId !== undefined && !isNonEmptyString(summary.parentSessionId)) ||
+        (summary.origin !== undefined && summary.origin !== 'subagent') ||
+        (summary.cwd !== undefined && typeof summary.cwd !== 'string') ||
+        (summary.agentPreset !== undefined && typeof summary.agentPreset !== 'string')
+      )
         throw malformedResponse('$events api-session/added')
-      return [{ ...summary, type: 'host/session-added' }]
+      return [
+        {
+          type: 'host/session-added',
+          sessionId: summary.sessionId,
+          blank: summary.blank,
+          ...(summary.parentSessionId === undefined ? {} : { parentSessionId: summary.parentSessionId }),
+          ...(summary.origin === undefined ? {} : { origin: summary.origin }),
+          ...(summary.cwd === undefined ? {} : { cwd: summary.cwd }),
+          ...(summary.agentPreset === undefined ? {} : { agentPreset: summary.agentPreset }),
+        },
+      ]
     }
     case 'api-session/removed':
       if (args.length !== 1 || !isNonEmptyString(args[0]))
@@ -1321,14 +1385,6 @@ function hasDefinedAlphaTitle(value: Record<string, unknown>): boolean {
 function normalizeAlphaEvent(value: unknown, sessionId: string): Record<string, unknown> | undefined {
   const event = recordOrUndefined(value)
   if (event === undefined || typeof event.type !== 'string') return undefined
-  if (event.type === 'goal/change') {
-    const data = asRecord(event.data) ?? {}
-    return {
-      ...event,
-      type: 'goal/updated',
-      data: { goals: data.cleared === true ? [] : data.goal === undefined ? [] : [data.goal] },
-    }
-  }
   return { ...event, sessionId }
 }
 
@@ -1488,7 +1544,9 @@ function alphaInteractionResult(value: unknown, kind: 'approval' | 'question'): 
 function presetRoster(value: unknown): unknown {
   const record = recordOrUndefined(value)
   if (record === undefined) throw new Error('preset roster is not an object')
-  return { ...record, hasDocument: record.authorable === true }
+  if (Object.hasOwn(record, 'hasDocument') && typeof record.hasDocument !== 'boolean')
+    throw new Error('preset roster has malformed hasDocument capability')
+  return { ...record, hasDocument: record.hasDocument === true }
 }
 
 function presetDocument(value: unknown): unknown {
@@ -1497,23 +1555,59 @@ function presetDocument(value: unknown): unknown {
   return { ...record, agentPreset: record.agentPreset ?? record.id }
 }
 
+/** Alpha's `agentPresets/copy` Remote resolves void; the requested id is its receipt. */
+function presetCopyReceipt(result: unknown, requestedId: unknown): { agentPreset: string } {
+  const record = recordOrUndefined(result)
+  const returnedId =
+    typeof result === 'string'
+      ? result
+      : typeof record?.agentPreset === 'string'
+        ? record.agentPreset
+        : requestedId
+  if (typeof returnedId !== 'string' || returnedId.trim() === '')
+    throw new Error('preset copy did not identify the new preset')
+  return { agentPreset: returnedId }
+}
+
 function goalReceipt(value: unknown): unknown {
   const record = recordOrUndefined(value)
   const refValue = record !== undefined && Object.hasOwn(record, 'ref') ? record.ref : value
   const ref = recordOrUndefined(refValue)
-  if (ref === undefined) throw new Error('goal receipt is not an object')
+  if (
+    ref === undefined ||
+    typeof ref.id !== 'string' ||
+    ref.id.trim() === '' ||
+    !Number.isSafeInteger(ref.revision) ||
+    (ref.revision as number) <= 0
+  )
+    throw new Error('goal receipt is malformed')
   return { ref: { id: ref.id, revision: ref.revision } }
 }
 
-function modelCatalog(value: unknown): unknown {
+type AlphaModelCatalog = Record<string, unknown> & {
+  readonly default: Record<string, unknown> & { readonly provider: string; readonly model: string }
+  readonly routableProviders: readonly string[]
+}
+
+function validAlphaModelCatalog(value: unknown): value is AlphaModelCatalog {
   const record = recordOrUndefined(value)
-  if (record === undefined) throw new Error('model catalog is not an object')
-  const selected = recordOrUndefined(record.default)
-  if (selected === undefined) throw new Error('model catalog default is not an object')
+  const selected = recordOrUndefined(record?.default)
+  return (
+    record !== undefined &&
+    selected !== undefined &&
+    isNonEmptyString(selected.provider) &&
+    isNonEmptyString(selected.model) &&
+    isNonEmptyStringArray(record.routableProviders)
+  )
+}
+
+function modelCatalog(value: unknown): unknown {
+  if (!validAlphaModelCatalog(value)) throw new Error('model catalog is malformed')
+  const selected = value.default
   return {
-    ...record,
+    ...value,
     current: selected,
-    routable: Array.isArray(record.routableProviders) && record.routableProviders.includes(selected.provider),
+    routable: value.routableProviders.includes(selected.provider),
   }
 }
 
@@ -1651,6 +1745,45 @@ function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): 
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0
+}
+
+type AlphaProviderInfo = Record<string, unknown> & { readonly id: string; readonly name: string }
+
+type AlphaConfigurableProvider = Record<string, unknown> & {
+  readonly provider: string
+  readonly displayName: string
+  readonly settingsNs: string
+  readonly settingsPath: readonly string[]
+  readonly declared?: boolean
+}
+
+function validAlphaProviderInfo(value: unknown): value is AlphaProviderInfo {
+  const row = recordOrUndefined(value)
+  return row !== undefined && isNonEmptyString(row.id) && isNonEmptyString(row.name)
+}
+
+function validAlphaConfigurableProvider(value: unknown): value is AlphaConfigurableProvider {
+  const row = recordOrUndefined(value)
+  return (
+    row !== undefined &&
+    isNonEmptyString(row.provider) &&
+    isNonEmptyString(row.displayName) &&
+    isNonEmptyString(row.settingsNs) &&
+    isNonEmptyStringArray(row.settingsPath) &&
+    (row.declared === undefined || typeof row.declared === 'boolean')
+  )
+}
+
+function alphaProviderInfoList(value: unknown): readonly AlphaProviderInfo[] {
+  if (!Array.isArray(value) || !value.every(validAlphaProviderInfo))
+    throw malformedResponse('llm/listProviders')
+  return value
+}
+
+function alphaConfigurableProviderList(value: unknown): readonly AlphaConfigurableProvider[] {
+  if (!Array.isArray(value) || !value.every(validAlphaConfigurableProvider))
+    throw malformedResponse('llm/listConfigurableProviders')
+  return value
 }
 
 function isNonEmptyStringArray(value: unknown): value is readonly string[] {

@@ -76,7 +76,12 @@ function subagentTokenTotal(summary: SessionSummary | undefined): number | undef
   const output = nonNegativeInteger(usage.outputTokens)
   const cacheRead = nonNegativeInteger(usage.cacheReadTokens)
   const cacheWrite = nonNegativeInteger(usage.cacheWriteTokens)
-  if (input === undefined && output === undefined && cacheRead === undefined && cacheWrite === undefined)
+  if (
+    input === undefined ||
+    output === undefined ||
+    (usage.cacheReadTokens !== undefined && cacheRead === undefined) ||
+    (usage.cacheWriteTokens !== undefined && cacheWrite === undefined)
+  )
     return undefined
   return (input ?? 0) + (output ?? 0) + (cacheRead ?? 0) + (cacheWrite ?? 0)
 }
@@ -90,11 +95,12 @@ function subagentDurationMs(
   if (timing === undefined) return undefined
   const settledMs = nonNegativeInteger(timing.settledMs)
   if (settledMs === undefined) return undefined
+  if (timing.active === undefined) return settledMs
   const active = record(timing.active)
-  if (active === undefined) return settledMs
+  if (active === undefined) return undefined
   const since = nonNegativeInteger(active.since)
   const through = nonNegativeInteger(active.through)
-  if (since === undefined || through === undefined) return settledMs
+  if (since === undefined || through === undefined) return undefined
   const end = activity === 'running' ? now : through
   return settledMs + Math.max(0, end - since)
 }

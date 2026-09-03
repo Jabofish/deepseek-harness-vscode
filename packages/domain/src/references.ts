@@ -9,6 +9,8 @@ export interface SessionReferenceCandidate {
   readonly sessionId: string
   readonly label: string
   readonly cwd?: string
+  /** Whether the source session shares the requesting session's workspace. */
+  readonly sameWorkspace: boolean
   readonly createdAt: number
   readonly mention: string
 }

@@ -38,7 +38,145 @@ const PROVIDER_SCHEMA = {
   },
 }
 
+const PROVIDER_SCHEMA_WITH_API_PROTOCOL = {
+  uid: 8,
+  refs: {
+    1: { type: 'string', meta: { role: 'credential-ref', description: 'API key' } },
+    2: { type: 'string' },
+    3: { type: 'const', value: 'openai-completions' },
+    4: { type: 'const', value: 'anthropic-messages' },
+    5: { type: 'union', list: [3, 4], meta: { required: true } },
+    6: { type: 'object', dict: { apiKeyEnv: 1, baseURL: 2, api: 5 } },
+    7: { type: 'dict', inner: 6 },
+    8: { type: 'object', dict: { providers: 7 } },
+  },
+}
+
 describe('Rc6ModelRepository provider configuration', () => {
+  it('accepts a live-only provider without a fabricated settings namespace', async () => {
+    const repository = new Rc6ModelRepository(
+      transportFor({
+        'llm.providers': {
+          providers: [
+            {
+              provider: 'runtime-only',
+              displayName: 'Runtime only',
+              settingsNs: '',
+              settingsPath: [],
+              active: true,
+            },
+          ],
+        },
+        'settings.describe': {
+          writable: true,
+          hasDocument: false,
+          namespaces: [],
+        },
+      }),
+    )
+
+    await expect(repository.listProviders()).resolves.toEqual([
+      {
+        id: 'runtime-only',
+        name: 'Runtime only',
+        kind: 'provider',
+        configurable: true,
+        active: true,
+        settingsNs: '',
+        settingsPath: [],
+        fields: [],
+      },
+    ])
+  })
+
+  it('preserves dynamic API protocol choices from the provider Schemastery union', async () => {
+    const repository = new Rc6ModelRepository(
+      transportFor({
+        'llm.providers': {
+          providers: [
+            {
+              provider: 'openai',
+              displayName: 'OpenAI',
+              settingsNs: 'llm-pi-ai',
+              settingsPath: ['providers', 'openai'],
+              active: false,
+              declared: false,
+            },
+          ],
+        },
+        'settings.describe': {
+          writable: true,
+          hasDocument: true,
+          namespaces: [
+            {
+              ns: 'llm-pi-ai',
+              schema: PROVIDER_SCHEMA_WITH_API_PROTOCOL,
+              value: { providers: { openai: { api: 'openai-completions' } } },
+              applies: 'live',
+              secrets: [],
+              revision: 7,
+            },
+          ],
+        },
+      }),
+    )
+
+    const [provider] = await repository.listProviders()
+    expect(provider?.id).toBe('openai')
+    expect(provider?.fields.find((field) => field.key === 'api')).toEqual({
+      key: 'api',
+      label: 'api',
+      secret: false,
+      required: true,
+      enumValues: ['openai-completions', 'anthropic-messages'],
+      value: 'openai-completions',
+    })
+  })
+
+  it('marks a conventional unconfigured custom reference writable for the retry action', async () => {
+    const repository = new Rc6ModelRepository(
+      transportFor({
+        'llm.providers': {
+          providers: [
+            {
+              provider: 'gateway',
+              displayName: 'Gateway',
+              settingsNs: 'llm-pi-ai',
+              settingsPath: ['providers', 'gateway'],
+              active: false,
+              declared: false,
+            },
+          ],
+        },
+        'settings.describe': {
+          writable: true,
+          hasDocument: true,
+          namespaces: [
+            {
+              ns: 'llm-pi-ai',
+              schema: PROVIDER_SCHEMA,
+              value: { providers: { gateway: { apiKeyEnv: 'GATEWAY_API_KEY' } } },
+              applies: 'live',
+              secrets: [],
+              revision: 8,
+            },
+          ],
+        },
+        'credentials.describe': { credentials: {} },
+      }),
+    )
+
+    const [provider] = await repository.listProviders()
+    expect(provider?.id).toBe('gateway')
+    expect(provider?.fields.find((field) => field.key === 'apiKeyEnv')).toEqual({
+      key: 'apiKeyEnv',
+      label: 'API key',
+      secret: true,
+      required: false,
+      writable: true,
+    })
+  })
+
   it('derives credential-ref fields through a provider settingsPath and reads only credential state', async () => {
     const calls: Call[] = []
     const repository = new Rc6ModelRepository(

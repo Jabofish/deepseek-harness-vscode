@@ -2,6 +2,7 @@ import { useState, type ReactElement } from 'react'
 import type { DiscoveredModel, ModelDiscoveryInput, ModelProvider } from '@dsh-vscode/domain'
 import type { DshSettingsSnapshot } from '../../app/store.js'
 import { useI18n } from '../../i18n.js'
+import { SelectMenu } from '../../components/common/SelectMenu.js'
 import { ModelListEditor, type EditableModel } from './ModelListEditor.js'
 
 export type ProviderSettingChange =
@@ -23,6 +24,7 @@ export interface ProviderSettingsEditorProps {
 interface ProviderFieldRef {
   readonly key: string
   readonly value: string
+  readonly enumValues?: readonly string[]
 }
 
 /**
@@ -59,6 +61,14 @@ export function ProviderSettingsEditor(props: ProviderSettingsEditorProps): Reac
   const [error, setError] = useState<string | undefined>(undefined)
 
   const disabled = !props.writable || props.saving
+  const apiOptions =
+    apiField?.enumValues === undefined || apiField.enumValues.length === 0
+      ? []
+      : [
+          ...(api === '' ? [{ value: '', label: t('settings.notSet') }] : []),
+          ...(api !== '' && !apiField.enumValues.includes(api) ? [{ value: api, label: api }] : []),
+          ...apiField.enumValues.map((value) => ({ value, label: value })),
+        ]
   const discoveryInput: Omit<ModelDiscoveryInput, 'apiKey'> = {
     settingsNamespace: settingsNs,
     providerId: props.provider.id,
@@ -129,12 +139,27 @@ export function ProviderSettingsEditor(props: ProviderSettingsEditorProps): Reac
           {apiPath === undefined ? null : (
             <label className="dsh-settings__provider-editor-field">
               <span>{t('settings.providerApi')}</span>
-              <input
-                type="text"
-                value={api}
-                disabled={disabled}
-                onChange={(event) => setApi(event.target.value)}
-              />
+              {apiField?.enumValues === undefined || apiField.enumValues.length === 0 ? (
+                <input
+                  type="text"
+                  value={api}
+                  disabled={disabled}
+                  onChange={(event) => setApi(event.target.value)}
+                />
+              ) : (
+                <SelectMenu
+                  className="dsh-settings__provider-api-select"
+                  icon="settings"
+                  menuMode="flow"
+                  label={api === '' ? t('settings.notSet') : api}
+                  ariaLabel={t('settings.providerApi')}
+                  title={t('settings.providerApi')}
+                  value={api}
+                  options={apiOptions}
+                  disabled={disabled}
+                  onChange={setApi}
+                />
+              )}
             </label>
           )}
           {hasModelList ? (
@@ -198,7 +223,11 @@ function addOptionalChange(
 function stringField(provider: ModelProvider, match: RegExp): ProviderFieldRef | undefined {
   const field = provider.fields.find((candidate) => !candidate.secret && match.test(candidate.key))
   if (field === undefined) return undefined
-  return { key: field.key, value: field.value ?? '' }
+  return {
+    key: field.key,
+    value: field.value ?? '',
+    ...(field.enumValues === undefined ? {} : { enumValues: field.enumValues }),
+  }
 }
 
 function stringAt(value: unknown, key: string): string | undefined {

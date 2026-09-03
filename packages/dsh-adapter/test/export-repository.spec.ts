@@ -42,6 +42,7 @@ describe('Rc6ExportRepository', () => {
           { type: 'reasoning/delta', text: 'private reasoning' },
           { type: 'message.user', text: 'Hello' },
         ],
+        hasMore: false,
       }),
       nodeFileSystem,
     )
@@ -58,7 +59,7 @@ describe('Rc6ExportRepository', () => {
     const destination = await destinationPath('existing.json')
     await writeFile(destination, 'original bytes', 'utf8')
     const repository = new Rc6ExportRepository(
-      createTransport({ events: [{ type: 'message.user' }] }),
+      createTransport({ events: [{ type: 'message.user' }], hasMore: false }),
       nodeFileSystem,
     )
 
@@ -94,6 +95,54 @@ describe('Rc6ExportRepository', () => {
     await expect(readFile(destination, 'utf8')).resolves.toBe('original bytes')
   })
 
+  it('rejects a history page missing the required hasMore flag', async () => {
+    const destination = await destinationPath('missing-history-flag.json')
+    const repository = new Rc6ExportRepository(createTransport({ events: [] }), nodeFileSystem)
+
+    await expect(repository.exportSession(exportOptions('json', true), destination)).rejects.toMatchObject({
+      code: 'PROTOCOL_ERROR',
+    })
+    await expect(readFile(destination)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('rejects a history page containing a malformed event row', async () => {
+    const destination = await destinationPath('malformed-history-row.json')
+    const repository = new Rc6ExportRepository(
+      createTransport({ events: [null], hasMore: false }),
+      nodeFileSystem,
+    )
+
+    await expect(repository.exportSession(exportOptions('json', true), destination)).rejects.toMatchObject({
+      code: 'PROTOCOL_ERROR',
+    })
+    await expect(readFile(destination)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('rejects a canonical event row that would otherwise be exported with synthetic state', async () => {
+    const destination = await destinationPath('malformed-canonical-history-row.json')
+    const repository = new Rc6ExportRepository(
+      createTransport({
+        events: [
+          {
+            event: {
+              type: 'assistant/message',
+              seq: 1,
+              time: 1,
+              data: { turn: 1, step: 1, markdown: 'not canonical' },
+            },
+          },
+        ],
+        hasMore: false,
+      }),
+      nodeFileSystem,
+    )
+
+    await expect(repository.exportSession(exportOptions('json', true), destination)).rejects.toMatchObject({
+      code: 'PROTOCOL_ERROR',
+    })
+    await expect(readFile(destination)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
   it('replaces a confirmed destination and restores the original when the commit rename fails', async () => {
     const destination = await destinationPath('rollback.json')
     await writeFile(destination, 'original bytes', 'utf8')
@@ -103,7 +152,7 @@ describe('Rc6ExportRepository', () => {
     })
     const fileSystem: ExportFileSystem = { ...nodeFileSystem, rename: renames }
     const repository = new Rc6ExportRepository(
-      createTransport({ events: [{ type: 'message.user', text: 'replacement' }] }),
+      createTransport({ events: [{ type: 'message.user', text: 'replacement' }], hasMore: false }),
       fileSystem,
     )
 
@@ -202,7 +251,7 @@ describe('Rc6ExportRepository', () => {
     const controller = new AbortController()
     controller.abort()
     const repository = new Rc6ExportRepository(
-      createTransport({ events: [{ type: 'message.user' }] }),
+      createTransport({ events: [{ type: 'message.user' }], hasMore: false }),
       nodeFileSystem,
     )
 

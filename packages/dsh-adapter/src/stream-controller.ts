@@ -2,7 +2,7 @@ import { AppError, type AsyncEventSource, type BackendEvent } from '@dsh-vscode/
 
 import type { DshTransport } from './contracts.js'
 import { redactText, safePayload } from './redaction.js'
-import { rc6Mapper } from './versions/rc6/mapper.js'
+import { assertCanonicalSessionEvent, rc6Mapper } from './versions/rc6/mapper.js'
 
 export interface DshStreamControllerOptions {
   /** Optional version-specific logical stream (for example alpha Remote mux). */
@@ -22,6 +22,8 @@ export type StreamRecovery = (
 export class DshStreamController implements AsyncEventSource<BackendEvent> {
   private readonly listeners = new Set<(event: BackendEvent) => void>()
   private readonly lastSequences = new Map<string, number>()
+  /** Alpha session/follow sends its history snapshot before this baseline. */
+  private readonly subscribedSessions = new Set<string>()
   /** Projection frames share the durable event sequence, so dedupe them per key. */
   private readonly lastProjectionSequences = new Map<string, Map<string, number>>()
   /** One detached history recovery at a time per session, in detection order. */
@@ -166,8 +168,10 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
     if (event.type === 'session.removed') {
       this.lastSequences.delete(event.sessionId)
       this.lastProjectionSequences.delete(event.sessionId)
+      this.subscribedSessions.delete(event.sessionId)
     }
     if (event.type === 'session.subscribed') {
+      this.subscribedSessions.add(event.sessionId)
       this.truncateProjectionSequences(event.sessionId, event.lastSequence)
       const previous = this.lastSequences.get(event.sessionId)
       if (previous === undefined) {
@@ -209,6 +213,15 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
     }
     const previous = this.lastSequences.get(sessionId) ?? -1
     if (sequence <= previous) return
+    if (this.options.streamSource !== undefined && !this.subscribedSessions.has(sessionId)) {
+      // A session/follow snapshot is a bounded history sample and is emitted
+      // before its session/subscribed cursor. A sample can legitimately start
+      // above sequence zero; do not manufacture a gap until the live baseline
+      // has been established.
+      this.lastSequences.set(sessionId, sequence)
+      this.emit(event)
+      return
+    }
     if (sequence > previous + 1) this.scheduleRecovery(sessionId, previous + 1, sequence - 1, signal)
     this.lastSequences.set(sessionId, sequence)
     this.retryAttempt = 0
@@ -359,6 +372,7 @@ function normalizeEnvelope(value: unknown): BackendEvent | undefined {
     case 'host/workspace-order-changed':
     case 'host/archived-sessions-changed':
     case 'host/remote-event':
+    case 'host/agent-error':
     case 'approval/requested':
     case 'approval/resolved':
     case 'question/requested':
@@ -370,13 +384,6 @@ function normalizeEnvelope(value: unknown): BackendEvent | undefined {
       return withSequence(mapStreamEvent(frame.type, withRpcId), frame.seq)
     case 'stream/error':
       return { type: 'connection.lost', reason: streamErrorReason(frame.error) }
-    case 'host/agent-error':
-      return {
-        type: 'notice',
-        ...(typeof frame.sessionId === 'string' ? { sessionId: frame.sessionId } : {}),
-        level: 'error',
-        text: typeof frame.message === 'string' ? frame.message.slice(0, 512) : 'DSH agent error.',
-      }
     default:
       return withSequence(
         {
@@ -392,6 +399,7 @@ function normalizeEnvelope(value: unknown): BackendEvent | undefined {
 
 function mapStreamEvent(name: string, value: unknown): BackendEvent {
   try {
+    assertCanonicalSessionEvent(name, value)
     return rc6Mapper.event(name, value)
   } catch {
     const data = record(value)

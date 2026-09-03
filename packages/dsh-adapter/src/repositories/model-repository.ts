@@ -1,4 +1,5 @@
 import {
+  deriveProviderCredentialReference,
   AppError,
   type DiscoveredModel,
   type ModelDescriptor,
@@ -14,6 +15,7 @@ import { rc6Mapper } from '../versions/rc6/mapper.js'
 import {
   schemasteryChildEntries,
   schemasteryNodeAtPath,
+  schemasteryUnionMembers,
   type SerializedSchemaNode,
 } from '../versions/rc6/schemastery.js'
 import {
@@ -70,9 +72,12 @@ export class Rc6ModelRepository implements ModelRepository {
       for (const draft of derived) {
         const state =
           draft.credentialRef === undefined ? undefined : credentialStates.get(draft.credentialRef)
+        const conventionalReferenceWritable =
+          state?.configured === false &&
+          draft.credentialRef === deriveProviderCredentialReference(provider.id)
         fields.set(draft.field.key, {
           ...draft.field,
-          ...(state === undefined ? {} : { writable: state.writable }),
+          ...(state === undefined ? {} : { writable: state.writable || conventionalReferenceWritable }),
           ...(state?.configured === true ? { value: '[configured]' } : {}),
         })
       }
@@ -291,12 +296,14 @@ function describeProviderFields(
         const credentialRef =
           role === 'credential-ref' && typeof value === 'string' && value !== '' ? value : undefined
         const description = typeof meta.description === 'string' ? meta.description : undefined
+        const enumValues = schemaEnumValues(namespace.schema, child)
         fields.push({
           field: {
             key: next.join('.'),
             label: description === undefined || description === '' ? key : description,
             secret: role === 'credential-ref',
             required: meta.required === true,
+            ...(enumValues === undefined ? {} : { enumValues }),
             ...(role !== 'credential-ref' && typeof value === 'string' ? { value } : {}),
           },
           ...(credentialRef === undefined ? {} : { credentialRef }),
@@ -308,6 +315,13 @@ function describeProviderFields(
   } catch {
     throw malformedModels('provider settings schema')
   }
+}
+
+function schemaEnumValues(schema: unknown, node: SerializedSchemaNode): readonly string[] | undefined {
+  const members = node.type === 'const' ? [node] : schemasteryUnionMembers(schema, node)
+  if (members.length === 0) return undefined
+  const values = members.map((member) => member.value)
+  return values.every((value): value is string => typeof value === 'string') ? values : undefined
 }
 
 function readPath(value: unknown, path: readonly string[]): unknown {
@@ -337,8 +351,14 @@ async function describeCredentialReferences(
     if (credentials === undefined) throw malformedModels('credential state')
     for (const ref of batch) {
       const view = asOptionalRecord(credentials[ref])
+      // `credentials.describe` may omit a never-written reference. This is the
+      // expected state for a newly materialized custom provider; it must not
+      // make the whole provider catalog malformed.
+      if (view === undefined) {
+        states.set(ref, { configured: false, writable: false })
+        continue
+      }
       if (
-        view === undefined ||
         typeof view.configured !== 'boolean' ||
         typeof view.writable !== 'boolean' ||
         (view.source !== undefined && typeof view.source !== 'string')

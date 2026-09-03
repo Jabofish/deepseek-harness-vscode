@@ -9,11 +9,12 @@ import { PluginConfiguration } from './PluginConfiguration.js'
 
 function snapshot(): DshSettingsSnapshot {
   const namespaces: DshSettingsSchema['namespaces'] = [
-    { ns: 'shell', applies: 'live', userFields: ['timeoutMs'], secrets: [] },
-    { ns: 'agent-loop', applies: 'live', userFields: [], secrets: [] },
+    { ns: 'shell', applies: 'live', revision: 1, userFields: ['timeoutMs'], secrets: [] },
+    { ns: 'agent-loop', applies: 'live', revision: 2, userFields: [], secrets: [] },
     {
       ns: 'web-search-deepseek',
       applies: 'live',
+      revision: 3,
       userFields: [],
       secrets: [{ field: 'apiKey', set: false }],
     },

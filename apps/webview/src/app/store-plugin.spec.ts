@@ -74,7 +74,7 @@ describe('AppStore plugin inventory projection', () => {
     store.dispose()
   })
 
-  it('drops malformed groups while retaining valid groups at the Webview boundary', async () => {
+  it('rejects a plugin snapshot containing a malformed group', async () => {
     const store = createAppStore(
       new PluginClient({
         entries: [],
@@ -85,9 +85,21 @@ describe('AppStore plugin inventory projection', () => {
       }) as unknown as ProtocolClient,
     )
 
-    await expect(store.loadPluginInventory()).resolves.toMatchObject({
-      agentPresets: [{ id: 'good', trust: 'user', isDefault: false, rows: [] }],
-    })
+    await expect(store.loadPluginInventory()).resolves.toBeUndefined()
+    store.dispose()
+  })
+
+  it('rejects a plugin snapshot containing a malformed entry', async () => {
+    const store = createAppStore(
+      new PluginClient({
+        entries: [
+          { entryId: 'valid', moduleName: '@dsh/valid', enabled: true, fiberPhase: null },
+          { entryId: 'broken', moduleName: '@dsh/broken', enabled: 'yes', fiberPhase: null },
+        ],
+      }) as unknown as ProtocolClient,
+    )
+
+    await expect(store.loadPluginInventory()).resolves.toBeUndefined()
     store.dispose()
   })
 })

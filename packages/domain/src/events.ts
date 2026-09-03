@@ -7,6 +7,8 @@ export interface GoalView {
   readonly id: string
   readonly title: string
   readonly status: 'pending' | 'in-progress' | 'completed' | 'blocked'
+  /** Upstream goal round budget, when the connected host advertises it. */
+  readonly maxGoalRounds?: number
 }
 
 export interface JobView {

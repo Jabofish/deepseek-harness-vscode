@@ -18,6 +18,7 @@ export class Rc6SkillRepository implements SkillRepository {
         typeof record.name !== 'string' ||
         record.name.trim() === '' ||
         typeof record.description !== 'string' ||
+        (record.whenToUse !== undefined && typeof record.whenToUse !== 'string') ||
         typeof record.modelInvocable !== 'boolean'
       )
         throw malformedSkillResponse('list entry')
@@ -26,6 +27,7 @@ export class Rc6SkillRepository implements SkillRepository {
           id: record.name,
           name: record.name,
           description: record.description,
+          ...(typeof record.whenToUse === 'string' ? { whenToUse: record.whenToUse } : {}),
           source: 'project' as const,
           enabled: record.modelInvocable,
         },

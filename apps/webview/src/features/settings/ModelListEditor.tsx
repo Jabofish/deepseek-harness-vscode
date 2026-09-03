@@ -171,6 +171,7 @@ export function ModelListEditor(props: ModelListEditorProps): ReactElement {
                     type="text"
                     value={model.id}
                     placeholder={t('settings.modelId')}
+                    maxLength={256}
                     disabled={!props.writable || props.saving}
                     onChange={(event) => update(index, { id: event.target.value })}
                   />
@@ -181,6 +182,7 @@ export function ModelListEditor(props: ModelListEditorProps): ReactElement {
                     type="text"
                     value={model.name ?? ''}
                     placeholder={t('settings.modelName')}
+                    maxLength={512}
                     disabled={!props.writable || props.saving}
                     onChange={(event) => update(index, { name: emptyToUndefined(event.target.value) })}
                   />

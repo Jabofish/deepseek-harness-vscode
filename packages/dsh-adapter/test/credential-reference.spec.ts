@@ -179,6 +179,87 @@ describe('Rc6CredentialRepository provider fields', () => {
     ])
   })
 
+  it('rejects a provider directory with an empty settingsPath segment before reading settings', async () => {
+    const calls: Call[] = []
+    const repository = new Rc6CredentialRepository(
+      transportFor(
+        {
+          'llm.providers': {
+            providers: [
+              {
+                provider: 'gateway',
+                displayName: 'Gateway',
+                settingsNs: 'llm-pi-ai',
+                settingsPath: ['providers', ''],
+                active: true,
+              },
+            ],
+          },
+        },
+        calls,
+      ),
+    )
+
+    await expect(repository.setSecret('gateway', 'apiKeyEnv', 'sk-invalid-path')).rejects.toMatchObject({
+      code: 'PROTOCOL_ERROR',
+    })
+    expect(calls).toEqual([{ method: 'llm.providers', params: {} }])
+  })
+
+  it('allows retrying a conventional custom-route reference after the profile has committed', async () => {
+    const calls: Call[] = []
+    const repository = new Rc6CredentialRepository(
+      transportFor(
+        {
+          'llm.providers': {
+            providers: [
+              {
+                provider: 'gateway',
+                displayName: 'Gateway',
+                settingsNs: 'llm-pi-ai',
+                settingsPath: ['providers', 'gateway'],
+                active: false,
+                declared: false,
+              },
+            ],
+          },
+          'settings.describe': {
+            writable: true,
+            hasDocument: true,
+            namespaces: [
+              {
+                ns: 'llm-pi-ai',
+                schema: NESTED_PROVIDER_SCHEMA,
+                value: {
+                  providers: {
+                    gateway: {
+                      apiKeyEnv: 'GATEWAY_API_KEY',
+                    },
+                  },
+                },
+                applies: 'live',
+                secrets: [],
+                revision: 8,
+              },
+            ],
+          },
+          'credentials.describe': { credentials: {} },
+          'credentials.set': {},
+        },
+        calls,
+      ),
+    )
+
+    await repository.setSecret('gateway', 'apiKeyEnv', 'sk-retry')
+
+    expect(calls).toEqual([
+      { method: 'llm.providers', params: {} },
+      { method: 'settings.describe', params: {} },
+      { method: 'credentials.describe', params: { refs: ['GATEWAY_API_KEY'] } },
+      { method: 'credentials.set', params: { ref: 'GATEWAY_API_KEY', value: 'sk-retry' } },
+    ])
+  })
+
   it('refuses an environment-shadowed credential reference before attempting a write', async () => {
     const calls: Call[] = []
     const repository = new Rc6CredentialRepository(

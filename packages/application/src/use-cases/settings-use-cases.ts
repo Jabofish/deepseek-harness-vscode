@@ -1,5 +1,5 @@
 import { AppError } from '@dsh-vscode/domain'
-import type { DshSettingsSchema } from '@dsh-vscode/domain'
+import type { DshSettingsSchema, SettingsPathOperation } from '@dsh-vscode/domain'
 
 import type { BackendService } from '../services/backend-service.js'
 
@@ -23,6 +23,19 @@ export class SettingsUseCases {
   public unset(path: string, signal?: AbortSignal): Promise<void> {
     if (path.trim() === '') throw new Error('Settings path is required')
     return this.backendService.requireBackend().settings.unset(path, signal)
+  }
+
+  public mutate(
+    namespace: string,
+    operations: readonly SettingsPathOperation[],
+    expectedRevision?: number,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    if (namespace.trim() === '') throw new Error('Settings namespace is required')
+    if (operations.length === 0) throw new Error('At least one settings operation is required')
+    return this.backendService
+      .requireBackend()
+      .settings.mutate(namespace, operations, expectedRevision, signal)
   }
 
   public openDocument(signal?: AbortSignal): Promise<void> {

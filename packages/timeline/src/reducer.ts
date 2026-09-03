@@ -532,21 +532,11 @@ export function reduceTimeline(
         activity: event.activity,
       })
       break
+    // Requests are rendered as live interaction cards by the Webview App.
+    // Projecting them into the durable timeline as notices creates a second
+    // transient surface (and makes approvals look like yellow tool output).
     case 'permission.requested':
-      nodes.push({
-        kind: 'notice',
-        id: `permission:${event.request.id}`,
-        level: 'warning',
-        text: event.request.title,
-      })
-      break
     case 'question.requested':
-      nodes.push({
-        kind: 'notice',
-        id: `question:${event.question.id}`,
-        level: 'info',
-        text: event.question.prompt,
-      })
       break
     case 'connection.lost':
       activeTurn = undefined
@@ -692,6 +682,8 @@ function eventMayChangeTimelineNodes(event: BackendEvent, state: TimelineState):
     case 'step.started':
     case 'session.added':
     case 'session.removed':
+    case 'permission.requested':
+    case 'question.requested':
     case 'permission.resolved':
     case 'question.resolved':
     case 'jobs.updated':

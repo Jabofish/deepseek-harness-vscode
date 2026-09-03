@@ -1,4 +1,4 @@
-import type { PromptAttachment } from '@dsh-vscode/domain'
+import { AppError, type PromptAttachment } from '@dsh-vscode/domain'
 
 export interface ParsedBase64DataUri {
   readonly mediaType: string
@@ -65,6 +65,109 @@ export function encodeImageAttachments(
   return images
 }
 
+export interface PromptContentLimits {
+  readonly maxImageBytes: number
+  readonly maxAttachmentTotalBytes: number
+  readonly maxImageTotalBytes: number
+  readonly maxImagesPerMessage?: number
+  readonly mediaTypes?: ReadonlySet<string>
+}
+
+/** Encode the upload-shaped content shared by Session and subagent prompts. */
+export function encodePromptContent(
+  text: string,
+  attachments: readonly PromptAttachment[],
+  limits: PromptContentLimits,
+): readonly Record<string, string>[] {
+  let totalBytes = 0
+  let imageBytes = 0
+  let imageCount = 0
+  const content: Record<string, string>[] = [{ type: 'text', text }]
+  for (const attachment of attachments) {
+    const parsed = parseBase64DataUri(attachment.uri)
+    if (parsed === undefined)
+      throw new AppError({
+        code: 'INVALID_CONFIGURATION',
+        message: 'The attachment must be a supported base64 data URI.',
+        retryable: false,
+      })
+    const mediaType = parsed.mediaType
+    const encoded = parsed.encoded
+    if (!isCanonicalBase64(encoded))
+      throw new AppError({
+        code: 'INVALID_CONFIGURATION',
+        message: 'The attachment encoding is invalid.',
+        retryable: false,
+      })
+    const image = isSupportedImageMimeType(mediaType)
+    if (image && limits.mediaTypes !== undefined && !limits.mediaTypes.has(mediaType))
+      throw new AppError({
+        code: 'INVALID_CONFIGURATION',
+        message: 'The attachment image type is not accepted by DSH.',
+        retryable: false,
+      })
+    const bytes = decodeCanonicalBase64(encoded, image ? limits.maxImageBytes : MAX_TEXT_ATTACHMENT_BYTES)
+    if (bytes === undefined)
+      throw new AppError({
+        code: 'INVALID_CONFIGURATION',
+        message: 'The attachment encoding is not canonical Base64.',
+        retryable: false,
+      })
+    if (image && limits.maxImagesPerMessage !== undefined) {
+      imageCount += 1
+      if (imageCount > limits.maxImagesPerMessage)
+        throw new AppError({
+          code: 'INVALID_CONFIGURATION',
+          message: 'The message contains too many images for DSH.',
+          retryable: false,
+        })
+    }
+    if (image && bytes.length > limits.maxImageBytes)
+      throw new AppError({
+        code: 'INVALID_CONFIGURATION',
+        message: 'The attachment is too large.',
+        retryable: false,
+      })
+    totalBytes += bytes.length
+    if (totalBytes > limits.maxAttachmentTotalBytes)
+      throw new AppError({
+        code: 'INVALID_CONFIGURATION',
+        message: 'The combined attachment size is too large.',
+        retryable: false,
+      })
+    if (image) {
+      imageBytes += bytes.length
+      if (imageBytes > limits.maxImageTotalBytes)
+        throw new AppError({
+          code: 'INVALID_CONFIGURATION',
+          message: 'The combined image size is too large for DSH.',
+          retryable: false,
+        })
+      if (bytes.length === 0 || !matchesImageSignature(mediaType, bytes))
+        throw new AppError({
+          code: 'INVALID_CONFIGURATION',
+          message: 'The attachment contents do not match a supported image.',
+          retryable: false,
+        })
+      content.push({ type: 'image', mediaType, data: encoded, name: safeAttachmentName(attachment.name) })
+      continue
+    }
+    if (!isTextAttachment(mediaType, attachment.name, bytes))
+      throw new AppError({
+        code: 'INVALID_CONFIGURATION',
+        message: 'This DSH integration supports images and text-based files only.',
+        retryable: false,
+      })
+    const name = safeAttachmentName(attachment.name)
+    const attachmentText = bytes.toString('utf8')
+    content.push({
+      type: 'text',
+      text: `\n\nAttached file: ${name}\n\n${attachmentText}\n\nEnd of attached file: ${name}`,
+    })
+  }
+  return content
+}
+
 export function isTextAttachment(mediaType: string, name: string, bytes: Buffer): boolean {
   if (!validTextBytes(bytes)) return false
   if (mediaType.startsWith('text/') || TEXT_ATTACHMENT_MIME_TYPES.has(mediaType)) return true
@@ -95,6 +198,7 @@ function extensionFromName(name: string): string {
 }
 
 const SUPPORTED_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
+const MAX_TEXT_ATTACHMENT_BYTES = 8 * 1024 * 1024
 
 const TEXT_ATTACHMENT_MIME_TYPES = new Set([
   'application/json',

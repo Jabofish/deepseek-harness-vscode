@@ -491,7 +491,8 @@ VS Code 无文件夹 Webview 回放，因此该修复不提升能力矩阵中的
 - SS-01/CV-01（Webview 缺口自愈）：Webview 此前把 `session.gap` 降级为未知事件，既不提示也不自愈。
   现在 `session.gap` 解析为严格 DTO 并渲染去重后的缺口提示，同时触发有界的 `session.history`
   反向回填（每缺口范围 ≤4 页、每页 ≤200 条消息、仅限当前会话与当前 open 代），逐页合并进事件台账并
-  重建时间线（进度式揭示）；补齐成功撤下提示，回填失败保留提示。乱序迟到事件（≤当前水位）经 16ms
+  重建时间线（进度式揭示）；回填进行中不渲染瞬时黄色提示，只有确认台账仍无法覆盖缺口时才保留提示，
+  补齐成功撤下提示。乱序迟到事件（≤当前水位）经 16ms
   去抖的台账重建显示。
   红绿证据：`apps/webview/src/app/store-gap-heal.spec.ts` 新增 5 例——回填+自愈、失败保留提示、
   乱序重建、畸形缺口忽略、他会话缺口忽略。
@@ -560,6 +561,26 @@ VS Code 无文件夹 Webview 回放，因此该修复不提升能力矩阵中的
   follow、长回答断线恢复和 VS Code Webview 回放尚未执行，因此 CN-06 继续保持 `PARTIAL`，不能把
   代码或自动测试证据记为完整 live 兼容。
 
+## 2026-09-03 供应商添加接线修复与上游语义适配证据
+
+- MD-01/ST-01/ST-02：结合固定上游的 `CustomProviderCard`、`ModelsSection`、Schemastery
+  protocol union 和 `settings.mutate` 语义，补齐自定义 Provider 从 Webview 到 Extension Host、
+  Application、Adapter、DSH 的完整链路。Provider profile 以打开时 namespace revision 做一次
+  compare-and-swap 写入，API key 由 Host 可选密码输入后单独调用 `credentials.set`；key 不进入
+  Webview 协议、Domain DTO 或日志。无 key 时保留上游 provider-native authentication 语义。
+- 动态接线：API protocol 选项直接来自 DSH `llm.providers` 对应 Schemastery union；模型发现增加
+  Host-only `models.discover.custom` 路由；自定义创建增加严格的 `provider.custom.create` 协议。
+  profile 已提交但凭据写入失败时，卡片锁定 profile 字段，重试只调用现有 Provider Secret
+  Host 路径，不重复使用已失效的 revision；刷新失败也不会诱导重复提交已落地 profile。
+- 安全与回归：协议和 Application 双重拒绝模型元数据中的 credential-shaped 字段，并校验模型
+  ID/name/capacity、路由 ID、动态 protocol、目标 settings collection、碰撞和 CAS revision；
+  `packages/application`、`packages/dsh-adapter`、`packages/webview-protocol` 及 Settings
+  组件回归覆盖成功、keyless、credential-only failure/retry、刷新失败、畸形输入和动态枚举。
+  本次全量自动证据为 `pnpm format:check`、`pnpm lint`、`pnpm typecheck`、`pnpm test`
+  （126 个文件、1011 个测试）和 `pnpm build` 均通过。
+- 真实证据边界：尚未对真实 DSH 执行自定义 Provider 写入、凭据保存/重试和模型发现 smoke，
+  因此 MD-01、ST-01、ST-02 继续保持 `PARTIAL`，不能将代码或自动测试证据记为完整 live 兼容。
+
 ## 未知运行时的尽力而为兼容策略
 
 - 选择规则：运行时版本为空时沿用未版本化候选的既有探测；运行时版本为非空且不在
@@ -582,3 +603,41 @@ VS Code 无文件夹 Webview 回放，因此该修复不提升能力矩阵中的
 ## 可选 DSH 能力的处理
 
 MCP、LSP、Schedule、Terminal、Session Query、E2B、Cordis 动态工具等可能未在默认 Web Profile 启用。扩展通过已知上游事件的通用 Tool Card 和 `CAPABILITY_UNAVAILABLE` 降级；不得为了“功能完整”擅自启用高权限插件。
+
+## 2026-09-03 上游 goal/change 接线修复证据
+
+- PL-01：固定 rc.6 提交 `47f943859bef60e4160492346772ded9b24f765a` 的 `goal/change` 是单个完整快照或 clear 墓碑，不是 `goals[]` 列表。rc.6 mapper 现将快照 `goal` 投影为 `goal.updated`，把 `objective` 映射为标题，并将 `active/paused/blocked/complete` 正确转换为 UI 的 `in-progress/pending/blocked/completed`；clear 墓碑映射为空列表，旧 whole-list 事件仍兼容。
+- 自动证据：`packages/dsh-adapter/test/rc6-contract.spec.ts` 新增 canonical snapshot、四种 phase、clear 和畸形快照回归；定向回归通过。尚未新增真实 DSH/Webview 回放，因此 PL-01 继续保持 `PARTIAL`。
+
+## 2026-09-03 固定版本跨链路字段审计与修复证据
+
+- IN-02/AT-01：rc.6 与 alpha 的 queue projection 现在保留上游 `Message` 中的 durable image reference；队列 UI
+  对含图片的条目只读展示，避免调用上游明确拒绝非 text block 的 queue edit；文本队列仍保留原有编辑、删除和
+  steer 路径。定向回归覆盖图片投影、图片队列编辑的本地拒绝和 UI 展示，IN-02、AT-01 仍因缺真实运行中操作与
+  Webview 回放保持 `PARTIAL`。
+- PL-01：goal create/edit 的可选 `maxGoalRounds` 已沿 Domain → Application → Host → Adapter 传递，历史投影、
+  live `goal.updated` 和 rc.6 `goal/change` canonical snapshot 均只接受正安全整数；`goal/change` 的 clear tombstone
+  映射为空列表。回归覆盖 max-only edit、live/历史投影、phase、clear 与畸形输入；真实 DSH/Webview 仍未验证，
+  PL-01 保持 `PARTIAL`。
+- SA-01/AT-01：alpha.3–.5 的 `subagent/attachment-invalid`、alpha.1–.2 的旧错误词汇、各 alpha 版本的
+  `agentPreset.copy` void receipt 和独立 `settings/canOpenAgentPresetDirectory` 探测均按固定上游契约映射；可选
+  目录探测失败不再阻断有效 preset roster。子代理图片只在 alpha.3+ 的真实能力路径启用，rc.6/旧 alpha 在 Host
+  边界明确拒绝；opaque attachment handle 只在成功投递后释放，失败保留以支持重试。SA-01、AT-01 仍缺真实 DSH
+  子代理/Webview 回放，保持 `PARTIAL`。
+- SK-01/TL-01/CM-01：skill 的可选 `whenToUse`、rc.6 structured tool/result error 的可读回放以及空 cursor
+  的参数省略已贯穿投影和 UI；command.execute 的 Host handle 解析/资源释放也补齐成功与失败边界。自动测试覆盖
+  畸形响应、取消、错误和资源释放；相关能力仍保持原有 `PARTIAL`，未以静态或自动证据冒充真实运行完成。
+- MD-01/CN-06：继续审计 alpha provider 接线时发现 `llm/listProviders` 与
+  `llm/listConfigurableProviders` 的非数组或坏条目此前会被静默过滤为缺失状态；现按固定上游数组契约
+  在 Host 侧以 `PROTOCOL_ERROR` fail closed，并新增非数组、坏条目回归，避免把协议损坏误显示成“无 Provider”。
+- CN-05/PL-01/AT-01：继续审计发现 session.list 的 projection 只是可能过期的部分提示，现不再作为
+  open 的权威基线；history projection 才能替换缓存，畸形 imageLimits、权限目录、目标快照、Token/pressure
+  分桶、队列/消息图片和 canonical 已知 content block 均按整项拒绝或保留上一份有效状态，避免过滤后放宽权限、
+  清空有效状态或静默丢失图片；新增 session/goal/Webview/stream 回归覆盖这些边界。
+- 协议边界回归：history 的显式 beforeSeq/sequence/time、session.open 的关键字段、session.subscribed/
+  session.projection 的水位与 value、permission/question resolution、workspace/notice/tool 标识、session.detail
+  的 goalIds，以及 alpha goal receipt、preset `hasDocument` 能力字段现在在“出现但畸形”时拒绝或降级为 unknown，
+  不再用索引、当前时间、空字符串、过滤后的子集或默认能力静默替代；真实缺省字段仍保留旧版本兼容路径。
+- 证据等级：本批次完成固定上游源码/契约核对和自动回归；本轮已通过 `pnpm check && pnpm build`
+  （格式、lint、类型检查、126 个测试文件/1062 个测试及构建）。尚未执行真实 DSH 与 VS Code Webview
+  的完整运行验证，因此不提升上述核心能力为 `DONE`。

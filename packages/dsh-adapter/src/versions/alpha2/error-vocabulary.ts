@@ -56,6 +56,7 @@ const ALPHA2_TO_LEGACY_RPC_CODE: Readonly<Record<string, string>> = {
   'subagent/parent-unavailable': 'subagent-parent-unavailable',
   'subagent/not-resumable': 'subagent-not-resumable',
   'subagent/unauthorized': 'subagent-unauthorized',
+  'subagent/attachment-invalid': 'attachment-error',
   'subagent/attachment-unsupported': 'attachment-error',
   'subagent/delivery-unavailable': 'subagent-delivery-unavailable',
   'subagent/projections-unavailable': 'subagent-catalog-diagnostic',

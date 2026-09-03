@@ -186,6 +186,55 @@ describe('AppStore session.open bounded retry', () => {
     expect(openRequests(client)).toHaveLength(1)
   })
 
+  it('rejects malformed critical session.open fields instead of opening blank state', async () => {
+    const valid = sessionOpenDetail(activeSession.id) as Record<string, unknown>
+    const malformedDetails = [
+      { ...valid, history: { events: [] } },
+      { ...valid, configuration: { toolMode: 'native' } },
+      { ...valid, historyHasMore: 'yes' },
+      { ...valid, permissionPresets: ['workspace-write', 7] },
+      {
+        ...valid,
+        history: [
+          {
+            sequence: 'not-a-sequence',
+            event: {
+              type: 'message.user',
+              sessionId: activeSession.id,
+              messageId: 'message-1',
+              markdown: 'must not be assigned an array-index sequence',
+            },
+          },
+        ],
+      },
+      {
+        ...valid,
+        history: [
+          {
+            sequence: 1,
+            time: 17,
+            event: {
+              type: 'message.user',
+              sessionId: activeSession.id,
+              messageId: 'message-1',
+              markdown: 'must reject a malformed history timestamp',
+            },
+          },
+        ],
+      },
+    ]
+
+    for (const detail of malformedDetails) {
+      const { store, client } = makeStore({ onOpen: () => detail })
+      await expect(store.openSession(activeSession.id)).rejects.toThrow(
+        /unable to open session|malformed subagent history page/i,
+      )
+      expect(store.activeSessionId).toBeUndefined()
+      expect(openRequests(client)).toHaveLength(1)
+      store.dispose()
+    }
+  })
+
   it('gives up after the bounded attempts and surfaces the last failure', async () => {
     vi.useFakeTimers()
     const { store, client } = makeStore({
