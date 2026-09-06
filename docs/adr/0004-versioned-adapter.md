@@ -5,7 +5,7 @@
 
 ## 决策
 
-当前已发布适配 `0.1.0-rc.6` 至 `0.1.1-rc.2`，并为 `0.1.2-alpha.1` 源码及已发布的 `0.1.2-alpha.2`、`0.1.2-alpha.3`、`0.1.2-alpha.4`、`0.1.2-alpha.5` 保留独立版本入口。所有版本入口共享 `DshVersionAdapterBase` 的 identity/probe 结构，但按上游真实 wire 边界分成两条不可交叉的线性链：`rc.6 → rc.7 → rc.8 → rc.1 → rc.2`，以及 `alpha.1 → alpha.2 → alpha.3 → alpha.4 → alpha.5`。Probe 选择具体版本 Adapter；rc.6 wire schema、方法名和 mapper 只能存在于 `packages/dsh-adapter/src/versions/rc6` 或对应 Repository，alpha 的共用 `/api`/`remote.mux` 传输只能存在于 `packages/dsh-adapter/src/versions/alpha`，alpha.2/alpha.3/alpha.4/alpha.5 专属错误词汇和身份必须位于各自版本入口，新增版本必须接在所属链末尾，不得跳过已发布版本或跨 family 继承。
+当前已发布适配 `0.1.0-rc.6` 至 `0.1.2-rc.1`，并为 `0.1.2-alpha.1` 源码及已发布的 `0.1.2-alpha.2`、`0.1.2-alpha.3`、`0.1.2-alpha.4`、`0.1.2-alpha.5`、最新未发布源码 `0.1.3-alpha.1` 保留独立版本入口。所有版本入口共享 `DshVersionAdapterBase` 的 identity/probe 结构，但按真实 wire 边界分为 legacy rc、alpha family v0 与 latest alpha Session v2 三个明确入口；`0.1.2-rc.1` 虽是 rc 发布号，实际浏览器 wire 仍沿 alpha.5，因此由 `versions/rc13` 明确复用 alpha.5 v0，而不会继承 `versions/alpha13` 的 v2。Probe 选择具体版本 Adapter；rc.6 wire schema、方法名和 mapper 只能存在于 `packages/dsh-adapter/src/versions/rc6` 或对应 Repository，alpha 的共用 `/api`/`remote.mux` 传输只能存在于 `packages/dsh-adapter/src/versions/alpha`，各版本专属错误/Session wire 和身份必须位于对应版本入口，新增版本不得跳过已核对的发布边界或跨 wire family 猜测。
 
 ## 后果
 

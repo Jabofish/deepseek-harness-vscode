@@ -4110,6 +4110,8 @@ function applyHostMessage(
   const event = parsedEvent === undefined ? domainEvent(message.name, message.payload) : parsedEvent
   if (event === undefined || event === null) return
   const eventSessionId = backendEventSessionId(event)
+  const transientSequence =
+    event.type === 'message.delta' || event.type === 'reasoning.delta' ? event.transientSequence : undefined
   const belongsToActiveSession = eventSessionId === undefined || eventSessionId === state.activeSessionId
   const controlPlaneMessage = event.type === 'message.user' && isCommandMessageSource(event.source)
   let history = state.history
@@ -4151,14 +4153,16 @@ function applyHostMessage(
     deferGapNotice
       ? state.timeline
       : reduceTimeline(state.timeline, {
-          sequence: event.sequence ?? message.sequence,
+          sequence: event.sequence ?? transientSequence ?? message.sequence,
           event,
           // Some DSH lifecycle/projection events carry the durable DSH
           // sequence even though they are not timeline records. They must
           // never move the conversation cursor: doing so can make the next
           // live delta look stale until history is replayed after switching
           // sessions.
-          ...(!advancesTimelineSequence(event) ? { advanceSequence: false } : {}),
+          ...(!advancesTimelineSequence(event) || transientSequence !== undefined
+            ? { advanceSequence: false }
+            : {}),
         })
   let next: AppState =
     timeline === state.timeline && history === state.history ? state : { ...state, timeline, history }
@@ -4675,10 +4679,20 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
     const turn = finiteEventIndex(value.turn)
     const step = finiteEventIndex(value.step)
     const time = finiteEventTimestamp(value.time)
+    const transientSequence = finiteTransientSequence(value.transientSequence)
+    const transientIndex = finiteEventIndex(value.transientIndex)
+    const hasTransientMetadata =
+      value.transientSequence !== undefined ||
+      value.transientAttemptId !== undefined ||
+      value.transientIndex !== undefined
     if (
       (value.turn !== undefined && turn === undefined) ||
       (value.step !== undefined && step === undefined) ||
       (value.time !== undefined && time === undefined) ||
+      (hasTransientMetadata &&
+        (transientSequence === undefined ||
+          !nonEmptyString(value.transientAttemptId) ||
+          transientIndex === undefined)) ||
       (Object.hasOwn(value, 'interrupted') && value.interrupted !== true)
     )
       return { type: 'unknown', name, payload }
@@ -4690,6 +4704,11 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
       ...(turn === undefined ? {} : { turn }),
       ...(step === undefined ? {} : { step }),
       ...(time === undefined ? {} : { time }),
+      ...(transientSequence === undefined ? {} : { transientSequence }),
+      ...(typeof value.transientAttemptId === 'string'
+        ? { transientAttemptId: value.transientAttemptId }
+        : {}),
+      ...(transientIndex === undefined ? {} : { transientIndex }),
       ...(value.interrupted === true ? { interrupted: true as const } : {}),
     }
   }
@@ -4702,10 +4721,20 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
     const turn = finiteEventIndex(value.turn)
     const step = finiteEventIndex(value.step)
     const time = finiteEventTimestamp(value.time)
+    const transientSequence = finiteTransientSequence(value.transientSequence)
+    const transientIndex = finiteEventIndex(value.transientIndex)
+    const hasTransientMetadata =
+      value.transientSequence !== undefined ||
+      value.transientAttemptId !== undefined ||
+      value.transientIndex !== undefined
     if (
       (value.turn !== undefined && turn === undefined) ||
       (value.step !== undefined && step === undefined) ||
       (value.time !== undefined && time === undefined) ||
+      (hasTransientMetadata &&
+        (transientSequence === undefined ||
+          !nonEmptyString(value.transientAttemptId) ||
+          transientIndex === undefined)) ||
       (Object.hasOwn(value, 'interrupted') && value.interrupted !== true)
     )
       return { type: 'unknown', name, payload }
@@ -4717,6 +4746,11 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
       ...(turn === undefined ? {} : { turn }),
       ...(step === undefined ? {} : { step }),
       ...(time === undefined ? {} : { time }),
+      ...(transientSequence === undefined ? {} : { transientSequence }),
+      ...(typeof value.transientAttemptId === 'string'
+        ? { transientAttemptId: value.transientAttemptId }
+        : {}),
+      ...(transientIndex === undefined ? {} : { transientIndex }),
     }
   }
   if (name === 'message.completed' && nonEmptyString(value.sessionId) && nonEmptyString(value.messageId)) {
@@ -5360,6 +5394,10 @@ function newestHistorySequence(history: readonly SessionHistoryEvent[]): number 
 }
 
 function optionalSequence(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined
+}
+
+function finiteTransientSequence(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined
 }
 

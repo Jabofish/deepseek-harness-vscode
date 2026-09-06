@@ -341,6 +341,8 @@ function normalizeEnvelope(value: unknown): BackendEvent | undefined {
     return withSequence({ type: 'unknown', name: 'protocol/frame', payload: safePayload(frame) }, frame.seq)
   const withRpcId = typeof envelope?.rpcId === 'string' ? { ...frame, rpcId: envelope.rpcId } : frame
   switch (frame.type) {
+    case 'session/assistant-stream':
+      return normalizeAssistantStreamFrame(frame)
     case 'session/event': {
       const event = record(frame.event)
       return typeof event?.type !== 'string'
@@ -397,6 +399,45 @@ function normalizeEnvelope(value: unknown): BackendEvent | undefined {
   }
 }
 
+function normalizeAssistantStreamFrame(value: Record<string, unknown>): BackendEvent | undefined {
+  const sessionId =
+    typeof value.sessionId === 'string' && value.sessionId.trim() !== '' ? value.sessionId : undefined
+  const frame = record(value.frame)
+  const chunk = record(frame?.chunk)
+  if (
+    sessionId === undefined ||
+    frame === undefined ||
+    frame.type !== 'chunk' ||
+    chunk === undefined ||
+    typeof frame.attemptId !== 'string' ||
+    frame.attemptId.trim() === '' ||
+    !safeNonNegativeInteger(frame.revision) ||
+    !safeNonNegativeInteger(frame.index) ||
+    !safeNonNegativeInteger(frame.turn) ||
+    !safeNonNegativeInteger(frame.step) ||
+    !safeInteger(frame.time) ||
+    !safeNonNegativeInteger(value.transientSequence)
+  )
+    return undefined
+  const chunkType = chunk.type
+  if (chunkType !== 'text-delta' && chunkType !== 'reasoning-delta') return undefined
+  if (typeof chunk.text !== 'string') return undefined
+  const common = {
+    sessionId,
+    messageId: `assistant:${String(frame.turn)}:${String(frame.step)}`,
+    delta: chunk.text,
+    turn: frame.turn,
+    step: frame.step,
+    time: frame.time,
+    transientSequence: value.transientSequence,
+    transientAttemptId: frame.attemptId,
+    transientIndex: frame.index,
+  }
+  return chunkType === 'text-delta'
+    ? { type: 'message.delta', ...common }
+    : { type: 'reasoning.delta', ...common }
+}
+
 function mapStreamEvent(name: string, value: unknown): BackendEvent {
   try {
     assertCanonicalSessionEvent(name, value)
@@ -429,6 +470,14 @@ function record(value: unknown): Record<string, unknown> | undefined {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined
+}
+
+function safeNonNegativeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 && !Object.is(value, -0)
+}
+
+function safeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && !Object.is(value, -0)
 }
 
 function safeReason(error: unknown): string {

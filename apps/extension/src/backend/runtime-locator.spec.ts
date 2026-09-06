@@ -43,9 +43,11 @@ describe('DshRuntimeLocator compatibility policy', () => {
       '0.1.0-rc.8',
       '0.1.1-rc.1',
       '0.1.1-rc.2',
+      '0.1.2-rc.1',
       '0.1.2-alpha.3',
       '0.1.2-alpha.4',
       '0.1.2-alpha.5',
+      '0.1.3-alpha.1',
     ]) {
       await expect(locator(version).locate()).resolves.toMatchObject({
         runtime: { version, supported: true, compatibility: 'known' },

@@ -6,6 +6,7 @@ import { AppError, type BackendEndpoint } from '@dsh-vscode/domain'
 import type { DshTransport, RetryPolicy } from '../../contracts.js'
 import { cancelled, httpFailure, normalizeTransportError } from '../../transport-errors.js'
 import { unwrapRpcResultValue } from '../rc6/rpc.js'
+import { Alpha13AssistantStreamProjector, type Alpha13ProjectorOutput } from '../alpha13/session-wire.js'
 
 /** The small subset of the `ws`/browser WebSocket surface used by the adapter. */
 export interface AlphaWebSocket {
@@ -33,6 +34,8 @@ export interface AlphaLoopbackApiClientOptions {
   readonly webSocket?: AlphaWebSocketConstructor
   /** Optional version-specific Remote error compatibility profile. */
   readonly normalizeErrorCode?: AlphaErrorCodeNormalizer
+  /** Session Controller wire profile; alpha.1-.5 use v0, 0.1.3-alpha.1 uses v2. */
+  readonly sessionWireVersion?: 'v0' | 'v2'
 }
 
 type AlphaSuccess = { readonly ok: true; readonly value?: unknown }
@@ -524,7 +527,8 @@ export class AlphaLoopbackApiClient implements DshTransport {
   ): Promise<Record<string, unknown>> {
     for await (const item of this.openRemoteStream('session/follow', { request }, signal)) {
       const frame = recordOrUndefined(item)
-      if (!validAlphaSessionSnapshot(frame)) throw malformedResponse('session/follow snapshot')
+      if (!validAlphaSessionSnapshot(frame, this.options.sessionWireVersion === 'v2'))
+        throw malformedResponse('session/follow snapshot')
       return frame
     }
     throw malformedResponse('session/follow snapshot')
@@ -539,7 +543,7 @@ export class AlphaLoopbackApiClient implements DshTransport {
       (record.projections !== undefined && !validAlphaProjectionBaseline(record.projections))
     )
       throw malformedResponse('session history')
-    const events = expandHistoryRecords(record.records, sessionId)
+    const events = expandHistoryRecords(record.records, sessionId, this.options.sessionWireVersion === 'v2')
     return {
       rpcId: randomUUID(),
       result: {
@@ -807,24 +811,84 @@ export class AlphaLoopbackApiClient implements DshTransport {
   }
 
   private async *readSession(sessionId: string, signal: AbortSignal): AsyncGenerator<unknown> {
-    const request = { address: { kind: 'session', sessionId }, maxMessages: 50 }
+    const v2 = this.options.sessionWireVersion === 'v2'
+    const request = {
+      address: { kind: 'session', sessionId },
+      maxMessages: 50,
+      ...(v2 ? { assistantStream: true } : {}),
+    }
+    const projector = v2 ? new Alpha13AssistantStreamProjector() : undefined
     for await (const item of this.openRemoteStream('session/follow', { request }, signal)) {
       const frame = recordOrUndefined(item)
       if (frame?.type === 'snapshot') {
-        if (!validAlphaSessionSnapshot(frame)) throw malformedResponse('session/follow snapshot')
-        for (const event of expandHistoryRecords(frame.records, sessionId))
-          yield { type: 'session/event', sessionId, event }
+        if (!validAlphaSessionSnapshot(frame, v2)) throw malformedResponse('session/follow snapshot')
+        const events = expandHistoryRecords(frame.records, sessionId, v2)
+        if (projector !== undefined) for (const event of events) projector.rememberDurable(event)
+        for (const event of events) yield { type: 'session/event', sessionId, event }
         yield {
           type: 'session/subscribed',
           sessionId,
           lastSeq: frame.cursor,
           projections: frame.projections,
         }
+        if (projector !== undefined) {
+          if (frame.assistantStream === undefined)
+            throw malformedResponse('session/follow assistant stream baseline')
+          let projected: readonly Alpha13ProjectorOutput[]
+          try {
+            projected = projector.open(frame.assistantStream, sessionId)
+          } catch (cause) {
+            throw malformedResponse('session/follow assistant stream baseline', cause)
+          }
+          for (const output of projected) yield this.alpha13ProjectorFrame(output)
+        }
       } else if (frame?.type === 'event') {
-        if (!validAlphaSessionEventFrame(frame)) throw malformedResponse('session/follow event')
+        if (!validAlphaSessionEventFrame(frame, v2)) throw malformedResponse('session/follow event')
         const event = normalizeAlphaEvent(frame.event, sessionId)
-        yield { type: 'session/event', sessionId, event }
+        if (event === undefined) throw malformedResponse('session/follow event')
+        if (projector === undefined) yield { type: 'session/event', sessionId, event }
+        else {
+          let projected: readonly Alpha13ProjectorOutput[]
+          try {
+            projected = projector.acceptDurable(event)
+          } catch (cause) {
+            throw malformedResponse('session/follow assistant settlement', cause)
+          }
+          for (const output of projected) yield this.alpha13ProjectorFrame(output)
+        }
+      } else if (projector !== undefined && frame?.type === 'assistant-stream') {
+        let projected: readonly Alpha13ProjectorOutput[]
+        try {
+          projected = projector.acceptFrame(frame.frame, sessionId)
+        } catch (cause) {
+          throw malformedResponse('session/follow assistant stream frame', cause)
+        }
+        for (const output of projected) yield this.alpha13ProjectorFrame(output)
       } else throw malformedResponse('session/follow frame')
+    }
+  }
+
+  private alpha13ProjectorFrame(output: Alpha13ProjectorOutput): Record<string, unknown> {
+    if (output.type === 'event') {
+      const sessionId = output.event.sessionId
+      if (typeof sessionId !== 'string' || sessionId.trim() === '')
+        throw malformedResponse('session/follow assistant settlement')
+      return { type: 'session/event', sessionId, event: output.event }
+    }
+    return {
+      type: 'session/assistant-stream',
+      sessionId: output.sessionId,
+      transientSequence: output.transientSequence,
+      frame: {
+        type: 'chunk',
+        attemptId: output.attemptId,
+        revision: output.revision,
+        index: output.index,
+        time: output.time,
+        turn: output.turn,
+        step: output.step,
+        chunk: output.chunk,
+      },
     }
   }
 
@@ -1391,16 +1455,17 @@ function normalizeAlphaEvent(value: unknown, sessionId: string): Record<string, 
 function expandHistoryRecords(
   records: readonly unknown[],
   sessionId: string,
+  v2 = false,
 ): readonly Record<string, unknown>[] {
   const out: Record<string, unknown>[] = []
   for (const raw of records) {
     const record = recordOrUndefined(raw)
     if (record?.type === 'event') {
       const event = recordOrUndefined(record.event)
-      if (event === undefined || !validAlphaSessionEvent(event))
+      if (event === undefined || !(v2 ? validAlpha13HistoryRecord(record) : validAlphaSessionEvent(event)))
         throw malformedResponse('session history event')
       out.push({ ...event, sessionId })
-    } else if (record?.type === 'chunks') out.push(...expandChunkRow(record.event, sessionId))
+    } else if (!v2 && record?.type === 'chunks') out.push(...expandChunkRow(record.event, sessionId))
     else throw malformedResponse('session history record')
   }
   // The Gateway snapshot is a set of history records, not the stream's
@@ -1613,10 +1678,12 @@ function modelCatalog(value: unknown): unknown {
 
 interface AlphaSessionSnapshot extends Record<string, unknown> {
   readonly type: 'snapshot'
+  readonly header: Record<string, unknown>
   readonly cursor: number
   readonly records: readonly unknown[]
   readonly hasMore: boolean
   readonly projections: Record<string, unknown>
+  readonly assistantStream?: unknown
 }
 
 interface AlphaSessionEventFrame extends Record<string, unknown> {
@@ -1648,23 +1715,84 @@ interface AlphaEventCancel extends Record<string, unknown> {
   readonly eventId: string
 }
 
-function validAlphaSessionSnapshot(value: unknown): value is AlphaSessionSnapshot {
+function validAlphaSessionSnapshot(value: unknown, v2 = false): value is AlphaSessionSnapshot {
   const record = recordOrUndefined(value)
+  const keysAreValid =
+    record !== undefined &&
+    (v2
+      ? hasExactKeys(
+          record,
+          Object.hasOwn(record, 'assistantStream')
+            ? ['type', 'header', 'cursor', 'records', 'hasMore', 'projections', 'assistantStream']
+            : ['type', 'header', 'cursor', 'records', 'hasMore', 'projections'],
+        )
+      : true)
   return (
     record !== undefined &&
+    keysAreValid &&
     record.type === 'snapshot' &&
     isPlainRecord(record.header) &&
+    (!v2 || validAlpha13SessionHeader(record.header)) &&
     isSafeAlphaCursor(record.cursor) &&
     Array.isArray(record.records) &&
+    (!v2 || record.records.every(validAlpha13HistoryRecord)) &&
     typeof record.hasMore === 'boolean' &&
-    validAlphaProjectionBaseline(record.projections)
+    validAlphaProjectionBaseline(record.projections, v2)
   )
 }
 
-function validAlphaSessionEventFrame(value: unknown): value is AlphaSessionEventFrame {
+function validAlpha13SessionHeader(value: Record<string, unknown>): boolean {
+  return (
+    hasAllowedKeys(value, [
+      'version',
+      'id',
+      'createdAt',
+      'cwd',
+      'parentSession',
+      'isSeeded',
+      'origin',
+      'delegationDepth',
+      'agentPreset',
+    ]) &&
+    typeof value.version === 'number' &&
+    Number.isSafeInteger(value.version) &&
+    value.version >= 0 &&
+    typeof value.id === 'string' &&
+    value.id.trim() !== '' &&
+    typeof value.createdAt === 'number' &&
+    Number.isSafeInteger(value.createdAt) &&
+    value.createdAt >= 0 &&
+    typeof value.isSeeded === 'boolean' &&
+    (value.cwd === undefined || typeof value.cwd === 'string') &&
+    (value.parentSession === undefined || typeof value.parentSession === 'string') &&
+    (value.origin === undefined || value.origin === 'subagent') &&
+    (value.delegationDepth === undefined ||
+      (Number.isSafeInteger(value.delegationDepth) && (value.delegationDepth as number) >= 0)) &&
+    (value.agentPreset === undefined || typeof value.agentPreset === 'string')
+  )
+}
+
+function validAlpha13HistoryRecord(value: unknown): boolean {
+  const record = recordOrUndefined(value)
+  const event = recordOrUndefined(record?.event)
+  return (
+    record !== undefined &&
+    hasExactKeys(record, ['type', 'event']) &&
+    record.type === 'event' &&
+    event !== undefined &&
+    validAlpha13SessionEvent(event)
+  )
+}
+
+function validAlphaSessionEventFrame(value: unknown, v2 = false): value is AlphaSessionEventFrame {
   const record = recordOrUndefined(value)
   const event = record?.event
-  return record?.type === 'event' && isPlainRecord(event) && validAlphaSessionEvent(event)
+  return (
+    record?.type === 'event' &&
+    (!v2 || hasExactKeys(record, ['type', 'event'])) &&
+    isPlainRecord(event) &&
+    (v2 ? validAlpha13SessionEvent(event) : validAlphaSessionEvent(event))
+  )
 }
 
 function validAlphaSessionEvent(value: Record<string, unknown>): boolean {
@@ -1680,9 +1808,33 @@ function validAlphaSessionEvent(value: Record<string, unknown>): boolean {
   )
 }
 
-function validAlphaProjectionBaseline(value: unknown): value is Record<string, unknown> {
+function validAlpha13SessionEvent(value: Record<string, unknown>): boolean {
+  const surfaceOp = value.surfaceOp
+  const replacement = recordOrUndefined(surfaceOp)
+  const sourceEventSeqs = value.sourceEventSeqs
+  return (
+    hasAllowedKeys(value, ['type', 'seq', 'time', 'data', 'ignorable', 'sourceEventSeqs', 'surfaceOp']) &&
+    validAlphaSessionEvent(value) &&
+    (sourceEventSeqs === undefined ||
+      (Array.isArray(sourceEventSeqs) && sourceEventSeqs.every(isSafeAlphaSequence))) &&
+    (surfaceOp === undefined ||
+      surfaceOp === 'append' ||
+      (replacement !== undefined &&
+        hasExactKeys(replacement, ['op', 'start', 'end']) &&
+        replacement.op === 'replace' &&
+        isSafeAlphaSequence(replacement.start) &&
+        isSafeAlphaSequence(replacement.end)))
+  )
+}
+
+function validAlphaProjectionBaseline(value: unknown, v2 = false): value is Record<string, unknown> {
   const projection = isPlainRecord(value) ? value : undefined
-  return projection !== undefined && isSafeAlphaCursor(projection.asOfSeq) && isPlainRecord(projection.values)
+  return (
+    projection !== undefined &&
+    (!v2 || hasExactKeys(projection, ['asOfSeq', 'values'])) &&
+    isSafeAlphaCursor(projection.asOfSeq) &&
+    isPlainRecord(projection.values)
+  )
 }
 
 function validAlphaEventReady(value: unknown): value is AlphaEventReady {
@@ -1741,6 +1893,10 @@ function validAlphaEventCancel(value: unknown): value is AlphaEventCancel {
 function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
   const ownKeys = Reflect.ownKeys(value)
   return ownKeys.length === keys.length && keys.every((key) => Object.hasOwn(value, key))
+}
+
+function hasAllowedKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  return Reflect.ownKeys(value).every((key) => typeof key === 'string' && keys.includes(key))
 }
 
 function isNonEmptyString(value: unknown): value is string {

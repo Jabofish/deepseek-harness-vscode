@@ -2,13 +2,13 @@
 
 ## 层次
 
-| 层          | 目标                                                                                    | 禁止替代                     |
-| ----------- | --------------------------------------------------------------------------------------- | ---------------------------- |
-| Contract    | rc.6–0.1.1-rc.2 与 alpha.1/alpha.2/alpha.3/alpha.4/alpha.5 RPC/Event/Tool 形状与 mapper | 不能只 mock Domain           |
-| Unit        | 状态机、排序、去重、reducer、错误映射                                                   | 不能靠 E2E 才发现竞态        |
-| Integration | Fake DSH socket/server、spawn 依赖、重连/资源释放                                       | 不能调用真实用户实例         |
-| VS Code E2E | View、命令、设置、Webview 协议、焦点和布局                                              | 不能只测 React DOM           |
-| Live smoke  | 固定 DSH 版本真实运行                                                                   | 不能声称自动测试等于真实兼容 |
+| 层          | 目标                                                                                                  | 禁止替代                     |
+| ----------- | ----------------------------------------------------------------------------------------------------- | ---------------------------- |
+| Contract    | rc.6–0.1.2-rc.1 与 alpha.1/alpha.2/alpha.3/alpha.4/alpha.5/0.1.3-alpha.1 RPC/Event/Tool 形状与 mapper | 不能只 mock Domain           |
+| Unit        | 状态机、排序、去重、reducer、错误映射                                                                 | 不能靠 E2E 才发现竞态        |
+| Integration | Fake DSH socket/server、spawn 依赖、重连/资源释放                                                     | 不能调用真实用户实例         |
+| VS Code E2E | View、命令、设置、Webview 协议、焦点和布局                                                            | 不能只测 React DOM           |
+| Live smoke  | 固定 DSH 版本真实运行                                                                                 | 不能声称自动测试等于真实兼容 |
 
 ## 必测负面路径
 

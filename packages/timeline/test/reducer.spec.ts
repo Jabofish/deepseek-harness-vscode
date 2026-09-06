@@ -220,6 +220,65 @@ describe('reduceTimeline', () => {
     ])
   })
 
+  it('deduplicates reconnect baseline frames without advancing the durable cursor', () => {
+    const first = reduceTimeline(initial, {
+      sequence: 1,
+      advanceSequence: false,
+      event: {
+        type: 'message.delta',
+        sessionId: 'session-1',
+        messageId: 'm1',
+        delta: 'Hello',
+        turn: 1,
+        step: 0,
+        transientAttemptId: 'attempt-1',
+        transientIndex: 0,
+        transientSequence: 1,
+      },
+    })
+    const duplicate = reduceTimeline(first, {
+      sequence: 2,
+      advanceSequence: false,
+      event: {
+        type: 'message.delta',
+        sessionId: 'session-1',
+        messageId: 'm1',
+        delta: 'Hello',
+        turn: 1,
+        step: 0,
+        transientAttemptId: 'attempt-1',
+        transientIndex: 0,
+        transientSequence: 2,
+      },
+    })
+    const continued = reduceTimeline(duplicate, {
+      sequence: 3,
+      advanceSequence: false,
+      event: {
+        type: 'message.delta',
+        sessionId: 'session-1',
+        messageId: 'm1',
+        delta: ' world',
+        turn: 1,
+        step: 0,
+        transientAttemptId: 'attempt-1',
+        transientIndex: 1,
+        transientSequence: 3,
+      },
+    })
+
+    expect(duplicate.nodes).toEqual(first.nodes)
+    expect(continued.nodes).toEqual([
+      expect.objectContaining({
+        kind: 'assistant-message',
+        markdown: 'Hello world',
+        liveAttemptId: 'attempt-1',
+        liveLastIndex: 1,
+      }),
+    ])
+    expect(continued.lastSequence).toBe(-1)
+  })
+
   it('retains durable image references on user and assistant timeline nodes', () => {
     const image = {
       attachmentId: 'fixture:image',

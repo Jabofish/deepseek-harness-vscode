@@ -208,6 +208,12 @@ type BackendEventPayload =
       readonly step?: number
       /** Epoch milliseconds from the durable DSH event. */
       readonly time?: number
+      /** Local-only ordering for Session v2 process-local assistant frames. */
+      readonly transientSequence?: number
+      /** Agent attempt identity used to make reconnect baselines idempotent. */
+      readonly transientAttemptId?: string
+      /** Dense process-local frame position within the attempt. */
+      readonly transientIndex?: number
     }
   | {
       readonly type: 'reasoning.delta'
@@ -218,6 +224,12 @@ type BackendEventPayload =
       readonly step?: number
       /** Epoch milliseconds from the durable DSH event. */
       readonly time?: number
+      /** Local-only ordering for Session v2 process-local assistant frames. */
+      readonly transientSequence?: number
+      /** Agent attempt identity used to make reconnect baselines idempotent. */
+      readonly transientAttemptId?: string
+      /** Dense process-local frame position within the attempt. */
+      readonly transientIndex?: number
     }
   | {
       readonly type: 'message.completed'

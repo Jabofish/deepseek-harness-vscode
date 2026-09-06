@@ -169,6 +169,7 @@ export function reduceTimeline(
       const timing = noteFirstToken(readStepTimings(), event.turn, event.step, event.time)
       commitTiming(timingKeyValue, timing)
       const index = conversationNodeIndex(nodes, event.messageId, event.turn, event.step)
+      const transient = event.transientAttemptId !== undefined && event.transientIndex !== undefined
       nodeChangeStart = Math.min(
         nodeChangeStart ?? (index < 0 ? nodes.length : index),
         index < 0 ? nodes.length : index,
@@ -183,19 +184,34 @@ export function reduceTimeline(
           ...(event.step === undefined ? {} : { step: event.step }),
           ...(turnClosed ? { turnCompleted: false } : {}),
           ...(timing === undefined ? {} : { timing }),
+          ...(transient
+            ? { liveAttemptId: event.transientAttemptId, liveLastIndex: event.transientIndex }
+            : {}),
         })
         break
       }
       const node = nodes[index]
       if (node?.kind === 'assistant-message') {
+        if (
+          transient &&
+          node.liveAttemptId === event.transientAttemptId &&
+          node.liveLastIndex !== undefined &&
+          event.transientIndex <= node.liveLastIndex
+        )
+          break
+        const replacesPreviousAttempt =
+          transient && node.liveAttemptId !== undefined && node.liveAttemptId !== event.transientAttemptId
         nodes[index] = {
           ...node,
-          markdown: `${node.markdown}${event.delta}`,
+          markdown: replacesPreviousAttempt ? event.delta : `${node.markdown}${event.delta}`,
           streaming: !turnClosed,
           ...(event.turn === undefined ? {} : { turn: event.turn }),
           ...(event.step === undefined ? {} : { step: event.step }),
           ...(event.turn === undefined ? {} : { turnCompleted: false }),
           ...(timing === undefined ? {} : { timing }),
+          ...(transient
+            ? { liveAttemptId: event.transientAttemptId, liveLastIndex: event.transientIndex }
+            : {}),
           ...(node.reasoning === undefined ? {} : { reasoning: { ...node.reasoning, streaming: false } }),
         }
       } else if (node?.kind === 'reasoning') {
@@ -211,6 +227,9 @@ export function reduceTimeline(
           ...(event.step === undefined ? {} : { step: event.step }),
           ...(turnClosed ? { turnCompleted: false } : {}),
           ...(timing === undefined ? {} : { timing }),
+          ...(transient
+            ? { liveAttemptId: event.transientAttemptId, liveLastIndex: event.transientIndex }
+            : {}),
           reasoning: { markdown: node.markdown, streaming: false },
         }
       }
@@ -225,6 +244,7 @@ export function reduceTimeline(
       }
       if (event.delta === '') break
       const index = conversationNodeIndex(nodes, event.messageId, event.turn, event.step)
+      const transient = event.transientAttemptId !== undefined && event.transientIndex !== undefined
       nodeChangeStart = Math.min(
         nodeChangeStart ?? (index < 0 ? nodes.length : index),
         index < 0 ? nodes.length : index,
@@ -240,26 +260,58 @@ export function reduceTimeline(
           ...(event.step === undefined ? {} : { step: event.step }),
           ...(turnClosed ? { turnCompleted: false } : {}),
           ...(timing === undefined ? {} : { timing }),
+          ...(transient
+            ? { liveAttemptId: event.transientAttemptId, liveLastIndex: event.transientIndex }
+            : {}),
           reasoning: { markdown: event.delta, streaming: !turnClosed },
         })
         break
       }
       const node = nodes[index]
       if (node?.kind === 'assistant-message') {
+        if (
+          transient &&
+          node.liveAttemptId === event.transientAttemptId &&
+          node.liveLastIndex !== undefined &&
+          event.transientIndex <= node.liveLastIndex
+        )
+          break
+        const replacesPreviousAttempt =
+          transient && node.liveAttemptId !== undefined && node.liveAttemptId !== event.transientAttemptId
         const reasoning = node.reasoning
         nodes[index] = {
           ...node,
           ...(event.turn === undefined ? {} : { turn: event.turn }),
           ...(event.step === undefined ? {} : { step: event.step }),
+          ...(replacesPreviousAttempt ? { markdown: '' } : {}),
           ...(event.turn === undefined ? {} : { turnCompleted: false }),
           ...(timing === undefined ? {} : { timing }),
+          ...(transient
+            ? { liveAttemptId: event.transientAttemptId, liveLastIndex: event.transientIndex }
+            : {}),
           reasoning: {
-            markdown: `${reasoning?.markdown ?? ''}${event.delta}`,
+            markdown: `${replacesPreviousAttempt ? '' : (reasoning?.markdown ?? '')}${event.delta}`,
             streaming: !turnClosed,
           },
         }
       } else if (node?.kind === 'reasoning') {
-        nodes[index] = { ...node, markdown: `${node.markdown}${event.delta}`, streaming: !turnClosed }
+        if (
+          transient &&
+          node.liveAttemptId === event.transientAttemptId &&
+          node.liveLastIndex !== undefined &&
+          event.transientIndex <= node.liveLastIndex
+        )
+          break
+        const replacesPreviousAttempt =
+          transient && node.liveAttemptId !== undefined && node.liveAttemptId !== event.transientAttemptId
+        nodes[index] = {
+          ...node,
+          markdown: replacesPreviousAttempt ? event.delta : `${node.markdown}${event.delta}`,
+          streaming: !turnClosed,
+          ...(transient
+            ? { liveAttemptId: event.transientAttemptId, liveLastIndex: event.transientIndex }
+            : {}),
+        }
       }
       break
     }
