@@ -163,13 +163,6 @@ export class Alpha13AssistantStreamProjector {
 
   public acceptFrame(value: unknown, sessionId: string): readonly Alpha13ProjectorOutput[] {
     const frame = parseFrame(value)
-    if (frame.type === 'start' && frame.revision === 1 && this.revision !== 0) {
-      // The upstream Agent lifecycle can be replaced while the same follow is
-      // open. Revision one is a deliberate new epoch, not a sequence gap.
-      this.activeAttempt = undefined
-      this.pendingSettlements.clear()
-      this.revision = 0
-    }
     if (frame.revision !== this.revision + 1)
       throw new Error(`assistant stream skipped revision ${String(this.revision + 1)}`)
     this.revision = frame.revision

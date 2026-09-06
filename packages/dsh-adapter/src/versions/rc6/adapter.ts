@@ -9,7 +9,7 @@ import {
 
 import {
   isKnownDshVersion,
-  LATEST_VERIFIED_DSH_VERSION,
+  LATEST_COMPATIBILITY_FALLBACK_DSH_VERSION,
   normalizeDshVersion,
   SUPPORTED_DSH_RANGE,
   type DshTransport,
@@ -130,8 +130,8 @@ export class Rc6VersionAdapter extends DshVersionAdapterBase {
           ? {
               compatibilityWarning:
                 hintedVersion === undefined
-                  ? `The DSH runtime did not expose its package version; compatibility is being checked against the newest verified adapter for ${LATEST_VERIFIED_DSH_VERSION} (${SUPPORTED_DSH_RANGE}).`
-                  : `DSH ${hintedVersion} is outside the tested compatibility range (${SUPPORTED_DSH_RANGE}); the newest verified adapter is ${LATEST_VERIFIED_DSH_VERSION}, and best-effort compatibility mode is active.`,
+                  ? `The DSH runtime did not expose its package version; compatibility is being checked against the newest safe fallback adapter for ${LATEST_COMPATIBILITY_FALLBACK_DSH_VERSION} (${SUPPORTED_DSH_RANGE}).`
+                  : `DSH ${hintedVersion} is outside the tested compatibility range (${SUPPORTED_DSH_RANGE}); the newest safe fallback adapter is ${LATEST_COMPATIBILITY_FALLBACK_DSH_VERSION}, and best-effort compatibility mode is active.`,
             }
           : {}),
       }

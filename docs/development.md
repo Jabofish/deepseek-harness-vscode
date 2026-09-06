@@ -5,7 +5,7 @@
 - Node.js：`>=22.19.0 <27`，CI 使用 `22.19.0`。
 - pnpm：`11.19.0`，由根 `packageManager` 固定。
 - VS Code：扩展 `engines.vscode` 为 `^1.125.0`。
-- DSH：已发布 `0.1.0-rc.6` 至 `0.1.2-rc.1`，保留源码级 `0.1.2-alpha.1` 适配并适配已发布 `0.1.2-alpha.2`、`0.1.2-alpha.3`、`0.1.2-alpha.4`、`0.1.2-alpha.5`；最新源码 `0.1.3-alpha.1` 使用独立 Session v2 适配缝；任何非空未知版本标签会按最新已验证 Adapter 优先进行只读兼容探测，成功后保留真实版本并显示警告；真实联调前用 `dsh --version` 确认。预发布源码快照尚未进入安装默认值。
+- DSH：已发布 `0.1.0-rc.6` 至 `0.1.2-rc.1`，保留源码级 `0.1.2-alpha.1` 适配并适配已发布 `0.1.2-alpha.2`、`0.1.2-alpha.3`、`0.1.2-alpha.4`、`0.1.2-alpha.5`；最新源码 `0.1.3-alpha.1` 使用独立 Session v2 适配缝且只对精确版本启用；任何非空未知版本标签会按可安全复用已验证 wire 的 Adapter 进行只读兼容探测，未知运行时回退到 alpha5 v0，成功后保留真实版本并显示警告；真实联调前用 `dsh --version` 确认。预发布源码快照尚未进入安装默认值。
 
 版本 Adapter 结构：公共 identity/probe 形状位于 `packages/dsh-adapter/src/adapter-base.ts`；实现按真实协议边界维护 legacy rc、alpha family v0 与最新 alpha Session v2 三个明确入口。`0.1.2-rc.1` 虽是 rc 发布号，浏览器 wire 仍沿 alpha.5，因此由 `versions/rc13` 复用 v0；`0.1.3-alpha.1` 才使用 `versions/alpha13` 的 Session v2。新增版本必须先完成上游差异审计和脱敏契约 fixture，再决定是否需要新的 mapper；不能跨 wire family 猜测。
 

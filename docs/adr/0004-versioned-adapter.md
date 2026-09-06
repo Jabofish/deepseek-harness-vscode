@@ -9,4 +9,4 @@
 
 ## 后果
 
-Domain/Application/Webview Protocol 不依赖上游类。升级通过新增 Adapter 和契约 fixture 完成；版本入口只承载 identity 和真实变更，公共 probe/transport/backend 组装留在所属 family 基类。未知版本先完成通用握手，再按显式优先级使用最新已验证 Adapter 的只读兼容探测，界面显示警告并保留真实运行时版本。版本特有字段不能 best-effort 猜测；候选拒绝时继续尝试更旧的已验证 Adapter，全部失败才拒绝连接。
+Domain/Application/Webview Protocol 不依赖上游类。升级通过新增 Adapter 和契约 fixture 完成；版本入口只承载 identity 和真实变更，公共 probe/transport/backend 组装留在所属 family 基类。未知版本先完成通用握手，再按显式优先级使用最新可安全复用 wire 的 Adapter 进行只读兼容探测，界面显示警告并保留真实运行时版本。版本特有字段不能 best-effort 猜测；当前 `alpha13` 的 Session v2 只允许精确版本选择，候选拒绝时继续尝试更旧的已验证 Adapter，全部失败才拒绝连接。

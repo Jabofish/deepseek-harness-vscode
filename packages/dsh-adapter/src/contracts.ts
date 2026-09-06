@@ -39,6 +39,14 @@ export const LATEST_SUPPORTED_DSH_VERSION = LATEST_PUBLISHED_DSH_VERSION
 /** Newest upstream snapshot for which this checkout has a verified adapter. */
 export const LATEST_VERIFIED_DSH_VERSION = SUPPORTED_DSH_VERSIONS[SUPPORTED_DSH_VERSIONS.length - 1]
 
+/**
+ * Newest adapter whose wire contract is safe to reuse for an unverified
+ * runtime. This is intentionally separate from the newest exact source
+ * snapshot: alpha13 uses Session v2 fields that cannot be inferred from
+ * session/list alone.
+ */
+export const LATEST_COMPATIBILITY_FALLBACK_DSH_VERSION = '0.1.2-alpha.5' as const
+
 export function isKnownDshVersion(version: string): boolean {
   return (SUPPORTED_DSH_VERSIONS as readonly string[]).includes(version)
 }

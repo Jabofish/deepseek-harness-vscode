@@ -13,7 +13,7 @@
 ## 必测负面路径
 
 - 无 DSH、版本不兼容、连接拒绝、端口被非 DSH 服务占用；
-- 候选 1 失败候选 2 成功、未知版本按优先级选择最新已验证 Adapter、兼容探测全部拒绝、并发 connect、connect 中取消；
+- 候选 1 失败候选 2 成功、未知版本按优先级选择最新可安全复用 wire 的 Adapter、兼容探测全部拒绝、并发 connect、connect 中取消；
 - 子进程早退、启动输出分段、端口占用、readiness 超时；
 - RPC timeout、Abort、5xx、业务错误、畸形 JSON/Frame；
 - 事件重复、乱序、缺口、重连、unknown event；

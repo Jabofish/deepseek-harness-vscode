@@ -80,8 +80,8 @@ export class VersionedBackendProbe implements BackendProbe {
         }
       } catch (error) {
         // A version-specific or compatibility probe may decline a candidate.
-        // Continue with the next newest verified adapter unless the caller
-        // cancelled the operation.
+        // Continue with the next newest safe wire-compatible adapter unless
+        // the caller cancelled the operation.
         if (
           signal?.aborted === true ||
           (error instanceof AppError && error.code === 'REQUEST_CANCELLED') ||

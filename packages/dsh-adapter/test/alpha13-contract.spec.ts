@@ -4,6 +4,7 @@ import type { BackendCandidate, BackendEndpoint } from '@dsh-vscode/domain'
 
 import { VersionedBackendProbe } from '../src/probe.js'
 import { AlphaLoopbackApiClient, type AlphaWebSocket } from '../src/versions/alpha/transport.js'
+import { Alpha5VersionAdapter } from '../src/versions/alpha5/adapter.js'
 import { Alpha13AssistantStreamProjector } from '../src/versions/alpha13/session-wire.js'
 import { Alpha13VersionAdapter } from '../src/versions/alpha13/adapter.js'
 
@@ -106,7 +107,7 @@ async function waitForSent(socket: FakeWebSocket, count: number): Promise<void> 
   throw new Error(`expected ${String(count)} mux frame(s)`)
 }
 
-function snapshot(): Record<string, unknown> {
+function snapshot(includeAssistantStream = true): Record<string, unknown> {
   return {
     type: 'snapshot',
     header: { version: 1, id: 's1', createdAt: 1, isSeeded: false },
@@ -114,12 +115,12 @@ function snapshot(): Record<string, unknown> {
     records: [],
     hasMore: false,
     projections: { asOfSeq: 0, values: {} },
-    assistantStream: { revision: 0 },
+    ...(includeAssistantStream ? { assistantStream: { revision: 0 } } : {}),
   }
 }
 
 describe('DSH 0.1.3-alpha.1 Session v2 contract', () => {
-  it('selects the exact latest source snapshot and makes it the newest compatibility fallback', async () => {
+  it('selects the exact latest source snapshot but declines unverified v2 fallback', async () => {
     const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
       Promise.resolve(response(init, { items: [] })),
     )
@@ -135,8 +136,11 @@ describe('DSH 0.1.3-alpha.1 Session v2 contract', () => {
       subagentImagePrompts: true,
     })
 
+    await expect(adapter.probeCompatibility(candidate('0.1.3-alpha.2'))).resolves.toBeUndefined()
+
     const connected = await new VersionedBackendProbe([
-      new Alpha13VersionAdapter({
+      adapter,
+      new Alpha5VersionAdapter({
         requestTimeoutMs: 1_000,
         retryPolicy: { maximumAttempts: 1, baseDelayMs: 1, maximumDelayMs: 1 },
         fetch,
@@ -145,13 +149,16 @@ describe('DSH 0.1.3-alpha.1 Session v2 contract', () => {
 
     expect(connected).toMatchObject({
       capabilities: {
-        protocolVersion: 'alpha13',
+        protocolVersion: 'alpha5',
         dshVersion: '0.1.3-alpha.2',
-        adapterId: 'dsh-0.1.3-alpha.1',
+        adapterId: 'dsh-0.1.2-alpha.5',
         compatibilityMode: 'best-effort',
         subagentImagePrompts: false,
       },
     })
+    expect(connected?.capabilities.compatibilityWarning).toContain(
+      'newest safe fallback adapter is 0.1.2-alpha.5',
+    )
   })
 
   it('requests assistantStream and folds start, durable settlement, chunk, and end in wire order', async () => {
@@ -254,6 +261,24 @@ describe('DSH 0.1.3-alpha.1 Session v2 contract', () => {
     await client.close()
   })
 
+  it('rejects a v2 snapshot without the assistant stream baseline', async () => {
+    FakeWebSocket.instances.length = 0
+    const client = transport(
+      vi.fn((_input: RequestInfo | URL, init?: RequestInit) => Promise.resolve(response(init, {}))),
+    )
+    const iterator = client.openSessionStream('s1', new AbortController().signal)[Symbol.asyncIterator]()
+    const first = iterator.next()
+    const socket = await waitForSocket()
+    socket.open()
+    await waitForSent(socket, 1)
+    socket.message(streamItem(socket, snapshot(false)))
+
+    await expect(first).resolves.toMatchObject({ value: { type: 'session/subscribed', lastSeq: 0 } })
+    await expect(iterator.next()).rejects.toThrow(/session\/follow assistant stream baseline/u)
+    await iterator.return?.()
+    await client.close()
+  })
+
   it('reconstructs compact reconnect chunks and rejects malformed continuity', () => {
     const projector = new Alpha13AssistantStreamProjector()
     const baseline = projector.open(
@@ -339,5 +364,211 @@ describe('DSH 0.1.3-alpha.1 Session v2 contract', () => {
       time: 42,
       chunk: { type: 'text-delta', index: 0, text: 'raw' },
     })
+  })
+
+  it('rejects a replacement revision one without dropping a pending settlement', () => {
+    const projector = new Alpha13AssistantStreamProjector()
+    projector.open({ revision: 0 }, 's1')
+    projector.acceptFrame(
+      {
+        type: 'start',
+        attemptId: 'attempt-old',
+        revision: 1,
+        startedAfterSeq: -1,
+        turn: 1,
+        step: 1,
+      },
+      's1',
+    )
+    const settlement = {
+      type: 'assistant/message',
+      seq: 7,
+      time: 103,
+      surfaceOp: 'append',
+      sessionId: 's1',
+      data: { turn: 1, step: 1, message: {} },
+    }
+    expect(projector.acceptDurable(settlement)).toEqual([])
+
+    expect(() =>
+      projector.acceptFrame(
+        {
+          type: 'start',
+          attemptId: 'attempt-new',
+          revision: 1,
+          startedAfterSeq: -1,
+          turn: 2,
+          step: 1,
+        },
+        's1',
+      ),
+    ).toThrow(/skipped revision 2/u)
+
+    expect(
+      projector.acceptFrame(
+        {
+          type: 'end',
+          attemptId: 'attempt-old',
+          revision: 2,
+          index: 0,
+          outcome: { kind: 'committed', eventType: 'assistant/message', seq: 7 },
+        },
+        's1',
+      ),
+    ).toMatchObject([{ type: 'event', event: { seq: 7 } }])
+  })
+
+  it('settles assistant attempts and handles abandoned attempts with strict pending checks', () => {
+    const committed = new Alpha13AssistantStreamProjector()
+    committed.open({ revision: 0 }, 's1')
+    committed.acceptFrame(
+      {
+        type: 'start',
+        attemptId: 'attempt-tool',
+        revision: 1,
+        startedAfterSeq: -1,
+        turn: 1,
+        step: 1,
+      },
+      's1',
+    )
+    const attemptSettlement = {
+      type: 'assistant/attempt',
+      seq: 8,
+      time: 104,
+      surfaceOp: 'append',
+      sessionId: 's1',
+      data: { turn: 1, step: 1, attempt: {} },
+    }
+    expect(committed.acceptDurable(attemptSettlement)).toEqual([])
+    expect(
+      committed.acceptFrame(
+        {
+          type: 'end',
+          attemptId: 'attempt-tool',
+          revision: 2,
+          index: 0,
+          outcome: { kind: 'committed', eventType: 'assistant/attempt', seq: 8 },
+        },
+        's1',
+      ),
+    ).toMatchObject([{ type: 'event', event: { type: 'assistant/attempt', seq: 8 } }])
+
+    const abandoned = new Alpha13AssistantStreamProjector()
+    abandoned.open({ revision: 0 }, 's1')
+    abandoned.acceptFrame(
+      {
+        type: 'start',
+        attemptId: 'attempt-abandoned',
+        revision: 1,
+        startedAfterSeq: -1,
+        turn: 2,
+        step: 1,
+      },
+      's1',
+    )
+    expect(
+      abandoned.acceptFrame(
+        {
+          type: 'end',
+          attemptId: 'attempt-abandoned',
+          revision: 2,
+          index: 0,
+          outcome: { kind: 'abandoned' },
+        },
+        's1',
+      ),
+    ).toEqual([])
+
+    const pending = new Alpha13AssistantStreamProjector()
+    pending.open({ revision: 0 }, 's1')
+    pending.acceptFrame(
+      {
+        type: 'start',
+        attemptId: 'attempt-pending',
+        revision: 1,
+        startedAfterSeq: -1,
+        turn: 3,
+        step: 1,
+      },
+      's1',
+    )
+    expect(
+      pending.acceptDurable({
+        type: 'assistant/message',
+        seq: 9,
+        time: 105,
+        surfaceOp: 'append',
+        sessionId: 's1',
+        data: { turn: 3, step: 1, message: {} },
+      }),
+    ).toEqual([])
+    expect(() =>
+      pending.acceptFrame(
+        {
+          type: 'end',
+          attemptId: 'attempt-pending',
+          revision: 2,
+          index: 0,
+          outcome: { kind: 'abandoned' },
+        },
+        's1',
+      ),
+    ).toThrow(/abandoned with a pending durable settlement/u)
+  })
+
+  it('expands compact tool chunks and rejects duplicate chunk indexes', () => {
+    const projector = new Alpha13AssistantStreamProjector()
+    expect(
+      projector.open(
+        {
+          revision: 1,
+          activeAttempt: {
+            attemptId: 'attempt-tool',
+            startedAfterSeq: -1,
+            turn: 1,
+            step: 1,
+            nextIndex: 2,
+            stream: [
+              {
+                type: 'tool-call-chunks',
+                time0: 100,
+                index: 2,
+                dt: [3],
+                id: 'call-1',
+                name: 'read',
+                args: ['{"', 'x'],
+              },
+            ],
+          },
+        },
+        's1',
+      ),
+    ).toMatchObject([
+      {
+        type: 'chunk',
+        index: 0,
+        chunk: { type: 'tool-call-delta', id: 'call-1', name: 'read', argumentsDelta: '{"' },
+      },
+      {
+        type: 'chunk',
+        index: 1,
+        chunk: { type: 'tool-call-delta', id: 'call-1', name: 'read', argumentsDelta: 'x' },
+      },
+    ])
+
+    expect(() =>
+      projector.acceptFrame(
+        {
+          type: 'chunk',
+          attemptId: 'attempt-tool',
+          revision: 2,
+          index: 1,
+          time: 104,
+          chunk: { type: 'text-delta', index: 0, text: 'duplicate' },
+        },
+        's1',
+      ),
+    ).toThrow(/expected chunk index 2/u)
   })
 })

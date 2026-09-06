@@ -279,6 +279,79 @@ describe('reduceTimeline', () => {
     expect(continued.lastSequence).toBe(-1)
   })
 
+  it('replaces stale transient answer and reasoning attempts without replaying old text', () => {
+    const answer = reduceTimeline(initial, {
+      sequence: 1,
+      advanceSequence: false,
+      event: {
+        type: 'message.delta',
+        sessionId: 'session-1',
+        messageId: 'm1',
+        delta: 'old answer',
+        turn: 1,
+        step: 0,
+        transientAttemptId: 'attempt-old',
+        transientIndex: 0,
+        transientSequence: 1,
+      },
+    })
+    const replacedAnswer = reduceTimeline(answer, {
+      sequence: 2,
+      advanceSequence: false,
+      event: {
+        type: 'message.delta',
+        sessionId: 'session-1',
+        messageId: 'm1',
+        delta: 'new answer',
+        turn: 1,
+        step: 0,
+        transientAttemptId: 'attempt-new',
+        transientIndex: 0,
+        transientSequence: 2,
+      },
+    })
+    expect(replacedAnswer.nodes).toContainEqual(
+      expect.objectContaining({ markdown: 'new answer', liveAttemptId: 'attempt-new', liveLastIndex: 0 }),
+    )
+
+    const reasoning = reduceTimeline(initial, {
+      sequence: 3,
+      advanceSequence: false,
+      event: {
+        type: 'reasoning.delta',
+        sessionId: 'session-1',
+        messageId: 'm1',
+        delta: 'old reasoning',
+        turn: 1,
+        step: 0,
+        transientAttemptId: 'attempt-old',
+        transientIndex: 0,
+        transientSequence: 3,
+      },
+    })
+    const replacedReasoning = reduceTimeline(reasoning, {
+      sequence: 4,
+      advanceSequence: false,
+      event: {
+        type: 'reasoning.delta',
+        sessionId: 'session-1',
+        messageId: 'm1',
+        delta: 'new reasoning',
+        turn: 1,
+        step: 0,
+        transientAttemptId: 'attempt-new',
+        transientIndex: 0,
+        transientSequence: 4,
+      },
+    })
+    const reasoningNode = replacedReasoning.nodes.find((node) => node.kind === 'assistant-message')
+    expect(reasoningNode).toBeDefined()
+    if (reasoningNode?.kind !== 'assistant-message') throw new Error('expected an assistant message node')
+    expect(reasoningNode.reasoning?.markdown).toBe('new reasoning')
+    expect(reasoningNode.liveAttemptId).toBe('attempt-new')
+    expect(reasoningNode.liveLastIndex).toBe(0)
+  })
+
   it('retains durable image references on user and assistant timeline nodes', () => {
     const image = {
       attachmentId: 'fixture:image',
