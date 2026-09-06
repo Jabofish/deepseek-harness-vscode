@@ -13,11 +13,13 @@ export class AlphaEventSource implements AsyncEventSource<BackendEvent> {
   private readonly global: DshStreamController
   private readonly workspace: DshStreamController
   private readonly sessions = new Map<string, DshStreamController>()
+  private readonly archivedSessions = new Set<string>()
   private readonly listeners = new Set<(event: BackendEvent) => void>()
   private readonly subscriptions = new Map<
     DshStreamController,
     Map<(event: BackendEvent) => void, () => void>
   >()
+  private readonly sessionFailureNotices = new Map<(event: BackendEvent) => void, Set<string>>()
   private closed = false
 
   public constructor(
@@ -41,12 +43,13 @@ export class AlphaEventSource implements AsyncEventSource<BackendEvent> {
     if (this.closed) return () => undefined
     this.listeners.add(listener)
     for (const controller of this.controllers())
-      this.attach(controller, listener, controller !== this.global && controller !== this.workspace)
+      this.attach(controller, listener, this.sessionIdFor(controller))
     let active = true
     return () => {
       if (!active) return
       active = false
       this.listeners.delete(listener)
+      this.sessionFailureNotices.delete(listener)
       for (const entries of this.subscriptions.values()) entries.get(listener)?.()
       for (const entries of this.subscriptions.values()) entries.delete(listener)
     }
@@ -54,7 +57,13 @@ export class AlphaEventSource implements AsyncEventSource<BackendEvent> {
 
   /** Start the durable follow stream for a Session the first time it is read. */
   public watchSession(sessionId: string): void {
-    if (this.closed || sessionId.trim() === '' || this.sessions.has(sessionId)) return
+    if (
+      this.closed ||
+      sessionId.trim() === '' ||
+      this.archivedSessions.has(sessionId) ||
+      this.sessions.has(sessionId)
+    )
+      return
     const controller = new DshStreamController(
       this.transport,
       (event) => this.handleObserved(event),
@@ -65,7 +74,14 @@ export class AlphaEventSource implements AsyncEventSource<BackendEvent> {
       },
     )
     this.sessions.set(sessionId, controller)
-    for (const listener of this.listeners) this.attach(controller, listener, true)
+    for (const listener of this.listeners) this.attach(controller, listener, sessionId)
+  }
+
+  /** Re-baseline a watched session so process-local assistant chunks are replayed. */
+  public async refreshSession(sessionId: string): Promise<void> {
+    if (this.closed || sessionId.trim() === '' || this.archivedSessions.has(sessionId)) return
+    this.watchSession(sessionId)
+    await this.sessions.get(sessionId)?.restart()
   }
 
   public async close(): Promise<void> {
@@ -75,6 +91,8 @@ export class AlphaEventSource implements AsyncEventSource<BackendEvent> {
     const controllers = [...this.controllers()]
     await Promise.all(controllers.map((controller) => controller.close()))
     this.sessions.clear()
+    this.archivedSessions.clear()
+    this.sessionFailureNotices.clear()
     this.subscriptions.clear()
   }
 
@@ -85,21 +103,36 @@ export class AlphaEventSource implements AsyncEventSource<BackendEvent> {
   private attach(
     controller: DshStreamController,
     listener: (event: BackendEvent) => void,
-    sessionScoped: boolean,
+    sessionId: string | undefined,
   ): void {
     const entries = this.subscriptions.get(controller) ?? new Map<(event: BackendEvent) => void, () => void>()
     if (entries.has(listener)) return
     // A session-scoped follow stream failing is transport noise, not a backend
     // connection loss: the host-wide stream stays healthy and the session
-    // controller runs its own recovery loop. Only the host-wide controller may
-    // announce connection.lost, or every per-session hiccup tears down
-    // connection-scoped consumers while the backend is still connected.
-    const deliver = sessionScoped
-      ? (event: BackendEvent): void => {
-          if (event.type === 'connection.lost') return
-          listener(event)
-        }
-      : listener
+    // controller runs its own recovery loop. Keep raw connection.lost scoped
+    // out of session listeners, but emit one safe session-level notice so the
+    // UI does not silently hide a live-stream interruption.
+    const deliver =
+      sessionId !== undefined
+        ? (event: BackendEvent): void => {
+            const failures = this.sessionFailureNotices.get(listener) ?? new Set<string>()
+            this.sessionFailureNotices.set(listener, failures)
+            if (event.type === 'connection.lost') {
+              if (!failures.has(sessionId)) {
+                failures.add(sessionId)
+                listener({
+                  type: 'notice',
+                  sessionId,
+                  level: 'warning',
+                  text: 'The session live stream was interrupted; reconnecting.',
+                })
+              }
+              return
+            }
+            if (event.type === 'session.subscribed') failures.delete(sessionId)
+            listener(event)
+          }
+        : listener
     entries.set(listener, controller.subscribe(deliver))
     this.subscriptions.set(controller, entries)
   }
@@ -110,18 +143,37 @@ export class AlphaEventSource implements AsyncEventSource<BackendEvent> {
     // session announced by the host must also become live immediately so its
     // durable events are not missed between list refreshes.
     if (event.type === 'session.added') this.watchSession(event.sessionId)
+    if (event.type === 'archived.sessions.changed') {
+      this.archivedSessions.clear()
+      for (const sessionId of event.sessionIds) this.archivedSessions.add(sessionId)
+      for (const sessionId of this.sessions.keys())
+        if (this.archivedSessions.has(sessionId)) void this.unwatchSession(sessionId)
+    }
     // Symmetric lifecycle: a session the host removed must not keep a follow
     // stream. Its server stream is gone, so the abandoned controller would
     // reconnect (and report connection losses) forever against a session that
     // no longer exists. SessionRepository.get() re-watches on later access.
-    if (event.type === 'session.removed') void this.unwatchSession(event.sessionId)
+    if (event.type === 'session.removed') {
+      this.archivedSessions.delete(event.sessionId)
+      void this.unwatchSession(event.sessionId)
+    }
+  }
+
+  private sessionIdFor(controller: DshStreamController): string | undefined {
+    for (const [sessionId, candidate] of this.sessions) if (candidate === controller) return sessionId
+    return undefined
   }
 
   private async unwatchSession(sessionId: string): Promise<void> {
+    this.clearSessionFailureNotices(sessionId)
     const controller = this.sessions.get(sessionId)
     if (controller === undefined) return
     this.sessions.delete(sessionId)
     this.subscriptions.delete(controller)
     await controller.close()
+  }
+
+  private clearSessionFailureNotices(sessionId: string): void {
+    for (const failures of this.sessionFailureNotices.values()) failures.delete(sessionId)
   }
 }

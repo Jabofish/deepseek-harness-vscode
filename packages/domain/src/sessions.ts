@@ -26,7 +26,7 @@ export interface ImageAttachmentLimits {
 export interface SessionSummary {
   readonly id: string
   readonly workspaceId: string
-  /** DSH's durable session working directory; useful when workspace membership is stale. */
+  /** Host-only DSH working directory; the public Webview projection removes it. */
   readonly cwd?: string
   readonly title: string
   /** True until the first model turn starts; command-only sessions stay blank. */

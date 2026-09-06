@@ -130,7 +130,9 @@ describe('Timeline', () => {
         showDshEvents={false}
       />,
     )
-    expect(container.querySelector('.dsh-timeline__empty')).toBeNull()
+    // Raw DSH events are hidden from the chat surface, so they must not
+    // suppress the empty-state guidance for the user-visible timeline.
+    expect(container.querySelector('.dsh-timeline__empty')).not.toBeNull()
 
     rerender(
       <Timeline

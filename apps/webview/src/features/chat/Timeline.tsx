@@ -103,6 +103,9 @@ type ExpandedDetailsSetter = (
 export interface TimelineProps {
   readonly sessionId: string
   readonly nodes: readonly TimelineNode[]
+  /** Optional tabpanel semantics supplied when the timeline is tabbed. */
+  readonly panelId?: string
+  readonly panelLabelledBy?: string
   /** Reducer-provided first changed raw node; absent callers use identity scan. */
   readonly nodeChangeStart?: number
   /** Guards the reducer hint when React skips an intermediate snapshot. */
@@ -340,7 +343,13 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
   }, [props.loadingOlderHistory, props.nodes.length, restoreScrollAnchor, scrollRef])
 
   return (
-    <div className="dsh-timeline-shell">
+    <div
+      id={props.panelId}
+      role={props.panelId === undefined ? undefined : 'tabpanel'}
+      aria-labelledby={props.panelLabelledBy}
+      tabIndex={props.panelId === undefined ? undefined : 0}
+      className="dsh-timeline-shell"
+    >
       <div
         ref={scrollRef}
         className="dsh-timeline"
@@ -367,7 +376,7 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
             </button>
           </div>
         ) : null}
-        {displayNodes.length === 0 && !timelineFacts.hasEvents ? (
+        {displayNodes.length === 0 ? (
           <div className="dsh-timeline__empty" role="status">
             <span className="dsh-timeline__empty-icon" aria-hidden="true">
               <Icon name="sparkles" />
@@ -1000,13 +1009,11 @@ function timelineNodeKey(node: DisplayTimelineNode): string {
 
 interface TimelineFacts {
   readonly hasActiveTool: boolean
-  readonly hasEvents: boolean
 }
 
 interface TimelineFactsCache extends TimelineFacts {
   readonly sourceNodes: readonly TimelineNode[]
   readonly firstActiveToolIndex: number
-  readonly firstEventIndex: number
 }
 
 function createTimelineFactsProjector(): (
@@ -1029,12 +1036,7 @@ function createTimelineFactsProjector(): (
       previousCache !== undefined &&
       previousCache.firstActiveToolIndex >= 0 &&
       previousCache.firstActiveToolIndex < commonPrefix
-    const stableEvent =
-      previousCache !== undefined &&
-      previousCache.firstEventIndex >= 0 &&
-      previousCache.firstEventIndex < commonPrefix
     let firstActiveToolIndex = stableActiveTool ? (previousCache?.firstActiveToolIndex ?? -1) : -1
-    let firstEventIndex = stableEvent ? (previousCache?.firstEventIndex ?? -1) : -1
 
     for (let index = commonPrefix; index < nodes.length; index += 1) {
       const node = nodes[index]
@@ -1044,16 +1046,13 @@ function createTimelineFactsProjector(): (
         (node.tool.status === 'queued' || node.tool.status === 'running')
       )
         firstActiveToolIndex = index
-      if (firstEventIndex < 0 && node?.kind === 'event') firstEventIndex = index
-      if (firstActiveToolIndex >= 0 && firstEventIndex >= 0) break
+      if (firstActiveToolIndex >= 0) break
     }
 
     previous = {
       sourceNodes: nodes,
       firstActiveToolIndex,
-      firstEventIndex,
       hasActiveTool: firstActiveToolIndex >= 0,
-      hasEvents: firstEventIndex >= 0,
     }
     return previous
   }

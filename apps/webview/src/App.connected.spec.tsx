@@ -330,6 +330,24 @@ describe('App connected rendering', () => {
     await waitFor(() => expect(screen.getByLabelText('Trajectory ledger')).toBeDefined())
   })
 
+  it('exposes tabpanel relationships and arrow-key navigation for conversation views', () => {
+    currentStore = storeFor(connectedState(true))
+    render(<App />)
+
+    const chat = screen.getByRole('tab', { name: 'Chat' })
+    const trajectory = screen.getByRole('tab', { name: 'Trajectory' })
+    expect(chat.getAttribute('aria-controls')).toBe('dsh-conversation-panel-chat')
+    expect(trajectory.getAttribute('aria-controls')).toBe('dsh-conversation-panel-trajectory')
+    expect(chat.getAttribute('tabindex')).toBe('0')
+    expect(trajectory.getAttribute('tabindex')).toBe('-1')
+
+    fireEvent.keyDown(chat, { key: 'ArrowRight' })
+    expect(trajectory.getAttribute('aria-selected')).toBe('true')
+    expect(chat.getAttribute('tabindex')).toBe('-1')
+    expect(trajectory.getAttribute('tabindex')).toBe('0')
+    expect(document.activeElement).toBe(trajectory)
+  })
+
   it('does not render a duplicate in-webview settings trigger', () => {
     currentStore = storeFor(connectedState(false))
     render(<App />)
@@ -377,6 +395,26 @@ describe('App connected rendering', () => {
 
     const updateNotice = screen.getByText('DSH update available').closest('.dsh-app__runtime-update')
     expect(updateNotice?.classList.contains('dsh-toast')).toBe(true)
+  })
+
+  it('hides the top update notice once the latest version is installed globally', () => {
+    currentStore = storeFor({
+      ...connectedState(false),
+      dshUpdate: {
+        status: 'ready',
+        currentVersion: '0.1.0-rc.8',
+        globalVersion: '0.1.0-rc.9',
+        latestVersion: '0.1.0-rc.9',
+        availableVersions: ['0.1.0-rc.9', '0.1.0-rc.8'],
+        updateAvailable: true,
+        restartRequired: true,
+        checkedAt: '2026-08-21T00:00:00.000Z',
+      },
+    })
+
+    render(<App />)
+
+    expect(screen.queryByText('DSH update available')).toBeNull()
   })
 
   it('keeps the settings entry point available when the runtime is missing', () => {

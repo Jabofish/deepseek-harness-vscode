@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { parseDshProcessCandidates } from './process-provider.js'
+import { runWindowsProcessListing } from './windows-process-provider.js'
 
 describe('OS process discovery parsing', () => {
   it('returns only loopback listeners owned by a web-profile DSH process', () => {
@@ -23,5 +24,34 @@ describe('OS process discovery parsing', () => {
       '  TCP    127.0.0.1:12982    0.0.0.0:0    LISTENING    25140',
     )
     expect(candidates[0]).toMatchObject({ endpoint: { port: 12982 }, pid: 25140 })
+  })
+
+  it('accepts the parser-compatible CIM fallback output', () => {
+    const candidates = parseDshProcessCandidates(
+      'node.exe C:\\npm\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js --profile web --port 0,25140',
+      '  TCP    127.0.0.1:12982    0.0.0.0:0    LISTENING    25140',
+    )
+    expect(candidates[0]).toMatchObject({ endpoint: { port: 12982 }, pid: 25140 })
+  })
+
+  it('falls back from missing WMIC to Get-CimInstance without a shell', async () => {
+    const runCommand = vi
+      .fn<(executable: string, args: readonly string[], signal?: AbortSignal) => Promise<string>>()
+      .mockRejectedValueOnce(new Error('wmic is not installed'))
+      .mockResolvedValueOnce('node.exe --profile web --port 0,25140')
+
+    await expect(runWindowsProcessListing(runCommand)).resolves.toBe('node.exe --profile web --port 0,25140')
+    expect(runCommand).toHaveBeenNthCalledWith(
+      1,
+      'wmic.exe',
+      ['process', 'get', 'CommandLine,ProcessId', '/format:csv'],
+      undefined,
+    )
+    expect(runCommand).toHaveBeenNthCalledWith(
+      2,
+      'powershell.exe',
+      expect.arrayContaining(['-NoProfile', '-NonInteractive', '-Command']),
+      undefined,
+    )
   })
 })

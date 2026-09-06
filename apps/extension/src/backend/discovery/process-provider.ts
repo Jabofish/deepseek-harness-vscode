@@ -61,7 +61,7 @@ function isWebDshCommand(line: string): boolean {
 }
 
 function processId(line: string): number | undefined {
-  const windows = line.match(/,([0-9]+)\s*$/)
+  const windows = line.match(/,"?([0-9]+)"?\s*$/)
   const posix = line.match(/^\s*([0-9]+)(?:\s|$)/)
   const value = windows?.[1] ?? posix?.[1]
   if (value === undefined) return undefined

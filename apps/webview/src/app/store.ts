@@ -88,6 +88,7 @@ import {
   isInjectedUserMessage,
   reduceTimeline,
   reduceTimelineBatch,
+  type TimelineNode,
   type TimelineState,
 } from '@dsh-vscode/timeline'
 import { featureResponseSchema } from '@dsh-vscode/webview-protocol'
@@ -550,7 +551,8 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     flushPendingHistory()
     setState((current) => {
       if (current.activeSessionId !== sessionId) return current
-      return { ...current, timeline: hydrateTimelineFromHistoryEvents(sessionId, current.history) }
+      const rebuilt = hydrateTimelineFromHistoryEvents(sessionId, current.history)
+      return { ...current, timeline: mergeLiveTransientNodes(rebuilt, current.timeline) }
     })
   }
   const scheduleLedgerRebuild = (sessionId: string): void => {
@@ -3523,16 +3525,13 @@ function findReusableBlankSession(
   archivedSessionIds: readonly string[],
   workspace: WorkspaceSummary,
 ): SessionSummary | undefined {
-  if (workspace.path === undefined || workspace.path.trim() === '') return undefined
   const archived = new Set(archivedSessionIds)
   return sessions.find(
     (session) =>
       session.origin !== 'subagent' &&
       session.blank &&
       !archived.has(session.id) &&
-      workspace.sessionIds?.includes(session.id) === true &&
-      session.cwd !== undefined &&
-      session.cwd === workspace.path,
+      (workspace.sessionIds?.includes(session.id) === true || session.workspaceId === workspace.id),
   )
 }
 
@@ -3827,7 +3826,6 @@ function sameSessionSummary(left: SessionSummary, right: SessionSummary): boolea
   return (
     left.id === right.id &&
     left.workspaceId === right.workspaceId &&
-    left.cwd === right.cwd &&
     left.title === right.title &&
     left.blank === right.blank &&
     left.parentSessionId === right.parentSessionId &&
@@ -3872,7 +3870,6 @@ function sameWorkspaceSummary(left: WorkspaceSummary, right: WorkspaceSummary): 
   if (
     left.id !== right.id ||
     left.name !== right.name ||
-    left.path !== right.path ||
     left.createdAt !== right.createdAt ||
     left.updatedAt !== right.updatedAt ||
     left.sessionCount !== right.sessionCount
@@ -4160,7 +4157,9 @@ function applyHostMessage(
           // never move the conversation cursor: doing so can make the next
           // live delta look stale until history is replayed after switching
           // sessions.
-          ...(!advancesTimelineSequence(event) || transientSequence !== undefined
+          ...(!advancesTimelineSequence(event) ||
+          transientSequence !== undefined ||
+          isHostOnlyInterruptedCompletion(event)
             ? { advanceSequence: false }
             : {}),
         })
@@ -4424,6 +4423,10 @@ function backendEventSessionId(event: BackendEvent): string | undefined {
   return undefined
 }
 
+function isHostOnlyInterruptedCompletion(event: BackendEvent): boolean {
+  return event.type === 'message.completed' && event.interrupted === true && event.sequence === undefined
+}
+
 /** Only durable conversation records advance the DSH timeline cursor. */
 function advancesTimelineSequence(event: BackendEvent): boolean {
   switch (event.type) {
@@ -4441,7 +4444,6 @@ function advancesTimelineSequence(event: BackendEvent): boolean {
     case 'workspace.order.changed':
     case 'workspace.removed':
     case 'remote.event':
-    case 'notice':
       return false
     default:
       return true
@@ -5419,6 +5421,85 @@ function hydrateTimelineFromHistoryEvents(
   return hydrateTimelineFromEntries(sessionId, history)
 }
 
+type ConversationTimelineNode = Extract<TimelineNode, { readonly kind: 'assistant-message' | 'reasoning' }>
+
+function isLiveTransientNode(node: TimelineNode): node is ConversationTimelineNode {
+  if (node.kind === 'assistant-message')
+    return (
+      node.liveAttemptId !== undefined &&
+      (node.streaming || node.reasoning?.streaming === true || node.interrupted === true)
+    )
+  return node.kind === 'reasoning' && node.liveAttemptId !== undefined && node.streaming
+}
+
+/**
+ * A durable ledger rebuild must not erase a stream that has no durable
+ * sequence yet. Keep only genuinely active transient nodes; completed nodes
+ * are reconstructed from history and must not be allowed to shadow it.
+ */
+function mergeLiveTransientNodes(rebuilt: TimelineState, previous: TimelineState): TimelineState {
+  const liveNodes = previous.nodes.filter(isLiveTransientNode)
+  if (liveNodes.length === 0) return rebuilt
+
+  const nodes = [...rebuilt.nodes]
+  for (const live of liveNodes) {
+    const index = findMatchingTransientNode(nodes, live)
+    if (index < 0) {
+      nodes.push(live)
+      continue
+    }
+    const current = nodes[index]
+    if (current === undefined) {
+      nodes.push(live)
+      continue
+    }
+    nodes[index] = mergeTransientNode(current, live)
+  }
+  return {
+    ...rebuilt,
+    nodes,
+    nodeChangeBase: rebuilt.nodes,
+    nodeChangeStart: 0,
+  }
+}
+
+function findMatchingTransientNode(nodes: readonly TimelineNode[], live: ConversationTimelineNode): number {
+  const byId = nodes.findIndex(
+    (node) => (node.kind === 'assistant-message' || node.kind === 'reasoning') && node.id === live.id,
+  )
+  if (byId >= 0) return byId
+  if (live.kind !== 'assistant-message' || live.turn === undefined || live.step === undefined) return -1
+  return nodes.findIndex(
+    (node) => node.kind === 'assistant-message' && node.turn === live.turn && node.step === live.step,
+  )
+}
+
+function mergeTransientNode(current: TimelineNode, live: ConversationTimelineNode): TimelineNode {
+  if (live.kind === 'assistant-message' && current.kind === 'assistant-message') {
+    const merged = {
+      ...current,
+      markdown: live.markdown,
+      streaming: live.streaming,
+      ...(live.turn === undefined ? {} : { turn: live.turn }),
+      ...(live.step === undefined ? {} : { step: live.step }),
+      ...(live.liveAttemptId === undefined ? {} : { liveAttemptId: live.liveAttemptId }),
+      ...(live.liveLastIndex === undefined ? {} : { liveLastIndex: live.liveLastIndex }),
+      ...(live.interrupted === undefined ? {} : { interrupted: live.interrupted }),
+    }
+    if (live.reasoning === undefined) delete merged.reasoning
+    else merged.reasoning = live.reasoning
+    return merged
+  }
+  if (live.kind === 'reasoning' && current.kind === 'assistant-message')
+    return {
+      ...current,
+      reasoning: { markdown: live.markdown, streaming: live.streaming },
+      ...(live.liveAttemptId === undefined ? {} : { liveAttemptId: live.liveAttemptId }),
+      ...(live.liveLastIndex === undefined ? {} : { liveLastIndex: live.liveLastIndex }),
+    }
+  return live
+}
+
 function hydrateTimelineFromEntries(
   sessionId: string,
   valid: readonly HydratedTimelineEntry[],
@@ -6133,7 +6214,7 @@ function parseToolPresentation(value: unknown): ToolPresentationView | undefined
     if (phase === 'call') {
       if (title === undefined) return undefined
       const description = presentationText(view.description)
-      const cwd = presentationPath(view.cwd)
+      const cwd = presentationWorkingDirectory(view.cwd)
       return {
         phase,
         card: 'terminal',
@@ -6353,6 +6434,11 @@ function presentationPath(value: unknown): string | undefined {
   return path === undefined || hasPresentationControlCharacter(path) ? undefined : path
 }
 
+function presentationWorkingDirectory(value: unknown): string | undefined {
+  const directory = presentationPath(value)
+  return directory === undefined || isAbsolutePresentationPath(directory) ? undefined : directory
+}
+
 function presentationUrl(value: unknown): string | undefined {
   const url = presentationText(value)
   return url === undefined || hasPresentationControlCharacter(url) ? undefined : url
@@ -6363,6 +6449,10 @@ function hasPresentationControlCharacter(value: string): boolean {
     const code = character.codePointAt(0) ?? 0
     return code <= 0x1f || (code >= 0x7f && code <= 0x9f)
   })
+}
+
+function isAbsolutePresentationPath(value: string): boolean {
+  return value.startsWith('/') || value.startsWith('\\') || /^[A-Za-z]:[\\/]/u.test(value)
 }
 
 function nonNegativePresentationNumber(value: unknown): number | undefined {

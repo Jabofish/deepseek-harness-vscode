@@ -45,6 +45,11 @@ export interface AsyncEventSource<T> {
 export interface SessionRepository {
   list(query?: SessionListQuery, signal?: AbortSignal): Promise<SessionPage>
   get(sessionId: string, signal?: AbortSignal): Promise<SessionDetail>
+  /**
+   * Optional session-open hook. Version adapters may use it to re-baseline a
+   * process-local follow stream after the authoritative history read.
+   */
+  open?(sessionId: string, signal?: AbortSignal): Promise<SessionDetail>
   history(sessionId: string, beforeSequence?: number, signal?: AbortSignal): Promise<SessionHistoryPage>
   readAttachment(sessionId: string, attachmentId: string, signal?: AbortSignal): Promise<PromptAttachment>
   create(input: SessionCreateInput, signal?: AbortSignal): Promise<SessionDetail>

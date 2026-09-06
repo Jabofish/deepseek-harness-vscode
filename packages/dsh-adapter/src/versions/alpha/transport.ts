@@ -844,7 +844,7 @@ export class AlphaLoopbackApiClient implements DshTransport {
         }
       } else if (frame?.type === 'event') {
         if (!validAlphaSessionEventFrame(frame, v2)) throw malformedResponse('session/follow event')
-        const event = normalizeAlphaEvent(frame.event, sessionId)
+        const event = normalizeAlphaEvent(frame.event, sessionId, v2)
         if (event === undefined) throw malformedResponse('session/follow event')
         if (projector === undefined) yield { type: 'session/event', sessionId, event }
         else {
@@ -875,6 +875,14 @@ export class AlphaLoopbackApiClient implements DshTransport {
         throw malformedResponse('session/follow assistant settlement')
       return { type: 'session/event', sessionId, event: output.event }
     }
+    if (output.type === 'interrupted')
+      return {
+        type: 'session/assistant-interrupted',
+        sessionId: output.sessionId,
+        attemptId: output.attemptId,
+        turn: output.turn,
+        step: output.step,
+      }
     return {
       type: 'session/assistant-stream',
       sessionId: output.sessionId,
@@ -1446,10 +1454,28 @@ function hasDefinedAlphaTitle(value: Record<string, unknown>): boolean {
   return typeof values?.title === 'string'
 }
 
-function normalizeAlphaEvent(value: unknown, sessionId: string): Record<string, unknown> | undefined {
+function normalizeAlphaEvent(
+  value: unknown,
+  sessionId: string,
+  v2 = false,
+): Record<string, unknown> | undefined {
   const event = recordOrUndefined(value)
   if (event === undefined || typeof event.type !== 'string') return undefined
-  return { ...event, sessionId }
+  return { ...(v2 ? normalizeAlpha13Event(event) : event), sessionId }
+}
+
+/** Keep the verified v2 event surface while ignoring additive upstream keys. */
+function normalizeAlpha13Event(value: Record<string, unknown>): Record<string, unknown> {
+  const event: Record<string, unknown> = {
+    type: value.type,
+    seq: value.seq,
+    time: value.time,
+    data: value.data,
+  }
+  for (const key of ['ignorable', 'sourceEventSeqs', 'surfaceOp']) {
+    if (Object.hasOwn(value, key)) event[key] = value[key]
+  }
+  return event
 }
 
 function expandHistoryRecords(
@@ -1464,7 +1490,7 @@ function expandHistoryRecords(
       const event = recordOrUndefined(record.event)
       if (event === undefined || !(v2 ? validAlpha13HistoryRecord(record) : validAlphaSessionEvent(event)))
         throw malformedResponse('session history event')
-      out.push({ ...event, sessionId })
+      out.push({ ...(v2 ? normalizeAlpha13Event(event) : event), sessionId })
     } else if (!v2 && record?.type === 'chunks') out.push(...expandChunkRow(record.event, sessionId))
     else throw malformedResponse('session history record')
   }
@@ -1743,17 +1769,6 @@ function validAlphaSessionSnapshot(value: unknown, v2 = false): value is AlphaSe
 
 function validAlpha13SessionHeader(value: Record<string, unknown>): boolean {
   return (
-    hasAllowedKeys(value, [
-      'version',
-      'id',
-      'createdAt',
-      'cwd',
-      'parentSession',
-      'isSeeded',
-      'origin',
-      'delegationDepth',
-      'agentPreset',
-    ]) &&
     typeof value.version === 'number' &&
     Number.isSafeInteger(value.version) &&
     value.version >= 0 &&
@@ -1813,7 +1828,6 @@ function validAlpha13SessionEvent(value: Record<string, unknown>): boolean {
   const replacement = recordOrUndefined(surfaceOp)
   const sourceEventSeqs = value.sourceEventSeqs
   return (
-    hasAllowedKeys(value, ['type', 'seq', 'time', 'data', 'ignorable', 'sourceEventSeqs', 'surfaceOp']) &&
     validAlphaSessionEvent(value) &&
     (sourceEventSeqs === undefined ||
       (Array.isArray(sourceEventSeqs) && sourceEventSeqs.every(isSafeAlphaSequence))) &&
@@ -1893,10 +1907,6 @@ function validAlphaEventCancel(value: unknown): value is AlphaEventCancel {
 function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
   const ownKeys = Reflect.ownKeys(value)
   return ownKeys.length === keys.length && keys.every((key) => Object.hasOwn(value, key))
-}
-
-function hasAllowedKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
-  return Reflect.ownKeys(value).every((key) => typeof key === 'string' && keys.includes(key))
 }
 
 function isNonEmptyString(value: unknown): value is string {

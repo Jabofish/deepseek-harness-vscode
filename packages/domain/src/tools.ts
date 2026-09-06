@@ -29,6 +29,7 @@ export type ToolPresentationView =
       readonly card: 'terminal'
       readonly title: string
       readonly description?: string
+      /** Host-only working directory; the public Webview projection removes it. */
       readonly cwd?: string
     }
   | {

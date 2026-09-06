@@ -575,14 +575,26 @@ VS Code 无文件夹 Webview 回放，因此该修复不提升能力矩阵中的
   waterfall 和 `--no-open` 路径继续沿已验证 alpha family 复用。
 - 代码/自动证据：新增 `versions/alpha13/adapter.ts` 与 `session-wire.ts`，v2 请求只由
   alpha13 发送；旧 alpha.1–alpha.5 仍固定 v0。Adapter 对 v2 header/history/frame/compact
-  record 做 fail-closed 校验，Host 侧只把可见 text/reasoning delta 投影给 Domain，tool/raw
+  record 做已知字段严格校验（未知新增顶层字段安全忽略），Host 侧只把可见 text/reasoning delta 投影给 Domain，tool/raw
   chunk 不穿透 Webview；Timeline 使用 `transientAttemptId + transientIndex` 去重，且
   `advanceSequence: false`，不把进程内帧伪装成 durable Session seq。`alpha13-contract.spec.ts`
   覆盖精确/未知版本探测、assistantStream 请求、baseline 重建、settlement 顺序和 malformed
-  continuity；`reducer.spec.ts` 覆盖 reconnect baseline 去重。
+  continuity；`reducer.spec.ts` 覆盖 reconnect baseline 去重、同一 attempt 的 baseline 重放替换，
+  abandoned frame 的 Host-only interrupted 投影由 `stream-controller.spec.ts` 覆盖。
 - 真实证据边界：当前仅完成最新源码/tag 对照、代码和自动测试；由于 `0.1.3-alpha.1` 未发布
   npm 包且未在本轮构建/启动上游 DSH 实例，真实 Web Profile、Cookie、remote.mux、长回答
   断线恢复和 VS Code Webview 回放仍缺，CN-06 保持 `PARTIAL`。
+- alpha13 的瞬态流明确降级为 text/reasoning：`block-start`、`block-end`、`tool-call-delta`、`usage`、
+  `finish` 不进入 Domain；工具最终结果仍来自 durable tool 事件。Session v2 header/event 对未知新增
+  顶层字段忽略，但已知字段和 frame 外壳继续 fail-closed，避免把未经验证的状态当作可恢复事件。
+
+- 生命周期回归：`session.open` 在权威 history 之后重新建立已有 follow baseline；瞬态序号出现缺口时
+  自动重启逻辑流并丢弃缺口帧；归档集合变化释放对应 session controller；单个 session 流断开只发送一次
+  session 级 reconnecting notice，Webview Timeline 已实际归约该提示。迟到 durable ledger 重建保留
+  active transient 节点，abandoned attempt 由 Host-only interrupted completion 关闭并保留中断标记；
+  覆盖证据为 `alpha-events.spec.ts`、`stream-controller.spec.ts`、`reducer.spec.ts`、
+  `store-gap-heal.spec.ts` 和 `store-timeline.integration.spec.tsx`；全量门禁仍不等价于真实
+  alpha13 DSH/VS Code Webview smoke。
 
 ## 2026-09-03 供应商添加接线修复与上游语义适配证据
 

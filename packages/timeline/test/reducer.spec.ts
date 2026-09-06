@@ -279,6 +279,64 @@ describe('reduceTimeline', () => {
     expect(continued.lastSequence).toBe(-1)
   })
 
+  it('replaces a same-attempt partial stream when a reconnect baseline restarts local sequence', () => {
+    const partial = reduceTimeline(initial, {
+      sequence: 1,
+      advanceSequence: false,
+      event: {
+        type: 'message.delta',
+        sessionId: 'session-1',
+        messageId: 'm1',
+        delta: 'old prefix',
+        turn: 1,
+        step: 0,
+        transientAttemptId: 'attempt-1',
+        transientIndex: 0,
+        transientSequence: 1,
+      },
+    })
+    const advanced = reduceTimeline(partial, {
+      sequence: 2,
+      advanceSequence: false,
+      event: {
+        type: 'message.delta',
+        sessionId: 'session-1',
+        messageId: 'm1',
+        delta: ' old suffix',
+        turn: 1,
+        step: 0,
+        transientAttemptId: 'attempt-1',
+        transientIndex: 1,
+        transientSequence: 2,
+      },
+    })
+    const baseline = reduceTimeline(advanced, {
+      sequence: 3,
+      advanceSequence: false,
+      event: {
+        type: 'message.delta',
+        sessionId: 'session-1',
+        messageId: 'm1',
+        delta: 'fresh prefix',
+        turn: 1,
+        step: 0,
+        transientAttemptId: 'attempt-1',
+        transientIndex: 0,
+        transientSequence: 1,
+      },
+    })
+
+    expect(baseline.nodes).toEqual([
+      expect.objectContaining({
+        kind: 'assistant-message',
+        markdown: 'fresh prefix',
+        streaming: true,
+        liveAttemptId: 'attempt-1',
+        liveLastIndex: 0,
+      }),
+    ])
+  })
+
   it('replaces stale transient answer and reasoning attempts without replaying old text', () => {
     const answer = reduceTimeline(initial, {
       sequence: 1,
@@ -350,6 +408,30 @@ describe('reduceTimeline', () => {
     expect(reasoningNode.reasoning?.markdown).toBe('new reasoning')
     expect(reasoningNode.liveAttemptId).toBe('attempt-new')
     expect(reasoningNode.liveLastIndex).toBe(0)
+
+    const answerAfterReasoning = reduceTimeline(reasoning, {
+      sequence: 5,
+      advanceSequence: false,
+      event: {
+        type: 'message.delta',
+        sessionId: 'session-1',
+        messageId: 'm1',
+        delta: 'new answer',
+        turn: 1,
+        step: 0,
+        transientAttemptId: 'attempt-new',
+        transientIndex: 0,
+        transientSequence: 5,
+      },
+    })
+    const answerNode = answerAfterReasoning.nodes.find((node) => node.kind === 'assistant-message')
+    expect(answerNode).toMatchObject({
+      kind: 'assistant-message',
+      markdown: 'new answer',
+      liveAttemptId: 'attempt-new',
+      liveLastIndex: 0,
+    })
+    expect(answerNode?.kind === 'assistant-message' ? answerNode.reasoning : undefined).toBeUndefined()
   })
 
   it('retains durable image references on user and assistant timeline nodes', () => {

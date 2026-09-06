@@ -12,6 +12,9 @@ import { Icon } from '../../ui/Icon.js'
 export interface TrajectoryViewProps {
   readonly sessionId: string | undefined
   readonly nodes: readonly TimelineNode[]
+  /** Optional tabpanel semantics supplied when the trajectory is tabbed. */
+  readonly panelId?: string
+  readonly panelLabelledBy?: string
   readonly nodeChangeStart?: number
   readonly nodeChangeBase?: readonly TimelineNode[]
   readonly streaming: boolean
@@ -70,6 +73,10 @@ export const TrajectoryView = memo(function TrajectoryView(props: TrajectoryView
 
   return (
     <div
+      id={props.panelId}
+      role={props.panelId === undefined ? undefined : 'tabpanel'}
+      aria-labelledby={props.panelLabelledBy}
+      tabIndex={props.panelId === undefined ? undefined : 0}
       className={`dsh-trajectory-shell${selected === undefined ? '' : ' dsh-trajectory-shell--inspecting'}`}
     >
       <div className="dsh-trajectory__toolbar">

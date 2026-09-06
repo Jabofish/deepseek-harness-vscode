@@ -19,12 +19,21 @@ export interface Alpha13ProjectedChunk {
   readonly transientSequence: number
 }
 
+export interface Alpha13ProjectedInterruption {
+  readonly type: 'interrupted'
+  readonly sessionId: string
+  readonly attemptId: string
+  readonly turn: number
+  readonly step: number
+}
+
 export interface Alpha13ProjectedDurableEvent {
   readonly type: 'event'
   readonly event: Record<string, unknown>
 }
 
-export type Alpha13ProjectorOutput = Alpha13ProjectedChunk | Alpha13ProjectedDurableEvent
+export type Alpha13ProjectorOutput =
+  Alpha13ProjectedChunk | Alpha13ProjectedDurableEvent | Alpha13ProjectedInterruption
 
 interface Alpha13ActiveAttempt {
   readonly attemptId: string
@@ -85,6 +94,11 @@ interface AssistantBaseline {
   }
 }
 
+// A projector normally lives for one follow subscription. Keep duplicate
+// suppression bounded; matching settlements stay in the separate pending map
+// until the corresponding end frame arrives.
+const MAX_PUBLISHED_SEQUENCES = 4_096
+
 /**
  * Validates and folds the v2 assistant stream exactly as the upstream Client
  * Session runtime does. Durable assistant settlements are held until their
@@ -99,14 +113,19 @@ export class Alpha13AssistantStreamProjector {
 
   public rememberDurable(event: Record<string, unknown>): void {
     const sequence = event.seq
-    if (isSafeSequence(sequence)) this.publishedSequences.add(sequence)
+    if (isSafeSequence(sequence)) {
+      this.publishedSequences.add(sequence)
+      this.trimPublishedSequences()
+    }
   }
 
   public open(baselineValue: unknown, sessionId: string): readonly Alpha13ProjectedChunk[] {
     const baseline = parseBaseline(baselineValue)
     this.revision = baseline.revision
+    this.transientSequence = 0
     this.pendingSettlements.clear()
     this.activeAttempt = undefined
+    this.trimPublishedSequences()
     if (baseline.activeAttempt === undefined) return []
 
     const attempt = baseline.activeAttempt
@@ -120,6 +139,7 @@ export class Alpha13AssistantStreamProjector {
       step: attempt.step,
       nextIndex: attempt.nextIndex,
     }
+    this.trimPublishedSequences()
     return chunks.map((item, index) =>
       this.projectChunk(
         sessionId,
@@ -158,6 +178,7 @@ export class Alpha13AssistantStreamProjector {
       return []
     }
     this.publishedSequences.add(sequence)
+    this.trimPublishedSequences()
     return [{ type: 'event', event }]
   }
 
@@ -177,6 +198,7 @@ export class Alpha13AssistantStreamProjector {
         step: frame.step,
         nextIndex: 0,
       }
+      this.trimPublishedSequences()
       return []
     }
 
@@ -195,7 +217,16 @@ export class Alpha13AssistantStreamProjector {
     if (frame.outcome.kind === 'abandoned') {
       if (this.pendingSettlements.size > 0)
         throw new Error('assistant stream abandoned with a pending durable settlement')
-      return []
+      this.trimPublishedSequences()
+      return [
+        {
+          type: 'interrupted',
+          sessionId,
+          attemptId: frame.attemptId,
+          turn: active.turn,
+          step: active.step,
+        },
+      ]
     }
     const sequence = frame.outcome.seq
     if (this.publishedSequences.has(sequence)) return []
@@ -204,7 +235,22 @@ export class Alpha13AssistantStreamProjector {
       throw new Error('assistant stream committed without its matching durable settlement')
     this.pendingSettlements.delete(sequence)
     this.publishedSequences.add(sequence)
+    this.trimPublishedSequences()
     return [{ type: 'event', event: pending }]
+  }
+
+  private trimPublishedSequences(): void {
+    const activeFloor = this.activeAttempt?.startedAfterSeq
+    if (activeFloor !== undefined) {
+      for (const sequence of this.publishedSequences) {
+        if (sequence <= activeFloor) this.publishedSequences.delete(sequence)
+      }
+    }
+    while (this.publishedSequences.size > MAX_PUBLISHED_SEQUENCES) {
+      const oldest = this.publishedSequences.values().next().value
+      if (!isSafeSequence(oldest)) return
+      this.publishedSequences.delete(oldest)
+    }
   }
 
   private projectChunk(

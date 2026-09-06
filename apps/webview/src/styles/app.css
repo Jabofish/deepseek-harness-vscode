@@ -279,6 +279,19 @@ ul {
   border-radius: var(--dsh-radius-md);
 }
 
+/* Runtime updates are advisory chrome, not part of the application flow.
+ * Keep the notice above the Webview content so it cannot steal conversation
+ * height while the user decides whether to open Settings. */
+.dsh-app__runtime-update {
+  position: fixed;
+  inset-block-start: var(--dsh-space-4);
+  inset-inline-end: var(--dsh-space-4);
+  z-index: 60;
+  width: min(32rem, calc(100vw - var(--dsh-space-4) - var(--dsh-space-4)));
+  max-width: calc(100vw - var(--dsh-space-4) - var(--dsh-space-4));
+  box-shadow: var(--dsh-shadow);
+}
+
 .dsh-toast {
   animation: dsh-toast-in var(--dsh-motion-duration-standard) var(--dsh-motion-ease-enter) both;
 }

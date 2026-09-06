@@ -7,6 +7,23 @@ const EMPTY_STEP_TIMINGS: Readonly<Record<string, AssistantTiming>> = Object.fre
 const EMPTY_COMMAND_MODES: Readonly<Record<string, 'plan' | 'permission'>> = Object.freeze({})
 const EMPTY_CLOSED_TURNS: ReadonlySet<number> = new Set()
 
+type TransientDeltaEvent = Extract<BackendEvent, { readonly type: 'message.delta' | 'reasoning.delta' }>
+type LiveTimelineNode = Extract<TimelineNode, { readonly kind: 'assistant-message' | 'reasoning' }>
+
+function isTransientBaselineRestart(event: TransientDeltaEvent, node: LiveTimelineNode): boolean {
+  // A fresh Session v2 follow subscription restarts its local transient
+  // sequence at one. The first frame must replace the previous partial
+  // projection for the same attempt instead of being dropped as a duplicate.
+  return (
+    event.transientAttemptId !== undefined &&
+    event.transientSequence === 1 &&
+    event.transientIndex === 0 &&
+    node.liveAttemptId === event.transientAttemptId &&
+    node.liveLastIndex !== undefined &&
+    node.liveLastIndex > 0
+  )
+}
+
 export interface SequencedBackendEvent {
   readonly sequence: number
   readonly event: BackendEvent
@@ -192,17 +209,26 @@ export function reduceTimeline(
       }
       const node = nodes[index]
       if (node?.kind === 'assistant-message') {
+        const baselineRestart = transient && isTransientBaselineRestart(event, node)
         if (
           transient &&
           node.liveAttemptId === event.transientAttemptId &&
           node.liveLastIndex !== undefined &&
-          event.transientIndex <= node.liveLastIndex
+          event.transientIndex <= node.liveLastIndex &&
+          !baselineRestart
         )
           break
         const replacesPreviousAttempt =
-          transient && node.liveAttemptId !== undefined && node.liveAttemptId !== event.transientAttemptId
+          transient &&
+          (baselineRestart ||
+            (node.liveAttemptId !== undefined && node.liveAttemptId !== event.transientAttemptId))
+        const nodeWithoutReasoning = { ...node }
+        if (replacesPreviousAttempt) {
+          delete nodeWithoutReasoning.reasoning
+          delete nodeWithoutReasoning.interrupted
+        }
         nodes[index] = {
-          ...node,
+          ...nodeWithoutReasoning,
           markdown: replacesPreviousAttempt ? event.delta : `${node.markdown}${event.delta}`,
           streaming: !turnClosed,
           ...(event.turn === undefined ? {} : { turn: event.turn }),
@@ -212,12 +238,20 @@ export function reduceTimeline(
           ...(transient
             ? { liveAttemptId: event.transientAttemptId, liveLastIndex: event.transientIndex }
             : {}),
-          ...(node.reasoning === undefined ? {} : { reasoning: { ...node.reasoning, streaming: false } }),
+          ...(replacesPreviousAttempt
+            ? {}
+            : node.reasoning === undefined
+              ? {}
+              : { reasoning: { ...node.reasoning, streaming: false } }),
         }
       } else if (node?.kind === 'reasoning') {
         // Older history can contain a reasoning node before the first answer
         // delta. Convert it in place so the answer can never render after a
         // separate reasoning card.
+        const replacesPreviousAttempt =
+          transient &&
+          (isTransientBaselineRestart(event, node) ||
+            (node.liveAttemptId !== undefined && node.liveAttemptId !== event.transientAttemptId))
         nodes[index] = {
           kind: 'assistant-message',
           id: event.messageId,
@@ -230,7 +264,7 @@ export function reduceTimeline(
           ...(transient
             ? { liveAttemptId: event.transientAttemptId, liveLastIndex: event.transientIndex }
             : {}),
-          reasoning: { markdown: node.markdown, streaming: false },
+          ...(replacesPreviousAttempt ? {} : { reasoning: { markdown: node.markdown, streaming: false } }),
         }
       }
       break
@@ -269,18 +303,24 @@ export function reduceTimeline(
       }
       const node = nodes[index]
       if (node?.kind === 'assistant-message') {
+        const baselineRestart = transient && isTransientBaselineRestart(event, node)
         if (
           transient &&
           node.liveAttemptId === event.transientAttemptId &&
           node.liveLastIndex !== undefined &&
-          event.transientIndex <= node.liveLastIndex
+          event.transientIndex <= node.liveLastIndex &&
+          !baselineRestart
         )
           break
         const replacesPreviousAttempt =
-          transient && node.liveAttemptId !== undefined && node.liveAttemptId !== event.transientAttemptId
+          transient &&
+          (baselineRestart ||
+            (node.liveAttemptId !== undefined && node.liveAttemptId !== event.transientAttemptId))
         const reasoning = node.reasoning
+        const nodeWithoutInterruption = { ...node }
+        if (replacesPreviousAttempt) delete nodeWithoutInterruption.interrupted
         nodes[index] = {
-          ...node,
+          ...nodeWithoutInterruption,
           ...(event.turn === undefined ? {} : { turn: event.turn }),
           ...(event.step === undefined ? {} : { step: event.step }),
           ...(replacesPreviousAttempt ? { markdown: '' } : {}),
@@ -295,15 +335,19 @@ export function reduceTimeline(
           },
         }
       } else if (node?.kind === 'reasoning') {
+        const baselineRestart = transient && isTransientBaselineRestart(event, node)
         if (
           transient &&
           node.liveAttemptId === event.transientAttemptId &&
           node.liveLastIndex !== undefined &&
-          event.transientIndex <= node.liveLastIndex
+          event.transientIndex <= node.liveLastIndex &&
+          !baselineRestart
         )
           break
         const replacesPreviousAttempt =
-          transient && node.liveAttemptId !== undefined && node.liveAttemptId !== event.transientAttemptId
+          transient &&
+          (baselineRestart ||
+            (node.liveAttemptId !== undefined && node.liveAttemptId !== event.transientAttemptId))
         nodes[index] = {
           ...node,
           markdown: replacesPreviousAttempt ? event.delta : `${node.markdown}${event.delta}`,

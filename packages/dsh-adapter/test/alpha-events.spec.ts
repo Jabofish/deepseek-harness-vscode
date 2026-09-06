@@ -12,7 +12,11 @@ interface FakeAlphaTransport extends DshTransport {
 }
 
 function fakeAlphaTransport(
-  options: { readonly failSessionStream?: string; readonly removeSession?: string } = {},
+  options: {
+    readonly failSessionStream?: string
+    readonly removeSession?: string
+    readonly archiveSession?: string
+  } = {},
 ): FakeAlphaTransport {
   const sessionStreamOpens = new Map<string, number>()
   const holdUntilAborted = (signal: AbortSignal): AsyncIterable<unknown> => ({
@@ -39,7 +43,21 @@ function fakeAlphaTransport(
         yield { payload: { type: 'host/session-removed', sessionId: options.removeSession } }
       yield* holdUntilAborted(signal)
     },
-    openWorkspaceStream: (signal: AbortSignal) => holdUntilAborted(signal),
+    openWorkspaceStream: (signal: AbortSignal) =>
+      (async function* () {
+        if (options.archiveSession !== undefined) {
+          while (!signal.aborted && (sessionStreamOpens.get(options.archiveSession) ?? 0) === 0)
+            await new Promise((resolve) => setTimeout(resolve, 5))
+          if (!signal.aborted)
+            yield {
+              payload: {
+                type: 'host/archived-sessions-changed',
+                sessionIds: [options.archiveSession],
+              },
+            }
+        }
+        yield* holdUntilAborted(signal)
+      })(),
     openSessionStream: (sessionId: string) => {
       sessionStreamOpens.set(sessionId, (sessionStreamOpens.get(sessionId) ?? 0) + 1)
       const firstFrame: Promise<unknown> =
@@ -99,6 +117,36 @@ describe('AlphaEventSource session lifecycle', () => {
     await waitForAtMost(() => (transport.sessionStreamOpens.get('s1') ?? 0) >= 2, 1_500)
     // ...without ever announcing a backend connection loss.
     expect(received.some((event) => event.type === 'connection.lost')).toBe(false)
+    expect(received.filter((event) => event.type === 'notice')).toHaveLength(1)
+
+    unsubscribe()
+    await source.close()
+  })
+
+  it('re-baselines an existing follow stream when a session is opened again', async () => {
+    const transport = fakeAlphaTransport()
+    const source = new AlphaEventSource(transport as unknown as AlphaLoopbackApiClient & DshTransport)
+    const unsubscribe = source.subscribe(() => undefined)
+    source.watchSession('s1')
+    await waitForAtMost(() => transport.sessionStreamOpens.get('s1') === 1, 1_000)
+
+    await source.refreshSession('s1')
+    await waitForAtMost(() => transport.sessionStreamOpens.get('s1') === 2, 1_000)
+
+    unsubscribe()
+    await source.close()
+  })
+
+  it('stops following a session after it enters the archive set', async () => {
+    const transport = fakeAlphaTransport({ archiveSession: 's1' })
+    const source = new AlphaEventSource(transport as unknown as AlphaLoopbackApiClient & DshTransport)
+    const received: BackendEvent[] = []
+    const unsubscribe = source.subscribe((event) => received.push(event))
+    source.watchSession('s1')
+
+    await waitForAtMost(() => received.some((event) => event.type === 'archived.sessions.changed'), 1_000)
+    await new Promise((resolve) => setTimeout(resolve, 700))
+    expect(transport.sessionStreamOpens.get('s1')).toBe(1)
 
     unsubscribe()
     await source.close()

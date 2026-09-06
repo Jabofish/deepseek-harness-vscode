@@ -100,6 +100,7 @@ import { normalizeLoopbackUrl, VsCodeConfigurationSource } from './config/config
 import { DSH_DOCUMENTATION_URL, DSH_PACKAGE, OUTPUT_CHANNEL_NAME } from './constants.js'
 import { WebviewMessageRouter } from './view/message-router.js'
 import { DshWebviewViewProvider } from './view/dsh-webview-view-provider.js'
+import { publicWorkspaceSummary, sanitizePublicValue } from './view/public-value.js'
 import { RuntimeInstaller } from './vscode/install-runtime.js'
 import { DshRuntimeUpdater } from './vscode/update-runtime.js'
 import { requestOptionalProviderApiKey, requestProviderSecret } from './vscode/credential-input.js'
@@ -874,7 +875,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
         editorContextProvider.dispose()
         taskSessionId = undefined
       }
-      void postEvent(event.type, sanitize(event))
+      void postEvent(event.type, sanitizePublicValue(event))
     })
   }
   const connect = async (signal?: AbortSignal): Promise<unknown> => {
@@ -892,7 +893,9 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     }
     const result = await coordinator.connect(request, signal)
     await context.workspaceState.update('dsh.lastEndpoint', {
-      endpoint: result.backend.connection.endpoint,
+      // Discovery only needs the validated loopback port. Keep the full
+      // endpoint in the live Host connection, not in durable workspace state.
+      port: result.backend.connection.endpoint.port,
     })
     attach(result.backend)
     // Commands may connect before the Webview exists. app.ready must always
@@ -957,7 +960,9 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       if (cached?.generation === currentWorkspaceSessionGeneration) return cached.detail
     }
     const pending = currentWorkspaceSessionLoads.get(sessionId)
-    if (pending !== undefined) return pending
+    // An explicit session.open owns a fresh stream baseline. Do not let an
+    // older advisory ownership read bypass that re-baselining hook.
+    if (pending !== undefined && options.fresh !== true) return pending
 
     const generation = currentWorkspaceSessionGeneration
     const load = (async (): Promise<SessionDetail> => {
@@ -986,7 +991,11 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
 
       let detail: SessionDetail
       try {
-        detail = await backendService.requireBackend().sessions.get(sessionId, signal)
+        const sessions = backendService.requireBackend().sessions
+        detail =
+          options.fresh === true && sessions.open !== undefined
+            ? await sessions.open(sessionId, signal)
+            : await sessions.get(sessionId, signal)
       } catch (error) {
         throw sessionOpenFailure('session summary and history read', error)
       }
@@ -1603,7 +1612,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     if (request.type === 'workspace.list') {
       const workspaces = await listCurrentWorkspaces(signal)
       const archivedSessionIds = await listCurrentArchivedSessionIds(workspaces, signal)
-      return publicValue({ items: workspaces, archivedSessionIds })
+      return publicValue({ items: workspaces.map(publicWorkspaceSummary), archivedSessionIds })
     }
     if (request.type === 'workspace.create') {
       const selected = await vscode.window.showOpenDialog({
@@ -1615,7 +1624,9 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       const uri = selected?.[0]
       if (uri === undefined) return { cancelled: true }
       return publicValue(
-        await workspaceUseCases.create({ name: request.payload.name, path: uri.fsPath }, signal),
+        publicWorkspaceSummary(
+          await workspaceUseCases.create({ name: request.payload.name, path: uri.fsPath }, signal),
+        ),
       )
     }
     if (request.type === 'workspace.rename') {
@@ -3017,7 +3028,7 @@ function fromFeatureReviewState(
 }
 
 function publicValue(value: unknown): unknown {
-  return sanitize(value)
+  return sanitizePublicValue(value)
 }
 
 function publicExtensionSettings(
@@ -3165,81 +3176,3 @@ async function pathExists(filePath: string): Promise<boolean> {
     })
   }
 }
-
-function sanitize(value: unknown, parentKey?: string): unknown {
-  if (Array.isArray(value)) return value.map((entry) => sanitize(entry, parentKey))
-  if (typeof value !== 'object' || value === null) return value
-  const result: Record<string, unknown> = {}
-  for (const [key, entry] of Object.entries(value)) {
-    if (isSensitivePublicField(parentKey, key, entry)) continue
-    result[key] = sanitize(entry, key)
-  }
-  return result
-}
-
-function isSensitivePublicField(parentKey: string | undefined, key: string, value: unknown): boolean {
-  const normalizedParent = parentKey?.toLocaleLowerCase()
-  const normalizedKey = key.toLocaleLowerCase()
-
-  // Provider catalog rows use `secret: boolean` as field metadata. Preserve
-  // that structural flag while continuing to redact secret-bearing values.
-  if (normalizedKey === 'secret' && typeof value === 'boolean') return false
-
-  // These counters are intentionally public UI telemetry. The previous
-  // broad `/token|input|output/` filter silently removed the DSH token meter
-  // and tool summaries before they reached the Webview.
-  if (normalizedParent === 'usage' || normalizedParent === 'tokenusage')
-    return !SAFE_USAGE_FIELDS.has(normalizedKey) && isExactSensitiveField(normalizedKey)
-  if (normalizedParent === 'contextpressure')
-    return !SAFE_CONTEXT_FIELDS.has(normalizedKey) && isExactSensitiveField(normalizedKey)
-
-  return isExactSensitiveField(normalizedKey)
-}
-
-const SAFE_USAGE_FIELDS = new Set([
-  'inputtokens',
-  'uncachedinputtokens',
-  'outputtokens',
-  'cachereadtokens',
-  'cachewritetokens',
-  'reasoningtokens',
-])
-
-const SAFE_CONTEXT_FIELDS = new Set(['pressuretokens', 'projectedtokens', 'contextwindow'])
-
-function isExactSensitiveField(key: string): boolean {
-  return SENSITIVE_PUBLIC_FIELDS.has(key)
-}
-
-const SENSITIVE_PUBLIC_FIELDS = new Set([
-  'endpoint',
-  'baseurl',
-  'apikey',
-  'api_key',
-  'accesstoken',
-  'access_token',
-  'refreshtoken',
-  'refresh_token',
-  'authorization',
-  'password',
-  'secret',
-  'secretkey',
-  'privatekey',
-  'token',
-  'pid',
-  'processid',
-  'process_id',
-  'executable',
-  'executablepath',
-  'executable_path',
-  'managedport',
-  'managed_port',
-  'attachports',
-  'attach_ports',
-  'serverurl',
-  'server_url',
-  'commandline',
-  'stack',
-  'body',
-  'response',
-])

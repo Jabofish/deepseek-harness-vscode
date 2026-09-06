@@ -110,6 +110,60 @@ describe('DshStreamController', () => {
     await controller.close()
   })
 
+  it('re-baselines a stream after a transient assistant sequence gap', async () => {
+    const transport = reconnectingTransport([
+      [subscribeFrame('s1', 0), assistantFrame('s1', 1, 'first'), assistantFrame('s1', 3, 'gap-after-drop')],
+      [subscribeFrame('s1', 0), assistantFrame('s1', 1, 'recovered')],
+    ])
+    const received: BackendEvent[] = []
+    const controller = new DshStreamController(transport, undefined, undefined, {
+      streamSource: (signal) =>
+        transport.openMuxStream?.(signal) ?? streamTransport([]).openEventStream(signal),
+      closeTransport: false,
+    })
+    controllers.push(controller)
+    controller.subscribe((event) => received.push(event))
+
+    await waitForAtMost(
+      () => received.some((event) => event.type === 'message.delta' && event.delta === 'recovered'),
+      2_000,
+    )
+    expect(received.some((event) => event.type === 'message.delta' && event.delta === 'gap-after-drop')).toBe(
+      false,
+    )
+  })
+
+  it('projects an abandoned assistant stream as a host-only interrupted completion', async () => {
+    const stream = new ControlledStream()
+    const controller = new DshStreamController(streamTransport([]), undefined, undefined, {
+      streamSource: stream.source,
+      closeTransport: false,
+    })
+    controllers.push(controller)
+    const received: BackendEvent[] = []
+    controller.subscribe((event) => received.push(event))
+
+    stream.push({
+      payload: {
+        type: 'session/assistant-interrupted',
+        sessionId: 's1',
+        attemptId: 'attempt-abandoned',
+        turn: 2,
+        step: 1,
+      },
+    })
+    await waitFor(() => received.some((event) => event.type === 'message.completed'))
+
+    expect(received).toContainEqual({
+      type: 'message.completed',
+      sessionId: 's1',
+      messageId: 'assistant:2:1',
+      turn: 2,
+      step: 1,
+      interrupted: true,
+    })
+  })
+
   it('keeps reconnect backoff instead of hot-looping a failing stream', async () => {
     const received: string[] = []
     const failingStream: NonNullable<DshTransport['openMuxStream']> = (_signal) => ({
@@ -479,6 +533,26 @@ function liveTurnFrame(sessionId: string, seq: number): unknown {
       type: 'session/event',
       sessionId,
       event: { type: 'turn/start', seq, time: seq, data: { turn: 1 } },
+    },
+  }
+}
+
+function assistantFrame(sessionId: string, transientSequence: number, text: string): unknown {
+  return {
+    payload: {
+      type: 'session/assistant-stream',
+      sessionId,
+      transientSequence,
+      frame: {
+        type: 'chunk',
+        attemptId: 'attempt-1',
+        revision: transientSequence,
+        index: transientSequence - 1,
+        time: transientSequence,
+        turn: 1,
+        step: 0,
+        chunk: { type: 'text-delta', index: transientSequence - 1, text },
+      },
     },
   }
 }

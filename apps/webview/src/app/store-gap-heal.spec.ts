@@ -229,6 +229,53 @@ describe('AppStore session gap healing', () => {
     expect(store.getState().timeline.lastSequence).toBe(5)
   })
 
+  it('preserves an active v2 transient node while rebuilding the durable ledger', async () => {
+    const { store, client } = makeStore({ historySequences: [1, 2, 4, 5] })
+    await store.openSession(activeSession.id)
+
+    client.emit({
+      type: 'event',
+      sequence: 30_001,
+      name: 'message.delta',
+      payload: {
+        type: 'message.delta',
+        sessionId: activeSession.id,
+        messageId: 'assistant:1:0',
+        delta: 'draft',
+        turn: 1,
+        step: 0,
+        transientSequence: 1,
+        transientAttemptId: 'attempt-1',
+        transientIndex: 0,
+      },
+    } as unknown as HostMessage)
+    expect(store.getState().timeline.nodes).toContainEqual(
+      expect.objectContaining({
+        kind: 'assistant-message',
+        id: 'assistant:1:0',
+        markdown: 'draft',
+        streaming: true,
+      }),
+    )
+
+    // Sequence 3 arrives below the current durable cursor and triggers a
+    // ledger rebuild. The process-local stream has no durable history entry.
+    client.emit(liveUserMessage(3))
+    await flushAsync()
+
+    expect(store.getState().timeline.nodes).toContainEqual(
+      expect.objectContaining({
+        kind: 'assistant-message',
+        id: 'assistant:1:0',
+        markdown: 'draft',
+        streaming: true,
+        liveAttemptId: 'attempt-1',
+        liveLastIndex: 0,
+      }),
+    )
+    expect(userMessageNodes(store.getState())).toHaveLength(5)
+  })
+
   it('ignores malformed gap payloads without requesting history', async () => {
     const { store, client } = makeStore()
     await store.openSession(activeSession.id)

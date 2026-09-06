@@ -347,6 +347,30 @@ describe('Store to Timeline streamed rendering', () => {
     store.dispose()
   })
 
+  it('renders a valid session notice in the active timeline', async () => {
+    const client = new StreamClient()
+    const store = createAppStore(client as unknown as ProtocolClient)
+    await store.openSession('session-stream')
+
+    client.emit(
+      event(1, 'notice', {
+        sessionId: 'session-stream',
+        level: 'warning',
+        text: 'The session live stream was interrupted; reconnecting.',
+      }),
+    )
+    await new Promise((resolve) => window.setTimeout(resolve, 24))
+
+    expect(store.timeline.nodes).toContainEqual(
+      expect.objectContaining({
+        kind: 'notice',
+        level: 'warning',
+        text: 'The session live stream was interrupted; reconnecting.',
+      }),
+    )
+    store.dispose()
+  })
+
   it('preserves the interrupted marker on a completed assistant message', async () => {
     const client = new StreamClient()
     const store = createAppStore(client as unknown as ProtocolClient)
@@ -365,6 +389,46 @@ describe('Store to Timeline streamed rendering', () => {
     expect(store.timeline.nodes).toContainEqual(
       expect.objectContaining({ id: 'assistant-interrupted', interrupted: true }),
     )
+    store.dispose()
+  })
+
+  it('marks an abandoned v2 stream interrupted without consuming the durable cursor', async () => {
+    const client = new StreamClient()
+    const store = createAppStore(client as unknown as ProtocolClient)
+    await store.openSession('session-stream')
+
+    client.emit(
+      event(1, 'message.delta', {
+        sessionId: 'session-stream',
+        messageId: 'assistant:2:1',
+        turn: 2,
+        step: 1,
+        delta: 'partial',
+        transientSequence: 1,
+        transientAttemptId: 'attempt-abandoned',
+        transientIndex: 0,
+      }),
+    )
+    client.emit(
+      event(2, 'message.completed', {
+        sessionId: 'session-stream',
+        messageId: 'assistant:2:1',
+        turn: 2,
+        step: 1,
+        interrupted: true,
+      }),
+    )
+    await new Promise((resolve) => window.setTimeout(resolve, 24))
+
+    expect(store.timeline.nodes).toContainEqual(
+      expect.objectContaining({
+        id: 'assistant:2:1',
+        markdown: 'partial',
+        streaming: false,
+        interrupted: true,
+      }),
+    )
+    expect(store.timeline.lastSequence).toBe(-1)
     store.dispose()
   })
 

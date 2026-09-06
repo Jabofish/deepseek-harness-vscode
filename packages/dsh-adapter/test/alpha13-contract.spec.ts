@@ -110,7 +110,7 @@ async function waitForSent(socket: FakeWebSocket, count: number): Promise<void> 
 function snapshot(includeAssistantStream = true): Record<string, unknown> {
   return {
     type: 'snapshot',
-    header: { version: 1, id: 's1', createdAt: 1, isSeeded: false },
+    header: { version: 1, id: 's1', createdAt: 1, isSeeded: false, futureHeaderField: 'ignored' },
     cursor: 0,
     records: [],
     hasMore: false,
@@ -214,6 +214,7 @@ describe('DSH 0.1.3-alpha.1 Session v2 contract', () => {
           seq: 1,
           time: 101,
           surfaceOp: 'append',
+          futureEventField: 'ignored',
           data: { turn: 1, step: 1, message: {} },
         },
       }),
@@ -253,9 +254,13 @@ describe('DSH 0.1.3-alpha.1 Session v2 contract', () => {
         },
       }),
     )
-    await expect(settlementNext).resolves.toMatchObject({
+    const settlement = await settlementNext
+    expect(settlement).toMatchObject({
       value: { type: 'session/event', sessionId: 's1', event: { type: 'assistant/message', seq: 1 } },
     })
+    expect((settlement.value as { readonly event?: Record<string, unknown> }).event).not.toHaveProperty(
+      'futureEventField',
+    )
 
     await iterator.return?.()
     await client.close()
@@ -364,6 +369,18 @@ describe('DSH 0.1.3-alpha.1 Session v2 contract', () => {
       time: 42,
       chunk: { type: 'text-delta', index: 0, text: 'raw' },
     })
+  })
+
+  it('bounds idle durable duplicate suppression state', () => {
+    const projector = new Alpha13AssistantStreamProjector()
+    projector.open({ revision: 0 }, 's1')
+    for (let sequence = 0; sequence < 5_000; sequence += 1) projector.rememberDurable({ seq: sequence })
+
+    const published = (projector as unknown as { readonly publishedSequences: Set<number> })
+      .publishedSequences
+    expect(published.size).toBeLessThanOrEqual(4_096)
+    expect(published.has(0)).toBe(false)
+    expect(published.has(4_999)).toBe(true)
   })
 
   it('rejects a replacement revision one without dropping a pending settlement', () => {
@@ -478,7 +495,15 @@ describe('DSH 0.1.3-alpha.1 Session v2 contract', () => {
         },
         's1',
       ),
-    ).toEqual([])
+    ).toEqual([
+      {
+        type: 'interrupted',
+        sessionId: 's1',
+        attemptId: 'attempt-abandoned',
+        turn: 2,
+        step: 1,
+      },
+    ])
 
     const pending = new Alpha13AssistantStreamProjector()
     pending.open({ revision: 0 }, 's1')

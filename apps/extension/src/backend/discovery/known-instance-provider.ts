@@ -11,10 +11,15 @@ export class KnownInstanceDiscoveryProvider implements DiscoveryProvider {
   public discover(signal?: AbortSignal): Promise<readonly BackendCandidate[]> {
     if (signal?.aborted === true) return Promise.reject(discoveryCancelled(signal.reason))
     const value = this.workspaceState.get<unknown>('dsh.lastEndpoint')
-    if (!isEndpointRecord(value)) return Promise.resolve([])
+    const port = knownEndpointPort(value)
+    if (port === undefined) return Promise.resolve([])
     return Promise.resolve([
       {
-        endpoint: value.endpoint,
+        endpoint: {
+          host: '127.0.0.1',
+          port,
+          baseUrl: `http://127.0.0.1:${port}`,
+        },
         source: 'known',
         confidence: 90,
       },
@@ -22,23 +27,26 @@ export class KnownInstanceDiscoveryProvider implements DiscoveryProvider {
   }
 }
 
-function isEndpointRecord(
-  value: unknown,
-): value is { endpoint: { host: '127.0.0.1' | 'localhost'; port: number; baseUrl: string } } {
-  if (typeof value !== 'object' || value === null || !('endpoint' in value)) return false
-  const endpoint = value.endpoint
-  if (typeof endpoint !== 'object' || endpoint === null) return false
-  if (!('host' in endpoint) || !('port' in endpoint) || !('baseUrl' in endpoint)) return false
-  const host = endpoint.host
-  const port = endpoint.port
-  const baseUrl = endpoint.baseUrl
-  return (
-    (host === '127.0.0.1' || host === 'localhost') &&
-    typeof port === 'number' &&
-    Number.isInteger(port) &&
-    port >= 1 &&
-    port <= 65535 &&
-    typeof baseUrl === 'string' &&
+function knownEndpointPort(value: unknown): number | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+  const record = value as Record<string, unknown>
+  if (isPort(record.port)) return record.port
+
+  // Read the pre-hardening shape once for migration. A successful connection
+  // overwrites it with the port-only shape above.
+  const endpoint = record.endpoint
+  if (typeof endpoint !== 'object' || endpoint === null || Array.isArray(endpoint)) return undefined
+  const candidate = endpoint as Record<string, unknown>
+  const host = candidate.host
+  const port = candidate.port
+  const baseUrl = candidate.baseUrl
+  return (host === '127.0.0.1' || host === 'localhost') &&
+    isPort(port) &&
     baseUrl === `http://${host}:${port}`
-  )
+    ? port
+    : undefined
+}
+
+function isPort(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 65535
 }

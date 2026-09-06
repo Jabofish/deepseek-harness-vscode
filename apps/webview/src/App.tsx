@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type KeyboardEvent as ReactKeyboardEvent,
   type ReactElement,
 } from 'react'
 import type {
@@ -119,6 +120,11 @@ const DeferredTasksDrawer = TasksDrawer
 const DeferredCheckpointDrawer = CheckpointDrawer
 const DeferredSubagentDrawer = SubagentDrawer
 const DeferredExportDialog = ExportDialog
+const ERROR_TOAST_DISMISS_MS = 8_000
+const CONVERSATION_VIEW_IDS = {
+  chat: { tab: 'dsh-conversation-tab-chat', panel: 'dsh-conversation-panel-chat' },
+  trajectory: { tab: 'dsh-conversation-tab-trajectory', panel: 'dsh-conversation-panel-trajectory' },
+} as const
 
 export function App(): ReactElement {
   const { locale, setLocale, t } = useI18n()
@@ -173,6 +179,25 @@ export function App(): ReactElement {
   )
   const [themePreference, setThemePreferenceState] = useState<ThemePreference>(() => readThemePreference())
   const localeControlRef = useRef<HTMLSpanElement>(null)
+
+  const onConversationTabKeyDown = useCallback((event: ReactKeyboardEvent<HTMLButtonElement>): void => {
+    const current = event.currentTarget.dataset.conversationView
+    if (current !== 'chat' && current !== 'trajectory') return
+    const views = ['chat', 'trajectory'] as const
+    const currentIndex = views.indexOf(current)
+    let nextIndex: number | undefined
+    if (event.key === 'ArrowRight' || event.key === 'ArrowDown') nextIndex = (currentIndex + 1) % views.length
+    else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp')
+      nextIndex = (currentIndex - 1 + views.length) % views.length
+    else if (event.key === 'Home') nextIndex = 0
+    else if (event.key === 'End') nextIndex = views.length - 1
+    if (nextIndex === undefined) return
+    event.preventDefault()
+    const next = views[nextIndex]
+    if (next === undefined) return
+    setConversationView(next)
+    document.getElementById(CONVERSATION_VIEW_IDS[next].tab)?.focus()
+  }, [])
 
   const setConversationFontSize = useCallback((next: ConversationFontSize): void => {
     setConversationFontSizeState(next)
@@ -243,7 +268,7 @@ export function App(): ReactElement {
 
   useEffect(() => {
     if (error === undefined) return
-    const timer = window.setTimeout(() => setError(undefined), 4_000)
+    const timer = window.setTimeout(() => setError(undefined), ERROR_TOAST_DISMISS_MS)
     return () => window.clearTimeout(timer)
   }, [error])
 
@@ -289,7 +314,9 @@ export function App(): ReactElement {
   const compatibilityWarning = state.dshCompatibilityWarning
   const runtimeUpdateVersion = state.dshUpdate?.latestVersion ?? 'unknown'
   const runtimeUpdateVisible =
-    state.dshUpdate?.updateAvailable === true && dismissedRuntimeUpdateVersion !== runtimeUpdateVersion
+    state.dshUpdate?.updateAvailable === true &&
+    state.dshUpdate.globalVersion !== runtimeUpdateVersion &&
+    dismissedRuntimeUpdateVersion !== runtimeUpdateVersion
   const connectionMessage =
     backend.kind === 'failed' || backend.kind === 'port-conflict' ? backend.message : compatibilityWarning
   const connectionKey =
@@ -1332,23 +1359,33 @@ export function App(): ReactElement {
                       aria-label={t('app.conversationView')}
                     >
                       <button
+                        id={CONVERSATION_VIEW_IDS.chat.tab}
+                        data-conversation-view="chat"
                         className={`dsh-conversation__view-tab${
                           conversationView === 'chat' ? ' dsh-conversation__view-tab--active' : ''
                         }`}
                         type="button"
                         role="tab"
                         aria-selected={conversationView === 'chat'}
+                        aria-controls={CONVERSATION_VIEW_IDS.chat.panel}
+                        tabIndex={conversationView === 'chat' ? 0 : -1}
+                        onKeyDown={onConversationTabKeyDown}
                         onClick={() => setConversationView('chat')}
                       >
                         {t('app.chat')}
                       </button>
                       <button
+                        id={CONVERSATION_VIEW_IDS.trajectory.tab}
+                        data-conversation-view="trajectory"
                         className={`dsh-conversation__view-tab${
                           conversationView === 'trajectory' ? ' dsh-conversation__view-tab--active' : ''
                         }`}
                         type="button"
                         role="tab"
                         aria-selected={conversationView === 'trajectory'}
+                        aria-controls={CONVERSATION_VIEW_IDS.trajectory.panel}
+                        tabIndex={conversationView === 'trajectory' ? 0 : -1}
+                        onKeyDown={onConversationTabKeyDown}
                         onClick={() => setConversationView('trajectory')}
                       >
                         {t('app.trajectory')}
@@ -1450,6 +1487,8 @@ export function App(): ReactElement {
                   {conversationView === 'chat' ? (
                     <DeferredTimeline
                       sessionId={active.id}
+                      panelId={CONVERSATION_VIEW_IDS.chat.panel}
+                      panelLabelledBy={CONVERSATION_VIEW_IDS.chat.tab}
                       nodes={state.timeline.nodes}
                       {...(state.timeline.nodeChangeStart === undefined
                         ? {}
@@ -1481,6 +1520,8 @@ export function App(): ReactElement {
                   ) : (
                     <DeferredTrajectoryView
                       sessionId={active.id}
+                      panelId={CONVERSATION_VIEW_IDS.trajectory.panel}
+                      panelLabelledBy={CONVERSATION_VIEW_IDS.trajectory.tab}
                       nodes={state.timeline.nodes}
                       {...(state.timeline.nodeChangeStart === undefined
                         ? {}

@@ -230,6 +230,26 @@ Session packed history 和 `--no-open` 启动边界未改变；本地新增 `ver
 0.1.3-alpha.1 Web Profile/长回答断线恢复/VS Code Webview 回放仍未执行，因此能力矩阵保持
 `PARTIAL`。
 
+alpha13 的 assistant stream 帧是进程内瞬态传输。当前稳定 Domain 只投影 `text-delta` 和
+`reasoning-delta`；`block-start`、`block-end`、`tool-call-delta`、`usage`、`finish` 不伪造成 durable
+事件，也不会静默改变 durable 序号。工具调用的最终参数和结果仍通过 durable tool 事件呈现；因此
+alpha13 的工具参数增量和瞬态 usage/finish UI 明确属于未支持降级，后续若要展示必须新增 Domain
+瞬态 DTO 与对应版本 fixture。
+
+Session v2 的 header/event 已采用“已知字段严格校验、未知新增顶层字段忽略”的兼容策略；已知字段类型、
+必填项、序号和 replacement 结构仍 fail-closed。snapshot/frame 外壳和 assistant stream frame 本身
+继续严格校验，防止将未知消息形状误当成可恢复状态。
+
+Session v2 的生命周期边界也在 Host 侧固定：`session.open` 先读取权威 durable history，再对已有的
+per-session follow 流重新建立 baseline；因此 baseline 不会早于本次打开返回的 durable cut。Host 发现
+瞬态序号缺口时丢弃缺口后的帧并重启该逻辑流，不能从 history 恢复的瞬态内容不会被伪造成 durable 事件。
+workspace 归档集合变化会释放对应的 follow controller；单个 session 流断开只向该 session 发一次安全的
+reconnecting notice，不会把仍健康的 host-wide 连接误报为全局断线。Webview 对迟到 durable 事件或缺口
+回填触发的 ledger 重建会保留仍在 streaming 的 transient 节点；follow baseline 的本地序号重新从 1
+开始时，同一 attempt 的首帧会替换旧的 partial projection，而不是被重复帧门丢弃。上游 abandoned
+attempt 会投影为不进入 ledger 的 Host-only `message.completed(interrupted)`，让已交付前缀明确结束并
+标记为中断。
+
 ## 主通道决策
 
 主通道是 `dsh --profile web` 的 Web Host API 与 Host/Mux 事件，不是 ACP，也不是从 CLI stdout 解析状态。ACP/SDK 在会话恢复/列表/分叉、图片、推理、工具活动、计划、标题、设置和完整 UI 交互方面并不等价，不能满足本项目能力矩阵。

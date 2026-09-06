@@ -6,7 +6,9 @@
 
 - Webview 请求有唯一 `requestId`；Host 对每个请求最多返回一个终态响应。
 - 长期状态变化使用递增 `sequence` 的 event；UI 忽略重复/旧序号。
-- Webview 不获得 DSH endpoint、pid、命令行、绝对工作区路径、Secret 或原始诊断 body。
+- Webview 不获得 DSH endpoint、pid、命令行、绝对工作区路径、Secret 或原始诊断 body。工作区列表只发送
+  opaque workspace/session id 和显示字段；Extension Host 在发送前完成工作区成员匹配并移除 workspace `path`、session
+  `cwd` 以及工具 terminal 的绝对工作目录。文件/变更卡片中的路径仍是产品需要的相对文件标识，不用于工作区归属判断。
 - Host 不信任 Webview：所有 enum、id、port、path、数组长度和字符串长度在 Host 再验证。
 - 协议只传可序列化 DTO，不传 Error、Map、Set、AbortSignal、VS Code 对象或上游 rc.6–0.1.2-rc.1/0.1.2-alpha.1/0.1.2-alpha.2/0.1.2-alpha.3/0.1.2-alpha.4/0.1.2-alpha.5/0.1.3-alpha.1 类。
 

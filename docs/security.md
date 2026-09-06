@@ -20,6 +20,11 @@
 9. Permission/Plugin/安装/重启/删除/导出等有副作用操作必须由用户显式触发。
 10. Workspace Trust 未授予时只允许连接/浏览安全元数据，禁止自动启动高权限 Agent；具体降级 UI 在实现时测试。
 
+已知实例发现的 workspace state 只保存经连接校验的 loopback port（`dsh.lastEndpoint`）；完整 endpoint
+只存在于 Extension Host 的活动连接中，不进入 Webview。旧版本曾保存 `{ endpoint }` 的兼容记录，读取时仅
+接受 loopback、端口和严格匹配的 `http://` URL，并在下一次成功连接时覆盖为 port-only 记录；该迁移不读取或
+保存凭据。
+
 ## 诊断报告默认允许字段
 
 - 扩展版本、DSH 版本、OS 名称；

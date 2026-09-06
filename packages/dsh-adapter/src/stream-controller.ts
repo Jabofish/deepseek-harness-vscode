@@ -26,12 +26,15 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
   private readonly subscribedSessions = new Set<string>()
   /** Projection frames share the durable event sequence, so dedupe them per key. */
   private readonly lastProjectionSequences = new Map<string, Map<string, number>>()
+  /** Alpha13 transient frames have a separate local sequence space. */
+  private readonly lastTransientSequences = new Map<string, number>()
   /** One detached history recovery at a time per session, in detection order. */
   private readonly recoveries = new Map<string, Promise<void>>()
   private lifetime: AbortController | undefined
   private reading: Promise<void> | undefined
   private retryTimer: ReturnType<typeof setTimeout> | undefined
   private retryAttempt = 0
+  private restartTask: Promise<void> | undefined
   private closed = false
 
   public constructor(
@@ -66,7 +69,38 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
     this.lifetime?.abort()
     this.listeners.clear()
     await this.reading?.catch(() => undefined)
+    await this.restartTask?.catch(() => undefined)
     if (this.options.closeTransport !== false) await this.transport.close()
+  }
+
+  /**
+   * Re-open one logical stream without dropping its subscribers. Alpha13 uses
+   * this both when a session becomes active again and when a transient frame
+   * gap proves that the bounded receive queue discarded process-local chunks.
+   */
+  public async restart(): Promise<void> {
+    if (this.closed) return
+    if (this.restartTask !== undefined) return this.restartTask
+    const task = (async (): Promise<void> => {
+      if (this.retryTimer !== undefined) clearTimeout(this.retryTimer)
+      this.retryTimer = undefined
+      this.retryAttempt = 0
+      this.lastSequences.clear()
+      this.lastProjectionSequences.clear()
+      this.lastTransientSequences.clear()
+      this.subscribedSessions.clear()
+      this.recoveries.clear()
+      const reading = this.reading
+      this.lifetime?.abort()
+      await reading?.catch(() => undefined)
+      if (!this.closed && this.listeners.size > 0 && this.reading === undefined) this.startReading()
+    })()
+    this.restartTask = task
+    try {
+      await task
+    } finally {
+      if (this.restartTask === task) this.restartTask = undefined
+    }
   }
 
   private startReading(): void {
@@ -168,10 +202,12 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
     if (event.type === 'session.removed') {
       this.lastSequences.delete(event.sessionId)
       this.lastProjectionSequences.delete(event.sessionId)
+      this.lastTransientSequences.delete(event.sessionId)
       this.subscribedSessions.delete(event.sessionId)
     }
     if (event.type === 'session.subscribed') {
       this.subscribedSessions.add(event.sessionId)
+      this.lastTransientSequences.delete(event.sessionId)
       this.truncateProjectionSequences(event.sessionId, event.lastSequence)
       const previous = this.lastSequences.get(event.sessionId)
       if (previous === undefined) {
@@ -198,6 +234,23 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
     }
     const sessionId = eventSessionId(event)
     const sequence = event.sequence
+    const transientSequence = eventTransientSequence(event)
+    if (
+      sessionId !== undefined &&
+      transientSequence !== undefined &&
+      this.options.streamSource !== undefined
+    ) {
+      const previousTransient = this.lastTransientSequences.get(sessionId)
+      if (previousTransient !== undefined && transientSequence > previousTransient + 1) {
+        // Unlike durable frames, transient assistant chunks cannot be
+        // recovered from session.history. A queue drop is therefore healed by
+        // taking the stream's authoritative snapshot/baseline again.
+        void this.restart()
+        return
+      }
+      if (previousTransient !== undefined && transientSequence <= previousTransient) return
+      this.lastTransientSequences.set(sessionId, transientSequence)
+    }
     if (sessionId === undefined || sequence === undefined) {
       this.emit(event)
       return
@@ -343,6 +396,8 @@ function normalizeEnvelope(value: unknown): BackendEvent | undefined {
   switch (frame.type) {
     case 'session/assistant-stream':
       return normalizeAssistantStreamFrame(frame)
+    case 'session/assistant-interrupted':
+      return normalizeAssistantInterruptionFrame(frame)
     case 'session/event': {
       const event = record(frame.event)
       return typeof event?.type !== 'string'
@@ -438,6 +493,27 @@ function normalizeAssistantStreamFrame(value: Record<string, unknown>): BackendE
     : { type: 'reasoning.delta', ...common }
 }
 
+function normalizeAssistantInterruptionFrame(value: Record<string, unknown>): BackendEvent | undefined {
+  const sessionId =
+    typeof value.sessionId === 'string' && value.sessionId.trim() !== '' ? value.sessionId : undefined
+  if (
+    sessionId === undefined ||
+    typeof value.attemptId !== 'string' ||
+    value.attemptId.trim() === '' ||
+    !safeNonNegativeInteger(value.turn) ||
+    !safeNonNegativeInteger(value.step)
+  )
+    return undefined
+  return {
+    type: 'message.completed',
+    sessionId,
+    messageId: `assistant:${String(value.turn)}:${String(value.step)}`,
+    turn: value.turn,
+    step: value.step,
+    interrupted: true,
+  }
+}
+
 function mapStreamEvent(name: string, value: unknown): BackendEvent {
   try {
     assertCanonicalSessionEvent(name, value)
@@ -464,6 +540,11 @@ function eventSessionId(event: BackendEvent): string | undefined {
   if ('request' in event) return event.request.sessionId
   if ('question' in event) return event.question.sessionId
   return undefined
+}
+
+function eventTransientSequence(event: BackendEvent): number | undefined {
+  if (event.type !== 'message.delta' && event.type !== 'reasoning.delta') return undefined
+  return event.transientSequence
 }
 
 function record(value: unknown): Record<string, unknown> | undefined {

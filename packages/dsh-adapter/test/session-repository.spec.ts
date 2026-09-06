@@ -775,6 +775,33 @@ describe('Rc6SessionRepository history windows', () => {
     ])
   })
 
+  it('runs the session-open rebaseline only after the authoritative history read', async () => {
+    const order: string[] = []
+    const transport: DshTransport = {
+      request: <TResponse>(method: string) => {
+        order.push(method)
+        return Promise.resolve({
+          result: { ok: true, value: { events: [], hasMore: false } },
+        } as TResponse)
+      },
+      remoteRequest: <TResponse>() => Promise.reject<TResponse>(new Error('unexpected Remote')),
+      openEventStream: async function* () {
+        /* fixture stream */
+      },
+      close: () => Promise.resolve(),
+    }
+    const repository = new Rc6SessionRepository(transport, undefined, undefined, {
+      onSessionAccess: () => order.push('follow.start'),
+      onSessionOpen: () => {
+        order.push('follow.rebaseline')
+      },
+    })
+
+    await repository.open('session-1')
+
+    expect(order).toEqual(['follow.start', 'session.history', 'follow.rebaseline'])
+  })
+
   it('uses the official tail-page and beforeSeq contract without reading the whole log', async () => {
     const calls: { method: string; params: unknown }[] = []
     const transport: DshTransport = {

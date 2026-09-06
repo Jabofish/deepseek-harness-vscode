@@ -152,6 +152,7 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
       maxPromptAttachmentBytes: 20 * 1024 * 1024,
       maxPromptAttachmentTotalBytes: 200 * 1024 * 1024,
       onSessionAccess: (sessionId) => eventsHolder.value?.watchSession(sessionId),
+      onSessionOpen: (sessionId) => eventsHolder.value?.refreshSession(sessionId),
       deriveTitleFromCwd: true,
       // Alpha baselines queues on the session/control stream, not on
       // `session/follow`; a subscription must not wipe that state.

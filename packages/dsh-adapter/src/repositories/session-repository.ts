@@ -65,6 +65,7 @@ export class Rc6SessionRepository implements SessionRepository {
     this.maxPromptAttachmentTotalBytes =
       options.maxPromptAttachmentTotalBytes ?? MAX_PROMPT_ATTACHMENT_TOTAL_BYTES
     this.onSessionAccess = options.onSessionAccess
+    this.onSessionOpen = options.onSessionOpen
     this.deriveTitleFromCwd = options.deriveTitleFromCwd === true
     this.resetQueueOnSubscribe = options.resetQueueOnSubscribe ?? true
   }
@@ -75,6 +76,7 @@ export class Rc6SessionRepository implements SessionRepository {
   private readonly maxPromptAttachmentBytes: number
   private readonly maxPromptAttachmentTotalBytes: number
   private readonly onSessionAccess: ((sessionId: string) => void) | undefined
+  private readonly onSessionOpen: ((sessionId: string) => void | Promise<void>) | undefined
   private readonly deriveTitleFromCwd: boolean
   private readonly resetQueueOnSubscribe: boolean
 
@@ -257,6 +259,16 @@ export class Rc6SessionRepository implements SessionRepository {
       ...(history.beforeSequence === undefined ? {} : { historyBeforeSequence: history.beforeSequence }),
       ...(projection === undefined ? {} : { projection }),
     }
+  }
+
+  public async open(sessionId: string, signal?: AbortSignal): Promise<SessionDetail> {
+    const detail = await this.get(sessionId, signal)
+    // Re-baseline after the authoritative history read. This ensures a
+    // process-local alpha13 assistant snapshot cannot predate the durable cut
+    // returned by session.open, while still restoring transient chunks that
+    // were produced during the read.
+    await this.onSessionOpen?.(sessionId)
+    return detail
   }
 
   public async history(
@@ -951,6 +963,8 @@ interface SessionRepositoryOptions {
   readonly includeEmptyCommandImages?: boolean
   /** Version adapters may attach a logical per-session event stream lazily. */
   readonly onSessionAccess?: (sessionId: string) => void
+  /** Version adapters may re-baseline a process-local stream on session.open. */
+  readonly onSessionOpen?: (sessionId: string) => void | Promise<void>
   /** Alpha's list projection derives a display title from cwd when no title exists. */
   readonly deriveTitleFromCwd?: boolean
   /**
