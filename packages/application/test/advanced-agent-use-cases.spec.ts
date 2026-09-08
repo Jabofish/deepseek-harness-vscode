@@ -15,6 +15,7 @@ function harness(): {
   document: AgentPresetDocument
   location: AgentPresetLocation
   history: SubagentHistoryPage
+  send: ReturnType<typeof vi.fn>
 } {
   const document: AgentPresetDocument = { id: 'standard', trust: 'system', content: 'preset' }
   const roster: AgentPresetRoster = { presets: [], authorable: false, hasDocument: false }
@@ -74,7 +75,7 @@ function harness(): {
       return Promise.resolve(history)
     },
     list: (): Promise<never> => Promise.reject(new Error('unused')),
-    send: (): Promise<void> => Promise.resolve(),
+    send: vi.fn(() => Promise.resolve()),
     interrupt: (): Promise<void> => Promise.resolve(),
   }
   const backend = {
@@ -85,7 +86,7 @@ function harness(): {
   } as unknown as DshBackend
   const service = new BackendService()
   service.attach(backend, () => undefined)
-  return { useCases: new AdvancedAgentUseCases(service), document, location, history }
+  return { useCases: new AdvancedAgentUseCases(service), document, location, history, send: subagents.send }
 }
 
 describe('AdvancedAgentUseCases preset authoring', () => {
@@ -98,5 +99,26 @@ describe('AdvancedAgentUseCases preset authoring', () => {
     await expect(useCases.removePreset('copy')).resolves.toBeUndefined()
     await expect(useCases.clearGoal('goal')).resolves.toBeUndefined()
     await expect(useCases.listSubagentHistory('session', { beforeSequence: 10 })).resolves.toBe(history)
+  })
+})
+
+describe('AdvancedAgentUseCases subagent delivery', () => {
+  it('defaults legacy requests to queue and forwards an explicit steer mode', async () => {
+    const { useCases, send } = harness()
+
+    await useCases.execute('subagent.send', { sessionId: 'child', message: 'queued' })
+    await useCases.execute('subagent.send', { sessionId: 'child', message: 'steer now', mode: 'steer' })
+
+    expect(send).toHaveBeenNthCalledWith(1, 'child', 'queued', [], 'queue', undefined)
+    expect(send).toHaveBeenNthCalledWith(2, 'child', 'steer now', [], 'steer', undefined)
+  })
+
+  it('rejects an invalid delivery mode before touching the repository', async () => {
+    const { useCases, send } = harness()
+
+    await expect(
+      useCases.execute('subagent.send', { sessionId: 'child', message: 'invalid', mode: 'later' }),
+    ).rejects.toThrow('mode must be queue or steer')
+    expect(send).not.toHaveBeenCalled()
   })
 })

@@ -136,4 +136,29 @@ describe('subagent Webview protocol', () => {
       }).success,
     ).toBe(true)
   })
+
+  it('defaults delivery to queue, accepts steer, and rejects unknown modes', () => {
+    const queued = webviewRequestSchema.safeParse({
+      type: 'subagent.send',
+      requestId: 'request-subagent-default',
+      payload: { sessionId: 'child', message: 'continue' },
+    })
+    expect(queued.success).toBe(true)
+    if (queued.success && queued.data.type === 'subagent.send') expect(queued.data.payload.mode).toBe('queue')
+
+    expect(
+      webviewRequestSchema.safeParse({
+        type: 'subagent.send',
+        requestId: 'request-subagent-steer',
+        payload: { sessionId: 'child', message: 'steer', mode: 'steer' },
+      }).success,
+    ).toBe(true)
+    expect(
+      webviewRequestSchema.safeParse({
+        type: 'subagent.send',
+        requestId: 'request-subagent-invalid',
+        payload: { sessionId: 'child', message: 'invalid', mode: 'later' },
+      }).success,
+    ).toBe(false)
+  })
 })

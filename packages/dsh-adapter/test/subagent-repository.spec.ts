@@ -214,6 +214,58 @@ describe('Rc6SubagentRepository addressed operations', () => {
     })
   })
 
+  it('preserves the legacy signal-only follow-up overload', async () => {
+    const calls: Call[] = []
+    const repository = new Rc6SubagentRepository(
+      transportFor((method) => {
+        if (method === 'subagent.list') return healthyCatalog
+        if (method === 'subagent.prompt') return { messageId: 'message-legacy' }
+        throw new Error(`unexpected RPC ${method}`)
+      }, calls),
+    )
+    await repository.list('parent')
+
+    await expect(
+      repository.send('continuable-child', 'legacy follow-up', new AbortController().signal),
+    ).resolves.toBeUndefined()
+    expect(calls.at(-1)).toMatchObject({
+      method: 'subagent.prompt',
+      params: { parentSessionId: 'parent', childSessionId: 'continuable-child', mode: 'continuable' },
+    })
+  })
+
+  it('forwards queue and steer delivery only when the alpha.2 wire requires it', async () => {
+    const calls: Call[] = []
+    const repository = new Rc6SubagentRepository(
+      transportFor((method) => {
+        if (method === 'subagent.list') return healthyCatalog
+        if (method === 'subagent.prompt') return { messageId: 'message-delivery' }
+        throw new Error(`unexpected RPC ${method}`)
+      }, calls),
+      { subagentPromptDelivery: true },
+    )
+    await repository.list('parent')
+
+    await repository.send('continuable-child', 'queue follow-up', [], 'queue')
+    expect(calls.at(-1)).toEqual({
+      method: 'subagent.prompt',
+      params: {
+        parentSessionId: 'parent',
+        childSessionId: 'continuable-child',
+        mode: 'continuable',
+        delivery: 'queue',
+        content: [{ type: 'text', text: 'queue follow-up' }],
+        clientTimeZone: expect.stringMatching(/^[A-Za-z_]+\/[A-Za-z_0-9+-]+$|^UTC$/u) as unknown,
+      },
+    })
+
+    await repository.send('continuable-child', 'steer follow-up', [], 'steer')
+    expect(calls.at(-1)).toMatchObject({
+      method: 'subagent.prompt',
+      params: { delivery: 'steer' },
+    })
+  })
+
   it('preserves alpha inline image parts when the adapter explicitly enables them', async () => {
     const calls: Call[] = []
     const repository = new Rc6SubagentRepository(

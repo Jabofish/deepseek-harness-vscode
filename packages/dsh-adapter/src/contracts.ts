@@ -20,13 +20,14 @@ export const SUPPORTED_DSH_VERSIONS = [
   '0.1.2-alpha.3',
   '0.1.2-alpha.4',
   '0.1.2-alpha.5',
-  // Latest upstream source snapshot. It is intentionally source-adapted here
-  // because it is not yet published as an installable npm package.
+  // Latest upstream 0.1.3 alpha snapshots. Each Session wire change is
+  // isolated behind its own exact version adapter.
   '0.1.3-alpha.1',
+  '0.1.3-alpha.2',
 ] as const
 
 export const SUPPORTED_DSH_RANGE =
-  '0.1.0-rc.6 through 0.1.2-rc.1; upstream 0.1.2-alpha.1 through 0.1.2-alpha.5 and 0.1.3-alpha.1 source snapshot' as const
+  '0.1.0-rc.6 through 0.1.2-rc.1; upstream 0.1.2-alpha.1 through 0.1.2-alpha.5 and 0.1.3-alpha.1 through 0.1.3-alpha.2' as const
 
 export const DSH_PACKAGE_NAME = '@deepseek-ai/dsh' as const
 

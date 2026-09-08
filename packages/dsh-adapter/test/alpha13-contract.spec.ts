@@ -145,12 +145,12 @@ describe('DSH 0.1.3-alpha.1 Session v2 contract', () => {
         retryPolicy: { maximumAttempts: 1, baseDelayMs: 1, maximumDelayMs: 1 },
         fetch,
       }),
-    ]).probe(candidate('0.1.3-alpha.2'))
+    ]).probe(candidate('0.1.3-alpha.3'))
 
     expect(connected).toMatchObject({
       capabilities: {
         protocolVersion: 'alpha5',
-        dshVersion: '0.1.3-alpha.2',
+        dshVersion: '0.1.3-alpha.3',
         adapterId: 'dsh-0.1.2-alpha.5',
         compatibilityMode: 'best-effort',
         subagentImagePrompts: false,

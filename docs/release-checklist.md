@@ -2,7 +2,7 @@
 
 只有全部必需项满足才可发布。
 
-当前发布版本是 `0.1.6`（稳定版），运行时契约覆盖已发布 DSH `0.1.0-rc.6` 至 `0.1.2-rc.1`，并包含 `0.1.2-alpha.1` 源码预适配、已发布 `0.1.2-alpha.2`、`0.1.2-alpha.3`、`0.1.2-alpha.4`、`0.1.2-alpha.5` 适配，以及最新未发布源码 `0.1.3-alpha.1` 的 Session v2 适配；预发布源码快照不作为安装默认。任何非空未知版本标签仅由可安全复用已验证 wire 的 Adapter 进行兼容探测，alpha13 v2 只接受精确版本，未知运行时回退到 alpha5 v0，成功后保留真实版本并显示警告。能力矩阵仍有 `PARTIAL`，以下未勾选项代表真实缺口，不应被“构建成功”替代。
+当前发布版本是 `0.1.7`（稳定版），运行时契约覆盖已发布 DSH `0.1.0-rc.6` 至 `0.1.2-rc.1`、`0.1.2-alpha.2` 至 `0.1.2-alpha.5` 和 `0.1.3-alpha.2`，并包含 `0.1.2-alpha.1`、`0.1.3-alpha.1` 的源码级适配；`0.1.3-alpha.1/.2` 分别使用 alpha13/alpha132 的 Session v2 适配，只有 alpha132 发送 alpha.2 新增的 subagent `delivery` 字段。预发布版本不作为安装默认。任何非空未知版本标签仅由可安全复用已验证 wire 的 Adapter 进行兼容探测，alpha13/alpha132 v2 只接受精确版本，未知运行时回退到 alpha5 v0，成功后保留真实版本并显示警告。能力矩阵仍有 `PARTIAL`，以下未勾选项代表真实缺口，不应被“构建成功”替代。
 
 ## 功能
 
@@ -20,10 +20,11 @@
 - [ ] VS Code 最低支持版本 E2E 通过。
 - [ ] 真实 DSH rc.6/rc.7/rc.8/rc.1/rc.2 smoke matrix 通过，且未知版本的安全 wire Adapter 优先、失败继续尝试、警告降级路径通过。
 - [ ] 未发布 alpha.1 对应 npm/运行包发布后完成真实 Connection、Cookie、remote.mux、Session/Workspace follow smoke；在此之前只能保留源码契约证据。
-- [ ] 已发布 alpha.2 完成真实 Connection、Cookie、remote.mux、Session/Workspace follow smoke，并把结果记录到能力矩阵；当前适配仍不作为安装默认。
+- [ ] 已发布 `0.1.2-alpha.2` 完成真实 Connection、Cookie、remote.mux、Session/Workspace follow smoke，并把结果记录到能力矩阵；当前适配仍不作为安装默认。
 - [ ] 已发布 alpha.3 完成真实 Connection、Cookie、remote.mux、Session/Workspace follow smoke，并把结果记录到能力矩阵；当前适配仍不作为安装默认。
 - [ ] 已发布 alpha.4 完成真实 Connection、Cookie、remote.mux、Session/Workspace follow smoke，并把结果记录到能力矩阵；当前适配仍不作为安装默认。
 - [ ] 已发布 alpha.5 完成真实 Connection、Cookie、remote.mux、Session/Workspace follow smoke，并把结果记录到能力矩阵；当前适配仍不作为安装默认。
+- [ ] 已发布 `0.1.3-alpha.2` 完成真实 Connection、Cookie、remote.mux、Session v2、Workspace follow 和 subagent queue/steer smoke，并把结果记录到能力矩阵；当前适配仍不作为安装默认。
 - [ ] 性能、长会话、断流恢复、资源泄漏基线通过。
 - [ ] 键盘、屏幕阅读器、亮/暗/高对比、240px、Reduced Motion 通过。
 

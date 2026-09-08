@@ -5,6 +5,7 @@ import {
   type SubagentHistoryPage,
   type SubagentHistoryQuery,
   type PromptAttachment,
+  type RunningInputMode,
   type SubagentRepository,
   type SubagentView,
 } from '@dsh-vscode/domain'
@@ -23,6 +24,8 @@ const HISTORY_PAGE_MESSAGES = 50
 export interface SubagentRepositoryOptions {
   /** Alpha.3+ admits inline image parts; rc.6/alpha.1-2 accept text parts only. */
   readonly inlineImagePrompts?: boolean
+  /** DSH 0.1.3-alpha.2 requires the queue/steer delivery discriminator. */
+  readonly subagentPromptDelivery?: boolean
   readonly maxPromptAttachmentBytes?: number
   readonly maxPromptAttachmentTotalBytes?: number
 }
@@ -63,16 +66,34 @@ export class Rc6SubagentRepository implements SubagentRepository {
     return { entries, parentAvailable: value.parentAvailable }
   }
 
+  public send(sessionId: string, message: string, signal?: AbortSignal): Promise<void>
+  public send(
+    sessionId: string,
+    message: string,
+    attachments?: readonly PromptAttachment[],
+    signal?: AbortSignal,
+  ): Promise<void>
+  public send(
+    sessionId: string,
+    message: string,
+    attachments?: readonly PromptAttachment[],
+    mode?: RunningInputMode,
+    signal?: AbortSignal,
+  ): Promise<void>
   public async send(
     sessionId: string,
     message: string,
     attachmentsOrSignal: readonly PromptAttachment[] | AbortSignal = [],
+    modeOrSignal: RunningInputMode | AbortSignal = 'queue',
     signal?: AbortSignal,
   ): Promise<void> {
-    const attachments = Array.isArray(attachmentsOrSignal) ? attachmentsOrSignal : []
-    const requestSignal: AbortSignal | undefined = Array.isArray(attachmentsOrSignal)
-      ? signal
-      : (attachmentsOrSignal as AbortSignal | undefined)
+    const attachments = isAbortSignal(attachmentsOrSignal) ? [] : attachmentsOrSignal
+    const mode = isAbortSignal(modeOrSignal) ? 'queue' : modeOrSignal
+    const requestSignal = isAbortSignal(attachmentsOrSignal)
+      ? attachmentsOrSignal
+      : isAbortSignal(modeOrSignal)
+        ? modeOrSignal
+        : signal
     const address = this.addresses.get(sessionId)
     if (address?.mode !== 'continuable') throw unavailable('one-shot subagent follow-up')
     const content = encodePromptContent(message, attachments, {
@@ -90,6 +111,7 @@ export class Rc6SubagentRepository implements SubagentRepository {
           parentSessionId: address.parentSessionId,
           childSessionId: sessionId,
           mode: address.mode,
+          ...(this.options.subagentPromptDelivery === true ? { delivery: mode } : {}),
           content,
           ...clientTimeZoneField(),
         },
@@ -148,6 +170,10 @@ export class Rc6SubagentRepository implements SubagentRepository {
     )
     if (value.accepted !== true) throw malformedSubagentResponse('interrupt receipt')
   }
+}
+
+function isAbortSignal(value: unknown): value is AbortSignal {
+  return typeof value === 'object' && value !== null && 'aborted' in value && 'addEventListener' in value
 }
 
 function catalogEntry(value: unknown, parentSessionId: string): SubagentView | SubagentDiagnosticView {

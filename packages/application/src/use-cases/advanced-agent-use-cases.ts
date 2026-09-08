@@ -9,6 +9,7 @@ import type {
   JobView,
   PluginInventorySnapshot,
   PromptAttachment,
+  RunningInputMode,
   SkillDescriptor,
   SubagentCatalog,
   SubagentHistoryPage,
@@ -113,6 +114,7 @@ export class AdvancedAgentUseCases {
           requiredString(input, 'sessionId'),
           requiredString(input, 'message'),
           promptAttachments(input.attachments),
+          runningInputMode(input.mode),
           signal,
         )
         return undefined
@@ -173,6 +175,12 @@ function promptAttachments(value: unknown): readonly PromptAttachment[] {
       ...(typeof record.mimeType === 'string' ? { mimeType: record.mimeType } : {}),
     }
   })
+}
+
+function runningInputMode(value: unknown): RunningInputMode {
+  if (value === undefined) return 'queue'
+  if (value === 'queue' || value === 'steer') return value
+  throw new Error('mode must be queue or steer')
 }
 
 function malformedAttachment(index: number): AppError {

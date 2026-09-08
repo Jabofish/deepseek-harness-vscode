@@ -107,7 +107,7 @@ describe('AppStore subagent transport routing', () => {
     expect(client.requests).toContainEqual(
       expect.objectContaining({
         type: 'subagent.send',
-        payload: { sessionId: 'child', message: 'continue the work' },
+        payload: { sessionId: 'child', message: 'continue the work', mode: 'queue' },
       }),
     )
     expect(client.requests).toContainEqual(
@@ -142,10 +142,27 @@ describe('AppStore subagent transport routing', () => {
         payload: {
           sessionId: 'child',
           message: '看这张图',
+          mode: 'queue',
           attachments: [
             { uri: 'dsh-attachment:0123456789abcdef', name: 'screen.png', mimeType: 'image/png' },
           ],
         },
+      }),
+    )
+    store.dispose()
+  })
+
+  it('forwards steer delivery for a continuable child', async () => {
+    const client = new FakeClient(answer)
+    const store = createAppStore(client as unknown as ProtocolClient)
+
+    await store.openSubagent(child(), true)
+    await store.sendPrompt('child', 'interrupt the current step', [], 'steer')
+
+    expect(client.requests).toContainEqual(
+      expect.objectContaining({
+        type: 'subagent.send',
+        payload: { sessionId: 'child', message: 'interrupt the current step', mode: 'steer' },
       }),
     )
     store.dispose()

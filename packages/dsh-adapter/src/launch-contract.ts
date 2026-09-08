@@ -19,6 +19,7 @@ const WEB_NO_OPEN_VERSIONS = new Set([
   '0.1.2-alpha.4',
   '0.1.2-alpha.5',
   '0.1.3-alpha.1',
+  '0.1.3-alpha.2',
 ])
 
 /**

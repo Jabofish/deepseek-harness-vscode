@@ -50,6 +50,7 @@ import {
   type ConnectionRequest,
 } from '@dsh-vscode/application'
 import {
+  Alpha132VersionAdapter,
   Alpha13VersionAdapter,
   Alpha5VersionAdapter,
   Alpha4VersionAdapter,
@@ -359,6 +360,10 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     ...adapterOptions,
     authCookie: (endpoint) => endpointCookies.get(endpoint.baseUrl),
   })
+  const alpha132Adapter = new Alpha132VersionAdapter({
+    ...adapterOptions,
+    authCookie: (endpoint) => endpointCookies.get(endpoint.baseUrl),
+  })
   const alpha13Adapter = new Alpha13VersionAdapter({
     ...adapterOptions,
     authCookie: (endpoint) => endpointCookies.get(endpoint.baseUrl),
@@ -389,6 +394,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
   const rc7Adapter = new Rc7VersionAdapter(adapterOptions)
   const rc6Adapter = new Rc6VersionAdapter(adapterOptions)
   const adapters = [
+    alpha132Adapter,
     alpha13Adapter,
     rc13Adapter,
     alpha5Adapter,

@@ -2109,6 +2109,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
             payload: {
               sessionId,
               message: text,
+              mode,
               ...(attachments.length === 0 ? {} : { attachments: [...attachments] }),
             },
           })

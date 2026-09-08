@@ -150,10 +150,19 @@ export interface SubagentRepository {
     query?: SubagentHistoryQuery,
     signal?: AbortSignal,
   ) => Promise<SubagentHistoryPage>
+  /** Preserve the pre-delivery overloads while allowing the alpha.2 mode. */
+  send(sessionId: string, message: string, signal?: AbortSignal): Promise<void>
   send(
     sessionId: string,
     message: string,
-    attachmentsOrSignal?: readonly PromptAttachment[] | AbortSignal,
+    attachments?: readonly PromptAttachment[],
+    signal?: AbortSignal,
+  ): Promise<void>
+  send(
+    sessionId: string,
+    message: string,
+    attachments?: readonly PromptAttachment[],
+    mode?: RunningInputMode,
     signal?: AbortSignal,
   ): Promise<void>
   interrupt(sessionId: string, signal?: AbortSignal): Promise<void>

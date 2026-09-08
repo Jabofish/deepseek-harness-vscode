@@ -1,5 +1,10 @@
 # Change Log
 
+## 0.1.7
+
+- 适配已发布 DSH `0.1.3-alpha.2`：新增独立 `alpha132` Session v2 版本入口，严格透传 subagent `queue/steer` 的 `delivery` 字段，并保留旧版本不发送该字段的兼容边界。
+- Added a dedicated `alpha132` Session v2 adapter for released DSH `0.1.3-alpha.2`, forwarding subagent `queue/steer` delivery strictly while keeping the field off older runtimes.
+
 ## 0.1.6
 
 - 完成最新未发布 DSH `0.1.3-alpha.1` Session v2 的严格适配，补齐 transient/durable 结算、重连基线、abandoned 中断和未知版本安全降级回归。

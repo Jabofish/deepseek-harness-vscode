@@ -55,6 +55,8 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
 
   /** Alpha.1/2 accept only text/content blocks on the subagent wire. */
   protected readonly supportsInlineSubagentImages: boolean = false
+  /** Only DSH 0.1.3-alpha.2 requires `subagent.prompt.delivery`. */
+  protected readonly supportsSubagentPromptDelivery: boolean = false
 
   public constructor(protected readonly options: AlphaAdapterOptions) {
     super()
@@ -180,6 +182,7 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
       jobs,
       subagents: new Rc6SubagentRepository(transport, {
         inlineImagePrompts: backend.capabilities.subagentImagePrompts === true,
+        subagentPromptDelivery: this.supportsSubagentPromptDelivery,
         maxPromptAttachmentBytes: 20 * 1024 * 1024,
         maxPromptAttachmentTotalBytes: 200 * 1024 * 1024,
       }),

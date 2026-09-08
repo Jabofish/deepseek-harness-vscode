@@ -611,6 +611,9 @@ export const webviewRequestSchema = z.discriminatedUnion('type', [
         .object({
           sessionId: id,
           message: z.string().min(1).max(1_000_000),
+          // Kept optional at the protocol boundary for older Webviews; the
+          // parsed output always supplies the DSH delivery default.
+          mode: z.enum(['queue', 'steer']).optional().default('queue'),
           attachments: z.array(attachmentSchema).max(MAX_PROMPT_ATTACHMENTS).optional(),
         })
         .strict(),

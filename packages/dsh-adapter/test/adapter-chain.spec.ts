@@ -7,6 +7,7 @@ import {
   Alpha4VersionAdapter,
   Alpha5VersionAdapter,
   Alpha13VersionAdapter,
+  Alpha132VersionAdapter,
   AlphaVersionAdapter,
   Rc6VersionAdapter,
   Rc7VersionAdapter,
@@ -56,15 +57,17 @@ describe('version adapter family chains', () => {
     const alpha4 = new Alpha4VersionAdapter(options)
     const alpha5 = new Alpha5VersionAdapter(options)
     const alpha13 = new Alpha13VersionAdapter(options)
+    const alpha132 = new Alpha132VersionAdapter(options)
 
     expect(alpha2).toBeInstanceOf(Alpha1VersionAdapter)
     expect(alpha3).toBeInstanceOf(Alpha2VersionAdapter)
     expect(alpha4).toBeInstanceOf(Alpha3VersionAdapter)
     expect(alpha5).toBeInstanceOf(Alpha4VersionAdapter)
     expect(alpha13).toBeInstanceOf(Alpha5VersionAdapter)
+    expect(alpha132).toBeInstanceOf(Alpha13VersionAdapter)
     expect(alpha1).not.toBeInstanceOf(Rc6VersionAdapter)
     expect(
-      [alpha1, alpha2, alpha3, alpha4, alpha5, alpha13].map((adapter) => adapter.supportedVersion),
+      [alpha1, alpha2, alpha3, alpha4, alpha5, alpha13, alpha132].map((adapter) => adapter.supportedVersion),
     ).toEqual([
       '0.1.2-alpha.1',
       '0.1.2-alpha.2',
@@ -72,13 +75,16 @@ describe('version adapter family chains', () => {
       '0.1.2-alpha.4',
       '0.1.2-alpha.5',
       '0.1.3-alpha.1',
+      '0.1.3-alpha.2',
     ])
     expect(
-      [alpha1, alpha2, alpha3, alpha4, alpha5, alpha13].map((adapter) => adapter.compatibilityPriority),
-    ).toEqual([80, 90, 100, 110, 120, 130])
+      [alpha1, alpha2, alpha3, alpha4, alpha5, alpha13, alpha132].map(
+        (adapter) => adapter.compatibilityPriority,
+      ),
+    ).toEqual([80, 90, 100, 110, 120, 130, 140])
     expect(
-      [alpha1, alpha2, alpha3, alpha4, alpha5, alpha13].map((adapter) => adapter.protocolVersion),
-    ).toEqual(['alpha1', 'alpha2', 'alpha3', 'alpha4', 'alpha5', 'alpha13'])
+      [alpha1, alpha2, alpha3, alpha4, alpha5, alpha13, alpha132].map((adapter) => adapter.protocolVersion),
+    ).toEqual(['alpha1', 'alpha2', 'alpha3', 'alpha4', 'alpha5', 'alpha13', 'alpha132'])
   })
 
   it('retains the old alpha family name as a compatibility alias only', () => {
