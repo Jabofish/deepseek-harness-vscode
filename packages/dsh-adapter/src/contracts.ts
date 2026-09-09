@@ -20,14 +20,16 @@ export const SUPPORTED_DSH_VERSIONS = [
   '0.1.2-alpha.3',
   '0.1.2-alpha.4',
   '0.1.2-alpha.5',
-  // Latest upstream 0.1.3 alpha snapshots. Each Session wire change is
-  // isolated behind its own exact version adapter.
+  // Upstream alpha snapshots. Each Session wire change is isolated behind
+  // its own exact version adapter.
   '0.1.3-alpha.1',
   '0.1.3-alpha.2',
+  // 0.1.5-alpha.1 introduces the strict Session wire v3 contract.
+  '0.1.5-alpha.1',
 ] as const
 
 export const SUPPORTED_DSH_RANGE =
-  '0.1.0-rc.6 through 0.1.2-rc.1; upstream 0.1.2-alpha.1 through 0.1.2-alpha.5 and 0.1.3-alpha.1 through 0.1.3-alpha.2' as const
+  '0.1.0-rc.6 through 0.1.2-rc.1; upstream 0.1.2-alpha.1 through 0.1.2-alpha.5, 0.1.3-alpha.1 through 0.1.3-alpha.2, and 0.1.5-alpha.1' as const
 
 export const DSH_PACKAGE_NAME = '@deepseek-ai/dsh' as const
 
@@ -43,8 +45,8 @@ export const LATEST_VERIFIED_DSH_VERSION = SUPPORTED_DSH_VERSIONS[SUPPORTED_DSH_
 /**
  * Newest adapter whose wire contract is safe to reuse for an unverified
  * runtime. This is intentionally separate from the newest exact source
- * snapshot: alpha13 uses Session v2 fields that cannot be inferred from
- * session/list alone.
+ * snapshot: alpha13/alpha132 use Session v2 fields and alpha151 uses Session
+ * v3 fields that cannot be inferred from session/list alone.
  */
 export const LATEST_COMPATIBILITY_FALLBACK_DSH_VERSION = '0.1.2-alpha.5' as const
 
@@ -70,7 +72,7 @@ export interface DshVersionAdapter {
   readonly protocolVersion?: string
   /** Explicit newest-to-oldest priority used only for unknown runtime probes. */
   readonly compatibilityPriority?: number
-  /** An adapter may service an unknown runtime after its own compatibility probe succeeds. */
+  /** Whether this adapter is eligible for unknown-runtime probing and factory fallback. */
   readonly fallback?: boolean
   probe(candidate: BackendCandidate, signal?: AbortSignal): Promise<BackendCapabilities | undefined>
   /**

@@ -7,6 +7,12 @@ import type { DshTransport, RetryPolicy } from '../../contracts.js'
 import { cancelled, httpFailure, normalizeTransportError } from '../../transport-errors.js'
 import { unwrapRpcResultValue } from '../rc6/rpc.js'
 import { Alpha13AssistantStreamProjector, type Alpha13ProjectorOutput } from '../alpha13/session-wire.js'
+import {
+  validAlpha151HistoryRecord,
+  validAlpha151ProjectionBaseline,
+  validAlpha151SessionEventFrame,
+  validAlpha151SessionSnapshot,
+} from '../alpha151/session-wire.js'
 
 /** The small subset of the `ws`/browser WebSocket surface used by the adapter. */
 export interface AlphaWebSocket {
@@ -24,6 +30,8 @@ export interface AlphaWebSocketConstructor {
 /** Normalize one upstream alpha Remote code into the local compatibility vocabulary. */
 export type AlphaErrorCodeNormalizer = (code: string, details: Readonly<Record<string, unknown>>) => string
 
+export type AlphaSessionWireVersion = 'v0' | 'v2' | 'v3'
+
 export interface AlphaLoopbackApiClientOptions {
   readonly endpoint: BackendEndpoint
   readonly requestTimeoutMs: number
@@ -34,8 +42,8 @@ export interface AlphaLoopbackApiClientOptions {
   readonly webSocket?: AlphaWebSocketConstructor
   /** Optional version-specific Remote error compatibility profile. */
   readonly normalizeErrorCode?: AlphaErrorCodeNormalizer
-  /** Session Controller wire profile; alpha.1-.5 use v0, 0.1.3-alpha.1/.2 use v2. */
-  readonly sessionWireVersion?: 'v0' | 'v2'
+  /** Session Controller wire profile; old alpha uses v0, alpha13 uses v2, alpha151 uses v3. */
+  readonly sessionWireVersion?: AlphaSessionWireVersion
 }
 
 type AlphaSuccess = { readonly ok: true; readonly value?: unknown }
@@ -527,7 +535,7 @@ export class AlphaLoopbackApiClient implements DshTransport {
   ): Promise<Record<string, unknown>> {
     for await (const item of this.openRemoteStream('session/follow', { request }, signal)) {
       const frame = recordOrUndefined(item)
-      if (!validAlphaSessionSnapshot(frame, this.options.sessionWireVersion === 'v2'))
+      if (!validAlphaWireSnapshot(frame, this.options.sessionWireVersion ?? 'v0'))
         throw malformedResponse('session/follow snapshot')
       return frame
     }
@@ -536,14 +544,18 @@ export class AlphaLoopbackApiClient implements DshTransport {
 
   private historyResponse(value: unknown, sessionId: string): LegacyResponse {
     const record = recordOrUndefined(value)
+    const wireVersion = this.options.sessionWireVersion ?? 'v0'
     if (
       record === undefined ||
       !Array.isArray(record.records) ||
       typeof record.hasMore !== 'boolean' ||
-      (record.projections !== undefined && !validAlphaProjectionBaseline(record.projections))
+      (record.projections !== undefined &&
+        (wireVersion === 'v3'
+          ? !validAlpha151ProjectionBaseline(record.projections)
+          : !validAlphaProjectionBaseline(record.projections)))
     )
       throw malformedResponse('session history')
-    const events = expandHistoryRecords(record.records, sessionId, this.options.sessionWireVersion === 'v2')
+    const events = expandHistoryRecords(record.records, sessionId, wireVersion)
     return {
       rpcId: randomUUID(),
       result: {
@@ -811,18 +823,20 @@ export class AlphaLoopbackApiClient implements DshTransport {
   }
 
   private async *readSession(sessionId: string, signal: AbortSignal): AsyncGenerator<unknown> {
-    const v2 = this.options.sessionWireVersion === 'v2'
+    const wireVersion = this.options.sessionWireVersion ?? 'v0'
+    const v2 = wireVersion === 'v2'
+    const assistantStream = v2 || wireVersion === 'v3'
     const request = {
       address: { kind: 'session', sessionId },
       maxMessages: 50,
-      ...(v2 ? { assistantStream: true } : {}),
+      ...(assistantStream ? { assistantStream: true } : {}),
     }
-    const projector = v2 ? new Alpha13AssistantStreamProjector() : undefined
+    const projector = assistantStream ? new Alpha13AssistantStreamProjector() : undefined
     for await (const item of this.openRemoteStream('session/follow', { request }, signal)) {
       const frame = recordOrUndefined(item)
       if (frame?.type === 'snapshot') {
-        if (!validAlphaSessionSnapshot(frame, v2)) throw malformedResponse('session/follow snapshot')
-        const events = expandHistoryRecords(frame.records, sessionId, v2)
+        if (!validAlphaWireSnapshot(frame, wireVersion)) throw malformedResponse('session/follow snapshot')
+        const events = expandHistoryRecords(frame.records, sessionId, wireVersion)
         if (projector !== undefined) for (const event of events) projector.rememberDurable(event)
         for (const event of events) yield { type: 'session/event', sessionId, event }
         yield {
@@ -843,8 +857,8 @@ export class AlphaLoopbackApiClient implements DshTransport {
           for (const output of projected) yield this.alpha13ProjectorFrame(output)
         }
       } else if (frame?.type === 'event') {
-        if (!validAlphaSessionEventFrame(frame, v2)) throw malformedResponse('session/follow event')
-        const event = normalizeAlphaEvent(frame.event, sessionId, v2)
+        if (!validAlphaWireEventFrame(frame, wireVersion)) throw malformedResponse('session/follow event')
+        const event = normalizeAlphaEvent(frame.event, sessionId, wireVersion)
         if (event === undefined) throw malformedResponse('session/follow event')
         if (projector === undefined) yield { type: 'session/event', sessionId, event }
         else {
@@ -1457,11 +1471,11 @@ function hasDefinedAlphaTitle(value: Record<string, unknown>): boolean {
 function normalizeAlphaEvent(
   value: unknown,
   sessionId: string,
-  v2 = false,
+  wireVersion: AlphaSessionWireVersion = 'v0',
 ): Record<string, unknown> | undefined {
   const event = recordOrUndefined(value)
   if (event === undefined || typeof event.type !== 'string') return undefined
-  return { ...(v2 ? normalizeAlpha13Event(event) : event), sessionId }
+  return { ...(wireVersion === 'v2' ? normalizeAlpha13Event(event) : event), sessionId }
 }
 
 /** Keep the verified v2 event surface while ignoring additive upstream keys. */
@@ -1481,17 +1495,26 @@ function normalizeAlpha13Event(value: Record<string, unknown>): Record<string, u
 function expandHistoryRecords(
   records: readonly unknown[],
   sessionId: string,
-  v2 = false,
+  wireVersion: AlphaSessionWireVersion = 'v0',
 ): readonly Record<string, unknown>[] {
+  const v2 = wireVersion === 'v2'
+  const v3 = wireVersion === 'v3'
   const out: Record<string, unknown>[] = []
   for (const raw of records) {
     const record = recordOrUndefined(raw)
     if (record?.type === 'event') {
       const event = recordOrUndefined(record.event)
-      if (event === undefined || !(v2 ? validAlpha13HistoryRecord(record) : validAlphaSessionEvent(event)))
+      if (
+        event === undefined ||
+        !(v3
+          ? validAlpha151HistoryRecord(record)
+          : v2
+            ? validAlpha13HistoryRecord(record)
+            : validAlphaSessionEvent(event))
+      )
         throw malformedResponse('session history event')
       out.push({ ...(v2 ? normalizeAlpha13Event(event) : event), sessionId })
-    } else if (!v2 && record?.type === 'chunks') out.push(...expandChunkRow(record.event, sessionId))
+    } else if (!v2 && !v3 && record?.type === 'chunks') out.push(...expandChunkRow(record.event, sessionId))
     else throw malformedResponse('session history record')
   }
   // The Gateway snapshot is a set of history records, not the stream's
@@ -1507,6 +1530,24 @@ function expandHistoryRecords(
       return sequenceDelta === 0 ? left.index - right.index : sequenceDelta
     })
     .map(({ event }) => event)
+}
+
+function validAlphaWireSnapshot(
+  value: unknown,
+  wireVersion: AlphaSessionWireVersion,
+): value is AlphaSessionSnapshot {
+  return wireVersion === 'v3'
+    ? validAlpha151SessionSnapshot(value)
+    : validAlphaSessionSnapshot(value, wireVersion === 'v2')
+}
+
+function validAlphaWireEventFrame(
+  value: unknown,
+  wireVersion: AlphaSessionWireVersion,
+): value is AlphaSessionEventFrame {
+  return wireVersion === 'v3'
+    ? validAlpha151SessionEventFrame(value)
+    : validAlphaSessionEventFrame(value, wireVersion === 'v2')
 }
 
 function expandChunkRow(value: unknown, sessionId: string): readonly Record<string, unknown>[] {

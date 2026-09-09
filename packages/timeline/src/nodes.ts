@@ -66,7 +66,7 @@ export type TimelineNode =
       readonly timing?: AssistantTiming
       /** rc.8 marks a delivered prefix that ended because the step was interrupted. */
       readonly interrupted?: true
-      /** Session v2 process-local stream identity; never a durable cursor. */
+      /** Versioned Session process-local stream identity; never a durable cursor. */
       readonly liveAttemptId?: string
       /** Highest transient frame index folded into this node. */
       readonly liveLastIndex?: number
@@ -80,7 +80,7 @@ export type TimelineNode =
       readonly id: string
       readonly markdown: string
       readonly streaming: boolean
-      /** Session v2 process-local stream identity for reconnect deduplication. */
+      /** Versioned Session process-local stream identity for reconnect deduplication. */
       readonly liveAttemptId?: string
       /** Highest transient frame index folded into this reasoning node. */
       readonly liveLastIndex?: number

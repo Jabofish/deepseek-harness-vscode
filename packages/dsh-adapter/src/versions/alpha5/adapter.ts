@@ -21,6 +21,6 @@ export class Alpha5VersionAdapter extends Alpha4VersionAdapter {
     supportedVersion: '0.1.2-alpha.5',
     protocolVersion: 'alpha5',
     compatibilityPriority: 120,
-    fallback: false,
+    fallback: true,
   }
 }

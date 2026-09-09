@@ -4440,6 +4440,7 @@ function advancesTimelineSequence(event: BackendEvent): boolean {
     case 'session.removed':
     case 'session.status':
     case 'session.subscribed':
+    case 'session.system':
     case 'session.title':
     case 'workspace.changed':
     case 'workspace.order.changed':
@@ -4466,6 +4467,7 @@ function eventMayChangeTimelineState(event: BackendEvent): boolean {
     case 'session.removed':
     case 'session.status':
     case 'session.subscribed':
+    case 'session.system':
     case 'session.title':
     case 'workspace.changed':
     case 'workspace.order.changed':
@@ -4604,6 +4606,8 @@ function domainEvent(name: string, payload: unknown): BackendEvent | undefined {
 function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefined {
   const value = object(payload)
   if (value === undefined) return { type: 'unknown', name, payload }
+  if (name === 'session.system' && nonEmptyString(value.sessionId))
+    return { type: 'session.system', sessionId: value.sessionId }
   if (
     name === 'message.user' &&
     nonEmptyString(value.sessionId) &&

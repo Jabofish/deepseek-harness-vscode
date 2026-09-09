@@ -66,23 +66,14 @@ describe('DSH 0.1.2-alpha.3 Connection/Gateway contract', () => {
     expect(fetch).toHaveBeenCalledOnce()
   })
 
-  it('uses the supplied alpha.3 implementation for an unknown future runtime', async () => {
+  it('does not use the exact-only alpha.3 implementation for an unknown future runtime', async () => {
     const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
       Promise.resolve(response(init, { ok: true, value: { items: [] } })),
     )
     const connected = await new VersionedBackendProbe([adapter(fetch)]).probe(candidate('0.1.2-alpha.6'))
 
-    expect(connected).toMatchObject({
-      ownership: 'external',
-      capabilities: {
-        protocolVersion: 'alpha3',
-        dshVersion: '0.1.2-alpha.6',
-        adapterId: 'dsh-0.1.2-alpha.3',
-        compatibilityMode: 'best-effort',
-        featureProfile: { source: 'compatibility-fallback' },
-      },
-    })
-    expect(connected?.capabilities.compatibilityWarning).toContain('0.1.2-alpha.6')
+    expect(connected).toBeUndefined()
+    expect(fetch.mock.calls).toHaveLength(0)
   })
 
   it('retains alpha.2 namespaced error mapping while using the alpha.3 entry point', async () => {

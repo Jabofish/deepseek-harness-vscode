@@ -146,6 +146,40 @@ describe('VersionedBackendProbe version classification', () => {
     expect(older.probeCompatibility.mock.calls).toHaveLength(0)
   })
 
+  it('does not invoke a compatibility hook on an adapter that is not a fallback', async () => {
+    const nonFallback = compatibilityAdapter(
+      'non-fallback',
+      {
+        protocolVersion: 'wrong-contract',
+        dshVersion: 'wrong-version',
+        features: new Set(['session']),
+      },
+      undefined,
+      100,
+      false,
+    )
+    const fallback = compatibilityAdapter(
+      'fallback',
+      {
+        protocolVersion: 'safe-contract',
+        dshVersion: 'safe-version',
+        features: new Set(['session']),
+      },
+      undefined,
+      10,
+      true,
+    )
+
+    const connected = await new VersionedBackendProbe([nonFallback, fallback]).probe({
+      ...candidate(3955),
+      runtimeVersion: '0.1.2-alpha.6',
+    })
+
+    expect(connected?.capabilities.adapterId).toBe('fallback')
+    expect(nonFallback.probeCompatibility.mock.calls).toHaveLength(0)
+    expect(fallback.probeCompatibility.mock.calls).toHaveLength(1)
+  })
+
   it('does not call exact-only adapters for an unknown runtime', async () => {
     const exactOnly = {
       id: 'exact-only',
@@ -267,6 +301,7 @@ describe('VersionedBackendProbe version classification', () => {
       id: 'first',
       supportedVersion: 'first',
       compatibilityPriority: 20,
+      fallback: true,
       probe: vi.fn(() => Promise.resolve(undefined)),
       probeCompatibility: vi.fn(() => {
         controller.abort()
@@ -313,6 +348,7 @@ function compatibilityAdapter(
   result: BackendCapabilities | undefined | Promise<BackendCapabilities | undefined>,
   exactResult: BackendCapabilities | undefined = undefined,
   compatibilityPriority = 0,
+  fallback = true,
 ): DshVersionAdapter & {
   readonly probe: ReturnType<typeof vi.fn>
   readonly probeCompatibility: ReturnType<typeof vi.fn>
@@ -321,6 +357,7 @@ function compatibilityAdapter(
     id,
     supportedVersion: id,
     compatibilityPriority,
+    fallback,
     probe: vi.fn(() => Promise.resolve(exactResult)),
     probeCompatibility: vi.fn(() => Promise.resolve(result)),
     createTransport: vi.fn(() => ({}) as DshTransport),

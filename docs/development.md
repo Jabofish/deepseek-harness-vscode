@@ -5,9 +5,9 @@
 - Node.js：`>=22.19.0 <27`，CI 使用 `22.19.0`。
 - pnpm：`11.19.0`，由根 `packageManager` 固定。
 - VS Code：扩展 `engines.vscode` 为 `^1.125.0`。
-- DSH：已发布 `0.1.0-rc.6` 至 `0.1.2-rc.1`、`0.1.2-alpha.2` 至 `0.1.2-alpha.5` 和 `0.1.3-alpha.2`，保留源码级 `0.1.2-alpha.1`、`0.1.3-alpha.1` 适配；`0.1.3-alpha.1` 与 `.2` 使用独立 Session v2 适配缝且只对精确版本启用，`.2` 额外透传严格必填的 subagent `delivery`；任何非空未知版本标签会按可安全复用已验证 wire 的 Adapter 进行只读兼容探测，未知运行时回退到 alpha5 v0，成功后保留真实版本并显示警告；真实联调前用 `dsh --version` 确认。预发布版本尚未进入安装默认值。
+- DSH：已发布 `0.1.0-rc.6` 至 `0.1.2-rc.1`、`0.1.2-alpha.2` 至 `0.1.2-alpha.5`、`0.1.3-alpha.2`，最新上游 tag/npm 为 `0.1.5-alpha.1`，并保留所有已知 tag 的独立版本入口；`0.1.3-alpha.1/.2` 使用 Session v2，`0.1.5-alpha.1` 使用严格 Session v3，均只对精确版本启用。`.2` 额外透传严格必填的 subagent `delivery`；任何非空未知版本标签会按可安全复用已验证 wire 的 Adapter 进行只读兼容探测，未知运行时回退到 alpha5 v0，成功后保留真实版本并显示警告；真实联调前用 `dsh --version` 确认。预发布版本尚未进入安装默认值。
 
-版本 Adapter 结构：公共 identity/probe 形状位于 `packages/dsh-adapter/src/adapter-base.ts`；实现按真实协议边界维护 legacy rc、alpha family v0 与 alpha.1/.2 Session v2 三个明确入口。`0.1.2-rc.1` 虽是 rc 发布号，浏览器 wire 仍沿 alpha.5，因此由 `versions/rc13` 复用 v0；`0.1.3-alpha.1` 使用 `versions/alpha13`，`.2` 使用 `versions/alpha132` 并仅在该版本启用 subagent `delivery`。新增版本必须先完成上游差异审计和脱敏契约 fixture，再决定是否需要新的 mapper；不能跨 wire family 猜测。
+版本 Adapter 结构：公共 identity/probe 形状位于 `packages/dsh-adapter/src/adapter-base.ts`；实现按真实协议边界维护 legacy rc、alpha family v0、alpha13/alpha132 Session v2 和 alpha151 Session v3 四个明确入口。`0.1.2-rc.1` 虽是 rc 发布号，浏览器 wire 仍沿 alpha.5，因此由 `versions/rc13` 复用 v0；`0.1.3-alpha.1` 使用 `versions/alpha13`，`.2` 使用 `versions/alpha132` 并仅在该版本启用 subagent `delivery`，`0.1.5-alpha.1` 使用 `versions/alpha151` 并仅在该版本启用 v3 严格校验。新增版本必须先完成上游差异审计和脱敏契约 fixture，再决定是否需要新的 mapper；不能跨 wire family 猜测。
 
 ## 首次安装
 
@@ -55,7 +55,7 @@ pnpm build
 
 1. 选择 `new-isolated`，或 `auto` 且确认没有可连接实例。
 2. `dsh.connection.managedPort=0` 使用随机空闲端口；固定端口用于可预测调试。
-3. 托管启动使用版本化参数数组：rc.6/rc.7 为 `--profile web --host 127.0.0.1 --port <n>`；rc.8、rc.1、rc.2、alpha.1、alpha.2、alpha.3、alpha.4、alpha.5、`0.1.3-alpha.1` 和 `.2` 在同一组参数中追加已由上游声明的 `--no-open`；未知版本不猜测该可选参数。
+3. 托管启动使用版本化参数数组：rc.6/rc.7 为 `--profile web --host 127.0.0.1 --port <n>`；rc.8、rc.1、rc.2、alpha.1、alpha.2、alpha.3、alpha.4、alpha.5、`0.1.3-alpha.1`、`.2` 和 `0.1.5-alpha.1` 在同一组参数中追加已由上游声明的 `--no-open`；未知版本不猜测该可选参数。
 4. 扩展关闭后只结束本次扩展创建的进程。
 
 ## Remote SSH/WSL/Dev Container

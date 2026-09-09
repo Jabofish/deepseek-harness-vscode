@@ -492,6 +492,7 @@ export class Rc6SessionRepository implements SessionRepository {
     mode: RunningInputMode = 'queue',
     signal?: AbortSignal,
   ): Promise<void> {
+    assertPromptContent(input.text, input.attachments)
     const limits = this.promptContentLimits(input.sessionId)
     const receipt = await callRpc<unknown>(
       this.transport,
@@ -512,6 +513,7 @@ export class Rc6SessionRepository implements SessionRepository {
     mode: RunningInputMode,
     signal?: AbortSignal,
   ): Promise<QueuedInput> {
+    assertPromptContent(input.text, input.attachments)
     const limits = this.promptContentLimits(input.sessionId)
     const promptKey = queuedPromptKey(input, mode)
     const pending = this.pendingQueueIdentities.get(promptKey)
@@ -610,6 +612,12 @@ export class Rc6SessionRepository implements SessionRepository {
   }
 
   public async updateQueuedInput(inputId: string, text: string, signal?: AbortSignal): Promise<void> {
+    if (text.trim() === '')
+      throw new AppError({
+        code: 'INVALID_CONFIGURATION',
+        message: 'Queue edit content must include non-whitespace text.',
+        retryable: false,
+      })
     const sessionId = this.ownerOf(inputId)
     const queued = this.queues.get(sessionId)?.find((item) => item.id === inputId)
     if (queued?.images !== undefined && queued.images.length > 0)
@@ -1447,6 +1455,15 @@ function queuedPromptKey(input: PromptInput, mode: RunningInputMode): string {
 function assertAccepted(value: unknown, method: string): void {
   if (asRecord(value).accepted === true) return
   throw malformedSessionResponse(`${method} receipt`)
+}
+
+function assertPromptContent(text: string, attachments: readonly PromptAttachment[]): void {
+  if (text.trim() !== '' || attachments.length > 0) return
+  throw new AppError({
+    code: 'INVALID_CONFIGURATION',
+    message: 'Prompt content must include non-whitespace text or an attachment.',
+    retryable: false,
+  })
 }
 
 function isPermissionPresetId(value: string): boolean {

@@ -10,7 +10,7 @@
 2. 完成 `Rc6VersionAdapter.probe`，明确识别兼容/不兼容/非 DSH/不可达。
 3. 完成 AppError 映射规范和所有协议 Schema。
 
-退出条件：契约测试可发现 rpc-map 漂移；连接未知版本会按最新可安全复用 wire 的 Adapter 优先进行只读兼容探测并进入警告降级，不能把 `alpha13`/`alpha132` 的 Session v2 或 alpha132 的 subagent `delivery` 当作未知版本回退；fixture 不含路径、Prompt 或 Secret。
+退出条件：契约测试可发现 rpc-map 漂移；连接未知版本会按最新可安全复用 wire 的 Adapter 优先进行只读兼容探测并进入警告降级，不能把 `alpha13`/`alpha132` 的 Session v2、`alpha151` 的 Session v3 或 alpha132 的 subagent `delivery` 当作未知版本回退；fixture 不含路径、Prompt 或 Secret。
 
 ## 阶段 1：View、配置和 Runtime Missing
 

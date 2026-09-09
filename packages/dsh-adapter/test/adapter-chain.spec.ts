@@ -8,6 +8,7 @@ import {
   Alpha5VersionAdapter,
   Alpha13VersionAdapter,
   Alpha132VersionAdapter,
+  Alpha151VersionAdapter,
   AlphaVersionAdapter,
   Rc6VersionAdapter,
   Rc7VersionAdapter,
@@ -15,6 +16,7 @@ import {
   Rc11VersionAdapter,
   Rc12VersionAdapter,
   Rc13VersionAdapter,
+  SUPPORTED_DSH_VERSIONS,
 } from '../src/index.js'
 
 const options = {
@@ -24,6 +26,31 @@ const options = {
 }
 
 describe('version adapter family chains', () => {
+  it('has exactly one concrete adapter for every supported release identity', () => {
+    const adapters = [
+      new Rc6VersionAdapter(options),
+      new Rc7VersionAdapter(options),
+      new Rc8VersionAdapter(options),
+      new Rc11VersionAdapter(options),
+      new Rc12VersionAdapter(options),
+      new Rc13VersionAdapter(options),
+      new Alpha1VersionAdapter(options),
+      new Alpha2VersionAdapter(options),
+      new Alpha3VersionAdapter(options),
+      new Alpha4VersionAdapter(options),
+      new Alpha5VersionAdapter(options),
+      new Alpha13VersionAdapter(options),
+      new Alpha132VersionAdapter(options),
+      new Alpha151VersionAdapter(options),
+    ]
+
+    expect(adapters.map((adapter) => adapter.supportedVersion)).toEqual([...SUPPORTED_DSH_VERSIONS])
+    expect(adapters.map((adapter) => adapter.id)).toEqual(
+      SUPPORTED_DSH_VERSIONS.map((version) => `dsh-${version}`),
+    )
+    expect(new Set(adapters.map((adapter) => adapter.supportedVersion)).size).toBe(adapters.length)
+  })
+
   it('keeps release identities and newest-first priorities monotonic', () => {
     const rc6 = new Rc6VersionAdapter(options)
     const rc7 = new Rc7VersionAdapter(options)
@@ -48,6 +75,8 @@ describe('version adapter family chains', () => {
       'rc12',
       'rc13',
     ])
+    expect(rc6.fallback).toBe(true)
+    expect(rc13.fallback).toBe(false)
   })
 
   it('keeps the alpha chain linear without crossing the rc transport boundary', () => {
@@ -58,6 +87,7 @@ describe('version adapter family chains', () => {
     const alpha5 = new Alpha5VersionAdapter(options)
     const alpha13 = new Alpha13VersionAdapter(options)
     const alpha132 = new Alpha132VersionAdapter(options)
+    const alpha151 = new Alpha151VersionAdapter(options)
 
     expect(alpha2).toBeInstanceOf(Alpha1VersionAdapter)
     expect(alpha3).toBeInstanceOf(Alpha2VersionAdapter)
@@ -65,9 +95,12 @@ describe('version adapter family chains', () => {
     expect(alpha5).toBeInstanceOf(Alpha4VersionAdapter)
     expect(alpha13).toBeInstanceOf(Alpha5VersionAdapter)
     expect(alpha132).toBeInstanceOf(Alpha13VersionAdapter)
+    expect(alpha151).toBeInstanceOf(Alpha132VersionAdapter)
     expect(alpha1).not.toBeInstanceOf(Rc6VersionAdapter)
     expect(
-      [alpha1, alpha2, alpha3, alpha4, alpha5, alpha13, alpha132].map((adapter) => adapter.supportedVersion),
+      [alpha1, alpha2, alpha3, alpha4, alpha5, alpha13, alpha132, alpha151].map(
+        (adapter) => adapter.supportedVersion,
+      ),
     ).toEqual([
       '0.1.2-alpha.1',
       '0.1.2-alpha.2',
@@ -76,15 +109,21 @@ describe('version adapter family chains', () => {
       '0.1.2-alpha.5',
       '0.1.3-alpha.1',
       '0.1.3-alpha.2',
+      '0.1.5-alpha.1',
     ])
     expect(
-      [alpha1, alpha2, alpha3, alpha4, alpha5, alpha13, alpha132].map(
+      [alpha1, alpha2, alpha3, alpha4, alpha5, alpha13, alpha132, alpha151].map(
         (adapter) => adapter.compatibilityPriority,
       ),
-    ).toEqual([80, 90, 100, 110, 120, 130, 140])
+    ).toEqual([80, 90, 100, 110, 120, 130, 140, 150])
     expect(
-      [alpha1, alpha2, alpha3, alpha4, alpha5, alpha13, alpha132].map((adapter) => adapter.protocolVersion),
-    ).toEqual(['alpha1', 'alpha2', 'alpha3', 'alpha4', 'alpha5', 'alpha13', 'alpha132'])
+      [alpha1, alpha2, alpha3, alpha4, alpha5, alpha13, alpha132, alpha151].map(
+        (adapter) => adapter.protocolVersion,
+      ),
+    ).toEqual(['alpha1', 'alpha2', 'alpha3', 'alpha4', 'alpha5', 'alpha13', 'alpha132', 'alpha151'])
+    expect(alpha5.fallback).toBe(true)
+    expect(alpha13.fallback).toBe(false)
+    expect(alpha151.fallback).toBe(false)
   })
 
   it('retains the old alpha family name as a compatibility alias only', () => {

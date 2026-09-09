@@ -208,7 +208,7 @@ type BackendEventPayload =
       readonly step?: number
       /** Epoch milliseconds from the durable DSH event. */
       readonly time?: number
-      /** Local-only ordering for Session v2 process-local assistant frames. */
+      /** Local-only ordering for versioned Session process-local assistant frames. */
       readonly transientSequence?: number
       /** Agent attempt identity used to make reconnect baselines idempotent. */
       readonly transientAttemptId?: string
@@ -224,7 +224,7 @@ type BackendEventPayload =
       readonly step?: number
       /** Epoch milliseconds from the durable DSH event. */
       readonly time?: number
-      /** Local-only ordering for Session v2 process-local assistant frames. */
+      /** Local-only ordering for versioned Session process-local assistant frames. */
       readonly transientSequence?: number
       /** Agent attempt identity used to make reconnect baselines idempotent. */
       readonly transientAttemptId?: string
@@ -319,6 +319,8 @@ type BackendEventPayload =
       readonly lastSequence: number
       readonly projection?: SessionProjectionSnapshot
     }
+  /** Internal durable watermark for an upstream system/message event. */
+  | { readonly type: 'session.system'; readonly sessionId: string }
   | {
       readonly type: 'session.projection'
       readonly sessionId: string

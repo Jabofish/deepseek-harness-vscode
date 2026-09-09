@@ -11,7 +11,7 @@ type TransientDeltaEvent = Extract<BackendEvent, { readonly type: 'message.delta
 type LiveTimelineNode = Extract<TimelineNode, { readonly kind: 'assistant-message' | 'reasoning' }>
 
 function isTransientBaselineRestart(event: TransientDeltaEvent, node: LiveTimelineNode): boolean {
-  // A fresh Session v2 follow subscription restarts its local transient
+  // A fresh versioned Session follow subscription restarts its local transient
   // sequence at one. The first frame must replace the previous partial
   // projection for the same attempt instead of being dropped as a duplicate.
   return (
@@ -654,6 +654,7 @@ export function reduceTimeline(
     case 'session.removed':
     case 'session.subscribed':
     case 'session.projection':
+    case 'session.system':
     case 'workspace.changed':
     case 'workspace.removed':
     case 'workspace.order.changed':
@@ -786,6 +787,7 @@ function eventMayChangeTimelineNodes(event: BackendEvent, state: TimelineState):
     case 'queue.updated':
     case 'session.subscribed':
     case 'session.projection':
+    case 'session.system':
     case 'workspace.changed':
     case 'workspace.removed':
     case 'workspace.order.changed':

@@ -40,9 +40,12 @@ the verified list. Updating never stops an external DSH.
 - Visual Studio Code `1.125+` on Windows, Linux, or macOS (Remote SSH, WSL, and Dev Containers
   supported)
 - Published DeepSeek Harness `0.1.0-rc.6` through `0.1.2-rc.1` Host/Web API, published
-  `0.1.2-alpha.2`/`0.1.2-alpha.3`/`0.1.2-alpha.4`/`0.1.2-alpha.5` and `0.1.3-alpha.2`,
-  plus source-level adapters for `0.1.2-alpha.1` and `0.1.3-alpha.1` (not the install default)
-- Unknown versions reporting a non-empty label are probed with the newest verified adapter first; successful best-effort connections preserve the real version and show a warning
+  `0.1.2-alpha.2`/`0.1.2-alpha.3`/`0.1.2-alpha.4`/`0.1.2-alpha.5`, `0.1.3-alpha.2`,
+  and latest upstream tag/npm `0.1.5-alpha.1`; source-level adapters are retained for every
+  known tag (not the install default)
+- Unknown versions reporting a non-empty label are probed with the newest verified adapter first;
+  alpha151 Session v3 is exact-only, and successful best-effort connections preserve the real
+  version and show a warning
 - Node.js `22.19+` when installing DSH from within the extension
 
 Available models, tools, and advanced agent capabilities follow the connected DSH instance;

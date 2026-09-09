@@ -202,7 +202,12 @@ export const rc6Mapper = {
     const projections = record.projections
     if (projections !== undefined && !validProjectionBlock(projections))
       throw new Error('Malformed session history projections')
-    const events = record.events.map((entry, index) => mapHistoryEntry(entry, index, sessionId))
+    const events = record.events
+      .map((entry, index) => mapHistoryEntry(entry, index, sessionId))
+      // The v3 system/message is a model-facing prompt. The event's sequence
+      // is still consumed by the live stream watermark, but the prompt itself
+      // must never be copied into the Extension/Webview history DTO.
+      .filter((entry) => entry.event.type !== 'session.system')
     const projection = objectOrUndefined(projections)
     return {
       events,
@@ -339,6 +344,10 @@ export const rc6Mapper = {
           sessionId,
           title: stringOr(data.title ?? data.name, ''),
         }
+      case 'system/message':
+        // Keep only a sequence-bearing internal marker. Never project the
+        // system prompt text or its message structure beyond the adapter.
+        return { type: 'session.system', sessionId }
       case 'agent-preset/selected':
         return sessionConfiguration(sessionId, { preset: stringOr(data.agentPreset ?? data.preset, '') })
       case 'permission/preset':
@@ -680,8 +689,10 @@ export const rc6Mapper = {
           jobs: data.jobs.map(job),
         }
       case 'tool/code-dispatch-start':
+      case 'tool/ptc-dispatch-start':
         return { type: 'tool.updated', sessionId, tool: tool({ ...data, status: 'running' }, 'call') }
       case 'tool/code-dispatch':
+      case 'tool/ptc-dispatch':
         return { type: 'tool.updated', sessionId, tool: tool({ ...data, status: 'completed' }, 'result') }
       case 'tool-workflow/run-start':
         return {
@@ -1243,7 +1254,8 @@ function isFiniteNumber(value: unknown): value is number {
 function tool(value: Record<string, unknown>, phase: 'call' | 'result' = 'result'): ToolCallView {
   const message = objectOrUndefined(value.message)
   const source = objectOrUndefined(message?.source)
-  const messageIsError = messageHasToolError(message)
+  const isPtcDispatch = typeof value.subCallId === 'string' || typeof value.parentCallId === 'string'
+  const messageIsError = value.isError === true || messageHasToolError(message)
   const viewEnvelope = objectOrUndefined(value.view)
   const view = objectOrUndefined(viewEnvelope?.view) ?? viewEnvelope
   const presentation = projectToolPresentation(viewEnvelope, phase, contentText)
@@ -1255,7 +1267,12 @@ function tool(value: Record<string, unknown>, phase: 'call' | 'result' = 'result
     view?.rawInput ??
     view?.description ??
     view?.content
-  const messageOutput = message === undefined ? undefined : messageText(message)
+  const messageOutput =
+    message === undefined
+      ? isPtcDispatch && Array.isArray(value.content)
+        ? contentText(value.content, false)
+        : undefined
+      : messageText(message)
   const messageError = message === undefined ? '' : messageToolErrorText(message)
   const output =
     value.outputSummary ??
@@ -1279,7 +1296,10 @@ function tool(value: Record<string, unknown>, phase: 'call' | 'result' = 'result
   const turn = eventIndex(value.turn)
   const step = eventIndex(value.step)
   return {
-    id: stringOr(value.callId ?? source?.callId ?? value.id ?? view?.callId ?? view?.id, 'tool-call'),
+    id: stringOr(
+      value.callId ?? source?.callId ?? value.subCallId ?? value.id ?? view?.callId ?? view?.id,
+      'tool-call',
+    ),
     ...(turn === undefined ? {} : { turn }),
     ...(step === undefined ? {} : { step }),
     name: name ?? 'unknown-tool',

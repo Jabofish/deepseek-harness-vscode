@@ -108,13 +108,7 @@ describe('DSH 0.1.2-rc.1 Connection/Gateway contract', () => {
     await expect(adapter.probe(candidate('0.1.2-alpha.5'))).resolves.toBeUndefined()
 
     const future = await new VersionedBackendProbe([adapter]).probe(candidate('0.1.2-rc.2'))
-    expect(future).toMatchObject({
-      capabilities: {
-        protocolVersion: 'rc13',
-        dshVersion: '0.1.2-rc.2',
-        compatibilityMode: 'best-effort',
-      },
-    })
+    expect(future).toBeUndefined()
   })
 
   it('keeps the v0 follow request and packed history path for the published rc.1 wire', async () => {

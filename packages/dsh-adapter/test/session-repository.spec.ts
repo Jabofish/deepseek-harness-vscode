@@ -491,6 +491,42 @@ describe('Rc6SessionRepository prompt delivery modes', () => {
     })
   })
 
+  it('rejects empty prompt content before sending it to DSH', async () => {
+    const calls: { method: string; params: unknown }[] = []
+    const repository = new Rc6SessionRepository(recordingTransport(calls))
+    const input = { sessionId: 'session-1', text: ' \n\t', attachments: [] }
+
+    await expect(repository.sendPrompt(input)).rejects.toMatchObject({ code: 'INVALID_CONFIGURATION' })
+    await expect(repository.enqueuePrompt(input, 'queue')).rejects.toMatchObject({
+      code: 'INVALID_CONFIGURATION',
+    })
+    expect(calls).toEqual([])
+  })
+
+  it('rejects a whitespace-only queue edit before sending it to DSH', async () => {
+    const calls: { method: string; params: unknown }[] = []
+    const repository = new Rc6SessionRepository(recordingTransport(calls))
+    repository.remember({
+      type: 'queue.updated',
+      sessionId: 'session-1',
+      items: [
+        {
+          id: 'queued-1',
+          sessionId: 'session-1',
+          text: 'original',
+          attachments: [],
+          mode: 'queue',
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    })
+
+    await expect(repository.updateQueuedInput('queued-1', ' \n\t')).rejects.toMatchObject({
+      code: 'INVALID_CONFIGURATION',
+    })
+    expect(calls).toEqual([])
+  })
+
   it('does not replace a queued image message with a text-only edit', async () => {
     const calls: { method: string; params: unknown }[] = []
     const repository = new Rc6SessionRepository(recordingTransport(calls))

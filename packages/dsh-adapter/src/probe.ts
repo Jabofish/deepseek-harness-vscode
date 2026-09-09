@@ -48,7 +48,13 @@ export class VersionedBackendProbe implements BackendProbe {
     throwIfProbeAborted(signal)
     const hintedVersion = normalizeDshVersion(candidate.runtimeVersion)
     const compatibilityProbe = hintedVersion !== undefined && !isKnownDshVersion(hintedVersion)
-    const adapters = compatibilityProbe ? orderCompatibilityAdapters(this.adapters) : this.adapters
+    // An unknown runtime must be claimed only by an explicitly designated
+    // compatibility fallback. Having a probeCompatibility method alone is
+    // not sufficient: exact-only adapters can expose that hook accidentally,
+    // and selecting one would misreport the wire contract for a future build.
+    const adapters = compatibilityProbe
+      ? orderCompatibilityAdapters(this.adapters.filter((adapter) => adapter.fallback === true))
+      : this.adapters
     let incompatible: AppError | undefined
     for (const adapter of adapters) {
       throwIfProbeAborted(signal)

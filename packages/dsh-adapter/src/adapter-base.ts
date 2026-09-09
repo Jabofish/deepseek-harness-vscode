@@ -13,6 +13,7 @@ export interface VersionAdapterIdentity {
   readonly supportedVersion: string
   readonly protocolVersion: string
   readonly compatibilityPriority: number
+  /** Unknown runtimes may use this adapter only when this flag is true. */
   readonly fallback: boolean
 }
 
