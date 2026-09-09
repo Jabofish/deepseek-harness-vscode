@@ -9,6 +9,7 @@ const extensionRequire = createRequire(path.join(extensionRoot, 'package.json'))
 const vsceRequire = createRequire(extensionRequire.resolve('@vscode/vsce/package.json'))
 const packagePath = path.join(repositoryRoot, 'artifacts', 'deepseek-harness-vscode-universal.vsix')
 const marketplaceSocketTimeout = 10 * 60 * 1000
+const maxPublishAttempts = 3
 
 if (!process.env.VSCE_PAT) {
   throw new Error('VSCE_PAT is required for Marketplace publishing.')
@@ -34,10 +35,34 @@ const { publishVSIX } = extensionRequire('@vscode/vsce')
 
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))
 
+function getErrorText(error) {
+  if (error instanceof Error) {
+    return `${error.name}\n${error.message}`
+  }
+
+  if (error && typeof error === 'object') {
+    const errorRecord = error
+    return [
+      typeof errorRecord.message === 'string' ? errorRecord.message : '',
+      typeof errorRecord.statusCode === 'number' ? String(errorRecord.statusCode) : '',
+      typeof errorRecord.code === 'string' ? errorRecord.code : '',
+      typeof errorRecord.result === 'string' ? errorRecord.result : '',
+    ].join('\n')
+  }
+
+  return String(error)
+}
+
+function isRetryableMarketplaceError(error) {
+  return /timeout|ETIMEDOUT|ESOCKETTIMEDOUT|ECONNRESET|502|503|504|bad gateway|gateway timeout|service(?:s)? (?:isn't|are not|unavailable)/i.test(
+    getErrorText(error),
+  )
+}
+
 async function publish() {
   let lastError
 
-  for (let attempt = 1; attempt <= 2; attempt += 1) {
+  for (let attempt = 1; attempt <= maxPublishAttempts; attempt += 1) {
     try {
       await publishVSIX(packagePath, {
         cwd: extensionRoot,
@@ -47,10 +72,9 @@ async function publish() {
       return
     } catch (error) {
       lastError = error
-      const message = error instanceof Error ? error.message : String(error)
-      const retryable = /timeout|ETIMEDOUT|ESOCKETTIMEDOUT|ECONNRESET/i.test(message)
+      const retryable = isRetryableMarketplaceError(error)
 
-      if (!retryable || attempt === 2) {
+      if (!retryable || attempt === maxPublishAttempts) {
         throw error
       }
 
