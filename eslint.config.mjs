@@ -20,7 +20,12 @@ export default tseslint.config(
     languageOptions: {
       parserOptions: {
         projectService: {
-          allowDefaultProject: ['eslint.config.mjs', 'vitest.config.ts', 'apps/extension/esbuild.mjs'],
+          allowDefaultProject: [
+            'eslint.config.mjs',
+            'vitest.config.ts',
+            'apps/extension/esbuild.mjs',
+            'scripts/publish-marketplace.cjs',
+          ],
         },
         tsconfigRootDir: import.meta.dirname,
       },
@@ -40,12 +45,33 @@ export default tseslint.config(
     },
   },
   {
-    files: ['**/*.config.{js,mjs,ts}', 'eslint.config.mjs', 'apps/extension/esbuild.mjs', 'scripts/**/*.mjs'],
+    files: [
+      '**/*.config.{js,mjs,ts}',
+      'eslint.config.mjs',
+      'apps/extension/esbuild.mjs',
+      'scripts/**/*.{cjs,mjs}',
+    ],
     rules: {
       '@typescript-eslint/no-unsafe-assignment': 'off',
       '@typescript-eslint/no-unsafe-argument': 'off',
       '@typescript-eslint/no-unsafe-call': 'off',
       '@typescript-eslint/no-unsafe-member-access': 'off',
+    },
+  },
+  {
+    files: ['scripts/**/*.cjs'],
+    languageOptions: {
+      globals: {
+        __dirname: 'readonly',
+        console: 'readonly',
+        process: 'readonly',
+        require: 'readonly',
+        setTimeout: 'readonly',
+      },
+    },
+    rules: {
+      '@typescript-eslint/explicit-function-return-type': 'off',
+      '@typescript-eslint/no-require-imports': 'off',
     },
   },
 )

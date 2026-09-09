@@ -122,7 +122,7 @@ jobs:
     if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.event_name == 'workflow_dispatch' && inputs.publish_marketplace == true) }}
     needs: package
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 25
     permissions:
       contents: read
     steps:
@@ -161,25 +161,7 @@ jobs:
       - name: Publish extension
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
-        run: |
-          set -euo pipefail
-          last_status=1
-          for attempt in 1 2 3; do
-            if pnpm --filter deepseek-harness-client exec vsce publish \
-              --packagePath ../../artifacts/deepseek-harness-vscode-universal.vsix \
-              --skip-duplicate; then
-              exit 0
-            else
-              last_status=$?
-            fi
-
-            if [ "$attempt" -lt 3 ]; then
-              delay=$((attempt * 30))
-              echo "Marketplace publish attempt ${attempt} failed; retrying in ${delay}s."
-              sleep "$delay"
-            fi
-          done
-          exit "$last_status"
+        run: pnpm --filter deepseek-harness-client exec node ../../scripts/publish-marketplace.cjs
 
   release:
     name: Create GitHub Release
