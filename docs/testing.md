@@ -2,13 +2,13 @@
 
 ## 层次
 
-| 层          | 目标                                                                                             | 禁止替代                     |
-| ----------- | ------------------------------------------------------------------------------------------------ | ---------------------------- |
-| Contract    | rc.6–0.1.2-rc.1、alpha.1–alpha.5、0.1.3-alpha.1/.2 与 0.1.5-alpha.1 RPC/Event/Tool 形状与 mapper | 不能只 mock Domain           |
-| Unit        | 状态机、排序、去重、reducer、错误映射                                                            | 不能靠 E2E 才发现竞态        |
-| Integration | Fake DSH socket/server、spawn 依赖、重连/资源释放                                                | 不能调用真实用户实例         |
-| VS Code E2E | View、命令、设置、Webview 协议、焦点和布局                                                       | 不能只测 React DOM           |
-| Live smoke  | 固定 DSH 版本真实运行                                                                            | 不能声称自动测试等于真实兼容 |
+| 层          | 目标                                                                                                                                  | 禁止替代                     |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
+| Contract    | `0.0.1-rc.1/.2/.5`、`0.1.0-rc.2/.3`、rc.6–0.1.2-rc.1、alpha.1–alpha.5、0.1.3-alpha.1/.2 与 0.1.5-alpha.1 RPC/Event/Tool 形状与 mapper | 不能只 mock Domain           |
+| Unit        | 状态机、排序、去重、reducer、错误映射                                                                                                 | 不能靠 E2E 才发现竞态        |
+| Integration | Fake DSH socket/server、spawn 依赖、重连/资源释放                                                                                     | 不能调用真实用户实例         |
+| VS Code E2E | View、命令、设置、Webview 协议、焦点和布局                                                                                            | 不能只测 React DOM           |
+| Live smoke  | 固定 DSH 版本真实运行                                                                                                                 | 不能声称自动测试等于真实兼容 |
 
 ## 必测负面路径
 
@@ -32,6 +32,7 @@
 - 大流量 fixture 由生成器产生，避免提交真实会话日志。
 - 更新 DSH 依赖时先运行漂移测试，再更新 fixture；禁止直接更新 snapshot 接受未知差异。未知版本 fixture 必须覆盖真实版本标签保留、兼容模式警告、最新候选优先、候选拒绝后继续、全部候选拒绝和取消边界。
 - `packages/dsh-adapter/test/adapter-chain.spec.ts` 必须随版本链变更维护，锁定每个已支持版本的连续继承、协议身份和兼容优先级；它不能替代各版本的 wire contract fixture。
+- 当前历史版本 fixture 还必须锁定：rc.1 的旧 `command.*` 与 Host invalidation、rc.2 的 `session/tasks`/`host/remote-event`、rc.1/rc.2 的时区字段差异、rc.1 缺少 ZIP 下载和工作区排序，以及 rc.5/0.1.0-rc.2/.3 的 rc.6 Host wire 复用边界。
 
 ## 性能预算
 

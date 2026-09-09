@@ -40,6 +40,11 @@ function child(onKill: (signal: NodeJS.Signals | undefined) => void): SpawnedChi
 
 describe('DshProcessSupervisor', () => {
   it.each([
+    '0.0.1-rc.1',
+    '0.0.1-rc.2',
+    '0.0.1-rc.5',
+    '0.1.0-rc.2',
+    '0.1.0-rc.3',
     '0.1.0-rc.6',
     '0.1.0-rc.7',
     '0.1.0-rc.8',

@@ -7,6 +7,14 @@ import type {
 } from '@dsh-vscode/domain'
 
 export const SUPPORTED_DSH_VERSIONS = [
+  // Published 0.0.1 history. rc.1/rc.2 use the pre-Remote command API;
+  // rc.5 returns to the rc.6 Host API family.
+  '0.0.1-rc.1',
+  '0.0.1-rc.2',
+  '0.0.1-rc.5',
+  // 0.1.0-rc.2/rc.3 are exact aliases of the rc.6 Host API wire contract.
+  '0.1.0-rc.2',
+  '0.1.0-rc.3',
   '0.1.0-rc.6',
   '0.1.0-rc.7',
   '0.1.0-rc.8',
@@ -29,7 +37,7 @@ export const SUPPORTED_DSH_VERSIONS = [
 ] as const
 
 export const SUPPORTED_DSH_RANGE =
-  '0.1.0-rc.6 through 0.1.2-rc.1; upstream 0.1.2-alpha.1 through 0.1.2-alpha.5, 0.1.3-alpha.1 through 0.1.3-alpha.2, and 0.1.5-alpha.1' as const
+  '0.0.1-rc.1/.2/.5; 0.1.0-rc.2/.3/.6/.7/.8; 0.1.1-rc.1/.2; 0.1.2-rc.1; 0.1.2-alpha.1-.5; 0.1.3-alpha.1/.2; 0.1.5-alpha.1' as const
 
 export const DSH_PACKAGE_NAME = '@deepseek-ai/dsh' as const
 

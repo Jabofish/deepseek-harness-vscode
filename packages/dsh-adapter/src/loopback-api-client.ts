@@ -1,10 +1,11 @@
 import { AbstractApiClient } from '@deepseek-ai/dsh-host-apiproxy/client'
-import { serverRequestSchema, serverResponseSchema } from '@deepseek-ai/dsh-host-apiproxy/api'
+import { serverRequestSchema } from '@deepseek-ai/dsh-host-apiproxy/api'
 import { hostFrameSchema, muxFrameSchema } from '@deepseek-ai/dsh-host-apiproxy/api/events.schema'
 import type { RequestPayload, ResponseValue, RpcMethodMap } from '@deepseek-ai/dsh-host-apiproxy/api/rpc-map'
 import {
   RpcId,
   type ClientResponse,
+  type RpcMessage,
   type RpcResponse,
   type RpcResult,
 } from '@deepseek-ai/dsh-host-apiproxy/api/rpc'
@@ -32,6 +33,43 @@ export interface LoopbackApiClientOptions {
   readonly retryPolicy: RetryPolicy
   readonly fetch: typeof globalThis.fetch
   readonly webSocket?: typeof globalThis.WebSocket
+  /** Optional exact-version frame contract for an older Host API family. */
+  readonly frameParser?: LoopbackFrameParser
+}
+
+export type LoopbackFrameChannel = 'mux' | 'host'
+
+/**
+ * Version adapters can replace only the payload parser while retaining the
+ * common WebSocket carrier. The parser must validate a complete frame and
+ * return the value that the stream controller will receive.
+ */
+export interface LoopbackFrameParser {
+  parse(value: unknown, channel: LoopbackFrameChannel): unknown
+}
+
+type RawClientRequest = {
+  readonly type: 'client-request'
+  readonly rpcId: string
+  readonly method: string
+  readonly payload: unknown
+}
+
+type RawRpcResult =
+  | { readonly ok: true; readonly value?: unknown }
+  | {
+      readonly ok: false
+      readonly error: {
+        readonly code: string
+        readonly message: string
+        readonly details: Record<string, unknown>
+      }
+    }
+
+type RawServerResponse = {
+  readonly type: 'server-response'
+  readonly rpcId: string
+  readonly result: RawRpcResult
 }
 
 /** The network boundary. HTTP RPCs and DSH WebSocket event downlinks stay in the Extension Host. */
@@ -94,48 +132,11 @@ export class LoopbackApiClient extends AbstractApiClient implements DshTransport
     signal?: AbortSignal,
     timeoutPolicy: 'default' | 'caller-signal-only' = 'default',
   ): Promise<RpcResponse<ResponseValue<K>>> {
-    const message = {
-      type: 'client-request' as const,
-      rpcId: this.mintRpcId(),
-      method,
-      payload,
+    const full = await this.callRawUnary(String(method), payload, signal, timeoutPolicy)
+    return {
+      rpcId: full.rpcId as RpcResponse<ResponseValue<K>>['rpcId'],
+      result: full.result as RpcResponse<ResponseValue<K>>['result'],
     }
-    this.onEnvelope(message)
-    const requestSignal =
-      timeoutPolicy === 'caller-signal-only'
-        ? signal
-        : signal === undefined
-          ? AbortSignal.timeout(this.options.requestTimeoutMs)
-          : AbortSignal.any([AbortSignal.timeout(this.options.requestTimeoutMs), signal])
-    const response = await this.doFetch(new URL(`/api/${method}`, this.options.endpoint.baseUrl), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(message),
-      ...(requestSignal === undefined ? {} : { signal: requestSignal }),
-    })
-    if (!response.ok) {
-      await releaseUnreadBody(response)
-      throw httpFailure(String(method), response.status)
-    }
-    let full: ReturnType<typeof serverResponseSchema.parse>
-    try {
-      full = serverResponseSchema.parse(await response.json())
-    } catch (cause) {
-      throw new AppError({
-        code: 'PROTOCOL_ERROR',
-        message: `DSH returned a malformed response for ${method}.`,
-        retryable: false,
-        cause,
-      })
-    }
-    this.onEnvelope(full)
-    if (full.rpcId !== message.rpcId)
-      throw new AppError({
-        code: 'PROTOCOL_ERROR',
-        message: `DSH returned a mismatched response for ${method}.`,
-        retryable: false,
-      })
-    return { rpcId: full.rpcId, result: full.result as RpcResponse<ResponseValue<K>>['result'] }
   }
 
   public remoteRequest<TResponse>(
@@ -170,6 +171,7 @@ export class LoopbackApiClient extends AbstractApiClient implements DshTransport
       mergeSignals(signal, this.closed.signal),
       muxFrameSchema,
       MUX_FRAME_TYPES,
+      'mux',
     )
   }
 
@@ -179,6 +181,7 @@ export class LoopbackApiClient extends AbstractApiClient implements DshTransport
       mergeSignals(signal, this.closed.signal),
       hostFrameSchema,
       HOST_FRAME_TYPES,
+      'host',
     )
   }
 
@@ -335,6 +338,12 @@ export class LoopbackApiClient extends AbstractApiClient implements DshTransport
         return this.llm.models(params as RequestPayload<'llm.models'>, signal)
       case 'llm.discoverModels':
         return this.llm.discoverModels(params as RequestPayload<'llm.discoverModels'>, signal)
+      case 'command.list':
+      case 'command.execute':
+        // These are the pre-Remote command methods used by 0.0.1-rc.1/rc.2.
+        // They are deliberately kept as opaque RPCs; the legacy repository
+        // owns their exact request/result projection.
+        return this.callRawUnary(method, params, signal)
       default:
         throw new AppError({
           code: 'CAPABILITY_UNAVAILABLE',
@@ -353,45 +362,7 @@ export class LoopbackApiClient extends AbstractApiClient implements DshTransport
     params: RequestPayload<'host.describe'>,
     signal?: AbortSignal,
   ): Promise<unknown> {
-    const message = {
-      type: 'client-request' as const,
-      rpcId: this.mintRpcId(),
-      method: 'host.describe',
-      payload: params,
-    }
-    this.onEnvelope(message)
-    const requestSignal =
-      signal === undefined
-        ? AbortSignal.timeout(this.options.requestTimeoutMs)
-        : AbortSignal.any([AbortSignal.timeout(this.options.requestTimeoutMs), signal])
-    const response = await this.doFetch(new URL('/api/host.describe', this.options.endpoint.baseUrl), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(message),
-      signal: requestSignal,
-    })
-    if (!response.ok) {
-      await releaseUnreadBody(response)
-      throw httpFailure('host.describe', response.status)
-    }
-    let full: ReturnType<typeof serverResponseSchema.parse>
-    try {
-      full = serverResponseSchema.parse(await response.json())
-    } catch (cause) {
-      throw new AppError({
-        code: 'PROTOCOL_ERROR',
-        message: 'DSH returned a malformed host.describe response.',
-        retryable: false,
-        cause,
-      })
-    }
-    this.onEnvelope(full)
-    if (full.rpcId !== message.rpcId)
-      throw new AppError({
-        code: 'PROTOCOL_ERROR',
-        message: 'DSH returned a mismatched host.describe response.',
-        retryable: false,
-      })
+    const full = await this.callRawUnary('host.describe', params, signal)
     return { rpcId: full.rpcId, result: full.result }
   }
 
@@ -416,50 +387,63 @@ export class LoopbackApiClient extends AbstractApiClient implements DshTransport
         message: 'The DSH Remote endpoint is invalid.',
         retryable: false,
       })
-    const message = {
-      type: 'client-request' as const,
+    const full = await this.callRawUnary(endpoint, { args }, signal)
+    return full.result as TResponse
+  }
+
+  /**
+   * Validate only the common RPC carrier. Business result schemas belong to
+   * the repositories and old releases legitimately use error codes that are
+   * absent from the currently installed generated package.
+   */
+  private async callRawUnary(
+    method: string,
+    payload: unknown,
+    signal?: AbortSignal,
+    timeoutPolicy: 'default' | 'caller-signal-only' = 'default',
+  ): Promise<RawServerResponse> {
+    const message: RawClientRequest = {
+      type: 'client-request',
       rpcId: this.mintRpcId(),
-      method: endpoint,
-      payload: { args },
+      method,
+      payload,
     }
-    this.onEnvelope(message)
-    const target = new URL(`/api/${endpoint}`, this.options.endpoint.baseUrl)
-    // Mirror callUnary's deadline: without it a hung Remote host leaves
-    // commands/execute and the feedback/reference Remotes unsettled until the
-    // caller's signal fires, which many callers never pass.
+    this.onEnvelope(message as unknown as RpcMessage)
     const requestSignal =
-      signal === undefined
-        ? AbortSignal.timeout(this.options.requestTimeoutMs)
-        : AbortSignal.any([AbortSignal.timeout(this.options.requestTimeoutMs), signal])
-    const response = await this.doFetch(target, {
+      timeoutPolicy === 'caller-signal-only'
+        ? signal
+        : signal === undefined
+          ? AbortSignal.timeout(this.options.requestTimeoutMs)
+          : AbortSignal.any([AbortSignal.timeout(this.options.requestTimeoutMs), signal])
+    const response = await this.doFetch(new URL(`/api/${method}`, this.options.endpoint.baseUrl), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(message),
-      signal: requestSignal,
+      ...(requestSignal === undefined ? {} : { signal: requestSignal }),
     })
     if (!response.ok) {
       await releaseUnreadBody(response)
-      throw httpFailure(endpoint, response.status)
+      throw httpFailure(method, response.status)
     }
-    let full: ReturnType<typeof serverResponseSchema.parse>
+    let full: RawServerResponse
     try {
-      full = serverResponseSchema.parse(await response.json())
+      full = parseRawServerResponse(await response.json())
     } catch (cause) {
       throw new AppError({
         code: 'PROTOCOL_ERROR',
-        message: `DSH returned a malformed Remote response for ${endpoint}.`,
+        message: `DSH returned a malformed response for ${method}.`,
         retryable: false,
         cause,
       })
     }
-    this.onEnvelope(full)
+    this.onEnvelope(full as unknown as RpcMessage)
     if (full.rpcId !== message.rpcId)
       throw new AppError({
         code: 'PROTOCOL_ERROR',
-        message: `DSH returned a mismatched Remote response for ${endpoint}.`,
+        message: `DSH returned a mismatched response for ${method}.`,
         retryable: false,
       })
-    return full.result as TResponse
+    return full
   }
 
   private openWebSocketStream(
@@ -467,8 +451,9 @@ export class LoopbackApiClient extends AbstractApiClient implements DshTransport
     signal: AbortSignal,
     frameSchema: { parse(value: unknown): unknown },
     knownFrameTypes: ReadonlySet<string>,
+    channel: LoopbackFrameChannel,
   ): AsyncIterable<unknown> {
-    return this.readWebSocket(path, signal, frameSchema, knownFrameTypes)
+    return this.readWebSocket(path, signal, frameSchema, knownFrameTypes, channel)
   }
 
   /**
@@ -481,6 +466,7 @@ export class LoopbackApiClient extends AbstractApiClient implements DshTransport
     signal: AbortSignal,
     frameSchema: { parse(value: unknown): unknown },
     knownFrameTypes: ReadonlySet<string>,
+    channel: LoopbackFrameChannel,
   ): AsyncIterable<unknown> {
     if (signal.aborted) return
     const WebSocketConstructor = this.options.webSocket ?? globalThis.WebSocket
@@ -543,7 +529,9 @@ export class LoopbackApiClient extends AbstractApiClient implements DshTransport
       }
       try {
         const full = serverRequestSchema.parse(JSON.parse(event.data))
-        const frame = parseFramePayload(frameSchema, full.payload, knownFrameTypes)
+        const frame =
+          this.options.frameParser?.parse(full.payload, channel) ??
+          parseFramePayload(frameSchema, full.payload, knownFrameTypes)
         this.onEnvelope(full)
         enqueue({ kind: 'frame', value: { rpcId: full.rpcId, payload: frame } })
       } catch {
@@ -699,6 +687,7 @@ class WebSocketQueue {
 
 const IDEMPOTENT_METHODS = new Set([
   'host.describe',
+  'command.list',
   'session.list',
   'session.search',
   'session.history',
@@ -825,6 +814,45 @@ function record(value: unknown): Record<string, unknown> | undefined {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined
+}
+
+function parseRawServerResponse(value: unknown): RawServerResponse {
+  const envelope = record(value)
+  const result = record(envelope?.result)
+  if (
+    envelope?.type !== 'server-response' ||
+    typeof envelope.rpcId !== 'string' ||
+    result === undefined ||
+    typeof result.ok !== 'boolean'
+  )
+    throw new Error('Malformed server-response envelope')
+
+  if (result.ok) {
+    return {
+      type: 'server-response',
+      rpcId: envelope.rpcId,
+      result: Object.hasOwn(result, 'value') ? { ok: true, value: result.value } : { ok: true },
+    }
+  }
+
+  const error = record(result.error)
+  if (
+    error === undefined ||
+    typeof error.code !== 'string' ||
+    typeof error.message !== 'string' ||
+    !Object.hasOwn(error, 'details')
+  )
+    throw new Error('Malformed server-response error')
+  const details = record(error.details)
+  if (details === undefined) throw new Error('Malformed server-response error details')
+  return {
+    type: 'server-response',
+    rpcId: envelope.rpcId,
+    result: {
+      ok: false,
+      error: { code: error.code, message: error.message, details },
+    },
+  }
 }
 
 function assertLoopback(endpoint: BackendEndpoint): void {

@@ -1,6 +1,10 @@
 # Change Log
 
-## Unreleased
+## 0.1.8
+
+- 补齐当前 npm 上列出的历史版本：`0.0.1-rc.1`、`0.0.1-rc.2`、`0.0.1-rc.5`、`0.1.0-rc.2`、`0.1.0-rc.3`；旧 `command.*`、`session/tasks`、Host invalidation/remote-event、时区字段和能力缺口均在独立 Adapter 中精确隔离，并新增脱敏契约回归。
+- Added exact adapters for the five historical npm releases (`0.0.1-rc.1`, `0.0.1-rc.2`, `0.0.1-rc.5`, `0.1.0-rc.2`, and `0.1.0-rc.3`), including their legacy command/event/time-zone differences and explicit unsupported capability boundaries.
+- 本轮仅完成历史 npm 包契约、源码适配和自动回归，五个历史版本尚未完成真实 DSH/VS Code live smoke；因此不把自动测试当作运行时兼容证明。
 
 - 适配最新上游 tag/npm `dsh-v0.1.5-alpha.1` / DSH `0.1.5-alpha.1`：新增独立 `alpha151` Session wire v3 版本缝，严格校验事件信封与 surface 元数据，安全处理 `system/message`，并映射 PTC 事件；旧 rc/alpha 版本入口、wire 和兼容回退保持独立。
 - Added a dedicated `alpha151` Session wire v3 adapter for upstream `dsh-v0.1.5-alpha.1`, including strict event-envelope/surface validation, Host-only system-message handling, and PTC event mapping; older rc/alpha adapters and fallback boundaries remain unchanged.

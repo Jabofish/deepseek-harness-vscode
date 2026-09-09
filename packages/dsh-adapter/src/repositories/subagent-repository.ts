@@ -28,6 +28,8 @@ export interface SubagentRepositoryOptions {
   readonly subagentPromptDelivery?: boolean
   readonly maxPromptAttachmentBytes?: number
   readonly maxPromptAttachmentTotalBytes?: number
+  /** 0.0.1-rc.1 predates the browser-local time-zone field. */
+  readonly includeClientTimeZone?: boolean
 }
 
 export class Rc6SubagentRepository implements SubagentRepository {
@@ -113,7 +115,7 @@ export class Rc6SubagentRepository implements SubagentRepository {
           mode: address.mode,
           ...(this.options.subagentPromptDelivery === true ? { delivery: mode } : {}),
           content,
-          ...clientTimeZoneField(),
+          ...(this.options.includeClientTimeZone === false ? {} : clientTimeZoneField()),
         },
         requestSignal,
       ),

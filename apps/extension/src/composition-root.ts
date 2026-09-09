@@ -58,6 +58,11 @@ import {
   Alpha3VersionAdapter,
   Alpha2VersionAdapter,
   Alpha1VersionAdapter,
+  LegacyRc1VersionAdapter,
+  LegacyRc2VersionAdapter,
+  LegacyRc5VersionAdapter,
+  Rc02VersionAdapter,
+  Rc03VersionAdapter,
   Rc6VersionAdapter,
   Rc7VersionAdapter,
   Rc8VersionAdapter,
@@ -398,6 +403,11 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
   const rc8Adapter = new Rc8VersionAdapter(adapterOptions)
   const rc7Adapter = new Rc7VersionAdapter(adapterOptions)
   const rc6Adapter = new Rc6VersionAdapter(adapterOptions)
+  const rc03Adapter = new Rc03VersionAdapter(adapterOptions)
+  const rc02Adapter = new Rc02VersionAdapter(adapterOptions)
+  const legacyRc5Adapter = new LegacyRc5VersionAdapter(adapterOptions)
+  const legacyRc2Adapter = new LegacyRc2VersionAdapter(adapterOptions)
+  const legacyRc1Adapter = new LegacyRc1VersionAdapter(adapterOptions)
   const adapters = [
     alpha151Adapter,
     alpha132Adapter,
@@ -413,6 +423,11 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     rc8Adapter,
     rc7Adapter,
     rc6Adapter,
+    rc03Adapter,
+    rc02Adapter,
+    legacyRc5Adapter,
+    legacyRc2Adapter,
+    legacyRc1Adapter,
   ] as const
   const probe = new VersionedBackendProbe(adapters, { fetch: globalThis.fetch })
   const factory = new VersionedBackendFactory(adapters)

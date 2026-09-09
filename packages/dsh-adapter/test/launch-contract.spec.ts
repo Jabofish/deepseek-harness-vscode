@@ -4,6 +4,11 @@ import { managedWebArguments } from '../src/launch-contract.js'
 
 describe('managed Web Profile launch contract', () => {
   it.each([
+    ['0.0.1-rc.1', false],
+    ['0.0.1-rc.2', false],
+    ['0.0.1-rc.5', false],
+    ['0.1.0-rc.2', false],
+    ['0.1.0-rc.3', false],
     ['0.1.0-rc.6', false],
     ['0.1.0-rc.7', false],
     ['0.1.0-rc.8', true],

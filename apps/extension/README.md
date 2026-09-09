@@ -39,7 +39,8 @@ the verified list. Updating never stops an external DSH.
 
 - Visual Studio Code `1.125+` on Windows, Linux, or macOS (Remote SSH, WSL, and Dev Containers
   supported)
-- Published DeepSeek Harness `0.1.0-rc.6` through `0.1.2-rc.1` Host/Web API, published
+- Published DeepSeek Harness `0.0.1-rc.1`/`.2`/`.5`, `0.1.0-rc.2`/`.3`, and
+  `0.1.0-rc.6` through `0.1.2-rc.1` Host/Web API, published
   `0.1.2-alpha.2`/`0.1.2-alpha.3`/`0.1.2-alpha.4`/`0.1.2-alpha.5`, `0.1.3-alpha.2`,
   and latest upstream tag/npm `0.1.5-alpha.1`; source-level adapters are retained for every
   known tag (not the install default)

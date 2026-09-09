@@ -10,6 +10,11 @@ import {
   Alpha132VersionAdapter,
   Alpha151VersionAdapter,
   AlphaVersionAdapter,
+  LegacyRc1VersionAdapter,
+  LegacyRc2VersionAdapter,
+  LegacyRc5VersionAdapter,
+  Rc02VersionAdapter,
+  Rc03VersionAdapter,
   Rc6VersionAdapter,
   Rc7VersionAdapter,
   Rc8VersionAdapter,
@@ -28,6 +33,11 @@ const options = {
 describe('version adapter family chains', () => {
   it('has exactly one concrete adapter for every supported release identity', () => {
     const adapters = [
+      new LegacyRc1VersionAdapter(options),
+      new LegacyRc2VersionAdapter(options),
+      new LegacyRc5VersionAdapter(options),
+      new Rc02VersionAdapter(options),
+      new Rc03VersionAdapter(options),
       new Rc6VersionAdapter(options),
       new Rc7VersionAdapter(options),
       new Rc8VersionAdapter(options),
@@ -52,6 +62,11 @@ describe('version adapter family chains', () => {
   })
 
   it('keeps release identities and newest-first priorities monotonic', () => {
+    const legacyRc1 = new LegacyRc1VersionAdapter(options)
+    const legacyRc2 = new LegacyRc2VersionAdapter(options)
+    const legacyRc5 = new LegacyRc5VersionAdapter(options)
+    const rc02 = new Rc02VersionAdapter(options)
+    const rc03 = new Rc03VersionAdapter(options)
     const rc6 = new Rc6VersionAdapter(options)
     const rc7 = new Rc7VersionAdapter(options)
     const rc8 = new Rc8VersionAdapter(options)
@@ -64,10 +79,21 @@ describe('version adapter family chains', () => {
     expect(rc11).toBeInstanceOf(Rc8VersionAdapter)
     expect(rc12).toBeInstanceOf(Rc11VersionAdapter)
     expect(rc13).toBeInstanceOf(Alpha5VersionAdapter)
-    expect([rc6, rc7, rc8, rc11, rc12, rc13].map((adapter) => adapter.compatibilityPriority)).toEqual([
-      30, 40, 50, 60, 70, 125,
-    ])
-    expect([rc6, rc7, rc8, rc11, rc12, rc13].map((adapter) => adapter.protocolVersion)).toEqual([
+    expect(
+      [legacyRc1, legacyRc2, legacyRc5, rc02, rc03, rc6, rc7, rc8, rc11, rc12, rc13].map(
+        (adapter) => adapter.compatibilityPriority,
+      ),
+    ).toEqual([10, 15, 20, 25, 27, 30, 40, 50, 60, 70, 125])
+    expect(
+      [legacyRc1, legacyRc2, legacyRc5, rc02, rc03, rc6, rc7, rc8, rc11, rc12, rc13].map(
+        (adapter) => adapter.protocolVersion,
+      ),
+    ).toEqual([
+      'legacy-rc1',
+      'legacy-rc2',
+      'legacy-rc5',
+      'rc02',
+      'rc03',
       'rc6',
       'rc7',
       'rc8',
@@ -75,7 +101,17 @@ describe('version adapter family chains', () => {
       'rc12',
       'rc13',
     ])
+    expect(legacyRc1).toBeInstanceOf(Rc6VersionAdapter)
+    expect(legacyRc2).toBeInstanceOf(LegacyRc1VersionAdapter)
+    expect(legacyRc5).toBeInstanceOf(Rc6VersionAdapter)
+    expect(rc02).toBeInstanceOf(LegacyRc5VersionAdapter)
+    expect(rc03).toBeInstanceOf(Rc02VersionAdapter)
     expect(rc6.fallback).toBe(true)
+    expect(legacyRc1.fallback).toBe(false)
+    expect(legacyRc2.fallback).toBe(false)
+    expect(legacyRc5.fallback).toBe(false)
+    expect(rc02.fallback).toBe(false)
+    expect(rc03.fallback).toBe(false)
     expect(rc13.fallback).toBe(false)
   })
 

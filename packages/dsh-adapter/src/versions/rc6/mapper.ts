@@ -682,12 +682,16 @@ export const rc6Mapper = {
       case 'command/done':
         return commandNotice(name, data, sessionId)
       case 'session/jobs':
-        if (!Array.isArray(data.jobs)) throw new Error('Malformed session/jobs jobs')
+      case 'session/tasks': {
+        const entries = name === 'session/tasks' ? data.tasks : data.jobs
+        if (!Array.isArray(entries))
+          throw new Error(`Malformed ${name} ${name === 'session/tasks' ? 'tasks' : 'jobs'}`)
         return {
           type: 'jobs.updated',
           sessionId,
-          jobs: data.jobs.map(job),
+          jobs: entries.map(job),
         }
+      }
       case 'tool/code-dispatch-start':
       case 'tool/ptc-dispatch-start':
         return { type: 'tool.updated', sessionId, tool: tool({ ...data, status: 'running' }, 'call') }
@@ -851,6 +855,24 @@ export const rc6Mapper = {
           type: 'archived.sessions.changed',
           sessionIds: requiredStringArray(data.sessionIds ?? data.archivedSessionIds, 'archived session ids'),
         }
+      case 'host/commands-changed':
+        return { type: 'remote.event', name: 'commands/change', args: [] }
+      case 'host/session-preset-changed':
+        if (sessionId === '' || typeof data.agentPreset !== 'string')
+          throw new Error('Malformed host/session-preset-changed')
+        return {
+          type: 'remote.event',
+          name: 'agent-preset/selected',
+          args: [sessionId, data.agentPreset],
+        }
+      case 'host/settings-changed':
+        if (typeof data.ns !== 'string') throw new Error('Malformed host/settings-changed')
+        return { type: 'remote.event', name: 'settings/document-updated', args: [data.ns] }
+      case 'host/credentials-changed':
+        if (typeof data.ref !== 'string') throw new Error('Malformed host/credentials-changed')
+        return { type: 'remote.event', name: 'credentials/updated', args: [data.ref] }
+      case 'host/models-changed':
+        return { type: 'remote.event', name: 'llm/adapters-updated', args: [] }
       case 'host/remote-event': {
         const eventName = data.event ?? data.name
         if (typeof eventName !== 'string' || eventName.length === 0 || !Array.isArray(data.args))

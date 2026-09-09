@@ -1,6 +1,8 @@
 # 能力矩阵
 
-这是功能范围的唯一清单。`DONE` 必须同时有代码、自动测试和所需的真实 DSH 运行证据；当前尚未满足发布退出条件的能力统一标为 `PARTIAL`，并在证据列写明缺口。已发布 rc.6–0.1.2-rc.1、`0.1.2-alpha.2`–`.5`、`0.1.3-alpha.2` 和最新上游 tag/npm `0.1.5-alpha.1`，以及源码级 `0.1.2-alpha.1`、`0.1.3-alpha.1` 使用独立版本入口；未知运行时按最新可安全复用 wire 的 Adapter 优先进行只读兼容探测，`alpha13`/`alpha132` 的 Session v2 和 `alpha151` 的 Session v3 仅精确版本可用，所有运行时专属能力仍以 `CAPABILITY_UNAVAILABLE` 和兼容警告边界降级；没有提供的 RPC 不以空实现冒充完成。
+这是功能范围的唯一清单。`DONE` 必须同时有代码、自动测试和所需的真实 DSH 运行证据；当前尚未满足发布退出条件的能力统一标为 `PARTIAL`，并在证据列写明缺口。已发布 `0.0.1-rc.1/.2/.5`、`0.1.0-rc.2/.3`、rc.6–0.1.2-rc.1、`0.1.2-alpha.2`–`.5`、`0.1.3-alpha.2` 和最新上游 tag/npm `0.1.5-alpha.1`，以及源码级 `0.1.2-alpha.1`、`0.1.3-alpha.1` 使用独立版本入口；未知运行时按最新可安全复用 wire 的 Adapter 优先进行只读兼容探测，`alpha13`/`alpha132` 的 Session v2 和 `alpha151` 的 Session v3 仅精确版本可用，所有运行时专属能力仍以 `CAPABILITY_UNAVAILABLE` 和兼容警告边界降级；没有提供的 RPC 不以空实现冒充完成。
+
+本轮历史版本精确适配证据：`packages/dsh-adapter/test/legacy-contract.spec.ts` 覆盖五个 npm-only 版本的 exact probe、旧 command/事件/时区/能力边界，以及 rc.1/rc.2 的 frame parser；`adapter-chain.spec.ts` 和 `launch-contract.spec.ts` 覆盖版本身份、继承优先级和托管启动参数。上述是源码与自动测试证据，不替代五个版本的真实 DSH/VS Code live smoke。
 
 ## 2026-08-29 实施批次 E：Agent 编辑器闭环与本地生产力增量
 
@@ -17,7 +19,7 @@
 
 本批次的全量门禁结果以交付命令输出为准；没有真实 DSH 运行验证的新增能力不标为 `DONE`。
 
-托管启动回归修复（2026-08-29）：启动参数已迁移到版本化 `managedWebArguments` 契约；rc.6/rc.7 不传 `--no-open`，rc.8、rc.1、rc.2、`0.1.2-rc.1`、alpha.1、alpha.2、alpha.3、alpha.4、alpha.5、`0.1.3-alpha.1`、`.2` 和 `0.1.5-alpha.1` 仅在上游 Web Profile 声明后传入，未知版本不猜测可选 flag。实际 rc.6 隔离 smoke 已成功报告 loopback endpoint，并确认本次受管进程退出后端口关闭。
+托管启动回归修复（2026-08-29）：启动参数已迁移到版本化 `managedWebArguments` 契约；`0.0.1-rc.1/.2/.5`、`0.1.0-rc.2/.3`、rc.6/rc.7 不传 `--no-open`，rc.8、`0.1.1-rc.1/.2`、`0.1.2-rc.1`、alpha.1–alpha.5、`0.1.3-alpha.1/.2` 和 `0.1.5-alpha.1` 仅在上游 Web Profile 声明后传入，未知版本不猜测可选 flag。实际 rc.6 隔离 smoke 已成功报告 loopback endpoint，并确认本次受管进程退出后端口关闭。
 
 无文件夹临时工作区修复（2026-08-29）：`TemporaryWorkspaceManager` 已接入 Extension Host 的
 `workspace.list`、`session.list` 和 `session.create` 路径。无 VS Code 文件夹时，首次列表请求会创建或恢复

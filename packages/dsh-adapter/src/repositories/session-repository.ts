@@ -68,6 +68,8 @@ export class Rc6SessionRepository implements SessionRepository {
     this.onSessionOpen = options.onSessionOpen
     this.deriveTitleFromCwd = options.deriveTitleFromCwd === true
     this.resetQueueOnSubscribe = options.resetQueueOnSubscribe ?? true
+    this.includesClientTimeZone = options.includeClientTimeZone ?? true
+    this.executeSessionConfigurationCommand = options.executeSessionConfigCommand
   }
 
   private readonly supportsPreallocatedSessionId: boolean
@@ -79,6 +81,9 @@ export class Rc6SessionRepository implements SessionRepository {
   private readonly onSessionOpen: ((sessionId: string) => void | Promise<void>) | undefined
   private readonly deriveTitleFromCwd: boolean
   private readonly resetQueueOnSubscribe: boolean
+  private readonly includesClientTimeZone: boolean
+  private readonly executeSessionConfigurationCommand:
+    ((sessionId: string, command: string, signal?: AbortSignal) => Promise<void>) | undefined
 
   public remember(event: BackendEvent): void {
     if (event.type !== 'queue.updated') {
@@ -501,7 +506,7 @@ export class Rc6SessionRepository implements SessionRepository {
         sessionId: input.sessionId,
         mode,
         content: encodePromptContent(input.text, input.attachments, limits),
-        ...clientTimeZoneField(),
+        ...(this.includesClientTimeZone ? clientTimeZoneField() : {}),
       },
       signal,
     )
@@ -557,7 +562,7 @@ export class Rc6SessionRepository implements SessionRepository {
           sessionId: input.sessionId,
           mode,
           content: encodePromptContent(input.text, input.attachments, limits),
-          ...clientTimeZoneField(),
+          ...(this.includesClientTimeZone ? clientTimeZoneField() : {}),
         },
         signal,
       )
@@ -745,6 +750,10 @@ export class Rc6SessionRepository implements SessionRepository {
         throw malformedSessionResponse('agent preset selection')
     }
     const command = async (value: string, operationSignal?: AbortSignal): Promise<void> => {
+      if (this.executeSessionConfigurationCommand !== undefined) {
+        await this.executeSessionConfigurationCommand(sessionId, value, operationSignal)
+        return
+      }
       await executeSessionConfigCommand(
         this.transport,
         sessionId,
@@ -969,6 +978,14 @@ interface SessionRepositoryOptions {
   readonly maxPromptAttachmentTotalBytes?: number
   /** rc.8+ requires the `images` array on commands/execute even when empty. */
   readonly includeEmptyCommandImages?: boolean
+  /** rc.1 predates the browser-local time-zone field on prompt requests. */
+  readonly includeClientTimeZone?: boolean
+  /** Legacy rc.1/rc.2 execute session configuration through command.*. */
+  readonly executeSessionConfigCommand?: (
+    sessionId: string,
+    command: string,
+    signal?: AbortSignal,
+  ) => Promise<void>
   /** Version adapters may attach a logical per-session event stream lazily. */
   readonly onSessionAccess?: (sessionId: string) => void
   /** Version adapters may re-baseline a process-local stream on session.open. */

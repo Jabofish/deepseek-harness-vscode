@@ -25,7 +25,7 @@ flowchart TB
 
   subgraph Adapter["Versioned DSH Boundary"]
     BASE["DshVersionAdapterBase\n(identity + probe contract)"]
-    RC6["rc.6 → rc.7 → rc.8 → rc.1 → rc.2\nlegacy Host API family"]
+    RC6["0.0.1-rc.1 → 0.0.1-rc.2 → 0.0.1-rc.5 → 0.1.0-rc.2 → 0.1.0-rc.3 → 0.1.0-rc.6 → 0.1.0-rc.7 → 0.1.0-rc.8 → 0.1.1-rc.1 → 0.1.1-rc.2\nlegacy Host API family"]
     ALPHA["alpha.1 → alpha.2 → alpha.3 → alpha.4 → alpha.5 → alpha13 → alpha132 → alpha151\nConnection/Gateway family + versioned Session seams"]
     STREAM["Shared Host/Mux Stream"]
     BASE --> RC6
@@ -43,16 +43,16 @@ flowchart TB
 
 ## 包依赖
 
-| 包                          | 职责                                                                                                | 可以依赖                                | 禁止依赖                      |
-| --------------------------- | --------------------------------------------------------------------------------------------------- | --------------------------------------- | ----------------------------- |
-| `packages/domain`           | 稳定业务类型、错误、仓储接口                                                                        | 无平台依赖                              | VS Code、React、HTTP、process |
-| `packages/application`      | 用例、连接协调、端口接口                                                                            | Domain                                  | DSH wire type、VS Code UI     |
-| `packages/dsh-adapter`      | rc.6–0.1.2-rc.1、alpha.1–alpha.5、0.1.3-alpha.1/.2 与 0.1.5-alpha.1 的 RPC/Event 映射、仓储、流恢复 | Domain、Application ports、固定上游包   | VS Code、React                |
-| `packages/webview-protocol` | Host/Webview 版本化消息 Schema                                                                      | Zod                                     | 传输实现、Secret              |
-| `packages/timeline`         | 事件归并、回放、可见窗口                                                                            | Domain                                  | React、VS Code、HTTP          |
-| `packages/ui`               | 无业务副作用的可复用 UI                                                                             | React、Domain view DTO                  | DSH、VS Code API              |
-| `apps/extension`            | Composition Root、进程/文件/网络/凭据、命令                                                         | Application、Adapter、Protocol、VS Code | React                         |
-| `apps/webview`              | 极简 UI、局部状态、虚拟列表                                                                         | UI、Timeline、Protocol                  | Node、VS Code 模块、直接网络  |
+| 包                          | 职责                                                                                                                                     | 可以依赖                                | 禁止依赖                      |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- | ----------------------------- |
+| `packages/domain`           | 稳定业务类型、错误、仓储接口                                                                                                             | 无平台依赖                              | VS Code、React、HTTP、process |
+| `packages/application`      | 用例、连接协调、端口接口                                                                                                                 | Domain                                  | DSH wire type、VS Code UI     |
+| `packages/dsh-adapter`      | `0.0.1-rc.1/.2/.5`、`0.1.0-rc.2/.3`、rc.6–0.1.2-rc.1、alpha.1–alpha.5、0.1.3-alpha.1/.2 与 0.1.5-alpha.1 的 RPC/Event 映射、仓储、流恢复 | Domain、Application ports、固定上游包   | VS Code、React                |
+| `packages/webview-protocol` | Host/Webview 版本化消息 Schema                                                                                                           | Zod                                     | 传输实现、Secret              |
+| `packages/timeline`         | 事件归并、回放、可见窗口                                                                                                                 | Domain                                  | React、VS Code、HTTP          |
+| `packages/ui`               | 无业务副作用的可复用 UI                                                                                                                  | React、Domain view DTO                  | DSH、VS Code API              |
+| `apps/extension`            | Composition Root、进程/文件/网络/凭据、命令                                                                                              | Application、Adapter、Protocol、VS Code | React                         |
+| `apps/webview`              | 极简 UI、局部状态、虚拟列表                                                                                                              | UI、Timeline、Protocol                  | Node、VS Code 模块、直接网络  |
 
 ## 完整目录
 
@@ -82,6 +82,12 @@ packages/
   domain/                 # 业务契约
   dsh-adapter/
     src/adapter-base.ts   # 版本 identity/probe 结构基类
+    src/versions/legacy/  # 0.0.1-rc.1/.2 旧 Host frame/command/repository 契约
+    src/versions/legacy01/ # 0.0.1-rc.1 精确版本入口
+    src/versions/legacy02/ # 0.0.1-rc.2 精确版本入口
+    src/versions/legacy05/ # 0.0.1-rc.5 精确版本入口
+    src/versions/rc02/    # 0.1.0-rc.2 精确版本入口
+    src/versions/rc03/    # 0.1.0-rc.3 精确版本入口
     src/versions/rc6/     # rc.6 兼容基线与 legacy mapper
     src/versions/rc7/     # rc.7 版本身份与契约入口
     src/versions/rc8/     # rc.8 版本身份、增量事件与契约入口

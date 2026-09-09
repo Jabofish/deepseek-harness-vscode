@@ -4,7 +4,9 @@ import {
   type BackendCapabilities,
   type BackendEndpoint,
   type ConnectedBackend,
+  type CommandRepository,
   type DshBackend,
+  type ExportRepository,
 } from '@dsh-vscode/domain'
 
 import {
@@ -159,7 +161,7 @@ export class Rc6VersionAdapter extends DshVersionAdapterBase {
   public createBackend(backend: ConnectedBackend): Promise<DshBackend> {
     const transport = this.createTransport(backend.endpoint)
     const interactions = new Rc6InteractionRepository(transport)
-    const workspaces = new Rc6WorkspaceRepository(transport)
+    const workspaces = this.createWorkspaceRepository(transport)
     const sessions = this.createSessionRepository(transport, workspaces)
     const goals = new Rc6GoalRepository(transport)
     const jobs = new Rc6JobRepository(transport)
@@ -183,13 +185,13 @@ export class Rc6VersionAdapter extends DshVersionAdapterBase {
       interactions,
       goals,
       jobs,
-      subagents: new Rc6SubagentRepository(transport),
+      subagents: this.createSubagentRepository(transport),
       settings: new Rc6SettingsRepository(transport),
       skills: new Rc6SkillRepository(transport),
       commands: this.createCommandRepository(transport),
       plugins: new Rc6PluginRepository(transport),
       presets: new Rc6PresetRepository(transport),
-      exports: new Rc6ExportRepository(transport, this.options.exportFileSystem),
+      exports: this.createExportRepository(transport),
       references: new Rc6ReferenceRepository(transport),
       feedback: new Rc6MessageFeedbackRepository(transport),
       events,
@@ -203,8 +205,20 @@ export class Rc6VersionAdapter extends DshVersionAdapterBase {
   }
 
   /** Version adapters may select the exact Remote argument shape they serve. */
-  protected createCommandRepository(transport: DshTransport): Rc6CommandRepository {
+  protected createCommandRepository(transport: DshTransport): CommandRepository {
     return new Rc6CommandRepository(transport)
+  }
+
+  protected createWorkspaceRepository(transport: DshTransport): Rc6WorkspaceRepository {
+    return new Rc6WorkspaceRepository(transport)
+  }
+
+  protected createSubagentRepository(transport: DshTransport): Rc6SubagentRepository {
+    return new Rc6SubagentRepository(transport)
+  }
+
+  protected createExportRepository(transport: DshTransport): ExportRepository {
+    return new Rc6ExportRepository(transport, this.options.exportFileSystem)
   }
 
   protected createSessionRepository(

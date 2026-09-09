@@ -428,6 +428,11 @@ function normalizeEnvelope(value: unknown): BackendEvent | undefined {
     case 'host/workspace-removed':
     case 'host/workspace-order-changed':
     case 'host/archived-sessions-changed':
+    case 'host/commands-changed':
+    case 'host/session-preset-changed':
+    case 'host/settings-changed':
+    case 'host/credentials-changed':
+    case 'host/models-changed':
     case 'host/remote-event':
     case 'host/agent-error':
     case 'approval/requested':
@@ -437,6 +442,7 @@ function normalizeEnvelope(value: unknown): BackendEvent | undefined {
     case 'session/subscribed':
     case 'session/queue':
     case 'session/jobs':
+    case 'session/tasks':
     case 'session/projection':
       return withSequence(mapStreamEvent(frame.type, withRpcId), frame.seq)
     case 'stream/error':

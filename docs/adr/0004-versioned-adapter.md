@@ -5,7 +5,7 @@
 
 ## 决策
 
-当前已发布适配 `0.1.0-rc.6` 至 `0.1.2-rc.1`、`0.1.2-alpha.2` 至 `0.1.2-alpha.5`、`0.1.3-alpha.2` 和最新上游 tag/npm `0.1.5-alpha.1`，并为 `0.1.2-alpha.1`、`0.1.3-alpha.1` 源码保留独立版本入口。所有版本入口共享 `DshVersionAdapterBase` 的 identity/probe 结构，但按真实 wire 边界分为 legacy rc、alpha family v0、alpha13/alpha132 Session v2 与 alpha151 Session v3 四个明确入口；`0.1.2-rc.1` 虽是 rc 发布号，实际浏览器 wire 仍沿 alpha.5，因此由 `versions/rc13` 明确复用 alpha.5 v0，而不会继承 `versions/alpha13` 的 v2。Probe 选择具体版本 Adapter；rc.6 wire schema、方法名和 mapper 只能存在于 `packages/dsh-adapter/src/versions/rc6` 或对应 Repository，alpha 的共用 `/api`/`remote.mux` 传输只能存在于 `packages/dsh-adapter/src/versions/alpha`，各版本专属错误/Session wire 和身份必须位于对应版本入口，新增版本不得跳过已核对的发布边界或跨 wire family 猜测。alpha151 v3 只精确匹配 `0.1.5-alpha.1`，不得被未知版本兼容探测选中。
+当前已发布适配 `0.0.1-rc.1/.2/.5`、`0.1.0-rc.2/.3`、`0.1.0-rc.6` 至 `0.1.2-rc.1`、`0.1.2-alpha.2` 至 `0.1.2-alpha.5`、`0.1.3-alpha.2` 和最新上游 tag/npm `0.1.5-alpha.1`，并为 `0.1.2-alpha.1`、`0.1.3-alpha.1` 源码保留独立版本入口。所有版本入口共享 `DshVersionAdapterBase` 的 identity/probe 结构，但按真实 wire 边界分为 legacy rc、alpha family v0、alpha13/alpha132 Session v2 与 alpha151 Session v3 四个明确入口；legacy rc 内部再区分 `0.0.1-rc.1/.2` 的旧 command/frame wire 与 `0.0.1-rc.5`、`0.1.0-rc.2/.3` 的 rc.6 Host wire；`0.1.2-rc.1` 虽是 rc 发布号，实际浏览器 wire 仍沿 alpha.5，因此由 `versions/rc13` 明确复用 alpha.5 v0，而不会继承 `versions/alpha13` 的 v2。Probe 选择具体版本 Adapter；rc.6 wire schema、方法名和 mapper 只能存在于 `packages/dsh-adapter/src/versions/rc6` 或对应 Repository，alpha 的共用 `/api`/`remote.mux` 传输只能存在于 `packages/dsh-adapter/src/versions/alpha`，各版本专属错误/Session wire 和身份必须位于对应版本入口，新增版本不得跳过已核对的发布边界或跨 wire family 猜测。alpha151 v3 只精确匹配 `0.1.5-alpha.1`，不得被未知版本兼容探测选中。
 
 ## 后果
 
