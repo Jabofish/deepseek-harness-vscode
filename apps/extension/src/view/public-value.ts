@@ -1,4 +1,9 @@
+import path from 'node:path'
+
 import type { WorkspaceSummary } from '@dsh-vscode/domain'
+import { isCanonicalWorkspaceRelativePath } from '@dsh-vscode/domain'
+
+import { isPathWithin } from '../backend/path-safety.js'
 
 /**
  * Project a workspace summary across the Host/Webview boundary.
@@ -10,6 +15,34 @@ export function publicWorkspaceSummary(value: WorkspaceSummary): Omit<WorkspaceS
   const { path, ...summary } = value
   void path
   return summary
+}
+
+/**
+ * Convert a DSH present-tool source path into a renderer-safe workspace path.
+ * The source may be absolute or relative to the viewed Session cwd, but only
+ * a canonical path inside one of the currently owned workspace roots crosses
+ * the Host/Webview boundary.
+ */
+export function publicWorkspaceRelativePath(
+  sourcePath: string,
+  sessionCwd: string | undefined,
+  roots: readonly string[],
+): string | undefined {
+  const source = sourcePath.trim()
+  if (source === '' || roots.length === 0) return undefined
+  const base = sessionCwd ?? (roots.length === 1 ? roots[0] : undefined)
+  const absolute = isAbsoluteHostPath(source)
+    ? path.resolve(source)
+    : base === undefined
+      ? undefined
+      : path.resolve(base, source)
+  if (absolute === undefined) return undefined
+  for (const root of roots) {
+    if (!isPathWithin(root, absolute)) continue
+    const relative = path.relative(root, absolute).split(path.sep).join('/')
+    return isCanonicalWorkspaceRelativePath(relative) ? relative : undefined
+  }
+  return undefined
 }
 
 /** Remove fields that are never needed by the renderer from public payloads. */
@@ -94,3 +127,7 @@ const SENSITIVE_PUBLIC_FIELDS = new Set([
   'cwd',
   'home',
 ])
+
+function isAbsoluteHostPath(value: string): boolean {
+  return path.isAbsolute(value) || /^[A-Za-z]:[\\/]/u.test(value) || value.startsWith('\\\\')
+}

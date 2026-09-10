@@ -42,11 +42,11 @@ the verified list. Updating never stops an external DSH.
 - Published DeepSeek Harness `0.0.1-rc.1`/`.2`/`.5`, `0.1.0-rc.2`/`.3`, and
   `0.1.0-rc.6` through `0.1.2-rc.1` Host/Web API, published
   `0.1.2-alpha.2`/`0.1.2-alpha.3`/`0.1.2-alpha.4`/`0.1.2-alpha.5`, `0.1.3-alpha.2`,
-  and latest upstream tag/npm `0.1.5-alpha.1`; source-level adapters are retained for every
-  known tag (not the install default)
+  and `0.1.5-alpha.1`/`.2`/`rc.1`; source-level adapters are retained for every known tag,
+  with the installer currently defaulting to `0.1.5-rc.1`
 - Unknown versions reporting a non-empty label are probed with the newest verified adapter first;
-  alpha151 Session v3 is exact-only, and successful best-effort connections preserve the real
-  version and show a warning
+  alpha151/alpha152/rc151 Session v3 is exact-only, and successful best-effort connections preserve
+  the real version and show a warning
 - Node.js `22.19+` when installing DSH from within the extension
 
 Available models, tools, and advanced agent capabilities follow the connected DSH instance;

@@ -1185,6 +1185,45 @@ summary.dsh-timeline__card-header,
   list-style: none;
 }
 
+.dsh-timeline__presented-files {
+  padding-top: var(--dsh-space-1);
+}
+
+.dsh-timeline__presented-file {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--dsh-space-1) var(--dsh-space-2);
+  min-width: 0;
+}
+
+.dsh-timeline__presented-file-main {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: var(--dsh-space-1);
+  color: var(--dsh-link);
+}
+
+.dsh-timeline__presented-file-main > span {
+  min-width: 0;
+}
+
+.dsh-timeline__presented-file-description {
+  grid-column: 1 / -1;
+  min-width: 0;
+  color: var(--dsh-muted);
+  font-size: 0.85em;
+  overflow-wrap: anywhere;
+}
+
+.dsh-timeline__presented-file-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--dsh-space-1);
+}
+
 .dsh-timeline__tool-group-latest {
   min-width: 0;
   overflow: hidden;

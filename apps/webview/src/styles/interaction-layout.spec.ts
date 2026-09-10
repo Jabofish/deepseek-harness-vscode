@@ -14,6 +14,14 @@ describe('Conversation interaction layout', () => {
     expect(interactionRule).toContain('overflow-y: auto;')
     expect(interactionRule).toContain('overscroll-behavior: contain;')
   })
+
+  it('keeps nested picker menus outside the extras scrollport', () => {
+    const extrasRule = cssRule('.dsh-composer__extras-panel')
+    expect(extrasRule).toContain(
+      'animation: dsh-overlay-fade-in var(--dsh-motion-duration-standard) var(--dsh-motion-ease-enter) both;',
+    )
+    expect(extrasRule).toContain('overflow-y: auto;')
+  })
 })
 
 function cssRule(selector: string): string {

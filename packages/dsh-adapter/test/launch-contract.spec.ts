@@ -23,8 +23,10 @@ describe('managed Web Profile launch contract', () => {
     ['0.1.3-alpha.1', true],
     ['0.1.3-alpha.2', true],
     ['0.1.5-alpha.1', true],
+    ['0.1.5-alpha.2', true],
+    ['0.1.5-rc.1', true],
     ['0.1.0-rc.99', false],
-  ])('selects the verified optional flags for %s', (version, noOpen) => {
+  ])('uses --no-open by default except for early versions: %s', (version, noOpen) => {
     const args = managedWebArguments(version, 4317)
 
     expect(args).toContain('--profile')

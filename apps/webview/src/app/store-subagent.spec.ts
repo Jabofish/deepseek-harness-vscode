@@ -247,6 +247,30 @@ describe('AppStore subagent transport routing', () => {
     store.dispose()
   })
 
+  it('refreshes the active parent catalog when a durable catalog fact arrives', async () => {
+    const client = new FakeClient(answer)
+    const store = createAppStore(client as unknown as ProtocolClient)
+    await store.openSubagent(child(), true)
+    client.requests.length = 0
+
+    client.emit({
+      type: 'event',
+      name: 'subagent.catalog.updated',
+      sequence: 5,
+      payload: {
+        sessionId: 'child',
+        entry: { id: 'child-2', createdAt: 2, mode: 'one-shot', label: 'Research child' },
+      },
+    })
+
+    await vi.waitFor(() =>
+      expect(client.requests).toContainEqual(
+        expect.objectContaining({ type: 'subagent.list', payload: { sessionId: 'child' } }),
+      ),
+    )
+    store.dispose()
+  })
+
   it('preserves identity for equivalent transient queue, goal, todo, and job snapshots', async () => {
     const client = new FakeClient(answer)
     const store = createAppStore(client as unknown as ProtocolClient)

@@ -48,6 +48,20 @@ export interface SubagentCatalog {
   readonly parentAvailable: boolean
 }
 
+/** Durable parent-owned child discovery fact from DSH `subagent/catalog`. */
+export interface SubagentCatalogEntryFact {
+  readonly id: string
+  readonly createdAt: number
+  readonly mode: 'one-shot' | 'continuable'
+  readonly label?: string
+}
+
+/** A filesystem reference explicitly declared by DSH's `present` tool. */
+export interface PresentedFileView {
+  readonly path: string
+  readonly description?: string
+}
+
 export interface TodoView {
   readonly id: string
   readonly content: string
@@ -248,6 +262,14 @@ type BackendEventPayload =
       readonly interrupted?: true
     }
   | {
+      /** DSH `deliverables/presented`; source files remain at their current workspace paths. */
+      readonly type: 'deliverables.presented'
+      readonly sessionId: string
+      readonly turn: number
+      readonly callId: string
+      readonly files: readonly PresentedFileView[]
+    }
+  | {
       /** DSH `step/start`; opens the assistant timing boundary. */
       readonly type: 'step.started'
       readonly sessionId: string
@@ -313,6 +335,12 @@ type BackendEventPayload =
       readonly stopReason: 'completed' | 'cancelled' | 'error'
     }
   | { readonly type: 'team.updated'; readonly sessionId: string; readonly activity: TeamActivityView }
+  | {
+      /** Parent-owned durable subagent discovery fact; the full catalog is read separately. */
+      readonly type: 'subagent.catalog.updated'
+      readonly sessionId: string
+      readonly entry: SubagentCatalogEntryFact
+    }
   | {
       readonly type: 'session.subscribed'
       readonly sessionId: string

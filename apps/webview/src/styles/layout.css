@@ -849,6 +849,10 @@
   padding: var(--dsh-space-2);
   font-size: var(--dsh-menu-font-size);
   line-height: var(--dsh-menu-line-height);
+  /* This surface is a scrollport. The shared scale animation would establish
+   * a containing block for fixed picker menus and clip them at the panel edge.
+   * Keep the panel's fade while leaving viewport-positioned menus unconfined. */
+  animation: dsh-overlay-fade-in var(--dsh-motion-duration-standard) var(--dsh-motion-ease-enter) both;
   /* Expanded command catalogs remain inside this bounded surface. Picker and
    * risk menus use viewport positioning, so they are not clipped by this
    * scroll owner. */

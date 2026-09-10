@@ -12,6 +12,7 @@ import {
   type CheckpointSummary,
   FEATURE_CAPABILITY_IDS,
   type AgentConfiguration,
+  type BackendEvent,
   type ChangeSetFile,
   type BackendEndpoint,
   type BackendState,
@@ -51,6 +52,7 @@ import {
 } from '@dsh-vscode/application'
 import {
   Alpha151VersionAdapter,
+  Alpha152VersionAdapter,
   Alpha132VersionAdapter,
   Alpha13VersionAdapter,
   Alpha5VersionAdapter,
@@ -69,6 +71,7 @@ import {
   Rc11VersionAdapter,
   Rc12VersionAdapter,
   Rc13VersionAdapter,
+  Rc151VersionAdapter,
   VersionedBackendFactory,
   VersionedBackendProbe,
   redactText,
@@ -107,7 +110,11 @@ import { normalizeLoopbackUrl, VsCodeConfigurationSource } from './config/config
 import { DSH_DOCUMENTATION_URL, DSH_PACKAGE, OUTPUT_CHANNEL_NAME } from './constants.js'
 import { WebviewMessageRouter } from './view/message-router.js'
 import { DshWebviewViewProvider } from './view/dsh-webview-view-provider.js'
-import { publicWorkspaceSummary, sanitizePublicValue } from './view/public-value.js'
+import {
+  publicWorkspaceRelativePath,
+  publicWorkspaceSummary,
+  sanitizePublicValue,
+} from './view/public-value.js'
 import { RuntimeInstaller } from './vscode/install-runtime.js'
 import { DshRuntimeUpdater } from './vscode/update-runtime.js'
 import { requestOptionalProviderApiKey, requestProviderSecret } from './vscode/credential-input.js'
@@ -374,6 +381,14 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     ...adapterOptions,
     authCookie: (endpoint) => endpointCookies.get(endpoint.baseUrl),
   })
+  const alpha152Adapter = new Alpha152VersionAdapter({
+    ...adapterOptions,
+    authCookie: (endpoint) => endpointCookies.get(endpoint.baseUrl),
+  })
+  const rc151Adapter = new Rc151VersionAdapter({
+    ...adapterOptions,
+    authCookie: (endpoint) => endpointCookies.get(endpoint.baseUrl),
+  })
   const alpha13Adapter = new Alpha13VersionAdapter({
     ...adapterOptions,
     authCookie: (endpoint) => endpointCookies.get(endpoint.baseUrl),
@@ -409,6 +424,8 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
   const legacyRc2Adapter = new LegacyRc2VersionAdapter(adapterOptions)
   const legacyRc1Adapter = new LegacyRc1VersionAdapter(adapterOptions)
   const adapters = [
+    rc151Adapter,
+    alpha152Adapter,
     alpha151Adapter,
     alpha132Adapter,
     alpha13Adapter,
@@ -860,10 +877,19 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
   })
   const taskUseCases = new TaskUseCases(taskRegistry)
   let eventPostQueue = Promise.resolve()
-  const postEvent = (name: string, payload: unknown): Promise<boolean> => {
+  const enqueueEvent = (
+    resolve: () => Promise<{ readonly name: string; readonly payload: unknown } | undefined>,
+  ): Promise<boolean> => {
     const task = eventPostQueue.then(async () => {
+      const nextEvent = await resolve()
+      if (nextEvent === undefined) return true
       const nextSequence = sequence + 1
-      const delivered = await post({ type: 'event', name, sequence: nextSequence, payload })
+      const delivered = await post({
+        type: 'event',
+        name: nextEvent.name,
+        sequence: nextSequence,
+        payload: nextEvent.payload,
+      })
       if (delivered) sequence = nextSequence
       return delivered
     })
@@ -873,6 +899,36 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     )
     return task.catch(() => false)
   }
+  const postEvent = (name: string, payload: unknown): Promise<boolean> => {
+    return enqueueEvent(() => Promise.resolve({ name, payload }))
+  }
+  const publicBackendEvent = async (backend: DshBackend, event: BackendEvent): Promise<unknown> => {
+    if (event.type !== 'deliverables.presented') return sanitizePublicValue(event)
+    const session = await backend.sessions.get(event.sessionId).catch(() => undefined)
+    const roots = [
+      ...currentWorkspaceFolders().map((folder) => folder.uri.fsPath),
+      ...(temporaryWorkspaceManager.current?.path === undefined
+        ? []
+        : [temporaryWorkspaceManager.current.path]),
+      ...(temporaryWorkspaceManager.reference?.path === undefined
+        ? []
+        : [temporaryWorkspaceManager.reference.path]),
+    ]
+    const uniqueRoots = [...new Set(roots)]
+    const files = event.files.flatMap((file) => {
+      const relativePath = publicWorkspaceRelativePath(file.path, session?.cwd, uniqueRoots)
+      return relativePath === undefined ? [] : [{ ...file, path: relativePath }]
+    })
+    // Do not publish a card whose paths cannot be mapped into a workspace
+    // owned by this Extension Host. The raw source path stays Host-local.
+    if (files.length === 0) return undefined
+    return sanitizePublicValue({ ...event, files })
+  }
+  const postBackendEvent = (backend: DshBackend, event: BackendEvent): Promise<boolean> =>
+    enqueueEvent(async () => {
+      const payload = await publicBackendEvent(backend, event)
+      return payload === undefined ? undefined : { name: event.type, payload }
+    })
   postRuntimeUpdateProgress = (progress) => {
     void postEvent('runtime.update.progress', progress)
   }
@@ -902,7 +958,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
         editorContextProvider.dispose()
         taskSessionId = undefined
       }
-      void postEvent(event.type, sanitizePublicValue(event))
+      void postBackendEvent(backend, event)
     })
   }
   const connect = async (signal?: AbortSignal): Promise<unknown> => {

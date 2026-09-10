@@ -3,6 +3,7 @@ import type {
   GoalView,
   MessageAttachment,
   MessageImageReference,
+  PresentedFileView,
   TeamActivityView,
   TodoView,
   TokenUsage,
@@ -86,6 +87,15 @@ export type TimelineNode =
       readonly liveLastIndex?: number
     }
   | { readonly kind: 'tool'; readonly id: string; readonly tool: ToolCallView; readonly sequence?: number }
+  | {
+      /** Explicit files declared by DSH's durable `present` tool. */
+      readonly kind: 'deliverables'
+      readonly id: string
+      readonly sequence?: number
+      readonly turn: number
+      readonly callId: string
+      readonly files: readonly PresentedFileView[]
+    }
   | { readonly kind: 'goal'; readonly id: string; readonly goals: readonly GoalView[] }
   | { readonly kind: 'todo'; readonly id: string; readonly todos: readonly TodoView[] }
   | { readonly kind: 'compaction'; readonly id: string; readonly compaction: CompactionView }

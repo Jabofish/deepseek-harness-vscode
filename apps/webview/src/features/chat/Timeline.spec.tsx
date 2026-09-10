@@ -1045,6 +1045,36 @@ describe('Timeline', () => {
     expect(openLink).toHaveBeenCalledWith('src/feature.ts')
   })
 
+  it('renders explicitly delivered files with open and reveal actions', () => {
+    const openLink = vi.fn()
+    const showInFolder = vi.fn()
+    render(
+      <Timeline
+        sessionId="session-1"
+        nodes={[
+          {
+            kind: 'deliverables',
+            id: 'deliverables:call-present',
+            sequence: 4,
+            turn: 1,
+            callId: 'call-present',
+            files: [{ path: 'artifacts/report.txt', description: 'Generated report' }],
+          },
+        ]}
+        streaming={false}
+        onOpenLink={openLink}
+        onShowInFolder={showInFolder}
+      />,
+    )
+
+    expect(screen.getByRole('region', { name: 'Files ready to open' })).toBeDefined()
+    expect(screen.getByText('Generated report')).toBeDefined()
+    fireEvent.click(screen.getByRole('button', { name: 'Open delivered file report.txt' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Show delivered file report.txt in folder' }))
+    expect(openLink).toHaveBeenCalledWith('artifacts/report.txt')
+    expect(showInFolder).toHaveBeenCalledWith('artifacts/report.txt')
+  })
+
   it('keeps a Host file-open refusal in a retryable modal', async () => {
     const openLink = vi
       .fn<(_: string) => Promise<void>>()

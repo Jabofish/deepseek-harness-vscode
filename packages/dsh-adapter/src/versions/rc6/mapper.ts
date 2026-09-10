@@ -8,12 +8,14 @@ import type {
   ModelDescriptor,
   ModelProvider,
   PermissionRequest,
+  PresentedFileView,
   QueuedInput,
   SessionDetail,
   SessionConfigurationPatch,
   SessionHistoryEvent,
   SessionStatus,
   SessionSummary,
+  SubagentCatalogEntryFact,
   TeamActivityView,
   TokenUsage,
   ToolCallView,
@@ -482,6 +484,27 @@ export const rc6Mapper = {
           ...(data.interrupted === true || message.interrupted === true
             ? { interrupted: true as const }
             : {}),
+        }
+      }
+      case 'deliverables/presented': {
+        if (sessionId === '') throw new Error('Malformed deliverables/presented sessionId')
+        const turn = positiveSafeNumber(data.turn)
+        if (turn === undefined) throw new Error('Malformed deliverables/presented turn')
+        const callId = safeStableIdentifier(data.callId, 'deliverables/presented callId')
+        return {
+          type: 'deliverables.presented',
+          sessionId,
+          turn,
+          callId,
+          files: presentedFiles(data.files),
+        }
+      }
+      case 'subagent/catalog': {
+        if (sessionId === '') throw new Error('Malformed subagent/catalog sessionId')
+        return {
+          type: 'subagent.catalog.updated',
+          sessionId,
+          entry: subagentCatalogEntry(data),
         }
       }
       case 'user/message': {
@@ -1392,6 +1415,78 @@ function toolLocations(
     if (locations.length >= 32) break
   }
   return locations.length === 0 ? undefined : locations
+}
+
+/** Map the explicit DSH file-delivery payload without exposing arbitrary JSON. */
+function presentedFiles(value: unknown): readonly PresentedFileView[] {
+  const entries = requiredArray(value, 'deliverables/presented files')
+  if (entries.length === 0 || entries.length > 128)
+    throw new Error('Malformed deliverables/presented files count')
+  return entries.map((entry) => {
+    const file = object(entry, 'deliverables/presented file')
+    const path = safePresentedPath(file.path)
+    const description = safePresentedDescription(file.description)
+    return { path, ...(description === undefined ? {} : { description }) }
+  })
+}
+
+function safePresentedPath(value: unknown): string {
+  if (
+    typeof value !== 'string' ||
+    value.trim() === '' ||
+    value.length > 4_096 ||
+    hasUnsafePathCharacters(value)
+  )
+    throw new Error('Malformed deliverables/presented path')
+  return value
+}
+
+function safePresentedDescription(value: unknown): string | undefined {
+  if (value === undefined) return undefined
+  if (typeof value !== 'string' || value.length > 4_096 || hasUnsafePathCharacters(value))
+    throw new Error('Malformed deliverables/presented description')
+  return value
+}
+
+function safeStableIdentifier(value: unknown, label: string): string {
+  if (
+    typeof value !== 'string' ||
+    value.trim() === '' ||
+    value.length > 512 ||
+    hasUnsafePathCharacters(value)
+  )
+    throw new Error(`Malformed ${label}`)
+  return value
+}
+
+function subagentCatalogEntry(data: Record<string, unknown>): SubagentCatalogEntryFact {
+  if (data.version !== 0) throw new Error('Malformed subagent/catalog version')
+  const id = safeStableIdentifier(data.childId, 'subagent/catalog childId')
+  const createdAt = nonNegativeSafeNumber(data.childCreatedAt)
+  if (createdAt === undefined) throw new Error('Malformed subagent/catalog childCreatedAt')
+  if (data.mode !== 'one-shot' && data.mode !== 'continuable')
+    throw new Error('Malformed subagent/catalog mode')
+  const hasLabel = Object.hasOwn(data, 'label')
+  const label = hasLabel ? safeCatalogLabel(data.label, data.mode === 'continuable') : undefined
+  if (data.mode === 'continuable' && label === undefined)
+    throw new Error('Malformed subagent/catalog continuable label')
+  return {
+    id,
+    createdAt,
+    mode: data.mode,
+    ...(label === undefined ? {} : { label }),
+  }
+}
+
+function safeCatalogLabel(value: unknown, required: boolean): string | undefined {
+  if (
+    typeof value !== 'string' ||
+    (required && value.trim() === '') ||
+    value.length > 4_096 ||
+    hasUnsafePathCharacters(value)
+  )
+    throw new Error('Malformed subagent/catalog label')
+  return value
 }
 
 function hasUnsafePathCharacters(value: string): boolean {

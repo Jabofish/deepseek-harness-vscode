@@ -1,5 +1,14 @@
 # Change Log
 
+## 0.1.9
+
+- 适配 DSH `0.1.5-alpha.2` 与 `0.1.5-rc.1`：保留独立精确版本入口并沿用已核对的 Session v3 传输；补齐 `deliverables/presented` 文件交付事件、时间线展示以及 Host 安全打开/显示文件路径。
+- 接入 `subagent/catalog` 持久目录事件，刷新活动父会话的子代理目录；新增事件、畸形载荷、版本选择和 Webview 回归测试。
+- 受管 DSH 的 Web Profile 启动关闭默认浏览器交接；Web UI 仍仅通过 `dsh.openWebUi` 命令按需打开。
+- Added exact `0.1.5-alpha.2` and `0.1.5-rc.1` adapters on the verified Session v3 transport, with delivered-file timeline cards and Host-mediated open/reveal actions.
+- Added durable `subagent/catalog` refresh handling plus mapper, reducer, and Webview regression coverage. Automatic checks pass; real DSH/Webview smoke remains a release prerequisite.
+- Managed Web Profile launches no longer hand off to the default browser automatically; `dsh.openWebUi` remains an explicit opt-in command.
+
 ## 0.1.8
 
 - 补齐当前 npm 上列出的历史版本：`0.0.1-rc.1`、`0.0.1-rc.2`、`0.0.1-rc.5`、`0.1.0-rc.2`、`0.1.0-rc.3`；旧 `command.*`、`session/tasks`、Host invalidation/remote-event、时区字段和能力缺口均在独立 Adapter 中精确隔离，并新增脱敏契约回归。

@@ -1,5 +1,5 @@
 /**
- * Strict Session Controller wire validation for DSH 0.1.5-alpha.1.
+ * Strict Session Controller wire validation for the DSH 0.1.5 v3 family.
  *
  * The upstream v3 client validates the event envelope and the event-local
  * surface rules before handing a record to the journal projector. Keep this
@@ -24,6 +24,7 @@ const KNOWN_SESSION_EVENT_TYPES = new Set([
   'compaction/prune',
   'compaction/start',
   'compaction/summary',
+  'deliverables/presented',
   'feedback/message-delete',
   'feedback/message-put',
   'feedback/record',
@@ -45,6 +46,7 @@ const KNOWN_SESSION_EVENT_TYPES = new Set([
   'session/title-llm-request',
   'step/end',
   'step/start',
+  'subagent/catalog',
   'subagent/descriptor',
   'subagent/model-selection-policy',
   'system/message',

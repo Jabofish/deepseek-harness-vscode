@@ -565,6 +565,65 @@ function renderNode(
           {...(onOpenLink === undefined ? {} : { onOpenLink })}
         />
       )
+    case 'deliverables':
+      return (
+        <section
+          className="dsh-timeline__card dsh-timeline__card--event"
+          aria-label={t('timeline.deliverables')}
+        >
+          <header className="dsh-timeline__card-header">
+            <div className="dsh-timeline__card-heading">
+              <span className="dsh-message-avatar dsh-message-avatar--system" aria-hidden="true">
+                <Icon name="file" />
+              </span>
+              <strong>{t('timeline.deliverables')}</strong>
+            </div>
+            <span className="dsh-timeline__card-meta">
+              {t('timeline.items', { count: node.files.length })}
+            </span>
+          </header>
+          <ul className="dsh-timeline__event-list dsh-timeline__presented-files">
+            {node.files.map((file, index) => {
+              const label = producedFileLabel(file.path)
+              return (
+                <li className="dsh-timeline__presented-file" key={`${file.path}:${index}`}>
+                  <div className="dsh-timeline__presented-file-main" title={file.path}>
+                    <Icon name="file" />
+                    <ContentFlow as="span" variant="truncate">
+                      {label}
+                    </ContentFlow>
+                  </div>
+                  {file.description === undefined || file.description.trim() === '' ? null : (
+                    <span className="dsh-timeline__presented-file-description">{file.description}</span>
+                  )}
+                  <div className="dsh-timeline__presented-file-actions">
+                    {onOpenLink === undefined ? null : (
+                      <button
+                        className="dsh-button dsh-button--secondary dsh-button--compact"
+                        type="button"
+                        aria-label={t('timeline.openPresented', { name: label })}
+                        onClick={() => onOpenLink(file.path)}
+                      >
+                        {t('timeline.openProduced', { name: label })}
+                      </button>
+                    )}
+                    {onShowInFolder === undefined ? null : (
+                      <button
+                        className="dsh-button dsh-button--secondary dsh-button--compact"
+                        type="button"
+                        aria-label={t('timeline.revealPresented', { name: label })}
+                        onClick={() => onShowInFolder(file.path)}
+                      >
+                        {t('timeline.showInFolder')}
+                      </button>
+                    )}
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
+        </section>
+      )
     case 'assistant-turn':
       return renderAssistantTurn(
         node,

@@ -159,6 +159,42 @@ describe('reduceTimeline', () => {
     expect(second.nodes).toBe(first.nodes)
   })
 
+  it('places explicit delivered files by their durable event sequence and ignores catalog refresh rows', () => {
+    const delivered = reduceTimeline(initial, {
+      sequence: 4,
+      event: {
+        type: 'deliverables.presented',
+        sessionId: 'session-1',
+        turn: 1,
+        callId: 'call-present',
+        files: [{ path: 'artifacts/report.txt', description: 'Generated report' }],
+      },
+    })
+    expect(delivered).toMatchObject({
+      lastSequence: 4,
+      nodes: [
+        {
+          kind: 'deliverables',
+          id: 'deliverables:call-present',
+          sequence: 4,
+          turn: 1,
+          files: [{ path: 'artifacts/report.txt', description: 'Generated report' }],
+        },
+      ],
+    })
+
+    const catalog = reduceTimeline(delivered, {
+      sequence: 5,
+      event: {
+        type: 'subagent.catalog.updated',
+        sessionId: 'session-1',
+        entry: { id: 'child-1', createdAt: 10, mode: 'one-shot' },
+      },
+    })
+    expect(catalog.lastSequence).toBe(5)
+    expect(catalog.nodes).toBe(delivered.nodes)
+  })
+
   it('adds a visible terminal node for max-token and error turn endings', () => {
     let state = reduceTimeline(initial, {
       sequence: 1,

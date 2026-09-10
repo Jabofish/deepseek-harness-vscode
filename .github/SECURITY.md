@@ -6,7 +6,7 @@ Security fixes are only applied to the latest release line.
 
 | Version                  | Supported |
 | ------------------------ | --------- |
-| latest release (`0.1.6`) | Yes       |
+| latest release (`0.1.9`) | Yes       |
 | older releases           | No        |
 
 ## Reporting a vulnerability

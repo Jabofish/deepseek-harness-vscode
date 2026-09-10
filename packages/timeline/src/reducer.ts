@@ -541,6 +541,16 @@ export function reduceTimeline(
       } else upsert(nodes, { kind: 'tool', id: event.tool.id, sequence: input.sequence, tool })
       break
     }
+    case 'deliverables.presented':
+      upsert(nodes, {
+        kind: 'deliverables',
+        id: `deliverables:${event.callId}`,
+        sequence: input.sequence,
+        turn: event.turn,
+        callId: event.callId,
+        files: event.files,
+      })
+      break
     case 'goal.updated':
       upsert(nodes, { kind: 'goal', id: `goal:${event.sessionId}`, goals: event.goals })
       break
@@ -648,6 +658,7 @@ export function reduceTimeline(
       break
     case 'permission.resolved':
     case 'question.resolved':
+    case 'subagent.catalog.updated':
     case 'session.title':
     case 'session.configuration':
     case 'session.added':
@@ -783,6 +794,7 @@ function eventMayChangeTimelineNodes(event: BackendEvent, state: TimelineState):
     case 'question.requested':
     case 'permission.resolved':
     case 'question.resolved':
+    case 'subagent.catalog.updated':
     case 'jobs.updated':
     case 'queue.updated':
     case 'session.subscribed':
@@ -877,10 +889,14 @@ function closeTurn(
       const relevant =
         (node.kind === 'assistant-message' && node.turn === turn) ||
         (node.kind === 'tool' && (node.tool.turn === undefined || node.tool.turn === turn)) ||
-        (node.kind === 'retry' && node.turn === turn)
+        (node.kind === 'retry' && node.turn === turn) ||
+        (node.kind === 'deliverables' && node.turn === turn)
       if (!relevant || index === closingIndex) return false
       const nodeSequence =
-        node.kind === 'assistant-message' || node.kind === 'tool' || node.kind === 'retry'
+        node.kind === 'assistant-message' ||
+        node.kind === 'tool' ||
+        node.kind === 'retry' ||
+        node.kind === 'deliverables'
           ? node.sequence
           : undefined
       if (closingSequence !== undefined && nodeSequence !== undefined) return nodeSequence > closingSequence
@@ -1041,6 +1057,7 @@ function nodeSequence(node: TimelineNode): number | undefined {
   switch (node.kind) {
     case 'assistant-message':
     case 'tool':
+    case 'deliverables':
     case 'retry':
     case 'turn-terminal':
     case 'event':

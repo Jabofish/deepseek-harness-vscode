@@ -40,6 +40,7 @@ import {
   type PermissionRequest,
   type PermissionOption,
   type PluginInventorySnapshot,
+  type PresentedFileView,
   type PromptTemplate,
   type PromptTemplateDraft,
   type PromptTemplateInsertion,
@@ -67,6 +68,7 @@ import {
   type TaskSummary,
   type TurnEndFailure,
   type SubagentCatalog,
+  type SubagentCatalogEntryFact,
   type SubagentHistoryPage,
   type SubagentView,
   type TokenUsage,
@@ -1194,7 +1196,10 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
             )
         })
     }
-    if (message.type === 'event' && message.name === 'session.subscribed') {
+    if (
+      message.type === 'event' &&
+      (message.name === 'session.subscribed' || message.name === 'subagent.catalog.updated')
+    ) {
       const subscribed = object(message.payload)
       const sessionId = typeof subscribed?.sessionId === 'string' ? subscribed.sessionId : undefined
       if (sessionId !== undefined && sessionId === state.activeSessionId)
@@ -4793,6 +4798,23 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
       ...(value.interrupted === true ? { interrupted: true as const } : {}),
     }
   }
+  if (name === 'deliverables.presented' && nonEmptyString(value.sessionId)) {
+    const turn = positivePresentationNumber(value.turn)
+    const callId = presentationIdentifier(value.callId)
+    const files = parsePresentedFiles(value.files)
+    if (turn !== undefined && callId !== undefined && files !== undefined)
+      return {
+        type: 'deliverables.presented',
+        sessionId: value.sessionId,
+        turn,
+        callId,
+        files,
+      }
+  }
+  if (name === 'subagent.catalog.updated' && nonEmptyString(value.sessionId)) {
+    const entry = parseSubagentCatalogEntryFact(value.entry)
+    if (entry !== undefined) return { type: 'subagent.catalog.updated', sessionId: value.sessionId, entry }
+  }
   if (name === 'session.status' && nonEmptyString(value.sessionId) && typeof value.status === 'string')
     return { type: 'session.status', sessionId: value.sessionId, status: value.status }
   if (
@@ -6325,7 +6347,7 @@ function parseSearchPresentation(value: Record<string, unknown>): ToolPresentati
   if (value.shape !== 'matches' || !Array.isArray(value.files)) return undefined
   const files = value.files.slice(0, 128).flatMap((entry): ToolPresentationSearchFile[] => {
     const file = object(entry)
-    const path = presentationPath(file?.path)
+    const path = presentationWorkspacePath(file?.path)
     if (file === undefined || path === undefined || !Array.isArray(file.matches)) return []
     const matches = file.matches.slice(0, 128).flatMap((matchValue): ToolPresentationSearchMatch[] => {
       const match = object(matchValue)
@@ -6437,6 +6459,62 @@ function presentationTextList(value: unknown): readonly string[] | undefined {
 function presentationPath(value: unknown): string | undefined {
   const path = presentationText(value)
   return path === undefined || hasPresentationControlCharacter(path) ? undefined : path
+}
+
+function presentationWorkspacePath(value: unknown): string | undefined {
+  const path = presentationPath(value)
+  return path !== undefined && isCanonicalWorkspaceRelativePath(path) ? path : undefined
+}
+
+function parsePresentedFiles(value: unknown): readonly PresentedFileView[] | undefined {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 128) return undefined
+  const files: PresentedFileView[] = []
+  for (const entry of value) {
+    const file = object(entry)
+    const path = presentationPath(file?.path)
+    const hasDescription = file !== undefined && Object.hasOwn(file, 'description')
+    const description = hasDescription ? presentationText(file?.description, true) : undefined
+    if (
+      path === undefined ||
+      (hasDescription && (description === undefined || hasPresentationControlCharacter(description)))
+    )
+      return undefined
+    files.push({ path, ...(description === undefined ? {} : { description }) })
+  }
+  return files
+}
+
+function presentationIdentifier(value: unknown): string | undefined {
+  if (
+    typeof value !== 'string' ||
+    value.trim() === '' ||
+    value.length > 512 ||
+    hasPresentationControlCharacter(value)
+  )
+    return undefined
+  return value
+}
+
+function parseSubagentCatalogEntryFact(value: unknown): SubagentCatalogEntryFact | undefined {
+  const entry = object(value)
+  const id = presentationIdentifier(entry?.id)
+  const createdAt = nonNegativePresentationNumber(entry?.createdAt)
+  const hasLabel = entry !== undefined && Object.hasOwn(entry, 'label')
+  const label = hasLabel ? presentationText(entry?.label, true) : undefined
+  if (
+    id === undefined ||
+    createdAt === undefined ||
+    (entry?.mode !== 'one-shot' && entry?.mode !== 'continuable') ||
+    (hasLabel && (label === undefined || hasPresentationControlCharacter(label))) ||
+    (entry?.mode === 'continuable' && (label === undefined || label.trim() === ''))
+  )
+    return undefined
+  return {
+    id,
+    createdAt,
+    mode: entry.mode,
+    ...(label === undefined ? {} : { label }),
+  }
 }
 
 function presentationWorkingDirectory(value: unknown): string | undefined {

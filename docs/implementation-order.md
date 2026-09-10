@@ -10,7 +10,7 @@
 2. 完成 `Rc6VersionAdapter.probe`，明确识别兼容/不兼容/非 DSH/不可达。
 3. 完成 AppError 映射规范和所有协议 Schema。
 
-退出条件：契约测试可发现 rpc-map 漂移；连接未知版本会按最新可安全复用 wire 的 Adapter 优先进行只读兼容探测并进入警告降级，不能把 `alpha13`/`alpha132` 的 Session v2、`alpha151` 的 Session v3 或 alpha132 的 subagent `delivery` 当作未知版本回退；fixture 不含路径、Prompt 或 Secret。
+退出条件：契约测试可发现 rpc-map 漂移；连接未知版本会按最新可安全复用 wire 的 Adapter 优先进行只读兼容探测并进入警告降级，不能把 `alpha13`/`alpha132` 的 Session v2、`alpha151`/`alpha152`/`rc151` 的 Session v3、alpha132 的 subagent `delivery` 或 alpha152/rc151 的交付/目录事件当作未知版本回退；fixture 不含路径、Prompt 或 Secret。
 
 ## 阶段 1：View、配置和 Runtime Missing
 
@@ -43,7 +43,7 @@
 1. Workspace 列表/创建/重命名/删除。
 2. Session 新建/列表/分页/搜索/历史/重命名/分叉/归档。
 3. 单例 Host/Mux 流、序号、重连、历史补洞。
-4. 文本/推理/错误/标题/统计 Timeline；虚拟化和流合批。
+4. 文本/推理/错误/标题/统计 Timeline；虚拟化和流合批；已声明的交付文件展示与 Host 文件操作委托。
 5. Composer 发送/停止；附件基础通路。
 
 退出条件：重放 fixture 得到确定 Timeline；重连无重复/缺失；大历史不卡主线程；实际 rc.6、rc.7 和 rc.8 均完成新会话和恢复，并验证未知版本按安全 wire Adapter 优先、候选继续和警告降级路径。
@@ -66,7 +66,7 @@
 
 1. Goal/Todo 和 Plan Mode 恢复。
 2. Jobs 输出、通知、停止。
-3. Subagent 树、历史、Follow-up、Interrupt。
+3. Subagent 树、历史、Follow-up、Interrupt，以及父会话 `subagent/catalog` 持久目录刷新。
 4. Workflow/Ralph 阶段生命周期。
 5. Skills 发现/执行、动态命令、Plugin Inventory/配置。
 6. 未知工具和未知事件的安全降级。

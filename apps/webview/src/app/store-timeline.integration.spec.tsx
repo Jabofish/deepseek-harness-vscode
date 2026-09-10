@@ -495,4 +495,29 @@ describe('Store to Timeline streamed rendering', () => {
     )
     store.dispose()
   })
+
+  it('projects a durable explicit-delivery event into the timeline', async () => {
+    const client = new StreamClient()
+    const store = createAppStore(client as unknown as ProtocolClient)
+    await store.openSession('session-stream')
+
+    client.emit(
+      event(1, 'deliverables.presented', {
+        sessionId: 'session-stream',
+        turn: 1,
+        callId: 'call-present',
+        files: [{ path: 'artifacts/report.txt', description: 'Generated report' }],
+      }),
+    )
+    await new Promise((resolve) => window.setTimeout(resolve, 24))
+
+    expect(store.timeline.nodes).toContainEqual({
+      kind: 'deliverables',
+      id: 'deliverables:call-present',
+      sequence: 1,
+      turn: 1,
+      callId: 'call-present',
+      files: [{ path: 'artifacts/report.txt', description: 'Generated report' }],
+    })
+  })
 })

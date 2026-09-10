@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { publicWorkspaceSummary, sanitizePublicValue } from './public-value.js'
+import { publicWorkspaceRelativePath, publicWorkspaceSummary, sanitizePublicValue } from './public-value.js'
 
 describe('public Webview value projection', () => {
   it('removes workspace paths while retaining opaque membership ids', () => {
@@ -36,5 +36,25 @@ describe('public Webview value projection', () => {
       projection: { key: 'goal', value: { prompt: 'visible product text' } },
       usage: { inputTokens: 12, outputTokens: 8 },
     })
+  })
+
+  it('projects absolute or traversing delivered paths only when they stay in an owned root', () => {
+    const root = process.platform === 'win32' ? 'C:\\workspace' : '/workspace'
+    expect(publicWorkspaceRelativePath('artifacts/report.txt', root, [root])).toBe('artifacts/report.txt')
+    expect(
+      publicWorkspaceRelativePath(
+        process.platform === 'win32'
+          ? 'C:\\workspace\\artifacts\\report.txt'
+          : '/workspace/artifacts/report.txt',
+        root,
+        [root],
+      ),
+    ).toBe('artifacts/report.txt')
+    expect(publicWorkspaceRelativePath('../outside.txt', root, [root])).toBeUndefined()
+    expect(
+      publicWorkspaceRelativePath(process.platform === 'win32' ? 'C:\\outside.txt' : '/outside.txt', root, [
+        root,
+      ]),
+    ).toBeUndefined()
   })
 })

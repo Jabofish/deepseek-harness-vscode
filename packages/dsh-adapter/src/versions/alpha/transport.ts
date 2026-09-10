@@ -42,7 +42,7 @@ export interface AlphaLoopbackApiClientOptions {
   readonly webSocket?: AlphaWebSocketConstructor
   /** Optional version-specific Remote error compatibility profile. */
   readonly normalizeErrorCode?: AlphaErrorCodeNormalizer
-  /** Session Controller wire profile; old alpha uses v0, alpha13 uses v2, alpha151 uses v3. */
+  /** Session Controller wire profile; old alpha uses v0, alpha13 uses v2, and alpha151+ uses v3. */
   readonly sessionWireVersion?: AlphaSessionWireVersion
 }
 
