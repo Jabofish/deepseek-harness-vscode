@@ -1,5 +1,14 @@
 # Change Log
 
+## 0.1.10
+
+- 适配 DSH `0.1.5-rc.2`：新增独立 `rc152` 精确版本入口；沿用已核对的 Session v3
+  传输，补齐消息反馈七分类、统一提交/撤销对话框以及紧凑交付物展示。
+- Added the exact `0.1.5-rc.2` adapter on the verified Session v3 transport, with upstream
+  feedback categories/dialog semantics and compact deliverable presentation.
+- 上游适配通过全量自动门禁、VSIX 打包检查和真实 rc.2 基础 smoke；完整 VS Code Webview
+  DOM、交互式交付物和长会话恢复验证仍按能力矩阵保留为后续工作。
+
 ## 0.1.9
 
 - 适配 DSH `0.1.5-alpha.2` 与 `0.1.5-rc.1`：保留独立精确版本入口并沿用已核对的 Session v3 传输；补齐 `deliverables/presented` 文件交付事件、时间线展示以及 Host 安全打开/显示文件路径。

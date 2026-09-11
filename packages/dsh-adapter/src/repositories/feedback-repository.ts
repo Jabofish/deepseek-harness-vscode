@@ -1,5 +1,6 @@
 import {
   AppError,
+  type FeedbackCategory,
   type MessageFeedbackItem,
   type MessageFeedbackRating,
   type MessageFeedbackRepository,
@@ -14,7 +15,7 @@ type FeedbackRemoteResult = {
   readonly error?: { readonly code?: unknown; readonly current?: unknown }
 }
 
-/** Optional rc.8 sidecar adapter. All DSH calls remain in the Extension Host. */
+/** Optional message-feedback sidecar adapter. All DSH calls remain in the Extension Host. */
 export class Rc6MessageFeedbackRepository implements MessageFeedbackRepository {
   private readonly versions = new Map<string, string>()
 
@@ -49,6 +50,7 @@ export class Rc6MessageFeedbackRepository implements MessageFeedbackRepository {
     messageId: string,
     rating: MessageFeedbackRating,
     note?: string,
+    category?: FeedbackCategory,
     signal?: AbortSignal,
   ): Promise<MessageFeedbackItem> {
     const request = {
@@ -56,6 +58,7 @@ export class Rc6MessageFeedbackRepository implements MessageFeedbackRepository {
       messageId,
       rating,
       ...(note === undefined ? {} : { note }),
+      ...(category === undefined ? {} : { category }),
       ifVersion: this.versions.get(`${sessionId}:${messageId}`) ?? null,
     }
     try {
@@ -148,6 +151,7 @@ function parseItem(value: unknown): MessageFeedbackItem | undefined {
     typeof record.version !== 'string' ||
     record.version.trim() === '' ||
     (record.note !== undefined && (typeof record.note !== 'string' || record.note.trim() === '')) ||
+    (record.category !== undefined && !isFeedbackCategory(record.category)) ||
     !safeTime(createdAt) ||
     !safeTime(updatedAt) ||
     updatedAt < createdAt
@@ -157,10 +161,23 @@ function parseItem(value: unknown): MessageFeedbackItem | undefined {
     messageId: record.messageId,
     rating: record.rating,
     ...(record.note === undefined ? {} : { note: record.note }),
+    ...(record.category === undefined ? {} : { category: record.category }),
     version: record.version,
     createdAt,
     updatedAt,
   }
+}
+
+function isFeedbackCategory(value: unknown): value is FeedbackCategory {
+  return (
+    value === 'task-result' ||
+    value === 'instruction-following' ||
+    value === 'product-interaction' ||
+    value === 'service-stability' ||
+    value === 'resource-cost' ||
+    value === 'security-privacy-permission' ||
+    value === 'other'
+  )
 }
 
 function safeTime(value: unknown): value is number {

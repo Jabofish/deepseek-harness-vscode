@@ -72,6 +72,7 @@ import {
   Rc12VersionAdapter,
   Rc13VersionAdapter,
   Rc151VersionAdapter,
+  Rc152VersionAdapter,
   VersionedBackendFactory,
   VersionedBackendProbe,
   redactText,
@@ -389,6 +390,10 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     ...adapterOptions,
     authCookie: (endpoint) => endpointCookies.get(endpoint.baseUrl),
   })
+  const rc152Adapter = new Rc152VersionAdapter({
+    ...adapterOptions,
+    authCookie: (endpoint) => endpointCookies.get(endpoint.baseUrl),
+  })
   const alpha13Adapter = new Alpha13VersionAdapter({
     ...adapterOptions,
     authCookie: (endpoint) => endpointCookies.get(endpoint.baseUrl),
@@ -424,6 +429,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
   const legacyRc2Adapter = new LegacyRc2VersionAdapter(adapterOptions)
   const legacyRc1Adapter = new LegacyRc1VersionAdapter(adapterOptions)
   const adapters = [
+    rc152Adapter,
     rc151Adapter,
     alpha152Adapter,
     alpha151Adapter,
@@ -2107,6 +2113,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
             request.payload.messageId,
             request.payload.rating,
             request.payload.note,
+            request.payload.category,
             signal,
           ),
       )
@@ -2121,6 +2128,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
             request.payload.messageId,
             request.payload.rating,
             request.payload.note,
+            request.payload.category,
             signal,
           ),
       )

@@ -5,6 +5,7 @@ import type { BackendCandidate, BackendEndpoint } from '@dsh-vscode/domain'
 import { rc6Mapper } from '../src/versions/rc6/mapper.js'
 import { Alpha152VersionAdapter, type Alpha152AdapterOptions } from '../src/versions/alpha152/adapter.js'
 import { Rc151VersionAdapter } from '../src/versions/rc151/adapter.js'
+import { Rc152VersionAdapter } from '../src/versions/rc152/adapter.js'
 
 const endpoint: BackendEndpoint = {
   host: '127.0.0.1',
@@ -33,13 +34,14 @@ function options(fetch: typeof globalThis.fetch): Alpha152AdapterOptions {
   }
 }
 
-describe('DSH 0.1.5-alpha.2 and 0.1.5-rc.1 contract seams', () => {
+describe('DSH 0.1.5-alpha.2 and 0.1.5-rc.1/rc.2 contract seams', () => {
   it('selects each v3 release exactly and keeps both out of compatibility fallback', async () => {
     const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
       Promise.resolve(response(init, { items: [] })),
     )
     const alpha152 = new Alpha152VersionAdapter(options(fetch))
     const rc151 = new Rc151VersionAdapter(options(fetch))
+    const rc152 = new Rc152VersionAdapter(options(fetch))
 
     await expect(alpha152.probe(candidate('0.1.5-alpha.2'))).resolves.toMatchObject({
       protocolVersion: 'alpha152',
@@ -51,6 +53,12 @@ describe('DSH 0.1.5-alpha.2 and 0.1.5-rc.1 contract seams', () => {
     })
     await expect(rc151.probe(candidate('0.1.5-alpha.2'))).resolves.toBeUndefined()
     await expect(rc151.probeCompatibility(candidate('0.1.5-rc.1'))).resolves.toBeUndefined()
+    await expect(rc152.probe(candidate('0.1.5-rc.2'))).resolves.toMatchObject({
+      protocolVersion: 'rc152',
+      dshVersion: '0.1.5-rc.2',
+    })
+    await expect(rc152.probe(candidate('0.1.5-rc.1'))).resolves.toBeUndefined()
+    await expect(rc152.probeCompatibility(candidate('0.1.5-rc.2'))).resolves.toBeUndefined()
   })
 
   it('maps explicit file deliveries and parent catalog facts into bounded domain events', () => {

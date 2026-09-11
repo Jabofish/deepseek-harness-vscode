@@ -391,6 +391,17 @@ export const webviewRequestSchema = z.discriminatedUnion('type', [
           messageId: id,
           rating: z.enum(['positive', 'negative']),
           note: z.string().max(16_384).optional(),
+          category: z
+            .enum([
+              'task-result',
+              'instruction-following',
+              'product-interaction',
+              'service-stability',
+              'resource-cost',
+              'security-privacy-permission',
+              'other',
+            ])
+            .optional(),
         })
         .strict(),
     })
@@ -405,6 +416,17 @@ export const webviewRequestSchema = z.discriminatedUnion('type', [
           messageId: id,
           rating: z.enum(['positive', 'negative']),
           note: z.string().max(16_384).optional(),
+          category: z
+            .enum([
+              'task-result',
+              'instruction-following',
+              'product-interaction',
+              'service-stability',
+              'resource-cost',
+              'security-privacy-permission',
+              'other',
+            ])
+            .optional(),
         })
         .strict(),
     })

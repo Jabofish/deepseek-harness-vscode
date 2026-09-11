@@ -162,3 +162,38 @@ describe('subagent Webview protocol', () => {
     ).toBe(false)
   })
 })
+
+describe('message feedback Webview protocol', () => {
+  it('accepts the upstream feedback category on submit and note updates', () => {
+    for (const type of ['feedback.toggle', 'feedback.note'] as const) {
+      expect(
+        webviewRequestSchema.safeParse({
+          type,
+          requestId: `request-${type}`,
+          payload: {
+            sessionId: 'session-1',
+            messageId: 'message-1',
+            rating: 'negative',
+            note: 'needs work',
+            category: 'instruction-following',
+          },
+        }).success,
+      ).toBe(true)
+    }
+  })
+
+  it('rejects a foreign feedback category', () => {
+    expect(
+      webviewRequestSchema.safeParse({
+        type: 'feedback.toggle',
+        requestId: 'request-feedback-invalid',
+        payload: {
+          sessionId: 'session-1',
+          messageId: 'message-1',
+          rating: 'positive',
+          category: 'not-a-category',
+        },
+      }).success,
+    ).toBe(false)
+  })
+})

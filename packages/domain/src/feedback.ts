@@ -1,11 +1,22 @@
-/** Safe projection of the optional rc.8 message-feedback sidecar. */
+/** Safe projection of the optional message-feedback sidecar. */
 
 export type MessageFeedbackRating = 'positive' | 'negative'
+
+/** The fixed upstream taxonomy used when submitting message feedback. */
+export type FeedbackCategory =
+  | 'task-result'
+  | 'instruction-following'
+  | 'product-interaction'
+  | 'service-stability'
+  | 'resource-cost'
+  | 'security-privacy-permission'
+  | 'other'
 
 export interface MessageFeedbackItem {
   readonly messageId: string
   readonly rating: MessageFeedbackRating
   readonly note?: string
+  readonly category?: FeedbackCategory
   readonly version: string
   readonly createdAt?: number
   readonly updatedAt?: number
@@ -20,6 +31,7 @@ export interface MessageFeedbackRepository {
     messageId: string,
     rating: MessageFeedbackRating,
     note?: string,
+    category?: FeedbackCategory,
     signal?: AbortSignal,
   ): Promise<MessageFeedbackItem>
   /** Remove one rating; absent feedback is idempotently successful. */

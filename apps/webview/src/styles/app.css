@@ -1205,6 +1205,11 @@ summary.dsh-timeline__card-header,
   color: var(--dsh-link);
 }
 
+.dsh-timeline__presented-file-main > .dsh-icon {
+  width: 20px;
+  height: 20px;
+}
+
 .dsh-timeline__presented-file-main > span {
   min-width: 0;
 }
@@ -1503,7 +1508,7 @@ summary.dsh-timeline__card-header,
   flex-wrap: nowrap;
   min-width: 0;
   gap: var(--dsh-space-2);
-  margin-top: var(--dsh-space-3);
+  margin-top: var(--dsh-space-1);
   overflow: hidden;
 }
 
@@ -2785,6 +2790,7 @@ summary.dsh-timeline__card-header,
 .dsh-settings__backdrop,
 .dsh-tool-error-modal__backdrop,
 .dsh-session-dialog__backdrop,
+.dsh-feedback-dialog__backdrop,
 .dsh-lightbox__backdrop,
 .dsh-message-image-lightbox {
   position: fixed;
@@ -2799,6 +2805,7 @@ summary.dsh-timeline__card-header,
 .dsh-settings,
 .dsh-tool-error-modal,
 .dsh-session-dialog,
+.dsh-feedback-dialog,
 .dsh-lightbox__dialog,
 .dsh-message-image-lightbox__dialog {
   display: flex;
@@ -2811,6 +2818,50 @@ summary.dsh-timeline__card-header,
   border-radius: var(--dsh-radius-lg);
   background: var(--dsh-surface-raised);
   box-shadow: var(--dsh-shadow);
+}
+
+.dsh-feedback-dialog {
+  width: min(100%, 36rem);
+  gap: var(--dsh-space-3);
+  padding: var(--dsh-space-4);
+  overflow: auto;
+}
+
+.dsh-feedback-dialog__categories {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--dsh-space-1);
+}
+
+.dsh-feedback-dialog__chip {
+  min-width: 0;
+  padding: 6px 9px;
+  border: var(--dsh-border);
+  border-radius: 999px;
+  color: var(--dsh-muted);
+  background: var(--dsh-surface-soft);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.76rem;
+  line-height: 1.2;
+}
+
+.dsh-feedback-dialog__chip:hover:not(:disabled),
+.dsh-feedback-dialog__chip:focus-visible,
+.dsh-feedback-dialog__chip[aria-pressed='true'] {
+  border-color: var(--dsh-accent);
+  color: var(--dsh-text);
+  background: color-mix(in srgb, var(--dsh-accent) 14%, var(--dsh-surface-soft));
+}
+
+.dsh-feedback-dialog__chip:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.dsh-feedback-dialog__detail {
+  min-height: 7rem;
+  resize: vertical;
 }
 
 .dsh-settings {
@@ -3300,6 +3351,11 @@ summary.dsh-timeline__card-header,
 
 .dsh-message-actions__note-panel textarea {
   width: 100%;
+}
+
+.dsh-message-actions__feedback-status {
+  color: var(--dsh-muted);
+  font-size: 0.76rem;
 }
 
 .dsh-todo-list {

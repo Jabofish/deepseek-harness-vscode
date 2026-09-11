@@ -28,6 +28,7 @@ import {
   isValidEditorContextRange,
   type ExtensionSettingsSummary,
   type GoalView,
+  type FeedbackCategory,
   type JobView,
   type MessageFeedbackItem,
   type MessageFeedbackRating,
@@ -285,7 +286,16 @@ export interface AppActions {
   /** Steer every still-queued pending input into the running turn (official empty-draft accelerated Enter). */
   steerAllQueued(): Promise<void>
   loadFeedback(sessionId: string): Promise<void>
+  /** Ensure the active session's feedback catalog is seeded before deciding to retract. */
+  ensureFeedback(sessionId: string, messageId: string): Promise<MessageFeedbackItem | undefined>
   toggleFeedback(sessionId: string, messageId: string, rating: MessageFeedbackRating): Promise<void>
+  submitFeedback(
+    sessionId: string,
+    messageId: string,
+    rating: MessageFeedbackRating,
+    note?: string,
+    category?: FeedbackCategory,
+  ): Promise<void>
   setFeedbackNote(sessionId: string, messageId: string, note: string | undefined): Promise<void>
   removeFeedback(sessionId: string, messageId: string): Promise<void>
   listReferences(sessionId: string, query: string, quoted: boolean): Promise<readonly ReferenceCandidate[]>
@@ -479,6 +489,18 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   let notifyTimer: number | undefined
   let pendingHistorySessionId: string | undefined
   let pendingHistory: SessionHistoryEvent[] = []
+  // Feedback is an advisory first-paint read, but a mutation must never race
+  // that read with an empty CAS cache. Share the in-flight request and remember
+  // successful seeds so a cold row can wait for the same authoritative catalog
+  // without issuing a second list call.
+  const feedbackLoads = new Map<string, Promise<FeedbackListResult>>()
+  const feedbackReadySessions = new Set<string>()
+  let feedbackGeneration = 0
+  const invalidateFeedback = (): void => {
+    feedbackGeneration += 1
+    feedbackLoads.clear()
+    feedbackReadySessions.clear()
+  }
   const notify = (): void => {
     for (const listener of listeners) listener()
   }
@@ -1154,6 +1176,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       commandDirectoryGeneration += 1
       commandDirectoryCache.clear()
       commandDirectoryLoads.clear()
+      invalidateFeedback()
     }
     if (
       message.type === 'event' &&
@@ -1245,10 +1268,43 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       }
     }
   }
+  const requestFeedbackSnapshot = (sessionId: string, force = false): Promise<FeedbackListResult> => {
+    if (force) feedbackReadySessions.delete(sessionId)
+    if (!force && feedbackReadySessions.has(sessionId) && state.activeSessionId === sessionId) {
+      return Promise.resolve({
+        items: Object.values(state.feedback),
+        unavailable: state.feedbackUnavailable === true,
+      })
+    }
+    const existing = feedbackLoads.get(sessionId)
+    if (existing !== undefined) return existing
+    const generation = feedbackGeneration
+    const pending = safeFeedbackList(client, sessionId).then((result) => {
+      if (generation === feedbackGeneration && (result.items !== undefined || result.unavailable === true))
+        feedbackReadySessions.add(sessionId)
+      return result
+    })
+    feedbackLoads.set(sessionId, pending)
+    void pending.finally(() => {
+      if (feedbackLoads.get(sessionId) === pending) feedbackLoads.delete(sessionId)
+    })
+    return pending
+  }
+  const applyFeedbackSnapshot = (sessionId: string, result: FeedbackListResult): void => {
+    setState((current) => {
+      if (current.activeSessionId !== sessionId) return current
+      return {
+        ...current,
+        ...(result.items === undefined ? {} : { feedback: feedbackRecord(result.items) }),
+        ...(result.unavailable === undefined ? {} : { feedbackUnavailable: result.unavailable }),
+      }
+    })
+  }
   const open = async (sessionId: string, options: { readonly startup?: boolean } = {}): Promise<void> => {
     if (options.startup !== true) startupRestorePending = false
     flushPendingHistory()
     const version = ++openVersion
+    feedbackReadySessions.delete(sessionId)
     editorContextRefreshGeneration += 1
     changesRefreshGeneration += 1
     tasksRefreshGeneration += 1
@@ -1303,7 +1359,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
           { type: 'job.list', requestId: requestId(), payload: { sessionId } },
           isJobView,
         ),
-        safeFeedbackList(client, sessionId),
+        requestFeedbackSnapshot(sessionId),
         loadSubagentCatalog(sessionId),
       ])
       if (version !== openVersion) return
@@ -1430,6 +1486,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   const openSubagent = async (entry: SubagentView, parentAvailable: boolean): Promise<void> => {
     flushPendingHistory()
     const version = ++openVersion
+    feedbackReadySessions.delete(entry.id)
     promptTemplatesRefreshGeneration += 1
     const pending = createPendingOpen(entry.id, version)
     let completed = false
@@ -1462,7 +1519,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
           { type: 'job.list', requestId: requestId(), payload: { sessionId: entry.id } },
           isJobView,
         ),
-        safeFeedbackList(client, entry.id),
+        requestFeedbackSnapshot(entry.id),
         loadSubagentCatalog(entry.id),
       ])
       const history = await historyData
@@ -1758,6 +1815,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       await attemptStartupRestore()
     },
     reconnect: async () => {
+      invalidateFeedback()
       await client.request<unknown>({ type: 'connection.retry', requestId: requestId() })
       await refresh()
     },
@@ -2213,15 +2271,13 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       }
     },
     loadFeedback: async (sessionId) => {
-      const result = await safeFeedbackList(client, sessionId)
-      setState((current) => {
-        if (current.activeSessionId !== sessionId) return current
-        return {
-          ...current,
-          ...(result.items === undefined ? {} : { feedback: feedbackRecord(result.items) }),
-          ...(result.unavailable === undefined ? {} : { feedbackUnavailable: result.unavailable }),
-        }
-      })
+      applyFeedbackSnapshot(sessionId, await requestFeedbackSnapshot(sessionId, true))
+    },
+    ensureFeedback: async (sessionId, messageId) => {
+      const alreadyReady = feedbackReadySessions.has(sessionId) && state.activeSessionId === sessionId
+      const result = await requestFeedbackSnapshot(sessionId)
+      if (!alreadyReady) applyFeedbackSnapshot(sessionId, result)
+      return state.activeSessionId === sessionId ? state.feedback[messageId] : undefined
     },
     toggleFeedback: async (sessionId, messageId, rating) => {
       try {
@@ -2249,6 +2305,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
               messageId,
               rating,
               ...(current?.note === undefined ? {} : { note: current.note }),
+              ...(current?.category === undefined ? {} : { category: current.category }),
             },
           }),
         )
@@ -2265,6 +2322,38 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         )
       }
     },
+    submitFeedback: async (sessionId, messageId, rating, note, category) => {
+      try {
+        const item = object(
+          await client.request<unknown>({
+            type: 'feedback.toggle',
+            requestId: requestId(),
+            payload: {
+              sessionId,
+              messageId,
+              rating,
+              ...(note === undefined ? {} : { note }),
+              ...(category === undefined ? {} : { category }),
+            },
+          }),
+        )
+        if (!isMessageFeedbackItem(item)) throw new Error(translate('app.error.feedback'))
+        setState((next) =>
+          next.activeSessionId === sessionId
+            ? { ...next, feedback: { ...next.feedback, [item.messageId]: item } }
+            : next,
+        )
+      } catch (error) {
+        if (!isFeedbackCapabilityUnavailable(error)) throw error
+        setState((next) =>
+          next.activeSessionId === sessionId ? { ...next, feedbackUnavailable: true } : next,
+        )
+        // A dialog submission must remain pending in the UI when the optional
+        // sidecar is absent; resolving here would make MessageActions show a
+        // false success acknowledgement.
+        throw error
+      }
+    },
     setFeedbackNote: async (sessionId, messageId, note) => {
       try {
         const current = state.feedback[messageId]
@@ -2278,6 +2367,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
               messageId,
               rating: current.rating,
               ...(note === undefined ? {} : { note }),
+              ...(current.category === undefined ? {} : { category: current.category }),
             },
           }),
         )
@@ -3059,6 +3149,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       }
       pendingHistory = []
       pendingHistorySessionId = undefined
+      invalidateFeedback()
       unsubscribe()
       unsubscribeFeature()
       client.dispose()
@@ -7472,10 +7563,23 @@ function isMessageFeedbackItem(value: unknown): value is MessageFeedbackItem {
     typeof item.version === 'string' &&
     item.version.length > 0 &&
     (item.note === undefined || typeof item.note === 'string') &&
+    (item.category === undefined || isFeedbackCategory(item.category)) &&
     (item.createdAt === undefined ||
       (typeof item.createdAt === 'number' && Number.isSafeInteger(item.createdAt) && item.createdAt >= 0)) &&
     (item.updatedAt === undefined ||
       (typeof item.updatedAt === 'number' && Number.isSafeInteger(item.updatedAt) && item.updatedAt >= 0))
+  )
+}
+
+function isFeedbackCategory(value: unknown): value is FeedbackCategory {
+  return (
+    value === 'task-result' ||
+    value === 'instruction-following' ||
+    value === 'product-interaction' ||
+    value === 'service-stability' ||
+    value === 'resource-cost' ||
+    value === 'security-privacy-permission' ||
+    value === 'other'
   )
 }
 

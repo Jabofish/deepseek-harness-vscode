@@ -33,20 +33,21 @@ export const SUPPORTED_DSH_VERSIONS = [
   '0.1.3-alpha.1',
   '0.1.3-alpha.2',
   // 0.1.5-alpha.1 introduces the strict Session wire v3 contract. alpha.2
-  // and rc.1 retain that wire while adding durable deliverable/catalog
+  // and rc.1/rc.2 retain that wire while adding durable deliverable/catalog
   // events, so they still get distinct exact identities below.
   '0.1.5-alpha.1',
   '0.1.5-alpha.2',
   '0.1.5-rc.1',
+  '0.1.5-rc.2',
 ] as const
 
 export const SUPPORTED_DSH_RANGE =
-  '0.0.1-rc.1/.2/.5; 0.1.0-rc.2/.3/.6/.7/.8; 0.1.1-rc.1/.2; 0.1.2-rc.1; 0.1.2-alpha.1-.5; 0.1.3-alpha.1/.2; 0.1.5-alpha.1/.2/rc.1' as const
+  '0.0.1-rc.1/.2/.5; 0.1.0-rc.2/.3/.6/.7/.8; 0.1.1-rc.1/.2; 0.1.2-rc.1; 0.1.2-alpha.1-.5; 0.1.3-alpha.1/.2; 0.1.5-alpha.1/.2/rc.1/.2' as const
 
 export const DSH_PACKAGE_NAME = '@deepseek-ai/dsh' as const
 
 /** Latest published package used by the extension's installer. */
-export const LATEST_PUBLISHED_DSH_VERSION = '0.1.5-rc.1' as const
+export const LATEST_PUBLISHED_DSH_VERSION = '0.1.5-rc.2' as const
 
 /** Keep the installer default aligned with the latest package in the exact supported set. */
 export const LATEST_SUPPORTED_DSH_VERSION = LATEST_PUBLISHED_DSH_VERSION
@@ -57,7 +58,7 @@ export const LATEST_VERIFIED_DSH_VERSION = SUPPORTED_DSH_VERSIONS[SUPPORTED_DSH_
 /**
  * Newest adapter whose wire contract is safe to reuse for an unverified
  * runtime. This is intentionally separate from the newest exact source
- * snapshot: alpha13/alpha132 use Session v2 fields and alpha151/alpha152/rc151
+ * snapshot: alpha13/alpha132 use Session v2 fields and alpha151/alpha152/rc151/rc152
  * use Session v3 fields that cannot be inferred from session/list alone.
  */
 export const LATEST_COMPATIBILITY_FALLBACK_DSH_VERSION = '0.1.2-alpha.5' as const

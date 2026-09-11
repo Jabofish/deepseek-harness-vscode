@@ -4,10 +4,10 @@
 
 Security fixes are only applied to the latest release line.
 
-| Version                  | Supported |
-| ------------------------ | --------- |
-| latest release (`0.1.9`) | Yes       |
-| older releases           | No        |
+| Version                   | Supported |
+| ------------------------- | --------- |
+| latest release (`0.1.10`) | Yes       |
+| older releases            | No        |
 
 ## Reporting a vulnerability
 

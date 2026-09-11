@@ -12,6 +12,7 @@ import {
 } from 'react'
 import { isInjectedUserMessage, type AssistantTiming, type TimelineNode } from '@dsh-vscode/timeline'
 import type {
+  FeedbackCategory,
   MessageFeedbackItem,
   MessageFeedbackRating,
   MessageImageReference,
@@ -35,6 +36,17 @@ import {
 } from '../../components/common/index.js'
 import { Icon } from '../../ui/Icon.js'
 import { useI18n, type Translate } from '../../i18n.js'
+
+type FeedbackSubmit = (
+  messageId: string,
+  rating: MessageFeedbackRating,
+  note: string | undefined,
+  category: FeedbackCategory | undefined,
+) => Promise<void> | void
+
+type FeedbackPrepare = (
+  messageId: string,
+) => Promise<MessageFeedbackItem | undefined> | MessageFeedbackItem | undefined
 
 type DshEventNode = Extract<TimelineNode, { readonly kind: 'event' }>
 
@@ -128,7 +140,8 @@ export interface TimelineProps {
   readonly feedback?: Readonly<Record<string, MessageFeedbackItem>>
   readonly feedbackUnavailable?: boolean | undefined
   readonly onFeedback?: (messageId: string, rating: MessageFeedbackRating) => void
-  readonly onFeedbackNote?: (messageId: string, note: string | undefined) => Promise<void> | void
+  readonly onFeedbackSubmit?: FeedbackSubmit
+  readonly onFeedbackPrepare?: FeedbackPrepare
   /** Whether an older DSH history window is available. */
   readonly hasMoreHistory?: boolean
   readonly loadingOlderHistory?: boolean
@@ -186,7 +199,8 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
   const stableOnOpenSession = useStableOptionalCallback(props.onOpenSession)
   const stableOnBranch = useStableOptionalCallback(props.onBranch)
   const stableOnFeedback = useStableOptionalCallback(props.onFeedback)
-  const stableOnFeedbackNote = useStableOptionalCallback(props.onFeedbackNote)
+  const stableOnFeedbackSubmit = useStableOptionalCallback(props.onFeedbackSubmit)
+  const stableOnFeedbackPrepare = useStableOptionalCallback(props.onFeedbackPrepare)
   const [openLinkError, setOpenLinkError] = useState<{ readonly href: string; readonly message: string }>()
   const [openLinkBusy, setOpenLinkBusy] = useState(false)
   const requestOpenLink = useCallback(
@@ -283,8 +297,7 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
   const hasShowInFolder = props.onShowInFolder !== undefined
   const hasOpenSession = props.onOpenSession !== undefined
   const hasBranch = props.onBranch !== undefined
-  const hasFeedback = props.onFeedback !== undefined
-  const hasFeedbackNote = props.onFeedbackNote !== undefined
+  const hasFeedback = props.onFeedback !== undefined || props.onFeedbackSubmit !== undefined
   const nodeRenderContext = useMemo<TimelineNodeRenderContext>(
     () => ({
       expandedDetails,
@@ -300,7 +313,8 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
       feedback: props.feedback,
       feedbackUnavailable: props.feedbackUnavailable,
       onFeedback: hasFeedback ? stableOnFeedback : undefined,
-      onFeedbackNote: hasFeedbackNote ? stableOnFeedbackNote : undefined,
+      onFeedbackSubmit: props.onFeedbackSubmit === undefined ? undefined : stableOnFeedbackSubmit,
+      onFeedbackPrepare: props.onFeedbackPrepare === undefined ? undefined : stableOnFeedbackPrepare,
       requestOpenLink,
       t,
     }),
@@ -308,7 +322,6 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
       expandedDetails,
       hasBranch,
       hasFeedback,
-      hasFeedbackNote,
       hasLoadImage,
       hasOpenLink,
       hasOpenSession,
@@ -317,11 +330,14 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
       props.branching,
       props.feedback,
       props.feedbackUnavailable,
+      props.onFeedbackSubmit,
+      props.onFeedbackPrepare,
       requestOpenLink,
       running,
       stableOnBranch,
       stableOnFeedback,
-      stableOnFeedbackNote,
+      stableOnFeedbackSubmit,
+      stableOnFeedbackPrepare,
       stableOnLoadImage,
       stableOnOpenSession,
       stableOnShowInFolder,
@@ -550,7 +566,8 @@ function renderNode(
   running = false,
   feedback?: Readonly<Record<string, MessageFeedbackItem>>,
   onFeedback?: (messageId: string, rating: MessageFeedbackRating) => void,
-  onFeedbackNote?: (messageId: string, note: string | undefined) => Promise<void> | void,
+  onFeedbackSubmit?: FeedbackSubmit,
+  onFeedbackPrepare?: FeedbackPrepare,
   t: Translate = (key) => key,
   feedbackUnavailable = false,
 ): ReactElement {
@@ -582,7 +599,10 @@ function renderNode(
               {t('timeline.items', { count: node.files.length })}
             </span>
           </header>
-          <ul className="dsh-timeline__event-list dsh-timeline__presented-files">
+          <ul
+            className="dsh-timeline__event-list dsh-timeline__presented-files"
+            data-presented-files-row="true"
+          >
             {node.files.map((file, index) => {
               const label = producedFileLabel(file.path)
               return (
@@ -639,7 +659,8 @@ function renderNode(
         running,
         feedback,
         onFeedback,
-        onFeedbackNote,
+        onFeedbackSubmit,
+        onFeedbackPrepare,
         feedbackUnavailable,
       )
     case 'goal':
@@ -854,7 +875,8 @@ function renderNode(
         running,
         feedback,
         onFeedback,
-        onFeedbackNote,
+        onFeedbackSubmit,
+        onFeedbackPrepare,
         feedbackUnavailable,
       )
     case 'reasoning':
@@ -888,6 +910,7 @@ function renderNode(
         feedback,
         onFeedback,
         undefined,
+        undefined,
         feedbackUnavailable,
       )
   }
@@ -908,7 +931,8 @@ interface TimelineNodeRenderContext {
   readonly feedback: Readonly<Record<string, MessageFeedbackItem>> | undefined
   readonly feedbackUnavailable: boolean | undefined
   readonly onFeedback: ((messageId: string, rating: MessageFeedbackRating) => void) | undefined
-  readonly onFeedbackNote: ((messageId: string, note: string | undefined) => Promise<void> | void) | undefined
+  readonly onFeedbackSubmit: FeedbackSubmit | undefined
+  readonly onFeedbackPrepare: FeedbackPrepare | undefined
   readonly t: Translate
 }
 
@@ -927,7 +951,8 @@ function renderTimelineNode(node: DisplayTimelineNode, context: TimelineNodeRend
     context.running,
     context.feedback,
     context.onFeedback,
-    context.onFeedbackNote,
+    context.onFeedbackSubmit,
+    context.onFeedbackPrepare,
     context.t,
     context.feedbackUnavailable,
   )
@@ -962,7 +987,8 @@ function timelineRowContextEqual(
     previous.branching !== next.branching ||
     previous.running !== next.running ||
     previous.onFeedback !== next.onFeedback ||
-    previous.onFeedbackNote !== next.onFeedbackNote ||
+    previous.onFeedbackSubmit !== next.onFeedbackSubmit ||
+    previous.onFeedbackPrepare !== next.onFeedbackPrepare ||
     previous.feedbackUnavailable !== next.feedbackUnavailable ||
     previous.t !== next.t
   )
@@ -1214,7 +1240,8 @@ function renderAssistantTurn(
   running = false,
   feedback?: Readonly<Record<string, MessageFeedbackItem>>,
   onFeedback?: (messageId: string, rating: MessageFeedbackRating) => void,
-  onFeedbackNote?: (messageId: string, note: string | undefined) => Promise<void> | void,
+  onFeedbackSubmit?: FeedbackSubmit,
+  onFeedbackPrepare?: FeedbackPrepare,
   feedbackUnavailable = false,
 ): ReactElement {
   const inProgress = assistantNodeInProgress(node)
@@ -1249,7 +1276,8 @@ function renderAssistantTurn(
             assistantMessageId(node),
             feedback,
             onFeedback,
-            onFeedbackNote,
+            onFeedbackSubmit,
+            onFeedbackPrepare,
             feedbackUnavailable,
           )}
           {...(onBranch === undefined
@@ -1277,7 +1305,8 @@ function renderAssistantMessage(
   running = false,
   feedback?: Readonly<Record<string, MessageFeedbackItem>>,
   onFeedback?: (messageId: string, rating: MessageFeedbackRating) => void,
-  onFeedbackNote?: (messageId: string, note: string | undefined) => Promise<void> | void,
+  onFeedbackSubmit?: FeedbackSubmit,
+  onFeedbackPrepare?: FeedbackPrepare,
   feedbackUnavailable = false,
 ): ReactElement {
   const inProgress = assistantNodeInProgress(node)
@@ -1323,7 +1352,14 @@ function renderAssistantMessage(
       {node.markdown.trim() === '' || actionsUnavailable ? null : (
         <MessageActions
           text={node.markdown}
-          {...feedbackActionProps(node.id, feedback, onFeedback, onFeedbackNote, feedbackUnavailable)}
+          {...feedbackActionProps(
+            node.id,
+            feedback,
+            onFeedback,
+            onFeedbackSubmit,
+            onFeedbackPrepare,
+            feedbackUnavailable,
+          )}
           {...(onBranch === undefined
             ? {}
             : { onBranch: node.sequence === undefined ? () => undefined : () => onBranch(node.sequence!) })}
@@ -1446,26 +1482,43 @@ function feedbackActionProps(
   messageId: string | undefined,
   feedback: Readonly<Record<string, MessageFeedbackItem>> | undefined,
   onFeedback: ((messageId: string, rating: MessageFeedbackRating) => void) | undefined,
-  onFeedbackNote: ((messageId: string, note: string | undefined) => Promise<void> | void) | undefined,
+  onFeedbackSubmit: FeedbackSubmit | undefined,
+  onFeedbackPrepare: FeedbackPrepare | undefined,
   feedbackUnavailable: boolean,
 ): {
   readonly feedbackRating?: MessageFeedbackRating
   readonly feedbackNote?: string
+  readonly feedbackCategory?: FeedbackCategory
   readonly onFeedback?: (rating: MessageFeedbackRating) => void
-  readonly onFeedbackNote?: (note: string | undefined) => Promise<void> | void
+  readonly onFeedbackSubmit?: (
+    rating: MessageFeedbackRating,
+    note: string | undefined,
+    category: FeedbackCategory | undefined,
+  ) => Promise<void> | void
+  readonly onFeedbackPrepare?: () =>
+    Promise<MessageFeedbackItem | undefined> | MessageFeedbackItem | undefined
   readonly feedbackUnavailable?: boolean
 } {
-  if (messageId === undefined || (onFeedback === undefined && onFeedbackNote === undefined)) return {}
-  const rating = feedback?.[messageId]?.rating
+  if (messageId === undefined || (onFeedback === undefined && onFeedbackSubmit === undefined)) return {}
+  const item = feedback?.[messageId]
+  const rating = item?.rating
   return {
     ...(rating === undefined ? {} : { feedbackRating: rating }),
-    ...(feedback?.[messageId]?.note === undefined ? {} : { feedbackNote: feedback[messageId].note }),
+    ...(item?.note === undefined ? {} : { feedbackNote: item.note }),
+    ...(item?.category === undefined ? {} : { feedbackCategory: item.category }),
     ...(onFeedback === undefined
       ? {}
       : { onFeedback: (next: MessageFeedbackRating) => onFeedback(messageId, next) }),
-    ...(onFeedbackNote === undefined
+    ...(onFeedbackSubmit === undefined
       ? {}
-      : { onFeedbackNote: (note: string | undefined) => onFeedbackNote(messageId, note) }),
+      : {
+          onFeedbackSubmit: (
+            next: MessageFeedbackRating,
+            note: string | undefined,
+            category: FeedbackCategory | undefined,
+          ) => onFeedbackSubmit(messageId, next, note, category),
+        }),
+    ...(onFeedbackPrepare === undefined ? {} : { onFeedbackPrepare: () => onFeedbackPrepare(messageId) }),
     ...(feedbackUnavailable ? { feedbackUnavailable: true } : {}),
   }
 }
@@ -1478,7 +1531,11 @@ function renderProducedFiles(
 ): ReactElement | null {
   if (paths.length === 0) return null
   return (
-    <div className="dsh-timeline__produced-files" aria-label={t('timeline.producedFiles')}>
+    <div
+      className="dsh-timeline__produced-files"
+      data-produced-files-row="true"
+      aria-label={t('timeline.producedFiles')}
+    >
       <span className="dsh-timeline__produced-label">{t('timeline.producedFiles')}</span>
       <div className="dsh-timeline__produced-list">
         {paths.map((path) => {

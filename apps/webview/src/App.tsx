@@ -15,6 +15,7 @@ import type {
   ContextPressure,
   EditorContextKind,
   EditorContextPreview,
+  FeedbackCategory,
   GoalView,
   ImageAttachmentLimits,
   MessageFeedbackRating,
@@ -734,11 +735,20 @@ export function App(): ReactElement {
         setError(reason instanceof Error ? reason.message : t('app.error.feedback')),
       )
   })
-  const timelineOnFeedbackNote = useStableCallback(
-    async (messageId: string, note: string | undefined): Promise<void> => {
+  const timelineOnFeedbackPrepare = useStableCallback((messageId: string) => {
+    if (activeSessionId === undefined) return Promise.resolve(undefined)
+    return store.ensureFeedback(activeSessionId, messageId)
+  })
+  const timelineOnFeedbackSubmit = useStableCallback(
+    async (
+      messageId: string,
+      rating: MessageFeedbackRating,
+      note: string | undefined,
+      category: FeedbackCategory | undefined,
+    ): Promise<void> => {
       if (activeSessionId === undefined) return
       try {
-        await store.setFeedbackNote(activeSessionId, messageId, note)
+        await store.submitFeedback(activeSessionId, messageId, rating, note, category)
       } catch (reason: unknown) {
         setError(reason instanceof Error ? reason.message : t('app.error.feedback'))
         throw reason
@@ -1515,7 +1525,8 @@ export function App(): ReactElement {
                       loadingOlderHistory={state.historyLoading}
                       onLoadOlderHistory={timelineOnLoadOlderHistory}
                       onFeedback={timelineOnFeedback}
-                      onFeedbackNote={timelineOnFeedbackNote}
+                      onFeedbackPrepare={timelineOnFeedbackPrepare}
+                      onFeedbackSubmit={timelineOnFeedbackSubmit}
                     />
                   ) : (
                     <DeferredTrajectoryView

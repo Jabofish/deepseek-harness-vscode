@@ -23,7 +23,7 @@ function transport(
   }
 }
 
-describe('rc.8 optional reference and feedback remotes', () => {
+describe('optional reference and feedback remotes', () => {
   it('uses the generated agentId wire field and keeps files before sessions', async () => {
     const client = transport((endpoint) =>
       endpoint === 'fileReferences/list'
@@ -132,6 +132,7 @@ describe('rc.8 optional reference and feedback remotes', () => {
       messageId: 'm1',
       rating: 'negative',
       note: 'needs work',
+      category: 'task-result',
       version: 'v2',
       createdAt: 10,
       updatedAt: 20,
@@ -150,7 +151,9 @@ describe('rc.8 optional reference and feedback remotes', () => {
     const repository = new Rc6MessageFeedbackRepository(client)
 
     await expect(repository.list('s1')).resolves.toMatchObject([{ messageId: 'm1', version: 'v1' }])
-    await expect(repository.put('s1', 'm1', 'negative', 'needs work')).resolves.toEqual(updated)
+    await expect(repository.put('s1', 'm1', 'negative', 'needs work', 'task-result')).resolves.toEqual(
+      updated,
+    )
     expect(client.remoteRequestMock).toHaveBeenNthCalledWith(
       2,
       'messageFeedback/put',
@@ -160,6 +163,7 @@ describe('rc.8 optional reference and feedback remotes', () => {
           messageId: 'm1',
           rating: 'negative',
           note: 'needs work',
+          category: 'task-result',
           ifVersion: 'v1',
         },
       },
@@ -180,6 +184,7 @@ describe('rc.8 optional reference and feedback remotes', () => {
       { ...valid, createdAt: undefined },
       { ...valid, createdAt: 30, updatedAt: 20 },
       { ...valid, note: '   ' },
+      { ...valid, category: 'not-a-feedback-category' },
       { ...valid, rating: 'unknown' },
       null,
     ]

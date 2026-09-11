@@ -43,8 +43,8 @@ _Extensions: Install from VSIX..._ in VS Code.
 
 ## Get started
 
-1. If DSH is not installed yet, run `npm install --global @deepseek-ai/dsh` (requires Node.js
-   `22.19+`), or press the guided install action in the view.
+1. If DSH is not installed yet, run `npm install --global @deepseek-ai/dsh@0.1.5-rc.2` (requires
+   Node.js `22.19+`), or press the guided install action in the view.
 2. Open the `DeepSeek Harness` view in VS Code.
 3. Choose or create a workspace, start a session, and send your task.
 
@@ -70,12 +70,12 @@ global package update requires selecting or reconnecting the runtime before it i
 
 ## Compatibility
 
-| Requirement      | Version                                                                                                                                                                                                                                                                                                                                               |
-| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| VS Code          | `1.125+` on Windows, Linux, or macOS; Remote SSH, WSL, and Dev Containers are supported                                                                                                                                                                                                                                                               |
-| DeepSeek Harness | Published CLI/Web API `0.0.1-rc.1`/`.2`/`.5`, `0.1.0-rc.2`/`.3`, `0.1.0-rc.6` through `0.1.2-rc.1`, published `0.1.2-alpha.2`/`0.1.2-alpha.3`/`0.1.2-alpha.4`/`0.1.2-alpha.5`, released `0.1.3-alpha.2`, and `0.1.5-alpha.1`/`.2`/`rc.1`; source-level adapters are retained for every known tag and the installer currently defaults to `0.1.5-rc.1` |
-| Unknown versions | Any non-empty label is probed with the newest adapter that can safely reuse a verified wire; the alpha13/alpha132 Session v2 and alpha151/alpha152/rc151 Session v3 adapters are exact-only, so unknown runtimes fall through to the verified alpha5 v0 adapter and surface a warning                                                                 |
-| Node.js          | `22.19+`, required only when installing DSH from within the extension                                                                                                                                                                                                                                                                                 |
+| Requirement      | Version                                                                                                                                                                                                                                                                                                                                                                                                |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| VS Code          | `1.125+` on Windows, Linux, or macOS; Remote SSH, WSL, and Dev Containers are supported                                                                                                                                                                                                                                                                                                                |
+| DeepSeek Harness | Published CLI/Web API `0.0.1-rc.1`/`.2`/`.5`, `0.1.0-rc.2`/`.3`, `0.1.0-rc.6` through `0.1.2-rc.1`, published `0.1.2-alpha.2`/`0.1.2-alpha.3`/`0.1.2-alpha.4`/`0.1.2-alpha.5`, released `0.1.3-alpha.2`, and `0.1.5-alpha.1`/`.2`/`rc.1`/`rc.2`; source-level adapters are retained for every known tag and the installer defaults to `0.1.5-rc.2` via npm's `next` dist-tag (`latest` remains `rc.1`) |
+| Unknown versions | Any non-empty label is probed with the newest adapter that can safely reuse a verified wire; the alpha13/alpha132 Session v2 and alpha151/alpha152/rc151/rc152 Session v3 adapters are exact-only, so unknown runtimes fall through to the verified alpha5 v0 adapter and surface a warning                                                                                                            |
+| Node.js          | `22.19+`, required only when installing DSH from within the extension                                                                                                                                                                                                                                                                                                                                  |
 
 Available models, tools, and advanced agent capabilities follow the connected DSH instance;
 unsupported capabilities are surfaced clearly instead of failing silently.

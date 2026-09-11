@@ -23,6 +23,7 @@ import {
   Rc12VersionAdapter,
   Rc13VersionAdapter,
   Rc151VersionAdapter,
+  Rc152VersionAdapter,
   SUPPORTED_DSH_VERSIONS,
 } from '../src/index.js'
 
@@ -56,6 +57,7 @@ describe('version adapter family chains', () => {
       new Alpha151VersionAdapter(options),
       new Alpha152VersionAdapter(options),
       new Rc151VersionAdapter(options),
+      new Rc152VersionAdapter(options),
     ]
 
     expect(adapters.map((adapter) => adapter.supportedVersion)).toEqual([...SUPPORTED_DSH_VERSIONS])
@@ -130,6 +132,7 @@ describe('version adapter family chains', () => {
     const alpha151 = new Alpha151VersionAdapter(options)
     const alpha152 = new Alpha152VersionAdapter(options)
     const rc151 = new Rc151VersionAdapter(options)
+    const rc152 = new Rc152VersionAdapter(options)
 
     expect(alpha2).toBeInstanceOf(Alpha1VersionAdapter)
     expect(alpha3).toBeInstanceOf(Alpha2VersionAdapter)
@@ -140,9 +143,10 @@ describe('version adapter family chains', () => {
     expect(alpha151).toBeInstanceOf(Alpha132VersionAdapter)
     expect(alpha152).toBeInstanceOf(Alpha151VersionAdapter)
     expect(rc151).toBeInstanceOf(Alpha152VersionAdapter)
+    expect(rc152).toBeInstanceOf(Rc151VersionAdapter)
     expect(alpha1).not.toBeInstanceOf(Rc6VersionAdapter)
     expect(
-      [alpha1, alpha2, alpha3, alpha4, alpha5, alpha13, alpha132, alpha151, alpha152, rc151].map(
+      [alpha1, alpha2, alpha3, alpha4, alpha5, alpha13, alpha132, alpha151, alpha152, rc151, rc152].map(
         (adapter) => adapter.supportedVersion,
       ),
     ).toEqual([
@@ -156,14 +160,15 @@ describe('version adapter family chains', () => {
       '0.1.5-alpha.1',
       '0.1.5-alpha.2',
       '0.1.5-rc.1',
+      '0.1.5-rc.2',
     ])
     expect(
-      [alpha1, alpha2, alpha3, alpha4, alpha5, alpha13, alpha132, alpha151, alpha152, rc151].map(
+      [alpha1, alpha2, alpha3, alpha4, alpha5, alpha13, alpha132, alpha151, alpha152, rc151, rc152].map(
         (adapter) => adapter.compatibilityPriority,
       ),
-    ).toEqual([80, 90, 100, 110, 120, 130, 140, 150, 160, 170])
+    ).toEqual([80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180])
     expect(
-      [alpha1, alpha2, alpha3, alpha4, alpha5, alpha13, alpha132, alpha151, alpha152, rc151].map(
+      [alpha1, alpha2, alpha3, alpha4, alpha5, alpha13, alpha132, alpha151, alpha152, rc151, rc152].map(
         (adapter) => adapter.protocolVersion,
       ),
     ).toEqual([
@@ -177,12 +182,14 @@ describe('version adapter family chains', () => {
       'alpha151',
       'alpha152',
       'rc151',
+      'rc152',
     ])
     expect(alpha5.fallback).toBe(true)
     expect(alpha13.fallback).toBe(false)
     expect(alpha151.fallback).toBe(false)
     expect(alpha152.fallback).toBe(false)
     expect(rc151.fallback).toBe(false)
+    expect(rc152.fallback).toBe(false)
   })
 
   it('retains the old alpha family name as a compatibility alias only', () => {

@@ -27,7 +27,7 @@ can stay in the editor and stay in flow.
 2. Choose or create a workspace, then start a session.
 3. Type your task and send it.
 
-If DSH is not installed yet, run `npm install --global @deepseek-ai/dsh` (requires Node.js
+If DSH is not installed yet, run `npm install --global @deepseek-ai/dsh@0.1.5-rc.2` (requires Node.js
 `22.19+`), or use the guided install action in the view. The extension discovers a compatible local
 DSH automatically; discovery always completes before anything is started, and a DSH the extension
 does not own is never stopped.
@@ -42,10 +42,10 @@ the verified list. Updating never stops an external DSH.
 - Published DeepSeek Harness `0.0.1-rc.1`/`.2`/`.5`, `0.1.0-rc.2`/`.3`, and
   `0.1.0-rc.6` through `0.1.2-rc.1` Host/Web API, published
   `0.1.2-alpha.2`/`0.1.2-alpha.3`/`0.1.2-alpha.4`/`0.1.2-alpha.5`, `0.1.3-alpha.2`,
-  and `0.1.5-alpha.1`/`.2`/`rc.1`; source-level adapters are retained for every known tag,
-  with the installer currently defaulting to `0.1.5-rc.1`
+  and `0.1.5-alpha.1`/`.2`/`rc.1`/`rc.2`; source-level adapters are retained for every known tag,
+  with the installer defaulting to `0.1.5-rc.2` via npm's `next` dist-tag (`latest` remains `rc.1`)
 - Unknown versions reporting a non-empty label are probed with the newest verified adapter first;
-  alpha151/alpha152/rc151 Session v3 is exact-only, and successful best-effort connections preserve
+  alpha151/alpha152/rc151/rc152 Session v3 is exact-only, and successful best-effort connections preserve
   the real version and show a warning
 - Node.js `22.19+` when installing DSH from within the extension
 

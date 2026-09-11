@@ -676,7 +676,7 @@ describe('DeepSeek Harness 0.1.0-rc.6 contract', () => {
       rc6Mapper.workspace({
         workspaceId: 'w1',
         title: 'WebCraft',
-        path: 'D:/CS/WebCraft',
+        path: 'D:/workspace/WebCraft',
         sessionIds: ['s1'],
         createdAt: 1_700_000_000_000,
       }),

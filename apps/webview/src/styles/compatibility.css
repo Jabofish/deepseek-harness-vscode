@@ -2997,6 +2997,7 @@
   .dsh-presets__modal-backdrop,
   .dsh-settings__backdrop,
   .dsh-session-dialog__backdrop,
+  .dsh-feedback-dialog__backdrop,
   .dsh-tool-error-modal__backdrop,
   .dsh-lightbox__backdrop,
   .dsh-message-image-lightbox {
@@ -3007,6 +3008,7 @@
   .dsh-settings__model-picker,
   .dsh-presets__modal-backdrop > .dsh-presets__dialog,
   .dsh-session-dialog,
+  .dsh-feedback-dialog,
   .dsh-tool-error-modal {
     width: 100%;
     max-width: 100%;
