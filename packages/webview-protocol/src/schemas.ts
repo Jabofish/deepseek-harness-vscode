@@ -54,6 +54,30 @@ const promptSchema = z
       }
     }
   })
+const diagnosticsStateSchema = z.enum([
+  'idle',
+  'locating-runtime',
+  'discovering',
+  'connecting',
+  'connected',
+  'starting',
+  'runtime-missing',
+  'failed',
+  'port-conflict',
+  'stopping',
+])
+
+/** Host-owned, redacted, and bounded data for the in-app diagnostics surface. */
+export const diagnosticsSnapshotSchema = z
+  .object({
+    extensionVersion: z.string().min(1).max(128),
+    dshVersion: z.string().min(1).max(128).optional(),
+    state: diagnosticsStateSchema,
+    endpointKind: z.enum(['configured', 'external', 'managed']).optional(),
+    canReconnect: z.boolean(),
+    recentEvents: z.array(z.string().max(8_193)).max(32),
+  })
+  .strict()
 const agentConfigurationSchema = z
   .object({
     preset: id,
@@ -733,6 +757,7 @@ export const webviewRequestSchema = z.discriminatedUnion('type', [
     })
     .strict(),
   z.object({ type: z.literal('diagnostics.show'), ...requestBase }).strict(),
+  z.object({ type: z.literal('diagnostics.snapshot'), ...requestBase }).strict(),
   z
     .object({
       type: z.literal('view.openLink'),

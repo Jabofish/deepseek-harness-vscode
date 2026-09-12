@@ -23,6 +23,8 @@ describe('staged feature capability profile', () => {
     expect(profile.capabilities['CP-01'].state).toBe('verified-contract')
     expect(profile.capabilities['SY-01'].state).toBe('verified-contract')
     expect(profile.capabilities['SY-01'].upstream).toBe('verified-contract')
+    expect(profile.capabilities['RF-01'].state).toBe('verified-contract')
+    expect(profile.capabilities['RF-01'].upstream).toBe('verified-contract')
   })
 
   it('downgrades unknown runtimes and reports missing upstream prerequisites', () => {

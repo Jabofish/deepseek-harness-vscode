@@ -42,4 +42,24 @@ describe('RedactedDiagnostics', () => {
     expect(entry.fields).not.toHaveProperty('endpoint')
     diagnostics.dispose()
   })
+
+  it('keeps a bounded recent ring without exposing secrets', () => {
+    const { channel } = fakeChannel()
+    const diagnostics = new RedactedDiagnostics(channel)
+    for (let index = 0; index < 40; index += 1)
+      diagnostics.log('info', 'connection-state', {
+        state: index === 39 ? 'connected' : 'connecting',
+        attempt: index,
+        message: `token=secret-${index}`,
+      })
+
+    const recent = diagnostics.recentEvents()
+    expect(recent).toHaveLength(32)
+    expect(recent[0]).toContain('"attempt":8')
+    expect(recent.at(-1)).toContain('connected')
+    expect(recent.join('\n')).not.toContain('token=secret-')
+    expect(diagnostics.recentEvents(2)).toHaveLength(2)
+    expect(diagnostics.recentEvents(0)).toEqual([])
+    diagnostics.dispose()
+  })
 })

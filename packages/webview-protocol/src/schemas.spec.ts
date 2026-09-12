@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { webviewRequestSchema } from './schemas.js'
+import { diagnosticsSnapshotSchema, webviewRequestSchema } from './schemas.js'
 
 describe('custom provider Webview protocol', () => {
   it('accepts only the non-secret provider draft and its CAS revision', () => {
@@ -86,6 +86,37 @@ describe('custom provider Webview protocol', () => {
     })
 
     expect(result.success).toBe(false)
+  })
+})
+
+describe('diagnostics Webview protocol', () => {
+  it('accepts a bounded redacted snapshot request', () => {
+    expect(
+      webviewRequestSchema.safeParse({
+        type: 'diagnostics.snapshot',
+        requestId: 'request-diagnostics',
+      }).success,
+    ).toBe(true)
+  })
+
+  it('keeps diagnostics response fields closed and bounded', () => {
+    expect(
+      diagnosticsSnapshotSchema.safeParse({
+        extensionVersion: '0.1.9',
+        state: 'failed',
+        canReconnect: true,
+        recentEvents: ['{"level":"error","event":"failure"}'],
+      }).success,
+    ).toBe(true)
+    expect(
+      diagnosticsSnapshotSchema.safeParse({
+        extensionVersion: '0.1.9',
+        state: 'failed',
+        canReconnect: true,
+        recentEvents: [],
+        endpoint: 'http://127.0.0.1:3939',
+      }).success,
+    ).toBe(false)
   })
 })
 

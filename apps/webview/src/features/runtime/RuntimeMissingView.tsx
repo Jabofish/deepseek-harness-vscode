@@ -1,7 +1,9 @@
 import type { ReactElement } from 'react'
+import type { DiagnosticsSnapshot } from '@dsh-vscode/domain'
 import { ContentFlow } from '../../components/common/ContentFlow.js'
 import { useI18n } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
+import { DiagnosticsDrawer } from '../diagnostics/DiagnosticsDrawer.js'
 
 export interface RuntimeMissingViewProps {
   readonly searchedLocations: readonly string[]
@@ -9,6 +11,9 @@ export interface RuntimeMissingViewProps {
   readonly onAction: (action: 'install' | 'select' | 'copy-command' | 'open-docs') => void
   readonly onRetry?: () => void
   readonly onOpenSettings?: () => void
+  readonly onReadDiagnostics?: () => Promise<DiagnosticsSnapshot | undefined>
+  readonly onReconnectDiagnostics?: () => Promise<void>
+  readonly onShowDiagnosticsOutput?: () => Promise<void>
 }
 
 export function RuntimeMissingView(props: RuntimeMissingViewProps): ReactElement {
@@ -64,6 +69,15 @@ export function RuntimeMissingView(props: RuntimeMissingViewProps): ReactElement
           <button className="dsh-button dsh-button--ghost" type="button" onClick={props.onOpenSettings}>
             {t('runtime.openSettings')}
           </button>
+        )}
+        {props.onReadDiagnostics === undefined ||
+        props.onReconnectDiagnostics === undefined ||
+        props.onShowDiagnosticsOutput === undefined ? null : (
+          <DiagnosticsDrawer
+            onRead={props.onReadDiagnostics}
+            onReconnect={props.onReconnectDiagnostics}
+            onShowOutput={props.onShowDiagnosticsOutput}
+          />
         )}
         <button
           className="dsh-button dsh-button--ghost"

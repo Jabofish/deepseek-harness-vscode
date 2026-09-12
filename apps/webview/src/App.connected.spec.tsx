@@ -110,6 +110,8 @@ function storeFor(state: AppState): AppStore {
     subscribe: () => () => undefined,
     initialize: vi.fn().mockResolvedValue(undefined),
     reconnect: vi.fn().mockResolvedValue(undefined),
+    readDiagnostics: vi.fn().mockResolvedValue(undefined),
+    showDiagnostics: vi.fn().mockResolvedValue(undefined),
     configureConnection: vi.fn().mockResolvedValue(undefined),
     refreshSessions: vi.fn().mockResolvedValue(undefined),
     searchSessions: vi.fn().mockResolvedValue([]),

@@ -54,6 +54,7 @@ import { RuntimeMissingView } from './features/runtime/RuntimeMissingView.js'
 import { SessionDrawer } from './features/sessions/SessionDrawer.js'
 import { SessionLineage } from './features/subagents/SessionLineage.js'
 import { SubagentDrawer } from './features/subagents/SubagentDrawer.js'
+import { DiagnosticsDrawer } from './features/diagnostics/DiagnosticsDrawer.js'
 import { SettingsDrawer } from './features/settings/SettingsDrawer.js'
 import { TrajectoryView } from './features/trajectory/TrajectoryView.js'
 import { AppHeader } from './features/shell/AppHeader.js'
@@ -120,6 +121,7 @@ const DeferredChangesDrawer = ChangesDrawer
 const DeferredTasksDrawer = TasksDrawer
 const DeferredCheckpointDrawer = CheckpointDrawer
 const DeferredSubagentDrawer = SubagentDrawer
+const DeferredDiagnosticsDrawer = DiagnosticsDrawer
 const DeferredExportDialog = ExportDialog
 const ERROR_TOAST_DISMISS_MS = 8_000
 const CONVERSATION_VIEW_IDS = {
@@ -1089,6 +1091,12 @@ export function App(): ReactElement {
               )
           }}
         />
+        <DeferredDiagnosticsDrawer
+          key={`diagnostics-${activeId}`}
+          onRead={() => store.readDiagnostics()}
+          onReconnect={() => store.reconnect()}
+          onShowOutput={() => store.showDiagnostics()}
+        />
         {dshEventCount > 0 ? (
           <ConversationEventToggle
             count={dshEventCount}
@@ -1300,6 +1308,9 @@ export function App(): ReactElement {
               onAction={runRuntimeAction}
               onRetry={retryConnection}
               onOpenSettings={() => store.setDrawer('settings')}
+              onReadDiagnostics={() => store.readDiagnostics()}
+              onReconnectDiagnostics={() => store.reconnect()}
+              onShowDiagnosticsOutput={() => store.showDiagnostics()}
             />
           ) : (
             <>
@@ -1352,6 +1363,9 @@ export function App(): ReactElement {
                         loadingSessionCatalog={backend.kind === 'connected'}
                         onRetry={retryConnection}
                         onOpenSettings={() => store.setDrawer('settings')}
+                        onReadDiagnostics={() => store.readDiagnostics()}
+                        onReconnectDiagnostics={() => store.reconnect()}
+                        onShowDiagnosticsOutput={() => store.showDiagnostics()}
                       />
                     )}
                   </div>

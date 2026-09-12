@@ -96,9 +96,9 @@ export function deriveFeatureCapabilityProfile(input: CapabilityInput): FeatureC
         'VS Code symbol and diagnostic context capture is available when the active document reports it.',
     },
     'RF-01': {
-      state: 'unavailable',
-      upstream: 'unavailable',
-      reason: 'Recovery and failure diagnostics are not enabled in Slice 0.',
+      state: 'verified-contract',
+      upstream: 'verified-contract',
+      reason: 'Extension-owned redacted diagnostics and reconnect recovery are available.',
     },
   }
 

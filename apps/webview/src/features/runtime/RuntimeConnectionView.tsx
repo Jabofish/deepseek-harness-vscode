@@ -1,5 +1,7 @@
 import type { ReactElement } from 'react'
+import type { DiagnosticsSnapshot } from '@dsh-vscode/domain'
 import type { WebviewBackendState } from '../../app/store.js'
+import { DiagnosticsDrawer } from '../diagnostics/DiagnosticsDrawer.js'
 import { useI18n } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
 
@@ -19,6 +21,9 @@ export interface RuntimeConnectionViewProps {
   readonly loadingSessionCatalog?: boolean
   readonly onRetry?: () => void
   readonly onOpenSettings?: () => void
+  readonly onReadDiagnostics?: () => Promise<DiagnosticsSnapshot | undefined>
+  readonly onReconnectDiagnostics?: () => Promise<void>
+  readonly onShowDiagnosticsOutput?: () => Promise<void>
 }
 
 export function RuntimeConnectionView(props: RuntimeConnectionViewProps): ReactElement {
@@ -31,6 +36,10 @@ export function RuntimeConnectionView(props: RuntimeConnectionViewProps): ReactE
   const message = failure ? props.state.message : undefined
   const retryable =
     (props.state.kind === 'failed' || props.state.kind === 'port-conflict') && props.state.retryable
+  const diagnosticsReady =
+    props.onReadDiagnostics !== undefined &&
+    props.onReconnectDiagnostics !== undefined &&
+    props.onShowDiagnosticsOutput !== undefined
 
   return (
     <section
@@ -68,7 +77,7 @@ export function RuntimeConnectionView(props: RuntimeConnectionViewProps): ReactE
           )
         })}
       </ol>
-      {failure && (retryable || props.onOpenSettings !== undefined) ? (
+      {failure && (retryable || props.onOpenSettings !== undefined || diagnosticsReady) ? (
         <div className="dsh-runtime-connection__actions">
           {!retryable || props.onRetry === undefined ? null : (
             <button className="dsh-button dsh-button--primary" type="button" onClick={props.onRetry}>
@@ -79,6 +88,13 @@ export function RuntimeConnectionView(props: RuntimeConnectionViewProps): ReactE
             <button className="dsh-button dsh-button--ghost" type="button" onClick={props.onOpenSettings}>
               {t('runtime.openConnectionSettings')}
             </button>
+          )}
+          {!diagnosticsReady ? null : (
+            <DiagnosticsDrawer
+              onRead={props.onReadDiagnostics}
+              onReconnect={props.onReconnectDiagnostics}
+              onShowOutput={props.onShowDiagnosticsOutput}
+            />
           )}
         </div>
       ) : null}

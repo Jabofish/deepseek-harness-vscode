@@ -17,6 +17,7 @@ import {
   type DshSettingsSchema,
   type DshRuntimeUpdateProgress,
   type DshUpdateSnapshot,
+  type DiagnosticsSnapshot,
   type DiscoveredModel,
   type DynamicCommand,
   type EditorContextItem,
@@ -94,7 +95,7 @@ import {
   type TimelineNode,
   type TimelineState,
 } from '@dsh-vscode/timeline'
-import { featureResponseSchema } from '@dsh-vscode/webview-protocol'
+import { diagnosticsSnapshotSchema, featureResponseSchema } from '@dsh-vscode/webview-protocol'
 import type { FeatureResponse, HostMessage, WebviewRequest } from '@dsh-vscode/webview-protocol'
 
 import { translate } from '../i18n.js'
@@ -248,6 +249,8 @@ export interface DshSettingsSnapshot {
 export interface AppActions {
   initialize(): Promise<void>
   reconnect(): Promise<void>
+  readDiagnostics(): Promise<DiagnosticsSnapshot | undefined>
+  showDiagnostics(): Promise<void>
   refreshSessions(): Promise<void>
   searchSessions(query: string): Promise<readonly SessionSummary[]>
   refreshCommands(sessionId?: string): Promise<void>
@@ -1818,6 +1821,23 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       invalidateFeedback()
       await client.request<unknown>({ type: 'connection.retry', requestId: requestId() })
       await refresh()
+    },
+    readDiagnostics: async () => {
+      const parsed = diagnosticsSnapshotSchema.safeParse(
+        await client.request<unknown>({ type: 'diagnostics.snapshot', requestId: requestId() }),
+      )
+      if (!parsed.success) return undefined
+      return {
+        extensionVersion: parsed.data.extensionVersion,
+        ...(parsed.data.dshVersion === undefined ? {} : { dshVersion: parsed.data.dshVersion }),
+        state: parsed.data.state,
+        ...(parsed.data.endpointKind === undefined ? {} : { endpointKind: parsed.data.endpointKind }),
+        canReconnect: parsed.data.canReconnect,
+        recentEvents: parsed.data.recentEvents,
+      }
+    },
+    showDiagnostics: async () => {
+      await client.request<unknown>({ type: 'diagnostics.show', requestId: requestId() })
     },
     refreshSessions: refresh,
     searchSessions: async (query) => {

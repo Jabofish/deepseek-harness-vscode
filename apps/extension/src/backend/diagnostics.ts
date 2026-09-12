@@ -3,7 +3,11 @@ import { redactText } from '@dsh-vscode/dsh-adapter'
 
 export type DiagnosticLevel = 'error' | 'warn' | 'info' | 'debug'
 
+const MAX_RECENT_ENTRIES = 32
+
 export class RedactedDiagnostics implements vscode.Disposable {
+  private readonly recentLines: string[] = []
+
   public constructor(
     private readonly channel: Pick<vscode.OutputChannel, 'appendLine' | 'show' | 'dispose'>,
   ) {}
@@ -16,7 +20,16 @@ export class RedactedDiagnostics implements vscode.Disposable {
       event: /^[A-Za-z0-9._-]{1,128}$/.test(event) ? event : 'diagnostic',
       fields: safe,
     })
-    this.channel.appendLine(line.length > 8_192 ? `${line.slice(0, 8_192)}…` : line)
+    const boundedLine = line.length > 8_192 ? `${line.slice(0, 8_192)}…` : line
+    this.channel.appendLine(boundedLine)
+    this.recentLines.push(boundedLine)
+    if (this.recentLines.length > MAX_RECENT_ENTRIES) this.recentLines.splice(0, 1)
+  }
+
+  public recentEvents(limit = MAX_RECENT_ENTRIES): readonly string[] {
+    const boundedLimit = Math.min(MAX_RECENT_ENTRIES, Math.max(0, Math.floor(limit)))
+    if (boundedLimit === 0) return []
+    return this.recentLines.slice(-boundedLimit)
   }
 
   public show(): void {
@@ -29,7 +42,7 @@ export class RedactedDiagnostics implements vscode.Disposable {
 }
 
 const SAFE_FIELD =
-  /^(code|phase|candidateSource|latencyBucket|hostVersion|method|status|attempt|count|durationMs|ownership|requestType|rpcMethod|name)$/
+  /^(code|phase|candidateSource|latencyBucket|hostVersion|method|status|attempt|count|durationMs|ownership|requestType|rpcMethod|name|state)$/
 /** Free-text fields never pass through raw; they get the shared scrubber below. */
 const REDACTED_TEXT_FIELD = /^(message|stack|detail)$/
 

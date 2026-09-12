@@ -1699,6 +1699,7 @@
 .dsh-conversation__actions-grid > .dsh-tasks-popover,
 .dsh-conversation__actions-grid > .dsh-checkpoints-popover,
 .dsh-conversation__actions-grid > .dsh-prompt-templates-popover,
+.dsh-conversation__actions-grid > .dsh-diagnostics-popover,
 .dsh-conversation__actions-grid > .dsh-subagent-tree,
 .dsh-conversation__actions-grid > .dsh-conversation__locale-control {
   display: flex;
@@ -1710,6 +1711,7 @@
 .dsh-conversation__actions-grid .dsh-tasks-popover__trigger,
 .dsh-conversation__actions-grid .dsh-checkpoints-popover__trigger,
 .dsh-conversation__actions-grid .dsh-prompt-templates-popover__trigger,
+.dsh-conversation__actions-grid .dsh-diagnostics-popover__trigger,
 .dsh-conversation__actions-grid .dsh-subagent-tree__trigger,
 .dsh-conversation__actions-grid .dsh-conversation__export-trigger,
 .dsh-conversation__actions-grid .dsh-conversation__locale-switch,
@@ -1777,6 +1779,7 @@
 .dsh-tasks-popover,
 .dsh-checkpoints-popover,
 .dsh-prompt-templates-popover,
+.dsh-diagnostics-popover,
 .dsh-subagent-tree {
   position: relative;
   display: inline-flex;
@@ -1789,6 +1792,7 @@
 .dsh-checkpoints-popover__trigger,
 .dsh-prompt-templates-popover__trigger,
 .dsh-jobs-popover__trigger,
+.dsh-diagnostics-popover__trigger,
 .dsh-subagent-tree__trigger {
   display: inline-flex;
   align-items: center;
@@ -1819,6 +1823,9 @@
 .dsh-prompt-templates-popover__trigger:hover,
 .dsh-prompt-templates-popover__trigger:focus-visible,
 .dsh-prompt-templates-popover__trigger[aria-expanded='true'],
+.dsh-diagnostics-popover__trigger:hover,
+.dsh-diagnostics-popover__trigger:focus-visible,
+.dsh-diagnostics-popover__trigger[aria-expanded='true'],
 .dsh-jobs-popover__trigger:hover,
 .dsh-jobs-popover__trigger:focus-visible,
 .dsh-jobs-popover__trigger[aria-expanded='true'],
@@ -1836,6 +1843,7 @@
 .dsh-checkpoints-popover__trigger > span,
 .dsh-prompt-templates-popover__trigger > span,
 .dsh-jobs-popover__trigger > span,
+.dsh-diagnostics-popover__trigger > span,
 .dsh-subagent-tree__trigger > span {
   min-width: 0;
   overflow: hidden;
@@ -1848,6 +1856,7 @@
 .dsh-checkpoints-popover__trigger > .dsh-icon,
 .dsh-prompt-templates-popover__trigger > .dsh-icon,
 .dsh-jobs-popover__trigger > .dsh-icon,
+.dsh-diagnostics-popover__trigger > .dsh-icon,
 .dsh-subagent-tree__trigger > .dsh-icon {
   width: 1rem;
   height: 1rem;

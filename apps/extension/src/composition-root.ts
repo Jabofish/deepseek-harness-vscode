@@ -10,6 +10,7 @@ import {
   AppError,
   type CheckpointPreview,
   type CheckpointSummary,
+  type DiagnosticsSnapshot,
   FEATURE_CAPABILITY_IDS,
   type AgentConfiguration,
   type BackendEvent,
@@ -943,6 +944,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
   }
   const publishState = (state: BackendState): void => {
     void updateContextKeys(vscode.commands, state)
+    diagnostics.log('info', 'connection-state', { state: state.kind })
     const payload = publicState(state)
     void postEvent('connection.snapshot', payload)
   }
@@ -1693,6 +1695,15 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       diagnostics.show()
       return { shown: true }
     }
+    if (request.type === 'diagnostics.snapshot')
+      return publicValue(
+        publicDiagnosticsSnapshot(
+          coordinator.getState(),
+          extensionVersion,
+          diagnostics.recentEvents(),
+          configuration.read().connection.mode,
+        ),
+      )
     const isTemporarySessionCreate =
       request.type === 'session.create' && currentWorkspaceFolders().length === 0
     if (!vscode.workspace.isTrusted && requiresTrustedWorkspace(request.type) && !isTemporarySessionCreate)
@@ -2803,6 +2814,34 @@ function publicState(state: BackendState): unknown {
     ...(state.kind === 'runtime-missing'
       ? { searchedLocations: publicRuntimeLocations(state.searchedLocations) }
       : {}),
+  }
+}
+
+function publicDiagnosticsSnapshot(
+  state: BackendState,
+  extensionVersion: string,
+  recentEvents: readonly string[],
+  connectionMode: ExtensionSettings['connection']['mode'],
+): DiagnosticsSnapshot {
+  const dshVersion = state.kind === 'connected' ? state.backend.capabilities.dshVersion : undefined
+  const endpointKind =
+    state.kind === 'connected'
+      ? state.backend.ownership
+      : connectionMode === 'custom'
+        ? 'configured'
+        : undefined
+  const canReconnect =
+    state.kind === 'connected' ||
+    state.kind === 'runtime-missing' ||
+    state.kind === 'port-conflict' ||
+    (state.kind === 'failed' && state.retryable)
+  return {
+    extensionVersion,
+    ...(dshVersion === undefined ? {} : { dshVersion }),
+    state: state.kind,
+    ...(endpointKind === undefined ? {} : { endpointKind }),
+    canReconnect,
+    recentEvents: recentEvents.slice(-32),
   }
 }
 

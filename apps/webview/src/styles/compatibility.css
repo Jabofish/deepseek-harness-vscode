@@ -313,6 +313,123 @@
   min-width: 0;
 }
 
+.dsh-diagnostics__header,
+.dsh-diagnostics__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  gap: var(--dsh-space-2);
+}
+
+.dsh-diagnostics__header h2 {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: break-word;
+}
+
+.dsh-diagnostics__details {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--dsh-space-2);
+  margin: 0;
+}
+
+.dsh-diagnostics__details > div {
+  min-width: 0;
+  padding: var(--dsh-space-2);
+  border: var(--dsh-border);
+  border-radius: var(--dsh-radius-sm);
+  background: color-mix(in srgb, var(--dsh-surface-raised) 55%, transparent);
+}
+
+.dsh-diagnostics__details dt {
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-xs);
+}
+
+.dsh-diagnostics__details dd {
+  min-width: 0;
+  margin: var(--dsh-space-1) 0 0;
+  overflow-wrap: anywhere;
+}
+
+.dsh-diagnostics__actions {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
+.dsh-diagnostics__empty,
+.dsh-diagnostics__error,
+.dsh-diagnostics__notice,
+.dsh-diagnostics-popover__status,
+.dsh-diagnostics-popover__failure p {
+  margin: 0;
+  color: var(--dsh-muted);
+}
+
+.dsh-diagnostics__error {
+  color: var(--dsh-danger);
+}
+
+.dsh-diagnostics__notice {
+  color: var(--dsh-success);
+}
+
+.dsh-diagnostics-popover {
+  position: relative;
+  display: inline-flex;
+  min-width: 0;
+}
+
+.dsh-diagnostics-popover__trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--dsh-control-height);
+  min-height: var(--dsh-control-height);
+  gap: var(--dsh-space-1);
+  padding: var(--dsh-space-1) var(--dsh-space-2);
+  border: 1px solid var(--dsh-border-color);
+  border-radius: var(--dsh-radius-md);
+  color: var(--dsh-muted);
+  background: transparent;
+  font: inherit;
+  font-size: 0.78rem;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.dsh-diagnostics-popover__trigger > .dsh-icon {
+  width: 1rem;
+  height: 1rem;
+  flex: 0 0 auto;
+}
+
+.dsh-diagnostics-popover__menu {
+  width: min(32rem, calc(100vw - 1rem));
+  padding: 0;
+}
+
+.dsh-diagnostics-popover__menu .dsh-diagnostics {
+  width: auto;
+  margin: 0;
+  padding: var(--dsh-space-3);
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+}
+
+.dsh-diagnostics-popover__failure {
+  display: grid;
+  gap: var(--dsh-space-2);
+  padding: var(--dsh-space-3);
+}
+
+.dsh-diagnostics-popover__failure p[role='alert'] {
+  color: var(--dsh-danger);
+}
+
 .dsh-jobs h2,
 .dsh-subagents h2 {
   margin: 0;
