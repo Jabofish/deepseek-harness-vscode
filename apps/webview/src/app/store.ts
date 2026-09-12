@@ -67,6 +67,7 @@ import {
   type SessionSummary,
   type SkillDescriptor,
   type TeamActivityView,
+  type TaskListScope,
   type TaskSummary,
   type TurnEndFailure,
   type SubagentCatalog,
@@ -227,6 +228,9 @@ export interface AppState {
   readonly changesLoading: boolean
   readonly tasks: readonly TaskSummary[]
   readonly tasksLoading: boolean
+  readonly taskScope: TaskListScope
+  readonly tasksComplete: boolean
+  readonly tasksOmittedSessions: number
   readonly checkpoints: readonly CheckpointSummary[]
   readonly checkpointsLoading: boolean
   readonly promptTemplates: readonly PromptTemplateSummary[]
@@ -321,7 +325,7 @@ export interface AppActions {
   getChangeDetail(changeId: string): Promise<ChangeDetail | undefined>
   markChangeReviewed(changeId: string, reviewState: ChangeReviewState): Promise<ChangeSetFile | undefined>
   openChange(changeId: string): Promise<void>
-  refreshTasks(sessionId?: string, includeCompleted?: boolean): Promise<void>
+  refreshTasks(sessionId?: string, includeCompleted?: boolean, scope?: TaskListScope): Promise<void>
   getTask(taskId: string): Promise<TaskSummary | undefined>
   stopTask(
     taskId: string,
@@ -478,6 +482,9 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     changesLoading: false,
     tasks: [],
     tasksLoading: false,
+    taskScope: 'current-session',
+    tasksComplete: true,
+    tasksOmittedSessions: 0,
     checkpoints: [],
     checkpointsLoading: false,
     promptTemplates: [],
@@ -904,21 +911,39 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   const refreshTasksState = async (
     sessionId: string | undefined = state.activeSessionId,
     includeCompleted = false,
+    scope: TaskListScope = 'current-session',
   ): Promise<void> => {
-    if (typeof client.featureRequest !== 'function' || sessionId === undefined) return
+    const targetSessionId = scope === 'workspace' ? undefined : sessionId
+    const expectedActiveSessionId = state.activeSessionId
+    if (
+      typeof client.featureRequest !== 'function' ||
+      (scope === 'current-session' && targetSessionId === undefined)
+    )
+      return
     const generation = ++tasksRefreshGeneration
     setState((current) => ({ ...current, tasksLoading: true }))
     try {
       const result = await client.featureRequest({
         type: 'tasks.list',
         requestId: requestId(),
-        payload: { sessionId, includeCompleted, limit: 200 },
+        payload: {
+          ...(targetSessionId === undefined ? {} : { sessionId: targetSessionId }),
+          scope,
+          includeCompleted,
+          limit: 200,
+        },
       })
-      const tasks = parseFeatureTasksResult(result)
-      if (tasks !== undefined)
+      const snapshot = parseFeatureTasksResult(result)
+      if (snapshot !== undefined)
         setState((current) =>
-          generation === tasksRefreshGeneration && current.activeSessionId === sessionId
-            ? { ...current, tasks }
+          generation === tasksRefreshGeneration && current.activeSessionId === expectedActiveSessionId
+            ? {
+                ...current,
+                tasks: snapshot.items,
+                taskScope: snapshot.scope,
+                tasksComplete: snapshot.complete,
+                tasksOmittedSessions: snapshot.omittedSessions,
+              }
             : current,
         )
     } finally {
@@ -1248,8 +1273,15 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
           }
           if (message.name === 'changes.updated' && message.change.sessionId === state.activeSessionId)
             void refreshChangesState(message.change.sessionId)
-          if (message.name === 'tasks.updated' && message.task.sessionId === state.activeSessionId)
-            void refreshTasksState(message.task.sessionId)
+          if (
+            message.name === 'tasks.updated' &&
+            (state.taskScope === 'workspace' || message.task.sessionId === state.activeSessionId)
+          )
+            void refreshTasksState(
+              state.taskScope === 'workspace' ? undefined : message.task.sessionId,
+              false,
+              state.taskScope,
+            )
           if (message.name === 'checkpoint.updated' && message.checkpoint.sessionId === state.activeSessionId)
             void refreshCheckpointsState(message.checkpoint.sessionId)
         })
@@ -1398,6 +1430,9 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
             changesLoading: false,
             tasks: [],
             tasksLoading: false,
+            taskScope: 'current-session',
+            tasksComplete: true,
+            tasksOmittedSessions: 0,
             checkpoints: [],
             checkpointsLoading: false,
             promptTemplates: [],
@@ -1556,6 +1591,9 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
             changesLoading: false,
             tasks: [],
             tasksLoading: false,
+            taskScope: 'current-session',
+            tasksComplete: true,
+            tasksOmittedSessions: 0,
             checkpoints: [],
             checkpointsLoading: false,
             promptTemplates: [],
@@ -1767,6 +1805,15 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     },
     get tasksLoading() {
       return state.tasksLoading
+    },
+    get taskScope() {
+      return state.taskScope
+    },
+    get tasksComplete() {
+      return state.tasksComplete
+    },
+    get tasksOmittedSessions() {
+      return state.tasksOmittedSessions
     },
     get checkpoints() {
       return state.checkpoints
@@ -2657,7 +2704,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         requestId: requestId(),
         payload: { taskId },
       })
-      return parseFeatureTasksResult(result)?.[0]
+      return parseFeatureTasksResult(result)?.items[0]
     },
     stopTask: async (taskId, mode, taskRevision) => {
       if (typeof client.featureRequest !== 'function') return undefined
@@ -2666,11 +2713,11 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         requestId: requestId(),
         payload: { taskId, mode, taskRevision },
       })
-      const task = parseFeatureTasksResult(result)?.[0]
+      const task = parseFeatureTasksResult(result)?.items[0]
       if (task !== undefined)
         setState((current) => ({
           ...current,
-          tasks: current.tasks.map((entry) => (entry.taskId === task.taskId ? task : entry)),
+          tasks: mergeTask(current.tasks, task),
         }))
       return task
     },
@@ -2681,11 +2728,11 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         requestId: requestId(),
         payload: { taskId, interactionId, answer },
       })
-      const task = parseFeatureTasksResult(result)?.[0]
+      const task = parseFeatureTasksResult(result)?.items[0]
       if (task !== undefined)
         setState((current) => ({
           ...current,
-          tasks: current.tasks.map((entry) => (entry.taskId === task.taskId ? task : entry)),
+          tasks: mergeTask(current.tasks, task),
         }))
       return task
     },
@@ -4481,6 +4528,9 @@ function applyHostMessage(
       changesLoading: false,
       tasks: [],
       tasksLoading: false,
+      taskScope: 'current-session',
+      tasksComplete: true,
+      tasksOmittedSessions: 0,
       promptTemplates: [],
       promptTemplatesLoading: false,
       promptMode: 'ask',
@@ -5776,6 +5826,7 @@ type FeatureSuccessResponse = Extract<FeatureResponse, { readonly ok: true }>
 type FeatureResponsePayload = FeatureSuccessResponse['payload']
 type FeatureChangeSummary = Extract<FeatureResponsePayload, { readonly kind: 'changes' }>['items'][number]
 type FeatureChangeDetailPayload = Extract<FeatureResponsePayload, { readonly kind: 'change.detail' }>
+type FeatureTaskList = Extract<FeatureResponsePayload, { readonly kind: 'tasks' }>
 type FeatureTaskSummary = Extract<FeatureResponsePayload, { readonly kind: 'tasks' }>['items'][number]
 type FeatureCheckpointSummary = Extract<
   FeatureResponsePayload,
@@ -5796,7 +5847,14 @@ type FeaturePromptTemplateInsertion = Extract<
 >
 type FeatureOperationPayload = Extract<FeatureResponsePayload, { readonly kind: 'operation' }>
 
-function parseFeatureTasksResult(value: unknown): readonly TaskSummary[] | undefined {
+function parseFeatureTasksResult(value: unknown):
+  | {
+      readonly items: readonly TaskSummary[]
+      readonly scope: TaskListScope
+      readonly complete: boolean
+      readonly omittedSessions: number
+    }
+  | undefined {
   const parsed = featureResponseSchema.safeParse({
     type: 'feature.response',
     requestId: 'store-parse',
@@ -5804,7 +5862,13 @@ function parseFeatureTasksResult(value: unknown): readonly TaskSummary[] | undef
     payload: value,
   })
   if (!parsed.success || parsed.data.ok !== true || parsed.data.payload.kind !== 'tasks') return undefined
-  return parsed.data.payload.items.map(parseFeatureTaskSummary)
+  const payload: FeatureTaskList = parsed.data.payload
+  return {
+    items: payload.items.map(parseFeatureTaskSummary),
+    scope: payload.scope,
+    complete: payload.complete,
+    omittedSessions: payload.omittedSessions,
+  }
 }
 
 function parseFeatureCheckpointsResult(value: unknown): readonly CheckpointSummary[] | undefined {
@@ -5935,6 +5999,7 @@ function parseFeatureTaskSummary(item: FeatureTaskSummary): TaskSummary {
     workspaceFolderId: item.workspaceFolderId,
     kind: item.kind,
     title: item.title,
+    ...(item.sessionTitle === undefined ? {} : { sessionTitle: item.sessionTitle }),
     status: item.status,
     needsUserAction: item.needsUserAction,
     ...(item.actionKind === undefined ? {} : { actionKind: item.actionKind }),
@@ -5954,6 +6019,12 @@ function parseFeatureTaskSummary(item: FeatureTaskSummary): TaskSummary {
     ...(item.connectionGeneration === undefined ? {} : { connectionGeneration: item.connectionGeneration }),
     taskRevision: item.taskRevision,
   }
+}
+
+function mergeTask(tasks: readonly TaskSummary[], task: TaskSummary): readonly TaskSummary[] {
+  const index = tasks.findIndex((entry) => entry.taskId === task.taskId)
+  if (index < 0) return [...tasks, task]
+  return tasks.map((entry, entryIndex) => (entryIndex === index ? task : entry))
 }
 
 function parseFeatureChangesResult(value: unknown): readonly ChangeSetFile[] | undefined {

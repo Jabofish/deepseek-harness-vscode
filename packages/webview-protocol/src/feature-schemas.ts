@@ -192,6 +192,7 @@ export const taskSummarySchema = z
     workspaceFolderId: id,
     kind: z.enum(['session', 'subagent', 'job', 'goal', 'interaction', 'unknown']),
     title: safeLabel,
+    sessionTitle: safeLabel.optional(),
     status: z.enum([
       'running',
       'idle',
@@ -464,6 +465,7 @@ export const featureRequestSchema = z.discriminatedUnion('type', [
         .object({
           workspaceFolderId: id.optional(),
           sessionId: id.optional(),
+          scope: z.enum(['current-session', 'workspace']).optional(),
           includeCompleted: z.boolean().optional(),
           cursor: z.string().max(2_048).optional(),
           limit: z.number().int().min(1).max(200).optional(),
@@ -648,7 +650,16 @@ const featureResponsePayloadSchema = z.discriminatedUnion('kind', [
       truncated: z.boolean().optional(),
     })
     .strict(),
-  z.object({ kind: z.literal('tasks'), items: z.array(taskSummarySchema).max(200) }).strict(),
+  z
+    .object({
+      kind: z.literal('tasks'),
+      items: z.array(taskSummarySchema).max(200),
+      scope: z.enum(['current-session', 'workspace']),
+      source: z.enum(['current-session', 'workspace-composed']),
+      complete: z.boolean(),
+      omittedSessions: z.number().int().nonnegative().max(64),
+    })
+    .strict(),
   z
     .object({
       kind: z.literal('checkpoints'),

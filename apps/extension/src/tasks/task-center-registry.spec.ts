@@ -31,6 +31,8 @@ function backend(
     readonly cancel?: ReturnType<typeof vi.fn>
     readonly interrupt?: ReturnType<typeof vi.fn>
     readonly subagentMode?: 'one-shot' | 'continuable'
+    readonly sessions?: readonly SessionSummary[]
+    readonly sessionErrors?: readonly string[]
   } = {},
 ): TestBackend {
   const session =
@@ -59,6 +61,14 @@ function backend(
   }
   const cancel = overrides.cancel ?? vi.fn().mockResolvedValue(undefined)
   const interrupt = overrides.interrupt ?? vi.fn().mockResolvedValue(undefined)
+  const sessionItems = overrides.sessions ?? [session]
+  const sessionById = new Map(sessionItems.map((item) => [item.id, item]))
+  const sessionErrors = new Set(overrides.sessionErrors ?? [])
+  const getSession = vi.fn().mockImplementation((sessionId: string) => {
+    if (sessionErrors.has(sessionId)) return Promise.reject(new Error(`Cannot read ${sessionId}`))
+    const found = sessionById.get(sessionId)
+    return Promise.resolve(found ?? session)
+  })
   return {
     connection: {
       endpoint: { host: '127.0.0.1', port: 3080, baseUrl: 'http://127.0.0.1:3080' },
@@ -68,7 +78,8 @@ function backend(
       connectionGeneration: 1,
     },
     sessions: {
-      get: vi.fn().mockResolvedValue(session),
+      list: vi.fn().mockResolvedValue({ items: sessionItems }),
+      get: getSession,
       cancel,
     },
     jobs: {
@@ -100,6 +111,9 @@ function backend(
       respondToPermission: vi.fn().mockResolvedValue(undefined),
       respondToQuestion: vi.fn().mockResolvedValue(undefined),
     },
+    workspaces: {
+      listArchivedSessionIds: vi.fn().mockResolvedValue([]),
+    },
     events,
   } as unknown as TestBackend
 }
@@ -118,6 +132,84 @@ describe('TaskCenterRegistry', () => {
     expect(tasks).toHaveLength(4)
     expect(tasks.every((task) => task.workspaceFolderId === 'folder-1')).toBe(true)
     expect(tasks.every((task) => task.canProcessStop === false)).toBe(true)
+  })
+
+  it('composes a bounded workspace view from authoritative session repositories', async () => {
+    const background: SessionSummary = {
+      id: 'session-2',
+      workspaceId: 'dsh-workspace-1',
+      title: 'Background session',
+      blank: false,
+      status: 'running',
+      createdAt: '2026-08-29T00:02:00.000Z',
+      updatedAt: '2026-08-29T00:03:00.000Z',
+    }
+    const current = backend({
+      sessions: [
+        {
+          id: 'session-1',
+          workspaceId: 'dsh-workspace-1',
+          title: 'Main session',
+          blank: false,
+          status: 'running',
+          createdAt: '2026-08-29T00:00:00.000Z',
+          updatedAt: '2026-08-29T00:01:00.000Z',
+        },
+        background,
+      ],
+    })
+    const registry = new TaskCenterRegistry({
+      resolveSessionWorkspaceFolderId: () => 'folder-1',
+      workspaceFolderIds: () => ['folder-1'],
+      isWorkspaceFolderOpen: () => true,
+    })
+    registry.attach(current, () => 'folder-1')
+    registry.setCurrentSession('session-1')
+
+    const snapshot = await registry.listSnapshot({ scope: 'workspace', includeCompleted: true })
+
+    expect(snapshot).toMatchObject({
+      scope: 'workspace',
+      source: 'workspace-composed',
+      complete: false,
+      omittedSessions: 0,
+    })
+    expect(new Set(snapshot.items.map((task) => task.sessionId))).toEqual(new Set(['session-1', 'session-2']))
+    expect(snapshot.items.filter((task) => task.kind !== 'session').every((task) => task.sessionTitle)).toBe(
+      true,
+    )
+    expect(Reflect.get(current.sessions, 'list')).toHaveBeenCalledWith({}, undefined)
+
+    const backgroundTask = snapshot.items.find((task) => task.taskId === 'session:session-2')
+    if (backgroundTask === undefined) throw new Error('workspace session task was not projected')
+    registry.setCurrentSession('session-3')
+    await registry.stop(backgroundTask.taskId, 'session-cancel', backgroundTask.taskRevision)
+    expect(Reflect.get(current.sessions, 'cancel')).toHaveBeenCalledWith('session-2', undefined)
+  })
+
+  it('keeps readable workspace tasks bounded when one session read fails', async () => {
+    const background: SessionSummary = {
+      id: 'session-2',
+      workspaceId: 'dsh-workspace-1',
+      title: 'Unavailable session',
+      blank: false,
+      status: 'running',
+      createdAt: '2026-08-29T00:02:00.000Z',
+      updatedAt: '2026-08-29T00:03:00.000Z',
+    }
+    const current = backend({ sessions: [background], sessionErrors: ['session-2'] })
+    const registry = new TaskCenterRegistry({
+      resolveSessionWorkspaceFolderId: () => 'folder-1',
+      workspaceFolderIds: () => ['folder-1'],
+      isWorkspaceFolderOpen: () => true,
+    })
+    registry.attach(current, () => 'folder-1')
+
+    const snapshot = await registry.listSnapshot({ scope: 'workspace' })
+
+    expect(snapshot.items).toEqual([])
+    expect(snapshot.omittedSessions).toBe(1)
+    expect(snapshot.complete).toBe(false)
   })
 
   it('uses a revision compare-and-set and only cancels a DSH session', async () => {

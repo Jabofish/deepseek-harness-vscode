@@ -59,7 +59,8 @@ export function deriveFeatureCapabilityProfile(input: CapabilityInput): FeatureC
     ? {
         state: 'compatibility-fallback',
         upstream: pinned ? 'verified-contract' : 'compatibility-fallback',
-        reason: 'The pinned DSH task source is session-scoped; cross-session aggregation is not verified.',
+        reason:
+          'The pinned DSH task source is session-scoped; workspace composition is available but global task seed/replay/ownership is not verified.',
       }
     : {
         state: 'unavailable',

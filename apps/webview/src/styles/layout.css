@@ -1982,6 +1982,48 @@
   overflow-wrap: anywhere;
 }
 
+.dsh-tasks-popover__scope {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--dsh-space-1);
+}
+
+.dsh-tasks-popover__scope-button {
+  min-width: 0;
+  min-height: 1.75rem;
+  padding: var(--dsh-space-1) var(--dsh-space-2);
+  border: 1px solid var(--dsh-border-color);
+  border-radius: var(--dsh-radius-sm);
+  color: var(--dsh-muted);
+  background: var(--dsh-surface-raised);
+  font: inherit;
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
+.dsh-tasks-popover__scope-button:hover:not(:disabled),
+.dsh-tasks-popover__scope-button:focus-visible,
+.dsh-tasks-popover__scope-button[aria-pressed='true'] {
+  border-color: var(--dsh-border-color);
+  color: var(--dsh-text);
+  background: var(--dsh-surface-hover);
+  outline: none;
+}
+
+.dsh-tasks-popover__scope-button:disabled {
+  cursor: default;
+  opacity: 0.8;
+}
+
+.dsh-tasks-popover__notice {
+  padding: var(--dsh-space-1) var(--dsh-space-2);
+  border-inline-start: 2px solid var(--dsh-warning);
+  color: var(--dsh-muted);
+  font-size: 0.72rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
 .dsh-changes-popover__error {
   min-width: 0;
   padding: var(--dsh-space-1) 0;
@@ -2087,6 +2129,7 @@
 .dsh-changes-popover__status-label,
 .dsh-changes-popover__evidence,
 .dsh-tasks-popover__kind,
+.dsh-tasks-popover__session,
 .dsh-tasks-popover__status,
 .dsh-prompt-templates-popover__row-main em {
   flex: 0 0 auto;

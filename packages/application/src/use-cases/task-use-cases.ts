@@ -1,10 +1,28 @@
-import type { TaskControlMode, TaskListQuery, TaskRepository, TaskSummary } from '@dsh-vscode/domain'
+import type {
+  TaskControlMode,
+  TaskListQuery,
+  TaskListSnapshot,
+  TaskRepository,
+  TaskSummary,
+} from '@dsh-vscode/domain'
 
 export class TaskUseCases {
   public constructor(private readonly tasks: TaskRepository) {}
 
   public list(query?: TaskListQuery, signal?: AbortSignal): Promise<readonly TaskSummary[]> {
     return this.tasks.list(query, signal)
+  }
+
+  public async listSnapshot(query?: TaskListQuery, signal?: AbortSignal): Promise<TaskListSnapshot> {
+    if (this.tasks.listSnapshot !== undefined) return this.tasks.listSnapshot(query, signal)
+    const scope = query?.scope ?? 'current-session'
+    return {
+      scope: scope === 'workspace' ? 'current-session' : scope,
+      source: 'current-session',
+      items: await this.tasks.list(query, signal),
+      complete: scope !== 'workspace',
+      omittedSessions: 0,
+    }
   }
 
   public get(taskId: string, signal?: AbortSignal): Promise<TaskSummary> {

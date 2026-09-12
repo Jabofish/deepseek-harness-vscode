@@ -29,6 +29,9 @@ import {
   type QuestionAnswer,
   type EditorContextItem,
   type SessionDetail,
+  type SessionSummary,
+  type TaskListSnapshot,
+  type TaskListScope,
   type TaskSummary,
   type WorkspaceSummary,
 } from '@dsh-vscode/domain'
@@ -753,7 +756,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     const folder = currentWorkspaceFolder()
     return folder === undefined ? undefined : workspaceFolderId(folder)
   }
-  const workspaceFolderIdForSession = (session: SessionDetail): string | undefined => {
+  const workspaceFolderIdForSession = (session: Pick<SessionSummary, 'cwd'>): string | undefined => {
     const folders = currentWorkspaceFolders()
     if (folders.length === 0) return undefined
     if (session.cwd !== undefined) {
@@ -824,6 +827,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
   })
   const promptTemplateUseCases = new PromptTemplateUseCases(promptTemplateStore)
   let taskSessionId: string | undefined
+  let taskListScope: TaskListScope = 'current-session'
   const postTaskFeatureEvent = (task: TaskSummary): Promise<boolean> => {
     let connection: DshBackend['connection']
     try {
@@ -875,13 +879,25 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     )
   }
   const taskRegistry = new TaskCenterRegistry({
+    resolveSessionWorkspaceFolderId: (session) =>
+      session.cwd === undefined ? undefined : workspaceFolderIdForSession(session),
+    workspaceFolderIds: () => currentWorkspaceFolders().map((folder) => workspaceFolderId(folder)),
+    isWorkspaceFolderOpen: (workspaceId) =>
+      currentWorkspaceFolders().some((folder) => workspaceFolderId(folder) === workspaceId),
     onChange: (sessionId) => {
+      if (taskListScope === 'workspace') {
+        void taskRegistry
+          .listSnapshot({ scope: 'workspace', includeCompleted: true, limit: 200 })
+          .then((snapshot) => Promise.all(snapshot.items.map((task) => postTaskFeatureEvent(task))))
+          .catch(() => undefined)
+        return
+      }
       if (taskSessionId !== sessionId) return
       const workspaceId = currentWorkspaceFolderId()
       if (workspaceId === undefined) return
       void taskRegistry
-        .list({ sessionId, workspaceFolderId: workspaceId, includeCompleted: true, limit: 200 })
-        .then((tasks) => Promise.all(tasks.map((task) => postTaskFeatureEvent(task))))
+        .listSnapshot({ sessionId, workspaceFolderId: workspaceId, includeCompleted: true, limit: 200 })
+        .then((snapshot) => Promise.all(snapshot.items.map((task) => postTaskFeatureEvent(task))))
         .catch(() => undefined)
     },
   })
@@ -1422,6 +1438,41 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       }
     }
     if (request.type === 'tasks.list') {
+      const scope = request.payload.scope ?? 'current-session'
+      if (scope === 'workspace') {
+        if (request.payload.sessionId !== undefined)
+          throw new AppError({
+            code: 'INVALID_CONFIGURATION',
+            message: 'A workspace task view cannot target one session.',
+            retryable: false,
+          })
+        const requestedWorkspaceFolderId =
+          request.payload.workspaceFolderId === undefined
+            ? undefined
+            : featureWorkspaceFolderId(request.payload.workspaceFolderId, undefined)
+        if (requestedWorkspaceFolderId === undefined && currentWorkspaceFolders().length === 0)
+          throw new AppError({
+            code: 'RESOURCE_NOT_OWNED',
+            message: 'Open a workspace folder before viewing workspace tasks.',
+            retryable: false,
+          })
+        taskListScope = 'workspace'
+        const snapshot = await taskUseCases.listSnapshot(
+          {
+            scope,
+            ...(requestedWorkspaceFolderId === undefined
+              ? {}
+              : { workspaceFolderId: requestedWorkspaceFolderId }),
+            ...(request.payload.includeCompleted === undefined
+              ? {}
+              : { includeCompleted: request.payload.includeCompleted }),
+            ...(request.payload.cursor === undefined ? {} : { cursor: request.payload.cursor }),
+            ...(request.payload.limit === undefined ? {} : { limit: request.payload.limit }),
+          },
+          signal,
+        )
+        return featureTaskList(snapshot)
+      }
       const sessionId = request.payload.sessionId ?? taskSessionId
       if (sessionId === undefined)
         throw new AppError({
@@ -1432,11 +1483,13 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       const session = await requireCurrentWorkspaceSession(sessionId, signal)
       const currentWorkspaceId = featureWorkspaceFolderId(request.payload.workspaceFolderId, session)
       taskSessionId = sessionId
+      taskListScope = 'current-session'
       taskRegistry.setCurrentSession(sessionId)
-      const tasks = await taskUseCases.list(
+      const snapshot = await taskUseCases.listSnapshot(
         {
           workspaceFolderId: currentWorkspaceId,
           sessionId,
+          scope,
           ...(request.payload.includeCompleted === undefined
             ? {}
             : { includeCompleted: request.payload.includeCompleted }),
@@ -1445,7 +1498,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
         },
         signal,
       )
-      return { kind: 'tasks', items: tasks.map(featureTaskSummary) }
+      return featureTaskList(snapshot)
     }
     if (request.type === 'tasks.open') {
       const task = await taskUseCases.get(request.payload.taskId, signal)
@@ -1457,7 +1510,13 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       }
       taskSessionId = task.sessionId
       taskRegistry.setCurrentSession(task.sessionId)
-      return { kind: 'tasks', items: [featureTaskSummary(task)] }
+      return featureTaskList({
+        scope: 'current-session',
+        source: 'current-session',
+        items: [task],
+        complete: true,
+        omittedSessions: 0,
+      })
     }
     if (request.type === 'tasks.stop') {
       const current = await taskUseCases.get(request.payload.taskId, signal)
@@ -1477,7 +1536,13 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
         request.payload.taskRevision,
         signal,
       )
-      return { kind: 'tasks', items: [featureTaskSummary(task)] }
+      return featureTaskList({
+        scope: 'current-session',
+        source: 'current-session',
+        items: [task],
+        complete: true,
+        omittedSessions: 0,
+      })
     }
     if (request.type === 'tasks.answer') {
       const current = await taskUseCases.get(request.payload.taskId, signal)
@@ -1497,7 +1562,13 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
         request.payload.answer,
         signal,
       )
-      return { kind: 'tasks', items: [featureTaskSummary(task)] }
+      return featureTaskList({
+        scope: 'current-session',
+        source: 'current-session',
+        items: [task],
+        complete: true,
+        omittedSessions: 0,
+      })
     }
     if (request.type === 'prompt.template.list') {
       const owner = await promptTemplateOwner(
@@ -3107,6 +3178,7 @@ function featureTaskSummary(
     workspaceFolderId: task.workspaceFolderId,
     kind: task.kind === 'goal' || task.kind === 'interaction' ? task.kind : task.kind,
     title: task.title,
+    ...(task.sessionTitle === undefined ? {} : { sessionTitle: task.sessionTitle }),
     status: task.status,
     needsUserAction: task.needsUserAction,
     ...(task.actionKind === undefined ? {} : { actionKind: task.actionKind }),
@@ -3125,6 +3197,19 @@ function featureTaskSummary(
     ...(task.backendInstanceId === undefined ? {} : { backendInstanceId: task.backendInstanceId }),
     ...(task.connectionGeneration === undefined ? {} : { connectionGeneration: task.connectionGeneration }),
     taskRevision: task.taskRevision,
+  }
+}
+
+function featureTaskList(
+  snapshot: TaskListSnapshot,
+): Extract<FeatureResponsePayload, { readonly kind: 'tasks' }> {
+  return {
+    kind: 'tasks',
+    items: snapshot.items.map(featureTaskSummary),
+    scope: snapshot.scope,
+    source: snapshot.source,
+    complete: snapshot.complete,
+    omittedSessions: snapshot.omittedSessions,
   }
 }
 

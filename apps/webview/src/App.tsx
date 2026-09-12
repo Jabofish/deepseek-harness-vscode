@@ -1024,7 +1024,12 @@ export function App(): ReactElement {
           key={`tasks-${activeId}`}
           tasks={state.tasks}
           loading={state.tasksLoading}
-          onRefresh={() => store.refreshTasks(activeId)}
+          scope={state.taskScope}
+          complete={state.tasksComplete}
+          omittedSessions={state.tasksOmittedSessions}
+          alwaysVisible
+          onRefresh={() => store.refreshTasks(activeId, false, state.taskScope)}
+          onScopeChange={(scope) => store.refreshTasks(activeId, false, scope)}
           onOpen={async (task) => {
             if (task.sessionId === undefined) return
             const childId = task.kind === 'subagent' ? task.sourceId : undefined
@@ -1040,12 +1045,12 @@ export function App(): ReactElement {
           }}
           onStop={async (task) => {
             await store.stopTask(task.taskId, 'session-cancel', task.taskRevision)
-            await store.refreshTasks(activeId)
+            await store.refreshTasks(activeId, false, state.taskScope)
           }}
           onAnswer={async (task, answer) => {
             if (task.interactionId === undefined) return
             await store.answerTask(task.taskId, task.interactionId, answer)
-            await store.refreshTasks(activeId)
+            await store.refreshTasks(activeId, false, state.taskScope)
           }}
         />
         <DeferredCheckpointDrawer
@@ -1173,6 +1178,9 @@ export function App(): ReactElement {
     state.subagents,
     state.tasks,
     state.tasksLoading,
+    state.taskScope,
+    state.tasksComplete,
+    state.tasksOmittedSessions,
     store,
     t,
     showDshEvents,

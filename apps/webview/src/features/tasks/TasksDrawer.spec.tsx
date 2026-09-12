@@ -71,4 +71,29 @@ describe('TasksDrawer', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Answer' }))
     await waitFor(() => expect(onAnswer).toHaveBeenCalledWith(task, 'yes'))
   })
+
+  it('labels workspace scope and reports incomplete session reads', () => {
+    render(
+      <I18nProvider>
+        <TasksDrawer
+          tasks={[{ ...task, sessionTitle: 'Background session' }]}
+          loading={false}
+          scope="workspace"
+          complete={false}
+          omittedSessions={1}
+          onRefresh={vi.fn().mockResolvedValue(undefined)}
+          onScopeChange={vi.fn().mockResolvedValue(undefined)}
+          onOpen={vi.fn().mockResolvedValue(undefined)}
+          onStop={vi.fn().mockResolvedValue(undefined)}
+          onAnswer={vi.fn().mockResolvedValue(undefined)}
+        />
+      </I18nProvider>,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '1 needs input' }))
+
+    expect(screen.getByRole('dialog', { name: 'Workspace tasks' })).toBeTruthy()
+    expect(screen.getByText('1 workspace sessions could not be read.')).toBeTruthy()
+    expect(screen.getByText('Background session')).toBeTruthy()
+  })
 })

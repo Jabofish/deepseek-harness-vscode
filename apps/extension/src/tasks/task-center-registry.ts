@@ -5,6 +5,7 @@ import {
   type DshBackend,
   type GoalView,
   type JobView,
+  type TaskListSnapshot,
   type SessionSummary,
   type SubagentCatalog,
   type TaskListQuery,
@@ -14,11 +15,19 @@ import {
 } from '@dsh-vscode/domain'
 
 const MAX_TASKS = 200
+const MAX_WORKSPACE_SESSIONS = 64
+const SESSION_READ_CONCURRENCY = 4
 
 export interface TaskCenterRegistryOptions {
   readonly now?: () => number
   /** Called with a session id after a structured source event arrives. */
   readonly onChange?: (sessionId: string) => void
+  /** Resolve a DSH session summary to an open VS Code workspace folder. */
+  readonly resolveSessionWorkspaceFolderId?: (session: SessionSummary) => string | undefined
+  /** Return all currently open VS Code workspace folder ids. */
+  readonly workspaceFolderIds?: () => readonly string[]
+  /** Check that a task's workspace folder is still open before control actions. */
+  readonly isWorkspaceFolderOpen?: (workspaceFolderId: string) => boolean
 }
 
 interface PendingInteraction {
@@ -30,13 +39,14 @@ interface PendingInteraction {
 }
 
 /**
- * Current-session task projection.
+ * Task-center projection.
  *
  * The pinned DSH contract does not prove a global task seed/replay/ownership
- * API. This registry therefore composes only the authoritative repositories
- * already owned by the active backend, and never invents a cross-session
- * view. `process-stop` is intentionally unavailable unless a future managed
- * process control port is explicitly supplied.
+ * API. Workspace scope therefore composes only the authoritative session,
+ * goal, job, and subagent repositories already owned by the active backend.
+ * It is deliberately reported as a partial `workspace-composed` source;
+ * `process-stop` is intentionally unavailable unless a future managed process
+ * control port is explicitly supplied.
  */
 export class TaskCenterRegistry implements TaskRepository {
   private readonly entries = new Map<string, TaskSummary>()
@@ -45,15 +55,22 @@ export class TaskCenterRegistry implements TaskRepository {
   private readonly interactions = new Map<string, PendingInteraction>()
   private readonly now: () => number
   private readonly onChange: TaskCenterRegistryOptions['onChange']
+  private readonly resolveSessionWorkspaceFolderId: TaskCenterRegistryOptions['resolveSessionWorkspaceFolderId']
+  private readonly workspaceFolderIds: TaskCenterRegistryOptions['workspaceFolderIds']
+  private readonly isWorkspaceFolderOpen: TaskCenterRegistryOptions['isWorkspaceFolderOpen']
   private backend: DshBackend | undefined
   private workspaceFolderId: (() => string | undefined) | undefined
   private unsubscribe: (() => void) | undefined
   private currentSessionId: string | undefined
   private attachmentGeneration = 0
+  private readonly workspaceTaskIds = new Set<string>()
 
   public constructor(options: TaskCenterRegistryOptions = {}) {
     this.now = options.now ?? (() => Date.now())
     this.onChange = options.onChange
+    this.resolveSessionWorkspaceFolderId = options.resolveSessionWorkspaceFolderId
+    this.workspaceFolderIds = options.workspaceFolderIds
+    this.isWorkspaceFolderOpen = options.isWorkspaceFolderOpen
   }
 
   public attach(backend: DshBackend, workspaceFolderId: () => string | undefined): void {
@@ -76,6 +93,7 @@ export class TaskCenterRegistry implements TaskRepository {
     this.currentSessionId = undefined
     this.entries.clear()
     this.interactions.clear()
+    this.workspaceTaskIds.clear()
   }
 
   public dispose(): void {
@@ -89,6 +107,15 @@ export class TaskCenterRegistry implements TaskRepository {
   }
 
   public async list(query: TaskListQuery = {}, signal?: AbortSignal): Promise<readonly TaskSummary[]> {
+    return (await this.listSnapshot(query, signal)).items
+  }
+
+  public async listSnapshot(query: TaskListQuery = {}, signal?: AbortSignal): Promise<TaskListSnapshot> {
+    if (query.scope === 'workspace') return this.listWorkspace(query, signal)
+    return this.listCurrentSession(query, signal)
+  }
+
+  private async listCurrentSession(query: TaskListQuery, signal?: AbortSignal): Promise<TaskListSnapshot> {
     throwIfAborted(signal)
     const backend = this.requireBackend()
     const attachmentGeneration = this.attachmentGeneration
@@ -125,20 +152,150 @@ export class TaskCenterRegistry implements TaskRepository {
       )
         this.entries.delete(taskId)
     }
+    this.workspaceTaskIds.clear()
     for (const task of tasks) this.entries.set(task.taskId, task)
     const offset = parseCursor(query.cursor)
     const limit = Math.min(Math.max(query.limit ?? MAX_TASKS, 1), MAX_TASKS)
-    return visible.slice(offset, offset + limit)
+    return {
+      scope: 'current-session',
+      source: 'current-session',
+      items: visible.slice(offset, offset + limit),
+      complete: true,
+      omittedSessions: 0,
+    }
+  }
+
+  private async listWorkspace(query: TaskListQuery, signal?: AbortSignal): Promise<TaskListSnapshot> {
+    throwIfAborted(signal)
+    const backend = this.requireBackend()
+    const attachmentGeneration = this.attachmentGeneration
+    const requestedWorkspaceFolderId = query.workspaceFolderId
+    const workspaceFolderIds =
+      requestedWorkspaceFolderId === undefined ? this.openWorkspaceFolderIds() : [requestedWorkspaceFolderId]
+    if (workspaceFolderIds.length === 0) throw unavailable('an open workspace folder')
+
+    const [sessionPage, archivedSessionIds] = await Promise.all([
+      backend.sessions.list({}, signal),
+      this.listArchivedSessionIds(backend, signal),
+    ])
+    throwIfAborted(signal)
+    if (!this.isCurrentAttachment(backend, attachmentGeneration))
+      throw unavailable('the current DSH connection')
+
+    const sessions = sessionPage.items.filter((session) => !archivedSessionIds.has(session.id))
+    const resolved = sessions
+      .map((session) => ({
+        session,
+        workspaceFolderId: this.resolveSessionWorkspaceFolderId?.(session),
+      }))
+      .filter(
+        (candidate): candidate is { readonly session: SessionSummary; readonly workspaceFolderId: string } =>
+          candidate.workspaceFolderId !== undefined &&
+          workspaceFolderIds.includes(candidate.workspaceFolderId),
+      )
+    const bounded = resolved.slice(0, MAX_WORKSPACE_SESSIONS)
+    let omittedSessions = Math.max(0, resolved.length - bounded.length)
+    if (sessionPage.nextCursor !== undefined)
+      omittedSessions = Math.min(MAX_WORKSPACE_SESSIONS, omittedSessions + 1)
+    const taskGroups: TaskSummary[][] = []
+    for (let offset = 0; offset < bounded.length; offset += SESSION_READ_CONCURRENCY) {
+      throwIfAborted(signal)
+      const batch = bounded.slice(offset, offset + SESSION_READ_CONCURRENCY)
+      const results = await Promise.all(
+        batch.map(async (candidate): Promise<readonly TaskSummary[] | undefined> => {
+          try {
+            return await this.readSessionTasks(candidate.session, candidate.workspaceFolderId, signal)
+          } catch (error) {
+            if (signal?.aborted === true) throw error
+            return undefined
+          }
+        }),
+      )
+      for (const tasks of results) {
+        if (tasks === undefined) {
+          omittedSessions += 1
+        } else taskGroups.push([...tasks])
+      }
+    }
+    throwIfAborted(signal)
+    if (!this.isCurrentAttachment(backend, attachmentGeneration))
+      throw unavailable('the current DSH connection')
+
+    const tasks = taskGroups.flat()
+    const visible = tasks
+      .filter((task) => query.includeCompleted === true || !isTaskTerminal(task.status))
+      .sort((left, right) => right.updatedAt - left.updatedAt || left.taskId.localeCompare(right.taskId))
+    this.rememberWorkspaceTasks(tasks, workspaceFolderIds)
+    const offset = parseCursor(query.cursor)
+    const limit = Math.min(Math.max(query.limit ?? MAX_TASKS, 1), MAX_TASKS)
+    return {
+      scope: 'workspace',
+      source: 'workspace-composed',
+      items: visible.slice(offset, offset + limit),
+      // A session list plus per-session repositories cannot prove global
+      // interaction replay/ownership, even when every bounded read succeeds.
+      complete: false,
+      omittedSessions: Math.min(MAX_WORKSPACE_SESSIONS, omittedSessions),
+    }
+  }
+
+  private openWorkspaceFolderIds(): readonly string[] {
+    const ids = this.workspaceFolderIds?.() ?? [this.workspaceFolderId?.()].filter(isString)
+    return [...new Set(ids.filter((id) => id.trim() !== ''))]
+  }
+
+  private async listArchivedSessionIds(
+    backend: DshBackend,
+    signal?: AbortSignal,
+  ): Promise<ReadonlySet<string>> {
+    if (typeof backend.workspaces.listArchivedSessionIds !== 'function')
+      throw unavailable('archived session state')
+    return new Set(await backend.workspaces.listArchivedSessionIds(signal))
+  }
+
+  private async readSessionTasks(
+    summary: SessionSummary,
+    workspaceFolderId: string,
+    signal?: AbortSignal,
+  ): Promise<readonly TaskSummary[]> {
+    const backend = this.requireBackend()
+    const [session, jobs, goals, subagents] = await Promise.all([
+      backend.sessions.get(summary.id, signal),
+      backend.jobs.list(summary.id, signal),
+      backend.goals.list(summary.id, signal),
+      backend.subagents.list(summary.id, signal),
+    ])
+    if (session.id !== summary.id) throw unavailable('the workspace session identity')
+    return [
+      this.sessionTask(session, workspaceFolderId, subagents),
+      ...goals.map((goal) => this.goalTask(goal, session, workspaceFolderId)),
+      ...jobs.map((job) => this.jobTask(job, session, workspaceFolderId)),
+      ...this.subagentTasks(subagents, session, workspaceFolderId),
+      ...this.interactionTasks(session, workspaceFolderId),
+    ]
+  }
+
+  private rememberWorkspaceTasks(tasks: readonly TaskSummary[], workspaceFolderIds: readonly string[]): void {
+    const taskIds = new Set(tasks.map((task) => task.taskId))
+    for (const taskId of this.workspaceTaskIds) {
+      if (!taskIds.has(taskId)) this.entries.delete(taskId)
+    }
+    this.workspaceTaskIds.clear()
+    for (const task of tasks) {
+      if (workspaceFolderIds.includes(task.workspaceFolderId)) this.workspaceTaskIds.add(task.taskId)
+      this.entries.set(task.taskId, task)
+    }
   }
 
   public async get(taskId: string, signal?: AbortSignal): Promise<TaskSummary> {
     throwIfAborted(signal)
     const known = this.entries.get(taskId)
     if (known !== undefined) {
-      // The projection is scoped to the current session: a task cached from a
-      // previously current session must not stay readable (or actionable via
-      // stop/answer) after the user switches sessions.
-      if (!this.isInCurrentSessionScope(known)) throw taskNotOwned()
+      // Current-session reads remain isolated. A task from another session is
+      // actionable only after an explicit workspace-scoped list loaded it and
+      // the folder is still open; the Extension route performs a second
+      // session ownership check before any DSH side effect.
+      if (!this.isInCurrentSessionScope(known) && !this.isInCurrentWorkspaceScope(known)) throw taskNotOwned()
       return known
     }
     if (this.currentSessionId !== undefined) {
@@ -153,6 +310,14 @@ export class TaskCenterRegistry implements TaskRepository {
     return (
       this.currentSessionId !== undefined &&
       (task.sessionId === this.currentSessionId || task.parentTaskId === `session:${this.currentSessionId}`)
+    )
+  }
+
+  private isInCurrentWorkspaceScope(task: TaskSummary): boolean {
+    return (
+      this.workspaceTaskIds.has(task.taskId) &&
+      (this.isWorkspaceFolderOpen?.(task.workspaceFolderId) ??
+        task.workspaceFolderId === this.workspaceFolderId?.())
     )
   }
 
@@ -267,6 +432,7 @@ export class TaskCenterRegistry implements TaskRepository {
       workspaceFolderId,
       kind: 'goal',
       title: boundedLabel(goal.title),
+      sessionTitle: boundedLabel(session.title || session.id),
       status,
       needsUserAction: status === 'blocked',
       ...(status === 'blocked' ? { actionKind: 'none' as const } : {}),
@@ -301,6 +467,7 @@ export class TaskCenterRegistry implements TaskRepository {
       workspaceFolderId,
       kind: 'job',
       title: boundedLabel(job.label || job.kind),
+      sessionTitle: boundedLabel(session.title || session.id),
       status,
       needsUserAction: false,
       ...(job.detail === undefined ? {} : { actionKind: 'none' as const }),
@@ -324,13 +491,14 @@ export class TaskCenterRegistry implements TaskRepository {
     return catalog.entries.map((entry) => {
       if (entry.kind === 'diagnostic')
         return this.withRevision({
-          taskId: `subagent:${entry.id}`,
+          taskId: `subagent:${session.id}:${entry.id}`,
           sourceId: entry.id,
           sessionId: session.id,
           parentTaskId: `session:${session.id}`,
           workspaceFolderId,
           kind: 'subagent',
           title: 'Unavailable subagent',
+          sessionTitle: boundedLabel(session.title || session.id),
           status: 'unknown',
           needsUserAction: false,
           startedAt: 0,
@@ -345,13 +513,14 @@ export class TaskCenterRegistry implements TaskRepository {
         })
       const status: TaskSummaryStatus = entry.activity === 'running' ? 'running' : 'idle'
       return this.withRevision({
-        taskId: `subagent:${entry.id}`,
+        taskId: `subagent:${session.id}:${entry.id}`,
         sourceId: entry.id,
         sessionId: session.id,
         parentTaskId: `session:${session.id}`,
         workspaceFolderId,
         kind: 'subagent',
         title: boundedLabel(entry.label ?? entry.id),
+        sessionTitle: boundedLabel(session.title || session.id),
         status,
         needsUserAction: false,
         startedAt: 0,
@@ -380,6 +549,7 @@ export class TaskCenterRegistry implements TaskRepository {
           workspaceFolderId,
           kind: 'interaction',
           title: boundedLabel(interaction.title),
+          sessionTitle: boundedLabel(session.title || session.id),
           status: 'needs-input',
           needsUserAction: true,
           actionKind: interaction.kind,
@@ -510,6 +680,10 @@ function parseCursor(value: string | undefined): number {
   if (value === undefined || value.trim() === '') return 0
   const parsed = Number(value)
   return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : 0
+}
+
+function isString(value: string | undefined): value is string {
+  return value !== undefined
 }
 
 function boundedLabel(value: string): string {

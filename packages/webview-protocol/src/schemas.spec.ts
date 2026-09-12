@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { diagnosticsSnapshotSchema, webviewRequestSchema } from './schemas.js'
+import { featureRequestSchema, featureResponseSchema } from './feature-schemas.js'
 
 describe('custom provider Webview protocol', () => {
   it('accepts only the non-secret provider draft and its CAS revision', () => {
@@ -115,6 +116,71 @@ describe('diagnostics Webview protocol', () => {
         canReconnect: true,
         recentEvents: [],
         endpoint: 'http://127.0.0.1:3939',
+      }).success,
+    ).toBe(false)
+  })
+})
+
+describe('task center Webview protocol', () => {
+  const task = {
+    taskId: 'session:session-1',
+    sourceId: 'session-1',
+    sessionId: 'session-1',
+    workspaceFolderId: 'workspace-1',
+    kind: 'session',
+    title: 'Main session',
+    status: 'running',
+    needsUserAction: false,
+    startedAt: 1,
+    updatedAt: 2,
+    childCount: 0,
+    canOpen: true,
+    canAnswer: false,
+    canSessionCancel: true,
+    canProcessStop: false,
+    ownerKind: 'unknown',
+    taskRevision: 1,
+  } as const
+
+  it('accepts an explicit workspace task scope without a session id', () => {
+    expect(
+      featureRequestSchema.safeParse({
+        type: 'tasks.list',
+        requestId: 'request-tasks-workspace',
+        payload: { scope: 'workspace', includeCompleted: false, limit: 200 },
+      }).success,
+    ).toBe(true)
+  })
+
+  it('requires bounded scope and completeness metadata on task responses', () => {
+    expect(
+      featureResponseSchema.safeParse({
+        type: 'feature.response',
+        requestId: 'response-tasks',
+        ok: true,
+        payload: {
+          kind: 'tasks',
+          items: [task],
+          scope: 'workspace',
+          source: 'workspace-composed',
+          complete: false,
+          omittedSessions: 2,
+        },
+      }).success,
+    ).toBe(true)
+    expect(
+      featureResponseSchema.safeParse({
+        type: 'feature.response',
+        requestId: 'response-tasks',
+        ok: true,
+        payload: {
+          kind: 'tasks',
+          items: [task],
+          scope: 'workspace',
+          source: 'workspace-composed',
+          complete: false,
+          omittedSessions: 65,
+        },
       }).success,
     ).toBe(false)
   })
