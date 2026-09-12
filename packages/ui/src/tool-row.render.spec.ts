@@ -9,6 +9,39 @@ import { ToolRow } from './components/ToolRow.js'
 afterEach(() => cleanup())
 
 describe('ToolRow rendering', () => {
+  it('hands structured read lines to the optional host code renderer', () => {
+    const tool: ToolCallView = {
+      id: 'read-code-renderer',
+      name: 'read',
+      title: 'Read',
+      category: 'tool',
+      status: 'completed',
+      metadata: {},
+      presentation: {
+        phase: 'result',
+        card: 'read',
+        path: 'src/feature.ts',
+        offset: 11,
+        lines: [{ number: 11, text: 'const answer = 42' }],
+        totalLines: 42,
+        lang: 'ts',
+      },
+    }
+
+    render(
+      createElement(ToolRow, {
+        tool,
+        expanded: true,
+        onToggle: vi.fn(),
+        renderCode: ({ lines, language, totalLines }) =>
+          createElement('output', { 'data-code-renderer': `${language}:${totalLines}` }, lines[0]?.text),
+      }),
+    )
+
+    expect(document.querySelector('[data-code-renderer="ts:42"]')?.textContent).toBe('const answer = 42')
+    expect(document.querySelector('.dsh-tool-row__read-code')).toBeNull()
+  })
+
   it('renders web search sources once instead of repeating them as generic targets', () => {
     const sourceUrl = 'https://weather.example.test/hangzhou'
     const tool: ToolCallView = {

@@ -1,7 +1,7 @@
 import { createElement, type ReactElement } from 'react'
 import type { ToolCallView } from '@dsh-vscode/domain'
 import { ToolCard } from './components/ToolCard.js'
-import { isSpecializedTool, ToolRow } from './components/ToolRow.js'
+import { isSpecializedTool, ToolRow, type ToolCodeRenderProps } from './components/ToolRow.js'
 import type { PresentationTranslate } from './tool-presentation.js'
 
 export interface ToolRendererProps {
@@ -10,6 +10,7 @@ export interface ToolRendererProps {
   readonly onToggle?: () => void
   readonly onOpenLink?: (href: string) => void
   readonly translate?: PresentationTranslate
+  readonly renderCode?: (props: ToolCodeRenderProps) => ReactElement
 }
 
 export type ToolRenderer = (props: ToolRendererProps) => ReactElement

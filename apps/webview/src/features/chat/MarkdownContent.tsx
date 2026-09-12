@@ -2,7 +2,6 @@ import MarkdownIt from 'markdown-it'
 import * as katex from 'katex'
 import texmath from 'markdown-it-texmath'
 import { createRoot, type Root } from 'react-dom/client'
-import type { BundledLanguage, Highlighter } from 'shiki'
 import {
   useDeferredValue,
   useEffect,
@@ -17,6 +16,7 @@ import {
 import { useI18n } from '../../i18n.js'
 import { CopyButton } from './CopyButton.js'
 import { ContentFlow } from '../../components/common/ContentFlow.js'
+import { getWebviewHighlighter, resolveBundledLanguage, SHIKI_THEMES } from './shiki.js'
 import 'katex/dist/katex.min.css'
 
 const STREAMING_HIGHLIGHT_DEBOUNCE_MS = 120
@@ -238,22 +238,6 @@ export const MarkdownContent = memo(function MarkdownContent({
   )
 })
 
-type MarkdownHighlighter = Highlighter
-
-let highlighterPromise: Promise<MarkdownHighlighter> | undefined
-
-const MARKDOWN_HIGHLIGHT_THEMES = {
-  light: 'github-light-default',
-  dark: 'github-dark-default',
-} as const
-
-function getMarkdownHighlighter(): Promise<MarkdownHighlighter> {
-  highlighterPromise ??= import('shiki').then(({ createHighlighter }) =>
-    createHighlighter({ themes: Object.values(MARKDOWN_HIGHLIGHT_THEMES), langs: [] }),
-  )
-  return highlighterPromise
-}
-
 function createMarkdownProjector(): (markdown: string, streaming: boolean) => string {
   let previousFrozenSource: string | undefined
   let previousFrozenHtml: string | undefined
@@ -356,17 +340,17 @@ async function highlightMarkdownHtml(html: string): Promise<string> {
   const parsed = new DOMParser().parseFromString(`<body>${html}</body>`, 'text/html')
   const codeBlocks = Array.from(parsed.body.querySelectorAll<HTMLElement>('pre > code[class*="language-"]'))
   if (codeBlocks.length === 0) return html
-  const highlighter = await getMarkdownHighlighter()
+  const highlighter = await getWebviewHighlighter()
   let changed = false
   for (const code of codeBlocks) {
     const languageClass = Array.from(code.classList).find((value) => value.startsWith('language-'))
-    const language = languageClass === undefined ? undefined : bundledLanguage(languageClass.slice(9))
+    const language = languageClass === undefined ? undefined : resolveBundledLanguage(languageClass.slice(9))
     if (language === undefined) continue
     try {
       await highlighter.loadLanguage(language)
       const highlighted = highlighter.codeToHtml(code.textContent ?? '', {
         lang: language,
-        themes: MARKDOWN_HIGHLIGHT_THEMES,
+        themes: SHIKI_THEMES,
         defaultColor: 'light-dark()',
         // The surrounding Markdown CSS owns the surface. Shiki's default
         // root background is an opaque theme color and would otherwise turn
@@ -386,41 +370,6 @@ async function highlightMarkdownHtml(html: string): Promise<string> {
     }
   }
   return changed ? parsed.body.innerHTML : html
-}
-
-function bundledLanguage(value: string): BundledLanguage | undefined {
-  const aliases: Readonly<Record<string, BundledLanguage>> = {
-    bash: 'shell',
-    cjs: 'javascript',
-    cpp: 'cpp',
-    cs: 'csharp',
-    cxx: 'cpp',
-    go: 'go',
-    html: 'html',
-    htm: 'html',
-    java: 'java',
-    js: 'javascript',
-    json: 'json',
-    jsx: 'jsx',
-    md: 'markdown',
-    py: 'python',
-    python: 'python',
-    ps: 'powershell',
-    ps1: 'powershell',
-    sh: 'shell',
-    shell: 'shell',
-    sql: 'sql',
-    svg: 'xml',
-    swift: 'swift',
-    ts: 'typescript',
-    tsx: 'tsx',
-    xml: 'xml',
-    yaml: 'yaml',
-    yml: 'yaml',
-  }
-  const normalized = value.trim().toLowerCase()
-  if (normalized === '' || normalized === 'text' || normalized === 'plaintext') return undefined
-  return aliases[normalized] ?? (normalized as BundledLanguage)
 }
 
 interface MountedCopyRegion {

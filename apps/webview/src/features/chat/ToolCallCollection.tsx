@@ -1,9 +1,15 @@
 import { memo, useCallback, type ReactElement } from 'react'
 import { projectToolCallTree, type TimelineNode, type ToolCallTreeNode } from '@dsh-vscode/timeline'
-import { ToolRendererRegistry, toolNameLabel, toolStatusLabel } from '@dsh-vscode/ui'
+import {
+  ToolRendererRegistry,
+  toolNameLabel,
+  toolStatusLabel,
+  type ToolCodeRenderProps,
+} from '@dsh-vscode/ui'
 import { ContentFlow } from '../../components/common/index.js'
 import { Icon } from '../../ui/Icon.js'
 import type { Translate } from '../../i18n.js'
+import { ToolCodePreview } from './ToolCodePreview.js'
 
 export type ToolTimelineNode = Extract<TimelineNode, { readonly kind: 'tool' }>
 
@@ -108,6 +114,7 @@ const ToolCardView = memo(function ToolCardView(props: ToolCardViewProps): React
         expanded,
         translate: props.translate,
         onToggle,
+        renderCode: renderToolCode,
         ...(props.onOpenLink === undefined ? {} : { onOpenLink: props.onOpenLink }),
       })}
       {tree.children.length === 0 ? null : (
@@ -132,6 +139,10 @@ const ToolCardView = memo(function ToolCardView(props: ToolCardViewProps): React
     </div>
   )
 }, toolCardViewEqual)
+
+function renderToolCode(props: ToolCodeRenderProps): ReactElement {
+  return <ToolCodePreview {...props} />
+}
 
 function toolCollectionEqual(previous: ToolCallCollectionProps, next: ToolCallCollectionProps): boolean {
   if (

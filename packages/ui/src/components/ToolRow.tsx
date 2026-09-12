@@ -1,5 +1,10 @@
 import { useState, type ReactElement } from 'react'
-import type { ToolCallView, ToolPresentationSource, ToolPresentationView } from '@dsh-vscode/domain'
+import type {
+  ToolCallView,
+  ToolPresentationLine,
+  ToolPresentationSource,
+  ToolPresentationView,
+} from '@dsh-vscode/domain'
 import {
   decodeToolValue,
   formatToolText,
@@ -15,6 +20,16 @@ export type ToolRowVariant =
 
 export type ToolRowState = 'running' | 'ok' | 'error' | 'stopped'
 
+/** Host-surface renderer for a structured read window. The shared package
+ * keeps a plaintext fallback; a Webview may add syntax highlighting and
+ * bounded code controls without making this package depend on Shiki. */
+export interface ToolCodeRenderProps {
+  readonly lines: readonly ToolPresentationLine[]
+  readonly language?: string
+  readonly totalLines: number
+  readonly translate?: PresentationTranslate
+}
+
 export interface ToolRowProps {
   readonly tool: ToolCallView
   /** Controlled when supplied; registry consumers may omit both for local disclosure state. */
@@ -24,6 +39,8 @@ export interface ToolRowProps {
   readonly onOpenLink?: (href: string) => void
   /** Optional label translator supplied by the hosting surface. */
   readonly translate?: PresentationTranslate
+  /** Optional host-surface code renderer for structured read cards. */
+  readonly renderCode?: (props: ToolCodeRenderProps) => ReactElement
 }
 
 export interface ToolRowModel {
@@ -160,7 +177,13 @@ export function ToolRow(props: ToolRowProps): ReactElement {
       </button>
       {expanded && hasDetails ? (
         <div className="dsh-tool-row__details">
-          {renderStructuredDetails(props.tool, model.sections, props.translate, props.onOpenLink)}
+          {renderStructuredDetails(
+            props.tool,
+            model.sections,
+            props.translate,
+            props.onOpenLink,
+            props.renderCode,
+          )}
           {props.onOpenLink === undefined ? null : (
             <div
               className="dsh-tool-row__targets"
@@ -235,11 +258,14 @@ function renderStructuredDetails(
   sections: readonly ToolDetailBlock[],
   t?: PresentationTranslate,
   onOpenLink?: (href: string) => void,
+  renderCode?: (props: ToolCodeRenderProps) => ReactElement,
 ): ReactElement {
   const view = tool.presentation
   return (
     <>
-      {view === undefined ? renderSections(sections) : renderPresentationView(view, sections, t, onOpenLink)}
+      {view === undefined
+        ? renderSections(sections)
+        : renderPresentationView(view, sections, t, onOpenLink, renderCode)}
       {tool.error === undefined ? null : (
         <section className="dsh-tool-row__section dsh-tool-row__section--error" role="alert">
           <h4>{label(t, 'toolrow.error', 'Error')}</h4>
@@ -268,6 +294,7 @@ function renderPresentationView(
   fallback: readonly ToolDetailBlock[],
   t?: PresentationTranslate,
   onOpenLink?: (href: string) => void,
+  renderCode?: (props: ToolCodeRenderProps) => ReactElement,
 ): ReactElement {
   switch (view.card) {
     case 'terminal':
@@ -277,7 +304,7 @@ function renderPresentationView(
     case 'search':
       return view.shape === 'matches' ? renderSearchMatches(view, t) : renderSections(fallback)
     case 'read':
-      return renderReadView(view, t)
+      return renderReadView(view, t, renderCode)
     case 'web':
       return view.kind === 'search' ? renderWebSearch(view, t, onOpenLink) : renderSections(fallback)
     default:
@@ -389,25 +416,28 @@ function renderSearchMatches(
 function renderReadView(
   view: Extract<ToolPresentationView, { readonly card: 'read' }>,
   t?: PresentationTranslate,
+  renderCode?: (props: ToolCodeRenderProps) => ReactElement,
 ): ReactElement {
+  let code: ReactElement
+  if (renderCode === undefined) code = renderPlainReadCode(view)
+  else {
+    try {
+      code = renderCode({
+        lines: view.lines,
+        ...(view.lang === undefined ? {} : { language: view.lang }),
+        totalLines: view.totalLines,
+        ...(t === undefined ? {} : { translate: t }),
+      })
+    } catch {
+      code = renderPlainReadCode(view)
+    }
+  }
   return (
     <section className="dsh-tool-row__section dsh-tool-row__read-window">
       <h4>
         {label(t, 'toolrow.presentation.file', 'File')}: {view.path}
       </h4>
-      <pre className="dsh-tool-row__read-code" data-language={view.lang ?? 'text'}>
-        {view.lines.map((line) => (
-          <span className="dsh-tool-row__read-line" key={line.number}>
-            <span className="dsh-sr-only">
-              {line.number}: {line.text}
-            </span>
-            <span className="dsh-tool-row__line-number" aria-hidden="true">
-              {line.number}:
-            </span>{' '}
-            <code>{line.text}</code>
-          </span>
-        ))}
-      </pre>
+      {code}
       <span className="dsh-tool-row__read-total">
         {view.lines.length === 0
           ? label(t, 'toolrow.presentation.emptyWindow', `No lines / ${view.totalLines}`, {
@@ -416,6 +446,24 @@ function renderReadView(
           : `${view.offset}–${view.offset + view.lines.length - 1} / ${view.totalLines}`}
       </span>
     </section>
+  )
+}
+
+function renderPlainReadCode(view: Extract<ToolPresentationView, { readonly card: 'read' }>): ReactElement {
+  return (
+    <pre className="dsh-tool-row__read-code" data-language={view.lang ?? 'text'}>
+      {view.lines.map((line, index) => (
+        <span className="dsh-tool-row__read-line" key={`${line.number}:${index}`}>
+          <span className="dsh-sr-only">
+            {line.number}: {line.text}
+          </span>
+          <span className="dsh-tool-row__line-number" aria-hidden="true">
+            {line.number}:
+          </span>{' '}
+          <code aria-hidden="true">{line.text}</code>
+        </span>
+      ))}
+    </pre>
   )
 }
 
