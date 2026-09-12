@@ -9,6 +9,66 @@ import { ToolRow } from './components/ToolRow.js'
 afterEach(() => cleanup())
 
 describe('ToolRow rendering', () => {
+  it('hands structured diffs to the optional host diff renderer', () => {
+    const diffs = [{ path: 'src/feature.ts', oldText: 'before', newText: 'after' }]
+    const tool: ToolCallView = {
+      id: 'diff-renderer',
+      name: 'edit',
+      title: 'Edit',
+      category: 'tool',
+      status: 'completed',
+      metadata: {},
+      presentation: {
+        phase: 'result',
+        card: 'diff',
+        diffs,
+      },
+    }
+
+    render(
+      createElement(ToolRow, {
+        tool,
+        expanded: true,
+        onToggle: vi.fn(),
+        renderDiff: ({ diffs: value }) =>
+          createElement('output', { 'data-diff-renderer': value[0]?.newText }, 'custom diff'),
+      }),
+    )
+
+    expect(document.querySelector('[data-diff-renderer="after"]')?.textContent).toBe('custom diff')
+    expect(document.querySelector('.dsh-tool-row__diff-file')).toBeNull()
+  })
+
+  it('falls back to the shared diff view when an optional renderer fails', () => {
+    const tool: ToolCallView = {
+      id: 'broken-diff-renderer',
+      name: 'edit',
+      title: 'Edit',
+      category: 'tool',
+      status: 'completed',
+      metadata: {},
+      presentation: {
+        phase: 'result',
+        card: 'diff',
+        diffs: [{ path: 'src/feature.ts', oldText: 'before', newText: 'after' }],
+      },
+    }
+
+    render(
+      createElement(ToolRow, {
+        tool,
+        expanded: true,
+        onToggle: vi.fn(),
+        renderDiff: () => {
+          throw new Error('renderer failure')
+        },
+      }),
+    )
+
+    expect(document.querySelector('.dsh-tool-row__diff-file-name')?.textContent).toBe('src/feature.ts')
+    expect(document.querySelector('.dsh-tool-row__diff-line--remove')?.textContent).toContain('before')
+  })
+
   it('hands structured read lines to the optional host code renderer', () => {
     const tool: ToolCallView = {
       id: 'read-code-renderer',

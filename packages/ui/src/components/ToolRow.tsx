@@ -1,6 +1,7 @@
 import { useState, type ReactElement } from 'react'
 import type {
   ToolCallView,
+  ToolPresentationDiff,
   ToolPresentationLine,
   ToolPresentationSource,
   ToolPresentationView,
@@ -30,6 +31,14 @@ export interface ToolCodeRenderProps {
   readonly translate?: PresentationTranslate
 }
 
+/** Host-surface renderer for a structured diff card. The shared package keeps
+ * a bounded plaintext fallback; a Webview may add copy, folding, and the
+ * upstream diff summary without making this package depend on browser APIs. */
+export interface ToolDiffRenderProps {
+  readonly diffs: readonly ToolPresentationDiff[]
+  readonly translate?: PresentationTranslate
+}
+
 export interface ToolRowProps {
   readonly tool: ToolCallView
   /** Controlled when supplied; registry consumers may omit both for local disclosure state. */
@@ -41,6 +50,8 @@ export interface ToolRowProps {
   readonly translate?: PresentationTranslate
   /** Optional host-surface code renderer for structured read cards. */
   readonly renderCode?: (props: ToolCodeRenderProps) => ReactElement
+  /** Optional host-surface renderer for structured diff cards. */
+  readonly renderDiff?: (props: ToolDiffRenderProps) => ReactElement
 }
 
 export interface ToolRowModel {
@@ -183,6 +194,7 @@ export function ToolRow(props: ToolRowProps): ReactElement {
             props.translate,
             props.onOpenLink,
             props.renderCode,
+            props.renderDiff,
           )}
           {props.onOpenLink === undefined ? null : (
             <div
@@ -259,13 +271,14 @@ function renderStructuredDetails(
   t?: PresentationTranslate,
   onOpenLink?: (href: string) => void,
   renderCode?: (props: ToolCodeRenderProps) => ReactElement,
+  renderDiff?: (props: ToolDiffRenderProps) => ReactElement,
 ): ReactElement {
   const view = tool.presentation
   return (
     <>
       {view === undefined
         ? renderSections(sections)
-        : renderPresentationView(view, sections, t, onOpenLink, renderCode)}
+        : renderPresentationView(view, sections, t, onOpenLink, renderCode, renderDiff)}
       {tool.error === undefined ? null : (
         <section className="dsh-tool-row__section dsh-tool-row__section--error" role="alert">
           <h4>{label(t, 'toolrow.error', 'Error')}</h4>
@@ -295,12 +308,13 @@ function renderPresentationView(
   t?: PresentationTranslate,
   onOpenLink?: (href: string) => void,
   renderCode?: (props: ToolCodeRenderProps) => ReactElement,
+  renderDiff?: (props: ToolDiffRenderProps) => ReactElement,
 ): ReactElement {
   switch (view.card) {
     case 'terminal':
       return view.phase === 'result' ? renderTerminalResult(view, t) : renderSections(fallback)
     case 'diff':
-      return renderDiffView(view, t)
+      return renderDiffView(view, t, renderDiff)
     case 'search':
       return view.shape === 'matches' ? renderSearchMatches(view, t) : renderSections(fallback)
     case 'read':
@@ -344,7 +358,19 @@ function renderTerminalResult(
 function renderDiffView(
   view: Extract<ToolPresentationView, { readonly card: 'diff' }>,
   t?: PresentationTranslate,
+  renderDiff?: (props: ToolDiffRenderProps) => ReactElement,
 ): ReactElement {
+  if (renderDiff !== undefined) {
+    try {
+      return renderDiff({
+        diffs: view.diffs,
+        ...(t === undefined ? {} : { translate: t }),
+      })
+    } catch {
+      // A host renderer is an enhancement only; retain the safe shared view
+      // when the optional implementation cannot handle this payload.
+    }
+  }
   return (
     <>
       <section className="dsh-tool-row__section dsh-tool-row__diff-section">

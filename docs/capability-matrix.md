@@ -43,9 +43,20 @@
 - 安全边界：共享 `packages/ui` 不依赖 Shiki；高亮只消费 Adapter 已校验的
   `ToolPresentationLine[]`，不会 fetch、解析 ANSI/TUI 或执行代码。复制仍由 Webview
   clipboard helper 处理，屏幕阅读器同时获得“行号 + 正文”的完整文本。
-- 自动证据：`pnpm check`（147 个测试文件、1208 个测试）和 `pnpm build` 通过；新增
+- 自动证据：`pnpm check`（147 个测试文件、1209 个测试）和 `pnpm build` 通过；新增
   renderer seam、折叠、源码复制、实际高亮和未知语法回退测试。真实 DSH/VS Code Webview
   Read 回放尚未完成，因此 TL-01 继续保持 `PARTIAL`。
+
+## 2026-09-12 P0 结构化 Diff 预览切片
+
+- TL-01：共享 `ToolRow` 新增可选结构化 diff renderer seam，默认 renderer 异常时仍回退到
+  纯文本差异视图；Webview `ToolDiffPreview` 对齐上游 `DiffBlock`，支持创建/编辑差异、
+  同文件多 hunk 分隔、多文件去重统计、默认 16 行头尾折叠、完整差异复制和 `+/-` 统计。
+- 安全边界：差异只消费 Adapter 已校验的 `ToolPresentationDiff[]`，不读取文件、不 fetch、
+  不解析 ANSI/TUI；复制经现有 Webview clipboard helper，renderer 失败不会隐藏原始差异。
+- 自动证据：`pnpm check`（148 个测试文件、1214 个测试）和 `pnpm build` 通过；新增共享
+  renderer 成功/异常回退以及 Webview 多 hunk、统计、折叠、复制、空列表测试。真实
+  DSH/VS Code Webview Diff 回放尚未完成，因此 TL-01 继续保持 `PARTIAL`。
 
 托管启动回归修复（2026-08-29）：启动参数已迁移到版本化 `managedWebArguments` 契约；`--no-open` 对所有已知版本默认传入，仅 `0.0.1-rc.1/.2/.5`、`0.1.0-rc.2/.3/.6/.7` 这些早期 Web Profile 省略，未知版本不猜测可选 flag。实际 rc.6 隔离 smoke 已成功报告 loopback endpoint，并确认本次受管进程退出后端口关闭。
 
