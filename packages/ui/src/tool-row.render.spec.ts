@@ -101,6 +101,42 @@ describe('ToolRow rendering', () => {
     expect(document.querySelector('.dsh-tool-row__terminal-output')).toBeNull()
   })
 
+  it('hands both structured search shapes to the optional host search renderer', () => {
+    const tool: ToolCallView = {
+      id: 'search-renderer',
+      name: 'glob',
+      title: 'Search',
+      category: 'tool',
+      status: 'completed',
+      metadata: {},
+      presentation: {
+        phase: 'result',
+        card: 'search',
+        shape: 'paths',
+        paths: ['src/feature.ts'],
+        truncated: false,
+        total: 1,
+      },
+    }
+
+    render(
+      createElement(ToolRow, {
+        tool,
+        expanded: true,
+        onToggle: vi.fn(),
+        renderSearch: ({ view }) =>
+          createElement(
+            'output',
+            { 'data-search-renderer': view.shape },
+            view.shape === 'paths' ? view.paths.join(',') : '',
+          ),
+      }),
+    )
+
+    expect(document.querySelector('[data-search-renderer="paths"]')?.textContent).toBe('src/feature.ts')
+    expect(document.querySelector('.dsh-tool-row__search-files')).toBeNull()
+  })
+
   it('hands structured read lines to the optional host code renderer', () => {
     const tool: ToolCallView = {
       id: 'read-code-renderer',

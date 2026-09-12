@@ -47,6 +47,14 @@ export interface ToolTerminalRenderProps {
   readonly translate?: PresentationTranslate
 }
 
+/** Host-surface renderer for a structured search result. Both upstream
+ * matches-by-file and flat-path shapes remain available to the Webview; the
+ * shared package keeps its existing bounded fallback. */
+export interface ToolSearchRenderProps {
+  readonly view: Extract<ToolPresentationView, { readonly card: 'search'; readonly phase: 'result' }>
+  readonly translate?: PresentationTranslate
+}
+
 export interface ToolRowProps {
   readonly tool: ToolCallView
   /** Controlled when supplied; registry consumers may omit both for local disclosure state. */
@@ -62,6 +70,8 @@ export interface ToolRowProps {
   readonly renderDiff?: (props: ToolDiffRenderProps) => ReactElement
   /** Optional host-surface renderer for structured terminal result cards. */
   readonly renderTerminal?: (props: ToolTerminalRenderProps) => ReactElement
+  /** Optional host-surface renderer for structured search result cards. */
+  readonly renderSearch?: (props: ToolSearchRenderProps) => ReactElement
 }
 
 export interface ToolRowModel {
@@ -206,6 +216,7 @@ export function ToolRow(props: ToolRowProps): ReactElement {
             props.renderCode,
             props.renderDiff,
             props.renderTerminal,
+            props.renderSearch,
           )}
           {props.onOpenLink === undefined ? null : (
             <div
@@ -284,13 +295,23 @@ function renderStructuredDetails(
   renderCode?: (props: ToolCodeRenderProps) => ReactElement,
   renderDiff?: (props: ToolDiffRenderProps) => ReactElement,
   renderTerminal?: (props: ToolTerminalRenderProps) => ReactElement,
+  renderSearch?: (props: ToolSearchRenderProps) => ReactElement,
 ): ReactElement {
   const view = tool.presentation
   return (
     <>
       {view === undefined
         ? renderSections(sections)
-        : renderPresentationView(view, sections, t, onOpenLink, renderCode, renderDiff, renderTerminal)}
+        : renderPresentationView(
+            view,
+            sections,
+            t,
+            onOpenLink,
+            renderCode,
+            renderDiff,
+            renderTerminal,
+            renderSearch,
+          )}
       {tool.error === undefined ? null : (
         <section className="dsh-tool-row__section dsh-tool-row__section--error" role="alert">
           <h4>{label(t, 'toolrow.error', 'Error')}</h4>
@@ -322,6 +343,7 @@ function renderPresentationView(
   renderCode?: (props: ToolCodeRenderProps) => ReactElement,
   renderDiff?: (props: ToolDiffRenderProps) => ReactElement,
   renderTerminal?: (props: ToolTerminalRenderProps) => ReactElement,
+  renderSearch?: (props: ToolSearchRenderProps) => ReactElement,
 ): ReactElement {
   switch (view.card) {
     case 'terminal':
@@ -331,7 +353,7 @@ function renderPresentationView(
     case 'diff':
       return renderDiffView(view, t, renderDiff)
     case 'search':
-      return view.shape === 'matches' ? renderSearchMatches(view, t) : renderSections(fallback)
+      return renderSearchView(view, t, renderSearch, fallback)
     case 'read':
       return renderReadView(view, t, renderCode)
     case 'web':
@@ -339,6 +361,26 @@ function renderPresentationView(
     default:
       return renderSections(fallback)
   }
+}
+
+function renderSearchView(
+  view: Extract<ToolPresentationView, { readonly card: 'search'; readonly phase: 'result' }>,
+  t: PresentationTranslate | undefined,
+  renderSearch: ((props: ToolSearchRenderProps) => ReactElement) | undefined,
+  fallback: readonly ToolDetailBlock[],
+): ReactElement {
+  if (renderSearch !== undefined) {
+    try {
+      return renderSearch({
+        view,
+        ...(t === undefined ? {} : { translate: t }),
+      })
+    } catch {
+      // A host renderer is an enhancement only; retain the shared view when it
+      // cannot handle an otherwise validated search result.
+    }
+  }
+  return view.shape === 'matches' ? renderSearchMatches(view, t) : renderSections(fallback)
 }
 
 function renderTerminalResult(

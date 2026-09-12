@@ -6,6 +6,7 @@ import {
   toolStatusLabel,
   type ToolCodeRenderProps,
   type ToolDiffRenderProps,
+  type ToolSearchRenderProps,
   type ToolTerminalRenderProps,
 } from '@dsh-vscode/ui'
 import { ContentFlow } from '../../components/common/index.js'
@@ -13,6 +14,7 @@ import { Icon } from '../../ui/Icon.js'
 import type { Translate } from '../../i18n.js'
 import { ToolCodePreview } from './ToolCodePreview.js'
 import { ToolDiffPreview } from './ToolDiffPreview.js'
+import { ToolSearchPreview } from './ToolSearchPreview.js'
 import { ToolTerminalPreview } from './ToolTerminalPreview.js'
 
 export type ToolTimelineNode = Extract<TimelineNode, { readonly kind: 'tool' }>
@@ -121,6 +123,7 @@ const ToolCardView = memo(function ToolCardView(props: ToolCardViewProps): React
         renderCode: renderToolCode,
         renderDiff: renderToolDiff,
         renderTerminal: renderToolTerminal,
+        renderSearch: renderToolSearch,
         ...(props.onOpenLink === undefined ? {} : { onOpenLink: props.onOpenLink }),
       })}
       {tree.children.length === 0 ? null : (
@@ -156,6 +159,10 @@ function renderToolDiff(props: ToolDiffRenderProps): ReactElement {
 
 function renderToolTerminal(props: ToolTerminalRenderProps): ReactElement {
   return <ToolTerminalPreview {...props} />
+}
+
+function renderToolSearch(props: ToolSearchRenderProps): ReactElement {
+  return <ToolSearchPreview {...props} />
 }
 
 function toolCollectionEqual(previous: ToolCallCollectionProps, next: ToolCallCollectionProps): boolean {
