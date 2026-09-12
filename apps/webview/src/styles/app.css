@@ -1078,6 +1078,51 @@ ul {
   background: var(--dsh-surface-soft);
 }
 
+.dsh-timeline__user-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+
+.dsh-user-reference {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  gap: 0.2rem;
+  padding: 0 0.25rem;
+  border: 1px solid color-mix(in srgb, currentColor 28%, transparent);
+  border-radius: var(--dsh-radius-sm);
+  color: inherit;
+  vertical-align: baseline;
+  overflow-wrap: anywhere;
+}
+
+button.dsh-user-reference {
+  min-height: 0;
+  padding-block: 0;
+  border-color: color-mix(in srgb, var(--dsh-primary) 45%, transparent);
+  background: color-mix(in srgb, var(--dsh-primary) 12%, transparent);
+  cursor: pointer;
+  font: inherit;
+}
+
+.dsh-user-reference .dsh-icon {
+  width: 0.85em;
+  height: 0.85em;
+  flex: 0 0 auto;
+}
+
+.dsh-user-reference:focus-visible {
+  outline: 2px solid var(--dsh-focus-ring);
+  outline-offset: 2px;
+}
+
+.dsh-timeline__reference-summary {
+  margin-top: var(--dsh-space-1);
+  color: var(--dsh-muted);
+  font-size: 0.8em;
+}
+
 .dsh-timeline__card--event {
   width: 100%;
 }

@@ -467,6 +467,64 @@ describe('DeepSeek Harness 0.1.0-rc.6 contract', () => {
     expect(JSON.stringify(assistant)).not.toContain('iVBOR')
   })
 
+  it('projects structured session references as bounded labels without leaking capture details', () => {
+    const event = rc6Mapper.event('user/message', {
+      sessionId: 's1',
+      message: {
+        id: 'user-reference-1',
+        source: {
+          kind: 'session-reference',
+          form: 'recall',
+          version: 1,
+          references: [
+            {
+              sessionId: 'source-session-1',
+              label: 'Earlier debugging',
+              capturedThroughSeq: 17,
+              originalMessages: 12,
+              retainedMessages: 8,
+              omittedMessages: 4,
+              omittedBytes: 512,
+              truncated: true,
+            },
+          ],
+        },
+        content: [{ type: 'text', text: '继续检查 @Earlier debugging' }],
+      },
+    })
+
+    expect(event).toEqual({
+      type: 'message.user',
+      sessionId: 's1',
+      messageId: 'user-reference-1',
+      markdown: '继续检查 @Earlier debugging',
+      source: 'session-reference',
+      sourceForm: 'recall',
+      sessionReferenceLabels: ['Earlier debugging'],
+    })
+    expect(JSON.stringify(event)).not.toContain('capturedThroughSeq')
+    expect(JSON.stringify(event)).not.toContain('source-session-1')
+  })
+
+  it('fails closed on malformed structured session references', () => {
+    for (const references of [
+      'not-an-array',
+      [{ label: 'missing session id' }],
+      [{ sessionId: 'source-session-1', label: '' }],
+    ]) {
+      expect(() =>
+        rc6Mapper.event('user/message', {
+          sessionId: 's1',
+          message: {
+            id: 'user-reference-invalid',
+            source: { kind: 'session-reference', references },
+            content: [{ type: 'text', text: 'context' }],
+          },
+        }),
+      ).toThrow(/Malformed session-reference/)
+    }
+  })
+
   it('preserves the durable assistant message id used by feedback mutations', () => {
     expect(
       rc6Mapper.event('assistant/message', {

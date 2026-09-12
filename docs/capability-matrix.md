@@ -95,6 +95,20 @@
   renderer 接线以及 Webview 搜索/抓取、状态、截断、空态、Host-only URL 操作测试。真实
   DSH/VS Code Webview Web 回放尚未完成，因此 TL-01 继续保持 `PARTIAL`。
 
+## 2026-09-12 P0 历史文件引用预览切片
+
+- 上游证据：DSH `11d6bd05f3` 的 `user-text`/`ui-reference` 让历史用户消息中的文件引用
+  和 session-reference 具备结构化展示事实；本地 Adapter 只投影有界的 session label，
+  不把 session id、捕获统计或绝对路径发送到 Webview。
+- 代码证据：Domain/Timeline 保留隐藏 `session-reference` 消息的 label，并将它关联到紧邻
+  的用户消息；Webview 使用安全的文本投影显示文件、文件夹、session 标签，文件点击复用
+  已有 Host `view.openLink` 路径校验，未生成原生 `href` 或直接访问文件系统。畸形引用在
+  Adapter/Store 边界 fail closed。
+- 自动证据：新增 Adapter、Timeline reducer、UserText 和 Timeline 回归，覆盖合法/畸形
+  session-reference、quoted path、文件动作、文件夹/session 只读降级和隐藏上下文关联；本轮
+  全量门禁结果以交付命令输出为准。真实 DSH/VS Code Webview 历史消息回放尚未完成，相关
+  能力继续保持 `PARTIAL`。
+
 托管启动回归修复（2026-08-29）：启动参数已迁移到版本化 `managedWebArguments` 契约；`--no-open` 对所有已知版本默认传入，仅 `0.0.1-rc.1/.2/.5`、`0.1.0-rc.2/.3/.6/.7` 这些早期 Web Profile 省略，未知版本不猜测可选 flag。实际 rc.6 隔离 smoke 已成功报告 loopback endpoint，并确认本次受管进程退出后端口关闭。
 
 无文件夹临时工作区修复（2026-08-29）：`TemporaryWorkspaceManager` 已接入 Extension Host 的

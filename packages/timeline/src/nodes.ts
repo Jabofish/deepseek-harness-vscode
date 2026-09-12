@@ -48,6 +48,8 @@ export type TimelineNode =
       readonly source?: string
       readonly sourceForm?: string
       readonly sourceSummary?: string
+      /** Labels from a hidden structured DSH session-reference message. */
+      readonly sessionReferenceLabels?: readonly string[]
     }
   | {
       readonly kind: 'assistant-message'

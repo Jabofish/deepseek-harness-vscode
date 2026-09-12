@@ -513,6 +513,7 @@ export const rc6Mapper = {
         const sourceLabel = stringOr(source?.kind ?? source?.type ?? message.source, '')
         const sourceForm = stringOr(source?.form, '')
         const sourceSummary = stringOr(source?.summary, '')
+        const sessionReferenceLabels = structuredSessionReferenceLabels(source)
         const rpcId = stringOr(envelope.rpcId ?? data.rpcId ?? source?.rpcId, '')
         const userContent = userMessageContent(message)
         return {
@@ -530,6 +531,7 @@ export const rc6Mapper = {
               : {}),
           ...(sourceForm === '' ? {} : { sourceForm }),
           ...(sourceSummary === '' ? {} : { sourceSummary }),
+          ...(sessionReferenceLabels.length === 0 ? {} : { sessionReferenceLabels }),
         }
       }
       case 'tool/call':
@@ -2062,6 +2064,33 @@ function userMessageContent(value: Record<string, unknown> | undefined): UserMes
     if (text !== '') textParts.push(text)
   }
   return { markdown: textParts.join('\n'), attachments, images: uniqueImages(images) }
+}
+
+/**
+ * Keep only the labels needed to render the upstream session-reference chip.
+ * The durable source also carries capture statistics and session ids; those
+ * stay on the Host side and never cross into the Webview projection.
+ */
+function structuredSessionReferenceLabels(source: Record<string, unknown> | undefined): readonly string[] {
+  if (source?.kind !== 'session-reference') return []
+  if (!Array.isArray(source.references) || source.references.length > 32)
+    throw new Error('Malformed session-reference references')
+  const labels: string[] = []
+  for (const entry of source.references) {
+    const reference = objectOrUndefined(entry)
+    if (
+      reference === undefined ||
+      typeof reference.sessionId !== 'string' ||
+      reference.sessionId.trim() === '' ||
+      reference.sessionId.length > 512 ||
+      typeof reference.label !== 'string' ||
+      reference.label.trim() === '' ||
+      reference.label.length > 512
+    )
+      throw new Error('Malformed session-reference entry')
+    if (!labels.includes(reference.label)) labels.push(reference.label)
+  }
+  return labels
 }
 
 function messageImages(value: Record<string, unknown> | undefined): readonly MessageImageReference[] {

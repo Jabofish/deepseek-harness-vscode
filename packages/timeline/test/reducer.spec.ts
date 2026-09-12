@@ -1009,6 +1009,32 @@ describe('reduceTimeline', () => {
     ])
   })
 
+  it('retains structured session-reference labels on hidden context nodes', () => {
+    const next = reduceTimeline(initial, {
+      sequence: 1,
+      event: {
+        type: 'message.user',
+        sessionId: 'session-1',
+        messageId: 'context-session-reference-1',
+        markdown: 'recalled context',
+        source: 'session-reference',
+        sourceForm: 'recall',
+        sessionReferenceLabels: ['Earlier debugging'],
+      },
+    })
+
+    expect(next.nodes).toEqual([
+      {
+        kind: 'user-message',
+        id: 'context-session-reference-1',
+        markdown: 'recalled context',
+        source: 'session-reference',
+        sourceForm: 'recall',
+        sessionReferenceLabels: ['Earlier debugging'],
+      },
+    ])
+  })
+
   it('does not advance the active session cursor for a foreign event', () => {
     const next = reduceTimeline(initial, {
       sequence: 99,

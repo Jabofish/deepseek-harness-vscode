@@ -79,6 +79,38 @@ describe('Timeline', () => {
     expect(screen.getByText('Using a tool…')).toBeDefined()
   })
 
+  it('projects hidden session-reference context onto the preceding user turn', () => {
+    const onOpenLink = vi.fn()
+    render(
+      <Timeline
+        sessionId="session-1"
+        nodes={[
+          {
+            kind: 'user-message',
+            id: 'user-1',
+            markdown: '检查 @src/index.ts 和 @Earlier debugging',
+            source: 'user',
+          },
+          {
+            kind: 'user-message',
+            id: 'context-1',
+            markdown: 'hidden recalled context',
+            source: 'session-reference',
+            sourceForm: 'recall',
+            sessionReferenceLabels: ['Earlier debugging'],
+          },
+        ]}
+        streaming={false}
+        onOpenLink={onOpenLink}
+      />,
+    )
+
+    expect(screen.getByText('Recalled sessions: Earlier debugging')).toBeDefined()
+    expect(screen.queryByText('hidden recalled context')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'src/index.ts' }))
+    expect(onOpenLink).toHaveBeenCalledWith('src/index.ts')
+  })
+
   it('refreshes incremental activity and event facts at the hinted raw boundary', () => {
     const runningTool: TimelineNode = {
       kind: 'tool',

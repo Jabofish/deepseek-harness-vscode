@@ -21,6 +21,7 @@ import type {
 import { MarkdownContent } from './MarkdownContent.js'
 import { MessageImages } from './MessageImages.js'
 import { MessageActions } from './MessageActions.js'
+import { containsUserTextReferences, projectUserText } from './UserText.js'
 import { ReasoningDisclosure } from './ReasoningDisclosure.js'
 import { ToolCallCollection, type ToolTimelineNode } from './ToolCallCollection.js'
 import { WorkflowRunCard } from '../workflows/WorkflowDrawer.js'
@@ -78,6 +79,10 @@ interface ToolBlock {
 }
 
 type AssistantContentBlock = ReasoningBlock | MessageBlock | ToolBlock
+
+interface UserTextFacts {
+  readonly sessionReferenceLabels: readonly string[]
+}
 
 interface AssistantTurnNode {
   readonly kind: 'assistant-turn'
@@ -189,6 +194,7 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
     () => timelineFactsProjector(props.nodes, props.nodeChangeStart, props.nodeChangeBase),
     [timelineFactsProjector, props.nodeChangeBase, props.nodeChangeStart, props.nodes],
   )
+  const userTextFacts = useMemo(() => collectUserTextFacts(props.nodes), [props.nodes])
   const virtualizationProjector = useMemo(() => createVirtualizationProjector(), [])
 
   const usingTool = timelineFacts.hasActiveTool
@@ -307,6 +313,7 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
       onLoadImage: hasLoadImage ? stableOnLoadImage : undefined,
       onShowInFolder: hasShowInFolder ? stableOnShowInFolder : undefined,
       onOpenSession: hasOpenSession ? stableOnOpenSession : undefined,
+      userTextFacts,
       onBranch: hasBranch ? stableOnBranch : undefined,
       branching: props.branching === true,
       running,
@@ -342,6 +349,7 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
       stableOnOpenSession,
       stableOnShowInFolder,
       t,
+      userTextFacts,
     ],
   )
 
@@ -554,6 +562,7 @@ function ToolLinkErrorDialog({
 
 function renderNode(
   node: DisplayTimelineNode,
+  userTextFacts: ReadonlyMap<string, UserTextFacts>,
   expanded: ReadonlySet<string>,
   setExpanded: ExpandedDetailsSetter,
   assistantLabel = 'Model',
@@ -827,7 +836,10 @@ function renderNode(
           </ol>
         </details>
       )
-    case 'user-message':
+    case 'user-message': {
+      const facts = userTextFacts.get(node.id)
+      const sessionReferenceLabels = facts?.sessionReferenceLabels ?? []
+      const projected = containsUserTextReferences(node.markdown, sessionReferenceLabels)
       return (
         <div className="dsh-timeline__message-stack dsh-timeline__message-stack--user">
           <article
@@ -853,13 +865,27 @@ function renderNode(
               {...(onLoadImage === undefined ? {} : { loadImage: onLoadImage })}
               translate={t}
             />
-            {node.markdown.trim() === '' ? null : (
+            {node.markdown.trim() === '' ? null : projected ? (
+              <div className="dsh-timeline__user-text">
+                {projectUserText(
+                  node.markdown,
+                  sessionReferenceLabels,
+                  onOpenLink === undefined ? undefined : { openFile: onOpenLink },
+                )}
+              </div>
+            ) : (
               <MarkdownContent markdown={node.markdown} onOpenLink={onOpenLink} />
+            )}
+            {sessionReferenceLabels.length === 0 ? null : (
+              <div className="dsh-timeline__reference-summary" data-reference-summary="session">
+                {t('timeline.referenceSummary', { labels: sessionReferenceLabels.join(', ') })}
+              </div>
             )}
           </article>
           {node.markdown.trim() === '' ? null : <MessageActions text={node.markdown} translate={t} />}
         </div>
       )
+    }
     case 'assistant-message':
       return renderAssistantMessage(
         node,
@@ -924,6 +950,7 @@ interface TimelineNodeRenderContext {
   readonly onLoadImage: ((image: MessageImageReference) => Promise<string | undefined>) | undefined
   readonly onShowInFolder: ((href: string) => void) | undefined
   readonly onOpenSession: ((sessionId: string) => void) | undefined
+  readonly userTextFacts: ReadonlyMap<string, UserTextFacts>
   readonly onBranch: ((atSeq: number) => void) | undefined
   readonly branching: boolean
   readonly requestOpenLink: (href: string) => void
@@ -939,6 +966,7 @@ interface TimelineNodeRenderContext {
 function renderTimelineNode(node: DisplayTimelineNode, context: TimelineNodeRenderContext): ReactElement {
   return renderNode(
     node,
+    context.userTextFacts,
     context.expandedDetails,
     context.setExpandedDetails,
     context.assistantLabel,
@@ -983,6 +1011,7 @@ function timelineRowContextEqual(
     previous.onLoadImage !== next.onLoadImage ||
     previous.onShowInFolder !== next.onShowInFolder ||
     previous.onOpenSession !== next.onOpenSession ||
+    previous.userTextFacts !== next.userTextFacts ||
     previous.onBranch !== next.onBranch ||
     previous.branching !== next.branching ||
     previous.running !== next.running ||
@@ -2016,6 +2045,30 @@ function isInjectedUserTimelineNode(node: Extract<TimelineNode, { readonly kind:
     markdown: node.markdown,
     ...(node.source === undefined ? {} : { source: node.source }),
   })
+}
+
+/**
+ * DSH projects structured context messages immediately after the user turn
+ * they enrich. Keep those hidden records out of the visible timeline while
+ * retaining their display facts for the preceding user-authored text.
+ */
+function collectUserTextFacts(nodes: readonly TimelineNode[]): ReadonlyMap<string, UserTextFacts> {
+  const facts = new Map<string, UserTextFacts>()
+  for (let index = 0; index < nodes.length; index += 1) {
+    const node = nodes[index]
+    if (node?.kind !== 'user-message' || isInjectedUserTimelineNode(node)) continue
+
+    const labels: string[] = []
+    for (let nextIndex = index + 1; nextIndex < nodes.length; nextIndex += 1) {
+      const next = nodes[nextIndex]
+      if (next?.kind !== 'user-message' || !isInjectedUserTimelineNode(next)) break
+      if (next.source === 'session-reference') labels.push(...(next.sessionReferenceLabels ?? []))
+    }
+
+    const uniqueLabels = [...new Set(labels)].slice(0, 32)
+    if (uniqueLabels.length > 0) facts.set(node.id, { sessionReferenceLabels: uniqueLabels })
+  }
+  return facts
 }
 
 interface PendingAssistantWork {

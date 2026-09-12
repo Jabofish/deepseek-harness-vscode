@@ -4782,11 +4782,16 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
   ) {
     const hasAttachments = Object.hasOwn(value, 'attachments')
     const hasImages = Object.hasOwn(value, 'images')
+    const hasSessionReferenceLabels = Object.hasOwn(value, 'sessionReferenceLabels')
     const attachments = hasAttachments ? messageAttachments(value.attachments) : undefined
     const images = hasImages ? messageImages(value.images) : undefined
+    const sessionReferenceLabels = hasSessionReferenceLabels
+      ? messageSessionReferenceLabels(value.sessionReferenceLabels)
+      : undefined
     if (
       (hasAttachments && attachments === undefined) ||
       (hasImages && images === undefined) ||
+      (hasSessionReferenceLabels && sessionReferenceLabels === undefined) ||
       (value.rpcId !== undefined && typeof value.rpcId !== 'string') ||
       (value.source !== undefined && typeof value.source !== 'string') ||
       (value.sourceForm !== undefined && typeof value.sourceForm !== 'string') ||
@@ -4804,6 +4809,7 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
       ...(typeof value.source === 'string' ? { source: value.source } : {}),
       ...(typeof value.sourceForm === 'string' ? { sourceForm: value.sourceForm } : {}),
       ...(typeof value.sourceSummary === 'string' ? { sourceSummary: value.sourceSummary } : {}),
+      ...(sessionReferenceLabels === undefined ? {} : { sessionReferenceLabels }),
     }
   }
   if ((name === 'turn.started' || name === 'turn.ended') && nonEmptyString(value.sessionId)) {
@@ -6305,6 +6311,16 @@ function messageAttachments(value: unknown): readonly MessageAttachment[] | unde
     })
   }
   return attachments
+}
+
+function messageSessionReferenceLabels(value: unknown): readonly string[] | undefined {
+  if (!Array.isArray(value) || value.length > 32) return undefined
+  const labels: string[] = []
+  for (const entry of value) {
+    if (typeof entry !== 'string' || entry.trim() === '' || entry.length > 512) return undefined
+    if (!labels.includes(entry)) labels.push(entry)
+  }
+  return labels
 }
 
 function messageImages(value: unknown): readonly MessageImageReference[] | undefined {

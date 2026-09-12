@@ -212,6 +212,8 @@ type BackendEventPayload =
       readonly source?: string
       readonly sourceForm?: string
       readonly sourceSummary?: string
+      /** Session labels projected from a structured DSH session-reference source. */
+      readonly sessionReferenceLabels?: readonly string[]
     }
   | {
       readonly type: 'message.delta'
