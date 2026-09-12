@@ -58,6 +58,18 @@
   renderer 成功/异常回退以及 Webview 多 hunk、统计、折叠、复制、空列表测试。真实
   DSH/VS Code Webview Diff 回放尚未完成，因此 TL-01 继续保持 `PARTIAL`。
 
+## 2026-09-12 P0 结构化 Terminal 结果预览切片
+
+- TL-01：共享 `ToolRow` 新增结构化 terminal result renderer seam，Webview
+  `ToolTerminalPreview` 对齐上游 `TerminalBlock` 的安全可用部分：输出最多显示 16 行并
+  支持头尾折叠、复制原始 output、空输出占位，以及基于已验证 `exitCode`/`signal` 的显式
+  退出状态；嵌套工具调用也复用该 renderer。
+- 安全边界：只消费 Adapter 已校验的 terminal presentation，不从输出文本猜测成功/失败，
+  不解析 ANSI/TUI，不启动命令、不读取工作目录；renderer 失败仍回退到共享纯文本结果视图。
+- 自动证据：`pnpm check`（149 个测试文件、1218 个测试）和 `pnpm build` 通过；新增共享
+  renderer 接线以及 Webview 折叠、原文复制、退出码/信号优先级、空输出测试。真实
+  DSH/VS Code Webview Terminal 回放尚未完成，因此 TL-01 继续保持 `PARTIAL`。
+
 托管启动回归修复（2026-08-29）：启动参数已迁移到版本化 `managedWebArguments` 契约；`--no-open` 对所有已知版本默认传入，仅 `0.0.1-rc.1/.2/.5`、`0.1.0-rc.2/.3/.6/.7` 这些早期 Web Profile 省略，未知版本不猜测可选 flag。实际 rc.6 隔离 smoke 已成功报告 loopback endpoint，并确认本次受管进程退出后端口关闭。
 
 无文件夹临时工作区修复（2026-08-29）：`TemporaryWorkspaceManager` 已接入 Extension Host 的

@@ -39,6 +39,14 @@ export interface ToolDiffRenderProps {
   readonly translate?: PresentationTranslate
 }
 
+/** Host-surface renderer for a structured terminal result. ANSI/TUI parsing is
+ * deliberately outside this shared boundary; a Webview may add safe output
+ * controls while preserving the raw validated result text. */
+export interface ToolTerminalRenderProps {
+  readonly view: Extract<ToolPresentationView, { readonly card: 'terminal'; readonly phase: 'result' }>
+  readonly translate?: PresentationTranslate
+}
+
 export interface ToolRowProps {
   readonly tool: ToolCallView
   /** Controlled when supplied; registry consumers may omit both for local disclosure state. */
@@ -52,6 +60,8 @@ export interface ToolRowProps {
   readonly renderCode?: (props: ToolCodeRenderProps) => ReactElement
   /** Optional host-surface renderer for structured diff cards. */
   readonly renderDiff?: (props: ToolDiffRenderProps) => ReactElement
+  /** Optional host-surface renderer for structured terminal result cards. */
+  readonly renderTerminal?: (props: ToolTerminalRenderProps) => ReactElement
 }
 
 export interface ToolRowModel {
@@ -195,6 +205,7 @@ export function ToolRow(props: ToolRowProps): ReactElement {
             props.onOpenLink,
             props.renderCode,
             props.renderDiff,
+            props.renderTerminal,
           )}
           {props.onOpenLink === undefined ? null : (
             <div
@@ -272,13 +283,14 @@ function renderStructuredDetails(
   onOpenLink?: (href: string) => void,
   renderCode?: (props: ToolCodeRenderProps) => ReactElement,
   renderDiff?: (props: ToolDiffRenderProps) => ReactElement,
+  renderTerminal?: (props: ToolTerminalRenderProps) => ReactElement,
 ): ReactElement {
   const view = tool.presentation
   return (
     <>
       {view === undefined
         ? renderSections(sections)
-        : renderPresentationView(view, sections, t, onOpenLink, renderCode, renderDiff)}
+        : renderPresentationView(view, sections, t, onOpenLink, renderCode, renderDiff, renderTerminal)}
       {tool.error === undefined ? null : (
         <section className="dsh-tool-row__section dsh-tool-row__section--error" role="alert">
           <h4>{label(t, 'toolrow.error', 'Error')}</h4>
@@ -309,10 +321,13 @@ function renderPresentationView(
   onOpenLink?: (href: string) => void,
   renderCode?: (props: ToolCodeRenderProps) => ReactElement,
   renderDiff?: (props: ToolDiffRenderProps) => ReactElement,
+  renderTerminal?: (props: ToolTerminalRenderProps) => ReactElement,
 ): ReactElement {
   switch (view.card) {
     case 'terminal':
-      return view.phase === 'result' ? renderTerminalResult(view, t) : renderSections(fallback)
+      return view.phase === 'result'
+        ? renderTerminalResult(view, t, renderTerminal)
+        : renderSections(fallback)
     case 'diff':
       return renderDiffView(view, t, renderDiff)
     case 'search':
@@ -329,7 +344,19 @@ function renderPresentationView(
 function renderTerminalResult(
   view: Extract<ToolPresentationView, { readonly card: 'terminal'; readonly phase: 'result' }>,
   t?: PresentationTranslate,
+  renderTerminal?: (props: ToolTerminalRenderProps) => ReactElement,
 ): ReactElement {
+  if (renderTerminal !== undefined) {
+    try {
+      return renderTerminal({
+        view,
+        ...(t === undefined ? {} : { translate: t }),
+      })
+    } catch {
+      // A host renderer is an enhancement only; retain the shared result view
+      // when the optional implementation cannot handle this payload.
+    }
+  }
   const exit = view.exitCode === undefined ? view.signal : String(view.exitCode)
   const succeeded = view.exitCode === 0
   return (

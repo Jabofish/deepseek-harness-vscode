@@ -69,6 +69,38 @@ describe('ToolRow rendering', () => {
     expect(document.querySelector('.dsh-tool-row__diff-line--remove')?.textContent).toContain('before')
   })
 
+  it('hands structured terminal results to the optional host terminal renderer', () => {
+    const tool: ToolCallView = {
+      id: 'terminal-renderer',
+      name: 'bash',
+      title: 'Bash',
+      category: 'tool',
+      status: 'completed',
+      metadata: {},
+      presentation: {
+        phase: 'result',
+        card: 'terminal',
+        output: 'all checks passed',
+        exitCode: 0,
+      },
+    }
+
+    render(
+      createElement(ToolRow, {
+        tool,
+        expanded: true,
+        onToggle: vi.fn(),
+        renderTerminal: ({ view }) =>
+          createElement('output', { 'data-terminal-renderer': view.output }, 'custom terminal'),
+      }),
+    )
+
+    expect(document.querySelector('[data-terminal-renderer="all checks passed"]')?.textContent).toBe(
+      'custom terminal',
+    )
+    expect(document.querySelector('.dsh-tool-row__terminal-output')).toBeNull()
+  })
+
   it('hands structured read lines to the optional host code renderer', () => {
     const tool: ToolCallView = {
       id: 'read-code-renderer',
