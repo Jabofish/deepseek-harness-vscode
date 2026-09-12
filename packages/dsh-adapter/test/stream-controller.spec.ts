@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { AppError } from '@dsh-vscode/domain'
 import type { BackendEvent } from '@dsh-vscode/domain'
 import type { DshTransport } from '../src/contracts.js'
+import { historyGapRecovery, Rc6SessionRepository } from '../src/repositories/session-repository.js'
 import { DshStreamController } from '../src/stream-controller.js'
 
 describe('DshStreamController', () => {
@@ -46,6 +47,90 @@ describe('DshStreamController', () => {
 
     await waitFor(() => received.length === 2)
     expect(received).toEqual(['tokenUsage', 'contextPressure'])
+  })
+
+  it('stops a same-sequence bucket when a listener closes the controller', async () => {
+    const stream = new ControlledStream()
+    const received: BackendEvent[] = []
+    let closePromise: Promise<void> | undefined
+    const controller = new DshStreamController(streamTransport([]), undefined, undefined, {
+      streamSource: stream.source,
+      closeTransport: false,
+    })
+    controllers.push(controller)
+    controller.subscribe((event) => {
+      received.push(event)
+      if (event.type === 'turn.started') closePromise = controller.close()
+    })
+
+    stream.push(subscribeFrame('s1', 0))
+    stream.push(liveTurnFrame('s1', 1))
+    stream.push(canonicalFrame('s1', 1, 'turn/end', { turn: 1, reason: { kind: 'completed' } }))
+    await waitFor(() => received.some((event) => event.type === 'turn.started'))
+    await closePromise
+
+    expect(received.filter((event) => event.sequence === 1)).toHaveLength(1)
+    expect(received.some((event) => event.type === 'turn.ended')).toBe(false)
+  })
+
+  it('keeps delivery alive when an observer rejects one event', async () => {
+    const stream = new ControlledStream()
+    const received: BackendEvent[] = []
+    const controller = new DshStreamController(
+      streamTransport([]),
+      () => {
+        throw new Error('cache observer failed')
+      },
+      undefined,
+      { streamSource: stream.source, closeTransport: false },
+    )
+    controllers.push(controller)
+    controller.subscribe((event) => received.push(event))
+
+    stream.push(subscribeFrame('s1', 0))
+    stream.push(liveTurnFrame('s1', 1))
+    stream.push(liveTurnFrame('s1', 2))
+    await waitFor(() => received.some((event) => event.sequence === 2))
+
+    expect(
+      received.map((event) => event.sequence).filter((value): value is number => value !== undefined),
+    ).toEqual([1, 2])
+  })
+
+  it('orders nested model retry events with the durable session stream', async () => {
+    const stream = new ControlledStream()
+    const controller = new DshStreamController(
+      streamTransport([]),
+      undefined,
+      () => Promise.resolve([recoveredTurn('s1', 1)]),
+      { streamSource: stream.source, closeTransport: false },
+    )
+    controllers.push(controller)
+    const received: BackendEvent[] = []
+    controller.subscribe((event) => received.push(event))
+
+    stream.push(subscribeFrame('s1', 0))
+    stream.push(
+      canonicalFrame('s1', 2, 'llm/retry', {
+        retryId: 'retry-1',
+        turn: 1,
+        step: 1,
+        provider: 'deepseek',
+        mode: 'normal',
+        policyKey: 'deepseek-normal',
+        retry: 1,
+        maxRetries: 2,
+        delayMs: 10,
+        failure: { code: 'RATE_LIMIT', message: 'rate limited' },
+      }),
+    )
+
+    await waitFor(() => received.some((event) => event.type === 'model.retry'))
+    const durable = received.filter(
+      (event) => event.type !== 'session.subscribed' && event.type !== 'session.gap',
+    )
+    expect(durable.map((event) => event.sequence)).toEqual([1, 2])
+    expect(durable.map((event) => event.type)).toEqual(['turn.started', 'model.retry'])
   })
 
   it('restarts the stream for a listener that subscribes during teardown', async () => {
@@ -131,6 +216,45 @@ describe('DshStreamController', () => {
     expect(received.some((event) => event.type === 'message.delta' && event.delta === 'gap-after-drop')).toBe(
       false,
     )
+  })
+
+  it('hands an unfinished durable drain to the next reconnect generation', async () => {
+    const firstStream = new ControlledStream()
+    const secondStream = new ControlledStream()
+    let releaseRecovery = (): void => undefined
+    const recoveryBarrier = new Promise<void>((resolve) => {
+      releaseRecovery = resolve
+    })
+    let recoveryCalls = 0
+    const controller = new DshStreamController(
+      controlledGenerationTransport([firstStream, secondStream]),
+      undefined,
+      async (_sessionId, _fromSequence, _toSequence) => {
+        recoveryCalls += 1
+        if (recoveryCalls === 1) await recoveryBarrier
+        return recoveryCalls === 2 ? [recoveredTurn('s1', 1)] : []
+      },
+    )
+    controllers.push(controller)
+    const received: BackendEvent[] = []
+    controller.subscribe((event) => received.push(event))
+
+    firstStream.push(subscribeFrame('s1', 0))
+    firstStream.push(liveTurnFrame('s1', 2))
+    await waitFor(() => recoveryCalls === 1)
+    firstStream.end()
+
+    await waitForAtMost(() => secondStream.signal !== undefined, 2_000)
+    secondStream.push(subscribeFrame('s1', 2))
+    secondStream.push(liveTurnFrame('s1', 3))
+    releaseRecovery()
+
+    await waitForAtMost(() => received.some((event) => event.sequence === 3), 2_000)
+    expect(
+      received
+        .map((event) => event.sequence)
+        .filter((sequence): sequence is number => sequence !== undefined),
+    ).toEqual([1, 2, 3])
   })
 
   it('projects an abandoned assistant stream as a host-only interrupted completion', async () => {
@@ -557,18 +681,112 @@ function assistantFrame(sessionId: string, transientSequence: number, text: stri
   }
 }
 
+function canonicalFrame(sessionId: string, sequence: number, type: string, data: unknown): unknown {
+  return {
+    payload: {
+      type: 'session/event',
+      sessionId,
+      event: { type, seq: sequence, time: sequence, data },
+    },
+  }
+}
+
+function projectionFrame(sessionId: string, sequence: number, key: string, value: unknown): unknown {
+  return {
+    payload: { type: 'session/projection', sessionId, key, value, seq: sequence },
+  }
+}
+
+function historyRow(
+  sequence: number,
+  type: string,
+  data: unknown,
+): {
+  event: { type: string; seq: number; time: number; data: unknown }
+} {
+  return { event: { type, seq: sequence, time: 1_700_000_000_000 + sequence, data } }
+}
+
+function toolResultData(
+  callId: string,
+  messageId: string,
+  output: string,
+  isError: boolean,
+  error?: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    turn: callId === 'call-3' ? 2 : 1,
+    step: 1,
+    callId,
+    message: {
+      id: messageId,
+      role: 'user',
+      source: { kind: 'tool', callId },
+      content: [
+        {
+          type: 'tool-result',
+          toolCallId: callId,
+          isError,
+          content: [{ type: 'text', text: output }],
+        },
+      ],
+    },
+    ...(error === undefined ? {} : { error }),
+  }
+}
+
 function recoveredTurn(sessionId: string, sequence: number): BackendEvent {
   return { type: 'turn.started', sessionId, turn: 1, sequence } as unknown as BackendEvent
 }
 
-describe('DshStreamController detached gap recovery', () => {
+function recoveredMessage(
+  sessionId: string,
+  sequence: number,
+  messageId: string,
+  markdown: string,
+): BackendEvent {
+  return { type: 'message.user', sessionId, messageId, markdown, source: 'user', sequence }
+}
+
+function recoveredStep(sessionId: string, sequence: number): BackendEvent {
+  return { type: 'step.started', sessionId, turn: 1, step: 1, sequence }
+}
+
+function recoveredReasoning(sessionId: string, sequence: number, delta: string): BackendEvent {
+  return { type: 'reasoning.delta', sessionId, messageId: 'assistant-1', turn: 1, step: 1, delta, sequence }
+}
+
+function recoveredTool(
+  sessionId: string,
+  sequence: number,
+  id: string,
+  status: 'completed' | 'running',
+  outputSummary?: string,
+): BackendEvent {
+  return {
+    type: 'tool.updated',
+    sessionId,
+    sequence,
+    tool: {
+      id,
+      name: 'shell',
+      category: 'execution',
+      title: 'Shell',
+      status,
+      ...(outputSummary === undefined ? {} : { outputSummary }),
+      metadata: {},
+    },
+  }
+}
+
+describe('DshStreamController ordered gap recovery', () => {
   const controllers: DshStreamController[] = []
 
   afterEach(async () => {
     await Promise.all(controllers.splice(0).map((controller) => controller.close()))
   })
 
-  it('delivers the live event first and replays the hole below the watermark', async () => {
+  it('delivers a recovered hole before the live edge without blocking the reader', async () => {
     const stream = new ControlledStream()
     const recovered: Array<[string, number, number]> = []
     const controller = new DshStreamController(
@@ -587,23 +805,440 @@ describe('DshStreamController detached gap recovery', () => {
     stream.push(subscribeFrame('s1', 5))
     await waitFor(() => received.some((event) => event.type === 'session.subscribed'))
     stream.push(liveTurnFrame('s1', 10))
-    // The live event must not wait for the history replay; recovery runs
-    // detached so the read loop keeps draining the host's frames.
-    await waitFor(() => received.some((event) => event.sequence === 10))
+    // Recovery runs alongside the host reader, while the live event remains
+    // buffered until the preceding history range has been accounted for.
     await waitFor(() => received.some((event) => event.sequence === 6))
     await waitFor(() => received.some((event) => event.sequence === 9))
+    await waitFor(() => received.some((event) => event.sequence === 10))
 
     expect(recovered).toEqual([['s1', 6, 9]])
-    expect(received.findIndex((event) => event.sequence === 10)).toBeLessThan(
-      received.findIndex((event) => event.sequence === 6),
-    )
+    expect(
+      received
+        .map((event) => event.sequence)
+        .filter((sequence): sequence is number => sequence !== undefined),
+    ).toEqual([6, 7, 8, 9, 10])
     expect(received.some((event) => event.type === 'session.gap')).toBe(false)
-    // The watermark stays at the live edge: a redelivered older frame is
-    // still deduplicated, and recovery never rewinds it.
+    // A redelivered older frame is still deduplicated after the ordered
+    // dispatcher has crossed the live edge.
     stream.push(liveTurnFrame('s1', 9))
     stream.push(liveTurnFrame('s1', 11))
     await waitFor(() => received.some((event) => event.sequence === 11))
     expect(received.filter((event) => event.sequence === 9)).toHaveLength(1)
+  })
+
+  it('keeps a complex interleaved multi-tool stream complete and ordered during recovery', async () => {
+    const stream = new ControlledStream()
+    const releaseRecovery = { resolve: (): void => undefined }
+    const recoveryBarrier = new Promise<void>((resolve) => {
+      releaseRecovery.resolve = resolve
+    })
+    const recoveryRanges: Array<[number, number]> = []
+    const controller = new DshStreamController(
+      streamTransport([]),
+      undefined,
+      async (_sessionId, fromSequence, toSequence) => {
+        recoveryRanges.push([fromSequence, toSequence])
+        if (recoveryRanges.length === 1) await recoveryBarrier
+        return [
+          recoveredMessage('s1', 6, 'user-1', 'inspect the repository'),
+          recoveredTurn('s1', 7),
+          recoveredStep('s1', 8),
+          recoveredReasoning('s1', 9, 'I will inspect two tools.'),
+          recoveredTool('s1', 11, 'call-1', 'completed', 'first tool result'),
+        ].filter(
+          (event) =>
+            event.sequence !== undefined && event.sequence >= fromSequence && event.sequence <= toSequence,
+        )
+      },
+      { streamSource: stream.source, closeTransport: false },
+    )
+    controllers.push(controller)
+    const received: BackendEvent[] = []
+    controller.subscribe((event) => received.push(event))
+
+    stream.push(subscribeFrame('s1', 5))
+    await waitFor(() => received.some((event) => event.type === 'session.subscribed'))
+    stream.push(
+      canonicalFrame('s1', 10, 'tool/call', {
+        turn: 1,
+        step: 1,
+        callId: 'call-1',
+        name: 'shell',
+        arguments: '{}',
+      }),
+    )
+    stream.push(projectionFrame('s1', 10, 'tokenUsage', { outputTokens: 2 }))
+    stream.push(projectionFrame('s1', 10, 'contextPressure', { pressureTokens: 12 }))
+    stream.push(
+      canonicalFrame('s1', 12, 'tool/call', {
+        turn: 1,
+        step: 1,
+        callId: 'call-2',
+        name: 'read',
+        arguments: '{"path":"README.md"}',
+      }),
+    )
+    stream.push(
+      canonicalFrame('s1', 13, 'tool/result', {
+        turn: 1,
+        step: 1,
+        callId: 'call-2',
+        message: {
+          id: 'tool-message-2',
+          role: 'user',
+          content: [
+            {
+              type: 'tool-result',
+              toolCallId: 'call-2',
+              content: [{ type: 'text', text: 'README contents' }],
+            },
+          ],
+          source: { kind: 'tool', callId: 'call-2' },
+        },
+      }),
+    )
+    stream.push(
+      canonicalFrame('s1', 14, 'assistant/message', {
+        turn: 1,
+        step: 1,
+        message: {
+          id: 'assistant-1',
+          role: 'assistant',
+          content: [{ type: 'text', text: 'The repository is consistent.' }],
+          source: { kind: 'model', provider: 'provider-1', model: 'model-1' },
+        },
+      }),
+    )
+    stream.push(canonicalFrame('s1', 15, 'step/end', { turn: 1, step: 1 }))
+    stream.push(canonicalFrame('s1', 16, 'turn/end', { turn: 1, reason: { kind: 'completed' } }))
+
+    // Projection state is allowed to arrive while history is loading, but no
+    // durable conversation record may jump over the recovery barrier.
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(received.some((event) => event.sequence === 10 && event.type === 'tool.updated')).toBe(false)
+    expect(received.filter((event) => event.type === 'session.projection').map((event) => event.key)).toEqual(
+      ['tokenUsage', 'contextPressure'],
+    )
+
+    releaseRecovery.resolve()
+    await waitFor(() => received.some((event) => event.sequence === 16))
+
+    const durable = received
+      .filter((event) => event.type !== 'session.projection' && event.type !== 'session.subscribed')
+      .filter((event) => event.sequence !== undefined)
+    expect(durable.map((event) => event.sequence)).toEqual([6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16])
+    expect(durable.map((event) => event.type)).toEqual([
+      'message.user',
+      'turn.started',
+      'step.started',
+      'reasoning.delta',
+      'tool.updated',
+      'tool.updated',
+      'tool.updated',
+      'tool.updated',
+      'message.completed',
+      'step.ended',
+      'turn.ended',
+    ])
+    expect(recoveryRanges).toEqual([
+      [6, 9],
+      [11, 11],
+    ])
+    expect(received.some((event) => event.type === 'session.gap')).toBe(false)
+  })
+
+  it('replays an upstream-shaped multi-request stream losslessly across several live holes', async () => {
+    const stream = new ControlledStream()
+    const sessionId = 's1'
+    const rawHistory = [
+      historyRow(0, 'system/message', { message: { content: [{ type: 'text', text: 'private prompt' }] } }),
+      historyRow(1, 'turn/start', { turn: 1 }),
+      historyRow(2, 'user/message', {
+        id: 'user-1',
+        role: 'user',
+        source: { kind: 'user', rpcId: 'request-1' },
+        content: [{ type: 'text', text: 'inspect two tools' }],
+      }),
+      historyRow(3, 'step/start', { turn: 1, step: 1 }),
+      historyRow(4, 'assistant/chunk', {
+        turn: 1,
+        step: 1,
+        messageId: 'assistant-1',
+        chunk: { type: 'text-delta', index: 0, text: 'I will inspect both tools. ' },
+      }),
+      historyRow(5, 'tool/call', {
+        turn: 1,
+        step: 1,
+        callId: 'call-1',
+        name: 'read_file',
+        arguments: '{"path":"src/a.ts"}',
+      }),
+      historyRow(6, 'tool/call', {
+        turn: 1,
+        step: 1,
+        callId: 'call-2',
+        name: 'read_file',
+        arguments: '{"path":"src/b.ts"}',
+      }),
+      historyRow(
+        7,
+        'tool/result',
+        toolResultData('call-1', 'tool-result-1', 'permission denied', true, {
+          name: 'ToolError',
+          code: 'PERMISSION_DENIED',
+          message: 'permission denied',
+        }),
+      ),
+      historyRow(8, 'tool/result', toolResultData('call-2', 'tool-result-2', 'file b contents', false)),
+      historyRow(9, 'deliverables/presented', {
+        turn: 1,
+        callId: 'call-2',
+        files: [
+          { path: 'artifacts/inspection.md', description: 'inspection report' },
+          { path: 'artifacts/summary.json', description: 'machine-readable summary' },
+        ],
+      }),
+      historyRow(10, 'assistant/chunk', {
+        turn: 1,
+        step: 1,
+        messageId: 'assistant-1',
+        chunk: { type: 'text-delta', index: 1, text: 'The first tool failed, but the second succeeded.' },
+      }),
+      historyRow(11, 'step/end', { turn: 1, step: 1 }),
+      historyRow(12, 'turn/end', { turn: 1, reason: { kind: 'completed' } }),
+      historyRow(13, 'turn/start', { turn: 2 }),
+      historyRow(14, 'user/message', {
+        id: 'user-2',
+        role: 'user',
+        source: { kind: 'user', rpcId: 'request-2' },
+        content: [{ type: 'text', text: 'now verify the report' }],
+      }),
+      historyRow(15, 'step/start', { turn: 2, step: 1 }),
+      historyRow(16, 'tool/call', {
+        turn: 2,
+        step: 1,
+        callId: 'call-3',
+        name: 'code_interpreter',
+        arguments: '{"code":"verify()"}',
+      }),
+      historyRow(17, 'tool/ptc-dispatch-start', {
+        rootCallId: 'call-3',
+        parentCallId: 'call-3',
+        subCallId: 'call-3:ptc:1',
+        name: 'read_file',
+        arguments: { path: 'artifacts/inspection.md' },
+      }),
+      historyRow(18, 'tool/ptc-dispatch', {
+        rootCallId: 'call-3',
+        parentCallId: 'call-3',
+        subCallId: 'call-3:ptc:1',
+        name: 'read_file',
+        arguments: { path: 'artifacts/inspection.md' },
+        isError: true,
+        content: [{ type: 'text', text: 'file changed during verification' }],
+      }),
+      historyRow(19, 'tool/ptc-dispatch-start', {
+        rootCallId: 'call-3',
+        parentCallId: 'call-3',
+        subCallId: 'call-3:ptc:2',
+        name: 'read_file',
+        arguments: { path: 'artifacts/summary.json' },
+      }),
+      historyRow(20, 'tool/ptc-dispatch', {
+        rootCallId: 'call-3',
+        parentCallId: 'call-3',
+        subCallId: 'call-3:ptc:2',
+        name: 'read_file',
+        arguments: { path: 'artifacts/summary.json' },
+        content: [{ type: 'text', text: '{"ok":true}' }],
+      }),
+      historyRow(
+        21,
+        'tool/result',
+        toolResultData('call-3', 'tool-result-3', 'verification completed', false),
+      ),
+      historyRow(22, 'assistant/message', {
+        turn: 2,
+        step: 1,
+        message: {
+          id: 'assistant-2',
+          role: 'assistant',
+          content: [{ type: 'text', text: 'The report is verified.' }],
+          source: { kind: 'model', provider: 'fake', model: 'fake-1' },
+        },
+        usage: { inputTokens: 100, outputTokens: 20, cacheReadTokens: 10, cacheWriteTokens: 0 },
+      }),
+      historyRow(23, 'deliverables/presented', {
+        turn: 2,
+        callId: 'call-3',
+        files: [{ path: 'artifacts/verified.txt', description: 'verification result' }],
+      }),
+      historyRow(24, 'step/end', { turn: 2, step: 1 }),
+      historyRow(25, 'turn/end', { turn: 2, reason: { kind: 'completed' } }),
+    ]
+    const recoveryRanges: Array<[number, number]> = []
+    let releaseFirstHistory: (() => void) | undefined
+    const firstHistoryBarrier = new Promise<void>((resolve) => {
+      releaseFirstHistory = resolve
+    })
+    let historyStarted: (() => void) | undefined
+    const historyRequestStarted = new Promise<void>((resolve) => {
+      historyStarted = resolve
+    })
+    const transport: DshTransport = {
+      request: async <TResponse>(method: string, params: unknown, signal?: AbortSignal) => {
+        if (method !== 'session.history') throw new Error(`unexpected ${method}`)
+        const beforeSequence = (params as { readonly beforeSeq?: number }).beforeSeq
+        if (beforeSequence === 5) {
+          historyStarted?.()
+          await firstHistoryBarrier
+        }
+        signal?.throwIfAborted()
+        const events = rawHistory.filter(
+          (entry) => beforeSequence === undefined || entry.event.seq < beforeSequence,
+        )
+        return {
+          result: { ok: true, value: { events, hasMore: false } },
+        } as TResponse
+      },
+      remoteRequest: <TResponse>() => Promise.reject<TResponse>(new Error('unexpected Remote')),
+      openEventStream: stream.source,
+      close: () => Promise.resolve(),
+    }
+    const repository = new Rc6SessionRepository(transport)
+    const controller = new DshStreamController(
+      transport,
+      undefined,
+      (streamSessionId, fromSequence, toSequence, signal) => {
+        recoveryRanges.push([fromSequence, toSequence])
+        return historyGapRecovery(repository)(streamSessionId, fromSequence, toSequence, signal)
+      },
+      { closeTransport: false },
+    )
+    controllers.push(controller)
+    const received: BackendEvent[] = []
+    controller.subscribe((event) => received.push(event))
+
+    stream.push(subscribeFrame(sessionId, -1))
+    stream.push(canonicalFrame(sessionId, 5, 'tool/call', rawHistory[5]?.event.data))
+    stream.push(canonicalFrame(sessionId, 5, 'tool/call', rawHistory[5]?.event.data))
+    stream.push(projectionFrame(sessionId, 5, 'tokenUsage', { outputTokens: 4 }))
+    stream.push(projectionFrame(sessionId, 5, 'contextPressure', { pressureTokens: 32 }))
+    stream.push(projectionFrame(sessionId, 5, 'tokenUsage', { outputTokens: 4 }))
+    await historyRequestStarted
+    await waitFor(() => received.filter((event) => event.type === 'session.projection').length >= 2)
+    expect(
+      received.filter((event) => event.type !== 'session.subscribed' && event.type !== 'session.projection'),
+    ).toEqual([])
+    stream.push(canonicalFrame(sessionId, 8, 'tool/result', rawHistory[8]?.event.data))
+    stream.push(canonicalFrame(sessionId, 13, 'turn/start', rawHistory[13]?.event.data))
+    stream.push(canonicalFrame(sessionId, 16, 'tool/call', rawHistory[16]?.event.data))
+    stream.push(canonicalFrame(sessionId, 22, 'assistant/message', rawHistory[22]?.event.data))
+    stream.push(projectionFrame(sessionId, 22, 'tokenUsage', { inputTokens: 100, outputTokens: 20 }))
+    stream.push(projectionFrame(sessionId, 22, 'contextPressure', { pressureTokens: 64 }))
+    stream.push(canonicalFrame(sessionId, 25, 'turn/end', rawHistory[25]?.event.data))
+
+    releaseFirstHistory?.()
+    await waitFor(() => received.some((event) => event.sequence === 25))
+
+    const durable = received.filter(
+      (event) => event.type !== 'session.subscribed' && event.type !== 'session.projection',
+    )
+    expect(durable.map((event) => event.sequence)).toEqual(
+      Array.from({ length: 26 }, (_value, index) => index),
+    )
+    expect(durable.map((event) => event.type)).toEqual([
+      'session.system',
+      'turn.started',
+      'message.user',
+      'step.started',
+      'message.delta',
+      'tool.updated',
+      'tool.updated',
+      'tool.updated',
+      'tool.updated',
+      'deliverables.presented',
+      'message.delta',
+      'step.ended',
+      'turn.ended',
+      'turn.started',
+      'message.user',
+      'step.started',
+      'tool.updated',
+      'tool.updated',
+      'tool.updated',
+      'tool.updated',
+      'tool.updated',
+      'tool.updated',
+      'message.completed',
+      'deliverables.presented',
+      'step.ended',
+      'turn.ended',
+    ])
+    expect(recoveryRanges).toEqual([
+      [0, 4],
+      [6, 7],
+      [9, 12],
+      [14, 15],
+      [17, 21],
+      [23, 24],
+    ])
+    expect(received.filter((event) => event.type === 'session.projection').map((event) => event.key)).toEqual(
+      ['tokenUsage', 'contextPressure', 'tokenUsage', 'contextPressure'],
+    )
+    expect(received.filter((event) => event.sequence === 5 && event.type === 'tool.updated')).toHaveLength(1)
+    expect(received.filter((event) => event.type === 'session.gap')).toHaveLength(0)
+    expect(durable.find((event) => event.sequence === 7)).toMatchObject({
+      type: 'tool.updated',
+      tool: { id: 'call-1', status: 'failed', error: 'permission denied' },
+    })
+    expect(durable.find((event) => event.sequence === 18)).toMatchObject({
+      type: 'tool.updated',
+      tool: { id: 'call-3:ptc:1', parentCallId: 'call-3', status: 'failed' },
+    })
+    expect(durable.find((event) => event.sequence === 17)).toMatchObject({
+      type: 'tool.updated',
+      tool: { id: 'call-3:ptc:1', parentCallId: 'call-3', status: 'running' },
+    })
+    expect(durable.find((event) => event.sequence === 9)).toMatchObject({
+      type: 'deliverables.presented',
+      files: [{ path: 'artifacts/inspection.md' }, { path: 'artifacts/summary.json' }],
+    })
+    expect(durable.find((event) => event.sequence === 23)).toMatchObject({
+      type: 'deliverables.presented',
+      files: [{ path: 'artifacts/verified.txt' }],
+    })
+  })
+
+  it('holds a reconnect tail behind the higher subscription baseline', async () => {
+    const stream = new ControlledStream()
+    const recoveryRanges: Array<[number, number]> = []
+    const controller = new DshStreamController(
+      streamTransport([]),
+      undefined,
+      (_sessionId, fromSequence, toSequence) => {
+        recoveryRanges.push([fromSequence, toSequence])
+        return Promise.resolve([recoveredTurn('s1', 2), recoveredTurn('s1', 3)])
+      },
+      { streamSource: stream.source, closeTransport: false },
+    )
+    controllers.push(controller)
+    const received: BackendEvent[] = []
+    controller.subscribe((event) => received.push(event))
+
+    stream.push(subscribeFrame('s1', 0))
+    stream.push(liveTurnFrame('s1', 1))
+    await waitFor(() => received.some((event) => event.sequence === 1))
+    stream.push(subscribeFrame('s1', 3))
+    stream.push(liveTurnFrame('s1', 4))
+    await waitFor(() => received.some((event) => event.sequence === 4))
+
+    expect(recoveryRanges).toEqual([[2, 3]])
+    expect(
+      received
+        .map((event) => event.sequence)
+        .filter((sequence): sequence is number => sequence !== undefined),
+    ).toEqual([1, 2, 3, 4])
   })
 
   it('does not treat a pre-subscription history snapshot as a live gap', async () => {
@@ -752,6 +1387,22 @@ function reconnectingTransport(generations: readonly (readonly unknown[])[]): Ds
         signal.addEventListener('abort', () => resolve(), { once: true })
       })
     }
+  }
+  return {
+    request: <T>() => Promise.reject<T>(new Error('request is not used by this test')),
+    remoteRequest: <T>() => Promise.reject<T>(new Error('remoteRequest is not used by this test')),
+    openEventStream: open,
+    openMuxStream: open,
+    close: () => Promise.resolve(),
+  }
+}
+
+function controlledGenerationTransport(generations: readonly ControlledStream[]): DshTransport {
+  let nextGeneration = 0
+  const open = (signal: AbortSignal): AsyncIterable<unknown> => {
+    const stream = generations[nextGeneration] ?? generations[generations.length - 1]
+    nextGeneration += 1
+    return stream?.source(signal) ?? streamTransport([]).openEventStream(signal)
   }
   return {
     request: <T>() => Promise.reject<T>(new Error('request is not used by this test')),

@@ -18,18 +18,27 @@ export type StreamRecovery = (
   signal: AbortSignal,
 ) => Promise<readonly BackendEvent[]>
 
+interface OrderedSessionDelivery {
+  nextSequence: number
+  readonly pending: Map<number, BackendEvent[]>
+  recoveryThrough?: number
+  draining: boolean
+  drainSignal?: AbortSignal
+  readonly abort: AbortController
+}
+
 /** One shared mux/host reader for every consumer in an Extension Host. */
 export class DshStreamController implements AsyncEventSource<BackendEvent> {
   private readonly listeners = new Set<(event: BackendEvent) => void>()
   private readonly lastSequences = new Map<string, number>()
   /** Alpha session/follow sends its history snapshot before this baseline. */
   private readonly subscribedSessions = new Set<string>()
+  /** Durable conversation frames are buffered and emitted in sequence order. */
+  private readonly orderedDeliveries = new Map<string, OrderedSessionDelivery>()
   /** Projection frames share the durable event sequence, so dedupe them per key. */
   private readonly lastProjectionSequences = new Map<string, Map<string, number>>()
   /** Alpha13 transient frames have a separate local sequence space. */
   private readonly lastTransientSequences = new Map<string, number>()
-  /** One detached history recovery at a time per session, in detection order. */
-  private readonly recoveries = new Map<string, Promise<void>>()
   private lifetime: AbortController | undefined
   private reading: Promise<void> | undefined
   private retryTimer: ReturnType<typeof setTimeout> | undefined
@@ -67,6 +76,7 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
     if (this.retryTimer !== undefined) clearTimeout(this.retryTimer)
     this.retryTimer = undefined
     this.lifetime?.abort()
+    this.clearOrderedDeliveries()
     this.listeners.clear()
     await this.reading?.catch(() => undefined)
     await this.restartTask?.catch(() => undefined)
@@ -86,10 +96,10 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
       this.retryTimer = undefined
       this.retryAttempt = 0
       this.lastSequences.clear()
+      this.clearOrderedDeliveries()
       this.lastProjectionSequences.clear()
       this.lastTransientSequences.clear()
       this.subscribedSessions.clear()
-      this.recoveries.clear()
       const reading = this.reading
       this.lifetime?.abort()
       await reading?.catch(() => undefined)
@@ -201,6 +211,7 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
     if (signal.aborted) return
     if (event.type === 'session.removed') {
       this.lastSequences.delete(event.sessionId)
+      this.deleteOrderedDelivery(event.sessionId)
       this.lastProjectionSequences.delete(event.sessionId)
       this.lastTransientSequences.delete(event.sessionId)
       this.subscribedSessions.delete(event.sessionId)
@@ -212,14 +223,21 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
       const previous = this.lastSequences.get(event.sessionId)
       if (previous === undefined) {
         this.lastSequences.set(event.sessionId, event.lastSequence)
+        this.orderedDeliveries.set(event.sessionId, createOrderedDelivery(event.lastSequence + 1))
       } else if (event.lastSequence > previous) {
         // The v1 mux has no client-side resume hook ("since" is ignored), so a
         // re-subscribe above the cached watermark means the missed range is
-        // only reachable through history. Recover off the read loop: blocking
-        // here suspends the follow consumer while the host keeps streaming,
-        // which used to overflow the receive queue and kill the stream
-        // mid-answer.
-        this.scheduleRecovery(event.sessionId, previous + 1, event.lastSequence, signal)
+        // only reachable through history. Keep reading the host in parallel,
+        // but hold later durable frames behind this recovery window.
+        const delivery =
+          this.orderedDeliveries.get(event.sessionId) ??
+          (() => {
+            const created = createOrderedDelivery(previous + 1)
+            this.orderedDeliveries.set(event.sessionId, created)
+            return created
+          })()
+        delivery.recoveryThrough = Math.max(delivery.recoveryThrough ?? -1, event.lastSequence)
+        this.lastSequences.set(event.sessionId, event.lastSequence)
       } else if (event.lastSequence < previous) {
         // The v1 mux has no client-side resume hook ("since" is ignored), so
         // the host's subscribed frame is the authoritative log baseline. A
@@ -227,9 +245,25 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
         // holds; keeping the stale watermark would silently drop the host's
         // new event epoch below it. Follow the baseline down instead.
         this.lastSequences.set(event.sessionId, event.lastSequence)
+        this.replaceOrderedDelivery(event.sessionId, event.lastSequence + 1)
+      } else if (!this.orderedDeliveries.has(event.sessionId)) {
+        // Alpha session/follow may have emitted a bounded history snapshot
+        // before this cursor. Those frames were intentionally delivered
+        // directly; start the ordered live tail immediately after the cursor.
+        this.orderedDeliveries.set(event.sessionId, createOrderedDelivery(event.lastSequence + 1))
       }
       this.retryAttempt = 0
       this.emit(event)
+      const delivery = this.orderedDeliveries.get(event.sessionId)
+      if (delivery !== undefined && delivery.nextSequence <= event.lastSequence) {
+        // If the previous generation was aborted while a hole was being
+        // recovered, a reconnect may repeat the same host baseline. Re-arm
+        // that baseline instead of leaving the unfinished prefix stranded.
+        delivery.recoveryThrough = Math.max(delivery.recoveryThrough ?? -1, event.lastSequence)
+        this.startOrderedDrain(event.sessionId, signal)
+      } else if (event.lastSequence > (previous ?? event.lastSequence)) {
+        this.startOrderedDrain(event.sessionId, signal)
+      }
       return
     }
     const sessionId = eventSessionId(event)
@@ -264,59 +298,145 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
       this.emit(event)
       return
     }
-    const previous = this.lastSequences.get(sessionId) ?? -1
-    if (sequence <= previous) return
     if (this.options.streamSource !== undefined && !this.subscribedSessions.has(sessionId)) {
       // A session/follow snapshot is a bounded history sample and is emitted
       // before its session/subscribed cursor. A sample can legitimately start
       // above sequence zero; do not manufacture a gap until the live baseline
       // has been established.
+      const previous = this.lastSequences.get(sessionId)
+      if (previous !== undefined && sequence <= previous) return
       this.lastSequences.set(sessionId, sequence)
       this.emit(event)
       return
     }
-    if (sequence > previous + 1) this.scheduleRecovery(sessionId, previous + 1, sequence - 1, signal)
-    this.lastSequences.set(sessionId, sequence)
+    const previous = this.lastSequences.get(sessionId)
+    if (previous === undefined) this.lastSequences.set(sessionId, -1)
+    const delivery =
+      this.orderedDeliveries.get(sessionId) ??
+      (() => {
+        const created = createOrderedDelivery(0)
+        this.orderedDeliveries.set(sessionId, created)
+        return created
+      })()
+    if (sequence < delivery.nextSequence) return
+    const pending = delivery.pending.get(sequence) ?? []
+    if (pending.some((candidate) => sameBackendEvent(candidate, event))) return
+    pending.push(event)
+    delivery.pending.set(sequence, pending)
+    this.lastSequences.set(sessionId, Math.max(this.lastSequences.get(sessionId) ?? -1, sequence))
     this.retryAttempt = 0
-    this.emit(event)
+    this.startOrderedDrain(sessionId, signal)
   }
 
   /**
-   * Heal a detected sequence hole without suspending the read loop. The
-   * current event is delivered immediately and the history replay for the
-   * hole runs detached; consumers observe the recovered events (below the
-   * watermark) plus a `session.gap` for whatever history could not cover.
+   * Drain one session's durable queue without suspending the host read loop.
+   * Later frames can continue accumulating in `pending` while history fills a
+   * hole, but consumers never see a later sequence before the hole's replay
+   * or its explicit gap notice.
    */
-  private scheduleRecovery(
+  private startOrderedDrain(sessionId: string, signal: AbortSignal): void {
+    const delivery = this.orderedDeliveries.get(sessionId)
+    if (delivery === undefined) return
+    // A reconnect can deliver a new frame while the previous generation is
+    // unwinding. Remember that newer signal even when the old drain still owns
+    // the turn, so its finally block can hand the queue to the live generation.
+    delivery.drainSignal = signal
+    if (delivery.draining) return
+    delivery.draining = true
+    void this.drainOrderedSession(sessionId, delivery, signal)
+      .catch(() => undefined)
+      .finally(() => {
+        if (this.orderedDeliveries.get(sessionId) !== delivery) return
+        delivery.draining = false
+        const nextSignal = delivery.drainSignal
+        if (
+          !this.closed &&
+          nextSignal !== undefined &&
+          !nextSignal.aborted &&
+          (delivery.recoveryThrough !== undefined || delivery.pending.size > 0)
+        )
+          this.startOrderedDrain(sessionId, nextSignal)
+      })
+  }
+
+  private async drainOrderedSession(
     sessionId: string,
+    delivery: OrderedSessionDelivery,
+    signal: AbortSignal,
+  ): Promise<void> {
+    while (!signal.aborted && !this.closed && this.orderedDeliveries.get(sessionId) === delivery) {
+      const next = delivery.nextSequence
+      const pending = delivery.pending.get(next)
+      if (pending !== undefined && pending.length > 0) {
+        this.emitPendingSequence(sessionId, delivery, next)
+        continue
+      }
+
+      const requiredThrough = delivery.recoveryThrough
+      if (requiredThrough !== undefined && requiredThrough >= next) {
+        delete delivery.recoveryThrough
+        await this.recoverOrderedRange(sessionId, delivery, next, requiredThrough, signal)
+        continue
+      }
+      if (requiredThrough !== undefined) delete delivery.recoveryThrough
+
+      const firstPending = smallestPendingSequence(delivery.pending, next)
+      if (firstPending === undefined || firstPending <= next) return
+      await this.recoverOrderedRange(sessionId, delivery, next, firstPending - 1, signal)
+    }
+  }
+
+  private async recoverOrderedRange(
+    sessionId: string,
+    delivery: OrderedSessionDelivery,
     fromSequence: number,
     toSequence: number,
     signal: AbortSignal,
-  ): void {
-    if (fromSequence > toSequence) return
-    if (this.recover === undefined) {
-      this.emit({
-        type: 'session.gap',
-        sessionId,
-        fromSequence,
-        toSequence,
-      })
-      return
-    }
-    const previousTail = this.recoveries.get(sessionId)
-    const task = (async () => {
+  ): Promise<void> {
+    let recovered: readonly BackendEvent[] = []
+    if (this.recover !== undefined) {
       try {
-        await previousTail
+        recovered = await this.recover(
+          sessionId,
+          fromSequence,
+          toSequence,
+          AbortSignal.any([signal, delivery.abort.signal]),
+        )
       } catch {
-        /* the queued predecessor already announced its own gap */
+        // A recovery read is advisory. The explicit gap below keeps the
+        // ordered dispatcher moving while the Webview can retry from history.
       }
-      if (signal.aborted || this.closed) return
-      await this.recoverRange(sessionId, fromSequence, toSequence, signal)
-    })()
-    const tail = task.finally(() => {
-      if (this.recoveries.get(sessionId) === tail) this.recoveries.delete(sessionId)
-    })
-    this.recoveries.set(sessionId, tail)
+    }
+    if (signal.aborted || this.closed || this.orderedDeliveries.get(sessionId) !== delivery) return
+
+    for (const candidate of [...recovered].sort(
+      (left, right) => (left.sequence ?? 0) - (right.sequence ?? 0),
+    )) {
+      const sequence = candidate.sequence
+      if (sequence === undefined || sequence < delivery.nextSequence || sequence > toSequence) continue
+      const pending = delivery.pending.get(sequence) ?? []
+      if (pending.some((existing) => sameBackendEvent(existing, candidate))) continue
+      pending.push(candidate)
+      delivery.pending.set(sequence, pending)
+    }
+
+    while (
+      delivery.nextSequence <= toSequence &&
+      !signal.aborted &&
+      !this.closed &&
+      this.orderedDeliveries.get(sessionId) === delivery
+    ) {
+      const next = delivery.nextSequence
+      const pending = delivery.pending.get(next)
+      if (pending !== undefined && pending.length > 0) {
+        this.emitPendingSequence(sessionId, delivery, next)
+        continue
+      }
+      const nextPresent = smallestPendingSequence(delivery.pending, next + 1, toSequence)
+      const gapTo = nextPresent === undefined ? toSequence : nextPresent - 1
+      this.emit({ type: 'session.gap', sessionId, fromSequence: next, toSequence: gapTo })
+      delivery.nextSequence = gapTo + 1
+    }
   }
 
   private truncateProjectionSequences(sessionId: string, lastSequence: number): void {
@@ -327,54 +447,46 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
   }
 
   /**
-   * Replay one sequence hole from history. Runs detached from the read loop,
-   * so it must not touch `lastSequences`: the watermark already moved past the
-   * hole when the hole was detected. Recovered events are emitted below the
-   * watermark (consumers dedupe by sequence), and whatever history could not
-   * cover is announced as `session.gap` so consumers can heal it themselves.
+   * Commit one durable sequence before notifying consumers. Listener code can
+   * synchronously close or restart the stream, so deleting and advancing only
+   * after the callback would either duplicate the first record or strand the
+   * remainder of a same-sequence bucket.
    */
-  private async recoverRange(
-    sessionId: string,
-    fromSequence: number,
-    toSequence: number,
-    signal: AbortSignal,
-  ): Promise<void> {
-    if (this.recover === undefined || fromSequence > toSequence) return
-    let cursor = fromSequence - 1
-    try {
-      const recovered = await this.recover(sessionId, fromSequence, toSequence, signal)
-      for (const candidate of [...recovered].sort(
-        (left, right) => (left.sequence ?? 0) - (right.sequence ?? 0),
-      )) {
-        if (signal.aborted) break
-        const recoveredSequence = candidate.sequence
-        if (recoveredSequence === undefined || recoveredSequence <= cursor) continue
-        if (recoveredSequence > toSequence) break
-        if (recoveredSequence > cursor + 1)
-          this.emit({
-            type: 'session.gap',
-            sessionId,
-            fromSequence: cursor + 1,
-            toSequence: recoveredSequence - 1,
-          })
-        cursor = recoveredSequence
-        this.emit(candidate)
-      }
-    } catch {
-      // A recovery read is advisory. The explicit gap below keeps projection
-      // consumers from mistaking an incomplete replay for a contiguous stream.
+  private emitPendingSequence(sessionId: string, delivery: OrderedSessionDelivery, sequence: number): void {
+    const pending = delivery.pending.get(sequence)
+    if (pending === undefined || pending.length === 0) return
+    delivery.pending.delete(sequence)
+    delivery.nextSequence = sequence + 1
+    for (const event of pending) {
+      if (this.closed || delivery.abort.signal.aborted || this.orderedDeliveries.get(sessionId) !== delivery)
+        break
+      this.emit(event)
     }
-    if (!signal.aborted && cursor < toSequence)
-      this.emit({
-        type: 'session.gap',
-        sessionId,
-        fromSequence: cursor + 1,
-        toSequence,
-      })
+  }
+
+  private replaceOrderedDelivery(sessionId: string, nextSequence: number): void {
+    this.deleteOrderedDelivery(sessionId)
+    this.orderedDeliveries.set(sessionId, createOrderedDelivery(nextSequence))
+  }
+
+  private deleteOrderedDelivery(sessionId: string): void {
+    this.orderedDeliveries.get(sessionId)?.abort.abort()
+    this.orderedDeliveries.delete(sessionId)
+  }
+
+  private clearOrderedDeliveries(): void {
+    for (const delivery of this.orderedDeliveries.values()) delivery.abort.abort()
+    this.orderedDeliveries.clear()
   }
 
   private emit(event: BackendEvent): void {
-    this.observe?.(event)
+    try {
+      this.observe?.(event)
+    } catch {
+      // Cache observers are advisory to delivery. One malformed projection or
+      // repository-side invariant must not terminate the stream and discard
+      // the rest of a same-sequence bucket.
+    }
     for (const listener of this.listeners) {
       try {
         listener(event)
@@ -382,6 +494,37 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
         /* isolate renderer listeners */
       }
     }
+  }
+}
+
+function createOrderedDelivery(nextSequence: number): OrderedSessionDelivery {
+  return {
+    nextSequence,
+    pending: new Map(),
+    draining: false,
+    abort: new AbortController(),
+  }
+}
+
+function smallestPendingSequence(
+  pending: ReadonlyMap<number, BackendEvent[]>,
+  minimum: number,
+  maximum = Number.MAX_SAFE_INTEGER,
+): number | undefined {
+  let smallest: number | undefined
+  for (const sequence of pending.keys()) {
+    if (sequence < minimum || sequence > maximum) continue
+    if (smallest === undefined || sequence < smallest) smallest = sequence
+  }
+  return smallest
+}
+
+function sameBackendEvent(left: BackendEvent, right: BackendEvent): boolean {
+  if (left === right) return true
+  try {
+    return JSON.stringify(left) === JSON.stringify(right)
+  } catch {
+    return false
   }
 }
 
@@ -545,6 +688,7 @@ function eventSessionId(event: BackendEvent): string | undefined {
   if ('sessionId' in event && typeof event.sessionId === 'string') return event.sessionId
   if ('request' in event) return event.request.sessionId
   if ('question' in event) return event.question.sessionId
+  if ('retry' in event) return event.retry.sessionId
   return undefined
 }
 

@@ -193,6 +193,7 @@ export const rc6Mapper = {
   history(
     value: unknown,
     sessionId: string,
+    options: { readonly includeSystemMarkers?: boolean } = {},
   ): {
     events: readonly SessionHistoryEvent[]
     hasMore: boolean
@@ -209,7 +210,7 @@ export const rc6Mapper = {
       // The v3 system/message is a model-facing prompt. The event's sequence
       // is still consumed by the live stream watermark, but the prompt itself
       // must never be copied into the Extension/Webview history DTO.
-      .filter((entry) => entry.event.type !== 'session.system')
+      .filter((entry) => options.includeSystemMarkers === true || entry.event.type !== 'session.system')
     const projection = objectOrUndefined(projections)
     return {
       events,

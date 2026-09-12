@@ -28,10 +28,10 @@ function userMessageHistoryEntry(sequence: number): unknown {
   }
 }
 
-function liveUserMessage(sequence: number): HostMessage {
+function liveUserMessage(sequence: number, hostSequence = 10_000 + sequence): HostMessage {
   return {
     type: 'event',
-    sequence: 10_000 + sequence,
+    sequence: hostSequence,
     name: 'message.user',
     payload: {
       type: 'message.user',
@@ -41,6 +41,40 @@ function liveUserMessage(sequence: number): HostMessage {
       sequence,
     },
   } as unknown as HostMessage
+}
+
+function historyEvent(
+  sequence: number,
+  event: Record<string, unknown>,
+): { sequence: number; event: unknown } {
+  return { sequence, event }
+}
+
+function liveEvent(sequence: number, event: Record<string, unknown>): HostMessage {
+  return {
+    type: 'event',
+    sequence: 30_000 + sequence,
+    name: typeof event.type === 'string' ? event.type : 'unknown',
+    payload: { ...event, sequence },
+  } as unknown as HostMessage
+}
+
+function toolView(
+  id: string,
+  status: 'running' | 'completed',
+  outputSummary?: string,
+): Record<string, unknown> {
+  return {
+    id,
+    name: 'shell',
+    category: 'execution',
+    title: 'Shell',
+    status,
+    turn: 1,
+    step: 1,
+    ...(outputSummary === undefined ? {} : { outputSummary }),
+    metadata: {},
+  }
 }
 
 function gapMessage(fromSequence: number, toSequence: number, payload?: unknown): HostMessage {
@@ -76,6 +110,10 @@ class FakeClient {
 
   public emit(message: HostMessage): void {
     for (const listener of this.listeners) listener(message)
+  }
+
+  public dispose(): void {
+    this.listeners.clear()
   }
 }
 
@@ -120,7 +158,9 @@ function baseResponse(request: WebviewRequest): unknown {
 function makeStore(
   options: {
     readonly historySequences?: readonly number[]
+    readonly history?: readonly unknown[]
     readonly historyPage?: unknown
+    readonly openResponse?: unknown
     readonly respond?: Respond
   } = {},
 ): {
@@ -130,19 +170,21 @@ function makeStore(
   const historySequences = options.historySequences ?? [1, 2, 3, 4, 5]
   const respond: Respond = (request) => {
     if (request.type === 'session.open')
-      return {
-        ...activeSession,
-        history: historySequences.map((sequence) => userMessageHistoryEntry(sequence)),
-        historyHasMore: false,
-        permissionPresets: [],
-        configuration: {
-          preset: 'standard',
-          toolMode: 'native',
-          permissionPreset: 'workspace-write',
-          planMode: false,
-          model: { providerId: 'deepseek', modelId: 'deepseek-chat' },
-        },
-      }
+      return (
+        options.openResponse ?? {
+          ...activeSession,
+          history: options.history ?? historySequences.map((sequence) => userMessageHistoryEntry(sequence)),
+          historyHasMore: false,
+          permissionPresets: [],
+          configuration: {
+            preset: 'standard',
+            toolMode: 'native',
+            permissionPreset: 'workspace-write',
+            planMode: false,
+            model: { providerId: 'deepseek', modelId: 'deepseek-chat' },
+          },
+        }
+      )
     if (request.type === 'session.history') return options.historyPage ?? { events: [], hasMore: false }
     if (options.respond !== undefined) return options.respond(request)
     return baseResponse(request)
@@ -195,6 +237,240 @@ describe('AppStore session gap healing', () => {
     expect(state.timeline.nodes.some((node) => node.id === `gap:${activeSession.id}:6:9`)).toBe(false)
   })
 
+  it('uses raw page coverage when presentation history compacts deltas or hides system rows', async () => {
+    const sessionId = activeSession.id
+    const { store, client } = makeStore({
+      history: [
+        historyEvent(1, {
+          type: 'message.user',
+          sessionId,
+          messageId: 'user-1',
+          markdown: 'inspect the report',
+        }),
+      ],
+      historyPage: {
+        events: [
+          historyEvent(3, {
+            type: 'message.delta',
+            sessionId,
+            messageId: 'assistant-1',
+            turn: 1,
+            step: 1,
+            delta: 'The report is complete.',
+          }),
+        ],
+        hasMore: false,
+        beforeSeq: 2,
+        // The Adapter reports the raw page window, including the hidden
+        // system row at sequence 2 and the delta row compacted over 2..3.
+        coveredSeqRanges: [{ from: 2, to: 3 }],
+      },
+    })
+    await store.openSession(sessionId)
+
+    client.emit(gapMessage(2, 3))
+    await flushAsync()
+
+    const state = store.getState()
+    expect(historyRequests(client)).toHaveLength(1)
+    expect(state.timeline.nodes).toContainEqual(
+      expect.objectContaining({
+        kind: 'assistant-message',
+        id: 'assistant-1',
+        markdown: 'The report is complete.',
+      }),
+    )
+    expect(state.timeline.nodes.some((node) => node.id === `gap:${sessionId}:2:3`)).toBe(false)
+  })
+
+  it('does not append a live delta already represented by a compacted open-history row', async () => {
+    const sessionId = activeSession.id
+    let releaseOpen: ((value: unknown) => void) | undefined
+    const openResponse = new Promise<unknown>((resolve) => {
+      releaseOpen = resolve
+    })
+    const { store, client } = makeStore({ openResponse })
+    const opening = store.openSession(sessionId)
+    client.emit(
+      liveEvent(3, {
+        type: 'message.delta',
+        sessionId,
+        messageId: 'assistant-1',
+        turn: 1,
+        step: 1,
+        delta: 'second',
+      }),
+    )
+    releaseOpen?.({
+      ...activeSession,
+      history: [
+        {
+          sequence: 3,
+          time: '2026-08-31T08:00:00.000Z',
+          coveredSequences: [1, 3],
+          event: {
+            type: 'message.delta',
+            sessionId,
+            messageId: 'assistant-1',
+            turn: 1,
+            step: 1,
+            delta: 'firstsecond',
+          },
+        },
+      ],
+      historyHasMore: false,
+      permissionPresets: [],
+      configuration: {
+        preset: 'standard',
+        toolMode: 'native',
+        permissionPreset: 'workspace-write',
+        planMode: false,
+        model: { providerId: 'deepseek', modelId: 'deepseek-chat' },
+      },
+    })
+    await opening
+    await flushAsync()
+
+    const assistantNodes = store.getState().timeline.nodes.filter((node) => node.kind === 'assistant-message')
+    expect(assistantNodes).toHaveLength(1)
+    expect(assistantNodes[0]).toMatchObject({ markdown: 'firstsecond' })
+    expect(store.getState().history.filter((entry) => entry.sequence === 3)).toHaveLength(1)
+    store.dispose()
+  })
+
+  it('keeps distinct same-host-sequence events queued across the open barrier', async () => {
+    let releaseOpen: ((value: unknown) => void) | undefined
+    const openResponse = new Promise<unknown>((resolve) => {
+      releaseOpen = resolve
+    })
+    const { store, client } = makeStore({ openResponse })
+    const opening = store.openSession(activeSession.id)
+
+    const queuedEvent = (durableSequence: number, messageId: string, markdown: string): HostMessage =>
+      ({
+        type: 'event',
+        sequence: 42,
+        name: 'message.user',
+        payload: {
+          type: 'message.user',
+          sessionId: activeSession.id,
+          messageId,
+          markdown,
+          source: 'user',
+          sequence: durableSequence,
+        },
+      }) as unknown as HostMessage
+    client.emit(queuedEvent(6, 'user-6', 'first concurrent request'))
+    client.emit(queuedEvent(7, 'user-7', 'second concurrent request'))
+    releaseOpen?.({
+      ...activeSession,
+      history: [5, 4, 3, 2, 1].map((sequence) => userMessageHistoryEntry(sequence)),
+      historyHasMore: false,
+      permissionPresets: [],
+      configuration: {
+        preset: 'standard',
+        toolMode: 'native',
+        permissionPreset: 'workspace-write',
+        planMode: false,
+        model: { providerId: 'deepseek', modelId: 'deepseek-chat' },
+      },
+    })
+    await opening
+
+    expect(userMessageNodes(store.getState())).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'user-6', markdown: 'first concurrent request' }),
+        expect.objectContaining({ id: 'user-7', markdown: 'second concurrent request' }),
+      ]),
+    )
+    expect(store.getState().history.map((entry) => entry.sequence)).toEqual([1, 2, 3, 4, 5, 6, 7])
+    store.dispose()
+  })
+
+  it('does not silently truncate a high-volume open barrier', async () => {
+    let releaseOpen: ((value: unknown) => void) | undefined
+    const openResponse = new Promise<unknown>((resolve) => {
+      releaseOpen = resolve
+    })
+    const { store, client } = makeStore({ openResponse })
+    const opening = store.openSession(activeSession.id)
+    const pendingSequences = Array.from({ length: 4_100 }, (_value, index) => index + 6)
+
+    // Reverse arrival is deliberate: it exercises the stable Host-sequence
+    // ordering applied when the open barrier finally replays its queue.
+    for (const [index, sequence] of [...pendingSequences].reverse().entries())
+      client.emit(liveUserMessage(sequence, 40_000 + index))
+    releaseOpen?.({
+      ...activeSession,
+      history: [5, 4, 3, 2, 1].map((sequence) => userMessageHistoryEntry(sequence)),
+      historyHasMore: false,
+      permissionPresets: [],
+      configuration: {
+        preset: 'standard',
+        toolMode: 'native',
+        permissionPreset: 'workspace-write',
+        planMode: false,
+        model: { providerId: 'deepseek', modelId: 'deepseek-chat' },
+      },
+    })
+    await opening
+    await flushAsync()
+
+    expect(store.getState().history.map((entry) => entry.sequence)).toEqual([
+      1,
+      2,
+      3,
+      4,
+      5,
+      ...pendingSequences,
+    ])
+    expect(userMessageNodes(store.getState())).toHaveLength(4_105)
+    expect(userMessageNodes(store.getState()).at(-1)).toMatchObject({
+      id: 'message-4105',
+      markdown: 'message 4105',
+    })
+    store.dispose()
+    client.dispose()
+  })
+
+  it('does not let a non-durable approval frame hide the next durable request', async () => {
+    const { store, client } = makeStore()
+    await store.openSession(activeSession.id)
+
+    client.emit({
+      type: 'event',
+      sequence: 30_000,
+      name: 'permission.requested',
+      payload: {
+        request: {
+          id: 'approval-1',
+          sessionId: activeSession.id,
+          title: 'Allow the tool?',
+          description: 'The tool needs approval.',
+          risk: 'medium',
+          options: [{ id: 'allow', label: 'Allow once', kind: 'allow-once' }],
+        },
+      },
+    } as unknown as HostMessage)
+    client.emit(
+      liveEvent(6, {
+        type: 'message.user',
+        sessionId: activeSession.id,
+        messageId: 'message-6',
+        markdown: 'continue after approval',
+      }),
+    )
+    await flushAsync()
+
+    expect(store.permissions).toHaveLength(1)
+    expect(userMessageNodes(store.getState())).toContainEqual(
+      expect.objectContaining({ id: 'message-6', markdown: 'continue after approval' }),
+    )
+    expect(store.getState().timeline.lastSequence).toBe(6)
+    store.dispose()
+    client.dispose()
+  })
+
   it('keeps the gap notice when the backfill read fails', async () => {
     const { store, client } = makeStore({
       respond: () => {
@@ -219,7 +495,7 @@ describe('AppStore session gap healing', () => {
     await store.openSession(activeSession.id)
     expect(userMessageNodes(store.getState())).toHaveLength(4)
 
-    // Detached stream recovery redelivers sequence 3 after the live edge
+    // Ordered recovery redelivers sequence 3 after the live edge
     // moved on: the reduce gate drops it, so only a ledger rebuild can show it.
     client.emit(liveUserMessage(3))
     await flushAsync()
@@ -227,6 +503,119 @@ describe('AppStore session gap healing', () => {
     const nodes = userMessageNodes(store.getState())
     expect(nodes).toHaveLength(5)
     expect(store.getState().timeline.lastSequence).toBe(5)
+  })
+
+  it('rebuilds a complex timeline after an out-of-order recovery burst', async () => {
+    const sessionId = activeSession.id
+    const history = [
+      historyEvent(1, {
+        type: 'message.user',
+        sessionId,
+        messageId: 'user-1',
+        markdown: 'inspect two tools',
+        source: 'user',
+      }),
+      historyEvent(2, { type: 'turn.started', sessionId, turn: 1 }),
+      historyEvent(3, { type: 'step.started', sessionId, turn: 1, step: 1 }),
+      historyEvent(4, {
+        type: 'reasoning.delta',
+        sessionId,
+        messageId: 'assistant-1',
+        turn: 1,
+        step: 1,
+        delta: 'I will inspect both tools.',
+      }),
+      historyEvent(5, {
+        type: 'tool.updated',
+        sessionId,
+        tool: toolView('call-1', 'running'),
+      }),
+    ]
+    const { store, client } = makeStore({ history })
+    await store.openSession(sessionId)
+
+    // This is the order an out-of-order recovery path could expose to the
+    // Webview: the live edge advances first, then older records arrive.
+    client.emit(
+      liveEvent(10, {
+        type: 'tool.updated',
+        sessionId,
+        tool: toolView('call-1', 'completed', 'first result'),
+      }),
+    )
+    client.emit(
+      liveEvent(12, {
+        type: 'tool.updated',
+        sessionId,
+        tool: toolView('call-2', 'completed', 'second result'),
+      }),
+    )
+    client.emit(
+      liveEvent(13, {
+        type: 'message.completed',
+        sessionId,
+        messageId: 'assistant-1',
+        turn: 1,
+        step: 1,
+        markdown: 'Both tools completed successfully.',
+      }),
+    )
+    client.emit(liveEvent(14, { type: 'step.ended', sessionId, turn: 1, step: 1 }))
+    client.emit(liveEvent(15, { type: 'turn.ended', sessionId, turn: 1, reason: 'completed' }))
+
+    for (const message of [
+      historyEvent(6, {
+        type: 'message.user',
+        sessionId,
+        messageId: 'user-2',
+        markdown: 'include the second tool',
+        source: 'user',
+      }),
+      historyEvent(7, { type: 'tool.updated', sessionId, tool: toolView('call-1', 'running') }),
+      historyEvent(8, {
+        type: 'tool.updated',
+        sessionId,
+        tool: toolView('call-2', 'running'),
+      }),
+      historyEvent(9, {
+        type: 'message.delta',
+        sessionId,
+        messageId: 'assistant-1',
+        turn: 1,
+        step: 1,
+        delta: 'Both tools completed successfully.',
+      }),
+      historyEvent(11, {
+        type: 'session.projection',
+        sessionId,
+        key: 'contextPressure',
+        value: { pressureTokens: 12 },
+      }),
+    ].map((entry) => liveEvent(entry.sequence, entry.event as Record<string, unknown>)))
+      client.emit(message)
+
+    await flushAsync()
+
+    const state = store.getState()
+    expect(state.history.map((entry) => entry.sequence)).toEqual([
+      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+    ])
+    expect(state.timeline.nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: 'user-message', id: 'user-1' }),
+        expect.objectContaining({ kind: 'user-message', id: 'user-2' }),
+        expect.objectContaining({ kind: 'tool', id: 'call-1' }),
+        expect.objectContaining({ kind: 'tool', id: 'call-2' }),
+        expect.objectContaining({
+          kind: 'assistant-message',
+          id: 'assistant-1',
+          markdown: 'Both tools completed successfully.',
+        }),
+      ]),
+    )
+    expect(state.timeline.nodes.some((node) => node.id.startsWith('gap:'))).toBe(false)
+    expect(state.timeline.lastSequence).toBe(15)
+    store.dispose()
   })
 
   it('preserves an active v2 transient node while rebuilding the durable ledger', async () => {

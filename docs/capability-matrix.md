@@ -860,3 +860,22 @@ MCP、LSP、Schedule、Terminal、Session Query、E2B、Cordis 动态工具等�
 - 证据等级：本批次完成固定上游源码/契约核对和自动回归；本轮已通过 `pnpm check && pnpm build`
   （格式、lint、类型检查、126 个测试文件/1062 个测试及构建）。尚未执行真实 DSH 与 VS Code Webview
   的完整运行验证，因此不提升上述核心能力为 `DONE`。
+
+## 2026-09-13 复杂对话流 P0 完整性修复证据
+
+- CN-05/CN-06 根因：恢复任务此前与 live reader 脱钩，后续 durable 序号可能越过未恢复的洞；历史
+  presentation 过滤/压缩又被误当作恢复源；同一序号的不同 projection 或工具记录会被 sequence-only
+  合并丢弃；相邻之外的 delta 被跨工具/生命周期行拼接；`model.retry` 的嵌套 sessionId、重连交接、
+  打开屏障超量缓存和 Host-only 交互序号也存在漏路或乱序风险。
+- 修复：按 session 建立有序 durable 队列，恢复期间持续读取但按序号屏障交付，支持关闭、重连代际交接、
+  同序号多记录和 observer 异常隔离；恢复使用未压缩、保留内部 system marker 的 Adapter 专用历史源，
+  presentation page 返回精确 raw coverage；Webview 台账采用 exact-event dedupe、coverage 合并和 durable
+  序号排序，打开屏障取消静默 4096 条截断，并把审批/提问/队列/作业等控制面与对话游标隔离。
+- 自动证据：`packages/dsh-adapter/test/stream-controller.spec.ts` 以真实 rc.6 mapper/Repository 形状回放
+  多请求、多工具并行/失败、嵌套 PTC、deliverables、projection、多个 live hole、重连和同序号记录；
+  `session-repository.spec.ts` 覆盖 raw recovery 与 system marker/相邻 delta；Webview 的 gap/open/startup/
+  subagent 回归覆盖乱序恢复、压缩覆盖、同 Host 序号、4100 条打开屏障和非 durable approval。最终全量
+  `pnpm test` 为 152 个测试文件、1250 个测试全绿；`pnpm format:check`、`pnpm lint`、`pnpm typecheck`
+  和 `pnpm build` 均通过。
+- 证据边界：本批次完成代码与自动复杂流回放，但未新增真实 DSH 长会话断线恢复及真实 VS Code Webview
+  DOM smoke；因此 CN-05、CN-06、SS-01、CV-01 仍保持 `PARTIAL`，自动测试不冒充现场运行证明。

@@ -1888,6 +1888,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
         events: page.events,
         hasMore: page.hasMore,
         ...(page.beforeSequence === undefined ? {} : { beforeSeq: page.beforeSequence }),
+        ...(page.coveredSequenceRanges === undefined ? {} : { coveredSeqRanges: page.coveredSequenceRanges }),
         ...(page.projection === undefined ? {} : { projection: page.projection }),
       })
     }

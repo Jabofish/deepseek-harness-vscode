@@ -588,7 +588,71 @@ describe('AppStore startup session restoration', () => {
     await store.openSession(activeSession.id)
 
     expect(store.timeline.nodes.map((node) => node.id)).toEqual(['user-1', 'user-2'])
-    expect(store.history.map((entry) => entry.sequence)).toEqual([2, 1])
+    expect(store.history.map((entry) => entry.sequence)).toEqual([1, 2])
+    store.dispose()
+  })
+
+  it('keeps distinct same-sequence projection records during a replay merge', async () => {
+    const client = new StartupClient((request) => {
+      if (request.type === 'session.open')
+        return {
+          ...activeSession,
+          history: [
+            {
+              sequence: 1,
+              event: {
+                type: 'message.user',
+                sessionId: activeSession.id,
+                messageId: 'user-1',
+                markdown: 'inspect the repository',
+              },
+            },
+          ],
+          permissionPresets: ['workspace-write'],
+          configuration: {
+            preset: 'standard',
+            toolMode: 'native',
+            permissionPreset: 'workspace-write',
+            planMode: false,
+            model: { providerId: 'deepseek', modelId: 'deepseek-chat' },
+          },
+        }
+      return startupResponse(request)
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+    await store.openSession(activeSession.id)
+
+    const emitProjection = (key: string, value: unknown): void => {
+      client.emit({
+        type: 'event',
+        name: 'session.projection',
+        sequence: 10_000 + (key === 'tokenUsage' ? 1 : 2),
+        payload: {
+          type: 'session.projection',
+          sessionId: activeSession.id,
+          key,
+          value,
+          sequence: 2,
+        },
+      })
+    }
+    emitProjection('tokenUsage', { outputTokens: 2 })
+    emitProjection('contextPressure', { pressureTokens: 12 })
+    // An exact replay is safe to deduplicate, but it must not erase the other
+    // record that shares the same durable sequence.
+    emitProjection('tokenUsage', { outputTokens: 2 })
+    await new Promise((resolve) => window.setTimeout(resolve, 24))
+
+    expect(store.history.filter((entry) => entry.sequence === 2)).toHaveLength(2)
+    expect(
+      store.history
+        .filter((entry) => entry.sequence === 2)
+        .map((entry) => (entry.event.type === 'session.projection' ? entry.event.key : undefined)),
+    ).toEqual(['tokenUsage', 'contextPressure'])
+    expect(store.projections[activeSession.id]).toMatchObject({
+      tokenUsage: { outputTokens: 2 },
+      contextPressure: { pressureTokens: 12 },
+    })
     store.dispose()
   })
 

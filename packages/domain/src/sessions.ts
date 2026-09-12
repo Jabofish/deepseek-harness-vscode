@@ -60,6 +60,13 @@ export interface SessionHistoryEvent {
   readonly sequence: number
   readonly time: string
   readonly event: BackendEvent
+  /** Raw DSH sequence positions represented by one compacted presentation row. */
+  readonly coveredSequences?: readonly number[]
+}
+
+export interface SessionSequenceRange {
+  readonly from: number
+  readonly to: number
 }
 
 /** One bounded DSH history window, ordered oldest-to-newest by durable sequence. */
@@ -68,6 +75,8 @@ export interface SessionHistoryPage {
   readonly hasMore: boolean
   /** Raw oldest sequence in the page; needed because delta compaction changes display rows. */
   readonly beforeSequence?: number
+  /** Exact raw sequence runs represented before presentation filtering/compaction. */
+  readonly coveredSequenceRanges?: readonly SessionSequenceRange[]
   readonly projection?: SessionProjectionSnapshot
 }
 

@@ -63,6 +63,7 @@ import {
   type SessionConfigurationPatch,
   type SessionExportOptions,
   type SessionHistoryEvent,
+  type SessionSequenceRange,
   type SessionProjectionSnapshot,
   type SessionSummary,
   type SkillDescriptor,
@@ -409,7 +410,9 @@ type LiveHistoryAppender = (sessionId: string, entry: SessionHistoryEvent) => vo
 interface PendingSessionOpen {
   readonly version: number
   readonly sessionId: string
+  /** Lossless until the authoritative open/advisory replay has committed. */
   readonly messages: HostMessage[]
+  readonly messageKeys: Set<string>
   replayedMessages: number
   ready: boolean
 }
@@ -590,7 +593,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     })
   }
   const scheduleLedgerRebuild = (sessionId: string): void => {
-    // Out-of-order live frames (detached stream recovery, re-snapshot
+    // Out-of-order live frames (recovery, re-snapshot
     // redelivery) land in the ledger but are dropped by the timeline cursor.
     // One coalesced rebuild republishes the ledger; a newer open() rebuilds
     // its own baseline anyway, so a stale rebuild just bows out.
@@ -612,6 +615,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         const range = entry.ranges.shift()
         if (range === undefined) break
         let beforeSeq = range.to + 1
+        let coveredSequenceRanges: readonly SessionSequenceRange[] = []
         for (let page = 0; page < MAX_GAP_BACKFILL_PAGES; page += 1) {
           if (state.activeSessionId !== sessionId || openVersion !== version) return
           let payload: unknown
@@ -632,6 +636,10 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
             events = parsed.events
             hasMore = parsed.hasMore
             nextBefore = parsed.beforeSequence ?? oldestHistorySequence(parsed.events)
+            coveredSequenceRanges = mergeSequenceRanges(
+              coveredSequenceRanges,
+              parsed.coveredSequenceRanges ?? historySequenceRanges(parsed.events),
+            )
           } catch {
             break
           }
@@ -651,6 +659,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         if (
           state.activeSessionId === sessionId &&
           openVersion === version &&
+          !sequenceRangesCover(coveredSequenceRanges, range.from, range.to) &&
           !historyCoversSequenceRange(state.history, range.from, range.to)
         )
           publishUnhealedGap(sessionId, range.from, range.to)
@@ -718,34 +727,58 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   const pendingOpens = new Map<number, PendingSessionOpen>()
   const latestPendingOpen = new Map<string, PendingSessionOpen>()
   const deferredOpenMessages = new Map<string, HostMessage[]>()
-  const MAX_PENDING_OPEN_MESSAGES = 4096
+  const deferredOpenMessageKeys = new Map<string, Set<string>>()
   const sameHostEvent = (left: HostMessage, right: HostMessage): boolean => {
     if (left.type !== 'event' || right.type !== 'event') return false
-    return left.sequence === right.sequence
+    if (left.sequence !== right.sequence) return false
+    try {
+      // Host sequence is the transport ordering key, not the durable DSH
+      // identity. Keep two distinct events if a reconnect/replay ever reuses
+      // one host slot; otherwise a valid projection/tool record can vanish
+      // before the open barrier is released.
+      return JSON.stringify(left) === JSON.stringify(right)
+    } catch {
+      return false
+    }
+  }
+  const hostMessageIdentity = (message: HostMessage): string | undefined => {
+    if (message.type !== 'event') return undefined
+    try {
+      return JSON.stringify(message)
+    } catch {
+      return undefined
+    }
   }
   const hostMessageSequence = (message: HostMessage): number =>
     message.type === 'event' ? message.sequence : Number.MAX_SAFE_INTEGER
+  const appendUniqueHostMessage = (
+    messages: HostMessage[],
+    messageKeys: Set<string>,
+    message: HostMessage,
+  ): void => {
+    const identity = hostMessageIdentity(message)
+    if (identity !== undefined) {
+      if (messageKeys.has(identity)) return
+      messageKeys.add(identity)
+    } else if (messages.some((candidate) => sameHostEvent(candidate, message))) return
+    messages.push(message)
+  }
   const appendPendingMessage = (pending: PendingSessionOpen, message: HostMessage): void => {
-    if (pending.messages.some((candidate) => sameHostEvent(candidate, message))) return
-    pending.messages.push(message)
-    if (pending.messages.length > MAX_PENDING_OPEN_MESSAGES) {
-      const removed = pending.messages.length - MAX_PENDING_OPEN_MESSAGES
-      pending.messages.splice(0, removed)
-      pending.replayedMessages = Math.max(0, pending.replayedMessages - removed)
-    }
+    appendUniqueHostMessage(pending.messages, pending.messageKeys, message)
   }
   const appendDeferredMessage = (sessionId: string, message: HostMessage): void => {
     const messages = deferredOpenMessages.get(sessionId) ?? []
-    if (!messages.some((candidate) => sameHostEvent(candidate, message))) messages.push(message)
-    if (messages.length > MAX_PENDING_OPEN_MESSAGES)
-      messages.splice(0, messages.length - MAX_PENDING_OPEN_MESSAGES)
+    const messageKeys = deferredOpenMessageKeys.get(sessionId) ?? new Set<string>()
+    appendUniqueHostMessage(messages, messageKeys, message)
     deferredOpenMessages.set(sessionId, messages)
+    deferredOpenMessageKeys.set(sessionId, messageKeys)
   }
   const createPendingOpen = (sessionId: string, version: number): PendingSessionOpen => {
     const pending: PendingSessionOpen = {
       version,
       sessionId,
       messages: [],
+      messageKeys: new Set(),
       replayedMessages: 0,
       ready: false,
     }
@@ -753,6 +786,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     if (deferred !== undefined) {
       for (const message of deferred) appendPendingMessage(pending, message)
       deferredOpenMessages.delete(sessionId)
+      deferredOpenMessageKeys.delete(sessionId)
     }
     const previous = latestPendingOpen.get(sessionId)
     if (previous !== undefined)
@@ -780,6 +814,19 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     const messages = pending.messages.slice(pending.replayedMessages)
     pending.replayedMessages = pending.messages.length
     return messages
+      .map((message, index) => ({
+        message,
+        index,
+        durableSequence: durableMessageSequence(message),
+        hostSequence: hostMessageSequence(message),
+      }))
+      .sort(
+        (left, right) =>
+          left.durableSequence - right.durableSequence ||
+          left.hostSequence - right.hostSequence ||
+          left.index - right.index,
+      )
+      .map(({ message }) => message)
   }
   let commandDirectoryGeneration = 0
   let configurationGeneration = 0
@@ -4599,6 +4646,12 @@ function advancesTimelineSequence(event: BackendEvent): boolean {
   switch (event.type) {
     case 'archived.sessions.changed':
     case 'connection.lost':
+    case 'jobs.updated':
+    case 'permission.requested':
+    case 'permission.resolved':
+    case 'question.requested':
+    case 'question.resolved':
+    case 'queue.updated':
     case 'session.added':
     case 'session.activity':
     case 'session.configuration':
@@ -4624,6 +4677,8 @@ function eventMayChangeTimelineState(event: BackendEvent): boolean {
     case 'archived.sessions.changed':
     case 'jobs.updated':
     case 'permission.resolved':
+    case 'permission.requested':
+    case 'question.requested':
     case 'question.resolved':
     case 'queue.updated':
     case 'session.activity':
@@ -5437,6 +5492,7 @@ function parseHistoryPayload(value: unknown, includeTimeline: boolean): ParsedHi
     }
     const eventRecord = object(record.event)
     const historyEventRecord = eventRecord ?? record
+    const coveredSequences = parseCoveredSequences(record)
     const hasRecordSequence = Object.hasOwn(record, 'sequence')
     const hasEventSequence = Object.hasOwn(historyEventRecord, 'sequence')
     const hasEventSeq = Object.hasOwn(historyEventRecord, 'seq')
@@ -5455,6 +5511,11 @@ function parseHistoryPayload(value: unknown, includeTimeline: boolean): ParsedHi
       throw new Error(translate('app.error.malformedHistory'))
     if (hasRecordTime && !nonEmptyString(recordTime)) throw new Error(translate('app.error.malformedHistory'))
     const sequence = optionalSequence(rawSequence) ?? index
+    if (
+      coveredSequences !== undefined &&
+      (coveredSequences.length === 0 || coveredSequences[coveredSequences.length - 1] !== sequence)
+    )
+      throw new Error(translate('app.error.malformedHistory'))
     const parsedEvent =
       typeof historyEventRecord?.type === 'string'
         ? domainEvent(historyEventRecord.type, historyEventRecord)
@@ -5464,6 +5525,7 @@ function parseHistoryPayload(value: unknown, includeTimeline: boolean): ParsedHi
         sequence,
         time: recordTime === undefined ? historyTime(parsedEvent) : recordTime,
         event: { ...parsedEvent, sequence },
+        ...(coveredSequences === undefined ? {} : { coveredSequences }),
       })
     }
     if (!includeTimeline) continue
@@ -5486,13 +5548,22 @@ function parseHistoryPayload(value: unknown, includeTimeline: boolean): ParsedHi
       sequence,
     })
   }
-  return { history, timeline }
+  // The Host normally emits the open snapshot in durable order, but an
+  // overlapping reconnect/open can assemble this payload from more than one
+  // source. Keep the ledger canonical before it becomes the pagination and
+  // rebuild input; equal durable sequences retain their source order.
+  const orderedHistory = history
+    .map((entry, index) => ({ entry, index }))
+    .sort((left, right) => left.entry.sequence - right.entry.sequence || left.index - right.index)
+    .map(({ entry }) => entry)
+  return { history: orderedHistory, timeline }
 }
 
 function parseSessionHistoryPage(value: unknown): {
   readonly events: readonly SessionHistoryEvent[]
   readonly hasMore: boolean
   readonly beforeSequence?: number
+  readonly coveredSequenceRanges?: readonly SessionSequenceRange[]
   readonly projection?: SessionProjectionSnapshot
 } {
   const page = object(value)
@@ -5504,13 +5575,47 @@ function parseSessionHistoryPage(value: unknown): {
   if (hasBeforeSequence && parsedBeforeSequence === undefined)
     throw new Error(translate('app.error.malformedHistory'))
   const beforeSequence = parsedBeforeSequence ?? oldestHistorySequence(events)
+  const coveredSequenceRanges = parseCoveredSequenceRanges(page)
   const projection = parseSessionProjection(page.projection)
   return {
     events,
     hasMore: page.hasMore,
     ...(beforeSequence === undefined ? {} : { beforeSequence }),
+    ...(coveredSequenceRanges === undefined ? {} : { coveredSequenceRanges }),
     ...(projection === undefined ? {} : { projection }),
   }
+}
+
+function parseCoveredSequences(record: Record<string, unknown>): readonly number[] | undefined {
+  if (!Object.hasOwn(record, 'coveredSequences')) return undefined
+  if (!Array.isArray(record.coveredSequences)) throw new Error(translate('app.error.malformedHistory'))
+  const sequences: number[] = []
+  let previous = -1
+  for (const value of record.coveredSequences) {
+    const sequence = optionalSequence(value)
+    if (sequence === undefined || sequence <= previous)
+      throw new Error(translate('app.error.malformedHistory'))
+    sequences.push(sequence)
+    previous = sequence
+  }
+  return sequences
+}
+
+function parseCoveredSequenceRanges(
+  page: Record<string, unknown>,
+): readonly SessionSequenceRange[] | undefined {
+  if (!Object.hasOwn(page, 'coveredSeqRanges')) return undefined
+  if (!Array.isArray(page.coveredSeqRanges)) throw new Error(translate('app.error.malformedHistory'))
+  const ranges: SessionSequenceRange[] = []
+  for (const value of page.coveredSeqRanges) {
+    const range = object(value)
+    const from = optionalSequence(range?.from)
+    const to = optionalSequence(range?.to)
+    if (from === undefined || to === undefined || to < from)
+      throw new Error(translate('app.error.malformedHistory'))
+    ranges.push({ from, to })
+  }
+  return mergeSequenceRanges([], ranges)
 }
 
 function parseSessionProjection(value: unknown): SessionProjectionSnapshot | undefined {
@@ -5536,7 +5641,16 @@ function mergeHistory(
   if (additions.length === 0) return current
   let previousSequence = current[current.length - 1]?.sequence
   let appendOnly = true
+  for (let index = 1; index < current.length; index += 1) {
+    const previous = current[index - 1]?.sequence
+    const currentSequence = current[index]?.sequence
+    if (previous !== undefined && currentSequence !== undefined && currentSequence < previous) {
+      appendOnly = false
+      break
+    }
+  }
   for (const addition of additions) {
+    if (!appendOnly) break
     if (previousSequence !== undefined && addition.sequence <= previousSequence) {
       appendOnly = false
       break
@@ -5548,18 +5662,47 @@ function mergeHistory(
   // races still use the deduplicating sorted path below.
   if (appendOnly) return current.concat(additions)
 
-  const bySequence = new Map<number, SessionHistoryEvent>()
+  // A durable sequence identifies the upstream log position, not a whole
+  // history batch. Projection records intentionally share one sequence, and
+  // replay races can also present the same sequence with a distinct event.
+  // Indexing only by sequence silently discarded those records and was the
+  // source of missing state in complex multi-tool streams. Deduplicate only
+  // exact logical event replays, then keep every distinct same-sequence row.
+  const byIdentity = new Map<string, SessionHistoryEvent>()
   for (const entry of [...current, ...additions]) {
-    if (!bySequence.has(entry.sequence)) bySequence.set(entry.sequence, entry)
+    const identity = historyEntryIdentity(entry)
+    const existing = byIdentity.get(identity)
+    if (existing === undefined) byIdentity.set(identity, entry)
+    else byIdentity.set(identity, mergeHistoryCoverage(existing, entry))
   }
-  return [...bySequence.values()].sort((left, right) => left.sequence - right.sequence)
+  const unique = [...byIdentity.values()]
+  return unique
+    .filter((entry) => !isDeltaCoveredByCompactedEntry(entry, unique))
+    .sort((left, right) => left.sequence - right.sequence)
+}
+
+function historyEntryIdentity(entry: SessionHistoryEvent): string {
+  try {
+    return `${entry.sequence}:${JSON.stringify(entry.event)}`
+  } catch {
+    // Parsed DSH payloads are acyclic, but retain a deterministic fallback if
+    // a future adapter event carries a non-serializable extension value.
+    return `${entry.sequence}:${entry.event.type}`
+  }
+}
+
+function mergeHistoryCoverage(left: SessionHistoryEvent, right: SessionHistoryEvent): SessionHistoryEvent {
+  const coveredSequences = [
+    ...new Set([...(left.coveredSequences ?? []), ...(right.coveredSequences ?? [])]),
+  ].sort((first, second) => first - second)
+  return coveredSequences.length === 0 ? left : { ...left, coveredSequences }
 }
 
 function oldestHistorySequence(history: readonly SessionHistoryEvent[]): number | undefined {
-  return history.reduce<number | undefined>(
-    (oldest, entry) => (oldest === undefined ? entry.sequence : Math.min(oldest, entry.sequence)),
-    undefined,
-  )
+  return history.reduce<number | undefined>((oldest, entry) => {
+    const entryOldest = Math.min(entry.sequence, ...(entry.coveredSequences ?? []))
+    return oldest === undefined ? entryOldest : Math.min(oldest, entryOldest)
+  }, undefined)
 }
 
 function historyCoversSequenceRange(
@@ -5567,19 +5710,63 @@ function historyCoversSequenceRange(
   fromSequence: number,
   toSequence: number,
 ): boolean {
-  if (fromSequence > toSequence) return true
-  const sequences = history
-    .map((entry) => entry.sequence)
-    .filter((sequence) => sequence >= fromSequence && sequence <= toSequence)
-    .sort((left, right) => left - right)
-  let expected = fromSequence
-  for (const sequence of sequences) {
-    if (sequence < expected) continue
-    if (sequence !== expected) return false
-    if (expected === toSequence) return true
-    expected += 1
+  return sequenceRangesCover(historySequenceRanges(history), fromSequence, toSequence)
+}
+
+function historySequenceRanges(history: readonly SessionHistoryEvent[]): readonly SessionSequenceRange[] {
+  const sequences = history.flatMap((entry) => entry.coveredSequences ?? [entry.sequence])
+  return mergeSequenceRanges(
+    [],
+    sequences.map((sequence) => ({ from: sequence, to: sequence })),
+  )
+}
+
+function mergeSequenceRanges(
+  current: readonly SessionSequenceRange[],
+  additions: readonly SessionSequenceRange[],
+): readonly SessionSequenceRange[] {
+  const ordered = [...current, ...additions].sort(
+    (left, right) => left.from - right.from || left.to - right.to,
+  )
+  const merged: SessionSequenceRange[] = []
+  for (const range of ordered) {
+    const previous = merged[merged.length - 1]
+    if (previous !== undefined && range.from <= previous.to + 1) {
+      if (range.to > previous.to) merged[merged.length - 1] = { ...previous, to: range.to }
+    } else merged.push(range)
   }
-  return false
+  return merged
+}
+
+function sequenceRangesCover(
+  ranges: readonly SessionSequenceRange[],
+  fromSequence: number,
+  toSequence: number,
+): boolean {
+  if (fromSequence > toSequence) return true
+  return ranges.some((range) => range.from <= fromSequence && range.to >= toSequence)
+}
+
+function isDeltaCoveredByCompactedEntry(
+  entry: SessionHistoryEvent,
+  candidates: readonly SessionHistoryEvent[],
+): boolean {
+  if (entry.coveredSequences !== undefined || !isDeltaHistoryEvent(entry.event)) return false
+  return candidates.some(
+    (candidate) =>
+      candidate.coveredSequences !== undefined &&
+      candidate.coveredSequences.length > 1 &&
+      isDeltaHistoryEvent(candidate.event) &&
+      candidate.event.type === entry.event.type &&
+      candidate.event.messageId === entry.event.messageId &&
+      candidate.coveredSequences.includes(entry.sequence),
+  )
+}
+
+function isDeltaHistoryEvent(
+  event: SessionHistoryEvent['event'],
+): event is Extract<SessionHistoryEvent['event'], { readonly type: 'message.delta' | 'reasoning.delta' }> {
+  return event.type === 'message.delta' || event.type === 'reasoning.delta'
 }
 
 function newestHistorySequence(history: readonly SessionHistoryEvent[]): number | undefined {
@@ -5587,6 +5774,11 @@ function newestHistorySequence(history: readonly SessionHistoryEvent[]): number 
     (newest, entry) => (newest === undefined ? entry.sequence : Math.max(newest, entry.sequence)),
     undefined,
   )
+}
+
+function durableMessageSequence(message: HostMessage): number {
+  const event = parseHostDomainEvent(message)
+  return event?.sequence ?? Number.MAX_SAFE_INTEGER
 }
 
 function optionalSequence(value: unknown): number | undefined {

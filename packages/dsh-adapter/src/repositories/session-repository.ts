@@ -11,6 +11,7 @@ import {
   type SessionDetail,
   type SessionHistoryEvent,
   type SessionHistoryPage,
+  type SessionSequenceRange,
   type SessionListQuery,
   type SessionPage,
   type SessionRepository,
@@ -284,10 +285,30 @@ export class Rc6SessionRepository implements SessionRepository {
     return (await this.readHistoryPage(sessionId, beforeSequence, signal)).page
   }
 
+  /**
+   * Return an un-compacted, prompt-free marker stream for durable gap healing.
+   * This is intentionally outside SessionRepository: the Webview must keep
+   * using the bounded presentation history, while the stream dispatcher needs
+   * every durable sequence to distinguish a real hole from UI compaction.
+   */
+  public async historyForRecovery(
+    sessionId: string,
+    beforeSequence?: number,
+    signal?: AbortSignal,
+  ): Promise<SessionHistoryPage> {
+    return (
+      await this.readHistoryPage(sessionId, beforeSequence, signal, {
+        compact: false,
+        includeSystemMarkers: true,
+      })
+    ).page
+  }
+
   private async readHistoryPage(
     sessionId: string,
     beforeSequence?: number,
     signal?: AbortSignal,
+    options: { readonly compact?: boolean; readonly includeSystemMarkers?: boolean } = {},
   ): Promise<{ readonly page: SessionHistoryPage; readonly rawEvents: readonly unknown[] }> {
     const historyValue = await callRpc<unknown>(
       this.transport,
@@ -300,16 +321,26 @@ export class Rc6SessionRepository implements SessionRepository {
       signal,
     )
     if (!validHistoryResponse(historyValue)) throw malformedSessionResponse('session history')
-    const mapped = rc6Mapper.history(historyValue, sessionId)
+    // Always map the internal marker rows while calculating the raw page
+    // boundary. A public page omits the prompt marker, but its cursor must
+    // still point at the real oldest durable record or pagination can stall
+    // on a page whose first record is system/message.
+    const mapped = rc6Mapper.history(historyValue, sessionId, { includeSystemMarkers: true })
     this.rememberProjectionValues(sessionId, mapped.projection?.values, mapped.projection !== undefined)
     const rawEvents = Array.isArray(historyValue.events) ? historyValue.events : []
     const sequences = mapped.events.map((entry) => entry.sequence).filter((value) => value >= 0)
     const oldest = sequences.length === 0 ? undefined : Math.min(...sequences)
+    const coveredSequenceRanges = sequenceRanges(sequences)
+    const events =
+      options.includeSystemMarkers === true
+        ? mapped.events
+        : mapped.events.filter((entry) => entry.event.type !== 'session.system')
     return {
       page: {
-        events: compactHistoryEvents(mapped.events),
+        events: options.compact === false ? events : compactHistoryEvents(events),
         hasMore: mapped.hasMore,
         ...(oldest === undefined ? {} : { beforeSequence: oldest }),
+        ...(coveredSequenceRanges.length === 0 ? {} : { coveredSequenceRanges }),
         ...(mapped.projection === undefined ? {} : { projection: mapped.projection }),
       },
       rawEvents,
@@ -947,10 +978,19 @@ export class Rc6SessionRepository implements SessionRepository {
  * contiguous stream — but a page-bounded read would turn every wide
  * reconnect into one of those gaps even though the events are readable.
  */
-export function historyGapRecovery(sessions: Pick<SessionRepository, 'history'>): StreamRecovery {
+interface HistoryRecoverySource extends Pick<SessionRepository, 'history'> {
+  readonly historyForRecovery?: (
+    sessionId: string,
+    beforeSequence?: number,
+    signal?: AbortSignal,
+  ) => Promise<SessionHistoryPage>
+}
+
+export function historyGapRecovery(sessions: HistoryRecoverySource): StreamRecovery {
+  const history = sessions.historyForRecovery ?? sessions.history
   return async (sessionId, fromSequence, toSequence, signal) => {
     const pages = await walkHistoryPages(
-      (beforeSequence) => sessions.history(sessionId, beforeSequence, signal),
+      (beforeSequence) => history.call(sessions, sessionId, beforeSequence, signal),
       {
         initialBeforeSequence: toSequence + 1,
         stopWhen: (page) => {
@@ -1029,11 +1069,11 @@ function normalizePath(value: string): string {
 /**
  * DSH persists every streaming assistant chunk as a history event. Those
  * chunks are useful on the wire while a turn is running, but forwarding them
- * individually makes a completed session exceed the Webview protocol budget
- * and also makes history rendering look like many separate replies. Collapse
- * deltas by message while retaining their first sequence/time; a completed
- * message already carries the authoritative assembled text, so its duplicate
- * deltas are not needed by the timeline.
+ * individually makes history rendering look like many separate replies. Only
+ * collapse adjacent deltas of the same message: a tool/lifecycle row is a hard
+ * ordering boundary, so deltas on opposite sides must remain separate. A
+ * completed message already carries the authoritative assembled text, so its
+ * duplicate deltas are not needed by the timeline.
  */
 function compactHistoryEvents(events: readonly SessionHistoryEvent[]): readonly SessionHistoryEvent[] {
   const completedMessages = new Set<string>()
@@ -1044,45 +1084,91 @@ function compactHistoryEvents(events: readonly SessionHistoryEvent[]): readonly 
   }
 
   const compacted: SessionHistoryEvent[] = []
-  const deltaIndexes = new Map<string, number>()
+  let previousDeltaKey: string | undefined
+  let previousDeltaIndex = -1
   for (const entry of events) {
     const event = entry.event
     // block/tool/usage/finish chunks are stream bookkeeping. Visible tool
     // calls/results and the completed assistant message are mapped separately;
     // retaining every bookkeeping row would recreate the protocol overflow.
-    if (event.type === 'unknown' && event.name.startsWith('assistant/chunk')) continue
+    if (event.type === 'unknown' && event.name.startsWith('assistant/chunk')) {
+      previousDeltaKey = undefined
+      previousDeltaIndex = -1
+      continue
+    }
     if (event.type !== 'message.delta' && event.type !== 'reasoning.delta') {
       compacted.push(entry)
+      previousDeltaKey = undefined
+      previousDeltaIndex = -1
       continue
     }
-    if (completedMessages.has(event.messageId)) continue
+    if (completedMessages.has(event.messageId)) {
+      previousDeltaKey = undefined
+      previousDeltaIndex = -1
+      continue
+    }
 
     const key = `${event.type}:${event.messageId}`
-    const existingIndex = deltaIndexes.get(key)
-    if (existingIndex === undefined) {
-      deltaIndexes.set(key, compacted.length)
+    if (key !== previousDeltaKey) {
+      previousDeltaKey = key
+      previousDeltaIndex = compacted.length
       compacted.push(entry)
       continue
     }
-    const existing = compacted[existingIndex]
+    const existing = compacted[previousDeltaIndex]
     if (existing === undefined) continue
-    if (existing.event.type === 'message.delta' && event.type === 'message.delta')
-      compacted[existingIndex] = {
+    if (existing.event.type === 'message.delta' && event.type === 'message.delta') {
+      const sequence = Math.max(existing.sequence, entry.sequence)
+      const coveredSequences = mergeCoveredSequences(existing, entry)
+      compacted[previousDeltaIndex] = {
         ...existing,
         // Keep the newest durable sequence on the compacted row. The Webview
         // uses it as its replay watermark; retaining the first sequence would
         // let a live delta already covered by history be appended twice.
-        sequence: Math.max(existing.sequence, entry.sequence),
-        event: { ...existing.event, delta: `${existing.event.delta}${event.delta}` },
+        sequence,
+        event: { ...existing.event, delta: `${existing.event.delta}${event.delta}`, sequence },
+        ...(coveredSequences.length > 1 ? { coveredSequences } : {}),
       }
-    else if (existing.event.type === 'reasoning.delta' && event.type === 'reasoning.delta')
-      compacted[existingIndex] = {
+    } else if (existing.event.type === 'reasoning.delta' && event.type === 'reasoning.delta') {
+      const sequence = Math.max(existing.sequence, entry.sequence)
+      const coveredSequences = mergeCoveredSequences(existing, entry)
+      compacted[previousDeltaIndex] = {
         ...existing,
-        sequence: Math.max(existing.sequence, entry.sequence),
-        event: { ...existing.event, delta: `${existing.event.delta}${event.delta}` },
+        sequence,
+        event: { ...existing.event, delta: `${existing.event.delta}${event.delta}`, sequence },
+        ...(coveredSequences.length > 1 ? { coveredSequences } : {}),
       }
+    }
   }
+  // Keep the public page ordered even if a future mapper supplies a
+  // non-monotonic sequence; the index tie-breaker preserves source order.
   return compacted
+    .map((entry, index) => ({ entry, index }))
+    .sort((left, right) => left.entry.sequence - right.entry.sequence || left.index - right.index)
+    .map(({ entry }) => entry)
+}
+
+function mergeCoveredSequences(left: SessionHistoryEvent, right: SessionHistoryEvent): readonly number[] {
+  return [
+    ...new Set([
+      ...(left.coveredSequences ?? [left.sequence]),
+      ...(right.coveredSequences ?? [right.sequence]),
+    ]),
+  ].sort((first, second) => first - second)
+}
+
+function sequenceRanges(sequences: readonly number[]): readonly SessionSequenceRange[] {
+  const ordered = [...new Set(sequences)].sort((first, second) => first - second)
+  const ranges: SessionSequenceRange[] = []
+  for (const sequence of ordered) {
+    const previous = ranges[ranges.length - 1]
+    if (previous !== undefined && sequence === previous.to + 1) {
+      ranges[ranges.length - 1] = { ...previous, to: sequence }
+    } else {
+      ranges.push({ from: sequence, to: sequence })
+    }
+  }
+  return ranges
 }
 
 function fallbackSessionSummary(

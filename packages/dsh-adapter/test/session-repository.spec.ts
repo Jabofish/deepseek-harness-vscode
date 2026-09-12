@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { DshTransport } from '../src/contracts.js'
-import { Rc6SessionRepository } from '../src/repositories/session-repository.js'
+import { historyGapRecovery, Rc6SessionRepository } from '../src/repositories/session-repository.js'
 
 function sessionCreateTransport(calls: { method: string; params: unknown }[]): DshTransport {
   return {
@@ -877,6 +877,251 @@ describe('Rc6SessionRepository history windows', () => {
     ])
     expect(page).toMatchObject({ hasMore: true, beforeSequence: 14 })
     expect(page.events.map((entry) => entry.sequence)).toEqual([14, 20])
+  })
+
+  it('keeps interleaved deltas in their durable order', async () => {
+    const transport: DshTransport = {
+      request: <TResponse>() =>
+        Promise.resolve({
+          result: {
+            ok: true,
+            value: {
+              events: [
+                {
+                  event: {
+                    type: 'assistant/chunk',
+                    seq: 1,
+                    time: 1_000,
+                    data: {
+                      turn: 1,
+                      step: 1,
+                      chunk: { type: 'text-delta', index: 0, text: 'first ' },
+                    },
+                  },
+                },
+                {
+                  event: {
+                    type: 'assistant/chunk',
+                    seq: 2,
+                    time: 2_000,
+                    data: {
+                      turn: 1,
+                      step: 1,
+                      chunk: { type: 'text-delta', index: 1, text: 'prefix ' },
+                    },
+                  },
+                },
+                {
+                  event: {
+                    type: 'tool/call',
+                    seq: 3,
+                    time: 3_000,
+                    data: { turn: 1, step: 1, callId: 'call-1', name: 'shell', arguments: '{}' },
+                  },
+                },
+                {
+                  event: {
+                    type: 'assistant/chunk',
+                    seq: 4,
+                    time: 4_000,
+                    data: {
+                      turn: 1,
+                      step: 1,
+                      chunk: { type: 'text-delta', index: 2, text: 'second' },
+                    },
+                  },
+                },
+                {
+                  event: {
+                    type: 'tool/result',
+                    seq: 5,
+                    time: 5_000,
+                    data: {
+                      turn: 1,
+                      step: 1,
+                      callId: 'call-1',
+                      message: {
+                        id: 'tool-result-1',
+                        role: 'user',
+                        source: { kind: 'tool', callId: 'call-1' },
+                        content: [
+                          {
+                            type: 'tool-result',
+                            toolCallId: 'call-1',
+                            content: [{ type: 'text', text: 'ok' }],
+                          },
+                        ],
+                      },
+                    },
+                  },
+                },
+              ],
+              hasMore: false,
+            },
+          },
+        } as TResponse),
+      remoteRequest: <TResponse>() => Promise.reject<TResponse>(new Error('unexpected Remote')),
+      openEventStream: async function* () {
+        /* fixture stream */
+      },
+      close: () => Promise.resolve(),
+    }
+
+    const page = await new Rc6SessionRepository(transport).history('session-1')
+
+    expect(page.events.map((entry) => entry.sequence)).toEqual([2, 3, 4, 5])
+    expect(page.events.map((entry) => entry.event.type)).toEqual([
+      'message.delta',
+      'tool.updated',
+      'message.delta',
+      'tool.updated',
+    ])
+    expect(page.events[0]).toMatchObject({
+      sequence: 2,
+      event: { type: 'message.delta', sequence: 2, delta: 'first prefix ' },
+      coveredSequences: [1, 2],
+    })
+    expect(page.events[2]).toMatchObject({
+      sequence: 4,
+      event: { type: 'message.delta', sequence: 4, delta: 'second' },
+    })
+  })
+
+  it('uses an un-compacted internal history path for recovery without exposing system prompts', async () => {
+    const rawEvents = [
+      {
+        event: {
+          type: 'system/message',
+          seq: 0,
+          time: 1_000,
+          data: { message: { content: [{ type: 'text', text: 'secret system prompt' }] } },
+        },
+      },
+      {
+        event: {
+          type: 'assistant/chunk',
+          seq: 1,
+          time: 1_001,
+          data: {
+            turn: 1,
+            step: 1,
+            messageId: 'assistant-1',
+            chunk: { type: 'text-delta', index: 0, text: 'first ' },
+          },
+        },
+      },
+      {
+        event: {
+          type: 'tool/call',
+          seq: 2,
+          time: 1_002,
+          data: { turn: 1, step: 1, callId: 'call-1', name: 'read_file', arguments: '{"path":"a"}' },
+        },
+      },
+      {
+        event: {
+          type: 'assistant/chunk',
+          seq: 3,
+          time: 1_003,
+          data: {
+            turn: 1,
+            step: 1,
+            messageId: 'assistant-1',
+            chunk: { type: 'text-delta', index: 1, text: 'second' },
+          },
+        },
+      },
+      {
+        event: {
+          type: 'tool/result',
+          seq: 4,
+          time: 1_004,
+          data: {
+            turn: 1,
+            step: 1,
+            callId: 'call-1',
+            message: {
+              id: 'tool-result-1',
+              role: 'user',
+              source: { kind: 'tool', callId: 'call-1' },
+              content: [
+                {
+                  type: 'tool-result',
+                  toolCallId: 'call-1',
+                  content: [{ type: 'text', text: 'ok' }],
+                },
+              ],
+            },
+          },
+        },
+      },
+      {
+        event: {
+          type: 'deliverables/presented',
+          seq: 5,
+          time: 1_005,
+          data: {
+            turn: 1,
+            callId: 'call-1',
+            files: [
+              { path: 'artifacts/report.md', description: 'report' },
+              { path: 'artifacts/data.json', description: 'data' },
+            ],
+          },
+        },
+      },
+    ]
+    const calls: { method: string; params: unknown }[] = []
+    const transport: DshTransport = {
+      request: <TResponse>(method: string, params: unknown) => {
+        calls.push({ method, params })
+        const beforeSequence = (params as { readonly beforeSeq?: number }).beforeSeq
+        const eligible =
+          beforeSequence === undefined
+            ? rawEvents
+            : rawEvents.filter((entry) => entry.event.seq < beforeSequence)
+        return Promise.resolve({
+          result: { ok: true, value: { events: eligible, hasMore: false } },
+        } as TResponse)
+      },
+      remoteRequest: <TResponse>() => Promise.reject<TResponse>(new Error('unexpected Remote')),
+      openEventStream: async function* () {
+        /* fixture stream */
+      },
+      close: () => Promise.resolve(),
+    }
+    const repository = new Rc6SessionRepository(transport)
+
+    const publicPage = await repository.history('session-1')
+    expect(publicPage.events.some((entry) => entry.event.type === 'session.system')).toBe(false)
+    expect(publicPage.coveredSequenceRanges).toEqual([{ from: 0, to: 5 }])
+    expect(
+      publicPage.events.some((entry) => entry.sequence === 3 && entry.event.type === 'message.delta'),
+    ).toBe(true)
+    expect(
+      publicPage.events.some(
+        (entry) => entry.sequence === 5 && entry.event.type === 'deliverables.presented',
+      ),
+    ).toBe(true)
+
+    const recovered = await historyGapRecovery(repository)('session-1', 0, 5, new AbortController().signal)
+    expect(recovered.map((event) => event.sequence)).toEqual([0, 1, 2, 3, 4, 5])
+    expect(recovered.map((event) => event.type)).toEqual([
+      'session.system',
+      'message.delta',
+      'tool.updated',
+      'message.delta',
+      'tool.updated',
+      'deliverables.presented',
+    ])
+    expect(recovered[0]).toEqual({ type: 'session.system', sessionId: 'session-1', sequence: 0 })
+    expect(recovered[3]).toMatchObject({ type: 'message.delta', sequence: 3, delta: 'second' })
+    expect(recovered[5]).toMatchObject({
+      type: 'deliverables.presented',
+      sequence: 5,
+      files: [{ path: 'artifacts/report.md' }, { path: 'artifacts/data.json' }],
+    })
+    expect(calls.filter((call) => call.method === 'session.history').length).toBe(2)
   })
 
   it('salvages the published session when workspace attachment fails', async () => {
