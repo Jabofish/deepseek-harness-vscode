@@ -55,6 +55,15 @@ export interface ToolSearchRenderProps {
   readonly translate?: PresentationTranslate
 }
 
+/** Host-surface renderer for structured web search/fetch results. Link
+ * navigation remains an explicit host callback; this package never creates a
+ * browser navigation target itself. */
+export interface ToolWebRenderProps {
+  readonly view: Extract<ToolPresentationView, { readonly card: 'web'; readonly phase: 'result' }>
+  readonly translate?: PresentationTranslate
+  readonly onOpenLink?: (href: string) => void
+}
+
 export interface ToolRowProps {
   readonly tool: ToolCallView
   /** Controlled when supplied; registry consumers may omit both for local disclosure state. */
@@ -72,6 +81,8 @@ export interface ToolRowProps {
   readonly renderTerminal?: (props: ToolTerminalRenderProps) => ReactElement
   /** Optional host-surface renderer for structured search result cards. */
   readonly renderSearch?: (props: ToolSearchRenderProps) => ReactElement
+  /** Optional host-surface renderer for structured web result cards. */
+  readonly renderWeb?: (props: ToolWebRenderProps) => ReactElement
 }
 
 export interface ToolRowModel {
@@ -164,6 +175,10 @@ export function ToolRow(props: ToolRowProps): ReactElement {
   const summary = model.errorSummary ?? model.summary
   const expand = label(props.translate, 'toolrow.expand', 'Expand')
   const collapse = label(props.translate, 'toolrow.collapse', 'Collapse')
+  const targets =
+    props.onOpenLink === undefined
+      ? []
+      : presentationTargets(props.tool.presentation, props.renderWeb !== undefined)
   return (
     <article
       className={`dsh-tool-row dsh-tool-row--${model.state}`}
@@ -217,13 +232,14 @@ export function ToolRow(props: ToolRowProps): ReactElement {
             props.renderDiff,
             props.renderTerminal,
             props.renderSearch,
+            props.renderWeb,
           )}
-          {props.onOpenLink === undefined ? null : (
+          {props.onOpenLink === undefined || targets.length === 0 ? null : (
             <div
               className="dsh-tool-row__targets"
               aria-label={label(props.translate, 'toolrow.presentation.open', 'Open')}
             >
-              {presentationTargets(props.tool.presentation).map((target) => (
+              {targets.map((target) => (
                 <button
                   key={`${target.href}:${target.label}`}
                   type="button"
@@ -254,7 +270,10 @@ interface ToolPresentationTarget {
   readonly label: string
 }
 
-function presentationTargets(view: ToolPresentationView | undefined): readonly ToolPresentationTarget[] {
+function presentationTargets(
+  view: ToolPresentationView | undefined,
+  hasWebRenderer = false,
+): readonly ToolPresentationTarget[] {
   if (view === undefined) return []
   const targets: ToolPresentationTarget[] = []
   const add = (href: string | undefined, labelText: string): void => {
@@ -276,7 +295,7 @@ function presentationTargets(view: ToolPresentationView | undefined): readonly T
       add(view.path, `${view.path}:${view.offset}`)
       break
     case 'web':
-      if (view.kind === 'fetch') add(view.url, view.url)
+      if (view.kind === 'fetch' && !hasWebRenderer) add(view.url, view.url)
       // Web search already renders each source, including its openable URL,
       // inside the specialized sources section. Adding the generic target
       // list here would render the same sources a second time.
@@ -296,6 +315,7 @@ function renderStructuredDetails(
   renderDiff?: (props: ToolDiffRenderProps) => ReactElement,
   renderTerminal?: (props: ToolTerminalRenderProps) => ReactElement,
   renderSearch?: (props: ToolSearchRenderProps) => ReactElement,
+  renderWeb?: (props: ToolWebRenderProps) => ReactElement,
 ): ReactElement {
   const view = tool.presentation
   return (
@@ -311,6 +331,7 @@ function renderStructuredDetails(
             renderDiff,
             renderTerminal,
             renderSearch,
+            renderWeb,
           )}
       {tool.error === undefined ? null : (
         <section className="dsh-tool-row__section dsh-tool-row__section--error" role="alert">
@@ -344,6 +365,7 @@ function renderPresentationView(
   renderDiff?: (props: ToolDiffRenderProps) => ReactElement,
   renderTerminal?: (props: ToolTerminalRenderProps) => ReactElement,
   renderSearch?: (props: ToolSearchRenderProps) => ReactElement,
+  renderWeb?: (props: ToolWebRenderProps) => ReactElement,
 ): ReactElement {
   switch (view.card) {
     case 'terminal':
@@ -357,10 +379,32 @@ function renderPresentationView(
     case 'read':
       return renderReadView(view, t, renderCode)
     case 'web':
-      return view.kind === 'search' ? renderWebSearch(view, t, onOpenLink) : renderSections(fallback)
+      return renderWebView(view, t, onOpenLink, renderWeb, fallback)
     default:
       return renderSections(fallback)
   }
+}
+
+function renderWebView(
+  view: Extract<ToolPresentationView, { readonly card: 'web'; readonly phase: 'result' }>,
+  t: PresentationTranslate | undefined,
+  onOpenLink: ((href: string) => void) | undefined,
+  renderWeb: ((props: ToolWebRenderProps) => ReactElement) | undefined,
+  fallback: readonly ToolDetailBlock[],
+): ReactElement {
+  if (renderWeb !== undefined) {
+    try {
+      return renderWeb({
+        view,
+        ...(t === undefined ? {} : { translate: t }),
+        ...(onOpenLink === undefined ? {} : { onOpenLink }),
+      })
+    } catch {
+      // A host renderer is an enhancement only; retain the shared view when it
+      // cannot handle an otherwise validated web result.
+    }
+  }
+  return view.kind === 'search' ? renderWebSearch(view, t, onOpenLink) : renderSections(fallback)
 }
 
 function renderSearchView(

@@ -137,6 +137,38 @@ describe('ToolRow rendering', () => {
     expect(document.querySelector('.dsh-tool-row__search-files')).toBeNull()
   })
 
+  it('hands structured web results to the optional host web renderer', () => {
+    const tool: ToolCallView = {
+      id: 'web-renderer',
+      name: 'web_fetch',
+      title: 'Fetch',
+      category: 'tool',
+      status: 'completed',
+      metadata: {},
+      presentation: {
+        phase: 'result',
+        card: 'web',
+        kind: 'fetch',
+        url: 'https://example.test/page',
+        statusCode: 200,
+        truncated: false,
+      },
+    }
+
+    render(
+      createElement(ToolRow, {
+        tool,
+        expanded: true,
+        onToggle: vi.fn(),
+        onOpenLink: vi.fn(),
+        renderWeb: ({ view }) => createElement('output', { 'data-web-renderer': view.kind }, 'custom web'),
+      }),
+    )
+
+    expect(document.querySelector('[data-web-renderer="fetch"]')?.textContent).toBe('custom web')
+    expect(document.querySelector('.dsh-tool-row__targets')).toBeNull()
+  })
+
   it('hands structured read lines to the optional host code renderer', () => {
     const tool: ToolCallView = {
       id: 'read-code-renderer',

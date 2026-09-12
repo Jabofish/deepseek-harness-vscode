@@ -8,6 +8,7 @@ import {
   type ToolDiffRenderProps,
   type ToolSearchRenderProps,
   type ToolTerminalRenderProps,
+  type ToolWebRenderProps,
 } from './components/ToolRow.js'
 import type { PresentationTranslate } from './tool-presentation.js'
 
@@ -21,6 +22,7 @@ export interface ToolRendererProps {
   readonly renderDiff?: (props: ToolDiffRenderProps) => ReactElement
   readonly renderTerminal?: (props: ToolTerminalRenderProps) => ReactElement
   readonly renderSearch?: (props: ToolSearchRenderProps) => ReactElement
+  readonly renderWeb?: (props: ToolWebRenderProps) => ReactElement
 }
 
 export type ToolRenderer = (props: ToolRendererProps) => ReactElement

@@ -82,6 +82,19 @@
   renderer 接线以及 Webview paths/matches、复制、文件折叠、尾部文件头恢复、空态测试。真实
   DSH/VS Code Webview Search 回放尚未完成，因此 TL-01 继续保持 `PARTIAL`。
 
+## 2026-09-12 P0 结构化 Web 结果预览切片
+
+- TL-01：共享 `ToolRow` 新增结构化 web renderer seam；Webview `ToolWebPreview` 对齐上游
+  `WebBlock`，支持搜索答案的安全 Markdown、编号来源、标题/摘要/发布时间、无结果与来源
+  截断提示，以及 fetch URL、HTTP 状态和内容截断提示。URL 只能经现有 Host `onOpenLink`
+  回调触发，fetch renderer 启用时不会重复显示旧目标按钮。
+- 安全边界：Adapter 已校验的 HTTP(S) URL 才能成为 Host 操作按钮；Webview 不生成原生
+  `href`、不直接访问网络，模型答案继续走既有禁止原始 HTML/远程图片的 Markdown 投影。
+  renderer 失败时回退到共享 Web 结果视图。
+- 自动证据：`pnpm check`（151 个测试文件、1227 个测试）和 `pnpm build` 通过；新增共享
+  renderer 接线以及 Webview 搜索/抓取、状态、截断、空态、Host-only URL 操作测试。真实
+  DSH/VS Code Webview Web 回放尚未完成，因此 TL-01 继续保持 `PARTIAL`。
+
 托管启动回归修复（2026-08-29）：启动参数已迁移到版本化 `managedWebArguments` 契约；`--no-open` 对所有已知版本默认传入，仅 `0.0.1-rc.1/.2/.5`、`0.1.0-rc.2/.3/.6/.7` 这些早期 Web Profile 省略，未知版本不猜测可选 flag。实际 rc.6 隔离 smoke 已成功报告 loopback endpoint，并确认本次受管进程退出后端口关闭。
 
 无文件夹临时工作区修复（2026-08-29）：`TemporaryWorkspaceManager` 已接入 Extension Host 的
