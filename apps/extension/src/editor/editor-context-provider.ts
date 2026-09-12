@@ -48,7 +48,19 @@ export interface EditorContextProviderOptions {
   readonly workspace?: typeof vscode.workspace
   readonly window?: typeof vscode.window
   readonly languages?: typeof vscode.languages
+  readonly commands?: typeof vscode.commands
   readonly now?: () => number
+}
+
+interface EditorSymbol {
+  readonly name: string
+  readonly detail?: string
+  readonly range: vscode.Range
+}
+
+interface SymbolCandidate extends EditorSymbol {
+  readonly depth: number
+  readonly locationUri?: unknown
 }
 
 /** VS Code-facing capture and attachment resolver; all platform objects stop here. */
@@ -58,6 +70,7 @@ export class EditorContextProvider implements EditorContextPort, vscode.Disposab
   private readonly workspace: typeof vscode.workspace
   private readonly window: typeof vscode.window
   private readonly languages: typeof vscode.languages
+  private readonly commands: typeof vscode.commands
   private readonly guard: WorkspacePathGuard
   private readonly store: EditorContextStore
   private readonly contextStoreGeneration = 1
@@ -69,6 +82,7 @@ export class EditorContextProvider implements EditorContextPort, vscode.Disposab
     this.workspace = options.workspace ?? vscode.workspace
     this.window = options.window ?? vscode.window
     this.languages = options.languages ?? vscode.languages
+    this.commands = options.commands ?? vscode.commands
     this.guard = new WorkspacePathGuard(this.workspace)
     this.store = new EditorContextStore(options.now)
   }
@@ -148,6 +162,13 @@ export class EditorContextProvider implements EditorContextPort, vscode.Disposab
       if (canFit(diagnosticBytes)) availableKinds.push('diagnostic')
     }
 
+    const symbol = await this.findSymbolAtCursor(editor, signal)
+    if (symbol !== undefined) {
+      const symbolText = editor.document.getText(symbol.range)
+      const symbolBytes = Buffer.byteLength(symbolText, 'utf8')
+      if (symbolText.length > 0 && canFit(symbolBytes)) availableKinds.push('symbol')
+    }
+
     return { availableKinds }
   }
 
@@ -206,14 +227,25 @@ export class EditorContextProvider implements EditorContextPort, vscode.Disposab
     await this.guard.assertRegularFile(resolved)
     throwIfAborted(signal)
 
-    const range = captureRange(editor, input.kind)
+    let range: vscode.Range | undefined
+    let symbolName: string | undefined
+    if (input.kind === 'symbol') {
+      const symbol = await this.findSymbolAtCursor(editor, signal)
+      if (symbol === undefined) throw contextUnavailable('No symbol is available at the current cursor.')
+      range = symbol.range
+      symbolName = symbol.name
+    } else {
+      range = captureRange(editor, input.kind)
+    }
     const contextRange = range === undefined ? undefined : toContextRange(range)
     const selectedLine = editor.selection.active.line
     const source = await this.readSource(editor.document, input.kind, range, selectedLine)
     this.assertCaptureIsCurrent(lifecycleGeneration, signal)
     if (source.bytes.byteLength > EDITOR_CONTEXT_LIMITS.maxItemBytes) throw contextLimit()
     const relativePath = resolved.relativePath
-    const label = `${input.kind}: ${relativePath}${range === undefined ? '' : `:${range.start.line + 1}`}`
+    const label = `${input.kind}: ${relativePath}${range === undefined ? '' : `:${range.start.line + 1}`}${
+      symbolName === undefined ? '' : ` ${symbolName}`
+    }`
     const readCurrent = async (): Promise<CurrentEditorContextContent> => {
       // Do not retain the capture request's AbortSignal in a long-lived
       // context handle. A cancellation after capture admission must not make
@@ -257,8 +289,6 @@ export class EditorContextProvider implements EditorContextPort, vscode.Disposab
     range: vscode.Range | undefined,
     selectedLine?: number,
   ): Promise<CurrentEditorContextContent> {
-    if (kind === 'symbol')
-      throw contextUnavailable('The active document has no supported symbol context provider.')
     if (kind === 'diagnostic') {
       const diagnostics = this.languages.getDiagnostics(document.uri)
       const current = diagnostics.filter(
@@ -271,6 +301,12 @@ export class EditorContextProvider implements EditorContextPort, vscode.Disposab
       const text = current.map((diagnostic) => `${diagnostic.severity}: ${diagnostic.message}`).join('\n')
       return { bytes: Buffer.from(text, 'utf8'), documentVersion: document.version }
     }
+    if (range === undefined && (kind === 'selection' || kind === 'symbol'))
+      throw contextUnavailable(
+        kind === 'selection'
+          ? 'Select non-empty text before adding context.'
+          : 'No symbol is available at the current cursor.',
+      )
     if (range === undefined && document.uri.scheme === 'file') {
       const info = await Promise.resolve(this.workspace.fs.stat(document.uri)).catch(() => undefined)
       if (info !== undefined && info.size > EDITOR_CONTEXT_LIMITS.maxItemBytes) throw contextLimit()
@@ -278,7 +314,28 @@ export class EditorContextProvider implements EditorContextPort, vscode.Disposab
     const text = range === undefined ? document.getText() : document.getText(range)
     if (kind === 'selection' && text.length === 0)
       throw contextUnavailable('Select non-empty text before adding context.')
+    if (kind === 'symbol' && text.length === 0)
+      throw contextUnavailable('The current symbol has no readable content.')
     return { bytes: Buffer.from(text, 'utf8'), documentVersion: document.version }
+  }
+
+  private async findSymbolAtCursor(
+    editor: vscode.TextEditor,
+    signal?: AbortSignal,
+  ): Promise<EditorSymbol | undefined> {
+    throwIfAborted(signal)
+    let result: unknown
+    try {
+      result = await this.commands.executeCommand<unknown>(
+        'vscode.executeDocumentSymbolProvider',
+        editor.document.uri,
+      )
+    } catch {
+      throwIfAborted(signal)
+      return undefined
+    }
+    throwIfAborted(signal)
+    return findSymbolAtPosition(result, editor.document, editor.selection.active)
   }
 
   private assertOwner(owner: EditorContextOwner): void {
@@ -301,8 +358,13 @@ function captureRangeForDocument(
   kind: EditorContextCaptureInput['kind'],
   captured: vscode.Range | undefined,
 ): vscode.Range | undefined {
-  if (kind !== 'selection') return undefined
-  if (captured === undefined) throw contextUnavailable('The captured selection is no longer available.')
+  if (kind !== 'selection' && kind !== 'symbol') return undefined
+  if (captured === undefined)
+    throw contextUnavailable(
+      kind === 'selection'
+        ? 'The captured selection is no longer available.'
+        : 'The captured symbol is no longer available.',
+    )
   if (
     captured.start.line >= document.lineCount ||
     captured.end.line >= document.lineCount ||
@@ -316,6 +378,123 @@ function captureRangeForDocument(
   )
     throw contextStale()
   return captured
+}
+
+function findSymbolAtPosition(
+  value: unknown,
+  document: vscode.TextDocument,
+  position: vscode.Position,
+): EditorSymbol | undefined {
+  if (!validDocumentPosition(document, position)) return undefined
+  const candidates: SymbolCandidate[] = []
+  collectSymbolCandidates(value, 0, candidates)
+  return candidates
+    .filter(
+      (candidate) =>
+        isDocumentRangeValid(document, candidate.range) &&
+        (candidate.locationUri === undefined || sameUri(candidate.locationUri, document.uri)) &&
+        rangeContains(candidate.range, position),
+    )
+    .sort(compareSymbolCandidates)[0]
+}
+
+function collectSymbolCandidates(value: unknown, depth: number, result: SymbolCandidate[]): void {
+  if (!Array.isArray(value)) return
+  for (const entry of value) {
+    if (!isRecord(entry)) continue
+    const name = typeof entry.name === 'string' ? entry.name.trim() : ''
+    const location = isRecord(entry.location) ? entry.location : undefined
+    const range = toSymbolRange(entry.range) ?? toSymbolRange(location?.range)
+    if (name !== '' && range !== undefined) {
+      const detail = typeof entry.detail === 'string' && entry.detail.trim() !== '' ? entry.detail : undefined
+      const locationUri = location?.uri
+      result.push({
+        name,
+        range,
+        depth,
+        ...(detail === undefined ? {} : { detail }),
+        ...(locationUri === undefined ? {} : { locationUri }),
+      })
+    }
+    collectSymbolCandidates(entry.children, depth + 1, result)
+  }
+}
+
+function toSymbolRange(value: unknown): vscode.Range | undefined {
+  if (!isRecord(value)) return undefined
+  const start = toSymbolPosition(value.start)
+  const end = toSymbolPosition(value.end)
+  if (start === undefined || end === undefined || comparePosition(start, end) > 0) return undefined
+  return new vscode.Range(start.line, start.character, end.line, end.character)
+}
+
+function toSymbolPosition(value: unknown): { readonly line: number; readonly character: number } | undefined {
+  if (!isRecord(value)) return undefined
+  if (
+    !Number.isSafeInteger(value.line) ||
+    !Number.isSafeInteger(value.character) ||
+    (value.line as number) < 0 ||
+    (value.character as number) < 0
+  )
+    return undefined
+  return { line: value.line as number, character: value.character as number }
+}
+
+function isDocumentRangeValid(document: vscode.TextDocument, range: vscode.Range): boolean {
+  return (
+    validDocumentPosition(document, range.start) &&
+    validDocumentPosition(document, range.end) &&
+    comparePosition(range.start, range.end) <= 0
+  )
+}
+
+function validDocumentPosition(
+  document: vscode.TextDocument,
+  position: { line: number; character: number },
+): boolean {
+  return (
+    Number.isSafeInteger(position.line) &&
+    position.line >= 0 &&
+    position.line < document.lineCount &&
+    Number.isSafeInteger(position.character) &&
+    position.character >= 0 &&
+    position.character <= document.lineAt(position.line).text.length
+  )
+}
+
+function rangeContains(
+  range: vscode.Range,
+  position: { readonly line: number; readonly character: number },
+): boolean {
+  return comparePosition(range.start, position) <= 0 && comparePosition(position, range.end) <= 0
+}
+
+function comparePosition(
+  left: { readonly line: number; readonly character: number },
+  right: { readonly line: number; readonly character: number },
+): number {
+  if (left.line !== right.line) return left.line - right.line
+  return left.character - right.character
+}
+
+function compareSymbolCandidates(left: SymbolCandidate, right: SymbolCandidate): number {
+  const leftLineSpan = left.range.end.line - left.range.start.line
+  const rightLineSpan = right.range.end.line - right.range.start.line
+  if (leftLineSpan !== rightLineSpan) return leftLineSpan - rightLineSpan
+  const leftCharacterSpan = left.range.end.character - left.range.start.character
+  const rightCharacterSpan = right.range.end.character - right.range.start.character
+  if (leftCharacterSpan !== rightCharacterSpan) return leftCharacterSpan - rightCharacterSpan
+  if (left.depth !== right.depth) return right.depth - left.depth
+  return left.name.localeCompare(right.name)
+}
+
+function sameUri(value: unknown, expected: vscode.Uri): boolean {
+  if (!isRecord(value)) return false
+  return value.scheme === expected.scheme && value.fsPath === expected.fsPath
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
 }
 
 function toContextRange(range: vscode.Range): {

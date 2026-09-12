@@ -86,10 +86,14 @@ export function deriveFeatureCapabilityProfile(input: CapabilityInput): FeatureC
         'Local prompt template lifecycle is available; mode mapping remains bounded by DSH capabilities and approvals.',
     },
     'NAV-01': upstream(['host', 'workspace'], 'NAV-01 navigation', 'verified-contract'),
+    // SY-01 is an extension-owned Language Service route. The active editor
+    // availability remains host-projected; this entry only records that the
+    // route is implemented and does not claim a new DSH RPC.
     'SY-01': {
-      state: 'unavailable',
-      upstream: 'unavailable',
-      reason: 'Symbol and diagnostic context sources are not enabled in Slice 0.',
+      state: 'verified-contract',
+      upstream: 'verified-contract',
+      reason:
+        'VS Code symbol and diagnostic context capture is available when the active document reports it.',
     },
     'RF-01': {
       state: 'unavailable',

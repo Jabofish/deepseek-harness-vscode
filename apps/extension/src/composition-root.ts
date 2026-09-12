@@ -567,7 +567,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     },
   })
   const attachmentTokens = new AttachmentStore()
-  const editorContextProvider = new EditorContextProvider()
+  const editorContextProvider = new EditorContextProvider({ commands: vscode.commands })
   const editorContextUseCases = new EditorContextUseCases(editorContextProvider)
   const navigationService = new NavigationService()
   const navigationUseCases = new NavigationUseCases(navigationService)

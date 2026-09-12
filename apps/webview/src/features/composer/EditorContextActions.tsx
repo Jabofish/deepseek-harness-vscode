@@ -14,9 +14,16 @@ export interface EditorContextActionsProps {
 interface EditorContextAction {
   readonly kind: EditorContextKind
   readonly icon: IconName
-  readonly labelKey: 'composer.contextSelection' | 'composer.contextFile' | 'composer.contextDiagnostic'
+  readonly labelKey:
+    | 'composer.contextSelection'
+    | 'composer.contextFile'
+    | 'composer.contextDiagnostic'
+    | 'composer.contextSymbol'
   readonly descriptionKey:
-    'composer.addSelectionContext' | 'composer.addFileContext' | 'composer.addDiagnosticContext'
+    | 'composer.addSelectionContext'
+    | 'composer.addFileContext'
+    | 'composer.addDiagnosticContext'
+    | 'composer.addSymbolContext'
 }
 
 const CONTEXT_ACTIONS: readonly EditorContextAction[] = [
@@ -37,6 +44,12 @@ const CONTEXT_ACTIONS: readonly EditorContextAction[] = [
     icon: 'alert',
     labelKey: 'composer.contextDiagnostic',
     descriptionKey: 'composer.addDiagnosticContext',
+  },
+  {
+    kind: 'symbol',
+    icon: 'target',
+    labelKey: 'composer.contextSymbol',
+    descriptionKey: 'composer.addSymbolContext',
   },
 ]
 
