@@ -2,7 +2,7 @@
 
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { ChangeDetail, ChangeSetFile } from '@dsh-vscode/domain'
+import type { ChangeDetail, ChangeReviewState, ChangeSetFile } from '@dsh-vscode/domain'
 
 import { I18nProvider } from '../../i18n.js'
 import { ChangesDrawer } from './ChangesDrawer.js'
@@ -113,5 +113,59 @@ describe('ChangesDrawer', () => {
     await waitFor(() => expect(document.querySelector('pre')?.textContent).toBe('SECOND'))
     firstDetail.resolve({ ...change, redactedDiff: 'FIRST', diffTruncated: false })
     await waitFor(() => expect(document.querySelector('pre')?.textContent).toBe('SECOND'))
+  })
+
+  it('offers explicit accept, reject, and attention review decisions in the detail view', async () => {
+    const accepted = deferred<ChangeSetFile>()
+    const rejected = deferred<ChangeSetFile>()
+    const needsAttention = deferred<ChangeSetFile>()
+    const onMarkReviewed = vi.fn((_changeId: string, reviewState: ChangeReviewState) => {
+      if (reviewState === 'unreviewed') return Promise.resolve(undefined)
+      if (reviewState === 'accepted') return accepted.promise
+      if (reviewState === 'rejected') return rejected.promise
+      if (reviewState === 'needs-attention') return needsAttention.promise
+      return Promise.resolve({ ...change, reviewState })
+    })
+    renderDrawer({ onMarkReviewed })
+
+    fireEvent.click(screen.getByRole('button', { name: '1 changes' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Review src/main.ts' }))
+    await waitFor(() => expect(screen.getByRole('region', { name: 'Change detail' })).toBeDefined())
+
+    expect(screen.getByRole('group', { name: 'Change review decision' })).toBeDefined()
+    fireEvent.click(screen.getByRole('button', { name: 'Accept' }))
+    await waitFor(() => expect(onMarkReviewed).toHaveBeenCalledWith('change-1', 'accepted'))
+    expect(screen.getByRole('button', { name: 'Reject' })).toHaveProperty('disabled', true)
+    expect(screen.getByRole('button', { name: 'Needs attention' })).toHaveProperty('disabled', true)
+
+    accepted.resolve({ ...change, reviewState: 'accepted' })
+    await waitFor(() => expect(screen.getByText('Accepted')).toBeDefined())
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reject' }))
+    await waitFor(() => expect(onMarkReviewed).toHaveBeenCalledWith('change-1', 'rejected'))
+    rejected.resolve({ ...change, reviewState: 'rejected' })
+    await waitFor(() => expect(screen.getByText('Rejected')).toBeDefined())
+
+    fireEvent.click(screen.getByRole('button', { name: 'Needs attention' }))
+    await waitFor(() => expect(onMarkReviewed).toHaveBeenCalledWith('change-1', 'needs-attention'))
+    needsAttention.resolve({ ...change, reviewState: 'needs-attention' })
+    await waitFor(() =>
+      expect(screen.getByRole('region', { name: 'Change detail' }).textContent).toContain('Needs attention'),
+    )
+    expect(onMarkReviewed).toHaveBeenCalledTimes(3)
+  })
+
+  it('shows an accessible error when a review decision cannot be saved', async () => {
+    const onMarkReviewed = vi.fn().mockRejectedValue(new Error('unavailable'))
+    renderDrawer({ onMarkReviewed })
+
+    fireEvent.click(screen.getByRole('button', { name: '1 changes' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Review src/main.ts' }))
+    await waitFor(() => expect(screen.getByRole('region', { name: 'Change detail' })).toBeDefined())
+    fireEvent.click(screen.getByRole('button', { name: 'Reject' }))
+
+    await waitFor(() =>
+      expect(screen.getByRole('alert').textContent).toBe('The review decision could not be saved.'),
+    )
   })
 })

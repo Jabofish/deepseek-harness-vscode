@@ -23,6 +23,8 @@ export function ChangesDrawer(props: ChangesDrawerProps): ReactElement | null {
   const [detail, setDetail] = useState<ChangeDetail | undefined>()
   const [detailLoading, setDetailLoading] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
+  const [reviewing, setReviewing] = useState<ChangeReviewState | undefined>()
+  const [reviewError, setReviewError] = useState(false)
   const detailRequestGeneration = useRef(0)
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -58,6 +60,22 @@ export function ChangesDrawer(props: ChangesDrawerProps): ReactElement | null {
       .finally(() => {
         if (generation === detailRequestGeneration.current) setDetailLoading(false)
       })
+  }
+  const markDetailReviewed = (
+    reviewState: Extract<ChangeReviewState, 'accepted' | 'rejected' | 'needs-attention'>,
+  ): void => {
+    if (detail === undefined || reviewing !== undefined) return
+    setReviewing(reviewState)
+    setReviewError(false)
+    void props
+      .onMarkReviewed(detail.changeId, reviewState)
+      .then((next) => {
+        if (next !== undefined)
+          setDetail((current) => (current === undefined ? current : { ...current, ...next }))
+        else setReviewError(true)
+      })
+      .catch(() => setReviewError(true))
+      .finally(() => setReviewing(undefined))
   }
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
     if (event.key !== 'Escape' || !open) return
@@ -162,8 +180,44 @@ export function ChangesDrawer(props: ChangesDrawerProps): ReactElement | null {
               <div className="dsh-changes-popover__detail-meta">
                 <span>{t(`changes.evidence.${detail.evidence}`)}</span>
                 <span>{t(`changes.application.${detail.applicationState}`)}</span>
+                <span>{t(`changes.review.${detail.reviewState}`)}</span>
               </div>
               <pre>{detail.redactedDiff ?? t('changes.noDiff')}</pre>
+              <div
+                className="dsh-changes-popover__review-actions"
+                role="group"
+                aria-label={t('changes.reviewActions')}
+              >
+                <button
+                  type="button"
+                  className="dsh-button dsh-button--primary dsh-button--compact"
+                  disabled={reviewing !== undefined}
+                  onClick={() => markDetailReviewed('accepted')}
+                >
+                  {reviewing === 'accepted' ? t('changes.reviewing') : t('changes.accept')}
+                </button>
+                <button
+                  type="button"
+                  className="dsh-button dsh-button--danger dsh-button--compact"
+                  disabled={reviewing !== undefined}
+                  onClick={() => markDetailReviewed('rejected')}
+                >
+                  {reviewing === 'rejected' ? t('changes.reviewing') : t('changes.reject')}
+                </button>
+                <button
+                  type="button"
+                  className="dsh-button dsh-button--secondary dsh-button--compact"
+                  disabled={reviewing !== undefined}
+                  onClick={() => markDetailReviewed('needs-attention')}
+                >
+                  {reviewing === 'needs-attention' ? t('changes.reviewing') : t('changes.needsAttention')}
+                </button>
+              </div>
+              {reviewError ? (
+                <div className="dsh-changes-popover__error" role="alert">
+                  {t('changes.reviewFailed')}
+                </div>
+              ) : null}
             </section>
           )}
         </div>
