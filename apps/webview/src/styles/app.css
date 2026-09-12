@@ -1426,6 +1426,20 @@ summary.dsh-timeline__card-header,
   max-width: 100%;
 }
 
+.dsh-timeline__tool-call {
+  min-width: 0;
+}
+
+.dsh-timeline__tool-subcalls {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dsh-space-2);
+  min-width: 0;
+  margin: var(--dsh-space-1) 0 var(--dsh-space-1) var(--dsh-space-3);
+  padding-left: var(--dsh-space-2);
+  border-left: var(--dsh-border);
+}
+
 /* A single call and a collapsed batch share one compact collection contract.
  * Only the expanded body differs; the closed footprint never depends on the
  * number of calls returned by DSH. */

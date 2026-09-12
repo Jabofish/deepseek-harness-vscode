@@ -1340,11 +1340,13 @@ function tool(value: Record<string, unknown>, phase: 'call' | 'result' = 'result
     (errorText !== undefined || messageIsError) && mappedStatus !== 'cancelled' ? 'failed' : mappedStatus
   const turn = eventIndex(value.turn)
   const step = eventIndex(value.step)
+  const parentCallId = firstString(value.parentCallId)
   return {
     id: stringOr(
       value.callId ?? source?.callId ?? value.subCallId ?? value.id ?? view?.callId ?? view?.id,
       'tool-call',
     ),
+    ...(parentCallId === undefined ? {} : { parentCallId }),
     ...(turn === undefined ? {} : { turn }),
     ...(step === undefined ? {} : { step }),
     name: name ?? 'unknown-tool',

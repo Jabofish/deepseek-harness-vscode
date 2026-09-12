@@ -21,6 +21,18 @@
 
 本批次的全量门禁结果以交付命令输出为准；没有真实 DSH 运行验证的新增能力不标为 `DONE`。
 
+## 2026-09-12 P0 递归工具调用树切片
+
+- TL-01：固定 rc.6 契约中的 `rootCallId`、`parentCallId`、`subCallId` 已由 Adapter
+  保留到 Domain；Timeline 新增有界 `ToolCallTree` 投影，支持任意已验证深度内的嵌套
+  Code/PTC 调用、启动/完成/失败状态和父调用缺失时的可见降级。Webview 通过同一工具
+  Renderer 递归展示子调用，并保留每个子调用独立的生命周期状态。
+- 安全边界：循环、自引用和超过 256 层的关系会断开为安全根节点，不丢弃对应工具行；不
+  解析 ANSI/TUI 文本，也不凭模型文本猜测工具状态。新增 Adapter、Timeline 和 Webview
+  回归覆盖嵌套、孤儿、错误状态、循环与深度上限。
+- 自动证据：`pnpm check`（146 个测试文件、1204 个测试）和 `pnpm build` 通过；真实
+  DSH/VS Code Webview PTC 回放尚未完成，因此 TL-01 继续保持 `PARTIAL`。
+
 托管启动回归修复（2026-08-29）：启动参数已迁移到版本化 `managedWebArguments` 契约；`--no-open` 对所有已知版本默认传入，仅 `0.0.1-rc.1/.2/.5`、`0.1.0-rc.2/.3/.6/.7` 这些早期 Web Profile 省略，未知版本不猜测可选 flag。实际 rc.6 隔离 smoke 已成功报告 loopback endpoint，并确认本次受管进程退出后端口关闭。
 
 无文件夹临时工作区修复（2026-08-29）：`TemporaryWorkspaceManager` 已接入 Extension Host 的

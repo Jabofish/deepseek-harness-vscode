@@ -1,5 +1,5 @@
 import { memo, useCallback, type ReactElement } from 'react'
-import type { TimelineNode } from '@dsh-vscode/timeline'
+import { projectToolCallTree, type TimelineNode, type ToolCallTreeNode } from '@dsh-vscode/timeline'
 import { ToolRendererRegistry, toolNameLabel, toolStatusLabel } from '@dsh-vscode/ui'
 import { ContentFlow } from '../../components/common/index.js'
 import { Icon } from '../../ui/Icon.js'
@@ -26,11 +26,12 @@ export const ToolCallCollection = memo(function ToolCallCollection(
   props: ToolCallCollectionProps,
 ): ReactElement | null {
   if (props.tools.length === 0) return null
+  const roots = projectToolCallTree(props.tools)
 
-  if (props.tools.length === 1) {
-    const tool = props.tools[0]
-    return tool === undefined ? null : (
-      <div className="dsh-timeline__tool-collection">{renderToolCard(tool, props)}</div>
+  if (roots.length === 1) {
+    const root = roots[0]
+    return root === undefined ? null : (
+      <div className="dsh-timeline__tool-collection">{renderToolCard(root, props)}</div>
     )
   }
 
@@ -62,18 +63,18 @@ export const ToolCallCollection = memo(function ToolCallCollection(
         </span>
       </summary>
       <div className="dsh-timeline__tool-group-list">
-        {props.tools.map((toolNode) => (
-          <div key={toolNode.id}>{renderToolCard(toolNode, props)}</div>
+        {roots.map((root) => (
+          <div key={root.node.id}>{renderToolCard(root, props)}</div>
         ))}
       </div>
     </details>
   )
 }, toolCollectionEqual)
 
-function renderToolCard(node: ToolTimelineNode, props: ToolCallCollectionProps): ReactElement {
+function renderToolCard(tree: ToolCallTreeNode, props: ToolCallCollectionProps): ReactElement {
   return (
     <ToolCardView
-      node={node}
+      tree={tree}
       expanded={props.expanded}
       onExpandedChange={props.onExpandedChange}
       translate={props.translate}
@@ -83,7 +84,7 @@ function renderToolCard(node: ToolTimelineNode, props: ToolCallCollectionProps):
 }
 
 interface ToolCardViewProps {
-  readonly node: ToolTimelineNode
+  readonly tree: ToolCallTreeNode
   readonly expanded: ReadonlySet<string>
   readonly onExpandedChange: (expanded: ReadonlySet<string>) => void
   readonly translate: Translate
@@ -91,7 +92,8 @@ interface ToolCardViewProps {
 }
 
 const ToolCardView = memo(function ToolCardView(props: ToolCardViewProps): ReactElement {
-  const { expanded: expandedKeys, node, onExpandedChange } = props
+  const { expanded: expandedKeys, tree, onExpandedChange } = props
+  const node = tree.node
   const expanded = expandedKeys.has(node.id)
   const onToggle = useCallback((): void => {
     const next = new Set(expandedKeys)
@@ -100,12 +102,35 @@ const ToolCardView = memo(function ToolCardView(props: ToolCardViewProps): React
     onExpandedChange(next)
   }, [expandedKeys, node.id, onExpandedChange])
 
-  return toolRendererRegistry.render(node.tool, {
-    expanded,
-    translate: props.translate,
-    onToggle,
-    ...(props.onOpenLink === undefined ? {} : { onOpenLink: props.onOpenLink }),
-  })
+  return (
+    <div className="dsh-timeline__tool-call" data-tool-call-id={node.id}>
+      {toolRendererRegistry.render(node.tool, {
+        expanded,
+        translate: props.translate,
+        onToggle,
+        ...(props.onOpenLink === undefined ? {} : { onOpenLink: props.onOpenLink }),
+      })}
+      {tree.children.length === 0 ? null : (
+        <div
+          className="dsh-timeline__tool-subcalls"
+          data-subcalls="true"
+          role="group"
+          aria-label={props.translate('timeline.toolSubcalls')}
+        >
+          {tree.children.map((child) => (
+            <ToolCardView
+              key={child.node.id}
+              tree={child}
+              expanded={expandedKeys}
+              onExpandedChange={onExpandedChange}
+              translate={props.translate}
+              {...(props.onOpenLink === undefined ? {} : { onOpenLink: props.onOpenLink })}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
 }, toolCardViewEqual)
 
 function toolCollectionEqual(previous: ToolCallCollectionProps, next: ToolCallCollectionProps): boolean {
@@ -126,12 +151,22 @@ function toolCollectionEqual(previous: ToolCallCollectionProps, next: ToolCallCo
 
 function toolCardViewEqual(previous: ToolCardViewProps, next: ToolCardViewProps): boolean {
   return (
-    previous.node === next.node &&
+    previous.tree.node === next.tree.node &&
+    previous.tree.children === next.tree.children &&
     previous.onExpandedChange === next.onExpandedChange &&
     previous.onOpenLink === next.onOpenLink &&
     previous.translate === next.translate &&
-    previous.expanded.has(previous.node.id) === next.expanded.has(next.node.id)
+    expandedTreeEqual(previous.tree, previous.expanded, next.expanded)
   )
+}
+
+function expandedTreeEqual(
+  tree: ToolCallTreeNode,
+  previous: ReadonlySet<string>,
+  next: ReadonlySet<string>,
+): boolean {
+  if (previous.has(tree.node.id) !== next.has(tree.node.id)) return false
+  return tree.children.every((child) => expandedTreeEqual(child, previous, next))
 }
 
 function toolSummary(tool: ToolTimelineNode['tool'], translate: Translate): string {

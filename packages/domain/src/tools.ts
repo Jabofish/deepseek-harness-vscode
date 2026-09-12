@@ -137,6 +137,8 @@ export interface ToolPresentationSource {
 
 export interface ToolCallView {
   readonly id: string
+  /** DSH Code/PTC parent call id; root calls omit this field. */
+  readonly parentCallId?: string
   /** DSH turn/step coordinates; used to close interrupted tools at turn/end. */
   readonly turn?: number
   readonly step?: number

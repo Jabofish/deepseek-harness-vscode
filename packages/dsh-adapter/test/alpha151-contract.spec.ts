@@ -222,7 +222,12 @@ describe('DSH 0.1.5-alpha.1 Session wire v3 contract', () => {
     expect(ptcStart).toMatchObject({
       type: 'tool.updated',
       sessionId: 's1',
-      tool: { id: 'call-1:ptc:1', name: 'read_file', status: 'running' },
+      tool: {
+        id: 'call-1:ptc:1',
+        parentCallId: 'call-1',
+        name: 'read_file',
+        status: 'running',
+      },
     })
     const ptc = rc6Mapper.event('tool/ptc-dispatch', {
       sessionId: 's1',
@@ -239,7 +244,13 @@ describe('DSH 0.1.5-alpha.1 Session wire v3 contract', () => {
     expect(ptc).toMatchObject({
       type: 'tool.updated',
       sessionId: 's1',
-      tool: { id: 'call-1:ptc:1', name: 'read_file', status: 'completed', outputSummary: 'contents' },
+      tool: {
+        id: 'call-1:ptc:1',
+        parentCallId: 'call-1',
+        name: 'read_file',
+        status: 'completed',
+        outputSummary: 'contents',
+      },
     })
 
     expect(
