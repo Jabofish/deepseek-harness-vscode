@@ -23,6 +23,7 @@ import {
   type FeatureCapabilityProfile,
   type EditorContextOwner,
   type EditorContextAvailability,
+  type EditorContextKind,
   type PromptTemplateSummary,
   type QuestionAnswer,
   type EditorContextItem,
@@ -120,7 +121,7 @@ import { RuntimeInstaller } from './vscode/install-runtime.js'
 import { DshRuntimeUpdater } from './vscode/update-runtime.js'
 import { requestOptionalProviderApiKey, requestProviderSecret } from './vscode/credential-input.js'
 import { moveOrExplainSecondarySidebar } from './vscode/secondary-sidebar.js'
-import { updateContextKeys } from './vscode/context-keys.js'
+import { updateContextKeys, updateEditorContextAvailabilityKeys } from './vscode/context-keys.js'
 import { DSH_CHAT_VIEW_OWNER_ID, EditorContextProvider } from './editor/editor-context-provider.js'
 import { NavigationService } from './navigation/navigation-service.js'
 import { ChangeSetTracker } from './changes/change-set-tracker.js'
@@ -737,10 +738,12 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
   const postEditorContextAvailabilityEvent = async (): Promise<void> => {
     try {
       const availability = await editorContextUseCases.availability(featureOwner())
+      await updateEditorContextAvailabilityKeys(vscode.commands, availability.availableKinds)
       await postFeatureEvent('editor.context.availability.changed', {
         availableKinds: featureContextKinds(availability),
       })
     } catch {
+      await updateEditorContextAvailabilityKeys(vscode.commands, []).catch(() => undefined)
       // Capability refresh is best effort; the next feature list remains the
       // authoritative recovery path when the view or backend is reconnecting.
     }
@@ -2411,6 +2414,23 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       })
     },
   })
+  const captureEditorContextFromCommand = async (kind: EditorContextKind): Promise<void> => {
+    try {
+      const item = await editorContextUseCases.capture({ kind }, featureContextOwner())
+      await postFeatureEvent('editor.context.changed', {
+        contextRef: item.ref.contextRef,
+        action: 'added',
+      }).catch(() => false)
+      await postEditorContextAvailabilityEvent()
+      await provider.reveal(true)
+    } catch (error) {
+      const detail =
+        error instanceof AppError
+          ? error.message
+          : 'An unexpected error occurred. Open DSH diagnostics for the redacted failure details.'
+      void vscode.window.showErrorMessage(`Unable to add ${kind} editor context: ${detail}`)
+    }
+  }
   const stateSubscription = coordinator.subscribe(publishState)
   const subscriptions: vscode.Disposable[] = [
     stateSubscriptionDisposable(stateSubscription),
@@ -2476,8 +2496,13 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
           'dsh.openDocumentation': () => vscode.env.openExternal(vscode.Uri.parse(DSH_DOCUMENTATION_URL)),
           'dsh.openInSecondarySidebar': () => moveOrExplainSecondarySidebar(vscode.commands, vscode.window),
           'dsh.showDiagnostics': () => diagnostics.show(),
+          'dsh.addSelectionContext': () => captureEditorContextFromCommand('selection'),
+          'dsh.addFileContext': () => captureEditorContextFromCommand('file'),
+          'dsh.addSymbolContext': () => captureEditorContextFromCommand('symbol'),
+          'dsh.addDiagnosticContext': () => captureEditorContextFromCommand('diagnostic'),
         },
       })
+      void postEditorContextAvailabilityEvent()
       context.subscriptions.push(...subscriptions)
       context.subscriptions.push(
         configuration.onDidChange((affectsConfiguration) => {

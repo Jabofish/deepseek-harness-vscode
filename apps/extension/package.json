@@ -43,7 +43,11 @@
     "onCommand:dsh.reconnect",
     "onCommand:dsh.newSession",
     "onCommand:dsh.openWebUi",
-    "onCommand:dsh.installRuntime"
+    "onCommand:dsh.installRuntime",
+    "onCommand:dsh.addSelectionContext",
+    "onCommand:dsh.addFileContext",
+    "onCommand:dsh.addSymbolContext",
+    "onCommand:dsh.addDiagnosticContext"
   ],
   "files": [
     "dist/**",
@@ -146,6 +150,26 @@
       {
         "command": "dsh.showDiagnostics",
         "title": "DSH: Show Redacted Diagnostics"
+      },
+      {
+        "command": "dsh.addSelectionContext",
+        "title": "DSH: Add Selection to Context",
+        "icon": "$(selection)"
+      },
+      {
+        "command": "dsh.addFileContext",
+        "title": "DSH: Add File to Context",
+        "icon": "$(file)"
+      },
+      {
+        "command": "dsh.addSymbolContext",
+        "title": "DSH: Add Symbol to Context",
+        "icon": "$(symbol-method)"
+      },
+      {
+        "command": "dsh.addDiagnosticContext",
+        "title": "DSH: Add Diagnostic to Context",
+        "icon": "$(error)"
       }
     ],
     "menus": {
@@ -174,6 +198,50 @@
           "command": "dsh.openWebUi",
           "when": "view == dsh.chatView && dsh.connected",
           "group": "navigation@4"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "dsh.addSelectionContext",
+          "when": "editorTextFocus && dsh.editorContext.selectionAvailable",
+          "group": "dsh@1"
+        },
+        {
+          "command": "dsh.addFileContext",
+          "when": "editorTextFocus && dsh.editorContext.fileAvailable",
+          "group": "dsh@2"
+        },
+        {
+          "command": "dsh.addSymbolContext",
+          "when": "editorTextFocus && dsh.editorContext.symbolAvailable",
+          "group": "dsh@3"
+        },
+        {
+          "command": "dsh.addDiagnosticContext",
+          "when": "editorTextFocus && dsh.editorContext.diagnosticAvailable",
+          "group": "dsh@4"
+        }
+      ],
+      "editor/title/context": [
+        {
+          "command": "dsh.addSelectionContext",
+          "when": "editorLangId != '' && dsh.editorContext.selectionAvailable",
+          "group": "dsh@1"
+        },
+        {
+          "command": "dsh.addFileContext",
+          "when": "editorLangId != '' && dsh.editorContext.fileAvailable",
+          "group": "dsh@2"
+        },
+        {
+          "command": "dsh.addSymbolContext",
+          "when": "editorLangId != '' && dsh.editorContext.symbolAvailable",
+          "group": "dsh@3"
+        },
+        {
+          "command": "dsh.addDiagnosticContext",
+          "when": "editorLangId != '' && dsh.editorContext.diagnosticAvailable",
+          "group": "dsh@4"
         }
       ]
     },

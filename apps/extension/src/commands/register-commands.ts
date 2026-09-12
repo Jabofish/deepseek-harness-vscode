@@ -27,4 +27,8 @@ const COMMANDS = [
   'dsh.openDocumentation',
   'dsh.openInSecondarySidebar',
   'dsh.showDiagnostics',
+  'dsh.addSelectionContext',
+  'dsh.addFileContext',
+  'dsh.addSymbolContext',
+  'dsh.addDiagnosticContext',
 ] as const
