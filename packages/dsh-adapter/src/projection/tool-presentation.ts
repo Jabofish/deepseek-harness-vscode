@@ -103,8 +103,12 @@ function diffPresentation(
     const diff = recordOrUndefined(entry)
     if (diff === undefined) return []
     const path = safePath(diff.path)
-    const newText = requiredText(diff.newText)
-    const oldText = diff.oldText === null ? null : requiredText(diff.oldText)
+    // Diff text is file content, not a label. The pinned DSH emits an empty
+    // `newText` for a hunk that only removes lines (and for a file written
+    // with empty content), and an empty `oldText` for a pure insertion; those
+    // diffs carry the change, so only a non-string may drop them.
+    const newText = lineText(diff.newText)
+    const oldText = diff.oldText === null ? null : lineText(diff.oldText)
     if (path === undefined || newText === undefined || (diff.oldText !== null && oldText === undefined))
       return []
     const normalizedOldText: string | null = oldText === undefined ? null : oldText

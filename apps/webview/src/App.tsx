@@ -1032,16 +1032,11 @@ export function App(): ReactElement {
           onScopeChange={(scope) => store.refreshTasks(activeId, false, scope)}
           onOpen={async (task) => {
             if (task.sessionId === undefined) return
-            const childId = task.kind === 'subagent' ? task.sourceId : undefined
-            const child =
-              childId === undefined
-                ? undefined
-                : state.subagents.entries.find((entry) => entry.kind === 'child' && entry.id === childId)
-            if (child?.kind === 'child') {
-              await store.openSubagent(child, state.subagents.parentAvailable)
-              return
-            }
-            await store.openSession(task.sessionId)
+            // A subagent row names the child in `sourceId`; `sessionId` is its
+            // parent. The store resolves the child through whichever catalog
+            // actually lists it, so a workspace-scoped row stays openable while
+            // a different conversation is on screen.
+            await store.openSession(task.kind === 'subagent' ? task.sourceId : task.sessionId)
           }}
           onStop={async (task) => {
             await store.stopTask(task.taskId, 'session-cancel', task.taskRevision)

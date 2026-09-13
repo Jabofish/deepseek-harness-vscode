@@ -48,9 +48,14 @@ export function formatToolText(value: string | undefined, t?: PresentationTransl
   if (embedded !== undefined) {
     const parsed = decode(embedded)
     if (parsed !== embedded) {
-      const prefix = source.slice(0, source.indexOf(embedded)).trim()
+      const start = source.indexOf(embedded)
+      const prefix = source.slice(0, start).trim()
+      // Everything after the literal is still the tool's own message; dropping
+      // it would hide the actionable tail of an error such as
+      // `Expected one of [read, write] but got "x"`.
+      const suffix = source.slice(start + embedded.length).trim()
       const formatted = formatToolValue(parsed, t)
-      if (formatted !== undefined) return prefix === '' ? formatted : `${prefix}\n${formatted}`
+      if (formatted !== undefined) return [prefix, formatted, suffix].filter((part) => part !== '').join('\n')
     }
   }
   return bounded(source)
@@ -273,7 +278,13 @@ function visibleContent(value: unknown): readonly string[] {
   if (Array.isArray(value)) return unique(value.flatMap(visibleContent))
   const record = object(value)
   if (record === undefined) return []
-  if (typeof record.text === 'string') return record.text.trim() === '' ? [] : [bounded(record.text)]
+  if (typeof record.text === 'string') {
+    // A `{type:'text', text}` block carries the tool's own output, which for a
+    // structured tool is the JSON payload itself; it needs the same formatting
+    // as every other text boundary instead of being shown raw.
+    const formatted = formatToolText(record.text)
+    return formatted === undefined ? [] : [formatted]
+  }
   for (const key of ['content', 'message', 'result', 'output'] as const) {
     const nested = visibleContent(record[key])
     if (nested.length > 0) return nested

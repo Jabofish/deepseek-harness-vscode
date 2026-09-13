@@ -835,8 +835,9 @@ describe('SettingsDrawer', () => {
         expectedRevision: 7,
       }),
     )
-    fireEvent.click(within(card).getByRole('button', { name: 'Close' }))
-    expect(screen.queryByRole('region', { name: 'Add custom provider' })).toBeNull()
+    // A committed create closes the editor by itself; the Close button stays
+    // disabled until the save settles, so clicking it here is a race.
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Add custom provider' })).toBeNull())
   })
 
   it('retries only the credential after a committed custom profile reports a key failure', async () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { resolveNpmExecutable, runtimePathEntries } from './runtime-paths.js'
+import { isAbsoluteFilePath, resolveNpmExecutable, runtimePathEntries } from './runtime-paths.js'
 
 describe('runtime path resolution', () => {
   it('keeps Linux package-manager paths available to a GUI-launched host', () => {
@@ -65,5 +65,23 @@ describe('runtime path resolution', () => {
         Path: 'C:\\Users\\alice\\AppData\\Roaming\\npm',
       }),
     ).toContain('C:\\Users\\alice\\AppData\\Roaming\\npm')
+  })
+})
+
+describe('absolute path detection', () => {
+  it('accepts absolute paths written on any platform', () => {
+    const absolute = [
+      '/usr/local/bin/dsh',
+      '/home/alice/.npm-global/bin/dsh',
+      'C:\\Users\\alice\\AppData\\Roaming\\npm\\dsh.cmd',
+      'D:/tools/dsh.cmd',
+      '\\\\build\\share\\dsh.cmd',
+    ]
+    for (const value of absolute) expect(isAbsoluteFilePath(value), value).toBe(true)
+  })
+
+  it('rejects command names, relative paths and drive-relative spellings', () => {
+    const relative = ['dsh', 'dsh.cmd', 'bin/dsh', './bin/dsh', '.\\bin\\dsh', 'C:tools\\dsh.cmd']
+    for (const value of relative) expect(isAbsoluteFilePath(value), value).toBe(false)
   })
 })

@@ -164,6 +164,38 @@ describe('Rc6ExportRepository', () => {
     expect(renames).toHaveBeenCalledTimes(3)
   })
 
+  it.each(['EEXIST', 'FileExists'])(
+    'recovers a confirmed export when the destination appears as a %s commit failure',
+    async (code) => {
+      const destination = await destinationPath('raced.json')
+      let destinationVisible = false
+      const fileSystem: ExportFileSystem = {
+        ...nodeFileSystem,
+        stat: (filePath) =>
+          !destinationVisible && filePath === destination
+            ? Promise.reject(Object.assign(new Error('FileNotFound'), { code: 'FileNotFound' }))
+            : nodeFileSystem.stat(filePath),
+        rename: async (source, target, overwrite = false) => {
+          if (!destinationVisible && target === destination) {
+            destinationVisible = true
+            await writeFile(destination, 'created after the check', 'utf8')
+            throw Object.assign(new Error(code), { code })
+          }
+          await nodeFileSystem.rename(source, target, overwrite)
+        },
+      }
+      const repository = new Rc6ExportRepository(
+        createTransport({ events: [{ type: 'message.user', text: 'replacement' }], hasMore: false }),
+        fileSystem,
+      )
+
+      await repository.exportSession(exportOptions('json', true), destination, undefined, true)
+
+      await expect(readFile(destination, 'utf8')).resolves.toContain('replacement')
+      await expect(temporaryFiles(destination)).resolves.toEqual([])
+    },
+  )
+
   it('cancels a failed ZIP source without deleting the existing destination', async () => {
     const destination = await destinationPath('failed.zip')
     await writeFile(destination, 'original bytes', 'utf8')

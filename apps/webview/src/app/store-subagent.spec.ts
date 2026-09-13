@@ -119,6 +119,159 @@ describe('AppStore subagent transport routing', () => {
     store.dispose()
   })
 
+  it('routes a session open of a registered subagent child through the parent catalog', async () => {
+    const parent = {
+      id: 'parent',
+      workspaceId: 'workspace',
+      title: 'Parent',
+      blank: false,
+      status: 'idle',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:02:00.000Z',
+    }
+    const childSummary = {
+      ...parent,
+      id: 'child',
+      title: 'Worker',
+      origin: 'subagent',
+      parentSessionId: 'parent',
+    }
+    const client = new FakeClient((request) => {
+      switch (request.type) {
+        case 'session.list':
+          return { items: [parent, childSummary] }
+        case 'subagent.list':
+          return request.payload.sessionId === 'parent'
+            ? { entries: [child()], parentAvailable: true }
+            : answer(request)
+        case 'session.open':
+          // The registry answers a child open like any other session. The
+          // defect this probe pins down is that a root open was issued at all.
+          return {
+            ...childSummary,
+            history: [],
+            permissionPresets: [],
+            configuration: {
+              preset: 'standard',
+              toolMode: 'native',
+              permissionPreset: 'workspace-write',
+              planMode: false,
+              model: { providerId: 'deepseek', modelId: 'deepseek-chat' },
+            },
+          }
+        default:
+          return answer(request)
+      }
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+
+    await store.refreshSessions()
+    await store.openSession('child')
+
+    expect(store.activeSubagent).toMatchObject({
+      entry: { id: 'child', mode: 'continuable' },
+      parentAvailable: true,
+    })
+    expect(store.timeline.sessionId).toBe('child')
+    expect(client.requests.some((request) => request.type === 'subagent.history')).toBe(true)
+    expect(client.requests.some((request) => request.type === 'session.open')).toBe(false)
+    store.dispose()
+  })
+
+  it('lands on the parent when the catalog no longer lists the named child', async () => {
+    const parent = {
+      id: 'parent',
+      workspaceId: 'workspace',
+      title: 'Parent',
+      blank: false,
+      status: 'idle',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:02:00.000Z',
+    }
+    const childSummary = {
+      ...parent,
+      id: 'child',
+      title: 'Worker',
+      origin: 'subagent',
+      parentSessionId: 'parent',
+    }
+    const client = new FakeClient((request) => {
+      switch (request.type) {
+        case 'session.list':
+          return { items: [parent, childSummary] }
+        case 'subagent.list':
+          return { entries: [], parentAvailable: false }
+        case 'session.open':
+          return request.payload.sessionId === 'child'
+            ? { ...childSummary, history: [], permissionPresets: [] }
+            : { ...parent, history: [], permissionPresets: [] }
+        default:
+          return answer(request)
+      }
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+
+    await store.refreshSessions()
+    await store.openSession('child')
+
+    expect(store.activeSubagent).toBeUndefined()
+    expect(store.activeSessionId).toBe('parent')
+    expect(
+      client.requests.some(
+        (request) => request.type === 'session.open' && request.payload.sessionId === 'child',
+      ),
+    ).toBe(false)
+    store.dispose()
+  })
+
+  it('does not let a slow child resolution take over a session opened afterwards', async () => {
+    const parent = {
+      id: 'parent',
+      workspaceId: 'workspace',
+      title: 'Parent',
+      blank: false,
+      status: 'idle',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:02:00.000Z',
+    }
+    const childSummary = {
+      ...parent,
+      id: 'child',
+      title: 'Worker',
+      origin: 'subagent',
+      parentSessionId: 'parent',
+    }
+    const catalog = deferred<unknown>()
+    const client = new FakeClient((request) => {
+      switch (request.type) {
+        case 'session.list':
+          return { items: [parent, childSummary] }
+        case 'subagent.list':
+          // The resolution of the child view stays in flight while the user
+          // moves on to another session.
+          return request.payload.sessionId === 'parent' ? catalog.promise : answer(request)
+        case 'session.open':
+          return { ...parent, history: [], permissionPresets: [] }
+        default:
+          return answer(request)
+      }
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+
+    await store.refreshSessions()
+    const pendingChild = store.openSession('child')
+    await store.openSession('parent')
+    expect(store.activeSessionId).toBe('parent')
+
+    catalog.resolve({ entries: [child()], parentAvailable: true })
+    await pendingChild
+
+    expect(store.activeSessionId).toBe('parent')
+    expect(store.activeSubagent).toBeUndefined()
+    expect(store.timeline.sessionId).toBe('parent')
+    store.dispose()
+  })
+
   it('forwards opaque attachment handles when the host advertises alpha subagent images', async () => {
     const client = new FakeClient(answer)
     const store = createAppStore(client as unknown as ProtocolClient)

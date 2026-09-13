@@ -2,7 +2,7 @@ import path from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
 
-import { DshRuntimeLocator } from './runtime-locator.js'
+import { DshRuntimeLocator, readStoredRuntimePath } from './runtime-locator.js'
 
 const testPlatform =
   process.platform === 'win32'
@@ -412,5 +412,44 @@ describe('DshRuntimeLocator caching', () => {
     })
 
     await expect(locator.locate()).resolves.toMatchObject({ runtime: { supported: true } })
+  })
+})
+
+describe('persisted runtime path hints', () => {
+  it('keeps a hint written on a POSIX platform', () => {
+    // The host persists this value in `globalState`; macOS/Linux installs put
+    // the npm-global shim under a root-relative path that Windows-only
+    // detection would discard, forcing a full rescan on every window start.
+    expect(readStoredRuntimePath({ path: '/home/alice/.npm-global/bin/dsh', source: 'npm-global' })).toEqual({
+      path: '/home/alice/.npm-global/bin/dsh',
+      source: 'npm-global',
+    })
+    expect(readStoredRuntimePath({ path: '/usr/local/bin/dsh', source: 'path' })).toEqual({
+      path: '/usr/local/bin/dsh',
+      source: 'path',
+    })
+  })
+
+  it('keeps a hint written on a Windows drive or UNC share', () => {
+    expect(
+      readStoredRuntimePath({
+        path: 'C:\\Users\\alice\\AppData\\Roaming\\npm\\dsh.cmd',
+        source: 'npm-global',
+      }),
+    ).toEqual({ path: 'C:\\Users\\alice\\AppData\\Roaming\\npm\\dsh.cmd', source: 'npm-global' })
+    expect(readStoredRuntimePath({ path: '\\\\build\\share\\dsh.cmd', source: 'path' })).toEqual({
+      path: '\\\\build\\share\\dsh.cmd',
+      source: 'path',
+    })
+  })
+
+  it('drops relative paths, drive-relative spellings, unknown sources and malformed values', () => {
+    expect(readStoredRuntimePath({ path: 'dsh', source: 'path' })).toBeUndefined()
+    expect(readStoredRuntimePath({ path: 'bin/dsh', source: 'path' })).toBeUndefined()
+    expect(readStoredRuntimePath({ path: 'C:tools\\dsh.cmd', source: 'path' })).toBeUndefined()
+    expect(readStoredRuntimePath({ path: '/usr/bin/dsh', source: 'configured' })).toBeUndefined()
+    expect(readStoredRuntimePath({ path: '   ', source: 'path' })).toBeUndefined()
+    expect(readStoredRuntimePath(undefined)).toBeUndefined()
+    expect(readStoredRuntimePath(['/usr/bin/dsh'])).toBeUndefined()
   })
 })

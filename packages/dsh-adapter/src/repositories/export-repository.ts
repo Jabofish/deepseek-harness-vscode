@@ -268,7 +268,7 @@ export async function writeExportAtomically(
       await fileSystem.rename(temporaryPath, destination, false)
       temporaryOwned = false
     } catch (error) {
-      if (!isErrorCode(error, 'EEXIST') || !overwriteConfirmed) throw error
+      if (!isCommitConflict(error) || !overwriteConfirmed) throw error
       destinationInfo = await readDestinationInfo(destination, fileSystem)
       if (destinationInfo?.isDirectory() === true)
         throw new AppError({
@@ -425,4 +425,9 @@ function isErrorCode(error: unknown, code: string): boolean {
 
 function isNotFoundError(error: unknown): boolean {
   return isErrorCode(error, 'ENOENT') || isErrorCode(error, 'FileNotFound')
+}
+
+/** Node reports an occupied destination as EEXIST; `vscode.workspace.fs` as FileExists. */
+function isCommitConflict(error: unknown): boolean {
+  return isErrorCode(error, 'EEXIST') || isErrorCode(error, 'FileExists')
 }

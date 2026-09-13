@@ -173,6 +173,8 @@ function makeStore(
     readonly history?: readonly unknown[]
     readonly historyPage?: unknown
     readonly openResponse?: unknown
+    /** Receives the 1-based session.open call index; wins over openResponse. */
+    readonly openResponseForCall?: (call: number) => unknown
     readonly respond?: Respond
   } = {},
 ): {
@@ -180,9 +182,12 @@ function makeStore(
   client: FakeClient
 } {
   const historySequences = options.historySequences ?? [1, 2, 3, 4, 5]
+  let openCalls = 0
   const respond: Respond = (request) => {
-    if (request.type === 'session.open')
+    if (request.type === 'session.open') {
+      openCalls += 1
       return (
+        options.openResponseForCall?.(openCalls) ??
         options.openResponse ?? {
           ...activeSession,
           history: options.history ?? historySequences.map((sequence) => userMessageHistoryEntry(sequence)),
@@ -197,6 +202,7 @@ function makeStore(
           },
         }
       )
+    }
     if (request.type === 'session.history') return options.historyPage ?? { events: [], hasMore: false }
     if (options.respond !== undefined) return options.respond(request)
     return baseResponse(request)
@@ -1704,27 +1710,44 @@ describe('AppStore session gap healing', () => {
 
   it('does not let an older Alpha follow projection baseline overwrite a newer control update', async () => {
     const sessionId = activeSession.id
-    const { store, client } = makeStore({
-      openResponse: {
-        ...activeSession,
-        history: [],
-        historyHasMore: false,
-        permissionPresets: [],
-        projection: {
-          asOfSequence: 5,
-          values: {
-            contextPressure: { pressureTokens: 5 },
-            tokenUsage: { outputTokens: 5 },
-          },
-        },
-        configuration: {
-          preset: 'standard',
-          toolMode: 'native',
-          permissionPreset: 'workspace-write',
-          planMode: false,
-          model: { providerId: 'deepseek', modelId: 'deepseek-chat' },
+    const firstEpochDetail = {
+      ...activeSession,
+      history: [],
+      historyHasMore: false,
+      permissionPresets: [],
+      projection: {
+        asOfSequence: 5,
+        values: {
+          contextPressure: { pressureTokens: 5 },
+          tokenUsage: { outputTokens: 5 },
         },
       },
+      configuration: {
+        preset: 'standard',
+        toolMode: 'native',
+        permissionPreset: 'workspace-write',
+        planMode: false,
+        model: { providerId: 'deepseek', modelId: 'deepseek-chat' },
+      },
+    }
+    const { store, client } = makeStore({
+      // The replacement process answers the reopen with its own authoritative
+      // baseline: lower durable sequences than the previous process, which its
+      // predecessor's cuts must not fence out as stale.
+      openResponseForCall: (call) =>
+        call === 1
+          ? firstEpochDetail
+          : {
+              ...firstEpochDetail,
+              backendInstanceId: 'backend-next',
+              projection: {
+                asOfSequence: 1,
+                values: {
+                  contextPressure: { pressureTokens: 1 },
+                  tokenUsage: { outputTokens: 1 },
+                },
+              },
+            },
     })
     await store.openSession(sessionId)
     await flushAsync()
@@ -1860,5 +1883,102 @@ describe('AppStore session gap healing', () => {
     await flushAsync()
 
     expect(historyRequests(client)).toHaveLength(0)
+  })
+
+  it('keeps an announced hole when another session takes over its backfill', async () => {
+    const sessionId = activeSession.id
+    const otherSessionId = 'session-other'
+    let releasePage: ((value: unknown) => void) | undefined
+    const page = new Promise<unknown>((resolve) => {
+      releasePage = resolve
+    })
+    const configuration = {
+      preset: 'standard',
+      toolMode: 'native',
+      permissionPreset: 'workspace-write',
+      planMode: false,
+      model: { providerId: 'deepseek', modelId: 'deepseek-chat' },
+    }
+    const historyOf = (id: string, sequences: readonly number[]): unknown[] =>
+      sequences.map((sequence) => ({
+        sequence,
+        time: '2026-08-31T08:00:00.000Z',
+        event: {
+          type: 'message.user',
+          sessionId: id,
+          messageId: `${id}-${sequence}`,
+          markdown: `message ${sequence}`,
+        },
+      }))
+    const client = new FakeClient((request) => {
+      if (request.type === 'session.open') {
+        const requested = (request.payload as { readonly sessionId?: string }).sessionId
+        const id = requested === otherSessionId ? otherSessionId : sessionId
+        return {
+          ...activeSession,
+          id,
+          // The other session's ledger numerically covers the announced
+          // range. That says nothing about this session's hole.
+          history: historyOf(id, id === otherSessionId ? [6, 7, 8, 9] : [1, 2, 3, 4, 5]),
+          historyHasMore: false,
+          permissionPresets: [],
+          configuration,
+        }
+      }
+      if (request.type === 'session.history') return page
+      if (request.type === 'session.list')
+        return { items: [activeSession, { ...activeSession, id: otherSessionId }] }
+      return baseResponse(request)
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+    await store.openSession(sessionId)
+    // Let the open barrier settle first: an announcement delivered while the
+    // barrier is still buffering is replayed on the next open, which would
+    // mask a lost range behind an accidental second backfill.
+    await flushAsync()
+    expect(userMessageNodes(store.getState())).toHaveLength(5)
+
+    client.emit(gapMessage(6, 9))
+    expect(historyRequests(client)).toHaveLength(1)
+
+    await store.openSession(otherSessionId)
+    await flushAsync()
+    releasePage?.({ events: [], hasMore: false })
+    await flushAsync()
+
+    // Coming back to the session re-derives the notice from its own history:
+    // the range was never healed, so it must still be announced.
+    await store.openSession(sessionId)
+    const state = store.getState()
+    expect(userMessageNodes(state)).toHaveLength(5)
+    expect(state.timeline.nodes.some((node) => node.id === `gap:${sessionId}:6:9`)).toBe(true)
+    store.dispose()
+    client.dispose()
+  })
+
+  it('keeps the notice when the session is reopened while its backfill read is in flight', async () => {
+    let releasePage: ((value: unknown) => void) | undefined
+    const page = new Promise<unknown>((resolve) => {
+      releasePage = resolve
+    })
+    const { store, client } = makeStore({ historyPage: page })
+    await store.openSession(activeSession.id)
+    // An announcement buffered by the open barrier is replayed by the next
+    // open, so the barrier has to settle before the hole is announced.
+    await flushAsync()
+
+    client.emit(gapMessage(6, 9))
+    expect(historyRequests(client)).toHaveLength(1)
+
+    await store.openSession(activeSession.id)
+    await flushAsync()
+    releasePage?.({ events: [], hasMore: false })
+    await flushAsync()
+
+    const state = store.getState()
+    expect(userMessageNodes(state)).toHaveLength(5)
+    expect(state.timeline.nodes.some((node) => node.id === `gap:${activeSession.id}:6:9`)).toBe(true)
+    store.dispose()
+    client.dispose()
   })
 })

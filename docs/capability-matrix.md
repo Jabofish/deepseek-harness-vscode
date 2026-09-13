@@ -146,6 +146,206 @@ VS Code 无文件夹 Webview 回放，因此该修复不提升能力矩阵中的
 
 证据边界：本轮只有代码与自动测试证据，未做真实 DSH/VS Code Webview 运行验证，因此相关核心能力仍保持 `PARTIAL`，不因本切片提升为 `DONE`。全量门禁 `pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build` 在本切片通过（160 个测试文件 / 1328 项测试通过、1 项 live smoke 默认跳过）。
 
+## 2026-09-13 缺陷复查（续）：换代中的缺口回填、编辑器上下文加载态与跨平台路径判定
+
+对上一节第 5 条的证据复查发现当时的结论过强：`runGapBackfill` 仍在每个分页前和分页返回后用 `openVersion` 直接 `return`，所以“会话切换期间正在读取的分页”会连同已出队的 range 一起被丢弃——切回该会话时既没有补齐，也没有任何警告。上一节第 5 条的描述按本轮结论修正为下面的第 1–3 条。
+
+1. `runGapBackfill` 现在只在 `disposed` 时提前退出；`openVersion` 变化只停止继续取页（已换代的分页结果无法再并入该会话 ledger）。停止取页后仍会走到覆盖判定，把未愈合的 range 记入 `unhealedGapRanges`，下次打开该会话时由 `restoreGapNotices` 用该会话真实历史重新判定并渲染。
+2. 覆盖判定只在该会话就是当前会话时才读 `state.history`；此前无条件读当前会话的 ledger，另一个会话中数值上覆盖同一段序号的历史会错误压制该洞的警告。
+3. 新增 `disposed` 标志：dispose 时置位并同时递增 `openVersion`，让在途回填既不能触碰已销毁的 store，也不会因为“换代”而丢掉已经公告的洞。
+4. 编辑器上下文（`editor.context.list`）刷新被 `open()`/`openSubagent()` 换代后，被废弃的刷新不会清除 `editorContextLoading`（其 `finally` 受 generation 保护），而换代路径此前也不重置该标志，编辑器上下文栏因此一直转圈。现在两条重建路径都在首帧重置 `editorContextLoading: false`。
+5. 持久化的 DSH 运行时路径提示此前用只认 Windows 盘符/UNC 的谓词校验，macOS/Linux 上写入的 npm-global、PATH 提示每次窗口启动都会被丢弃并触发全量重扫。现在 `runtime-paths.ts` 的 `isAbsoluteFilePath` 同时接受 POSIX 绝对路径、盘符和 UNC，并同时用于“打开 Markdown 链接”的绝对路径判定。
+6. 排队面板对 `mode: 'steer'` 的行仍提供“排队”选项，而 Host 侧只有 `action: { kind: 'steer' }`（固定上游的 `session.updateQueue` 没有反向动作），选中后静默无效。现在 steer 行作为只读状态显示（禁用触发器 + 说明性 tooltip），可切换的方向（排队 → 引导）保持可点。
+
+自动证据：
+
+- `apps/webview/src/app/store-gap-heal.spec.ts`（27 项，新增 2 项）：“另一会话接管回填后仍保留已公告的洞”（另一个会话的 ledger 数值上覆盖同一段序号也不得压制警告）、“回填读取在途时重开同一会话仍保留警告”。两项在修复前均以 `expected false to be true` 失败，修复后通过。
+- `apps/webview/src/app/store-editor-context-loading.spec.ts`（2 项）：切换会话、进入子会话转录期间被换代的编辑器上下文刷新不再让工具栏持续转圈。
+- `apps/webview/src/features/input/QueuePanel.spec.tsx`（6 项，新增 2 项）：排队行可以提升为 steer；steer 行不再提供 Host 无法执行的排队切换。
+- `apps/extension/src/backend/runtime-paths.spec.ts`、`runtime-locator.spec.ts`（新增用例）：POSIX/盘符/UNC 绝对路径被接受，相对路径与盘符相对拼写被拒绝。
+
+被测试排除的假设（无缺陷）：工作区文件夹变化后 `requireCurrentWorkspaceSession` 的缓存失效（`composition-root.ts` 的 `onDidChangeWorkspaceFolders` 已调用 `invalidateCurrentWorkspaceSessionDetails`）。
+
+证据边界：本轮仍只有代码与自动测试证据，相关核心能力保持 `PARTIAL`。全量门禁 `pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build` 在本轮通过（160 个测试文件 / 1339 项测试通过、1 项 live smoke 默认跳过）。
+
+## 2026-09-13 缺陷复查（续二）：扩展主动重连后的连接域残留与跟随订阅丢失
+
+定位方式：把“连接换代”当作独立缺陷族沿事件路径再查一遍。`DshConnectionCoordinator.disconnect()` 只发布
+`{kind:'stopping'}` → `{kind:'idle'}`（失败时 `failed`）快照，从不发布 `connection.lost` 后端事件；而 Webview
+store 里只有 `connection.lost` 分支清理连接域状态。因此由扩展发起的重连（`dsh.reconnect`、`connection.retry`、
+`connection.configure` 与 `TRANSPORT_CONFIGURATION_KEYS` 触发的自动重连最终都走 composition-root 的
+`reconnect()` = `disconnect()` + `connect()`）会完整保留上一个进程的排队行、审批/问题卡、编辑器上下文、
+任务/变更清单、提示词模板与命令目录——这些都是进程内状态，新进程在重新订阅会话前并不存在。
+
+同一根因还有第二半：跟随订阅属于进程本身。`connected → stopping → idle → connected` 之后新进程没有旧进程的
+订阅，屏幕上的会话会静默停止接收模型与工具事件，而状态栏仍显示已连接。
+
+1. 新增 `withoutConnectionScopedSurfaces(state)`：清空上述进程内状态并把 `activeSubagent.parentAvailable`
+   置为 `false`；在 `connection.snapshot` 处理里于“离开 `connected`”时应用。`connected → connected`
+   （协调器的缓存后端快路径）保持原样，不重复清空。
+2. `connection.lost` 分支改为复用同一函数，两条路径语义一致。
+3. `connection.snapshot` 由非 `connected` 变为 `connected` 时触发新的 `onConnectionEpoch` 回调，store 侧接
+   `reopenActiveView()`：有活动子会话转录就 `openSubagent`，否则 `open(activeSessionId)`，随后 `refresh()`
+   会话列表。扩展侧 `session.open` 使用 `{ fresh: true }`（经 `onSessionOpen` 惰性附着跟随流），且 `attach()`
+   先调用 `invalidateCurrentWorkspaceSessionDetails()`，因此重开既建立新订阅也不会读到陈旧缓存；
+   `BackendService.attach` 在 backend 对象变化时清空 replay map，旧进程的
+   `queue.updated`/`permission.requested` 不会被重放进新 epoch。
+
+自动证据：
+
+- `apps/webview/src/app/store-reconnect-epoch.spec.ts`（新增 3 项）：重连序列 `stopping`/`idle`/`connected` 后
+  排队行与审批卡被清空、活动会话被重新 open、转录节点保留（修复前以
+  `expected [ { id: 'queued-1', …(5) } ] to deeply equal []` 失败）；重复 `connected` 快照不重开也不清空
+  （缓存后端快路径）；`stopping`/`idle`/`connecting` 期间不提前重开、转录保留。
+- `apps/webview/src/app/store-gap-heal.spec.ts`（27 项）：`makeStore` 增加 `openResponseForCall`，使“换代后新进程
+  可复用更低的持久序号”这一既有保证在引入重开之后仍被覆盖（断言不变，仍要求 `contextPressure: 1` /
+  `tokenUsage: 1`）。
+
+被测试排除的假设（无缺陷）：`loadOlderHistory` 已按 `openVersion` 判代（`version !== openVersion` 时丢弃分页），
+不会把被替换进程的历史页并入当前 ledger。
+
+已知残留（未修复，可恢复的展示态而非静默错误）：切到**另一个** DSH 实例后重开必然失败且该失败被吞掉，旧转录
+会继续显示；用户可从刷新后的会话列表另选会话恢复，发送消息也会给出可见错误。
+
+证据边界：本轮仍只有代码与自动测试证据，核心能力保持 `PARTIAL`。全量门禁
+`pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build` 在本轮通过（161 个测试文件 /
+1342 项测试通过、1 项 live smoke 默认跳过）。
+
+## 2026-09-13 缺陷复查（续三）：替换进程里的子会话路由与重开重试
+
+上一节的重连修复按“换代时刻”再打一遍探针（`store-reconnect-epoch.spec.ts` 由 3 项扩到 5 项），确认两个仍然存在的功能缺口：
+
+1. 子会话转录在替换进程上打不开。DSH 的子会话路由（`subagent.history`/`subagent.send` 解析的 `addresses`）是**连接态**：只有在本连接读过 `subagent.list(parentSessionId)` 才会登记子会话的父路由，替换进程的表是空的。于是 `openSubagent` 的 history 读取（以及上一节新增的换代重开）以不可重试的 `CAPABILITY_UNAVAILABLE` 失败，用户停留在“看起来正常”的冻结转录上。现在 `openSubagent` 先读一次父目录（顺序在 history 之前，作为该连接上的路由登记），`parentAvailable` 仍沿用调用方从同一目录读到的值——此前尝试用刚读到的目录值覆盖它，会让 `subagent.send` 被误判为“父会话不可用”（4 项既有子会话用例转红后回退）。
+2. 换代重开只尝试一次。`connected` 在替换进程提交工作区投影之前就已发布，`requireCurrentWorkspaceSession` 因此可能给出“会话不属于当前工作区”的**终局**（`retryable: false`）拒绝，而 `requestSessionOpen` 按设计不重试终局错误——这正是冷启动用 `attemptStartupRestore` 反复重试所规避的同一竞态。现在换代重开（`resubscribeActiveView`）用与 open 相同的 `OPEN_RETRY_ATTEMPTS` / `OPEN_RETRY_BASE_DELAY_MS` 有界退避重试，并在用户已经切到别的视图时立即停止，避免面板被拉回失败的会话。
+3. 上一节把 `activeSubagent.parentAvailable` 在换代时置为 `false` 属于过强处理：该标志描述父会话目录事实，置假会让子会话转录的追问被直接拒绝。已回退该处理。
+
+自动证据（均为先红后绿）：
+
+- `apps/webview/src/app/store-reconnect-epoch.spec.ts`（新增 2 项）：“替换连接上重新登记子转录路由”修复前失败于 `expected [ { type: 'subagent.history', …(2) } ] to deeply equal []`；“替换连接以终局拒绝重开时重试”修复前失败于 `expected 2 to be greater than or equal to 4`（只发出 1 次重开请求）。第 1 项中断言顺序此前掩盖了 `parentAvailable` 子断言，另用一次“临时恢复旧行为”的定向运行单独证实（`expected false to be true`）。
+- `apps/webview/src/app/store-subagent.spec.ts`（既有 4 项）在“目录值覆盖调用方值”的中间版本上转红，回退后恢复，确认回退不是猜测。
+
+被测试排除的假设（无缺陷）：会话作用域事件不会污染当前会话视图——逐条核对 `session.status`、`session.title`、`session.projection`、`session.configuration`、`queue.updated`、`goal.updated`、`todo.updated`、`jobs.updated`、`permission.*`、`question.*` 分支后确认都按 `event.sessionId` 过滤或只更新对应列表项；`session.removed` 对活动会话的清理也覆盖了转录、投影与目录。
+
+已知残留（同上节，未额外修复）：切到**另一个** DSH 实例后重开必然失败且失败被吞掉，旧转录继续显示；现在多了 3 次有界重试，用户仍可从刷新后的会话列表另选会话恢复，发送消息也会给出可见错误。
+
+证据边界：本轮仍只有代码与自动测试证据，核心能力保持 `PARTIAL`。全量门禁
+`pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build` 在本轮通过（161 个测试文件 /
+1344 项测试通过、1 项 live smoke 默认跳过）。
+
+## 2026-09-13 缺陷复查（续四）：子会话被当作根会话打开
+
+`open()` 是“把某个会话变成当前视图”的唯一入口（`openSession`、启动恢复、session mention、lineage 跳转、任务行、fork/创建回调都经过它），但此前它只按 id 打开：**子会话（`origin === 'subagent'`）会被当成根会话呈现**。子会话面完全由 `activeSubagent` 驱动——追问走 `subagent.send`、Stop 走 `subagent.interrupt`、one-shot 只读徽标、lineage 头、`parentAvailable` 门禁——所以被当成根会话的子会话会同时拿到根会话的动作：`session.sendPrompt` 直接发给子会话、`session.cancel`、`forkSession`（`App.branchSession` 只在 `activeSubagent !== undefined` 时拒绝）、导出按钮；one-shot 只读、附件门禁与 `parentAvailable` 检查则全部失效。lineage 头**会**渲染（rc.6 mapper 在摘要与详情里都投影 `parentSessionId`），所以返回父会话的入口仍在，错的是这个视图的动作语义与它自身的身份。
+
+可达路径（都不需要构造畸形数据）：
+
+1. **Webview 重载**：持久化状态只存 `activeSessionId`，而子会话摘要留在注册表投影里（`session.list` 按工作区成员过滤，不过滤 origin），于是 `selectStartupSessionId` 会返回被记住的子会话 id，`attemptStartupRestore` 以根会话路径打开它。
+2. **session mention 点击**：composer 的本地子会话引用与 DSH 文本里的 `dsh-session:<childId>` 都经 `timelineOnOpenSession → openSession`。
+3. **lineage 上跳**：嵌套子会话的祖先条目也是子会话，点击同样走 `openSession`。
+4. **任务行**：`TasksDrawer` 只有 `kind: 'subagent'` 的行可以打开，App 层直接按 `sourceId`（子会话）统一交给 `openSession` 路由；见“续四再补”。
+
+修复：`open()` 的目标若是在注册表投影里已知的子会话，就改由该子会话父会话的 `subagent.list` 目录路由（新 `resolveSubagentOpen`），用 `openSubagent(entry, catalog.parentAvailable)` 呈现；目录已不再列出该子会话（或目录读取失败）时，向上走到目录仍能呈现的最近祖先——父目录是子转录唯一仍可达的入口。根会话路径保持**同步序幕**：只有子会话才付出目录读取的异步代价，因为 open 屏障依赖“注册缓冲”与调用发生在同一轮事件循环里。
+
+自动证据（均为先红后绿）：
+
+- `apps/webview/src/app/store-startup.spec.ts`（新增 1 项，另加 `acquireVsCodeApi` 持久化桩）：“重载后按父目录重开被记住的子会话转录”修复前失败于 `expected undefined to match object { entry: { id: 'session-child', …(1) }, …(1) }`（子会话以根会话打开，且发出了 `session.open`）；修复后断言 `activeSubagent.entry.id === childSession.id`、`activeSubagent.parentAvailable === true`、`subagent.history` 已读取、从未发出 `session.open`，且后续 `sendPrompt` 走 `subagent.send` 而非 `session.sendPrompt`。
+- `apps/webview/src/app/store-subagent.spec.ts`（新增 2 项）：“按目录路由子会话的 openSession”修复前失败于同一 `expected undefined to match object { entry: { id: 'child', …(1) }, …(1) }`；“目录不再列出该子会话时落到父会话”修复前失败于 `expected 'child' to be 'parent'`（子会话仍以根会话打开）。
+- 回归证据：把路由的无条件 `await` 放在 `open()` 序幕时，`store-gap-heal.spec.ts` 的 6 项 open 屏障用例转红（`expected [ 1, 2, 3, 4, 5 ] to deeply equal [ 1, 2, 3, 4, 5, 6, 7, 8, 9, …(4096) ]` 等），改成“只有子会话才异步”后全部恢复——这 6 项用例即“序幕必须同步”的守门测试。
+
+已知残留：子会话摘要尚未进入注册表投影（例如只有 `workspace.sessionIds` 的持久成员名单）时，origin 在 RPC 返回前不可知，该 id 仍会以普通会话打开；注册表投影或 `session.history` 恢复后再次进入该视图会走上正确路由。
+
+### 续四补：迟到的子会话解析会覆盖用户之后选择的视图
+
+上面的路由把一次 `subagent.list` 往返放进了 `open()` 的序幕，于是出现同族的第二个缺陷：**解析期间用户若切到别的会话（或启动恢复在途中用户已手动切换），迟到的解析结果仍会把视图抢回去**。`openSubagent` 一开始就 `++openVersion`，所以它不但不会被旧版本守卫拦住，反而让用户刚打开的那个会话的响应全部被判定过期。可达序列：点击 `dsh-session:<childId>` 提及 → 目录读取在途 → 用户点抽屉里的另一个会话 → 目录返回 → 视图跳回子会话。
+
+修复：新增单调 `openIntent`。`open()` 在任何 `await` 之前同步 `++openIntent` 并记住自己的 intent，子会话解析返回后若 `intent !== openIntent` 就把结果整个丢弃（既不打开子会话，也不把它降级成根会话打开，更不执行 `flushPendingHistory` 等序幕副作用）；`resolveSubagentOpen` 改为只做纯解析并返回 `{ kind: 'subagent', entry, parentAvailable }`，副作用留给 `open`；`openSubagent` 自身也递增 `openIntent`，这样抽屉/任务行的**直接**子会话打开同样能作废在途的 by-id 解析。根会话路径仍无 `await` 前置，行为不变。
+
+自动证据（先红后绿）：`store-subagent.spec.ts` 新增“慢的子会话解析不得覆盖其后打开的会话”——目录响应用 deferred 挂起，先 `openSession('child')`、再 `openSession('parent')`、最后 resolve 目录并 await 前者；修复前失败于 `expected 'child' to be 'parent'`（迟到解析把子会话视图抢回，`activeSubagent` 也被建立），修复后 `activeSessionId` 与 `timeline.sessionId` 保持 `parent`、`activeSubagent` 为 undefined。
+
+证据边界：本轮仍只有代码与自动测试证据，核心能力保持 `PARTIAL`。全量门禁
+`pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build` 在本轮通过（162 个测试文件 /
+1348 项测试通过、1 项 live smoke 默认跳过）。
+
+### 续四再补：子代理任务行会打开父会话而不是子会话
+
+同族的第三个缺陷在任务中心：`TaskSummary` 对 `kind: 'subagent'` 行的字段语义是 `sourceId` = 子会话 id、
+`sessionId` = **父**会话 id（`apps/extension/src/tasks/task-center-registry.ts`）。而 `App.tsx` 的
+`TasksDrawer.onOpen` 只在**当前视图的目录**（`state.subagents.entries`）里能查到该 child 时才走
+`openSubagent`，查不到就回落 `openSession(task.sessionId)`——即静默打开父会话。可达场景不需要畸形数据：
+任务范围切到 `workspace` 后，任一属于**别的父会话**的子代理行都会命中该回退；在子会话视图里查看任务列表时同理
+（此时 `state.subagents.entries` 是当前子会话自己的子目录）。
+
+修复：任务行不再自行查目录，改为把子会话 id 交给 `openSession` 单一路由
+（`store.openSession(task.kind === 'subagent' ? task.sourceId : task.sessionId)`），由存储层按该子会话父会话的目录解析；
+这与“续四”的路由修复共用同一入口，因此两个缺陷的修复互相依赖。
+
+自动证据（先红后绿）：`apps/webview/src/App.connected.spec.tsx` 新增“即使当前目录未列出，也能打开具名的子代理任务”——
+任务列表给出一条 `sourceId: 'child-2'`、`sessionId: 'other'` 的运行中子代理行，spy 断言
+`openSession` 收到子会话 id 且未调用 `openSubagent`；修复前失败于
+`expected "vi.fn()" to be called with arguments: [ 'child-2' ] / Received: [ "other" ]`，修复后通过。
+
+证据边界：本轮仍只有代码与自动测试证据，核心能力保持 `PARTIAL`。全量门禁
+`pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build` 在本轮通过（161 个测试文件通过 /
+1 项 live smoke 跳过；1349 项测试通过、1 项跳过）。
+
+### 续五：检查点标签被解析器丢弃、缺失 i18n 键渲染原始标识符
+
+缺陷一（检查点标签被 webview 解析器丢弃）：宿主 `featureCheckpointSummary`
+（`apps/extension/src/composition-root.ts`）会在 `checkpoint.list`/`checkpoint.create`/`checkpoint.preview`
+载荷里带 `label`，协议 `checkpointSummarySchema` 也定义了 `label`，但 webview 的
+`parseFeatureCheckpointSummary`（`apps/webview/src/app/store.ts`）逐字段手抄成 domain 对象时漏掉了它。
+后果：检查点抽屉里每个条目都退化成 `t('checkpoints.unnamed')`，用户建检查点时填的标签（`createCheckpoint`
+确实发出了 `label`）在回包里凭空消失，条目的 title 与删除/恢复 aria-label 全部变成 id。
+既有 `CheckpointDrawer.spec.tsx` 直接构造 domain 对象，绕过了 store 解析器，所以看不到这个字段丢失——
+这类“手抄字段漏一个”的缺陷只能由**契约约束到解析器边界**的探针发现。
+
+自动证据（先红后绿）：新增 `apps/webview/src/app/store-checkpoint-label.spec.ts`，fixture 先经
+`featureResponseSchema.safeParse` 校验为合法协议载荷（防止 fixture 与契约漂移），再覆盖列表、创建、预览三条路径。
+把解析器里的 `label` 拷贝临时移除后复现：三条断言分别失败于
+`expected [ undefined ] to deeply equal [ 'Before refactor' ]` 与两处
+`expected undefined to be 'Before refactor'`；恢复后 3/3 通过。
+
+缺陷二（缺失的 i18n 键把原始标识符渲染进 UI）：`translate`（`apps/webview/src/i18n.tsx`）在词典里找不到键时
+**不抛错、不告警**，直接把键名当作文本返回，于是 `t('app.error.checkpoint')`（store.ts 四处 checkpoint 失败路径）
+和 `t('settings.modelIdDuplicate')`（`CustomProviderCard` 的重复模型 ID 校验）会在界面上显示成
+`app.error.checkpoint` / `settings.modelIdDuplicate` 这样的原始标识符。同类语义问题：`settings.modelIdRequired`
+的英文原文是“must have a unique model ID”，但 `ModelListEditor`/`ProviderSettingsEditor` 用它表示**未填写**，
+文案与触发条件不符。
+
+自动证据（先红后绿）：新增守卫 `apps/webview/src/i18n-keys.spec.ts`——遍历全部非测试源码里的字面量
+`t('…')`/`translate('…')` 调用，要求每个键都能真正命中词典；修复前报出
+`[ 'app.error.checkpoint', 'settings.modelIdDuplicate' ]`，修复后为空。同一文件再补一条同族守卫：对每个带
+`{placeholder}` 的模板，静态解析字面量调用点的 params 对象，缺参即失败（`translate` 会原样留下 `{name}`，
+同样是静默渲染）。该守卫已用变异验证：临时从 `TodoList` 的 `t('todo.progress', …)` 去掉 `completed` 后
+报 `features\goals\TodoList.tsx: todo.progress missing completed`，还原后通过。
+
+同类风险清单（本轮逐条证伪，测试保留为守卫）：144 个含占位符的词典模板逐个核对全部字面量调用点——无缺参、
+无零参调用（简化版扫描先给出 18 处假阳性，全部是 `{ completed, total }` 简写属性导致的解析偏差，修正解析器后归零）；
+`parseTodoViews`、`parseGoalViews`、`parseQueuedInputs`、权限/提问解析器、`parseFeatureTaskSummary`、
+`parseFeaturePromptTemplateSummary`、`parseFeatureChangeSummary`、`parseEditorContextItem` 逐字段核对与协议 schema
+一致，未发现第二个丢字段的解析器（`parseFeatureTasksResult` 丢掉的载荷 `source` 未被 webview 状态或 UI 使用）。
+字面量扫描覆盖不到**模板字面量键**，因此另行枚举全部 25 个动态前缀（`changes.status.${…}`、`checkpoints.state.${…}`、
+`tasks.kind.${…}`、`runtime.status.${…}` 等），逐个把词典后缀与取值来源比对：本地常量并集与域类型并集一致，
+宿主驱动的那部分与协议 zod 枚举一致（`runtimeStatusLabel` 对 `failed`/`port-conflict` 做了显式合并、`plugins.phase`
+对 `null` 显式回落 `unmounted`，两处都不是漏配）；其中 7 个协议驱动的后缀已固化为第三条自动派生守卫
+（直接从 `changeSummarySchema`/`checkpointSummarySchema`/`taskSummarySchema`/`promptTemplateSummarySchema` 的
+`options` 取值），并用变异验证会红：删掉 `checkpoints.state.stale` 后报同一路径。
+另外确认了对称方向（宿主漏字段）不会静默：`message-router` 的 `response()` 在发送前用 `featureHostMessageSchema`
+校验，超预算载荷显式降级为 `PROTOCOL_ERROR`；且 `AppErrorCode` 与 `protocolAppErrorCodeSchema` 逐项相同（33/33，
+已用脚本比对），`ok:false` 分支的重解析不会因未知错误码抛异常。
+
+请求路由覆盖同样双向核对过：`featureRequestSchema` 的 25 个成员里，webview 实际发出 23 个，宿主
+`handleFeatureRequest` 全部有分支；`feature.request.cancel` 由 `message-router` 特判；唯一没有宿主分支的是
+`changes.restore.prepare`——它只在协议里声明、webview 没有任何调用点（变更抽屉没有恢复入口），属于**分阶段
+声明**，且真被发送时会走到处理器末尾显式抛 `FEATURE_DISABLED`（非重试终局错误），不会挂起或产生空载荷。
+本轮不为其凭空补一个上游没有的破坏性能力，只把它记录为已知的空声明路由。
+缺陷一的可见面也已补测：失败时 store 抛出的 `Error.message` 就是抽屉 `role="alert"` 显示的文本，新增用例断言
+「宿主回包缺少 summary」时用户看到的是 `Unable to complete the checkpoint operation.` 而不是原始键；把词典里的
+`app.error.checkpoint` 删掉后该用例正好还原出原始症状（`Received: "app.error.checkpoint"`）。
+
+证据边界：本轮仍只有代码与自动测试证据，相关能力保持 `PARTIAL`，未做真实 DSH 运行验证。
+全量门禁 `pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build` 在本轮通过
+（163 个测试文件通过、1 项 live smoke 默认跳过）。
+
 ## 2026-09-13 真实 DSH live smoke：rc.1 连接、探测与释放
 
 新增可复现的真实运行验证 `tests/live-dsh/run.spec.ts`（默认跳过，`DSH_LIVE_SMOKE=1` 启用）。它用
@@ -1028,3 +1228,235 @@ MCP、LSP、Schedule、Terminal、Session Query、E2B、Cordis 动态工具等�
   `pnpm build` 全部通过。
 - 证据边界：本批次为脱敏回放的 Store/组件层自动验证，未启动真实 DSH、未做真实 VS Code Webview DOM
   smoke；CN-06 与 CV-01 的证据等级不因本批次改变。
+
+## 2026-09-13 续六：启动失败被误报为「就绪超时」、live smoke 默认运行时在 Windows 上不可启动
+
+本轮由「跑一次真实 DSH live smoke」触发，两个缺陷同属一族：**启动阶段的失败没有自己的表达**，
+只能以别的现象（就绪超时）出现。
+
+缺陷一（可执行文件启动失败被误报为就绪超时）。`DshProcessSupervisor.startOnce`
+（`apps/extension/src/backend/process-supervisor.ts`）只等待 stdout 里的 ready 行；而启动失败的两种形态都
+不会产生任何输出、也不会产生 `exit`：
+
+- 可执行文件不可用（裸命令名在 Windows 上、文件被删除、EACCES）→ Node 在 `child` 上发 `error`
+  事件（`spawn dsh ENOENT`），`pid` 为 undefined；
+- `shell: false` 遇到 `.cmd`/`.bat` 目标 → Node **同步抛出** `EINVAL`，连 child 都不存在。
+
+前者让 `start()` 白等 15 秒后报 `Timed out waiting for DSH readiness.`（把启动失败说成运行时没就绪），
+后者让裸 errno `EINVAL` 穿透 supervisor 的错误映射直达调用方；两种 spawner
+（`composition-root.ts` 的 `spawnManagedChild` 与 live smoke 自带的那份）也都没有挂 `error` 监听，
+于是 `ENOENT` 会以未处理事件的形式抛进扩展宿主。用普通 Node 复现过两种形态：
+`spawn('dsh', …, { shell: false })` → `ERROR ENOENT`；`spawn('dsh.cmd', …, { shell: false })` → 同步
+`Error: spawn EINVAL`。
+
+自动证据（先红后绿，`apps/extension/src/backend/process-supervisor.spec.ts`）：
+
+- 新增「reports a launch that never produced a process instead of a readiness timeout」：假的
+  `SpawnedChild`（`pid: -1`、无输出、`exited` 永不 settle）。修复前失败于
+  `expected AppError: Timed out waiting for DSH readi… to match object { code: 'BACKEND_UNREACHABLE', message: 'The DSH process could not be started.' }`，
+  并确实耗时约 15 秒；修复后毫秒级失败。
+- 新增「reports a synchronous spawn failure as an unreachable runtime」：`spawn` 同步抛 `EINVAL`。
+  修复前失败于 `expected Error: spawn EINVAL { code: 'EINVAL' } to match object { code: 'BACKEND_UNREACHABLE', … }`。
+
+修复：两个 spawner 都挂上 `child.once('error', …)` 并把失败并入 `exited` 契约（失败启动等价于立即退出，
+且不再产生未处理事件）；supervisor 把「同步抛出」与 `pid <= 0` 统一映射为 `BACKEND_UNREACHABLE:
+The DSH process could not be started.`（`retryable: true`，保留 `cause`）。错误文案刻意不回显进程输出，
+避免把 DSH 的登录 token 链接带进用户可见错误。修复后该 spec 39/39 通过（18ms）。
+
+缺陷二（live smoke 的默认运行时在 Windows 上不可启动）。`tests/live-dsh/run.spec.ts` 把
+`DSH_LIVE_RUNTIME` 默认成裸命令名 `dsh`，而 README 承诺「defaults to `dsh` on PATH」：裸名交给
+`shell: false` 必然 `ENOENT`，于是这份「可复现的真实运行验证」在本机跑不起来，且因为缺陷一而表现为
+误导性的就绪超时。
+
+自动/运行证据（先红后绿）：修复前连续两次
+`DSH_LIVE_SMOKE=1 npx vitest run tests/live-dsh/run.spec.ts` 都在
+`[dsh-live-smoke] launch dsh --profile web --no-open --host 127.0.0.1 --port <port>` 之后失败于
+`AppError: Timed out waiting for DSH readiness.`（`Tests 1 failed (1)`）。修复：新增
+`tests/live-dsh/runtime.ts` 的 `resolveLiveRuntime`——显式路径原样使用，裸命令名按产品 runtime-locator
+的候选顺序（Windows：`dsh.cmd`、`dsh.bat`、`dsh.exe`、`dsh`）扫 PATH，找不到时明确报错并提示设置
+`DSH_LIVE_RUNTIME`；`runtime.spec.ts` 用假 PATH/假 `fileExists` 固定该解析（4 项，不需要真实 DSH），
+变异验证：把 `.cmd` 候选改名后「resolves a bare command name to a spawnable PATH entry」立即变红，还原后 4/4。
+README 里那条写着 `launch dsh.cmd` 的旧「recorded run」已删除——裸 `dsh.cmd` 在 `shell: false` 下同步
+`EINVAL`，该记录不可能复现，留着就是假证据。
+
+修复后的真实运行（2026-09-13，Windows，`@deepseek-ai/dsh@0.1.5-rc.1`，默认运行时解析）：
+
+```text
+[dsh-live-smoke] launch C:\Users\<you>\AppData\Roaming\npm\dsh.cmd --profile web --no-open --host 127.0.0.1 --port 15459
+[dsh-live-smoke] login http://127.0.0.1:15459 status=303 cookie=exchanged
+[dsh-live-smoke] managed start pid=12224 endpoint=http://127.0.0.1:15459
+[dsh-live-smoke] probe dsh=0.1.5-rc.1 protocol=rc151 adapter=dsh-0.1.5-rc.1 mode=exact
+[dsh-live-smoke] session.list 44 session(s)
+[dsh-live-smoke] workspace.list 8 workspace(s)
+[dsh-live-smoke] events.subscribe released
+[dsh-live-smoke] backend closed
+[dsh-live-smoke] managed stop port 15459 closed
+```
+
+证据边界：这次真实运行只补强 CN-01 的受管启动段（定位 → 启动 → 探测 → 附着）与 CN-04 的「只停止自己
+启动的进程 + 端口释放」，仍不含真实 VS Code Webview 渲染；相关能力保持 `PARTIAL`。本轮同时确认：
+产品侧不存在同一问题——runtime-locator 的候选名带 `.cmd` 前缀且必须通过 `fileExists`，所以扩展拿到的
+是可被 shim 解析的完整路径（Electron 套件的 managed 真实运行也是这么走的）。
+
+门禁：`pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build` 全部通过。
+
+## 2026-09-13 续七：剪贴板写入被拒时跳过 DOM 回退；缓存命中率整数算法反证
+
+审计方法（本轮新增）：把「源文件中被任何 `.spec` 文件零引用」的导出符号当作未审计区，逐个判定。该扫描给出
+215 个零引用导出，其中多数是类型/常量/`index` 重导出；重点核对后确认以下为**分阶段声明**（协议或 domain 已定义、
+两侧都还没有调用点，不是缺陷）：`compareFeatureEventCursor` / `isFeatureEventStale` / `isFeatureEventGap` /
+`resourceScopeAllows` / `FeatureResourceRegistry`（domain 侧），以及协议里的 `notification.safe` 宿主事件。
+`changes.restore.prepare` 同属此类（真发过去会显式抛 `FEATURE_DISABLED`）。
+
+缺陷：`writeClipboard`（`apps/webview/src/features/chat/clipboard.ts`）只在 `navigator.clipboard` **不存在**时
+才走 DOM 回退。Webview iframe 的权限策略拒绝 `clipboard-write` 时，`navigator.clipboard` 依然存在、而
+`writeText()` 会以 `NotAllowedError` reject——原实现直接把这个拒绝抛给调用方，**既不回退也不返回布尔值**。
+后果：复制按钮点了没有任何反应（`CopyButton` 的 `.catch` 只重置 pending、不给反馈），
+`DiagnosticsPanel` 的 `void writeClipboard(report)` 还会产生未处理的 Promise 拒绝。
+
+- 先红：`apps/webview/src/features/chat/clipboard.spec.ts` 断言「API reject 时必须回退 DOM 并 resolve」，
+  原实现报 `AssertionError: promise rejected "DOMException{ … NotAllowedError … }" instead of resolving`（3 个用例红）。
+- 修复：把 `writeText` 的失败折算为 `false` 后继续走 DOM 回退；函数从此不再 reject，只返回布尔值。
+- 回归：同一文件 5 个用例（API 成功 / API 拒绝→回退成功 / 回退失败返回 false / 回退抛错返回 false 且清理
+  textarea / API 缺失时走回退）全部通过，另断言成功路径不触碰 `execCommand`。
+
+反证（保留为新守卫，不修改实现）：`packages/timeline/src/usage.ts` 是本轮扫描中唯一零测试的 `timeline` 模块，
+其缓存命中显示使用手工整数运算（二分求整百分比 + 逐位提升小数的循环）。新增
+`packages/timeline/test/usage.spec.ts` 用独立推导的不变量复算：显示值必须等于「在所示精度下四舍五入」的结果、
+在任何有未缓存 prompt token 的会话上不得显示 100、精度必须是最细的可用精度，并对
+input×cacheWrite×cacheRead 约 1300 组网格与 1/999999、1/999、1/1999 等近似满命中用例全量核对，全部一致
+——未发现缺陷，结论保持「实现正确」而不是「未验证」。
+
+证据边界：本轮改动只在 Webview 组件层与 timeline 纯函数层，未启动真实 DSH、未做真实 VS Code Webview DOM
+smoke；CN-06 与 CV-01 的证据等级不因本批次改变。
+
+门禁：`pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build` 全部通过
+（166 个测试文件通过 / 1 跳过，1375 个测试通过 / 1 跳过）。
+
+## 2026-09-13 续八：工具文本渲染的丢失与泄漏；双语字典一致性反证
+
+本轮继续按「先写探针、看 RED、再改源码」的顺序审计导出级零测试函数。`packages/ui/src/tool-presentation.ts` 的
+`formatToolText`/`formatToolValue`/`decodeToolValue` 被 `ToolCard.tsx`、`ToolRow.tsx`（工具错误、输出、回答、
+输入摘要）直接使用，此前只有 `toolPresentation` 有测试。
+
+缺陷 1：`formatToolText` 丢掉结构化字面量之后的尾部文本。`embeddedStructuredLiteral` 找到前缀化结果里的
+平衡括号字面量后，只保留 `字面量之前的文本 + 格式化块`，`字面量之后`的内容被静默丢弃。RED 证据：
+`formatToolText('Expected one of [read, write] but got "x"')` 返回 `'Expected one of\n• read\n• write'`，
+`but got "x"`（读者唯一能知道被拒值的地方）消失；`'Tool completed: {"answers":…} — 12 ms'` 丢掉 `12 ms`。
+修复：把字面量之后的文本作为第三段保留（`[prefix, formatted, suffix].filter(非空).join('\n')`），
+保持原始顺序、不丢信息。
+
+缺陷 2：嵌套 tool-result 文本里的原始 JSON 泄漏。`visibleContent` 的 `record.text` 分支用 `bounded()` 直接输出，
+于是 `outputSummary = {"content":[{"type":"text","text":"{\"answers\":[…]}"}]}`（DSH 工具结果的真实包裹形状）
+把原始 JSON 渲染进会话，违反该文件「不得泄漏 JSON/Python 对象表示」的契约。RED 证据：
+断言渲染文本不含 `{"answers"` 时收到 `{"answers":[{"selected":["yes"]}]}`。修复：`record.text` 改走
+`formatToolText`，与同函数中字符串分支的处理一致。
+
+同时修正 3 处「永远不会失败」的断言：`JSON.stringify(presentation)).not.toContain('{"answers"')` ——
+`JSON.stringify` 会把引号转义成 `\"`，该子串不可能出现；改为直接断言 `response[0].content`。
+
+反证（保留为守卫，不修改实现）：`apps/webview/src/i18n.tsx` 的 `en`/`zh` 字典各 1154 个键，
+键集合、占位符名（`{count}` 等）完全一致，无重复键。此前只有「英文键存在」与「占位符齐全」两个守卫，
+中文侧没有任何检查，而 provider 是 `zh[key] ?? en[key] ?? key`：中文缺键不会报错，只会渲染英文；
+占位符名不一致则会留下字面 `{n}`。新增守卫断言两字典键集合互为子集、占位符名逐键相同，
+并用「临时把 zh 的 `{count}` 改成 `{n}`」验证该守卫确实会失败（RED 输出
+`tasks.count: en{count} zh{n}`），随后已还原。
+
+证据边界：本轮改动只在 `packages/ui` 纯函数层与 Webview 测试层，未启动真实 DSH、未做真实 VS Code
+Webview DOM smoke；CN-06 与 CV-01 的证据等级不因本批次改变。
+
+门禁：`pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build` 全部通过
+（166 个测试文件通过 / 1 跳过，1382 个测试通过 / 1 跳过）。
+
+## 2026-09-13 续九：删除型 diff 在 Adapter 与 Webview 两层被丢弃
+
+缺陷 36（高）：`newText` 为空串的 diff 被当作「空标签」丢弃，diff 卡片与变更审阅条目一起消失。
+上游固定版本证据（`$APPDATA/npm/node_modules/@deepseek-ai/dsh`，v0.1.5-rc.1）：
+`dsh-tools/lib/types/presentation.d.ts:33-35` 只约束 `oldText: string | null`、`newText: string`，
+没有任何非空要求；`dsh-tool-fs/lib/index.js:502-503` 的 `computeHunkDiffs` 对纯删除 hunk 产出
+`oldText: oldLines.join("\n")`、`newText: newLines.join("\n")`，即 `newText: ''`；同文件 `:674-675`、`:684-685`
+的 `write` 用 `oldText: null, newText: args.content`（清空文件即 `''`）、`:789-792` 的 `edit` 与
+`:826-827` 的 `oldText: args.old_string || null, newText: args.new_string` 同理；
+`dsh-tool-str-replace-editor/lib/index.js:237,247` 用 `?? ""` 显式允许空内容；上游自己的
+`isFileDiff`（`dsh-tool-fs/lib/index.js:509-512`）与 `diffsFromMeta` 只做类型检查，接受空串。
+本仓库内证据：`apps/extension/src/changes/change-set-tracker.ts:445-452` 的 `changeStatus` 正是用
+`newText.length === 0 && oldText.length > 0` 判定「删除」，即该状态此前不可达。
+
+RED 证据（先写探针，两处同时复现）：`packages/dsh-adapter/test/tool-presentation.spec.ts` 期望
+`{ card: 'diff', phase: 'result', diffs: [{ path: 'src/feature.ts', oldText: 'const removed = 1', newText: '' }] }`
+实际 `presentation: undefined`；`apps/webview/src/app/store-tool-diff.spec.ts` 同样在期望
+`newText: ''` 的 diff 时收到 `undefined`（宿主事件已到达 store，被 `parseToolDiffs` 丢弃）。
+
+修复（两层同源，都用「内容而非标签」的判据）：
+`packages/dsh-adapter/src/projection/tool-presentation.ts` 的 `diffPresentation` 改用 `lineText`
+（只拒绝非字符串，不再拒绝空串，仍保留 `bounded()` 4096 上限与 `safePath` 校验）；
+`apps/webview/src/app/store.ts` 的 `parseToolDiffs` 改用 `presentationText(value, true)`
+（与本文件处理 read/search 行内容时既有的 `allowEmpty: true` 约定一致，`:7653`、`:7678`）。
+`oldText === null`（新建/覆盖）语义保持不变，非字符串与不安全路径仍被丢弃。
+
+链式守卫：`apps/extension/src/changes/change-set-tracker.spec.ts` 新增
+`reports a removal-only edit, mapped from the DSH wire shape, as deleted`，用 `rc6Mapper.event('tool/result', …)`
+构造真实线形（`view.card === 'diff'` + 空 `newText`）再喂给 `ChangeSetTracker`，断言
+`status: 'deleted'`、`additions: 0`、`deletions: 1`、`diffAvailable: true`；修复前该用例无任何候选可产出。
+
+回归检查（新行为新触发的路径）：修复后删除型 diff 会首次进入 Webview 宿主渲染器
+`apps/webview/src/features/chat/ToolDiffPreview.tsx`，其 `projectDiffs` 对 `newText: ''` 输出路径行 +
+纯 `del` 行、`added` 保持 0，`contentLines('')` 返回 `[]`；`packages/ui/src/components/ToolRow.tsx` 的
+`diffLines`/`splitDiffLines` 同样已丢弃结尾空段。该路径无需改动。
+
+证据边界：本批次只覆盖代码存在与自动测试两级；未启动真实 DSH、未做真实 VS Code Webview DOM smoke，
+CN-06 与 CV-01 的证据等级不因本批次改变。
+
+门禁：`pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build` 全部通过
+（167 个测试文件通过 / 1 跳过，1385 个测试通过 / 1 跳过）。
+
+## 2026-09-13 续十：超限附件被误报为编码非法，且附件/发送失败原因对用户不可见
+
+缺陷 37（中高）：字节数超限的附件被报成「The attachment encoding is not canonical Base64.」——用户上传的
+Base64 完全规范，只是超出 `maxImageBytes`。根因：`packages/dsh-adapter/src/attachment-codec.ts` 里
+`encodePromptContent` 先调用 `decodeCanonicalBase64(encoded, maximumBytes)`，而该函数对「超限」与「畸形」
+统一返回 `undefined`（`:26`），调用点只能把两者都描述成「编码非法」。
+上游固定版本证据（`$APPDATA/npm/node_modules/@deepseek-ai/dsh`，v0.1.5-rc.1）：
+`dsh-attachment/lib/types/error.d.ts:2,5` 把 `INVALID_IMAGE_BASE64` 与 `IMAGE_TOO_LARGE` 声明为两个稳定错误码，
+并注明「Consumers route on `code`」；`dsh-attachment-local/lib/index.js:321`
+`if (input.data.byteLength > limits.maxImageBytes) throw new AttachmentError("Image exceeds the configured byte limit.", "IMAGE_TOO_LARGE")`。
+本仓库证据：`packages/dsh-adapter/src/repositories/session-repository.ts:859-871` 的 `promptContentLimits` 以
+`Math.min(本地上限, imageLimits.maxImageBytes)` 为准，宿主投影里更小的上限会合法地产生「超限但编码正确」的输入。
+
+RED 证据：`packages/dsh-adapter/test/attachment-codec.spec.ts` 新增
+`blames the byte limit, not the encoding, when an attachment is too large`，修复前实际为
+`'The attachment encoding is not canoni…'`，期望 `'The attachment is too large.'`。
+修复：解码前用 `decodedByteLength(encoded)`（不分配 payload）判尺寸并抛 `INVALID_CONFIGURATION` +
+`'The attachment is too large.'`；删除原先不可达的 `bytes.length > limits.maxImageBytes` 分支；
+`decodeCanonicalBase64` 保持严格，继续负责「非规范 Base64」判据。
+
+缺陷 38（高，可诊断性）：附件与提示词发送的失败原因在 Extension 边界被整体丢弃。
+`apps/extension/src/view/message-router.ts` 的 `publicErrorMessage` 此前只对 `command.execute`、settings/models/provider
+转发有界（320 字符）且脱敏后的原因，`attachment.*`、`session.sendPrompt`、`session.enqueuePrompt`、`subagent.send`
+一律只回落到 code 的兜底文案——「附件过大」「图片类型不被 DSH 接受」「附件内容与图片签名不符」「combined size 超限」
+在 Webview 里全部显示为「The DSH configuration is invalid.」，用户无法区分「该换一张图」和「该改配置」。
+RED 证据：`apps/extension/src/view/message-router.spec.ts` 新增两条用例：`attachment.pick` 得到
+`expected 'The DSH configuration is invalid.' to contain 'too large'`；`session.sendPrompt` 同样，
+且断言转发内容已脱敏（`not.toContain('super-secret')`）。
+修复：新增 `MESSAGE_ATTACHMENT_REQUESTS` 白名单与 `withFailureDetail`（复用既有 `safeCommandDiagnostic`：
+`redactText(..., 320)`，并附带 `rpcMethod`/`rpcCode`），只对附件类与提示词发送类请求追加原因，其它请求文案不变。
+
+缺陷 39（中）：确认覆盖的导出在提交竞态下漏认一种错误词汇。`writeExportAtomically` 只在 `EEXIST` 时走
+「目标已被创建 → 备份并替换」的恢复路径，而 Extension Host 经 `vscode.workspace.fs.rename(..., {overwrite:false})`
+上报的是 `FileExists`（`node_modules/@types/vscode/index.d.ts:9741`：`@throws FileExists when newUri exists and when the overwrite option is not true`），
+于是 `overwriteConfirmed: true` 的导出在 VS Code 文件系统下直接失败为 `EXPORT_FAILED`，尽管用户已确认覆盖。
+RED 证据：`packages/dsh-adapter/test/export-repository.spec.ts` 新增
+`it.each(['EEXIST', 'FileExists'])` 的 `recovers a confirmed export when the destination appears as a %s commit failure`，
+修复前 `FileExists` 用例以 `EXPORT_FAILED`（cause `Error: FileExists`）失败。
+修复：`isCommitConflict` 同时接受 `EEXIST` 与 `FileExists`。
+
+附带修复（测试级竞态）：`apps/webview/src/features/settings/SettingsDrawer.spec.tsx` 的
+`offers a dashed custom-provider card from a dynamic settings path` 在保存成功后自动关闭卡片，
+而 Close 按钮在 `setBusy(false)` 落地前仍为 `disabled`，全量并发下点击被忽略导致偶发失败；
+改为等待卡片自行消失，与同文件另外两条同源用例（`:889`、`:933`）一致。
+
+证据边界：本批次只覆盖代码存在与自动测试两级；未启动真实 DSH、未做真实 VS Code Webview DOM smoke，
+CN-06 与 CV-01 的证据等级不因本批次改变。
+
+门禁：`pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build` 全部通过
+（167 个测试文件通过 / 1 跳过，1390 个测试通过 / 1 跳过）。

@@ -2,8 +2,15 @@
 export async function writeClipboard(text: string): Promise<boolean> {
   const clipboard = globalThis.navigator?.clipboard
   if (clipboard?.writeText !== undefined) {
-    await clipboard.writeText(text)
-    return true
+    // A Webview whose frame policy denies `clipboard-write` still exposes the
+    // API, but every write rejects with NotAllowedError. Treat that as "the
+    // API is unusable" and continue to the DOM fallback instead of rejecting,
+    // so callers never have to guard a copy that silently did nothing.
+    const written = await clipboard.writeText(text).then(
+      () => true,
+      () => false,
+    )
+    if (written) return true
   }
 
   const textarea = document.createElement('textarea')

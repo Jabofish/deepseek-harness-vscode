@@ -571,6 +571,53 @@ describe('App connected rendering', () => {
     expect(sendPrompt).toHaveBeenCalledWith('child-1', 'continue', [], 'queue')
   })
 
+  it('opens the named subagent task even when the current catalog does not list it', async () => {
+    const state = connectedState(true)
+    const openSession = vi.fn().mockResolvedValue(undefined)
+    const openSubagent = vi.fn().mockResolvedValue(undefined)
+    currentStore = {
+      ...storeFor({
+        ...state,
+        // Workspace-scoped task list: this child belongs to another parent, so
+        // the catalog of the session being viewed cannot name it.
+        tasks: [
+          {
+            taskId: 'subagent:other:child-2',
+            sourceId: 'child-2',
+            sessionId: 'other',
+            parentTaskId: 'session:other',
+            workspaceFolderId: 'w1',
+            kind: 'subagent',
+            title: 'Worker',
+            sessionTitle: 'Other parent',
+            status: 'running',
+            needsUserAction: false,
+            startedAt: 0,
+            updatedAt: 1,
+            childCount: 0,
+            canOpen: true,
+            canAnswer: false,
+            canSessionCancel: true,
+            canProcessStop: false,
+            ownerKind: 'unknown',
+            taskRevision: 1,
+          },
+        ],
+      }),
+      openSession,
+      openSubagent,
+    }
+
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Conversation tools' }))
+    fireEvent.click(await screen.findByRole('button', { name: /active tasks/u }))
+    fireEvent.click(await screen.findByRole('button', { name: /Subagent/u }))
+
+    await waitFor(() => expect(openSession).toHaveBeenCalled())
+    expect(openSubagent).not.toHaveBeenCalled()
+    expect(openSession).toHaveBeenCalledWith('child-2')
+  })
+
   it('uses DSH context pressure instead of estimating tokens from rendered text', () => {
     const state = connectedState(true)
     currentStore = storeFor({

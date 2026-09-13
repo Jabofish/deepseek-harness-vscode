@@ -106,7 +106,17 @@ export function encodePromptContent(
         message: 'The attachment image type is not accepted by DSH.',
         retryable: false,
       })
-    const bytes = decodeCanonicalBase64(encoded, image ? limits.maxImageBytes : MAX_TEXT_ATTACHMENT_BYTES)
+    const maximumBytes = image ? limits.maxImageBytes : MAX_TEXT_ATTACHMENT_BYTES
+    // Size is checked before decoding: `decodeCanonicalBase64` cannot tell an
+    // over-limit payload from a malformed one, and "the encoding is invalid"
+    // is the wrong reason for an attachment that is merely too large.
+    if (decodedByteLength(encoded) > maximumBytes)
+      throw new AppError({
+        code: 'INVALID_CONFIGURATION',
+        message: 'The attachment is too large.',
+        retryable: false,
+      })
+    const bytes = decodeCanonicalBase64(encoded, maximumBytes)
     if (bytes === undefined)
       throw new AppError({
         code: 'INVALID_CONFIGURATION',
@@ -122,12 +132,6 @@ export function encodePromptContent(
           retryable: false,
         })
     }
-    if (image && bytes.length > limits.maxImageBytes)
-      throw new AppError({
-        code: 'INVALID_CONFIGURATION',
-        message: 'The attachment is too large.',
-        retryable: false,
-      })
     totalBytes += bytes.length
     if (totalBytes > limits.maxAttachmentTotalBytes)
       throw new AppError({
@@ -184,6 +188,12 @@ export function safeAttachmentName(name: string): string {
     .join('')
     .trim()
   return (sanitized === '' ? 'file' : sanitized).slice(0, 256)
+}
+
+/** Decoded size of canonical Base64 without allocating the payload. */
+function decodedByteLength(value: string): number {
+  const padding = value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0
+  return (value.length / 4) * 3 - padding
 }
 
 function validTextBytes(bytes: Buffer): boolean {

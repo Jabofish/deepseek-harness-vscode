@@ -127,6 +127,64 @@ describe('WebviewMessageRouter command diagnostics', () => {
   })
 })
 
+describe('WebviewMessageRouter attachment diagnostics', () => {
+  function routerRejecting(error: AppError, posted: unknown[]): WebviewMessageRouter {
+    return new WebviewMessageRouter({
+      postMessage: (message) => {
+        posted.push(message)
+        return Promise.resolve(true)
+      },
+      handleRequest: () => Promise.reject(error),
+    })
+  }
+
+  it('keeps a local attachment rejection reason visible instead of blaming the DSH configuration', async () => {
+    const posted: unknown[] = []
+    const router = routerRejecting(
+      new AppError({
+        code: 'INVALID_CONFIGURATION',
+        message: 'The selected file is too large.',
+        retryable: false,
+      }),
+      posted,
+    )
+
+    await router.handle({
+      protocolVersion: 1,
+      message: { type: 'attachment.pick', requestId: 'attachment-diagnostic-1' },
+    })
+
+    const response = posted[0] as { readonly error?: { readonly message?: string } }
+    expect(response.error?.message).toContain('too large')
+  })
+
+  it('keeps the DSH attachment limit reason visible when a prompt is rejected', async () => {
+    const posted: unknown[] = []
+    const router = routerRejecting(
+      new AppError({
+        code: 'INVALID_CONFIGURATION',
+        message: 'The attachment is too large. token=super-secret',
+        retryable: false,
+      }),
+      posted,
+    )
+
+    await router.handle({
+      protocolVersion: 1,
+      message: {
+        type: 'session.sendPrompt',
+        requestId: 'attachment-diagnostic-2',
+        payload: { sessionId: 'session-1', text: 'hi', attachments: [] },
+      },
+    })
+
+    const response = posted[0] as { readonly error?: { readonly message?: string } }
+    const message = response.error?.message ?? ''
+    expect(message).toContain('too large')
+    expect(message).not.toContain('super-secret')
+  })
+})
+
 describe('WebviewMessageRouter unexpected failure diagnostics', () => {
   it('reports non-AppError failures to the host diagnostics hook, bounded and redacted', async () => {
     const posted: unknown[] = []

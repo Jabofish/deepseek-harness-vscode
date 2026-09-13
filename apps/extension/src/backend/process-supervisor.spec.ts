@@ -251,4 +251,47 @@ describe('DshProcessSupervisor', () => {
     await expect(handle.stop()).resolves.toBeUndefined()
     expect(attempts).toBe(2)
   })
+
+  it('reports a launch that never produced a process instead of a readiness timeout', async () => {
+    // A failed `spawn` still yields a child object: Node leaves `pid` unset and
+    // reports the reason on an `error` event, so nothing is ever written to the
+    // readiness buffers. Blaming the runtime for a launch that never happened
+    // costs a full timeout and hides the actionable cause from the user.
+    const kills = vi.fn<(signal: NodeJS.Signals | undefined) => void>()
+    const supervisor = new DshProcessSupervisor({
+      managedPort: () => 4317,
+      spawn: () => ({
+        pid: -1,
+        stdout: output(''),
+        stderr: output(''),
+        kill: kills,
+        exited: new Promise<never>(() => undefined),
+      }),
+    })
+
+    const started = Date.now()
+    await expect(supervisor.start(runtime())).rejects.toMatchObject({
+      code: 'BACKEND_UNREACHABLE',
+      message: 'The DSH process could not be started.',
+    })
+    expect(Date.now() - started).toBeLessThan(2_000)
+  }, 20_000)
+
+  it('reports a synchronous spawn failure as an unreachable runtime', async () => {
+    // `shell: false` cannot launch a `.cmd`/`.bat` target: Node throws EINVAL
+    // before any child exists, and that raw errno must not reach the caller as
+    // an unmapped error.
+    const supervisor = new DshProcessSupervisor({
+      managedPort: () => 4317,
+      spawn: () => {
+        throw Object.assign(new Error('spawn EINVAL'), { code: 'EINVAL' })
+      },
+    })
+
+    await expect(supervisor.start(runtime())).rejects.toMatchObject({
+      code: 'BACKEND_UNREACHABLE',
+      message: 'The DSH process could not be started.',
+      retryable: true,
+    })
+  })
 })

@@ -108,8 +108,8 @@ import { MacOsProcessDiscoveryProvider } from './backend/discovery/macos-process
 import { WindowsProcessDiscoveryProvider } from './backend/discovery/windows-process-provider.js'
 import { DshProcessSupervisor, type SpawnedChild } from './backend/process-supervisor.js'
 import { isManagedTemporaryWorkspacePath, isPathWithin } from './backend/path-safety.js'
-import { DshRuntimeLocator, type RuntimePathHint } from './backend/runtime-locator.js'
-import { resolveNpmExecutable, runtimePathEntries } from './backend/runtime-paths.js'
+import { DshRuntimeLocator, readStoredRuntimePath } from './backend/runtime-locator.js'
+import { isAbsoluteFilePath, resolveNpmExecutable, runtimePathEntries } from './backend/runtime-paths.js'
 import { TemporaryWorkspaceManager, type StoredTemporaryWorkspace } from './backend/temporary-workspace.js'
 import { resolveWindowsShim } from './backend/windows-shim.js'
 import { normalizeLoopbackUrl, VsCodeConfigurationSource } from './config/configuration-source.js'
@@ -2709,29 +2709,10 @@ function readStoredTemporaryWorkspace(value: unknown): StoredTemporaryWorkspace 
     id.trim() === '' ||
     typeof workspacePath !== 'string' ||
     workspacePath.trim() === '' ||
-    !isAbsoluteWorkspacePath(workspacePath)
+    !isAbsoluteFilePath(workspacePath)
   )
     return undefined
   return { id, path: workspacePath }
-}
-
-function isAbsoluteWorkspacePath(value: string): boolean {
-  return path.isAbsolute(value) || /^[A-Za-z]:[\\/]/.test(value) || value.startsWith('\\\\')
-}
-
-function readStoredRuntimePath(value: unknown): RuntimePathHint | undefined {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
-  const record = value as Record<string, unknown>
-  const storedPath = record.path
-  const source = record.source
-  if (typeof storedPath !== 'string' || storedPath.trim() === '' || !isAbsoluteFilePath(storedPath))
-    return undefined
-  if (source !== 'path' && source !== 'npm-global') return undefined
-  return { path: storedPath, source }
-}
-
-function isAbsoluteFilePath(value: string): boolean {
-  return /^[A-Za-z]:[\\/]/.test(value) || value.startsWith('\\\\')
 }
 
 function sameWorkspacePath(left: string, right: string): boolean {
@@ -2836,6 +2817,14 @@ function spawnManagedChild(
       env: childEnvironment,
     },
   )
+  const exited = new Promise<{ readonly code: number | null; readonly signal: string | null }>((resolve) => {
+    child.once('exit', (code, signal) => resolve({ code, signal }))
+    // A launch that never produced a process (missing executable, EACCES)
+    // reports `error` and never `exit`. Resolve the exit contract so callers
+    // stop waiting for a process that does not exist, and so the reason is not
+    // raised as an unhandled event in the Extension Host.
+    child.once('error', () => resolve({ code: -1, signal: null }))
+  })
   return {
     pid: child.pid ?? -1,
     stdout: textStream(child.stdout),
@@ -2843,9 +2832,7 @@ function spawnManagedChild(
     kill: (signal?: NodeJS.Signals) => {
       child.kill(signal)
     },
-    exited: new Promise((resolve) => {
-      child.once('exit', (code, signal) => resolve({ code, signal }))
-    }),
+    exited,
   }
 }
 

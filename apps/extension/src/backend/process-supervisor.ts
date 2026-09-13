@@ -62,12 +62,25 @@ export class DshProcessSupervisor implements ProcessSupervisor {
     const configuredPort = this.dependencies.managedPort()
     const port =
       Number.isInteger(configuredPort) && configuredPort >= 0 && configuredPort <= 65535 ? configuredPort : 0
-    const child = this.dependencies.spawn(
-      runtime.executable,
-      managedWebArguments(runtime.version, port),
-      this.dependencies.workingDirectory?.(),
-      toolEnvironment(this.dependencies.toolMode?.(), runtime.version),
-    )
+    let child: SpawnedChild
+    try {
+      child = this.dependencies.spawn(
+        runtime.executable,
+        managedWebArguments(runtime.version, port),
+        this.dependencies.workingDirectory?.(),
+        toolEnvironment(this.dependencies.toolMode?.(), runtime.version),
+      )
+    } catch (error) {
+      // `shell: false` rejects a shim target (`.cmd`/`.bat`) synchronously with
+      // EINVAL, before any child exists.
+      throw launchFailure(error)
+    }
+    if (child.pid <= 0) {
+      // A launch that never produced a process writes no output and never
+      // exits, so waiting for readiness would blame the runtime for a spawn
+      // that failed outright (a missing or unusable executable).
+      throw launchFailure()
+    }
     const output = new RingBuffer(64 * 1024)
     const errors = new RingBuffer(64 * 1024)
     let resolvedEndpoint: ReadyEndpoint | undefined
@@ -213,6 +226,15 @@ class RingBuffer {
   public tail(limit: number): string {
     return this.value.slice(-limit).replace(/[\r\n]+/g, ' ')
   }
+}
+
+function launchFailure(cause?: unknown): AppError {
+  return new AppError({
+    code: 'BACKEND_UNREACHABLE',
+    message: 'The DSH process could not be started.',
+    retryable: true,
+    ...(cause === undefined ? {} : { cause }),
+  })
 }
 
 function delay(ms: number): Promise<void> {

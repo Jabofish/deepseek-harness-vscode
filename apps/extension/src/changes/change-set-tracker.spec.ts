@@ -7,6 +7,7 @@ import type {
   FeatureEventIdentity,
   ToolCallView,
 } from '@dsh-vscode/domain'
+import { rc6Mapper } from '@dsh-vscode/dsh-adapter'
 
 import { ChangeSetTracker } from './change-set-tracker.js'
 
@@ -84,6 +85,45 @@ function backend(events: TestEventSource, generation: number): DshBackend {
 }
 
 describe('ChangeSetTracker', () => {
+  it('reports a removal-only edit, mapped from the DSH wire shape, as deleted', async () => {
+    // The pinned DSH `edit` result carries `newText: ''` for a hunk that only
+    // removes lines. The chain that has to keep it is mapper -> tracker: if
+    // any layer filters an empty text out, the file disappears from the review
+    // instead of being reported as deleted.
+    const event = rc6Mapper.event('tool/result', {
+      sessionId: 'session-1',
+      data: {
+        callId: 'call-removal',
+        name: 'edit',
+        status: 'completed',
+        view: {
+          for: 'result',
+          view: {
+            card: 'diff',
+            title: 'Edit src/main.ts',
+            diffs: [{ path: 'src/main.ts', oldText: 'const removed = 1', newText: '' }],
+          },
+        },
+      },
+    })
+    if (event.type !== 'tool.updated') throw new Error(`Expected tool.updated, got ${event.type}`)
+
+    const tracker = new ChangeSetTracker({ now: () => 1_000 })
+    await tracker.observeNow(observation(event.tool, 1))
+    const changes = await tracker.list({ sessionId: 'session-1' })
+
+    expect(changes).toHaveLength(1)
+    expect(changes[0]).toMatchObject({
+      relativePath: 'src/main.ts',
+      status: 'deleted',
+      evidence: 'structuredToolSuccess',
+      additions: 0,
+      deletions: 1,
+      diffAvailable: true,
+      diff: { oldText: 'const removed = 1', newText: '' },
+    })
+  })
+
   it('aggregates structured proposals and promotes only a hash-matched success', async () => {
     const updates: string[] = []
     const proposedHash = 'a'.repeat(64)

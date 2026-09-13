@@ -18,7 +18,11 @@ function queuedInput(id: string, text = id): QueuedInput {
   }
 }
 
-function renderQueue(items: readonly QueuedInput[], running = false): void {
+function renderQueue(
+  items: readonly QueuedInput[],
+  running = false,
+  onModeChange: (id: string, mode: QueuedInput['mode']) => void = vi.fn(),
+): void {
   render(
     <I18nProvider>
       <QueuePanel
@@ -26,7 +30,7 @@ function renderQueue(items: readonly QueuedInput[], running = false): void {
         running={running}
         onEdit={vi.fn()}
         onRemove={vi.fn()}
-        onModeChange={vi.fn()}
+        onModeChange={onModeChange}
       />
     </I18nProvider>,
   )
@@ -71,6 +75,29 @@ describe('QueuePanel', () => {
     expect(
       screen.getByRole('textbox', { name: 'Edit queued prompt q-image' }).getAttribute('title'),
     ).toContain('cannot be edited')
+  })
+
+  it('promotes a queued prompt to steer', () => {
+    const onModeChange = vi.fn()
+    renderQueue([queuedInput('q1', 'first')], true, onModeChange)
+
+    fireEvent.click(screen.getByRole('button', { name: /Mode for queued prompt q1/u }))
+    fireEvent.click(screen.getByRole('option', { name: 'Steer' }))
+
+    expect(onModeChange).toHaveBeenCalledWith('q1', 'steer')
+  })
+
+  it('does not offer a delivery mode the Host cannot apply to a steering prompt', () => {
+    const onModeChange = vi.fn()
+    renderQueue([{ ...queuedInput('q-steer', 'first'), mode: 'steer' }], true, onModeChange)
+
+    // The pinned Host only accepts `action: { kind: 'steer' }`; no request
+    // moves a steering prompt back into the queue, so the mode is reported
+    // instead of offered as a choice that silently does nothing.
+    const trigger = screen.getByRole('button', { name: /Mode for queued prompt q-steer/u })
+    expect(trigger.textContent).toContain('Steer')
+    expect(trigger.hasAttribute('disabled')).toBe(true)
+    expect(onModeChange).not.toHaveBeenCalled()
   })
 
   it('collapses a multi-prompt backlog until the user opens it', () => {

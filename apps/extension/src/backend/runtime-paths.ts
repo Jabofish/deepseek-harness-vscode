@@ -92,3 +92,12 @@ export function resolveNpmExecutable(
   // still works when its npm path cannot be inspected ahead of time.
   return executableName
 }
+
+/**
+ * Absolute-path test that spans platforms. Persisted hints and pasted links
+ * outlive the platform that wrote them, so a Windows drive or UNC path must
+ * count on macOS/Linux too.
+ */
+export function isAbsoluteFilePath(value: string): boolean {
+  return path.isAbsolute(value) || /^[A-Za-z]:[\\/]/.test(value) || value.startsWith('\\\\')
+}

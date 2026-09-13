@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ToolCallView } from '@dsh-vscode/domain'
-import { toolPresentation } from './tool-presentation.js'
+import { formatToolText, toolPresentation } from './tool-presentation.js'
 
 function tool(overrides: Partial<ToolCallView> = {}): ToolCallView {
   return {
@@ -129,7 +129,24 @@ describe('toolPresentation', () => {
 
     expect(presentation.response[0]?.label).toBe('Answers')
     expect(presentation.response[0]?.content).toContain('温和 (15-25°C)')
-    expect(JSON.stringify(presentation)).not.toContain('{"answers"')
+    // Assert on the rendered string: `JSON.stringify` escapes the quotes, so a
+    // raw payload would slip past a `not.toContain('{"answers"')` check there.
+    expect(presentation.response[0]?.content).not.toContain('{"answers"')
+  })
+
+  it('does not leak a structured payload nested inside a tool-result text block', () => {
+    const presentation = toolPresentation(
+      tool({
+        name: 'question',
+        title: 'question',
+        outputSummary: JSON.stringify({
+          content: [{ type: 'text', text: '{"answers":[{"selected":["yes"]}]}' }],
+        }),
+      }),
+    )
+
+    expect(presentation.response[0]?.content).toContain('yes')
+    expect(presentation.response[0]?.content).not.toContain('{"answers"')
   })
 
   it('formats a structured result even when a bridge prepends a status line', () => {
@@ -143,6 +160,37 @@ describe('toolPresentation', () => {
 
     expect(presentation.response[0]?.content).toContain('Tool completed:')
     expect(presentation.response[0]?.content).toContain('Answers')
-    expect(JSON.stringify(presentation)).not.toContain('{"answers"')
+    expect(presentation.response[0]?.content).not.toContain('{"answers"')
+  })
+})
+
+describe('formatToolText', () => {
+  it('keeps the trailing text that follows an embedded structured literal', () => {
+    // A tool error whose actionable tail sits after a bracketed list must not
+    // lose that tail: the reader needs to know which value was rejected.
+    expect(formatToolText('Expected one of [read, write] but got "x"')).toBe(
+      'Expected one of\n• read\n• write\nbut got "x"',
+    )
+  })
+
+  it('keeps a status suffix that follows a prefixed JSON result', () => {
+    const formatted = formatToolText('Tool completed: {"answers":[{"selected":["yes"]}]} — 12 ms')
+    expect(formatted).toContain('Tool completed:')
+    expect(formatted).toContain('Answers')
+    expect(formatted).toContain('12 ms')
+  })
+
+  it('returns exactly the formatted value when the whole text is structured', () => {
+    expect(formatToolText('{"answers":[{"selected":["yes"]}]}')).toBe('Answers: • Selected: • yes')
+  })
+
+  it('leaves prose with an unbalanced bracket untouched', () => {
+    const source = 'Use [Ctrl+C to copy'
+    expect(formatToolText(source)).toBe(source)
+  })
+
+  it('returns undefined for an empty or blank value', () => {
+    expect(formatToolText(undefined)).toBeUndefined()
+    expect(formatToolText('   ')).toBeUndefined()
   })
 })

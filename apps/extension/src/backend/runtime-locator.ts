@@ -4,6 +4,8 @@ import { AppError } from '@dsh-vscode/domain'
 import { isKnownDshVersion } from '@dsh-vscode/dsh-adapter'
 import path from 'node:path'
 
+import { isAbsoluteFilePath } from './runtime-paths.js'
+
 export interface RuntimeLocatorDependencies {
   readonly os: OperatingSystem
   readonly configuredPath: () => string | undefined
@@ -24,6 +26,22 @@ export interface RuntimeLocatorDependencies {
 export interface RuntimePathHint {
   readonly path: string
   readonly source: Exclude<DshRuntime['source'], 'configured' | 'bundled'>
+}
+
+/**
+ * Read the hint persisted in `globalState`. Anything that is not an absolute
+ * path from a known discovery source is dropped rather than handed to the
+ * candidate scan.
+ */
+export function readStoredRuntimePath(value: unknown): RuntimePathHint | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+  const record = value as Record<string, unknown>
+  const storedPath = record.path
+  const source = record.source
+  if (typeof storedPath !== 'string' || storedPath.trim() === '' || !isAbsoluteFilePath(storedPath))
+    return undefined
+  if (source !== 'path' && source !== 'npm-global') return undefined
+  return { path: storedPath, source }
 }
 
 export class DshRuntimeLocator implements RuntimeLocator {

@@ -18,6 +18,7 @@ import { VersionedBackendProbe } from '../../packages/dsh-adapter/src/probe.js'
 import { Rc151VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc151/adapter.js'
 import { Rc152VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc152/adapter.js'
 import type { BackendEndpoint } from '../../packages/domain/src/runtime.js'
+import { resolveLiveRuntime } from './runtime.js'
 
 const DEFAULT_RUNTIME_VERSION = '0.1.5-rc.1'
 const LIVE_TIMEOUT_MS = 90_000
@@ -41,7 +42,7 @@ describe.skipIf(process.env.DSH_LIVE_SMOKE !== '1')('live DSH connection smoke',
   it(
     'starts the managed web profile, probes it, reads sessions and releases the port',
     async () => {
-      const runtimeExecutable = process.env.DSH_LIVE_RUNTIME?.trim() || 'dsh'
+      const runtimeExecutable = resolveLiveRuntime(process.env.DSH_LIVE_RUNTIME?.trim() || 'dsh')
       const runtimeVersion = process.env.DSH_LIVE_RUNTIME_VERSION?.trim() || DEFAULT_RUNTIME_VERSION
       const port = await freeLoopbackPort()
       const workspace = await mkdtemp(path.join(os.tmpdir(), 'dsh-live-smoke-'))
@@ -167,6 +168,12 @@ function spawnManagedChild(
       env: childEnvironment,
     },
   )
+  const exited = new Promise<{ readonly code: number | null; readonly signal: string | null }>((resolve) => {
+    child.once('exit', (code, signal) => resolve({ code, signal }))
+    // Mirror the Extension Host spawner: a failed launch reports `error` and
+    // never `exit`, which must not surface as an unhandled event here.
+    child.once('error', () => resolve({ code: -1, signal: null }))
+  })
   return {
     pid: child.pid ?? -1,
     stdout: textStream(child.stdout),
@@ -174,9 +181,7 @@ function spawnManagedChild(
     kill: (signal?: NodeJS.Signals) => {
       child.kill(signal)
     },
-    exited: new Promise((resolve) => {
-      child.once('exit', (code, signal) => resolve({ code, signal }))
-    }),
+    exited,
   }
 }
 

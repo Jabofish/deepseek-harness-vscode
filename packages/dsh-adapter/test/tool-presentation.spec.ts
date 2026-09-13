@@ -136,6 +136,50 @@ describe('DSH tool presentation contract', () => {
     expect(JSON.stringify(web.presentation)).not.toContain('call-web')
   })
 
+  it('keeps a removal-only hunk whose new text is legitimately empty', () => {
+    // The pinned DSH builds a hunk diff with `newLines.join("\n")`, so a hunk
+    // that only deletes lines has `newText: ''`; `edit`/`write`/`str_replace`
+    // call views do the same when a change clears the file. Dropping those
+    // diffs loses the file from the tool card and from the change review, and
+    // makes the "deleted" status unreachable.
+    const removal = mapped(rc6Mapper, 'tool/result', {
+      callId: 'call-removal',
+      name: 'edit',
+      view: {
+        for: 'result',
+        view: {
+          card: 'diff',
+          title: 'Edit src/feature.ts',
+          diffs: [{ path: 'src/feature.ts', oldText: 'const removed = 1', newText: '' }],
+        },
+      },
+    })
+    expect(removal.presentation).toMatchObject({
+      phase: 'result',
+      card: 'diff',
+      diffs: [{ path: 'src/feature.ts', oldText: 'const removed = 1', newText: '' }],
+    })
+
+    const cleared = mapped(rc6Mapper, 'tool/call', {
+      callId: 'call-cleared',
+      name: 'write',
+      view: {
+        for: 'call',
+        view: {
+          card: 'diff',
+          title: 'Write notes.md',
+          diffs: [{ path: 'notes.md', oldText: null, newText: '' }],
+          locations: [{ path: 'notes.md' }],
+        },
+      },
+    })
+    expect(cleared.presentation).toMatchObject({
+      phase: 'call',
+      card: 'diff',
+      diffs: [{ path: 'notes.md', oldText: null, newText: '' }],
+    })
+  })
+
   it('keeps rc.6 no-view and malformed/future cards on the generic path', () => {
     const legacy = mapped(rc6Mapper, 'tool/result', {
       callId: 'legacy',

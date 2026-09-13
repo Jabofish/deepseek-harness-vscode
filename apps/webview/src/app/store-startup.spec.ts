@@ -50,6 +50,39 @@ const blankSession = {
   updatedAt: '2026-08-21T07:01:00.000Z',
 } as const
 
+const childSession = {
+  id: 'session-child',
+  workspaceId: 'workspace-1',
+  title: 'Delegated transcript',
+  blank: false,
+  origin: 'subagent',
+  parentSessionId: activeSession.id,
+  status: 'idle',
+  createdAt: '2026-08-21T08:06:00.000Z',
+  updatedAt: '2026-08-21T08:07:00.000Z',
+} as const
+
+const childEntry = {
+  kind: 'child',
+  id: childSession.id,
+  label: 'Worker',
+  activity: 'inactive',
+  parentSessionId: activeSession.id,
+  mode: 'continuable',
+  hasChildren: false,
+} as const
+
+// The Webview reload case: only the id survives in the persisted state, so the
+// startup restore has to rebuild the view it names from the registry.
+const persisted: { state: unknown } = { state: undefined }
+vi.stubGlobal('acquireVsCodeApi', () => ({
+  postMessage: () => undefined,
+  getState: () => persisted.state,
+  setState: (next: unknown) => {
+    persisted.state = next
+  },
+}))
+
 const workspace = {
   id: 'workspace-1',
   name: 'Workspace',
@@ -111,7 +144,10 @@ function startupResponse(request: WebviewRequest): unknown {
 }
 
 describe('AppStore startup session restoration', () => {
-  afterEach(() => document.body.replaceChildren())
+  afterEach(() => {
+    persisted.state = undefined
+    document.body.replaceChildren()
+  })
 
   it('starts the independent settings read while the startup catalog is still loading', async () => {
     let releaseSessions: (() => void) | undefined
@@ -478,6 +514,78 @@ describe('AppStore startup session restoration', () => {
     expect(store.configuration).toMatchObject({
       model: { providerId: 'deepseek', modelId: 'deepseek-chat' },
     })
+    store.dispose()
+  })
+
+  it('reopens a remembered subagent transcript through the parent catalog', async () => {
+    persisted.state = { version: 1, activeSessionId: childSession.id }
+    const client = new StartupClient((request) => {
+      switch (request.type) {
+        case 'session.list':
+          return { items: [activeSession, childSession] }
+        case 'subagent.list':
+          return request.payload.sessionId === activeSession.id
+            ? { entries: [childEntry], parentAvailable: true }
+            : { entries: [], parentAvailable: false }
+        case 'subagent.history':
+          return {
+            events: [
+              {
+                sequence: 1,
+                time: '2026-08-21T08:06:30.000Z',
+                event: {
+                  type: 'message.user',
+                  sessionId: childSession.id,
+                  messageId: 'child-user-1',
+                  markdown: 'delegate this',
+                },
+              },
+            ],
+            hasMore: false,
+          }
+        case 'subagent.send':
+          return { messageId: 'child-message-1' }
+        case 'session.open':
+          // The registry answers a child open like any other session. The
+          // defect is that a root session was opened for a child at all.
+          return {
+            ...childSession,
+            history: [],
+            permissionPresets: [],
+            configuration: {
+              preset: 'standard',
+              toolMode: 'native',
+              permissionPreset: 'workspace-write',
+              planMode: false,
+              model: { providerId: 'deepseek', modelId: 'deepseek-chat' },
+            },
+          }
+        default:
+          return startupResponse(request)
+      }
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+
+    await store.initialize()
+
+    expect(store.activeSessionId).toBe(childSession.id)
+    expect(store.activeSubagent?.entry).toMatchObject({
+      id: childSession.id,
+      mode: 'continuable',
+    })
+    expect(store.activeSubagent?.parentAvailable).toBe(true)
+    expect(store.timeline.nodes.map((node) => node.id)).toEqual(['child-user-1'])
+    expect(client.requests.some((request) => request.type === 'subagent.history')).toBe(true)
+    expect(client.requests.some((request) => request.type === 'session.open')).toBe(false)
+
+    await store.sendPrompt(childSession.id, 'continue the work', [], 'queue')
+    expect(client.requests).toContainEqual(
+      expect.objectContaining({
+        type: 'subagent.send',
+        payload: { sessionId: childSession.id, message: 'continue the work', mode: 'queue' },
+      }),
+    )
+    expect(client.requests.some((request) => request.type === 'session.sendPrompt')).toBe(false)
     store.dispose()
   })
 

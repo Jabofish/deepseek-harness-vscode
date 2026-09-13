@@ -86,15 +86,28 @@ export const QueuePanel = memo(function QueuePanel(props: QueuePanelProps): Reac
                     displayLabel
                     label={item.mode === 'queue' ? t('queue.mode.queue') : t('queue.mode.steer')}
                     ariaLabel={t('queue.mode', { id: item.id })}
-                    title={t('queue.mode', { id: item.id })}
+                    title={
+                      item.mode === 'queue'
+                        ? t('queue.mode', { id: item.id })
+                        : t('queue.mode.fixed', { id: item.id })
+                    }
                     value={item.mode}
-                    options={[
-                      { value: 'queue', label: t('queue.mode.queue') },
-                      { value: 'steer', label: t('queue.mode.steer') },
-                    ]}
+                    // The pinned Host only turns a queued prompt into a steer
+                    // request; nothing moves it back. A steering row therefore
+                    // reports its mode instead of offering a switch that would
+                    // silently do nothing.
+                    options={
+                      item.mode === 'queue'
+                        ? [
+                            { value: 'queue', label: t('queue.mode.queue') },
+                            { value: 'steer', label: t('queue.mode.steer') },
+                          ]
+                        : [{ value: 'steer', label: t('queue.mode.steer') }]
+                    }
+                    disabled={item.mode !== 'queue'}
                     placement="below"
                     onChange={(mode) => {
-                      if (mode === 'queue' || mode === 'steer') props.onModeChange(item.id, mode)
+                      if (mode === 'steer') props.onModeChange(item.id, mode)
                     }}
                   />
                   <button

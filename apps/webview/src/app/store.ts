@@ -725,16 +725,18 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     const version = openVersion
     try {
       while (entry.ranges.length > 0) {
+        if (disposed) return
         const range = entry.ranges.shift()
         if (range === undefined) break
         let beforeSeq = range.to + 1
         let coveredSequenceRanges: readonly SessionSequenceRange[] = []
-        // A page read is not cancelled by switching to another session: the
-        // answer decides whether this hole is healed or has to stay announced.
-        // Bailing out on a switch lost the range entirely, so the transcript
-        // kept its hole without any warning once the session came back.
+        // Pages answered after another open superseded this one can no longer
+        // be merged into the session's ledger, so the read stops fetching.
+        // Stopping must not lose the announcement: the range is still recorded
+        // below and the notice is re-derived from the session's own history
+        // the next time it is shown.
         for (let page = 0; page < MAX_GAP_BACKFILL_PAGES; page += 1) {
-          if (openVersion !== version) return
+          if (version !== openVersion) break
           let payload: unknown
           try {
             payload = await client.request<unknown>({
@@ -760,7 +762,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
           } catch {
             break
           }
-          if (openVersion !== version) return
+          if (version !== openVersion) break
           if (events.length === 0) break
           setState((current) =>
             current.activeSessionId === sessionId
@@ -775,11 +777,16 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         }
         // The range memory is per session, so an unhealed hole is recorded even
         // while another session is on screen; the notice itself is re-derived
-        // when that session is opened again.
+        // when that session is opened again. Only this session's ledger can
+        // vouch for the hole: sequence numbers of another session's history
+        // say nothing about it.
         if (
-          openVersion === version &&
+          !disposed &&
           !sequenceRangesCover(coveredSequenceRanges, range.from, range.to) &&
-          !historyCoversSequenceRange(state.history, range.from, range.to)
+          !(
+            state.activeSessionId === sessionId &&
+            historyCoversSequenceRange(state.history, range.from, range.to)
+          )
         )
           publishUnhealedGap(sessionId, range.from, range.to)
       }
@@ -832,6 +839,10 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   const callbacks: { openCreatedSession?: (sessionId: string) => Promise<void> } = {}
   let refreshVersion = 0
   let openVersion = 0
+  // Claims the "most recent view request" slot for opens that have to await a
+  // catalog read before they can claim `openVersion`.
+  let openIntent = 0
+  let disposed = false
   // A newly-created store has not yet made its one automatic session choice.
   // Keep that decision pending when the first registry snapshot is empty: the
   // DSH workspace/session registries can publish in adjacent turns.
@@ -1336,6 +1347,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         scheduleGapBackfill,
         projectionSequences,
         rememberHostOnlyNodes,
+        reopenActiveView,
       )
     // Content frames that history recovery redelivers below the timeline
     // cursor are absorbed into the ledger but ignored by the reduce gate.
@@ -1516,7 +1528,64 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       }
     })
   }
-  const open = async (sessionId: string, options: { readonly startup?: boolean } = {}): Promise<void> => {
+  /**
+   * A subagent child is a view onto its parent's catalog, never a root session:
+   * its follow-up prompt, Stop, lineage header, and one-shot read-only guard all
+   * key off `activeSubagent`. The registry projection does name children (the
+   * drawer, mention links, and lineage entries rely on that), so any path that
+   * asks to open one — a reload restoring the persisted view, a session mention,
+   * a lineage hop, a task row — has to be presented through the catalog the
+   * subagent view is built from. When the catalog no longer lists the child, the
+   * nearest ancestor that it does list is the only place the transcript is still
+   * reachable from.
+   */
+  const resolveSubagentOpen = async (
+    sessionId: string,
+  ): Promise<
+    | { readonly kind: 'subagent'; readonly entry: SubagentView; readonly parentAvailable: boolean }
+    | { readonly kind: 'session'; readonly sessionId: string }
+  > => {
+    const visited = new Set<string>([sessionId])
+    let target = sessionId
+    for (;;) {
+      const summary = state.sessions.find((session) => session.id === target)
+      if (summary?.origin !== 'subagent' || summary.parentSessionId === undefined) break
+      const catalog = await loadSubagentCatalog(summary.parentSessionId)
+      // A diagnostic entry is not presentable: `isSubagentView` keeps the climb
+      // going so those stay unreachable rather than half-openable.
+      const entry = catalog?.entries.find(
+        (candidate): candidate is SubagentView => isSubagentView(candidate) && candidate.id === target,
+      )
+      if (catalog !== undefined && entry !== undefined)
+        return { kind: 'subagent', entry, parentAvailable: catalog.parentAvailable }
+      // Malformed lineage must not walk forever; fall back to the named session.
+      if (visited.has(summary.parentSessionId)) return { kind: 'session', sessionId }
+      visited.add(summary.parentSessionId)
+      target = summary.parentSessionId
+    }
+    return { kind: 'session', sessionId: target }
+  }
+  const open = async (
+    requestedSessionId: string,
+    options: { readonly startup?: boolean } = {},
+  ): Promise<void> => {
+    let sessionId = requestedSessionId
+    // Claims the intent slot before any await. A root open stays fully
+    // synchronous up to its buffer registration, or an event delivered while
+    // the open is in flight lands outside the replay barrier; only a subagent
+    // child pays the catalog read, and that read can be superseded.
+    const intent = ++openIntent
+    if (
+      state.sessions.some((session) => session.id === requestedSessionId && session.origin === 'subagent')
+    ) {
+      const resolution = await resolveSubagentOpen(requestedSessionId)
+      if (intent !== openIntent) return
+      if (resolution.kind === 'subagent') {
+        await openSubagent(resolution.entry, resolution.parentAvailable)
+        return
+      }
+      sessionId = resolution.sessionId
+    }
     if (options.startup !== true) startupRestorePending = false
     flushPendingHistory()
     const version = ++openVersion
@@ -1624,6 +1693,9 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
             activeSubagent: undefined,
             changes: [],
             changesLoading: false,
+            // A refresh superseded by this open can no longer clear its own
+            // loading flag, so the reset has to release it.
+            editorContextLoading: false,
             tasks: [],
             tasksLoading: false,
             taskScope: 'current-session',
@@ -1722,6 +1794,9 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     }
   }
   const openSubagent = async (entry: SubagentView, parentAvailable: boolean): Promise<void> => {
+    // A direct child open (drawer, task row) also supersedes an in-flight
+    // by-id resolution inside `open`.
+    openIntent += 1
     flushPendingHistory()
     const version = ++openVersion
     feedbackReadySessions.delete(entry.id)
@@ -1737,6 +1812,12 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       ''
     try {
       await discardEditorContextForSessionSwitch(entry.id)
+      // The child→parent routing is connection state owned by the host
+      // catalog: a child transcript can only be read after its parent catalog
+      // was read on *this* connection, and a replacement process starts
+      // without one. Read it first instead of beside the history request; the
+      // caller still owns `parentAvailable`, which it read from that catalog.
+      await loadSubagentCatalog(entry.parentSessionId)
       const historyData = client
         .request<unknown>({
           type: 'subagent.history',
@@ -1807,6 +1888,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
             commands: [],
             changes: [],
             changesLoading: false,
+            editorContextLoading: false,
             tasks: [],
             tasksLoading: false,
             taskScope: 'current-session',
@@ -1855,6 +1937,45 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     } finally {
       settlePendingOpen(pending, completed)
     }
+  }
+  /**
+   * A replacement DSH process starts with no follow subscriptions of its own.
+   * Whatever the user is looking at has to be re-baselined against the new
+   * process, or the conversation silently stops receiving model and tool
+   * events while the shell reports a healthy connection.
+   *
+   * `connected` is published before the replacement process has committed its
+   * workspace projection, so the re-baseline can be rejected outright with the
+   * definitive `retryable: false` answer `requireCurrentWorkspaceSession` gives
+   * a session that is not (yet) part of the current workspace — the same race a
+   * cold start recovers from by re-arming its restore. Retry it here with the
+   * same bounded backoff, and stop as soon as the user looks at something else
+   * so the panel never jumps back to the view that failed.
+   */
+  const resubscribeActiveView = async (): Promise<void> => {
+    for (let attempt = 1; ; attempt += 1) {
+      const subagent = state.activeSubagent
+      const sessionId = subagent === undefined ? state.activeSessionId : subagent.entry.id
+      if (sessionId === undefined) return
+      try {
+        if (subagent === undefined) await open(sessionId)
+        else await openSubagent(subagent.entry, subagent.parentAvailable)
+        return
+      } catch {
+        const stillCurrent =
+          subagent === undefined
+            ? state.activeSubagent === undefined && state.activeSessionId === sessionId
+            : state.activeSubagent?.entry.id === sessionId
+        if (attempt >= OPEN_RETRY_ATTEMPTS || !stillCurrent) return
+        await new Promise((resolve) => setTimeout(resolve, OPEN_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1)))
+      }
+    }
+  }
+  const reopenActiveView = (): void => {
+    void resubscribeActiveView()
+    // The replacement process may expose a different catalog entirely; the
+    // session switcher has to reflect that backend, not the previous one.
+    void refresh()
   }
   callbacks.openCreatedSession = open
   const attemptStartupRestore = (): Promise<void> => {
@@ -3458,7 +3579,9 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       }
       // In-flight opens, rebuilds and gap backfills all guard on openVersion;
       // bumping it retires them without letting a late continuation touch a
-      // disposed store.
+      // disposed store. Gap backfills also read `disposed`: they outlive a
+      // superseded open on purpose so their announced range is not lost.
+      disposed = true
       openVersion += 1
       gapBackfills.clear()
       unhealedGapRanges.clear()
@@ -4428,6 +4551,7 @@ function applyHostMessage(
   onSessionGap?: (event: Extract<BackendEvent, { type: 'session.gap' }>) => void,
   projectionSequences?: ProjectionSequenceIndex,
   onHostOnlyNodes?: (sessionId: string, nodes: readonly TimelineNode[], anchors: readonly string[]) => void,
+  onConnectionEpoch?: () => void,
 ): void {
   if (message.type !== 'event') return
   if (message.name === 'runtime.update.progress') {
@@ -4454,12 +4578,19 @@ function applyHostMessage(
       projectionSequences?.perKey.clear()
       projectionSequences?.baselines.clear()
     }
+    // Leaving `connected` means the process that owned the live queue,
+    // approvals and catalogs is gone. `connected` -> `connected` is the
+    // coordinator's cached-backend fast path, where every surface stays valid.
+    const base =
+      state.backend.kind === 'connected' && kind !== 'connected'
+        ? withoutConnectionScopedSurfaces(state)
+        : state
     if (kind === 'runtime-missing') {
       const searchedLocations = Array.isArray(snapshot?.searchedLocations)
         ? snapshot.searchedLocations.filter((entry): entry is string => typeof entry === 'string')
         : []
       setState({
-        ...state,
+        ...base,
         backend: { kind, searchedLocations },
         connectedDshVersion: undefined,
         subagentImagePrompts: false,
@@ -4479,7 +4610,7 @@ function applyHostMessage(
     ) {
       if (kind === 'failed')
         setState({
-          ...state,
+          ...base,
           connectedDshVersion: undefined,
           subagentImagePrompts: false,
           dshCompatibilityWarning: undefined,
@@ -4495,7 +4626,7 @@ function applyHostMessage(
         })
       else if (kind === 'port-conflict')
         setState({
-          ...state,
+          ...base,
           connectedDshVersion: undefined,
           subagentImagePrompts: false,
           dshCompatibilityWarning: undefined,
@@ -4510,7 +4641,7 @@ function applyHostMessage(
         })
       else
         setState({
-          ...state,
+          ...base,
           backend: { kind },
           connectedDshVersion:
             kind === 'connected' && typeof snapshot?.dshVersion === 'string'
@@ -4524,6 +4655,11 @@ function applyHostMessage(
           featureProfile:
             kind === 'connected' ? parseFeatureCapabilityProfile(snapshot?.featureProfile) : undefined,
         })
+      // Every DSH process owns its own follow subscriptions. The replacement
+      // process never inherits the previous one's, so the conversation on
+      // screen would silently stop receiving model and tool events even
+      // though the shell reports a healthy connection.
+      if (kind === 'connected' && state.backend.kind !== 'connected') onConnectionEpoch?.()
     }
     return
   }
@@ -4841,38 +4977,49 @@ function applyHostMessage(
     projectionSequences?.perKey.clear()
     projectionSequences?.baselines.clear()
     next = {
-      ...next,
+      ...withoutConnectionScopedSurfaces(next),
       backend: { kind: 'failed', message: event.reason, retryable: true },
       connectedDshVersion: undefined,
       subagentImagePrompts: false,
       dshCompatibilityWarning: undefined,
       featureProfile: undefined,
-      queue: [],
-      jobs: [],
-      feedback: {},
-      feedbackUnavailable: false,
-      editorContext: [],
-      editorContextAvailableKinds: [],
-      editorContextLoading: false,
-      changes: [],
-      changesLoading: false,
-      tasks: [],
-      tasksLoading: false,
-      taskScope: 'current-session',
-      tasksComplete: true,
-      tasksOmittedSessions: 0,
-      promptTemplates: [],
-      promptTemplatesLoading: false,
-      promptMode: 'ask',
-      permissions: [],
-      questions: [],
-      subagents: EMPTY_SUBAGENT_CATALOG,
-      activeSubagent:
-        next.activeSubagent === undefined ? undefined : { ...next.activeSubagent, parentAvailable: false },
-      commands: [],
     }
   }
   if (next !== state) setState(next)
+}
+
+/**
+ * Process-local surfaces that only exist inside one DSH process. The pinned
+ * mux re-announces them when a session is subscribed again, so a new process
+ * fills them in by itself; until then they must not be shown as if they still
+ * belonged to the replacement process. Used by connection loss and by every
+ * connection restart that never publishes one.
+ */
+function withoutConnectionScopedSurfaces(state: AppState): AppState {
+  return {
+    ...state,
+    queue: [],
+    jobs: [],
+    feedback: {},
+    feedbackUnavailable: false,
+    editorContext: [],
+    editorContextAvailableKinds: [],
+    editorContextLoading: false,
+    changes: [],
+    changesLoading: false,
+    tasks: [],
+    tasksLoading: false,
+    taskScope: 'current-session',
+    tasksComplete: true,
+    tasksOmittedSessions: 0,
+    promptTemplates: [],
+    promptTemplatesLoading: false,
+    promptMode: 'ask',
+    permissions: [],
+    questions: [],
+    subagents: EMPTY_SUBAGENT_CATALOG,
+    commands: [],
+  }
 }
 
 function replayHostMessages(
@@ -6847,6 +6994,7 @@ function parseFeatureCheckpointSummary(item: FeatureCheckpointSummary): Checkpoi
     sessionId: item.sessionId,
     workspaceFolderId: item.workspaceFolderId,
     createdAt: item.createdAt,
+    ...(item.label === undefined ? {} : { label: item.label }),
     fileCount: item.fileCount,
     totalBytes: item.totalBytes,
     state: item.state,
@@ -7465,8 +7613,10 @@ function parseToolDiffs(value: unknown): readonly ToolPresentationDiff[] {
   return value.slice(0, 32).flatMap((entry): ToolPresentationDiff[] => {
     const diff = object(entry)
     const path = presentationPath(diff?.path)
-    const newText = presentationText(diff?.newText)
-    const oldText = diff?.oldText === null ? null : presentationText(diff?.oldText)
+    // Diff text is file content: a removal-only hunk has an empty `newText`,
+    // and the "deleted" review state is derived from that empty text.
+    const newText = presentationText(diff?.newText, true)
+    const oldText = diff?.oldText === null ? null : presentationText(diff?.oldText, true)
     return path === undefined || newText === undefined || (diff?.oldText !== null && oldText === undefined)
       ? []
       : [{ path, oldText: oldText === undefined ? null : oldText, newText }]
