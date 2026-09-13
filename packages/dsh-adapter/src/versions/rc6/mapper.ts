@@ -41,6 +41,7 @@ const CANONICAL_SESSION_EVENT_NAMES = new Set([
   'step/end',
   'user/message',
   'assistant/chunk',
+  'assistant/attempt',
   'assistant/message',
   'tool/call',
   'tool/result',
@@ -81,6 +82,11 @@ export function assertCanonicalSessionEvent(name: string, value: unknown): void 
       assertCanonicalEventIndex(data.turn, `${name} turn`)
       assertCanonicalEventIndex(data.step, `${name} step`)
       assertCanonicalStreamChunk(data.chunk)
+      return
+    case 'assistant/attempt':
+      assertCanonicalEventIndex(data.turn, `${name} turn`)
+      assertCanonicalEventIndex(data.step, `${name} step`)
+      if (!Array.isArray(data.stream)) throw new Error(`Malformed ${name} stream`)
       return
     case 'assistant/message':
       assertCanonicalEventIndex(data.turn, `${name} turn`)
@@ -487,6 +493,28 @@ export const rc6Mapper = {
             : {}),
         }
       }
+      case 'assistant/attempt': {
+        // The upstream Client treats an attempt settlement as a non-visible
+        // terminal boundary. Preserve that boundary in the domain without
+        // projecting its compact stream or fabricating assistant text.
+        const turn = eventIndex(data.turn)
+        const step = eventIndex(data.step)
+        const time = eventTimestamp(envelope.time ?? data.time)
+        if (turn === undefined || step === undefined)
+          return {
+            type: 'unknown',
+            ...(sessionId === '' ? {} : { sessionId }),
+            name,
+            payload: safePayload(value),
+          }
+        return {
+          type: 'assistant.attempt',
+          sessionId,
+          turn,
+          step,
+          ...(time === undefined ? {} : { time }),
+        }
+      }
       case 'deliverables/presented': {
         if (sessionId === '') throw new Error('Malformed deliverables/presented sessionId')
         const turn = positiveSafeNumber(data.turn)
@@ -811,6 +839,11 @@ export const rc6Mapper = {
             type: 'session.subscribed',
             sessionId,
             lastSequence: data.lastSeq,
+            // The rc.6-family mux couples this subscription with the
+            // process-local queue/jobs/interaction baseline. Alpha's
+            // Session-follow adapter overrides this with false on its
+            // internal frame because those streams are independent there.
+            controlBaseline: data.controlBaseline !== false,
             ...(projection === undefined
               ? {}
               : {

@@ -406,6 +406,10 @@ export interface AppStore extends AppState, AppActions {
 
 type StateSetter = (next: AppState | ((current: AppState) => AppState)) => void
 type LiveHistoryAppender = (sessionId: string, entry: SessionHistoryEvent) => void
+interface ProjectionSequenceIndex {
+  readonly perKey: Map<string, Map<string, number>>
+  readonly baselines: Map<string, number>
+}
 
 interface PendingSessionOpen {
   readonly version: number
@@ -498,6 +502,13 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     busyEnter: 'queue',
     drawer: undefined,
   }
+  // Projection values arrive from both the Alpha Session/follow stream and
+  // the independent session/control stream. Keep their DSH cut outside the
+  // public state so an older snapshot cannot overwrite a newer live value.
+  const projectionSequences: ProjectionSequenceIndex = {
+    perKey: new Map(),
+    baselines: new Map(),
+  }
   const listeners = new Set<() => void>()
   let notifyTimer: number | undefined
   let pendingHistorySessionId: string | undefined
@@ -589,7 +600,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     setState((current) => {
       if (current.activeSessionId !== sessionId) return current
       const rebuilt = hydrateTimelineFromHistoryEvents(sessionId, current.history)
-      return { ...current, timeline: mergeLiveTransientNodes(rebuilt, current.timeline) }
+      return { ...current, timeline: mergeLiveTransientNodes(rebuilt, current.timeline, current.history) }
     })
   }
   const scheduleLedgerRebuild = (sessionId: string): void => {
@@ -813,20 +824,17 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   const pendingMessagesAfterReplay = (pending: PendingSessionOpen): readonly HostMessage[] => {
     const messages = pending.messages.slice(pending.replayedMessages)
     pending.replayedMessages = pending.messages.length
-    return messages
-      .map((message, index) => ({
-        message,
-        index,
-        durableSequence: durableMessageSequence(message),
-        hostSequence: hostMessageSequence(message),
-      }))
-      .sort(
-        (left, right) =>
-          left.durableSequence - right.durableSequence ||
-          left.hostSequence - right.hostSequence ||
-          left.index - right.index,
-      )
-      .map(({ message }) => message)
+    return orderPendingReplayMessages(messages)
+  }
+  const pendingMessagesFrom = (pending: PendingSessionOpen, startIndex: number): readonly HostMessage[] => {
+    // Durable records are cursor-gated and control records are idempotent,
+    // but cursorless assistant frames deliberately bypass that gate. They
+    // were already reduced during first paint/live delivery; replaying them
+    // after an advisory snapshot would apply a stale prefix over a settled
+    // assistant because the matching durable completion is now <= the cursor.
+    const messages = pending.messages.slice(startIndex).filter(isAdvisoryReplayMessage)
+    pending.replayedMessages = pending.messages.length
+    return orderPendingReplayMessages(messages)
   }
   let commandDirectoryGeneration = 0
   let configurationGeneration = 0
@@ -1193,7 +1201,15 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         // paint. Retain the message in the queue so the final advisory
         // snapshot can replay it after its potentially stale list response.
         if (pending.ready && pending.version === openVersion && state.activeSessionId === pending.sessionId)
-          applyHostMessage(message, state, setState, appendLiveHistory, parsedEvent, scheduleGapBackfill)
+          applyHostMessage(
+            message,
+            state,
+            setState,
+            appendLiveHistory,
+            parsedEvent,
+            scheduleGapBackfill,
+            projectionSequences,
+          )
       }
     }
     // A session can be reopened while it is still active. Applying its live
@@ -1202,7 +1218,15 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     // only events addressed to an in-flight open; global connection/workspace
     // events continue to update the shell while the read is in progress.
     if (!deferredToOpen)
-      applyHostMessage(message, state, setState, appendLiveHistory, parsedEvent, scheduleGapBackfill)
+      applyHostMessage(
+        message,
+        state,
+        setState,
+        appendLiveHistory,
+        parsedEvent,
+        scheduleGapBackfill,
+        projectionSequences,
+      )
     // Content frames that history recovery redelivers below the timeline
     // cursor are absorbed into the ledger but ignored by the reduce gate.
     // Republish the ledger once so the healed range becomes visible.
@@ -1213,7 +1237,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       state.activeSessionId !== undefined &&
       messageSessionId === state.activeSessionId &&
       parsedEvent.sequence !== undefined &&
-      advancesTimelineSequence(parsedEvent) &&
+      timelineSequenceOptions(parsedEvent).advanceSequence !== false &&
       parsedEvent.sequence <= previousLastSequence
     )
       scheduleLedgerRebuild(state.activeSessionId)
@@ -1393,6 +1417,10 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     checkpointsRefreshGeneration += 1
     promptTemplatesRefreshGeneration += 1
     const pending = createPendingOpen(sessionId, version)
+    // Events delivered after this open began must be replayed after the
+    // advisory snapshots, even when the critical history request has not
+    // produced first paint yet.
+    const advisoryReplayStart = pending.messages.length
     let completed = false
     let advisoryPending = false
     try {
@@ -1458,7 +1486,12 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
               optionalSequence(detail?.historyBeforeSequence) ??
               (detail?.historyHasMore === true ? oldestHistorySequence(history) : undefined),
             historyLoading: false,
-            projections: setSessionProjection(current.projections, sessionId, detail?.projection),
+            projections: setSessionProjection(
+              current.projections,
+              sessionId,
+              detail?.projection,
+              projectionSequences,
+            ),
             sessions: upsertOpenedSession(current.sessions, detail, sessionId),
             configuration: isAgentConfiguration(detail?.configuration)
               ? detail.configuration
@@ -1492,6 +1525,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
           },
           initialMessages,
           scheduleGapBackfill,
+          projectionSequences,
         ),
       )
       pending.ready = true
@@ -1534,7 +1568,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
           // A gap event has already been applied live and may have triggered
           // an asynchronous history rebuild. Replaying it over the advisory
           // baseline would re-add a gap notice after the backfill removed it.
-          const pendingMessages = pendingMessagesAfterReplay(pending).filter(
+          const pendingMessages = pendingMessagesFrom(pending, advisoryReplayStart).filter(
             (message) => message.type !== 'event' || message.name !== 'session.gap',
           )
           setState((current) =>
@@ -1550,6 +1584,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
               },
               pendingMessages,
               scheduleGapBackfill,
+              projectionSequences,
             ),
           )
           void refreshChangesState(sessionId)
@@ -1574,6 +1609,9 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     feedbackReadySessions.delete(entry.id)
     promptTemplatesRefreshGeneration += 1
     const pending = createPendingOpen(entry.id, version)
+    // The history and advisory reads overlap. Preserve every event delivered
+    // after this open began for the final advisory replay.
+    const advisoryReplayStart = pending.messages.length
     let completed = false
     const workspaceId =
       state.sessions.find((session) => session.id === state.activeSessionId)?.workspaceId ??
@@ -1622,7 +1660,12 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
             historyHasMore: false,
             historyBeforeSequence: undefined,
             historyLoading: false,
-            projections: setSessionProjection(current.projections, entry.id, history.projection),
+            projections: setSessionProjection(
+              current.projections,
+              entry.id,
+              history.projection,
+              projectionSequences,
+            ),
             configuration: undefined,
             sessionModels: [],
             permissionPresets: [],
@@ -1649,6 +1692,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
           },
           initialMessages,
           scheduleGapBackfill,
+          projectionSequences,
         ),
       )
       pending.ready = true
@@ -1656,7 +1700,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
 
       const [queue, goals, jobs, feedback, subagents] = await secondaryData
       if (version !== openVersion) return
-      const pendingMessages = pendingMessagesAfterReplay(pending)
+      const pendingMessages = pendingMessagesFrom(pending, advisoryReplayStart)
       setState((current) =>
         replayHostMessages(
           {
@@ -1670,6 +1714,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
           },
           pendingMessages,
           scheduleGapBackfill,
+          projectionSequences,
         ),
       )
       void refreshChangesState(entry.id)
@@ -1959,6 +2004,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         state.historyLoading
       )
         return
+      const version = openVersion
       setState((current) =>
         current.activeSessionId === sessionId ? { ...current, historyLoading: true } : current,
       )
@@ -1969,36 +2015,48 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
           payload: { sessionId, beforeSeq, maxMessages: 200 },
         })
         const page = parseSessionHistoryPage(result)
-        const current = state
-        if (current.activeSessionId !== sessionId) return
-        const currentBase = current.historyBeforeSequence ?? oldestHistorySequence(current.history)
-        const pageNewest = newestHistorySequence(page.events)
-        if (pageNewest !== undefined && currentBase !== undefined && pageNewest >= currentBase)
-          throw new Error(translate('app.error.historyDiscontinuous'))
-        const history = mergeHistory(current.history, page.events)
-        const timeline = hydrateTimelineFromHistoryEvents(sessionId, history)
-        const nextBefore = page.beforeSequence ?? oldestHistorySequence(page.events)
-        const hasMore =
-          page.hasMore && nextBefore !== undefined && (currentBase === undefined || nextBefore < currentBase)
-        setState((next) =>
-          next.activeSessionId === sessionId
-            ? {
-                ...next,
-                timeline,
-                history,
-                historyHasMore: hasMore,
-                historyBeforeSequence: nextBefore,
-                historyLoading: false,
-                projections:
-                  page.projection === undefined
-                    ? next.projections
-                    : setSessionProjection(next.projections, sessionId, page.projection),
-                todos: latestTodos(timeline),
-              }
-            : next,
-        )
+        // A live stream can publish while the paging request is in flight.
+        // Flush the coalesced history ledger before taking the functional
+        // update so the page is merged with the newest state, not the state
+        // that existed when the request started.
+        flushPendingHistory()
+        let discontinuous = false
+        setState((next) => {
+          if (version !== openVersion || next.activeSessionId !== sessionId) return next
+          const currentBase = next.historyBeforeSequence ?? oldestHistorySequence(next.history)
+          const pageNewest = newestHistorySequence(page.events)
+          if (pageNewest !== undefined && currentBase !== undefined && pageNewest >= currentBase) {
+            discontinuous = true
+            return { ...next, historyLoading: false }
+          }
+          const history = mergeHistory(next.history, page.events)
+          const timeline = mergeLiveTransientNodes(
+            hydrateTimelineFromHistoryEvents(sessionId, history),
+            next.timeline,
+            history,
+          )
+          const nextBefore = page.beforeSequence ?? oldestHistorySequence(page.events)
+          const hasMore =
+            page.hasMore &&
+            nextBefore !== undefined &&
+            (currentBase === undefined || nextBefore < currentBase)
+          return {
+            ...next,
+            timeline,
+            history,
+            historyHasMore: hasMore,
+            historyBeforeSequence: nextBefore,
+            historyLoading: false,
+            projections:
+              page.projection === undefined
+                ? next.projections
+                : setSessionProjection(next.projections, sessionId, page.projection, projectionSequences),
+            todos: latestTodos(timeline),
+          }
+        })
+        if (discontinuous) throw new Error(translate('app.error.historyDiscontinuous'))
       } finally {
-        if (state.activeSessionId === sessionId && state.historyLoading)
+        if (version === openVersion && state.activeSessionId === sessionId && state.historyLoading)
           setState((current) =>
             current.activeSessionId === sessionId ? { ...current, historyLoading: false } : current,
           )
@@ -4224,6 +4282,7 @@ function applyHostMessage(
   appendLiveHistory?: LiveHistoryAppender,
   parsedEvent?: BackendEvent | null,
   onSessionGap?: (event: Extract<BackendEvent, { type: 'session.gap' }>) => void,
+  projectionSequences?: ProjectionSequenceIndex,
 ): void {
   if (message.type !== 'event') return
   if (message.name === 'runtime.update.progress') {
@@ -4242,6 +4301,14 @@ function applyHostMessage(
   if (message.name === 'connection.snapshot') {
     const snapshot = object(message.payload)
     const kind = snapshot?.kind
+    // A manual reconnect publishes stopping/idle before the new connected
+    // epoch and may not emit connection.lost. Projection cuts belong to one
+    // DSH process epoch, so never let the previous process watermark reject
+    // the replacement's lower sequence baseline.
+    if (kind !== 'connected') {
+      projectionSequences?.perKey.clear()
+      projectionSequences?.baselines.clear()
+    }
     if (kind === 'runtime-missing') {
       const searchedLocations = Array.isArray(snapshot?.searchedLocations)
         ? snapshot.searchedLocations.filter((entry): entry is string => typeof entry === 'string')
@@ -4368,11 +4435,7 @@ function applyHostMessage(
           // never move the conversation cursor: doing so can make the next
           // live delta look stale until history is replayed after switching
           // sessions.
-          ...(!advancesTimelineSequence(event) ||
-          transientSequence !== undefined ||
-          isHostOnlyInterruptedCompletion(event)
-            ? { advanceSequence: false }
-            : {}),
+          ...timelineSequenceOptions(event),
         })
   let next: AppState =
     timeline === state.timeline && history === state.history ? state : { ...state, timeline, history }
@@ -4419,9 +4482,22 @@ function applyHostMessage(
     )
     if (sessions !== next.sessions) next = { ...next, sessions }
   } else if (event.type === 'session.projection') {
-    const projections = updateSessionProjection(next.projections, event.sessionId, event.key, event.value)
+    const projectionAccepted = currentProjectionSequence(
+      projectionSequences,
+      event.sessionId,
+      event.key,
+      event.sequence,
+    )
+    const projections = updateSessionProjection(
+      next.projections,
+      event.sessionId,
+      event.key,
+      event.value,
+      event.sequence,
+      projectionSequences,
+    )
     if (projections !== next.projections) next = { ...next, projections }
-    if (event.key === 'title' && typeof event.value === 'string') {
+    if (projectionAccepted && event.key === 'title' && typeof event.value === 'string') {
       const title = event.value.trim()
       if (title !== '') {
         const sessions = updateSessionById(next.sessions, event.sessionId, (session) =>
@@ -4436,24 +4512,35 @@ function applyHostMessage(
     // follows it with a queue/jobs frame when that snapshot is non-empty.
     const queue = next.queue.length === 0 ? next.queue : []
     const jobs = next.jobs.length === 0 ? next.jobs : []
-    const permissions = removeMatching(next.permissions, (request) => request.sessionId === event.sessionId)
-    const questions = removeMatching(next.questions, (question) => question.sessionId === event.sessionId)
+    const permissions =
+      event.controlBaseline === false
+        ? next.permissions
+        : removeMatching(next.permissions, (request) => request.sessionId === event.sessionId)
+    const questions =
+      event.controlBaseline === false
+        ? next.questions
+        : removeMatching(next.questions, (question) => question.sessionId === event.sessionId)
     if (
-      queue !== next.queue ||
-      jobs !== next.jobs ||
+      (event.controlBaseline !== false && (queue !== next.queue || jobs !== next.jobs)) ||
       permissions !== next.permissions ||
       questions !== next.questions ||
       event.projection !== undefined
     )
       next = {
         ...next,
-        queue,
-        jobs,
+        ...(event.controlBaseline === false ? {} : { queue, jobs }),
         permissions,
         questions,
         ...(event.projection === undefined
           ? {}
-          : { projections: setSessionProjection(next.projections, event.sessionId, event.projection) }),
+          : {
+              projections: setSessionProjection(
+                next.projections,
+                event.sessionId,
+                event.projection,
+                projectionSequences,
+              ),
+            }),
       }
   } else if (event.type === 'session.configuration' && event.sessionId === next.activeSessionId) {
     next = {
@@ -4464,6 +4551,8 @@ function applyHostMessage(
           : mergeConfigurationPatch(next.configuration, event.patch),
     }
   } else if (event.type === 'session.removed') {
+    projectionSequences?.perKey.delete(event.sessionId)
+    projectionSequences?.baselines.delete(event.sessionId)
     const wasActive = next.activeSessionId === event.sessionId
     next = {
       ...next,
@@ -4557,6 +4646,8 @@ function applyHostMessage(
       questions: [...next.questions.filter((question) => question.id !== event.question.id), event.question],
     }
   } else if (event.type === 'connection.lost') {
+    projectionSequences?.perKey.clear()
+    projectionSequences?.baselines.clear()
     next = {
       ...next,
       backend: { kind: 'failed', message: event.reason, retryable: true },
@@ -4596,6 +4687,7 @@ function replayHostMessages(
   state: AppState,
   messages: readonly HostMessage[],
   onSessionGap?: (event: Extract<BackendEvent, { type: 'session.gap' }>) => void,
+  projectionSequences?: ProjectionSequenceIndex,
 ): AppState {
   let replayed = state
   const pendingHistory = new Map<string, SessionHistoryEvent[]>()
@@ -4608,7 +4700,15 @@ function replayHostMessages(
     replayed = typeof next === 'function' ? next(replayed) : next
   }
   for (const message of messages)
-    applyHostMessage(message, replayed, setReplayed, appendReplayHistory, undefined, onSessionGap)
+    applyHostMessage(
+      message,
+      replayed,
+      setReplayed,
+      appendReplayHistory,
+      undefined,
+      onSessionGap,
+      projectionSequences,
+    )
   const additions = pendingHistory.get(replayed.activeSessionId ?? '')
   if (additions !== undefined) {
     const history = mergeHistory(replayed.history, additions)
@@ -4669,6 +4769,25 @@ function advancesTimelineSequence(event: BackendEvent): boolean {
     default:
       return true
   }
+}
+
+/**
+ * Keep the live and history-replay cursor rules identical.
+ *
+ * A streamed delta can carry the durable frame sequence as transport
+ * metadata, but it is still only a transient projection of the assistant
+ * message. If replay lets that delta consume the cursor, the durable
+ * `message.completed` frame at the same sequence is rejected as stale and
+ * the completed answer disappears after a ledger rebuild.
+ */
+function timelineSequenceOptions(event: BackendEvent): { readonly advanceSequence?: false } {
+  const transientSequence =
+    event.type === 'message.delta' || event.type === 'reasoning.delta' ? event.transientSequence : undefined
+  return !advancesTimelineSequence(event) ||
+    transientSequence !== undefined ||
+    isHostOnlyInterruptedCompletion(event)
+    ? { advanceSequence: false }
+    : {}
 }
 
 /** Session/catalog state events do not need a new TimelineState object. */
@@ -4779,10 +4898,56 @@ function setSessionProjection(
   projections: AppState['projections'],
   sessionId: string,
   projection: unknown,
+  projectionSequences?: ProjectionSequenceIndex,
 ): AppState['projections'] {
   const record = object(projection)
   const values = object(record?.values)
-  return values === undefined ? projections : { ...projections, [sessionId]: values }
+  if (values === undefined) return projections
+  const sequence = projectionAsOfSequence(record?.asOfSequence)
+  // Older adapters did not expose a projection cut. Preserve their historical
+  // whole-snapshot behavior; versioned Alpha/rc.6 payloads always carry one and
+  // use the per-key higher-sequence path below.
+  if (sequence === undefined) return { ...projections, [sessionId]: values }
+
+  const current = projections[sessionId]
+  const next = { ...(current ?? {}) }
+  const previousBaseline = projectionSequences?.baselines.get(sessionId)
+  if (previousBaseline !== undefined && sequence <= previousBaseline) return projections
+  if (projectionSequences !== undefined) projectionSequences.baselines.set(sessionId, sequence)
+  let changed = false
+  for (const [key, value] of Object.entries(values)) {
+    const previous = projectionSequences?.perKey.get(sessionId)?.get(key)
+    if (previous !== undefined && sequence <= previous) continue
+    if (projectionSequences !== undefined) {
+      const perSession = projectionSequences.perKey.get(sessionId) ?? new Map<string, number>()
+      perSession.set(key, sequence)
+      projectionSequences.perKey.set(sessionId, perSession)
+    }
+    if (current === undefined || !Object.hasOwn(current, key) || !Object.is(current[key], value)) {
+      next[key] = value
+      changed = true
+    }
+  }
+  // A complete baseline also carries absence information. Keep a tombstone
+  // watermark for an omitted key so a delayed lower-sequence frame cannot
+  // resurrect a value that the newer snapshot has removed.
+  const knownKeys = new Set([
+    ...Object.keys(current ?? {}),
+    ...(projectionSequences?.perKey.get(sessionId)?.keys() ?? []),
+  ])
+  for (const key of knownKeys) {
+    if (Object.hasOwn(values, key)) continue
+    const previous = projectionSequences?.perKey.get(sessionId)?.get(key)
+    if (previous !== undefined && sequence <= previous) continue
+    if (projectionSequences !== undefined) {
+      const perSession = projectionSequences.perKey.get(sessionId) ?? new Map<string, number>()
+      perSession.set(key, sequence)
+      projectionSequences.perKey.set(sessionId, perSession)
+    }
+    delete next[key]
+    changed = true
+  }
+  return changed ? { ...projections, [sessionId]: next } : projections
 }
 
 function updateSessionProjection(
@@ -4790,7 +4955,10 @@ function updateSessionProjection(
   sessionId: string,
   key: string,
   value: unknown,
+  sequence?: number,
+  projectionSequences?: ProjectionSequenceIndex,
 ): AppState['projections'] {
+  if (!acceptProjectionSequence(projectionSequences, sessionId, key, sequence)) return projections
   const current = projections[sessionId]
   if (current !== undefined && Object.hasOwn(current, key) && Object.is(current[key], value))
     return projections
@@ -4798,6 +4966,40 @@ function updateSessionProjection(
     ...projections,
     [sessionId]: { ...(current ?? {}), [key]: value },
   }
+}
+
+function projectionAsOfSequence(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= -1 ? value : undefined
+}
+
+function acceptProjectionSequence(
+  projectionSequences: ProjectionSequenceIndex | undefined,
+  sessionId: string,
+  key: string,
+  sequence: number | undefined,
+): boolean {
+  if (projectionSequences === undefined || sequence === undefined) return true
+  const baseline = projectionSequences.baselines.get(sessionId)
+  if (baseline !== undefined && sequence <= baseline) return false
+  const perSession = projectionSequences.perKey.get(sessionId) ?? new Map<string, number>()
+  const previous = perSession.get(key)
+  if (previous !== undefined && sequence <= previous) return false
+  perSession.set(key, sequence)
+  projectionSequences.perKey.set(sessionId, perSession)
+  return true
+}
+
+function currentProjectionSequence(
+  projectionSequences: ProjectionSequenceIndex | undefined,
+  sessionId: string,
+  key: string,
+  sequence: number | undefined,
+): boolean {
+  if (projectionSequences === undefined || sequence === undefined) return true
+  const baseline = projectionSequences.baselines.get(sessionId)
+  if (baseline !== undefined && sequence <= baseline) return false
+  const previous = projectionSequences.perKey.get(sessionId)?.get(key)
+  return previous === undefined || sequence > previous
 }
 
 function removeSessionProjection(
@@ -4915,10 +5117,12 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
     const time = finiteEventTimestamp(value.time)
     const transientSequence = finiteTransientSequence(value.transientSequence)
     const transientIndex = finiteEventIndex(value.transientIndex)
+    const transientStartedAfterSequence = finiteTransientStartSequence(value.transientStartedAfterSequence)
     const hasTransientMetadata =
       value.transientSequence !== undefined ||
       value.transientAttemptId !== undefined ||
-      value.transientIndex !== undefined
+      value.transientIndex !== undefined ||
+      value.transientStartedAfterSequence !== undefined
     if (
       (value.turn !== undefined && turn === undefined) ||
       (value.step !== undefined && step === undefined) ||
@@ -4927,6 +5131,7 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
         (transientSequence === undefined ||
           !nonEmptyString(value.transientAttemptId) ||
           transientIndex === undefined)) ||
+      (value.transientStartedAfterSequence !== undefined && transientStartedAfterSequence === undefined) ||
       (Object.hasOwn(value, 'interrupted') && value.interrupted !== true)
     )
       return { type: 'unknown', name, payload }
@@ -4943,6 +5148,7 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
         ? { transientAttemptId: value.transientAttemptId }
         : {}),
       ...(transientIndex === undefined ? {} : { transientIndex }),
+      ...(transientStartedAfterSequence === undefined ? {} : { transientStartedAfterSequence }),
       ...(value.interrupted === true ? { interrupted: true as const } : {}),
     }
   }
@@ -4957,10 +5163,12 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
     const time = finiteEventTimestamp(value.time)
     const transientSequence = finiteTransientSequence(value.transientSequence)
     const transientIndex = finiteEventIndex(value.transientIndex)
+    const transientStartedAfterSequence = finiteTransientStartSequence(value.transientStartedAfterSequence)
     const hasTransientMetadata =
       value.transientSequence !== undefined ||
       value.transientAttemptId !== undefined ||
-      value.transientIndex !== undefined
+      value.transientIndex !== undefined ||
+      value.transientStartedAfterSequence !== undefined
     if (
       (value.turn !== undefined && turn === undefined) ||
       (value.step !== undefined && step === undefined) ||
@@ -4969,6 +5177,7 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
         (transientSequence === undefined ||
           !nonEmptyString(value.transientAttemptId) ||
           transientIndex === undefined)) ||
+      (value.transientStartedAfterSequence !== undefined && transientStartedAfterSequence === undefined) ||
       (Object.hasOwn(value, 'interrupted') && value.interrupted !== true)
     )
       return { type: 'unknown', name, payload }
@@ -4985,6 +5194,7 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
         ? { transientAttemptId: value.transientAttemptId }
         : {}),
       ...(transientIndex === undefined ? {} : { transientIndex }),
+      ...(transientStartedAfterSequence === undefined ? {} : { transientStartedAfterSequence }),
     }
   }
   if (name === 'message.completed' && nonEmptyString(value.sessionId) && nonEmptyString(value.messageId)) {
@@ -5018,6 +5228,20 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
       ...(step === undefined ? {} : { step }),
       ...(time === undefined ? {} : { time }),
       ...(value.interrupted === true ? { interrupted: true as const } : {}),
+    }
+  }
+  if (name === 'assistant.attempt' && nonEmptyString(value.sessionId)) {
+    const turn = finiteEventIndex(value.turn)
+    const step = finiteEventIndex(value.step)
+    const time = finiteEventTimestamp(value.time)
+    if (turn === undefined || step === undefined || (value.time !== undefined && time === undefined))
+      return { type: 'unknown', name, payload }
+    return {
+      type: 'assistant.attempt',
+      sessionId: value.sessionId,
+      turn,
+      step,
+      ...(time === undefined ? {} : { time }),
     }
   }
   if (name === 'deliverables.presented' && nonEmptyString(value.sessionId)) {
@@ -5064,10 +5288,13 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
       }
     }
     if (hasProjection && projection === undefined) return { type: 'unknown', name, payload }
+    if (value.controlBaseline !== undefined && typeof value.controlBaseline !== 'boolean')
+      return { type: 'unknown', name, payload }
     return {
       type: 'session.subscribed',
       sessionId: value.sessionId,
       lastSequence: value.lastSequence,
+      ...(value.controlBaseline === undefined ? {} : { controlBaseline: value.controlBaseline }),
       ...(projection === undefined ? {} : { projection }),
     }
   }
@@ -5122,11 +5349,13 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
   ) {
     const turn = finiteEventIndex(value.tool.turn)
     const step = finiteEventIndex(value.tool.step)
+    const parentCallId = value.tool.parentCallId
     const locations = parseToolLocations(value.tool.locations)
     const presentation = parseToolPresentation(value.tool.presentation)
     if (
       (value.tool.turn !== undefined && turn === undefined) ||
       (value.tool.step !== undefined && step === undefined) ||
+      (parentCallId !== undefined && !nonEmptyString(parentCallId)) ||
       (value.tool.category !== undefined && typeof value.tool.category !== 'string') ||
       (value.tool.title !== undefined && typeof value.tool.title !== 'string') ||
       (value.tool.startedAt !== undefined && typeof value.tool.startedAt !== 'string') ||
@@ -5142,6 +5371,7 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
       sessionId: value.sessionId,
       tool: {
         id: value.tool.id,
+        ...(typeof parentCallId === 'string' ? { parentCallId } : {}),
         ...(turn === undefined ? {} : { turn }),
         ...(step === undefined ? {} : { step }),
         name: value.tool.name,
@@ -5776,9 +6006,135 @@ function newestHistorySequence(history: readonly SessionHistoryEvent[]): number 
   )
 }
 
-function durableMessageSequence(message: HostMessage): number {
+interface PendingReplayEntry {
+  readonly message: HostMessage
+  readonly index: number
+  readonly hostSequence: number
+  readonly event?: BackendEvent
+  readonly durableSequence?: number
+}
+
+function isAdvisoryReplayMessage(message: HostMessage): boolean {
   const event = parseHostDomainEvent(message)
-  return event?.sequence ?? Number.MAX_SAFE_INTEGER
+  // Cursorless assistant frames and host-only interruption completions were
+  // already applied live after first paint. Replaying them over an advisory
+  // snapshot would either duplicate a settled answer or regress a still-live
+  // prefix. Durable records and idempotent control events still need replay.
+  return !(
+    event?.type === 'message.delta' ||
+    event?.type === 'reasoning.delta' ||
+    (event?.type === 'message.completed' && event.interrupted === true && event.sequence === undefined)
+  )
+}
+
+/**
+ * Order the messages collected while a session is opening without mixing the
+ * two sequence spaces. Durable DSH events must be applied in DSH order because
+ * the timeline reducer rejects an older durable cursor. Alpha assistant
+ * deltas are cursorless, however, and are published before their matching
+ * durable `message.completed`; Host sequence is the only order that contains
+ * both records. Place those transient prefixes immediately before their
+ * settlement while retaining DSH order for all durable records.
+ */
+function orderPendingReplayMessages(messages: readonly HostMessage[]): readonly HostMessage[] {
+  const entries = messages.map<PendingReplayEntry>((message, index) => {
+    const event = parseHostDomainEvent(message) ?? undefined
+    return {
+      message,
+      index,
+      hostSequence: message.type === 'event' ? message.sequence : Number.MAX_SAFE_INTEGER,
+      ...(event === undefined ? {} : { event }),
+      ...(event?.sequence === undefined ? {} : { durableSequence: event.sequence }),
+    }
+  })
+  const durable = entries
+    .filter((entry) => entry.durableSequence !== undefined)
+    .sort(
+      (left, right) =>
+        left.durableSequence! - right.durableSequence! ||
+        left.hostSequence - right.hostSequence ||
+        left.index - right.index,
+    )
+  const nonDurable = entries.filter((entry) => entry.durableSequence === undefined)
+  if (nonDurable.length === 0) return durable.map(({ message }) => message)
+
+  const beforeDurable = new Map<number, PendingReplayEntry[]>()
+  for (const entry of nonDurable) {
+    const anchor = transientSettlementAnchor(entry, durable)
+    const insertionIndex = durable.findIndex((candidate) => entry.hostSequence < candidate.hostSequence)
+    const durableIndex = anchor ?? (insertionIndex < 0 ? durable.length : insertionIndex)
+    const bucket = beforeDurable.get(durableIndex)
+    if (bucket === undefined) beforeDurable.set(durableIndex, [entry])
+    else bucket.push(entry)
+  }
+
+  const ordered: PendingReplayEntry[] = []
+  for (let index = 0; index <= durable.length; index += 1) {
+    const bucket = beforeDurable.get(index)
+    if (bucket !== undefined)
+      ordered.push(
+        ...bucket.sort((left, right) => left.hostSequence - right.hostSequence || left.index - right.index),
+      )
+    const durableEntry = durable[index]
+    if (durableEntry !== undefined) ordered.push(durableEntry)
+  }
+  return ordered.map(({ message }) => message)
+}
+
+function transientSettlementAnchor(
+  entry: PendingReplayEntry,
+  durable: readonly PendingReplayEntry[],
+): number | undefined {
+  const event = entry.event
+  if (
+    event === undefined ||
+    (event.type !== 'message.delta' && event.type !== 'reasoning.delta') ||
+    event.transientAttemptId === undefined ||
+    event.transientIndex === undefined
+  )
+    return undefined
+  const key = assistantReplayKey(event)
+  const startedAfterSequence = event.transientStartedAfterSequence
+  const attemptBoundary =
+    startedAfterSequence === undefined
+      ? undefined
+      : (() => {
+          const index = durable.findIndex(
+            (candidate) =>
+              candidate.durableSequence !== undefined && candidate.durableSequence > startedAfterSequence,
+          )
+          return index < 0 ? durable.length : index
+        })()
+  const afterTransient = durable.findIndex(
+    (candidate) =>
+      candidate.event?.type === 'message.completed' &&
+      assistantReplayKey(candidate.event) === key &&
+      (startedAfterSequence === undefined ||
+        (candidate.durableSequence !== undefined && candidate.durableSequence > startedAfterSequence)) &&
+      candidate.hostSequence >= entry.hostSequence,
+  )
+  if (afterTransient >= 0) return Math.max(attemptBoundary ?? 0, afterTransient)
+  // An earlier settlement belongs to a previous retry. If the new attempt has
+  // not produced its own settlement yet, keep the transient prefix at its
+  // Host-sequence position; moving it before the old settlement would make
+  // the old durable row absorb and replace the live node during replay.
+  if (attemptBoundary !== undefined) {
+    const insertionIndex = durable.findIndex((candidate) => entry.hostSequence < candidate.hostSequence)
+    return Math.max(attemptBoundary, insertionIndex < 0 ? durable.length : insertionIndex)
+  }
+  return undefined
+}
+
+function assistantReplayKey(
+  event: Extract<BackendEvent, { readonly type: 'message.delta' | 'reasoning.delta' | 'message.completed' }>,
+): string {
+  // Alpha's cursorless frame uses the deterministic turn/step fallback id,
+  // while the durable assistant message carries DSH's generated message id.
+  // Coordinates are the shared identity for a live attempt; only legacy
+  // events without coordinates can fall back to their message id.
+  return event.turn !== undefined && event.step !== undefined
+    ? [event.sessionId, event.turn, event.step].join('\u0000')
+    : [event.sessionId, event.messageId].join('\u0000')
 }
 
 function optionalSequence(value: unknown): number | undefined {
@@ -5787,6 +6143,10 @@ function optionalSequence(value: unknown): number | undefined {
 
 function finiteTransientSequence(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined
+}
+
+function finiteTransientStartSequence(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= -1 ? value : undefined
 }
 
 function nonEmptyString(value: unknown): value is string {
@@ -5823,15 +6183,35 @@ function isLiveTransientNode(node: TimelineNode): node is ConversationTimelineNo
  * sequence yet. Keep only genuinely active transient nodes; completed nodes
  * are reconstructed from history and must not be allowed to shadow it.
  */
-function mergeLiveTransientNodes(rebuilt: TimelineState, previous: TimelineState): TimelineState {
+function mergeLiveTransientNodes(
+  rebuilt: TimelineState,
+  previous: TimelineState,
+  history: readonly SessionHistoryEvent[] = [],
+): TimelineState {
   const liveNodes = previous.nodes.filter(isLiveTransientNode)
   if (liveNodes.length === 0) return rebuilt
 
   const nodes = [...rebuilt.nodes]
   for (const live of liveNodes) {
+    // `assistant/attempt` is a durable non-visible settlement. If the
+    // rebuilt history already contains the settlement for this attempt, do
+    // not reattach the old process-local prefix just because the durable row
+    // intentionally produces no TimelineNode.
+    if (findMatchingAssistantAttempt(history, rebuilt.sessionId, live) !== undefined) continue
     const index = findMatchingTransientNode(nodes, live)
     if (index < 0) {
-      nodes.push(live)
+      const settlement = findMatchingSettledAssistant(nodes, live)
+      // DSH's assistant stream carries the durable cursor immediately before
+      // the attempt started. A settlement at or below that cursor belongs to
+      // an earlier retry and must remain beside the still-live attempt; only a
+      // later settlement retires the live prefix during a ledger rebuild.
+      if (
+        settlement === undefined ||
+        (live.liveStartedAfterSequence !== undefined &&
+          settlement.sequence !== undefined &&
+          settlement.sequence <= live.liveStartedAfterSequence)
+      )
+        insertLiveNodeAtPreviousPosition(nodes, previous.nodes, live)
       continue
     }
     const current = nodes[index]
@@ -5849,15 +6229,163 @@ function mergeLiveTransientNodes(rebuilt: TimelineState, previous: TimelineState
   }
 }
 
+/**
+ * Rebuilding from the durable ledger can remove a process-local stream row
+ * while retaining the durable rows that were adjacent to it. Re-append would
+ * move the live answer below later tool/deliverable rows, so restore it beside
+ * the nearest durable neighbour from the previous transcript instead.
+ */
+function insertLiveNodeAtPreviousPosition(
+  nodes: TimelineNode[],
+  previousNodes: readonly TimelineNode[],
+  live: ConversationTimelineNode,
+): void {
+  const previousIndex = previousNodes.indexOf(live)
+  if (previousIndex >= 0) {
+    for (let index = previousIndex + 1; index < previousNodes.length; index += 1) {
+      const anchor = previousNodes[index]
+      if (anchor === undefined || isLiveTransientNode(anchor)) continue
+      const currentIndex = findStableTimelineNodeIndex(nodes, anchor)
+      if (currentIndex >= 0) {
+        nodes.splice(currentIndex, 0, live)
+        return
+      }
+    }
+    for (let index = previousIndex - 1; index >= 0; index -= 1) {
+      const anchor = previousNodes[index]
+      if (anchor === undefined || isLiveTransientNode(anchor)) continue
+      const currentIndex = findStableTimelineNodeIndex(nodes, anchor)
+      if (currentIndex >= 0) {
+        nodes.splice(currentIndex + 1, 0, live)
+        return
+      }
+    }
+  }
+
+  const boundary = live.liveStartedAfterSequence
+  if (boundary !== undefined) {
+    const laterIndex = nodes.findIndex((node) => {
+      const sequence = timelineNodeSequence(node)
+      return sequence !== undefined && sequence > boundary
+    })
+    if (laterIndex >= 0) {
+      nodes.splice(laterIndex, 0, live)
+      return
+    }
+  }
+  nodes.push(live)
+}
+
+function findStableTimelineNodeIndex(nodes: readonly TimelineNode[], anchor: TimelineNode): number {
+  return nodes.findIndex((node) => node.kind === anchor.kind && node.id === anchor.id)
+}
+
+function timelineNodeSequence(node: TimelineNode): number | undefined {
+  switch (node.kind) {
+    case 'assistant-message':
+    case 'tool':
+    case 'deliverables':
+    case 'retry':
+    case 'turn-terminal':
+    case 'event':
+      return node.sequence
+    default:
+      return undefined
+  }
+}
+
+function findMatchingAssistantAttempt(
+  history: readonly SessionHistoryEvent[],
+  sessionId: string | undefined,
+  live: ConversationTimelineNode,
+): SessionHistoryEvent | undefined {
+  if (
+    sessionId === undefined ||
+    live.kind !== 'assistant-message' ||
+    live.turn === undefined ||
+    live.step === undefined ||
+    live.liveStartedAfterSequence === undefined
+  )
+    return undefined
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    const entry = history[index]
+    if (
+      entry?.event.type === 'assistant.attempt' &&
+      entry.event.sessionId === sessionId &&
+      entry.event.turn === live.turn &&
+      entry.event.step === live.step &&
+      entry.sequence > live.liveStartedAfterSequence
+    )
+      return entry
+  }
+  return undefined
+}
+
+function isSettledDurableAssistant(
+  node: TimelineNode,
+): node is Extract<TimelineNode, { readonly kind: 'assistant-message' }> {
+  return (
+    node.kind === 'assistant-message' &&
+    node.sequence !== undefined &&
+    !node.streaming &&
+    node.reasoning?.streaming !== true
+  )
+}
+
 function findMatchingTransientNode(nodes: readonly TimelineNode[], live: ConversationTimelineNode): number {
-  const byId = nodes.findIndex(
-    (node) => (node.kind === 'assistant-message' || node.kind === 'reasoning') && node.id === live.id,
+  const byId = findNodeIndexFromEnd(
+    nodes,
+    (node) =>
+      (node.kind === 'assistant-message' || node.kind === 'reasoning') &&
+      node.id === live.id &&
+      isOpenTransientConversationNode(node),
   )
   if (byId >= 0) return byId
   if (live.kind !== 'assistant-message' || live.turn === undefined || live.step === undefined) return -1
-  return nodes.findIndex(
-    (node) => node.kind === 'assistant-message' && node.turn === live.turn && node.step === live.step,
+  return findNodeIndexFromEnd(
+    nodes,
+    (node) =>
+      node.kind === 'assistant-message' &&
+      node.turn === live.turn &&
+      node.step === live.step &&
+      isOpenTransientConversationNode(node),
   )
+}
+
+function findMatchingSettledAssistant(
+  nodes: readonly TimelineNode[],
+  live: ConversationTimelineNode,
+): Extract<TimelineNode, { readonly kind: 'assistant-message' }> | undefined {
+  const index = findNodeIndexFromEnd(nodes, (node) => {
+    if (!isSettledDurableAssistant(node)) return false
+    if (node.id === live.id) return true
+    return (
+      live.kind === 'assistant-message' &&
+      live.turn !== undefined &&
+      live.step !== undefined &&
+      node.turn === live.turn &&
+      node.step === live.step
+    )
+  })
+  const node = index < 0 ? undefined : nodes[index]
+  return node?.kind === 'assistant-message' ? node : undefined
+}
+
+function isOpenTransientConversationNode(node: TimelineNode): boolean {
+  if (node.kind === 'assistant-message')
+    return node.streaming || node.reasoning?.streaming === true || node.liveAttemptId !== undefined
+  return node.kind === 'reasoning' && node.streaming
+}
+
+function findNodeIndexFromEnd(
+  nodes: readonly TimelineNode[],
+  predicate: (node: TimelineNode) => boolean,
+): number {
+  for (let index = nodes.length - 1; index >= 0; index -= 1) {
+    const node = nodes[index]
+    if (node !== undefined && predicate(node)) return index
+  }
+  return -1
 }
 
 function mergeTransientNode(current: TimelineNode, live: ConversationTimelineNode): TimelineNode {
@@ -5870,6 +6398,9 @@ function mergeTransientNode(current: TimelineNode, live: ConversationTimelineNod
       ...(live.step === undefined ? {} : { step: live.step }),
       ...(live.liveAttemptId === undefined ? {} : { liveAttemptId: live.liveAttemptId }),
       ...(live.liveLastIndex === undefined ? {} : { liveLastIndex: live.liveLastIndex }),
+      ...(live.liveStartedAfterSequence === undefined
+        ? {}
+        : { liveStartedAfterSequence: live.liveStartedAfterSequence }),
       ...(live.interrupted === undefined ? {} : { interrupted: live.interrupted }),
     }
     if (live.reasoning === undefined) delete merged.reasoning
@@ -5882,6 +6413,9 @@ function mergeTransientNode(current: TimelineNode, live: ConversationTimelineNod
       reasoning: { markdown: live.markdown, streaming: live.streaming },
       ...(live.liveAttemptId === undefined ? {} : { liveAttemptId: live.liveAttemptId }),
       ...(live.liveLastIndex === undefined ? {} : { liveLastIndex: live.liveLastIndex }),
+      ...(live.liveStartedAfterSequence === undefined
+        ? {}
+        : { liveStartedAfterSequence: live.liveStartedAfterSequence }),
     }
   return live
 }
@@ -5911,11 +6445,14 @@ function hydrateTimelineFromEntries(
       // Projection/lifecycle records carry durable sequence metadata but are
       // not conversation records. Keep their state updates while preventing
       // them from consuming the timeline cursor during history rehydration.
-      ...(!advancesTimelineSequence(event) ? { advanceSequence: false } : {}),
+      ...timelineSequenceOptions(event),
     })),
   )
   const lastSequence = ordered.reduce(
-    (maximum, entry) => (advancesTimelineSequence(entry.event) ? Math.max(maximum, entry.sequence) : maximum),
+    (maximum, entry) =>
+      timelineSequenceOptions(entry.event).advanceSequence === false
+        ? maximum
+        : Math.max(maximum, entry.sequence),
     -1,
   )
   return ordered.length === 0 ? timeline : { ...timeline, lastSequence }

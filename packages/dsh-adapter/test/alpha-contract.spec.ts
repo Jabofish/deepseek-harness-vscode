@@ -1140,6 +1140,49 @@ describe('alpha remote mux receive queue', () => {
     })
     await transport.close()
   })
+
+  it('normalizes an incremental control projection so it cannot occupy a durable sequence', async () => {
+    FakeWebSocket.instances.length = 0
+    const transport = client(
+      vi.fn((_input: RequestInfo | URL, init?: RequestInit) => Promise.resolve(response(init, undefined))),
+    )
+    const stream = transport.openHostStream(new AbortController().signal)
+    const iterator = stream[Symbol.asyncIterator]()
+    const first = iterator.next()
+    const socket = await waitForSocket()
+    socket.open()
+    await waitForSent(socket, 1)
+    socket.message(
+      streamItem(socket, {
+        type: 'baseline',
+        value: { queues: {}, jobs: {}, projections: {} },
+      }),
+    )
+    // Real DSH emits incremental projection frames whose `seq` is the cursor
+    // they describe, not a durable log position. The next durable row can
+    // carry the very same sequence, so the frame must reach the adapter as the
+    // same non-durable `session/projection` shape the baseline branch produces.
+    socket.message(
+      streamItem(socket, {
+        type: 'projection',
+        sessionId: 's1',
+        key: 'next-turn',
+        value: [{ turn: 1, seq: 15 }],
+        seq: 15,
+      }),
+    )
+    await expect(first).resolves.toMatchObject({
+      done: false,
+      value: {
+        type: 'session/projection',
+        sessionId: 's1',
+        key: 'next-turn',
+        value: [{ turn: 1, seq: 15 }],
+        seq: 15,
+      },
+    })
+    await transport.close()
+  })
 })
 
 describe('alpha backend assembly baseline ownership', () => {
@@ -1229,11 +1272,134 @@ describe('alpha backend assembly baseline ownership', () => {
         },
       })
       await waitForEvent(() => received.some((event) => event.type === 'session.subscribed'))
+      expect(received.find((event) => event.type === 'session.subscribed')).toMatchObject({
+        controlBaseline: false,
+      })
       // The alpha session/follow snapshot carries no jobs or queue baseline;
       // the session/control stream owns that state, so re-subscribing a
       // session must not wipe what the control stream baselined.
       await expect(backend.jobs.list('s1')).resolves.toHaveLength(1)
       await expect(backend.sessions.listQueue('s1')).resolves.toHaveLength(1)
+    } finally {
+      unsubscribe()
+      await backend.close()
+    }
+  })
+
+  it('keeps the durable completion that shares its sequence with a control projection', async () => {
+    FakeWebSocket.instances.length = 0
+    const adapter = new Alpha1VersionAdapter({
+      requestTimeoutMs: 1_000,
+      retryPolicy: { maximumAttempts: 1, baseDelayMs: 1, maximumDelayMs: 1 },
+      fetch: vi.fn((_input: RequestInfo | URL, init?: RequestInit) => Promise.resolve(response(init, {}))),
+      authCookie: () => 'dsh_session=test-cookie',
+      webSocket: FakeWebSocket,
+    })
+    const backend = await adapter.createBackend({
+      endpoint,
+      ownership: 'external',
+      capabilities: {
+        protocolVersion: 'alpha1',
+        dshVersion: '0.1.2-alpha.1',
+        features: new Set(['events']),
+      },
+    })
+    const received: BackendEvent[] = []
+    const unsubscribe = backend.events.subscribe((event) => received.push(event))
+    try {
+      const socket = await waitForSocket()
+      socket.open()
+      await waitForSent(socket, 3)
+      const openStreamId = (streamEndpoint: string): number => {
+        for (const sent of socket.sent) {
+          const frame = JSON.parse(sent) as { type?: string; endpoint?: string; streamId?: number }
+          if (frame.type === 'open' && frame.endpoint === streamEndpoint) return frame.streamId as number
+        }
+        throw new Error(`the alpha mux never opened ${streamEndpoint}`)
+      }
+      socket.message({
+        type: 'item',
+        streamId: openStreamId('$events'),
+        value: { type: 'ready', clientId: 'client-1', host: { home: '/home/tester' } },
+      })
+      socket.message({
+        type: 'item',
+        streamId: openStreamId('workspace/follow'),
+        value: { type: 'baseline', value: { items: [], archivedSessionIds: [] } },
+      })
+      socket.message({
+        type: 'item',
+        streamId: openStreamId('session/control'),
+        value: { type: 'baseline', value: { queues: {}, jobs: {}, projections: {} } },
+      })
+      ;(backend.events as AlphaEventSource).watchSession('s1')
+      await waitForSent(socket, 4)
+      socket.message({
+        type: 'item',
+        streamId: openStreamId('session/follow'),
+        value: {
+          type: 'snapshot',
+          header: {},
+          cursor: 14,
+          records: [],
+          hasMore: false,
+          projections: { asOfSeq: 14, values: {} },
+        },
+      })
+      await waitForEvent(() => received.some((event) => event.type === 'session.subscribed'))
+      // Real DSH order: the advisory projection for cursor 15 arrives first,
+      // immediately followed by the durable row that actually owns sequence 15.
+      socket.message({
+        type: 'item',
+        streamId: openStreamId('session/control'),
+        value: {
+          type: 'projection',
+          sessionId: 's1',
+          key: 'next-turn',
+          value: [{ turn: 1, seq: 15 }],
+          seq: 15,
+        },
+      })
+      socket.message({
+        type: 'item',
+        streamId: openStreamId('session/follow'),
+        value: {
+          type: 'event',
+          event: {
+            type: 'assistant/message',
+            sessionId: 's1',
+            seq: 15,
+            time: 1_786_406_400_004,
+            data: {
+              turn: 1,
+              step: 1,
+              message: {
+                role: 'assistant',
+                content: [{ type: 'text', text: 'The final answer.' }],
+                source: { kind: 'model', provider: 'fixture', model: 'fixture' },
+                id: '11111111-1111-4111-8111-111111111111',
+              },
+              usage: { inputTokens: 4, outputTokens: 4 },
+            },
+          },
+        },
+      })
+      await waitForEvent(() => received.some((event) => event.type === 'message.completed'))
+      expect(received.find((event) => event.type === 'session.projection')).toMatchObject({
+        type: 'session.projection',
+        sessionId: 's1',
+        key: 'next-turn',
+        sequence: 15,
+      })
+      expect(received.find((event) => event.type === 'message.completed')).toMatchObject({
+        sessionId: 's1',
+        messageId: '11111111-1111-4111-8111-111111111111',
+        markdown: 'The final answer.',
+        sequence: 15,
+      })
+      // The shared sequence must never surface as a durable unknown row: the
+      // Webview cursor would then consume the slot and drop the completion.
+      expect(received.some((event) => event.type === 'unknown')).toBe(false)
     } finally {
       unsubscribe()
       await backend.close()

@@ -9,6 +9,8 @@ import {
   validAlpha151SessionSnapshot,
 } from '../src/versions/alpha151/session-wire.js'
 import { AlphaLoopbackApiClient, type AlphaWebSocket } from '../src/versions/alpha/transport.js'
+import { DshStreamController } from '../src/stream-controller.js'
+import type { BackendEvent } from '@dsh-vscode/domain'
 
 class FakeWebSocket implements AlphaWebSocket {
   public static readonly instances: FakeWebSocket[] = []
@@ -362,6 +364,384 @@ describe('DSH 0.1.5-alpha.1 Session wire v3 contract', () => {
     await client.close()
   })
 
+  it('forwards the final assistant message after a mixed live attempt settles', async () => {
+    FakeWebSocket.instances.length = 0
+    const client = new AlphaLoopbackApiClient({
+      ...adapterOptions(
+        vi.fn((_input: RequestInfo | URL, init?: RequestInit) => Promise.resolve(response(init, {}))),
+      ),
+      endpoint,
+      authCookie: () => 'dsh_session=test-cookie',
+      webSocket: FakeWebSocket,
+      sessionWireVersion: 'v3',
+    })
+    const iterator = client.openSessionStream('s1', new AbortController().signal)[Symbol.asyncIterator]()
+    const opening = iterator.next()
+    const socket = await waitForSocket()
+    socket.open()
+    await waitForSent(socket, 1)
+    socket.message(streamItem(socket, snapshot()))
+    await expect(opening).resolves.toMatchObject({
+      value: { type: 'session/subscribed', sessionId: 's1', lastSeq: 1 },
+    })
+
+    socket.message(
+      streamItem(socket, {
+        type: 'assistant-stream',
+        frame: {
+          type: 'start',
+          attemptId: 'attempt-final',
+          revision: 1,
+          startedAfterSeq: 1,
+          turn: 1,
+          step: 2,
+        },
+      }),
+    )
+    socket.message(
+      streamItem(socket, {
+        type: 'assistant-stream',
+        frame: {
+          type: 'chunk',
+          attemptId: 'attempt-final',
+          revision: 2,
+          index: 0,
+          time: 2,
+          chunk: { type: 'text-delta', index: 0, text: '替换成功 ✅' },
+        },
+      }),
+    )
+    await expect(iterator.next()).resolves.toMatchObject({
+      value: {
+        type: 'session/assistant-stream',
+        frame: { type: 'chunk', chunk: { type: 'text-delta', text: '替换成功 ✅' } },
+      },
+    })
+
+    const finalEvent = event({
+      type: 'assistant/message',
+      seq: 2,
+      time: 3,
+      data: {
+        turn: 1,
+        step: 2,
+        message: {
+          id: 'assistant-final',
+          role: 'assistant',
+          content: [{ type: 'text', text: '替换成功 ✅' }],
+          source: { kind: 'model', provider: 'minimax', model: 'MiniMax-M3' },
+        },
+        stream: [{ type: 'text-chunks', time0: 2, index: 0, dt: [], texts: ['替换成功 ✅'] }],
+      },
+    })
+    socket.message(streamItem(socket, { type: 'event', event: finalEvent }))
+    socket.message(
+      streamItem(socket, {
+        type: 'assistant-stream',
+        frame: {
+          type: 'end',
+          attemptId: 'attempt-final',
+          revision: 3,
+          index: 1,
+          outcome: { kind: 'committed', eventType: 'assistant/message', seq: 2 },
+        },
+      }),
+    )
+
+    await expect(iterator.next()).resolves.toEqual({
+      done: false,
+      value: {
+        type: 'session/event',
+        sessionId: 's1',
+        event: { ...finalEvent, sessionId: 's1' },
+      },
+    })
+    await iterator.return?.()
+    await client.close()
+  })
+
+  it('delivers a real mixed multi-tool, multi-request stream through the controller', async () => {
+    FakeWebSocket.instances.length = 0
+    const client = new AlphaLoopbackApiClient({
+      ...adapterOptions(
+        vi.fn((_input: RequestInfo | URL, init?: RequestInit) => Promise.resolve(response(init, {}))),
+      ),
+      endpoint,
+      authCookie: () => 'dsh_session=test-cookie',
+      webSocket: FakeWebSocket,
+      sessionWireVersion: 'v3',
+    })
+    const controller = new DshStreamController(client, undefined, undefined, {
+      streamSource: (signal) => client.openSessionStream('s1', signal),
+      closeTransport: false,
+    })
+    const received: BackendEvent[] = []
+    const unsubscribe = controller.subscribe((next) => received.push(next))
+
+    try {
+      const socket = await waitForSocket()
+      socket.open()
+      await waitForSent(socket, 1)
+
+      const wireEvent = (
+        type: string,
+        seq: number,
+        time: number,
+        data: Record<string, unknown>,
+      ): Record<string, unknown> => ({
+        type,
+        seq,
+        time,
+        data,
+        ...(new Set(['system/message', 'user/message', 'assistant/message', 'tool/result']).has(type)
+          ? { surfaceOp: 'append' }
+          : {}),
+      })
+      const userMessage = wireEvent('user/message', 2, 2, {
+        id: 'user-1',
+        role: 'user',
+        source: { kind: 'user' },
+        content: [{ type: 'text', text: 'inspect the files and report the result' }],
+      })
+      const snapshotValue = snapshot(
+        [
+          { type: 'event', event: wireEvent('system/message', 0, 0, { message: { content: [] } }) },
+          { type: 'event', event: wireEvent('turn/start', 1, 1, { turn: 1 }) },
+          { type: 'event', event: userMessage },
+          { type: 'event', event: wireEvent('step/start', 3, 3, { turn: 1, step: 1 }) },
+        ],
+        true,
+      )
+      snapshotValue.cursor = 3
+      snapshotValue.projections = { asOfSeq: 3, values: {} }
+      socket.message(streamItem(socket, snapshotValue))
+
+      for (const expectedType of [
+        'session.system',
+        'turn.started',
+        'message.user',
+        'step.started',
+        'session.subscribed',
+      ])
+        await waitForReceived(received, (event) => event.type === expectedType)
+
+      const send = (value: unknown): void => socket.message(streamItem(socket, value))
+      send({
+        type: 'assistant-stream',
+        frame: {
+          type: 'start',
+          attemptId: 'attempt-1',
+          revision: 1,
+          startedAfterSeq: 3,
+          turn: 1,
+          step: 1,
+        },
+      })
+      // Hidden stream bookkeeping must be consumed without creating a false
+      // transient gap or swallowing the next visible chunk.
+      send({
+        type: 'assistant-stream',
+        frame: {
+          type: 'chunk',
+          attemptId: 'attempt-1',
+          revision: 2,
+          index: 0,
+          time: 4,
+          chunk: { type: 'reasoning-delta', index: 0, text: '先检查两个文件。' },
+        },
+      })
+      send({
+        type: 'assistant-stream',
+        frame: {
+          type: 'chunk',
+          attemptId: 'attempt-1',
+          revision: 3,
+          index: 1,
+          time: 5,
+          chunk: {
+            type: 'tool-call-delta',
+            index: 1,
+            id: 'call-1',
+            name: 'read',
+            argumentsDelta: '{"path":"a"}',
+          },
+        },
+      })
+      send({
+        type: 'assistant-stream',
+        frame: {
+          type: 'chunk',
+          attemptId: 'attempt-1',
+          revision: 4,
+          index: 2,
+          time: 6,
+          chunk: {
+            type: 'block-end',
+            index: 1,
+            block: { type: 'tool-call', id: 'call-1', name: 'read', arguments: '{}' },
+          },
+        },
+      })
+      send({
+        type: 'event',
+        event: wireEvent('assistant/message', 4, 7, {
+          turn: 1,
+          step: 1,
+          message: {
+            id: 'assistant-tool-request',
+            role: 'assistant',
+            content: [{ type: 'tool-call', id: 'call-1', name: 'read', arguments: '{"path":"a"}' }],
+            source: { kind: 'model', provider: 'minimax', model: 'MiniMax-M3' },
+          },
+          stream: [],
+        }),
+      })
+      send({
+        type: 'assistant-stream',
+        frame: {
+          type: 'end',
+          attemptId: 'attempt-1',
+          revision: 5,
+          index: 3,
+          outcome: { kind: 'committed', eventType: 'assistant/message', seq: 4 },
+        },
+      })
+      send({
+        type: 'event',
+        event: wireEvent('tool/call', 5, 8, {
+          turn: 1,
+          step: 1,
+          callId: 'call-1',
+          name: 'read',
+          arguments: '{"path":"a"}',
+        }),
+      })
+      send({
+        type: 'event',
+        event: wireEvent('tool/result', 6, 9, {
+          turn: 1,
+          step: 1,
+          callId: 'call-1',
+          message: {
+            id: 'tool-result-1',
+            role: 'user',
+            content: [
+              { type: 'tool-result', toolCallId: 'call-1', content: [{ type: 'text', text: 'a contents' }] },
+            ],
+            source: { kind: 'tool', callId: 'call-1' },
+          },
+        }),
+      })
+      send({
+        type: 'event',
+        event: wireEvent('tool/call', 7, 10, {
+          turn: 1,
+          step: 1,
+          callId: 'call-2',
+          name: 'read',
+          arguments: '{"path":"b"}',
+        }),
+      })
+      send({
+        type: 'event',
+        event: wireEvent('tool/result', 8, 11, {
+          turn: 1,
+          step: 1,
+          callId: 'call-2',
+          message: {
+            id: 'tool-result-2',
+            role: 'user',
+            content: [
+              { type: 'tool-result', toolCallId: 'call-2', content: [{ type: 'text', text: 'b contents' }] },
+            ],
+            source: { kind: 'tool', callId: 'call-2' },
+          },
+        }),
+      })
+      send({ type: 'event', event: wireEvent('step/end', 9, 12, { turn: 1, step: 1 }) })
+      send({
+        type: 'assistant-stream',
+        frame: {
+          type: 'start',
+          attemptId: 'attempt-2',
+          revision: 6,
+          startedAfterSeq: 9,
+          turn: 1,
+          step: 2,
+        },
+      })
+      send({
+        type: 'assistant-stream',
+        frame: {
+          type: 'chunk',
+          attemptId: 'attempt-2',
+          revision: 7,
+          index: 0,
+          time: 13,
+          chunk: { type: 'text-delta', index: 0, text: '检查完成，两个文件都正常。' },
+        },
+      })
+      const finalEvent = wireEvent('assistant/message', 10, 14, {
+        turn: 1,
+        step: 2,
+        message: {
+          id: 'assistant-final',
+          role: 'assistant',
+          content: [{ type: 'text', text: '检查完成，两个文件都正常。' }],
+          source: { kind: 'model', provider: 'minimax', model: 'MiniMax-M3' },
+        },
+        stream: [{ type: 'text-chunks', time0: 13, index: 0, dt: [], texts: ['检查完成，两个文件都正常。'] }],
+      })
+      send({ type: 'event', event: finalEvent })
+      send({
+        type: 'assistant-stream',
+        frame: {
+          type: 'end',
+          attemptId: 'attempt-2',
+          revision: 8,
+          index: 1,
+          outcome: { kind: 'committed', eventType: 'assistant/message', seq: 10 },
+        },
+      })
+      send({
+        type: 'event',
+        event: wireEvent('deliverables/presented', 11, 15, {
+          turn: 1,
+          callId: 'call-2',
+          files: [{ path: 'report.md', description: 'report' }],
+        }),
+      })
+      send({ type: 'event', event: wireEvent('step/end', 12, 16, { turn: 1, step: 2 }) })
+      send({
+        type: 'event',
+        event: wireEvent('turn/end', 13, 17, { turn: 1, reason: { kind: 'completed' } }),
+      })
+
+      await waitForReceived(received, (event) => event.type === 'message.completed' && event.sequence === 10)
+      await waitForReceived(received, (event) => event.type === 'turn.ended' && event.sequence === 13)
+
+      const durable = received.filter(
+        (event) =>
+          event.type !== 'session.subscribed' &&
+          event.type !== 'message.delta' &&
+          event.type !== 'reasoning.delta',
+      )
+      expect(durable.map((event) => event.sequence)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13])
+      expect(received).toContainEqual(
+        expect.objectContaining({
+          type: 'message.completed',
+          sequence: 10,
+          messageId: 'assistant-final',
+          markdown: '检查完成，两个文件都正常。',
+        }),
+      )
+    } finally {
+      unsubscribe()
+      await controller.close()
+      await client.close()
+    }
+  })
+
   it('requires the v3 assistant baseline and rejects a malformed snapshot', async () => {
     FakeWebSocket.instances.length = 0
     const client = new AlphaLoopbackApiClient({
@@ -385,3 +765,16 @@ describe('DSH 0.1.5-alpha.1 Session wire v3 contract', () => {
     await client.close()
   })
 })
+
+async function waitForReceived(
+  received: readonly BackendEvent[],
+  predicate: (event: BackendEvent) => boolean,
+): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (received.some(predicate)) return
+    await new Promise((resolve) => setTimeout(resolve, 1))
+  }
+  throw new Error(
+    `timed out waiting for the expected controller event: ${received.map((event) => `${event.type}:${String(event.sequence ?? '')}`).join(',')}`,
+  )
+}

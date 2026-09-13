@@ -49,6 +49,66 @@ describe('DshStreamController', () => {
     expect(received).toEqual(['tokenUsage', 'contextPressure'])
   })
 
+  it('dedupes an exact durable row duplicated inside an authoritative follow snapshot', async () => {
+    const stream = new ControlledStream()
+    const controller = new DshStreamController(streamTransport([]), undefined, undefined, {
+      streamSource: stream.source,
+      closeTransport: false,
+    })
+    controllers.push(controller)
+    const received: BackendEvent[] = []
+    controller.subscribe((event) => received.push(event))
+
+    // The follow snapshot is authoritative before its cursor is established.
+    // A retried page must not create two identical conversation nodes, while
+    // distinct records sharing a sequence remain valid elsewhere in the fold.
+    const row = canonicalFrame('s1', 1, 'turn/start', { turn: 1 })
+    stream.push(row)
+    stream.push(row)
+    stream.push(subscribeFrame('s1', 1))
+
+    await waitFor(() => received.some((event) => event.type === 'session.subscribed'))
+    expect(received.filter((event) => event.type === 'turn.started')).toHaveLength(1)
+  })
+
+  it('does not drop the final assistant message when it is in the opening snapshot', async () => {
+    const stream = new ControlledStream()
+    const controller = new DshStreamController(streamTransport([]), undefined, undefined, {
+      streamSource: stream.source,
+      closeTransport: false,
+    })
+    controllers.push(controller)
+    const received: BackendEvent[] = []
+    controller.subscribe((event) => received.push(event))
+
+    stream.push(
+      canonicalFrame('s1', 1, 'assistant/message', {
+        turn: 5,
+        step: 5,
+        message: {
+          id: 'assistant-final',
+          role: 'assistant',
+          source: { kind: 'model', provider: 'minimax-cn', model: 'MiniMax-M3' },
+          content: [
+            {
+              type: 'text',
+              text: '替换成功 ✅\n\n**结果对比：**\n\n| 行 | 之前 | 现在 |\n|---|---|---|\n| 1 | `Hello, World!` | `Greetings from MiniMax-M3!` |',
+            },
+          ],
+        },
+      }),
+    )
+    stream.push(subscribeFrame('s1', 1))
+
+    await waitFor(() => received.some((event) => event.type === 'message.completed'))
+    const completed = received.find((event) => event.type === 'message.completed')
+    expect(completed?.type).toBe('message.completed')
+    if (completed?.type !== 'message.completed') return
+    expect(completed.sequence).toBe(1)
+    expect(completed.messageId).toBe('assistant-final')
+    expect(completed.markdown).toContain('Greetings from MiniMax-M3!')
+  })
+
   it('stops a same-sequence bucket when a listener closes the controller', async () => {
     const stream = new ControlledStream()
     const received: BackendEvent[] = []
@@ -95,6 +155,23 @@ describe('DshStreamController', () => {
     expect(
       received.map((event) => event.sequence).filter((value): value is number => value !== undefined),
     ).toEqual([1, 2])
+  })
+
+  it('delivers the teardown event before an observer closes the controller', async () => {
+    const received: BackendEvent[] = []
+    const controllerHolder: { current?: DshStreamController } = {}
+    const controller = new DshStreamController(
+      streamTransport([{ payload: { type: 'host/session-removed', sessionId: 's1' } }]),
+      () => {
+        void controllerHolder.current?.close()
+      },
+    )
+    controllerHolder.current = controller
+    controllers.push(controller)
+    controller.subscribe((event) => received.push(event))
+
+    await waitFor(() => received.some((event) => event.type === 'session.removed'))
+    expect(received).toContainEqual({ type: 'session.removed', sessionId: 's1' })
   })
 
   it('orders nested model retry events with the durable session stream', async () => {
@@ -288,6 +365,101 @@ describe('DshStreamController', () => {
     })
   })
 
+  it('carries the DSH attempt start cursor through transient assistant chunks', async () => {
+    const stream = new ControlledStream()
+    const controller = new DshStreamController(streamTransport([]), undefined, undefined, {
+      streamSource: stream.source,
+      closeTransport: false,
+    })
+    controllers.push(controller)
+    const received: BackendEvent[] = []
+    controller.subscribe((event) => received.push(event))
+
+    stream.push({
+      payload: {
+        type: 'session/assistant-stream',
+        sessionId: 's1',
+        transientSequence: 1,
+        frame: {
+          type: 'start',
+          attemptId: 'attempt-retry',
+          revision: 1,
+          startedAfterSeq: 7,
+          turn: 1,
+          step: 1,
+        },
+      },
+    })
+    stream.push({
+      payload: {
+        type: 'session/assistant-stream',
+        sessionId: 's1',
+        transientSequence: 2,
+        frame: {
+          type: 'chunk',
+          attemptId: 'attempt-retry',
+          revision: 2,
+          index: 0,
+          time: 2,
+          turn: 1,
+          step: 1,
+          startedAfterSeq: 7,
+          chunk: { type: 'text-delta', index: 0, text: 'retrying' },
+        },
+      },
+    })
+
+    await waitFor(() => received.some((event) => event.type === 'message.delta'))
+    expect(received).toContainEqual(
+      expect.objectContaining({
+        type: 'message.delta',
+        sessionId: 's1',
+        transientAttemptId: 'attempt-retry',
+        transientStartedAfterSequence: 7,
+      }),
+    )
+  })
+
+  it('keeps multiple assistant attempts visible across interleaved durable events', async () => {
+    const stream = new ControlledStream()
+    const controller = new DshStreamController(streamTransport([]), undefined, undefined, {
+      streamSource: stream.source,
+      closeTransport: false,
+    })
+    controllers.push(controller)
+    const received: BackendEvent[] = []
+    controller.subscribe((event) => received.push(event))
+
+    stream.push(subscribeFrame('s1', 0))
+    stream.push(assistantAttemptFrame('s1', 1, 'attempt-first', 1, 'first attempt'))
+    stream.push(
+      canonicalFrame('s1', 1, 'llm/retry', {
+        retryId: 'retry-1',
+        turn: 1,
+        step: 1,
+        provider: 'deepseek',
+        mode: 'normal',
+        policyKey: 'deepseek-normal',
+        retry: 1,
+        maxRetries: 2,
+        delayMs: 10,
+        failure: { code: 'RATE_LIMIT', message: 'rate limited' },
+      }),
+    )
+    stream.push(assistantAttemptFrame('s1', 2, 'attempt-retry', 2, 'retry attempt'))
+
+    await waitFor(() => received.filter((event) => event.type === 'message.delta').length === 2)
+    const visible = received.filter((event) => event.type === 'message.delta' || event.type === 'model.retry')
+    expect(visible.map((event) => event.type)).toEqual(['message.delta', 'model.retry', 'message.delta'])
+    expect(visible.filter((event) => event.type === 'message.delta').map((event) => event.delta)).toEqual([
+      'first attempt',
+      'retry attempt',
+    ])
+    expect(
+      visible.filter((event) => event.type === 'message.delta').map((event) => event.transientAttemptId),
+    ).toEqual(['attempt-first', 'attempt-retry'])
+  })
+
   it('keeps reconnect backoff instead of hot-looping a failing stream', async () => {
     const received: string[] = []
     const failingStream: NonNullable<DshTransport['openMuxStream']> = (_signal) => ({
@@ -377,6 +549,263 @@ describe('DshStreamController', () => {
         ),
       2_000,
     )
+  })
+
+  it('keeps the authoritative pre-subscription snapshot after a natural reconnect to a shorter log', async () => {
+    const first = new ControlledStream()
+    const second = new ControlledStream()
+    const controller = new DshStreamController(streamTransport([]), undefined, undefined, {
+      streamSource: controlledGenerationSource([first, second]),
+      closeTransport: false,
+    })
+    controllers.push(controller)
+    const received: BackendEvent[] = []
+    controller.subscribe((event) => received.push(event))
+
+    first.push(subscribeFrame('s1', 9))
+    first.push(canonicalFrame('s1', 10, 'turn/start', { turn: 10 }))
+    await waitFor(() => received.some((event) => event.sequence === 10))
+    first.end()
+
+    await waitForAtMost(() => second.signal !== undefined && !second.signal.aborted, 2_000)
+    // Session/follow sends its bounded snapshot before session/subscribed. On
+    // a reconnect to a shorter epoch those rows are the only copy of the new
+    // log prefix and must not be discarded against the old watermark.
+    second.push(canonicalFrame('s1', 1, 'turn/start', { turn: 1 }))
+    second.push(canonicalFrame('s1', 2, 'turn/start', { turn: 2 }))
+    second.push(subscribeFrame('s1', 2))
+    second.push(canonicalFrame('s1', 3, 'turn/start', { turn: 3 }))
+
+    await waitFor(() => received.some((event) => event.type === 'turn.started' && event.sequence === 3))
+
+    expect(received.filter((event) => event.type === 'turn.started').map((event) => event.sequence)).toEqual([
+      10, 1, 2, 3,
+    ])
+  })
+
+  it('resets projection dedupe after a shorter follow baseline starts a new epoch', async () => {
+    const first = new ControlledStream()
+    const second = new ControlledStream()
+    const controller = new DshStreamController(streamTransport([]), undefined, undefined, {
+      streamSource: controlledGenerationSource([first, second]),
+      closeTransport: false,
+    })
+    controllers.push(controller)
+    const received: BackendEvent[] = []
+    controller.subscribe((event) => received.push(event))
+
+    first.push(subscribeFrame('s1', 0))
+    first.push(projectionFrame('s1', 1, 'tokenUsage', { outputTokens: 9 }))
+    first.push(canonicalFrame('s1', 10, 'turn/start', { turn: 10 }))
+    await waitFor(() => received.some((event) => event.sequence === 10))
+    first.end()
+
+    await waitForAtMost(() => second.signal !== undefined && !second.signal.aborted, 2_000)
+    // A lower subscription marker proves that the host started a new log
+    // epoch. Its first live projection may reuse a sequence from the old
+    // epoch and must not be dropped by the old per-key watermark.
+    second.push(subscribeFrame('s1', 1))
+    second.push(projectionFrame('s1', 1, 'tokenUsage', { outputTokens: 1 }))
+
+    await waitFor(() => received.filter((event) => event.type === 'session.projection').length === 2)
+    expect(
+      received.filter((event) => event.type === 'session.projection').map((event) => event.value),
+    ).toEqual([{ outputTokens: 9 }, { outputTokens: 1 }])
+  })
+
+  it('records projection sequences emitted from a follow snapshot before deduping its live replay', async () => {
+    const stream = new ControlledStream()
+    const controller = new DshStreamController(streamTransport([]), undefined, undefined, {
+      streamSource: stream.source,
+      closeTransport: false,
+    })
+    controllers.push(controller)
+    const received: BackendEvent[] = []
+    controller.subscribe((event) => received.push(event))
+
+    stream.push(projectionFrame('s1', 1, 'tokenUsage', { outputTokens: 1 }))
+    stream.push(subscribeFrame('s1', 1))
+    stream.push(projectionFrame('s1', 1, 'tokenUsage', { outputTokens: 1 }))
+
+    await waitFor(() => received.filter((event) => event.type === 'session.projection').length === 1)
+    expect(received.filter((event) => event.type === 'session.projection')).toHaveLength(1)
+  })
+
+  it('seeds projection dedupe from the subscribed baseline before live replay', async () => {
+    const stream = new ControlledStream()
+    const controller = new DshStreamController(streamTransport([]), undefined, undefined, {
+      streamSource: stream.source,
+      closeTransport: false,
+    })
+    controllers.push(controller)
+    const received: BackendEvent[] = []
+    controller.subscribe((event) => received.push(event))
+
+    stream.push({
+      payload: {
+        type: 'session/subscribed',
+        sessionId: 's1',
+        lastSeq: 10,
+        projections: {
+          asOfSeq: 10,
+          values: { tokenUsage: { outputTokens: 10 } },
+        },
+      },
+    })
+    stream.push(projectionFrame('s1', 9, 'tokenUsage', { outputTokens: 9 }))
+    stream.push(projectionFrame('s1', 11, 'tokenUsage', { outputTokens: 11 }))
+
+    await waitFor(() => received.filter((event) => event.type === 'session.projection').length === 1)
+    expect(received.filter((event) => event.type === 'session.projection')).toEqual([
+      {
+        type: 'session.projection',
+        sessionId: 's1',
+        key: 'tokenUsage',
+        value: { outputTokens: 11 },
+        sequence: 11,
+      },
+    ])
+  })
+
+  it('fences delayed projections for keys omitted by a complete subscribed baseline', async () => {
+    const stream = new ControlledStream()
+    const controller = new DshStreamController(streamTransport([]), undefined, undefined, {
+      streamSource: stream.source,
+      closeTransport: false,
+    })
+    controllers.push(controller)
+    const received: BackendEvent[] = []
+    controller.subscribe((event) => received.push(event))
+
+    stream.push({
+      payload: {
+        type: 'session/subscribed',
+        sessionId: 's1',
+        lastSeq: 10,
+        projections: { asOfSeq: 10, values: {} },
+      },
+    })
+    await waitFor(() => received.some((event) => event.type === 'session.subscribed'))
+    stream.push(projectionFrame('s1', 9, 'removedKey', { stale: true }))
+    stream.push(projectionFrame('s1', 11, 'newKey', { fresh: true }))
+    await waitFor(() => received.some((event) => event.type === 'session.projection'))
+
+    expect(received.filter((event) => event.type === 'session.projection')).toEqual([
+      {
+        type: 'session.projection',
+        sessionId: 's1',
+        key: 'newKey',
+        value: { fresh: true },
+        sequence: 11,
+      },
+    ])
+  })
+
+  it('crosses a recovery range made only of filtered projection rows', async () => {
+    const stream = new ControlledStream()
+    const recoveryRanges: Array<[number, number]> = []
+    const controller = new DshStreamController(
+      streamTransport([]),
+      undefined,
+      (_sessionId, fromSequence, toSequence) => {
+        recoveryRanges.push([fromSequence, toSequence])
+        return Promise.resolve([
+          {
+            type: 'session.projection',
+            sessionId: 's1',
+            key: 'tokenUsage',
+            value: { outputTokens: 9 },
+            sequence: 9,
+          },
+          {
+            type: 'session.projection',
+            sessionId: 's1',
+            key: 'tokenUsage',
+            value: { outputTokens: 10 },
+            sequence: 10,
+          },
+        ])
+      },
+      { streamSource: stream.source, closeTransport: false },
+    )
+    controllers.push(controller)
+    const received: BackendEvent[] = []
+    controller.subscribe((event) => received.push(event))
+
+    stream.push(subscribeFrame('s1', 8))
+    stream.push(projectionFrame('s1', 11, 'tokenUsage', { outputTokens: 11 }))
+    stream.push(canonicalFrame('s1', 11, 'turn/start', { turn: 1 }))
+
+    await waitFor(() => received.some((event) => event.type === 'turn.started' && event.sequence === 11))
+
+    expect(recoveryRanges).toEqual([[9, 10]])
+    expect(received.filter((event) => event.type === 'session.gap')).toHaveLength(0)
+    expect(received.filter((event) => event.type === 'session.projection')).toEqual([
+      {
+        type: 'session.projection',
+        sessionId: 's1',
+        key: 'tokenUsage',
+        value: { outputTokens: 11 },
+        sequence: 11,
+      },
+    ])
+  })
+
+  it('orders a reconnect snapshot tail after recovered events and later live events', async () => {
+    const first = new ControlledStream()
+    const second = new ControlledStream()
+    const recoveryRanges: Array<[number, number]> = []
+    let releaseRecovery: (() => void) | undefined
+    const recoveryBarrier = new Promise<void>((resolve) => {
+      releaseRecovery = resolve
+    })
+    let recoveryStartedResolve: (() => void) | undefined
+    const recoveryReady = new Promise<void>((resolve) => {
+      recoveryStartedResolve = resolve
+    })
+    const controller = new DshStreamController(
+      streamTransport([]),
+      undefined,
+      async (_sessionId, fromSequence, toSequence) => {
+        recoveryRanges.push([fromSequence, toSequence])
+        recoveryStartedResolve?.()
+        await recoveryBarrier
+        return [recoveredTurn('s1', 2), recoveredTurn('s1', 3)]
+      },
+      {
+        streamSource: controlledGenerationSource([first, second]),
+        closeTransport: false,
+      },
+    )
+    controllers.push(controller)
+    const received: BackendEvent[] = []
+    controller.subscribe((event) => received.push(event))
+
+    first.push(subscribeFrame('s1', 0))
+    first.push(canonicalFrame('s1', 1, 'turn/start', { turn: 1 }))
+    await waitFor(() => received.some((event) => event.sequence === 1))
+    first.end()
+
+    await waitForAtMost(() => second.signal !== undefined && !second.signal.aborted, 2_000)
+    // The snapshot is a bounded tail from the new generation. It must remain
+    // behind the missing prefix returned by history, while seq 6 proves that
+    // live frames can continue arriving during the asynchronous recovery.
+    second.push(canonicalFrame('s1', 4, 'turn/start', { turn: 4 }))
+    second.push(canonicalFrame('s1', 5, 'turn/start', { turn: 5 }))
+    second.push(subscribeFrame('s1', 5))
+    await recoveryReady
+    second.push(canonicalFrame('s1', 6, 'turn/start', { turn: 6 }))
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(received.some((event) => event.sequence === 4)).toBe(false)
+    expect(received.some((event) => event.sequence === 6)).toBe(false)
+
+    releaseRecovery?.()
+    await waitFor(() => received.some((event) => event.sequence === 6))
+
+    expect(recoveryRanges).toEqual([[2, 5]])
+    expect(received.filter((event) => event.type === 'turn.started').map((event) => event.sequence)).toEqual([
+      1, 2, 3, 4, 5, 6,
+    ])
   })
 
   it('forwards the durable turn end and host idle status from rc.6 frames', async () => {
@@ -676,6 +1105,32 @@ function assistantFrame(sessionId: string, transientSequence: number, text: stri
         turn: 1,
         step: 0,
         chunk: { type: 'text-delta', index: transientSequence - 1, text },
+      },
+    },
+  }
+}
+
+function assistantAttemptFrame(
+  sessionId: string,
+  transientSequence: number,
+  attemptId: string,
+  revision: number,
+  text: string,
+): unknown {
+  return {
+    payload: {
+      type: 'session/assistant-stream',
+      sessionId,
+      transientSequence,
+      frame: {
+        type: 'chunk',
+        attemptId,
+        revision,
+        index: 0,
+        time: revision,
+        turn: 1,
+        step: 1,
+        chunk: { type: 'text-delta', index: 0, text },
       },
     },
   }
@@ -1411,6 +1866,13 @@ function controlledGenerationTransport(generations: readonly ControlledStream[])
     openMuxStream: open,
     close: () => Promise.resolve(),
   }
+}
+
+function controlledGenerationSource(
+  generations: readonly ControlledStream[],
+): (signal: AbortSignal) => AsyncIterable<unknown> {
+  const transport = controlledGenerationTransport(generations)
+  return (signal) => transport.openEventStream(signal)
 }
 
 async function waitFor(predicate: () => boolean): Promise<void> {

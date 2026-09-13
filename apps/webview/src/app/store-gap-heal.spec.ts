@@ -59,6 +59,18 @@ function liveEvent(sequence: number, event: Record<string, unknown>): HostMessag
   } as unknown as HostMessage
 }
 
+function hostEvent(hostSequence: number, name: string, payload: unknown): HostMessage {
+  return { type: 'event', sequence: hostSequence, name, payload } as unknown as HostMessage
+}
+
+function liveTransientEvent(
+  hostSequence: number,
+  name: 'message.delta' | 'reasoning.delta',
+  payload: Record<string, unknown>,
+): HostMessage {
+  return hostEvent(hostSequence, name, payload)
+}
+
 function toolView(
   id: string,
   status: 'running' | 'completed',
@@ -387,6 +399,107 @@ describe('AppStore session gap healing', () => {
     store.dispose()
   })
 
+  it('replays an Alpha transient prefix before its durable settlement during open', async () => {
+    let releaseOpen: ((value: unknown) => void) | undefined
+    const openResponse = new Promise<unknown>((resolve) => {
+      releaseOpen = resolve
+    })
+    const { store, client } = makeStore({ openResponse })
+    const opening = store.openSession(activeSession.id)
+    const transientMessageId = 'assistant:1:1'
+    const durableMessageId = 'durable-assistant-message-1'
+
+    // This is the actual Alpha13 publication shape: cursorless assistant
+    // chunks are followed by the durable assistant/message only after the
+    // matching end frame commits. Host sequence is the only total order that
+    // contains both kinds of records.
+    client.emit({
+      type: 'event',
+      sequence: 40,
+      name: 'message.delta',
+      payload: {
+        type: 'message.delta',
+        sessionId: activeSession.id,
+        messageId: transientMessageId,
+        turn: 1,
+        step: 1,
+        delta: 'a',
+        transientSequence: 1,
+        transientAttemptId: 'attempt-1',
+        transientIndex: 0,
+      },
+    } as unknown as HostMessage)
+    client.emit({
+      type: 'event',
+      sequence: 41,
+      name: 'reasoning.delta',
+      payload: {
+        type: 'reasoning.delta',
+        sessionId: activeSession.id,
+        messageId: transientMessageId,
+        turn: 1,
+        step: 1,
+        delta: 'thinking',
+        transientSequence: 2,
+        transientAttemptId: 'attempt-1',
+        transientIndex: 1,
+      },
+    } as unknown as HostMessage)
+    client.emit({
+      type: 'event',
+      sequence: 42,
+      name: 'message.completed',
+      payload: {
+        type: 'message.completed',
+        sessionId: activeSession.id,
+        messageId: durableMessageId,
+        turn: 1,
+        step: 1,
+        markdown: 'a',
+        reasoning: 'thinking',
+        sequence: 6,
+      },
+    } as unknown as HostMessage)
+    client.emit({
+      type: 'event',
+      sequence: 43,
+      name: 'turn.ended',
+      payload: {
+        type: 'turn.ended',
+        sessionId: activeSession.id,
+        turn: 1,
+        reason: 'completed',
+        sequence: 7,
+      },
+    } as unknown as HostMessage)
+
+    releaseOpen?.({
+      ...activeSession,
+      history: [],
+      historyHasMore: false,
+      permissionPresets: [],
+      configuration: {
+        preset: 'standard',
+        toolMode: 'native',
+        permissionPreset: 'workspace-write',
+        planMode: false,
+        model: { providerId: 'deepseek', modelId: 'deepseek-chat' },
+      },
+    })
+    await opening
+
+    const assistant = store
+      .getState()
+      .timeline.nodes.find((node) => node.kind === 'assistant-message' && node.id === durableMessageId)
+    expect(assistant).toMatchObject({
+      markdown: 'a',
+      streaming: false,
+      reasoning: { markdown: 'thinking', streaming: false },
+    })
+    expect(store.getState().timeline.lastSequence).toBe(7)
+    store.dispose()
+  })
+
   it('does not silently truncate a high-volume open barrier', async () => {
     let releaseOpen: ((value: unknown) => void) | undefined
     const openResponse = new Promise<unknown>((resolve) => {
@@ -431,6 +544,84 @@ describe('AppStore session gap healing', () => {
     })
     store.dispose()
     client.dispose()
+  })
+
+  it('replays every control event delivered before first paint over stale advisory snapshots', async () => {
+    const sessionId = activeSession.id
+    const queueItem = {
+      id: 'queue-live',
+      sessionId,
+      text: 'continue after the tool result',
+      attachments: [],
+      mode: 'queue' as const,
+      createdAt: '2026-08-31T08:06:00.000Z',
+    }
+    const goal = { id: 'goal-live', title: 'Finish the verification', status: 'in-progress' as const }
+    const job = {
+      id: 'job-live',
+      kind: 'shell',
+      label: 'Verify report',
+      status: 'running' as const,
+      startedAt: 1_727_000_000_000,
+    }
+    const permission = {
+      id: 'permission-live',
+      sessionId,
+      title: 'Allow verification command?',
+      description: 'The verification command needs approval.',
+      risk: 'medium' as const,
+      options: [{ id: 'allow', label: 'Allow once', kind: 'allow-once' as const }],
+    }
+    const question = {
+      id: 'question-live',
+      sessionId,
+      prompt: 'Which report should be verified?',
+      choices: [{ id: 'latest', label: 'The latest report' }],
+      allowFreeText: false,
+    }
+    const controlEvent = (name: string, payload: unknown, sequence: number): HostMessage =>
+      ({
+        type: 'event',
+        sequence,
+        name,
+        payload,
+      }) as unknown as HostMessage
+    let releaseQueue: (() => void) | undefined
+    const queueList = new Promise<unknown>((resolve) => {
+      releaseQueue = () => resolve([])
+    })
+    const clientHolder: { current?: FakeClient } = {}
+    const { store, client: createdClient } = makeStore({
+      respond: (request) => {
+        if (request.type === 'session.queue.list') {
+          // The real Host can publish from another stream while the critical
+          // history request is still being installed. Return an intentionally
+          // stale advisory response after first paint to exercise the race.
+          clientHolder.current?.emit(controlEvent('queue.updated', { sessionId, items: [queueItem] }, 50))
+          clientHolder.current?.emit(controlEvent('goal.updated', { sessionId, goals: [goal] }, 51))
+          clientHolder.current?.emit(controlEvent('jobs.updated', { sessionId, jobs: [job] }, 52))
+          clientHolder.current?.emit(controlEvent('permission.requested', { request: permission }, 53))
+          clientHolder.current?.emit(controlEvent('question.requested', { question }, 54))
+          return queueList
+        }
+        return baseResponse(request)
+      },
+    })
+    clientHolder.current = createdClient
+
+    const opening = store.openSession(sessionId)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    releaseQueue?.()
+    await opening
+    await flushAsync()
+
+    expect(store.queue).toEqual([queueItem])
+    expect(store.goals).toEqual([goal])
+    expect(store.jobs).toEqual([job])
+    expect(store.permissions).toEqual([permission])
+    expect(store.questions).toEqual([question])
+    store.dispose()
+    createdClient.dispose()
   })
 
   it('does not let a non-durable approval frame hide the next durable request', async () => {
@@ -663,6 +854,990 @@ describe('AppStore session gap healing', () => {
       }),
     )
     expect(userMessageNodes(store.getState())).toHaveLength(5)
+  })
+
+  it('preserves the live transcript position when a later durable row triggers a rebuild', async () => {
+    const sessionId = activeSession.id
+    const { store, client } = makeStore({
+      history: [
+        historyEvent(0, {
+          type: 'message.user',
+          sessionId,
+          messageId: 'user-1',
+          markdown: 'inspect the live result',
+          source: 'user',
+        }),
+      ],
+    })
+    await store.openSession(sessionId)
+
+    // The live assistant prefix is observed before the durable tool row. The
+    // later duplicate tool row is the kind of below-cursor recovery delivery
+    // that forces a ledger rebuild.
+    client.emit(
+      liveTransientEvent(30_001, 'message.delta', {
+        type: 'message.delta',
+        sessionId,
+        messageId: 'assistant:1:1',
+        turn: 1,
+        step: 1,
+        delta: 'The live result is ready.',
+        transientSequence: 1,
+        transientAttemptId: 'attempt-1',
+        transientIndex: 0,
+        transientStartedAfterSequence: 0,
+      }),
+    )
+    const tool = {
+      type: 'tool.updated',
+      sessionId,
+      tool: toolView('call-1', 'completed', 'verified'),
+      sequence: 2,
+    }
+    client.emit(liveEvent(2, tool))
+    expect(store.getState().timeline.nodes.map((node) => node.id)).toEqual([
+      'user-1',
+      'assistant:1:1',
+      'call-1',
+    ])
+
+    // Redelivery has a new Host sequence but the same durable record.
+    client.emit(hostEvent(30_003, 'tool.updated', tool))
+    await flushAsync()
+
+    expect(store.getState().timeline.nodes.map((node) => node.id)).toEqual([
+      'user-1',
+      'assistant:1:1',
+      'call-1',
+    ])
+    store.dispose()
+    client.dispose()
+  })
+
+  it('does not let a durable settlement be overwritten by a live node during rebuild', async () => {
+    const { store, client } = makeStore({ historySequences: [1, 2, 4, 5] })
+    await store.openSession(activeSession.id)
+
+    client.emit({
+      type: 'event',
+      sequence: 30_001,
+      name: 'message.delta',
+      payload: {
+        type: 'message.delta',
+        sessionId: activeSession.id,
+        messageId: 'assistant:1:1',
+        turn: 1,
+        step: 1,
+        delta: 'partial answer',
+        transientSequence: 1,
+        transientAttemptId: 'attempt-1',
+        transientIndex: 0,
+      },
+    } as unknown as HostMessage)
+    client.emit(
+      liveEvent(3, {
+        type: 'message.completed',
+        sessionId: activeSession.id,
+        messageId: 'durable-assistant-1',
+        turn: 1,
+        step: 1,
+        markdown: 'final answer',
+        reasoning: 'final reasoning',
+      }),
+    )
+
+    await flushAsync()
+
+    expect(store.getState().timeline.nodes).toContainEqual(
+      expect.objectContaining({
+        kind: 'assistant-message',
+        id: 'durable-assistant-1',
+        markdown: 'final answer',
+        streaming: false,
+        reasoning: { markdown: 'final reasoning', streaming: false },
+      }),
+    )
+    expect(store.getState().timeline.nodes.filter((node) => node.kind === 'assistant-message')).toHaveLength(
+      1,
+    )
+    store.dispose()
+    client.dispose()
+  })
+
+  it('does not let an earlier same-coordinate retry absorb a newer live attempt during rebuild', async () => {
+    const sessionId = activeSession.id
+    const { store, client } = makeStore({
+      history: [
+        historyEvent(5, {
+          type: 'message.completed',
+          sessionId,
+          messageId: 'durable-attempt-1',
+          turn: 1,
+          step: 1,
+          markdown: 'first attempt was persisted',
+        }),
+      ],
+    })
+    await store.openSession(sessionId)
+
+    // Alpha starts a retry at the same logical turn/step with a new
+    // process-local attempt identity. It has no durable settlement yet.
+    client.emit({
+      type: 'event',
+      sequence: 30_001,
+      name: 'message.delta',
+      payload: {
+        type: 'message.delta',
+        sessionId,
+        messageId: 'assistant:1:1',
+        turn: 1,
+        step: 1,
+        delta: 'second attempt is still running',
+        transientSequence: 1,
+        transientAttemptId: 'attempt-2',
+        transientIndex: 0,
+        transientStartedAfterSequence: 5,
+      },
+    } as unknown as HostMessage)
+
+    // An older recovery record arrives below the current durable cursor and
+    // forces a ledger rebuild while the retry is still streaming.
+    client.emit(liveUserMessage(3))
+    await flushAsync()
+
+    const assistantNodes = store.getState().timeline.nodes.filter((node) => node.kind === 'assistant-message')
+    expect(assistantNodes).toHaveLength(2)
+    expect(assistantNodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'durable-attempt-1',
+          markdown: 'first attempt was persisted',
+          streaming: false,
+        }),
+        expect.objectContaining({
+          id: 'assistant:1:1',
+          markdown: 'second attempt is still running',
+          streaming: true,
+          liveAttemptId: 'attempt-2',
+        }),
+      ]),
+    )
+    store.dispose()
+    client.dispose()
+  })
+
+  it('does not reattach a failed live attempt when its assistant attempt is in history', async () => {
+    const sessionId = activeSession.id
+    const { store, client } = makeStore({
+      history: [
+        historyEvent(5, {
+          type: 'assistant.attempt',
+          sessionId,
+          turn: 1,
+          step: 1,
+          time: 5_000,
+        }),
+      ],
+    })
+    await store.openSession(sessionId)
+
+    client.emit({
+      type: 'event',
+      sequence: 30_001,
+      name: 'message.delta',
+      payload: {
+        type: 'message.delta',
+        sessionId,
+        messageId: 'assistant:1:1',
+        turn: 1,
+        step: 1,
+        delta: 'stale attempt prefix',
+        transientSequence: 1,
+        transientAttemptId: 'attempt-failed',
+        transientIndex: 0,
+        transientStartedAfterSequence: 0,
+      },
+    } as unknown as HostMessage)
+    expect(store.getState().timeline.nodes).toContainEqual(
+      expect.objectContaining({ markdown: 'stale attempt prefix', streaming: true }),
+    )
+
+    // A below-cursor recovery record rebuilds from the durable ledger. The
+    // attempt settlement has no visible node, so the merge must explicitly
+    // discard the old process-local prefix.
+    client.emit(liveUserMessage(3))
+    await flushAsync()
+
+    expect(store.getState().timeline.nodes).not.toContainEqual(
+      expect.objectContaining({ markdown: 'stale attempt prefix' }),
+    )
+    expect(store.getState().timeline.nodes.some((node) => node.kind === 'assistant-message')).toBe(false)
+    store.dispose()
+    client.dispose()
+  })
+
+  it('keeps a multi-request Alpha-like stream complete across first paint and advisory replay', async () => {
+    const sessionId = activeSession.id
+    let releaseOpen: ((value: unknown) => void) | undefined
+    const openResponse = new Promise<unknown>((resolve) => {
+      releaseOpen = resolve
+    })
+    let releaseQueue: (() => void) | undefined
+    const staleQueue = new Promise<unknown>((resolve) => {
+      releaseQueue = () => resolve([])
+    })
+    let queueRequestStarted = false
+    const durableEvent = (
+      hostSequence: number,
+      sequence: number,
+      event: Record<string, unknown>,
+    ): HostMessage =>
+      hostEvent(hostSequence, typeof event.type === 'string' ? event.type : 'unknown', { ...event, sequence })
+    const tool = (
+      id: string,
+      turn: number,
+      step: number,
+      status: 'running' | 'completed' | 'failed',
+      extra: Record<string, unknown> = {},
+    ): Record<string, unknown> => ({
+      id,
+      name: 'shell',
+      category: 'execution',
+      title: 'Shell',
+      status,
+      turn,
+      step,
+      metadata: {},
+      ...extra,
+    })
+    const queueBefore = {
+      id: 'queue-before-paint',
+      sessionId,
+      text: 'inspect the second result',
+      attachments: [],
+      mode: 'queue' as const,
+      createdAt: '2026-08-31T08:06:00.000Z',
+    }
+    const queueAfter = {
+      id: 'queue-after-paint',
+      sessionId,
+      text: 'keep the live tail visible',
+      attachments: [],
+      mode: 'steer' as const,
+      createdAt: '2026-08-31T08:07:00.000Z',
+    }
+    const goalBefore = { id: 'goal-complex', title: 'Inspect both results', status: 'in-progress' as const }
+    const goalAfter = { id: 'goal-complex', title: 'Inspect both results', status: 'completed' as const }
+    const todoBefore = {
+      id: 'todo-complex',
+      content: 'Compare nested tool output',
+      status: 'in-progress' as const,
+    }
+    const todoAfter = {
+      id: 'todo-complex',
+      content: 'Compare nested tool output',
+      status: 'completed' as const,
+    }
+    const jobBefore = {
+      id: 'job-complex',
+      kind: 'shell',
+      label: 'Run verification',
+      status: 'running' as const,
+      startedAt: 1_727_000_000_000,
+    }
+    const jobAfter = { ...jobBefore, status: 'completed' as const, finishedAt: 1_727_000_000_500 }
+    const permissionBefore = {
+      id: 'permission-before',
+      rpcId: 'permission-rpc-before',
+      sessionId,
+      title: 'Allow the first verification?',
+      description: 'The first tool needs approval.',
+      risk: 'medium' as const,
+      options: [{ id: 'allow', label: 'Allow once', kind: 'allow-once' as const }],
+    }
+    const permissionAfter = {
+      ...permissionBefore,
+      id: 'permission-after',
+      rpcId: 'permission-rpc-after',
+      title: 'Allow the second verification?',
+    }
+    const questionBefore = {
+      id: 'question-before',
+      rpcId: 'question-rpc-before',
+      sessionId,
+      prompt: 'Which report should be compared?',
+      choices: [{ id: 'latest', label: 'The latest report' }],
+      allowFreeText: false,
+    }
+    const questionAfter = {
+      ...questionBefore,
+      id: 'question-after',
+      rpcId: 'question-rpc-after',
+      prompt: 'Which live result should remain open?',
+    }
+    const { store, client } = makeStore({
+      openResponse,
+      respond: (request) => {
+        if (request.type === 'session.queue.list') {
+          queueRequestStarted = true
+          // The real advisory read can lag behind both the durable stream and
+          // the process-local control stream. Keep it stale until all live
+          // records have had a chance to cross the open barrier.
+          return staleQueue
+        }
+        return baseResponse(request)
+      },
+    })
+    const opening = store.openSession(sessionId)
+    const beforeFirstPaint: HostMessage[] = [
+      hostEvent(100, 'session.subscribed', {
+        sessionId,
+        lastSequence: 5,
+        controlBaseline: false,
+      }),
+      durableEvent(101, 6, {
+        type: 'tool.updated',
+        sessionId,
+        tool: tool('call-root-1:ptc:1', 1, 1, 'failed', {
+          parentCallId: 'call-root-1',
+          error: 'nested command failed',
+        }),
+      }),
+      durableEvent(102, 7, {
+        type: 'tool.updated',
+        sessionId,
+        tool: tool('call-root-1', 1, 1, 'completed', { outputSummary: 'root recovered' }),
+      }),
+      durableEvent(103, 8, {
+        type: 'deliverables.presented',
+        sessionId,
+        turn: 1,
+        callId: 'call-root-1',
+        files: [{ path: 'artifacts/first-report.md', description: 'First report' }],
+      }),
+      liveTransientEvent(104, 'reasoning.delta', {
+        type: 'reasoning.delta',
+        sessionId,
+        messageId: 'assistant:1:1',
+        turn: 1,
+        step: 1,
+        delta: 'I compared the nested result. ',
+        transientSequence: 1,
+        transientAttemptId: 'attempt-1',
+        transientIndex: 0,
+      }),
+      liveTransientEvent(105, 'message.delta', {
+        type: 'message.delta',
+        sessionId,
+        messageId: 'assistant:1:1',
+        turn: 1,
+        step: 1,
+        delta: 'The first result is ready.',
+        transientSequence: 2,
+        transientAttemptId: 'attempt-1',
+        transientIndex: 1,
+      }),
+      durableEvent(106, 9, {
+        type: 'message.completed',
+        sessionId,
+        messageId: 'durable-assistant-1',
+        turn: 1,
+        step: 1,
+        markdown: 'The first result is ready.',
+        reasoning: 'I compared the nested result. ',
+        usage: { inputTokens: 32, outputTokens: 14, reasoningTokens: 5 },
+      }),
+      durableEvent(107, 10, { type: 'step.ended', sessionId, turn: 1, step: 1 }),
+      durableEvent(108, 11, { type: 'turn.ended', sessionId, turn: 1, reason: 'completed' }),
+      hostEvent(109, 'queue.updated', { sessionId, items: [queueBefore] }),
+      hostEvent(110, 'goal.updated', { sessionId, goals: [goalBefore] }),
+      hostEvent(111, 'todo.updated', { sessionId, todos: [todoBefore] }),
+      hostEvent(112, 'jobs.updated', { sessionId, jobs: [jobBefore] }),
+      hostEvent(113, 'permission.requested', { request: permissionBefore }),
+      hostEvent(114, 'question.requested', { question: questionBefore }),
+      hostEvent(115, 'permission.resolved', {
+        sessionId,
+        requestId: permissionBefore.id,
+        outcome: 'approved',
+      }),
+      hostEvent(116, 'question.resolved', {
+        sessionId,
+        questionId: questionBefore.id,
+        questionRpcId: questionBefore.rpcId,
+        outcome: 'answered',
+      }),
+      hostEvent(117, 'goal.updated', { sessionId, goals: [goalAfter] }),
+      hostEvent(118, 'todo.updated', { sessionId, todos: [todoAfter] }),
+      hostEvent(119, 'jobs.updated', { sessionId, jobs: [jobAfter] }),
+      durableEvent(120, 12, {
+        type: 'message.user',
+        sessionId,
+        messageId: 'user-2',
+        rpcId: 'rpc-2',
+        markdown: 'Now inspect the second result.',
+        source: 'user',
+      }),
+      durableEvent(121, 13, { type: 'turn.started', sessionId, turn: 2 }),
+      durableEvent(122, 14, { type: 'step.started', sessionId, turn: 2, step: 1 }),
+      durableEvent(123, 15, {
+        type: 'tool.updated',
+        sessionId,
+        tool: tool('call-root-2', 2, 1, 'running'),
+      }),
+      durableEvent(124, 16, {
+        type: 'tool.updated',
+        sessionId,
+        tool: tool('call-root-2:ptc:1', 2, 1, 'running', { parentCallId: 'call-root-2' }),
+      }),
+      durableEvent(125, 17, {
+        type: 'tool.updated',
+        sessionId,
+        tool: tool('call-root-2:ptc:1', 2, 1, 'completed', {
+          parentCallId: 'call-root-2',
+          outputSummary: 'nested result',
+        }),
+      }),
+      durableEvent(126, 18, {
+        type: 'tool.updated',
+        sessionId,
+        tool: tool('call-root-2', 2, 1, 'completed', { outputSummary: 'second root recovered' }),
+      }),
+      durableEvent(127, 19, {
+        type: 'model.retry',
+        retry: {
+          sessionId,
+          id: 'retry-2',
+          turn: 2,
+          step: 1,
+          attempt: 1,
+          state: 'scheduled',
+          delayMs: 250,
+          maxRetries: 2,
+          message: 'retrying provider request',
+        },
+      }),
+      durableEvent(128, 20, {
+        type: 'model.retry',
+        retry: {
+          sessionId,
+          id: 'retry-2',
+          turn: 2,
+          step: 1,
+          attempt: 1,
+          state: 'started',
+          delayMs: 250,
+          maxRetries: 2,
+          message: 'retrying provider request',
+        },
+      }),
+      durableEvent(129, 21, {
+        type: 'deliverables.presented',
+        sessionId,
+        turn: 2,
+        callId: 'call-root-2',
+        files: [{ path: 'artifacts/second-report.md', description: 'Second report' }],
+      }),
+      liveTransientEvent(130, 'reasoning.delta', {
+        type: 'reasoning.delta',
+        sessionId,
+        messageId: 'assistant:2:1',
+        turn: 2,
+        step: 1,
+        delta: 'The second result needs one more check. ',
+        transientSequence: 1,
+        transientAttemptId: 'attempt-2',
+        transientIndex: 0,
+      }),
+      liveTransientEvent(131, 'message.delta', {
+        type: 'message.delta',
+        sessionId,
+        messageId: 'assistant:2:1',
+        turn: 2,
+        step: 1,
+        delta: 'The second result is ready.',
+        transientSequence: 2,
+        transientAttemptId: 'attempt-2',
+        transientIndex: 1,
+      }),
+      durableEvent(132, 21, {
+        type: 'session.projection',
+        sessionId,
+        key: 'tokenUsage',
+        value: { inputTokens: 64, outputTokens: 28 },
+      }),
+      durableEvent(133, 21, {
+        type: 'session.projection',
+        sessionId,
+        key: 'contextPressure',
+        value: { pressureTokens: 96 },
+      }),
+      durableEvent(134, 22, {
+        type: 'message.completed',
+        sessionId,
+        messageId: 'durable-assistant-2',
+        turn: 2,
+        step: 1,
+        markdown: 'The second result is ready.',
+        reasoning: 'The second result needs one more check. ',
+      }),
+      durableEvent(135, 23, { type: 'step.ended', sessionId, turn: 2, step: 1 }),
+      durableEvent(136, 24, { type: 'turn.ended', sessionId, turn: 2, reason: 'completed' }),
+      // The same durable tool event can be redelivered by a reconnect with a
+      // new Host sequence. It must not create a second timeline/history row.
+      durableEvent(137, 17, {
+        type: 'tool.updated',
+        sessionId,
+        tool: tool('call-root-2:ptc:1', 2, 1, 'completed', {
+          parentCallId: 'call-root-2',
+          outputSummary: 'nested result',
+        }),
+      }),
+      durableEvent(138, 25, {
+        type: 'future.new-event',
+        sessionId,
+        detail: 'preserve unknown durable records for forward compatibility',
+      }),
+    ]
+    for (const message of beforeFirstPaint) client.emit(message)
+    releaseOpen?.({
+      ...activeSession,
+      history: [
+        historyEvent(1, {
+          type: 'message.user',
+          sessionId,
+          messageId: 'user-1',
+          markdown: 'Review the first result.',
+          source: 'user',
+        }),
+        historyEvent(2, { type: 'turn.started', sessionId, turn: 1 }),
+        historyEvent(3, { type: 'step.started', sessionId, turn: 1, step: 1 }),
+        historyEvent(4, {
+          type: 'tool.updated',
+          sessionId,
+          tool: tool('call-root-1', 1, 1, 'running'),
+        }),
+        historyEvent(5, {
+          type: 'tool.updated',
+          sessionId,
+          tool: tool('call-root-1:ptc:1', 1, 1, 'running', { parentCallId: 'call-root-1' }),
+        }),
+      ],
+      historyHasMore: false,
+      permissionPresets: [],
+      configuration: {
+        preset: 'standard',
+        toolMode: 'native',
+        permissionPreset: 'workspace-write',
+        planMode: false,
+        model: { providerId: 'deepseek', modelId: 'deepseek-chat' },
+      },
+    })
+    await opening
+    expect(queueRequestStarted).toBe(true)
+
+    // These records arrive after first paint while the queue/list snapshot is
+    // still in flight. They must be applied live, then remain intact when the
+    // stale advisory [] response is finally merged.
+    const afterFirstPaint: HostMessage[] = [
+      hostEvent(200, 'queue.updated', { sessionId, items: [queueAfter] }),
+      hostEvent(201, 'goal.updated', { sessionId, goals: [goalAfter] }),
+      hostEvent(202, 'todo.updated', { sessionId, todos: [todoAfter] }),
+      hostEvent(203, 'jobs.updated', { sessionId, jobs: [jobAfter] }),
+      hostEvent(204, 'permission.requested', { request: permissionAfter }),
+      hostEvent(205, 'question.requested', { question: questionAfter }),
+      durableEvent(206, 26, {
+        type: 'message.user',
+        sessionId,
+        messageId: 'user-3',
+        rpcId: 'rpc-3',
+        markdown: 'Keep the live verification open.',
+        source: 'user',
+      }),
+      durableEvent(207, 27, { type: 'turn.started', sessionId, turn: 3 }),
+      durableEvent(208, 28, { type: 'step.started', sessionId, turn: 3, step: 1 }),
+      liveTransientEvent(209, 'reasoning.delta', {
+        type: 'reasoning.delta',
+        sessionId,
+        messageId: 'assistant:3:1',
+        turn: 3,
+        step: 1,
+        delta: 'The live verification is still running. ',
+        transientSequence: 1,
+        transientAttemptId: 'attempt-3',
+        transientIndex: 0,
+      }),
+      liveTransientEvent(210, 'message.delta', {
+        type: 'message.delta',
+        sessionId,
+        messageId: 'assistant:3:1',
+        turn: 3,
+        step: 1,
+        delta: 'Live verification in progress.',
+        transientSequence: 2,
+        transientAttemptId: 'attempt-3',
+        transientIndex: 1,
+      }),
+    ]
+    for (const message of afterFirstPaint) client.emit(message)
+    releaseQueue?.()
+    await flushAsync()
+
+    const state = store.getState()
+    expect(state.activeSessionId).toBe(sessionId)
+    expect(userMessageNodes(state).map((node) => node.id)).toEqual(['user-1', 'user-2', 'user-3'])
+    expect(state.history.map((entry) => entry.sequence)).toEqual(
+      Array.from({ length: 28 }, (_value, index) => index + 1).flatMap((sequence) =>
+        sequence === 21 ? [sequence, sequence, sequence] : [sequence],
+      ),
+    )
+    expect(state.history.filter((entry) => entry.sequence === 17)).toHaveLength(1)
+    expect(state.history.filter((entry) => entry.sequence === 21)).toHaveLength(3)
+    expect(state.timeline.lastSequence).toBe(28)
+
+    const assistants = state.timeline.nodes.filter((node) => node.kind === 'assistant-message')
+    expect(assistants).toHaveLength(3)
+    expect(assistants).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'durable-assistant-1',
+          markdown: 'The first result is ready.',
+          streaming: false,
+          reasoning: { markdown: 'I compared the nested result. ', streaming: false },
+        }),
+        expect.objectContaining({
+          id: 'durable-assistant-2',
+          markdown: 'The second result is ready.',
+          streaming: false,
+          reasoning: { markdown: 'The second result needs one more check. ', streaming: false },
+        }),
+        expect.objectContaining({
+          id: 'assistant:3:1',
+          markdown: 'Live verification in progress.',
+          streaming: true,
+          reasoning: { markdown: 'The live verification is still running. ', streaming: false },
+        }),
+      ]),
+    )
+
+    const tools = state.timeline.nodes.filter((node) => node.kind === 'tool')
+    expect(tools).toHaveLength(4)
+    const toolById = (id: string): (typeof tools)[number]['tool'] | undefined =>
+      tools.find((node) => node.id === id)?.tool
+    expect(toolById('call-root-1')?.status).toBe('completed')
+    expect(toolById('call-root-1:ptc:1')).toMatchObject({
+      parentCallId: 'call-root-1',
+      status: 'failed',
+      error: 'nested command failed',
+    })
+    expect(toolById('call-root-2')?.status).toBe('completed')
+    expect(toolById('call-root-2:ptc:1')).toMatchObject({
+      parentCallId: 'call-root-2',
+      status: 'completed',
+      outputSummary: 'nested result',
+    })
+    expect(state.timeline.nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'deliverables',
+          id: 'deliverables:call-root-1',
+          files: [{ path: 'artifacts/first-report.md', description: 'First report' }],
+        }),
+        expect.objectContaining({
+          kind: 'deliverables',
+          id: 'deliverables:call-root-2',
+          files: [{ path: 'artifacts/second-report.md', description: 'Second report' }],
+        }),
+        expect.objectContaining({ kind: 'retry', id: 'retry:retry-2', turn: 2, step: 1, attempt: 1 }),
+        expect.objectContaining({ kind: 'event', name: 'future.new-event', sequence: 25 }),
+      ]),
+    )
+    expect(state.projections[sessionId]).toEqual({
+      tokenUsage: { inputTokens: 64, outputTokens: 28 },
+      contextPressure: { pressureTokens: 96 },
+    })
+    expect(state.queue).toEqual([queueAfter])
+    expect(state.goals).toEqual([goalAfter])
+    expect(state.todos).toEqual([todoAfter])
+    expect(state.jobs).toEqual([jobAfter])
+    expect(state.permissions).toEqual([permissionAfter])
+    expect(state.questions).toEqual([questionAfter])
+    store.dispose()
+    client.dispose()
+  })
+
+  it('keeps a newer retry after an earlier settlement during the open replay', async () => {
+    let releaseOpen: ((value: unknown) => void) | undefined
+    const openResponse = new Promise<unknown>((resolve) => {
+      releaseOpen = resolve
+    })
+    const { store, client } = makeStore({ openResponse })
+    const opening = store.openSession(activeSession.id)
+
+    // The old attempt was already durable when the newer Alpha attempt
+    // started. Host sequence is the only total order that contains both the
+    // durable settlement and the cursorless live prefix.
+    client.emit(
+      liveEvent(5, {
+        type: 'message.completed',
+        sessionId: activeSession.id,
+        messageId: 'durable-attempt-1',
+        turn: 1,
+        step: 1,
+        markdown: 'old attempt',
+      }),
+    )
+    client.emit(
+      liveTransientEvent(30_006, 'message.delta', {
+        type: 'message.delta',
+        sessionId: activeSession.id,
+        messageId: 'assistant:1:1',
+        turn: 1,
+        step: 1,
+        delta: 'new attempt',
+        transientSequence: 1,
+        transientAttemptId: 'attempt-2',
+        transientIndex: 0,
+        transientStartedAfterSequence: 5,
+      }),
+    )
+    releaseOpen?.({
+      ...activeSession,
+      history: [],
+      historyHasMore: false,
+      permissionPresets: [],
+      configuration: {
+        preset: 'standard',
+        toolMode: 'native',
+        permissionPreset: 'workspace-write',
+        planMode: false,
+        model: { providerId: 'deepseek', modelId: 'deepseek-chat' },
+      },
+    })
+
+    await opening
+    await flushAsync()
+
+    const assistants = store.getState().timeline.nodes.filter((node) => node.kind === 'assistant-message')
+    expect(assistants).toHaveLength(2)
+    expect(assistants).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'durable-attempt-1', markdown: 'old attempt', streaming: false }),
+        expect.objectContaining({
+          id: 'assistant:1:1',
+          markdown: 'new attempt',
+          streaming: true,
+          liveAttemptId: 'attempt-2',
+        }),
+      ]),
+    )
+    store.dispose()
+    client.dispose()
+  })
+
+  it('uses the attempt cursor when an earlier settlement arrives after the live prefix', async () => {
+    let releaseOpen: ((value: unknown) => void) | undefined
+    const openResponse = new Promise<unknown>((resolve) => {
+      releaseOpen = resolve
+    })
+    const { store, client } = makeStore({ openResponse })
+    const opening = store.openSession(activeSession.id)
+
+    // Simulate two merged sources: the new Alpha attempt is observed first,
+    // while the previous durable settlement is delivered later. The attempt
+    // cursor still places the older settlement before the live prefix.
+    client.emit(
+      liveTransientEvent(30, 'message.delta', {
+        type: 'message.delta',
+        sessionId: activeSession.id,
+        messageId: 'assistant:1:1',
+        turn: 1,
+        step: 1,
+        delta: 'new attempt',
+        transientSequence: 1,
+        transientAttemptId: 'attempt-2',
+        transientIndex: 0,
+        transientStartedAfterSequence: 5,
+      }),
+    )
+    client.emit(
+      hostEvent(40, 'message.completed', {
+        type: 'message.completed',
+        sessionId: activeSession.id,
+        messageId: 'durable-attempt-1',
+        turn: 1,
+        step: 1,
+        markdown: 'old attempt',
+        sequence: 5,
+      }),
+    )
+    releaseOpen?.({
+      ...activeSession,
+      history: [],
+      historyHasMore: false,
+      permissionPresets: [],
+      configuration: {
+        preset: 'standard',
+        toolMode: 'native',
+        permissionPreset: 'workspace-write',
+        planMode: false,
+        model: { providerId: 'deepseek', modelId: 'deepseek-chat' },
+      },
+    })
+
+    await opening
+    await flushAsync()
+
+    expect(store.getState().timeline.nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'durable-attempt-1', markdown: 'old attempt', streaming: false }),
+        expect.objectContaining({
+          id: 'assistant:1:1',
+          markdown: 'new attempt',
+          streaming: true,
+          liveAttemptId: 'attempt-2',
+        }),
+      ]),
+    )
+    store.dispose()
+    client.dispose()
+  })
+
+  it('does not let an older Alpha follow projection baseline overwrite a newer control update', async () => {
+    const sessionId = activeSession.id
+    const { store, client } = makeStore({
+      openResponse: {
+        ...activeSession,
+        history: [],
+        historyHasMore: false,
+        permissionPresets: [],
+        projection: {
+          asOfSequence: 5,
+          values: {
+            contextPressure: { pressureTokens: 5 },
+            tokenUsage: { outputTokens: 5 },
+          },
+        },
+        configuration: {
+          preset: 'standard',
+          toolMode: 'native',
+          permissionPreset: 'workspace-write',
+          planMode: false,
+          model: { providerId: 'deepseek', modelId: 'deepseek-chat' },
+        },
+      },
+    })
+    await store.openSession(sessionId)
+    await flushAsync()
+
+    client.emit(
+      hostEvent(200, 'session.projection', {
+        sessionId,
+        key: 'contextPressure',
+        value: { pressureTokens: 20 },
+        sequence: 20,
+      }),
+    )
+    // Session/follow and session/control are independent Alpha streams. The
+    // follow snapshot is older, but can be published after the control update.
+    // Its tokenUsage cell is still newer than the open baseline and must not be
+    // discarded merely because contextPressure already has a higher cut.
+    client.emit(
+      hostEvent(201, 'session.subscribed', {
+        sessionId,
+        lastSequence: 10,
+        controlBaseline: false,
+        projection: {
+          asOfSequence: 10,
+          values: {
+            contextPressure: { pressureTokens: 10 },
+            tokenUsage: { outputTokens: 10 },
+          },
+        },
+      }),
+    )
+    await flushAsync()
+
+    expect(store.projections[sessionId]).toEqual({
+      contextPressure: { pressureTokens: 20 },
+      tokenUsage: { outputTokens: 10 },
+    })
+
+    // A manual reconnect may publish lifecycle snapshots without a separate
+    // connection.lost event. The replacement process is allowed to reuse lower
+    // durable sequence values and must seed its new projection epoch.
+    client.emit(hostEvent(202, 'connection.snapshot', { kind: 'idle' }))
+    client.emit(
+      hostEvent(203, 'connection.snapshot', {
+        kind: 'connected',
+        backendInstanceId: 'backend-next',
+        connectionGeneration: 2,
+      }),
+    )
+    client.emit(
+      hostEvent(204, 'session.subscribed', {
+        sessionId,
+        lastSequence: 1,
+        controlBaseline: false,
+        projection: {
+          asOfSequence: 1,
+          values: {
+            contextPressure: { pressureTokens: 1 },
+            tokenUsage: { outputTokens: 1 },
+          },
+        },
+      }),
+    )
+    await flushAsync()
+    expect(store.projections[sessionId]).toEqual({
+      contextPressure: { pressureTokens: 1 },
+      tokenUsage: { outputTokens: 1 },
+    })
+    store.dispose()
+    client.dispose()
+  })
+
+  it('fences delayed projections for keys omitted by a complete baseline', async () => {
+    const sessionId = activeSession.id
+    const { store, client } = makeStore()
+    await store.openSession(sessionId)
+
+    client.emit(
+      hostEvent(300, 'session.projection', {
+        sessionId,
+        key: 'removedKey',
+        value: { stale: true },
+        sequence: 8,
+      }),
+    )
+    client.emit(
+      hostEvent(301, 'session.subscribed', {
+        sessionId,
+        lastSequence: 10,
+        controlBaseline: false,
+        projection: { asOfSequence: 10, values: {} },
+      }),
+    )
+    client.emit(
+      hostEvent(302, 'session.projection', {
+        sessionId,
+        key: 'removedKey',
+        value: { stale: true, replayed: true },
+        sequence: 9,
+      }),
+    )
+    client.emit(
+      hostEvent(303, 'session.projection', {
+        sessionId,
+        key: 'newKey',
+        value: { fresh: true },
+        sequence: 11,
+      }),
+    )
+    await flushAsync()
+
+    expect(store.projections[sessionId]).toEqual({ newKey: { fresh: true } })
+    store.dispose()
+    client.dispose()
   })
 
   it('ignores malformed gap payloads without requesting history', async () => {

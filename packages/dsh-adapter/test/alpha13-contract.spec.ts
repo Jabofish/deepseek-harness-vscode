@@ -190,7 +190,9 @@ describe('DSH 0.1.3-alpha.1 Session v2 contract', () => {
     })
 
     socket.message(streamItem(socket, snapshot()))
-    await expect(first).resolves.toMatchObject({ value: { type: 'session/subscribed', lastSeq: 0 } })
+    await expect(first).resolves.toMatchObject({
+      value: { type: 'session/subscribed', lastSeq: 0, controlBaseline: false },
+    })
 
     const chunkNext = iterator.next()
     socket.message(
@@ -237,7 +239,15 @@ describe('DSH 0.1.3-alpha.1 Session v2 contract', () => {
         type: 'session/assistant-stream',
         sessionId: 's1',
         transientSequence: 1,
-        frame: { type: 'chunk', attemptId: 'attempt-1', revision: 2, index: 0, turn: 1, step: 1 },
+        frame: {
+          type: 'chunk',
+          attemptId: 'attempt-1',
+          revision: 2,
+          index: 0,
+          turn: 1,
+          step: 1,
+          startedAfterSeq: 0,
+        },
       },
     })
 
@@ -542,6 +552,82 @@ describe('DSH 0.1.3-alpha.1 Session v2 contract', () => {
     ).toThrow(/abandoned with a pending durable settlement/u)
   })
 
+  it('keeps transient ordering across a durable event and a retry attempt', () => {
+    const projector = new Alpha13AssistantStreamProjector()
+    projector.open({ revision: 0 }, 's1')
+    projector.acceptFrame(
+      {
+        type: 'start',
+        attemptId: 'attempt-first',
+        revision: 1,
+        startedAfterSeq: 0,
+        turn: 1,
+        step: 1,
+      },
+      's1',
+    )
+
+    const firstChunk = projector.acceptFrame(
+      {
+        type: 'chunk',
+        attemptId: 'attempt-first',
+        revision: 2,
+        index: 0,
+        time: 101,
+        chunk: { type: 'text-delta', index: 0, text: 'first attempt' },
+      },
+      's1',
+    )
+    expect(firstChunk).toMatchObject([{ type: 'chunk', transientSequence: 1, attemptId: 'attempt-first' }])
+
+    expect(
+      projector.acceptDurable({
+        type: 'llm/retry',
+        seq: 1,
+        time: 102,
+        surfaceOp: 'append',
+        sessionId: 's1',
+        data: { turn: 1, step: 1, retry: 1 },
+      }),
+    ).toMatchObject([{ type: 'event', event: { type: 'llm/retry', seq: 1 } }])
+    expect(
+      projector.acceptFrame(
+        {
+          type: 'end',
+          attemptId: 'attempt-first',
+          revision: 3,
+          index: 1,
+          outcome: { kind: 'abandoned' },
+        },
+        's1',
+      ),
+    ).toMatchObject([{ type: 'interrupted', attemptId: 'attempt-first' }])
+
+    projector.acceptFrame(
+      {
+        type: 'start',
+        attemptId: 'attempt-retry',
+        revision: 4,
+        startedAfterSeq: 1,
+        turn: 1,
+        step: 1,
+      },
+      's1',
+    )
+    const retryChunk = projector.acceptFrame(
+      {
+        type: 'chunk',
+        attemptId: 'attempt-retry',
+        revision: 5,
+        index: 0,
+        time: 103,
+        chunk: { type: 'text-delta', index: 0, text: 'retry attempt' },
+      },
+      's1',
+    )
+    expect(retryChunk).toMatchObject([{ type: 'chunk', transientSequence: 2, attemptId: 'attempt-retry' }])
+  })
+
   it('expands compact tool chunks and rejects duplicate chunk indexes', () => {
     const projector = new Alpha13AssistantStreamProjector()
     expect(
@@ -595,5 +681,59 @@ describe('DSH 0.1.3-alpha.1 Session v2 contract', () => {
         's1',
       ),
     ).toThrow(/expected chunk index 2/u)
+  })
+
+  it('keeps visible transient sequence contiguous across hidden tool chunks', () => {
+    const projector = new Alpha13AssistantStreamProjector()
+    projector.open({ revision: 0 }, 's1')
+    projector.acceptFrame(
+      {
+        type: 'start',
+        attemptId: 'attempt-mixed',
+        revision: 1,
+        startedAfterSeq: -1,
+        turn: 1,
+        step: 1,
+      },
+      's1',
+    )
+
+    const hidden = projector.acceptFrame(
+      {
+        type: 'chunk',
+        attemptId: 'attempt-mixed',
+        revision: 2,
+        index: 0,
+        time: 100,
+        chunk: { type: 'tool-call-delta', index: 0, id: 'call-1', argumentsDelta: '{' },
+      },
+      's1',
+    )
+    const text = projector.acceptFrame(
+      {
+        type: 'chunk',
+        attemptId: 'attempt-mixed',
+        revision: 3,
+        index: 1,
+        time: 101,
+        chunk: { type: 'text-delta', index: 1, text: 'visible' },
+      },
+      's1',
+    )
+    const reasoning = projector.acceptFrame(
+      {
+        type: 'chunk',
+        attemptId: 'attempt-mixed',
+        revision: 4,
+        index: 2,
+        time: 102,
+        chunk: { type: 'reasoning-delta', index: 2, text: 'thinking' },
+      },
+      's1',
+    )
+
+    expect(hidden).toMatchObject([{ type: 'chunk', transientSequence: 0, index: 0 }])
+    expect(text).toMatchObject([{ type: 'chunk', transientSequence: 1, index: 1 }])
+    expect(reasoning).toMatchObject([{ type: 'chunk', transientSequence: 2, index: 2 }])
   })
 })

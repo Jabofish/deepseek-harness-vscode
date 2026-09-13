@@ -73,6 +73,8 @@ export type TimelineNode =
       readonly liveAttemptId?: string
       /** Highest transient frame index folded into this node. */
       readonly liveLastIndex?: number
+      /** Durable DSH cursor immediately before this live attempt started. */
+      readonly liveStartedAfterSequence?: number
       readonly reasoning?: {
         readonly markdown: string
         readonly streaming: boolean
@@ -87,6 +89,8 @@ export type TimelineNode =
       readonly liveAttemptId?: string
       /** Highest transient frame index folded into this reasoning node. */
       readonly liveLastIndex?: number
+      /** Durable DSH cursor immediately before this live attempt started. */
+      readonly liveStartedAfterSequence?: number
     }
   | { readonly kind: 'tool'; readonly id: string; readonly tool: ToolCallView; readonly sequence?: number }
   | {

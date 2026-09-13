@@ -17,11 +17,26 @@ function isTransientBaselineRestart(event: TransientDeltaEvent, node: LiveTimeli
   return (
     event.transientAttemptId !== undefined &&
     event.transientSequence === 1 &&
-    event.transientIndex === 0 &&
     node.liveAttemptId === event.transientAttemptId &&
-    node.liveLastIndex !== undefined &&
-    node.liveLastIndex > 0
+    node.liveLastIndex !== undefined
   )
+}
+
+function transientNodeIdentity(event: TransientDeltaEvent):
+  | {
+      readonly liveAttemptId: string
+      readonly liveLastIndex: number
+      readonly liveStartedAfterSequence?: number
+    }
+  | Record<never, never> {
+  if (event.transientAttemptId === undefined || event.transientIndex === undefined) return {}
+  return {
+    liveAttemptId: event.transientAttemptId,
+    liveLastIndex: event.transientIndex,
+    ...(event.transientStartedAfterSequence === undefined
+      ? {}
+      : { liveStartedAfterSequence: event.transientStartedAfterSequence }),
+  }
 }
 
 export interface SequencedBackendEvent {
@@ -191,8 +206,8 @@ export function reduceTimeline(
       const timingKeyValue = timingKey(event.turn, event.step)
       const timing = noteFirstToken(readStepTimings(), event.turn, event.step, event.time)
       commitTiming(timingKeyValue, timing)
-      const index = conversationNodeIndex(nodes, event.messageId, event.turn, event.step)
       const transient = event.transientAttemptId !== undefined && event.transientIndex !== undefined
+      const index = conversationNodeIndex(nodes, event.messageId, event.turn, event.step, transient)
       nodeChangeStart = Math.min(
         nodeChangeStart ?? (index < 0 ? nodes.length : index),
         index < 0 ? nodes.length : index,
@@ -207,9 +222,7 @@ export function reduceTimeline(
           ...(event.step === undefined ? {} : { step: event.step }),
           ...(turnClosed ? { turnCompleted: false } : {}),
           ...(timing === undefined ? {} : { timing }),
-          ...(transient
-            ? { liveAttemptId: event.transientAttemptId, liveLastIndex: event.transientIndex }
-            : {}),
+          ...(transient ? transientNodeIdentity(event) : {}),
         })
         break
       }
@@ -241,9 +254,7 @@ export function reduceTimeline(
           ...(event.step === undefined ? {} : { step: event.step }),
           ...(event.turn === undefined ? {} : { turnCompleted: false }),
           ...(timing === undefined ? {} : { timing }),
-          ...(transient
-            ? { liveAttemptId: event.transientAttemptId, liveLastIndex: event.transientIndex }
-            : {}),
+          ...(transient ? transientNodeIdentity(event) : {}),
           ...(replacesPreviousAttempt
             ? {}
             : node.reasoning === undefined
@@ -267,9 +278,7 @@ export function reduceTimeline(
           ...(event.step === undefined ? {} : { step: event.step }),
           ...(turnClosed ? { turnCompleted: false } : {}),
           ...(timing === undefined ? {} : { timing }),
-          ...(transient
-            ? { liveAttemptId: event.transientAttemptId, liveLastIndex: event.transientIndex }
-            : {}),
+          ...(transient ? transientNodeIdentity(event) : {}),
           ...(replacesPreviousAttempt ? {} : { reasoning: { markdown: node.markdown, streaming: false } }),
         }
       }
@@ -283,8 +292,8 @@ export function reduceTimeline(
         nodeChangeStart = 0
       }
       if (event.delta === '') break
-      const index = conversationNodeIndex(nodes, event.messageId, event.turn, event.step)
       const transient = event.transientAttemptId !== undefined && event.transientIndex !== undefined
+      const index = conversationNodeIndex(nodes, event.messageId, event.turn, event.step, transient)
       nodeChangeStart = Math.min(
         nodeChangeStart ?? (index < 0 ? nodes.length : index),
         index < 0 ? nodes.length : index,
@@ -300,9 +309,7 @@ export function reduceTimeline(
           ...(event.step === undefined ? {} : { step: event.step }),
           ...(turnClosed ? { turnCompleted: false } : {}),
           ...(timing === undefined ? {} : { timing }),
-          ...(transient
-            ? { liveAttemptId: event.transientAttemptId, liveLastIndex: event.transientIndex }
-            : {}),
+          ...(transient ? transientNodeIdentity(event) : {}),
           reasoning: { markdown: event.delta, streaming: !turnClosed },
         })
         break
@@ -332,9 +339,7 @@ export function reduceTimeline(
           ...(replacesPreviousAttempt ? { markdown: '' } : {}),
           ...(event.turn === undefined ? {} : { turnCompleted: false }),
           ...(timing === undefined ? {} : { timing }),
-          ...(transient
-            ? { liveAttemptId: event.transientAttemptId, liveLastIndex: event.transientIndex }
-            : {}),
+          ...(transient ? transientNodeIdentity(event) : {}),
           reasoning: {
             markdown: `${replacesPreviousAttempt ? '' : (reasoning?.markdown ?? '')}${event.delta}`,
             streaming: !turnClosed,
@@ -358,9 +363,7 @@ export function reduceTimeline(
           ...node,
           markdown: replacesPreviousAttempt ? event.delta : `${node.markdown}${event.delta}`,
           streaming: !turnClosed,
-          ...(transient
-            ? { liveAttemptId: event.transientAttemptId, liveLastIndex: event.transientIndex }
-            : {}),
+          ...(transient ? transientNodeIdentity(event) : {}),
         }
       }
       break
@@ -414,83 +417,135 @@ export function reduceTimeline(
         event.images === undefined
       ) {
         if (node?.kind === 'assistant-message')
-          nodes[index] = {
-            ...node,
-            id: event.messageId,
-            streaming: false,
-            sequence: input.sequence,
-            ...(event.turn === undefined ? {} : { turn: event.turn }),
-            ...(event.step === undefined ? {} : { step: event.step }),
-            ...(turnClosed ? { turnCompleted: false } : {}),
-            ...(node.reasoning === undefined ? {} : { reasoning: { ...node.reasoning, streaming: false } }),
-            ...(event.usage === undefined ? {} : { usage: event.usage }),
-            ...(node.images === undefined ? {} : { images: node.images }),
-            ...(event.interrupted === undefined ? {} : { interrupted: event.interrupted }),
-            ...(timing === undefined ? {} : { timing }),
-          }
+          nodes[index] = settleAssistantNode(
+            {
+              ...node,
+              id: event.messageId,
+              streaming: false,
+              sequence: input.sequence,
+              ...(event.turn === undefined ? {} : { turn: event.turn }),
+              ...(event.step === undefined ? {} : { step: event.step }),
+              ...(turnClosed ? { turnCompleted: false } : {}),
+              ...(node.reasoning === undefined ? {} : { reasoning: { ...node.reasoning, streaming: false } }),
+              ...(event.usage === undefined ? {} : { usage: event.usage }),
+              ...(node.images === undefined ? {} : { images: node.images }),
+              ...(event.interrupted === undefined ? {} : { interrupted: event.interrupted }),
+              ...(timing === undefined ? {} : { timing }),
+            },
+            input.advanceSequence === false,
+          )
         else if (node?.kind === 'reasoning')
-          nodes[index] = {
-            kind: 'assistant-message',
-            id: event.messageId,
-            markdown: '',
-            streaming: false,
-            sequence: input.sequence,
-            ...(event.turn === undefined ? {} : { turn: event.turn }),
-            ...(event.step === undefined ? {} : { step: event.step }),
-            ...(turnClosed ? { turnCompleted: false } : {}),
-            ...(timing === undefined ? {} : { timing }),
-            ...(event.usage === undefined ? {} : { usage: event.usage }),
-            reasoning: { markdown: node.markdown, streaming: false },
-          }
+          nodes[index] = settleAssistantNode(
+            {
+              kind: 'assistant-message',
+              id: event.messageId,
+              markdown: '',
+              streaming: false,
+              sequence: input.sequence,
+              ...(event.turn === undefined ? {} : { turn: event.turn }),
+              ...(event.step === undefined ? {} : { step: event.step }),
+              ...(turnClosed ? { turnCompleted: false } : {}),
+              ...(timing === undefined ? {} : { timing }),
+              ...(event.usage === undefined ? {} : { usage: event.usage }),
+              ...(input.advanceSequence === false && node.liveAttemptId !== undefined
+                ? {
+                    liveAttemptId: node.liveAttemptId,
+                    liveLastIndex: node.liveLastIndex,
+                    ...(node.liveStartedAfterSequence === undefined
+                      ? {}
+                      : { liveStartedAfterSequence: node.liveStartedAfterSequence }),
+                  }
+                : {}),
+              reasoning: { markdown: node.markdown, streaming: false },
+            },
+            input.advanceSequence === false,
+          )
         break
       }
       if (node?.kind === 'assistant-message') {
         const reasoning =
           event.reasoning === undefined ? node.reasoning : { markdown: event.reasoning, streaming: false }
-        nodes[index] = {
-          ...node,
-          id: event.messageId,
-          markdown: event.markdown ?? node.markdown,
-          streaming: false,
-          sequence: input.sequence,
-          ...(event.turn === undefined ? {} : { turn: event.turn }),
-          ...(event.step === undefined ? {} : { step: event.step }),
-          ...(turnClosed ? { turnCompleted: false } : {}),
-          ...(timing === undefined ? {} : { timing }),
-          ...(event.modelLabel === undefined ? {} : { modelLabel: event.modelLabel }),
-          ...(event.interrupted === undefined ? {} : { interrupted: event.interrupted }),
-          ...(event.usage === undefined
-            ? node.usage === undefined
-              ? {}
-              : { usage: node.usage }
-            : { usage: event.usage }),
-          ...(event.images === undefined
-            ? node.images === undefined
-              ? {}
-              : { images: node.images }
-            : { images: event.images }),
-          ...(reasoning === undefined ? {} : { reasoning: { ...reasoning, streaming: false } }),
-        }
-      } else if (node?.kind === 'reasoning') {
-        nodes[index] = {
-          kind: 'assistant-message',
-          id: event.messageId,
-          markdown: event.markdown ?? '',
-          streaming: false,
-          sequence: input.sequence,
-          ...(event.turn === undefined ? {} : { turn: event.turn }),
-          ...(event.step === undefined ? {} : { step: event.step }),
-          ...(turnClosed ? { turnCompleted: false } : {}),
-          ...(timing === undefined ? {} : { timing }),
-          ...(event.modelLabel === undefined ? {} : { modelLabel: event.modelLabel }),
-          ...(event.usage === undefined ? {} : { usage: event.usage }),
-          ...(event.images === undefined ? {} : { images: event.images }),
-          ...(event.interrupted === undefined ? {} : { interrupted: event.interrupted }),
-          reasoning: {
-            markdown: event.reasoning ?? node.markdown,
+        nodes[index] = settleAssistantNode(
+          {
+            ...node,
+            id: event.messageId,
+            markdown: event.markdown ?? node.markdown,
             streaming: false,
+            sequence: input.sequence,
+            ...(event.turn === undefined ? {} : { turn: event.turn }),
+            ...(event.step === undefined ? {} : { step: event.step }),
+            ...(turnClosed ? { turnCompleted: false } : {}),
+            ...(timing === undefined ? {} : { timing }),
+            ...(event.modelLabel === undefined ? {} : { modelLabel: event.modelLabel }),
+            ...(event.interrupted === undefined ? {} : { interrupted: event.interrupted }),
+            ...(event.usage === undefined
+              ? node.usage === undefined
+                ? {}
+                : { usage: node.usage }
+              : { usage: event.usage }),
+            ...(event.images === undefined
+              ? node.images === undefined
+                ? {}
+                : { images: node.images }
+              : { images: event.images }),
+            ...(reasoning === undefined ? {} : { reasoning: { ...reasoning, streaming: false } }),
           },
-        }
+          input.advanceSequence === false,
+        )
+      } else if (node?.kind === 'reasoning') {
+        nodes[index] = settleAssistantNode(
+          {
+            kind: 'assistant-message',
+            id: event.messageId,
+            markdown: event.markdown ?? '',
+            streaming: false,
+            sequence: input.sequence,
+            ...(event.turn === undefined ? {} : { turn: event.turn }),
+            ...(event.step === undefined ? {} : { step: event.step }),
+            ...(turnClosed ? { turnCompleted: false } : {}),
+            ...(timing === undefined ? {} : { timing }),
+            ...(event.modelLabel === undefined ? {} : { modelLabel: event.modelLabel }),
+            ...(event.usage === undefined ? {} : { usage: event.usage }),
+            ...(event.images === undefined ? {} : { images: event.images }),
+            ...(event.interrupted === undefined ? {} : { interrupted: event.interrupted }),
+            ...(input.advanceSequence === false && node.liveAttemptId !== undefined
+              ? {
+                  liveAttemptId: node.liveAttemptId,
+                  liveLastIndex: node.liveLastIndex,
+                  ...(node.liveStartedAfterSequence === undefined
+                    ? {}
+                    : { liveStartedAfterSequence: node.liveStartedAfterSequence }),
+                }
+              : {}),
+            reasoning: {
+              markdown: event.reasoning ?? node.markdown,
+              streaming: false,
+            },
+          },
+          input.advanceSequence === false,
+        )
+      }
+      break
+    }
+    case 'assistant.attempt': {
+      // `assistant/attempt` is the durable settlement of an intermediate
+      // retry. Upstream removes the matching transient rows instead of
+      // rendering them as a completed assistant message. The event has no
+      // attempt id in the durable journal, so the newest open node at the
+      // shared turn/step coordinate is the local equivalent of that match.
+      openTurn(event.turn)
+      const index = findNodeIndexFromEnd(
+        nodes,
+        (node) =>
+          node.kind === 'assistant-message' &&
+          node.turn === event.turn &&
+          node.step === event.step &&
+          isOpenConversationNode(node) &&
+          (node.liveStartedAfterSequence === undefined || input.sequence > node.liveStartedAfterSequence),
+      )
+      if (index >= 0) {
+        nodeChangeStart = Math.min(nodeChangeStart ?? index, index)
+        nodes.splice(index, 1)
       }
       break
     }
@@ -1098,16 +1153,40 @@ function conversationNodeIndex(
   messageId: string,
   turn?: number,
   step?: number,
+  transient = false,
 ): number {
-  const exactIndex = findNodeIndexFromEnd(
-    nodes,
-    (node) => node.id === messageId && (node.kind === 'assistant-message' || node.kind === 'reasoning'),
-  )
+  const exactIndex = findNodeIndexFromEnd(nodes, (node) => {
+    if (node.id !== messageId || (node.kind !== 'assistant-message' && node.kind !== 'reasoning'))
+      return false
+    return !transient || isOpenConversationNode(node)
+  })
   if (exactIndex >= 0 || turn === undefined || step === undefined) return exactIndex
   return findNodeIndexFromEnd(
     nodes,
-    (node) => node.kind === 'assistant-message' && node.turn === turn && node.step === step,
+    (node) =>
+      node.kind === 'assistant-message' &&
+      node.turn === turn &&
+      node.step === step &&
+      isOpenConversationNode(node),
   )
+}
+
+function isOpenConversationNode(node: TimelineNode): boolean {
+  if (node.kind === 'assistant-message')
+    return node.streaming || node.reasoning?.streaming === true || node.liveAttemptId !== undefined
+  return node.kind === 'reasoning' && node.streaming
+}
+
+function settleAssistantNode(
+  node: Extract<TimelineNode, { readonly kind: 'assistant-message' }>,
+  preserveTransientIdentity: boolean,
+): Extract<TimelineNode, { readonly kind: 'assistant-message' }> {
+  if (preserveTransientIdentity) return node
+  const settled = { ...node }
+  delete settled.liveAttemptId
+  delete settled.liveLastIndex
+  delete settled.liveStartedAfterSequence
+  return settled
 }
 
 function sameUserMessagePreview(

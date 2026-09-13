@@ -230,6 +230,8 @@ type BackendEventPayload =
       readonly transientAttemptId?: string
       /** Dense process-local frame position within the attempt. */
       readonly transientIndex?: number
+      /** Durable DSH cursor immediately before this attempt started. */
+      readonly transientStartedAfterSequence?: number
     }
   | {
       readonly type: 'reasoning.delta'
@@ -246,6 +248,8 @@ type BackendEventPayload =
       readonly transientAttemptId?: string
       /** Dense process-local frame position within the attempt. */
       readonly transientIndex?: number
+      /** Durable DSH cursor immediately before this attempt started. */
+      readonly transientStartedAfterSequence?: number
     }
   | {
       readonly type: 'message.completed'
@@ -262,6 +266,15 @@ type BackendEventPayload =
       readonly time?: number
       /** rc.8 finalizes a delivered prefix when cancellation interrupts a step. */
       readonly interrupted?: true
+    }
+  | {
+      /** DSH `assistant/attempt`; settles a non-visible retry attempt. */
+      readonly type: 'assistant.attempt'
+      readonly sessionId: string
+      readonly turn: number
+      readonly step: number
+      /** Epoch milliseconds from the durable DSH event. */
+      readonly time?: number
     }
   | {
       /** DSH `deliverables/presented`; source files remain at their current workspace paths. */
@@ -347,6 +360,13 @@ type BackendEventPayload =
       readonly type: 'session.subscribed'
       readonly sessionId: string
       readonly lastSequence: number
+      /**
+       * Whether this subscription also reset the process-local control-plane
+       * baseline. Alpha follows Session history separately from queue/jobs and
+       * interaction streams, so its follow subscription must not clear those
+       * live values in the Webview.
+       */
+      readonly controlBaseline?: boolean
       readonly projection?: SessionProjectionSnapshot
     }
   /** Internal durable watermark for an upstream system/message event. */

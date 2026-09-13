@@ -21,6 +21,8 @@ export type StreamRecovery = (
 interface OrderedSessionDelivery {
   nextSequence: number
   readonly pending: Map<number, BackendEvent[]>
+  /** Durable positions occupied by filtered advisory rows. */
+  readonly skippedSequences: Set<number>
   recoveryThrough?: number
   draining: boolean
   drainSignal?: AbortSignal
@@ -37,8 +39,12 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
   private readonly orderedDeliveries = new Map<string, OrderedSessionDelivery>()
   /** Projection frames share the durable event sequence, so dedupe them per key. */
   private readonly lastProjectionSequences = new Map<string, Map<string, number>>()
+  /** A complete projection baseline also fences keys omitted from its values. */
+  private readonly projectionBaselines = new Map<string, number>()
   /** Alpha13 transient frames have a separate local sequence space. */
   private readonly lastTransientSequences = new Map<string, number>()
+  /** Session/follow emits its bounded history before the subscription cursor. */
+  private readonly pendingSessionSnapshots = new Map<string, BackendEvent[]>()
   private lifetime: AbortController | undefined
   private reading: Promise<void> | undefined
   private retryTimer: ReturnType<typeof setTimeout> | undefined
@@ -98,8 +104,10 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
       this.lastSequences.clear()
       this.clearOrderedDeliveries()
       this.lastProjectionSequences.clear()
+      this.projectionBaselines.clear()
       this.lastTransientSequences.clear()
       this.subscribedSessions.clear()
+      this.pendingSessionSnapshots.clear()
       const reading = this.reading
       this.lifetime?.abort()
       await reading?.catch(() => undefined)
@@ -115,6 +123,13 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
 
   private startReading(): void {
     if (this.closed || this.listeners.size === 0 || this.reading !== undefined) return
+    if (this.options.streamSource !== undefined) {
+      // A streamSource session starts every generation with a fresh bounded
+      // snapshot. Keep the durable watermark for recovery, but make the next
+      // session/subscribed frame establish the snapshot boundary again.
+      this.subscribedSessions.clear()
+      this.pendingSessionSnapshots.clear()
+    }
     const lifetime = new AbortController()
     this.lifetime = lifetime
     this.reading = this.runGeneration(lifetime)
@@ -213,14 +228,46 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
       this.lastSequences.delete(event.sessionId)
       this.deleteOrderedDelivery(event.sessionId)
       this.lastProjectionSequences.delete(event.sessionId)
+      this.projectionBaselines.delete(event.sessionId)
       this.lastTransientSequences.delete(event.sessionId)
       this.subscribedSessions.delete(event.sessionId)
+      this.pendingSessionSnapshots.delete(event.sessionId)
+    }
+    if (
+      this.options.streamSource !== undefined &&
+      event.type !== 'session.subscribed' &&
+      event.type !== 'session.removed'
+    ) {
+      const sessionId = eventSessionId(event)
+      if (sessionId !== undefined && !this.subscribedSessions.has(sessionId)) {
+        // Only durable rows belong to the bounded pre-subscription snapshot.
+        // Host-only notices (for example an abandoned assistant attempt) and
+        // cursorless live frames have no replayable DSH sequence; holding them
+        // for a subscription marker would either delay them indefinitely or
+        // lose them when a stream ends before that marker arrives.
+        if (event.sequence !== undefined) {
+          const snapshot = this.pendingSessionSnapshots.get(sessionId) ?? []
+          snapshot.push(event)
+          this.pendingSessionSnapshots.set(sessionId, snapshot)
+        } else this.emit(event)
+        return
+      }
     }
     if (event.type === 'session.subscribed') {
+      const snapshot = this.pendingSessionSnapshots.get(event.sessionId)
+      if (snapshot !== undefined) {
+        this.pendingSessionSnapshots.delete(event.sessionId)
+        this.acceptSessionSnapshot(event, snapshot, signal)
+        return
+      }
       this.subscribedSessions.add(event.sessionId)
       this.lastTransientSequences.delete(event.sessionId)
-      this.truncateProjectionSequences(event.sessionId, event.lastSequence)
       const previous = this.lastSequences.get(event.sessionId)
+      if (previous !== undefined && event.lastSequence < previous) {
+        this.lastProjectionSequences.delete(event.sessionId)
+        this.projectionBaselines.delete(event.sessionId)
+      } else this.truncateProjectionSequences(event.sessionId, event.lastSequence)
+      this.rememberProjectionBaseline(event)
       if (previous === undefined) {
         this.lastSequences.set(event.sessionId, event.lastSequence)
         this.orderedDeliveries.set(event.sessionId, createOrderedDelivery(event.lastSequence + 1))
@@ -290,11 +337,7 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
       return
     }
     if (event.type === 'session.projection') {
-      const perSession = this.lastProjectionSequences.get(sessionId) ?? new Map<string, number>()
-      const previous = perSession.get(event.key)
-      if (previous !== undefined && sequence <= previous) return
-      perSession.set(event.key, sequence)
-      this.lastProjectionSequences.set(sessionId, perSession)
+      if (!this.rememberProjectionSequence(sessionId, event.key, sequence)) return
       this.emit(event)
       return
     }
@@ -326,6 +369,91 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
     this.lastSequences.set(sessionId, Math.max(this.lastSequences.get(sessionId) ?? -1, sequence))
     this.retryAttempt = 0
     this.startOrderedDrain(sessionId, signal)
+  }
+
+  /** Reconcile a bounded Session/follow snapshot with the retained watermark. */
+  private acceptSessionSnapshot(
+    event: Extract<BackendEvent, { readonly type: 'session.subscribed' }>,
+    snapshot: readonly BackendEvent[],
+    signal: AbortSignal,
+  ): void {
+    this.subscribedSessions.add(event.sessionId)
+    // A new Session/follow baseline starts a new process-local projection
+    // epoch even when the durable log happens to reuse lower sequence values.
+    // Clear these side channels before replaying the snapshot so the first
+    // transient frame/projection of the new epoch cannot be rejected by stale
+    // state from the previous generation.
+    this.lastTransientSequences.delete(event.sessionId)
+    const orderedSnapshot = [...snapshot].sort(
+      (left, right) =>
+        (left.sequence ?? Number.MAX_SAFE_INTEGER) - (right.sequence ?? Number.MAX_SAFE_INTEGER),
+    )
+    const previous = this.lastSequences.get(event.sessionId)
+    if (previous !== undefined && event.lastSequence < previous) {
+      this.lastProjectionSequences.delete(event.sessionId)
+      this.projectionBaselines.delete(event.sessionId)
+    } else this.truncateProjectionSequences(event.sessionId, event.lastSequence)
+    this.rememberProjectionBaseline(event)
+
+    // A first snapshot, or a host log that moved backwards, is authoritative
+    // for the rows it contains. Emit those rows even when they are below the
+    // previous watermark; otherwise a restarted DSH process loses the new
+    // epoch before the lower session/subscribed cursor can reset delivery.
+    if (previous === undefined || event.lastSequence < previous) {
+      const emittedSnapshot: BackendEvent[] = []
+      for (const candidate of orderedSnapshot) {
+        // A retried follow page can repeat an identical durable row before the
+        // cursor marker arrives. Dedupe exact records only: distinct projection
+        // keys or distinct events sharing one DSH sequence are still valid.
+        if (emittedSnapshot.some((existing) => sameBackendEvent(existing, candidate))) continue
+        if (
+          candidate.type === 'session.projection' &&
+          (candidate.sequence === undefined ||
+            !this.rememberProjectionSequence(event.sessionId, candidate.key, candidate.sequence))
+        )
+          continue
+        emittedSnapshot.push(candidate)
+        this.emit(candidate)
+      }
+      this.lastSequences.set(event.sessionId, event.lastSequence)
+      if (previous === undefined)
+        this.orderedDeliveries.set(event.sessionId, createOrderedDelivery(event.lastSequence + 1))
+      else this.replaceOrderedDelivery(event.sessionId, event.lastSequence + 1)
+      this.retryAttempt = 0
+      this.emit(event)
+      return
+    }
+
+    // A reconnect snapshot is only a bounded tail. Keep it behind the old
+    // cursor so the recovery callback can fill the unseen prefix, then let
+    // the queued tail drain in durable sequence order.
+    const delivery =
+      this.orderedDeliveries.get(event.sessionId) ??
+      (() => {
+        const created = createOrderedDelivery(previous + 1)
+        this.orderedDeliveries.set(event.sessionId, created)
+        return created
+      })()
+    for (const candidate of orderedSnapshot) {
+      const sequence = candidate.sequence
+      if (sequence === undefined || sequence < delivery.nextSequence) continue
+      if (
+        candidate.type === 'session.projection' &&
+        !this.rememberProjectionSequence(event.sessionId, candidate.key, sequence)
+      ) {
+        delivery.skippedSequences.add(sequence)
+        continue
+      }
+      const pending = delivery.pending.get(sequence) ?? []
+      if (pending.some((existing) => sameBackendEvent(existing, candidate))) continue
+      pending.push(candidate)
+      delivery.pending.set(sequence, pending)
+    }
+    this.lastSequences.set(event.sessionId, Math.max(previous, event.lastSequence))
+    delivery.recoveryThrough = Math.max(delivery.recoveryThrough ?? -1, event.lastSequence)
+    this.retryAttempt = 0
+    this.emit(event)
+    this.startOrderedDrain(event.sessionId, signal)
   }
 
   /**
@@ -414,6 +542,13 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
     )) {
       const sequence = candidate.sequence
       if (sequence === undefined || sequence < delivery.nextSequence || sequence > toSequence) continue
+      if (
+        candidate.type === 'session.projection' &&
+        !this.rememberProjectionSequence(sessionId, candidate.key, sequence)
+      ) {
+        delivery.skippedSequences.add(sequence)
+        continue
+      }
       const pending = delivery.pending.get(sequence) ?? []
       if (pending.some((existing) => sameBackendEvent(existing, candidate))) continue
       pending.push(candidate)
@@ -429,14 +564,54 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
       const next = delivery.nextSequence
       const pending = delivery.pending.get(next)
       if (pending !== undefined && pending.length > 0) {
+        delivery.skippedSequences.delete(next)
         this.emitPendingSequence(sessionId, delivery, next)
         continue
       }
+      if (delivery.skippedSequences.delete(next)) {
+        delivery.nextSequence = next + 1
+        continue
+      }
       const nextPresent = smallestPendingSequence(delivery.pending, next + 1, toSequence)
-      const gapTo = nextPresent === undefined ? toSequence : nextPresent - 1
+      const nextSkipped = smallestSkippedSequence(delivery.skippedSequences, next + 1, toSequence)
+      const firstPresent =
+        nextPresent === undefined
+          ? nextSkipped
+          : nextSkipped === undefined
+            ? nextPresent
+            : Math.min(nextPresent, nextSkipped)
+      const gapTo = firstPresent === undefined ? toSequence : firstPresent - 1
       this.emit({ type: 'session.gap', sessionId, fromSequence: next, toSequence: gapTo })
       delivery.nextSequence = gapTo + 1
     }
+  }
+
+  private rememberProjectionSequence(sessionId: string, key: string, sequence: number): boolean {
+    const baseline = this.projectionBaselines.get(sessionId)
+    if (baseline !== undefined && sequence <= baseline) return false
+    const perSession = this.lastProjectionSequences.get(sessionId) ?? new Map<string, number>()
+    const previous = perSession.get(key)
+    if (previous !== undefined && sequence <= previous) return false
+    perSession.set(key, sequence)
+    this.lastProjectionSequences.set(sessionId, perSession)
+    return true
+  }
+
+  private rememberProjectionBaseline(
+    event: Extract<BackendEvent, { readonly type: 'session.subscribed' }>,
+  ): void {
+    const projection = event.projection
+    if (projection === undefined) return
+    const previousBaseline = this.projectionBaselines.get(event.sessionId)
+    if (previousBaseline !== undefined && projection.asOfSequence <= previousBaseline) return
+    this.projectionBaselines.set(event.sessionId, projection.asOfSequence)
+    const perSession = this.lastProjectionSequences.get(event.sessionId) ?? new Map<string, number>()
+    for (const key of Object.keys(projection.values)) {
+      const previous = perSession.get(key)
+      if (previous === undefined || projection.asOfSequence > previous)
+        perSession.set(key, projection.asOfSequence)
+    }
+    this.lastProjectionSequences.set(event.sessionId, perSession)
   }
 
   private truncateProjectionSequences(sessionId: string, lastSequence: number): void {
@@ -480,6 +655,12 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
   }
 
   private emit(event: BackendEvent): void {
+    // The observer owns cache/lifecycle side effects. Alpha may synchronously
+    // close a session controller from there (for example after
+    // `session.removed`), which clears this controller's live listener set.
+    // Snapshot the listeners before invoking the observer so the event that
+    // caused the teardown still reaches every subscriber exactly once.
+    const listeners = [...this.listeners]
     try {
       this.observe?.(event)
     } catch {
@@ -487,7 +668,7 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
       // repository-side invariant must not terminate the stream and discard
       // the rest of a same-sequence bucket.
     }
-    for (const listener of this.listeners) {
+    for (const listener of listeners) {
       try {
         listener(event)
       } catch {
@@ -501,6 +682,7 @@ function createOrderedDelivery(nextSequence: number): OrderedSessionDelivery {
   return {
     nextSequence,
     pending: new Map(),
+    skippedSequences: new Set(),
     draining: false,
     abort: new AbortController(),
   }
@@ -513,6 +695,19 @@ function smallestPendingSequence(
 ): number | undefined {
   let smallest: number | undefined
   for (const sequence of pending.keys()) {
+    if (sequence < minimum || sequence > maximum) continue
+    if (smallest === undefined || sequence < smallest) smallest = sequence
+  }
+  return smallest
+}
+
+function smallestSkippedSequence(
+  skipped: ReadonlySet<number>,
+  minimum: number,
+  maximum: number,
+): number | undefined {
+  let smallest: number | undefined
+  for (const sequence of skipped) {
     if (sequence < minimum || sequence > maximum) continue
     if (smallest === undefined || sequence < smallest) smallest = sequence
   }
@@ -623,6 +818,11 @@ function normalizeAssistantStreamFrame(value: Record<string, unknown>): BackendE
     !safeNonNegativeInteger(value.transientSequence)
   )
     return undefined
+  let startedAfterSeq: number | undefined
+  if (frame.startedAfterSeq !== undefined) {
+    if (!safeCursor(frame.startedAfterSeq)) return undefined
+    startedAfterSeq = frame.startedAfterSeq
+  }
   const chunkType = chunk.type
   if (chunkType !== 'text-delta' && chunkType !== 'reasoning-delta') return undefined
   if (typeof chunk.text !== 'string') return undefined
@@ -636,6 +836,7 @@ function normalizeAssistantStreamFrame(value: Record<string, unknown>): BackendE
     transientSequence: value.transientSequence,
     transientAttemptId: frame.attemptId,
     transientIndex: frame.index,
+    ...(startedAfterSeq === undefined ? {} : { transientStartedAfterSequence: startedAfterSeq }),
   }
   return chunkType === 'text-delta'
     ? { type: 'message.delta', ...common }
@@ -705,6 +906,10 @@ function record(value: unknown): Record<string, unknown> | undefined {
 
 function safeNonNegativeInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 && !Object.is(value, -0)
+}
+
+function safeCursor(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= -1 && !Object.is(value, -0)
 }
 
 function safeInteger(value: unknown): value is number {

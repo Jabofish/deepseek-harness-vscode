@@ -373,6 +373,105 @@ describe('reduceTimeline', () => {
     ])
   })
 
+  it('replaces a one-chunk attempt when its reconnect baseline follows hidden chunks', () => {
+    const partial = reduceTimeline(initial, {
+      sequence: 1,
+      advanceSequence: false,
+      event: {
+        type: 'message.delta',
+        sessionId: 'session-1',
+        messageId: 'm1',
+        delta: 'old prefix',
+        turn: 1,
+        step: 0,
+        transientAttemptId: 'attempt-1',
+        transientIndex: 0,
+        transientSequence: 1,
+      },
+    })
+    const baseline = reduceTimeline(partial, {
+      sequence: 2,
+      advanceSequence: false,
+      event: {
+        type: 'message.delta',
+        sessionId: 'session-1',
+        messageId: 'm1',
+        delta: 'fresh prefix',
+        turn: 1,
+        step: 0,
+        transientAttemptId: 'attempt-1',
+        transientIndex: 2,
+        transientSequence: 1,
+      },
+    })
+
+    expect(baseline.nodes).toEqual([
+      expect.objectContaining({
+        kind: 'assistant-message',
+        markdown: 'fresh prefix',
+        liveAttemptId: 'attempt-1',
+        liveLastIndex: 2,
+      }),
+    ])
+  })
+
+  it('replaces a baseline whose first visible chunk follows hidden stream chunks', () => {
+    const partial = reduceTimeline(initial, {
+      sequence: 1,
+      advanceSequence: false,
+      event: {
+        type: 'message.delta',
+        sessionId: 'session-1',
+        messageId: 'm1',
+        delta: 'old prefix',
+        turn: 1,
+        step: 0,
+        transientAttemptId: 'attempt-1',
+        transientIndex: 2,
+        transientSequence: 1,
+      },
+    })
+    const advanced = reduceTimeline(partial, {
+      sequence: 2,
+      advanceSequence: false,
+      event: {
+        type: 'message.delta',
+        sessionId: 'session-1',
+        messageId: 'm1',
+        delta: ' old suffix',
+        turn: 1,
+        step: 0,
+        transientAttemptId: 'attempt-1',
+        transientIndex: 3,
+        transientSequence: 2,
+      },
+    })
+    const baseline = reduceTimeline(advanced, {
+      sequence: 3,
+      advanceSequence: false,
+      event: {
+        type: 'message.delta',
+        sessionId: 'session-1',
+        messageId: 'm1',
+        delta: 'fresh prefix',
+        turn: 1,
+        step: 0,
+        transientAttemptId: 'attempt-1',
+        transientIndex: 2,
+        transientSequence: 1,
+      },
+    })
+
+    expect(baseline.nodes).toEqual([
+      expect.objectContaining({
+        kind: 'assistant-message',
+        markdown: 'fresh prefix',
+        liveAttemptId: 'attempt-1',
+        liveLastIndex: 2,
+      }),
+    ])
+  })
+
   it('replaces stale transient answer and reasoning attempts without replaying old text', () => {
     const answer = reduceTimeline(initial, {
       sequence: 1,
@@ -586,6 +685,208 @@ describe('reduceTimeline', () => {
         turn: 1,
         step: 1,
       },
+    ])
+  })
+
+  it('keeps distinct durable assistant records at one turn and step', () => {
+    const first = reduceTimeline(initial, {
+      sequence: 1,
+      event: {
+        type: 'message.completed',
+        sessionId: 'session-1',
+        messageId: 'assistant-message-first',
+        turn: 1,
+        step: 1,
+        markdown: 'first attempt result',
+      },
+    })
+    const second = reduceTimeline(first, {
+      sequence: 2,
+      event: {
+        type: 'message.completed',
+        sessionId: 'session-1',
+        messageId: 'assistant-message-second',
+        turn: 1,
+        step: 1,
+        markdown: 'second attempt result',
+      },
+    })
+
+    expect(second.nodes).toEqual([
+      expect.objectContaining({
+        kind: 'assistant-message',
+        id: 'assistant-message-first',
+        markdown: 'first attempt result',
+      }),
+      expect.objectContaining({
+        kind: 'assistant-message',
+        id: 'assistant-message-second',
+        markdown: 'second attempt result',
+      }),
+    ])
+  })
+
+  it('does not let a settled transient identity capture a later assistant record', () => {
+    const streamed = reduceTimeline(initial, {
+      sequence: 1,
+      advanceSequence: false,
+      event: {
+        type: 'message.delta',
+        sessionId: 'session-1',
+        messageId: 'assistant:1:1',
+        turn: 1,
+        step: 1,
+        delta: 'live prefix',
+        transientAttemptId: 'attempt-1',
+        transientIndex: 0,
+        transientSequence: 1,
+      },
+    })
+    const settled = reduceTimeline(streamed, {
+      sequence: 2,
+      event: {
+        type: 'message.completed',
+        sessionId: 'session-1',
+        messageId: 'assistant-message-first',
+        turn: 1,
+        step: 1,
+        markdown: 'first result',
+      },
+    })
+    const later = reduceTimeline(settled, {
+      sequence: 3,
+      event: {
+        type: 'message.completed',
+        sessionId: 'session-1',
+        messageId: 'assistant-message-second',
+        turn: 1,
+        step: 1,
+        markdown: 'later result',
+      },
+    })
+
+    expect(later.nodes).toEqual([
+      expect.objectContaining({
+        kind: 'assistant-message',
+        id: 'assistant-message-first',
+        markdown: 'first result',
+        streaming: false,
+      }),
+      expect.objectContaining({
+        kind: 'assistant-message',
+        id: 'assistant-message-second',
+        markdown: 'later result',
+        streaming: false,
+      }),
+    ])
+  })
+
+  it('removes a failed assistant attempt before rendering the retried answer', () => {
+    let state = reduceTimeline(initial, {
+      sequence: 1,
+      event: {
+        type: 'message.delta',
+        sessionId: 'session-1',
+        messageId: 'assistant:1:1',
+        turn: 1,
+        step: 1,
+        delta: 'failed prefix',
+        transientAttemptId: 'attempt-failed',
+        transientIndex: 0,
+        transientSequence: 1,
+      },
+    })
+    state = reduceTimeline(state, {
+      sequence: 2,
+      event: { type: 'assistant.attempt', sessionId: 'session-1', turn: 1, step: 1, time: 20 },
+    })
+    expect(state.nodes).toEqual([])
+    expect(state.lastSequence).toBe(2)
+
+    state = reduceTimeline(state, {
+      sequence: 3,
+      event: {
+        type: 'model.retry',
+        retry: {
+          id: 'retry-1',
+          sessionId: 'session-1',
+          turn: 1,
+          step: 1,
+          attempt: 2,
+          state: 'scheduled',
+        },
+      },
+    })
+    state = reduceTimeline(state, {
+      sequence: 4,
+      event: {
+        type: 'message.delta',
+        sessionId: 'session-1',
+        messageId: 'assistant:1:1',
+        turn: 1,
+        step: 1,
+        delta: 'final answer',
+        transientAttemptId: 'attempt-final',
+        transientIndex: 0,
+        transientSequence: 2,
+      },
+    })
+    state = reduceTimeline(state, {
+      sequence: 5,
+      event: {
+        type: 'message.completed',
+        sessionId: 'session-1',
+        messageId: 'assistant-message-final',
+        turn: 1,
+        step: 1,
+        markdown: 'final answer',
+      },
+    })
+
+    expect(state.nodes).toEqual([
+      expect.objectContaining({
+        kind: 'retry',
+        id: 'retry:retry-1',
+      }),
+      expect.objectContaining({
+        kind: 'assistant-message',
+        id: 'assistant-message-final',
+        markdown: 'final answer',
+        streaming: false,
+      }),
+    ])
+    expect(state.nodes).not.toContainEqual(expect.objectContaining({ markdown: 'failed prefix' }))
+  })
+
+  it('does not remove a newer retry when an earlier attempt settlement arrives late', () => {
+    let state = reduceTimeline(initial, {
+      sequence: 4,
+      event: {
+        type: 'message.delta',
+        sessionId: 'session-1',
+        messageId: 'assistant:1:1',
+        turn: 1,
+        step: 1,
+        delta: 'new attempt',
+        transientAttemptId: 'attempt-new',
+        transientIndex: 0,
+        transientSequence: 1,
+        transientStartedAfterSequence: 5,
+      },
+    })
+    state = reduceTimeline(state, {
+      sequence: 5,
+      event: { type: 'assistant.attempt', sessionId: 'session-1', turn: 1, step: 1 },
+    })
+
+    expect(state.nodes).toEqual([
+      expect.objectContaining({
+        kind: 'assistant-message',
+        markdown: 'new attempt',
+        liveAttemptId: 'attempt-new',
+        liveStartedAfterSequence: 5,
+        streaming: true,
+      }),
     ])
   })
 

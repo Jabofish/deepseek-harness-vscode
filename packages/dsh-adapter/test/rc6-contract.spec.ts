@@ -324,6 +324,19 @@ describe('DeepSeek Harness 0.1.0-rc.6 contract', () => {
       }),
     ).toMatchObject({ type: 'message.completed', turn: 1, step: 1, time: 4_800 })
     expect(
+      rc6Mapper.event('assistant/attempt', {
+        sessionId: 's1',
+        time: 4_900,
+        data: { turn: 1, step: 1, stream: [] },
+      }),
+    ).toEqual({
+      type: 'assistant.attempt',
+      sessionId: 's1',
+      turn: 1,
+      step: 1,
+      time: 4_900,
+    })
+    expect(
       rc6Mapper.event('tool/call', {
         sessionId: 's1',
         time: 5_000,

@@ -744,13 +744,125 @@ describe('AppStore subagent transport routing', () => {
       type: 'event',
       name: 'session.subscribed',
       sequence: 12,
-      payload: { sessionId: 'parent', lastSequence: 21 },
+      payload: { sessionId: 'parent', lastSequence: 21, controlBaseline: true },
     })
 
     expect(store.queue).toBe(queueAfterReset)
     expect(store.jobs).toBe(jobsAfterReset)
     expect(store.permissions).toBe(permissionsAfterReset)
     expect(store.questions).toBe(questionsAfterReset)
+    store.dispose()
+  })
+
+  it('keeps independent Alpha control state across a Session-follow baseline', async () => {
+    const client = new FakeClient((request) => {
+      switch (request.type) {
+        case 'session.open':
+          return {
+            id: 'parent',
+            workspaceId: 'workspace',
+            title: 'Parent',
+            blank: false,
+            status: 'running',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+            history: [],
+          }
+        case 'session.queue.list':
+        case 'goal.list':
+        case 'job.list':
+        case 'command.list':
+        case 'skill.list':
+          return []
+        case 'subagent.list':
+          return { entries: [], parentAvailable: true }
+        default:
+          throw new Error(`unexpected request ${request.type}`)
+      }
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+    await store.openSession('parent')
+
+    client.emit({
+      type: 'event',
+      name: 'queue.updated',
+      sequence: 1,
+      payload: {
+        sessionId: 'parent',
+        items: [
+          {
+            id: 'queued-1',
+            sessionId: 'parent',
+            text: 'keep this queued prompt',
+            attachments: [],
+            mode: 'queue',
+            createdAt: '2026-01-01T00:00:00.000Z',
+          },
+        ],
+      },
+    })
+    client.emit({
+      type: 'event',
+      name: 'jobs.updated',
+      sequence: 2,
+      payload: {
+        sessionId: 'parent',
+        jobs: [{ id: 'job-1', kind: 'bash', label: 'running job', status: 'running', startedAt: 1 }],
+      },
+    })
+    client.emit({
+      type: 'event',
+      name: 'permission.requested',
+      sequence: 3,
+      payload: {
+        request: {
+          id: 'permission-1',
+          rpcId: 'permission-rpc-1',
+          sessionId: 'parent',
+          title: 'Allow shell',
+          description: 'The tool needs permission.',
+          risk: 'medium',
+          options: [{ id: 'allow-once', label: 'Allow once', kind: 'allow-once' }],
+        },
+      },
+    })
+    client.emit({
+      type: 'event',
+      name: 'question.requested',
+      sequence: 4,
+      payload: {
+        question: {
+          id: 'question-1',
+          rpcId: 'question-rpc-1',
+          sessionId: 'parent',
+          prompt: 'Choose a path',
+          allowFreeText: true,
+        },
+      },
+    })
+
+    const before = {
+      queue: store.queue,
+      jobs: store.jobs,
+      permissions: store.permissions,
+      questions: store.questions,
+    }
+    client.emit({
+      type: 'event',
+      name: 'session.subscribed',
+      sequence: 5,
+      payload: {
+        sessionId: 'parent',
+        lastSequence: 20,
+        controlBaseline: false,
+        projection: { asOfSequence: 20, values: { title: 'Parent' } },
+      },
+    })
+
+    expect(store.queue).toBe(before.queue)
+    expect(store.jobs).toBe(before.jobs)
+    expect(store.permissions).toBe(before.permissions)
+    expect(store.questions).toBe(before.questions)
     store.dispose()
   })
 })
@@ -932,6 +1044,253 @@ describe('AppStore history paging', () => {
     expect(store.history.map((entry) => entry.sequence)).toEqual([20])
     expect(store.historyBeforeSequence).toBe(20)
     expect(store.historyHasMore).toBe(true)
+    expect(store.historyLoading).toBe(false)
+    store.dispose()
+  })
+
+  it('merges an older page with a multi-event live turn received while paging is in flight', async () => {
+    const page = deferred<unknown>()
+    let historyRequested = false
+    const client = new FakeClient((request) => {
+      switch (request.type) {
+        case 'session.open':
+          return {
+            id: 'parent',
+            workspaceId: 'workspace',
+            title: 'Parent',
+            blank: false,
+            status: 'running',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+            historyHasMore: true,
+            historyBeforeSequence: 20,
+            history: [
+              {
+                sequence: 20,
+                time: '2026-01-01T00:00:02.000Z',
+                event: {
+                  type: 'message.completed',
+                  sessionId: 'parent',
+                  messageId: 'older-visible',
+                  markdown: 'before the live turn',
+                },
+              },
+            ],
+          }
+        case 'session.history':
+          historyRequested = true
+          return page.promise
+        case 'session.queue.list':
+        case 'goal.list':
+        case 'job.list':
+        case 'command.list':
+        case 'skill.list':
+          return []
+        case 'subagent.list':
+          return { entries: [], parentAvailable: true }
+        default:
+          throw new Error(`unexpected request ${request.type}`)
+      }
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+
+    await store.openSession('parent')
+    const paging = store.loadOlderHistory()
+    await vi.waitFor(() => expect(historyRequested).toBe(true))
+
+    // These two records form one live assistant turn. They are deliberately
+    // delivered after the page request starts, so a stale closure would
+    // rebuild the result from only the pre-request history.
+    client.emit({
+      type: 'event',
+      name: 'message.delta',
+      sequence: 21,
+      payload: {
+        sessionId: 'parent',
+        sequence: 21,
+        messageId: 'assistant-live',
+        turn: 2,
+        step: 1,
+        delta: 'live prefix',
+      },
+    })
+    client.emit({
+      type: 'event',
+      name: 'message.completed',
+      sequence: 22,
+      payload: {
+        sessionId: 'parent',
+        sequence: 22,
+        messageId: 'assistant-live',
+        turn: 2,
+        step: 1,
+        markdown: 'live prefix and final answer',
+      },
+    })
+    client.emit({
+      type: 'event',
+      name: 'tool.updated',
+      sequence: 23,
+      payload: {
+        sessionId: 'parent',
+        sequence: 23,
+        tool: {
+          id: 'tool-after-page-start',
+          name: 'apply_patch',
+          category: 'file',
+          title: 'apply_patch',
+          status: 'completed',
+          inputSummary: 'preserve live state',
+          metadata: {},
+        },
+      },
+    })
+
+    page.resolve({
+      beforeSeq: 10,
+      hasMore: false,
+      events: [
+        {
+          sequence: 10,
+          time: '2026-01-01T00:00:01.000Z',
+          event: {
+            type: 'message.completed',
+            sessionId: 'parent',
+            messageId: 'oldest-visible',
+            markdown: 'oldest answer',
+          },
+        },
+      ],
+    })
+    await paging
+
+    expect(store.history.map((entry) => entry.sequence)).toEqual([10, 20, 21, 22, 23])
+    expect(store.timeline.nodes.map((node) => node.id)).toEqual([
+      'oldest-visible',
+      'older-visible',
+      'assistant-live',
+      'tool-after-page-start',
+    ])
+    expect(store.timeline.nodes).toContainEqual(
+      expect.objectContaining({ id: 'assistant-live', markdown: 'live prefix and final answer' }),
+    )
+    expect(store.historyLoading).toBe(false)
+    expect(store.historyBeforeSequence).toBe(10)
+    store.dispose()
+  })
+
+  it('does not commit an old session page after a newer session open starts', async () => {
+    const page = deferred<unknown>()
+    const nextOpen = deferred<unknown>()
+    let historyRequested = false
+    const detail = (
+      sessionId: string,
+      history: readonly unknown[],
+      historyHasMore = false,
+    ): Record<string, unknown> => ({
+      id: sessionId,
+      workspaceId: 'workspace',
+      title: sessionId === 'parent' ? 'Parent' : 'Next',
+      blank: false,
+      status: 'completed',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      historyHasMore,
+      historyBeforeSequence: historyHasMore ? 20 : undefined,
+      history,
+    })
+    const client = new FakeClient((request) => {
+      switch (request.type) {
+        case 'session.open':
+          return request.payload.sessionId === 'next'
+            ? nextOpen.promise
+            : detail(
+                'parent',
+                [
+                  {
+                    sequence: 20,
+                    time: '2026-01-01T00:00:02.000Z',
+                    event: {
+                      type: 'message.completed',
+                      sessionId: 'parent',
+                      messageId: 'parent-current',
+                      markdown: 'current parent answer',
+                    },
+                  },
+                ],
+                true,
+              )
+        case 'session.history':
+          historyRequested = true
+          return page.promise
+        case 'session.queue.list':
+        case 'goal.list':
+        case 'job.list':
+        case 'command.list':
+        case 'skill.list':
+          return []
+        case 'subagent.list':
+          return { entries: [], parentAvailable: true }
+        default:
+          throw new Error(`unexpected request ${request.type}`)
+      }
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+
+    await store.openSession('parent')
+    const paging = store.loadOlderHistory()
+    await vi.waitFor(() => expect(historyRequested).toBe(true))
+
+    const openingNext = store.openSession('next')
+    await vi.waitFor(() =>
+      expect(client.requests).toContainEqual(
+        expect.objectContaining({ type: 'session.open', payload: { sessionId: 'next' } }),
+      ),
+    )
+
+    page.resolve({
+      beforeSeq: 10,
+      hasMore: false,
+      events: [
+        {
+          sequence: 10,
+          time: '2026-01-01T00:00:01.000Z',
+          event: {
+            type: 'message.completed',
+            sessionId: 'parent',
+            messageId: 'parent-stale-page',
+            markdown: 'stale parent page',
+          },
+        },
+      ],
+    })
+    await paging
+
+    // The newer open has not painted yet, so the old session is still active.
+    // The page must nevertheless be discarded by the open-generation guard.
+    expect(store.activeSessionId).toBe('parent')
+    expect(store.history.map((entry) => entry.sequence)).toEqual([20])
+    expect(store.timeline.nodes.map((node) => node.id)).toEqual(['parent-current'])
+
+    nextOpen.resolve(
+      detail('next', [
+        {
+          sequence: 30,
+          time: '2026-01-01T00:00:03.000Z',
+          event: {
+            type: 'message.completed',
+            sessionId: 'next',
+            messageId: 'next-current',
+            markdown: 'next answer',
+          },
+        },
+      ]),
+    )
+    await openingNext
+
+    expect(store.activeSessionId).toBe('next')
+    expect(store.history.map((entry) => entry.sequence)).toEqual([30])
+    expect(store.timeline.nodes.map((node) => node.id)).toEqual(['next-current'])
     expect(store.historyLoading).toBe(false)
     store.dispose()
   })

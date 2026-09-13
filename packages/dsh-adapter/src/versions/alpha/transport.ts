@@ -815,7 +815,17 @@ export class AlphaLoopbackApiClient implements DshTransport {
           !isJsonLike(frame.value)
         )
           throw malformedResponse('session/control projection')
-        yield frame
+        // Incremental projections carry the cursor they describe, not a durable
+        // log position: the same `seq` can also belong to a real event that
+        // arrives right after. Re-emit the normalized frame the baseline branch
+        // already produces so the seam never consumes a durable slot for it.
+        yield {
+          type: 'session/projection',
+          sessionId: frame.sessionId,
+          key: frame.key,
+          value: frame.value,
+          seq: frame.seq,
+        }
       } else {
         throw malformedResponse('session/control frame')
       }
@@ -843,6 +853,10 @@ export class AlphaLoopbackApiClient implements DshTransport {
           type: 'session/subscribed',
           sessionId,
           lastSeq: frame.cursor,
+          // Alpha's Session follow is separate from session/control and
+          // $events. A follow reconnect must not reset queue, jobs, or pending
+          // interactions that are still owned by those streams.
+          controlBaseline: false,
           projections: frame.projections,
         }
         if (projector !== undefined) {
@@ -909,6 +923,7 @@ export class AlphaLoopbackApiClient implements DshTransport {
         time: output.time,
         turn: output.turn,
         step: output.step,
+        startedAfterSeq: output.startedAfterSeq,
         chunk: output.chunk,
       },
     }

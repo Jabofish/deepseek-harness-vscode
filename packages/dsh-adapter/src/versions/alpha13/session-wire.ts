@@ -14,6 +14,8 @@ export interface Alpha13ProjectedChunk {
   readonly time: number
   readonly turn: number
   readonly step: number
+  /** Durable DSH cursor immediately before this attempt started. */
+  readonly startedAfterSeq: number
   readonly chunk: Record<string, unknown>
   /** Local ordering only. It is never exposed as a DSH session sequence. */
   readonly transientSequence: number
@@ -153,6 +155,7 @@ export class Alpha13AssistantStreamProjector {
         },
         attempt.turn,
         attempt.step,
+        attempt.startedAfterSeq,
       ),
     )
   }
@@ -209,7 +212,7 @@ export class Alpha13AssistantStreamProjector {
 
     if (frame.type === 'chunk') {
       active.nextIndex += 1
-      return [this.projectChunk(sessionId, frame, active.turn, active.step)]
+      return [this.projectChunk(sessionId, frame, active.turn, active.step, active.startedAfterSeq)]
     }
 
     active.nextIndex = frame.index
@@ -258,8 +261,15 @@ export class Alpha13AssistantStreamProjector {
     frame: ChunkFrame,
     turn: number,
     step: number,
+    startedAfterSeq: number,
   ): Alpha13ProjectedChunk {
-    this.transientSequence += 1
+    // The Webview projection intentionally exposes only text/reasoning
+    // chunks. Keep its local continuity counter in that same publication
+    // space: compact tool/block/usage/finish chunks are still validated and
+    // indexed by the projector, but must not create an artificial gap when
+    // the stream controller receives the next visible chunk.
+    if (frame.chunk.type === 'text-delta' || frame.chunk.type === 'reasoning-delta')
+      this.transientSequence += 1
     return {
       type: 'chunk',
       sessionId,
@@ -269,6 +279,7 @@ export class Alpha13AssistantStreamProjector {
       time: frame.time,
       turn,
       step,
+      startedAfterSeq,
       chunk: frame.chunk,
       transientSequence: this.transientSequence,
     }

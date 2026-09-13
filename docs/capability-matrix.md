@@ -879,3 +879,52 @@ MCP、LSP、Schedule、Terminal、Session Query、E2B、Cordis 动态工具等�
   和 `pnpm build` 均通过。
 - 证据边界：本批次完成代码与自动复杂流回放，但未新增真实 DSH 长会话断线恢复及真实 VS Code Webview
   DOM smoke；因此 CN-05、CN-06、SS-01、CV-01 仍保持 `PARTIAL`，自动测试不冒充现场运行证明。
+
+## 2026-09-13 P0 最终 assistant 消息丢失：control projection 占用 durable 序号
+
+- CN-06/CV-01 根因：真实 DSH 会在 `session/control` 上推送增量 `projection` 帧，其 `seq` 描述的是该投影的
+  as-of 游标而不是持久日志位置（对照本机 `session.v3.jsonl.zstd` journal，其中没有任何 `projection`
+  行）。`AlphaLoopbackApiClient.readControl` 的增量分支此前直接 `yield frame`，而 `normalizeEnvelope` 没有
+  `projection` 分支，帧因此变成带 `sequence` 的 `unknown`；Webview Store 把 `unknown` 视为推进对话游标，
+  于是 `projection@141` 抢占 durable 槽位，紧随其后的真实 `assistant/message@141`、`step.ended@142`、
+  `turn.ended@143` 被判为过期丢弃，台账重建（`reduceTimelineBatch`）后依旧缺失——与“工具行还在、最终回答
+  消失”的现场症状一致。
+- 修复：增量投影在 transport seam 归一化为 `session/projection`，与 baseline 分支产出的形状一致；
+  `session/projection` 既不推进 Webview 对话游标，也在 `DshStreamController` 中绕过有序 durable 队列，因此
+  不会再占用 durable 序号。真实流中其余 `unknown`（`model/selection`、`agent/inbox/spliced`、
+  `session/queue`）经 journal 核对确属持久行，保留推进语义。
+- 自动证据：`packages/dsh-adapter/test/alpha-contract.spec.ts` 新增 “normalizes an incremental control
+  projection so it cannot occupy a durable sequence”（transport seam 归一化）与 “keeps the durable
+  completion that shares its sequence with a control projection”（组装层：控制面投影 @15 之后跟随真实
+  `assistant/message@15` 不再降级为 unknown）；`apps/webview/src/app/store-timeline.integration.spec.tsx`
+  新增 “keeps the answer when a control projection is published for a completion sequence”，覆盖完成帧被
+  丢弃的失败形态以及延迟 durable 重投后的台账重建。移除 transport 修复时上述用例转红，恢复后转绿。
+- 真实 DSH 运行验证（本机外部实例 `0.1.5-rc.1`，`127.0.0.1:30005`，token launch URL + cookie，多步工具
+  回合）：314 个后端事件、75 个 `session.projection`、0 个 unknown projection、4 条 assistant-message；
+  最终 Markdown 为“已在当前目录创建 `hello.txt`，内容为 `live-verify`，读取确认无误（单行内容正是
+  `live-verify`）。”；用真实 durable 历史重开会话后 assistant 数量与 Markdown 完全一致，Trajectory 记录 4
+  条 message。同一脚本移除修复后复现 P0：40 个 unknown projection、0 条 assistant-message、最终 Markdown
+  为空。
+- 门禁：`pnpm format:check`、`pnpm lint`、`pnpm typecheck`、`pnpm test`（152 个测试文件、1293 个测试）与
+  `pnpm build` 全部通过。
+- 证据边界：本批次为 Adapter/Store 自动回归与真实 DSH 事件流运行验证，仍未完成真实 VS Code Webview DOM
+  smoke；因此 CN-06 与 CV-01 继续保持 `PARTIAL`。
+
+## 2026-09-13 脱敏长会话端到端呈现回放
+
+- 资产：`apps/webview/src/app/long-session.fixture.ts` 以真实 0.1.5 会话（18 轮 / 47 步）的事件顺序、
+  步数分布、工具词汇与 payload 形状为模板，重放一段 6 轮 / 19 步的脱敏对话；路径、命令、标识与句子均为
+  虚构。覆盖 durable `turn/step/tool` 行、进程内 assistant 帧（无游标 delta）、`assistant/message`
+  完成、`session/projection`、`todo/write`+`todo.updated`、`subagent` 工具与
+  `subagent-report`/`relay` 收件箱报告、`deliverables/presented`，以及结果行只报 `unknown-tool` 的
+  合并路径。
+- 自动证据：`apps/webview/src/app/store-long-session.spec.tsx` 通过真实 Store（`createAppStore`）+
+  `Timeline` + `TrajectoryView` 断言 6 条用户气泡、6 条完成回答、11 张工具卡（8 种工具）的本地化标题与
+  来源顺序、失败工具的 error 区块、TODO 的 `In progress` 状态、交付文件描述、思考展开前后内容、以及
+  Trajectory 的 6 个轮次分段和 `context` 行位置；同时断言 `session.projection@177` 之后的
+  `message.completed@177` 仍落在唯一节点上、瞬时流式节点被就地替换、全程不出现 `event`/unknown 节点，
+  并在重渲染与低于游标的 durable 重投后保持节点集合与文本不变。
+- 门禁：`pnpm format:check`、`pnpm lint`、`pnpm typecheck`、`pnpm test`（153 个测试文件、1295 个测试）与
+  `pnpm build` 全部通过。
+- 证据边界：本批次为脱敏回放的 Store/组件层自动验证，未启动真实 DSH、未做真实 VS Code Webview DOM
+  smoke；CN-06 与 CV-01 的证据等级不因本批次改变。
