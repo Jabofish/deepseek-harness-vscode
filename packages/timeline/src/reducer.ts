@@ -707,10 +707,19 @@ export function reduceTimeline(
       break
     case 'connection.lost':
       activeTurn = undefined
-      nodes.push({ kind: 'notice', id: `connection:${input.sequence}`, level: 'error', text: event.reason })
+      // Host-only rows are outside the durable cursor, so the Webview's own
+      // replay paths (advisory snapshots, a re-open) can hand the same row to
+      // the reducer twice. Key them by identity: a redelivery refreshes the
+      // existing row instead of appending a second copy.
+      upsert(nodes, {
+        kind: 'notice',
+        id: `connection:${input.sequence}`,
+        level: 'error',
+        text: event.reason,
+      })
       break
     case 'session.gap':
-      nodes.push({
+      upsert(nodes, {
         kind: 'notice',
         id: `gap:${event.sessionId}:${event.fromSequence}:${event.toSequence}`,
         level: 'warning',
@@ -766,10 +775,19 @@ export function reduceTimeline(
       }
       const modeCommand = modeName !== undefined
       if (event.commandInput !== undefined && !modeCommand)
-        nodes.push({ kind: 'command-input', id: `command-input:${input.sequence}`, text: event.commandInput })
+        upsert(nodes, {
+          kind: 'command-input',
+          id: `command-input:${input.sequence}`,
+          text: event.commandInput,
+        })
       const hideNotice = modeCommand && event.level === 'info'
       if (!hideNotice && !(event.level === 'info' && / started\.$/u.test(event.text)))
-        nodes.push({ kind: 'notice', id: `notice:${input.sequence}`, level: event.level, text: event.text })
+        upsert(nodes, {
+          kind: 'notice',
+          id: `notice:${input.sequence}`,
+          level: event.level,
+          text: event.text,
+        })
       if (event.commandPhase === 'done' && event.commandId !== undefined) {
         if (Object.prototype.hasOwnProperty.call(readCommandModes(), event.commandId))
           delete ensureCommandModes()[event.commandId]

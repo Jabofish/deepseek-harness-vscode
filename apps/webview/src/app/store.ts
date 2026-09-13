@@ -579,13 +579,25 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     string,
     { ranges: Array<{ readonly from: number; readonly to: number }>; running: boolean }
   >()
+  /**
+   * Gap warnings are host-only rows: a rebuild from the durable ledger
+   * reconstructs the transcript and would silently drop the warning that part
+   * of it never arrived. Keep the announced ranges so every rebuild can
+   * re-derive the notice from what history still cannot cover.
+   */
+  const unhealedGapRanges = new Map<string, Array<{ readonly from: number; readonly to: number }>>()
   let ledgerRebuildTimer: number | undefined
   const MAX_GAP_BACKFILL_PAGES = 4
   const GAP_BACKFILL_PAGE_MESSAGES = 200
+  const gapNoticeId = (sessionId: string, fromSequence: number, toSequence: number): string =>
+    `gap:${sessionId}:${fromSequence}:${toSequence}`
   const publishUnhealedGap = (sessionId: string, fromSequence: number, toSequence: number): void => {
+    const announced = unhealedGapRanges.get(sessionId) ?? []
+    if (!announced.some((range) => range.from === fromSequence && range.to === toSequence))
+      unhealedGapRanges.set(sessionId, [...announced, { from: fromSequence, to: toSequence }])
     setState((current) => {
       if (current.activeSessionId !== sessionId) return current
-      const id = `gap:${sessionId}:${fromSequence}:${toSequence}`
+      const id = gapNoticeId(sessionId, fromSequence, toSequence)
       if (current.timeline.nodes.some((node) => node.id === id)) return current
       const timeline = reduceTimeline(current.timeline, {
         sequence: current.timeline.lastSequence,
@@ -595,12 +607,102 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       return timeline === current.timeline ? current : { ...current, timeline }
     })
   }
+  const restoreGapNotices = (
+    rebuilt: TimelineState,
+    sessionId: string,
+    history: readonly SessionHistoryEvent[],
+  ): TimelineState => {
+    const announced = unhealedGapRanges.get(sessionId)
+    const covered = new Set<string>()
+    const remaining = (announced ?? []).filter((range) => {
+      if (!historyCoversSequenceRange(history, range.from, range.to)) return true
+      covered.add(gapNoticeId(sessionId, range.from, range.to))
+      return false
+    })
+    if (covered.size === 0 && remaining.length === 0) return rebuilt
+    if (remaining.length === 0) unhealedGapRanges.delete(sessionId)
+    else if (remaining.length !== (announced ?? []).length) unhealedGapRanges.set(sessionId, remaining)
+    const kept = rebuilt.nodes.filter((node) => !covered.has(node.id))
+    let timeline = kept === rebuilt.nodes ? rebuilt : { ...rebuilt, nodes: kept }
+    for (const range of remaining) {
+      const id = gapNoticeId(sessionId, range.from, range.to)
+      if (timeline.nodes.some((node) => node.id === id)) continue
+      timeline = reduceTimeline(timeline, {
+        sequence: timeline.lastSequence,
+        event: { type: 'session.gap', sessionId, fromSequence: range.from, toSequence: range.to },
+        advanceSequence: false,
+      })
+    }
+    return timeline
+  }
+  /**
+   * Command notices and agent errors are host-only rows: DSH never replays
+   * them, so every path that rebuilds the transcript - a below-cursor rebuild,
+   * a switch back to the session - would silently erase them from the
+   * conversation. Remember them per session together with the rows they
+   * arrived behind, and put them back at that position.
+   */
+  const rememberedHostOnlyNodes = new Map<
+    string,
+    Array<{ readonly node: TimelineNode; readonly anchors: readonly string[] }>
+  >()
+  const MAX_HOST_ONLY_NODES_PER_SESSION = 128
+  const MAX_HOST_ONLY_SESSIONS = 16
+  const rememberHostOnlyNodes = (
+    sessionId: string,
+    nodes: readonly TimelineNode[],
+    anchors: readonly string[],
+  ): void => {
+    const remembered = rememberedHostOnlyNodes.get(sessionId) ?? []
+    const next = [...remembered]
+    for (const node of nodes)
+      if (!next.some((entry) => entry.node.id === node.id)) next.push({ node, anchors })
+    while (next.length > MAX_HOST_ONLY_NODES_PER_SESSION) next.shift()
+    // Re-insert so the least recently active session is evicted first.
+    rememberedHostOnlyNodes.delete(sessionId)
+    rememberedHostOnlyNodes.set(sessionId, next)
+    while (rememberedHostOnlyNodes.size > MAX_HOST_ONLY_SESSIONS) {
+      const oldest = rememberedHostOnlyNodes.keys().next().value
+      if (oldest === undefined) break
+      rememberedHostOnlyNodes.delete(oldest)
+    }
+  }
+  const restoreHostOnlyNodes = (timeline: TimelineState, sessionId: string): TimelineState => {
+    const remembered = rememberedHostOnlyNodes.get(sessionId)
+    if (remembered === undefined || remembered.length === 0) return timeline
+    let nodes: TimelineNode[] | undefined
+    // Arrival order is the invariant: rows that arrived later can never end up
+    // in front of a row that arrived earlier, whatever their anchors resolve
+    // to (rows that arrived before any durable node have no anchor at all).
+    let previousIndex = -1
+    for (const entry of remembered) {
+      const existing = (nodes ?? timeline.nodes).findIndex((node) => node.id === entry.node.id)
+      if (existing >= 0) {
+        previousIndex = existing
+        continue
+      }
+      const target = nodes ?? (nodes = [...timeline.nodes])
+      const index = Math.max(hostOnlyInsertIndex(target, entry.anchors), previousIndex + 1)
+      target.splice(index, 0, entry.node)
+      previousIndex = index
+    }
+    return nodes === undefined
+      ? timeline
+      : { ...timeline, nodes, nodeChangeBase: timeline.nodes, nodeChangeStart: 0 }
+  }
   const rebuildTimelineFromLedger = (sessionId: string): void => {
     flushPendingHistory()
     setState((current) => {
       if (current.activeSessionId !== sessionId) return current
       const rebuilt = hydrateTimelineFromHistoryEvents(sessionId, current.history)
-      return { ...current, timeline: mergeLiveTransientNodes(rebuilt, current.timeline, current.history) }
+      return {
+        ...current,
+        timeline: mergeLiveTransientNodes(
+          restoreHostOnlyNodes(restoreGapNotices(rebuilt, sessionId, current.history), sessionId),
+          current.timeline,
+          current.history,
+        ),
+      }
     })
   }
   const scheduleLedgerRebuild = (sessionId: string): void => {
@@ -627,8 +729,12 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         if (range === undefined) break
         let beforeSeq = range.to + 1
         let coveredSequenceRanges: readonly SessionSequenceRange[] = []
+        // A page read is not cancelled by switching to another session: the
+        // answer decides whether this hole is healed or has to stay announced.
+        // Bailing out on a switch lost the range entirely, so the transcript
+        // kept its hole without any warning once the session came back.
         for (let page = 0; page < MAX_GAP_BACKFILL_PAGES; page += 1) {
-          if (state.activeSessionId !== sessionId || openVersion !== version) return
+          if (openVersion !== version) return
           let payload: unknown
           try {
             payload = await client.request<unknown>({
@@ -654,7 +760,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
           } catch {
             break
           }
-          if (state.activeSessionId !== sessionId || openVersion !== version) return
+          if (openVersion !== version) return
           if (events.length === 0) break
           setState((current) =>
             current.activeSessionId === sessionId
@@ -667,8 +773,10 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
           if (nextBefore === undefined || nextBefore <= 0) break
           beforeSeq = nextBefore
         }
+        // The range memory is per session, so an unhealed hole is recorded even
+        // while another session is on screen; the notice itself is re-derived
+        // when that session is opened again.
         if (
-          state.activeSessionId === sessionId &&
           openVersion === version &&
           !sequenceRangesCover(coveredSequenceRanges, range.from, range.to) &&
           !historyCoversSequenceRange(state.history, range.from, range.to)
@@ -1209,6 +1317,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
             parsedEvent,
             scheduleGapBackfill,
             projectionSequences,
+            rememberHostOnlyNodes,
           )
       }
     }
@@ -1226,6 +1335,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         parsedEvent,
         scheduleGapBackfill,
         projectionSequences,
+        rememberHostOnlyNodes,
       )
     // Content frames that history recovery redelivers below the timeline
     // cursor are absorbed into the ledger but ignored by the reduce gate.
@@ -1437,8 +1547,14 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       if (!isSessionOpenDetail(detail, sessionId)) throw new Error(translate('app.error.openSession'))
       const rawHistory = detail.history
       const parsedHistory = parseSessionHistoryWithTimeline(rawHistory)
-      const timeline = hydrateTimelineFromEntries(sessionId, parsedHistory.timeline)
       const history = parsedHistory.history
+      // Host-only rows (command notices, agent errors, unhealed gap warnings)
+      // are not part of the ledger this hydration reads, so a re-open has to
+      // put back the ones the session already announced.
+      const timeline = restoreHostOnlyNodes(
+        restoreGapNotices(hydrateTimelineFromEntries(sessionId, parsedHistory.timeline), sessionId, history),
+        sessionId,
+      )
       const permissionPresets = stringList(detail?.permissionPresets)
       const workspaceFolderId =
         typeof detail?.workspaceId === 'string' && detail.workspaceId.trim() !== ''
@@ -1526,6 +1642,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
           initialMessages,
           scheduleGapBackfill,
           projectionSequences,
+          rememberHostOnlyNodes,
         ),
       )
       pending.ready = true
@@ -1585,6 +1702,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
               pendingMessages,
               scheduleGapBackfill,
               projectionSequences,
+              rememberHostOnlyNodes,
             ),
           )
           void refreshChangesState(sessionId)
@@ -1693,6 +1811,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
           initialMessages,
           scheduleGapBackfill,
           projectionSequences,
+          rememberHostOnlyNodes,
         ),
       )
       pending.ready = true
@@ -1715,6 +1834,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
           pendingMessages,
           scheduleGapBackfill,
           projectionSequences,
+          rememberHostOnlyNodes,
         ),
       )
       void refreshChangesState(entry.id)
@@ -3319,6 +3439,17 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         window.clearTimeout(notifyTimer)
         notifyTimer = undefined
       }
+      if (ledgerRebuildTimer !== undefined) {
+        window.clearTimeout(ledgerRebuildTimer)
+        ledgerRebuildTimer = undefined
+      }
+      // In-flight opens, rebuilds and gap backfills all guard on openVersion;
+      // bumping it retires them without letting a late continuation touch a
+      // disposed store.
+      openVersion += 1
+      gapBackfills.clear()
+      unhealedGapRanges.clear()
+      rememberedHostOnlyNodes.clear()
       pendingHistory = []
       pendingHistorySessionId = undefined
       invalidateFeedback()
@@ -4283,6 +4414,7 @@ function applyHostMessage(
   parsedEvent?: BackendEvent | null,
   onSessionGap?: (event: Extract<BackendEvent, { type: 'session.gap' }>) => void,
   projectionSequences?: ProjectionSequenceIndex,
+  onHostOnlyNodes?: (sessionId: string, nodes: readonly TimelineNode[], anchors: readonly string[]) => void,
 ): void {
   if (message.type !== 'event') return
   if (message.name === 'runtime.update.progress') {
@@ -4420,6 +4552,20 @@ function applyHostMessage(
   const duplicateGapNotice =
     gapNodeId !== undefined && state.timeline.nodes.some((node) => node.id === gapNodeId)
   const deferGapNotice = event.type === 'session.gap' && onSessionGap !== undefined && belongsToActiveSession
+  // Host-only rows (command notices, agent errors, raw frames the Host could
+  // not map to a durable DSH record) carry no durable cursor. Falling back to
+  // the Host publication counter for the reduce input would let that counter
+  // spend a durable slot: a durable row below it then looks stale and
+  // disappears until a rebuild, and the host-only row itself is dropped
+  // whenever the counter happens to sit behind the DSH sequence (a reloaded
+  // Webview, a session resumed from history). Order them by arrival instead.
+  // Cursorless assistant deltas keep the sequence comparison: without transient
+  // attempt metadata that comparison is the only thing that keeps a live delta
+  // already covered by the hydrated history from being appended twice.
+  const sequenceOptions =
+    event.sequence === undefined && transientSequence === undefined && !isAssistantDelta(event)
+      ? { advanceSequence: false as const }
+      : timelineSequenceOptions(event)
   const timeline =
     !belongsToActiveSession ||
     controlPlaneMessage ||
@@ -4435,8 +4581,41 @@ function applyHostMessage(
           // never move the conversation cursor: doing so can make the next
           // live delta look stale until history is replayed after switching
           // sessions.
-          ...timelineSequenceOptions(event),
+          ...sequenceOptions,
         })
+  if (timeline !== state.timeline && belongsToActiveSession && onHostOnlyNodes !== undefined) {
+    const sessionId = timeline.sessionId
+    const hostOnly = timeline.nodes.slice(state.timeline.nodes.length).filter(isHostOnlyTimelineNode)
+    if (sessionId !== undefined && hostOnly.length > 0)
+      onHostOnlyNodes(
+        sessionId,
+        hostOnly,
+        state.timeline.nodes
+          .slice(-4)
+          .map((node) => node.id)
+          .reverse(),
+      )
+  } else if (
+    !belongsToActiveSession &&
+    onHostOnlyNodes !== undefined &&
+    eventSessionId !== undefined &&
+    !controlPlaneMessage &&
+    eventMayChangeTimelineState(event)
+  ) {
+    // DSH publishes notices for every watched session, so a host-only row can
+    // arrive while another session is open. It is dropped from the active
+    // transcript by design, but DSH history never carries it either: remember
+    // it for its own session or opening that session loses it silently.
+    const scratch = reduceTimeline(hydrateTimelineFromEntries(eventSessionId, []), {
+      sequence: event.sequence ?? transientSequence ?? message.sequence,
+      event,
+      advanceSequence: false,
+    })
+    const hostOnly = scratch.nodes.filter(isHostOnlyTimelineNode)
+    // No anchor rows are known for a session that is not open; the restored
+    // row lands at the end of its transcript.
+    if (hostOnly.length > 0) onHostOnlyNodes(eventSessionId, hostOnly, [])
+  }
   let next: AppState =
     timeline === state.timeline && history === state.history ? state : { ...state, timeline, history }
   if (event.type === 'session.status') {
@@ -4688,6 +4867,7 @@ function replayHostMessages(
   messages: readonly HostMessage[],
   onSessionGap?: (event: Extract<BackendEvent, { type: 'session.gap' }>) => void,
   projectionSequences?: ProjectionSequenceIndex,
+  onHostOnlyNodes?: (sessionId: string, nodes: readonly TimelineNode[], anchors: readonly string[]) => void,
 ): AppState {
   let replayed = state
   const pendingHistory = new Map<string, SessionHistoryEvent[]>()
@@ -4708,6 +4888,7 @@ function replayHostMessages(
       undefined,
       onSessionGap,
       projectionSequences,
+      onHostOnlyNodes,
     )
   const additions = pendingHistory.get(replayed.activeSessionId ?? '')
   if (additions !== undefined) {
@@ -4741,6 +4922,29 @@ function isHostOnlyInterruptedCompletion(event: BackendEvent): boolean {
   return event.type === 'message.completed' && event.interrupted === true && event.sequence === undefined
 }
 
+function isAssistantDelta(event: BackendEvent): boolean {
+  return event.type === 'message.delta' || event.type === 'reasoning.delta'
+}
+
+/**
+ * Rows only the Extension Host publishes: DSH history never replays them, so
+ * any path that rebuilds the transcript from history has to put them back
+ * explicitly. Gap warnings are excluded; they are restored from
+ * `unhealedGapRanges`, which knows whether the hole was healed by a backfill.
+ */
+function isHostOnlyTimelineNode(node: TimelineNode): boolean {
+  return node.kind === 'command-input' || (node.kind === 'notice' && !node.id.startsWith('gap:'))
+}
+
+/** Position a remembered row behind the nearest of its recorded neighbour rows. */
+function hostOnlyInsertIndex(nodes: readonly TimelineNode[], anchors: readonly string[]): number {
+  for (const anchor of anchors) {
+    const index = nodes.findIndex((node) => node.id === anchor)
+    if (index >= 0) return index + 1
+  }
+  return nodes.length
+}
+
 /** Only durable conversation records advance the DSH timeline cursor. */
 function advancesTimelineSequence(event: BackendEvent): boolean {
   switch (event.type) {
@@ -4765,6 +4969,12 @@ function advancesTimelineSequence(event: BackendEvent): boolean {
     case 'workspace.order.changed':
     case 'workspace.removed':
     case 'remote.event':
+      return false
+    case 'unknown':
+      // An uninterpreted frame is preserved as a raw event row, but it must
+      // never spend a durable cursor slot. DSH legitimately carries several
+      // rows in one sequence (projections, replay races), so a row this build
+      // cannot read must not make a renderable neighbour look stale.
       return false
     default:
       return true
@@ -6238,7 +6448,7 @@ function mergeLiveTransientNodes(
 function insertLiveNodeAtPreviousPosition(
   nodes: TimelineNode[],
   previousNodes: readonly TimelineNode[],
-  live: ConversationTimelineNode,
+  live: TimelineNode,
 ): void {
   const previousIndex = previousNodes.indexOf(live)
   if (previousIndex >= 0) {
@@ -6262,7 +6472,7 @@ function insertLiveNodeAtPreviousPosition(
     }
   }
 
-  const boundary = live.liveStartedAfterSequence
+  const boundary = 'liveStartedAfterSequence' in live ? live.liveStartedAfterSequence : undefined
   if (boundary !== undefined) {
     const laterIndex = nodes.findIndex((node) => {
       const sequence = timelineNodeSequence(node)

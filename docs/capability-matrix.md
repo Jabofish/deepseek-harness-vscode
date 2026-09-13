@@ -118,6 +118,31 @@
 `apps/extension/src/backend/temporary-workspace.spec.ts` 7 项管理器测试和既有路径安全测试；尚未完成真实
 VS Code 无文件夹 Webview 回放，因此该修复不提升能力矩阵中的核心能力为 `DONE`。
 
+## 2026-09-13 会话转录完整性专项切片：无游标行、重建等价与 reducer 契约
+
+本轮针对“静默丢失 / 陈旧 / 顺序错乱”这一同类问题清单逐项编写专项测试，其中两项被测试证伪为真实缺陷并已修复，其余假设被测试排除但保留测试文件。
+
+已确认并修复的缺陷：
+
+1. Host-only 行（`notice`、`command-input`、Host 无法映射的原始帧）没有 durable DSH 游标，但此前会回退使用 Host 发布计数器推进时间线游标：其后的 durable 行会被当作陈旧行丢弃，而计数器落后于持久化游标时（重载 Webview、从历史恢复会话）Host-only 行自身被丢弃。现在 `store.ts` 对“无 envelope sequence、无 transient sequence 且非助手增量”的行传入 `{ advanceSequence: false }`，按到达顺序排列；无 transient 元数据的助手增量仍保留游标比较，以维持已水合历史的去重（`store-subagent.spec.ts` 的既有用例守住了这条边界）。
+2. `unknown` 原始帧此前会推进持久化游标；现在 `advancesTimelineSequence` 对其返回 false，未解释帧仍以原始行保留在真实位置，但不再占掉一个持久化槽位。
+3. 从 durable ledger 重建时间线时会擦除 Host-only 的 `notice`/`command-input` 节点（DSH 永不下发这些行）。新增 `restoreHostOnlyNodes`，按重建前的位置重新插入历史中不存在的 Host-only 节点；`insertLiveNodeAtPreviousPosition` 放宽到全部携带 `liveStartedAfterSequence` 的节点，使流式助手/推理节点在重建后仍锚定在原位置。
+4. 同一个 `restoreHostOnlyNodes` 只覆盖 below-cursor 重建，切换会话（`open()` 重建基线）与后台会话仍会静默丢掉 Host-only 行：DSH 会为所有被 watch 的会话发布 `notice`（例如某会话 follow 流断开时由 Adapter 合成的告警），而 Webview 只保留当前会话的转录。现在 store 按会话记忆 Host-only 行及其锚点（每会话 128 行、最多 16 个会话，LRU 淘汰），在重建、切换回来、重新打开时按到达顺序放回；后台会话的行在其会话未打开时也会被记住（锚点未知时落在末尾）。
+5. `runGapBackfill` 此前在会话切换后放弃整段回填：切走再切回时，洞既没被历史补齐，也没有留下任何警告。现在回填只受 `openVersion`（dispose/换代）约束，恢复结果按会话发布 `session.gap`。
+
+自动证据：
+
+- `apps/webview/src/app/store-cursor-integrity.spec.ts`（7 项）：未解释帧不占持久化槽位、未解释帧保留在持久化位置、Host-only notice 不推进游标、计数器落后游标的 Host-only notice 仍可见、重建后 Host-only 行仍在、重建后流式答案仍在、重建后未愈合的 gap 警告仍在。
+- `apps/webview/src/app/store-rebuild-equivalence.spec.ts`（2 项）：真实形状 fixture（含 reasoning/message 增量、嵌套子工具调用、稀疏未知工具结果、Host-only 命令通知、`session.projection`、不可读帧、gap）在“有/无 below-cursor 重建”下生成逐节点签名完全一致的转录，并断言各节点家族均已出现以防空跑；同一 below-cursor 行连续到达两次也稳定。
+- `apps/webview/src/app/store-session-switch-integrity.spec.ts`（6 项）：Host-only notice/command-input 在切走再切回后仍在、后台会话的 notice 在打开该会话时仍在、未愈合的 gap 警告在切换后仍在、恢复的行落在其持久化位置而不是末尾、反复切换不会重复插入同一行。
+- `packages/timeline/test/reducer-transcript-integrity.spec.ts`（10 项）：孤儿工具结果建卡、稀疏后续帧保留更完整身份、已关闭 turn 的迟到 running 更新降级为 `cancelled`、携带不同 id 的 durable 完成帧原地结算并改名、连续相同用户消息保持为独立节点、只消费 `optimistic:user:` 占位；同一 Host-only notice/command-input/连接警告/gap 警告行重投两次只刷新不追加（advisory 快照与切换返回都会重投这些无游标行，此前会追加第二份）。
+- `packages/dsh-adapter/test/unknown-frame-cursor.spec.ts`（4 项）：Adapter 侧未解释帧的游标契约，含重启基线行为。
+- `dispose()` 同步加固：清理待执行的重建定时器、通过 `openVersion` 失效在途 open/backfill、清理 gap 追踪表。
+
+被测试排除的假设（无缺陷，测试保留）：Adapter 重启基线、reducer 的顺序/去重语义、会话引用投影、虚拟化、旧历史分页、流中重建、gap 回填失败路径均由上述新测试或既有高质量 spec 覆盖。
+
+证据边界：本轮只有代码与自动测试证据，未做真实 DSH/VS Code Webview 运行验证，因此相关核心能力仍保持 `PARTIAL`，不因本切片提升为 `DONE`。全量门禁 `pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build` 在本切片通过（158 个测试文件 / 1324 项测试）。
+
 ## 历史基线：实施批次 E 之前的能力快照
 
 以下表格只保留批次 E 开始前的审计基线，用于追溯，不覆盖本文件上方“实施批次 E”的当前状态；其中的“尚未实现”描述不应被当作当前代码结论。
