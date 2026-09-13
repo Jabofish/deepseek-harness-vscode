@@ -1765,7 +1765,17 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       ])
       const history = await historyData
       if (version !== openVersion) return
-      const timeline = hydrateTimelineFromHistoryEvents(entry.id, history.events)
+      // A child transcript is rebuilt from `subagent.history` on every entry,
+      // and DSH never replays host-only rows or an unhealed hole, so both
+      // restores have to run exactly as they do for a parent open.
+      const timeline = restoreHostOnlyNodes(
+        restoreGapNotices(
+          hydrateTimelineFromHistoryEvents(entry.id, history.events),
+          entry.id,
+          history.events,
+        ),
+        entry.id,
+      )
       const initialMessages = pendingMessagesAfterReplay(pending)
       setState((current) =>
         replayHostMessages(
@@ -2151,7 +2161,10 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
           }
           const history = mergeHistory(next.history, page.events)
           const timeline = mergeLiveTransientNodes(
-            hydrateTimelineFromHistoryEvents(sessionId, history),
+            restoreHostOnlyNodes(
+              restoreGapNotices(hydrateTimelineFromHistoryEvents(sessionId, history), sessionId, history),
+              sessionId,
+            ),
             next.timeline,
             history,
           )
