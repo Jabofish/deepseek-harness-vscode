@@ -2,6 +2,12 @@
 
 这是功能范围的唯一清单。`DONE` 必须同时有代码、自动测试和所需的真实 DSH 运行证据；当前尚未满足发布退出条件的能力统一标为 `PARTIAL`，并在证据列写明缺口。已发布 `0.0.1-rc.1/.2/.5`、`0.1.0-rc.2/.3`、rc.6–0.1.2-rc.1、`0.1.2-alpha.2`–`.5`、`0.1.3-alpha.2` 和 `0.1.5-alpha.1/.2/rc.1/rc.2`，以及源码级 `0.1.2-alpha.1`、`0.1.3-alpha.1` 使用独立版本入口；未知运行时按最新可安全复用 wire 的 Adapter 优先进行只读兼容探测，`alpha13`/`alpha132` 的 Session v2 和 `alpha151`/`alpha152`/`rc151`/`rc152` 的 Session v3 仅精确版本可用，所有运行时专属能力仍以 `CAPABILITY_UNAVAILABLE` 和兼容警告边界降级；没有提供的 RPC 不以空实现冒充完成。安装器默认通过 npm `next` 使用精确支持集合中的最新 `0.1.5-rc.2`（npm `latest` 仍为 `rc.1`）。
 
+## 2026-09-13 0.1.11 发布前上游同步审计
+
+上游实时核对结果：`master` 仍为 `c291e7961a515f6d7af9304e7fd1d257929aef26`，最新发布 tag/npm 仍为 DSH `0.1.5-rc.2`（npm `next`；`latest` 为 `0.1.5-rc.1`）。`0.1.5-rc.2` 到当前 master 的审计未发现本扩展消费的 Connection/Gateway、Cookie、`remote.mux` 或 Session v3 wire 变化，因此本次不新增不存在的版本 Adapter，`rc152` 精确入口与未知版本安全回退边界保持不变。
+
+本次扩展代码与自动测试已整理到 `0.1.11`；`pnpm check` 通过 167 个测试文件（1390 个测试通过、1 个跳过），`pnpm build` 通过。新增的结构化工具预览、重连/历史回放、Host-only 行、附件/导出错误等证据仍属于代码与自动测试级别；真实 DSH/Webview 完整 smoke 缺口不因发布而改标为 `DONE`。
+
 本轮历史版本精确适配证据：`packages/dsh-adapter/test/legacy-contract.spec.ts` 覆盖五个 npm-only 版本的 exact probe、旧 command/事件/时区/能力边界，以及 rc.1/rc.2 的 frame parser；`adapter-chain.spec.ts` 和 `launch-contract.spec.ts` 覆盖版本身份、继承优先级和托管启动参数。上述是源码与自动测试证据，不替代五个版本的真实 DSH/VS Code live smoke。
 
 ## 2026-08-29 实施批次 E：Agent 编辑器闭环与本地生产力增量

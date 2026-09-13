@@ -7,7 +7,7 @@ import { I18nProvider } from '../../i18n.js'
 import { DiagnosticsPanel } from './DiagnosticsPanel.js'
 
 const snapshot: DiagnosticsSnapshot = {
-  extensionVersion: '0.1.10',
+  extensionVersion: '0.1.11',
   dshVersion: '0.1.9',
   state: 'failed',
   endpointKind: 'managed',

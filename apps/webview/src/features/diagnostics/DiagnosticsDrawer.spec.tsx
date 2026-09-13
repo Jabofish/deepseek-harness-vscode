@@ -7,7 +7,7 @@ import { I18nProvider } from '../../i18n.js'
 import { DiagnosticsDrawer } from './DiagnosticsDrawer.js'
 
 const snapshot: DiagnosticsSnapshot = {
-  extensionVersion: '0.1.10',
+  extensionVersion: '0.1.11',
   state: 'failed',
   canReconnect: true,
   recentEvents: [],

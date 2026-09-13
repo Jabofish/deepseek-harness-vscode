@@ -27,7 +27,7 @@ class DiagnosticsClient {
 }
 
 const snapshot = {
-  extensionVersion: '0.1.10',
+  extensionVersion: '0.1.11',
   dshVersion: '0.1.9',
   state: 'failed',
   endpointKind: 'managed',

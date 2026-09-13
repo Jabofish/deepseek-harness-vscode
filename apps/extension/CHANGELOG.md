@@ -1,5 +1,15 @@
 # Change Log
 
+## 0.1.11
+
+- 上游同步审计截至 `c291e796`：最新 DSH 发布仍为 `0.1.5-rc.2`，其后未发现本扩展消费的 Connection/Gateway、Cookie、`remote.mux` 或 Session v3 wire 变化；继续使用独立 `rc152` 精确适配，不虚构未发布的上游版本。
+- 完善编辑器当前符号/诊断上下文、原生编辑器入口、工作区任务中心和故障诊断恢复；新增递归工具调用树，以及 read/diff/terminal/search/web 结构化预览和历史文件引用展示。
+- 加固长会话事件顺序、重连/历史回放、Host-only 行、附件大小错误、导出覆盖竞态和发送错误详情；保持凭据、端点和文件操作留在 Extension Host。
+- 本次发布前 `pnpm check` 通过 167 个测试文件（1390 个测试通过、1 个跳过），`pnpm build` 通过；真实 DSH/Webview 完整 smoke 仍按能力矩阵保留为未完成证据。
+- The upstream audit at `c291e796` confirms that DSH `0.1.5-rc.2` remains the newest published runtime and that no consumed Connection/Gateway, Cookie, `remote.mux`, or Session v3 wire changed afterwards; the exact `rc152` adapter remains the supported entry.
+- Adds editor symbol/diagnostic context, native editor actions, workspace task scope, diagnostics recovery, recursive tool-call trees, structured read/diff/terminal/search/web previews, and historical file-reference rendering.
+- Hardens long-session ordering, reconnect/history replay, Host-only rows, attachment-size errors, confirmed export races, and user-visible send failures while keeping credentials, endpoints, and file operations in the Extension Host.
+
 ## 0.1.10
 
 - 适配 DSH `0.1.5-rc.2`：新增独立 `rc152` 精确版本入口；沿用已核对的 Session v3
