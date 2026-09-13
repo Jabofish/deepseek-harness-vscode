@@ -21,6 +21,8 @@
     "../packages/dsh-adapter/src/**/*.ts",
     "../packages/webview-protocol/src/**/*.ts",
     "../packages/timeline/src/**/*.ts",
-    "../packages/test-support/src/**/*.ts"
+    "../packages/test-support/src/**/*.ts",
+    "../apps/extension/src/backend/process-supervisor.ts",
+    "../apps/extension/src/backend/windows-shim.ts"
   ]
 }

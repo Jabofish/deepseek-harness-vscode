@@ -143,6 +143,34 @@ VS Code 无文件夹 Webview 回放，因此该修复不提升能力矩阵中的
 
 证据边界：本轮只有代码与自动测试证据，未做真实 DSH/VS Code Webview 运行验证，因此相关核心能力仍保持 `PARTIAL`，不因本切片提升为 `DONE`。全量门禁 `pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build` 在本切片通过（158 个测试文件 / 1324 项测试）。
 
+## 2026-09-13 真实 DSH live smoke：rc.1 连接、探测与释放
+
+新增可复现的真实运行验证 `tests/live-dsh/run.spec.ts`（默认跳过，`DSH_LIVE_SMOKE=1` 启用）。它用
+扩展自身的托管契约启动真实 DSH，执行登录 cookie 交换、版本探测、真实适配器连接、只读 RPC 与释放，
+只停止自己启动的进程：
+
+```text
+launch dsh.cmd --profile web --no-open --host 127.0.0.1 --port 45265
+login http://127.0.0.1:45265 status=303 cookie=exchanged
+managed start pid=21788 endpoint=http://127.0.0.1:45265
+probe dsh=0.1.5-rc.1 protocol=rc151 adapter=dsh-0.1.5-rc.1 mode=exact
+session.list 44 session(s) / workspace.list 8 workspace(s) / events.subscribe released
+backend closed / managed stop port 45265 closed
+```
+
+本轮因此具备第三级证据（真实 DSH 运行验证）的能力：
+
+- CN-06 的 `0.1.5-rc.1` 精确入口：真实构建被 `VersionedBackendProbe` 以 `exact` 模式选中
+  `dsh-0.1.5-rc.1`/`rc151`，握手、`session.list`、`workspace.list` 与事件订阅均成功；其余历史
+  版本（alpha.*、rc.131/rc.152 等）仍只有代码与自动测试证据。
+- CN-01/CN-02 的受管启动路径：`managedWebArguments` 生成的 `--profile web --no-open` 参数向量在真实
+  rc.1 上产生了 loopback endpoint，`onReadyEndpoint` 的 303 + cookie 交换成功。
+- CN-04 的句柄所有权：脚本只停止自己创建的进程，并在停止后断言 loopback 端口已关闭。
+
+证据边界：以上为 Node/适配层真实运行证据，仍未包含真实 VS Code Webview 渲染与交互（现有 Electron
+套件只做激活与 `dsh.connect` 冒烟），因此这些能力继续保持 `PARTIAL`；下一步提升路径是给 Electron
+套件补真实 DSH 与断言，而不是直接改状态。
+
 ## 历史基线：实施批次 E 之前的能力快照
 
 以下表格只保留批次 E 开始前的审计基线，用于追溯，不覆盖本文件上方“实施批次 E”的当前状态；其中的“尚未实现”描述不应被当作当前代码结论。
