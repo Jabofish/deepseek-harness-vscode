@@ -170,9 +170,53 @@ backend closed / managed stop port 45265 closed
   rc.1 上产生了 loopback endpoint，`onReadyEndpoint` 的 303 + cookie 交换成功。
 - CN-04 的句柄所有权：脚本只停止自己创建的进程，并在停止后断言 loopback 端口已关闭。
 
-证据边界：以上为 Node/适配层真实运行证据，仍未包含真实 VS Code Webview 渲染与交互（现有 Electron
+证据边界：以上为 Node/适配层真实运行证据，仍未包含真实 VS Code Webview 渲染与交互（当时的 Electron
 套件只做激活与 `dsh.connect` 冒烟），因此这些能力继续保持 `PARTIAL`；下一步提升路径是给 Electron
 套件补真实 DSH 与断言，而不是直接改状态。
+
+## 2026-09-13 VS Code Electron 套件：附着断言与真实托管运行
+
+`tests/vscode-e2e/` 此前只做“激活 + `dsh.connect` + 等待 1.5 s”，对连接结果没有任何断言，README 却列出了
+六项验收场景。本批次把它升级为可验证的端到端证据，并让 README 只声明实际断言的内容：
+
+- `run.ts` 的 loopback fixture 记录真实流量（RPC 方法名、`/api/events.mux` 与 `/api/events.host` 的
+  WebSocket 升级、被拒绝的升级），并通过测试专用只读通道 `GET /__e2e/observations` 暴露；窗口关闭后
+  runner 复核同一份计数，套件若不再真正使用 fixture 会直接失败。
+- `suite/index.js` 在 Extension Host 内读取工作区 `.vscode/settings.json` 确认连接模式，执行
+  `dsh.connect`，并在 attach-only 模式下轮询观测通道，断言真实发生了 `host.describe` 握手与两条事件
+  下行链路。managed 模式不做 fixture 断言（扩展拥有真实 runtime，不经过 fixture）。
+- `run.ts` 增加 `--disable-workspace-trust`：一次性临时工作区必须被视为受信任，否则扩展按契约拒绝
+  自动启动，托管模式无法执行。
+
+真实运行证据（2026-09-13，Windows，VS Code 1.125.0，`DSH_VSCODE_E2E_EXECUTABLE=D:\Microsoft VS Code\Code.exe`）：
+
+```text
+attach-only : fixture listening on port 21326 → events.mux upgrade → events.host upgrade
+              → dsh.connect completed → attached methods=[/,host.describe] mux=1 host=1 → exit 0
+managed     : fixture listening on port 53163 → managed runtime 0.1.5-rc.1 npm shim
+              → dsh.connect completed → exit 0
+```
+
+`DshConnectionCoordinator.connectOnce` 在“未找到 runtime / 版本不受支持 / 启动失败 / 端点不可达”的每个
+分支都先发布失败状态再 `throw`，因此 managed 模式下 `dsh.connect` 正常返回即证明真实 Extension Host 中
+完成了“定位 → 启动 → 探测 → 附着”的完整受管链路。
+
+因此获得第三级证据（真实 VS Code 扩展宿主 + 真实 DSH）的部分：
+
+- CN-02 的 `attach-only` 与 `new-isolated` 两种策略：前者在真实 Extension Host 中以真实 wire 流量证明
+  “附着不启动”，后者在真实 Extension Host 中托管真实 `0.1.5-rc.1`。
+- CN-01 的受管启动段（定位 → 启动 → 探测 → 附着）；`auto` 的候选回退矩阵与并发合并仍未在真实运行中
+  覆盖，因此 CN-01 保持 `PARTIAL`。
+- CN-04 的“只停止自己持有的进程”在真实托管启动上成立；真实卸载矩阵仍未覆盖。
+
+仍未覆盖（README 已如实标注，不再声称已完成）：Secondary Side Bar 布局、缺 runtime 时的底部引导、
+真实 protocol 的完整业务流（session/streaming/审批/问题/模型/job/goal/subagent）、reload 恢复与外部
+进程存活。这些需要扩展向测试暴露可读的视图/状态通道，或引入真正的 UI 自动化。
+
+证据边界：本批次把“真实 VS Code 扩展宿主 + 真实 DSH”纳入证据，但**没有**断言 Webview DOM 的渲染与
+交互；因此没有能力因此提升为 `DONE`，CN-01/CN-02/CN-04 继续保持 `PARTIAL`。全量门禁
+`pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build` 通过（160 个测试文件、
+1328 项测试通过、1 项 live smoke 默认跳过）。
 
 ## 历史基线：实施批次 E 之前的能力快照
 

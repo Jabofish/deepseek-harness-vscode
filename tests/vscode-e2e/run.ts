@@ -14,14 +14,23 @@ export async function run(): Promise<void> {
   const managed = process.env.DSH_VSCODE_E2E_MODE === 'managed'
   const runtimeExecutable = process.env.DSH_VSCODE_E2E_RUNTIME
   const fixtureSockets = new Set<Duplex>()
+  const observations: FixtureObservations = {
+    methods: [],
+    muxUpgrades: 0,
+    hostUpgrades: 0,
+    rejectedUpgrades: 0,
+  }
   const server = createServer((request, response) => {
-    void handleFixtureRequest(request, response)
+    void handleFixtureRequest(request, response, observations)
   })
   server.on('upgrade', (request, socket) => {
     if (request.url !== '/api/events.mux' && request.url !== '/api/events.host') {
+      observations.rejectedUpgrades += 1
       socket.destroy()
       return
     }
+    if (request.url === '/api/events.mux') observations.muxUpgrades += 1
+    else observations.hostUpgrades += 1
     const key = request.headers['sec-websocket-key']
     if (typeof key !== 'string') {
       socket.destroy()
@@ -72,6 +81,8 @@ export async function run(): Promise<void> {
     console.log(
       `[dsh-vscode-e2e] mode=${managed ? 'managed' : 'attach-only'} fixture listening on loopback port ${address.port}`,
     )
+    if (managed)
+      console.log(`[dsh-vscode-e2e] managed runtime: ${runtimeExecutable ?? 'discovered from PATH'}`)
     const vscodeExecutablePath = process.env.DSH_VSCODE_E2E_EXECUTABLE
     console.log(
       vscodeExecutablePath === undefined
@@ -86,8 +97,29 @@ export async function run(): Promise<void> {
       // Codex/VS Code terminals can inherit this Electron switch. Passing it
       // through makes Code.exe execute the workspace path as a Node script.
       extensionTestsEnv: { ELECTRON_RUN_AS_NODE: undefined },
-      launchArgs: [workspace, '--disable-gpu', '--skip-welcome', '--skip-release-notes'],
+      // The temp workspace must count as trusted, otherwise the extension is
+      // required to refuse an automatic start and managed mode can never run.
+      launchArgs: [
+        workspace,
+        '--disable-gpu',
+        '--skip-welcome',
+        '--skip-release-notes',
+        '--disable-workspace-trust',
+      ],
     })
+    console.log(
+      `[dsh-vscode-e2e] fixture observed methods=[${observations.methods.join(',')}] mux=${observations.muxUpgrades} host=${observations.hostUpgrades}`,
+    )
+    if (!managed) {
+      // The suite asserts this too, but a suite that silently stops asking is
+      // exactly the failure mode this fixture exists to catch.
+      const attached =
+        observations.muxUpgrades >= 1 && observations.hostUpgrades >= 1 && observations.methods.length >= 1
+      if (!attached)
+        throw new Error(
+          `The attach-only fixture was never used by the extension host: ${JSON.stringify(observations)}`,
+        )
+    }
   } finally {
     for (const socket of fixtureSockets) socket.destroy()
     await new Promise<void>((resolve) => {
@@ -97,10 +129,29 @@ export async function run(): Promise<void> {
   }
 }
 
-async function handleFixtureRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
+interface FixtureObservations {
+  /** RPC method names the extension host actually asked for, in order. */
+  readonly methods: string[]
+  muxUpgrades: number
+  hostUpgrades: number
+  rejectedUpgrades: number
+}
+
+async function handleFixtureRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+  observations: FixtureObservations,
+): Promise<void> {
   if (request.url === '/api/events.mux' || request.url === '/api/events.host') {
     response.writeHead(426, { connection: 'Upgrade', upgrade: 'websocket' })
     response.end('upgrade required')
+    return
+  }
+  // Test-only channel: the extension host suite reads this to assert what the
+  // extension actually did over the wire instead of trusting a command result.
+  if (request.url === '/__e2e/observations') {
+    response.writeHead(200, { 'content-type': 'application/json' })
+    response.end(JSON.stringify(observations))
     return
   }
   let body = ''
@@ -111,7 +162,8 @@ async function handleFixtureRequest(request: IncomingMessage, response: ServerRe
   } catch {
     rpcId = undefined
   }
-  const method = request.url?.replace(/^\/api\//, '')
+  const method = request.url?.replace(/^\/api\//, '') ?? ''
+  if (!observations.methods.includes(method)) observations.methods.push(method)
   const value =
     method === 'host.describe'
       ? {
