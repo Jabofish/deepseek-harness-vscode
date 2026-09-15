@@ -21,14 +21,7 @@ describe.skipIf(process.env.DSH_LIVE_SMOKE !== '1')('live DSH connection smoke',
   it(
     'starts the managed web profile, probes it, reads sessions and releases the port',
     async () => {
-      const runtime = await startManagedRuntime({
-        ...(process.env.DSH_LIVE_RUNTIME === undefined
-          ? {}
-          : { requestedRuntime: process.env.DSH_LIVE_RUNTIME }),
-        ...(process.env.DSH_LIVE_RUNTIME_VERSION === undefined
-          ? {}
-          : { runtimeVersion: process.env.DSH_LIVE_RUNTIME_VERSION }),
-      })
+      const runtime = await startManagedRuntime()
       const steps = runtime.steps
       try {
         const { backend } = runtime

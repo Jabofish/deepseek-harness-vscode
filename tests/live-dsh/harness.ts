@@ -17,6 +17,7 @@ import type { DshBackend } from '../../packages/domain/src/backend.js'
 import type { BackendEndpoint } from '../../packages/domain/src/runtime.js'
 import { Rc151VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc151/adapter.js'
 import { Rc152VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc152/adapter.js'
+import { Alpha161VersionAdapter } from '../../packages/dsh-adapter/src/versions/alpha161/adapter.js'
 import { resolveLiveRuntime } from './runtime.js'
 
 export const DEFAULT_RUNTIME_VERSION = '0.1.5-rc.1'
@@ -42,13 +43,21 @@ export interface ManagedLiveRuntime {
  * Start an isolated, extension-owned DSH exactly as the Extension Host does and
  * return a connected backend. Only the process started here is signalled; an
  * external DSH is never touched.
+ *
+ * Explicit options win; otherwise `DSH_LIVE_RUNTIME` and
+ * `DSH_LIVE_RUNTIME_VERSION` select the executable and the adapter hint so that
+ * every live spec reads the same environment instead of silently probing a
+ * newer binary under the pinned default version.
  */
 export async function startManagedRuntime(options?: {
   readonly requestedRuntime?: string
   readonly runtimeVersion?: string
 }): Promise<ManagedLiveRuntime> {
-  const runtimeExecutable = resolveLiveRuntime(options?.requestedRuntime?.trim() || 'dsh')
-  const runtimeVersion = options?.runtimeVersion?.trim() || DEFAULT_RUNTIME_VERSION
+  const runtimeExecutable = resolveLiveRuntime(
+    options?.requestedRuntime?.trim() || process.env.DSH_LIVE_RUNTIME?.trim() || 'dsh',
+  )
+  const runtimeVersion =
+    options?.runtimeVersion?.trim() || process.env.DSH_LIVE_RUNTIME_VERSION?.trim() || DEFAULT_RUNTIME_VERSION
   const port = await freeLoopbackPort()
   const workspace = await mkdtemp(path.join(os.tmpdir(), 'dsh-live-'))
   const steps: string[] = []
@@ -90,6 +99,7 @@ export async function startManagedRuntime(options?: {
     steps.push(`managed start pid=${started.pid} endpoint=${started.endpoint.baseUrl}`)
 
     const adapters = [
+      new Alpha161VersionAdapter(adapterOptions(endpointCookie)),
       new Rc152VersionAdapter(adapterOptions(endpointCookie)),
       new Rc151VersionAdapter(adapterOptions(endpointCookie)),
     ]

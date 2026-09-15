@@ -4,9 +4,13 @@
 
 - 加固 Webview 弹层的 Escape 分层、键盘导航、焦点归还、IME 输入、失败提示，以及会话、任务、设置和附件入口的交互回归。
 - 完善结构化工具结果、团队状态、历史文件引用和模型选择的展示/映射；导出时按选项正确过滤推理内容和附件。
+- 接入 DSH `0.1.6-alpha.1` 的独立精确 `alpha161` Adapter；复用已核对的 Session v3 基础 wire，并对新增 `image/offload` projection 事件执行脱敏 opaque 保留。
+- 当前未将 `image/offload` 的消息投影、终端、权限预设、归档恢复和 Skill 路径等新增 alpha 能力冒充为已完成；安装器默认仍为 `0.1.5-rc.2`。
 - 补充真实 DSH 的只读 surface/transcript smoke harness 与能力矩阵证据；本轮不改变 DSH 版本、不 bump 扩展版本，也不触发发布流程。
 - Harden Webview layering, keyboard navigation, focus restoration, IME input, failure reporting, and session/task/settings/attachment interaction regressions.
 - Improve structured tool, team-status, historical file-reference, and model-selection rendering/mapping, with option-aware export filtering for reasoning and attachments.
+- Add an exact `0.1.6-alpha.1` (`alpha161`) adapter on the audited Session v3 base wire, preserving the new `image/offload` projection event as a redacted opaque row.
+- Keep the alpha projection, terminal, permission-preset, unarchive, and skill-path surfaces explicitly unavailable; the installer default remains `0.1.5-rc.2`.
 - Add read-only real-DSH surface/transcript smoke coverage and capability-matrix evidence; no DSH version change, extension version bump, or release trigger is included.
 
 ## 0.1.11

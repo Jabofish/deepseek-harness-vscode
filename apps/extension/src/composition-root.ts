@@ -58,6 +58,7 @@ import {
 import {
   Alpha151VersionAdapter,
   Alpha152VersionAdapter,
+  Alpha161VersionAdapter,
   Alpha132VersionAdapter,
   Alpha13VersionAdapter,
   Alpha5VersionAdapter,
@@ -399,6 +400,10 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     ...adapterOptions,
     authCookie: (endpoint) => endpointCookies.get(endpoint.baseUrl),
   })
+  const alpha161Adapter = new Alpha161VersionAdapter({
+    ...adapterOptions,
+    authCookie: (endpoint) => endpointCookies.get(endpoint.baseUrl),
+  })
   const alpha13Adapter = new Alpha13VersionAdapter({
     ...adapterOptions,
     authCookie: (endpoint) => endpointCookies.get(endpoint.baseUrl),
@@ -434,6 +439,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
   const legacyRc2Adapter = new LegacyRc2VersionAdapter(adapterOptions)
   const legacyRc1Adapter = new LegacyRc1VersionAdapter(adapterOptions)
   const adapters = [
+    alpha161Adapter,
     rc152Adapter,
     rc151Adapter,
     alpha152Adapter,

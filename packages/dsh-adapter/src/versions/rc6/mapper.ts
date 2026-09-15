@@ -1413,8 +1413,9 @@ function tool(value: Record<string, unknown>, phase: 'call' | 'result' = 'result
 /**
  * DSH persists a tool failure as a small identity object and keeps the
  * human-readable text in the error-marked tool-result message. Prefer that
- * replay-authoritative text; only fall back to a single identity field so
- * `{name, code}` never becomes a misleading JSON sentence in the timeline.
+ * replay-authoritative text; then use the upstream user-facing reason before
+ * falling back to a single identity field so `{name, code}` never becomes a
+ * misleading JSON sentence in the timeline.
  */
 function toolErrorText(
   value: unknown,
@@ -1429,9 +1430,12 @@ function toolErrorText(
     if (explicitText !== undefined) return explicitText
     if (messageIsError) {
       const messageTextValue = optionalText(messageError) ?? optionalText(messageOutput)
-      if (messageTextValue !== undefined) return messageTextValue
+      // An empty upstream tool-result block is rendered by contentText as a
+      // structural placeholder; the alpha.1 error.reason is more useful.
+      if (messageTextValue !== undefined && messageTextValue !== '[tool result]') return messageTextValue
     }
-    const identityText = optionalText(identity?.code) ?? optionalText(identity?.name)
+    const identityText =
+      optionalText(identity?.reason) ?? optionalText(identity?.code) ?? optionalText(identity?.name)
     if (identityText !== undefined) return identityText
     if (typeof value === 'number' || typeof value === 'boolean') return bounded(value)
     return undefined

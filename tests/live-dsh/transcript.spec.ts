@@ -16,6 +16,7 @@ const MAX_PAGES = 6
  * "can this build read the frame", not "does it win the cursor race".
  *
  *   $env:DSH_LIVE_SMOKE = '1'
+ *   $env:DSH_LIVE_RUNTIME_VERSION = '0.1.5-rc.1'      # optional; defaults to the pinned runtime
  *   npx vitest run tests/live-dsh/transcript.spec.ts
  *
  * Read-only: it never sends a prompt or writes to the runtime.

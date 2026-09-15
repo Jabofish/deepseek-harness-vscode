@@ -21,9 +21,14 @@ never touched. It is skipped unless explicitly enabled:
 ```powershell
 $env:DSH_LIVE_SMOKE = '1'
 $env:DSH_LIVE_RUNTIME = 'dsh.cmd'                                     # optional; defaults to `dsh` on PATH
-$env:DSH_LIVE_RUNTIME_VERSION = '0.1.5-rc.1'                          # defaults to the pinned runtime
-npx vitest run tests/live-dsh/run.spec.ts
+$env:DSH_LIVE_RUNTIME_VERSION = '0.1.5-rc.1'                          # optional; defaults to the pinned runtime
+npx vitest run tests/live-dsh
 ```
+
+Every spec in this directory reads the same two variables inside
+`startManagedRuntime`, so `run.spec.ts`, `surfaces.spec.ts` and
+`transcript.spec.ts` always launch the same build and the printed probe line
+names the exact adapter selected for that version hint.
 
 `DSH_LIVE_RUNTIME` accepts either an explicit path or a bare command name. A
 bare name is resolved through `PATH` with the runtime locator's candidate order

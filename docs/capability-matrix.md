@@ -14,6 +14,7 @@
 
 - 扩展当前发布基线为 `0.1.11`；本轮修改不 bump 版本、不创建新 tag，也不触发发布。
 - 已知 DSH 版本按真实协议边界使用独立 Adapter：legacy Host、alpha family v0、Session v2 和 Session v3 不跨 wire family 猜测。
+- 已新增 DSH `0.1.6-alpha.1` 的精确 `alpha161` Adapter，并在 npm alpha 通道的真实 `0.1.6-alpha.1` 上通过 live smoke：managed `--no-open` 启动、`mode=exact` 精确探测、只读 surface 与 transcript 归约全部成功；Connection/Gateway 与 Session v3 基础 wire 复用已核对的 `rc152` 边界，`image/offload` 仅按脱敏 opaque 事件保留。其消息投影 UI、终端、权限预设、归档恢复和 Skill 路径等新增 surface 仍未实现，安装器默认仍为 `0.1.5-rc.2`。
 - Webview 不接触 endpoint、进程句柄、凭据、文件系统或网络；所有 DSH、文件、进程和 Secret 操作由 Extension Host 负责。
 - 代码与自动测试已经覆盖若干条目，但完整的 DSH 版本矩阵、VS Code Webview 现场回放、跨平台发布验证和可访问性人工验证仍是主要缺口，因此当前条目保持 `PARTIAL`。
 
