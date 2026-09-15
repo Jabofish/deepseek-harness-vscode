@@ -84,7 +84,12 @@ export function MessageActions(props: MessageActionsProps): ReactElement {
     if (dialogRating === undefined) return
     feedbackDetailRef.current?.focus()
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape' && !dialogSaving) closeDialog()
+      // The dialog is the innermost surface; outer owners listen on the same
+      // document/window keys, so it has to mark the key as consumed or they
+      // collapse alongside it.
+      if (event.key !== 'Escape' || event.defaultPrevented || dialogSaving) return
+      event.preventDefault()
+      closeDialog()
     }
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)

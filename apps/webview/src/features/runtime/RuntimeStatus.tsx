@@ -104,8 +104,8 @@ export function RuntimeStatus({
             <button
               className="dsh-icon-button"
               type="button"
-              aria-label={t('settings.close')}
-              title={t('settings.close')}
+              aria-label={t('runtime.closeDetails')}
+              title={t('runtime.closeDetails')}
               onClick={close}
             >
               <Icon name="close" />

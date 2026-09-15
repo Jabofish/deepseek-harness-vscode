@@ -1,5 +1,6 @@
-import { useState, type ReactElement } from 'react'
+import { useRef, useState, type ReactElement } from 'react'
 import type { DiscoveredModel, ModelDiscoveryInput } from '@dsh-vscode/domain'
+import { useDismissibleLayer } from '../../components/common/useDismissibleLayer.js'
 import { Icon } from '../../ui/Icon.js'
 import { useI18n } from '../../i18n.js'
 
@@ -93,7 +94,18 @@ export function ModelListEditor(props: ModelListEditorProps): ReactElement {
   const closeCandidates = (): void => {
     setCandidates(undefined)
     setPicked(new Set())
+    // The dialog is `aria-modal`, so hand the keyboard back to the button that
+    // opened it instead of dropping focus on the body.
+    discoverTriggerRef.current?.focus()
   }
+
+  const pickerRef = useRef<HTMLElement>(null)
+  const discoverTriggerRef = useRef<HTMLButtonElement>(null)
+  useDismissibleLayer({
+    open: candidates !== undefined,
+    refs: [pickerRef],
+    onDismiss: closeCandidates,
+  })
 
   const adopt = (): void => {
     if (candidates === undefined) return
@@ -138,6 +150,7 @@ export function ModelListEditor(props: ModelListEditorProps): ReactElement {
         <strong>{t('settings.modelsEditor')}</strong>
         <div className="dsh-settings__model-editor-actions">
           <button
+            ref={discoverTriggerRef}
             className="dsh-button dsh-button--secondary dsh-button--compact"
             type="button"
             disabled={!props.writable || props.saving || discovering}
@@ -261,6 +274,7 @@ export function ModelListEditor(props: ModelListEditorProps): ReactElement {
       {candidates === undefined ? null : (
         <div className="dsh-settings__model-picker-backdrop" role="presentation">
           <section
+            ref={pickerRef}
             className="dsh-settings__model-picker"
             role="dialog"
             aria-modal="true"
@@ -271,6 +285,7 @@ export function ModelListEditor(props: ModelListEditorProps): ReactElement {
               <button
                 className="dsh-icon-button"
                 type="button"
+                autoFocus
                 aria-label={t('settings.closeDiscoveredModels')}
                 onClick={closeCandidates}
               >

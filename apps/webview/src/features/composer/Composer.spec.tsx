@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { useState, type ReactElement } from 'react'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { DynamicCommand } from '@dsh-vscode/domain'
 import { Composer } from './Composer.js'
@@ -74,6 +75,53 @@ describe('Composer', () => {
     expect(screen.getByRole('button', { name: `Remove ${name}` })).toBeDefined()
     expect(screen.getByText(name).getAttribute('title')).toBe(name)
     expect(screen.getByRole('textbox', { name: 'Prompt' }).className).toContain('dsh-composer__textarea')
+  })
+
+  it('reports the extras menu open state so the host can refresh or close its picker', () => {
+    const onExtrasOpenChange = vi.fn()
+    render(<Composer {...baseProps()} onExtrasOpenChange={onExtrasOpenChange} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
+    expect(onExtrasOpenChange).toHaveBeenLastCalledWith(true)
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(onExtrasOpenChange).toHaveBeenLastCalledWith(false)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Attach file' }))
+    expect(onExtrasOpenChange).toHaveBeenLastCalledWith(false)
+  })
+
+  it('keeps the open-file picker collapsed after a command is inserted from the extras menu', () => {
+    const onExtrasOpenChange = vi.fn()
+    function Host(): ReactElement {
+      const [pickerOpen, setPickerOpen] = useState(false)
+      return (
+        <Composer
+          {...baseProps()}
+          commands={commandFixtures()}
+          openFilePickerOpen={pickerOpen}
+          onToggleOpenFilePicker={() => setPickerOpen((current) => !current)}
+          onExtrasOpenChange={(open) => {
+            onExtrasOpenChange(open)
+            // Mirrors App.tsx: a closed menu must not leave its nested picker expanded.
+            if (!open) setPickerOpen(false)
+          }}
+        />
+      )
+    }
+    render(<Host />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Choose an open file' }))
+    expect(screen.getByRole('dialog', { name: 'Open files' })).toBeDefined()
+
+    fireEvent.click(screen.getByRole('menuitem', { name: /\/goal/ }))
+    expect(onExtrasOpenChange).toHaveBeenLastCalledWith(false)
+
+    // The host resets its picker only on that notification, so the next opening stays quiet.
+    fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
+    expect(screen.queryByRole('dialog', { name: 'Open files' })).toBeNull()
   })
 
   it('does not render an open-file action when no supported file can be attached', () => {
@@ -342,6 +390,23 @@ describe('Composer', () => {
     expect(screen.queryByRole('dialog', { name: 'Preview shot.png' })).toBeNull()
   })
 
+  it('returns focus to the attachment thumbnail after the preview closes', () => {
+    render(
+      <Composer
+        {...baseProps()}
+        attachments={[{ uri: 'dsh-attachment:photo-1234567890', name: 'shot.png', mimeType: 'image/png' }]}
+        attachmentPreviews={{ 'dsh-attachment:photo-1234567890': 'data:image/png;base64,aXBob3Rv' }}
+      />,
+    )
+    const thumbnail = screen.getByRole('button', { name: 'Preview shot.png' })
+    fireEvent.click(thumbnail)
+    const dialog = screen.getByRole('dialog', { name: 'Preview shot.png' })
+    expect(document.activeElement).toBe(within(dialog).getByRole('button', { name: 'Close preview' }))
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: 'Preview shot.png' })).toBeNull()
+    expect(document.activeElement).toBe(thumbnail)
+  })
+
   it('addresses previews by opaque handle when two attachments share a name', () => {
     render(
       <Composer
@@ -396,6 +461,25 @@ describe('Composer', () => {
     const textarea = screen.getByRole('textbox', { name: 'Prompt' })
     fireEvent.keyDown(textarea, { key: 'ArrowDown', isComposing: true })
     expect(textarea.getAttribute('aria-activedescendant')).toBeNull()
+  })
+
+  it('ignores menu Enter arbitration for the legacy IME signal', () => {
+    // keyCode 229 is the composition signal engines emit without
+    // `isComposing`; that Enter is confirming an IME candidate, so it must not
+    // pick the highlighted row (or run the typed command line).
+    const props = baseProps()
+    render(<Composer {...props} draft="/p" commands={commandFixtures()} onCommand={vi.fn()} />)
+    const textarea = screen.getByRole('textbox', { name: 'Prompt' })
+    fireEvent.keyDown(textarea, { key: 'ArrowDown' })
+    expect(textarea.getAttribute('aria-activedescendant')).toBe('dsh-command-option-0')
+
+    fireEvent.keyDown(textarea, { key: 'Enter', keyCode: 229 })
+    expect(props.onDraftChange).not.toHaveBeenCalled()
+    expect(textarea.getAttribute('aria-activedescendant')).toBe('dsh-command-option-0')
+
+    // Positive control: the same Enter without the composition signal picks the row.
+    fireEvent.keyDown(textarea, { key: 'Enter' })
+    expect(props.onDraftChange).toHaveBeenCalledWith('/plan ')
   })
 
   it('dismisses the command menu on Escape until the query changes', () => {
@@ -472,6 +556,73 @@ describe('Composer', () => {
     expect(onCommand).toHaveBeenCalledWith('/goal fix the parser')
     expect(onDraftChange).toHaveBeenCalledWith('')
     expect(onSubmit).not.toHaveBeenCalled()
+  })
+
+  it('keeps text typed while a submitted command line is still in flight', async () => {
+    let admit: (() => void) | undefined
+    const onCommand = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          admit = resolve
+        }),
+    )
+    function Host(): ReactElement {
+      const [draft, setDraft] = useState('/goal fix the parser')
+      return (
+        <Composer
+          {...baseProps()}
+          draft={draft}
+          commands={commandFixtures()}
+          onCommand={onCommand}
+          onDraftChange={setDraft}
+        />
+      )
+    }
+    render(<Host />)
+    const textarea = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })
+
+    fireEvent.keyDown(textarea, { key: 'Enter' })
+    expect(onCommand).toHaveBeenCalledWith('/goal fix the parser')
+
+    fireEvent.change(textarea, { target: { value: '/goal fix the parser and the lexer' } })
+    await act(async () => {
+      admit?.()
+      await Promise.resolve()
+    })
+
+    expect(textarea.value).toBe('/goal fix the parser and the lexer')
+  })
+
+  it('clears the command line once the Host accepts it', async () => {
+    let admit: (() => void) | undefined
+    const onCommand = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          admit = resolve
+        }),
+    )
+    function Host(): ReactElement {
+      const [draft, setDraft] = useState('/goal fix the parser')
+      return (
+        <Composer
+          {...baseProps()}
+          draft={draft}
+          commands={commandFixtures()}
+          onCommand={onCommand}
+          onDraftChange={setDraft}
+        />
+      )
+    }
+    render(<Host />)
+    const textarea = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })
+
+    fireEvent.keyDown(textarea, { key: 'Enter' })
+    await act(async () => {
+      admit?.()
+      await Promise.resolve()
+    })
+
+    expect(textarea.value).toBe('')
   })
 
   it('submits a bare-token command without args through the command channel on Enter', () => {

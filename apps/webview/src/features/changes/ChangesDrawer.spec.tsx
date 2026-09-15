@@ -168,4 +168,32 @@ describe('ChangesDrawer', () => {
       expect(screen.getByRole('alert').textContent).toBe('The review decision could not be saved.'),
     )
   })
+
+  it('reports a rejected file open instead of dropping the row click silently', async () => {
+    const onOpen = vi.fn().mockRejectedValue(new Error('workspace folder is gone'))
+    renderDrawer({ onOpen })
+
+    fireEvent.click(screen.getByRole('button', { name: '1 changes' }))
+    fireEvent.click(screen.getByTitle('src/main.ts'))
+
+    await waitFor(() =>
+      expect(screen.getByRole('alert').textContent).toBe('The changed file could not be opened.'),
+    )
+  })
+
+  it('clears a reported open failure once a later open succeeds', async () => {
+    const onOpen = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('workspace folder is gone'))
+      .mockResolvedValue(undefined)
+    renderDrawer({ onOpen })
+
+    fireEvent.click(screen.getByRole('button', { name: '1 changes' }))
+    fireEvent.click(screen.getByTitle('src/main.ts'))
+    await waitFor(() => expect(screen.getByRole('alert')).toBeDefined())
+
+    fireEvent.click(screen.getByTitle('src/main.ts'))
+    await waitFor(() => expect(onOpen).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
+  })
 })

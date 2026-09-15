@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactElement } from 'react'
 import type { TaskListScope, TaskSummary } from '@dsh-vscode/domain'
 import { useI18n } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
@@ -34,13 +34,53 @@ export function TasksDrawer(props: TasksDrawerProps): ReactElement | null {
   const [open, setOpen] = useState(false)
   const [answering, setAnswering] = useState<string | undefined>()
   const [answer, setAnswer] = useState('')
+  const [failure, setFailure] = useState<string | undefined>(undefined)
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
+  const answeringRowRef = useRef<HTMLLIElement>(null)
+
+  /** Dismissing the center also drops the inline draft, so reopening is clean. */
+  const close = (): void => {
+    setOpen(false)
+    setAnswering(undefined)
+    setAnswer('')
+    setFailure(undefined)
+  }
+
+  /**
+   * Every row action is host work that can be refused (a stale revision, a task
+   * owned by another view). Surfacing the refusal is the only way the user can
+   * tell "applied" from "silently dropped".
+   */
+  const runAction = async (action: () => Promise<void>): Promise<void> => {
+    setFailure(undefined)
+    try {
+      await action()
+    } catch (reason) {
+      setFailure(reason instanceof Error ? reason.message : t('tasks.actionFailed'))
+    }
+  }
+
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
+    if (event.key !== 'Escape' || !open || event.defaultPrevented) return
+    event.preventDefault()
+    if (answering !== undefined) {
+      // The inline form is the innermost layer: the first Escape discards the
+      // draft and returns focus to the row it belongs to.
+      const row = answeringRowRef.current
+      setAnswering(undefined)
+      setAnswer('')
+      row?.querySelector<HTMLButtonElement>('button')?.focus()
+      return
+    }
+    close()
+    triggerRef.current?.focus()
+  }
 
   useEffect(() => {
     if (!open) return
     const closeOutside = (event: PointerEvent): void => {
-      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) setOpen(false)
+      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) close()
     }
     document.addEventListener('pointerdown', closeOutside)
     return () => document.removeEventListener('pointerdown', closeOutside)
@@ -68,25 +108,36 @@ export function TasksDrawer(props: TasksDrawerProps): ReactElement | null {
   const submitAnswer = async (task: TaskSummary): Promise<void> => {
     const interactionId = task.interactionId
     if (interactionId === undefined || answer.trim() === '') return
-    await props.onAnswer(task, answer)
+    setFailure(undefined)
+    try {
+      await props.onAnswer(task, answer)
+    } catch (reason) {
+      // The form stays open with its draft so the refusal can be retried.
+      setFailure(reason instanceof Error ? reason.message : t('tasks.actionFailed'))
+      return
+    }
     setAnswer('')
     setAnswering(undefined)
   }
 
   const changeScope = (next: TaskListScope): void => {
-    if (next === scope || props.onScopeChange === undefined) return
-    void props.onScopeChange(next).catch(() => undefined)
+    const onScopeChange = props.onScopeChange
+    if (next === scope || onScopeChange === undefined) return
+    void runAction(() => onScopeChange(next))
   }
 
   return (
-    <div ref={rootRef} className="dsh-tasks-popover">
+    <div ref={rootRef} className="dsh-tasks-popover" onKeyDown={onKeyDown}>
       <button
         ref={triggerRef}
         type="button"
         className="dsh-tasks-popover__trigger"
         aria-expanded={open}
         aria-label={countLabel}
-        onClick={() => setOpen((current) => !current)}
+        onClick={() => {
+          if (open) close()
+          else setOpen(true)
+        }}
       >
         {needsInputCount > 0 ? <span className="dsh-tasks-popover__dot" data-state="warning" /> : null}
         <Icon name="list" />
@@ -106,7 +157,7 @@ export function TasksDrawer(props: TasksDrawerProps): ReactElement | null {
               className="dsh-icon-button"
               aria-label={t('tasks.refresh')}
               title={t('tasks.refresh')}
-              onClick={() => void props.onRefresh().catch(() => undefined)}
+              onClick={() => void runAction(() => props.onRefresh())}
             >
               <Icon name="refresh" />
             </button>
@@ -141,10 +192,16 @@ export function TasksDrawer(props: TasksDrawerProps): ReactElement | null {
           {props.loading && visibleTasks.length === 0 ? (
             <div className="dsh-tasks-popover__status">{t('tasks.loading')}</div>
           ) : null}
+          {failure === undefined ? null : (
+            <p className="dsh-tasks-popover__error" role="alert">
+              {failure}
+            </p>
+          )}
           <ul className="dsh-tasks-popover__rows">
             {visibleTasks.map((task) => (
               <li
                 key={task.taskId}
+                ref={answering === task.taskId ? answeringRowRef : undefined}
                 className="dsh-tasks-popover__row"
                 data-needs-input={task.needsUserAction}
               >
@@ -152,7 +209,7 @@ export function TasksDrawer(props: TasksDrawerProps): ReactElement | null {
                   type="button"
                   className="dsh-tasks-popover__main"
                   disabled={!task.canOpen}
-                  onClick={() => void props.onOpen(task).catch(() => undefined)}
+                  onClick={() => void runAction(() => props.onOpen(task))}
                 >
                   <span
                     className="dsh-tasks-popover__status-dot"
@@ -176,7 +233,7 @@ export function TasksDrawer(props: TasksDrawerProps): ReactElement | null {
                     className="dsh-icon-button"
                     aria-label={t('tasks.stop', { title: task.title })}
                     title={t('tasks.stop', { title: task.title })}
-                    onClick={() => void props.onStop(task).catch(() => undefined)}
+                    onClick={() => void runAction(() => props.onStop(task))}
                   >
                     <Icon name="stop" />
                   </button>
@@ -187,7 +244,7 @@ export function TasksDrawer(props: TasksDrawerProps): ReactElement | null {
                       className="dsh-tasks-popover__answer"
                       onSubmit={(event) => {
                         event.preventDefault()
-                        void submitAnswer(task).catch(() => undefined)
+                        void submitAnswer(task)
                       }}
                     >
                       <input

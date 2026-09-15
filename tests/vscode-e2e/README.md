@@ -5,7 +5,7 @@
 The runner is opt-in. To avoid an implicit network download, provide a local VS Code executable:
 
 ```powershell
-$env:DSH_VSCODE_E2E_EXECUTABLE = 'C:\path\to\Code.exe'
+$env:DSH_VSCODE_E2E_EXECUTABLE = '<path-to-Code.exe>'
 node --experimental-transform-types tests/vscode-e2e/run.ts
 ```
 
@@ -32,27 +32,4 @@ These are the remaining scenarios from the original acceptance list. They need U
 
 The remaining UI flows are covered by the protocol, adapter, timeline, and application unit tests; the Electron runner is intentionally opt-in because it downloads and launches VS Code.
 
-## Recorded runs (2026-09-13, Windows)
-
-Attach-only, `DSH_VSCODE_E2E_EXECUTABLE='D:\Microsoft VS Code\Code.exe'`:
-
-```text
-[dsh-vscode-e2e] mode=attach-only fixture listening on loopback port 21326
-[dsh-vscode-e2e] fixture WebSocket upgrade /api/events.mux
-[dsh-vscode-e2e] fixture WebSocket upgrade /api/events.host
-[dsh-vscode-e2e] dsh.connect completed
-[dsh-vscode-e2e] attached methods=[/,host.describe] mux=1 host=1
-[dsh-vscode-e2e] fixture observed methods=[/,host.describe] mux=1 host=1
-exit 0
-```
-
-Managed with the real `@deepseek-ai/dsh` 0.1.5-rc.1 npm shim:
-
-```text
-[dsh-vscode-e2e] mode=managed fixture listening on loopback port 53163
-[dsh-vscode-e2e] managed runtime: C:\Users\...\AppData\Roaming/npm/dsh.cmd
-[dsh-vscode-e2e] dsh.connect completed
-[dsh-vscode-e2e] managed mode: no attach fixture traffic expected
-[dsh-vscode-e2e] fixture observed methods=[] mux=0 host=0
-exit 0
-```
+结果以测试断言和退出码为准；不要把机器路径、端口、进程号或原始运行输出复制进项目文档。

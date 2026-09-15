@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { TimelineNode } from '@dsh-vscode/timeline'
 import { ConversationEventToggle } from '../shell/ConversationEventToggle.js'
@@ -418,6 +418,27 @@ describe('Timeline', () => {
     const toggle = screen.getByRole('button', { name: 'Show DSH events' })
     fireEvent.click(toggle)
     expect(onPressedChange).toHaveBeenCalledWith(true)
+  })
+
+  it('keeps unreadable DSH frames out of the default transcript', () => {
+    const nodes: readonly TimelineNode[] = [
+      { kind: 'user-message', id: 'user-1', markdown: 'Please continue' },
+      { kind: 'event', id: 'event-1', name: 'agent/inbox/spliced', payload: { count: 2 } },
+      { kind: 'assistant-message', id: 'assistant-1', markdown: 'Continuing.', streaming: false },
+    ]
+    const { container, rerender } = render(
+      <Timeline sessionId="session-1" nodes={nodes} streaming={false} showDshEvents={false} />,
+    )
+
+    expect(screen.getByText('Please continue')).toBeDefined()
+    expect(screen.getByText('Continuing.')).toBeDefined()
+    expect(container.querySelectorAll('.dsh-timeline__event-group')).toHaveLength(0)
+    expect(screen.queryByText('agent/inbox/spliced')).toBeNull()
+
+    rerender(<Timeline sessionId="session-1" nodes={nodes} streaming={false} showDshEvents />)
+
+    expect(container.querySelectorAll('.dsh-timeline__event-group-item')).toHaveLength(1)
+    expect(screen.getByText('agent/inbox/spliced')).toBeDefined()
   })
 
   it('uses a labeled event action in the conversation tools menu', () => {
@@ -991,6 +1012,68 @@ describe('Timeline', () => {
     expect(onFeedback).toHaveBeenCalledWith('assistant-message-real-1', 'positive')
   })
 
+  it('closes only the feedback dialog when Escape lands on a message action above the refusal modal', async () => {
+    const onFeedbackSubmit = vi.fn()
+    const openLink = vi
+      .fn<(_: string) => Promise<void>>()
+      .mockRejectedValueOnce(new Error('The editor refused this path.'))
+    render(
+      <Timeline
+        sessionId="session-1"
+        nodes={[
+          {
+            kind: 'assistant-message',
+            id: 'assistant-message-feedback-stack',
+            markdown: 'Before the tool.',
+            streaming: false,
+            turn: 1,
+            step: 0,
+            turnCompleted: true,
+          },
+          {
+            kind: 'tool',
+            id: 'tool:read-feedback-stack',
+            tool: {
+              id: 'call-read-feedback-stack',
+              name: 'read',
+              category: 'read',
+              title: 'Read feature.ts',
+              status: 'completed',
+              presentation: {
+                phase: 'result',
+                card: 'read',
+                path: 'src/feature.ts',
+                offset: 11,
+                lines: [{ number: 11, text: 'export const answer = 42' }],
+                totalLines: 42,
+                lang: 'ts',
+              },
+              metadata: {},
+            },
+          },
+        ]}
+        streaming={false}
+        onOpenLink={openLink}
+        onFeedbackSubmit={onFeedbackSubmit}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Read details' }))
+    fireEvent.click(screen.getByTitle('src/feature.ts'))
+    await screen.findByRole('dialog', { name: 'Unable to open tool output' })
+
+    // The refusal modal declares `aria-modal` but owns no focus trap, so the
+    // keyboard can still reach a message action behind it; the feedback dialog
+    // is then the innermost surface.
+    fireEvent.click(screen.getByRole('button', { name: 'Good response' }))
+    await screen.findByRole('dialog', { name: 'Submit feedback' })
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    expect(screen.queryByRole('dialog', { name: 'Submit feedback' })).toBeNull()
+    expect(screen.getByRole('dialog', { name: 'Unable to open tool output' })).toBeDefined()
+  })
+
   it('renders a specialized skill row and reveals only its visible result text', () => {
     render(
       <Timeline
@@ -1150,6 +1233,227 @@ describe('Timeline', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
     await waitFor(() => expect(openLink).toHaveBeenCalledTimes(2))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  })
+
+  it('returns focus to the tool link after the Host file-open refusal closes', async () => {
+    const openLink = vi
+      .fn<(_: string) => Promise<void>>()
+      .mockRejectedValueOnce(new Error('The editor refused this path.'))
+    render(
+      <Timeline
+        sessionId="session-1"
+        nodes={[
+          {
+            kind: 'tool',
+            id: 'tool:read-open-focus',
+            tool: {
+              id: 'call-read-open-focus',
+              name: 'read',
+              category: 'read',
+              title: 'Read feature.ts',
+              status: 'completed',
+              presentation: {
+                phase: 'result',
+                card: 'read',
+                path: 'src/feature.ts',
+                offset: 11,
+                lines: [{ number: 11, text: 'export const answer = 42' }],
+                totalLines: 42,
+                lang: 'ts',
+              },
+              metadata: {},
+            },
+          },
+        ]}
+        streaming={false}
+        onOpenLink={openLink}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Read details' }))
+    const trigger = screen.getByTitle('src/feature.ts')
+    fireEvent.click(trigger)
+    const dialog = await screen.findByRole('dialog')
+    expect(document.activeElement).toBe(within(dialog).getByRole('button', { name: 'Dismiss error' }))
+
+    // The modal is `aria-modal`, so the keyboard has to come back to the link
+    // the user was on — the timeline can recycle that row while it is up.
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(document.activeElement).toBe(trigger)
+  })
+
+  it('returns focus to the tool link after a second refusal, not to the retry control', async () => {
+    const openLink = vi
+      .fn<(_: string) => Promise<void>>()
+      .mockRejectedValueOnce(new Error('first refusal'))
+      .mockRejectedValueOnce(new Error('second refusal'))
+    render(
+      <Timeline
+        sessionId="session-1"
+        nodes={[
+          {
+            kind: 'tool',
+            id: 'tool:read-open-retry-focus',
+            tool: {
+              id: 'call-read-open-retry-focus',
+              name: 'read',
+              category: 'read',
+              title: 'Read feature.ts',
+              status: 'completed',
+              presentation: {
+                phase: 'result',
+                card: 'read',
+                path: 'src/feature.ts',
+                offset: 11,
+                lines: [{ number: 11, text: 'export const answer = 42' }],
+                totalLines: 42,
+                lang: 'ts',
+              },
+              metadata: {},
+            },
+          },
+        ]}
+        streaming={false}
+        onOpenLink={openLink}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Read details' }))
+    const trigger = screen.getByTitle('src/feature.ts')
+    fireEvent.click(trigger)
+    await screen.findByRole('dialog')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    await waitFor(() => expect(screen.getByText('second refusal')).toBeDefined())
+
+    // The retry remounts the dialog; the row control that started the open is
+    // still the element the keyboard belongs to once the refusal is dismissed.
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(document.activeElement).toBe(trigger)
+  })
+
+  it('keeps the refusal modal when a nested surface already consumed the Escape key', async () => {
+    const consumed = vi.fn()
+    const openLink = vi
+      .fn<(_: string) => Promise<void>>()
+      .mockRejectedValueOnce(new Error('The editor refused this path.'))
+    render(
+      // Models the composer's slash menu and the other React-level Escape
+      // consumers: their handler runs at the root container, before the window
+      // listener the refusal modal owns, and marks the key as consumed.
+      <div
+        onKeyDown={(event) => {
+          if (event.key !== 'Escape') return
+          consumed()
+          event.preventDefault()
+        }}
+      >
+        <Timeline
+          sessionId="session-1"
+          nodes={[
+            {
+              kind: 'tool',
+              id: 'tool:read-open-consumed',
+              tool: {
+                id: 'call-read-open-consumed',
+                name: 'read',
+                category: 'read',
+                title: 'Read feature.ts',
+                status: 'completed',
+                presentation: {
+                  phase: 'result',
+                  card: 'read',
+                  path: 'src/feature.ts',
+                  offset: 11,
+                  lines: [{ number: 11, text: 'export const answer = 42' }],
+                  totalLines: 42,
+                  lang: 'ts',
+                },
+                metadata: {},
+              },
+            },
+          ]}
+          streaming={false}
+          onOpenLink={openLink}
+        />
+      </div>,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Read details' }))
+    fireEvent.click(screen.getByTitle('src/feature.ts'))
+    await screen.findByRole('dialog')
+
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Dismiss error' }), { key: 'Escape' })
+
+    expect(consumed).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('dialog')).toBeDefined()
+  })
+
+  it('leaves the refusal modal unmounted while a retry the Host has not answered yet is in flight', async () => {
+    // Falsified hypothesis: Escape could tear down the modal during an
+    // in-flight retry. The retry itself clears the refusal, so there is no
+    // surface for Escape to dismiss; the failure comes back with the second
+    // message and the keyboard still dismisses that one.
+    let settle: (() => void) | undefined
+    const openLink = vi
+      .fn<(_: string) => Promise<void>>()
+      .mockRejectedValueOnce(new Error('The editor refused this path.'))
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((_resolve, reject) => {
+            settle = () => reject(new Error('second refusal'))
+          }),
+      )
+    render(
+      <Timeline
+        sessionId="session-1"
+        nodes={[
+          {
+            kind: 'tool',
+            id: 'tool:read-open-busy',
+            tool: {
+              id: 'call-read-open-busy',
+              name: 'read',
+              category: 'read',
+              title: 'Read feature.ts',
+              status: 'completed',
+              presentation: {
+                phase: 'result',
+                card: 'read',
+                path: 'src/feature.ts',
+                offset: 11,
+                lines: [{ number: 11, text: 'export const answer = 42' }],
+                totalLines: 42,
+                lang: 'ts',
+              },
+              metadata: {},
+            },
+          },
+        ]}
+        streaming={false}
+        onOpenLink={openLink}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Read details' }))
+    fireEvent.click(screen.getByTitle('src/feature.ts'))
+    await screen.findByRole('dialog')
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+
+    expect(screen.queryByRole('dialog')).toBeNull()
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(screen.queryByRole('dialog')).toBeNull()
+
+    await act(async () => {
+      settle?.()
+      await Promise.resolve()
+    })
+    expect(screen.getByText('second refusal')).toBeDefined()
+
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 
   it('shows a compact activity phrase instead of message actions while an answer is streaming', () => {
@@ -1369,6 +1673,68 @@ describe('Timeline', () => {
     )
 
     expect(screen.queryByText('Injected context should not appear as a chat bubble.')).toBeNull()
+  })
+
+  it('labels Agent Team activity states instead of printing the protocol values', () => {
+    render(
+      <Timeline
+        sessionId="session-1"
+        nodes={[
+          {
+            kind: 'team',
+            id: 'team:member:team-1:member-1',
+            activity: {
+              kind: 'member',
+              id: 'team:member:team-1:member-1',
+              teamId: 'team-1',
+              memberId: 'member-1',
+              name: 'Planner',
+              phase: 'provisioning',
+            },
+          },
+          {
+            kind: 'team',
+            id: 'team:task:team-1:task-1',
+            activity: {
+              kind: 'task',
+              id: 'team:task:team-1:task-1',
+              teamId: 'team-1',
+              taskId: 'task-1',
+              subject: 'Inspect the contract',
+              status: 'in_progress',
+              blockedByCount: 0,
+              writeScopeCount: 1,
+            },
+          },
+          {
+            kind: 'team',
+            id: 'team:message:queued:team-1:message-1',
+            activity: {
+              kind: 'message.queued',
+              id: 'team:message:queued:team-1:message-1',
+              teamId: 'team-1',
+              messageId: 'message-1',
+              senderName: 'Planner',
+              targetId: 'member-2',
+              delivery: 'wakeup',
+              content: 'Take the next task',
+            },
+          },
+        ]}
+        streaming={false}
+      />,
+    )
+
+    // `provisioning`, `in_progress` and `wakeup` are wire identifiers, not
+    // labels: rendering them verbatim puts the raw protocol value (and an
+    // English-only string) into both interfaces.
+    expect(screen.queryByText('provisioning')).toBeNull()
+    expect(screen.queryByText('in_progress')).toBeNull()
+    expect(screen.queryByText('wakeup')).toBeNull()
+    expect(screen.getByText('Provisioning')).toBeDefined()
+    expect(screen.getByText('In progress')).toBeDefined()
+    expect(screen.getByText('Queued')).toBeDefined()
+    expect(screen.getByText('Wakes the target')).toBeDefined()
   })
 })
 

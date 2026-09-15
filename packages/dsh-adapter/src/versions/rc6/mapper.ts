@@ -373,6 +373,16 @@ export const rc6Mapper = {
         return sessionConfiguration(sessionId, {
           approvalPolicy: stringOr(data.policy ?? data.value ?? data.name, ''),
         })
+      case 'model/selection': {
+        // rc.1 appends the pending next-request selection
+        // ({ provider, model, reasoningEffort? }) before the request header
+        // that confirms it. Keeping the frame opaque would leave the visible
+        // model stale until the next prompt starts.
+        const model = mapModelPatch(data)
+        return model.providerId === undefined || model.modelId === undefined
+          ? { type: 'unknown', ...(sessionId === '' ? {} : { sessionId }), name, payload: safePayload(value) }
+          : sessionConfiguration(sessionId, { model })
+      }
       case 'request/context': {
         const model = mapModelPatch(data)
         return Object.keys(model).length === 0

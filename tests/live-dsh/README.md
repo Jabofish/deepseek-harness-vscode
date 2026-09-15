@@ -20,7 +20,7 @@ never touched. It is skipped unless explicitly enabled:
 
 ```powershell
 $env:DSH_LIVE_SMOKE = '1'
-$env:DSH_LIVE_RUNTIME = 'C:\Users\<you>\AppData\Roaming\npm\dsh.cmd'   # optional; defaults to `dsh` on PATH
+$env:DSH_LIVE_RUNTIME = 'dsh.cmd'                                     # optional; defaults to `dsh` on PATH
 $env:DSH_LIVE_RUNTIME_VERSION = '0.1.5-rc.1'                          # defaults to the pinned runtime
 npx vitest run tests/live-dsh/run.spec.ts
 ```
@@ -31,20 +31,6 @@ bare name is resolved through `PATH` with the runtime locator's candidate order
 cannot launch a `.cmd` shim and the resulting `ENOENT` used to surface as a
 readiness timeout. `runtime.spec.ts` guards that resolution without needing an
 installed DSH.
-
-Recorded run (2026-09-13, Windows, `@deepseek-ai/dsh@0.1.5-rc.1`, default runtime resolution):
-
-```text
-[dsh-live-smoke] launch C:\Users\<you>\AppData\Roaming\npm\dsh.cmd --profile web --no-open --host 127.0.0.1 --port 15459
-[dsh-live-smoke] login http://127.0.0.1:15459 status=303 cookie=exchanged
-[dsh-live-smoke] managed start pid=12224 endpoint=http://127.0.0.1:15459
-[dsh-live-smoke] probe dsh=0.1.5-rc.1 protocol=rc151 adapter=dsh-0.1.5-rc.1 mode=exact
-[dsh-live-smoke] session.list 44 session(s)
-[dsh-live-smoke] workspace.list 8 workspace(s)
-[dsh-live-smoke] events.subscribe released
-[dsh-live-smoke] backend closed
-[dsh-live-smoke] managed stop port 15459 closed
-```
 
 A bare command name is not the only hazard: `shell: false` rejects a `.cmd`
 path outright with a synchronous `EINVAL`. Only an explicit path that the shim

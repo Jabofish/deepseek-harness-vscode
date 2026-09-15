@@ -9,9 +9,15 @@ let highlighterPromise: Promise<Highlighter> | undefined
 
 /** Lazily create one Webview highlighter and share its grammar cache. */
 export function getWebviewHighlighter(): Promise<Highlighter> {
-  highlighterPromise ??= import('shiki').then(({ createHighlighter }) =>
-    createHighlighter({ themes: Object.values(SHIKI_THEMES), langs: [] }),
-  )
+  highlighterPromise ??= import('shiki')
+    .then(({ createHighlighter }) => createHighlighter({ themes: Object.values(SHIKI_THEMES), langs: [] }))
+    .catch((reason: unknown) => {
+      // A chunk that failed to load is a transient Webview condition, not a
+      // permanent one: caching the rejection would leave every later code block
+      // unhighlighted for the rest of the session.
+      highlighterPromise = undefined
+      throw reason
+    })
   return highlighterPromise
 }
 

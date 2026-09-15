@@ -1973,7 +1973,9 @@
 .dsh-checkpoints-popover__status,
 .dsh-prompt-templates-popover__status,
 .dsh-checkpoints-popover__error,
-.dsh-prompt-templates-popover__error {
+.dsh-prompt-templates-popover__error,
+.dsh-tasks-popover__error,
+.dsh-session-switcher__error {
   min-width: 0;
   padding: var(--dsh-space-2);
   color: var(--dsh-muted);

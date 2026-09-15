@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -45,6 +46,14 @@ export const ModelPicker = memo(function ModelPicker(props: ModelPickerProps): R
   const triggerRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const menuId = useId()
+  /** Where the next open should land the keyboard cursor. */
+  const openEntryRef = useRef<'first' | 'last'>('first')
+  /**
+   * Requests are one-shot: the counter stays above zero for the rest of the
+   * session, so a value seen at mount is already spent and a remount must not
+   * spend it again.
+   */
+  const consumedRequestRef = useRef(props.openRequest ?? 0)
   const selected = props.models.find(
     (model) => model.providerId === props.value.providerId && model.id === props.value.modelId,
   )
@@ -72,6 +81,26 @@ export const ModelPicker = memo(function ModelPicker(props: ModelPickerProps): R
     setPane('root')
   }, [])
 
+  const openMenu = useCallback((entry: 'first' | 'last' = 'first'): void => {
+    openEntryRef.current = entry
+    setPane('root')
+    setOpen(true)
+  }, [])
+
+  /**
+   * Every surface of this menu is keyboard-reachable: opening it and switching
+   * panes both land the cursor on a row, otherwise the arrow handlers never see
+   * a keydown because focus fell back to the document body.
+   */
+  useLayoutEffect(() => {
+    if (!open) return
+    const items = menuItems(menuRef.current)
+    if (items.length === 0) return
+    const entry = openEntryRef.current
+    openEntryRef.current = 'first'
+    items[entry === 'last' ? items.length - 1 : 0]?.focus()
+  }, [open, pane])
+
   useDismissibleLayer({
     open,
     refs: [rootRef, menuRef],
@@ -83,26 +112,31 @@ export const ModelPicker = memo(function ModelPicker(props: ModelPickerProps): R
   })
 
   useEffect(() => {
-    if ((props.openRequest ?? 0) <= 0 || props.disabled || props.models.length === 0) return
+    const request = props.openRequest ?? 0
+    if (request <= 0 || request <= consumedRequestRef.current) return
+    // An empty directory is the one transient reason to keep waiting: the
+    // request is spent only once there is something to show.
+    if (props.disabled || props.models.length === 0) return
     const openPicker = window.setTimeout(() => {
-      setPane('root')
-      setOpen(true)
+      consumedRequestRef.current = request
+      openMenu()
       triggerRef.current?.focus()
     }, 0)
     return () => window.clearTimeout(openPicker)
-  }, [props.disabled, props.models.length, props.openRequest])
+  }, [openMenu, props.disabled, props.models.length, props.openRequest])
 
   const moveFocus = (offset: number): void => {
-    const items =
-      rootRef.current === null
-        ? []
-        : Array.from(
-            rootRef.current.querySelectorAll<HTMLButtonElement>('[role="menuitem"], [role="menuitemradio"]'),
-          )
+    const items = menuItems(menuRef.current)
     if (items.length === 0) return
     const active = items.findIndex((item) => item === document.activeElement)
     const next = (Math.max(active, 0) + offset + items.length) % items.length
     items[next]?.focus()
+  }
+
+  const onTriggerKeyDown = (event: KeyboardEvent<HTMLButtonElement>): void => {
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
+    event.preventDefault()
+    openMenu(event.key === 'ArrowDown' ? 'first' : 'last')
   }
 
   const onMenuKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
@@ -132,6 +166,7 @@ export const ModelPicker = memo(function ModelPicker(props: ModelPickerProps): R
       ...(reasoningLevel === undefined ? {} : { reasoningLevel }),
     })
     close()
+    triggerRef.current?.focus()
   }
 
   const selectReasoningLevel = (reasoningLevel: string): void => {
@@ -142,6 +177,7 @@ export const ModelPicker = memo(function ModelPicker(props: ModelPickerProps): R
       reasoningLevel,
     })
     close()
+    triggerRef.current?.focus()
   }
 
   return (
@@ -161,11 +197,9 @@ export const ModelPicker = memo(function ModelPicker(props: ModelPickerProps): R
         disabled={props.disabled === true || props.models.length === 0}
         onClick={() => {
           if (open) close()
-          else {
-            setPane('root')
-            setOpen(true)
-          }
+          else openMenu()
         }}
+        onKeyDown={onTriggerKeyDown}
       >
         <Icon name="model" />
         <span className="dsh-select-menu__trigger-text">{currentLabel}</span>
@@ -287,6 +321,13 @@ export const ModelPicker = memo(function ModelPicker(props: ModelPickerProps): R
     </div>
   )
 })
+
+/** Menu rows in DOM order, including the back row. */
+function menuItems(menu: HTMLElement | null): readonly HTMLButtonElement[] {
+  return menu === null
+    ? []
+    : Array.from(menu.querySelectorAll<HTMLButtonElement>('[role="menuitem"], [role="menuitemradio"]'))
+}
 
 function groupModels(models: readonly ModelDescriptor[]): readonly ProviderGroup[] {
   const groups: ProviderGroup[] = []

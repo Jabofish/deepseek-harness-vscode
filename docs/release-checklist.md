@@ -20,12 +20,12 @@
 - [ ] VS Code 最低支持版本 E2E 通过。
 - [ ] 真实 DSH `0.0.1-rc.1/.2/.5`、`0.1.0-rc.2/.3`、rc.6/rc.7/rc.8/`0.1.1-rc.1/.2`/`0.1.2-rc.1` smoke matrix 通过，且未知版本的安全 wire Adapter 优先、失败继续尝试、警告降级路径通过。
 - [ ] 未发布 alpha.1 对应 npm/运行包发布后完成真实 Connection、Cookie、remote.mux、Session/Workspace follow smoke；在此之前只能保留源码契约证据。
-- [ ] 已发布 `0.1.2-alpha.2` 完成真实 Connection、Cookie、remote.mux、Session/Workspace follow smoke，并把结果记录到能力矩阵；当前适配仍不作为安装默认。
-- [ ] 已发布 alpha.3 完成真实 Connection、Cookie、remote.mux、Session/Workspace follow smoke，并把结果记录到能力矩阵；当前适配仍不作为安装默认。
-- [ ] 已发布 alpha.4 完成真实 Connection、Cookie、remote.mux、Session/Workspace follow smoke，并把结果记录到能力矩阵；当前适配仍不作为安装默认。
-- [ ] 已发布 alpha.5 完成真实 Connection、Cookie、remote.mux、Session/Workspace follow smoke，并把结果记录到能力矩阵；当前适配仍不作为安装默认。
-- [ ] 已发布 `0.1.3-alpha.2` 完成真实 Connection、Cookie、remote.mux、Session v2、Workspace follow 和 subagent queue/steer smoke，并把结果记录到能力矩阵；当前适配仍不作为安装默认。
-- [ ] 最新 `0.1.5-alpha.1/.2/rc.1/rc.2` 完成真实 Connection、Cookie、remote.mux、Session v3、Workspace follow、surface replacement、system-message 隔离、PTC、`deliverables/presented`、`subagent/catalog` 和 rc.2 消息反馈 Remote smoke，并把结果记录到能力矩阵。
+- [ ] 已发布 `0.1.2-alpha.2` 完成真实 Connection、Cookie、remote.mux、Session/Workspace follow smoke，并更新能力矩阵状态与证据；当前适配仍不作为安装默认。
+- [ ] 已发布 alpha.3 完成真实 Connection、Cookie、remote.mux、Session/Workspace follow smoke，并更新能力矩阵状态与证据；当前适配仍不作为安装默认。
+- [ ] 已发布 alpha.4 完成真实 Connection、Cookie、remote.mux、Session/Workspace follow smoke，并更新能力矩阵状态与证据；当前适配仍不作为安装默认。
+- [ ] 已发布 alpha.5 完成真实 Connection、Cookie、remote.mux、Session/Workspace follow smoke，并更新能力矩阵状态与证据；当前适配仍不作为安装默认。
+- [ ] 已发布 `0.1.3-alpha.2` 完成真实 Connection、Cookie、remote.mux、Session v2、Workspace follow 和 subagent queue/steer smoke，并更新能力矩阵状态与证据；当前适配仍不作为安装默认。
+- [ ] 最新 `0.1.5-alpha.1/.2/rc.1/rc.2` 完成真实 Connection、Cookie、remote.mux、Session v3、Workspace follow、surface replacement、system-message 隔离、PTC、`deliverables/presented`、`subagent/catalog` 和 rc.2 消息反馈 Remote smoke，并更新能力矩阵状态与证据。
 - [ ] 性能、长会话、断流恢复、资源泄漏基线通过。
 - [ ] 键盘、屏幕阅读器、亮/暗/高对比、240px、Reduced Motion 通过。
 

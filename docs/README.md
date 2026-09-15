@@ -39,6 +39,7 @@
 ## 维护约定
 
 - 修改功能状态只更新 `capability-matrix.md`，不要在其他文档复制状态表；
+- `capability-matrix.md` 只保留当前状态、完成条件和最短证据入口，不追加按日期排列的审计记录、缺陷流水或原始运行输出；
 - 修改版本兼容信息时，同步检查 `README.md`、`README.zh-CN.md`、`apps/extension/README.md`、
   `docs/dsh-contract.md` 和 `docs/release-checklist.md`，避免互相矛盾；
 - 新增 ADR 使用 `adr/` 的现有编号格式，状态只能是 Accepted / Superseded。

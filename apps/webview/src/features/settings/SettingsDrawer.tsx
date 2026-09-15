@@ -169,6 +169,20 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
   const [connectionError, setConnectionError] = useState<string | undefined>(undefined)
   const [connectionNotice, setConnectionNotice] = useState<string | undefined>(undefined)
   const closeRef = useRef<HTMLButtonElement>(null)
+  /** The provider row's control takes the keyboard back from its confirmation. */
+  const removeProviderTriggerRef = useRef<HTMLElement | null>(null)
+  const removeProviderWasOpen = useRef(false)
+
+  const removeProviderOpen = removingProviderId !== undefined
+  useEffect(() => {
+    if (removeProviderWasOpen.current && !removeProviderOpen) {
+      const target = removeProviderTriggerRef.current
+      removeProviderTriggerRef.current = null
+      // A confirmed removal deletes the row that opened the confirmation.
+      if (target !== null && target.isConnected) target.focus()
+    }
+    removeProviderWasOpen.current = removeProviderOpen
+  }, [removeProviderOpen])
 
   useEffect(() => {
     if (!open) return
@@ -281,10 +295,11 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
   useEffect(() => {
     if (!open) return
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') {
-        event.stopPropagation()
-        onOpenChange(false)
-      }
+      // An open layer inside the drawer (provider dropdowns) consumes Escape
+      // first; the drawer must not close on top of it.
+      if (event.key !== 'Escape' || event.defaultPrevented) return
+      event.stopPropagation()
+      onOpenChange(false)
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
@@ -1060,7 +1075,8 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                                   className="dsh-button dsh-button--secondary dsh-button--compact dsh-settings__provider-remove"
                                   type="button"
                                   disabled={busyField !== undefined}
-                                  onClick={() => {
+                                  onClick={(event) => {
+                                    removeProviderTriggerRef.current = event.currentTarget
                                     setSaveError(undefined)
                                     setRemovingProviderId(provider.id)
                                   }}
@@ -1275,6 +1291,7 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                         className="dsh-button dsh-button--secondary dsh-button--compact"
                         type="button"
                         disabled={busyField !== undefined}
+                        autoFocus
                         onClick={() => setRemovingProviderId(undefined)}
                       >
                         {t('settings.cancel')}

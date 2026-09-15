@@ -5,7 +5,9 @@ import { DiagnosticsDrawer } from '../diagnostics/DiagnosticsDrawer.js'
 import { useI18n } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
 
-type RuntimeConnectionStage = 'discovering' | 'locating-runtime' | 'starting' | 'connecting' | 'sessions'
+/** Exported for the i18n key spec, which pins one label per stage. */
+export type RuntimeConnectionStage =
+  'discovering' | 'locating-runtime' | 'starting' | 'connecting' | 'sessions'
 
 const RUNTIME_CONNECTION_STAGES: readonly RuntimeConnectionStage[] = [
   'discovering',

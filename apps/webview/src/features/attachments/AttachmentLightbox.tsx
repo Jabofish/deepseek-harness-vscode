@@ -5,6 +5,9 @@ import { useI18n } from '../../i18n.js'
 export interface AttachmentLightboxProps {
   readonly name: string
   readonly src: string | undefined
+  /** The preview request already settled without an image, so the placeholder
+   * is a terminal failure rather than a pending load. */
+  readonly unavailable?: boolean
   readonly onClose: () => void
 }
 
@@ -16,10 +19,12 @@ export function AttachmentLightbox(props: AttachmentLightboxProps): ReactElement
   }, [])
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') {
-        event.stopPropagation()
-        props.onClose()
-      }
+      // A layer that is already open consumes Escape first; a surface that acts
+      // regardless would collapse both with one key press. `preventDefault` is
+      // how the layer hook marks the key as consumed.
+      if (event.key !== 'Escape' || event.defaultPrevented) return
+      event.preventDefault()
+      props.onClose()
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
@@ -53,12 +58,16 @@ export function AttachmentLightbox(props: AttachmentLightboxProps): ReactElement
             <Icon name="close" />
           </button>
         </div>
-        {props.src === undefined ? (
+        {props.src !== undefined ? (
+          <img className="dsh-lightbox__image" src={props.src} alt={props.name} />
+        ) : props.unavailable === true ? (
+          <div className="dsh-lightbox__placeholder" role="alert">
+            {t('timeline.imageUnavailable')}
+          </div>
+        ) : (
           <div className="dsh-lightbox__placeholder" role="status">
             {t('composer.loadingPreview')}
           </div>
-        ) : (
-          <img className="dsh-lightbox__image" src={props.src} alt={props.name} />
         )}
       </div>
     </div>

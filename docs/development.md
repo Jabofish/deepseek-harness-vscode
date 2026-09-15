@@ -43,7 +43,7 @@ pnpm build
 1. 由开发者自行启动 `dsh --profile web`。
 2. 把端口加入 `dsh.connection.attachPorts` 或使用实现后的进程发现。
 3. 选择 `auto` 或 `attach-only`。
-4. 验证日志显示 `ownership=external`，扩展关闭后 DSH 仍在运行。
+4. 验证输出应显示 `ownership=external`，扩展关闭后 DSH 仍在运行。
 
 ### 指定现有服务端点
 

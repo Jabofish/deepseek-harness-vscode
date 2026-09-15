@@ -77,6 +77,7 @@ import {
 import { useI18n, type Locale, type Translate } from './i18n.js'
 import { Icon } from './ui/Icon.js'
 import { SelectMenu } from './components/common/SelectMenu.js'
+import { useDismissibleLayer } from './components/common/useDismissibleLayer.js'
 import { hasVsCodeApi } from './vscode-api.js'
 import { PopupSelectRegistry } from './features/commands/popupSelectRegistry.js'
 import {
@@ -143,6 +144,7 @@ export function App(): ReactElement {
   const [draft, setDraft] = useState('')
   const [attachments, setAttachments] = useState<PromptAttachment[]>([])
   const [attachmentPreviews, setAttachmentPreviews] = useState<Record<string, string>>({})
+  const [attachmentPreviewFailures, setAttachmentPreviewFailures] = useState<readonly string[]>([])
   const [openFileCandidates, setOpenFileCandidates] = useState<readonly OpenFileCandidate[]>([])
   const [openFileCandidatesSessionId, setOpenFileCandidatesSessionId] = useState<string | undefined>()
   const [openFilePickerOpen, setOpenFilePickerOpen] = useState(false)
@@ -163,7 +165,18 @@ export function App(): ReactElement {
   const [busyAction, setBusyAction] = useState<'install' | 'select' | undefined>()
   const [respondingInteractionId, setRespondingInteractionId] = useState<string | undefined>()
   const [branching, setBranching] = useState(false)
-  const [error, setError] = useState<string | undefined>()
+  const [error, setErrorState] = useState<string | undefined>()
+  /**
+   * Every message owns its own dismissal window. Keyed on the message alone, a
+   * repeat of the identical failure while the first toast is up would change no
+   * state, leaving the original deadline in place and the second report visible
+   * only for the remainder of it.
+   */
+  const [errorRevision, setErrorRevision] = useState(0)
+  const setError = useCallback((message: string | undefined): void => {
+    setErrorState(message)
+    setErrorRevision((current) => current + 1)
+  }, [])
   const [welcomeVisible, setWelcomeVisible] = useState(() => !welcomeWasDismissed())
   const [dismissedRuntimeUpdateVersion, setDismissedRuntimeUpdateVersion] = useState(() =>
     dismissedRuntimeUpdateVersionFromStorage(),
@@ -176,6 +189,7 @@ export function App(): ReactElement {
     readonly visible: boolean
   }>({ sessionId: undefined, visible: false })
   const [exportOpen, setExportOpen] = useState(false)
+  const [exportSessionId, setExportSessionId] = useState<string | undefined>()
   const [localeOpen, setLocaleOpen] = useState(false)
   const [conversationFontSize, setConversationFontSizeState] = useState<ConversationFontSize>(() =>
     readConversationFontSize(),
@@ -222,7 +236,7 @@ export function App(): ReactElement {
         setError(reason instanceof Error ? reason.message : t('settings.updateFailed'))
       })
     },
-    [setLocale, state.backend.kind, store, t],
+    [setError, setLocale, state.backend.kind, store, t],
   )
 
   useLayoutEffect(() => {
@@ -271,47 +285,51 @@ export function App(): ReactElement {
 
   useEffect(() => {
     if (error === undefined) return
-    const timer = window.setTimeout(() => setError(undefined), ERROR_TOAST_DISMISS_MS)
+    const timer = window.setTimeout(() => setErrorState(undefined), ERROR_TOAST_DISMISS_MS)
     return () => window.clearTimeout(timer)
-  }, [error])
+  }, [error, errorRevision])
 
-  useEffect(() => {
-    if (!localeOpen) return
-    const closeOnEscape = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') setLocaleOpen(false)
-    }
-    const closeOnOutsidePointer = (event: PointerEvent): void => {
-      if (!localeControlRef.current?.contains(event.target as Node)) setLocaleOpen(false)
-    }
-    window.addEventListener('keydown', closeOnEscape)
-    window.addEventListener('pointerdown', closeOnOutsidePointer)
-    return () => {
-      window.removeEventListener('keydown', closeOnEscape)
-      window.removeEventListener('pointerdown', closeOnOutsidePointer)
-    }
-  }, [localeOpen])
+  // Escape belongs to the layer hook alone. The language listbox is nested in
+  // the conversation-tools panel, whose own layer consumes the key for the
+  // whole surface; a raw window listener here would run after that layer
+  // already closed both surfaces with a single press.
+  useDismissibleLayer({
+    open: localeOpen,
+    refs: [localeControlRef],
+    onDismiss: () => setLocaleOpen(false),
+  })
 
   useEffect(() => {
     const missing = attachments.filter(
       (attachment) =>
         attachment.mimeType?.startsWith('image/') === true &&
-        attachmentPreviews[attachment.uri] === undefined,
+        attachmentPreviews[attachment.uri] === undefined &&
+        !attachmentPreviewFailures.includes(attachment.uri),
     )
     if (missing.length === 0) return
     let cancelled = false
+    const recordFailure = (uri: string): void => {
+      setAttachmentPreviewFailures((current) => (current.includes(uri) ? current : [...current, uri]))
+    }
     for (const attachment of missing) {
       void store
         .previewAttachment(attachment.uri)
         .then((dataUri) => {
-          if (!cancelled && dataUri !== undefined)
-            setAttachmentPreviews((current) => ({ ...current, [attachment.uri]: dataUri }))
+          if (cancelled) return
+          // `undefined` is the Host's flattened refusal (an expired or dead
+          // draft handle); recording it keeps the lightbox from claiming the
+          // image is merely still loading.
+          if (dataUri === undefined) recordFailure(attachment.uri)
+          else setAttachmentPreviews((current) => ({ ...current, [attachment.uri]: dataUri }))
         })
-        .catch(() => undefined)
+        .catch(() => {
+          if (!cancelled) recordFailure(attachment.uri)
+        })
     }
     return () => {
       cancelled = true
     }
-  }, [attachments, attachmentPreviews, store])
+  }, [attachments, attachmentPreviewFailures, attachmentPreviews, store])
 
   const backend = state.backend
   const compatibilityWarning = state.dshCompatibilityWarning
@@ -403,6 +421,12 @@ export function App(): ReactElement {
       : false
   const visibleOpenFilePickerOpen =
     openFilePickerOpen && openFilePickerSessionId !== undefined && openFilePickerSessionId === activeSessionId
+  // The export form names no session of its own, so it belongs to the
+  // conversation it was opened from: a switch would silently retarget it.
+  const visibleExportSessionId =
+    exportOpen && exportSessionId !== undefined && exportSessionId === activeSessionId
+      ? exportSessionId
+      : undefined
   const visibleOpenFileCandidates = useMemo(
     () => (openFileCandidatesSessionId === activeSessionId ? openFileCandidates : EMPTY_OPEN_FILE_CANDIDATES),
     [activeSessionId, openFileCandidates, openFileCandidatesSessionId],
@@ -561,6 +585,7 @@ export function App(): ReactElement {
     setAttachmentPreviews((current) =>
       Object.fromEntries(Object.entries(current).filter(([uri]) => !removed.has(uri))),
     )
+    setAttachmentPreviewFailures((current) => current.filter((uri) => !removed.has(uri)))
     setOpenFileAttachmentIds((current) =>
       Object.fromEntries(Object.entries(current).filter(([uri]) => !removed.has(uri))),
     )
@@ -636,32 +661,42 @@ export function App(): ReactElement {
       })
       .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : t('app.error.prompt')))
   }
+  /**
+   * Loads the open-file snapshot that both the composer menu row and the
+   * picker render. The row is only offered when the list names an attachable
+   * file, so it has to be requested while that menu is being built.
+   */
+  const loadOpenFileCandidates = (sessionId: string, awaitingPicker: boolean): void => {
+    const request = ++openFileRequestRef.current
+    if (awaitingPicker) setOpenFilePickerLoading(true)
+    void store
+      .listOpenFiles()
+      .then((candidates) => {
+        if (request !== openFileRequestRef.current) return
+        setOpenFileCandidatesSessionId(sessionId)
+        setOpenFileCandidates(candidates)
+      })
+      .catch((reason: unknown) => {
+        if (request !== openFileRequestRef.current) return
+        setOpenFileCandidatesSessionId(sessionId)
+        setOpenFileCandidates([])
+        if (awaitingPicker) setError(reason instanceof Error ? reason.message : t('app.error.listOpenFiles'))
+      })
+      .finally(() => {
+        // A newer request may have replaced this one; the flag describes the
+        // picker, so whichever request was waiting for it has to clear it.
+        if (awaitingPicker) setOpenFilePickerLoading(false)
+      })
+  }
   const toggleOpenFilePicker = (): void => {
     if (visibleOpenFilePickerOpen) {
       setOpenFilePickerOpen(false)
       return
     }
     if (activeSessionId === undefined) return
-    const request = ++openFileRequestRef.current
     setOpenFilePickerSessionId(activeSessionId)
     setOpenFilePickerOpen(true)
-    setOpenFilePickerLoading(true)
-    void store
-      .listOpenFiles()
-      .then((candidates) => {
-        if (request !== openFileRequestRef.current) return
-        setOpenFileCandidatesSessionId(activeSessionId)
-        setOpenFileCandidates(candidates)
-      })
-      .catch((reason: unknown) => {
-        if (request !== openFileRequestRef.current) return
-        setOpenFileCandidatesSessionId(activeSessionId)
-        setOpenFileCandidates([])
-        setError(reason instanceof Error ? reason.message : t('app.error.listOpenFiles'))
-      })
-      .finally(() => {
-        if (request === openFileRequestRef.current) setOpenFilePickerLoading(false)
-      })
+    loadOpenFileCandidates(activeSessionId, true)
   }
   const selectOpenFile = (candidateId: string): void => {
     if (
@@ -907,6 +942,16 @@ export function App(): ReactElement {
   })
   const composerOnIngestFiles = useStableCallback((files: readonly File[]): void => ingestFiles(files))
   const composerOnToggleOpenFilePicker = useStableCallback((): void => toggleOpenFilePicker())
+  const composerOnExtrasOpenChange = useStableCallback((open: boolean): void => {
+    if (!open) {
+      // The picker is rendered inside that menu; leaving it "open" would make
+      // the next menu opening start with a stale popover already expanded.
+      setOpenFilePickerOpen(false)
+      return
+    }
+    if (activeSessionId === undefined) return
+    loadOpenFileCandidates(activeSessionId, false)
+  })
   const composerOnSelectOpenFile = useStableCallback((candidateId: string): void =>
     selectOpenFile(candidateId),
   )
@@ -1001,8 +1046,16 @@ export function App(): ReactElement {
   const attachedOpenFileIds = useMemo(() => Object.values(openFileAttachmentIds), [openFileAttachmentIds])
   const closeConversationActions = useCallback((): void => {
     setLocaleOpen(false)
-    setExportOpen(false)
   }, [])
+  const toggleExport = useCallback((): void => {
+    if (visibleExportSessionId !== undefined) {
+      setExportOpen(false)
+      return
+    }
+    if (activeSessionId === undefined) return
+    setExportSessionId(activeSessionId)
+    setExportOpen(true)
+  }, [activeSessionId, visibleExportSessionId])
   const activeId = active?.id
   const conversationActionItems = useMemo<ReactElement | null>(() => {
     if (activeId === undefined) return null
@@ -1108,8 +1161,8 @@ export function App(): ReactElement {
           <button
             type="button"
             className="dsh-conversation__export-trigger"
-            aria-expanded={exportOpen}
-            onClick={() => setExportOpen((current) => !current)}
+            aria-expanded={visibleExportSessionId !== undefined}
+            onClick={toggleExport}
           >
             {t('export.trigger')}
           </button>
@@ -1156,11 +1209,13 @@ export function App(): ReactElement {
     activeSubagent,
     discardAttachmentDrafts,
     dshEventCount,
-    exportOpen,
     locale,
     localeOpen,
     applyLocale,
+    setError,
     setShowDshEvents,
+    toggleExport,
+    visibleExportSessionId,
     state.changes,
     state.changesLoading,
     state.checkpoints,
@@ -1492,9 +1547,9 @@ export function App(): ReactElement {
                       ))}
                     </div>
                   ) : null}
-                  {exportOpen && activeSubagent === undefined ? (
+                  {visibleExportSessionId === undefined ? null : (
                     <DeferredExportDialog
-                      sessionId={active.id}
+                      sessionId={visibleExportSessionId}
                       onExport={(options) => {
                         setExportOpen(false)
                         void store
@@ -1504,7 +1559,7 @@ export function App(): ReactElement {
                           )
                       }}
                     />
-                  ) : null}
+                  )}
                   {state.goals.length > 0 ? (
                     <>
                       <GoalBar goals={state.goals} onUpdate={goalOnUpdate} onClear={goalOnClear} />
@@ -1622,6 +1677,7 @@ export function App(): ReactElement {
                             onPickAttachment={composerOnPickAttachment}
                             onIngestFiles={composerOnIngestFiles}
                             attachmentPreviews={attachmentPreviews}
+                            attachmentPreviewFailures={attachmentPreviewFailures}
                             openFileCandidates={visibleOpenFileCandidates}
                             openFilePickerOpen={visibleOpenFilePickerOpen}
                             openFilePickerLoading={visibleOpenFilePickerLoading}
@@ -1631,6 +1687,7 @@ export function App(): ReactElement {
                             attachedOpenFileIds={attachedOpenFileIds}
                             {...(attachingOpenFileId === undefined ? {} : { attachingOpenFileId })}
                             onToggleOpenFilePicker={composerOnToggleOpenFilePicker}
+                            onExtrasOpenChange={composerOnExtrasOpenChange}
                             onSelectOpenFile={composerOnSelectOpenFile}
                             onRemoveAttachment={composerOnRemoveAttachment}
                             onSubmit={composerOnSubmit}

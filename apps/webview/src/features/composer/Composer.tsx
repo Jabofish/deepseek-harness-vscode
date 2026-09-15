@@ -98,13 +98,16 @@ export interface ComposerProps {
   readonly configurationDisabled?: boolean
   readonly presetMutable?: boolean
   readonly attachmentPreviews?: Readonly<Record<string, string>>
+  /** Handles whose preview request settled without an image (expired draft or
+   * Host refusal); the lightbox must say so instead of loading forever. */
+  readonly attachmentPreviewFailures?: readonly string[]
   readonly onConfigurationChange?: (configuration: AgentConfiguration) => void
   readonly onPromptModeChange?: (mode: PromptMode) => void
   readonly onCommand?: (command: string, attachments?: readonly PromptAttachment[]) => Promise<void> | void
   readonly onPopupSelect?: (command: string) => void
   readonly onCommandQueryChange?: (query: string | undefined) => void
   readonly onReferenceQueryChange?: (query: string | undefined, quoted: boolean) => void
-  readonly onDraftChange: (value: string) => void
+  readonly onDraftChange: (value: string | ((current: string) => string)) => void
   readonly onPickAttachment: () => void
   readonly onIngestFiles: (files: readonly File[]) => void
   readonly openFileCandidates: readonly OpenFileCandidate[]
@@ -114,6 +117,9 @@ export interface ComposerProps {
   readonly attachedOpenFileIds: readonly string[]
   readonly attachingOpenFileId?: string
   readonly onToggleOpenFilePicker: () => void
+  /** Reports the secondary action menu's open state so the host can refresh the
+   * open-file candidates and close the nested picker with that menu. */
+  readonly onExtrasOpenChange?: (open: boolean) => void
   readonly onSelectOpenFile: (candidateId: string) => void
   readonly onRemoveAttachment: (uri: string) => void
   readonly onCaptureEditorContext?: (kind: EditorContextKind) => Promise<void> | void
@@ -149,7 +155,29 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
   const [dropState, setDropState] = useState<'ready' | 'blocked' | undefined>(undefined)
   const [attachmentRailScrollable, setAttachmentRailScrollable] = useState(false)
   const [previewUri, setPreviewUri] = useState<string | undefined>(undefined)
+  /**
+   * The lightbox is `aria-modal`, so the keyboard belongs inside while it is up
+   * and returns to the thumbnail that opened it. The opener is captured at the
+   * click site rather than from the effect, because the lightbox mounts with
+   * its own `autoFocus`.
+   */
+  const previewTriggerRef = useRef<HTMLButtonElement | null>(null)
+  const previewWasOpen = useRef(false)
+  useEffect(() => {
+    if (previewWasOpen.current && previewUri === undefined) {
+      const target = previewTriggerRef.current
+      previewTriggerRef.current = null
+      // A removed attachment takes its thumbnail away; body focus beats a
+      // detached node.
+      if (target !== null && target.isConnected) target.focus()
+    }
+    previewWasOpen.current = previewUri !== undefined
+  }, [previewUri])
   const [extrasOpen, setExtrasOpen] = useState(false)
+  const changeExtrasOpen = (open: boolean): void => {
+    setExtrasOpen(open)
+    props.onExtrasOpenChange?.(open)
+  }
   // Official input-trigger menu state: the highlight rides
   // aria-activedescendant, and Escape dismisses until the query changes.
   const [menuHighlight, setMenuHighlight] = useState<number | undefined>(undefined)
@@ -443,6 +471,12 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
     pendingCursorRef.current = range.start
   }
 
+  /** True while an IME owns the key: its Enter/Escape pick or cancel a
+   * candidate instead of acting on the composer. `keyCode` 229 is the legacy
+   * composition signal engines emit without `isComposing`. */
+  const isComposingKey = (event: KeyboardEvent<HTMLTextAreaElement>): boolean =>
+    composing.current || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229
+
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z') {
       event.preventDefault()
@@ -455,7 +489,7 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
       return
     }
     if (deleteEmbeddedReference(event)) return
-    if (referenceMenuOpen && !composing.current && !event.nativeEvent.isComposing) {
+    if (referenceMenuOpen && !isComposingKey(event)) {
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         const candidates = props.references ?? []
         if (candidates.length > 0) {
@@ -489,7 +523,7 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
     // the trigger menu is open it intercepts ArrowUp/ArrowDown (highlight),
     // Escape (dismiss until the query changes), and Enter (pick the
     // highlighted row, or run the enter transaction on the full line).
-    if (menuOpen && !composing.current && !event.nativeEvent.isComposing) {
+    if (menuOpen && !isComposingKey(event)) {
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         if (menuRows.length > 0) {
           event.preventDefault()
@@ -547,9 +581,7 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
     // IME guard so a composition-closing Shift+Enter still breaks the line.
     if (event.shiftKey) return
     // IME guard: composition Enter picks a candidate, it must not send.
-    // keyCode 229 is the legacy IME-composition signal engines emit without
-    // isComposing.
-    if (composing.current || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return
+    if (isComposingKey(event)) return
     event.preventDefault()
     // Held-down Enter must not machine-gun sends.
     if (event.repeat) return
@@ -611,7 +643,9 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
     const result = props.attachments.length === 0 ? onCommand(command) : onCommand(command, props.attachments)
     if (result !== undefined && typeof result.then === 'function')
       void result.then(
-        () => props.onDraftChange(''),
+        // The Host owns the submitted line once it is accepted; text typed
+        // while the command ran is a different draft and has to survive.
+        () => props.onDraftChange((current) => (current === command ? '' : current)),
         () => undefined,
       )
     else props.onDraftChange('')
@@ -624,7 +658,7 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
     props.onDraftChange(nextDraft)
     props.onCommandQueryChange?.(slashCommandQuery(nextDraft))
     props.onReferenceQueryChange?.(undefined, false)
-    setExtrasOpen(false)
+    changeExtrasOpen(false)
     window.requestAnimationFrame(() => textareaRef.current?.focus())
   }
   const selectReference = (candidate: ReferenceCandidate): void => {
@@ -715,7 +749,10 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
                       type="button"
                       aria-label={t('composer.preview', { name: attachment.name })}
                       title={t('composer.preview', { name: attachment.name })}
-                      onClick={() => setPreviewUri(attachment.uri)}
+                      onClick={(event) => {
+                        previewTriggerRef.current = event.currentTarget
+                        setPreviewUri(attachment.uri)
+                      }}
                     >
                       {preview === undefined ? (
                         <Icon name="image" />
@@ -864,7 +901,7 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
             {...(props.editorContext === undefined ? {} : { count: props.editorContext.length })}
             label={t('composer.context')}
             anchorRef={composerRef}
-            onOpenChange={setExtrasOpen}
+            onOpenChange={changeExtrasOpen}
           >
             <div className="dsh-composer__extras-section">
               <ComposerAttachmentActions
@@ -879,12 +916,12 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
                   ? {}
                   : { attachingOpenFileId: props.attachingOpenFileId })}
                 onPickAttachment={() => {
-                  setExtrasOpen(false)
+                  changeExtrasOpen(false)
                   props.onPickAttachment()
                 }}
                 onToggleOpenFilePicker={props.onToggleOpenFilePicker}
                 onSelectOpenFile={(candidateId) => {
-                  setExtrasOpen(false)
+                  changeExtrasOpen(false)
                   if (props.openFilePickerOpen) props.onToggleOpenFilePicker()
                   props.onSelectOpenFile(candidateId)
                 }}
@@ -936,6 +973,10 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
         <AttachmentLightbox
           name={previewedAttachment.name}
           src={previews[previewedAttachment.uri]}
+          unavailable={
+            previews[previewedAttachment.uri] === undefined &&
+            props.attachmentPreviewFailures?.includes(previewedAttachment.uri) === true
+          }
           onClose={() => setPreviewUri(undefined)}
         />
       )}

@@ -79,6 +79,20 @@ export function PromptTemplatesDrawer(props: PromptTemplatesDrawerProps): ReactE
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const readGeneration = useRef(0)
+  /** The control that opened a confirmation takes the keyboard back. */
+  const dialogTriggerRef = useRef<HTMLElement | null>(null)
+  const dialogWasOpen = useRef(false)
+
+  const dialogOpen = dialog !== undefined || pendingInsertion !== undefined
+  useEffect(() => {
+    if (dialogWasOpen.current && !dialogOpen) {
+      const target = dialogTriggerRef.current
+      dialogTriggerRef.current = null
+      // Deleting a template removes the row that opened the confirmation.
+      if (target !== null && target.isConnected) target.focus()
+    }
+    dialogWasOpen.current = dialogOpen
+  }, [dialogOpen])
 
   const visibleTemplates = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase()
@@ -233,7 +247,9 @@ export function PromptTemplatesDrawer(props: PromptTemplatesDrawerProps): ReactE
   }
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
-    if (event.key !== 'Escape') return
+    // An inner layer (for example the scope SelectMenu) already consumed this
+    // Escape; closing the editor here would discard the in-progress form.
+    if (event.key !== 'Escape' || event.defaultPrevented) return
     event.preventDefault()
     readGeneration.current += 1
     if (dialog !== undefined && !busy) closeEditor()
@@ -338,7 +354,10 @@ export function PromptTemplatesDrawer(props: PromptTemplatesDrawerProps): ReactE
                   aria-label={t('promptTemplates.delete', { title: template.title })}
                   title={t('promptTemplates.delete', { title: template.title })}
                   disabled={busy}
-                  onClick={() => setDialog({ kind: 'delete', template })}
+                  onClick={(event) => {
+                    dialogTriggerRef.current = event.currentTarget
+                    setDialog({ kind: 'delete', template })
+                  }}
                 >
                   <Icon name="trash" />
                 </button>
@@ -379,7 +398,10 @@ export function PromptTemplatesDrawer(props: PromptTemplatesDrawerProps): ReactE
                     type="button"
                     className="dsh-button dsh-button--compact"
                     disabled={busy}
-                    onClick={() => requestInsert()}
+                    onClick={(event) => {
+                      dialogTriggerRef.current = event.currentTarget
+                      requestInsert()
+                    }}
                   >
                     <Icon name="add" />
                     {t('promptTemplates.insert')}
@@ -401,10 +423,11 @@ export function PromptTemplatesDrawer(props: PromptTemplatesDrawerProps): ReactE
             <section className="dsh-prompt-templates-popover__dialog" role="alertdialog" aria-modal="true">
               <strong>{t('promptTemplates.missingTitle')}</strong>
               <p>{t('promptTemplates.missingDescription')}</p>
-              {pendingInsertion.unresolvedVariables.map((variable) => (
+              {pendingInsertion.unresolvedVariables.map((variable, index) => (
                 <label key={variable}>
                   <span>{`{{${variable}}}`}</span>
                   <input
+                    autoFocus={index === 0}
                     value={pendingValues[variable] ?? ''}
                     onChange={(event) =>
                       setPendingValues((current) => ({ ...current, [variable]: event.target.value }))
@@ -552,6 +575,7 @@ export function PromptTemplatesDrawer(props: PromptTemplatesDrawerProps): ReactE
                   type="button"
                   className="dsh-button dsh-button--secondary"
                   disabled={busy}
+                  autoFocus
                   onClick={() => setDialog(undefined)}
                 >
                   {t('promptTemplates.cancel')}

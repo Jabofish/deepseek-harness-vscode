@@ -1,7 +1,7 @@
 import { useState, type ReactElement } from 'react'
 import type { DiscoveredModel, ModelDiscoveryInput, ModelProvider } from '@dsh-vscode/domain'
 import type { DshSettingsSnapshot } from '../../app/store.js'
-import { useI18n } from '../../i18n.js'
+import { useI18n, type Translate } from '../../i18n.js'
 import { SelectMenu } from '../../components/common/SelectMenu.js'
 import { ModelListEditor, type EditableModel } from './ModelListEditor.js'
 
@@ -84,8 +84,9 @@ export function ProviderSettingsEditor(props: ProviderSettingsEditorProps): Reac
       id: model.id.trim(),
       ...(model.name === undefined || model.name.trim() === '' ? {} : { name: model.name.trim() }),
     }))
-    if (normalizedModels.some((model) => model.id === '')) {
-      setError(t('settings.modelIdRequired'))
+    const modelFailure = validateModels(normalizedModels)
+    if (modelFailure !== undefined) {
+      setError(modelFailureMessage(modelFailure, t))
       return
     }
     const changes: ProviderSettingChange[] = []
@@ -204,6 +205,40 @@ export function ProviderSettingsEditor(props: ProviderSettingsEditorProps): Reac
       </footer>
     </div>
   )
+}
+
+type CapacityField = 'contextWindow' | 'maxTokens'
+type ModelFailure =
+  | { readonly kind: 'id' }
+  | { readonly kind: 'duplicate' }
+  | { readonly kind: 'capacity'; readonly field: CapacityField }
+
+/**
+ * The model list editor keeps unparsable capacity text in a per-row display
+ * buffer next to the model state, so this form only sees an invalid number as
+ * `NaN`. Rejecting it here keeps the value from crossing the transport, where
+ * JSON serialization would turn it into `null` and store a corrupt capacity.
+ */
+function validateModels(models: readonly EditableModel[]): ModelFailure | undefined {
+  const ids = new Set<string>()
+  for (const model of models) {
+    const id = model.id.trim()
+    if (id === '') return { kind: 'id' }
+    if (ids.has(id)) return { kind: 'duplicate' }
+    ids.add(id)
+    for (const field of ['contextWindow', 'maxTokens'] as const) {
+      const value = model[field]
+      if (value !== undefined && (!Number.isSafeInteger(value) || value <= 0))
+        return { kind: 'capacity', field }
+    }
+  }
+  return undefined
+}
+
+function modelFailureMessage(failure: ModelFailure, t: Translate): string {
+  if (failure.kind === 'id') return t('settings.modelIdRequired')
+  if (failure.kind === 'duplicate') return t('settings.modelIdDuplicate')
+  return t('settings.invalidCapacity', { field: t(`settings.${failure.field}`) })
 }
 
 function addOptionalChange(

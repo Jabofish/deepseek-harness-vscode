@@ -11,6 +11,7 @@ import {
 import { createPortal } from 'react-dom'
 import type { SessionSummary, WorkspaceSummary } from '@dsh-vscode/domain'
 import { PopoverCard } from '../../components/common/PopoverCard.js'
+import { useDismissibleLayer } from '../../components/common/useDismissibleLayer.js'
 import { Icon } from '../../ui/Icon.js'
 import { displaySessionTitle } from './session-title.js'
 import { useI18n } from '../../i18n.js'
@@ -19,7 +20,8 @@ export interface SessionDrawerProps {
   readonly sessions: readonly SessionSummary[]
   readonly workspaces: readonly WorkspaceSummary[]
   readonly activeSessionId: string | undefined
-  readonly open?: boolean
+  /** Omitted or `undefined` leaves the switcher uncontrolled: it owns `open`. */
+  readonly open?: boolean | undefined
   readonly onOpenChange?: (open: boolean) => void
   readonly showTrigger?: boolean
   readonly onOpen: (sessionId: string) => void
@@ -36,7 +38,7 @@ export interface SessionDrawerProps {
 type SessionSorting = 'manual' | 'updated'
 type WorkspaceDisplay = 'current' | 'grouped'
 type RenameTarget =
-  | { readonly kind: 'session'; readonly id: string; readonly title: string }
+  | { readonly kind: 'session'; readonly id: string; readonly title: string; readonly workspaceId: string }
   | { readonly kind: 'workspace'; readonly id: string; readonly title: string }
 
 const SEARCH_DEBOUNCE_MS = 250
@@ -86,9 +88,17 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
   const [renameError, setRenameError] = useState<string>()
   const [removeWorkspace, setRemoveWorkspace] = useState<WorkspaceSummary>()
   const [removeError, setRemoveError] = useState<string>()
+  const [moveError, setMoveError] = useState<string>()
   const [mutationBusy, setMutationBusy] = useState(false)
   const searchSequence = useRef(0)
   const renameInputRef = useRef<HTMLInputElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const renameDialogRef = useRef<HTMLFormElement>(null)
+  const removeDialogRef = useRef<HTMLDivElement>(null)
+  /** Both dialogs are portalled `aria-modal` surfaces; the row control that
+   * opened one takes the keyboard back when it closes. */
+  const dialogTriggerRef = useRef<HTMLElement | null>(null)
   const panelId = useId()
   const renameDialogId = useId()
   const isControlled = props.open !== undefined
@@ -114,17 +124,57 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
     setRenameDraft('')
     setRenameError(undefined)
   }, [mutationBusy])
+  const closeRemoveDialog = useCallback((): void => {
+    if (mutationBusy) return
+    setRemoveWorkspace(undefined)
+  }, [mutationBusy])
+  const closeSwitcher = (): void => {
+    setOpen(false)
+  }
+  const closeSwitcherAndRefocus = (): void => {
+    setOpen(false)
+    triggerRef.current?.focus()
+  }
+  // The switcher is the outer layer; its two portalled dialogs each own the
+  // innermost layer, so one Escape closes the dialog and leaves the switcher
+  // (and its search and scroll position) in place. The trigger belongs to the
+  // layer as well: without it a real press (pointerdown then click) closes the
+  // switcher on the pointerdown and the click toggles it straight back open.
+  useDismissibleLayer({
+    open,
+    refs: [triggerRef, panelRef, renameDialogRef, removeDialogRef],
+    onDismiss: closeSwitcher,
+    onEscape: closeSwitcherAndRefocus,
+  })
+  useDismissibleLayer({
+    open: renameTarget !== undefined,
+    refs: [renameDialogRef],
+    onDismiss: closeRenameDialog,
+  })
+  useDismissibleLayer({
+    open: removeWorkspace !== undefined,
+    refs: [removeDialogRef],
+    onDismiss: closeRemoveDialog,
+  })
 
   useEffect(() => {
     if (renameTarget === undefined) return
     renameInputRef.current?.focus()
     renameInputRef.current?.select()
-    const closeOnEscape = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') closeRenameDialog()
+  }, [renameTarget])
+
+  const dialogOpen = renameTarget !== undefined || removeWorkspace !== undefined
+  const dialogWasOpen = useRef(false)
+  useEffect(() => {
+    if (dialogWasOpen.current && !dialogOpen) {
+      const target = dialogTriggerRef.current
+      dialogTriggerRef.current = null
+      // The renamed or removed row can be gone by now; body focus beats a
+      // detached node.
+      if (target !== null && target.isConnected) target.focus()
     }
-    window.addEventListener('keydown', closeOnEscape)
-    return () => window.removeEventListener('keydown', closeOnEscape)
-  }, [closeRenameDialog, renameTarget])
+    dialogWasOpen.current = dialogOpen
+  }, [dialogOpen])
 
   const workspaceSessions = (workspace: WorkspaceSummary): readonly SessionSummary[] =>
     props.sessions.filter(
@@ -201,6 +251,25 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
       .onArchive(session.id)
       .catch(() => undefined)
       .finally(() => setRemovingSessionId((current) => (current === session.id ? undefined : current)))
+  }
+
+  /**
+   * Reorder drops are host work like any other mutation: a refused move leaves
+   * the list unchanged, so without a report the drag is indistinguishable from
+   * a no-op.
+   */
+  const moveSession = (workspaceId: string, sessionId: string, beforeSessionId: string): void => {
+    setMoveError(undefined)
+    void props.onMoveSession(workspaceId, sessionId, beforeSessionId).catch((reason: unknown) => {
+      setMoveError(reason instanceof Error ? reason.message : t('sessions.moveFailed'))
+    })
+  }
+
+  const moveWorkspace = (workspaceId: string, beforeWorkspaceId: string): void => {
+    setMoveError(undefined)
+    void props.onMoveWorkspace(workspaceId, beforeWorkspaceId).catch((reason: unknown) => {
+      setMoveError(reason instanceof Error ? reason.message : t('sessions.moveFailed'))
+    })
   }
 
   const startRename = (target: RenameTarget): void => {
@@ -284,7 +353,7 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
           )
             return
           event.preventDefault()
-          void props.onMoveSession(reorderWorkspaceId, drag.itemId, session.id)
+          moveSession(reorderWorkspaceId, drag.itemId, session.id)
         }}
       >
         <button
@@ -325,7 +394,15 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
             aria-label={t('sessions.rename', { title })}
             title={t('sessions.renameTitle')}
             disabled={removingSessionId !== undefined || mutationBusy}
-            onClick={() => startRename({ kind: 'session', id: session.id, title: session.title })}
+            onClick={(event) => {
+              dialogTriggerRef.current = event.currentTarget
+              startRename({
+                kind: 'session',
+                id: session.id,
+                title: session.title,
+                workspaceId: session.workspaceId,
+              })
+            }}
           >
             <Icon name="edit" />
           </button>
@@ -372,7 +449,7 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
           const drag = readOrderDrag(event.dataTransfer)
           if (drag?.kind !== 'workspace' || drag.itemId === workspace.id) return
           event.preventDefault()
-          void props.onMoveWorkspace(drag.itemId, workspace.id)
+          moveWorkspace(drag.itemId, workspace.id)
         }}
       >
         <button
@@ -399,7 +476,10 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
             aria-label={t('sessions.renameWorkspace', { name: workspace.name })}
             title={t('sessions.renameWorkspaceTitle')}
             disabled={mutationBusy}
-            onClick={() => startRename({ kind: 'workspace', id: workspace.id, title: workspace.name })}
+            onClick={(event) => {
+              dialogTriggerRef.current = event.currentTarget
+              startRename({ kind: 'workspace', id: workspace.id, title: workspace.name })
+            }}
           >
             <Icon name="edit" />
           </button>
@@ -409,7 +489,8 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
             aria-label={t('sessions.removeWorkspace', { name: workspace.name })}
             title={t('sessions.removeWorkspaceTitle')}
             disabled={mutationBusy}
-            onClick={() => {
+            onClick={(event) => {
+              dialogTriggerRef.current = event.currentTarget
               setRemoveError(undefined)
               setRemoveWorkspace(workspace)
             }}
@@ -428,7 +509,10 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
         ? props.sessions.some(
             (session) =>
               session.id !== renameTarget.id &&
-              session.workspaceId === selectedWorkspaceKey &&
+              // A row from the "content matches" list belongs to another
+              // workspace; the warning names "this workspace", so it has to
+              // compare inside the renamed session's own workspace.
+              session.workspaceId === renameTarget.workspaceId &&
               session.title.trim().toLocaleLowerCase() === renameDraft.trim().toLocaleLowerCase() &&
               renameDraft.trim() !== '',
           )
@@ -449,6 +533,7 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
       </h2>
       {showTrigger ? (
         <button
+          ref={triggerRef}
           className={`dsh-session-switcher__trigger${open ? ' dsh-session-switcher__trigger--open' : ''}`}
           type="button"
           aria-expanded={open}
@@ -462,7 +547,10 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
           title={
             activeSession === undefined ? t('sessions.open') : displaySessionTitle(activeSession.title, t)
           }
-          onClick={() => setOpen((current) => !current)}
+          onClick={() => {
+            setMoveError(undefined)
+            setOpen((current) => !current)
+          }}
         >
           <span className="dsh-session-switcher__icon" aria-hidden="true">
             <Icon name="session" />
@@ -479,6 +567,7 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
       ) : null}
       {open ? (
         <PopoverCard
+          ref={panelRef}
           id={panelId}
           className="dsh-session-switcher__panel"
           role="dialog"
@@ -545,6 +634,11 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
               onChange={(event) => setSearchQuery(event.target.value)}
             />
           </div>
+          {moveError === undefined ? null : (
+            <p className="dsh-session-switcher__error" role="alert">
+              {moveError}
+            </p>
+          )}
           {props.workspaces.length === 0 ? null : (
             <div className="dsh-session-switcher__workspaces" aria-label={t('sessions.workspaces')}>
               {props.workspaces.map(renderWorkspaceCard)}
@@ -609,6 +703,7 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
         : createPortal(
             <div className="dsh-session-dialog__backdrop" role="presentation">
               <form
+                ref={renameDialogRef}
                 className="dsh-session-dialog"
                 role="dialog"
                 aria-modal="true"
@@ -665,6 +760,7 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
         : createPortal(
             <div className="dsh-session-dialog__backdrop" role="presentation">
               <div
+                ref={removeDialogRef}
                 className="dsh-session-dialog"
                 role="alertdialog"
                 aria-modal="true"
@@ -689,7 +785,8 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
                     className="dsh-button dsh-button--secondary"
                     type="button"
                     disabled={mutationBusy}
-                    onClick={() => setRemoveWorkspace(undefined)}
+                    autoFocus
+                    onClick={closeRemoveDialog}
                   >
                     {t('common.cancel')}
                   </button>

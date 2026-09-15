@@ -243,6 +243,72 @@ describe('SessionControls', () => {
     expect(onCommand).toHaveBeenCalledWith('/permission danger-full-access')
   })
 
+  it('dismisses the full-access prompt on Escape without touching the permission', () => {
+    const onCommand = vi.fn()
+    render(
+      <SessionControls
+        configuration={{
+          preset: 'standard',
+          toolMode: 'native',
+          permissionPreset: 'workspace-write',
+          planMode: false,
+          model: { providerId: 'deepseek', modelId: 'deepseek-chat' },
+        }}
+        models={[]}
+        presets={[{ id: 'standard', trust: 'system', isDefault: true }]}
+        permissionPresets={['workspace-write', 'danger-full-access']}
+        disabled={false}
+        presetMutable
+        onChange={vi.fn()}
+        onCommand={onCommand}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Access: Workspace Write' }))
+    fireEvent.click(screen.getByRole('option', { name: 'Full Access' }))
+    fireEvent.click(screen.getByRole('checkbox'))
+    expect(screen.getByRole('alertdialog', { name: 'Enable Full access?' })).toBeDefined()
+
+    // Backing out of the prompt must be as cheap as cancelling it: the
+    // acknowledgement is scoped to the pending preset and never reaches DSH.
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+    expect(onCommand).not.toHaveBeenCalled()
+  })
+
+  it('dismisses the full-access prompt on outside pointer input', () => {
+    const onCommand = vi.fn()
+    render(
+      <SessionControls
+        configuration={{
+          preset: 'standard',
+          toolMode: 'native',
+          permissionPreset: 'workspace-write',
+          planMode: false,
+          model: { providerId: 'deepseek', modelId: 'deepseek-chat' },
+        }}
+        models={[]}
+        presets={[{ id: 'standard', trust: 'system', isDefault: true }]}
+        permissionPresets={['workspace-write', 'danger-full-access']}
+        disabled={false}
+        presetMutable
+        onChange={vi.fn()}
+        onCommand={onCommand}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Access: Workspace Write' }))
+    fireEvent.click(screen.getByRole('option', { name: 'Full Access' }))
+    expect(screen.getByRole('alertdialog', { name: 'Enable Full access?' })).toBeDefined()
+
+    const prompt = screen.getByRole('alertdialog', { name: 'Enable Full access?' })
+    fireEvent.pointerDown(prompt)
+    expect(screen.queryByRole('alertdialog')).not.toBeNull()
+    fireEvent.pointerDown(document.body)
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+    expect(onCommand).not.toHaveBeenCalled()
+  })
+
   it('marks full access with the warning-colored access control', () => {
     render(
       <SessionControls

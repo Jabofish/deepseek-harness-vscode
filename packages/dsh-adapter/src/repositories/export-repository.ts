@@ -324,10 +324,10 @@ function* jsonChunks(
   let emitted = false
   yield '[\n'
   for (const event of events) {
-    if (!includeReasoning && isReasoningEvent(event)) continue
+    const projected = exportableEvent(event, includeReasoning, includeAttachments)
+    if (projected === undefined) continue
     if (emitted) yield ',\n'
-    const serialized = JSON.stringify(includeAttachments ? event : stripAttachments(event), null, 2) ?? 'null'
-    yield indent(serialized, 2)
+    yield indent(JSON.stringify(projected, null, 2) ?? 'null', 2)
     emitted = true
   }
   yield emitted ? '\n]' : ']'
@@ -339,12 +339,20 @@ function* markdownChunks(
   includeAttachments: boolean,
 ): Iterable<string> {
   for (const event of events) {
-    if (!includeReasoning && isReasoningEvent(event)) continue
-    const value = asRecord(includeAttachments ? event : stripAttachments(event))
+    const projected = exportableEvent(event, includeReasoning, includeAttachments)
+    if (projected === undefined) continue
+    const value = asRecord(projected)
     const type = eventType(value)
     const text = typeof value.text === 'string' ? value.text : (JSON.stringify(value) ?? '')
     yield `### ${type}\n\n${text}\n\n`
   }
+}
+
+/** Returns `undefined` for a row that is dropped from the export entirely. */
+function exportableEvent(event: unknown, includeReasoning: boolean, includeAttachments: boolean): unknown {
+  if (!includeReasoning && isReasoningEvent(event)) return undefined
+  const value = includeReasoning ? event : stripReasoning(event)
+  return includeAttachments ? value : stripAttachments(value)
 }
 
 function stripAttachments(value: unknown): unknown {
@@ -367,8 +375,37 @@ function stripAttachments(value: unknown): unknown {
   return result
 }
 
+/** Content blocks and stream chunks the mapper projects as private reasoning. */
+const REASONING_BLOCK_TYPES = new Set(['reasoning', 'reasoning-delta'])
+/** Message fields the mapper reads back as reasoning text. */
+const REASONING_KEYS = new Set(['reasoning', 'reasoningContent', 'reasoning_content'])
+
+/**
+ * A row is pure reasoning when its own type says so (legacy/synthetic rows) or
+ * when it is an rc.6 streamed reasoning delta, which carries nothing else.
+ * Rows that merely embed reasoning are kept and stripped instead, so the
+ * visible answer is not lost with them.
+ */
 function isReasoningEvent(event: unknown): boolean {
-  return /reasoning/i.test(eventType(asRecord(event)))
+  const record = asRecord(event)
+  if (/reasoning/i.test(eventType(record))) return true
+  const nested = asRecordOrUndefined(record.event) ?? record
+  return asRecordOrUndefined(asRecord(nested.data).chunk)?.type === 'reasoning-delta'
+}
+
+/** Returns `undefined` for a value that is reasoning and nothing else. */
+function stripReasoning(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stripReasoning).filter((entry) => entry !== undefined)
+  const record = asRecordOrUndefined(value)
+  if (record === undefined) return value
+  if (typeof record.type === 'string' && REASONING_BLOCK_TYPES.has(record.type)) return undefined
+  const result: Record<string, unknown> = {}
+  for (const [key, entry] of Object.entries(record)) {
+    if (REASONING_KEYS.has(key)) continue
+    const stripped = stripReasoning(entry)
+    if (stripped !== undefined) result[key] = stripped
+  }
+  return result
 }
 
 function eventType(value: Record<string, unknown>): string {

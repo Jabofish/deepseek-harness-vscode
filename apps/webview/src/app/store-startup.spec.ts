@@ -517,6 +517,33 @@ describe('AppStore startup session restoration', () => {
     store.dispose()
   })
 
+  it('follows a model selection recorded outside the composer picker', async () => {
+    const client = new StartupClient()
+    const store = createAppStore(client as unknown as ProtocolClient)
+    await store.initialize()
+
+    // The adapter turns a durable model selection into a configuration patch.
+    // Without this path the picker keeps claiming the previous model until the
+    // next request header lands.
+    client.emit({
+      type: 'event',
+      name: 'session.configuration',
+      sequence: 1,
+      payload: {
+        sessionId: 'session-active',
+        patch: {
+          model: { providerId: 'deepseek', modelId: 'deepseek-reasoner', reasoningLevel: 'high' },
+        },
+      },
+    })
+    await new Promise((resolve) => window.setTimeout(resolve, 24))
+
+    expect(store.configuration).toMatchObject({
+      model: { providerId: 'deepseek', modelId: 'deepseek-reasoner', reasoningLevel: 'high' },
+    })
+    store.dispose()
+  })
+
   it('reopens a remembered subagent transcript through the parent catalog', async () => {
     persisted.state = { version: 1, activeSessionId: childSession.id }
     const client = new StartupClient((request) => {

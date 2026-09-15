@@ -55,6 +55,184 @@ describe('Rc6ExportRepository', () => {
     await expect(temporaryFiles(destination)).resolves.toEqual([])
   })
 
+  it('excludes canonical rc.6 reasoning rows and reasoning blocks from a JSON export', async () => {
+    const destination = await destinationPath('canonical-reasoning.json')
+    const repository = new Rc6ExportRepository(
+      createTransport({ events: canonicalReasoningRows(), hasMore: false }),
+      nodeFileSystem,
+    )
+
+    await repository.exportSession(exportOptions('json', false), destination)
+
+    const exported = await readFile(destination, 'utf8')
+    expect(exported).not.toContain('private reasoning')
+    const rows = JSON.parse(exported) as readonly unknown[]
+    expect(rows).toHaveLength(2)
+    const message = (rows[1] as { event: { data: { message: { content: readonly unknown[] } } } }).event.data
+      .message
+    expect(message.content).toEqual([{ type: 'text', text: 'Hello' }])
+  })
+
+  it('keeps canonical rc.6 reasoning rows when the export asks for reasoning', async () => {
+    const destination = await destinationPath('canonical-reasoning-included.json')
+    const repository = new Rc6ExportRepository(
+      createTransport({ events: canonicalReasoningRows(), hasMore: false }),
+      nodeFileSystem,
+    )
+
+    await repository.exportSession(exportOptions('json', true), destination)
+
+    const exported = await readFile(destination, 'utf8')
+    expect(exported).toContain('private reasoning')
+    const rows = JSON.parse(exported) as readonly unknown[]
+    expect(rows).toHaveLength(3)
+  })
+
+  it('excludes canonical rc.6 reasoning from a Markdown export', async () => {
+    const destination = await destinationPath('canonical-reasoning.md')
+    const repository = new Rc6ExportRepository(
+      createTransport({ events: canonicalReasoningRows(), hasMore: false }),
+      nodeFileSystem,
+    )
+
+    await repository.exportSession(exportOptions('markdown', false), destination)
+
+    const exported = await readFile(destination, 'utf8')
+    expect(exported).not.toContain('private reasoning')
+    expect(exported).toContain('Hello')
+  })
+
+  it('keeps tool arguments and visible text while stripping embedded reasoning fields', async () => {
+    const destination = await destinationPath('canonical-reasoning-attempt.json')
+    const repository = new Rc6ExportRepository(
+      createTransport({
+        events: [
+          {
+            event: {
+              type: 'tool/call',
+              seq: 1,
+              time: 1,
+              data: {
+                turn: 1,
+                step: 1,
+                callId: 'call-1',
+                name: 'search',
+                arguments: '{"reasoning":"a tool argument named reasoning"}',
+              },
+            },
+          },
+          {
+            event: {
+              type: 'assistant/attempt',
+              seq: 2,
+              time: 2,
+              data: {
+                turn: 1,
+                step: 1,
+                stream: [
+                  { type: 'reasoning-delta', index: 0, text: 'private reasoning' },
+                  { type: 'text-delta', index: 1, text: 'Hello' },
+                ],
+              },
+            },
+          },
+          {
+            event: {
+              type: 'assistant/message',
+              seq: 3,
+              time: 3,
+              data: {
+                turn: 1,
+                step: 1,
+                reasoning: 'private reasoning',
+                message: {
+                  id: 'm1',
+                  role: 'assistant',
+                  source: { kind: 'model', provider: 'deepseek', model: 'deepseek-chat' },
+                  reasoning_content: 'private reasoning',
+                  content: [{ type: 'text', text: 'Hello' }],
+                },
+              },
+            },
+          },
+        ],
+        hasMore: false,
+      }),
+      nodeFileSystem,
+    )
+
+    await repository.exportSession(exportOptions('json', false), destination)
+
+    const exported = await readFile(destination, 'utf8')
+    expect(exported).not.toContain('private reasoning')
+    const rows = JSON.parse(exported) as readonly Record<string, unknown>[]
+    expect(rows).toHaveLength(3)
+    const attempt = rows[1] as { event: { data: { stream: readonly unknown[] } } }
+    expect(attempt.event.data.stream).toEqual([{ type: 'text-delta', index: 1, text: 'Hello' }])
+    const toolCall = rows[0] as { event: { data: { arguments: string } } }
+    expect(toolCall.event.data.arguments).toBe('{"reasoning":"a tool argument named reasoning"}')
+    const message = rows[2] as { event: { data: { message: Record<string, unknown> } } }
+    expect(message.event.data.message.reasoning_content).toBeUndefined()
+    expect(message.event.data.message.content).toEqual([{ type: 'text', text: 'Hello' }])
+  })
+
+  it('applies the attachment and reasoning exclusions in one pass', async () => {
+    const destination = await destinationPath('canonical-reasoning-attachments.json')
+    const repository = new Rc6ExportRepository(
+      createTransport({
+        events: [
+          {
+            event: {
+              type: 'assistant/message',
+              seq: 1,
+              time: 1,
+              data: {
+                turn: 1,
+                step: 1,
+                message: {
+                  id: 'm1',
+                  role: 'assistant',
+                  source: { kind: 'model', provider: 'deepseek', model: 'deepseek-chat' },
+                  content: [
+                    { type: 'reasoning', text: 'private reasoning' },
+                    { type: 'text', text: 'Hello' },
+                    {
+                      type: 'image',
+                      attachment: {
+                        attachmentId: 'a1',
+                        mediaType: 'image/png',
+                        bytes: 3,
+                        width: 1,
+                        height: 1,
+                      },
+                    },
+                  ],
+                },
+              },
+            },
+          },
+          // Older rc.6-compatible rows carried inline media instead of a
+          // reference, and the attachment exclusion still has to scrub them.
+          { type: 'image', seq: 2, uri: 'data:image/png;base64,aGVsbG8=', data: 'aGVsbG8=' },
+        ],
+        hasMore: false,
+      }),
+      nodeFileSystem,
+    )
+
+    await repository.exportSession(exportOptions('json', false, false), destination)
+
+    const exported = await readFile(destination, 'utf8')
+    expect(exported).not.toContain('private reasoning')
+    expect(exported).not.toContain('aGVsbG8=')
+    expect(exported).toContain('[attachment omitted]')
+    const rows = JSON.parse(exported) as readonly Record<string, unknown>[]
+    expect(rows).toHaveLength(2)
+    const blocks = (rows[0] as { event: { data: { message: { content: readonly unknown[] } } } }).event.data
+      .message.content
+    expect(blocks.map((block) => (block as { type: string }).type)).toEqual(['text', 'image'])
+  })
+
   it('never overwrites an existing destination without an explicit Host confirmation', async () => {
     const destination = await destinationPath('existing.json')
     await writeFile(destination, 'original bytes', 'utf8')
@@ -293,6 +471,54 @@ describe('Rc6ExportRepository', () => {
     await expect(temporaryFiles(destination)).resolves.toEqual([])
   })
 })
+
+/**
+ * Real rc.6 history rows carry reasoning inside the payload: a streamed
+ * `assistant/chunk` with a `reasoning-delta` chunk, and an `assistant/message`
+ * whose content mixes a `reasoning` block with the visible `text` block. The
+ * row type never contains "reasoning", so the row shape is what the filter
+ * must key on.
+ */
+function canonicalReasoningRows(): readonly unknown[] {
+  return [
+    {
+      event: {
+        type: 'assistant/chunk',
+        seq: 1,
+        time: 1,
+        data: { turn: 1, step: 1, chunk: { type: 'reasoning-delta', index: 0, text: 'private reasoning' } },
+      },
+    },
+    {
+      event: {
+        type: 'assistant/chunk',
+        seq: 2,
+        time: 2,
+        data: { turn: 1, step: 1, chunk: { type: 'text-delta', index: 1, text: 'Hello' } },
+      },
+    },
+    {
+      event: {
+        type: 'assistant/message',
+        seq: 3,
+        time: 3,
+        data: {
+          turn: 1,
+          step: 1,
+          message: {
+            id: 'm1',
+            role: 'assistant',
+            source: { kind: 'model', provider: 'deepseek', model: 'deepseek-chat' },
+            content: [
+              { type: 'reasoning', text: 'private reasoning' },
+              { type: 'text', text: 'Hello' },
+            ],
+          },
+        },
+      },
+    },
+  ]
+}
 
 function exportOptions(
   format: SessionExportOptions['format'],

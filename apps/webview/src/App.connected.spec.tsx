@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AppState, AppStore } from './app/store.js'
 
@@ -741,6 +741,186 @@ describe('App connected rendering', () => {
     expect(screen.queryByRole('button', { name: 'Remove notes.txt' })).toBeNull()
   })
 
+  it('reports an unavailable attachment preview instead of a permanent loading state', async () => {
+    const state = connectedState(true)
+    const uri = 'dsh-attachment:00000000-0000-4000-8000-000000000002'
+    const pickAttachment = vi.fn().mockResolvedValue({ uri, name: 'photo.png', mimeType: 'image/png' })
+    // A dead or expired Host handle answers with `{cancelled: true}`, which the
+    // store flattens to `undefined` — an outcome the lightbox must not dress up
+    // as "still loading".
+    const previewAttachment = vi.fn().mockResolvedValue(undefined)
+    currentStore = { ...storeFor(state), pickAttachment, previewAttachment }
+
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Attach file' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Preview photo.png' }))
+
+    const lightbox = await screen.findByRole('dialog', { name: 'Preview photo.png' })
+    await waitFor(() => expect(within(lightbox).getByText('Unable to load image')).toBeDefined())
+    expect(within(lightbox).queryByText('Loading preview…')).toBeNull()
+    // The failure is terminal: it must not re-request the same handle forever.
+    await waitFor(() => expect(previewAttachment).toHaveBeenCalledTimes(1))
+  })
+
+  it('shows the resolved attachment preview in the lightbox', async () => {
+    const state = connectedState(true)
+    const uri = 'dsh-attachment:00000000-0000-4000-8000-000000000003'
+    const pickAttachment = vi.fn().mockResolvedValue({ uri, name: 'photo.png', mimeType: 'image/png' })
+    const previewAttachment = vi.fn().mockResolvedValue('data:image/png;base64,AAAA')
+    currentStore = { ...storeFor(state), pickAttachment, previewAttachment }
+
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Attach file' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Preview photo.png' }))
+
+    const lightbox = await screen.findByRole('dialog', { name: 'Preview photo.png' })
+    await waitFor(() =>
+      expect(within(lightbox).getByRole('img', { name: 'photo.png' }).getAttribute('src')).toBe(
+        'data:image/png;base64,AAAA',
+      ),
+    )
+    expect(within(lightbox).queryByText('Unable to load image')).toBeNull()
+  })
+
+  it('retries the preview after a failed attachment is removed and picked again', async () => {
+    const state = connectedState(true)
+    const uri = 'dsh-attachment:00000000-0000-4000-8000-000000000004'
+    const pickAttachment = vi.fn().mockResolvedValue({ uri, name: 'photo.png', mimeType: 'image/png' })
+    const previewAttachment = vi.fn().mockResolvedValue(undefined)
+    currentStore = { ...storeFor(state), pickAttachment, previewAttachment }
+
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Attach file' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Preview photo.png' }))
+    const lightbox = await screen.findByRole('dialog', { name: 'Preview photo.png' })
+    await waitFor(() => expect(within(lightbox).getByText('Unable to load image')).toBeDefined())
+    fireEvent.click(within(lightbox).getByRole('button', { name: 'Close preview' }))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove photo.png' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Attach file' }))
+    await screen.findByRole('button', { name: 'Preview photo.png' })
+
+    await waitFor(() => expect(previewAttachment).toHaveBeenCalledTimes(2))
+  })
+
+  it('offers the open-file picker on a session whose candidate list was never listed', async () => {
+    const state = connectedState(true)
+    const listOpenFiles = vi
+      .fn()
+      .mockResolvedValue([{ id: 'dsh-open-file-1', name: 'LICENSE', active: true, supported: true }])
+    const attachOpenFile = vi.fn().mockResolvedValue({
+      uri: 'dsh-attachment:00000000-0000-4000-8000-000000000001',
+      name: 'LICENSE',
+      mimeType: 'text/plain',
+    })
+    currentStore = { ...storeFor(state), listOpenFiles, attachOpenFile }
+
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Choose an open file' }))
+    fireEvent.click(await screen.findByRole('option', { name: /LICENSE/u }))
+
+    await waitFor(() => expect(attachOpenFile).toHaveBeenCalledWith('dsh-open-file-1'))
+    expect(await screen.findByRole('button', { name: 'Remove LICENSE' })).toBeDefined()
+  })
+
+  it('restarts the error dismissal window when the same failure repeats', async () => {
+    vi.useFakeTimers()
+    try {
+      const state = connectedState(true)
+      const pickAttachment = vi.fn().mockRejectedValue(new Error('Host refused the attachment'))
+      currentStore = { ...storeFor(state), pickAttachment }
+
+      render(<App />)
+      const failAttachment = async (): Promise<void> => {
+        fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
+        fireEvent.click(screen.getByRole('menuitem', { name: 'Attach file' }))
+        await act(async () => {
+          await Promise.resolve()
+        })
+      }
+
+      await failAttachment()
+      expect(screen.queryByText('Host refused the attachment')).not.toBeNull()
+
+      act(() => {
+        vi.advanceTimersByTime(5_000)
+      })
+      await failAttachment()
+
+      // 3s after the repeat the toast must still be up: the second failure owns
+      // a fresh window, it does not inherit the first one's deadline.
+      act(() => {
+        vi.advanceTimersByTime(3_000)
+      })
+      expect(screen.queryByText('Host refused the attachment')).not.toBeNull()
+
+      act(() => {
+        vi.advanceTimersByTime(5_000)
+      })
+      expect(screen.queryByText('Host refused the attachment')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('dismisses the error toast on demand', async () => {
+    const state = connectedState(true)
+    const pickAttachment = vi.fn().mockRejectedValue(new Error('Host refused the attachment'))
+    currentStore = { ...storeFor(state), pickAttachment }
+
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Attach file' }))
+    await screen.findByText('Host refused the attachment')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss error' }))
+
+    expect(screen.queryByText('Host refused the attachment')).toBeNull()
+  })
+
+  it('keeps the open-file row hidden when the listed open files cannot be attached', async () => {
+    const state = connectedState(true)
+    const listOpenFiles = vi
+      .fn()
+      .mockResolvedValue([{ id: 'dsh-open-file-1', name: 'archive.bin', active: true, supported: false }])
+    currentStore = { ...storeFor(state), listOpenFiles }
+
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    expect(listOpenFiles).toHaveBeenCalled()
+    expect(screen.getByRole('menuitem', { name: 'Attach file' })).toBeDefined()
+    expect(screen.queryByRole('menuitem', { name: 'Choose an open file' })).toBeNull()
+  })
+
+  it('does not leave the open-file picker open after its menu is dismissed', async () => {
+    const state = connectedState(true)
+    currentStore = {
+      ...storeFor(state),
+      listOpenFiles: vi
+        .fn()
+        .mockResolvedValue([{ id: 'dsh-open-file-1', name: 'LICENSE', active: true, supported: true }]),
+    }
+
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Choose an open file' }))
+    await screen.findByRole('option', { name: /LICENSE/u })
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+    fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
+
+    expect(screen.queryByRole('dialog', { name: 'Open files' })).toBeNull()
+  })
+
   it('keeps one draft chip when the same picker file is selected twice', async () => {
     const state = connectedState(true)
     const firstUri = 'dsh-attachment:00000000-0000-4000-8000-000000000001'
@@ -789,6 +969,108 @@ describe('App connected rendering', () => {
     expect(screen.getByText('包含附件')).toBeDefined()
     expect(screen.getByRole('button', { name: '选择保存位置并导出' })).toBeDefined()
     await waitFor(() => expect(updateDshSetting).toHaveBeenCalledWith('locale.preference', 'zh'))
+  })
+
+  it('keeps the conversation tools panel open when Escape closes the interface-language menu', () => {
+    currentStore = storeFor(connectedState(true))
+    render(<App />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Conversation tools' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Interface language' }))
+    expect(screen.getByRole('listbox', { name: 'Interface language' })).toBeDefined()
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    expect(screen.queryByRole('listbox', { name: 'Interface language' })).toBeNull()
+    expect(screen.getByRole('dialog', { name: 'Conversation tools' })).toBeDefined()
+
+    // The listbox still dismisses on an outside press, and the panel stays
+    // reachable for the Escape that no nested surface consumes any more.
+    fireEvent.click(screen.getByRole('button', { name: 'Interface language' }))
+    expect(screen.getByRole('listbox', { name: 'Interface language' })).toBeDefined()
+    fireEvent.pointerDown(screen.getByRole('dialog', { name: 'Conversation tools' }))
+    expect(screen.queryByRole('listbox', { name: 'Interface language' })).toBeNull()
+    expect(screen.getByRole('dialog', { name: 'Conversation tools' })).toBeDefined()
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: 'Conversation tools' })).toBeNull()
+  })
+
+  it('keeps the export form mounted once the pointer leaves the conversation tools panel', async () => {
+    currentStore = storeFor(connectedState(true))
+    render(<App />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Conversation tools' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Export' }))
+    await screen.findByRole('heading', { name: 'Export session' })
+
+    // The form lives in the conversation column, not in the panel: the first
+    // press on any of its controls is an outside press for the panel.
+    fireEvent.pointerDown(screen.getByRole('checkbox', { name: 'Include attachments' }))
+
+    expect(screen.getByRole('heading', { name: 'Export session' })).toBeDefined()
+
+    // Its own trigger stays the owner of that lifetime.
+    fireEvent.click(screen.getByRole('button', { name: 'Conversation tools' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Export' }))
+    expect(screen.queryByRole('heading', { name: 'Export session' })).toBeNull()
+  })
+
+  it('drops the export form when the conversation it was opened for is left', async () => {
+    const state = connectedState(true)
+    let live: AppState = {
+      ...state,
+      sessions: [
+        ...state.sessions,
+        {
+          id: 's2',
+          title: 'Other session',
+          workspaceId: 'w1',
+          blank: false,
+          status: 'idle',
+          createdAt: '2026-01-02T00:00:00.000Z',
+          updatedAt: '2026-01-02T00:00:00.000Z',
+        },
+      ],
+    }
+    const listeners = new Set<() => void>()
+    const exportSession = vi.fn().mockResolvedValue(undefined)
+    currentStore = {
+      ...storeFor(state),
+      exportSession,
+      getState: () => live,
+      subscribe: (listener: () => void) => {
+        listeners.add(listener)
+        return () => {
+          listeners.delete(listener)
+        }
+      },
+    }
+
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Conversation tools' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Export' }))
+    await screen.findByRole('heading', { name: 'Export session' })
+
+    // The form names no session of its own, so carrying it into another
+    // conversation would export whichever one happens to be active.
+    await act(async () => {
+      live = { ...live, activeSessionId: 's2', timeline: { ...live.timeline, sessionId: 's2' } }
+      for (const listener of listeners) listener()
+      await Promise.resolve()
+    })
+
+    expect(screen.queryByRole('heading', { name: 'Export session' })).toBeNull()
+
+    // Reopening it targets the conversation the user is looking at now.
+    fireEvent.click(screen.getByRole('button', { name: 'Export' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Choose destination and export' }))
+    expect(exportSession).toHaveBeenCalledWith({
+      sessionId: 's2',
+      format: 'markdown',
+      includeAttachments: true,
+      includeReasoning: true,
+    })
   })
 
   it('uses the Settings language control for the shared extension and DSH preference', async () => {

@@ -110,6 +110,37 @@ describe('cache hit display', () => {
           assertDocumentedRounding(usage(input, cacheRead, cacheWrite))
   })
 
+  it('agrees with an exact reference over every ratio up to a denominator of 300', () => {
+    // The integer technique inside the implementation replaces float division
+    // with a binary search over thresholds. The sparse grid above can step over
+    // an off-by-one threshold; this sweep visits every (cacheRead, denominator)
+    // pair, so a wrong neighbour would surface immediately.
+    //
+    // The reference stays in integers on purpose: `(115 / 200) * 100` is
+    // 57.49999999999999 in binary, so a float reference would call the correct
+    // half-up answer of 58 a defect. Rounding x/y half-up is
+    // floor((2x + y) / 2y) when x/y is a percentage over 100.
+    for (let denominator = 1; denominator <= 300; denominator += 1)
+      for (let cacheRead = 0; cacheRead <= denominator; cacheRead += 1) {
+        const rows = usage(0, cacheRead, denominator - cacheRead)
+        if (cacheRead === denominator) {
+          expect(cacheHitPercent(rows)).toBe('100')
+          continue
+        }
+        const exactPercent = Math.floor((cacheRead * 200 + denominator) / (2 * denominator))
+        if (exactPercent < 100) expect(cacheHitPercent(rows)).toBe(String(exactPercent))
+        else assertDocumentedRounding(rows)
+      }
+  })
+
+  it('keeps a one-token miss inside the last shown digit up to a denominator of 2000', () => {
+    // The near-full branch picks a decimal count from the size of the miss. A
+    // wrong count shows either a premature 100 or a digit that rounds away the
+    // miss, so restate the documented contract for every reachable size.
+    for (let denominator = 8; denominator <= 2_000; denominator += 1)
+      assertDocumentedRounding(usage(1, denominator - 1, 0))
+  })
+
   it('reports nothing for an empty or absent aggregate', () => {
     expect(cacheHitPercent(undefined)).toBeNull()
     expect(cacheHitPercent(usage(0, 0, 0))).toBeNull()

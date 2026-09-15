@@ -197,6 +197,50 @@ describe('buildTrajectory', () => {
   })
 })
 
+describe('createTrajectoryProjector incremental folding', () => {
+  /**
+   * The projector keeps a checkpoint at the last stable work boundary and folds
+   * only the live suffix. That is the same class of "incremental result must
+   * equal a full rebuild" risk the reducer was audited for, so it is checked by
+   * differential replay: every generated snapshot has to match buildTrajectory
+   * exactly, through both the caller-hint path and the identity-prefix path.
+   */
+  it('matches a full rebuild after every generated snapshot', () => {
+    const random = createRandom(0x5eed)
+    for (let run = 0; run < 40; run += 1) {
+      const hinted = createTrajectoryProjector()
+      const identity = createTrajectoryProjector()
+      let previous: readonly TimelineNode[] = []
+      let serial = 0
+      const nextId = (prefix: string): string => `${prefix}-${run}-${(serial += 1)}`
+
+      for (let step = 0; step < 30; step += 1) {
+        const next = applyRandomSnapshotStep(previous, random, nextId)
+        const expected = buildTrajectory(next)
+
+        const fromHint = hinted(next, firstChangedIndex(previous, next), previous)
+        expect(fromHint).toStrictEqual(expected)
+        // The identity fallback (a caller that cannot name the change point, or
+        // hands over an equal array instance) has to agree with the same rebuild.
+        const fromIdentity = identity(next.slice())
+        expect(fromIdentity).toStrictEqual(expected)
+
+        previous = next
+      }
+    }
+  })
+
+  it('returns the cached projection for the same array instance', () => {
+    const project = createTrajectoryProjector()
+    const snapshot: readonly TimelineNode[] = [...nodes]
+    const first = project(snapshot)
+    // The reducer hands over a new array per snapshot, so an identical instance
+    // means "nothing changed" and must not be refolded.
+    expect(project(snapshot)).toBe(first)
+    expect(project([...nodes])).not.toBe(first)
+  })
+})
+
 describe('searchTrajectoryRecords', () => {
   it('matches summaries and inspector payloads case-insensitively', () => {
     const projection = buildTrajectory(nodes)
@@ -212,3 +256,112 @@ describe('searchTrajectoryRecords', () => {
     expect(searchTrajectoryRecords(projection, 'no-such-needle')).toHaveLength(0)
   })
 })
+
+/** Seeded LCG so a failing sequence can be replayed from the printed snapshot. */
+function createRandom(seed: number): () => number {
+  let state = seed >>> 0
+  return () => {
+    state = (state * 1_664_525 + 1_013_904_223) >>> 0
+    return state / 0x1_0000_0000
+  }
+}
+
+function firstChangedIndex(
+  previous: readonly TimelineNode[],
+  next: readonly TimelineNode[],
+): number | undefined {
+  const limit = Math.min(previous.length, next.length)
+  let index = 0
+  while (index < limit && previous[index] === next[index]) index += 1
+  return index === previous.length && index === next.length ? undefined : index
+}
+
+function settledAssistant(id: string, markdown: string): TimelineNode {
+  return {
+    kind: 'assistant-message',
+    id,
+    markdown,
+    streaming: false,
+    timing: { stepStartTime: 1_000, firstTokenTime: 1_400, completedTime: 3_600 },
+    usage,
+  }
+}
+
+function runningTool(id: string): TimelineNode {
+  return {
+    kind: 'tool',
+    id,
+    tool: {
+      id,
+      name: 'shell',
+      category: 'execution',
+      title: `shell: step ${id}`,
+      status: 'running',
+      metadata: {},
+    },
+  }
+}
+
+function nonLedgerNode(id: string): TimelineNode {
+  return { kind: 'notice', id, level: 'info', text: `notice ${id}` }
+}
+
+/**
+ * One snapshot transition from the shapes the reducer produces: append a new
+ * node, complete the streaming tail in place (new object identity), rewrite an
+ * older node after a late durable projection, or drop the tail.
+ */
+function applyRandomSnapshotStep(
+  previous: readonly TimelineNode[],
+  random: () => number,
+  nextId: (prefix: string) => string,
+): readonly TimelineNode[] {
+  const nodes = previous.slice()
+  const last = nodes.at(-1)
+  const pick = random()
+
+  if (pick < 0.22) {
+    nodes.push({
+      kind: 'user-message',
+      id: nextId('user'),
+      markdown: `Request ${previous.length}`,
+      ...(random() < 0.3 ? { source: 'plugin' } : {}),
+    })
+  } else if (pick < 0.44) {
+    nodes.push({
+      kind: 'assistant-message',
+      id: nextId('assistant'),
+      markdown: `Working ${previous.length}`,
+      streaming: true,
+      ...(random() < 0.4 ? { reasoning: { markdown: `Thinking ${previous.length}`, streaming: true } } : {}),
+    })
+  } else if (pick < 0.58 && last?.kind === 'assistant-message' && last.streaming) {
+    nodes[nodes.length - 1] = settledAssistant(last.id, `${last.markdown} done`)
+  } else if (pick < 0.7) {
+    nodes.push(runningTool(nextId('tool')))
+  } else if (pick < 0.8 && last?.kind === 'tool' && last.tool.status === 'running') {
+    nodes[nodes.length - 1] = {
+      ...last,
+      tool: { ...last.tool, status: 'completed', completedAt: '2026-08-17T05:00:02.500Z' },
+    }
+  } else if (pick < 0.88) {
+    nodes.push({
+      kind: 'compaction',
+      id: nextId('compaction'),
+      compaction: { id: nextId('compaction'), phase: random() < 0.5 ? 'start' : 'end' },
+    })
+  } else if (pick < 0.94 && nodes.length > 0) {
+    const index = Math.floor(random() * nodes.length)
+    if (index === nodes.length - 1) {
+      nodes[index] = runningTool(nextId('tool'))
+    } else {
+      nodes[index] = nonLedgerNode(nextId('notice'))
+    }
+  } else if (nodes.length > 2) {
+    nodes.length = 1 + Math.floor(random() * (nodes.length - 1))
+  } else {
+    nodes.push(nonLedgerNode(nextId('notice')))
+  }
+
+  return nodes
+}

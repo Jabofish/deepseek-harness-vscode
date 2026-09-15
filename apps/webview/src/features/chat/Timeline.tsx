@@ -8,6 +8,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type MouseEvent,
   type ReactElement,
 } from 'react'
 import { isInjectedUserMessage, type AssistantTiming, type TimelineNode } from '@dsh-vscode/timeline'
@@ -238,6 +239,31 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
     },
     [hasOpenLink, stableOnOpenLink, t],
   )
+  /**
+   * The refusal dialog is `aria-modal`, so the keyboard has to come back to
+   * whichever control asked for the open. The opener is recorded from the click
+   * itself rather than from `document.activeElement`, because a link inside a
+   * markdown/`code` fragment can be a nested node and Safari does not focus a
+   * button on click. Controls inside the dialog are skipped so a retry keeps
+   * pointing at the original link.
+   */
+  const openLinkTriggerRef = useRef<HTMLElement | null>(null)
+  const openLinkWasOpen = useRef(false)
+  useEffect(() => {
+    if (openLinkWasOpen.current && openLinkError === undefined) {
+      const target = openLinkTriggerRef.current
+      // Retry remounts the dialog, so the opener is deliberately kept for the
+      // close that follows it; the connection guard covers a recycled row.
+      if (target !== null && target.isConnected) target.focus()
+    }
+    openLinkWasOpen.current = openLinkError !== undefined
+  }, [openLinkError])
+  const rememberOpenLinkTrigger = (event: MouseEvent<HTMLDivElement>): void => {
+    const target = event.target
+    if (!(target instanceof Element) || target.closest('[role="dialog"]') !== null) return
+    const control = target.closest<HTMLElement>('button, [href], [tabindex]')
+    if (control !== null) openLinkTriggerRef.current = control
+  }
   const latestNode = displayNodes[displayNodes.length - 1]
   const latestSignature = nodeSignatureProjector(latestNode)
   const virtualizeTimeline = virtualizationProjector(displayNodes, displayNodeTextSizeProjector)
@@ -373,6 +399,7 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
       aria-labelledby={props.panelLabelledBy}
       tabIndex={props.panelId === undefined ? undefined : 0}
       className="dsh-timeline-shell"
+      onClickCapture={rememberOpenLinkTrigger}
     >
       <div
         ref={scrollRef}
@@ -498,10 +525,12 @@ function ToolLinkErrorDialog({
   useEffect(() => {
     closeRef.current?.focus()
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        onClose()
-      }
+      // The dialog is aria-modal: the keyboard dismisses it, and the refocus
+      // effect below returns the keyboard to the control that asked for the
+      // open. A key an inner surface already consumed is not ours.
+      if (event.key !== 'Escape' || event.defaultPrevented) return
+      event.preventDefault()
+      onClose()
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
@@ -1214,14 +1243,17 @@ function renderTeamActivity(
       : activity.kind === 'task'
         ? activity.subject
         : (activity.content ?? activity.messageId)
-  const status =
+  // The phase, task status and delivery values are wire identifiers; the pill
+  // carries the reader-facing label and the delivery mode stays a meta detail
+  // instead of replacing the message state.
+  const statusKey =
     activity.kind === 'member'
-      ? activity.phase
+      ? `timeline.teamStatus.${activity.phase}`
       : activity.kind === 'task'
-        ? activity.status
+        ? `timeline.teamStatus.${activity.status}`
         : activity.kind === 'message.queued'
-          ? (activity.delivery ?? 'queued')
-          : 'delivered'
+          ? 'timeline.teamStatus.queued'
+          : 'timeline.teamStatus.delivered'
   return (
     <section className="dsh-timeline__card dsh-timeline__card--event" aria-label={t('timeline.teamActivity')}>
       <header className="dsh-timeline__card-header">
@@ -1231,7 +1263,7 @@ function renderTeamActivity(
           </span>
           <strong>{t('timeline.teamActivity')}</strong>
         </div>
-        <span className="dsh-status-pill dsh-status-pill--info">{status}</span>
+        <span className="dsh-status-pill dsh-status-pill--info">{t(statusKey)}</span>
       </header>
       <ul className="dsh-timeline__event-list">
         <li>
@@ -1248,6 +1280,9 @@ function renderTeamActivity(
             <span className="dsh-timeline__card-meta">
               {t('timeline.teamTarget', { target: activity.targetId })}
             </span>
+          ) : null}
+          {activity.kind === 'message.queued' && activity.delivery !== undefined ? (
+            <span className="dsh-timeline__card-meta">{t(`timeline.teamDelivery.${activity.delivery}`)}</span>
           ) : null}
         </li>
       </ul>

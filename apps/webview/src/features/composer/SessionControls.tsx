@@ -11,6 +11,7 @@ import {
 } from '@dsh-vscode/domain'
 import { memo, useCallback, useMemo, useRef, useState, type ReactElement } from 'react'
 import { SelectMenu, type SelectMenuOption } from '../../components/common/SelectMenu.js'
+import { useDismissibleLayer } from '../../components/common/useDismissibleLayer.js'
 import { Icon, type IconName } from '../../ui/Icon.js'
 import { ModelPicker } from '../models/ModelPicker.js'
 import { useI18n, type Translate } from '../../i18n.js'
@@ -169,6 +170,20 @@ export const SessionControls = memo(function SessionControls(props: SessionContr
     placement: 'above',
     align: 'end',
   })
+  const cancelRisk = useCallback(
+    (): void => setRiskState({ context: riskContext, acknowledged: false }),
+    [riskContext],
+  )
+  /**
+   * The prompt floats over the composer, so backing out of it has to cost the
+   * same as pressing Cancel: dropping the pending change is the safe outcome
+   * and the acknowledgement never leaves this view.
+   */
+  useDismissibleLayer({
+    open: riskPending !== undefined,
+    refs: [riskRef],
+    onDismiss: cancelRisk,
+  })
 
   const riskPopover =
     riskPending === undefined ? null : (
@@ -203,7 +218,7 @@ export const SessionControls = memo(function SessionControls(props: SessionContr
             onClick={() => {
               if (!riskAcknowledged) return
               const preset = riskPending
-              setRiskState({ context: riskContext, acknowledged: false })
+              cancelRisk()
               props.onCommand(`/permission ${preset}`)
             }}
           >
@@ -213,7 +228,7 @@ export const SessionControls = memo(function SessionControls(props: SessionContr
             className="dsh-button dsh-button--secondary dsh-button--compact"
             type="button"
             disabled={props.disabled}
-            onClick={() => setRiskState({ context: riskContext, acknowledged: false })}
+            onClick={cancelRisk}
           >
             {t('controls.cancel')}
           </button>

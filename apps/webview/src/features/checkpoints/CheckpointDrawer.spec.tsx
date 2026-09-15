@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { CheckpointPreview, CheckpointSummary } from '@dsh-vscode/domain'
 
@@ -96,5 +96,89 @@ describe('CheckpointDrawer', () => {
     expect(onDelete).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: 'Delete checkpoint' }))
     await waitFor(() => expect(onDelete).toHaveBeenCalledWith('dsh-checkpoint-1'))
+  })
+
+  it('gives the keyboard back to the Create button after the label dialog closes', () => {
+    renderDrawer({ checkpoints: [] })
+
+    const trigger = screen.getByRole('button', { name: 'Create' })
+    trigger.focus()
+    fireEvent.click(trigger)
+    expect(screen.getByLabelText('Label')).toBeDefined()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+
+    expect(screen.queryByLabelText('Label')).toBeNull()
+    expect(document.activeElement).toBe(trigger)
+  })
+
+  it('takes focus into the restore confirmation and gives it back to the row', async () => {
+    renderDrawer()
+
+    const trigger = screen.getByRole('button', { name: 'Restore Before refactor' })
+    trigger.focus()
+    fireEvent.click(trigger)
+
+    const dialog = await screen.findByRole('alertdialog')
+    expect(dialog.contains(document.activeElement)).toBe(true)
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+    expect(document.activeElement).toBe(trigger)
+  })
+
+  it('takes focus into the delete confirmation and gives it back to the row', () => {
+    renderDrawer()
+
+    const trigger = screen.getByRole('button', { name: 'Delete Before refactor' })
+    trigger.focus()
+    fireEvent.click(trigger)
+
+    const dialog = screen.getByRole('alertdialog')
+    expect(dialog.contains(document.activeElement)).toBe(true)
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+    expect(document.activeElement).toBe(trigger)
+  })
+
+  it('dismisses the popover when the pointer goes elsewhere', () => {
+    renderDrawer()
+    expect(screen.getByRole('dialog', { name: 'Session checkpoints' })).toBeDefined()
+
+    fireEvent.pointerDown(document.body)
+
+    expect(screen.queryByRole('dialog', { name: 'Session checkpoints' })).toBeNull()
+  })
+
+  it('closes the popover when its own trigger is pressed again', () => {
+    renderDrawer()
+    const trigger = screen.getByRole('button', { name: '1 checkpoints' })
+    expect(trigger.getAttribute('aria-expanded')).toBe('true')
+
+    fireEvent.pointerDown(trigger)
+    fireEvent.click(trigger)
+
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
+  })
+
+  it('keeps an open confirmation while the pointer goes elsewhere', () => {
+    renderDrawer()
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Before refactor' }))
+    expect(screen.getByRole('alertdialog')).toBeDefined()
+
+    fireEvent.pointerDown(document.body)
+
+    // The confirmation is `aria-modal`: an accidental press elsewhere must not
+    // discard it, and the popover underneath has to survive with it.
+    expect(screen.getByRole('alertdialog')).toBeDefined()
+    expect(screen.getByRole('dialog', { name: 'Session checkpoints' })).toBeDefined()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    fireEvent.pointerDown(document.body)
+
+    expect(screen.queryByRole('dialog', { name: 'Session checkpoints' })).toBeNull()
   })
 })

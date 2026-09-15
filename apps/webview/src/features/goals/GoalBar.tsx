@@ -64,6 +64,11 @@ export const GoalBar = memo(function GoalBar(props: GoalBarProps): ReactElement 
             value={draft}
             onChange={(event) => setDraft(event.currentTarget.value)}
             onKeyDown={(event) => {
+              // An IME owns Enter and Escape while it is composing: the first
+              // confirms a candidate, the second cancels one. Acting on either
+              // would save a half-composed objective or drop the edit. 229 is
+              // the legacy composition signal engines emit without isComposing.
+              if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return
               if (event.key === 'Enter') saveEdit()
               if (event.key === 'Escape') setEditingGoalId(undefined)
             }}

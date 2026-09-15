@@ -1,12 +1,4 @@
-import {
-  memo,
-  useCallback,
-  useRef,
-  useState,
-  type KeyboardEvent,
-  type ReactElement,
-  type ReactNode,
-} from 'react'
+import { memo, useCallback, useRef, useState, type ReactElement, type ReactNode } from 'react'
 
 import { PopoverCard } from '../../components/common/PopoverCard.js'
 import { useDismissibleLayer } from '../../components/common/useDismissibleLayer.js'
@@ -39,6 +31,9 @@ export const ConversationActionsMenu = memo(function ConversationActionsMenu(
     onClose?.()
   }, [onClose])
 
+  // Escape is owned by the layer hook alone: a React handler on this element
+  // would run before the document listeners of the drawers nested inside the
+  // panel and collapse both layers with one key press.
   useDismissibleLayer({
     open,
     refs: [rootRef],
@@ -49,15 +44,8 @@ export const ConversationActionsMenu = memo(function ConversationActionsMenu(
     },
   })
 
-  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
-    if (event.key !== 'Escape' || !open) return
-    event.preventDefault()
-    close()
-    triggerRef.current?.focus()
-  }
-
   return (
-    <div ref={rootRef} className="dsh-conversation__actions" onKeyDown={onKeyDown}>
+    <div ref={rootRef} className="dsh-conversation__actions">
       <button
         ref={triggerRef}
         className="dsh-icon-button dsh-conversation__actions-trigger"

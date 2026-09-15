@@ -194,13 +194,15 @@ export function CustomProviderCard(props: CustomProviderCardProps): ReactElement
       </div>
       {routeInvalid ? <p className="dsh-settings__error">{t('settings.providerRouteInvalid')}</p> : null}
       {routeTaken ? <p className="dsh-settings__error">{t('settings.providerRouteTaken')}</p> : null}
-      {modelFailure === 'id' ? <p className="dsh-settings__error">{t('settings.modelIdRequired')}</p> : null}
-      {modelFailure === 'duplicate' ? (
+      {modelFailure?.kind === 'id' ? (
+        <p className="dsh-settings__error">{t('settings.modelIdRequired')}</p>
+      ) : null}
+      {modelFailure?.kind === 'duplicate' ? (
         <p className="dsh-settings__error">{t('settings.modelIdDuplicate')}</p>
       ) : null}
-      {modelFailure === 'capacity' ? (
+      {modelFailure?.kind === 'capacity' ? (
         <p className="dsh-settings__error">
-          {t('settings.invalidCapacity', { field: t('settings.contextWindow') })}
+          {t('settings.invalidCapacity', { field: t(`settings.${modelFailure.field}`) })}
         </p>
       ) : null}
       <ModelListEditor
@@ -233,18 +235,23 @@ export function CustomProviderCard(props: CustomProviderCardProps): ReactElement
   )
 }
 
-type ModelFailure = 'id' | 'duplicate' | 'capacity' | undefined
+type ModelFailure =
+  | { readonly kind: 'id' }
+  | { readonly kind: 'duplicate' }
+  | { readonly kind: 'capacity'; readonly field: 'contextWindow' | 'maxTokens' }
+  | undefined
 
 function validateModels(models: readonly EditableModel[]): ModelFailure {
   const ids = new Set<string>()
   for (const model of models) {
     const id = model.id.trim()
-    if (id === '' || id.length > 256) return 'id'
-    if (ids.has(id)) return 'duplicate'
+    if (id === '' || id.length > 256) return { kind: 'id' }
+    if (ids.has(id)) return { kind: 'duplicate' }
     ids.add(id)
     for (const field of ['contextWindow', 'maxTokens'] as const) {
       const value = model[field]
-      if (value !== undefined && (!Number.isSafeInteger(value) || value <= 0)) return 'capacity'
+      if (value !== undefined && (!Number.isSafeInteger(value) || value <= 0))
+        return { kind: 'capacity', field }
     }
   }
   return undefined

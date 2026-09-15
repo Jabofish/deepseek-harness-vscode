@@ -155,6 +155,23 @@ describe('PresetManager composition viewer', () => {
         screen.queryByRole('button', { name: 'View composition: Cordis' }) !== undefined,
     ).toBe(true)
   })
+
+  it('closes the composition viewer on Escape', async () => {
+    const onReadDocument = vi.fn().mockResolvedValue({
+      id: 'cordis',
+      trust: 'system',
+      name: 'Cordis',
+      content: 'instructions:\n  - self-authored presets\n',
+    } satisfies AgentPresetDocument)
+    renderManager({ onReadDocument })
+    await waitFor(() => expect(screen.getByText('Built-in presets')).toBeDefined())
+    fireEvent.click(screen.getByRole('button', { name: 'View composition: Cordis' }))
+    await waitFor(() => expect(screen.getByRole('dialog', { name: 'Preset composition' })).toBeDefined())
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    expect(screen.queryByRole('dialog', { name: 'Preset composition' })).toBeNull()
+  })
 })
 
 describe('PresetManager location', () => {
@@ -251,6 +268,32 @@ describe('PresetManager copy dialog', () => {
     await waitFor(() => expect(screen.getByText('Built-in presets')).toBeDefined())
     expect(screen.getByRole('button', { name: 'Copy preset: Standard' })).toHaveProperty('disabled', true)
   })
+
+  it('closes the copy dialog on Escape without sending anything', async () => {
+    const onCopy = vi.fn().mockResolvedValue('fresh-copy')
+    renderManager({ onCopy })
+    await waitFor(() => expect(screen.getByText('Built-in presets')).toBeDefined())
+    fireEvent.click(screen.getByRole('button', { name: 'Copy preset: Standard' }))
+    fireEvent.change(screen.getByLabelText('Preset id'), { target: { value: 'fresh-copy' } })
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    expect(screen.queryByRole('dialog', { name: 'Copy preset' })).toBeNull()
+    expect(onCopy).not.toHaveBeenCalled()
+  })
+
+  it('keeps the copy dialog open while the copy is in flight', async () => {
+    const onCopy = vi.fn().mockReturnValue(new Promise(() => undefined))
+    renderManager({ onCopy })
+    await waitFor(() => expect(screen.getByText('Built-in presets')).toBeDefined())
+    fireEvent.click(screen.getByRole('button', { name: 'Copy preset: Standard' }))
+    fireEvent.change(screen.getByLabelText('Preset id'), { target: { value: 'fresh-copy' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Create' }))
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    expect(screen.getByRole('dialog', { name: 'Copy preset' })).toBeDefined()
+  })
 })
 
 describe('PresetManager removal', () => {
@@ -291,5 +334,35 @@ describe('PresetManager removal', () => {
 
     await waitFor(() => expect(screen.getByText('agent-preset-conflict')).toBeDefined())
     expect(screen.getByRole('alertdialog', { name: 'Delete preset' })).toBeDefined()
+  })
+
+  it('cancels the delete confirmation on Escape', async () => {
+    const onRemove = vi.fn().mockResolvedValue(undefined)
+    renderManager({ onRemove })
+    await waitFor(() => expect(screen.getByText('Custom presets')).toBeDefined())
+    fireEvent.click(screen.getByRole('button', { name: 'Delete preset: My copy' }))
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    expect(screen.queryByRole('alertdialog', { name: 'Delete preset' })).toBeNull()
+    expect(onRemove).not.toHaveBeenCalled()
+  })
+
+  it('takes focus into the delete confirmation and gives it back to the row', async () => {
+    // Every preset modal is portalled and `aria-modal`; leaving the keyboard on
+    // the row behind it walks the pointer-less user into the obscured roster.
+    renderManager()
+    await waitFor(() => expect(screen.getByText('Custom presets')).toBeDefined())
+    const trigger = screen.getByRole('button', { name: 'Delete preset: My copy' })
+    trigger.focus()
+    fireEvent.click(trigger)
+    const dialog = screen.getByRole('alertdialog', { name: 'Delete preset' })
+
+    expect(dialog.contains(document.activeElement)).toBe(true)
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+
+    expect(screen.queryByRole('alertdialog', { name: 'Delete preset' })).toBeNull()
+    expect(document.activeElement).toBe(trigger)
   })
 })

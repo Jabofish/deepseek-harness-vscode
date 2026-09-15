@@ -1779,7 +1779,9 @@ summary.dsh-timeline__card-header,
 .dsh-settings__error,
 .dsh-plugin-configuration__error,
 .dsh-checkpoints-popover__error,
-.dsh-prompt-templates-popover__error {
+.dsh-prompt-templates-popover__error,
+.dsh-tasks-popover__error,
+.dsh-session-switcher__error {
   margin: var(--dsh-space-2) 0 0;
   color: var(--dsh-danger);
   overflow-wrap: break-word;

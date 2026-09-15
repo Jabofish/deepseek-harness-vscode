@@ -44,6 +44,12 @@ export const SelectMenu = memo(function SelectMenu(props: SelectMenuProps): Reac
   const menuRef = useRef<HTMLDivElement>(null)
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([])
   const listboxId = useId()
+  /**
+   * Requests are one-shot: the counter stays above zero for the rest of the
+   * session, so a value seen at mount is already spent and a remount must not
+   * spend it again.
+   */
+  const consumedRequestRef = useRef(props.openRequest ?? 0)
   const enabledOptions = props.options.filter((option) => option.disabled !== true)
   const menuMode = props.menuMode ?? 'overlay'
   const menuPosition = useViewportMenuPosition({
@@ -77,8 +83,13 @@ export const SelectMenu = memo(function SelectMenu(props: SelectMenuProps): Reac
   })
 
   useEffect(() => {
-    if ((props.openRequest ?? 0) <= 0 || props.disabled || enabledOptions.length === 0) return
+    const request = props.openRequest ?? 0
+    if (request <= 0 || request <= consumedRequestRef.current) return
+    // An empty option list is the one transient reason to keep waiting: the
+    // request is spent only once there is something to show.
+    if (props.disabled || enabledOptions.length === 0) return
     const openPicker = window.setTimeout(() => {
+      consumedRequestRef.current = request
       setActiveIndex(requestedIndex)
       setOpen(true)
       triggerRef.current?.focus()
@@ -95,14 +106,16 @@ export const SelectMenu = memo(function SelectMenu(props: SelectMenuProps): Reac
     setOpen(false)
   }
 
-  function openMenu(nextIndex = indexOfValue(props.options, props.value)): void {
+  function openMenu(nextIndex = indexOfValue(props.options, props.value), direction: 1 | -1 = 1): void {
     if (props.disabled || enabledOptions.length === 0) return
-    setActiveIndex(nextIndex)
+    // A disabled entry cannot take focus, so the requested neighbour would
+    // leave the menu open but unfocused, with the keyboard stuck on the trigger.
+    setActiveIndex(nextEnabledIndex(props.options, nextIndex, direction))
     setOpen(true)
   }
 
-  function focusOption(index: number): void {
-    const nextIndex = nextEnabledIndex(props.options, index, 1)
+  function focusOption(index: number, direction: 1 | -1): void {
+    const nextIndex = nextEnabledIndex(props.options, index, direction)
     setActiveIndex(nextIndex)
     optionRefs.current[nextIndex]?.focus()
   }
@@ -110,7 +123,8 @@ export const SelectMenu = memo(function SelectMenu(props: SelectMenuProps): Reac
   function onTriggerKeyDown(event: KeyboardEvent<HTMLButtonElement>): void {
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault()
-      openMenu(indexOfValue(props.options, props.value) + (event.key === 'ArrowDown' ? 1 : -1))
+      const direction = event.key === 'ArrowDown' ? 1 : -1
+      openMenu(indexOfValue(props.options, props.value) + direction, direction)
     }
   }
 
@@ -123,13 +137,14 @@ export const SelectMenu = memo(function SelectMenu(props: SelectMenuProps): Reac
     }
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault()
-      focusOption(activeOptionIndex + (event.key === 'ArrowDown' ? 1 : -1))
+      const direction = event.key === 'ArrowDown' ? 1 : -1
+      focusOption(activeOptionIndex + direction, direction)
       return
     }
     if (event.key === 'Home' || event.key === 'End') {
       event.preventDefault()
-      const index = event.key === 'Home' ? 0 : props.options.length - 1
-      focusOption(index)
+      const toStart = event.key === 'Home'
+      focusOption(toStart ? 0 : props.options.length - 1, toStart ? 1 : -1)
       return
     }
     if (event.key === 'Enter' || event.key === ' ') {

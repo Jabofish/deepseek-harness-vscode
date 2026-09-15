@@ -1007,6 +1007,109 @@ describe('SettingsDrawer', () => {
     expect(onOpenChange).toHaveBeenCalledWith(false)
   })
 
+  it('keeps the drawer open when Escape only dismisses a provider dropdown', async () => {
+    const provider: ModelProvider = {
+      ...baseProvider,
+      id: 'openai',
+      fields: [
+        ...baseProvider.fields,
+        {
+          key: 'api',
+          label: 'API protocol',
+          secret: false,
+          required: true,
+          enumValues: ['openai-completions', 'anthropic-messages'],
+          value: 'openai-completions',
+        },
+      ],
+      settingsNs: 'llm-pi-ai',
+      settingsPath: ['providers', 'openai'],
+    }
+    const onOpenChange = vi.fn()
+    renderDrawer({ providers: [provider], onOpenChange })
+    await waitFor(() => expect(screen.getByText('new-isolated')).toBeDefined())
+    fireEvent.click(screen.getByRole('tab', { name: 'Models' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add custom provider' }))
+    const card = screen.getByRole('region', { name: 'Add custom provider' })
+    fireEvent.change(within(card).getByRole('textbox', { name: 'Provider ID' }), {
+      target: { value: 'gateway' },
+    })
+    fireEvent.click(within(card).getByRole('button', { name: 'API protocol: openai-completions' }))
+    expect(within(card).getByRole('listbox', { name: 'API protocol' })).toBeDefined()
+
+    fireEvent.keyDown(within(card).getByRole('option', { name: 'openai-completions' }), {
+      key: 'Escape',
+    })
+
+    expect(screen.queryByRole('listbox', { name: 'API protocol' })).toBeNull()
+    expect(onOpenChange).not.toHaveBeenCalled()
+    const reopened = screen.getByRole('region', { name: 'Add custom provider' })
+    expect(within(reopened).getByRole('textbox', { name: 'Provider ID' })).toHaveProperty('value', 'gateway')
+  })
+
+  it('lets a preset modal consume Escape so the drawer underneath stays open', async () => {
+    const onOpenChange = vi.fn()
+    const onLoadPresetRoster = vi.fn().mockResolvedValue({
+      presets: [{ id: 'standard', trust: 'system' as const, isDefault: true, name: 'Standard' }],
+      authorable: true,
+      hasDocument: true,
+    })
+    renderDrawer({ onOpenChange, onLoadPresetRoster })
+    await waitFor(() => expect(screen.getByText('new-isolated')).toBeDefined())
+    fireEvent.click(screen.getByRole('tab', { name: 'Presets' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Copy preset: Standard' }))
+    expect(screen.getByRole('dialog', { name: 'Copy preset' })).toBeDefined()
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    // The modal is the innermost layer: one Escape closes it and stops there.
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Copy preset' })).toBeNull())
+    expect(onOpenChange).not.toHaveBeenCalled()
+    expect(screen.getByRole('dialog', { name: 'Settings' })).toBeDefined()
+  })
+
+  it('takes focus into the provider removal confirmation and gives it back to the row', async () => {
+    const customProvider: ModelProvider = {
+      id: 'my-llm',
+      name: 'My LLM',
+      kind: 'remote',
+      configurable: true,
+      settingsNs: 'llm-my-llm',
+      settingsPath: ['my-llm'],
+      fields: [],
+    }
+    const fixture = dshSettingsFixture()
+    const removable: DshSettingsSnapshot = {
+      ...fixture,
+      schema: {
+        ...fixture.schema,
+        namespaces: [
+          ...fixture.schema.namespaces,
+          { ns: 'llm-my-llm', applies: 'live', revision: 1, userFields: [], secrets: [] },
+        ],
+      },
+      values: { ...fixture.values, 'llm-my-llm': { 'my-llm': { api: 'openai-completions' } } },
+    }
+    renderDrawer({
+      providers: [customProvider],
+      models: [],
+      onLoadDshSettings: vi.fn().mockResolvedValue(removable),
+    })
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Models' }))
+    const trigger = await screen.findByRole('button', { name: 'Remove' })
+    trigger.focus()
+    fireEvent.click(trigger)
+
+    const dialog = screen.getByRole('alertdialog', { name: 'Remove' })
+    expect(dialog.contains(document.activeElement)).toBe(true)
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+
+    expect(screen.queryByRole('alertdialog', { name: 'Remove' })).toBeNull()
+    expect(document.activeElement).toBe(trigger)
+  })
+
   it('renders nothing when closed', () => {
     renderDrawer({ open: false })
     expect(screen.queryByRole('dialog', { name: 'Settings' })).toBeNull()

@@ -2,7 +2,7 @@
 
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { EditorContextItem } from '@dsh-vscode/domain'
+import type { EditorContextItem, EditorContextPreview } from '@dsh-vscode/domain'
 
 import { EditorContextChips } from './EditorContextChips.js'
 
@@ -25,6 +25,42 @@ const item: EditorContextItem = {
   previewAvailable: true,
 }
 
+const secondItem: EditorContextItem = {
+  ...item,
+  ref: { ...item.ref, contextRef: 'dsh-context:context-2', relativePath: 'src/other.ts' },
+  label: 'file: src/other.ts',
+}
+
+const preview: EditorContextPreview = {
+  contextRef: item.ref.contextRef,
+  text: 'export const a = 1',
+  truncated: false,
+  expiresAt: 4_000,
+}
+
+function renderChips(
+  overrides: Partial<Parameters<typeof EditorContextChips>[0]> = {},
+): ReturnType<typeof render> {
+  const props = {
+    items: [item] as readonly EditorContextItem[],
+    disabled: false,
+    onRemove: vi.fn(),
+    onPreview: vi.fn().mockResolvedValue(preview),
+    ...overrides,
+  }
+  return render(<EditorContextChips {...props} />)
+}
+
+/** The preview is fetched on click; every probe starts from an open dialog. */
+async function openPreview(target: EditorContextItem = item): Promise<void> {
+  fireEvent.click(
+    screen.getByRole('button', {
+      name: `Preview file: ${target.ref.relativePath}`,
+    }),
+  )
+  await screen.findByRole('dialog', { name: 'Editor context preview' })
+}
+
 describe('EditorContextChips', () => {
   afterEach(() => cleanup())
 
@@ -41,5 +77,56 @@ describe('EditorContextChips', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Preview file: src/main.ts' }))
     await waitFor(() => expect(screen.getByText('The context preview is no longer available.')).toBeDefined())
     expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('closes the preview on Escape', async () => {
+    renderChips()
+    await openPreview()
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    expect(screen.queryByRole('dialog', { name: 'Editor context preview' })).toBeNull()
+  })
+
+  it('closes the preview when the pointer goes elsewhere in the composer', async () => {
+    renderChips()
+    await openPreview()
+
+    fireEvent.pointerDown(document.body)
+
+    expect(screen.queryByRole('dialog', { name: 'Editor context preview' })).toBeNull()
+  })
+
+  it('drops the preview when its context chip is removed', async () => {
+    const { rerender } = renderChips({ items: [item, secondItem] })
+    await openPreview()
+
+    rerender(
+      <EditorContextChips
+        items={[secondItem]}
+        disabled={false}
+        onRemove={vi.fn()}
+        onPreview={vi.fn().mockResolvedValue(preview)}
+      />,
+    )
+
+    expect(screen.queryByRole('dialog', { name: 'Editor context preview' })).toBeNull()
+  })
+
+  it('keeps the preview while its own chip is still attached', async () => {
+    const { rerender } = renderChips({ items: [item, secondItem] })
+    await openPreview()
+
+    rerender(
+      <EditorContextChips
+        items={[item]}
+        disabled={false}
+        onRemove={vi.fn()}
+        onPreview={vi.fn().mockResolvedValue(preview)}
+      />,
+    )
+
+    expect(screen.getByRole('dialog', { name: 'Editor context preview' })).toBeDefined()
+    expect(screen.getByText('export const a = 1')).toBeDefined()
   })
 })

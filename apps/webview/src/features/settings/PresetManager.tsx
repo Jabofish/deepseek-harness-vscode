@@ -1,5 +1,5 @@
 import { createPortal } from 'react-dom'
-import { useEffect, useState, type ReactElement } from 'react'
+import { useEffect, useRef, useState, type ReactElement } from 'react'
 import type {
   AgentPresetDescriptor,
   AgentPresetDocument,
@@ -7,6 +7,7 @@ import type {
   AgentPresetRoster,
 } from '@dsh-vscode/domain'
 import { PresetCard } from '../../components/common/PresetCard.js'
+import { useDismissibleLayer } from '../../components/common/useDismissibleLayer.js'
 import { Icon } from '../../ui/Icon.js'
 import { useI18n } from '../../i18n.js'
 
@@ -48,11 +49,14 @@ interface PresetView {
   readonly content: string
 }
 
+/** Exported for the i18n key spec, which pins one label per blocker. */
+export type PresetCopyBlocker = 'idRequired' | 'idInvalid' | 'idTaken'
+
 /** Why this copy cannot be submitted yet; the host re-checks on submit. */
 function copyBlocker(
   draft: CopyDraft,
   rows: readonly AgentPresetDescriptor[],
-): 'idRequired' | 'idInvalid' | 'idTaken' | undefined {
+): PresetCopyBlocker | undefined {
   if (draft.id === '') return 'idRequired'
   if (!PRESET_ID.test(draft.id)) return 'idInvalid'
   // A copy never overwrites: landing on a name already in use would replace
@@ -89,6 +93,53 @@ export function PresetManager(props: PresetManagerProps): ReactElement | null {
   const [defaultingId, setDefaultingId] = useState<string | undefined>(undefined)
   const [revealedPaths, setRevealedPaths] = useState<Readonly<Record<string, string>>>({})
   const [creatorBusy, setCreatorBusy] = useState(false)
+  const overlayRef = useRef<HTMLDivElement>(null)
+  const overlayOpen =
+    copy !== undefined ||
+    pendingDelete !== undefined ||
+    viewLoading ||
+    viewError !== undefined ||
+    view !== undefined
+
+  /**
+   * Every preset modal is portalled out of this subtree, so the dismissal is
+   * document-scoped. In-flight work keeps its modal: a copy or a removal that
+   * is already on the wire must not lose its own progress or error surface.
+   */
+  const closeOverlay = (): void => {
+    if (copy !== undefined) {
+      if (!copy.saving) setCopy(undefined)
+      return
+    }
+    if (pendingDelete !== undefined) {
+      if (!deleting) setPendingDelete(undefined)
+      return
+    }
+    if (viewLoading) return
+    if (viewError !== undefined) {
+      setViewError(undefined)
+      return
+    }
+    setView(undefined)
+  }
+  useDismissibleLayer({ open: overlayOpen, refs: [overlayRef], onDismiss: closeOverlay })
+
+  /**
+   * The modals are `aria-modal`, so the keyboard belongs inside while one is
+   * up. Focus is captured from the control that opened the overlay rather than
+   * from the effect, because the overlay mounts with its own `autoFocus`.
+   */
+  const restoreFocusRef = useRef<HTMLElement | null>(null)
+  const overlayWasOpen = useRef(false)
+  useEffect(() => {
+    if (overlayWasOpen.current && !overlayOpen) {
+      const target = restoreFocusRef.current
+      restoreFocusRef.current = null
+      // A removal deletes the row that opened the dialog; nothing to go back to.
+      if (target !== null && target.isConnected) target.focus()
+    }
+    overlayWasOpen.current = overlayOpen
+  }, [overlayOpen])
 
   const fetchRoster = (): Promise<void> =>
     props
@@ -384,7 +435,10 @@ export function PresetManager(props: PresetManagerProps): ReactElement | null {
                             type="button"
                             aria-label={t('presets.viewComposition', { name: row.name ?? row.id })}
                             title={t('presets.viewCompositionTitle')}
-                            onClick={() => openComposition(row.id)}
+                            onClick={(event) => {
+                              restoreFocusRef.current = event.currentTarget
+                              openComposition(row.id)
+                            }}
                           >
                             <Icon name="file" />
                           </button>
@@ -417,7 +471,8 @@ export function PresetManager(props: PresetManagerProps): ReactElement | null {
                               ? t('presets.copyTitle')
                               : t('presets.noWritableRoot')
                         }
-                        onClick={() => {
+                        onClick={(event) => {
+                          restoreFocusRef.current = event.currentTarget
                           setView(undefined)
                           setCopy({
                             from: row.id,
@@ -438,7 +493,10 @@ export function PresetManager(props: PresetManagerProps): ReactElement | null {
                           disabled={deleting}
                           aria-label={t('presets.delete', { name: row.name ?? row.id })}
                           title={t('presets.deleteTitle')}
-                          onClick={() => setPendingDelete(row.id)}
+                          onClick={(event) => {
+                            restoreFocusRef.current = event.currentTarget
+                            setPendingDelete(row.id)
+                          }}
                         >
                           <Icon name="trash" />
                         </button>
@@ -465,6 +523,7 @@ export function PresetManager(props: PresetManagerProps): ReactElement | null {
         : portalled(
             <div className="dsh-presets__modal-backdrop" role="presentation">
               <div
+                ref={overlayRef}
                 className="dsh-presets__dialog"
                 role="dialog"
                 aria-modal="true"
@@ -520,6 +579,7 @@ export function PresetManager(props: PresetManagerProps): ReactElement | null {
         ? portalled(
             <div className="dsh-presets__modal-backdrop" role="presentation">
               <div
+                ref={overlayRef}
                 className="dsh-presets__dialog"
                 role="dialog"
                 aria-modal="true"
@@ -558,6 +618,7 @@ export function PresetManager(props: PresetManagerProps): ReactElement | null {
           : portalled(
               <div className="dsh-presets__modal-backdrop" role="presentation">
                 <div
+                  ref={overlayRef}
                   className="dsh-presets__dialog"
                   role="dialog"
                   aria-modal="true"
@@ -569,6 +630,7 @@ export function PresetManager(props: PresetManagerProps): ReactElement | null {
                     <button
                       className="dsh-button dsh-button--secondary dsh-button--compact"
                       type="button"
+                      autoFocus
                       onClick={() => setView(undefined)}
                     >
                       {t('presets.close')}
@@ -582,6 +644,7 @@ export function PresetManager(props: PresetManagerProps): ReactElement | null {
         : portalled(
             <div className="dsh-presets__modal-backdrop" role="presentation">
               <div
+                ref={overlayRef}
                 className="dsh-presets__dialog"
                 role="alertdialog"
                 aria-modal="true"
@@ -594,6 +657,7 @@ export function PresetManager(props: PresetManagerProps): ReactElement | null {
                     className="dsh-button dsh-button--secondary dsh-button--compact"
                     type="button"
                     disabled={deleting}
+                    autoFocus
                     onClick={() => setPendingDelete(undefined)}
                   >
                     {t('presets.cancel')}

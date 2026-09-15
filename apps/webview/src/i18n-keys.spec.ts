@@ -10,9 +10,192 @@ import {
   promptTemplateSummarySchema,
   taskSummarySchema,
 } from '@dsh-vscode/webview-protocol'
+import type {
+  BackendState,
+  DiagnosticsSnapshot,
+  GoalView,
+  JobView,
+  PermissionRequest,
+  PluginFiberPhase,
+  SessionExportOptions,
+  SessionStatus,
+  TeamMemberPhase,
+  TeamTaskStatus,
+  TodoView,
+  WorkflowMember,
+  WorkflowSummary,
+} from '@dsh-vscode/domain'
+import type { FeedbackCategory, RunningInputMode, SubagentDiagnosticView } from '@dsh-vscode/domain'
+import { PROMPT_MODES } from '@dsh-vscode/domain'
+import { CONVERSATION_FONT_SIZE_OPTIONS, THEME_PREFERENCE_OPTIONS } from './app/ui-preferences.js'
+import type { RuntimeConnectionStage } from './features/runtime/RuntimeConnectionView.js'
+import type { PresetCopyBlocker } from './features/settings/PresetManager.js'
+import type { Locale } from './i18n.js'
 import { translate } from './i18n.js'
 
 const SOURCE_ROOT = fileURLToPath(new URL('.', import.meta.url))
+
+/**
+ * Value sets behind `t(\`prefix.${value}\`)` templates. The `Record<Union, true>`
+ * annotations are the exhaustiveness guard: adding a member to one of these
+ * unions stops `pnpm typecheck` here until the family list below covers it.
+ */
+const GOAL_STATUS: Record<GoalView['status'], true> = {
+  pending: true,
+  'in-progress': true,
+  completed: true,
+  blocked: true,
+}
+const TODO_STATUS: Record<TodoView['status'], true> = {
+  pending: true,
+  'in-progress': true,
+  completed: true,
+}
+const JOB_STATUS: Record<JobView['status'], true> = {
+  running: true,
+  stopping: true,
+  completed: true,
+  failed: true,
+  killed: true,
+}
+type WorkflowStatus = WorkflowSummary['status']
+/**
+ * The run row and its member rows render through the same `workflow.status.`
+ * family, so a status only one of the unions knows would print its raw key.
+ * The pin fails `pnpm typecheck` when the two unions drift apart.
+ */
+const WORKFLOW_MEMBER_STATUS_PINNED: [WorkflowStatus] extends [WorkflowMember['status']]
+  ? [WorkflowMember['status']] extends [WorkflowStatus]
+    ? true
+    : never
+  : never = true
+const WORKFLOW_STATUS: Record<WorkflowStatus, true> = {
+  running: true,
+  completed: true,
+  failed: true,
+  cancelled: true,
+  interrupted: true,
+}
+const SESSION_STATUS: Record<SessionStatus, true> = {
+  idle: true,
+  running: true,
+  'awaiting-input': true,
+  failed: true,
+  completed: true,
+}
+const PLUGIN_PHASE: Record<Exclude<PluginFiberPhase, null>, true> = {
+  pending: true,
+  loading: true,
+  active: true,
+  failed: true,
+  unloading: true,
+}
+const APPROVAL_RISK: Record<PermissionRequest['risk'], true> = {
+  low: true,
+  medium: true,
+  high: true,
+}
+const EXPORT_FORMAT: Record<SessionExportOptions['format'], true> = {
+  markdown: true,
+  json: true,
+  zip: true,
+}
+const DIAGNOSTICS_STATE: Record<BackendState['kind'], true> = {
+  idle: true,
+  'locating-runtime': true,
+  discovering: true,
+  connecting: true,
+  connected: true,
+  starting: true,
+  'runtime-missing': true,
+  failed: true,
+  'port-conflict': true,
+  stopping: true,
+}
+const DIAGNOSTICS_ENDPOINT: Record<Exclude<DiagnosticsSnapshot['endpointKind'], undefined>, true> = {
+  configured: true,
+  external: true,
+  managed: true,
+}
+const FEEDBACK_CATEGORY: Record<FeedbackCategory, true> = {
+  'task-result': true,
+  'instruction-following': true,
+  'product-interaction': true,
+  'service-stability': true,
+  'resource-cost': true,
+  'security-privacy-permission': true,
+  other: true,
+}
+const SUBAGENT_DIAGNOSTIC_REASON: Record<SubagentDiagnosticView['reason'], true> = {
+  corrupt: true,
+  unsupported: true,
+  unavailable: true,
+}
+const RUNTIME_CONNECTION_STAGE: Record<RuntimeConnectionStage, true> = {
+  discovering: true,
+  'locating-runtime': true,
+  starting: true,
+  connecting: true,
+  sessions: true,
+}
+const PRESET_COPY_BLOCKER: Record<PresetCopyBlocker, true> = {
+  idRequired: true,
+  idInvalid: true,
+  idTaken: true,
+}
+/**
+ * The Agent Team pill renders one `timeline.teamStatus.` key built from three
+ * different wire unions, so every member of each one needs a label: a phase or
+ * status the dictionary does not know prints its raw value into the card.
+ */
+const TEAM_STATUS_VALUE: Record<TeamMemberPhase | TeamTaskStatus | 'queued' | 'delivered', true> = {
+  provisioning: true,
+  active: true,
+  failed: true,
+  pending: true,
+  in_progress: true,
+  completed: true,
+  deleted: true,
+  queued: true,
+  delivered: true,
+}
+const TEAM_DELIVERY_MODE: Record<'quiet' | 'wakeup', true> = {
+  quiet: true,
+  wakeup: true,
+}
+/**
+ * The `settings.value.` family is fed by several option sets; the ones with an
+ * exported list are read from there in the family below, and the rest are
+ * pinned here. Only three permission presets need labels: `SessionControls`
+ * de-kebabes any other deployment-defined id instead of building a key.
+ */
+const SETTINGS_VALUE: Record<
+  Locale | RunningInputMode | 'danger-full-access' | 'workspace-write' | 'read-only',
+  true
+> = {
+  en: true,
+  zh: true,
+  queue: true,
+  steer: true,
+  'danger-full-access': true,
+  'workspace-write': true,
+  'read-only': true,
+}
+/** Kinds `RuntimeStatus` renders through the template; the rest are mapped first. */
+const RUNTIME_STATUS_TEMPLATE: Record<
+  Exclude<BackendState['kind'], 'connected' | 'runtime-missing' | 'failed' | 'port-conflict'>,
+  true
+> = {
+  idle: true,
+  'locating-runtime': true,
+  discovering: true,
+  connecting: true,
+  starting: true,
+  stopping: true,
+}
+
+/** Matches the key tables components carry (`{ labelKey: 'settings.x' }`). */
+const KEY_TABLE_FIELDS = /\b(?:labelKey|hintKey|titleKey|descriptionKey|translationKey)\s*:\s*'([^'\\]+)'/gu
 
 function sourceFiles(directory: string): readonly string[] {
   const files: string[] = []
@@ -233,5 +416,77 @@ describe('webview translation keys', () => {
       }
 
     expect(missing).toEqual([])
+  })
+
+  it('labels every value the remaining template keys can build', () => {
+    // The families above come from the protocol schemas; these come from the
+    // domain unions the drawers actually render, so they are checked against
+    // the unions rather than against a copied list of strings.
+    const families: readonly (readonly [string, readonly string[]])[] = [
+      ['goal.status.', Object.keys(GOAL_STATUS)],
+      ['todo.status.', Object.keys(TODO_STATUS)],
+      ['jobs.status.', Object.keys(JOB_STATUS)],
+      ['workflow.status.', Object.keys(WORKFLOW_STATUS)],
+      ['sessions.status.', Object.keys(SESSION_STATUS)],
+      ['plugins.phase.', Object.keys(PLUGIN_PHASE)],
+      ['approval.risk.', Object.keys(APPROVAL_RISK)],
+      ['export.format.', Object.keys(EXPORT_FORMAT)],
+      ['controls.workflowMode.', PROMPT_MODES],
+      ['diagnostics.state.', Object.keys(DIAGNOSTICS_STATE)],
+      ['diagnostics.endpoint.', Object.keys(DIAGNOSTICS_ENDPOINT)],
+      ['runtime.status.', Object.keys(RUNTIME_STATUS_TEMPLATE)],
+      ['message.feedbackCategory.', Object.keys(FEEDBACK_CATEGORY)],
+      ['subagents.diagnostic.', Object.keys(SUBAGENT_DIAGNOSTIC_REASON)],
+      ['runtime.connectionProgress.stage.', Object.keys(RUNTIME_CONNECTION_STAGE)],
+      ['timeline.teamStatus.', Object.keys(TEAM_STATUS_VALUE)],
+      ['timeline.teamDelivery.', Object.keys(TEAM_DELIVERY_MODE)],
+      ['presets.', Object.keys(PRESET_COPY_BLOCKER)],
+      [
+        'settings.value.',
+        [...Object.keys(SETTINGS_VALUE), ...THEME_PREFERENCE_OPTIONS, ...CONVERSATION_FONT_SIZE_OPTIONS],
+      ],
+    ]
+
+    const missing: string[] = []
+    for (const [prefix, values] of families)
+      for (const value of values) {
+        const key = `${prefix}${value}`
+        if (translate(key) === key) missing.push(key)
+      }
+
+    // Branches the templates above cannot express: a null Fiber phase and the
+    // four runtime kinds `RuntimeStatus` maps to fixed labels.
+    for (const key of [
+      'plugins.phase.unmounted',
+      'runtime.status.connected',
+      'runtime.status.runtime-missing',
+      'runtime.status.connection-failed',
+    ])
+      if (translate(key) === key) missing.push(key)
+
+    // The pin is a type-level assertion; reading it here keeps it load-bearing
+    // and documents that summary and member rows share the family.
+    expect(WORKFLOW_MEMBER_STATUS_PINNED).toBe(true)
+    // Teeth: an absent key must come back as itself, otherwise every check
+    // above would hold even if the dictionary lookup stopped working.
+    expect(translate('goal.status.archived')).toBe('goal.status.archived')
+    expect(missing).toEqual([])
+  })
+
+  it('resolves every key a component key table supplies', () => {
+    // `t(row.labelKey)` never appears as a literal call site, so the scan above
+    // is blind to these keys; the tables are the only place they exist.
+    let supplied = 0
+    const missing: string[] = []
+    for (const file of sourceFiles(SOURCE_ROOT))
+      for (const match of readFileSync(file, 'utf8').matchAll(KEY_TABLE_FIELDS)) {
+        const key = match[1]
+        if (key === undefined) continue
+        supplied += 1
+        if (translate(key) === key) missing.push(`${relative(SOURCE_ROOT, file)}: ${key}`)
+      }
+
+    expect(supplied).toBeGreaterThan(10)
+    expect(missing.sort()).toEqual([])
   })
 })

@@ -96,6 +96,64 @@ describe('DSH 0.1.5-alpha.2 and 0.1.5-rc.1/rc.2 contract seams', () => {
     })
   })
 
+  it('surfaces the durable next-request model selection for the open session', () => {
+    // rc.1 records a model switch as `model/selection` (the projection's
+    // pending intent) before the next request header confirms it. A client
+    // that drops the frame keeps showing the previous model until the next
+    // prompt starts, so the selection must reach the configuration patch.
+    expect(
+      rc6Mapper.event('model/selection', {
+        sessionId: 'session-1',
+        data: { provider: 'deepseek', model: 'deepseek-chat', reasoningEffort: 'high' },
+      }),
+    ).toEqual({
+      type: 'session.configuration',
+      sessionId: 'session-1',
+      patch: {
+        model: { providerId: 'deepseek', modelId: 'deepseek-chat', reasoningLevel: 'high' },
+      },
+    })
+    // The pinned schema requires both identities. A partial frame must stay
+    // opaque instead of half-clearing the visible model.
+    expect(
+      rc6Mapper.event('model/selection', { sessionId: 'session-1', data: { provider: 'deepseek' } }),
+    ).toMatchObject({ type: 'unknown', name: 'model/selection' })
+  })
+
+  it('keeps rc.1 log-only audit frames opaque without leaking their payload', () => {
+    // Every frame below is audit or bookkeeping in the pinned rc.1 contract,
+    // and the state a user sees arrives through another channel: approvals and
+    // questions as $events waterfalls, message feedback over the
+    // messageFeedback/* RPCs, the queue over session/control, titles over
+    // session/title. Mapping them here would invent a second source of truth.
+    for (const name of [
+      'agent/inbox/spliced',
+      'approval/asked',
+      'approval/decided',
+      'feedback/record',
+      'hook/invoked',
+      'hook/result',
+      'schedule/change',
+      'session/end-seed',
+      'session/title-llm-request',
+      'subagent/descriptor',
+    ])
+      expect(rc6Mapper.event(name, { sessionId: 'session-1', data: { anything: true } })).toMatchObject({
+        type: 'unknown',
+        name,
+        sessionId: 'session-1',
+      })
+    // The audit payload still crosses the adapter boundary, so the redaction
+    // has to be the thing that keeps prompt material out of a raw row.
+    const titleRequest = rc6Mapper.event('session/title-llm-request', {
+      sessionId: 'session-1',
+      data: { prompt: 'internal title prompt', keep: 'visible' },
+    })
+    expect(titleRequest).toMatchObject({ type: 'unknown' })
+    expect(JSON.stringify(titleRequest)).not.toContain('internal title prompt')
+    expect(JSON.stringify(titleRequest)).toContain('visible')
+  })
+
   it('fails closed for malformed delivery and catalog payloads', () => {
     expect(() =>
       rc6Mapper.event('deliverables/presented', {

@@ -25,6 +25,7 @@ export function ChangesDrawer(props: ChangesDrawerProps): ReactElement | null {
   const [refreshing, setRefreshing] = useState(false)
   const [reviewing, setReviewing] = useState<ChangeReviewState | undefined>()
   const [reviewError, setReviewError] = useState(false)
+  const [openError, setOpenError] = useState(false)
   const detailRequestGeneration = useRef(0)
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -96,7 +97,10 @@ export function ChangesDrawer(props: ChangesDrawerProps): ReactElement | null {
         className="dsh-changes-popover__trigger"
         aria-expanded={open}
         aria-label={countLabel}
-        onClick={() => setOpen((current) => !current)}
+        onClick={() => {
+          setOpenError(false)
+          setOpen((current) => !current)
+        }}
       >
         <Icon name="branch" />
         <span>{countLabel}</span>
@@ -117,6 +121,11 @@ export function ChangesDrawer(props: ChangesDrawerProps): ReactElement | null {
               <Icon name="refresh" />
             </button>
           </div>
+          {openError ? (
+            <div className="dsh-changes-popover__error" role="alert">
+              {t('changes.openFailed')}
+            </div>
+          ) : null}
           {props.loading && props.changes.length === 0 ? (
             <div className="dsh-changes-popover__status" role="status">
               {t('changes.loading')}
@@ -133,7 +142,8 @@ export function ChangesDrawer(props: ChangesDrawerProps): ReactElement | null {
                   className="dsh-changes-popover__row-main"
                   title={change.relativePath}
                   onClick={() => {
-                    void props.onOpen(change.changeId).catch(() => undefined)
+                    setOpenError(false)
+                    void props.onOpen(change.changeId).catch(() => setOpenError(true))
                     if (change.reviewState === 'unreviewed')
                       void props.onMarkReviewed(change.changeId, 'viewed').catch(() => undefined)
                   }}

@@ -2,7 +2,9 @@
 
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { useRef, type ReactElement } from 'react'
 import type { MessageImageReference } from '@dsh-vscode/domain'
+import { useDismissibleLayer } from '../../components/common/useDismissibleLayer.js'
 import { I18nProvider } from '../../i18n.js'
 import { MessageImages } from './MessageImages.js'
 
@@ -40,6 +42,35 @@ describe('MessageImages', () => {
     expect(dialog.querySelector('img')?.getAttribute('src')).toBe('data:image/png;base64,iVBORw0KGgo=')
     fireEvent.keyDown(window, { key: 'Escape' })
     expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('returns focus to the thumbnail after the lightbox closes', async () => {
+    const loadImage = vi.fn().mockResolvedValue('data:image/png;base64,iVBORw0KGgo=')
+    render(
+      <I18nProvider>
+        <MessageImages
+          images={[
+            {
+              attachmentId: 'fixture:focus',
+              mediaType: 'image/png',
+              bytes: 247,
+              width: 160,
+              height: 90,
+              name: 'focus.png',
+            },
+          ]}
+          loadImage={loadImage}
+          translate={(key) => key}
+        />
+      </I18nProvider>,
+    )
+
+    const thumbnail = await screen.findByRole('button', { name: 'timeline.openImage' })
+    fireEvent.click(thumbnail)
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'timeline.closeImage' }))
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(document.activeElement).toBe(thumbnail)
   })
 
   it('keeps an unavailable historical image as a bounded placeholder', async () => {
@@ -98,5 +129,45 @@ describe('MessageImages', () => {
 
     await screen.findByRole('button', { name: 'timeline.openImage' })
     expect(loadImage).toHaveBeenCalledTimes(1)
+  })
+
+  it('leaves Escape to a layer that already consumed it', async () => {
+    const loadImage = vi.fn().mockResolvedValue('data:image/png;base64,iVBORw0KGgo=')
+    const onEscape = vi.fn()
+    function Consumer(): ReactElement {
+      const ref = useRef<HTMLDivElement>(null)
+      useDismissibleLayer({ open: true, refs: [ref], onDismiss: () => undefined, onEscape })
+      return <div ref={ref} />
+    }
+    render(
+      <I18nProvider>
+        <Consumer />
+        <MessageImages
+          images={[
+            {
+              attachmentId: 'fixture:escape',
+              mediaType: 'image/png',
+              bytes: 247,
+              width: 160,
+              height: 90,
+              name: 'escape.png',
+            },
+          ]}
+          loadImage={loadImage}
+          translate={(key) => key}
+        />
+      </I18nProvider>,
+    )
+
+    fireEvent.click(await screen.findByRole('button', { name: 'timeline.openImage' }))
+    expect(screen.getByRole('dialog')).toBeDefined()
+
+    // The key targets a node inside the document, so it reaches the layer's
+    // document listener before the lightbox's window listener -- the order a
+    // real key press takes.
+    fireEvent.keyDown(document.body, { key: 'Escape' })
+
+    expect(onEscape).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('dialog')).toBeDefined()
   })
 })

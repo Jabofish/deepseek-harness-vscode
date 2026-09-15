@@ -23,6 +23,14 @@ export const MessageImages = memo(function MessageImages(props: MessageImagesPro
   const [lightbox, setLightbox] = useState<LoadedImage | undefined>(undefined)
   const requested = useRef(new Set<string>())
   const closeRef = useRef<HTMLButtonElement>(null)
+  /**
+   * The lightbox is `aria-modal`, so the keyboard belongs inside while it is up
+   * and returns to the thumbnail that opened it. The opener is captured at the
+   * click site rather than from the effect, because the lightbox mounts with
+   * its own focus call.
+   */
+  const lightboxTriggerRef = useRef<HTMLButtonElement | null>(null)
+  const lightboxWasOpen = useRef(false)
   const images = props.images
   const loadImage = props.loadImage
   const imageKey = images.map((image) => image.attachmentId).join('\u0000')
@@ -69,13 +77,25 @@ export const MessageImages = memo(function MessageImages(props: MessageImagesPro
     if (lightbox === undefined) return
     closeRef.current?.focus()
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        setLightbox(undefined)
-      }
+      // A layer that is already open consumes Escape first; acting regardless
+      // would collapse both surfaces with one key press.
+      if (event.key !== 'Escape' || event.defaultPrevented) return
+      event.preventDefault()
+      setLightbox(undefined)
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
+  }, [lightbox])
+
+  useEffect(() => {
+    if (lightboxWasOpen.current && lightbox === undefined) {
+      const target = lightboxTriggerRef.current
+      lightboxTriggerRef.current = null
+      // The window may scroll the thumbnail out of the rendered list; body
+      // focus beats a detached node.
+      if (target !== null && target.isConnected) target.focus()
+    }
+    lightboxWasOpen.current = lightbox !== undefined
   }, [lightbox])
 
   useEffect(() => {
@@ -105,7 +125,10 @@ export const MessageImages = memo(function MessageImages(props: MessageImagesPro
                 style={single ? imageRatioStyle(image) : undefined}
                 aria-label={props.translate('timeline.openImage', { name })}
                 title={props.translate('timeline.openImage', { name })}
-                onClick={() => setLightbox(entry)}
+                onClick={(event) => {
+                  lightboxTriggerRef.current = event.currentTarget
+                  setLightbox(entry)
+                }}
               >
                 <img src={entry.dataUri} alt={name} loading="lazy" />
               </button>

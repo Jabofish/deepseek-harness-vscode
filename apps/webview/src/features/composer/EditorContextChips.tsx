@@ -1,6 +1,7 @@
-import { useState, type ReactElement } from 'react'
+import { useRef, useState, type ReactElement } from 'react'
 import type { EditorContextItem, EditorContextPreview } from '@dsh-vscode/domain'
 
+import { useDismissibleLayer } from '../../components/common/useDismissibleLayer.js'
 import { useI18n } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
 
@@ -23,6 +24,23 @@ export function EditorContextChips(props: EditorContextChipsProps): ReactElement
   const [previewLoading, setPreviewLoading] = useState(false)
   const [previewError, setPreviewError] = useState(false)
   const [removeError, setRemoveError] = useState(false)
+  const chipsRef = useRef<HTMLDivElement>(null)
+  const previewRef = useRef<HTMLDivElement>(null)
+  // Removing the chip also retires its preview: the dialog would otherwise keep
+  // showing text for a context the composer no longer sends.
+  const visiblePreview =
+    preview !== undefined && props.items.some((item) => item.ref.contextRef === preview.contextRef)
+      ? preview
+      : undefined
+  const closePreview = (): void => {
+    setPreview(undefined)
+    setPreviewError(false)
+  }
+  useDismissibleLayer({
+    open: visiblePreview !== undefined,
+    refs: [chipsRef, previewRef],
+    onDismiss: closePreview,
+  })
   const previewItem = (item: EditorContextItem): void => {
     if (props.disabled || item.stale || !item.previewAvailable || previewLoading) return
     setPreviewLoading(true)
@@ -40,7 +58,7 @@ export function EditorContextChips(props: EditorContextChipsProps): ReactElement
   if (props.items.length === 0 && props.loading !== true) return <></>
   return (
     <>
-      <div className="dsh-composer__context-chips">
+      <div ref={chipsRef} className="dsh-composer__context-chips">
         {props.loading === true ? (
           <span className="dsh-composer__context-status" role="status">
             {t('composer.contextLoading')}
@@ -98,8 +116,9 @@ export function EditorContextChips(props: EditorContextChipsProps): ReactElement
           {t('composer.contextPreviewError')}
         </div>
       ) : null}
-      {preview === undefined ? null : (
+      {visiblePreview === undefined ? null : (
         <div
+          ref={previewRef}
           className="dsh-composer__context-preview-dialog"
           role="dialog"
           aria-label={t('composer.contextPreviewTitle')}
@@ -110,15 +129,12 @@ export function EditorContextChips(props: EditorContextChipsProps): ReactElement
               className="dsh-icon-button"
               type="button"
               aria-label={t('composer.contextPreviewClose')}
-              onClick={() => {
-                setPreview(undefined)
-                setPreviewError(false)
-              }}
+              onClick={closePreview}
             >
               <Icon name="close" />
             </button>
           </div>
-          <pre>{preview.text}</pre>
+          <pre>{visiblePreview.text}</pre>
         </div>
       )}
     </>

@@ -1,4 +1,4 @@
-import { useRef, useState, type FormEvent, type KeyboardEvent, type ReactElement } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactElement } from 'react'
 import type { CheckpointPreview, CheckpointSummary } from '@dsh-vscode/domain'
 
 import { useI18n } from '../../i18n.js'
@@ -43,6 +43,33 @@ export function CheckpointDrawer(props: CheckpointDrawerProps): ReactElement {
   const [notice, setNotice] = useState<string | undefined>()
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
+  /** The row control that opened the confirmation takes the keyboard back. */
+  const dialogTriggerRef = useRef<HTMLElement | null>(null)
+  const dialogWasOpen = useRef(false)
+
+  const dialogOpen = dialog !== undefined
+  useEffect(() => {
+    if (dialogWasOpen.current && !dialogOpen) {
+      const target = dialogTriggerRef.current
+      dialogTriggerRef.current = null
+      // Deleting a checkpoint removes the row that opened the confirmation.
+      if (target !== null && target.isConnected) target.focus()
+    }
+    dialogWasOpen.current = dialogOpen
+  }, [dialogOpen])
+
+  // The popover is pointer-dismissible like its Changes/Jobs siblings. The
+  // trigger lives inside `rootRef`, so pressing it again toggles instead of
+  // closing on the pointerdown and reopening on the click. A confirmation is
+  // `aria-modal`: while one is up, a press elsewhere is not a dismissal.
+  useEffect(() => {
+    if (!open || dialogOpen) return
+    const closeOutside = (event: PointerEvent): void => {
+      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) setOpen(false)
+    }
+    document.addEventListener('pointerdown', closeOutside)
+    return () => document.removeEventListener('pointerdown', closeOutside)
+  }, [dialogOpen, open])
 
   const closeDialog = (): void => {
     if (busy) return
@@ -169,7 +196,10 @@ export function CheckpointDrawer(props: CheckpointDrawerProps): ReactElement {
                 className="dsh-button dsh-button--secondary dsh-button--compact"
                 type="button"
                 disabled={busy}
-                onClick={() => setDialog({ kind: 'create' })}
+                onClick={(event) => {
+                  dialogTriggerRef.current = event.currentTarget
+                  setDialog({ kind: 'create' })
+                }}
               >
                 <Icon name="add" />
                 {t('checkpoints.create')}
@@ -228,7 +258,10 @@ export function CheckpointDrawer(props: CheckpointDrawerProps): ReactElement {
                       })}
                       title={t('checkpoints.restore', { label: checkpoint.label ?? checkpoint.checkpointId })}
                       disabled={busy || previewLoading}
-                      onClick={() => openRestore(checkpoint)}
+                      onClick={(event) => {
+                        dialogTriggerRef.current = event.currentTarget
+                        openRestore(checkpoint)
+                      }}
                     >
                       <Icon name="arrow-down" />
                     </button>
@@ -241,7 +274,8 @@ export function CheckpointDrawer(props: CheckpointDrawerProps): ReactElement {
                     })}
                     title={t('checkpoints.delete', { label: checkpoint.label ?? checkpoint.checkpointId })}
                     disabled={busy}
-                    onClick={() => {
+                    onClick={(event) => {
+                      dialogTriggerRef.current = event.currentTarget
                       setError(undefined)
                       setDialog({ kind: 'delete', checkpoint })
                     }}
@@ -323,6 +357,7 @@ export function CheckpointDrawer(props: CheckpointDrawerProps): ReactElement {
                   type="button"
                   className="dsh-button dsh-button--secondary"
                   disabled={busy}
+                  autoFocus
                   onClick={closeDialog}
                 >
                   {t('checkpoints.cancel')}
@@ -347,6 +382,7 @@ export function CheckpointDrawer(props: CheckpointDrawerProps): ReactElement {
                   type="button"
                   className="dsh-button dsh-button--secondary"
                   disabled={busy}
+                  autoFocus
                   onClick={closeDialog}
                 >
                   {t('checkpoints.cancel')}

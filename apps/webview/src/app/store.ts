@@ -2602,8 +2602,17 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
               ...(attachments.length === 0 ? {} : { attachments: [...attachments] }),
             },
           })
-        if (subagent === undefined && contextRefs.length > 0)
-          setState((current) => ({ ...current, editorContext: [] }))
+        // The Extension Host released exactly the handles this snapshot named.
+        // A chip captured while the request was in flight is a different handle
+        // that is still live on the host, so only the admitted refs drop out —
+        // mirroring how in-flight attachment drafts are kept.
+        if (subagent === undefined && contextRefs.length > 0) {
+          const admitted = new Set(contextRefs)
+          setState((current) => ({
+            ...current,
+            editorContext: current.editorContext.filter((item) => !admitted.has(item.ref.contextRef)),
+          }))
+        }
       } catch (reason) {
         if (showOptimisticPreview)
           setState((current) => ({

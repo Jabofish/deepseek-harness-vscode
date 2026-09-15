@@ -1,5 +1,14 @@
 # Change Log
 
+## Unreleased
+
+- 加固 Webview 弹层的 Escape 分层、键盘导航、焦点归还、IME 输入、失败提示，以及会话、任务、设置和附件入口的交互回归。
+- 完善结构化工具结果、团队状态、历史文件引用和模型选择的展示/映射；导出时按选项正确过滤推理内容和附件。
+- 补充真实 DSH 的只读 surface/transcript smoke harness 与能力矩阵证据；本轮不改变 DSH 版本、不 bump 扩展版本，也不触发发布流程。
+- Harden Webview layering, keyboard navigation, focus restoration, IME input, failure reporting, and session/task/settings/attachment interaction regressions.
+- Improve structured tool, team-status, historical file-reference, and model-selection rendering/mapping, with option-aware export filtering for reasoning and attachments.
+- Add read-only real-DSH surface/transcript smoke coverage and capability-matrix evidence; no DSH version change, extension version bump, or release trigger is included.
+
 ## 0.1.11
 
 - 上游同步审计截至 `c291e796`：最新 DSH 发布仍为 `0.1.5-rc.2`，其后未发现本扩展消费的 Connection/Gateway、Cookie、`remote.mux` 或 Session v3 wire 变化；继续使用独立 `rc152` 精确适配，不虚构未发布的上游版本。

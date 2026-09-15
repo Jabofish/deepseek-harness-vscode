@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { SessionSummary, WorkspaceSummary } from '@dsh-vscode/domain'
 import { SessionDrawer } from './SessionDrawer.js'
@@ -63,6 +63,23 @@ function renderDrawer(
     ...overrides,
   }
   return render(<SessionDrawer {...props} />)
+}
+
+function createDataTransfer(): {
+  effectAllowed: string
+  dropEffect: string
+  setData: ReturnType<typeof vi.fn>
+  getData: ReturnType<typeof vi.fn>
+} {
+  let value = ''
+  return {
+    effectAllowed: '',
+    dropEffect: '',
+    setData: vi.fn((_type: string, next: string) => {
+      value = next
+    }),
+    getData: vi.fn(() => value),
+  }
 }
 
 describe('SessionDrawer', () => {
@@ -184,6 +201,28 @@ describe('SessionDrawer', () => {
     expect(screen.queryByRole('dialog', { name: 'Rename session' })).toBeNull()
   })
 
+  it('scopes a rename conflict warning to the renamed session workspace', async () => {
+    const peer = session({ id: 's4', title: 'Beta notes', workspaceId: 'w2' })
+    const onSearch = vi.fn().mockResolvedValue([sessions[2]!])
+    renderDrawer({ sessions: [...sessions, peer], onSearch })
+
+    fireEvent.change(screen.getByLabelText('Search sessions by title or content'), {
+      target: { value: 'note' },
+    })
+    await waitFor(() => expect(screen.getByTitle('Other workspace note')).toBeDefined())
+
+    fireEvent.click(screen.getByRole('button', { name: 'Rename session Other workspace note' }))
+    const input = screen.getByLabelText('Session name')
+
+    // "Write docs" only exists in Alpha; Beta has no such title.
+    fireEvent.change(input, { target: { value: 'Write docs' } })
+    expect(screen.queryByText('Another session in this workspace already uses this name.')).toBeNull()
+
+    // "Beta notes" does live in Beta, the workspace this row belongs to.
+    fireEvent.change(input, { target: { value: 'Beta notes' } })
+    expect(screen.getByText('Another session in this workspace already uses this name.')).toBeDefined()
+  })
+
   it('confirms workspace removal and keeps the destructive action explicit', async () => {
     const onRemoveWorkspace = vi.fn().mockResolvedValue(undefined)
     renderDrawer({ onRemoveWorkspace })
@@ -196,6 +235,97 @@ describe('SessionDrawer', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Remove' }))
 
     await waitFor(() => expect(onRemoveWorkspace).toHaveBeenCalledWith('w1'))
+  })
+
+  it('dismisses the switcher on Escape and returns focus to its trigger', () => {
+    const onOpenChange = vi.fn()
+    renderDrawer({ open: true, showTrigger: true, onOpenChange })
+    const trigger = screen.getByRole('button', { name: 'Switch session: Fix login bug' })
+    trigger.focus()
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+    expect(document.activeElement).toBe(trigger)
+  })
+
+  it('dismisses the switcher when the pointer goes elsewhere', () => {
+    const onOpenChange = vi.fn()
+    renderDrawer({ open: true, onOpenChange })
+
+    fireEvent.pointerDown(document.body)
+
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
+  it('closes the switcher when its own trigger is pressed again', () => {
+    renderDrawer({ open: undefined, showTrigger: true })
+    const trigger = screen.getByRole('button', { name: 'Switch session: Fix login bug' })
+    fireEvent.click(trigger)
+    expect(trigger.getAttribute('aria-expanded')).toBe('true')
+
+    // A real press is pointerdown then click. The layer only owns the panel, so
+    // the pointerdown on the trigger reads as an outside press and closes the
+    // switcher; the click then toggles it back open, and the trigger can never
+    // close what it opened.
+    fireEvent.pointerDown(trigger)
+    fireEvent.click(trigger)
+
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
+  })
+
+  it('lets Escape dismiss the rename dialog before the switcher', () => {
+    const onOpenChange = vi.fn()
+    const onRename = vi.fn().mockResolvedValue(undefined)
+    renderDrawer({ open: true, onOpenChange, onRename })
+
+    fireEvent.click(screen.getAllByTitle('Rename session')[0]!)
+    expect(screen.getByRole('dialog', { name: 'Rename session' })).toBeDefined()
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    // The dialog is the innermost layer: the switcher underneath survives.
+    expect(screen.queryByRole('dialog', { name: 'Rename session' })).toBeNull()
+    expect(onOpenChange).not.toHaveBeenCalled()
+    expect(onRename).not.toHaveBeenCalled()
+  })
+
+  it('cancels the workspace removal confirmation on Escape without removing anything', () => {
+    const onOpenChange = vi.fn()
+    const onRemoveWorkspace = vi.fn().mockResolvedValue(undefined)
+    renderDrawer({ open: true, onOpenChange, onRemoveWorkspace })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove workspace Alpha' }))
+    expect(screen.getByRole('alertdialog', { name: 'Remove workspace' })).toBeDefined()
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    expect(screen.queryByRole('alertdialog', { name: 'Remove workspace' })).toBeNull()
+    expect(onRemoveWorkspace).not.toHaveBeenCalled()
+    expect(onOpenChange).not.toHaveBeenCalled()
+  })
+
+  it('keeps the removal confirmation while its removal is in flight', () => {
+    const onRemoveWorkspace = vi.fn().mockImplementation(() => new Promise(() => undefined))
+    renderDrawer({ open: true, onRemoveWorkspace })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove workspace Alpha' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }))
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    expect(screen.getByRole('alertdialog', { name: 'Remove workspace' })).toBeDefined()
+  })
+
+  it('keeps a pointer inside the rename dialog from dismissing the switcher', () => {
+    const onOpenChange = vi.fn()
+    renderDrawer({ open: true, onOpenChange })
+
+    fireEvent.click(screen.getAllByTitle('Rename session')[0]!)
+    fireEvent.pointerDown(screen.getByLabelText('Session name'))
+
+    expect(onOpenChange).not.toHaveBeenCalled()
+    expect(screen.getByRole('dialog', { name: 'Rename session' })).toBeDefined()
   })
 
   it('switches to grouped workspace view and exposes explicit status badges', () => {
@@ -229,5 +359,95 @@ describe('SessionDrawer', () => {
     fireEvent.dragStart(sessionRows[1]!, { dataTransfer })
     fireEvent.drop(sessionRows[0]!, { dataTransfer })
     await waitFor(() => expect(onMoveSession).toHaveBeenCalledWith('w1', 's2', 's1'))
+  })
+
+  it('reports a rejected session move instead of dropping it silently', async () => {
+    const onMoveSession = vi.fn().mockRejectedValue(new Error('Session order is stale.'))
+    renderDrawer({ onMoveSession })
+
+    const dataTransfer = createDataTransfer()
+    const sessionRows = screen.getAllByTitle('Drag to reorder session')
+    fireEvent.dragStart(sessionRows[1]!, { dataTransfer })
+    fireEvent.drop(sessionRows[0]!, { dataTransfer })
+
+    await waitFor(() => expect(onMoveSession).toHaveBeenCalledWith('w1', 's2', 's1'))
+    expect((await screen.findByRole('alert')).textContent).toBe('Session order is stale.')
+  })
+
+  it('reports a rejected workspace move instead of dropping it silently', async () => {
+    const onMoveWorkspace = vi.fn().mockRejectedValue(new Error('Workspace order is stale.'))
+    renderDrawer({ onMoveWorkspace })
+
+    const dataTransfer = createDataTransfer()
+    const workspaceCards = screen.getAllByTitle('Drag to reorder workspace')
+    fireEvent.dragStart(workspaceCards[1]!, { dataTransfer })
+    fireEvent.drop(workspaceCards[0]!, { dataTransfer })
+
+    await waitFor(() => expect(onMoveWorkspace).toHaveBeenCalledWith('w2', 'w1'))
+    expect((await screen.findByRole('alert')).textContent).toBe('Workspace order is stale.')
+  })
+
+  it('falls back to a translated message when a move rejects without an Error', async () => {
+    const onMoveSession = vi.fn().mockRejectedValue('nope')
+    renderDrawer({ onMoveSession })
+
+    const dataTransfer = createDataTransfer()
+    const sessionRows = screen.getAllByTitle('Drag to reorder session')
+    fireEvent.dragStart(sessionRows[1]!, { dataTransfer })
+    fireEvent.drop(sessionRows[0]!, { dataTransfer })
+
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('Unable to reorder.'))
+  })
+
+  it('takes focus into the workspace removal confirmation and gives it back to the row', () => {
+    renderDrawer()
+
+    const trigger = screen.getByRole('button', { name: 'Remove workspace Alpha' })
+    trigger.focus()
+    fireEvent.click(trigger)
+
+    const dialog = screen.getByRole('alertdialog', { name: 'Remove workspace' })
+    expect(dialog.contains(document.activeElement)).toBe(true)
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+
+    expect(screen.queryByRole('alertdialog', { name: 'Remove workspace' })).toBeNull()
+    expect(document.activeElement).toBe(trigger)
+  })
+
+  it('returns focus to the renamed row after the rename dialog closes', () => {
+    renderDrawer()
+
+    const trigger = screen.getAllByTitle('Rename session')[0]!
+    trigger.focus()
+    fireEvent.click(trigger)
+    const input = screen.getByLabelText('Session name')
+    expect(document.activeElement).toBe(input)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+
+    expect(screen.queryByRole('dialog', { name: 'Rename session' })).toBeNull()
+    expect(document.activeElement).toBe(trigger)
+  })
+
+  it('clears a reported move failure once a later move succeeds', async () => {
+    const onMoveSession = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Session order is stale.'))
+      .mockResolvedValue(undefined)
+    renderDrawer({ onMoveSession })
+
+    const dataTransfer = createDataTransfer()
+    const dragSecondOntoFirst = (): void => {
+      const sessionRows = screen.getAllByTitle('Drag to reorder session')
+      fireEvent.dragStart(sessionRows[1]!, { dataTransfer })
+      fireEvent.drop(sessionRows[0]!, { dataTransfer })
+    }
+    dragSecondOntoFirst()
+    await waitFor(() => expect(screen.getByRole('alert')).toBeDefined())
+
+    dragSecondOntoFirst()
+    await waitFor(() => expect(onMoveSession).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
   })
 })
