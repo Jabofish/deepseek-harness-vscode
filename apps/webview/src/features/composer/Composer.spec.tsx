@@ -742,10 +742,37 @@ describe('Composer model block', () => {
   it('leaves the composer alone until a directory answers', () => {
     render(<Composer {...baseProps()} />)
     const textarea = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })
-
     expect(textarea.disabled).toBe(false)
     expect(textarea.getAttribute('placeholder')).toBe('Message…')
     expect(screen.queryByRole('status')).toBeNull()
+  })
+
+  it('states the host route the directory named while the session names none', () => {
+    const configuration: AgentConfiguration = {
+      preset: 'standard',
+      toolMode: 'native',
+      permissionPreset: 'workspace-write',
+      planMode: false,
+      model: { providerId: '', modelId: '' },
+    }
+    render(
+      <Composer
+        {...baseProps()}
+        configuration={configuration}
+        models={[
+          {
+            id: 'served-chat',
+            providerId: 'served',
+            label: 'Served Chat',
+            supportsReasoning: false,
+          },
+        ]}
+        modelCurrent={{ providerId: 'served', modelId: 'served-chat' }}
+        onConfigurationChange={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: 'Model and reasoning: Served Chat' })).toBeDefined()
   })
 })
 

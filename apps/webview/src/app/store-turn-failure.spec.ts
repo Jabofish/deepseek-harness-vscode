@@ -49,7 +49,12 @@ class StreamClient {
           },
         }
       case 'models.session.list':
-        return { models: [], failures: [], routable: true }
+        return {
+          models: [],
+          failures: [],
+          current: { providerId: 'deepseek', modelId: 'deepseek-chat' },
+          routable: true,
+        }
       case 'subagent.list':
         return { entries: [], parentAvailable: true }
       default:

@@ -212,6 +212,14 @@ export interface AppState {
   /** Providers the session directory could not enumerate, with the host's reason. */
   readonly sessionModelFailures: readonly ModelCatalogFailure[]
   /**
+   * The route the session's next request will take, as the directory states it.
+   * The configuration names a model only once someone chose one, so an unstated
+   * configuration is not "no model" — it is this route, which only the host can
+   * name. It stays separate from `configuration` so that a control which sends
+   * the configuration back never writes a route the session did not choose.
+   */
+  readonly sessionModelCurrent: ModelSelection | undefined
+  /**
    * Whether the host serves the session's current selection at all, as the
    * directory states it. `undefined` means no directory has answered yet,
    * which is not the same as unroutable; the host refuses a prompt it cannot
@@ -505,6 +513,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     models: [],
     sessionModels: [],
     sessionModelFailures: [],
+    sessionModelCurrent: undefined,
     sessionModelRoutable: undefined,
     sessionModelDirectoryLoading: false,
     sessionModelDirectoryError: undefined,
@@ -1874,6 +1883,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
               : createDefaultConfiguration(current, composerPreferences),
             sessionModels: [],
             sessionModelFailures: [],
+            sessionModelCurrent: undefined,
             sessionModelRoutable: undefined,
             // The directory read starts below, before the first paint, so it is
             // in flight from the moment the session is on screen.
@@ -2073,6 +2083,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
             configuration: undefined,
             sessionModels: [],
             sessionModelFailures: [],
+            sessionModelCurrent: undefined,
             sessionModelRoutable: undefined,
             // An addressed subagent has no session directory of its own — the
             // host binds this selection to the owning Agent — so there is no
@@ -2299,6 +2310,9 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     },
     get sessionModelFailures() {
       return state.sessionModelFailures
+    },
+    get sessionModelCurrent() {
+      return state.sessionModelCurrent
     },
     get sessionModelRoutable() {
       return state.sessionModelRoutable
@@ -2732,6 +2746,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
               configuration: undefined,
               sessionModels: [],
               sessionModelFailures: [],
+              sessionModelCurrent: undefined,
               sessionModelRoutable: undefined,
               sessionModelDirectoryLoading: false,
               sessionModelDirectoryError: undefined,
@@ -4128,6 +4143,7 @@ async function refreshSessions(
             configuration: undefined,
             sessionModels: [],
             sessionModelFailures: [],
+            sessionModelCurrent: undefined,
             sessionModelRoutable: undefined,
             sessionModelDirectoryLoading: false,
             sessionModelDirectoryError: undefined,
@@ -4415,6 +4431,8 @@ function mergeSkillCommands(
 interface SessionModelDirectory {
   readonly models: readonly ModelDescriptor[]
   readonly failures: readonly ModelCatalogFailure[]
+  /** The route the session's next request will take, as the host states it. */
+  readonly current: ModelSelection
   readonly routable: boolean
 }
 
@@ -4449,6 +4467,11 @@ async function loadSessionModelDirectory(
     // invalidates the fragment rather than being dropped from it.
     if (!Array.isArray(result.failures) || !result.failures.every(isModelCatalogFailure))
       return { ok: false, message: malformed }
+    // The route the next request will take is the directory's own statement
+    // about this session; the configuration only names what someone chose. A
+    // fragment without it cannot say what the seat should state, so it is
+    // refused rather than left to look like an unstated selection.
+    if (!isModelSelection(result.current)) return { ok: false, message: malformed }
     // `routable` is the whole-fragment verdict and the host types it as
     // required; a fragment without it cannot say whether input is legal, so it
     // is refused rather than guessed (a guess would either lock a usable
@@ -4456,7 +4479,12 @@ async function loadSessionModelDirectory(
     if (typeof result.routable !== 'boolean') return { ok: false, message: malformed }
     return {
       ok: true,
-      directory: { models: result.models, failures: result.failures, routable: result.routable },
+      directory: {
+        models: result.models,
+        failures: result.failures,
+        current: result.current,
+        routable: result.routable,
+      },
     }
   } catch (error) {
     return { ok: false, message: errorText(error) }
@@ -4487,12 +4515,13 @@ function mergeSessionModelDirectory(
       return current
     return { ...current, sessionModelDirectoryLoading: false, sessionModelDirectoryError: read.message }
   }
-  const { models, failures, routable } = read.directory
+  const { models, failures, routable, current: selection } = read.directory
   if (
     !current.sessionModelDirectoryLoading &&
     current.sessionModelDirectoryError === undefined &&
     sameModelDescriptorList(current.sessionModels, models) &&
     sameModelCatalogFailureList(current.sessionModelFailures, failures) &&
+    sameModelSelection(current.sessionModelCurrent, selection) &&
     current.sessionModelRoutable === routable
   )
     return current
@@ -4500,6 +4529,7 @@ function mergeSessionModelDirectory(
     ...current,
     sessionModels: models,
     sessionModelFailures: failures,
+    sessionModelCurrent: selection,
     sessionModelRoutable: routable,
     sessionModelDirectoryLoading: false,
     sessionModelDirectoryError: undefined,
@@ -5208,6 +5238,7 @@ function applyHostMessage(
             configuration: undefined,
             sessionModels: [],
             sessionModelFailures: [],
+            sessionModelCurrent: undefined,
             sessionModelRoutable: undefined,
             sessionModelDirectoryLoading: false,
             sessionModelDirectoryError: undefined,
@@ -8644,6 +8675,30 @@ function isModelCatalogFailure(value: unknown): value is ModelCatalogFailure {
     typeof item.providerName === 'string' &&
     item.providerName.trim() !== '' &&
     typeof item.message === 'string'
+  )
+}
+
+/**
+ * A route the host named. It is not the same statement as the session's
+ * configuration, where empty ids mean "no choice recorded": every id here is
+ * required, because a directory that names half a route has not named one.
+ */
+function isModelSelection(value: unknown): value is ModelSelection {
+  const item = object(value)
+  return (
+    item !== undefined &&
+    nonBlankString(item.providerId) &&
+    nonBlankString(item.modelId) &&
+    (item.reasoningLevel === undefined || nonBlankString(item.reasoningLevel))
+  )
+}
+
+function sameModelSelection(left: ModelSelection | undefined, right: ModelSelection): boolean {
+  return (
+    left !== undefined &&
+    left.providerId === right.providerId &&
+    left.modelId === right.modelId &&
+    left.reasoningLevel === right.reasoningLevel
   )
 }
 

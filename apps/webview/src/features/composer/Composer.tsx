@@ -23,6 +23,7 @@ import type {
   ImageAttachmentLimits,
   ModelCatalogFailure,
   ModelDescriptor,
+  ModelSelection,
   PromptMode,
   PromptAttachment,
   QueuedInput,
@@ -92,6 +93,12 @@ export interface ComposerProps {
   readonly modelError?: string
   /** Re-read the session model directory; the picker's own retry surface. */
   readonly onModelRetry?: () => void
+  /**
+   * The route the host says the session's next request will take. The session's
+   * configuration names a model only once someone chose one, so the model seat
+   * states this route while the configuration names none.
+   */
+  readonly modelCurrent?: ModelSelection
   /**
    * The host's verdict on whether the session's current model is served at
    * all. `false` makes the input inert with the reason on screen; `undefined`
@@ -374,6 +381,7 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
       ...(props.commands === undefined ? {} : { commands: props.commands }),
       ...(props.modelLoading === undefined ? {} : { modelLoading: props.modelLoading }),
       ...(props.modelError === undefined ? {} : { modelError: props.modelError }),
+      ...(props.modelCurrent === undefined ? {} : { modelCurrent: props.modelCurrent }),
       ...(props.onModelRetry === undefined ? {} : { onModelRetry: props.onModelRetry }),
       ...(props.estimatedContextTokens === undefined
         ? {}

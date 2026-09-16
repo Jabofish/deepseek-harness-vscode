@@ -95,7 +95,12 @@ function response(request: WebviewRequest | FeatureRequest): unknown {
     case 'subagent.list':
       return { entries: [], parentAvailable: true }
     case 'models.session.list':
-      return { models: [], failures: [], routable: true }
+      return {
+        models: [],
+        failures: [],
+        current: { providerId: 'deepseek', modelId: 'deepseek-chat' },
+        routable: true,
+      }
     case 'checkpoint.list':
     case 'checkpoint.create':
       return contractPayload({ kind: 'checkpoints', items: [checkpoint] })

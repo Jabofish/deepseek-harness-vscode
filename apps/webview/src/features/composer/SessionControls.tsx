@@ -30,6 +30,14 @@ export interface SessionControlsProps {
   readonly modelError?: string
   /** Re-read the session model directory; omitted means this surface cannot retry. */
   readonly onModelRetry?: () => void
+  /**
+   * The route the host says the session's next request will take. The session's
+   * configuration names a model only once someone chose one, so this is what an
+   * unstated configuration actually runs — the seat states it instead of a
+   * generic "default", and the configuration keeps naming only what the session
+   * itself chose.
+   */
+  readonly modelCurrent?: ModelSelection
   readonly presets: readonly AgentPresetDescriptor[]
   readonly permissionPresets: readonly string[]
   /** Optional command directory; omitted means capability discovery is unavailable. */
@@ -164,6 +172,18 @@ export const SessionControls = memo(function SessionControls(props: SessionContr
     [configuration.planMode, onCommand],
   )
   const contextWindowTokens = positiveTokenCount(props.contextWindowTokens)
+  /**
+   * What the seat states as the current model. The configuration is the
+   * session's own choice and stays empty until someone makes one; the
+   * directory's route is the host's answer for that same emptiness, so it
+   * stands in — a seat that showed a generic "default" would hide the route the
+   * host named, and one that wrote the default *into* the configuration would
+   * persist a choice the session never made.
+   */
+  const model =
+    props.configuration.model.modelId.trim() === '' && props.modelCurrent !== undefined
+      ? props.modelCurrent
+      : props.configuration.model
   const contextLabel = useMemo(
     () =>
       props.estimatedContextTokens === undefined || contextWindowTokens === undefined
@@ -286,7 +306,7 @@ export const SessionControls = memo(function SessionControls(props: SessionContr
         {showPrimary ? (
           <ModelPicker
             models={props.models}
-            value={props.configuration.model}
+            value={model}
             {...(props.modelFailures === undefined ? {} : { failures: props.modelFailures })}
             {...(props.modelLoading === undefined ? {} : { loading: props.modelLoading })}
             {...(props.modelError === undefined ? {} : { error: props.modelError })}

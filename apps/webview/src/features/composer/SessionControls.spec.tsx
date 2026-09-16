@@ -2,7 +2,124 @@
 
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { AgentConfiguration, ModelDescriptor } from '@dsh-vscode/domain'
+import { I18nProvider } from '../../i18n.js'
 import { formatPresetLabel, modeIcon, permissionOptions, SessionControls } from './SessionControls.js'
+
+const REASONER: readonly ModelDescriptor[] = [
+  {
+    id: 'deepseek-reasoner',
+    providerId: 'deepseek',
+    label: 'DeepSeek Reasoner',
+    supportsReasoning: true,
+    reasoningLevels: [
+      { id: 'low', label: 'Low' },
+      { id: 'high', label: 'High' },
+    ],
+  },
+]
+
+/** The session's own configuration; model ids are empty until someone chooses. */
+function configuration(model: AgentConfiguration['model']): AgentConfiguration {
+  return {
+    preset: 'standard',
+    toolMode: 'native',
+    permissionPreset: 'workspace-write',
+    planMode: false,
+    model,
+  }
+}
+
+function renderSeat(
+  props: Partial<Pick<Parameters<typeof SessionControls>[0], 'modelCurrent' | 'models'>> & {
+    readonly model: AgentConfiguration['model']
+  },
+): void {
+  render(
+    <I18nProvider>
+      <SessionControls
+        configuration={configuration(props.model)}
+        models={props.models ?? REASONER}
+        presets={[{ id: 'standard', trust: 'system', isDefault: true }]}
+        permissionPresets={['workspace-write']}
+        disabled={false}
+        presetMutable
+        {...(props.modelCurrent === undefined ? {} : { modelCurrent: props.modelCurrent })}
+        onChange={vi.fn()}
+        onCommand={vi.fn()}
+      />
+    </I18nProvider>,
+  )
+}
+
+function modelTriggerLabel(): string {
+  const trigger = screen.getByRole('button', { name: /^Model and reasoning: /u })
+  return trigger.querySelector('.dsh-select-menu__trigger-text')?.textContent ?? ''
+}
+
+describe('SessionControls model seat', () => {
+  afterEach(() => cleanup())
+
+  it('states the route the host named while the session names none', () => {
+    // The configuration carries a selection only once someone makes one; an
+    // empty one is not "no model", it is whatever the host routes by default.
+    // Reporting a generic "Default model" would hide the route the host named.
+    renderSeat({
+      model: { providerId: '', modelId: '' },
+      modelCurrent: { providerId: 'deepseek', modelId: 'deepseek-reasoner', reasoningLevel: 'low' },
+    })
+
+    expect(modelTriggerLabel()).toBe('DeepSeek Reasoner · Low')
+  })
+
+  it('still says the default when no directory named a route', () => {
+    renderSeat({ model: { providerId: '', modelId: '' } })
+
+    expect(modelTriggerLabel()).toBe('Default model')
+  })
+
+  it("keeps the session's own choice over the route the host named", () => {
+    renderSeat({
+      model: { providerId: 'deepseek', modelId: 'deepseek-reasoner', reasoningLevel: 'high' },
+      modelCurrent: { providerId: 'anthropic', modelId: 'claude-sonnet' },
+    })
+
+    expect(modelTriggerLabel()).toBe('DeepSeek Reasoner · High')
+  })
+
+  it("keeps the host's route out of the configuration when another control changes", () => {
+    // The fallback is a statement about routing, not a choice the session made:
+    // a control that sends the configuration back must not carry it, or the
+    // next write would persist a model the user never picked.
+    const onChange = vi.fn()
+    render(
+      <I18nProvider>
+        <SessionControls
+          configuration={configuration({ providerId: '', modelId: '' })}
+          models={REASONER}
+          modelCurrent={{ providerId: 'deepseek', modelId: 'deepseek-reasoner', reasoningLevel: 'low' }}
+          presets={[
+            { id: 'standard', trust: 'system', isDefault: true },
+            { id: 'gateway-lab', name: 'Gateway Lab', trust: 'user', isDefault: false },
+          ]}
+          permissionPresets={['workspace-write']}
+          disabled={false}
+          presetMutable
+          onChange={onChange}
+          onCommand={vi.fn()}
+        />
+      </I18nProvider>,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Mode: Standard' }))
+    fireEvent.click(screen.getByRole('option', { name: 'Gateway Lab' }))
+
+    expect(onChange).toHaveBeenCalledWith({
+      ...configuration({ providerId: '', modelId: '' }),
+      preset: 'gateway-lab',
+    })
+  })
+})
 
 describe('SessionControls', () => {
   afterEach(() => cleanup())

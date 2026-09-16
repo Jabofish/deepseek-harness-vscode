@@ -454,6 +454,10 @@ export function App(): ReactElement {
   // fallback is what lets a session whose providers all failed show models at
   // all, and dropping the rows there would hide the only explanation.
   const sessionModelFailures = state.sessionModelFailures
+  // The route the host says the session's next request will take. The
+  // configuration names a model only once someone chose one, so this is the
+  // only statement of what an unstated configuration actually runs.
+  const sessionModelCurrent = state.sessionModelCurrent
   // The host's verdict on the session's current model, not a guess from the
   // groups: a route can serve a model it stopped advertising, and only the
   // host knows which adapters are live. `undefined` means no directory has
@@ -1685,6 +1689,9 @@ export function App(): ReactElement {
                             models={sessionModels}
                             modelFailures={sessionModelFailures}
                             modelLoading={sessionModelDirectoryLoading}
+                            {...(sessionModelCurrent === undefined
+                              ? {}
+                              : { modelCurrent: sessionModelCurrent })}
                             {...(sessionModelDirectoryError === undefined
                               ? {}
                               : { modelError: sessionModelDirectoryError })}

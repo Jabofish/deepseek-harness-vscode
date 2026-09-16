@@ -68,6 +68,36 @@ export function mapModelPatch(data: Record<string, unknown>): Partial<ModelSelec
   }
 }
 
+/**
+ * The durable `modelSelection` projection: the route the session's next
+ * request will take. It is the only statement of a session's *own* selection
+ * — a model catalog answers the deployment default and the providers the host
+ * serves, never which of them this session uses — so both the configuration
+ * read and the model directory compose from here.
+ *
+ * Wire families spell the members differently (`provider`/`providerId`,
+ * `reasoningEffort`/`reasoningLevel`) and both publish the projection as an
+ * object even when the session never selected, so an unstated selection
+ * arrives as empty members rather than as an absent projection.
+ */
+export interface ProjectedModelSelection {
+  readonly providerId: string
+  readonly modelId: string
+  readonly reasoningLevel: string | undefined
+}
+
+export function projectedModelSelection(
+  projectionValues: Readonly<Record<string, unknown>> | undefined,
+): ProjectedModelSelection {
+  const state = recordOrUndefined(projectionValues?.modelSelection)
+  const selected = recordOrUndefined(state?.next) ?? recordOrUndefined(state?.lastUsed)
+  return {
+    providerId: firstString(selected?.provider, selected?.providerId) ?? '',
+    modelId: firstString(selected?.model, selected?.modelId) ?? '',
+    reasoningLevel: firstString(selected?.reasoningEffort, selected?.reasoningLevel),
+  }
+}
+
 export function mapTodo(value: unknown, index: number): TodoView {
   const record = recordOrUndefined(value)
   if (record === undefined) throw new Error('Malformed todo')

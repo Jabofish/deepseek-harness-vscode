@@ -149,6 +149,10 @@ Steer 是收敛操作：`session/steer-unavailable`（回合已停止接受 stee
 
 `current` 与 `groups` 的关系也要读准：`groups` 是咨询目录，`current` 才是宿主的当前选择。目录里查不到 `current` 时（最常见的原因是那个 Provider 枚举失败，解释就在 `failures` 行里）客户端只能按宿主的标识显示 `provider/model`，不得据此宣称模型「不可用」：可用性是宿主的判定（`routable` 以及 `session.selectModel` 与 prompt 的应答），不是目录缺席能推出的结论。
 
+alpha 线的 `session/modelCatalog` 不直接给出 `session.models` 的应答，必须由读取方拼出来（`versions/alpha/transport.ts`）：它只答 `{ default, routableProviders, groups, failures }`，其中 `default` 是**部署级默认**（`agentDefaultModel.currentSelection()`），`routableProviders` 是全部可路由 Provider 的 id 列表；会话自己的选择不存在于这个应答里，只在会话的持久投影 `modelSelection` 里。因此本扩展按参考客户端的规则组合：`current` 取 `modelSelection` 投影的 `next ?? lastUsed`，`routable` 取 `routableProviders.includes(current.provider)`。省略 `modelSelection` 字段的断言是错误来源之一——投影可以合法地只带 `lastUsed`，而 `next: null` 意为「下次按 lastUsed 走」，不是「回到默认」。投影没有任何选择（含 `reasoningEffort`）时才回落到目录 `default`，且回落值要整份保留（`default` 自己声明的 `reasoningEffort` 就是适配器将用的强度，不得丢）；投影读不出时整次目录读取按协议错误失败——用默认值替一个读不到的会话选择作答，就是替用户宣称了一条他没选过的路由，正是 `routable` 判定最不该猜的地方。
+
+与之一致的客户端规则：会话尚未选择模型时，界面显示的是这份目录的 `current`（宿主此刻真正会走的路线）。这是**路由陈述**而不是会话选择，它只能出现在展示层，不得写回 `configuration.model`：任何把配置原样提交回宿主的路径（如 `session.configure`）都只能提交用户真正选过的值，否则一次无关的按下会把一个从未发生过的选择持久化进会话日志。
+
 `session.models` 这次读取本身也可以被宿主拒绝（业务错误或协议错误）。失败的读取不是空目录：`groups`/`failures` 一行都没拿到时这份目录什么都没说，客户端不得据此显示「本会话没有可用模型」这类判定——那是对未作答 Provider 的臆断，参考实现（`ModelSelect`）把该判定保留给真正答出空目录的读取。失败必须按宿主原文（`AppError` 稳定映射后的 message，契约实现规则 7）显示在目录所在的界面里，并配一个重读入口：会话目录缺席时本扩展会退回全局目录，若不说明原因，「换了目录」本身就会被当成宿主的答案。重读失败时保留上一次成功读取的目录（模型行与 `failures` 行都不清空），因为一次瞬时失败不该把已经陈述过的事实变成未知。
 
 ## 事件恢复与资源所有权

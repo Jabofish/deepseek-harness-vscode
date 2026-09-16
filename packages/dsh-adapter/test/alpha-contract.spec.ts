@@ -547,21 +547,14 @@ describe('DSH 0.1.2-alpha.1 Connection/Gateway contract', () => {
     })
     const socket = await waitForSocket()
     socket.open()
-    await waitForSent(socket, 1)
-    const opening = JSON.parse(socket.sent[0] ?? '{}') as { readonly streamId?: string }
-    socket.message({
-      type: 'item',
-      streamId: opening.streamId,
-      value: {
-        type: 'snapshot',
-        header: {},
-        cursor: 7,
-        records: [],
-        hasMore: true,
-        projections: { asOfSeq: 7, values: {} },
-      },
+    await answerFollow(socket, 1, {
+      type: 'snapshot',
+      header: {},
+      cursor: 7,
+      records: [],
+      hasMore: true,
+      projections: { asOfSeq: 7, values: {} },
     })
-    socket.message({ type: 'end', streamId: opening.streamId })
 
     await expect(history).resolves.toMatchObject({
       result: { ok: true, value: { events: [], hasMore: false } },
@@ -576,13 +569,137 @@ describe('DSH 0.1.2-alpha.1 Connection/Gateway contract', () => {
       maxMessages: 10,
     })
 
-    await expect(transport.request('session.models', {})).resolves.toMatchObject({
+    // The session directory is the zero-argument exception on the post side: it
+    // reads the session's own route over a second logical stream of the mux.
+    const models = transport.request('session.models', { sessionId: 's1' })
+    await answerFollow(socket, 2, {
+      type: 'snapshot',
+      header: {},
+      cursor: 2,
+      records: [],
+      hasMore: false,
+      projections: { asOfSeq: 2, values: {} },
+    })
+    const modelsOpen = JSON.parse(socket.sent[1] ?? '{}') as {
+      readonly payload?: { readonly args?: { readonly request?: Record<string, unknown> } }
+    }
+    expect(modelsOpen.payload?.args?.request).toMatchObject({
+      address: { kind: 'session', sessionId: 's1' },
+    })
+
+    await expect(models).resolves.toMatchObject({
       result: { ok: true, value: { current: { provider: 'p', model: 'm' }, routable: true } },
     })
     const catalogBody = JSON.parse(bodyText(fetch.mock.calls[1]?.[1])) as {
       readonly payload: { readonly args: Record<string, unknown> }
     }
     expect(catalogBody.payload.args).toEqual({})
+    await transport.close()
+  })
+
+  it.each([
+    [
+      'the route this session selected even though the default provider is gone',
+      { provider: 'retired', model: 'x' },
+      ['served'],
+      {
+        lastUsed: { provider: 'served', model: 'y' },
+        next: { provider: 'served', model: 'y', reasoningEffort: 'high' },
+      },
+      { provider: 'served', model: 'y', reasoningEffort: 'high' },
+      true,
+    ],
+    [
+      'the route the latest request used even though its adapter is gone',
+      { provider: 'served', model: 'y' },
+      ['served'],
+      { lastUsed: { provider: 'retired', model: 'x' }, next: null },
+      { provider: 'retired', model: 'x' },
+      false,
+    ],
+  ])(
+    'states %s instead of restating the deployment default',
+    async (_label, defaultSelection, routableProviders, modelSelection, current, routable) => {
+      // The catalog answers the deployment default and every routable provider,
+      // never which route *this* session uses — that is durable session state.
+      // Answering the default under the name of the session's route would block
+      // a session whose own adapter is serving it and let through one whose
+      // adapter is gone; the routing verdict has to follow the same selection.
+      FakeWebSocket.instances.length = 0
+      const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
+        Promise.resolve(
+          response(init, { default: defaultSelection, routableProviders, groups: [], failures: [] }),
+        ),
+      )
+      const transport = client(fetch)
+      const models = transport.request('session.models', { sessionId: 's1' })
+      const socket = await waitForSocket()
+      socket.open()
+      await answerFollow(socket, 1, {
+        type: 'snapshot',
+        header: {},
+        cursor: 2,
+        records: [],
+        hasMore: false,
+        projections: { asOfSeq: 2, values: { modelSelection } },
+      })
+
+      await expect(models).resolves.toMatchObject({ result: { ok: true, value: { current, routable } } })
+      await transport.close()
+    },
+  )
+
+  it('keeps the catalog default whole for a session that never selected a model', async () => {
+    FakeWebSocket.instances.length = 0
+    const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
+      Promise.resolve(
+        response(init, {
+          default: { provider: 'p', model: 'm', reasoningEffort: 'low' },
+          routableProviders: ['p'],
+        }),
+      ),
+    )
+    const transport = client(fetch)
+
+    const models = transport.request('session.models', { sessionId: 's1' })
+    const socket = await waitForSocket()
+    socket.open()
+    await answerFollow(socket, 1, {
+      type: 'snapshot',
+      header: {},
+      cursor: 0,
+      records: [],
+      hasMore: false,
+      projections: { asOfSeq: 0, values: { modelSelection: { lastUsed: null, next: null } } },
+    })
+
+    await expect(models).resolves.toMatchObject({
+      result: {
+        ok: true,
+        value: { current: { provider: 'p', model: 'm', reasoningEffort: 'low' }, routable: true },
+      },
+    })
+    await transport.close()
+  })
+
+  it('fails the session directory instead of answering a default it could not check', async () => {
+    // The projection read is not optional: a baseline that never arrives leaves
+    // the read unable to tell the session's route from the default, and a
+    // verdict guessed from the default is exactly the misstatement above.
+    FakeWebSocket.instances.length = 0
+    const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
+      Promise.resolve(response(init, { default: { provider: 'p', model: 'm' }, routableProviders: ['p'] })),
+    )
+    const transport = client(fetch)
+
+    const models = transport.request('session.models', { sessionId: 's1' })
+    const socket = await waitForSocket()
+    socket.open()
+    await waitForSent(socket, 1)
+    const opening = JSON.parse(socket.sent[0] ?? '{}') as { readonly streamId?: string }
+    socket.message({ type: 'end', streamId: opening.streamId })
+
+    await expect(models).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
     await transport.close()
   })
 
@@ -804,7 +921,9 @@ describe('DSH 0.1.2-alpha.1 Connection/Gateway contract', () => {
     )
     const transport = client(fetch)
 
-    await expect(transport.request('session.models', {})).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
+    await expect(transport.request('session.models', { sessionId: 's1' })).rejects.toMatchObject({
+      code: 'PROTOCOL_ERROR',
+    })
     await transport.close()
 
     const secondTransport = client(fetch)
@@ -1366,6 +1485,23 @@ async function waitForSent(socket: FakeWebSocket, count: number): Promise<void> 
     await Promise.resolve()
   }
   throw new Error(`the alpha mux socket sent ${socket.sent.length} frames; expected ${count}`)
+}
+
+/**
+ * Answer the `frame`th logical-stream opening on the mux socket with one
+ * baseline snapshot and close it. A remote method that reads a session baseline
+ * blocks until this frame arrives, so the answer has to name the stream the
+ * transport opened for it.
+ */
+async function answerFollow(
+  socket: FakeWebSocket,
+  frame: number,
+  value: Record<string, unknown>,
+): Promise<void> {
+  await waitForSent(socket, frame)
+  const opening = JSON.parse(socket.sent[frame - 1] ?? '{}') as { readonly streamId?: string }
+  socket.message(streamItem(socket, value, opening.streamId))
+  socket.message({ type: 'end', streamId: opening.streamId })
 }
 
 async function waitForEvent(predicate: () => boolean): Promise<void> {

@@ -137,7 +137,12 @@ function startupResponse(request: WebviewRequest): unknown {
     case 'subagent.list':
       return request.type === 'subagent.list' ? { entries: [], parentAvailable: true } : []
     case 'models.session.list':
-      return { models: [], failures: [], routable: true }
+      return {
+        models: [],
+        failures: [],
+        current: { providerId: 'deepseek', modelId: 'deepseek-chat' },
+        routable: true,
+      }
     default:
       throw new Error(`unexpected startup request ${request.type}`)
   }
@@ -1226,6 +1231,7 @@ describe('AppStore startup session restoration', () => {
             { id: 'deepseek-chat', providerId: 'deepseek', label: 'DeepSeek Chat', supportsReasoning: false },
           ],
           failures: [{ providerId: 'gateway', providerName: 'Gateway', message: 'connection refused' }],
+          current: { providerId: 'deepseek', modelId: 'deepseek-chat' },
           routable: true,
         }
       return startupResponse(request)
@@ -1270,6 +1276,7 @@ describe('AppStore startup session restoration', () => {
           ? {
               models: [],
               failures: [{ providerId: 'gateway', providerName: 'Gateway', message: 'connection refused' }],
+              current: { providerId: 'gateway', modelId: 'gateway-chat' },
               routable: false,
             }
           : {
@@ -1282,6 +1289,7 @@ describe('AppStore startup session restoration', () => {
                 },
               ],
               failures: [],
+              current: { providerId: 'gateway', modelId: 'gateway-chat' },
               routable: true,
             }
       return startupResponse(request)
@@ -1291,6 +1299,7 @@ describe('AppStore startup session restoration', () => {
     await store.openSession('session-active')
     await vi.waitFor(() => expect(store.sessionModelFailures).toHaveLength(1))
     expect(store.sessionModelRoutable).toBe(false)
+    expect(store.sessionModelCurrent).toEqual({ providerId: 'gateway', modelId: 'gateway-chat' })
 
     failing = false
     client.emit({
@@ -1316,6 +1325,7 @@ describe('AppStore startup session restoration', () => {
             { id: 'deepseek-chat', providerId: 'deepseek', label: 'DeepSeek Chat', supportsReasoning: false },
           ],
           failures: [],
+          current: { providerId: 'retired', modelId: 'retired-chat', reasoningLevel: 'high' },
           routable: false,
         }
       return startupResponse(request)
@@ -1326,8 +1336,15 @@ describe('AppStore startup session restoration', () => {
     await vi.waitFor(() => expect(store.sessionModelRoutable).toBe(false))
 
     // The verdict says nothing about the groups: a directory can list models
-    // and still name a current selection no adapter serves.
+    // and still name a current selection no adapter serves. The selection still
+    // has to travel — it is what the seat states and what an unroutable warning
+    // is about.
     expect(store.sessionModels).toHaveLength(1)
+    expect(store.sessionModelCurrent).toEqual({
+      providerId: 'retired',
+      modelId: 'retired-chat',
+      reasoningLevel: 'high',
+    })
     store.dispose()
   })
 
@@ -1339,6 +1356,7 @@ describe('AppStore startup session restoration', () => {
             { id: 'deepseek-chat', providerId: 'deepseek', label: 'DeepSeek Chat', supportsReasoning: false },
           ],
           failures: [],
+          current: { providerId: 'deepseek', modelId: 'deepseek-chat' },
         }
       return startupResponse(request)
     })
@@ -1351,6 +1369,33 @@ describe('AppStore startup session restoration', () => {
     // host will refuse, so a directory without it is no directory at all.
     expect(store.sessionModels).toEqual([])
     expect(store.sessionModelRoutable).toBeUndefined()
+    expect(store.sessionModelDirectoryError).toBe('DSH returned a malformed session model directory.')
+    store.dispose()
+  })
+
+  it('refuses a directory that does not name the route the next request takes', async () => {
+    const client = new StartupClient((request) => {
+      if (request.type === 'models.session.list')
+        return {
+          models: [
+            { id: 'deepseek-chat', providerId: 'deepseek', label: 'DeepSeek Chat', supportsReasoning: false },
+          ],
+          failures: [],
+          routable: true,
+        }
+      return startupResponse(request)
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+
+    await store.openSession('session-active')
+    await new Promise((resolve) => window.setTimeout(resolve, 0))
+
+    // The seat states the route the host says the next request will take, and
+    // the configuration names nothing until someone chooses. A fragment that
+    // stays silent about the route would leave the seat reporting a generic
+    // "default" for a host that may already be running something else.
+    expect(store.sessionModels).toEqual([])
+    expect(store.sessionModelCurrent).toBeUndefined()
     expect(store.sessionModelDirectoryError).toBe('DSH returned a malformed session model directory.')
     store.dispose()
   })
@@ -1369,6 +1414,7 @@ describe('AppStore startup session restoration', () => {
             },
           ],
           failures: [],
+          current: { providerId: 'deepseek', modelId: 'deepseek-reasoner' },
           routable: true,
         }
       return startupResponse(request)
@@ -1400,6 +1446,7 @@ describe('AppStore startup session restoration', () => {
             },
           ],
           failures: [],
+          current: { providerId: 'deepseek', modelId: 'deepseek-reasoner', reasoningLevel: 'low' },
           routable: true,
         }
       return startupResponse(request)
@@ -1451,6 +1498,7 @@ describe('AppStore startup session restoration', () => {
         return {
           models: [{ id: 'deepseek-chat', providerId: 'deepseek', label, supportsReasoning: false }],
           failures: [],
+          current: { providerId: 'deepseek', modelId: 'deepseek-chat' },
           routable: true,
         }
       }
@@ -1488,7 +1536,13 @@ describe('AppStore startup session restoration', () => {
     const client = new StartupClient((request) => {
       if (request.type === 'models.session.list')
         return new Promise((resolve) => {
-          settleDirectory = () => resolve({ models: [], failures: [], routable: true })
+          settleDirectory = () =>
+            resolve({
+              models: [],
+              failures: [],
+              current: { providerId: 'deepseek', modelId: 'deepseek-chat' },
+              routable: true,
+            })
         })
       return startupResponse(request)
     })
@@ -1509,7 +1563,13 @@ describe('AppStore startup session restoration', () => {
   it('re-reads the directory after the provider changes so a stale verdict cannot lock the input', async () => {
     let routable = false
     const client = new StartupClient((request) => {
-      if (request.type === 'models.session.list') return { models: [], failures: [], routable }
+      if (request.type === 'models.session.list')
+        return {
+          models: [],
+          failures: [],
+          current: { providerId: 'gateway', modelId: 'gateway-chat' },
+          routable,
+        }
       if (request.type === 'session.configure') return undefined
       return startupResponse(request)
     })

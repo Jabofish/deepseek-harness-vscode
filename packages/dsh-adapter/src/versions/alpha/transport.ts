@@ -6,6 +6,7 @@ import { AppError, type BackendEndpoint } from '@dsh-vscode/domain'
 import type { DshTransport, RetryPolicy } from '../../contracts.js'
 import { cancelled, httpFailure, normalizeTransportError } from '../../transport-errors.js'
 import { unwrapRpcResultValue } from '../rc6/rpc.js'
+import { projectedModelSelection } from '../../projection/agent.js'
 import type { SubagentAddressRegistry } from '../../repositories/shared/subagent-addresses.js'
 import { Alpha13AssistantStreamProjector, type Alpha13ProjectorOutput } from '../alpha13/session-wire.js'
 import {
@@ -591,22 +592,53 @@ export class AlphaLoopbackApiClient implements DshTransport {
   }
 
   private async sessionModels(value: Record<string, unknown>, signal?: AbortSignal): Promise<LegacyResponse> {
+    const sessionId = stringValue(value.sessionId, 'session.models sessionId')
     const response = await this.post('session/modelCatalog', { args: {} }, signal)
     if (!response.result.ok) return response
     const catalog = response.result.value
     if (!validAlphaModelCatalog(catalog)) throw malformedResponse('session/modelCatalog')
-    const selected = catalog.default
+    // The catalog names the deployment default and every routable provider; it
+    // deliberately does not name which of them *this* session uses, because a
+    // request's route is durable session state. Read that projection instead of
+    // answering about the default: a surface that blocks input on `routable`
+    // would otherwise block a session whose own model the host serves, and let
+    // through one whose adapter is gone.
+    const current = await this.sessionModelSelection(sessionId, catalog.default, signal)
     return {
       ...response,
       result: {
         ok: true,
         value: {
-          current: selected,
-          routable: catalog.routableProviders.includes(selected.provider),
+          current,
+          routable: catalog.routableProviders.includes(current.provider),
           groups: catalog.groups,
           failures: catalog.failures,
         },
       },
+    }
+  }
+
+  /**
+   * The route this session's next request will take. A session that selected a
+   * model (or already sent one) states it in the durable `modelSelection`
+   * projection, which the open/history path reads from the same baseline; a
+   * session that never did falls back to the deployment default the catalog
+   * answered. The projection read is not optional: answering the default under
+   * the name of the session's selection is exactly the misstatement above.
+   */
+  private async sessionModelSelection(
+    sessionId: string,
+    fallback: AlphaCatalogSelection,
+    signal?: AbortSignal,
+  ): Promise<AlphaCatalogSelection> {
+    const snapshot = await this.followSnapshot({ address: this.sessionAddress(sessionId) }, signal)
+    const projections = recordOrUndefined(snapshot.projections)
+    const selected = projectedModelSelection(recordOrUndefined(projections?.values))
+    if (selected.providerId === '' || selected.modelId === '') return fallback
+    return {
+      provider: selected.providerId,
+      model: selected.modelId,
+      ...(selected.reasoningLevel === undefined ? {} : { reasoningEffort: selected.reasoningLevel }),
     }
   }
 
@@ -1770,8 +1802,15 @@ function goalReceipt(value: unknown): unknown {
 }
 
 type AlphaModelCatalog = Record<string, unknown> & {
-  readonly default: Record<string, unknown> & { readonly provider: string; readonly model: string }
+  readonly default: AlphaCatalogSelection & Record<string, unknown>
   readonly routableProviders: readonly string[]
+}
+
+/** One model selection as the alpha catalog states it (`reasoningEffort` optional). */
+type AlphaCatalogSelection = {
+  readonly provider: string
+  readonly model: string
+  readonly reasoningEffort?: string
 }
 
 function validAlphaModelCatalog(value: unknown): value is AlphaModelCatalog {
@@ -1786,14 +1825,14 @@ function validAlphaModelCatalog(value: unknown): value is AlphaModelCatalog {
   )
 }
 
+/**
+ * The global catalog read only needs the enumeration halves; the session's own
+ * directory composes `current`/`routable` from the durable projection instead
+ * (`sessionModels`), because the catalog cannot state them.
+ */
 function modelCatalog(value: unknown): unknown {
   if (!validAlphaModelCatalog(value)) throw new Error('model catalog is malformed')
-  const selected = value.default
-  return {
-    ...value,
-    current: selected,
-    routable: value.routableProviders.includes(selected.provider),
-  }
+  return value
 }
 
 interface AlphaSessionSnapshot extends Record<string, unknown> {

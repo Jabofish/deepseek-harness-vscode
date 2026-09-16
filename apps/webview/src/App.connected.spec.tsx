@@ -75,6 +75,7 @@ function connectedState(activeSession: boolean): AppState {
     models: [],
     sessionModels: [],
     sessionModelFailures: [],
+    sessionModelCurrent: undefined,
     sessionModelRoutable: undefined,
     sessionModelDirectoryLoading: false,
     sessionModelDirectoryError: undefined,

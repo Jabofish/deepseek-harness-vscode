@@ -25,7 +25,7 @@ import { callRpc, type RpcResponseLike, unavailable, unwrapRpcResult } from '../
 import { clientTimeZoneField } from '../client-time-zone.js'
 import type { StreamRecovery } from '../stream-controller.js'
 import { rc6Mapper } from '../versions/rc6/mapper.js'
-import { permissionPresetIds } from '../projection/agent.js'
+import { permissionPresetIds, projectedModelSelection } from '../projection/agent.js'
 import type { Rc6WorkspaceRepository } from './workspace-repository.js'
 import { recordOrUndefined, validProjectionBlock, walkHistoryPages } from './shared/guards.js'
 import {
@@ -1288,7 +1288,7 @@ function configurationFromRawHistory(
   agentPreset?: string,
   projectionValues?: Readonly<Record<string, unknown>>,
 ): AgentConfiguration {
-  let model = modelSelectionFromProjection(projectionValues)
+  let model = projectedModelSelection(projectionValues)
   let permissionPreset = 'workspace-write'
   let planMode = false
   let sandboxMode: string | undefined
@@ -1362,20 +1362,6 @@ function configurationFromRawHistory(
       modelId: model.modelId,
       ...(model.reasoningLevel === undefined ? {} : { reasoningLevel: model.reasoningLevel }),
     },
-  }
-}
-
-function modelSelectionFromProjection(projectionValues: Readonly<Record<string, unknown>> | undefined): {
-  providerId: string
-  modelId: string
-  reasoningLevel: string | undefined
-} {
-  const state = recordOrUndefined(projectionValues?.modelSelection)
-  const selected = recordOrUndefined(state?.next) ?? recordOrUndefined(state?.lastUsed)
-  return {
-    providerId: firstString(selected?.provider, selected?.providerId) ?? '',
-    modelId: firstString(selected?.model, selected?.modelId) ?? '',
-    reasoningLevel: firstString(selected?.reasoningEffort, selected?.reasoningLevel),
   }
 }
 

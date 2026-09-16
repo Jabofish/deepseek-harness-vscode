@@ -153,7 +153,12 @@ function baseResponse(request: WebviewRequest): unknown {
     case 'subagent.list':
       return { entries: [], parentAvailable: true }
     case 'models.session.list':
-      return { models: [], failures: [], routable: true }
+      return {
+        models: [],
+        failures: [],
+        current: { providerId: 'deepseek', modelId: 'deepseek-chat' },
+        routable: true,
+      }
     default:
       return undefined
   }
