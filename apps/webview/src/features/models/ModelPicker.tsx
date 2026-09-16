@@ -10,13 +10,15 @@ import {
   type KeyboardEvent,
   type ReactElement,
 } from 'react'
-import type { ModelDescriptor, ModelSelection } from '@dsh-vscode/domain'
+import type { ModelCatalogFailure, ModelDescriptor, ModelSelection } from '@dsh-vscode/domain'
 import { useI18n } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
 import { useDismissibleLayer } from '../../components/common/useDismissibleLayer.js'
 import { useViewportMenuPosition } from '../../components/common/useViewportMenuPosition.js'
 
 type ModelPane = 'root' | 'models' | 'effort'
+
+const EMPTY_FAILURES: readonly ModelCatalogFailure[] = []
 
 interface ProviderGroup {
   readonly id: string
@@ -25,6 +27,8 @@ interface ProviderGroup {
 
 export interface ModelPickerProps {
   readonly models: readonly ModelDescriptor[]
+  /** Providers the directory could not enumerate, with the host's reason. */
+  readonly failures?: readonly ModelCatalogFailure[]
   readonly value: ModelSelection
   readonly disabled?: boolean
   readonly displayLabel?: boolean
@@ -46,6 +50,13 @@ export const ModelPicker = memo(function ModelPicker(props: ModelPickerProps): R
   const triggerRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const menuId = useId()
+  const failures = props.failures ?? EMPTY_FAILURES
+  /**
+   * A directory with nothing to show is not the same as a failure the user
+   * needs to read: the menu stays reachable while the host has something to
+   * say about why the providers are missing.
+   */
+  const empty = props.models.length === 0 && failures.length === 0
   /** Where the next open should land the keyboard cursor. */
   const openEntryRef = useRef<'first' | 'last'>('first')
   /**
@@ -116,14 +127,14 @@ export const ModelPicker = memo(function ModelPicker(props: ModelPickerProps): R
     if (request <= 0 || request <= consumedRequestRef.current) return
     // An empty directory is the one transient reason to keep waiting: the
     // request is spent only once there is something to show.
-    if (props.disabled || props.models.length === 0) return
+    if (props.disabled || empty) return
     const openPicker = window.setTimeout(() => {
       consumedRequestRef.current = request
       openMenu()
       triggerRef.current?.focus()
     }, 0)
     return () => window.clearTimeout(openPicker)
-  }, [openMenu, props.disabled, props.models.length, props.openRequest])
+  }, [empty, openMenu, props.disabled, props.openRequest])
 
   const moveFocus = (offset: number): void => {
     const items = menuItems(menuRef.current)
@@ -194,7 +205,7 @@ export const ModelPicker = memo(function ModelPicker(props: ModelPickerProps): R
         aria-expanded={open}
         aria-haspopup="menu"
         title={`${t('model.select')}: ${currentLabel}`}
-        disabled={props.disabled === true || props.models.length === 0}
+        disabled={props.disabled === true || empty}
         onClick={() => {
           if (open) close()
           else openMenu()
@@ -255,41 +266,55 @@ export const ModelPicker = memo(function ModelPicker(props: ModelPickerProps): R
                 <span>{t('model.back')}</span>
               </button>
               {pane === 'models' ? (
-                groups.length === 0 ? (
-                  <p className="dsh-model-picker__empty" role="status">
-                    {t('model.noModels')}
-                  </p>
-                ) : (
-                  groups.map((group) => (
-                    <section
-                      className="dsh-model-picker__group"
-                      key={group.id}
-                      role="group"
-                      aria-label={group.id}
-                    >
-                      <h3>{group.id}</h3>
-                      {group.models.map((model) => {
-                        const isSelected =
-                          model.providerId === props.value.providerId && model.id === props.value.modelId
-                        return (
-                          <button
-                            className={`dsh-select-menu__option${
-                              isSelected ? ' dsh-select-menu__option--selected' : ''
-                            }`}
-                            key={model.id}
-                            type="button"
-                            role="menuitemradio"
-                            aria-checked={isSelected}
-                            onClick={() => selectModel(model)}
-                          >
-                            <span>{model.label}</span>
-                            {isSelected ? <Icon name="check" /> : null}
-                          </button>
-                        )
-                      })}
-                    </section>
-                  ))
-                )
+                <>
+                  {failures.length === 0 ? null : (
+                    <div className="dsh-model-picker__failures">
+                      {failures.map((failure) => (
+                        <p className="dsh-model-picker__warning" role="status" key={failure.providerId}>
+                          {t('model.groupLoadFailed', {
+                            name: failure.providerName,
+                            message: failure.message,
+                          })}
+                        </p>
+                      ))}
+                    </div>
+                  )}
+                  {groups.length === 0 ? (
+                    <p className="dsh-model-picker__empty" role="status">
+                      {t('model.noModels')}
+                    </p>
+                  ) : (
+                    groups.map((group) => (
+                      <section
+                        className="dsh-model-picker__group"
+                        key={group.id}
+                        role="group"
+                        aria-label={group.id}
+                      >
+                        <h3>{group.id}</h3>
+                        {group.models.map((model) => {
+                          const isSelected =
+                            model.providerId === props.value.providerId && model.id === props.value.modelId
+                          return (
+                            <button
+                              className={`dsh-select-menu__option${
+                                isSelected ? ' dsh-select-menu__option--selected' : ''
+                              }`}
+                              key={model.id}
+                              type="button"
+                              role="menuitemradio"
+                              aria-checked={isSelected}
+                              onClick={() => selectModel(model)}
+                            >
+                              <span>{model.label}</span>
+                              {isSelected ? <Icon name="check" /> : null}
+                            </button>
+                          )
+                        })}
+                      </section>
+                    ))
+                  )}
+                </>
               ) : reasoningLevels.length === 0 ? (
                 <p className="dsh-model-picker__empty" role="status">
                   {t('model.noEfforts')}

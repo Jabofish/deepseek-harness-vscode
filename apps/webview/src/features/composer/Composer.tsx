@@ -21,6 +21,7 @@ import type {
   EditorContextKind,
   EditorContextPreview,
   ImageAttachmentLimits,
+  ModelCatalogFailure,
   ModelDescriptor,
   PromptMode,
   PromptAttachment,
@@ -62,6 +63,7 @@ const EMPTY_COMMAND_MENU_ROWS: readonly CommandMenuRow[] = []
 const EMPTY_STRING_LIST: readonly string[] = []
 const EMPTY_ATTACHMENT_PREVIEWS: Readonly<Record<string, string>> = {}
 const EMPTY_MODELS: readonly ModelDescriptor[] = []
+const EMPTY_MODEL_FAILURES: readonly ModelCatalogFailure[] = []
 const EMPTY_PRESETS: readonly AgentPresetDescriptor[] = []
 const EMPTY_EDITOR_CONTEXT: readonly EditorContextItem[] = []
 const EMPTY_EDITOR_CONTEXT_KINDS: readonly EditorContextKind[] = []
@@ -82,6 +84,8 @@ export interface ComposerProps {
   readonly imageLimits?: ImageAttachmentLimits
   readonly configuration?: AgentConfiguration | undefined
   readonly models?: readonly ModelDescriptor[]
+  /** Providers the session directory could not enumerate, with the host's reason. */
+  readonly modelFailures?: readonly ModelCatalogFailure[]
   readonly presets?: readonly AgentPresetDescriptor[]
   readonly permissionPresets?: readonly string[]
   readonly commands?: readonly DynamicCommand[]
@@ -254,6 +258,7 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
   const onConfigurationChange = props.onConfigurationChange
   const onCommand = props.onCommand
   const models = props.models ?? EMPTY_MODELS
+  const modelFailures = props.modelFailures ?? EMPTY_MODEL_FAILURES
   const presets = props.presets ?? EMPTY_PRESETS
   const editorContext = props.editorContext ?? EMPTY_EDITOR_CONTEXT
   const editorContextAvailableKinds = props.editorContextAvailableKinds ?? EMPTY_EDITOR_CONTEXT_KINDS
@@ -340,6 +345,7 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
     const controlProps: SessionControlsProps = {
       configuration,
       models,
+      modelFailures,
       presets,
       permissionPresets,
       disabled: props.configurationDisabled ?? (props.disabled || props.running),

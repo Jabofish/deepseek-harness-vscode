@@ -74,6 +74,7 @@ function connectedState(activeSession: boolean): AppState {
     providers: [],
     models: [],
     sessionModels: [],
+    sessionModelFailures: [],
     presets: [],
     permissionPresets: [],
     commands: [],

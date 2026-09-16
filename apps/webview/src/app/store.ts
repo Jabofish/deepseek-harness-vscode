@@ -36,6 +36,7 @@ import {
   type MessageFeedbackRating,
   type MessageAttachment,
   type MessageImageReference,
+  type ModelCatalogFailure,
   type ModelDescriptor,
   type ModelDiscoveryInput,
   type ModelProvider,
@@ -207,6 +208,8 @@ export interface AppState {
   readonly models: readonly ModelDescriptor[]
   /** Session-scoped model directory; the global catalog remains the Settings source. */
   readonly sessionModels: readonly ModelDescriptor[]
+  /** Providers the session directory could not enumerate, with the host's reason. */
+  readonly sessionModelFailures: readonly ModelCatalogFailure[]
   readonly presets: readonly AgentPresetDescriptor[]
   readonly permissionPresets: readonly string[]
   readonly commands: readonly DynamicCommand[]
@@ -475,6 +478,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     providers: [],
     models: [],
     sessionModels: [],
+    sessionModelFailures: [],
     presets: [],
     permissionPresets: [],
     commands: [],
@@ -1528,8 +1532,19 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       isCommandDirectoryRefresh(message.payload)
     )
       void refreshCommands(undefined, true)
-    if (message.type === 'event' && message.name === 'remote.event' && isModelCatalogRefresh(message.payload))
+    if (
+      message.type === 'event' &&
+      message.name === 'remote.event' &&
+      isModelCatalogRefresh(message.payload)
+    ) {
       void refreshProvidersAndModels(client, setState)
+      // The same host events invalidate the session-scoped directory. Without
+      // this re-read a failure row the picker is showing would outlive its
+      // cause, for example after the user repairs the credential it names.
+      const refreshSessionId = state.activeSessionId
+      if (refreshSessionId !== undefined)
+        void refreshSessionModelDirectory(client, setState, refreshSessionId)
+    }
     if (
       message.type === 'event' &&
       message.name === 'connection.snapshot' &&
@@ -1829,6 +1844,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
               ? detail.configuration
               : createDefaultConfiguration(current, composerPreferences),
             sessionModels: [],
+            sessionModelFailures: [],
             permissionPresets: permissionPresets ?? [],
             queue: [],
             goals: [],
@@ -1883,11 +1899,11 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         })
         .catch(() => undefined)
       void sessionModelDirectoryData
-        .then((sessionModels) => {
-          if (version !== openVersion || sessionModels === undefined) return
+        .then((directory) => {
+          if (version !== openVersion || directory === undefined) return
           setState((current) =>
-            current.activeSessionId === sessionId && current.sessionModels !== sessionModels
-              ? { ...current, sessionModels }
+            current.activeSessionId === sessionId && current.sessionModels !== directory.models
+              ? { ...current, sessionModels: directory.models, sessionModelFailures: directory.failures }
               : current,
           )
         })
@@ -2028,6 +2044,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
             ),
             configuration: undefined,
             sessionModels: [],
+            sessionModelFailures: [],
             permissionPresets: [],
             queue: [],
             goals: [],
@@ -2245,6 +2262,9 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     },
     get sessionModels() {
       return state.sessionModels
+    },
+    get sessionModelFailures() {
+      return state.sessionModelFailures
     },
     get presets() {
       return state.presets
@@ -2656,6 +2676,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
               projections: removeSessionProjection(current.projections, sessionId),
               configuration: undefined,
               sessionModels: [],
+              sessionModelFailures: [],
               permissionPresets: [],
               queue: [],
               goals: [],
@@ -4048,6 +4069,7 @@ async function refreshSessions(
             projections: {},
             configuration: undefined,
             sessionModels: [],
+            sessionModelFailures: [],
             permissionPresets: [],
             queue: [],
             goals: [],
@@ -4329,10 +4351,15 @@ function mergeSkillCommands(
   return [...commands, ...skillCommands]
 }
 
+interface SessionModelDirectory {
+  readonly models: readonly ModelDescriptor[]
+  readonly failures: readonly ModelCatalogFailure[]
+}
+
 async function loadSessionModelDirectory(
   client: ProtocolClient,
   sessionId: string,
-): Promise<readonly ModelDescriptor[] | undefined> {
+): Promise<SessionModelDirectory | undefined> {
   try {
     const result = object(
       await client.request<unknown>({
@@ -4342,10 +4369,38 @@ async function loadSessionModelDirectory(
       }),
     )
     if (result === undefined || !Array.isArray(result.models)) return undefined
-    return result.models.every(isModelDescriptor) ? result.models : undefined
+    if (!result.models.every(isModelDescriptor)) return undefined
+    // The failures are half the directory: they are the only statement about
+    // the providers that could not enumerate, so a row this side cannot read
+    // invalidates the fragment rather than being dropped from it.
+    if (!Array.isArray(result.failures) || !result.failures.every(isModelCatalogFailure)) return undefined
+    return { models: result.models, failures: result.failures }
   } catch {
     return undefined
   }
+}
+
+/**
+ * Re-read one session's model directory. A failed read keeps the last good
+ * directory: the open flow has the same contract, and the picker's warning
+ * rows must not be replaced by an empty directory the host never stated.
+ */
+async function refreshSessionModelDirectory(
+  client: ProtocolClient,
+  setState: StateSetter,
+  sessionId: string,
+): Promise<void> {
+  const directory = await loadSessionModelDirectory(client, sessionId)
+  if (directory === undefined) return
+  setState((current) => {
+    if (current.activeSessionId !== sessionId) return current
+    if (
+      sameModelDescriptorList(current.sessionModels, directory.models) &&
+      sameModelCatalogFailureList(current.sessionModelFailures, directory.failures)
+    )
+      return current
+    return { ...current, sessionModels: directory.models, sessionModelFailures: directory.failures }
+  })
 }
 
 function withClientCommandContributions(commands: readonly DynamicCommand[]): readonly DynamicCommand[] {
@@ -4570,6 +4625,27 @@ function sameModelDescriptorList(
       previous.contextWindow !== next.contextWindow ||
       previous.supportsReasoning !== next.supportsReasoning ||
       !sameStringList(previous.reasoningLevels, next.reasoningLevels)
+    )
+      return false
+  }
+  return true
+}
+
+function sameModelCatalogFailureList(
+  left: readonly ModelCatalogFailure[],
+  right: readonly ModelCatalogFailure[],
+): boolean {
+  if (left === right) return true
+  if (left.length !== right.length) return false
+  for (let index = 0; index < left.length; index += 1) {
+    const previous = left[index]
+    const next = right[index]
+    if (
+      previous === undefined ||
+      next === undefined ||
+      previous.providerId !== next.providerId ||
+      previous.providerName !== next.providerName ||
+      previous.message !== next.message
     )
       return false
   }
@@ -4996,6 +5072,7 @@ function applyHostMessage(
             projections: removeSessionProjection(next.projections, event.sessionId),
             configuration: undefined,
             sessionModels: [],
+            sessionModelFailures: [],
             permissionPresets: [],
             queue: [],
             goals: [],
@@ -8401,6 +8478,18 @@ function isModelDescriptor(value: unknown): value is ModelDescriptor {
     typeof item.providerId === 'string' &&
     typeof item.label === 'string' &&
     typeof item.supportsReasoning === 'boolean'
+  )
+}
+
+function isModelCatalogFailure(value: unknown): value is ModelCatalogFailure {
+  const item = object(value)
+  return (
+    item !== undefined &&
+    typeof item.providerId === 'string' &&
+    item.providerId.trim() !== '' &&
+    typeof item.providerName === 'string' &&
+    item.providerName.trim() !== '' &&
+    typeof item.message === 'string'
   )
 }
 

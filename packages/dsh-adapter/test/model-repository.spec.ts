@@ -342,3 +342,60 @@ describe('Rc6ModelRepository provider configuration', () => {
     })
   })
 })
+
+describe('Rc6ModelRepository session model catalog', () => {
+  const SESSION_MODELS = {
+    current: { provider: 'deepseek', model: 'deepseek-chat' },
+    routable: true,
+    groups: [
+      {
+        id: 'deepseek',
+        name: 'DeepSeek',
+        models: [{ id: 'deepseek-chat', name: 'DeepSeek Chat' }],
+      },
+    ],
+  }
+
+  it('keeps a provider-local failure whole alongside the groups that did load', async () => {
+    // The host measures nothing here: `modelCatalogFailureSchema` types the
+    // message as a plain string and the reference client renders it verbatim,
+    // so a provider-local failure that explains itself at length is exactly
+    // what the picker has to show. One failed provider must not cost the
+    // directory its healthy groups either.
+    const message = `gateway rejected the credential: ${'the token expired at the last rotation; '.repeat(200)}`
+    expect(message.length).toBeGreaterThan(4_096)
+
+    const repository = new Rc6ModelRepository(
+      transportFor({
+        'session.models': {
+          ...SESSION_MODELS,
+          failures: [{ id: 'gateway', name: 'Gateway', message }],
+        },
+      }),
+    )
+
+    await expect(repository.listSessionModels('session-1')).resolves.toEqual({
+      current: { providerId: 'deepseek', modelId: 'deepseek-chat' },
+      routable: true,
+      models: [
+        { id: 'deepseek-chat', providerId: 'deepseek', label: 'DeepSeek Chat', supportsReasoning: false },
+      ],
+      failures: [{ providerId: 'gateway', providerName: 'Gateway', message }],
+    })
+  })
+
+  it('refuses a failure row that cannot name its provider or explain itself', async () => {
+    const repository = new Rc6ModelRepository(
+      transportFor({
+        'session.models': {
+          ...SESSION_MODELS,
+          failures: [{ id: 'gateway', message: 'no provider name' }],
+        },
+      }),
+    )
+
+    await expect(repository.listSessionModels('session-1')).rejects.toMatchObject({
+      code: 'PROTOCOL_ERROR',
+    })
+  })
+})

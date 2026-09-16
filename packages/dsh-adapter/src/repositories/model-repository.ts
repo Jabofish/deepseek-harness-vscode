@@ -131,7 +131,14 @@ export class Rc6ModelRepository implements ModelRepository {
     })
     const failures = value.failures.map((failure) => {
       const record = recordOrUndefined(failure) as Record<string, unknown>
-      return { providerId: record.id as string, message: (record.message as string).slice(0, 512) }
+      // The host types this message as an arbitrary string and the reference
+      // client renders it verbatim: the picker is the only place a failed
+      // provider can explain itself, so nothing here may shorten it.
+      return {
+        providerId: record.id as string,
+        providerName: record.name as string,
+        message: record.message as string,
+      }
     })
     return {
       current: {

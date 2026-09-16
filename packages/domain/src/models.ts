@@ -75,11 +75,22 @@ export interface ModelDescriptor {
   readonly reasoningLevels?: readonly string[]
 }
 
+/**
+ * One provider whose catalog enumeration failed while the rest of the
+ * directory loaded. It explains why a provider contributes no models; the
+ * message is host-stated and carries no client-side length budget.
+ */
+export interface ModelCatalogFailure {
+  readonly providerId: string
+  readonly providerName: string
+  readonly message: string
+}
+
 export interface SessionModelCatalog {
   readonly current: ModelSelection
   readonly routable: boolean
   readonly models: readonly ModelDescriptor[]
-  readonly failures: readonly { readonly providerId: string; readonly message: string }[]
+  readonly failures: readonly ModelCatalogFailure[]
 }
 
 export interface ModelDiscoveryInput {

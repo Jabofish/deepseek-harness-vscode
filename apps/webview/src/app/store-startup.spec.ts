@@ -137,7 +137,7 @@ function startupResponse(request: WebviewRequest): unknown {
     case 'subagent.list':
       return request.type === 'subagent.list' ? { entries: [], parentAvailable: true } : []
     case 'models.session.list':
-      return { models: [] }
+      return { models: [], failures: [] }
     default:
       throw new Error(`unexpected startup request ${request.type}`)
   }
@@ -1215,6 +1215,90 @@ describe('AppStore startup session restoration', () => {
       ).length
       expect(after).toBe(before + 2)
     }
+    store.dispose()
+  })
+
+  it('keeps a provider-local failure alongside the models that did load', async () => {
+    const client = new StartupClient((request) => {
+      if (request.type === 'models.session.list')
+        return {
+          models: [
+            { id: 'deepseek-chat', providerId: 'deepseek', label: 'DeepSeek Chat', supportsReasoning: false },
+          ],
+          failures: [{ providerId: 'gateway', providerName: 'Gateway', message: 'connection refused' }],
+        }
+      return startupResponse(request)
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+
+    await store.openSession('session-active')
+
+    await vi.waitFor(() => expect(store.sessionModels).toHaveLength(1))
+    expect(store.sessionModelFailures).toEqual([
+      { providerId: 'gateway', providerName: 'Gateway', message: 'connection refused' },
+    ])
+    store.dispose()
+  })
+
+  it('refuses a directory whose failure rows cannot be read instead of keeping one half of it', async () => {
+    const client = new StartupClient((request) => {
+      if (request.type === 'models.session.list')
+        return {
+          models: [
+            { id: 'deepseek-chat', providerId: 'deepseek', label: 'DeepSeek Chat', supportsReasoning: false },
+          ],
+          failures: [{ providerId: 'gateway', message: 'no provider name' }],
+        }
+      return startupResponse(request)
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+
+    await store.openSession('session-active')
+    await new Promise((resolve) => window.setTimeout(resolve, 0))
+
+    expect(store.sessionModels).toEqual([])
+    expect(store.sessionModelFailures).toEqual([])
+    store.dispose()
+  })
+
+  it('re-reads the active session directory when the host invalidates the catalog', async () => {
+    let failing = true
+    const client = new StartupClient((request) => {
+      if (request.type === 'models.session.list')
+        return failing
+          ? {
+              models: [],
+              failures: [{ providerId: 'gateway', providerName: 'Gateway', message: 'connection refused' }],
+            }
+          : {
+              models: [
+                {
+                  id: 'gateway-chat',
+                  providerId: 'gateway',
+                  label: 'Gateway Chat',
+                  supportsReasoning: false,
+                },
+              ],
+              failures: [],
+            }
+      return startupResponse(request)
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+
+    await store.openSession('session-active')
+    await vi.waitFor(() => expect(store.sessionModelFailures).toHaveLength(1))
+
+    failing = false
+    client.emit({
+      type: 'event',
+      name: 'remote.event',
+      sequence: 9,
+      payload: { name: 'credentials/reference-updated', args: ['gateway-key'] },
+    })
+
+    // A failure row must not outlive the cause the user has just repaired.
+    await vi.waitFor(() => expect(store.sessionModelFailures).toEqual([]))
+    expect(store.sessionModels).toHaveLength(1)
     store.dispose()
   })
 

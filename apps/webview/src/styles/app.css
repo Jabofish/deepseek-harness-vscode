@@ -570,6 +570,27 @@ ul {
   color: var(--dsh-muted);
 }
 
+/*
+ * A provider the host could not enumerate. The message is host prose and can
+ * be arbitrarily long, so it wraps inside the menu instead of being clipped.
+ */
+.dsh-model-picker__failures {
+  display: grid;
+  gap: var(--dsh-space-2);
+  padding: var(--dsh-space-2);
+}
+
+.dsh-model-picker__warning {
+  margin: 0;
+  padding: var(--dsh-space-2);
+  border: 1px solid var(--dsh-warning-border);
+  border-radius: var(--dsh-radius-sm);
+  background: var(--dsh-warning-bg);
+  color: var(--dsh-warning);
+  font-size: 0.875em;
+  overflow-wrap: anywhere;
+}
+
 .dsh-runtime-status {
   position: relative;
   display: inline-flex;

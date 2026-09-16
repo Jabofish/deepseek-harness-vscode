@@ -449,6 +449,11 @@ export function App(): ReactElement {
     setDshEventVisibility({ sessionId: activeSessionId, visible })
   })
   const sessionModels = state.sessionModels.length > 0 ? state.sessionModels : state.models
+  // These rows name the providers the session directory could not enumerate.
+  // They stay visible while the global catalog stands in, because that
+  // fallback is what lets a session whose providers all failed show models at
+  // all, and dropping the rows there would hide the only explanation.
+  const sessionModelFailures = state.sessionModelFailures
   const pendingPermissions = useMemo(
     () =>
       activeSessionId === undefined || state.permissions.length === 0
@@ -1662,6 +1667,7 @@ export function App(): ReactElement {
                               : {})}
                             configuration={state.configuration}
                             models={sessionModels}
+                            modelFailures={sessionModelFailures}
                             presets={state.presets}
                             permissionPresets={state.permissionPresets}
                             commands={state.commands}

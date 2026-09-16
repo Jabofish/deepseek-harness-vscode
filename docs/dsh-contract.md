@@ -139,6 +139,10 @@ Steer 是收敛操作：`session/steer-unavailable`（回合已停止接受 stee
 
 空白会话（`blank: true`）的行标题按官方语义显示为本地化的 `New Session`，与 `title` 字段无关；持久标题的来源始终是日志里的 `session/title` 事件。
 
+## 会话模型目录
+
+`session.models` 的应答是 `{ current, routable, groups, failures }`，`groups` 与 `failures` 是同一份目录的两半：前者是已枚举成功的 Provider 分组，后者是逐个 Provider 的枚举失败（`{ id, name, message }`）。上游 schema 对 `failures.id`/`failures.name` 要求 `min(1)`，`message` 是无长度上限的 lookup 诊断；该行是「这个 Provider 为什么没有模型」的唯一解释，因此适配层不得丢弃或截断它，界面按宿主原文渲染（契约实现规则 7）。两个方向的误读都要避免：某 Provider 失败不使其他分组失效，客户端不得因为 `failures` 非空而清空目录或禁用选择；`failures` 也不是整目录失败，不得据此宣称会话没有可选模型。
+
 ## 事件恢复与资源所有权
 
 每个 Session 保存最后提交的服务器序号。重连顺序固定为：重新订阅、比较序号、通过历史补齐缺口、去重、提交 reducer。事件不能只按时间戳排序；未知事件保留安全的类型/序号/摘要，不能阻断后续已知事件。

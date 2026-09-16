@@ -53,7 +53,7 @@ class StreamClient {
           },
         }
       case 'models.session.list':
-        return { models: [] }
+        return { models: [], failures: [] }
       case 'subagent.list':
         return { entries: [], parentAvailable: true }
       default:

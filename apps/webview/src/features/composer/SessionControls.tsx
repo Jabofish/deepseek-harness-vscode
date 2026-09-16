@@ -3,6 +3,7 @@ import {
   type AgentPresetDescriptor,
   type ContextBreakdown,
   type DynamicCommand,
+  type ModelCatalogFailure,
   type ModelDescriptor,
   type ModelSelection,
   PROMPT_MODES,
@@ -21,6 +22,8 @@ import { useViewportMenuPosition } from '../../components/common/useViewportMenu
 export interface SessionControlsProps {
   readonly configuration: AgentConfiguration
   readonly models: readonly ModelDescriptor[]
+  /** Providers the session directory could not enumerate, with the host's reason. */
+  readonly modelFailures?: readonly ModelCatalogFailure[]
   readonly presets: readonly AgentPresetDescriptor[]
   readonly permissionPresets: readonly string[]
   /** Optional command directory; omitted means capability discovery is unavailable. */
@@ -278,6 +281,7 @@ export const SessionControls = memo(function SessionControls(props: SessionContr
           <ModelPicker
             models={props.models}
             value={props.configuration.model}
+            {...(props.modelFailures === undefined ? {} : { failures: props.modelFailures })}
             {...(props.modelPickerOpenRequest === undefined
               ? {}
               : { openRequest: props.modelPickerOpenRequest })}

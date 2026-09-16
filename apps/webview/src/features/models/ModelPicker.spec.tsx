@@ -3,7 +3,7 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ReactElement } from 'react'
-import type { ModelDescriptor, ModelSelection } from '@dsh-vscode/domain'
+import type { ModelCatalogFailure, ModelDescriptor, ModelSelection } from '@dsh-vscode/domain'
 
 import { I18nProvider } from '../../i18n.js'
 import { ModelPicker } from './ModelPicker.js'
@@ -151,6 +151,42 @@ describe('ModelPicker keyboard and focus contract', () => {
   })
 })
 
+describe('ModelPicker failure rows', () => {
+  afterEach(() => cleanup())
+
+  it('renders a failed provider with the host message whole and keeps the usable groups', () => {
+    // The host does not bound this diagnostic and the reference client renders
+    // it verbatim, so the picker is where a provider gets to explain itself.
+    const message = `gateway rejected the credential: ${'the token expired at the last rotation; '.repeat(200)}`
+    expect(message.length).toBeGreaterThan(4_096)
+
+    renderPicker({ failures: [{ providerId: 'gateway', providerName: 'Gateway', message }] })
+    openRoot()
+    activate(screen.getByRole('menuitem', { name: /^Model/u }))
+
+    expect(screen.getAllByRole('status').map((node) => node.textContent)).toEqual([
+      `Could not load models for Gateway: ${message}`,
+    ])
+    expect(screen.getByRole('menuitemradio', { name: /DeepSeek Chat/u })).toBeDefined()
+  })
+
+  it('keeps the menu reachable when every provider failed', () => {
+    renderPicker({
+      models: [],
+      failures: [{ providerId: 'gateway', providerName: 'Gateway', message: 'connection refused' }],
+    })
+
+    expect((trigger() as HTMLButtonElement).disabled).toBe(false)
+    openRoot()
+    activate(screen.getByRole('menuitem', { name: /^Model/u }))
+
+    expect(screen.getAllByRole('status').map((node) => node.textContent)).toEqual([
+      'Could not load models for Gateway: connection refused',
+      'No models are available for this session.',
+    ])
+  })
+})
+
 describe('ModelPicker open requests', () => {
   afterEach(() => cleanup())
 
@@ -224,6 +260,7 @@ function renderPicker(
   options: {
     readonly value?: ModelSelection
     readonly models?: readonly ModelDescriptor[]
+    readonly failures?: readonly ModelCatalogFailure[]
     readonly disabled?: boolean
     readonly openRequest?: number
     readonly onChange?: (value: ModelSelection) => void
@@ -236,6 +273,7 @@ function picker(
   options: {
     readonly value?: ModelSelection
     readonly models?: readonly ModelDescriptor[]
+    readonly failures?: readonly ModelCatalogFailure[]
     readonly disabled?: boolean
     readonly openRequest?: number
     readonly onChange?: (value: ModelSelection) => void
@@ -246,6 +284,7 @@ function picker(
       <ModelPicker
         models={options.models ?? MODELS}
         value={options.value ?? CHAT}
+        {...(options.failures === undefined ? {} : { failures: options.failures })}
         {...(options.disabled === undefined ? {} : { disabled: options.disabled })}
         {...(options.openRequest === undefined ? {} : { openRequest: options.openRequest })}
         onChange={options.onChange ?? vi.fn()}

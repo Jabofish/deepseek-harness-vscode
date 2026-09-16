@@ -95,7 +95,7 @@ function response(request: WebviewRequest | FeatureRequest): unknown {
     case 'subagent.list':
       return { entries: [], parentAvailable: true }
     case 'models.session.list':
-      return { models: [] }
+      return { models: [], failures: [] }
     case 'checkpoint.list':
     case 'checkpoint.create':
       return contractPayload({ kind: 'checkpoints', items: [checkpoint] })
