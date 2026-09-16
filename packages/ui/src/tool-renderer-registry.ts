@@ -59,6 +59,7 @@ export class ToolRendererRegistry {
         tool,
         expanded: options.expanded ?? false,
         onToggle: options.onToggle ?? (() => undefined),
+        ...(options.onOpenLink === undefined ? {} : { onOpenLink: options.onOpenLink }),
         ...(options.translate === undefined ? {} : { translate: options.translate }),
       })
     }
@@ -69,6 +70,7 @@ export class ToolRendererRegistry {
         tool,
         expanded: options.expanded ?? false,
         onToggle: options.onToggle ?? (() => undefined),
+        ...(options.onOpenLink === undefined ? {} : { onOpenLink: options.onOpenLink }),
         ...(options.translate === undefined ? {} : { translate: options.translate }),
       })
     }

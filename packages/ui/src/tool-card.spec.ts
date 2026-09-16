@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
-import { cleanup, render } from '@testing-library/react'
-import { afterEach, describe, expect, it } from 'vitest'
+import { cleanup, fireEvent, render } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createElement } from 'react'
 import type { ToolCallView } from '@dsh-vscode/domain'
 import { ToolCard } from './components/ToolCard.js'
@@ -89,5 +89,48 @@ describe('ToolCard', () => {
 
     const section = document.querySelector('.dsh-tool-card__section--error')
     expect(section?.textContent).toContain('field-89 is required but was missing from the payload')
+  })
+
+  it('does not repeat an error that is also present as the generic result', () => {
+    const failure = 'The tool could not open hello.txt.'
+    const tool: ToolCallView = {
+      id: 'third-party-duplicate-error',
+      name: 'filesystem_search',
+      title: 'Search files',
+      category: 'tool',
+      status: 'failed',
+      outputSummary: failure,
+      error: failure,
+      metadata: {},
+    }
+
+    render(createElement(ToolCard, { tool, expanded: true, onToggle: () => undefined }))
+
+    expect(document.querySelectorAll('.dsh-tool-card__section')).toHaveLength(1)
+    expect(document.querySelectorAll('.dsh-tool-card__section--error')).toHaveLength(1)
+    expect(document.querySelector('.dsh-tool-card__section--error')?.textContent).toContain(failure)
+  })
+
+  it('renders one clickable target for a safe generic-tool location', () => {
+    const filePath = 'D:\\CS\\deepseek-harness-vscode\\.test-workspace\\hello.txt'
+    const onOpenLink = vi.fn()
+    const tool: ToolCallView = {
+      id: 'generic-location-target',
+      name: 'filesystem_search',
+      title: 'Search files',
+      category: 'tool',
+      status: 'completed',
+      locations: [{ path: filePath, line: 3 }],
+      metadata: {},
+    }
+
+    render(createElement(ToolCard, { tool, expanded: true, onToggle: () => undefined, onOpenLink }))
+
+    const target = document.querySelector<HTMLButtonElement>('.dsh-tool-card__target')
+    expect(target?.textContent).toBe(`${filePath}:4`)
+    expect(document.querySelectorAll('.dsh-tool-card__target')).toHaveLength(1)
+    fireEvent.click(target!)
+    expect(onOpenLink).toHaveBeenCalledOnce()
+    expect(onOpenLink).toHaveBeenCalledWith(filePath)
   })
 })

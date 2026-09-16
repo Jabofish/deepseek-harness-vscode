@@ -78,6 +78,8 @@ export function ToolCodePreview(props: ToolCodeRenderProps): ReactElement {
     highlighted !== undefined && highlighted.language === language && highlighted.source === source
       ? highlighted.tokens
       : undefined
+  const hasToolbarMeta = props.lines.length < props.totalLines || (props.language?.trim() ?? '') !== ''
+  const showCopy = props.lines.length > 0
   const renderRows = (lines: ToolCodeRenderProps['lines'], startIndex: number): ReactElement[] =>
     lines.map((line, index) => {
       const sourceIndex = startIndex + index
@@ -114,20 +116,24 @@ export function ToolCodePreview(props: ToolCodeRenderProps): ReactElement {
       data-read=""
       data-language={props.language ?? 'text'}
     >
-      <div className="dsh-tool-code-preview__toolbar">
-        <span className="dsh-tool-code-preview__window">
-          {props.lines.length < props.totalLines
-            ? translate('toolrow.presentation.window', {
-                shown: props.lines.length,
-                total: props.totalLines,
-              })
-            : null}
-        </span>
-        <span className="dsh-tool-code-preview__language">{props.language ?? ''}</span>
-        {props.lines.length === 0 ? null : (
-          <CopyButton text={source} className="dsh-tool-code-preview__copy" translate={translate} />
-        )}
-      </div>
+      {hasToolbarMeta || showCopy ? (
+        <div
+          className={`dsh-tool-code-preview__toolbar${hasToolbarMeta ? '' : ' dsh-tool-code-preview__toolbar--minimal'}`}
+        >
+          <span className="dsh-tool-code-preview__window">
+            {props.lines.length < props.totalLines
+              ? translate('toolrow.presentation.window', {
+                  shown: props.lines.length,
+                  total: props.totalLines,
+                })
+              : null}
+          </span>
+          <span className="dsh-tool-code-preview__language">{props.language ?? ''}</span>
+          {showCopy ? (
+            <CopyButton text={source} className="dsh-tool-code-preview__copy" translate={translate} />
+          ) : null}
+        </div>
+      ) : null}
       <pre
         className="dsh-tool-code-preview__body"
         data-highlighted={highlightedSource === undefined ? 'false' : 'true'}

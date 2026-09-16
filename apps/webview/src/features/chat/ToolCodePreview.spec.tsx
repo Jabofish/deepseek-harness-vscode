@@ -77,6 +77,13 @@ describe('ToolCodePreview', () => {
     expect(container.querySelectorAll('.dsh-tool-code-preview__token')).toHaveLength(0)
   })
 
+  it('keeps a complete unlabeled read window from rendering an empty full-width toolbar', () => {
+    const { container } = render(<ToolCodePreview {...codeProps({ language: '' })} />)
+
+    expect(container.querySelector('.dsh-tool-code-preview__toolbar--minimal')).not.toBeNull()
+    expect(container.querySelector('.dsh-tool-code-preview__copy')).not.toBeNull()
+  })
+
   it('keeps an empty read window explicit without offering an empty copy', () => {
     const { container } = render(<ToolCodePreview {...codeProps({ lines: [], totalLines: 20 })} />)
 
