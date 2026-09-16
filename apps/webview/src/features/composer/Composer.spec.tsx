@@ -3,7 +3,7 @@
 import { useState, type ReactElement } from 'react'
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { DynamicCommand } from '@dsh-vscode/domain'
+import type { AgentConfiguration, DynamicCommand } from '@dsh-vscode/domain'
 import { Composer } from './Composer.js'
 
 function baseProps(): Parameters<typeof Composer>[0] {
@@ -672,6 +672,80 @@ describe('Composer', () => {
     )
     fireEvent.keyDown(screen.getByRole('textbox', { name: 'Prompt' }), { key: 'Tab' })
     expect(onDraftChange).toHaveBeenCalledWith('/goal ')
+  })
+})
+
+describe('Composer model block', () => {
+  afterEach(() => cleanup())
+
+  it('makes the input inert with the host reason when no adapter serves the model', () => {
+    const configuration: AgentConfiguration = {
+      preset: 'standard',
+      toolMode: 'native',
+      permissionPreset: 'workspace-write',
+      planMode: false,
+      model: { providerId: 'gateway', modelId: 'gateway-chat' },
+    }
+    render(
+      <Composer
+        {...baseProps()}
+        configuration={configuration}
+        models={[
+          {
+            id: 'served-chat',
+            providerId: 'served',
+            label: 'Served Chat',
+            supportsReasoning: false,
+          },
+        ]}
+        modelRoutable={false}
+        onConfigurationChange={vi.fn()}
+      />,
+    )
+    const textarea = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })
+
+    expect(textarea.disabled).toBe(true)
+    expect(textarea.getAttribute('placeholder')).toBe(
+      'This model is unavailable — select a model to continue',
+    )
+    expect(screen.getByRole('status').textContent).toBe(
+      'This model is unavailable — select a model to continue',
+    )
+    expect(screen.getByRole('button', { name: 'Send message' }).hasAttribute('disabled')).toBe(true)
+    // Choosing a served model is the way out, so the block never reaches the picker.
+    expect(screen.getByRole('button', { name: /^Model and reasoning/u }).hasAttribute('disabled')).toBe(false)
+  })
+
+  it('drops a submit that arrives while the model is unroutable', () => {
+    const onSubmit = vi.fn()
+    render(<Composer {...baseProps()} draft="hello" modelRoutable={false} onSubmit={onSubmit} />)
+
+    fireEvent.submit(composerForm())
+
+    expect(onSubmit).not.toHaveBeenCalled()
+  })
+
+  it('keeps Stop reachable while a turn runs under the block', () => {
+    const onSubmit = vi.fn()
+    const onCancel = vi.fn()
+    render(
+      <Composer {...baseProps()} running modelRoutable={false} onSubmit={onSubmit} onCancel={onCancel} />,
+    )
+    const stop = screen.getByRole('button', { name: 'Stop response' })
+
+    expect(stop.hasAttribute('disabled')).toBe(false)
+    fireEvent.submit(composerForm())
+    expect(onCancel).toHaveBeenCalledTimes(1)
+    expect(onSubmit).not.toHaveBeenCalled()
+  })
+
+  it('leaves the composer alone until a directory answers', () => {
+    render(<Composer {...baseProps()} />)
+    const textarea = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })
+
+    expect(textarea.disabled).toBe(false)
+    expect(textarea.getAttribute('placeholder')).toBe('Message…')
+    expect(screen.queryByRole('status')).toBeNull()
   })
 })
 

@@ -137,7 +137,7 @@ function startupResponse(request: WebviewRequest): unknown {
     case 'subagent.list':
       return request.type === 'subagent.list' ? { entries: [], parentAvailable: true } : []
     case 'models.session.list':
-      return { models: [], failures: [] }
+      return { models: [], failures: [], routable: true }
     default:
       throw new Error(`unexpected startup request ${request.type}`)
   }
@@ -1226,6 +1226,7 @@ describe('AppStore startup session restoration', () => {
             { id: 'deepseek-chat', providerId: 'deepseek', label: 'DeepSeek Chat', supportsReasoning: false },
           ],
           failures: [{ providerId: 'gateway', providerName: 'Gateway', message: 'connection refused' }],
+          routable: true,
         }
       return startupResponse(request)
     })
@@ -1269,6 +1270,7 @@ describe('AppStore startup session restoration', () => {
           ? {
               models: [],
               failures: [{ providerId: 'gateway', providerName: 'Gateway', message: 'connection refused' }],
+              routable: false,
             }
           : {
               models: [
@@ -1280,6 +1282,7 @@ describe('AppStore startup session restoration', () => {
                 },
               ],
               failures: [],
+              routable: true,
             }
       return startupResponse(request)
     })
@@ -1287,6 +1290,7 @@ describe('AppStore startup session restoration', () => {
 
     await store.openSession('session-active')
     await vi.waitFor(() => expect(store.sessionModelFailures).toHaveLength(1))
+    expect(store.sessionModelRoutable).toBe(false)
 
     failing = false
     client.emit({
@@ -1296,9 +1300,105 @@ describe('AppStore startup session restoration', () => {
       payload: { name: 'credentials/reference-updated', args: ['gateway-key'] },
     })
 
-    // A failure row must not outlive the cause the user has just repaired.
+    // A failure row must not outlive the cause the user has just repaired, and
+    // neither must the verdict that cause carried.
     await vi.waitFor(() => expect(store.sessionModelFailures).toEqual([]))
     expect(store.sessionModels).toHaveLength(1)
+    expect(store.sessionModelRoutable).toBe(true)
+    store.dispose()
+  })
+
+  it("keeps the host's verdict that the session model is unroutable", async () => {
+    const client = new StartupClient((request) => {
+      if (request.type === 'models.session.list')
+        return {
+          models: [
+            { id: 'deepseek-chat', providerId: 'deepseek', label: 'DeepSeek Chat', supportsReasoning: false },
+          ],
+          failures: [],
+          routable: false,
+        }
+      return startupResponse(request)
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+
+    await store.openSession('session-active')
+    await vi.waitFor(() => expect(store.sessionModelRoutable).toBe(false))
+
+    // The verdict says nothing about the groups: a directory can list models
+    // and still name a current selection no adapter serves.
+    expect(store.sessionModels).toHaveLength(1)
+    store.dispose()
+  })
+
+  it('refuses a directory that does not say whether the model is routable', async () => {
+    const client = new StartupClient((request) => {
+      if (request.type === 'models.session.list')
+        return {
+          models: [
+            { id: 'deepseek-chat', providerId: 'deepseek', label: 'DeepSeek Chat', supportsReasoning: false },
+          ],
+          failures: [],
+        }
+      return startupResponse(request)
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+
+    await store.openSession('session-active')
+    await new Promise((resolve) => window.setTimeout(resolve, 0))
+
+    // Guessing the verdict either locks a usable composer or unlocks one the
+    // host will refuse, so a directory without it is no directory at all.
+    expect(store.sessionModels).toEqual([])
+    expect(store.sessionModelRoutable).toBeUndefined()
+    store.dispose()
+  })
+
+  it('re-reads the directory after the provider changes so a stale verdict cannot lock the input', async () => {
+    let routable = false
+    const client = new StartupClient((request) => {
+      if (request.type === 'models.session.list') return { models: [], failures: [], routable }
+      if (request.type === 'session.configure') return undefined
+      return startupResponse(request)
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+
+    await store.openSession('session-active')
+    await vi.waitFor(() => expect(store.sessionModelRoutable).toBe(false))
+
+    routable = true
+    await store.configureSession('session-active', {
+      preset: 'standard',
+      toolMode: 'native',
+      permissionPreset: 'workspace-write',
+      planMode: false,
+      model: { providerId: 'gateway', modelId: 'gateway-chat' },
+    })
+
+    expect(store.sessionModelRoutable).toBe(true)
+    store.dispose()
+  })
+
+  it('does not re-read the directory when the provider stays the same', async () => {
+    const client = new StartupClient((request) => {
+      if (request.type === 'session.configure') return undefined
+      return startupResponse(request)
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+
+    await store.openSession('session-active')
+    await vi.waitFor(() => expect(store.sessionModelRoutable).toBe(true))
+    const before = client.requests.filter((request) => request.type === 'models.session.list').length
+
+    await store.configureSession('session-active', {
+      preset: 'standard',
+      toolMode: 'native',
+      permissionPreset: 'danger-full-access',
+      planMode: false,
+      model: { providerId: 'deepseek', modelId: 'deepseek-reasoner' },
+    })
+
+    expect(client.requests.filter((request) => request.type === 'models.session.list')).toHaveLength(before)
     store.dispose()
   })
 

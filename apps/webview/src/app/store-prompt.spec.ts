@@ -75,7 +75,7 @@ function response(request: WebviewRequest): unknown {
     case 'subagent.list':
       return request.type === 'subagent.list' ? { entries: [], parentAvailable: true } : []
     case 'models.session.list':
-      return { models: [], failures: [] }
+      return { models: [], failures: [], routable: true }
     default:
       return undefined
   }

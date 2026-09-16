@@ -210,6 +210,13 @@ export interface AppState {
   readonly sessionModels: readonly ModelDescriptor[]
   /** Providers the session directory could not enumerate, with the host's reason. */
   readonly sessionModelFailures: readonly ModelCatalogFailure[]
+  /**
+   * Whether the host serves the session's current selection at all, as the
+   * directory states it. `undefined` means no directory has answered yet,
+   * which is not the same as unroutable; the host refuses a prompt it cannot
+   * route either way, so this only decides whether the input stays usable.
+   */
+  readonly sessionModelRoutable: boolean | undefined
   readonly presets: readonly AgentPresetDescriptor[]
   readonly permissionPresets: readonly string[]
   readonly commands: readonly DynamicCommand[]
@@ -479,6 +486,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     models: [],
     sessionModels: [],
     sessionModelFailures: [],
+    sessionModelRoutable: undefined,
     presets: [],
     permissionPresets: [],
     commands: [],
@@ -1845,6 +1853,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
               : createDefaultConfiguration(current, composerPreferences),
             sessionModels: [],
             sessionModelFailures: [],
+            sessionModelRoutable: undefined,
             permissionPresets: permissionPresets ?? [],
             queue: [],
             goals: [],
@@ -1903,7 +1912,12 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
           if (version !== openVersion || directory === undefined) return
           setState((current) =>
             current.activeSessionId === sessionId && current.sessionModels !== directory.models
-              ? { ...current, sessionModels: directory.models, sessionModelFailures: directory.failures }
+              ? {
+                  ...current,
+                  sessionModels: directory.models,
+                  sessionModelFailures: directory.failures,
+                  sessionModelRoutable: directory.routable,
+                }
               : current,
           )
         })
@@ -2045,6 +2059,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
             configuration: undefined,
             sessionModels: [],
             sessionModelFailures: [],
+            sessionModelRoutable: undefined,
             permissionPresets: [],
             queue: [],
             goals: [],
@@ -2265,6 +2280,9 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     },
     get sessionModelFailures() {
       return state.sessionModelFailures
+    },
+    get sessionModelRoutable() {
+      return state.sessionModelRoutable
     },
     get presets() {
       return state.presets
@@ -2596,6 +2614,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     },
     configureSession: async (sessionId, configuration) => {
       const generation = ++configurationGeneration
+      const previousProvider = state.configuration?.model.providerId
       await client.request<unknown>({
         type: 'session.configure',
         requestId: requestId(),
@@ -2604,6 +2623,12 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       if (generation !== configurationGeneration) return
       rememberComposerConfiguration(configuration)
       setState((current) => (current.activeSessionId === sessionId ? { ...current, configuration } : current))
+      // Only the provider decides whether an adapter serves the selection, so
+      // only its change can move `routable`. Re-read after the write: a stale
+      // `false` would keep the composer inert for a selection the host now
+      // serves, and a stale `true` would unlock one it no longer does.
+      if (previousProvider === configuration.model.providerId) return
+      await refreshSessionModelDirectory(client, setState, sessionId)
     },
     executeCommand: async (sessionId, command, attachments = []) => {
       if ((await executeCommandRequest(sessionId, command, attachments)) === 'executed') return true
@@ -2677,6 +2702,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
               configuration: undefined,
               sessionModels: [],
               sessionModelFailures: [],
+              sessionModelRoutable: undefined,
               permissionPresets: [],
               queue: [],
               goals: [],
@@ -4070,6 +4096,7 @@ async function refreshSessions(
             configuration: undefined,
             sessionModels: [],
             sessionModelFailures: [],
+            sessionModelRoutable: undefined,
             permissionPresets: [],
             queue: [],
             goals: [],
@@ -4354,6 +4381,7 @@ function mergeSkillCommands(
 interface SessionModelDirectory {
   readonly models: readonly ModelDescriptor[]
   readonly failures: readonly ModelCatalogFailure[]
+  readonly routable: boolean
 }
 
 async function loadSessionModelDirectory(
@@ -4374,7 +4402,12 @@ async function loadSessionModelDirectory(
     // the providers that could not enumerate, so a row this side cannot read
     // invalidates the fragment rather than being dropped from it.
     if (!Array.isArray(result.failures) || !result.failures.every(isModelCatalogFailure)) return undefined
-    return { models: result.models, failures: result.failures }
+    // `routable` is the whole-fragment verdict and the host types it as
+    // required; a fragment without it cannot say whether input is legal, so it
+    // is refused rather than guessed (a guess would either lock a usable
+    // composer or unlock one the host will refuse).
+    if (typeof result.routable !== 'boolean') return undefined
+    return { models: result.models, failures: result.failures, routable: result.routable }
   } catch {
     return undefined
   }
@@ -4396,10 +4429,16 @@ async function refreshSessionModelDirectory(
     if (current.activeSessionId !== sessionId) return current
     if (
       sameModelDescriptorList(current.sessionModels, directory.models) &&
-      sameModelCatalogFailureList(current.sessionModelFailures, directory.failures)
+      sameModelCatalogFailureList(current.sessionModelFailures, directory.failures) &&
+      current.sessionModelRoutable === directory.routable
     )
       return current
-    return { ...current, sessionModels: directory.models, sessionModelFailures: directory.failures }
+    return {
+      ...current,
+      sessionModels: directory.models,
+      sessionModelFailures: directory.failures,
+      sessionModelRoutable: directory.routable,
+    }
   })
 }
 
@@ -5073,6 +5112,7 @@ function applyHostMessage(
             configuration: undefined,
             sessionModels: [],
             sessionModelFailures: [],
+            sessionModelRoutable: undefined,
             permissionPresets: [],
             queue: [],
             goals: [],

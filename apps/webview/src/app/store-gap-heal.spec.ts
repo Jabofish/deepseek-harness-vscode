@@ -161,7 +161,7 @@ function baseResponse(request: WebviewRequest): unknown {
     case 'subagent.list':
       return { entries: [], parentAvailable: true }
     case 'models.session.list':
-      return { models: [], failures: [] }
+      return { models: [], failures: [], routable: true }
     default:
       throw new Error(`unexpected request ${request.type}`)
   }

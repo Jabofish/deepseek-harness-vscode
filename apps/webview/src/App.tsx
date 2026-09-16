@@ -454,6 +454,11 @@ export function App(): ReactElement {
   // fallback is what lets a session whose providers all failed show models at
   // all, and dropping the rows there would hide the only explanation.
   const sessionModelFailures = state.sessionModelFailures
+  // The host's verdict on the session's current model, not a guess from the
+  // groups: a route can serve a model it stopped advertising, and only the
+  // host knows which adapters are live. `undefined` means no directory has
+  // answered, which must not read as blocked.
+  const sessionModelRoutable = state.sessionModelRoutable
   const pendingPermissions = useMemo(
     () =>
       activeSessionId === undefined || state.permissions.length === 0
@@ -1668,6 +1673,9 @@ export function App(): ReactElement {
                             configuration={state.configuration}
                             models={sessionModels}
                             modelFailures={sessionModelFailures}
+                            {...(sessionModelRoutable === undefined
+                              ? {}
+                              : { modelRoutable: sessionModelRoutable })}
                             presets={state.presets}
                             permissionPresets={state.permissionPresets}
                             commands={state.commands}

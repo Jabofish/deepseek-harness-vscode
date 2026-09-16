@@ -86,6 +86,13 @@ export interface ComposerProps {
   readonly models?: readonly ModelDescriptor[]
   /** Providers the session directory could not enumerate, with the host's reason. */
   readonly modelFailures?: readonly ModelCatalogFailure[]
+  /**
+   * The host's verdict on whether the session's current model is served at
+   * all. `false` makes the input inert with the reason on screen; `undefined`
+   * (no directory answered yet) leaves it alone. The picker stays usable
+   * either way, because choosing a served model is the way out.
+   */
+  readonly modelRoutable?: boolean
   readonly presets?: readonly AgentPresetDescriptor[]
   readonly permissionPresets?: readonly string[]
   readonly commands?: readonly DynamicCommand[]
@@ -259,6 +266,13 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
   const onCommand = props.onCommand
   const models = props.models ?? EMPTY_MODELS
   const modelFailures = props.modelFailures ?? EMPTY_MODEL_FAILURES
+  // Official composer-block semantics: a session whose current model no
+  // adapter serves becomes an inert editor carrying the reason, rather than a
+  // send that cannot be routed. It is an affordance, not enforcement — the
+  // host refuses such a prompt either way — and it never touches the model
+  // picker, which is the way out of the state.
+  const modelUnavailable = props.modelRoutable === false
+  const inputBlocked = props.inputDisabled === true || modelUnavailable
   const presets = props.presets ?? EMPTY_PRESETS
   const editorContext = props.editorContext ?? EMPTY_EDITOR_CONTEXT
   const editorContextAvailableKinds = props.editorContextAvailableKinds ?? EMPTY_EDITOR_CONTEXT_KINDS
@@ -370,7 +384,7 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
   const submit = (mode: RunningInputMode): void => {
     if (
       props.disabled ||
-      props.inputDisabled === true ||
+      inputBlocked ||
       submitting.current ||
       (props.draft.trim() === '' && props.attachments.length === 0)
     )
@@ -810,13 +824,18 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
         {...(props.onRemoveEditorContext === undefined ? {} : { onRemove: props.onRemoveEditorContext })}
         {...(props.onPreviewEditorContext === undefined ? {} : { onPreview: props.onPreviewEditorContext })}
       />
+      {modelUnavailable ? (
+        <p className="dsh-composer__model-block" role="status">
+          {t('composer.modelUnavailable')}
+        </p>
+      ) : null}
       <div className="dsh-composer__input-shell">
         <textarea
           ref={textareaRef}
           className="dsh-composer__textarea"
           aria-label={t('composer.prompt')}
           value={props.draft}
-          disabled={props.disabled || props.inputDisabled === true}
+          disabled={props.disabled || inputBlocked}
           {...(menuOpen
             ? {
                 'aria-expanded': true,
@@ -867,7 +886,7 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
               composing.current = false
             }, 10)
           }}
-          placeholder={t('composer.placeholder')}
+          placeholder={modelUnavailable ? t('composer.modelUnavailable') : t('composer.placeholder')}
           rows={1}
         />
         {referenceToken === undefined || props.references === undefined || !referenceMenuOpen ? null : (
@@ -964,7 +983,7 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
           title={props.running ? t('composer.stopResponse') : t('composer.sendMessage')}
           disabled={
             props.disabled ||
-            (!props.running && props.inputDisabled === true) ||
+            (!props.running && inputBlocked) ||
             isSubmitting ||
             (!props.running && props.draft.trim() === '' && props.attachments.length === 0)
           }

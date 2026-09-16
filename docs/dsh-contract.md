@@ -143,6 +143,8 @@ Steer 是收敛操作：`session/steer-unavailable`（回合已停止接受 stee
 
 `session.models` 的应答是 `{ current, routable, groups, failures }`，`groups` 与 `failures` 是同一份目录的两半：前者是已枚举成功的 Provider 分组，后者是逐个 Provider 的枚举失败（`{ id, name, message }`）。上游 schema 对 `failures.id`/`failures.name` 要求 `min(1)`，`message` 是无长度上限的 lookup 诊断；该行是「这个 Provider 为什么没有模型」的唯一解释，因此适配层不得丢弃或截断它，界面按宿主原文渲染（契约实现规则 7）。两个方向的误读都要避免：某 Provider 失败不使其他分组失效，客户端不得因为 `failures` 非空而清空目录或禁用选择；`failures` 也不是整目录失败，不得据此宣称会话没有可选模型。
 
+`routable` 是整份片段的必需字段（上游 schema 无默认值），语义是「当前是否有适配器服务 `current` 的 Provider」，即这个会话此刻能否开始一个 turn；上游明确说明它不能由 `groups` 推导，因此禁用输入的客户端必须读它而不是读分组（契约实现规则 7）：`routable === false` 时输入保持惰性并显示宿主给的原因，`true` 时正常；只有 Provider 变化才会改变它，所以写完 `session.configure` 后要按已提交的配置重读，而不是继续用旧判定。客户端不得把它当作强制——宿主对无法路由的 prompt 一律拒绝，界面禁用只是提示。
+
 ## 事件恢复与资源所有权
 
 每个 Session 保存最后提交的服务器序号。重连顺序固定为：重新订阅、比较序号、通过历史补齐缺口、去重、提交 reducer。事件不能只按时间戳排序；未知事件保留安全的类型/序号/摘要，不能阻断后续已知事件。

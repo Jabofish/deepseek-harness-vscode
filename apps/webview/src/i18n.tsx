@@ -406,6 +406,9 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'composer.remove': 'Remove {name}',
     'composer.prompt': 'Prompt',
     'composer.placeholder': 'Message…',
+    // The host serves no adapter for the session's current model, so the turn
+    // it would start cannot be routed at all.
+    'composer.modelUnavailable': 'This model is unavailable — select a model to continue',
     'composer.attach': 'Attach file',
     'composer.context': 'Editor context',
     'composer.commands': 'Commands',
@@ -1605,6 +1608,7 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'composer.remove': '移除 {name}',
     'composer.prompt': '提示',
     'composer.placeholder': '输入消息…',
+    'composer.modelUnavailable': '当前模型不可用，请先选择模型',
     'composer.attach': '添加附件',
     'composer.context': '编辑器上下文',
     'composer.commands': '命令',

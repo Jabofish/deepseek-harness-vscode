@@ -2237,6 +2237,19 @@ summary.dsh-timeline__card-header,
   background: var(--dsh-surface-raised);
 }
 
+/* The input is inert because no adapter serves the session's current model;
+   the text states the reason, and the picker above stays the way out. */
+.dsh-composer__model-block {
+  margin: 0;
+  padding: var(--dsh-space-2) var(--dsh-space-3);
+  border: 1px solid var(--dsh-warning-border);
+  border-radius: var(--dsh-radius-sm);
+  background: var(--dsh-warning-bg);
+  color: var(--dsh-warning);
+  font-size: 0.875em;
+  overflow-wrap: anywhere;
+}
+
 .dsh-composer__textarea {
   display: block;
   width: 100%;
