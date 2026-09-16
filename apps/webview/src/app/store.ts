@@ -40,6 +40,7 @@ import {
   type ModelDescriptor,
   type ModelDiscoveryInput,
   type ModelProvider,
+  type ModelReasoningLevel,
   type ModelSelection,
   type PermissionRequest,
   type PermissionOption,
@@ -4663,7 +4664,8 @@ function sameModelDescriptorList(
       previous.label !== next.label ||
       previous.contextWindow !== next.contextWindow ||
       previous.supportsReasoning !== next.supportsReasoning ||
-      !sameStringList(previous.reasoningLevels, next.reasoningLevels)
+      previous.defaultReasoningLevel !== next.defaultReasoningLevel ||
+      !sameReasoningLevelList(previous.reasoningLevels, next.reasoningLevels)
     )
       return false
   }
@@ -4719,6 +4721,19 @@ function sameStringList(left: readonly string[] | undefined, right: readonly str
   if (left === right) return true
   if (left === undefined || right === undefined || left.length !== right.length) return false
   return left.every((value, index) => value === right[index])
+}
+
+/**
+ * The seat names an effort with the adapter's label and sends its id back, so
+ * both halves belong to the identity of an advertised level.
+ */
+function sameReasoningLevelList(
+  left: readonly ModelReasoningLevel[] | undefined,
+  right: readonly ModelReasoningLevel[] | undefined,
+): boolean {
+  if (left === right) return true
+  if (left === undefined || right === undefined || left.length !== right.length) return false
+  return left.every((level, index) => level.id === right[index]?.id && level.label === right[index]?.label)
 }
 
 function upsertOpenedSession(
@@ -8512,13 +8527,29 @@ function isProviderField(value: unknown): boolean {
 
 function isModelDescriptor(value: unknown): value is ModelDescriptor {
   const item = object(value)
-  return (
-    item !== undefined &&
-    typeof item.id === 'string' &&
-    typeof item.providerId === 'string' &&
-    typeof item.label === 'string' &&
-    typeof item.supportsReasoning === 'boolean'
+  if (
+    item === undefined ||
+    typeof item.id !== 'string' ||
+    typeof item.providerId !== 'string' ||
+    typeof item.label !== 'string' ||
+    typeof item.supportsReasoning !== 'boolean' ||
+    (item.defaultReasoningLevel !== undefined && !nonBlankString(item.defaultReasoningLevel))
   )
+    return false
+  if (item.reasoningLevels === undefined) return true
+  // A level the picker cannot name is one it must not offer: the label is what
+  // the user reads and the id is what travels back, and neither may be blank.
+  return (
+    Array.isArray(item.reasoningLevels) &&
+    item.reasoningLevels.every((level) => {
+      const entry = object(level)
+      return entry !== undefined && nonBlankString(entry.id) && nonBlankString(entry.label)
+    })
+  )
+}
+
+function nonBlankString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim() !== ''
 }
 
 function isModelCatalogFailure(value: unknown): value is ModelCatalogFailure {

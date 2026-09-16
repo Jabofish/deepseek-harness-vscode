@@ -331,9 +331,11 @@ export const rc6Mapper = {
         : array(reasoning.efforts)
             .map((effort) => {
               const item = object(effort, 'reasoning effort')
-              return stringOr(item.id, '')
+              const id = stringOr(item.id, '')
+              return { id, label: stringOr(item.name, id) }
             })
-            .filter(Boolean)
+            .filter((level) => level.id !== '')
+    const defaultEffort = stringOr(reasoning?.defaultEffort, '')
     return {
       id: string(record.id, 'model id'),
       providerId: stringOr(record.providerId ?? record.provider, ''),
@@ -343,6 +345,7 @@ export const rc6Mapper = {
         : { contextWindow: number(record.contextWindow ?? context?.contextWindow, 0) }),
       supportsReasoning: reasoning !== undefined,
       ...(efforts.length === 0 ? {} : { reasoningLevels: efforts }),
+      ...(defaultEffort === '' ? {} : { defaultReasoningLevel: defaultEffort }),
     }
   },
 

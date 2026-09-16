@@ -66,13 +66,29 @@ export function deriveProviderCredentialReference(providerId: string): string {
   return `${providerId.toUpperCase().replace(/[^A-Z0-9]+/gu, '_')}_API_KEY`
 }
 
+/**
+ * One reasoning effort the model's adapter advertises. `label` is the
+ * host-supplied display name; the id is the value that travels back in a
+ * selection, so the two are never interchangeable.
+ */
+export interface ModelReasoningLevel {
+  readonly id: string
+  readonly label: string
+}
+
 export interface ModelDescriptor {
   readonly id: string
   readonly providerId: string
   readonly label: string
   readonly contextWindow?: number
   readonly supportsReasoning: boolean
-  readonly reasoningLevels?: readonly string[]
+  readonly reasoningLevels?: readonly ModelReasoningLevel[]
+  /**
+   * The effort the adapter applies when a selection names none. Absent means
+   * the adapter states no default, which is not the same as the first
+   * advertised level.
+   */
+  readonly defaultReasoningLevel?: string
 }
 
 /**

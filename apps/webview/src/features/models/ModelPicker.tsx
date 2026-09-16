@@ -70,15 +70,35 @@ export const ModelPicker = memo(function ModelPicker(props: ModelPickerProps): R
   )
   const groups = useMemo(() => groupModels(props.models), [props.models])
   const reasoningLevels = selected?.supportsReasoning ? (selected.reasoningLevels ?? []) : []
-  const effectiveReasoningLevel = props.value.reasoningLevel ?? reasoningLevels[0]
-  const currentLabel =
+  /**
+   * The effort in effect, as far as the host has stated it: an explicitly
+   * selected level, else the level the adapter declares as its default. The
+   * first advertised level is neither of those — an adapter that states no
+   * default resolves the effort itself, and naming one of its levels would
+   * report an effort the session may not be running.
+   */
+  const effectiveReasoningLevel = props.value.reasoningLevel ?? selected?.defaultReasoningLevel
+  const effortLabel =
+    reasoningLevels.length === 0
+      ? undefined
+      : effectiveReasoningLevel === undefined
+        ? t('model.defaultEffort')
+        : (reasoningLevels.find((level) => level.id === effectiveReasoningLevel)?.label ??
+          effectiveReasoningLevel)
+  /**
+   * The model half of the label. A selection the directory does not list is a
+   * route this picker cannot name — not a verdict: the catalog is advisory, a
+   * provider that could not enumerate reports its reason as a menu warning
+   * row, and the host states whether the session routes at all. Until the
+   * directory can name the route, the host's own identifiers stand in.
+   */
+  const routeLabel =
     selected === undefined
       ? props.value.modelId.trim() === ''
         ? t('model.default')
-        : t('model.unavailable', { label: props.value.modelId })
-      : reasoningLevels.length === 0 || effectiveReasoningLevel === undefined
-        ? selected.label
-        : `${selected.label} · ${effectiveReasoningLevel}`
+        : `${props.value.providerId}/${props.value.modelId}`
+      : selected.label
+  const currentLabel = effortLabel === undefined ? routeLabel : `${routeLabel} · ${effortLabel}`
   const menuPosition = useViewportMenuPosition({
     open,
     anchorRef: triggerRef,
@@ -168,9 +188,11 @@ export const ModelPicker = memo(function ModelPicker(props: ModelPickerProps): R
   }
 
   const selectModel = (model: ModelDescriptor): void => {
-    const levels = model.supportsReasoning ? (model.reasoningLevels ?? []) : []
     const sameRoute = props.value.providerId === model.providerId && props.value.modelId === model.id
-    const reasoningLevel = sameRoute ? props.value.reasoningLevel : levels[0]
+    // Choosing a route states the route alone: the adapter resolves the effort
+    // for a model it has not been asked about yet, while a level the session
+    // already carries survives re-picking the model it belongs to.
+    const reasoningLevel = sameRoute ? props.value.reasoningLevel : undefined
     props.onChange({
       providerId: model.providerId,
       modelId: model.id,
@@ -180,12 +202,12 @@ export const ModelPicker = memo(function ModelPicker(props: ModelPickerProps): R
     triggerRef.current?.focus()
   }
 
-  const selectReasoningLevel = (reasoningLevel: string): void => {
+  const selectReasoningLevel = (reasoningLevel: string | undefined): void => {
     if (selected === undefined) return
     props.onChange({
       providerId: selected.providerId,
       modelId: selected.id,
-      reasoningLevel,
+      ...(reasoningLevel === undefined ? {} : { reasoningLevel }),
     })
     close()
     triggerRef.current?.focus()
@@ -236,10 +258,10 @@ export const ModelPicker = memo(function ModelPicker(props: ModelPickerProps): R
                 onClick={() => setPane('models')}
               >
                 <span>{t('model.menuModel')}</span>
-                <span className="dsh-model-picker__row-value">{selected?.label ?? t('model.default')}</span>
+                <span className="dsh-model-picker__row-value">{routeLabel}</span>
                 <Icon name="chevron-right" />
               </button>
-              {reasoningLevels.length === 0 ? null : (
+              {effortLabel === undefined ? null : (
                 <button
                   className="dsh-model-picker__row"
                   type="button"
@@ -247,9 +269,7 @@ export const ModelPicker = memo(function ModelPicker(props: ModelPickerProps): R
                   onClick={() => setPane('effort')}
                 >
                   <span>{t('model.menuEffort')}</span>
-                  <span className="dsh-model-picker__row-value">
-                    {effectiveReasoningLevel ?? t('model.defaultEffort')}
-                  </span>
+                  <span className="dsh-model-picker__row-value">{effortLabel}</span>
                   <Icon name="chevron-right" />
                 </button>
               )}
@@ -315,29 +335,41 @@ export const ModelPicker = memo(function ModelPicker(props: ModelPickerProps): R
                     ))
                   )}
                 </>
-              ) : reasoningLevels.length === 0 ? (
-                <p className="dsh-model-picker__empty" role="status">
-                  {t('model.noEfforts')}
-                </p>
               ) : (
-                reasoningLevels.map((reasoningLevel) => {
-                  const isSelected = effectiveReasoningLevel === reasoningLevel
-                  return (
+                <>
+                  {selected === undefined || selected.defaultReasoningLevel !== undefined ? null : (
                     <button
                       className={`dsh-select-menu__option${
-                        isSelected ? ' dsh-select-menu__option--selected' : ''
+                        effectiveReasoningLevel === undefined ? ' dsh-select-menu__option--selected' : ''
                       }`}
-                      key={reasoningLevel}
                       type="button"
                       role="menuitemradio"
-                      aria-checked={isSelected}
-                      onClick={() => selectReasoningLevel(reasoningLevel)}
+                      aria-checked={effectiveReasoningLevel === undefined}
+                      onClick={() => selectReasoningLevel(undefined)}
                     >
-                      <span>{reasoningLevel}</span>
-                      {isSelected ? <Icon name="check" /> : null}
+                      <span>{t('model.defaultEffort')}</span>
+                      {effectiveReasoningLevel === undefined ? <Icon name="check" /> : null}
                     </button>
-                  )
-                })
+                  )}
+                  {reasoningLevels.map((reasoningLevel) => {
+                    const isSelected = effectiveReasoningLevel === reasoningLevel.id
+                    return (
+                      <button
+                        className={`dsh-select-menu__option${
+                          isSelected ? ' dsh-select-menu__option--selected' : ''
+                        }`}
+                        key={reasoningLevel.id}
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={isSelected}
+                        onClick={() => selectReasoningLevel(reasoningLevel.id)}
+                      >
+                        <span>{reasoningLevel.label}</span>
+                        {isSelected ? <Icon name="check" /> : null}
+                      </button>
+                    )
+                  })}
+                </>
               )}
             </>
           )}

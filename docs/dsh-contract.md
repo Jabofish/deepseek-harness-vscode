@@ -145,6 +145,10 @@ Steer 是收敛操作：`session/steer-unavailable`（回合已停止接受 stee
 
 `routable` 是整份片段的必需字段（上游 schema 无默认值），语义是「当前是否有适配器服务 `current` 的 Provider」，即这个会话此刻能否开始一个 turn；上游明确说明它不能由 `groups` 推导，因此禁用输入的客户端必须读它而不是读分组（契约实现规则 7）：`routable === false` 时输入保持惰性并显示宿主给的原因，`true` 时正常；只有 Provider 变化才会改变它，所以写完 `session.configure` 后要按已提交的配置重读，而不是继续用旧判定。客户端不得把它当作强制——宿主对无法路由的 prompt 一律拒绝，界面禁用只是提示。
 
+`groups[].models[].reasoning` 是适配器对推理强度的完整声明：`efforts[]` 每项都带必需的 `id` 与 `name`（都是 `min(1)`），`defaultEffort` 单独可选，且可以不在这份列表里。`name` 是宿主给这一档的显示名，`id` 才是选择里回传的值，两者不可互换；`defaultEffort` 是「没有指名强度时适配器实际用的那一档」，与 `efforts[0]` 无关。所以展示某一档必须用 `name`（列表外的值按宿主的 `id` 原文显示），会话未指名强度时显示 `defaultEffort`，适配器未声明默认时只能说「由提供方决定」——把列表首项当成生效值是在宣称一个宿主从未说过的强度，换模型时再把它回传，等于替用户做了一个他没做过的选择。
+
+`current` 与 `groups` 的关系也要读准：`groups` 是咨询目录，`current` 才是宿主的当前选择。目录里查不到 `current` 时（最常见的原因是那个 Provider 枚举失败，解释就在 `failures` 行里）客户端只能按宿主的标识显示 `provider/model`，不得据此宣称模型「不可用」：可用性是宿主的判定（`routable` 以及 `session.selectModel` 与 prompt 的应答），不是目录缺席能推出的结论。
+
 ## 事件恢复与资源所有权
 
 每个 Session 保存最后提交的服务器序号。重连顺序固定为：重新订阅、比较序号、通过历史补齐缺口、去重、提交 reducer。事件不能只按时间戳排序；未知事件保留安全的类型/序号/摘要，不能阻断后续已知事件。

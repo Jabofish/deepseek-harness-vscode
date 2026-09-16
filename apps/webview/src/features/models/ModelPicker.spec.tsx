@@ -15,14 +15,23 @@ const MODELS: readonly ModelDescriptor[] = [
     providerId: 'deepseek',
     label: 'DeepSeek Reasoner',
     supportsReasoning: true,
-    reasoningLevels: ['low', 'high'],
+    // No declared default: the adapter resolves the effort for this model, so
+    // the seat may only say so rather than name one of the levels.
+    reasoningLevels: [
+      { id: 'low', label: 'Low' },
+      { id: 'high', label: 'High' },
+    ],
   },
   {
     id: 'claude-sonnet',
     providerId: 'anthropic',
     label: 'Claude Sonnet',
     supportsReasoning: true,
-    reasoningLevels: ['low', 'high'],
+    reasoningLevels: [
+      { id: 'low', label: 'Low' },
+      { id: 'high', label: 'High' },
+    ],
+    defaultReasoningLevel: 'high',
   },
 ]
 
@@ -62,10 +71,11 @@ describe('ModelPicker keyboard and focus contract', () => {
     activate(screen.getByRole('menuitem', { name: /^Model/u }))
     activate(screen.getByRole('menuitemradio', { name: /DeepSeek Reasoner/u }))
 
+    // The route alone: the adapter resolves the effort for a model the session
+    // was not asked about yet, so the picker must not name a level for it.
     expect(onChange).toHaveBeenCalledWith({
       providerId: 'deepseek',
       modelId: 'deepseek-reasoner',
-      reasoningLevel: 'low',
     })
     expect(screen.queryByRole('menu')).toBeNull()
     expect(document.activeElement).toBe(trigger())
@@ -77,7 +87,7 @@ describe('ModelPicker keyboard and focus contract', () => {
 
     openRoot()
     activate(screen.getByRole('menuitem', { name: /^Reasoning effort/u }))
-    activate(screen.getByRole('menuitemradio', { name: 'high' }))
+    activate(screen.getByRole('menuitemradio', { name: 'High' }))
 
     expect(onChange).toHaveBeenCalledWith({
       providerId: 'deepseek',
@@ -184,6 +194,87 @@ describe('ModelPicker failure rows', () => {
       'Could not load models for Gateway: connection refused',
       'No models are available for this session.',
     ])
+  })
+})
+
+describe('ModelPicker seat statements', () => {
+  afterEach(() => cleanup())
+
+  it('names an unlisted route with the host identifiers instead of a verdict of its own', () => {
+    // The catalog is advisory: a provider that could not enumerate reports its
+    // reason as a warning row, and the host states routability separately, so
+    // the seat may not call the session's own model unavailable.
+    renderPicker({
+      value: { providerId: 'gateway', modelId: 'gateway-chat' },
+      failures: [{ providerId: 'gateway', providerName: 'Gateway', message: 'connection refused' }],
+    })
+
+    expect(triggerLabel()).toBe('gateway/gateway-chat')
+  })
+
+  it('states the level the adapter declared when the session names none', () => {
+    renderPicker({ value: { providerId: 'anthropic', modelId: 'claude-sonnet' } })
+
+    expect(triggerLabel()).toBe('Claude Sonnet · High')
+  })
+
+  it('says the adapter resolves the effort when it declares no default', () => {
+    renderPicker({ value: { providerId: 'deepseek', modelId: 'deepseek-reasoner' } })
+
+    expect(triggerLabel()).toBe('DeepSeek Reasoner · Provider default')
+  })
+
+  it('shows the level the session stated instead of the declared default', () => {
+    renderPicker({
+      value: { providerId: 'anthropic', modelId: 'claude-sonnet', reasoningLevel: 'low' },
+    })
+
+    expect(triggerLabel()).toBe('Claude Sonnet · Low')
+  })
+
+  it('renders a stated level the adapter does not list by its id', () => {
+    renderPicker({
+      value: { providerId: 'anthropic', modelId: 'claude-sonnet', reasoningLevel: 'max' },
+    })
+
+    expect(triggerLabel()).toBe('Claude Sonnet · max')
+  })
+
+  it('offers the provider default row when the adapter declared no default', () => {
+    renderPicker({ value: { providerId: 'deepseek', modelId: 'deepseek-reasoner' } })
+
+    openRoot()
+    activate(screen.getByRole('menuitem', { name: /^Reasoning effort/u }))
+
+    expect(screen.getByRole('menuitemradio', { name: 'Provider default' }).getAttribute('aria-checked')).toBe(
+      'true',
+    )
+    expect(screen.getByRole('menuitemradio', { name: 'Low' }).getAttribute('aria-checked')).toBe('false')
+  })
+
+  it('checks the declared default and offers no provider default row when one is declared', () => {
+    renderPicker({ value: { providerId: 'anthropic', modelId: 'claude-sonnet' } })
+
+    openRoot()
+    activate(screen.getByRole('menuitem', { name: /^Reasoning effort/u }))
+
+    expect(screen.queryByRole('menuitemradio', { name: 'Provider default' })).toBeNull()
+    expect(screen.getByRole('menuitemradio', { name: 'High' }).getAttribute('aria-checked')).toBe('true')
+  })
+
+  it('returns the effort to the adapter by clearing an explicit level', () => {
+    const onChange = vi.fn()
+    renderPicker({
+      value: { providerId: 'deepseek', modelId: 'deepseek-reasoner', reasoningLevel: 'high' },
+      onChange,
+    })
+
+    openRoot()
+    activate(screen.getByRole('menuitem', { name: /^Reasoning effort/u }))
+    expect(screen.getByRole('menuitemradio', { name: 'High' }).getAttribute('aria-checked')).toBe('true')
+    activate(screen.getByRole('menuitemradio', { name: 'Provider default' }))
+
+    expect(onChange).toHaveBeenCalledWith({ providerId: 'deepseek', modelId: 'deepseek-reasoner' })
   })
 })
 
@@ -307,6 +398,12 @@ async function flushOpenRequest(): Promise<void> {
 
 function trigger(): HTMLElement {
   return screen.getByRole('button', { name: /^Model and reasoning/u })
+}
+
+/** The visible half of the trigger label, without the accessible-name prefix. */
+function triggerLabel(): string {
+  const text = trigger().querySelector('.dsh-select-menu__trigger-text')
+  return text?.textContent ?? ''
 }
 
 function openRoot(): void {

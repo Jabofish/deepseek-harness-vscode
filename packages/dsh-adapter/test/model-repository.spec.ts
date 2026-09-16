@@ -398,4 +398,92 @@ describe('Rc6ModelRepository session model catalog', () => {
       code: 'PROTOCOL_ERROR',
     })
   })
+
+  it('carries the advertised effort names and the declared default whole', async () => {
+    // The seat shows the adapter's name for an effort and starts from the
+    // adapter's declared default; neither is derivable from the level ids, so
+    // dropping either here would leave the Webview restating a level list it
+    // has to guess at.
+    const repository = new Rc6ModelRepository(
+      transportFor({
+        'session.models': {
+          ...SESSION_MODELS,
+          failures: [],
+          groups: [
+            {
+              id: 'deepseek',
+              name: 'DeepSeek',
+              models: [
+                {
+                  id: 'deepseek-reasoner',
+                  name: 'DeepSeek Reasoner',
+                  reasoning: {
+                    efforts: [
+                      { id: 'low', name: 'Low', description: 'Cheap and quick.' },
+                      { id: 'high', name: 'High' },
+                    ],
+                    defaultEffort: 'high',
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    )
+
+    await expect(repository.listSessionModels('session-1')).resolves.toMatchObject({
+      models: [
+        {
+          id: 'deepseek-reasoner',
+          providerId: 'deepseek',
+          label: 'DeepSeek Reasoner',
+          supportsReasoning: true,
+          reasoningLevels: [
+            { id: 'low', label: 'Low' },
+            { id: 'high', label: 'High' },
+          ],
+          defaultReasoningLevel: 'high',
+        },
+      ],
+    })
+  })
+
+  it('keeps a declared default that the advertised list does not name', async () => {
+    // The wire types `defaultEffort` independently of `efforts`, and the
+    // reference client renders an unlisted effort by its id. Refusing the
+    // fragment or dropping the default would make the seat state a different
+    // effort than the adapter resolves.
+    const repository = new Rc6ModelRepository(
+      transportFor({
+        'session.models': {
+          ...SESSION_MODELS,
+          failures: [],
+          groups: [
+            {
+              id: 'deepseek',
+              name: 'DeepSeek',
+              models: [
+                {
+                  id: 'deepseek-reasoner',
+                  name: 'DeepSeek Reasoner',
+                  reasoning: { efforts: [{ id: 'low', name: 'Low' }], defaultEffort: 'medium' },
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    )
+
+    await expect(repository.listSessionModels('session-1')).resolves.toMatchObject({
+      models: [
+        {
+          id: 'deepseek-reasoner',
+          reasoningLevels: [{ id: 'low', label: 'Low' }],
+          defaultReasoningLevel: 'medium',
+        },
+      ],
+    })
+  })
 })

@@ -1354,6 +1354,71 @@ describe('AppStore startup session restoration', () => {
     store.dispose()
   })
 
+  it('refuses a directory whose reasoning level cannot be named', async () => {
+    const client = new StartupClient((request) => {
+      if (request.type === 'models.session.list')
+        return {
+          models: [
+            {
+              id: 'deepseek-reasoner',
+              providerId: 'deepseek',
+              label: 'DeepSeek Reasoner',
+              supportsReasoning: true,
+              reasoningLevels: [{ id: 'low' }],
+            },
+          ],
+          failures: [],
+          routable: true,
+        }
+      return startupResponse(request)
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+
+    await store.openSession('session-active')
+    await new Promise((resolve) => window.setTimeout(resolve, 0))
+
+    // The label is what the seat shows and the id is what travels back in a
+    // selection; a level missing either would render as a nameless row.
+    expect(store.sessionModels).toEqual([])
+    store.dispose()
+  })
+
+  it('publishes a re-read directory whose only change is an effort label', async () => {
+    let label = 'Low'
+    const client = new StartupClient((request) => {
+      if (request.type === 'models.session.list')
+        return {
+          models: [
+            {
+              id: 'deepseek-reasoner',
+              providerId: 'deepseek',
+              label: 'DeepSeek Reasoner',
+              supportsReasoning: true,
+              reasoningLevels: [{ id: 'low', label }],
+            },
+          ],
+          failures: [],
+          routable: true,
+        }
+      return startupResponse(request)
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+
+    await store.openSession('session-active')
+    await vi.waitFor(() => expect(store.sessionModels).toHaveLength(1))
+
+    label = 'Low (legacy)'
+    client.emit({
+      type: 'event',
+      name: 'remote.event',
+      sequence: 9,
+      payload: { name: 'llm/adapters-updated', args: [] },
+    })
+
+    await vi.waitFor(() => expect(store.sessionModels[0]?.reasoningLevels?.[0]?.label).toBe('Low (legacy)'))
+    store.dispose()
+  })
+
   it('re-reads the directory after the provider changes so a stale verdict cannot lock the input', async () => {
     let routable = false
     const client = new StartupClient((request) => {
