@@ -171,6 +171,32 @@ describe('ToolRow', () => {
     ])
   })
 
+  it('marks a settled shell row failed when its own exit status says so', () => {
+    const row = (presentation: ToolCallView['presentation']): ReturnType<typeof toolRowModel> =>
+      toolRowModel(
+        tool({
+          name: 'bash',
+          status: 'completed',
+          inputSummary: JSON.stringify({ description: 'Run the checks', command: 'pnpm check' }),
+          ...(presentation === undefined ? {} : { presentation }),
+        }),
+      )
+
+    const failing = row({ phase: 'result', card: 'terminal', output: 'boom', exitCode: 2 })
+    const killed = row({ phase: 'result', card: 'terminal', output: 'gone', signal: 'SIGTERM' })
+    const clean = row({ phase: 'result', card: 'terminal', output: 'ok', exitCode: 0 })
+    const quiet = row({ phase: 'result', card: 'terminal', output: 'no status stated' })
+
+    expect(failing.state).toBe('error')
+    // The card states the exit; the row must not echo the bare number back as
+    // if it were the failure text.
+    expect(failing.errorSummary).toBeUndefined()
+    expect(failing.summary).toBe('Run the checks')
+    expect(killed.state).toBe('error')
+    expect(clean.state).toBe('ok')
+    expect(quiet.state).toBe('ok')
+  })
+
   it('wraps a generic structured result instead of bypassing the presentation boundary', () => {
     const model = toolRowModel(
       tool({
@@ -206,5 +232,42 @@ describe('ToolRow', () => {
       { label: 'File', content: 'src/empty.ts' },
       { label: 'Total', content: 'No lines / 20' },
     ])
+  })
+
+  it('renders the stored 0-based location hint back in the 1-based path:line convention', () => {
+    const generic = toolRowModel(
+      tool({
+        name: 'workspace_search',
+        status: 'running',
+        presentation: {
+          phase: 'call',
+          card: 'generic',
+          locations: [
+            { path: 'src/first.ts', line: 0 },
+            { path: 'src/tenth.ts', line: 9 },
+            { path: 'src/unknown.ts' },
+          ],
+        },
+      }),
+    )
+    const diff = toolRowModel(
+      tool({
+        name: 'edit',
+        category: 'diff',
+        status: 'running',
+        presentation: {
+          phase: 'call',
+          card: 'diff',
+          title: 'Edit src/first.ts',
+          diffs: [{ path: 'src/first.ts', oldText: 'before', newText: 'after' }],
+          locations: [{ path: 'src/first.ts', line: 0 }],
+        },
+      }),
+    )
+
+    expect(generic.sections).toEqual([
+      { label: 'Files', content: 'src/first.ts:1\nsrc/tenth.ts:10\nsrc/unknown.ts' },
+    ])
+    expect(diff.sections.at(-1)).toEqual({ label: 'Files', content: 'src/first.ts:1' })
   })
 })

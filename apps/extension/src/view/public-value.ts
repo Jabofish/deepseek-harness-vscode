@@ -49,21 +49,33 @@ export function publicWorkspaceRelativePath(
 export function sanitizePublicValue(value: unknown, parentKey?: string): unknown {
   if (Array.isArray(value)) return value.map((entry) => sanitizePublicValue(entry, parentKey))
   if (typeof value !== 'object' || value === null) return value
+  const source = value as Record<string, unknown>
   const result: Record<string, unknown> = {}
-  for (const [key, entry] of Object.entries(value)) {
-    if (isSensitivePublicField(parentKey, key, entry)) continue
+  for (const [key, entry] of Object.entries(source)) {
+    if (isSensitivePublicField(parentKey, key, entry, source)) continue
     result[key] = sanitizePublicValue(entry, key)
   }
   return result
 }
 
-function isSensitivePublicField(parentKey: string | undefined, key: string, value: unknown): boolean {
+function isSensitivePublicField(
+  parentKey: string | undefined,
+  key: string,
+  value: unknown,
+  parent: Record<string, unknown>,
+): boolean {
   const normalizedParent = parentKey?.toLocaleLowerCase()
   const normalizedKey = key.toLocaleLowerCase()
 
   // Provider catalog rows use `secret: boolean` as field metadata. Preserve
   // that structural flag while continuing to redact secret-bearing values.
   if (normalizedKey === 'secret' && typeof value === 'boolean') return false
+
+  // The `commandLine` deny-list entry exists for process-discovery data, which
+  // is Host-only. An approval request uses the same field name for the command
+  // the user is about to authorize, which the approval card must render or the
+  // decision is blind.
+  if (normalizedKey === 'commandline' && isPermissionRequest(parent)) return false
 
   // These counters are intentionally public UI telemetry. The previous broad
   // `/token|input|output/` filter silently removed the DSH token meter and
@@ -74,6 +86,13 @@ function isSensitivePublicField(parentKey: string | undefined, key: string, valu
     return !SAFE_CONTEXT_FIELDS.has(normalizedKey) && isExactSensitiveField(normalizedKey)
 
   return isExactSensitiveField(normalizedKey)
+}
+
+/** Structural match for the only approval request shape the product renders. */
+function isPermissionRequest(value: Record<string, unknown>): boolean {
+  return (
+    Array.isArray(value.options) && typeof value.sessionId === 'string' && typeof value.title === 'string'
+  )
 }
 
 const SAFE_USAGE_FIELDS = new Set([

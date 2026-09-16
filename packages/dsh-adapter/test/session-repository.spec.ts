@@ -213,6 +213,76 @@ describe('Rc6SessionRepository session listing', () => {
   })
 })
 
+describe('Rc6SessionRepository blank session detail', () => {
+  it('reports a Session with no turn as idle, exactly like the list row the host publishes', async () => {
+    const calls: string[] = []
+    const repository = new Rc6SessionRepository({
+      request: <TResponse>(method: string) => {
+        calls.push(method)
+        const value = method === 'session.history' ? { events: [], hasMore: false } : {}
+        return Promise.resolve({ result: { ok: true, value } } as TResponse)
+      },
+      remoteRequest: <TResponse>() => Promise.reject<TResponse>(new Error('unexpected Remote')),
+      openEventStream: async function* () {
+        /* fixture stream */
+      },
+      close: () => Promise.resolve(),
+    })
+
+    const detail = await repository.get('session-fresh')
+
+    // A brand-new Session is opened through this fallback before any list
+    // response has cached a row for it. The host calls that Session blank and
+    // its list row reads `idle`; a detail that answers `completed` instead
+    // disables the composer's Agent-preset control the user has not used yet.
+    expect(detail.blank).toBe(true)
+    expect(detail.status).toBe('idle')
+    expect(calls).toEqual(['session.history'])
+  })
+
+  it('still reports a finished Session with a human turn as completed', async () => {
+    const repository = new Rc6SessionRepository({
+      request: <TResponse>(method: string) =>
+        Promise.resolve({
+          result: {
+            ok: true,
+            value:
+              method === 'session.history'
+                ? {
+                    events: [
+                      {
+                        event: {
+                          type: 'user/message',
+                          seq: 1,
+                          time: 2,
+                          data: {
+                            id: 'user-1',
+                            role: 'user',
+                            source: { kind: 'user' },
+                            content: [{ type: 'text', text: 'hello' }],
+                          },
+                        },
+                      },
+                    ],
+                    hasMore: false,
+                  }
+                : {},
+          },
+        } as TResponse),
+      remoteRequest: <TResponse>() => Promise.reject<TResponse>(new Error('unexpected Remote')),
+      openEventStream: async function* () {
+        /* fixture stream */
+      },
+      close: () => Promise.resolve(),
+    })
+
+    const detail = await repository.get('session-finished')
+
+    expect(detail.blank).toBe(false)
+    expect(detail.status).toBe('completed')
+  })
+})
+
 describe('Rc6SessionRepository session removal', () => {
   it('maps removal to the pinned rc.6 archive RPC', async () => {
     const requestImplementation = <TResponse>(
@@ -271,7 +341,9 @@ describe('Rc6SessionRepository prompt delivery modes', () => {
           sessionId: 'session-1',
           mode: 'queue',
           content: [{ type: 'text', text: 'hello' }],
-          clientTimeZone: expect.stringMatching(/^[A-Za-z_]+\/[A-Za-z_0-9+-]+$|^UTC$/u) as unknown,
+          clientTimeZone: expect.stringMatching(
+            /^[A-Za-z][A-Za-z0-9_+.-]*(?:\/[A-Za-z0-9_+.-]+)+$|^UTC$/u,
+          ) as unknown,
         },
       },
     ])
@@ -290,7 +362,9 @@ describe('Rc6SessionRepository prompt delivery modes', () => {
           sessionId: 'session-1',
           mode: 'steer',
           content: [{ type: 'text', text: 'redirect' }],
-          clientTimeZone: expect.stringMatching(/^[A-Za-z_]+\/[A-Za-z_0-9+-]+$|^UTC$/u) as unknown,
+          clientTimeZone: expect.stringMatching(
+            /^[A-Za-z][A-Za-z0-9_+.-]*(?:\/[A-Za-z0-9_+.-]+)+$|^UTC$/u,
+          ) as unknown,
         },
       },
     ])
@@ -363,6 +437,35 @@ describe('Rc6SessionRepository prompt delivery modes', () => {
     })
     await expect(
       repository.sendPrompt({ sessionId: 'session-1', text: 'wrong type', attachments: [image] }),
+    ).rejects.toMatchObject({ code: 'INVALID_CONFIGURATION' })
+    expect(calls).toHaveLength(1)
+  })
+
+  it('keeps the enforceable image limits when DSH advertises a type this client cannot encode', async () => {
+    const calls: { method: string; params: unknown }[] = []
+    const repository = new Rc6SessionRepository(recordingTransport(calls))
+    repository.remember({
+      type: 'session.projection',
+      sessionId: 'session-1',
+      key: 'imageLimits',
+      value: {
+        maxImageBytes: 8,
+        maxImagesPerMessage: 1,
+        maxMessageImageBytes: 8,
+        maxImagePixels: 1_000,
+        mediaTypes: ['image/png', 'image/avif'],
+      },
+    })
+    const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).toString('base64')
+    const image = { uri: `data:image/png;base64,${png}`, name: 'preview.png', mimeType: 'image/png' }
+
+    await expect(
+      repository.sendPrompt({ sessionId: 'session-1', text: 'one', attachments: [image] }),
+    ).resolves.toBeUndefined()
+    // An unknown image type narrows what this client can send; it must not
+    // discard the byte and count limits the same projection carries.
+    await expect(
+      repository.sendPrompt({ sessionId: 'session-1', text: 'two', attachments: [image, image] }),
     ).rejects.toMatchObject({ code: 'INVALID_CONFIGURATION' })
     expect(calls).toHaveLength(1)
   })
@@ -451,6 +554,7 @@ describe('Rc6SessionRepository prompt delivery modes', () => {
             sessionId: 'session-1',
             text: 'same text',
             attachments: [],
+            textOnly: true,
             mode: 'queue',
             createdAt: new Date().toISOString(),
             rpcId: 'rpc-1',
@@ -487,7 +591,9 @@ describe('Rc6SessionRepository prompt delivery modes', () => {
         { type: 'text', text: '' },
         { type: 'image', mediaType: 'image/png', data: png, name: 'preview.png' },
       ],
-      clientTimeZone: expect.stringMatching(/^[A-Za-z_]+\/[A-Za-z_0-9+-]+$|^UTC$/u) as unknown,
+      clientTimeZone: expect.stringMatching(
+        /^[A-Za-z][A-Za-z0-9_+.-]*(?:\/[A-Za-z0-9_+.-]+)+$|^UTC$/u,
+      ) as unknown,
     })
   })
 
@@ -515,6 +621,7 @@ describe('Rc6SessionRepository prompt delivery modes', () => {
           sessionId: 'session-1',
           text: 'original',
           attachments: [],
+          textOnly: true,
           mode: 'queue',
           createdAt: new Date().toISOString(),
         },
@@ -539,6 +646,7 @@ describe('Rc6SessionRepository prompt delivery modes', () => {
           sessionId: 'session-1',
           text: 'describe this',
           attachments: [],
+          textOnly: false,
           images: [
             {
               attachmentId: 'image-1',
@@ -560,6 +668,111 @@ describe('Rc6SessionRepository prompt delivery modes', () => {
     expect(calls).toEqual([])
   })
 
+  it('does not replace a queued file message with a text-only edit', async () => {
+    // The host admits a `file` part on the same queue wire as text and images;
+    // only the image branch was guarded before, so a file-bearing row passed
+    // the text-only edit and lost the file the model was meant to read.
+    const calls: { method: string; params: unknown }[] = []
+    const repository = new Rc6SessionRepository(recordingTransport(calls))
+    repository.remember({
+      type: 'queue.updated',
+      sessionId: 'session-1',
+      items: [
+        {
+          id: 'file-queued',
+          sessionId: 'session-1',
+          text: 'summarize this',
+          attachments: [],
+          textOnly: false,
+          files: ['spec.md'],
+          mode: 'queue',
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    })
+
+    await expect(repository.updateQueuedInput('file-queued', 'new text')).rejects.toMatchObject({
+      code: 'CAPABILITY_UNAVAILABLE',
+    })
+    expect(calls).toEqual([])
+  })
+
+  it('edits a text-only queued prompt through the wire action the host accepts', async () => {
+    const calls: { method: string; params: unknown }[] = []
+    const repository = new Rc6SessionRepository(recordingTransport(calls))
+    repository.remember({
+      type: 'queue.updated',
+      sessionId: 'session-1',
+      items: [
+        {
+          id: 'queued-1',
+          sessionId: 'session-1',
+          text: 'original',
+          attachments: [],
+          textOnly: true,
+          mode: 'queue',
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    })
+
+    await repository.updateQueuedInput('queued-1', 'edited')
+
+    expect(calls).toEqual([
+      {
+        method: 'session.updateQueue',
+        params: {
+          sessionId: 'session-1',
+          itemId: 'queued-1',
+          action: { kind: 'edit', content: [{ type: 'text', text: 'edited' }] },
+        },
+      },
+    ])
+  })
+
+  it('sends the remove and steer actions in the shared queue shape', async () => {
+    const calls: { method: string; params: unknown }[] = []
+    const repository = new Rc6SessionRepository(recordingTransport(calls))
+    repository.remember({
+      type: 'queue.updated',
+      sessionId: 'session-1',
+      items: [
+        {
+          id: 'queued-1',
+          sessionId: 'session-1',
+          text: 'original',
+          attachments: [],
+          textOnly: true,
+          mode: 'queue',
+          createdAt: new Date().toISOString(),
+        },
+        {
+          id: 'queued-2',
+          sessionId: 'session-1',
+          text: 'second',
+          attachments: [],
+          textOnly: true,
+          mode: 'queue',
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    })
+
+    await repository.removeQueuedInput('queued-1')
+    await repository.convertQueuedInputToSteer('queued-2')
+
+    expect(calls).toEqual([
+      {
+        method: 'session.updateQueue',
+        params: { sessionId: 'session-1', itemId: 'queued-1', action: { kind: 'remove' } },
+      },
+      {
+        method: 'session.updateQueue',
+        params: { sessionId: 'session-1', itemId: 'queued-2', action: { kind: 'steer' } },
+      },
+    ])
+  })
+
   it('rejects decoder-tolerated non-canonical prompt Base64', async () => {
     const repository = new Rc6SessionRepository(recordingTransport([]))
 
@@ -579,8 +792,66 @@ describe('Rc6SessionRepository prompt delivery modes', () => {
   })
 })
 
+describe('Rc6SessionRepository queue steering convergence', () => {
+  const failure = (code: string): DshTransport => ({
+    request: <TResponse>() =>
+      Promise.resolve({ result: { ok: false, error: { code, message: 'queue refused' } } } as TResponse),
+    remoteRequest: <TResponse>() => Promise.resolve({ result: { ok: true, value: [] } } as TResponse),
+    openEventStream: async function* () {
+      /* fixture stream */
+    },
+    close: () => Promise.resolve(),
+  })
+
+  function steerable(transport: DshTransport): Rc6SessionRepository {
+    const repository = new Rc6SessionRepository(transport)
+    repository.remember({
+      type: 'queue.updated',
+      sessionId: 'session-1',
+      items: [
+        {
+          id: 'queued-1',
+          sessionId: 'session-1',
+          text: 'steer me',
+          attachments: [],
+          textOnly: true,
+          mode: 'queue',
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    })
+    return repository
+  }
+
+  it('treats an already-claimed item as converged instead of a failure', async () => {
+    // The official client returns silently on both of these: the row is no
+    // longer pending, which is exactly what the Steer gesture asked for.
+    await expect(
+      steerable(failure('queue-item-not-found')).convertQueuedInputToSteer('queued-1'),
+    ).resolves.toBeUndefined()
+    await expect(
+      steerable(failure('steer-unavailable')).convertQueuedInputToSteer('queued-1'),
+    ).resolves.toBeUndefined()
+  })
+
+  it('still reports a queue failure that did not converge', async () => {
+    await expect(
+      steerable(failure('agent-busy')).convertQueuedInputToSteer('queued-1'),
+    ).rejects.toMatchObject({ code: 'BACKEND_BUSY' })
+  })
+
+  it('keeps remove and edit failures visible to the caller', async () => {
+    await expect(
+      steerable(failure('queue-item-not-found')).removeQueuedInput('queued-1'),
+    ).rejects.toMatchObject({ code: 'STALE_INTERACTION' })
+    await expect(
+      steerable(failure('queue-item-not-found')).updateQueuedInput('queued-1', 'edited'),
+    ).rejects.toMatchObject({ code: 'STALE_INTERACTION' })
+  })
+})
+
 describe('Rc6SessionRepository historical attachments', () => {
-  function attachmentTransport(data: string): DshTransport {
+  function attachmentTransport(data: string, bytes = 8): DshTransport {
     return {
       request: <TResponse>(method: string) => {
         expect(method).toBe('session.attachment')
@@ -592,7 +863,7 @@ describe('Rc6SessionRepository historical attachments', () => {
                 attachmentId: 'attachment-1',
                 name: 'image.png',
                 mediaType: 'image/png',
-                bytes: 8,
+                bytes,
                 width: 1,
                 height: 1,
               },
@@ -624,6 +895,40 @@ describe('Rc6SessionRepository historical attachments', () => {
         'attachment-1',
       ),
     ).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
+  })
+
+  it('reads a historical image that exceeds the current prompt admission limit', async () => {
+    const bytes = Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), Buffer.alloc(1_992, 7)])
+    const repository = new Rc6SessionRepository(attachmentTransport(bytes.toString('base64'), bytes.length))
+    repository.remember({
+      type: 'session.projection',
+      sessionId: 'session-1',
+      key: 'imageLimits',
+      value: {
+        maxImageBytes: 1_000,
+        maxImagesPerMessage: 2,
+        maxMessageImageBytes: 2_000,
+        maxImagePixels: 1_000,
+        mediaTypes: ['image/png'],
+      },
+    })
+
+    // `imageLimits` governs what may be *sent* now; DSH may still hold a larger
+    // image from an earlier turn and the read has to display it.
+    await expect(repository.readAttachment('session-1', 'attachment-1')).resolves.toMatchObject({
+      mimeType: 'image/png',
+    })
+  })
+
+  it('blames the size of a historical image beyond what this client can carry', async () => {
+    const bytes = Buffer.alloc(8 * 1024 * 1024 + 1, 1)
+    bytes.set([137, 80, 78, 71, 13, 10, 26, 10], 0)
+    const repository = new Rc6SessionRepository(attachmentTransport(bytes.toString('base64'), bytes.length))
+
+    await expect(repository.readAttachment('session-1', 'attachment-1')).rejects.toMatchObject({
+      code: 'INVALID_CONFIGURATION',
+      message: expect.stringContaining('too large') as unknown,
+    })
   })
 })
 
@@ -756,6 +1061,41 @@ describe('Rc6SessionRepository configuration safety', () => {
     expect(
       calls.some((call) => call.method === 'commands/execute' || call.method === 'session.selectModel'),
     ).toBe(false)
+  })
+
+  it('fails the configuration when the host does not know the plan command', async () => {
+    const { transport, calls } = configurationTransport()
+    const unresolvedTransport: DshTransport = {
+      ...transport,
+      remoteRequest: async <TResponse>(_endpoint: string, params: Readonly<Record<string, unknown>>) => {
+        const answer = await transport.remoteRequest<unknown>(_endpoint, params)
+        return (
+          params.line === '/plan' && _endpoint === 'commands/execute'
+            ? { ok: true, value: undefined }
+            : answer
+        ) as TResponse
+      },
+    }
+    const repository = new Rc6SessionRepository(unresolvedTransport)
+
+    // An unresolved line is a skill gesture on the command surface, but a
+    // session configuration command has to be applied: reporting it as unknown
+    // must not let the configuration believe plan mode was entered.
+    await expect(
+      repository.setConfiguration('session-1', {
+        preset: 'standard',
+        toolMode: 'native',
+        permissionPreset: 'workspace-write',
+        planMode: true,
+        model: { providerId: 'provider-new', modelId: 'model-new', reasoningLevel: 'high' },
+      }),
+    ).rejects.toMatchObject({ code: 'INVALID_CONFIGURATION' })
+    expect(
+      calls
+        .filter((call) => call.method === 'commands/execute')
+        .map((call) => (call.params as { readonly line: string }).line),
+    ).toEqual(['/plan'])
+    expect(calls.some((call) => call.method === 'session.selectModel')).toBe(false)
   })
 
   it('rolls back a permission change when a later configuration command fails', async () => {
@@ -1239,6 +1579,7 @@ describe('Rc6SessionRepository concurrent identical enqueues', () => {
           sessionId: 'session-1',
           text: 'same text',
           attachments: [],
+          textOnly: true,
           mode: 'queue',
           createdAt: new Date().toISOString(),
           rpcId: 'rpc-1',
@@ -1294,6 +1635,7 @@ describe('Rc6SessionRepository failed enqueue retries', () => {
           sessionId: 'session-1',
           text: 'same text',
           attachments: [],
+          textOnly: true,
           mode: 'queue',
           createdAt: new Date().toISOString(),
           rpcId: 'rpc-2',
@@ -1302,5 +1644,37 @@ describe('Rc6SessionRepository failed enqueue retries', () => {
     })
     await expect(second).resolves.toMatchObject({ id: 'queued-2' })
     expect(calls.filter((call) => call.method === 'session.prompt')).toHaveLength(2)
+  })
+})
+
+describe('Rc6SessionRepository rename receipts', () => {
+  function renameTransport(value: unknown): DshTransport {
+    return {
+      request: <TResponse>() => Promise.resolve({ result: { ok: true, value } } as TResponse),
+      remoteRequest: <TResponse>() => Promise.resolve({ result: { ok: true, value: [] } } as TResponse),
+      openEventStream: async function* () {
+        /* fixture stream */
+      },
+      close: () => Promise.resolve(),
+    }
+  }
+
+  it('surfaces the title the host accepted rather than the requested text', async () => {
+    // The host is the authority on what it stored: it strips ANSI and control
+    // characters, collapses whitespace and truncates to its own UTF-8 byte
+    // budget, then returns the accepted title. A client that keeps showing the
+    // text it typed displays a title the session log does not contain.
+    await expect(
+      new Rc6SessionRepository(renameTransport({ title: 'Hello World', seq: 42 })).rename(
+        'session-1',
+        '  Hello\n\nWorld  ',
+      ),
+    ).resolves.toBe('Hello World')
+  })
+
+  it('rejects a rename receipt without an acceptable title', async () => {
+    await expect(
+      new Rc6SessionRepository(renameTransport({ title: '   ', seq: 1 })).rename('session-1', 'x'),
+    ).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
   })
 })

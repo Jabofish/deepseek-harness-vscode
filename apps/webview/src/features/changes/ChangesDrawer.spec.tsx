@@ -169,6 +169,33 @@ describe('ChangesDrawer', () => {
     )
   })
 
+  it('reports a row review mark that the host rejected', async () => {
+    const onOpen = vi.fn().mockResolvedValue(undefined)
+    const onMarkReviewed = vi.fn().mockRejectedValue(new Error('session changed while reading'))
+    renderDrawer({ onOpen, onMarkReviewed })
+
+    fireEvent.click(screen.getByRole('button', { name: '1 changes' }))
+    fireEvent.click(screen.getByTitle('src/main.ts'))
+
+    // The row keeps its `unreviewed` state, so the failed mark is the only
+    // difference the user could notice; it must not disappear silently.
+    await waitFor(() =>
+      expect(screen.getByRole('alert').textContent).toBe('The review decision could not be saved.'),
+    )
+  })
+
+  it('reports a rejected refresh instead of leaving a stale list unexplained', async () => {
+    const onRefresh = vi.fn().mockRejectedValue(new Error('host busy'))
+    renderDrawer({ onRefresh })
+
+    fireEvent.click(screen.getByRole('button', { name: '1 changes' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh changes' }))
+
+    await waitFor(() =>
+      expect(screen.getByRole('alert').textContent).toBe('The change list could not be refreshed.'),
+    )
+  })
+
   it('reports a rejected file open instead of dropping the row click silently', async () => {
     const onOpen = vi.fn().mockRejectedValue(new Error('workspace folder is gone'))
     renderDrawer({ onOpen })

@@ -3,16 +3,26 @@ import { redactText } from '@dsh-vscode/dsh-adapter'
 
 export type DiagnosticLevel = 'error' | 'warn' | 'info' | 'debug'
 
+const LEVEL_RANK: Record<DiagnosticLevel, number> = { error: 0, warn: 1, info: 2, debug: 3 }
+
 const MAX_RECENT_ENTRIES = 32
+
+/** Normalize the `dsh.developer.logLevel` setting; anything unknown means `info`. */
+export function diagnosticLevel(value: unknown): DiagnosticLevel {
+  return value === 'error' || value === 'warn' || value === 'debug' ? value : 'info'
+}
 
 export class RedactedDiagnostics implements vscode.Disposable {
   private readonly recentLines: string[] = []
 
   public constructor(
     private readonly channel: Pick<vscode.OutputChannel, 'appendLine' | 'show' | 'dispose'>,
+    /** Read on every event so a settings change applies without a reload. */
+    private readonly level: () => DiagnosticLevel = () => 'info',
   ) {}
 
   public log(level: DiagnosticLevel, event: string, fields: Readonly<Record<string, unknown>> = {}): void {
+    if (LEVEL_RANK[level] > LEVEL_RANK[this.level()]) return
     const safe = redact(fields)
     const line = JSON.stringify({
       time: new Date().toISOString(),

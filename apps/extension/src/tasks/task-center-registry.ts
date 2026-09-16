@@ -33,6 +33,8 @@ export interface TaskCenterRegistryOptions {
 interface PendingInteraction {
   readonly taskId: string
   readonly interactionId: string
+  /** Request identity the host echoes back when the interaction resolves. */
+  readonly rpcId?: string
   readonly sessionId: string
   readonly kind: 'approval' | 'question'
   readonly title: string
@@ -613,6 +615,7 @@ export class TaskCenterRegistry implements TaskRepository {
       this.interactions.set(taskId, {
         taskId,
         interactionId: interaction.id,
+        ...(interaction.rpcId === undefined ? {} : { rpcId: interaction.rpcId }),
         sessionId: interaction.sessionId,
         kind: 'question',
         title: interaction.header ?? interaction.prompt,
@@ -621,7 +624,7 @@ export class TaskCenterRegistry implements TaskRepository {
       this.removeInteraction(event.requestId, event.sessionId)
     } else if (event.type === 'question.resolved') {
       if (event.questionId !== undefined) this.removeInteraction(event.questionId, event.sessionId)
-      if (event.questionRpcId !== undefined) this.removeInteraction(event.questionRpcId, event.sessionId)
+      if (event.questionRpcId !== undefined) this.removeResolvedRequest(event.questionRpcId, event.sessionId)
     } else if (event.type === 'session.removed' && event.sessionId !== undefined) {
       for (const [taskId, interaction] of this.interactions)
         if (interaction.sessionId === event.sessionId) this.interactions.delete(taskId)
@@ -633,6 +636,15 @@ export class TaskCenterRegistry implements TaskRepository {
     for (const [taskId, interaction] of this.interactions)
       if (interaction.sessionId === sessionId && interaction.interactionId === interactionId)
         this.interactions.delete(taskId)
+  }
+
+  /**
+   * A resolution identifies the request, not the caller-provided question item
+   * id the task row is keyed by, so match the remembered request identity.
+   */
+  private removeResolvedRequest(rpcId: string, sessionId: string): void {
+    for (const [taskId, interaction] of this.interactions)
+      if (interaction.sessionId === sessionId && interaction.rpcId === rpcId) this.interactions.delete(taskId)
   }
 
   private assertRevision(task: TaskSummary, expected: number): void {

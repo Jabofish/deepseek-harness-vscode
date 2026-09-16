@@ -72,6 +72,44 @@ describe('ProtocolClient', () => {
     client.dispose()
   })
 
+  it('keeps a session export alive past the ordinary request timeout', async () => {
+    const setTimeoutSpy = vi.spyOn(window, 'setTimeout')
+    const client = new ProtocolClient({
+      postMessage: () => undefined,
+      getState: () => undefined,
+      setState: () => undefined,
+    })
+    try {
+      const request = client.request<unknown>({
+        type: 'session.export',
+        requestId: 'export-1',
+        payload: {
+          sessionId: 'session-1',
+          format: 'zip',
+          includeAttachments: true,
+          includeReasoning: true,
+        },
+      })
+      // Keep a pre-assertion failure from surfacing as an unhandled rejection
+      // when dispose() settles the still-pending request below.
+      void request.catch(() => undefined)
+
+      // The Host deflates the whole session into the archive and reads a
+      // paged history for the text formats, so the export outlives an ordinary
+      // round trip. A client deadline below that reports a failure for a file
+      // the Host then finishes writing.
+      expect(setTimeoutSpy.mock.calls.some(([, timeout]) => timeout === 180_000)).toBe(true)
+      client.handle({
+        protocolVersion: PROTOCOL_VERSION,
+        message: { type: 'response', requestId: 'export-1', ok: true, payload: { cancelled: false } },
+      })
+      await expect(request).resolves.toEqual({ cancelled: false })
+    } finally {
+      setTimeoutSpy.mockRestore()
+      client.dispose()
+    }
+  })
+
   it('keeps an npm DSH install request pending beyond the ordinary request timeout', async () => {
     const setTimeoutSpy = vi.spyOn(window, 'setTimeout')
     const client = new ProtocolClient({
@@ -92,6 +130,76 @@ describe('ProtocolClient', () => {
         message: { type: 'response', requestId: 'install-1', ok: true, payload: { status: 'ready' } },
       })
       await expect(request).resolves.toEqual({ status: 'ready' })
+    } finally {
+      setTimeoutSpy.mockRestore()
+      client.dispose()
+    }
+  })
+
+  it('outlasts the two npm calls a host update check runs in sequence', async () => {
+    const setTimeoutSpy = vi.spyOn(window, 'setTimeout')
+    const client = new ProtocolClient({
+      postMessage: () => undefined,
+      getState: () => undefined,
+      setState: () => undefined,
+    })
+    try {
+      const request = client.request<unknown>({
+        type: 'runtime.update.check',
+        requestId: 'update-check-1',
+        payload: { force: true },
+      })
+
+      // The Host runs `npm view` and then `npm list --global`, each with its own
+      // 30s budget, before it can answer. A shorter client budget aborts a check
+      // the Host is still running, reports a timeout for work that succeeds, and
+      // drops the version list the drawer was waiting for.
+      const budgets = setTimeoutSpy.mock.calls.map(([, timeout]) => timeout)
+      expect(budgets.some((timeout) => typeof timeout === 'number' && timeout >= 60_000)).toBe(true)
+      client.handle({
+        protocolVersion: PROTOCOL_VERSION,
+        message: { type: 'response', requestId: 'update-check-1', ok: true, payload: { status: 'ready' } },
+      })
+      await expect(request).resolves.toEqual({ status: 'ready' })
+    } finally {
+      setTimeoutSpy.mockRestore()
+      client.dispose()
+    }
+  })
+
+  it('keeps a workspace-restoring feature request alive past the chat timeout', async () => {
+    const setTimeoutSpy = vi.spyOn(window, 'setTimeout')
+    const client = new ProtocolClient({
+      postMessage: () => undefined,
+      getState: () => undefined,
+      setState: () => undefined,
+    })
+    try {
+      const request = client.featureRequest<unknown>({
+        type: 'checkpoint.restore',
+        requestId: 'restore-1',
+        payload: {
+          checkpointId: 'checkpoint-1',
+          sessionId: 'session-1',
+          workspaceFolderId: 'workspace-1',
+          expectedCurrentRevision: 1,
+          conflictPolicy: 'abort',
+        },
+      })
+
+      // Restoring a checkpoint writes every recorded file back through the host
+      // file API; on a remote workspace that is a network round trip per file.
+      expect(setTimeoutSpy.mock.calls.map(([, timeout]) => timeout)).toContain(180_000)
+      client.handle({
+        protocolVersion: PROTOCOL_VERSION,
+        message: {
+          type: 'feature.response',
+          requestId: 'restore-1',
+          ok: true,
+          payload: { kind: 'operation', operationId: 'restore-1', state: 'completed' },
+        },
+      })
+      await expect(request).resolves.toMatchObject({ state: 'completed' })
     } finally {
       setTimeoutSpy.mockRestore()
       client.dispose()

@@ -109,6 +109,63 @@ describe('DshStreamController', () => {
     expect(completed.markdown).toContain('Greetings from MiniMax-M3!')
   })
 
+  it('keeps a live compaction replacement out of the transcript without losing its sequence', async () => {
+    const sessionId = 's1'
+    const transport = streamTransport([
+      canonicalFrame(sessionId, 0, 'user/message', {
+        id: 'u1',
+        role: 'user',
+        content: [{ type: 'text', text: 'Refactor the parser' }],
+        source: { kind: 'user' },
+      }),
+      {
+        payload: {
+          type: 'session/event',
+          sessionId,
+          event: {
+            type: 'user/message',
+            seq: 1,
+            time: 1,
+            surfaceOp: { op: 'replace', startSeq: 0, endSeq: 0 },
+            data: {
+              id: 'compaction-checkpoint',
+              role: 'user',
+              content: [{ type: 'text', text: 'Summary of the shadowed range.' }],
+              source: { kind: 'plugin', plugin: 'compact', compactionId: 'c1' },
+            },
+          },
+        },
+      },
+      canonicalFrame(sessionId, 2, 'assistant/message', {
+        turn: 1,
+        step: 1,
+        message: {
+          id: 'a1',
+          role: 'assistant',
+          source: { kind: 'model', provider: 'provider-1', model: 'model-1' },
+          content: [{ type: 'text', text: 'Parser refactored' }],
+        },
+      }),
+    ])
+    const received: BackendEvent[] = []
+    const controller = new DshStreamController(transport)
+    controllers.push(controller)
+    controller.subscribe((event) => received.push(event))
+
+    await waitFor(() => received.length === 3)
+    // The copy restates a shadowed range for the model alone, so it must not
+    // reach the transcript as a user turn. Its sequence still has to be
+    // delivered in order: the ordered-delivery watermark reads a missing
+    // sequence as a hole in the log and would recover history for it.
+    expect(received.map((event) => event.type)).toEqual([
+      'message.user',
+      'session.system',
+      'message.completed',
+    ])
+    expect(received[1]).toMatchObject({ type: 'session.system', sessionId, sequence: 1 })
+    expect(JSON.stringify(received)).not.toContain('Summary of the shadowed range.')
+  })
+
   it('stops a same-sequence bucket when a listener closes the controller', async () => {
     const stream = new ControlledStream()
     const received: BackendEvent[] = []

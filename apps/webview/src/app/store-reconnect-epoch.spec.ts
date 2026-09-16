@@ -20,6 +20,7 @@ const queueItem = {
   sessionId: activeSession.id,
   text: 'queued while the old process was alive',
   attachments: [],
+  textOnly: true,
   mode: 'queue',
   createdAt: '2026-08-31T08:00:00.000Z',
 } as const
@@ -43,7 +44,16 @@ const childEntry = {
   hasChildren: false,
 } as const
 
-function userMessageHistoryEntry(sequence: number): unknown {
+const PROBE_IMAGE = {
+  attachmentId: 'image-probe',
+  mediaType: 'image/png',
+  bytes: 71,
+  width: 2,
+  height: 1,
+  name: 'probe.png',
+} as const
+
+function userMessageHistoryEntry(sequence: number, images?: readonly (typeof PROBE_IMAGE)[]): unknown {
   return {
     sequence,
     time: '2026-08-31T08:00:00.000Z',
@@ -52,6 +62,7 @@ function userMessageHistoryEntry(sequence: number): unknown {
       sessionId: activeSession.id,
       messageId: `message-${sequence}`,
       markdown: `message ${sequence}`,
+      ...(images === undefined ? {} : { images }),
     },
   }
 }
@@ -148,10 +159,12 @@ function baseResponse(request: WebviewRequest): unknown {
   }
 }
 
-function sessionOpenResponse(): unknown {
+function sessionOpenResponse(withImage: boolean): unknown {
   return {
     ...activeSession,
-    history: [1, 2, 3, 4, 5].map((sequence) => userMessageHistoryEntry(sequence)),
+    history: [1, 2, 3, 4, 5].map((sequence) =>
+      userMessageHistoryEntry(sequence, withImage && sequence === 1 ? [PROBE_IMAGE] : undefined),
+    ),
     historyHasMore: false,
     permissionPresets: [],
     configuration: {
@@ -164,12 +177,12 @@ function sessionOpenResponse(): unknown {
   }
 }
 
-function makeStore(): {
+function makeStore(withImage = false): {
   store: ReturnType<typeof createAppStore>
   client: FakeClient
 } {
   const respond: Respond = (request) => {
-    if (request.type === 'session.open') return sessionOpenResponse()
+    if (request.type === 'session.open') return sessionOpenResponse(withImage)
     return baseResponse(request)
   }
   const client = new FakeClient(respond)
@@ -188,7 +201,7 @@ function makeSubagentStore(): {
 } {
   let routedParents = new Set<string>()
   const respond: Respond = (request) => {
-    if (request.type === 'session.open') return sessionOpenResponse()
+    if (request.type === 'session.open') return sessionOpenResponse(false)
     if (request.type === 'subagent.list') {
       const parentSessionId = (request.payload as { sessionId?: unknown }).sessionId
       if (typeof parentSessionId === 'string') routedParents.add(parentSessionId)
@@ -231,7 +244,7 @@ function makeRejectingStore(rejections: { count: number }): {
         )
         throw reason
       }
-      return sessionOpenResponse()
+      return sessionOpenResponse(false)
     }
     return baseResponse(request)
   }
@@ -246,6 +259,16 @@ const userMessageNodes = (state: {
   readonly timeline: { readonly nodes: readonly { readonly kind: string }[] }
 }): readonly { readonly kind: string }[] =>
   state.timeline.nodes.filter((node) => node.kind === 'user-message')
+
+const firstUserImage = (state: {
+  readonly timeline: {
+    readonly nodes: readonly {
+      readonly kind: string
+      readonly images?: readonly { readonly attachmentId: string }[]
+    }[]
+  }
+}): { readonly attachmentId: string } | undefined =>
+  state.timeline.nodes.find((node) => node.kind === 'user-message')?.images?.[0]
 
 const flushAsync = async (): Promise<void> => {
   await new Promise((resolve) => setTimeout(resolve, 60))
@@ -291,6 +314,31 @@ describe('AppStore connection restart', () => {
     expect(sessionOpens(client)).toHaveLength(2)
     // The conversation itself is durable, so it survives the replacement.
     expect(userMessageNodes(store.getState())).toHaveLength(5)
+    store.dispose()
+    client.dispose()
+  })
+
+  it('republishes a reopened row with fresh image references', async () => {
+    const { store, client } = makeStore(true)
+    client.emit(connectionSnapshot(1, 'connected', { dshVersion: '0.1.0' }))
+    await store.openSession(activeSession.id)
+    await flushAsync()
+    const before = firstUserImage(store.getState())
+    expect(before?.attachmentId).toBe(PROBE_IMAGE.attachmentId)
+
+    // The thumbnail loader latches a failed read for the life of its mount, so
+    // the reopen is what lets a dropped image read be retried: the republished
+    // row must carry a new reference object, not the same one the memo would
+    // skip over.
+    client.emit(connectionSnapshot(2, 'stopping'))
+    client.emit(connectionSnapshot(3, 'idle'))
+    client.emit(connectionSnapshot(4, 'connected', { dshVersion: '0.1.0' }))
+    await flushAsync()
+
+    expect(sessionOpens(client)).toHaveLength(2)
+    const after = firstUserImage(store.getState())
+    expect(after?.attachmentId).toBe(PROBE_IMAGE.attachmentId)
+    expect(after).not.toBe(before)
     store.dispose()
     client.dispose()
   })

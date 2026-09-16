@@ -3,13 +3,15 @@ import { createHash } from 'node:crypto'
 import {
   AppError,
   CHANGE_LIMITS,
-  changeDiffBytes,
+  changeDiffsBytes,
+  changeDiffsDelta,
+  changeDiffsStatus,
   changeEvidenceRank,
-  changeLineDelta,
   isCanonicalWorkspaceRelativePath,
   isChangeDiff,
   type BackendEvent,
   type ChangeDetail,
+  type ChangeDiff,
   type ChangeListQuery,
   type ChangeObservation,
   type ChangeReviewState,
@@ -23,10 +25,29 @@ import {
 
 const HASH_PATTERN = /^[a-f0-9]{64}$/u
 
+/**
+ * Host-only observation of a change path; no bytes cross this callback boundary.
+ * `absent` is a positive statement that no file exists there, which is the only
+ * evidence a deletion can produce: no hash can match a path that is gone.
+ */
+export type ChangePathObservation =
+  { readonly kind: 'hash'; readonly hash: string } | { readonly kind: 'absent' }
+
 export interface ChangeSetTrackerOptions {
   readonly now?: () => number
-  /** Host-only hash observation; no bytes cross this callback boundary. */
-  readonly readObservedHash?: (workspaceFolderId: string, relativePath: string) => Promise<string | undefined>
+  readonly observeChangePath?: (
+    workspaceFolderId: string,
+    relativePath: string,
+  ) => Promise<ChangePathObservation | undefined>
+  /**
+   * Fit a path the host stated to the workspace it belongs to. A real host
+   * states `meta.diffs[].path`, argument-derived paths, and rename sources as
+   * absolute host paths, while every consumer of a change row keys it by a
+   * canonical workspace-relative path. Fitting has to happen in the Host, where
+   * the workspace folders still exist; the answer is validated before use, so a
+   * hook cannot widen the boundary it exists to enforce.
+   */
+  readonly toWorkspaceRelativePath?: (workspaceFolderId: string, path: string) => string | undefined
   /** Resolve the authoritative workspace for a session before accepting events. */
   readonly resolveSessionWorkspaceFolderId?: (
     backend: DshBackend,
@@ -45,7 +66,8 @@ export class ChangeSetTracker {
   private readonly seenEvents = new Set<string>()
   private readonly sessionWorkspaceResolutions = new Map<string, Promise<string | undefined>>()
   private readonly now: () => number
-  private readonly readObservedHash: ChangeSetTrackerOptions['readObservedHash']
+  private readonly observeChangePath: ChangeSetTrackerOptions['observeChangePath']
+  private readonly toWorkspaceRelativePath: ChangeSetTrackerOptions['toWorkspaceRelativePath']
   private readonly resolveSessionWorkspaceFolderId: ChangeSetTrackerOptions['resolveSessionWorkspaceFolderId']
   private readonly onChange: ChangeSetTrackerOptions['onChange']
   private unsubscribe: (() => void) | undefined
@@ -56,7 +78,8 @@ export class ChangeSetTracker {
 
   public constructor(options: ChangeSetTrackerOptions = {}) {
     this.now = options.now ?? (() => Date.now())
-    this.readObservedHash = options.readObservedHash
+    this.observeChangePath = options.observeChangePath
+    this.toWorkspaceRelativePath = options.toWorkspaceRelativePath
     this.resolveSessionWorkspaceFolderId = options.resolveSessionWorkspaceFolderId
     this.onChange = options.onChange
   }
@@ -112,13 +135,13 @@ export class ChangeSetTracker {
     while (this.seenEvents.size > CHANGE_LIMITS.maxFiles * 8)
       this.seenEvents.delete(this.seenEvents.values().next().value as string)
 
-    const candidates = changeCandidates(observation.tool)
+    const fitPath = this.pathFitter(observation.workspaceFolderId)
+    const candidates = changeCandidates(observation.tool, fitPath)
     if (candidates.length === 0) return
     for (const candidate of candidates) {
       if (!isActive()) return
-      if (!isCanonicalWorkspaceRelativePath(candidate.relativePath)) continue
       const changeId = stableChangeId(observation, candidate.relativePath)
-      const incoming = this.toChange(observation, candidate, changeId)
+      const incoming = this.toChange(observation, candidate, changeId, fitPath)
       const current = this.entries.get(changeId)
       const next = current === undefined ? incoming : mergeChange(current, incoming)
       if (!isActive()) return
@@ -126,8 +149,8 @@ export class ChangeSetTracker {
       this.onChange?.(next)
       if (
         incoming.evidence === 'structuredToolSuccess' &&
-        incoming.proposalNewHash !== undefined &&
-        this.readObservedHash !== undefined
+        this.observeChangePath !== undefined &&
+        (incoming.proposalNewHash !== undefined || isDeletionProposal(incoming))
       )
         await this.observeAppliedHash(changeId, incoming, isActive)
     }
@@ -159,7 +182,7 @@ export class ChangeSetTracker {
       throwIfAborted(signal)
       const change = this.entries.get(changeId)
       if (change === undefined) throw changeUnavailable()
-      const diffText = change.diff === undefined ? undefined : formatDiff(change.diff)
+      const diffText = change.diffs === undefined ? undefined : formatDiff(change.diffs)
       const diffTruncated = diffText !== undefined && byteLength(diffText) > CHANGE_LIMITS.maxDiffBytes
       return {
         ...change,
@@ -252,6 +275,21 @@ export class ChangeSetTracker {
     return resolution
   }
 
+  /**
+   * A path stated by the host is either already workspace-relative (the shape
+   * the feature protocol defines) or has to be fitted to the workspace the
+   * observation belongs to. Anything else — an unfittable host path, an answer
+   * outside the workspace, a traversal segment — is dropped rather than stored.
+   */
+  private pathFitter(workspaceFolderId: string): (path: string) => string | undefined {
+    const toWorkspaceRelativePath = this.toWorkspaceRelativePath
+    return (value) => {
+      if (isCanonicalWorkspaceRelativePath(value)) return value
+      const fitted = toWorkspaceRelativePath?.(workspaceFolderId, value)
+      return fitted !== undefined && isCanonicalWorkspaceRelativePath(fitted) ? fitted : undefined
+    }
+  }
+
   private identity(
     event: Extract<BackendEvent, { readonly type: 'tool.updated' }>,
     backend: ConnectedBackend,
@@ -280,25 +318,26 @@ export class ChangeSetTracker {
     observation: ChangeObservation,
     candidate: ChangeCandidate,
     changeId: string,
+    fitPath: (path: string) => string | undefined,
   ): ChangeSetFile {
     const tool = observation.tool
-    const diff = candidate.diff
+    const diffs = candidate.diffs
     const failed = tool.status === 'failed' || tool.status === 'cancelled'
     const successful = tool.status === 'completed' && tool.presentation?.phase === 'result'
     const evidence = failed
       ? 'failed'
-      : diff !== undefined
+      : diffs !== undefined
         ? successful
           ? 'structuredToolSuccess'
           : 'structuredProposal'
         : candidate.locations.length > 0
           ? 'structuredLocationOnly'
           : 'incomplete'
-    const delta = diff === undefined ? undefined : changeLineDelta(diff)
+    const delta = diffs === undefined ? undefined : changeDiffsDelta(diffs)
     const metadata = tool.metadata
     const proposalOldHash = hashMetadata(metadata, ['proposalOldHash', 'oldHash'])
     const proposalNewHash = hashMetadata(metadata, ['proposalNewHash', 'newHash'])
-    const previousRelativePath = canonicalMetadataPath(metadata, ['previousRelativePath', 'renameFrom'])
+    const previousRelativePath = metadataPath(metadata, ['previousRelativePath', 'renameFrom'], fitPath)
     const status = previousRelativePath === undefined ? candidate.status : 'renamed'
     const firstSeenAt = parseTime(tool.startedAt) ?? observation.observedAt
     const lastSeenAt = parseTime(tool.completedAt) ?? observation.observedAt
@@ -313,10 +352,10 @@ export class ChangeSetTracker {
       ...(delta === undefined ? {} : { additions: delta.additions, deletions: delta.deletions }),
       ...(proposalOldHash === undefined ? {} : { proposalOldHash }),
       ...(proposalNewHash === undefined ? {} : { proposalNewHash }),
-      ...(diff === undefined ? {} : { diff }),
+      ...(diffs === undefined ? {} : { diffs }),
       locations: candidate.locations,
       evidence,
-      applicationState: failed ? 'failed' : diff === undefined ? 'unknown' : 'proposed',
+      applicationState: failed ? 'failed' : diffs === undefined ? 'unknown' : 'proposed',
       reviewState: 'unreviewed',
       sourceIds: [tool.id],
       sourceInteractionIds,
@@ -324,7 +363,7 @@ export class ChangeSetTracker {
       firstSeenAt,
       lastSeenAt: Math.max(firstSeenAt, lastSeenAt),
       identity: observation.identity,
-      diffAvailable: diff !== undefined,
+      diffAvailable: diffs !== undefined,
     }
   }
 
@@ -333,22 +372,36 @@ export class ChangeSetTracker {
     incoming: ChangeSetFile,
     isActive: () => boolean,
   ): Promise<void> {
-    const readObservedHash = this.readObservedHash
-    if (readObservedHash === undefined || incoming.proposalNewHash === undefined) return
-    const observedHash = await readObservedHash(incoming.workspaceFolderId, incoming.relativePath).catch(
+    const observeChangePath = this.observeChangePath
+    if (observeChangePath === undefined) return
+    const observation = await observeChangePath(incoming.workspaceFolderId, incoming.relativePath).catch(
       () => undefined,
     )
-    if (observedHash === undefined || !HASH_PATTERN.test(observedHash)) return
-    if (!isActive()) return
+    if (observation === undefined || !isActive()) return
     const current = this.entries.get(changeId)
-    if (current === undefined || current.proposalNewHash !== incoming.proposalNewHash) return
-    if (observedHash !== incoming.proposalNewHash) return
+    if (current === undefined) return
+    if (observation.kind === 'absent') {
+      // A deletion is verified by the file being gone; any other proposal whose
+      // path is missing was not confirmed by this observation.
+      if (!isDeletionProposal(current)) return
+      this.entries.set(changeId, {
+        ...current,
+        evidence: 'structuredToolSuccess',
+        applicationState: 'appliedObserved',
+      })
+      this.onChange?.(this.entries.get(changeId)!)
+      return
+    }
+    if (!HASH_PATTERN.test(observation.hash)) return
+    if (incoming.proposalNewHash === undefined) return
+    if (current.proposalNewHash !== incoming.proposalNewHash) return
+    if (observation.hash !== incoming.proposalNewHash) return
     if (!isActive()) return
     this.entries.set(changeId, {
       ...current,
       evidence: 'structuredToolSuccess',
       applicationState: 'appliedObserved',
-      observedHash,
+      observedHash: observation.hash,
     })
     this.onChange?.(this.entries.get(changeId)!)
   }
@@ -357,7 +410,7 @@ export class ChangeSetTracker {
     let totalBytes = 0
     const entries = [...this.entries.values()].sort((left, right) => right.lastSeenAt - left.lastSeenAt)
     for (const entry of entries) {
-      totalBytes += entry.diff === undefined ? 0 : changeDiffBytes(entry.diff)
+      totalBytes += entry.diffs === undefined ? 0 : changeDiffsBytes(entry.diffs)
       if (entries.indexOf(entry) >= CHANGE_LIMITS.maxFiles || totalBytes > CHANGE_LIMITS.maxTotalBytes)
         this.entries.delete(entry.changeId)
     }
@@ -367,44 +420,52 @@ export class ChangeSetTracker {
 interface ChangeCandidate {
   readonly relativePath: string
   readonly status: ChangeSetFile['status']
-  readonly diff?: ChangeSetFile['diff']
+  readonly diffs?: readonly ChangeDiff[]
   readonly locations: readonly ToolLocationView[]
 }
 
-function changeCandidates(tool: ToolCallView): readonly ChangeCandidate[] {
+function changeCandidates(
+  tool: ToolCallView,
+  fitPath: (path: string) => string | undefined,
+): readonly ChangeCandidate[] {
   const presentation = tool.presentation
+  // Every hunk the host sent: `computeHunkDiffs` caps the list nowhere, and a
+  // dropped tail here would vanish from the review with nothing on screen
+  // naming the loss. The wire budget and `CHANGE_LIMITS` bound what is kept.
   const diffEntries =
-    presentation?.card === 'diff' && 'diffs' in presentation
-      ? presentation.diffs.filter(isChangeDiff).slice(0, CHANGE_LIMITS.maxSources * 2)
-      : []
+    presentation?.card === 'diff' && 'diffs' in presentation ? presentation.diffs.filter(isChangeDiff) : []
   const locations = safeLocations(
     tool.locations ??
       (presentation !== undefined && 'locations' in presentation ? presentation.locations : undefined),
+    fitPath,
   )
-  const byPath = new Map<string, ChangeCandidate>()
+  const hunksByPath = new Map<string, ChangeDiff[]>()
   for (const diff of diffEntries) {
-    const path = diff.path
-    if (!isCanonicalWorkspaceRelativePath(path)) continue
-    const diffValue = { oldText: diff.oldText, newText: diff.newText }
-    byPath.set(path, {
-      relativePath: path,
-      status: changeStatus(diffValue),
-      diff: diffValue,
-      locations: locationsForPath(locations, path),
-    })
+    const relativePath = fitPath(diff.path)
+    if (relativePath === undefined) continue
+    const hunks = hunksByPath.get(relativePath)
+    if (hunks === undefined) hunksByPath.set(relativePath, [{ oldText: diff.oldText, newText: diff.newText }])
+    else hunks.push({ oldText: diff.oldText, newText: diff.newText })
   }
-  const mutation = isMutationTool(tool)
-  if (mutation) {
+  const candidates: ChangeCandidate[] = []
+  for (const [relativePath, hunks] of hunksByPath)
+    candidates.push({
+      relativePath,
+      status: changeDiffsStatus(hunks),
+      diffs: hunks,
+      locations: locationsForPath(locations, relativePath),
+    })
+  if (isMutationTool(tool)) {
     for (const location of locations) {
-      if (byPath.has(location.path)) continue
-      byPath.set(location.path, {
+      if (hunksByPath.has(location.path)) continue
+      candidates.push({
         relativePath: location.path,
         status: 'unknown',
         locations: [location],
       })
     }
   }
-  return [...byPath.values()].slice(0, CHANGE_LIMITS.maxFiles)
+  return candidates.slice(0, CHANGE_LIMITS.maxFiles)
 }
 
 function isMutationTool(tool: ToolCallView): boolean {
@@ -418,17 +479,21 @@ function isMutationTool(tool: ToolCallView): boolean {
   )
 }
 
-function safeLocations(value: readonly ToolLocationView[] | undefined): readonly ToolLocationView[] {
+function safeLocations(
+  value: readonly ToolLocationView[] | undefined,
+  fitPath: (path: string) => string | undefined,
+): readonly ToolLocationView[] {
   if (value === undefined) return []
   const locations: ToolLocationView[] = []
   for (const location of value) {
-    if (!isCanonicalWorkspaceRelativePath(location.path)) continue
+    const relativePath = fitPath(location.path)
+    if (relativePath === undefined) continue
     if (
       location.line !== undefined &&
       (!Number.isSafeInteger(location.line) || location.line < 0 || location.line > 1_000_000)
     )
       continue
-    locations.push(location)
+    locations.push(relativePath === location.path ? location : { ...location, path: relativePath })
     if (locations.length >= 32) break
   }
   return locations
@@ -442,13 +507,9 @@ function locationsForPath(
   return matching.length === 0 ? [{ path: relativePath }] : matching
 }
 
-function changeStatus(diff: {
-  readonly oldText: string | null
-  readonly newText: string
-}): ChangeSetFile['status'] {
-  if (diff.oldText === null) return 'added'
-  if (diff.newText.length === 0 && diff.oldText.length > 0) return 'deleted'
-  return 'modified'
+/** Only a deletion proposal has a verifiable post-state of absence. */
+function isDeletionProposal(change: ChangeSetFile): boolean {
+  return change.diffs !== undefined && changeDiffsStatus(change.diffs) === 'deleted'
 }
 
 function mergeChange(current: ChangeSetFile, incoming: ChangeSetFile): ChangeSetFile {
@@ -463,8 +524,22 @@ function mergeChange(current: ChangeSetFile, incoming: ChangeSetFile): ChangeSet
   const sourceToolCallIds = uniqueBounded([...current.sourceToolCallIds, ...incoming.sourceToolCallIds], 16)
   const locations = uniqueLocations([...current.locations, ...incoming.locations])
   const preferred = keepCurrent ? current : incoming
+  // `appliedObserved` comes from verifying the file, not from the observation
+  // being merged. A same-rank duplicate of the same tool event (for example the
+  // host-local frame and the sequenced mux frame of one call) carries a fresh
+  // `proposed` state and no observed hash, so preferring it would silently
+  // un-verify a change. Only strictly stronger evidence replaces the
+  // verification.
+  const verified =
+    current.applicationState === 'appliedObserved' && incomingRank <= currentRank
+      ? {
+          applicationState: current.applicationState,
+          ...(current.observedHash === undefined ? {} : { observedHash: current.observedHash }),
+        }
+      : {}
   return {
     ...preferred,
+    ...verified,
     sourceIds,
     sourceInteractionIds,
     sourceToolCallIds,
@@ -472,8 +547,8 @@ function mergeChange(current: ChangeSetFile, incoming: ChangeSetFile): ChangeSet
     firstSeenAt: Math.min(current.firstSeenAt, incoming.firstSeenAt),
     lastSeenAt: Math.max(current.lastSeenAt, incoming.lastSeenAt),
     reviewState: current.reviewState,
-    ...(preferred.diff === undefined && current.diff !== undefined
-      ? { diff: current.diff, diffAvailable: true }
+    ...(preferred.diffs === undefined && current.diffs !== undefined
+      ? { diffs: current.diffs, diffAvailable: true }
       : {}),
     ...(preferred.proposalOldHash === undefined && current.proposalOldHash === undefined
       ? {}
@@ -533,13 +608,16 @@ function hashMetadata(
   return undefined
 }
 
-function canonicalMetadataPath(
+function metadataPath(
   metadata: Readonly<Record<string, unknown>>,
   keys: readonly string[],
+  fitPath: (path: string) => string | undefined,
 ): string | undefined {
   for (const key of keys) {
     const value = metadata[key]
-    if (typeof value === 'string' && isCanonicalWorkspaceRelativePath(value)) return value
+    if (typeof value !== 'string') continue
+    const relativePath = fitPath(value)
+    if (relativePath !== undefined) return relativePath
   }
   return undefined
 }
@@ -557,8 +635,28 @@ function stringMetadata(
   )
 }
 
-function formatDiff(diff: NonNullable<ChangeSetFile['diff']>): string {
-  return [`--- old`, diff.oldText ?? '', `+++ new`, diff.newText].join('\n')
+/**
+ * The change review's diff text: every hunk's removed lines then its added
+ * lines, with the reference card's `⋯` between two hunks of the same file — so
+ * a reader sees the whole change and can tell a scattered edit from a
+ * contiguous one. Context lines ride along on both sides, exactly as the tool
+ * card drew them.
+ */
+function formatDiff(diffs: readonly ChangeDiff[]): string {
+  const rows: string[] = []
+  for (const diff of diffs) {
+    if (rows.length > 0) rows.push('⋯')
+    for (const line of diffContentLines(diff.oldText)) rows.push(`- ${line}`)
+    for (const line of diffContentLines(diff.newText)) rows.push(`+ ${line}`)
+  }
+  return rows.join('\n')
+}
+
+/** The reference card's line rule: an empty side is no lines, one trailing newline is a terminator. */
+function diffContentLines(text: string | null): readonly string[] {
+  if (text === null || text.length === 0) return []
+  const body = text.endsWith('\n') ? text.slice(0, -1) : text
+  return body.split('\n')
 }
 
 function byteLength(value: string): number {

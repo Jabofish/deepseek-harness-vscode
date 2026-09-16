@@ -93,7 +93,59 @@ describe('DeepSeek Harness 0.1.0-rc.6 contract', () => {
       ).toEqual({
         type: 'goal.updated',
         sessionId: 's1',
-        goals: [{ id: 'goal-1', title: 'Finish the adapter', status, maxGoalRounds: 3 }],
+        goals: [
+          {
+            id: 'goal-1',
+            title: 'Finish the adapter',
+            status,
+            maxGoalRounds: 3,
+            ...(phase === 'blocked'
+              ? { blockedReason: { code: 'awaiting-input', message: 'Waiting for user input' } }
+              : {}),
+          },
+        ],
+      })
+    }
+
+    // The legacy whole-list event is mapped leniently: an unusable reason is
+    // dropped instead of failing the frame, a usable one survives.
+    for (const [blockedReason, expected] of [
+      [
+        { code: 'awaiting-input', message: 'Waiting for user input' },
+        { code: 'awaiting-input', message: 'Waiting for user input' },
+      ],
+      [{ code: '', message: 'Waiting for user input' }, undefined],
+      [{ code: 'awaiting-input', message: '   ' }, undefined],
+      ['awaiting-input', undefined],
+    ] as const) {
+      expect(
+        rc6Mapper.event('goal/updated', {
+          sessionId: 's1',
+          data: {
+            goals: [
+              {
+                id: 'goal-1',
+                revision: 2,
+                objective: 'Finish the adapter',
+                phase: 'blocked',
+                maxGoalRounds: 3,
+                blockedReason,
+              },
+            ],
+          },
+        }),
+      ).toEqual({
+        type: 'goal.updated',
+        sessionId: 's1',
+        goals: [
+          {
+            id: 'goal-1',
+            title: 'Finish the adapter',
+            status: 'blocked',
+            maxGoalRounds: 3,
+            ...(expected === undefined ? {} : { blockedReason: expected }),
+          },
+        ],
       })
     }
 
@@ -402,6 +454,31 @@ describe('DeepSeek Harness 0.1.0-rc.6 contract', () => {
     })
   })
 
+  it('keeps a provider failure message longer than 320 characters', () => {
+    // `turn/end`'s error reason carries the provider adapter's own `LlmError`
+    // message (e.g. the provider's `error.message` from an HTTP error body)
+    // with no length bound, and the reference client renders it whole in its
+    // turn-error row. Clipping here drops the tail of the user's only
+    // diagnosis with no ellipsis or second surface that reveals the loss.
+    const message = `DeepSeek API error (HTTP 400): ${'invalid request field '.repeat(20)}`.trim()
+    expect(message.length).toBeGreaterThan(320)
+    expect(
+      rc6Mapper.event('turn/end', {
+        sessionId: 's1',
+        data: {
+          turn: 4,
+          reason: { kind: 'error', error: { code: 'PROVIDER_UNAVAILABLE', message } },
+        },
+      }),
+    ).toEqual({
+      type: 'turn.ended',
+      sessionId: 's1',
+      turn: 4,
+      reason: 'error',
+      failure: { code: 'PROVIDER_UNAVAILABLE', message },
+    })
+  })
+
   it('uses replayed tool-result text instead of rendering a structured error identity as JSON', () => {
     const mapped = rc6Mapper.event('tool/result', {
       sessionId: 's1',
@@ -430,6 +507,45 @@ describe('DeepSeek Harness 0.1.0-rc.6 contract', () => {
       },
     })
     expect(JSON.stringify(mapped)).not.toContain('AttachmentError')
+  })
+
+  it('keeps a failed tool result whose error text is longer than 4096 characters', () => {
+    // A failed call's text is host-authored and unbounded: a `tools/post-execute`
+    // block carries its feedback content verbatim (`hooks-codex` /
+    // `hooks-claude-code` pass the external hook's own reason through), and the
+    // reference client renders the flattened result text whole — the collapsed
+    // error row's summary is its first line. Clipping here leaves the row's
+    // error section showing a sentence chopped mid-line with nothing on screen
+    // naming the loss.
+    const text = `blocked by PostToolUse hook: lint failed\n${'src/feature.ts:12:5 no-unused-vars\n'.repeat(200)}`
+    expect(text.length).toBeGreaterThan(4_096)
+
+    const mapped = rc6Mapper.event('tool/result', {
+      sessionId: 's1',
+      data: {
+        callId: 'call-blocked',
+        name: 'write',
+        error: { name: 'PostToolUseBlocked', code: 'TOOL_BLOCKED' },
+        message: {
+          source: { kind: 'tool', callId: 'call-blocked' },
+          role: 'user',
+          id: 'message-blocked',
+          content: [
+            {
+              type: 'tool-result',
+              toolCallId: 'call-blocked',
+              isError: true,
+              content: [{ type: 'text', text }],
+            },
+          ],
+        },
+      },
+    })
+
+    expect(mapped).toMatchObject({
+      type: 'tool.updated',
+      tool: { id: 'call-blocked', status: 'failed', error: text },
+    })
   })
 
   it('projects the pinned upstream image attachment reference without leaking image bytes', () => {
@@ -577,6 +693,27 @@ describe('DeepSeek Harness 0.1.0-rc.6 contract', () => {
     })
   })
 
+  it('keeps a durable file part visible instead of dropping the message content', () => {
+    // 0.1.6-alpha.1 admits real `file` parts beside text and images; their
+    // bytes stay host-side. A file-only message carries no text at all, so an
+    // unprojected block would render as an empty user bubble.
+    expect(
+      rc6Mapper.event('user/message', {
+        sessionId: 's1',
+        message: {
+          id: 'user-file-1',
+          content: [{ type: 'file', attachment: { attachmentId: 'file-1', name: 'spec.md', bytes: 2048 } }],
+        },
+      }),
+    ).toEqual({
+      type: 'message.user',
+      sessionId: 's1',
+      messageId: 'user-file-1',
+      markdown: '',
+      attachments: [{ name: 'spec.md' }],
+    })
+  })
+
   it('keeps one clear permission result for a command lifecycle pair', () => {
     expect(
       rc6Mapper.event('command/run', {
@@ -605,6 +742,30 @@ describe('DeepSeek Harness 0.1.0-rc.6 contract', () => {
       commandId: 'command-1',
       commandPhase: 'done',
       text: 'Permission changed to Full access.',
+    })
+  })
+
+  it('keeps a slash-command line longer than 4096 characters', () => {
+    // `command/run` records the parser's `args` — the raw text after the
+    // command name, straight from the line the user submitted — with no length
+    // bound (`parseCommand` slices the remainder of the line). The transcript
+    // row this becomes is the record of what ran, so a clip here hides the tail
+    // of the user's own command from the transcript and from an export.
+    // `parseCommand` keeps the separator space, so the recorded `args` starts
+    // with one and the reconstructed line has a single space after the name.
+    const args = ` ${'a long goal description '.repeat(240)}`.trimEnd()
+    const event = rc6Mapper.event('command/run', {
+      sessionId: 's1',
+      commandId: 'command-long',
+      name: 'goal',
+      args,
+    })
+    expect(args.length).toBeGreaterThan(4_096)
+    expect(event).toMatchObject({
+      type: 'notice',
+      commandName: 'goal',
+      commandPhase: 'run',
+      commandInput: `/goal${args}`,
     })
   })
 
@@ -707,6 +868,25 @@ describe('DeepSeek Harness 0.1.0-rc.6 contract', () => {
         retry: 1,
       }),
     ).toThrow(/Malformed retry turn/)
+  })
+
+  it('keeps distinct prune rows apart when a prune carries no shadowed range', () => {
+    // The timeline reducer keys compaction nodes by this id, so a fallback that
+    // resolves to one shared label collapses every pruned range into a single
+    // row. A prune without a usable shadowedSeqs list must still identify
+    // itself, and the event's own durable sequence is what distinguishes it.
+    const events = [
+      rc6Mapper.event('compaction/prune', { sessionId: 's1', seq: 14, data: {} }),
+      rc6Mapper.event('compaction/prune', { sessionId: 's1', seq: 41, data: { shadowedTokenCount: 700 } }),
+      rc6Mapper.event('compaction/prune', { sessionId: 's1', seq: 42, data: { shadowedSeqs: [] } }),
+    ]
+    const ids = events.map((event) => {
+      if (event.type !== 'compaction.updated') throw new Error('expected a compaction update')
+      return event.compaction.id
+    })
+
+    expect(ids).toEqual(['prune:14', 'prune:41', 'prune:42'])
+    expect(new Set(ids).size).toBe(3)
   })
 
   it('maps the rc.6 session projection, history, queue, jobs, and question correlation', () => {
@@ -1005,6 +1185,54 @@ describe('DeepSeek Harness 0.1.0-rc.6 contract', () => {
     })
   })
 
+  it('projects an inlined queued text file as a file chip instead of pasting its body into the row', () => {
+    // A queued prompt with a text-file attachment carries the adapter's
+    // "Attached file: …" envelope as a text block. Rendering that block as the
+    // row's text shows the whole file body and, because the row is then
+    // all-text, offers an edit that replaces the file with its own bytes.
+    expect(
+      rc6Mapper.event('session/queue', {
+        sessionId: 's1',
+        items: [
+          {
+            id: 'queued-file-1',
+            placement: 'queued',
+            rpcId: 'rpc-queued-file-1',
+            createdAt: '2026-09-16T00:00:00.000Z',
+            message: {
+              id: 'queued-message-file-1',
+              role: 'user',
+              content: [
+                { type: 'text', text: '概括文件内容' },
+                {
+                  type: 'text',
+                  text: '\n\nAttached file: 思路4.md\n\n# 很长的正文\n\nEnd of attached file: 思路4.md',
+                },
+              ],
+              source: { kind: 'user', rpcId: 'rpc-queued-file-1' },
+            },
+          },
+        ],
+      }),
+    ).toEqual({
+      type: 'queue.updated',
+      sessionId: 's1',
+      items: [
+        {
+          id: 'queued-file-1',
+          sessionId: 's1',
+          text: '概括文件内容',
+          attachments: [],
+          files: ['思路4.md'],
+          textOnly: false,
+          mode: 'queue',
+          createdAt: '2026-09-16T00:00:00.000Z',
+          rpcId: 'rpc-queued-file-1',
+        },
+      ],
+    })
+  })
+
   it('does not filter malformed session detail goal IDs into a smaller list', () => {
     expect(() =>
       rc6Mapper.sessionDetail({
@@ -1034,6 +1262,65 @@ describe('DeepSeek Harness 0.1.0-rc.6 contract', () => {
         /Malformed session history (sequence|time)/,
       )
     }
+  })
+
+  it('keeps a model-only surface replacement out of the human transcript', () => {
+    // A compaction appends a replacement copy that shadows the compacted range
+    // instead of entering the surface at its own position. Its content is the
+    // summary the model reads, never words the user wrote, so the row must not
+    // become a user/assistant/tool record — while its durable sequence still
+    // has to reach the client so the live watermark does not see a hole.
+    const replacement = (overrides: Record<string, unknown>): Record<string, unknown> => ({
+      type: 'user/message',
+      seq: 6,
+      time: '2026-01-01T00:00:02.000Z',
+      surfaceOp: { op: 'replace', startSeq: 1, endSeq: 5 },
+      data: {
+        id: 'compaction-checkpoint',
+        role: 'user',
+        content: [{ type: 'text', text: 'Summary of the shadowed range.' }],
+        source: { kind: 'plugin', plugin: 'compact', compactionId: 'c1' },
+      },
+      ...overrides,
+    })
+    const page = rc6Mapper.history({ events: [{ event: replacement({}) }], hasMore: false }, 's1')
+    expect(page.events).toEqual([])
+    const markers = rc6Mapper.history({ events: [{ event: replacement({}) }], hasMore: false }, 's1', {
+      includeSystemMarkers: true,
+    })
+    expect(markers.events.map((entry) => [entry.sequence, entry.event.type])).toEqual([[6, 'session.system']])
+    expect(markers.events[0]?.event).not.toHaveProperty('payload')
+    expect(rc6Mapper.event('user/message', { ...replacement({}), sessionId: 's1' })).toEqual({
+      type: 'session.system',
+      sessionId: 's1',
+    })
+    // The alpha wire spells the shadowed span `startSeq`/`endSeq`, the older
+    // one `start`/`end`; both mark the same model-only copy.
+    expect(
+      rc6Mapper.event('assistant/message', {
+        sessionId: 's1',
+        surfaceOp: { op: 'replace', start: 1, end: 2 },
+        data: {
+          turn: 1,
+          step: 1,
+          message: { id: 'a1', role: 'assistant', content: [{ type: 'text', text: 'restated' }] },
+        },
+      }),
+    ).toEqual({ type: 'session.system', sessionId: 's1' })
+    expect(
+      rc6Mapper.event('tool/result', {
+        sessionId: 's1',
+        surfaceOp: { op: 'replace', startSeq: 2, endSeq: 2 },
+        data: { callId: 'call-1', name: 'read', status: 'completed', result: 'restated' },
+      }),
+    ).toEqual({ type: 'session.system', sessionId: 's1' })
+    // An append-origin message keeps its ordinary transcript mapping.
+    expect(
+      rc6Mapper.event('user/message', {
+        ...replacement({ surfaceOp: 'append' }),
+        sessionId: 's1',
+      }),
+    ).toMatchObject({ type: 'message.user', markdown: 'Summary of the shadowed range.' })
   })
 
   it('answers a pending question with the server rpc id and option label only once', async () => {
@@ -1149,6 +1436,26 @@ describe('DeepSeek Harness 0.1.0-rc.6 contract', () => {
     })
   })
 
+  it('keeps an RPC failure detail longer than 320 characters', async () => {
+    // The Connection RPC error envelope types `message` as an unbounded string
+    // on the host side, and the official client shows the failure text the host
+    // sent. This repository's own protocol budget for a host error message is
+    // 1,024 characters, so an adapter-side cut at 320 drops the tail of the
+    // host's only explanation on every failed route with nothing on screen
+    // naming the loss.
+    const detail = `Command rejected: ${'field "tools[3].description" is invalid; '.repeat(24)}`.trim()
+    expect(detail.length).toBeGreaterThan(320)
+    const failure = await callRpc(
+      transport({ result: { ok: false, error: { code: 'command-error', message: detail } } }),
+      'session.prompt',
+      {},
+    ).then(
+      () => undefined,
+      (error: unknown) => error as AppError,
+    )
+    expect(failure?.message).toContain(detail)
+  })
+
   it('discovers and executes slash commands through the pinned Typert Remote contract', async () => {
     const calls: { readonly method: string; readonly params: unknown }[] = []
     const commandTransport: DshTransport = {
@@ -1182,36 +1489,24 @@ describe('DeepSeek Harness 0.1.0-rc.6 contract', () => {
     ])
   })
 
-  it('forwards validated image data for image-capable slash commands and retains error outcomes', async () => {
+  it('refuses an attachment on a host whose commands/execute declares no attachment parameter', async () => {
+    // 0.1.0-rc.7 and older take only `(agent, line)`. The descriptor rejects an
+    // extra field outright, so an attachment that cannot travel has to fail
+    // before the request leaves the Host.
     const calls: { readonly method: string; readonly params: unknown }[] = []
     const commandTransport: DshTransport = {
       ...transport({ result: { ok: true, value: [] } }),
       remoteRequest: <TResponse>(method: string, params: unknown) => {
         calls.push({ method, params })
-        return Promise.resolve(
-          (method === 'commands/execute'
-            ? {
-                ok: true,
-                value: { commandId: 'command-2', result: { kind: 'error', text: 'needs more detail' } },
-              }
-            : { ok: true, value: [] }) as TResponse,
-        )
+        return Promise.resolve({ ok: true, value: [] } as TResponse)
       },
     }
-    const repository = new Rc6CommandRepository(commandTransport)
     await expect(
-      repository.execute('session-1', '/goal inspect', [
+      new Rc6CommandRepository(commandTransport).execute('session-1', '/goal inspect', [
         { uri: 'data:image/png;base64,AQ==', name: 'diagram.png', mimeType: 'image/png' },
       ]),
-    ).resolves.toEqual({ kind: 'error', text: 'needs more detail' })
-    expect(calls[0]).toEqual({
-      method: 'commands/execute',
-      params: {
-        agentId: 'session-1',
-        line: '/goal inspect',
-        images: [{ mediaType: 'image/png', data: 'AQ==', name: 'diagram.png' }],
-      },
-    })
+    ).rejects.toMatchObject({ code: 'INVALID_CONFIGURATION' })
+    expect(calls).toEqual([])
   })
 
   it('does not request a command directory without an active session', async () => {
@@ -1220,14 +1515,39 @@ describe('DeepSeek Harness 0.1.0-rc.6 contract', () => {
     ).resolves.toEqual([])
   })
 
-  it('reports an unmatched slash command without sending a model prompt', async () => {
+  it('reports an unmatched slash line as unknown instead of failing the submission', async () => {
+    // The host resolves `commands/execute` only against its command directory
+    // and answers an ok envelope without a value for every other line (its
+    // Remote signature resolves to `CommandExecution | undefined`, and JSON has
+    // no way to carry the `undefined`). A user-invocable skill is addressed
+    // exactly like that (`/skill-name args`), so the absence has to reach the
+    // caller: it decides between a skill prompt gesture and plain text, while
+    // the adapter itself never sends a model prompt.
+    const calls: { readonly method: string; readonly params: unknown }[] = []
+    const commandTransport: DshTransport = {
+      ...transport({ result: { ok: true } }),
+      remoteRequest: <TResponse>(method: string, params: unknown) => {
+        calls.push({ method, params })
+        return Promise.resolve({ ok: true } as TResponse)
+      },
+    }
     await expect(
-      new Rc6CommandRepository({
-        ...transport({ result: { ok: true, value: undefined } }),
-        remoteRequest: <TResponse>() => Promise.resolve({ ok: true, value: undefined } as TResponse),
-      }).execute('session-1', '/not-registered'),
-    ).rejects.toMatchObject({
-      code: 'INVALID_CONFIGURATION',
+      new Rc6CommandRepository(commandTransport).execute('session-1', '/dsh-badge'),
+    ).resolves.toEqual({
+      kind: 'unknown',
+    })
+    expect(calls).toEqual([
+      { method: 'commands/execute', params: { agentId: 'session-1', line: '/dsh-badge' } },
+    ])
+  })
+
+  it('keeps an absent value a protocol error for a value-returning Remote caller', async () => {
+    const commandTransport: DshTransport = {
+      ...transport({ result: { ok: true } }),
+      remoteRequest: <TResponse>() => Promise.resolve({ ok: true } as TResponse),
+    }
+    await expect(new Rc6CommandRepository(commandTransport).list('session-1')).rejects.toMatchObject({
+      code: 'PROTOCOL_ERROR',
     })
   })
 
@@ -1324,6 +1644,37 @@ describe('rc6 stateful frame degradation', () => {
     }
   })
 
+  it('keeps the approval pairing id the command is resolved through', () => {
+    // `approval/requested` carries no command. DSH's own client reads it from
+    // the running tool call the request is paired with by `callId`
+    // (`ApprovalPanel` -> `commandOf(args.command)`), and a shell call card's
+    // title IS the command. Dropping the pairing here leaves the approval card
+    // asking the user to authorize a command it cannot show.
+    expect(
+      rc6Mapper.event('approval/requested', {
+        sessionId: 's1',
+        approvalId: 'approval-1',
+        toolName: 'bash',
+        callId: 'call-1',
+        reason: 'The command writes outside the workspace.',
+      }),
+    ).toEqual({
+      type: 'permission.requested',
+      request: {
+        id: 'approval-1',
+        sessionId: 's1',
+        title: 'bash',
+        description: 'The command writes outside the workspace.',
+        callId: 'call-1',
+        risk: 'medium',
+        options: [
+          { id: 'allowed-once', label: 'Allow once', kind: 'allow-once' },
+          { id: 'rejected', label: 'Reject', kind: 'deny' },
+        ],
+      },
+    })
+  })
+
   it('rejects malformed interaction and host notice frames instead of clearing or inventing state', () => {
     expect(() =>
       rc6Mapper.event('approval/requested', { sessionId: 's1', approvalId: '', toolName: 'shell' }),
@@ -1356,6 +1707,23 @@ describe('rc6 stateful frame degradation', () => {
     expect(() => rc6Mapper.event('host/agent-error', { sessionId: 's1' })).toThrow(
       /Malformed host\/agent-error/,
     )
+  })
+
+  it('keeps an agent-error chain longer than 512 characters', () => {
+    // `host/agent-error` is the only outlet for a live failure with no turn
+    // position, and the host sends its whole `errorChain` (e.g. `TypeError:
+    // fetch failed` plus every cause). The notice row renders that text in
+    // full, so clipping it would drop most of the user's only diagnosis for
+    // the failure with nothing on screen to reveal the loss.
+    const message =
+      `TypeError: fetch failed: connect ECONNREFUSED 127.0.0.1:1 - ${'cause detail '.repeat(48)}`.trim()
+    expect(message.length).toBeGreaterThan(512)
+    expect(rc6Mapper.event('host/agent-error', { sessionId: 's1', message })).toEqual({
+      type: 'notice',
+      sessionId: 's1',
+      level: 'error',
+      text: message,
+    })
   })
 })
 

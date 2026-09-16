@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import type { ReactElement } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type {
   DshUpdateSnapshot,
@@ -124,10 +125,10 @@ function dshSettingsFixture(): DshSettingsSnapshot {
   }
 }
 
-function renderDrawer(
+function drawerElement(
   overrides: Partial<Parameters<typeof SettingsDrawer>[0]> = {},
   localized = false,
-): ReturnType<typeof render> {
+): ReactElement {
   const drawer = (
     <SettingsDrawer
       open
@@ -167,7 +168,14 @@ function renderDrawer(
       {...overrides}
     />
   )
-  return render(localized ? <I18nProvider>{drawer}</I18nProvider> : drawer)
+  return localized ? <I18nProvider>{drawer}</I18nProvider> : drawer
+}
+
+function renderDrawer(
+  overrides: Partial<Parameters<typeof SettingsDrawer>[0]> = {},
+  localized = false,
+): ReturnType<typeof render> {
+  return render(drawerElement(overrides, localized))
 }
 
 describe('SettingsDrawer', () => {
@@ -1108,6 +1116,33 @@ describe('SettingsDrawer', () => {
 
     expect(screen.queryByRole('alertdialog', { name: 'Remove' })).toBeNull()
     expect(document.activeElement).toBe(trigger)
+  })
+
+  it('keeps the keyboard where the user put it while settings load and the host re-renders', async () => {
+    let settle: ((value: ExtensionSettingsSummary) => void) | undefined
+    const onLoadSettings = vi.fn(
+      () =>
+        new Promise<ExtensionSettingsSummary>((resolve) => {
+          settle = resolve
+        }),
+    )
+    const view = renderDrawer({ onLoadSettings })
+    const tab = screen.getByRole('tab', { name: 'Models' })
+    tab.focus()
+    expect(document.activeElement).toBe(tab)
+
+    // The drawer takes the keyboard once, when it opens. The settings answer
+    // lands later and the App keeps re-rendering behind it (a streamed token, a
+    // session event, a fresh callback identity) — none of that may move the
+    // keyboard the user has since placed on a control of their own choosing.
+    await act(async () => {
+      settle?.(settingsFixture())
+      await Promise.resolve()
+    })
+    expect(document.activeElement).toBe(tab)
+
+    view.rerender(drawerElement({ onLoadSettings: () => Promise.resolve(settingsFixture()) }))
+    expect(document.activeElement).toBe(tab)
   })
 
   it('renders nothing when closed', () => {

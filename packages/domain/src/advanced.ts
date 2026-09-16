@@ -28,7 +28,23 @@ export interface SkillDescriptor {
   readonly description: string
   /** Optional host-provided routing guidance for when the skill applies. */
   readonly whenToUse?: string
-  readonly source: 'project' | 'user' | 'plugin'
+  /**
+   * Where the skill came from, when the host reports it.
+   *
+   * The DSH catalog carries no origin: `skill.list` answers name, description,
+   * optional routing guidance and `modelInvocable` only. A client-side origin
+   * would be a guess about the host's own directories, so an absent value means
+   * exactly that the host did not say.
+   */
+  readonly source?: 'project' | 'user' | 'plugin'
+  /**
+   * Whether the model may also invoke the skill, not whether it is usable.
+   *
+   * Every catalog row is already user-invocable — the host filters user-only
+   * skills in and only marks `modelInvocable: false` on the ones the model must
+   * not pick itself. A user-only skill is the one only a human can run, so no
+   * surface may disable it.
+   */
   readonly enabled: boolean
 }
 
@@ -42,8 +58,19 @@ export interface DynamicCommand {
   readonly source?: 'builtin' | 'skill' | 'plugin'
 }
 
+/**
+ * Outcome of one slash line handed to the command surface.
+ *
+ * `unknown` is what a DSH host answers for a line outside its command
+ * directory. Such a line is not a command failure: a user-invocable skill is
+ * addressed exactly like that (`/<skill> [args]`), and the host injects it when
+ * the same text arrives as an ordinary turn. The caller decides between that
+ * prompt gesture and plain text — the adapter never sends one itself.
+ */
 export type CommandExecutionResult =
-  { readonly kind: 'success'; readonly text?: string } | { readonly kind: 'error'; readonly text: string }
+  | { readonly kind: 'success'; readonly text?: string }
+  | { readonly kind: 'error'; readonly text: string }
+  | { readonly kind: 'unknown' }
 
 export interface ParsedSlashCommand {
   readonly name: string

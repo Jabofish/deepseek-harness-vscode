@@ -12,7 +12,7 @@ import { isKnownDshVersion, normalizeDshVersion, type DshTransport } from '../..
 import { withBestEffortAdapterCapabilities, withExactAdapterCapabilities } from '../../compatibility.js'
 import type { Rc6AdapterOptions } from '../rc6/adapter.js'
 import type { ExportFileSystem } from '../../repositories/export-repository.js'
-import { Rc8CommandRepository } from '../../repositories/command-repository.js'
+import { Rc6CommandRepository, type CommandAttachmentWire } from '../../repositories/command-repository.js'
 import { Rc6CredentialRepository } from '../../repositories/credential-repository.js'
 import { Rc6ExportRepository } from '../../repositories/export-repository.js'
 import { Rc6MessageFeedbackRepository } from '../../repositories/feedback-repository.js'
@@ -28,6 +28,7 @@ import { Rc6SettingsRepository } from '../../repositories/settings-repository.js
 import { Rc6SkillRepository } from '../../repositories/skill-repository.js'
 import { Rc6SubagentRepository } from '../../repositories/subagent-repository.js'
 import { Rc6WorkspaceRepository } from '../../repositories/workspace-repository.js'
+import { SubagentAddressRegistry } from '../../repositories/shared/subagent-addresses.js'
 import { AlphaEventSource } from './events.js'
 import {
   AlphaLoopbackApiClient,
@@ -57,6 +58,8 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
   protected readonly supportsInlineSubagentImages: boolean = false
   /** Only DSH 0.1.3-alpha.2 requires `subagent.prompt.delivery`. */
   protected readonly supportsSubagentPromptDelivery: boolean = false
+  /** 0.1.3-alpha.1 renamed the commands/execute attachment parameter. */
+  protected readonly commandAttachmentWire: CommandAttachmentWire = 'images'
 
   public constructor(protected readonly options: AlphaAdapterOptions) {
     super()
@@ -144,13 +147,27 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
   }
 
   public createBackend(backend: ConnectedBackend): Promise<DshBackend> {
-    const transport = this.createTransport(backend.endpoint) as AlphaLoopbackApiClient
-    const interactions = new Rc6InteractionRepository(transport, { resetPendingOnSubscribe: false })
-    const workspaces = new Rc6WorkspaceRepository(transport)
+    // One routing table for child sessions: the catalog commits it and the
+    // transport reuses it, so a child's live stream and history pages carry the
+    // durable descriptor the Session Controller requires for subagent Sessions.
+    const subagentAddresses = new SubagentAddressRegistry()
+    const transport = new AlphaLoopbackApiClient({
+      ...this.createTransportOptions(backend.endpoint),
+      subagentAddresses,
+    })
     const eventsHolder: { value?: AlphaEventSource } = {}
+    const interactions = new Rc6InteractionRepository(transport, {
+      resetPendingOnSubscribe: false,
+      // Alpha never echoes a settlement to the client that performed it, so the
+      // accepted answer must be published locally. Otherwise the Host replay
+      // cache re-posts the settled request after every Webview reload and the
+      // task center keeps a needs-input row that can only fail.
+      onSettled: (event) => eventsHolder.value?.publish(event),
+    })
+    const workspaces = new Rc6WorkspaceRepository(transport)
     const sessions = new Rc6SessionRepository(transport, workspaces, this.options.samePath, {
       preallocatedSessionId: true,
-      includeEmptyCommandImages: true,
+      commandAttachmentWire: this.commandAttachmentWire,
       maxPromptAttachmentBytes: 20 * 1024 * 1024,
       maxPromptAttachmentTotalBytes: 200 * 1024 * 1024,
       onSessionAccess: (sessionId) => eventsHolder.value?.watchSession(sessionId),
@@ -185,10 +202,11 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
         subagentPromptDelivery: this.supportsSubagentPromptDelivery,
         maxPromptAttachmentBytes: 20 * 1024 * 1024,
         maxPromptAttachmentTotalBytes: 200 * 1024 * 1024,
+        addresses: subagentAddresses,
       }),
       settings: new Rc6SettingsRepository(transport),
       skills: new Rc6SkillRepository(transport),
-      commands: new Rc8CommandRepository(transport),
+      commands: new Rc6CommandRepository(transport, this.commandAttachmentWire),
       plugins: new Rc6PluginRepository(transport),
       presets: new Rc6PresetRepository(transport),
       exports: new Rc6ExportRepository(transport, this.options.exportFileSystem),

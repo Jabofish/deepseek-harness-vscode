@@ -27,6 +27,25 @@ export function decodeCanonicalBase64(
   return bytes
 }
 
+export type Base64PayloadProblem = 'invalid' | 'too-large' | 'not-canonical'
+
+/**
+ * Decode a Base64 payload while keeping the failure reason. `decodeCanonicalBase64`
+ * only answers "no", so callers cannot tell a malformed encoding from a payload
+ * that is merely larger than the caller will carry.
+ */
+export function decodeBase64Payload(
+  value: string,
+  maximumBytes: number,
+): { readonly bytes: Buffer } | { readonly problem: Base64PayloadProblem } {
+  if (!isCanonicalBase64(value)) return { problem: 'invalid' }
+  // Size is decided before decoding so an oversized payload is never allocated
+  // and a non-canonical length can never be blamed on its size.
+  if (decodedByteLength(value) > maximumBytes) return { problem: 'too-large' }
+  const bytes = decodeCanonicalBase64(value, maximumBytes)
+  return bytes === undefined ? { problem: 'not-canonical' } : { bytes }
+}
+
 export function isSupportedImageMimeType(mediaType: string): boolean {
   return SUPPORTED_IMAGE_TYPES.has(mediaType.toLowerCase())
 }
@@ -93,12 +112,6 @@ export function encodePromptContent(
       })
     const mediaType = parsed.mediaType
     const encoded = parsed.encoded
-    if (!isCanonicalBase64(encoded))
-      throw new AppError({
-        code: 'INVALID_CONFIGURATION',
-        message: 'The attachment encoding is invalid.',
-        retryable: false,
-      })
     const image = isSupportedImageMimeType(mediaType)
     if (image && limits.mediaTypes !== undefined && !limits.mediaTypes.has(mediaType))
       throw new AppError({
@@ -107,22 +120,19 @@ export function encodePromptContent(
         retryable: false,
       })
     const maximumBytes = image ? limits.maxImageBytes : MAX_TEXT_ATTACHMENT_BYTES
-    // Size is checked before decoding: `decodeCanonicalBase64` cannot tell an
-    // over-limit payload from a malformed one, and "the encoding is invalid"
-    // is the wrong reason for an attachment that is merely too large.
-    if (decodedByteLength(encoded) > maximumBytes)
+    const decoded = decodeBase64Payload(encoded, maximumBytes)
+    if ('problem' in decoded)
       throw new AppError({
         code: 'INVALID_CONFIGURATION',
-        message: 'The attachment is too large.',
+        message:
+          decoded.problem === 'too-large'
+            ? 'The attachment is too large.'
+            : decoded.problem === 'invalid'
+              ? 'The attachment encoding is invalid.'
+              : 'The attachment encoding is not canonical Base64.',
         retryable: false,
       })
-    const bytes = decodeCanonicalBase64(encoded, maximumBytes)
-    if (bytes === undefined)
-      throw new AppError({
-        code: 'INVALID_CONFIGURATION',
-        message: 'The attachment encoding is not canonical Base64.',
-        retryable: false,
-      })
+    const bytes = decoded.bytes
     if (image && limits.maxImagesPerMessage !== undefined) {
       imageCount += 1
       if (imageCount > limits.maxImagesPerMessage)
@@ -170,6 +180,26 @@ export function encodePromptContent(
     })
   }
   return content
+}
+
+/**
+ * Recognize the envelope `encodePromptContent` writes around an inlined text
+ * file. The wrapper is deliberately marked so no consumer has to guess where
+ * the file starts or ends: the durable message, the queue row, and a redacted
+ * export all read the same shape back.
+ */
+const ATTACHED_FILE_BLOCK =
+  /^\s*Attached file: ([^\r\n]+)\r?\n\r?\n[\s\S]*\r?\n\r?\nEnd of attached file: \1\s*$/u
+
+export interface AttachedFileEnvelope {
+  readonly name: string
+}
+
+/** Returns the file's display name for an inlined text-file envelope. */
+export function attachedFileEnvelope(value: string): AttachedFileEnvelope | undefined {
+  const match = ATTACHED_FILE_BLOCK.exec(value)
+  const name = match?.[1]?.trim()
+  return name === undefined || name === '' ? undefined : { name }
 }
 
 export function isTextAttachment(mediaType: string, name: string, bytes: Buffer): boolean {

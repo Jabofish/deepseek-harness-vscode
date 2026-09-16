@@ -2,7 +2,7 @@ import { AppError, type AsyncEventSource, type BackendEvent } from '@dsh-vscode/
 
 import type { DshTransport } from './contracts.js'
 import { redactText, safePayload } from './redaction.js'
-import { assertCanonicalSessionEvent, rc6Mapper } from './versions/rc6/mapper.js'
+import { assertCanonicalSessionEvent, isReplacementSurfaceEvent, rc6Mapper } from './versions/rc6/mapper.js'
 
 export interface DshStreamControllerOptions {
   /** Optional version-specific logical stream (for example alpha Remote mux). */
@@ -865,6 +865,11 @@ function normalizeAssistantInterruptionFrame(value: Record<string, unknown>): Ba
 }
 
 function mapStreamEvent(name: string, value: unknown): BackendEvent {
+  // A model-only surface replacement is asked of the mapper before the
+  // canonical assert below: the assert is about the payload a transcript row
+  // needs, and letting it reject a replacement copy would degrade the copy into
+  // a payload-carrying unknown row or drop its durable sequence.
+  if (isReplacementSurfaceEvent(name, value)) return rc6Mapper.event(name, value)
   try {
     assertCanonicalSessionEvent(name, value)
     return rc6Mapper.event(name, value)

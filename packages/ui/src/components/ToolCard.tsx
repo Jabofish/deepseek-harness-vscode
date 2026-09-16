@@ -86,16 +86,11 @@ export function ToolCard(props: ToolCardProps): ReactElement {
           {props.tool.error === undefined ? null : (
             <section className="dsh-tool-card__section dsh-tool-card__section--error" role="alert">
               <h4>{errorLabel}</h4>
-              <p>{formatToolText(props.tool.error, props.translate) ?? bounded(props.tool.error)}</p>
+              <p>{formatToolText(props.tool.error, props.translate) ?? props.tool.error.trim()}</p>
             </section>
           )}
         </div>
       ) : null}
     </article>
   )
-}
-
-function bounded(value: string | undefined): string | undefined {
-  if (value === undefined || value.length === 0) return undefined
-  return value.length > 2_000 ? `${value.slice(0, 2_000)}…` : value
 }

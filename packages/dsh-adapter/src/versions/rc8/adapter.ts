@@ -34,7 +34,7 @@ export class Rc8VersionAdapter extends Rc7VersionAdapter {
     // rc.8's commands/execute Remote requires the images array even for the
     // attachment-free /permission and /plan configuration commands.
     return new Rc6SessionRepository(transport, workspaces, this.options.samePath, {
-      includeEmptyCommandImages: true,
+      commandAttachmentWire: 'images',
     })
   }
 }

@@ -30,11 +30,24 @@ export class Rc6InteractionRepository implements InteractionRepository {
   >()
   private readonly responding = new Map<string, Promise<void>>()
   private readonly resetPendingOnSubscribe: boolean
+  private readonly onSettled: ((event: BackendEvent) => void) | undefined
   public constructor(
     private readonly transport: DshTransport,
-    options?: { readonly resetPendingOnSubscribe?: boolean },
+    options?: {
+      readonly resetPendingOnSubscribe?: boolean
+      /**
+       * Report a locally accepted settlement to the backend event source.
+       *
+       * The rc.6-family host broadcasts a resolution frame to every subscriber;
+       * a transport that only reports a settlement to the *other* clients (alpha
+       * Remote Events) must echo the accepted `$events/result` here or replayed
+       * surfaces keep showing a request that can no longer be answered.
+       */
+      readonly onSettled?: (event: BackendEvent) => void
+    },
   ) {
     this.resetPendingOnSubscribe = options?.resetPendingOnSubscribe ?? true
+    this.onSettled = options?.onSettled
   }
 
   /** Return the session that owns a currently remembered permission request. */
@@ -143,6 +156,12 @@ export class Rc6InteractionRepository implements InteractionRepository {
     assertAcceptedReceipt(receipt)
     this.markAnswered([requestId])
     this.permissions.delete(requestId)
+    this.onSettled?.({
+      type: 'permission.resolved',
+      sessionId: pending.sessionId,
+      requestId,
+      outcome,
+    })
   }
 
   public async respondToQuestion(
@@ -191,10 +210,7 @@ export class Rc6InteractionRepository implements InteractionRepository {
       signal,
     )
     assertAcceptedReceipt(receipt)
-    for (const id of pending.questionIds) {
-      this.markAnswered([id])
-      this.questions.delete(id)
-    }
+    this.settleQuestion(pending, 'cancelled')
   }
 
   private async respondToQuestionOnce(
@@ -227,10 +243,28 @@ export class Rc6InteractionRepository implements InteractionRepository {
       signal,
     )
     assertAcceptedReceipt(receipt)
+    this.settleQuestion(pending, 'answered')
+  }
+
+  /** Forget one accepted question batch and report its resolution. */
+  private settleQuestion(
+    pending: {
+      readonly rpcId: string
+      readonly sessionId: string
+      readonly questionIds: readonly string[]
+    },
+    outcome: 'answered' | 'cancelled',
+  ): void {
     for (const id of pending.questionIds) {
       this.markAnswered([id])
       this.questions.delete(id)
     }
+    this.onSettled?.({
+      type: 'question.resolved',
+      sessionId: pending.sessionId,
+      questionRpcId: pending.rpcId,
+      outcome,
+    })
   }
 
   private markAnswered(ids: readonly string[]): void {

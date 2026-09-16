@@ -304,6 +304,36 @@ describe('TaskCenterRegistry', () => {
     ).toBe(false)
   })
 
+  it('clears a question task when DSH reports the request resolved', async () => {
+    const current = backend()
+    const registry = new TaskCenterRegistry({ now: () => 4_000 })
+    registry.attach(current, () => 'folder-1')
+    registry.setCurrentSession('session-1')
+    current.events.emit({
+      type: 'question.requested',
+      question: {
+        id: 'q-1',
+        rpcId: 'rpc-9',
+        sessionId: 'session-1',
+        prompt: 'Continue?',
+        allowFreeText: true,
+      },
+    })
+    expect(
+      (await registry.list({ sessionId: 'session-1' })).some((task) => task.interactionId === 'q-1'),
+    ).toBe(true)
+
+    current.events.emit({
+      type: 'question.resolved',
+      sessionId: 'session-1',
+      questionRpcId: 'rpc-9',
+      outcome: 'answered',
+    })
+    expect(
+      (await registry.list({ sessionId: 'session-1' })).some((task) => task.interactionId === 'q-1'),
+    ).toBe(false)
+  })
+
   it('drops all task state on detach so late events cannot reappear', async () => {
     const current = backend()
     const registry = new TaskCenterRegistry()

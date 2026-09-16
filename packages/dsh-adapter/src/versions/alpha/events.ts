@@ -55,6 +55,21 @@ export class AlphaEventSource implements AsyncEventSource<BackendEvent> {
     }
   }
 
+  /**
+   * Publish one settlement this client performed without a matching wire frame.
+   *
+   * An alpha Remote Event resolves the host waterfall for the client that
+   * answers it, and the Gateway drops that client's delivery before it queues
+   * the `cancel` frame, so the answering client never hears the request is
+   * over. The acceptance is local knowledge (`$events/result` succeeded), so the
+   * resolution is published here rather than fabricated as a transport frame.
+   */
+  public publish(event: BackendEvent): void {
+    if (this.closed) return
+    this.handleObserved(event)
+    for (const listener of this.listeners) listener(event)
+  }
+
   /** Start the durable follow stream for a Session the first time it is read. */
   public watchSession(sessionId: string): void {
     if (

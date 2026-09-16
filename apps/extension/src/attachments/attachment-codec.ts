@@ -7,6 +7,38 @@ import {
   type StoredAttachmentInput,
 } from './attachment-store.js'
 
+export interface AttachmentFileSystem {
+  stat(path: string): Promise<{ isFile(): boolean; size: number }>
+  readFile(path: string): Promise<Buffer>
+}
+
+/** Attachment byte budget for a file name, decided before any bytes are read. */
+export function attachmentSizeLimit(name: string): number {
+  return imageMimeType(name) === undefined ? MAX_ATTACHMENT_BYTES : MAX_IMAGE_ATTACHMENT_BYTES
+}
+
+/**
+ * Read a file into an attachment only after its stat size proves it fits.
+ * `prepareAttachment` enforces the same caps but only once the bytes are
+ * already in memory, where it also UTF-8 decodes them for text sniffing, so an
+ * oversized editor tab would be materialized in full before being rejected.
+ */
+export async function readAttachmentFile(
+  name: string,
+  filePath: string,
+  fileSystem: AttachmentFileSystem,
+): Promise<StoredAttachmentInput | undefined> {
+  const info = await fileSystem.stat(filePath).catch(() => undefined)
+  if (info === undefined || !info.isFile()) return undefined
+  if (info.size > attachmentSizeLimit(name))
+    throw new AppError({
+      code: 'INVALID_CONFIGURATION',
+      message: 'The current file is too large to attach.',
+      retryable: false,
+    })
+  return prepareAttachment(name, await fileSystem.readFile(filePath))
+}
+
 export function prepareAttachment(name: string, bytes: Buffer, hintMimeType?: string): StoredAttachmentInput {
   let mimeType = attachmentMimeType(name, bytes)
   // Pasted clipboard images often carry no filename extension. The declared

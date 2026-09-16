@@ -101,7 +101,14 @@ export class PromptTemplateStore implements PromptTemplateRepository {
       this.assertWorkspaceTrusted()
       await this.ensureScopeLoaded('workspace', query.workspaceFolderId, signal)
     } else if (query.scope === undefined && this.workspaceTrusted()) {
-      await this.ensureScopeLoaded('workspace', query.workspaceFolderId, signal)
+      // A trusted workspace can still have no template storage: VS Code only
+      // offers a local directory for a `file` folder, and a folder can close
+      // while the request is running. An unfiltered list must then fall back to
+      // the global templates instead of failing the whole request; a scope that
+      // exists but cannot be read still reports its own failure.
+      await this.ensureScopeLoaded('workspace', query.workspaceFolderId, signal).catch((error: unknown) => {
+        if (!isScopeUnavailable(error)) throw error
+      })
     }
     const values = [...this.records.values()]
       .filter((record) => this.isVisible(record, query))
@@ -585,6 +592,11 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
       message: 'The template operation was cancelled.',
       retryable: true,
     })
+}
+
+/** True only for a scope that is not open in VS Code, never for unreadable storage. */
+function isScopeUnavailable(error: unknown): boolean {
+  return error instanceof AppError && error.code === 'RESOURCE_NOT_OWNED'
 }
 
 function resourceNotOwned(): AppError {

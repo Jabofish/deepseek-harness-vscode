@@ -238,6 +238,47 @@ describe('PromptTemplateStore', () => {
     expect([...global.files.keys()]).toEqual([])
   })
 
+  it('keeps global templates visible when the workspace scope has no storage', async () => {
+    // A trusted workspace still has no template storage when the folder is not
+    // a local `file` workspace (Remote-SSH, virtual filesystem) or closes while
+    // the request is running. Global templates must stay listable there; only a
+    // genuinely unavailable scope is tolerated.
+    const global = memoryStorage()
+    let nextId = 0
+    const store = new PromptTemplateStore({
+      global,
+      workspace: () => undefined,
+      workspaceTrusted: () => true,
+      now: () => 1_000 + nextId,
+      makeId: () => `id-${nextId++}`,
+    })
+    const summary = await createTemplate(store)
+
+    expect(await store.list(owner)).toEqual([summary])
+    expect(await store.list({ ...owner, scope: 'global' })).toEqual([summary])
+    expect((await store.read(summary.templateId, owner)).templateText).toContain('{{selection}}')
+    expect((await store.insert(summary.templateId, { selection: 'x' }, owner)).text).toBe(
+      'Review x in {{currentFile}}.',
+    )
+  })
+
+  it('still reports a corrupt index when the workspace scope is available', async () => {
+    const global = memoryStorage()
+    const workspace = memoryStorage()
+    let nextId = 0
+    const store = new PromptTemplateStore({
+      global,
+      workspace: () => workspace,
+      workspaceTrusted: () => true,
+      now: () => 1_000 + nextId,
+      makeId: () => `id-${nextId++}`,
+    })
+    await createTemplate(store)
+    workspace.files.set('index.json', Buffer.from('{ not json'))
+
+    await expect(store.list(owner)).rejects.toMatchObject({ code: 'STORAGE_CORRUPT' })
+  })
+
   it('updates with a new body reference and deletes only after the index commit', async () => {
     const { store, global } = createHarness()
     const summary = await createTemplate(store)

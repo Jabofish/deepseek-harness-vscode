@@ -64,15 +64,24 @@ export const QueuePanel = memo(function QueuePanel(props: QueuePanelProps): Reac
                       {...(props.onLoadImage === undefined ? {} : { loadImage: props.onLoadImage })}
                     />
                   ) : null}
+                  {item.files === undefined || item.files.length === 0 ? null : (
+                    <span className="dsh-queue__files" aria-label={t('timeline.attachedFiles')}>
+                      {item.files.map((name, fileIndex) => (
+                        <span className="dsh-queue__file" key={`${name}:${fileIndex}`} title={name}>
+                          <Icon name="file" />
+                          <span>{name}</span>
+                        </span>
+                      ))}
+                    </span>
+                  )}
                   <input
                     aria-label={t('queue.edit', { id: item.id })}
                     defaultValue={item.text}
-                    readOnly={item.images !== undefined && item.images.length > 0}
-                    title={
-                      item.images !== undefined && item.images.length > 0
-                        ? t('queue.editWithImages')
-                        : undefined
-                    }
+                    // The only queue edit the host accepts replaces the whole
+                    // content with text, so a row that carries an image or a
+                    // file stays read-only rather than losing what it holds.
+                    readOnly={!item.textOnly}
+                    title={item.textOnly ? undefined : t('queue.editWithAttachments')}
                     onBlur={(event) => {
                       if (event.target.value !== item.text) props.onEdit(item.id, event.target.value)
                     }}

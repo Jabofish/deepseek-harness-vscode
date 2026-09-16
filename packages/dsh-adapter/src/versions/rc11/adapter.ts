@@ -23,7 +23,7 @@ export class Rc11VersionAdapter extends Rc8VersionAdapter {
   ): Rc6SessionRepository {
     return new Rc6SessionRepository(transport, workspaces, this.options.samePath, {
       reuseWorkspaceBlank: true,
-      includeEmptyCommandImages: true,
+      commandAttachmentWire: 'images',
     })
   }
 }

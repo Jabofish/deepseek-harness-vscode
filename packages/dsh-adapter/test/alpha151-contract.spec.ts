@@ -630,6 +630,7 @@ describe('DSH 0.1.5-alpha.1 Session wire v3 contract', () => {
             ],
             source: { kind: 'tool', callId: 'call-1' },
           },
+          meta: { path: 'a', offset: 1, lines: [{ number: 1, text: 'a contents' }], totalLines: 1 },
         }),
       })
       send({
@@ -735,6 +736,24 @@ describe('DSH 0.1.5-alpha.1 Session wire v3 contract', () => {
           markdown: '检查完成，两个文件都正常。',
         }),
       )
+      // The v3 wire carries no tool view: the settled card has to come from the
+      // result event's own metadata, on the same stream that delivers it.
+      const settled = received.find(
+        (event): event is Extract<BackendEvent, { readonly type: 'tool.updated' }> =>
+          event.type === 'tool.updated' && event.tool.id === 'call-1' && event.tool.status === 'completed',
+      )
+      expect(settled?.tool).toMatchObject({
+        id: 'call-1',
+        status: 'completed',
+        presentation: {
+          phase: 'result',
+          card: 'read',
+          path: 'a',
+          offset: 1,
+          lines: [{ number: 1, text: 'a contents' }],
+          totalLines: 1,
+        },
+      })
     } finally {
       unsubscribe()
       await controller.close()

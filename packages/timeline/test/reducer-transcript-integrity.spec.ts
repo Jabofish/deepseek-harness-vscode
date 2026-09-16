@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { BackendEvent } from '@dsh-vscode/domain'
+import type { BackendEvent, ToolCallView } from '@dsh-vscode/domain'
 import { reduceTimeline } from '../src/reducer.js'
 import type { TimelineState } from '../src/nodes.js'
 
@@ -268,5 +268,181 @@ describe('reduceTimeline transcript integrity', () => {
     const redelivered = reduceTimeline(first, { sequence: 2, event, advanceSequence: false })
 
     expect(redelivered.nodes.map((node) => node.id)).toEqual(['gap:session-1:20:30'])
+  })
+})
+
+/**
+ * A host without a session tool view states a shell call as raw arguments and
+ * its result as raw text. The call card is event-local; settling it is not,
+ * because the durable result carries no name and no arguments — the two halves
+ * meet only in this merge.
+ */
+describe('reduceTimeline settled shell cards', () => {
+  const shellCall = (
+    overrides: Partial<Extract<BackendEvent, { readonly type: 'tool.updated' }>['tool']> = {},
+  ): Extract<BackendEvent, { readonly type: 'tool.updated' }>['tool'] =>
+    tool('call-bash', 'running', {
+      name: 'bash',
+      category: 'bash',
+      title: 'Bash',
+      inputSummary: JSON.stringify({ command: 'pnpm check', description: 'Run the checks' }),
+      presentation: {
+        phase: 'call',
+        card: 'terminal',
+        title: 'pnpm check',
+        description: 'Run the checks',
+      },
+      ...overrides,
+    })
+
+  const shellResult = (
+    overrides: Partial<Extract<BackendEvent, { readonly type: 'tool.updated' }>['tool']> = {},
+  ): Extract<BackendEvent, { readonly type: 'tool.updated' }>['tool'] =>
+    tool('call-bash', 'completed', {
+      name: 'unknown-tool',
+      category: 'tool',
+      title: 'Tool',
+      outputSummary: 'boom\n[exit code: 2]',
+      ...overrides,
+    })
+
+  const withTool = (
+    state: TimelineState,
+    sequence: number,
+    eventTool: Extract<BackendEvent, { readonly type: 'tool.updated' }>['tool'],
+  ): TimelineState =>
+    reduceTimeline(state, {
+      sequence,
+      event: { type: 'tool.updated', sessionId: 'session-1', tool: eventTool },
+    })
+
+  const rowOf = (state: TimelineState): ToolCallView | undefined => {
+    const node = state.nodes[0]
+    return node?.kind === 'tool' ? node.tool : undefined
+  }
+
+  const settledRow = (
+    eventTool: Extract<BackendEvent, { readonly type: 'tool.updated' }>['tool'],
+  ): ToolCallView | undefined => rowOf(withTool(withTool(initial, 1, shellCall()), 2, eventTool))
+
+  it('settles a running shell row with the exit status its own output states', () => {
+    const row = settledRow(shellResult())
+    expect(row?.presentation).toEqual({ phase: 'result', card: 'terminal', output: 'boom', exitCode: 2 })
+    expect(row?.outputSummary).toBe('boom\n[exit code: 2]')
+    expect(row?.inputSummary).toBe(JSON.stringify({ command: 'pnpm check', description: 'Run the checks' }))
+  })
+
+  it('settles the same way when the call merges in after its result', () => {
+    const result = withTool(initial, 1, shellResult())
+    const both = withTool(result, 2, shellCall({ status: 'completed' }))
+    expect(rowOf(both)?.presentation).toEqual({
+      phase: 'result',
+      card: 'terminal',
+      output: 'boom',
+      exitCode: 2,
+    })
+  })
+
+  it('leaves a settled row alone once its card is the settled one', () => {
+    const settled = settledRow(shellResult())
+    const again = withTool(withTool(withTool(initial, 1, shellCall()), 2, shellResult()), 3, shellResult())
+    expect(rowOf(again)?.presentation).toEqual(settled?.presentation)
+  })
+
+  it('keeps the running card while the row has not settled, and when no text arrived', () => {
+    const runningCard = {
+      phase: 'call',
+      card: 'terminal',
+      title: 'pnpm check',
+      description: 'Run the checks',
+    }
+    const unsettled = { ...shellResult({ status: 'running' }) }
+    delete unsettled.outputSummary
+    expect(settledRow(unsettled)?.presentation).toEqual(runningCard)
+
+    // A settled row with no text at all has nothing better to state than the
+    // command it ran.
+    const withoutText = { ...shellResult() }
+    delete withoutText.outputSummary
+    expect(settledRow(withoutText)?.presentation).toEqual(runningCard)
+
+    // The renderer writes `(no output)` for a silent command, so empty text is
+    // not a rendered result: the row falls back instead of inventing a status.
+    const empty = settledRow(shellResult({ outputSummary: '' }))
+    expect(empty !== undefined && Object.hasOwn(empty, 'presentation')).toBe(false)
+  })
+
+  it('falls back to the generic row when the settled result cannot state a status', () => {
+    const spilled = settledRow(
+      shellResult({
+        outputSummary:
+          'partial\n\n(Omitted 50000 bytes. Full formatted result stored at: /spill/o.txt. Read the file.)',
+      }),
+    )
+    expect(spilled !== undefined && Object.hasOwn(spilled, 'presentation')).toBe(false)
+    expect(spilled?.outputSummary).toContain('(Omitted 50000 bytes')
+  })
+
+  it('falls back to the generic row for a persistent shell, a failure and a background call', () => {
+    const persistent = settledRow(
+      shellResult({
+        inputSummary: JSON.stringify({ command: 'pwd' }),
+        outputSummary: 'a directory',
+      }),
+    )
+    expect(persistent !== undefined && Object.hasOwn(persistent, 'presentation')).toBe(false)
+
+    const failed = settledRow(
+      shellResult({ outputSummary: 'command not found', error: 'command not found', status: 'failed' }),
+    )
+    expect(failed !== undefined && Object.hasOwn(failed, 'presentation')).toBe(false)
+    expect(failed?.error).toBe('command not found')
+
+    const background = settledRow(
+      shellResult({
+        inputSummary: JSON.stringify({
+          command: 'pnpm check',
+          description: 'Run the checks',
+          run_in_background: true,
+        }),
+        outputSummary: 'job-1 started',
+      }),
+    )
+    // The call card was never drawn for a background call; the row keeps the
+    // identity it has rather than gaining an invented exit status.
+    expect(background !== undefined && Object.hasOwn(background, 'presentation')).toBe(false)
+  })
+
+  it('keeps a card another producer stated', () => {
+    const hostCard = { phase: 'result', card: 'generic', content: ['rendered by the host'] } as const
+    const row = settledRow(shellResult({ presentation: hostCard }))
+    expect(row?.presentation).toEqual(hostCard)
+  })
+
+  it('states a terminal_send result as output alone', () => {
+    const send = tool('call-send', 'running', {
+      name: 'terminal_send',
+      category: 'terminal_send',
+      title: 'terminal_send',
+      inputSummary: JSON.stringify({ sessionId: 'pty-3', text: 'make' }),
+      presentation: { phase: 'call', card: 'terminal', title: 'make', description: 'Terminal pty-3' },
+    })
+    const row = rowOf(
+      withTool(
+        withTool(initial, 1, send),
+        2,
+        tool('call-send', 'completed', {
+          name: 'unknown-tool',
+          category: 'tool',
+          title: 'Tool',
+          outputSummary: 'compiling',
+        }),
+      ),
+    )
+    expect(row?.presentation).toEqual({
+      phase: 'result',
+      card: 'terminal',
+      output: 'compiling',
+    })
   })
 })

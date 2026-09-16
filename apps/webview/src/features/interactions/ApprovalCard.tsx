@@ -7,6 +7,8 @@ import { ContentFlow } from '../../components/common/ContentFlow.js'
 export interface ApprovalCardProps {
   readonly request: PermissionRequest
   readonly disabled: boolean
+  /** Command the request asks to authorize, resolved from the paired call. */
+  readonly command?: string
   readonly onRespond: (optionId: string) => void
 }
 
@@ -32,7 +34,7 @@ export function ApprovalCard(props: ApprovalCardProps): ReactElement {
       </ContentFlow>
       <div className="dsh-approval__takeover" role="status">
         <span>{t('approval.takeover')}</span>
-        {props.request.commandLine === undefined ? null : <code>{props.request.commandLine}</code>}
+        {props.command === undefined ? null : <code>{props.command}</code>}
       </div>
       <p className="dsh-interaction__risk">
         {t('approval.risk')}{' '}

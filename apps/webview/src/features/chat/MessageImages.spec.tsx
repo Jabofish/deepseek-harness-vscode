@@ -131,6 +131,67 @@ describe('MessageImages', () => {
     expect(loadImage).toHaveBeenCalledTimes(1)
   })
 
+  it('retries a failed thumbnail when the host re-publishes the row', async () => {
+    const loadImage = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('the connection dropped mid-read'))
+      .mockResolvedValue('data:image/png;base64,recovered')
+    const image: MessageImageReference = {
+      attachmentId: 'retry:image',
+      mediaType: 'image/png',
+      bytes: 12,
+      width: 16,
+      height: 16,
+      name: 'retry.png',
+    }
+    const { rerender } = render(
+      <I18nProvider>
+        <MessageImages images={[image]} loadImage={loadImage} translate={(key) => key} />
+      </I18nProvider>,
+    )
+
+    await screen.findByRole('alert')
+    // A reconnect reopens the session, so the store republishes every row with
+    // fresh objects: the failure belonged to a connection that no longer exists.
+    rerender(
+      <I18nProvider>
+        <MessageImages images={[{ ...image }]} loadImage={loadImage} translate={(key) => key} />
+      </I18nProvider>,
+    )
+
+    const thumbnail = await screen.findByRole('button', { name: 'timeline.openImage' })
+    expect(thumbnail.querySelector('img')?.getAttribute('src')).toBe('data:image/png;base64,recovered')
+    expect(loadImage).toHaveBeenCalledTimes(2)
+  })
+
+  it('stops retrying an unavailable image after a bounded number of attempts', async () => {
+    const loadImage = vi.fn().mockResolvedValue(undefined)
+    const image: MessageImageReference = {
+      attachmentId: 'gone:image',
+      mediaType: 'image/png',
+      bytes: 12,
+      width: 16,
+      height: 16,
+      name: 'gone.png',
+    }
+    const { rerender } = render(
+      <I18nProvider>
+        <MessageImages images={[image]} loadImage={loadImage} translate={(key) => key} />
+      </I18nProvider>,
+    )
+    for (let republication = 0; republication < 5; republication += 1) {
+      await screen.findByRole('alert')
+      rerender(
+        <I18nProvider>
+          <MessageImages images={[{ ...image }]} loadImage={loadImage} translate={(key) => key} />
+        </I18nProvider>,
+      )
+    }
+
+    await screen.findByRole('alert')
+    expect(loadImage).toHaveBeenCalledTimes(3)
+  })
+
   it('leaves Escape to a layer that already consumed it', async () => {
     const loadImage = vi.fn().mockResolvedValue('data:image/png;base64,iVBORw0KGgo=')
     const onEscape = vi.fn()

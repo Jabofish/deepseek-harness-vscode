@@ -13,6 +13,7 @@ const translate = (key: string, params?: Readonly<Record<string, string | number
   if (key === 'toolcard.status.running') return 'Running'
   if (key === 'toolcard.status.completed') return 'Done'
   if (key === 'toolcard.status.failed') return 'Failed'
+  if (key === 'toolrow.title.bash') return 'Bash'
   return key
 }
 
@@ -20,6 +21,7 @@ function toolNode(
   id: string,
   parentCallId?: string,
   status: 'running' | 'completed' | 'failed' = 'completed',
+  presentation?: Extract<TimelineNode, { readonly kind: 'tool' }>['tool']['presentation'],
 ): Extract<TimelineNode, { readonly kind: 'tool' }> {
   return {
     kind: 'tool',
@@ -32,6 +34,7 @@ function toolNode(
       title: id,
       status,
       inputSummary: id,
+      ...(presentation === undefined ? {} : { presentation }),
       metadata: {},
     },
   }
@@ -39,6 +42,27 @@ function toolNode(
 
 describe('ToolCallCollection', () => {
   afterEach(() => cleanup())
+
+  it('labels a collapsed group by the failure its latest shell row states', () => {
+    render(
+      <ToolCallCollection
+        tools={[
+          toolNode('first', undefined, 'completed'),
+          toolNode('bash', undefined, 'completed', {
+            phase: 'result',
+            card: 'terminal',
+            output: 'boom',
+            exitCode: 2,
+          }),
+        ]}
+        expanded={new Set()}
+        onExpandedChange={() => undefined}
+        translate={translate}
+      />,
+    )
+
+    expect(screen.getByText('Bash · Failed')).toBeDefined()
+  })
 
   it('renders recursively nested child calls with their independent lifecycle status', () => {
     const onExpandedChange = (): void => undefined

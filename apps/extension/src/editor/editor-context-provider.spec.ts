@@ -208,6 +208,16 @@ describe('EditorContextProvider', () => {
     expect((await harness.provider.preview(item.ref.contextRef, harness.owner)).text).toBe(source)
   })
 
+  it('bounds a composed context label so one item cannot break the feature payload', async () => {
+    const harness = createHarness([
+      { name: 'n'.repeat(600), detail: '', range: range(0, 0, 2, 1), children: [] },
+    ])
+
+    const item = await harness.provider.capture({ kind: 'symbol' }, harness.owner)
+    expect(item.label.startsWith('symbol: src/greet.ts:1 ')).toBe(true)
+    expect(item.label.length).toBe(512)
+  })
+
   it('fails closed for provider errors and malformed or foreign symbol ranges', async () => {
     const malformed = createHarness([
       { name: 'outside', range: range(99, 0, 99, 1) },

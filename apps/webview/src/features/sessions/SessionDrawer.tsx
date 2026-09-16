@@ -43,11 +43,29 @@ type RenameTarget =
 
 const SEARCH_DEBOUNCE_MS = 250
 const SEARCH_RESULT_LIMIT = 20
+/** `session.search` wire bound, measured in JavaScript UTF-16 code units. */
+const SEARCH_QUERY_MAX_CODE_UNITS = 500
 const ORDER_DRAG_MIME = 'application/x-dsh-order'
 
 type OrderDrag =
   | { readonly kind: 'workspace'; readonly itemId: string }
   | { readonly kind: 'session'; readonly workspaceId: string; readonly itemId: string }
+
+/**
+ * Keep the controlled input and the request inside the `session.search` wire
+ * contract: the host refuses a query carrying a NUL or one over the code-unit
+ * bound, and a query the field never let through cannot be sent in error.
+ */
+function sanitizeSearchQuery(value: string): string {
+  const withoutNul = value.replaceAll('\u0000', '')
+  if (withoutNul.length <= SEARCH_QUERY_MAX_CODE_UNITS) return withoutNul
+  let end = SEARCH_QUERY_MAX_CODE_UNITS
+  const last = withoutNul.charCodeAt(end - 1)
+  const next = withoutNul.charCodeAt(end)
+  // Never cut a surrogate pair in half: half a pair is not a character.
+  if (last >= 0xd800 && last <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) end -= 1
+  return withoutNul.slice(0, end)
+}
 
 function readOrderDrag(dataTransfer: DataTransfer): OrderDrag | undefined {
   try {
@@ -80,6 +98,7 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
     readonly query: string
     readonly matches: readonly SessionSummary[]
   }>({ query: '', matches: [] })
+  const [contentSearchUnavailable, setContentSearchUnavailable] = useState(false)
   const [sorting, setSorting] = useState<SessionSorting>('manual')
   const [workspaceDisplay, setWorkspaceDisplay] = useState<WorkspaceDisplay>('current')
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>()
@@ -207,19 +226,22 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
   useEffect(() => {
     const sequence = searchSequence.current + 1
     searchSequence.current = sequence
+    setContentSearchUnavailable(false)
     if (trimmedSearchQuery === '') return
     const timer = window.setTimeout(() => {
       void onSearch(trimmedSearchQuery)
         .then((matches) => {
           if (searchSequence.current !== sequence) return
-          setContentSearch({
-            query: trimmedSearchQuery,
-            matches: matches.slice(0, SEARCH_RESULT_LIMIT),
-          })
+          setContentSearch({ query: trimmedSearchQuery, matches: matches.slice(0, SEARCH_RESULT_LIMIT) })
+          setContentSearchUnavailable(false)
         })
         .catch(() => {
           if (searchSequence.current !== sequence) return
+          // A refused content search leaves the name filter as the only result
+          // source; reporting the empty list as "no matches" would claim the
+          // host searched and found nothing.
           setContentSearch({ query: trimmedSearchQuery, matches: [] })
+          setContentSearchUnavailable(true)
         })
     }, SEARCH_DEBOUNCE_MS)
     return () => window.clearTimeout(timer)
@@ -631,9 +653,15 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
               value={searchQuery}
               placeholder={t('sessions.search')}
               aria-label={t('sessions.searchAria')}
-              onChange={(event) => setSearchQuery(event.target.value)}
+              maxLength={SEARCH_QUERY_MAX_CODE_UNITS}
+              onChange={(event) => setSearchQuery(sanitizeSearchQuery(event.target.value))}
             />
           </div>
+          {contentSearchUnavailable ? (
+            <p className="dsh-session-switcher__warning" role="status">
+              {t('sessions.searchUnavailable')}
+            </p>
+          ) : null}
           {moveError === undefined ? null : (
             <p className="dsh-session-switcher__error" role="alert">
               {moveError}

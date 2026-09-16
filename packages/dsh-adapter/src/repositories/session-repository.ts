@@ -1,5 +1,6 @@
 import {
   AppError,
+  isImageMediaType,
   type AgentConfiguration,
   type BackendEvent,
   type ImageAttachmentLimits,
@@ -19,7 +20,7 @@ import {
 } from '@dsh-vscode/domain'
 
 import type { DshTransport } from '../contracts.js'
-import { executeSessionConfigCommand } from './command-repository.js'
+import { executeSessionConfigCommand, type CommandAttachmentWire } from './command-repository.js'
 import { callRpc, type RpcResponseLike, unavailable, unwrapRpcResult } from '../versions/rc6/rpc.js'
 import { clientTimeZoneField } from '../client-time-zone.js'
 import type { StreamRecovery } from '../stream-controller.js'
@@ -28,7 +29,7 @@ import { permissionPresetIds } from '../projection/agent.js'
 import type { Rc6WorkspaceRepository } from './workspace-repository.js'
 import { recordOrUndefined, validProjectionBlock, walkHistoryPages } from './shared/guards.js'
 import {
-  decodeCanonicalBase64,
+  decodeBase64Payload,
   encodePromptContent,
   isSupportedImageMimeType,
   matchesImageSignature,
@@ -61,7 +62,7 @@ export class Rc6SessionRepository implements SessionRepository {
     this.supportsPreallocatedSessionId =
       options.preallocatedSessionId === true || options.reuseWorkspaceBlank === true
     this.supportsWorkspaceBlankReuse = options.reuseWorkspaceBlank === true
-    this.includesEmptyCommandImages = options.includeEmptyCommandImages === true
+    this.commandAttachmentWire = options.commandAttachmentWire ?? 'none'
     this.maxPromptAttachmentBytes = options.maxPromptAttachmentBytes ?? MAX_PROMPT_ATTACHMENT_BYTES
     this.maxPromptAttachmentTotalBytes =
       options.maxPromptAttachmentTotalBytes ?? MAX_PROMPT_ATTACHMENT_TOTAL_BYTES
@@ -75,7 +76,7 @@ export class Rc6SessionRepository implements SessionRepository {
 
   private readonly supportsPreallocatedSessionId: boolean
   private readonly supportsWorkspaceBlankReuse: boolean
-  private readonly includesEmptyCommandImages: boolean
+  private readonly commandAttachmentWire: CommandAttachmentWire
   private readonly maxPromptAttachmentBytes: number
   private readonly maxPromptAttachmentTotalBytes: number
   private readonly onSessionAccess: ((sessionId: string) => void) | undefined
@@ -448,8 +449,8 @@ export class Rc6SessionRepository implements SessionRepository {
     await this.setArchived(sessionId, true, signal)
   }
 
-  public async rename(sessionId: string, title: string, signal?: AbortSignal): Promise<void> {
-    assertRenameReceipt(
+  public async rename(sessionId: string, title: string, signal?: AbortSignal): Promise<string> {
+    return acceptedRenameTitle(
       await callRpc<unknown>(this.transport, 'session.rename', { sessionId, title }, signal),
     )
   }
@@ -481,7 +482,17 @@ export class Rc6SessionRepository implements SessionRepository {
     const mediaType = typeof reference.mediaType === 'string' ? reference.mediaType.toLowerCase() : undefined
     const encoded = dataUri?.encoded ?? rawData
     const resolvedMediaType = dataUri?.mediaType ?? mediaType
-    const bytes = decodeCanonicalBase64(encoded, this.promptContentLimits(sessionId).maxImageBytes)
+    // A read is bounded by what this client can carry, not by the current
+    // `imageLimits` admission policy: DSH may still hold an image from an
+    // earlier turn that the stricter limit would reject for sending.
+    const decoded = decodeBase64Payload(encoded, this.maxPromptAttachmentBytes)
+    if ('problem' in decoded && decoded.problem === 'too-large')
+      throw new AppError({
+        code: 'INVALID_CONFIGURATION',
+        message: 'The historical attachment is too large to display.',
+        retryable: false,
+      })
+    const bytes = 'bytes' in decoded ? decoded.bytes : undefined
     if (
       resolvedMediaType === undefined ||
       !isSupportedImageMimeType(resolvedMediaType) ||
@@ -656,8 +667,16 @@ export class Rc6SessionRepository implements SessionRepository {
       })
     const sessionId = this.ownerOf(inputId)
     const queued = this.queues.get(sessionId)?.find((item) => item.id === inputId)
-    if (queued?.images !== undefined && queued.images.length > 0)
-      throw unavailable('editing a queued prompt with images')
+    // The wire's only edit is a text-only replacement of the whole content, so
+    // a row carrying an image or a file would lose it. The panel offers no
+    // edit for those rows; this guard also covers a stale row that still
+    // reached the verb.
+    if (queued?.textOnly === false)
+      throw new AppError({
+        code: 'CAPABILITY_UNAVAILABLE',
+        message: 'Editing a queued DSH prompt that carries attachments would drop them.',
+        retryable: false,
+      })
     const receipt = await callRpc<unknown>(
       this.transport,
       'session.updateQueue',
@@ -683,13 +702,17 @@ export class Rc6SessionRepository implements SessionRepository {
   }
 
   public async convertQueuedInputToSteer(inputId: string, signal?: AbortSignal): Promise<void> {
-    const receipt = await callRpc<unknown>(
-      this.transport,
-      'session.updateQueue',
-      { sessionId: this.ownerOf(inputId), itemId: inputId, action: { kind: 'steer' } },
-      signal,
-    )
-    assertAccepted(receipt, 'queue steering')
+    try {
+      const receipt = await callRpc<unknown>(
+        this.transport,
+        'session.updateQueue',
+        { sessionId: this.ownerOf(inputId), itemId: inputId, action: { kind: 'steer' } },
+        signal,
+      )
+      assertAccepted(receipt, 'queue steering')
+    } catch (error) {
+      if (!isSettledSteer(error)) throw error
+    }
   }
 
   public async cancel(sessionId: string, signal?: AbortSignal): Promise<void> {
@@ -789,7 +812,7 @@ export class Rc6SessionRepository implements SessionRepository {
         this.transport,
         sessionId,
         value,
-        this.includesEmptyCommandImages,
+        this.commandAttachmentWire,
         operationSignal,
       )
     }
@@ -1016,8 +1039,8 @@ interface SessionRepositoryOptions {
   /** rc.2 raises the DSH image envelope to 20 MiB per image / 200 MiB per message. */
   readonly maxPromptAttachmentBytes?: number
   readonly maxPromptAttachmentTotalBytes?: number
-  /** rc.8+ requires the `images` array on commands/execute even when empty. */
-  readonly includeEmptyCommandImages?: boolean
+  /** The commands/execute attachment parameter audited for this host version. */
+  readonly commandAttachmentWire?: CommandAttachmentWire
   /** rc.1 predates the browser-local time-zone field on prompt requests. */
   readonly includeClientTimeZone?: boolean
   /** Legacy rc.1/rc.2 execute session configuration through command.*. */
@@ -1214,7 +1237,13 @@ function fallbackSessionSummary(
               : statusEvent.status === 'completed'
                 ? 'completed'
                 : 'idle'
-        : 'completed',
+        : // A history without a durable status row is either a New Session the
+          // host still calls blank, or a finished turn. `completed` is terminal
+          // for every downstream consumer (the task center drops such rows),
+          // and it contradicts the host's own list row for the same Session.
+          !hasHumanMessage
+          ? 'idle'
+          : 'completed',
     createdAt: first ?? new Date().toISOString(),
     updatedAt: last ?? first ?? new Date().toISOString(),
   }
@@ -1360,7 +1389,11 @@ function parseImageAttachmentLimits(value: unknown): ImageAttachmentLimits | und
   const maxImageDimension =
     record.maxImageDimension === undefined ? undefined : positiveSafeInteger(record.maxImageDimension)
   const mediaTypes = Array.isArray(record.mediaTypes)
-    ? [...new Set(record.mediaTypes.map((entry) => (typeof entry === 'string' ? entry.toLowerCase() : '')))]
+    ? [
+        ...new Set(
+          record.mediaTypes.map((entry) => (typeof entry === 'string' ? entry.trim().toLowerCase() : '')),
+        ),
+      ]
     : []
   if (
     maxImageBytes === undefined ||
@@ -1368,7 +1401,7 @@ function parseImageAttachmentLimits(value: unknown): ImageAttachmentLimits | und
     maxMessageImageBytes === undefined ||
     maxImagePixels === undefined ||
     mediaTypes.length === 0 ||
-    mediaTypes.some((mediaType) => !isSupportedImageMimeType(mediaType)) ||
+    mediaTypes.some((mediaType) => !isImageMediaType(mediaType)) ||
     (record.maxImageDimension !== undefined && maxImageDimension === undefined)
   )
     return undefined
@@ -1378,7 +1411,9 @@ function parseImageAttachmentLimits(value: unknown): ImageAttachmentLimits | und
     maxMessageImageBytes,
     maxImagePixels,
     ...(maxImageDimension === undefined ? {} : { maxImageDimension }),
-    mediaTypes,
+    // A Host type this client cannot encode (image/avif) narrows what may be
+    // sent instead of discarding the byte and count limits beside it.
+    mediaTypes: mediaTypes.filter(isSupportedImageMimeType),
   }
 }
 
@@ -1419,7 +1454,8 @@ function requiredSessionId(value: Record<string, unknown>, method: string): stri
   throw malformedSessionResponse(`${method} receipt`)
 }
 
-function assertRenameReceipt(value: unknown): void {
+/** Validated rename receipt: the title the host stored, not the requested text. */
+function acceptedRenameTitle(value: unknown): string {
   const record = recordOrUndefined(value)
   if (
     record !== undefined &&
@@ -1428,7 +1464,7 @@ function assertRenameReceipt(value: unknown): void {
     Number.isSafeInteger(record.seq) &&
     (record.seq as number) >= 0
   )
-    return
+    return record.title
   throw malformedSessionResponse('session rename receipt')
 }
 
@@ -1558,6 +1594,22 @@ function queuedPromptKey(input: PromptInput, mode: RunningInputMode): string {
 function assertAccepted(value: unknown, method: string): void {
   if (asRecord(value).accepted === true) return
   throw malformedSessionResponse(`${method} receipt`)
+}
+
+/**
+ * Whether a failed Steer already reached its goal.
+ *
+ * Steering is convergent: an item the agent has claimed
+ * (`queue-item-not-found`) and a turn that stopped accepting steering
+ * (`steer-unavailable`) both mean the row is no longer pending, which is the
+ * state the caller asked for. The official client treats exactly these two as
+ * success, and a user gesture that races the host — clicking Steer as the turn
+ * ends, or steering a stale row a second time — must not report a failure.
+ */
+function isSettledSteer(error: unknown): boolean {
+  if (!(error instanceof AppError)) return false
+  const code = error.context?.rpcCode
+  return code === 'queue-item-not-found' || code === 'steer-unavailable'
 }
 
 function assertPromptContent(text: string, attachments: readonly PromptAttachment[]): void {

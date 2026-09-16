@@ -14,8 +14,9 @@ type SearchPathsView = Extract<ToolSearchRenderProps['view'], { readonly shape: 
 type SearchMatchesView = Extract<ToolSearchRenderProps['view'], { readonly shape: 'matches' }>
 
 function searchProps(
-  overrides: Partial<Omit<SearchPathsView, 'phase' | 'card' | 'shape'>> = {},
+  overrides: Partial<Omit<SearchPathsView, 'phase' | 'card' | 'shape'>> & { readonly recovery?: string } = {},
 ): ToolSearchRenderProps {
+  const { recovery, ...view } = overrides
   return {
     view: {
       phase: 'result',
@@ -24,8 +25,9 @@ function searchProps(
       paths: ['src/feature.ts'],
       truncated: false,
       total: 1,
-      ...overrides,
+      ...view,
     },
+    ...(recovery === undefined ? {} : { recovery }),
   }
 }
 
@@ -139,5 +141,28 @@ describe('ToolSearchPreview', () => {
 
     expect(container.textContent).toContain('No results')
     expect(screen.queryByRole('button', { name: 'Copy' })).toBeNull()
+  })
+
+  it('keeps the capped result text, whose tail names where the dropped rows went', () => {
+    const footer = 'Full glob result stored at: .dsh/spill/glob.txt. Read the file for the complete list.'
+    const { container } = render(
+      <ToolSearchPreview
+        {...searchProps({
+          paths: ['src/feature.ts'],
+          truncated: true,
+          total: 900,
+          recovery: `src/feature.ts\n(${footer})`,
+        })}
+      />,
+    )
+
+    const recovery = container.querySelector('.dsh-tool-search-preview__recovery')
+    expect(recovery?.textContent).toContain(footer)
+  })
+
+  it('renders no recovery block when the card already holds every row', () => {
+    const { container } = render(<ToolSearchPreview {...searchProps()} />)
+
+    expect(container.querySelector('.dsh-tool-search-preview__recovery')).toBeNull()
   })
 })

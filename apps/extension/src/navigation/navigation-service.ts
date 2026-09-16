@@ -40,7 +40,7 @@ export class NavigationService implements NavigationPort, vscode.Disposable {
     const document = await this.workspace.openTextDocument(resolved.uri)
     const editor = await this.window.showTextDocument(document, { preview: true, preserveFocus })
     if (range !== undefined) {
-      const vscodeRange = this.guard.assertRange(document, range)
+      const vscodeRange = this.guard.clampRange(document, range)
       editor.selection = new vscode.Selection(vscodeRange.start, vscodeRange.end)
       editor.revealRange(vscodeRange, vscode.TextEditorRevealType.InCenterIfOutsideViewport)
     }

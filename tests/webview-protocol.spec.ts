@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
-import { webviewRequestSchema } from '../packages/webview-protocol/src/schemas.js'
+import {
+  protocolValueWithinBudget,
+  webviewEnvelopeSchema,
+  webviewRequestSchema,
+} from '../packages/webview-protocol/src/schemas.js'
 
 describe('attachment ingest schema', () => {
   it('accepts automatic and custom DSH connection requests without exposing host details', () => {
@@ -106,6 +110,47 @@ describe('attachment ingest schema', () => {
         ...request,
         payload: { ...request.payload, dataBase64: `${request.payload.dataBase64}A` },
       }).success,
+    ).toBe(false)
+  })
+
+  it('keeps the wire budget in step with the admitted attachment envelope', () => {
+    const encodedLength = Math.ceil((20 * 1024 * 1024) / 3) * 4
+    const measurement = 'A'.repeat(encodedLength)
+    const envelope = {
+      protocolVersion: 1,
+      message: {
+        type: 'attachment.ingest',
+        requestId: 'request-1',
+        payload: { name: 'maximum.png', mimeType: 'image/png', dataBase64: measurement },
+      },
+    }
+
+    expect(webviewEnvelopeSchema.safeParse(envelope).success).toBe(true)
+    expect(protocolValueWithinBudget(envelope)).toBe(true)
+    // The preview that returns the same image must survive the budget too: the
+    // data URI prefix is the reason the per-string cap keeps a small headroom.
+    expect(
+      protocolValueWithinBudget({
+        protocolVersion: 1,
+        message: {
+          type: 'response',
+          requestId: 'request-1',
+          ok: true,
+          payload: { cancelled: false, dataUri: `data:image/png;base64,${measurement}` },
+        },
+      }),
+    ).toBe(true)
+    expect(
+      protocolValueWithinBudget({
+        ...envelope,
+        message: {
+          ...envelope.message,
+          payload: {
+            ...envelope.message.payload,
+            dataBase64: 'A'.repeat(Math.ceil((21 * 1024 * 1024) / 3) * 4),
+          },
+        },
+      }),
     ).toBe(false)
   })
 

@@ -1,14 +1,15 @@
-import type { ChangeSetFile } from './changes.js'
+import { CHANGE_LIMITS, type ChangeSetFile } from './changes.js'
 
 export type CheckpointState =
   'metadata-only' | 'content-ready' | 'stale' | 'corrupt' | 'partial-restore' | 'deleted'
 
 export interface CheckpointFile {
   readonly relativePath: string
+  /** Whether the file existed at checkpoint creation; a restore removes it otherwise. */
   readonly presentAtCheckpoint: boolean
-  /** Hash of the file immediately before/at checkpoint creation. */
+  /** Hash of the file exactly as it was at checkpoint creation. */
   readonly expectedCurrentHash?: string
-  /** Hash of bytes stored for restore; deliberately separate from expectedCurrentHash. */
+  /** Hash of the bytes stored for restore; verified on its own before any write. */
   readonly checkpointContentHash?: string
   readonly contentRef?: string
   readonly byteSize: number
@@ -63,7 +64,13 @@ export interface CheckpointCreateInput {
   readonly workspaceFolderId: string
   readonly label?: string
   readonly sourceChangeSetId?: string
-  readonly files: readonly Pick<ChangeSetFile, 'relativePath' | 'diff'>[]
+  /**
+   * The paths to snapshot. Only the paths are read from a change row: the
+   * repository reads each file itself, because the content a restore writes
+   * back has to be the file as it is at creation, and no change row states
+   * that text.
+   */
+  readonly files: readonly Pick<ChangeSetFile, 'relativePath'>[]
 }
 
 export interface CheckpointListQuery {
@@ -72,13 +79,21 @@ export interface CheckpointListQuery {
   readonly includeDeleted?: boolean
 }
 
-export type CheckpointConflictPolicy = 'abort' | 'allow-partial'
+/**
+ * What a restore does about a listed file that no longer matches the checkpoint.
+ *
+ * A checkpoint is a content snapshot: the bytes the files held when it was
+ * created. A file that changed since then is exactly the file a restore would
+ * put back, so it cannot be skipped without making the restore a no-op.
+ * `overwrite` is the caller confirming the user saw the changed files;
+ * `abort` refuses instead, for a caller that has shown no preview.
+ */
+export type CheckpointConflictPolicy = 'abort' | 'overwrite'
 
 export interface CheckpointRestoreOutcome {
   readonly summary: CheckpointSummary
   readonly state: 'completed' | 'partial'
   readonly restoredPaths: readonly string[]
-  readonly skippedPaths: readonly string[]
 }
 
 export interface CheckpointRepository {
@@ -87,6 +102,7 @@ export interface CheckpointRepository {
   get(checkpointId: string, signal?: AbortSignal): Promise<CheckpointSummary>
   preview(checkpointId: string, signal?: AbortSignal): Promise<CheckpointPreview>
   delete(checkpointId: string, signal?: AbortSignal): Promise<void>
+  /** Write every listed file back to the snapshot; `abort` refuses when one changed. */
   restore(
     checkpointId: string,
     expectedRevision: number,
@@ -96,7 +112,11 @@ export interface CheckpointRepository {
 }
 
 export const CHECKPOINT_LIMITS = {
-  maxFiles: 100,
+  // `checkpoint.create` snapshots the session's whole change list, so the cap has
+  // to cover every row the change tracker can still hold. A lower cap refuses the
+  // snapshot — with a quota message, since there is no honest way to report a
+  // truncated restore — exactly in the largest sessions.
+  maxFiles: CHANGE_LIMITS.maxFiles,
   maxCheckpointBytes: 50 * 1024 * 1024,
   maxWorkspaceBytes: 200 * 1024 * 1024,
   maxGlobalBytes: 500 * 1024 * 1024,

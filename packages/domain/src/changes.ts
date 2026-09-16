@@ -40,7 +40,15 @@ export interface ChangeSetFile {
   readonly proposalOldHash?: string
   readonly proposalNewHash?: string
   readonly observedHash?: string
-  readonly diff?: ChangeDiff
+  /**
+   * One entry per applied hunk, in file order. The host computes one diff per
+   * hunk with three context lines on each side, so a single `edit` touches
+   * several entries and a scattered `replace_all` dozens; a pure insertion hunk
+   * states `oldText: null` (which, on a `write` call phase, also stands for an
+   * overwrite the presenter could not see). Keeping the whole list is what lets
+   * the review show the change instead of one hunk of it.
+   */
+  readonly diffs?: readonly ChangeDiff[]
   readonly locations: readonly ToolLocationView[]
   readonly evidence: ChangeEvidence
   readonly applicationState: ChangeApplicationState
@@ -83,26 +91,51 @@ export const CHANGE_LIMITS = {
   maxFiles: 200,
   maxDiffBytes: 256 * 1024,
   maxTotalBytes: 16 * 1024 * 1024,
-  maxSources: 16,
 } as const
 
-export function changeDiffBytes(diff: Pick<ChangeDiff, 'oldText' | 'newText'>): number {
-  return byteLength(diff.oldText ?? '') + byteLength(diff.newText)
+export function changeDiffsBytes(diffs: readonly ChangeDiff[]): number {
+  let total = 0
+  for (const diff of diffs) total += byteLength(diff.oldText ?? '') + byteLength(diff.newText)
+  return total
 }
 
+/**
+ * The content lines of one side of a hunk. The reference diff card (and the TUI
+ * footer it mirrors) treats a single trailing newline as a line terminator
+ * rather than an extra empty line, and an empty side as no lines at all, so a
+ * full deletion's `newText` and a create's absent `oldText` contribute nothing.
+ */
 export function changeLineCount(text: string | null): number {
   if (text === null || text.length === 0) return 0
-  return text.split(/\r?\n/u).length
+  const body = text.endsWith('\n') ? text.slice(0, -1) : text
+  return body.split('\n').length
 }
 
-export function changeLineDelta(diff: ChangeDiff): {
+/**
+ * Line totals over every hunk of one file, counted the way the reference diff
+ * card counts the rows it draws: each hunk's old side toward `deletions` and
+ * its new side toward `additions`. Context lines sit on both sides, so the
+ * totals describe the rendered block rather than a net line delta.
+ */
+export function changeDiffsDelta(diffs: readonly ChangeDiff[]): {
   readonly additions: number
   readonly deletions: number
 } {
-  return {
-    additions: changeLineCount(diff.newText),
-    deletions: changeLineCount(diff.oldText),
+  let additions = 0
+  let deletions = 0
+  for (const diff of diffs) {
+    additions += changeLineCount(diff.newText)
+    deletions += changeLineCount(diff.oldText)
   }
+  return { additions, deletions }
+}
+
+/** The status a file's whole hunk list states, not the status of its last hunk. */
+export function changeDiffsStatus(diffs: readonly ChangeDiff[]): ChangeFileStatus {
+  if (diffs.length === 0) return 'unknown'
+  if (diffs.every((diff) => diff.oldText === null)) return 'added'
+  if (diffs.every((diff) => diff.newText.length === 0)) return 'deleted'
+  return 'modified'
 }
 
 export function changeEvidenceRank(evidence: ChangeEvidence): number {

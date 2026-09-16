@@ -54,7 +54,13 @@ export interface SessionRepository {
   readAttachment(sessionId: string, attachmentId: string, signal?: AbortSignal): Promise<PromptAttachment>
   create(input: SessionCreateInput, signal?: AbortSignal): Promise<SessionDetail>
   remove(sessionId: string, signal?: AbortSignal): Promise<void>
-  rename(sessionId: string, title: string, signal?: AbortSignal): Promise<void>
+  /**
+   * Rename a session and return the title the host accepted. The host
+   * normalizes what it stores (control characters stripped, whitespace
+   * collapsed, truncated to its own byte budget), so a caller that displays a
+   * title must use this value rather than the requested text.
+   */
+  rename(sessionId: string, title: string, signal?: AbortSignal): Promise<string>
   fork(sessionId: string, atSeq?: number, signal?: AbortSignal): Promise<SessionDetail>
   setArchived(sessionId: string, archived: boolean, signal?: AbortSignal): Promise<void>
   sendPrompt(input: PromptInput, mode?: RunningInputMode, signal?: AbortSignal): Promise<void>
@@ -166,6 +172,13 @@ export interface SubagentRepository {
     signal?: AbortSignal,
   ): Promise<void>
   interrupt(sessionId: string, signal?: AbortSignal): Promise<void>
+  /**
+   * Host-side ownership fact for a catalog-resolved child: the durable parent
+   * whose workspace membership authorizes child-scoped routes. The Session
+   * Controller refuses a session-kind address for a child, so the parent link
+   * cannot be re-derived from an ordinary session detail read.
+   */
+  readonly parentOf?: (this: SubagentRepository, childSessionId: string) => string | undefined
 }
 
 export interface SettingsRepository {

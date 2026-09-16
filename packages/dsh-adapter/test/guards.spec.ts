@@ -5,6 +5,7 @@ import {
   validProviderView,
   validSettingsNamespace,
   walkHistoryPages,
+  zeroBasedLine,
 } from '../src/repositories/shared/guards.js'
 
 describe('shared repository guards', () => {
@@ -48,6 +49,13 @@ describe('shared repository guards', () => {
         secrets: [{ path: ['apiKey'], set: true }],
       }),
     ).toBe(true)
+  })
+
+  it('converts an upstream 1-based location line and drops values the contract forbids', () => {
+    expect(zeroBasedLine(1)).toBe(0)
+    expect(zeroBasedLine(42)).toBe(41)
+    for (const invalid of [0, -1, 2.5, Number.NaN, Number.POSITIVE_INFINITY, '3', null, undefined, {}])
+      expect(zeroBasedLine(invalid)).toBeUndefined()
   })
 
   it('walks newest-first pages and stops on a projection or a non-progressing cursor', async () => {

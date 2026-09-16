@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { rc6Mapper } from '@dsh-vscode/dsh-adapter'
 
 import { publicWorkspaceRelativePath, publicWorkspaceSummary, sanitizePublicValue } from './public-value.js'
 
@@ -36,6 +37,65 @@ describe('public Webview value projection', () => {
       projection: { key: 'goal', value: { prompt: 'visible product text' } },
       usage: { inputTokens: 12, outputTokens: 8 },
     })
+  })
+
+  it('keeps an approval command preview while still removing a process command line', () => {
+    expect(
+      sanitizePublicValue({
+        type: 'permission.requested',
+        request: {
+          id: 'approval-1',
+          sessionId: 'session-1',
+          title: 'Run command',
+          description: 'DSH requested permission to continue.',
+          commandLine: 'rm -rf build',
+          risk: 'medium',
+          options: [{ id: 'allowed-once', label: 'Allow once', kind: 'allow-once' }],
+        },
+      }),
+    ).toEqual({
+      type: 'permission.requested',
+      request: {
+        id: 'approval-1',
+        sessionId: 'session-1',
+        title: 'Run command',
+        description: 'DSH requested permission to continue.',
+        commandLine: 'rm -rf build',
+        risk: 'medium',
+        options: [{ id: 'allowed-once', label: 'Allow once', kind: 'allow-once' }],
+      },
+    })
+    // A discovered DSH process command line is Host-only discovery data.
+    expect(sanitizePublicValue({ runner: { commandLine: 'dsh --token=secret', pid: 42 } })).toEqual({
+      runner: {},
+    })
+  })
+
+  it('crosses the boundary with a derived running command while cwd stays Host-only', () => {
+    // A host without a view envelope leaves the running command to the adapter,
+    // which reads it off the call's own arguments. The renderer needs that
+    // command (an approval is decided by it), while the resolved working
+    // directory stays on the privileged side.
+    const event = rc6Mapper.event('tool/call', {
+      sessionId: 'session-1',
+      data: {
+        callId: 'call-bash',
+        name: 'bash',
+        arguments: JSON.stringify({
+          command: 'pnpm check',
+          description: 'Run the repository checks',
+          workdir: 'C:\\Users\\alice\\project',
+        }),
+      },
+    })
+    const publicEvent = sanitizePublicValue(event) as { tool: { presentation: unknown } }
+    expect(publicEvent.tool.presentation).toEqual({
+      phase: 'call',
+      card: 'terminal',
+      title: 'pnpm check',
+      description: 'Run the repository checks',
+    })
+    expect(JSON.stringify(publicEvent.tool.presentation)).not.toContain('alice')
   })
 
   it('projects absolute or traversing delivered paths only when they stay in an owned root', () => {

@@ -185,9 +185,16 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
   }, [removeProviderOpen])
 
   useEffect(() => {
+    // The drawer owns the keyboard once, when it opens. The settings answer
+    // below lands later and the App re-renders behind it, so keeping this in
+    // the load effect would pull the keyboard back to the close button while
+    // the user is already working in a field.
     if (!open) return
     closeRef.current?.focus()
-    if (settingsState !== undefined) return
+  }, [open])
+
+  useEffect(() => {
+    if (!open || settingsState !== undefined) return
     let cancelled = false
     void onLoadSettings()
       .catch(() => undefined)

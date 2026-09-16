@@ -436,6 +436,7 @@ describe('AppStore subagent transport routing', () => {
       sessionId: 'child',
       text: 'queued prompt',
       attachments: [{ uri: 'attachment-1', name: 'notes.txt', mimeType: 'text/plain' }],
+      textOnly: true,
       mode: 'queue' as const,
       createdAt: '2026-08-31T00:00:00.000Z',
       rpcId: 'rpc-1',
@@ -840,6 +841,7 @@ describe('AppStore subagent transport routing', () => {
               sessionId: 'parent',
               text: 'stale',
               attachments: [],
+              textOnly: true,
               mode: 'queue',
               createdAt: '2026-01-01T00:00:00.000Z',
             },
@@ -948,6 +950,7 @@ describe('AppStore subagent transport routing', () => {
             sessionId: 'parent',
             text: 'keep this queued prompt',
             attachments: [],
+            textOnly: true,
             mode: 'queue',
             createdAt: '2026-01-01T00:00:00.000Z',
           },
@@ -1568,6 +1571,115 @@ describe('AppStore session branching', () => {
         payload: { sessionId: 'child', title: 'Task (2)' },
       }),
     )
+    store.dispose()
+  })
+
+  it('pages an older child-transcript page instead of dropping its durable cursor', async () => {
+    const client = new FakeClient((request) => {
+      switch (request.type) {
+        case 'subagent.history':
+          return request.payload.beforeSeq === undefined
+            ? {
+                beforeSeq: 60,
+                hasMore: true,
+                events: [
+                  {
+                    sequence: 60,
+                    time: '2026-01-01T00:00:03.000Z',
+                    event: {
+                      type: 'message.completed',
+                      sessionId: 'child',
+                      messageId: 'child-newer',
+                      markdown: 'newer child answer',
+                    },
+                  },
+                ],
+              }
+            : {
+                beforeSeq: 10,
+                hasMore: false,
+                events: [
+                  {
+                    sequence: 10,
+                    time: '2026-01-01T00:00:01.000Z',
+                    event: {
+                      type: 'message.completed',
+                      sessionId: 'child',
+                      messageId: 'child-older',
+                      markdown: 'older child answer',
+                    },
+                  },
+                ],
+              }
+        case 'subagent.list':
+          return { entries: [], parentAvailable: true }
+        case 'session.queue.list':
+        case 'goal.list':
+        case 'job.list':
+        case 'command.list':
+        case 'skill.list':
+          return []
+        default:
+          throw new Error(`unexpected request ${request.type}`)
+      }
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+
+    await store.openSubagent(child(), true)
+    expect(store.historyHasMore).toBe(true)
+    expect(store.historyBeforeSequence).toBe(60)
+
+    await store.loadOlderHistory()
+
+    expect(client.requests).toContainEqual(
+      expect.objectContaining({
+        type: 'subagent.history',
+        payload: { sessionId: 'child', beforeSeq: 60 },
+      }),
+    )
+    expect(client.requests.some((request) => request.type === 'session.history')).toBe(false)
+    expect(store.timeline.nodes.map((node) => node.id)).toEqual(['child-older', 'child-newer'])
+    expect(store.historyBeforeSequence).toBe(10)
+    expect(store.historyHasMore).toBe(false)
+    expect(store.historyLoading).toBe(false)
+    store.dispose()
+  })
+
+  it('rejects a child-transcript page whose explicit beforeSeq is malformed', async () => {
+    const client = new FakeClient((request) => {
+      switch (request.type) {
+        case 'subagent.history':
+          return {
+            beforeSeq: 'not-a-sequence',
+            hasMore: true,
+            events: [
+              {
+                sequence: 60,
+                time: '2026-01-01T00:00:03.000Z',
+                event: {
+                  type: 'message.completed',
+                  sessionId: 'child',
+                  messageId: 'child-newest',
+                  markdown: 'newest child answer',
+                },
+              },
+            ],
+          }
+        case 'subagent.list':
+          return { entries: [], parentAvailable: true }
+        case 'session.queue.list':
+        case 'goal.list':
+        case 'job.list':
+        case 'command.list':
+        case 'skill.list':
+          return []
+        default:
+          throw new Error(`unexpected request ${request.type}`)
+      }
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+
+    await expect(store.openSubagent(child(), true)).rejects.toThrow()
     store.dispose()
   })
 })

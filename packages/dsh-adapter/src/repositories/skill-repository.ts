@@ -28,7 +28,9 @@ export class Rc6SkillRepository implements SkillRepository {
           name: record.name,
           description: record.description,
           ...(typeof record.whenToUse === 'string' ? { whenToUse: record.whenToUse } : {}),
-          source: 'project' as const,
+          // The catalog carries no origin, and `modelInvocable: false` marks a
+          // skill only a human may run — the host already filtered out the ones
+          // the user cannot invoke, so it stays usable here.
           enabled: record.modelInvocable,
         },
       ]

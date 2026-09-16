@@ -57,10 +57,28 @@ const MAX_SAFE_PAYLOAD_STRING = 512
 export function redactText(value: string, maximumLength: number): string {
   const compact = value.replace(/\s+/gu, ' ').trim()
   if (compact === '') return ''
-  return compact
+  return redactLine(compact).slice(0, maximumLength)
+}
+
+/**
+ * Redact multi-line content (unified diffs, editor previews) without changing
+ * its shape: `redactText` folds every run of whitespace into one space, which
+ * turns a diff or a code excerpt into a single unreadable line. Indentation is
+ * content here, so only credentials and sensitive key/value text are replaced.
+ */
+export function redactMultilineText(value: string, maximumLength: number): string {
+  return value
+    .replace(/\r\n?/gu, '\n')
+    .split('\n')
+    .map((line) => redactLine(line))
+    .join('\n')
+    .slice(0, maximumLength)
+}
+
+function redactLine(line: string): string {
+  return line
     .replace(/(https?:\/\/)([^/\s:@]+(?::[^/\s@]*)?@)/giu, '$1[redacted]@')
     .replace(SENSITIVE_TEXT_PATTERN, (match) => match.replace(/[:=].*$/u, ': [redacted]'))
-    .slice(0, maximumLength)
 }
 
 /** Remove sensitive fields and bound recursive unknown protocol payloads. */

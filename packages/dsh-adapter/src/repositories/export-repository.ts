@@ -1,8 +1,16 @@
-import { AppError, type ExportRepository, type SessionExportOptions } from '@dsh-vscode/domain'
+import {
+  AppError,
+  type ExportRepository,
+  type MessageAttachment,
+  type MessageImageReference,
+  type SessionExportOptions,
+} from '@dsh-vscode/domain'
 
 import type { DshTransport } from '../contracts.js'
+import { attachedFileEnvelope } from '../attachment-codec.js'
+import { safePayload } from '../redaction.js'
 import { callRpc, unavailable } from '../versions/rc6/rpc.js'
-import { assertCanonicalSessionEvent } from '../versions/rc6/mapper.js'
+import { assertCanonicalSessionEvent, rc6Mapper } from '../versions/rc6/mapper.js'
 
 export interface ExportFileSystem {
   stat(path: string): Promise<{ isDirectory(): boolean }>
@@ -76,7 +84,7 @@ export class Rc6ExportRepository implements ExportRepository {
     const source =
       options.format === 'json'
         ? jsonChunks(events, options.includeReasoning, options.includeAttachments)
-        : markdownChunks(events, options.includeReasoning, options.includeAttachments)
+        : markdownChunks(events, options.includeReasoning, options.includeAttachments, options.sessionId)
     const chunks: string[] = []
     for (const chunk of source) {
       throwIfAborted(signal)
@@ -142,10 +150,10 @@ async function readExportHistory(
         message: 'DSH returned an invalid session history for export.',
         retryable: false,
       })
-    for (const entry of value.events) validateExportHistoryEntry(entry)
-    pages.push(value.events)
+    const page = value.events.map(normalizeExportHistoryEntry)
+    pages.push(page)
     if (!value.hasMore) return pages.reverse().flat()
-    const sequences = value.events.flatMap((entry) => {
+    const sequences = page.flatMap((entry) => {
       const record = asRecord(entry)
       const event = asRecord(record.event)
       const sequence = event.seq ?? record.seq
@@ -167,33 +175,41 @@ async function readExportHistory(
   })
 }
 
-/** Keep malformed history rows from being serialized as a successful export. */
-function validateExportHistoryEntry(value: unknown): void {
+/**
+ * Structural corruption rejects the export; a known-type payload this build
+ * cannot project does not. The transcript keeps such a row as an unreadable
+ * record rather than failing the session, so rejecting it here would make a
+ * session a user can read impossible to export. The row keeps its durable
+ * envelope and a redacted payload, and is marked so no reader mistakes it for
+ * a verified one.
+ */
+function normalizeExportHistoryEntry(value: unknown): unknown {
   const record = asRecordOrUndefined(value)
   if (record === undefined) throw malformedExportHistoryEntry()
   const nested = record.event
-  if (nested !== undefined) {
-    const event = asRecordOrUndefined(nested)
-    if (
-      event === undefined ||
-      typeof event.type !== 'string' ||
-      event.type.trim() === '' ||
-      !Number.isSafeInteger(event.seq) ||
-      (event.seq as number) < 0 ||
-      typeof event.time !== 'number' ||
-      !Number.isFinite(event.time)
-    )
-      throw malformedExportHistoryEntry()
-    try {
-      assertCanonicalSessionEvent(event.type, event)
-    } catch {
-      throw malformedExportHistoryEntry()
-    }
-    return
+  if (nested === undefined) {
+    // Older rc.6-compatible fixtures returned the raw event object directly.
+    // Preserve that compatibility while still requiring an identifiable row.
+    if (typeof record.type !== 'string' || record.type.trim() === '') throw malformedExportHistoryEntry()
+    return record
   }
-  // Older rc.6-compatible fixtures returned the raw event object directly.
-  // Preserve that compatibility while still requiring an identifiable row.
-  if (typeof record.type !== 'string' || record.type.trim() === '') throw malformedExportHistoryEntry()
+  const event = asRecordOrUndefined(nested)
+  if (
+    event === undefined ||
+    typeof event.type !== 'string' ||
+    event.type.trim() === '' ||
+    !Number.isSafeInteger(event.seq) ||
+    (event.seq as number) < 0 ||
+    typeof event.time !== 'number' ||
+    !Number.isFinite(event.time)
+  )
+    throw malformedExportHistoryEntry()
+  try {
+    assertCanonicalSessionEvent(event.type, event)
+    return record
+  } catch {
+    return { ...record, event: { ...event, data: safePayload(event.data), unreadable: true } }
+  }
 }
 
 function malformedExportHistoryEntry(): AppError {
@@ -337,15 +353,101 @@ function* markdownChunks(
   events: readonly unknown[],
   includeReasoning: boolean,
   includeAttachments: boolean,
+  sessionId: string,
 ): Iterable<string> {
   for (const event of events) {
     const projected = exportableEvent(event, includeReasoning, includeAttachments)
     if (projected === undefined) continue
     const value = asRecord(projected)
     const type = eventType(value)
-    const text = typeof value.text === 'string' ? value.text : (JSON.stringify(value) ?? '')
+    if (MARKDOWN_BOOKKEEPING_ROW_TYPES.has(type)) continue
+    const text = messageText(value, type, sessionId) ?? JSON.stringify(value) ?? ''
     yield `### ${type}\n\n${text}\n\n`
   }
+}
+
+/**
+ * Rows the readable export leaves out. These carry no conversation content —
+ * request headers, turn and step boundaries, inbox splices, LLM request
+ * bookkeeping — and a real session is mostly these rows: on one sampled session
+ * a single `request/header` record (the tool catalog) was 251 KB of a 548 KB
+ * Markdown file. The transcript hides the same rows from its default view. The
+ * JSON export keeps every row, so the readable shape loses nothing.
+ */
+const MARKDOWN_BOOKKEEPING_ROW_TYPES = new Set([
+  'agent/inbox/spliced',
+  'assistant/attempt',
+  'feedback/message-delete',
+  'feedback/message-put',
+  'feedback/record',
+  'hook/invoked',
+  'hook/result',
+  'image/offload',
+  'request/context',
+  'request/header',
+  'session-log-deepseek/delivery-accepted',
+  'session/end-seed',
+  'session/title-llm-request',
+  'step/end',
+  'step/start',
+  'turn/start',
+  'web/deepseek-search-llm-request',
+])
+
+/**
+ * A history export is meant to be read, so a row that carries message text
+ * renders as that text. Every other row keeps its record form: the JSON and
+ * ZIP exports are the lossless shapes, and prose for a streamed delta or a tool
+ * row would misrepresent the durable log. The projector is the one the
+ * transcript uses, so a row renders the way the Webview shows it.
+ * `MARKDOWN_BOOKKEEPING_ROW_TYPES` above lists the rows the readable shape
+ * leaves out entirely.
+ */
+function messageText(row: Record<string, unknown>, type: string, sessionId: string): string | undefined {
+  if (type !== 'user/message' && type !== 'assistant/message') return undefined
+  let mapped: ReturnType<typeof rc6Mapper.event>
+  try {
+    mapped = rc6Mapper.event(type, { ...(asRecordOrUndefined(row.event) ?? row), sessionId })
+  } catch {
+    // A payload the transcript keeps as an unreadable record stays a record.
+    return undefined
+  }
+  const parts: string[] = []
+  const markers: string[] = []
+  if (mapped.type === 'message.user') {
+    const text = nonEmptyText(mapped.markdown)
+    if (text !== undefined) parts.push(text)
+    for (const attachment of mapped.attachments ?? []) markers.push(attachmentMarker(attachment))
+    for (const image of mapped.images ?? []) markers.push(imageMarker(image))
+  } else if (mapped.type === 'message.completed') {
+    const text = nonEmptyText(mapped.markdown)
+    if (text !== undefined) parts.push(text)
+    const reasoning = nonEmptyText(mapped.reasoning)
+    if (reasoning !== undefined) parts.push(`#### Reasoning\n\n${reasoning}`)
+    for (const image of mapped.images ?? []) markers.push(imageMarker(image))
+  } else return undefined
+  // Markers, not payloads: an attached file and an image are part of the message,
+  // and prose that dropped them silently would read as if the turn had none. A
+  // message carrying only an attachment still has to render as itself instead of
+  // falling back to the record form.
+  if (markers.length > 0) parts.push(markers.join('\n'))
+  return parts.length === 0 ? undefined : parts.join('\n\n')
+}
+
+function attachmentMarker(attachment: MessageAttachment): string {
+  return attachment.mimeType === undefined || attachment.mimeType.trim() === ''
+    ? `[attachment: ${attachment.name}]`
+    : `[attachment: ${attachment.name} (${attachment.mimeType})]`
+}
+
+function imageMarker(image: MessageImageReference): string {
+  const name = image.name?.trim()
+  const label = name === undefined || name === '' ? image.attachmentId : name
+  return `[image: ${label} (${image.mediaType}, ${image.bytes} bytes)]`
+}
+
+function nonEmptyText(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() !== '' ? value : undefined
 }
 
 /** Returns `undefined` for a row that is dropped from the export entirely. */
@@ -368,6 +470,14 @@ function stripAttachments(value: unknown): unknown {
     }
     if (image && (key === 'data' || key === 'uri')) {
       result[key] = '[attachment omitted]'
+      continue
+    }
+    // A text file the adapter inlined is a plain text block, so the exclusion
+    // has to recognize the envelope: leaving it whole would export the file's
+    // contents in full right next to the "[attachment omitted]" markers.
+    if (key === 'text' && typeof entry === 'string') {
+      const envelope = attachedFileEnvelope(entry)
+      result[key] = envelope === undefined ? entry : `Attached file: ${envelope.name}\n\n[attachment omitted]`
       continue
     }
     result[key] = stripAttachments(entry)

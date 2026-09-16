@@ -9,6 +9,15 @@ interface LoadedImage {
   readonly dataUri: string
 }
 
+/**
+ * A read can fail for reasons that outlive nothing: the connection dropped, the
+ * host was still writing the image, or the session was reopened underneath the
+ * timeline. The store republishes every row after a reconnect, so a failure is
+ * retried when the row comes back — but only this many times, because a truly
+ * unavailable attachment must not turn a transcript into a request loop.
+ */
+const MAX_LOAD_ATTEMPTS = 3
+
 export interface MessageImagesProps {
   readonly images: readonly MessageImageReference[]
   readonly loadImage?: (image: MessageImageReference) => Promise<string | undefined>
@@ -22,6 +31,7 @@ export const MessageImages = memo(function MessageImages(props: MessageImagesPro
   const [failed, setFailed] = useState<ReadonlySet<string>>(new Set())
   const [lightbox, setLightbox] = useState<LoadedImage | undefined>(undefined)
   const requested = useRef(new Set<string>())
+  const attempts = useRef(new Map<string, number>())
   const closeRef = useRef<HTMLButtonElement>(null)
   /**
    * The lightbox is `aria-modal`, so the keyboard belongs inside while it is up
@@ -45,6 +55,9 @@ export const MessageImages = memo(function MessageImages(props: MessageImagesPro
     for (const image of imagesRef.current) {
       if (requested.current.has(image.attachmentId)) continue
       if (loadedRef.current[image.attachmentId] !== undefined) continue
+      const attempt = attempts.current.get(image.attachmentId) ?? 0
+      if (attempt >= MAX_LOAD_ATTEMPTS) continue
+      attempts.current.set(image.attachmentId, attempt + 1)
       requested.current.add(image.attachmentId)
       pendingImages.push(image)
     }
@@ -59,6 +72,9 @@ export const MessageImages = memo(function MessageImages(props: MessageImagesPro
         (dataUri) => {
           setLoading((current) => without(current, image.attachmentId))
           if (dataUri === undefined) {
+            // Release the in-flight marker: the next publication of this row may
+            // be answered by a host that can read the image after all.
+            requested.current.delete(image.attachmentId)
             setFailed((current) => new Set(current).add(image.attachmentId))
             return
           }
@@ -67,11 +83,12 @@ export const MessageImages = memo(function MessageImages(props: MessageImagesPro
         },
         () => {
           setLoading((current) => without(current, image.attachmentId))
+          requested.current.delete(image.attachmentId)
           setFailed((current) => new Set(current).add(image.attachmentId))
         },
       )
     }
-  }, [imageKey, loadImage])
+  }, [imageKey, loadImage, images])
 
   useEffect(() => {
     if (lightbox === undefined) return

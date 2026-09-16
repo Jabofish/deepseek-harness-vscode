@@ -2,7 +2,10 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { BackendCandidate, BackendEndpoint } from '@dsh-vscode/domain'
 
+import type { DshTransport } from '../src/contracts.js'
 import { VersionedBackendProbe } from '../src/probe.js'
+import { Rc6CommandRepository } from '../src/repositories/command-repository.js'
+import { Rc6SessionRepository } from '../src/repositories/session-repository.js'
 import { AlphaLoopbackApiClient, type AlphaWebSocket } from '../src/versions/alpha/transport.js'
 import { Alpha5VersionAdapter } from '../src/versions/alpha5/adapter.js'
 import { Alpha13AssistantStreamProjector } from '../src/versions/alpha13/session-wire.js'
@@ -105,6 +108,35 @@ async function waitForSent(socket: FakeWebSocket, count: number): Promise<void> 
     await Promise.resolve()
   }
   throw new Error(`expected ${String(count)} mux frame(s)`)
+}
+
+function commandTransport(
+  commands: { readonly method: string; readonly params: unknown }[],
+  directory: unknown = [],
+): DshTransport {
+  return {
+    request: <TResponse>(method: string) =>
+      Promise.resolve({
+        result: {
+          ok: true,
+          value: method === 'session.history' ? { events: [], hasMore: false } : { items: [] },
+        },
+      } as TResponse),
+    remoteRequest: <TResponse>(method: string, params: unknown) => {
+      commands.push({ method, params })
+      return Promise.resolve({
+        ok: true,
+        value:
+          method === 'commands/list'
+            ? directory
+            : { commandId: 'alpha13-command', result: { kind: 'success', text: 'applied' } },
+      } as TResponse)
+    },
+    openEventStream: async function* () {
+      /* fixture stream */
+    },
+    close: () => Promise.resolve(),
+  }
 }
 
 function snapshot(includeAssistantStream = true): Record<string, unknown> {
@@ -735,5 +767,115 @@ describe('DSH 0.1.3-alpha.1 Session v2 contract', () => {
     expect(hidden).toMatchObject([{ type: 'chunk', transientSequence: 0, index: 0 }])
     expect(text).toMatchObject([{ type: 'chunk', transientSequence: 1, index: 1 }])
     expect(reasoning).toMatchObject([{ type: 'chunk', transientSequence: 2, index: 2 }])
+  })
+
+  it('tags command attachments as submittedAttachments images on the 0.1.3 wire', async () => {
+    const commands: { readonly method: string; readonly params: unknown }[] = []
+    await expect(
+      new Rc6CommandRepository(commandTransport(commands), 'submittedAttachments').execute(
+        'session-1',
+        '/goal inspect',
+        [{ uri: 'data:image/png;base64,AQ==', name: 'diagram.png', mimeType: 'image/png' }],
+      ),
+    ).resolves.toEqual({ kind: 'success', text: 'applied' })
+    expect(commands).toEqual([
+      {
+        method: 'commands/execute',
+        params: {
+          agentId: 'session-1',
+          line: '/goal inspect',
+          submittedAttachments: [
+            { type: 'image', mediaType: 'image/png', data: 'AQ==', name: 'diagram.png' },
+          ],
+        },
+      },
+    ])
+  })
+
+  it('sends 0.1.3 session-config commands the required empty submittedAttachments array', async () => {
+    const commands: { readonly method: string; readonly params: unknown }[] = []
+    await new Rc6SessionRepository(commandTransport(commands), undefined, undefined, {
+      commandAttachmentWire: 'submittedAttachments',
+    }).setConfiguration('session-1', {
+      preset: '',
+      toolMode: 'native',
+      permissionPreset: 'read-only',
+      planMode: true,
+      model: { providerId: '', modelId: '' },
+    })
+    expect(commands).toEqual([
+      {
+        method: 'commands/execute',
+        params: { agentId: 'session-1', line: '/permission read-only', submittedAttachments: [] },
+      },
+      {
+        method: 'commands/execute',
+        params: { agentId: 'session-1', line: '/plan', submittedAttachments: [] },
+      },
+    ])
+  })
+
+  it('maps the renamed directory attachments flag onto the composer capability', async () => {
+    const commands: { readonly method: string; readonly params: unknown }[] = []
+    const directory = [
+      { name: 'goal', description: 'Set a goal', input: { hint: 'objective', attachments: true } },
+      { name: 'plan', description: 'Toggle plan mode', input: { hint: '', attachments: false } },
+    ]
+    await expect(
+      new Rc6CommandRepository(commandTransport(commands, directory), 'submittedAttachments').list(
+        'session-1',
+      ),
+    ).resolves.toEqual([
+      { name: 'goal', description: 'Set a goal', input: { hint: 'objective', images: true } },
+      { name: 'plan', description: 'Toggle plan mode', input: { hint: '' } },
+    ])
+  })
+
+  it('builds the 0.1.3 command surface with the inherited submittedAttachments wire', async () => {
+    const bodies: Record<string, unknown>[] = []
+    const adapter = new Alpha13VersionAdapter({
+      requestTimeoutMs: 1_000,
+      retryPolicy: { maximumAttempts: 1, baseDelayMs: 1, maximumDelayMs: 1 },
+      fetch: vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+        if (typeof init?.body !== 'string') throw new Error('test request body is not a string')
+        const body = JSON.parse(init.body) as {
+          readonly rpcId: string
+          readonly payload?: { readonly args?: { readonly line?: string } }
+        }
+        bodies.push(body)
+        // A line outside the directory resolves to `undefined`, which the
+        // Gateway can only carry as an ok envelope without a value.
+        const result =
+          body.payload?.args?.line === '/goal'
+            ? {
+                ok: true,
+                value: { commandId: 'alpha13-command', result: { kind: 'success', text: 'applied' } },
+              }
+            : { ok: true }
+        return Promise.resolve(
+          new Response(JSON.stringify({ type: 'server-response', rpcId: body.rpcId, result }), {
+            headers: { 'content-type': 'application/json' },
+          }),
+        )
+      }),
+    })
+    const backend = await adapter.createBackend({
+      endpoint,
+      ownership: 'external',
+      capabilities: { protocolVersion: 'alpha13', dshVersion: '0.1.3-alpha.1', features: new Set() },
+    })
+
+    await expect(backend.commands.execute('session-1', '/goal')).resolves.toEqual({
+      kind: 'success',
+      text: 'applied',
+    })
+    expect(bodies.find((body) => body.method === 'commands/execute')?.payload).toEqual({
+      args: { agentId: 'session-1', line: '/goal', submittedAttachments: [] },
+    })
+
+    await expect(backend.commands.execute('session-1', '/dsh-badge')).resolves.toEqual({
+      kind: 'unknown',
+    })
+    await backend.close()
   })
 })

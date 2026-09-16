@@ -4,11 +4,21 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ToolCodeRenderProps } from '@dsh-vscode/ui'
 import { ToolCodePreview } from './ToolCodePreview.js'
+import { getWebviewHighlighter } from './shiki.js'
 
 afterEach(() => {
   cleanup()
   vi.unstubAllGlobals()
 })
+
+/**
+ * Fetching the real Shiki bundle and one grammar is CPU-bound. Warm the shared
+ * highlighter outside the assertion window so a loaded host cannot turn the
+ * lazy highlight path into a timeout flake.
+ */
+async function warmHighlighter(): Promise<void> {
+  await (await getWebviewHighlighter()).loadLanguage('typescript')
+}
 
 function codeProps(overrides: Partial<ToolCodeRenderProps> = {}): ToolCodeRenderProps {
   return {
@@ -47,11 +57,14 @@ describe('ToolCodePreview', () => {
   it('copies only source text and keeps highlighting lazy with a plaintext fallback', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined)
     vi.stubGlobal('navigator', { clipboard: { writeText } })
+    await warmHighlighter()
     const { container } = render(<ToolCodePreview {...codeProps()} />)
 
     fireEvent.click(screen.getByRole('button', { name: 'Copy' }))
     await waitFor(() => expect(writeText).toHaveBeenCalledWith('const answer = 42\nreturn answer'))
-    await waitFor(() => expect(container.querySelector('[data-highlighted="true"]')).not.toBeNull())
+    await waitFor(() => expect(container.querySelector('[data-highlighted="true"]')).not.toBeNull(), {
+      timeout: 5_000,
+    })
     expect(container.querySelectorAll('.dsh-tool-code-preview__token').length).toBeGreaterThan(0)
     expect(container.textContent).toContain('const answer = 42')
   })

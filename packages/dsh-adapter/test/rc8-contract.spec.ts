@@ -123,11 +123,45 @@ describe('DeepSeek Harness rc.8 compatibility contract', () => {
     ])
   })
 
+  it('forwards validated images on the rc.8 wire and retains a nested error outcome', async () => {
+    const calls: { readonly method: string; readonly params: unknown }[] = []
+    const commandTransport: DshTransport = {
+      request: <TResponse>() => Promise.resolve(undefined as TResponse),
+      remoteRequest: <TResponse>(method: string, params: unknown) => {
+        calls.push({ method, params })
+        return Promise.resolve({
+          ok: true,
+          value: { commandId: 'command-rc8-image', result: { kind: 'error', text: 'needs more detail' } },
+        } as TResponse)
+      },
+      openEventStream: async function* () {
+        /* fixture stream */
+      },
+      close: () => Promise.resolve(),
+    }
+
+    await expect(
+      new Rc8CommandRepository(commandTransport).execute('session-1', '/goal inspect', [
+        { uri: 'data:image/png;base64,AQ==', name: 'diagram.png', mimeType: 'image/png' },
+      ]),
+    ).resolves.toEqual({ kind: 'error', text: 'needs more detail' })
+    expect(calls).toEqual([
+      {
+        method: 'commands/execute',
+        params: {
+          agentId: 'session-1',
+          line: '/goal inspect',
+          images: [{ mediaType: 'image/png', data: 'AQ==', name: 'diagram.png' }],
+        },
+      },
+    ])
+  })
+
   it('sends rc.8 session-config commands the required empty images array', async () => {
     const commands: { readonly method: string; readonly params: unknown }[] = []
-    const transport = configCommandTransport(commands, true)
+    const transport = configCommandTransport(commands)
     await new Rc6SessionRepository(transport, undefined, undefined, {
-      includeEmptyCommandImages: true,
+      commandAttachmentWire: 'images',
     }).setConfiguration('session-1', {
       preset: '',
       toolMode: 'native',
@@ -149,7 +183,7 @@ describe('DeepSeek Harness rc.8 compatibility contract', () => {
 
   it('keeps the rc.6 session-config commands free of the images field', async () => {
     const commands: { readonly method: string; readonly params: unknown }[] = []
-    const transport = configCommandTransport(commands, false)
+    const transport = configCommandTransport(commands)
     await new Rc6SessionRepository(transport).setConfiguration('session-1', {
       preset: '',
       toolMode: 'native',
@@ -235,6 +269,24 @@ describe('DeepSeek Harness rc.8 compatibility contract', () => {
         },
       }),
     ).toMatchObject({ type: 'team.updated', activity: { kind: 'message.queued', content: 'check this' } })
+    // v1 still types the mode as required, so its absence stays a malformed
+    // v1 payload rather than being read as the newer shape.
+    expect(
+      rc6Mapper.event('team/message/queued', {
+        sessionId: 's1',
+        data: {
+          version: 1,
+          teamId: 'team-1',
+          message: {
+            id: 'message-1',
+            senderId: 's1',
+            senderName: 'Planner',
+            targetId: 'member-1',
+            content: [{ type: 'text', text: 'check this' }],
+          },
+        },
+      }).type,
+    ).toBe('unknown')
     expect(
       rc6Mapper.event('team/message/delivered', {
         sessionId: 's1',
@@ -242,6 +294,24 @@ describe('DeepSeek Harness rc.8 compatibility contract', () => {
       }),
     ).toMatchObject({ type: 'team.updated', activity: { kind: 'message.delivered' } })
     expect(rc6Mapper.event('team/task', { sessionId: 's1', data: { version: 2 } }).type).toBe('unknown')
+    expect(
+      rc6Mapper.event('team/task', {
+        sessionId: 's1',
+        data: {
+          version: 3,
+          teamId: 'team-1',
+          task: {
+            id: 'task-1',
+            revision: 1,
+            subject: 'Review',
+            description: 'ignored',
+            status: 'pending',
+            blockedBy: [],
+            writeScopes: [],
+          },
+        },
+      }).type,
+    ).toBe('unknown')
   })
 
   it('maps rc.8 attachment admission reasons without leaking the upstream message', () => {
@@ -350,7 +420,9 @@ describe('DeepSeek Harness rc.8 compatibility contract', () => {
       type: 'tool.updated',
       tool: {
         category: 'diff',
-        locations: [{ path: 'out/report.md', line: 4 }],
+        // Upstream sends the 1-based line; the domain keeps it 0-based so a
+        // click can hand it to a VS Code position unchanged.
+        locations: [{ path: 'out/report.md', line: 3 }],
       },
     })
   })
@@ -358,9 +430,7 @@ describe('DeepSeek Harness rc.8 compatibility contract', () => {
 
 function configCommandTransport(
   commands: { readonly method: string; readonly params: unknown }[],
-  includeImages: boolean,
 ): DshTransport {
-  void includeImages
   return {
     request: <TResponse>(method: string) => {
       if (method === 'session.history')

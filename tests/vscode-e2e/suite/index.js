@@ -31,6 +31,11 @@ export async function run() {
     `unexpected DSH connection mode in the e2e workspace: ${String(mode)}`,
   )
 
+  if (process.env.DSH_VSCODE_E2E_INVALID_SETTINGS === '1') {
+    await assertInvalidSettingIsReported()
+    return
+  }
+
   await vscode.commands.executeCommand('dsh.connect')
   console.log('[dsh-vscode-e2e] dsh.connect completed')
 
@@ -39,15 +44,38 @@ export async function run() {
     // attach fixture, so the wire-level assertions below do not apply. The
     // owned-process story is covered by tests/live-dsh/run.spec.ts.
     console.log('[dsh-vscode-e2e] managed mode: no attach fixture traffic expected')
-    return
+  } else {
+    const port = settings['dsh.connection.attachPorts']?.[0]
+    assert.equal(typeof port, 'number', 'attach-only mode must record the fixture port')
+    const observed = await waitForAttachObservations(port)
+    console.log(
+      `[dsh-vscode-e2e] attached methods=[${observed.methods.join(',')}] mux=${observed.muxUpgrades} host=${observed.hostUpgrades}`,
+    )
   }
+}
 
-  const port = settings['dsh.connection.attachPorts']?.[0]
-  assert.equal(typeof port, 'number', 'attach-only mode must record the fixture port')
-  const observed = await waitForAttachObservations(port)
-  console.log(
-    `[dsh-vscode-e2e] attached methods=[${observed.methods.join(',')}] mux=${observed.muxUpgrades} host=${observed.hostUpgrades}`,
+/**
+ * The workspace was launched with an invalid `dsh.runtime.executablePath`, and
+ * the extension is already activated with its commands registered by the time
+ * this runs. The remaining claim is that the typo is reported per operation:
+ * reading settings while the extension activates would have failed activation
+ * instead, which needs a reload and a manual settings edit to recover.
+ */
+async function assertInvalidSettingIsReported() {
+  let failure
+  try {
+    await vscode.commands.executeCommand('dsh.connect')
+  } catch (error) {
+    failure = error
+  }
+  assert.ok(failure, 'the extension must reject a connect while dsh.runtime.executablePath is invalid')
+  const message = String(failure.message ?? failure)
+  assert.match(
+    message,
+    /runtime\.executablePath/u,
+    `the failure must name the invalid setting instead of a generic error: ${message}`,
   )
+  console.log(`[dsh-vscode-e2e] invalid setting reported without losing the host: ${message}`)
 }
 
 async function waitForAttachObservations(port) {

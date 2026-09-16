@@ -1,4 +1,4 @@
-import type { BackendEvent } from '@dsh-vscode/domain'
+import { settledToolPresentation, type BackendEvent } from '@dsh-vscode/domain'
 
 import type { AssistantTiming, ModelRetryNode, TimelineNode, TimelineState } from './nodes.js'
 import { addTokenUsage } from './usage.js'
@@ -298,7 +298,14 @@ export function reduceTimeline(
         nodeChangeStart ?? (index < 0 ? nodes.length : index),
         index < 0 ? nodes.length : index,
       )
-      const timing = timingForEvent(readStepTimings(), event.turn, event.step)
+      // DSH counts a reasoning chunk as an answer token (`isTokenDelta` accepts
+      // both text and reasoning deltas), so the step's first token - and with it
+      // TTFT, which is measured from here - belongs to whichever stream produced
+      // output first. Waiting for the first text delta inflates TTFT by the whole
+      // reasoning phase and drops reasoning-only steps from the sample count.
+      const timingKeyValue = timingKey(event.turn, event.step)
+      const timing = noteFirstToken(readStepTimings(), event.turn, event.step, event.time)
+      commitTiming(timingKeyValue, timing)
       if (index < 0) {
         nodes.push({
           kind: 'assistant-message',
@@ -693,11 +700,7 @@ export function reduceTimeline(
       }))
       break
     case 'team.updated':
-      upsert(nodes, {
-        kind: 'team',
-        id: event.activity.id,
-        activity: event.activity,
-      })
+      upsert(nodes, teamActivityNode(nodes, event.activity))
       break
     // Requests are rendered as live interaction cards by the Webview App.
     // Projecting them into the durable timeline as notices creates a second
@@ -1084,6 +1087,52 @@ function upsert(nodes: TimelineNode[], node: TimelineNode): void {
 }
 
 /**
+ * Project one Agent Team activity onto its durable row.
+ *
+ * A peer message is a single stored record plus its receipt: the host appends
+ * `team/message/queued` when the message is durably held, and
+ * `team/message/delivered` once the target holds it — the receipt names the same
+ * message id and carries no body, exactly as `team/message/delivered` is typed.
+ * Keying each event by its own id showed two cards for one message: a row that
+ * announced "queued" forever, and a receipt whose only text was the internal
+ * `team-message-<uuid>`. Both events share the message identity, so they share
+ * one row, and whichever direction they arrive in the row keeps the body and
+ * sender the queued record carried while its state follows the newest fact.
+ */
+function teamActivityNode(
+  nodes: readonly TimelineNode[],
+  activity: Extract<BackendEvent, { readonly type: 'team.updated' }>['activity'],
+): TimelineNode {
+  if (activity.kind === 'member' || activity.kind === 'task') {
+    return { kind: 'team', id: activity.id, activity }
+  }
+  const id = `team:message:${activity.teamId}:${activity.messageId}`
+  const index = findNodeIndexFromEnd(nodes, (node) => node.id === id)
+  const previous = index < 0 ? undefined : nodes[index]
+  const earlier = previous?.kind === 'team' ? previous.activity : undefined
+  if (earlier?.kind !== 'message.queued' && earlier?.kind !== 'message.delivered') {
+    return { kind: 'team', id, activity }
+  }
+  const senderName = activity.senderName ?? earlier.senderName
+  const delivery = activity.delivery ?? earlier.delivery
+  const content = activity.content ?? earlier.content
+  return {
+    kind: 'team',
+    id,
+    activity: {
+      ...activity,
+      kind:
+        activity.kind === 'message.delivered' || earlier.kind === 'message.delivered'
+          ? 'message.delivered'
+          : 'message.queued',
+      ...(senderName === undefined ? {} : { senderName }),
+      ...(delivery === undefined ? {} : { delivery }),
+      ...(content === undefined ? {} : { content }),
+    },
+  }
+}
+
+/**
  * Live DSH updates target the newest node in an append-ordered transcript.
  * Keep malformed/legacy collections deterministic by returning the newest
  * matching id, which is also the reducer's unique-id invariant after upsert.
@@ -1150,7 +1199,7 @@ function mergeTool(
   previous: Extract<TimelineNode, { readonly kind: 'tool' }>['tool'],
   next: Extract<TimelineNode, { readonly kind: 'tool' }>['tool'],
 ): Extract<TimelineNode, { readonly kind: 'tool' }>['tool'] {
-  return {
+  const merged: Extract<TimelineNode, { readonly kind: 'tool' }>['tool'] = {
     ...previous,
     ...next,
     name: next.name === 'unknown-tool' ? previous.name : next.name,
@@ -1164,6 +1213,23 @@ function mergeTool(
       : {}),
     metadata: { ...previous.metadata, ...next.metadata },
   }
+  // The call and its result meet only here: a durable result states no name and
+  // no arguments, so the card a running shell call established can be settled
+  // into the card its output states only once both halves are on one row.
+  const presentation = settledToolPresentation(merged.presentation, {
+    name: merged.name,
+    rawArguments: merged.inputSummary,
+    output: merged.outputSummary,
+    failed: merged.status === 'failed' || merged.error !== undefined,
+    settled: merged.status === 'completed' || merged.status === 'failed' || merged.status === 'cancelled',
+  })
+  if (presentation === merged.presentation) return merged
+  if (presentation === undefined) {
+    const withoutPresentation = { ...merged }
+    delete withoutPresentation.presentation
+    return withoutPresentation
+  }
+  return { ...merged, presentation }
 }
 
 function conversationNodeIndex(
@@ -1207,20 +1273,41 @@ function settleAssistantNode(
   return settled
 }
 
+/**
+ * Whether a durable `message.user` is the message a local preview stood in for.
+ *
+ * The durable projection does not carry the draft's media types: images become
+ * nameless durable image references, and a file the adapter inlined as a text
+ * block comes back as its display name alone. Comparing the two attachment
+ * lists field by field therefore never matched a message that carried anything,
+ * and the user saw their own steering or subagent message twice. Correspondence
+ * by kind is what identifies the message: each image the preview showed must be
+ * one of the event's image references, and every other name must line up in
+ * order with the event's named attachments.
+ *
+ * The event may also carry attachments the draft never had. Editor-context
+ * chips are resolved into prompt attachments inside the Extension Host and are
+ * appended after the draft's own, so the preview's names are the leading ones
+ * and anything beyond them belongs to content the Webview never listed.
+ */
 function sameUserMessagePreview(
   node: Extract<TimelineNode, { readonly kind: 'user-message' }>,
   event: Extract<BackendEvent, { readonly type: 'message.user' }>,
 ): boolean {
   if (node.markdown !== event.markdown) return false
   const previewAttachments = node.attachments ?? []
-  const eventAttachments = event.attachments ?? []
+  if (previewAttachments.length === 0) return true
+  const names: string[] = []
+  let imageCount = 0
+  for (const attachment of previewAttachments) {
+    if (attachment.mimeType?.startsWith('image/') === true) imageCount += 1
+    else names.push(attachment.name)
+  }
+  const eventNames = (event.attachments ?? []).map((attachment) => attachment.name)
   return (
-    previewAttachments.length === eventAttachments.length &&
-    previewAttachments.every(
-      (attachment, index) =>
-        attachment.name === eventAttachments[index]?.name &&
-        attachment.mimeType === eventAttachments[index]?.mimeType,
-    )
+    imageCount === (event.images ?? []).length &&
+    names.length <= eventNames.length &&
+    names.every((name, index) => name === eventNames[index])
   )
 }
 

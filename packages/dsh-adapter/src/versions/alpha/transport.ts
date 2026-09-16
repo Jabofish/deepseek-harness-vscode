@@ -6,6 +6,7 @@ import { AppError, type BackendEndpoint } from '@dsh-vscode/domain'
 import type { DshTransport, RetryPolicy } from '../../contracts.js'
 import { cancelled, httpFailure, normalizeTransportError } from '../../transport-errors.js'
 import { unwrapRpcResultValue } from '../rc6/rpc.js'
+import type { SubagentAddressRegistry } from '../../repositories/shared/subagent-addresses.js'
 import { Alpha13AssistantStreamProjector, type Alpha13ProjectorOutput } from '../alpha13/session-wire.js'
 import {
   validAlpha151HistoryRecord,
@@ -44,6 +45,13 @@ export interface AlphaLoopbackApiClientOptions {
   readonly normalizeErrorCode?: AlphaErrorCodeNormalizer
   /** Session Controller wire profile; old alpha uses v0, alpha13 uses v2, and alpha151+ uses v3. */
   readonly sessionWireVersion?: AlphaSessionWireVersion
+  /**
+   * Child-session routing committed by the subagent catalog. The Session
+   * Controller refuses a session-kind address for a subagent-origin Session,
+   * so every session-addressed read has to reuse the descriptor the catalog
+   * published for that child.
+   */
+  readonly subagentAddresses?: SubagentAddressRegistry
 }
 
 type AlphaSuccess = { readonly ok: true; readonly value?: unknown }
@@ -112,7 +120,12 @@ export class AlphaLoopbackApiClient implements DshTransport {
     const cookie = this.options.authCookie?.(this.options.endpoint)
     const headers: Record<string, string> = {}
     if (cookie !== undefined && cookie.trim() !== '') headers.Cookie = cookie
-    const requestSignal = combineSignals(signal, this.closed.signal, this.options.requestTimeoutMs)
+    // This route streams an archive whose size, and therefore duration, grows
+    // with the session, so the per-request RPC budget is the wrong bound: it
+    // aborts a download the Host is still deflating and reports it as a
+    // timeout. The caller's signal stays the deadline (the export is cancelled
+    // from the UI), and closing the connection aborts the stream.
+    const requestSignal = combineSignals(signal, this.closed.signal)
     let response: Response
     try {
       response = await this.options.fetch(target, {
@@ -338,7 +351,11 @@ export class AlphaLoopbackApiClient implements DshTransport {
         return this.legacy('credentials/describe', value, signal, credentialDescribe)
       case 'credentials.set':
       case 'credentials.unset':
-        return this.legacy(method.replace('.', '/'), value, signal)
+        // Both alpha credentials writes declare `RemoteResult<void>`, so a
+        // committed write answers an `ok` envelope without any `value` member.
+        // The shared repository contract reads a credential receipt as an empty
+        // object, and only this version knows the receipt rides no value.
+        return this.legacy(method.replace('.', '/'), value, signal, () => ({}))
       case 'llm.providers':
         return this.providers(signal)
       case 'llm.models':
@@ -465,12 +482,16 @@ export class AlphaLoopbackApiClient implements DshTransport {
     )
       throw malformedResponse(endpoint)
     const result = normalizeAlphaResult(envelope.result, this.options.normalizeErrorCode)
-    return { rpcId, result: result.ok && !Object.hasOwn(result, 'value') ? { ok: true, value: {} } : result }
+    // An `ok` result without `value` is the wire's only representation of a
+    // `undefined` business result (JSON cannot carry one). Replacing it with an
+    // empty object would erase the difference between "no result" and an empty
+    // one, so the absence has to survive to the caller that declared it.
+    return { rpcId, result }
   }
 
   private async history(value: Record<string, unknown>, signal?: AbortSignal): Promise<LegacyResponse> {
     const sessionId = stringValue(value.sessionId, 'session.history sessionId')
-    const address = { kind: 'session', sessionId }
+    const address = this.sessionAddress(sessionId)
     const snapshot = await this.followSnapshot(
       { address, ...(value.maxMessages === undefined ? {} : { maxMessages: value.maxMessages }) },
       signal,
@@ -837,7 +858,7 @@ export class AlphaLoopbackApiClient implements DshTransport {
     const v2 = wireVersion === 'v2'
     const assistantStream = v2 || wireVersion === 'v3'
     const request = {
-      address: { kind: 'session', sessionId },
+      address: this.sessionAddress(sessionId),
       maxMessages: 50,
       ...(assistantStream ? { assistantStream: true } : {}),
     }
@@ -893,6 +914,23 @@ export class AlphaLoopbackApiClient implements DshTransport {
         }
         for (const output of projected) yield this.alpha13ProjectorFrame(output)
       } else throw malformedResponse('session/follow frame')
+    }
+  }
+
+  /**
+   * Address one Session durably. A subagent child must travel through the
+   * parent/mode descriptor its catalog published: the Session Controller
+   * refuses a session-kind address for a subagent-origin Session, which would
+   * otherwise fail the child's live stream and every page read forever.
+   */
+  private sessionAddress(sessionId: string): Record<string, unknown> {
+    const child = this.options.subagentAddresses?.resolve(sessionId)
+    if (child === undefined) return { kind: 'session', sessionId }
+    return {
+      kind: 'subagent',
+      parentSessionId: child.parentSessionId,
+      childSessionId: sessionId,
+      mode: child.mode,
     }
   }
 

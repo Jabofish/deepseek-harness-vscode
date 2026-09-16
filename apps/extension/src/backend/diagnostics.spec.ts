@@ -43,6 +43,32 @@ describe('RedactedDiagnostics', () => {
     diagnostics.dispose()
   })
 
+  it('honors the configured verbosity instead of always appending every event', () => {
+    const { lines, channel } = fakeChannel()
+    const diagnostics = new RedactedDiagnostics(channel, () => 'error')
+
+    diagnostics.log('debug', 'connection-state', { state: 'connecting' })
+    diagnostics.log('info', 'connection-state', { state: 'connecting' })
+    diagnostics.log('warn', 'host-message-rejected', { code: 'PROTOCOL_ERROR' })
+    diagnostics.log('error', 'request-unexpected', { name: 'TypeError' })
+
+    expect(lines).toHaveLength(1)
+    expect(lines[0]).toContain('"level":"error"')
+    diagnostics.dispose()
+  })
+
+  it('keeps info events visible at the default verbosity', () => {
+    const { lines, channel } = fakeChannel()
+    const diagnostics = new RedactedDiagnostics(channel, () => 'info')
+
+    diagnostics.log('info', 'connection-state', { state: 'connected' })
+    diagnostics.log('debug', 'connection-state', { state: 'connecting' })
+
+    expect(lines).toHaveLength(1)
+    expect(lines[0]).toContain('"level":"info"')
+    diagnostics.dispose()
+  })
+
   it('keeps a bounded recent ring without exposing secrets', () => {
     const { channel } = fakeChannel()
     const diagnostics = new RedactedDiagnostics(channel)

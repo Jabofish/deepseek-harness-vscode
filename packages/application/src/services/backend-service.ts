@@ -45,17 +45,34 @@ export class BackendService {
   }
 
   private remember(event: BackendEvent): void {
-    const key = replayKey(event)
-    if (key === undefined) return
+    // Resolutions carry no replay key of their own; they are remembered by
+    // retiring the interaction they settle. The Webview re-renders whatever
+    // this cache replays, and a settled approval or question can no longer be
+    // answered, so leaving one here shows a dead prompt after every reload.
     if (event.type === 'permission.resolved') {
       this.replay.delete(`permission:${event.sessionId}:${event.requestId}`)
       return
     }
     if (event.type === 'question.resolved') {
-      for (const replayKeyValue of this.replay.keys())
-        if (replayKeyValue.startsWith(`question:${event.sessionId}:`)) this.replay.delete(replayKeyValue)
+      // DSH holds every unanswered question pending at once (the upstream
+      // provider keys them by rpc id), so one resolution retires only the
+      // question it names. A resolution that names none of them is the sole
+      // case that may sweep the session.
+      const identity = event.questionRpcId ?? event.questionId
+      for (const [key, remembered] of this.replay) {
+        if (remembered.type !== 'question.requested') continue
+        if (remembered.question.sessionId !== event.sessionId) continue
+        if (
+          identity === undefined ||
+          remembered.question.rpcId === identity ||
+          remembered.question.id === identity
+        )
+          this.replay.delete(key)
+      }
       return
     }
+    const key = replayKey(event)
+    if (key === undefined) return
     this.replay.set(key, event)
     while (this.replay.size > 256) this.replay.delete(this.replay.keys().next().value as string)
   }

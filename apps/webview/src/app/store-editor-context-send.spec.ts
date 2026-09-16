@@ -58,6 +58,7 @@ class HostClient {
   public holdSend = false
   public failSend = false
   public readonly sentContextRefs: (readonly string[])[] = []
+  public readonly executedCommands: string[] = []
   private captured = 1
   private readonly items: Record<string, unknown>[] = []
   private releaseSend: (() => void) | undefined
@@ -103,6 +104,10 @@ class HostClient {
     return () => this.listeners.delete(listener)
   }
 
+  public emit(message: HostMessage): void {
+    for (const listener of this.listeners) listener(message)
+  }
+
   public subscribeFeature(listener: (message: FeatureHostEvent) => void): () => void {
     this.featureListeners.add(listener)
     return () => this.featureListeners.delete(listener)
@@ -115,6 +120,10 @@ class HostClient {
 
   private answer(request: WebviewRequest): unknown {
     switch (request.type) {
+      case 'command.execute': {
+        this.executedCommands.push(request.payload.command)
+        return { kind: 'success' }
+      }
       case 'session.open': {
         const payload = request.payload as { readonly sessionId?: string } | undefined
         return {
@@ -191,6 +200,55 @@ describe('AppStore editor-context admission', () => {
       'admission rejected',
     )
     expect(refs(store)).toEqual(['context-2', 'context-1'])
+    store.dispose()
+  })
+
+  it('runs a slash line as a command instead of prompting the model beside a chip', async () => {
+    const { client, store } = open()
+    await store.openSession(SESSION_ID)
+    await settle()
+    await store.captureEditorContext('file')
+
+    await store.sendPrompt(SESSION_ID, '/compact', [], 'queue')
+
+    expect(client.executedCommands).toEqual(['/compact'])
+    // A control-plane line is not a prompt, and `command.execute` cannot carry
+    // chips; the composer's own command path leaves them attached for the next
+    // real message, so this path must not consume them either.
+    expect(client.sentContextRefs).toEqual([])
+    expect(refs(store)).toEqual(['context-1'])
+    store.dispose()
+  })
+
+  it('replaces a steer preview once the durable message carries the resolved chips', async () => {
+    const { client, store } = open()
+    await store.openSession(SESSION_ID)
+    await settle()
+    await store.captureEditorContext('file')
+
+    await store.sendPrompt(SESSION_ID, 'look at this', [], 'steer')
+    expect(store.timeline.nodes).toHaveLength(1)
+
+    // The Extension Host resolved the chip into a prompt attachment the
+    // Webview never listed in its preview, and the durable projection reports
+    // it by name.
+    client.emit({
+      type: 'event',
+      name: 'message.user',
+      sequence: 1,
+      payload: {
+        sessionId: SESSION_ID,
+        messageId: 'message-context-1',
+        markdown: 'look at this',
+        source: 'user',
+        attachments: [{ name: 'src/app.ts' }],
+      },
+    })
+    await settle()
+
+    expect(store.timeline.nodes).toEqual([
+      expect.objectContaining({ kind: 'user-message', id: 'message-context-1' }),
+    ])
     store.dispose()
   })
 })

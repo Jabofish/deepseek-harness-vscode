@@ -154,6 +154,65 @@ describe('DSH 0.1.5-alpha.2 and 0.1.5-rc.1/rc.2 contract seams', () => {
     expect(JSON.stringify(titleRequest)).toContain('visible')
   })
 
+  it('normalizes model-authored display text instead of dropping the event', () => {
+    // The `present` tool's `description` and the `subagent` tool's
+    // `description` are unconstrained model strings, so a line break is valid
+    // upstream. These values are display text, not paths: rejecting them would
+    // degrade the durable row into an unreadable frame and delete the
+    // deliverable card or the child entry from the product.
+    expect(
+      rc6Mapper.event('deliverables/presented', {
+        sessionId: 'session-1',
+        data: {
+          turn: 2,
+          callId: 'call-present',
+          files: [
+            { path: 'artifacts/report.md', description: 'Final report\nwritten by the subagent' },
+            { path: 'artifacts/notes.md', description: '\t' },
+          ],
+        },
+      }),
+    ).toEqual({
+      type: 'deliverables.presented',
+      sessionId: 'session-1',
+      turn: 2,
+      callId: 'call-present',
+      files: [
+        { path: 'artifacts/report.md', description: 'Final report written by the subagent' },
+        { path: 'artifacts/notes.md' },
+      ],
+    })
+    expect(
+      rc6Mapper.event('subagent/catalog', {
+        sessionId: 'session-1',
+        data: {
+          version: 0,
+          childId: 'child-1',
+          childCreatedAt: 42,
+          mode: 'one-shot',
+          label: 'Research\nchild',
+        },
+      }),
+    ).toEqual({
+      type: 'subagent.catalog.updated',
+      sessionId: 'session-1',
+      entry: { id: 'child-1', createdAt: 42, mode: 'one-shot', label: 'Research child' },
+    })
+    // Upstream types a continuable label as `z.string()`, so an empty one is a
+    // valid fact. The child entry must survive it: the drawer falls back to the
+    // child id when no display label is available.
+    expect(
+      rc6Mapper.event('subagent/catalog', {
+        sessionId: 'session-1',
+        data: { version: 0, childId: 'child-2', childCreatedAt: 43, mode: 'continuable', label: '   ' },
+      }),
+    ).toEqual({
+      type: 'subagent.catalog.updated',
+      sessionId: 'session-1',
+      entry: { id: 'child-2', createdAt: 43, mode: 'continuable' },
+    })
+  })
+
   it('fails closed for malformed delivery and catalog payloads', () => {
     expect(() =>
       rc6Mapper.event('deliverables/presented', {

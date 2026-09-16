@@ -3,12 +3,22 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MarkdownContent } from './MarkdownContent.js'
+import { getWebviewHighlighter } from './shiki.js'
 
 describe('MarkdownContent', () => {
   afterEach(() => {
     cleanup()
     vi.unstubAllGlobals()
   })
+
+  /**
+   * Fetching the real Shiki bundle and one grammar is CPU-bound. Warm the shared
+   * highlighter outside the assertion window so a loaded host cannot turn the
+   * lazy highlight path into a timeout flake.
+   */
+  async function warmHighlighter(): Promise<void> {
+    await (await getWebviewHighlighter()).loadLanguage('typescript')
+  }
 
   it('renders conversation Markdown as structured content', () => {
     const { container } = render(
@@ -149,11 +159,12 @@ describe('MarkdownContent', () => {
   })
 
   it('lazily highlights a fenced language with light and dark variants', async () => {
+    await warmHighlighter()
     const { container } = render(
       <MarkdownContent markdown={'```typescript\nconst answer: number = 42\n```'} />,
     )
 
-    await waitFor(() => expect(container.querySelector('pre.shiki')).not.toBeNull())
+    await waitFor(() => expect(container.querySelector('pre.shiki')).not.toBeNull(), { timeout: 5_000 })
     expect(container.textContent).toContain('const answer')
     expect(container.querySelectorAll('.shiki .line').length).toBeGreaterThan(0)
     const highlighted = container.querySelector('pre.shiki')

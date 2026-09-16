@@ -42,24 +42,35 @@ describe('Rc6SkillRepository skill.list', () => {
       ),
     )
 
+    // The catalog carries no origin and no "disabled" state: the host lists the
+    // skills a human may run and only says whether the model may pick them too.
+    // Neither fact may be invented, so a row has exactly what the host sent.
     await expect(repository.list('session-1')).resolves.toEqual([
       {
         id: 'code-review',
         name: 'code-review',
         description: 'Review changes.',
         whenToUse: 'Use for focused review requests.',
-        source: 'project',
         enabled: true,
       },
       {
         id: 'private-note',
         name: 'private-note',
         description: 'A user-only skill.',
-        source: 'project',
         enabled: false,
       },
     ])
     expect(calls).toEqual([{ method: 'skill.list', params: { sessionId: 'session-1' } }])
+  })
+
+  it('keeps a user-only skill usable rather than reporting it disabled', async () => {
+    const repository = new Rc6SkillRepository(
+      transportFor({ skills: [{ name: 'private-note', description: 'User only.', modelInvocable: false }] }),
+    )
+
+    const [skill] = await repository.list('session-1')
+    expect(skill?.source, 'the host never reports an origin, so none may be fabricated').toBeUndefined()
+    expect(skill?.enabled, 'user-only is not disabled').toBe(false)
   })
 
   it('rejects a malformed optional whenToUse value instead of silently dropping it', async () => {

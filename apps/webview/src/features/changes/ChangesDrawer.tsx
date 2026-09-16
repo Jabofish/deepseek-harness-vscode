@@ -26,6 +26,7 @@ export function ChangesDrawer(props: ChangesDrawerProps): ReactElement | null {
   const [reviewing, setReviewing] = useState<ChangeReviewState | undefined>()
   const [reviewError, setReviewError] = useState(false)
   const [openError, setOpenError] = useState(false)
+  const [refreshError, setRefreshError] = useState(false)
   const detailRequestGeneration = useRef(0)
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -42,9 +43,10 @@ export function ChangesDrawer(props: ChangesDrawerProps): ReactElement | null {
   const refresh = (): void => {
     if (refreshing) return
     setRefreshing(true)
+    setRefreshError(false)
     void props
       .onRefresh()
-      .catch(() => undefined)
+      .catch(() => setRefreshError(true))
       .finally(() => setRefreshing(false))
   }
   const openDetail = (changeId: string): void => {
@@ -143,9 +145,10 @@ export function ChangesDrawer(props: ChangesDrawerProps): ReactElement | null {
                   title={change.relativePath}
                   onClick={() => {
                     setOpenError(false)
+                    setReviewError(false)
                     void props.onOpen(change.changeId).catch(() => setOpenError(true))
                     if (change.reviewState === 'unreviewed')
-                      void props.onMarkReviewed(change.changeId, 'viewed').catch(() => undefined)
+                      void props.onMarkReviewed(change.changeId, 'viewed').catch(() => setReviewError(true))
                   }}
                 >
                   <Icon name={change.applicationState === 'failed' ? 'alert' : 'file'} />
@@ -223,13 +226,18 @@ export function ChangesDrawer(props: ChangesDrawerProps): ReactElement | null {
                   {reviewing === 'needs-attention' ? t('changes.reviewing') : t('changes.needsAttention')}
                 </button>
               </div>
-              {reviewError ? (
-                <div className="dsh-changes-popover__error" role="alert">
-                  {t('changes.reviewFailed')}
-                </div>
-              ) : null}
             </section>
           )}
+          {reviewError ? (
+            <div className="dsh-changes-popover__error" role="alert">
+              {t('changes.reviewFailed')}
+            </div>
+          ) : null}
+          {refreshError ? (
+            <div className="dsh-changes-popover__error" role="alert">
+              {t('changes.refreshFailed')}
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>

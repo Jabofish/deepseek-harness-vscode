@@ -651,6 +651,95 @@ describe('reduceTimeline', () => {
     expect(completed.stepTimings).toBeUndefined()
   })
 
+  it('records the first reasoning token as the step TTFT like the official ledger', () => {
+    const started = reduceTimeline(initial, {
+      sequence: 1,
+      event: { type: 'step.started', sessionId: 'session-1', turn: 1, step: 1, time: 1_000 },
+    })
+    const reasoned = reduceTimeline(started, {
+      sequence: 2,
+      event: {
+        type: 'reasoning.delta',
+        sessionId: 'session-1',
+        messageId: 'assistant:1:1',
+        turn: 1,
+        step: 1,
+        time: 1_200,
+        delta: 'weighing options',
+      },
+    })
+    const answered = reduceTimeline(reasoned, {
+      sequence: 3,
+      event: {
+        type: 'message.delta',
+        sessionId: 'session-1',
+        messageId: 'assistant:1:1',
+        turn: 1,
+        step: 1,
+        time: 5_000,
+        delta: 'Hello',
+      },
+    })
+    const completed = reduceTimeline(answered, {
+      sequence: 4,
+      event: {
+        type: 'message.completed',
+        sessionId: 'session-1',
+        messageId: 'assistant:1:1',
+        turn: 1,
+        step: 1,
+        time: 6_000,
+        markdown: 'Hello',
+      },
+    })
+
+    expect(completed.nodes).toContainEqual(
+      expect.objectContaining({
+        id: 'assistant:1:1',
+        markdown: 'Hello',
+        timing: { stepStartTime: 1_000, firstTokenTime: 1_200, completedTime: 6_000 },
+      }),
+    )
+  })
+
+  it('keeps a reasoning-only step as a TTFT sample', () => {
+    let state = reduceTimeline(initial, {
+      sequence: 1,
+      event: { type: 'step.started', sessionId: 'session-1', turn: 1, step: 1, time: 1_000 },
+    })
+    state = reduceTimeline(state, {
+      sequence: 2,
+      event: {
+        type: 'reasoning.delta',
+        sessionId: 'session-1',
+        messageId: 'assistant:1:1',
+        turn: 1,
+        step: 1,
+        time: 1_200,
+        delta: 'weighing options',
+      },
+    })
+    state = reduceTimeline(state, {
+      sequence: 3,
+      event: {
+        type: 'message.completed',
+        sessionId: 'session-1',
+        messageId: 'assistant:1:1',
+        turn: 1,
+        step: 1,
+        time: 6_000,
+        reasoning: 'weighing options',
+      },
+    })
+
+    expect(state.nodes).toContainEqual(
+      expect.objectContaining({
+        id: 'assistant:1:1',
+        timing: { stepStartTime: 1_000, firstTokenTime: 1_200, completedTime: 6_000 },
+      }),
+    )
+  })
+
   it('reconciles streamed coordinates with the durable assistant message id', () => {
     const streamed = reduceTimeline(initial, {
       sequence: 1,
@@ -1377,6 +1466,60 @@ describe('reduceTimeline', () => {
     expect(actual.nodes[1]?.id).toBe('message-3')
   })
 
+  it('reconciles an image-bearing preview with the durable image projection', () => {
+    const pending: TimelineState = {
+      ...initial,
+      nodes: [
+        {
+          kind: 'user-message',
+          id: 'optimistic:user:webview-4',
+          markdown: '看这张图',
+          attachments: [{ name: 'screen.png', mimeType: 'image/png' }],
+        },
+      ],
+    }
+    const actual = reduceTimeline(pending, {
+      sequence: 1,
+      event: {
+        type: 'message.user',
+        sessionId: 'session-1',
+        messageId: 'message-4',
+        markdown: '看这张图',
+        images: [{ attachmentId: 'image-1', mediaType: 'image/png', bytes: 4, width: 2, height: 2 }],
+      },
+    })
+
+    expect(actual.nodes).toHaveLength(1)
+    expect(actual.nodes[0]).toMatchObject({ kind: 'user-message', id: 'message-4' })
+  })
+
+  it('reconciles a file preview whose draft carried a media type', () => {
+    const pending: TimelineState = {
+      ...initial,
+      nodes: [
+        {
+          kind: 'user-message',
+          id: 'optimistic:user:webview-5',
+          markdown: '概括文件内容',
+          attachments: [{ name: 'notes.md', mimeType: 'text/markdown' }],
+        },
+      ],
+    }
+    const actual = reduceTimeline(pending, {
+      sequence: 1,
+      event: {
+        type: 'message.user',
+        sessionId: 'session-1',
+        messageId: 'message-5',
+        markdown: '概括文件内容',
+        attachments: [{ name: 'notes.md' }],
+      },
+    })
+
+    expect(actual.nodes).toHaveLength(1)
+    expect(actual.nodes[0]).toMatchObject({ kind: 'user-message', id: 'message-5' })
+  })
+
   it('upserts tool calls by stable id', () => {
     const tool = {
       id: 'tool-1',
@@ -1476,6 +1619,74 @@ describe('reduceTimeline', () => {
     ])
   })
 
+  it('interrupts a run whose step closes before run-end, keeping settled members', () => {
+    const started = reduceTimeline(initial, {
+      sequence: 1,
+      event: {
+        type: 'workflow.started',
+        sessionId: 'session-1',
+        workflow: {
+          id: 'run-1',
+          sessionId: 'session-1',
+          name: 'ralph-loop',
+          status: 'running',
+          stages: [],
+        },
+      },
+    })
+    const withMembers = [
+      { seq: 1, label: 'first', childId: 'child-1' },
+      { seq: 2, label: 'second', childId: 'child-2' },
+    ].reduce(
+      (state, member, index) =>
+        reduceTimeline(state, {
+          sequence: index + 2,
+          event: {
+            type: 'workflow.member.started',
+            sessionId: 'session-1',
+            runId: 'run-1',
+            phase: 'Fresh-agent rounds',
+            member: { ...member, status: 'running' },
+          },
+        }),
+      started,
+    )
+    const settled = reduceTimeline(withMembers, {
+      sequence: 4,
+      event: {
+        type: 'workflow.member.ended',
+        sessionId: 'session-1',
+        runId: 'run-1',
+        seq: 1,
+        outcome: 'completed',
+      },
+    })
+    // The host records run-end before the tool returns, so a run still open
+    // when its step closes was interrupted: the run and only its open members
+    // project interrupted, and the settled member keeps its real outcome.
+    const interrupted = reduceTimeline(settled, {
+      sequence: 5,
+      event: { type: 'step.ended', sessionId: 'session-1', turn: 1, step: 1 },
+    })
+    expect(interrupted.nodes).toMatchObject([
+      {
+        kind: 'workflow',
+        workflow: {
+          status: 'interrupted',
+          stages: [
+            {
+              phase: 'Fresh-agent rounds',
+              members: [
+                { seq: 1, status: 'completed' },
+                { seq: 2, status: 'interrupted' },
+              ],
+            },
+          ],
+        },
+      },
+    ])
+  })
+
   it('upserts rc.8 Agent Team activity by durable activity identity', () => {
     const member = reduceTimeline(initial, {
       sequence: 1,
@@ -1509,6 +1720,93 @@ describe('reduceTimeline', () => {
     })
     expect(active.nodes).toHaveLength(1)
     expect(active.nodes[0]).toMatchObject({ kind: 'team', activity: { phase: 'active' } })
+  })
+
+  it('advances one peer message row from queued to delivered instead of appending a receipt card', () => {
+    const queued = reduceTimeline(initial, {
+      sequence: 1,
+      event: {
+        type: 'team.updated',
+        sessionId: 'session-1',
+        activity: {
+          kind: 'message.queued',
+          id: 'team:message:queued:team-1:team-message-1',
+          teamId: 'team-1',
+          messageId: 'team-message-1',
+          senderName: 'Planner',
+          targetId: 'member-1',
+          delivery: 'wakeup',
+          content: 'Check the spacing rule before you claim the task.',
+        },
+      },
+    })
+    const delivered = reduceTimeline(queued, {
+      // The receipt carries no body: the host acknowledges the message it already
+      // stored, so the row it advances keeps the text the queued record carried.
+      sequence: 2,
+      event: {
+        type: 'team.updated',
+        sessionId: 'session-1',
+        activity: {
+          kind: 'message.delivered',
+          id: 'team:message:delivered:team-1:team-message-1',
+          teamId: 'team-1',
+          messageId: 'team-message-1',
+          targetId: 'member-1',
+        },
+      },
+    })
+    expect(queued.nodes).toHaveLength(1)
+    expect(delivered.nodes).toHaveLength(1)
+    expect(delivered.nodes[0]).toMatchObject({
+      kind: 'team',
+      activity: {
+        kind: 'message.delivered',
+        messageId: 'team-message-1',
+        senderName: 'Planner',
+        targetId: 'member-1',
+        delivery: 'wakeup',
+        content: 'Check the spacing rule before you claim the task.',
+      },
+    })
+  })
+
+  it('keeps a receipt when a queued record arrives after it', () => {
+    const delivered = reduceTimeline(initial, {
+      sequence: 1,
+      event: {
+        type: 'team.updated',
+        sessionId: 'session-1',
+        activity: {
+          kind: 'message.delivered',
+          id: 'team:message:delivered:team-1:team-message-1',
+          teamId: 'team-1',
+          messageId: 'team-message-1',
+          targetId: 'member-1',
+        },
+      },
+    })
+    const queued = reduceTimeline(delivered, {
+      sequence: 2,
+      event: {
+        type: 'team.updated',
+        sessionId: 'session-1',
+        activity: {
+          kind: 'message.queued',
+          id: 'team:message:queued:team-1:team-message-1',
+          teamId: 'team-1',
+          messageId: 'team-message-1',
+          senderName: 'Planner',
+          targetId: 'member-1',
+          content: 'Check the spacing rule before you claim the task.',
+        },
+      },
+    })
+    expect(queued.nodes).toHaveLength(1)
+    expect(queued.nodes[0]).toMatchObject({
+      kind: 'team',
+      activity: { kind: 'message.delivered', content: 'Check the spacing rule before you claim the task.' },
+    })
   })
 
   it('keeps transient job snapshots out of the durable timeline', () => {

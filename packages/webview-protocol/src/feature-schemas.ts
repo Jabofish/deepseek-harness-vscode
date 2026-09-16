@@ -402,18 +402,6 @@ export const featureRequestSchema = z.discriminatedUnion('type', [
     .strict(),
   z
     .object({
-      type: z.literal('changes.restore.prepare'),
-      ...featureRequestBase,
-      payload: z
-        .object({
-          changeId: id,
-          expectedCurrentHash: z.string().min(1).max(256),
-        })
-        .strict(),
-    })
-    .strict(),
-  z
-    .object({
       type: z.literal('checkpoint.create'),
       ...featureRequestBase,
       payload: z
@@ -452,7 +440,7 @@ export const featureRequestSchema = z.discriminatedUnion('type', [
           sessionId: id,
           workspaceFolderId: id,
           expectedCurrentRevision: generation,
-          conflictPolicy: z.enum(['abort', 'allow-partial']),
+          conflictPolicy: z.enum(['abort', 'overwrite']),
         })
         .strict(),
     })

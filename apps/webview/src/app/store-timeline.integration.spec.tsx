@@ -1077,6 +1077,56 @@ describe('Store to Timeline streamed rendering', () => {
     })
   })
 
+  it('keeps a deliverable whose model-authored description spans lines', async () => {
+    const client = new StreamClient()
+    const store = createAppStore(client as unknown as ProtocolClient)
+    await store.openSession('session-stream')
+
+    client.emit(
+      event(2, 'deliverables.presented', {
+        sessionId: 'session-stream',
+        turn: 1,
+        callId: 'call-multiline',
+        files: [{ path: 'artifacts/report.txt', description: 'Generated report\nfor the review' }],
+      }),
+    )
+    await new Promise((resolve) => window.setTimeout(resolve, 24))
+
+    expect(store.timeline.nodes).toContainEqual({
+      kind: 'deliverables',
+      id: 'deliverables:call-multiline',
+      sequence: 2,
+      turn: 1,
+      callId: 'call-multiline',
+      files: [{ path: 'artifacts/report.txt', description: 'Generated report for the review' }],
+    })
+  })
+
+  it('keeps a catalog fact whose model-authored label spans lines or is blank', async () => {
+    const client = new StreamClient()
+    const store = createAppStore(client as unknown as ProtocolClient)
+    await store.openSession('session-stream')
+
+    client.emit(
+      event(3, 'subagent.catalog.updated', {
+        sessionId: 'session-stream',
+        entry: { id: 'child-1', createdAt: 10, mode: 'continuable', label: 'Research\nchild' },
+      }),
+    )
+    // Upstream types a continuable label as `z.string()`, so a blank one is a
+    // valid fact; the drawer falls back to the child id.
+    client.emit(
+      event(4, 'subagent.catalog.updated', {
+        sessionId: 'session-stream',
+        entry: { id: 'child-2', createdAt: 11, mode: 'continuable', label: '   ' },
+      }),
+    )
+    await new Promise((resolve) => window.setTimeout(resolve, 24))
+
+    // A refused fact would be preserved as an unreadable raw row instead.
+    expect(store.timeline.nodes.some((node) => node.kind === 'event')).toBe(false)
+  })
+
   it('keeps the answer when a control projection is published for a completion sequence', async () => {
     const client = new StreamClient()
     const store = createAppStore(client as unknown as ProtocolClient)
@@ -1159,6 +1209,245 @@ describe('Store to Timeline streamed rendering', () => {
           element.textContent?.includes('live-verify'),
         ),
       ).toBe(true)
+    } finally {
+      unsubscribe()
+      store.dispose()
+    }
+  })
+
+  it("keeps a capped search's spill locator reachable from its settled row", async () => {
+    const client = new StreamClient()
+    const store = createAppStore(client as unknown as ProtocolClient)
+    await store.openSession('session-stream')
+
+    const timeline = (): ReactElement => (
+      <Timeline
+        sessionId="session-stream"
+        nodes={store.timeline.nodes}
+        {...(store.timeline.nodeChangeStart === undefined
+          ? {}
+          : { nodeChangeStart: store.timeline.nodeChangeStart })}
+        {...(store.timeline.nodeChangeBase === undefined
+          ? {}
+          : { nodeChangeBase: store.timeline.nodeChangeBase })}
+        streaming={false}
+        running
+      />
+    )
+    const view = render(timeline())
+    const unsubscribe = store.subscribe(() => view.rerender(timeline()))
+    try {
+      // The pinned `glob` caps the inline text at GLOB_MAX_RESULTS = 100 paths
+      // and appends `(Showing N of M paths… Full sorted result stored at:
+      // <locator>.)`, so the retained card is legitimately shorter than the
+      // settled result and the footer is the only route to the other 800 paths.
+      const rows = Array.from({ length: 800 }, (_, index) => `.dsh/spill/glob-${index + 1}.txt`).join('\n')
+      const footer =
+        'Full sorted result stored at: .dsh/spill/glob-results.txt. Read the file for the complete list.'
+      const outputSummary = `${rows}\n(Showing 100 of 900 paths. ${footer})`
+      expect(outputSummary.length).toBeGreaterThan(4_096)
+
+      client.emit(
+        event(1, 'tool.updated', {
+          sessionId: 'session-stream',
+          tool: {
+            id: 'call-glob-capped',
+            name: 'glob',
+            category: 'search',
+            title: 'Glob',
+            status: 'completed',
+            turn: 1,
+            step: 1,
+            inputSummary: JSON.stringify({ pattern: '**/*.txt' }),
+            outputSummary,
+            presentation: {
+              phase: 'result',
+              card: 'search',
+              shape: 'paths',
+              paths: Array.from({ length: 100 }, (_, index) => `.dsh/spill/glob-${index + 1}.txt`),
+              truncated: true,
+              total: 900,
+            },
+            metadata: {},
+          },
+        }),
+      )
+      await new Promise((resolve) => window.setTimeout(resolve, 24))
+
+      const node = store.timeline.nodes.find(
+        (entry) => entry.kind === 'tool' && entry.tool.id === 'call-glob-capped',
+      )
+      expect(node?.kind === 'tool' ? node.tool.outputSummary : undefined).toBe(outputSummary)
+
+      const summary = view.container.querySelector<HTMLButtonElement>('.dsh-tool-row__summary')
+      expect(summary).not.toBeNull()
+      fireEvent.click(summary!)
+
+      const recovery = view.container.querySelector('.dsh-tool-search-preview__recovery')
+      expect(recovery?.textContent).toContain(footer)
+      expect(recovery?.textContent).toContain('.dsh/spill/glob-800.txt')
+    } finally {
+      unsubscribe()
+      store.dispose()
+    }
+  })
+
+  it('renders a peer message queued without the retired v1 delivery mode', async () => {
+    const client = new StreamClient()
+    const store = createAppStore(client as unknown as ProtocolClient)
+    await store.openSession('session-stream')
+
+    const view = render(
+      <Timeline
+        sessionId="session-stream"
+        nodes={store.timeline.nodes}
+        {...(store.timeline.nodeChangeStart === undefined
+          ? {}
+          : { nodeChangeStart: store.timeline.nodeChangeStart })}
+        {...(store.timeline.nodeChangeBase === undefined
+          ? {}
+          : { nodeChangeBase: store.timeline.nodeChangeBase })}
+        streaming={false}
+        running
+      />,
+    )
+    const unsubscribe = client.subscribe(() =>
+      view.rerender(
+        <Timeline
+          sessionId="session-stream"
+          nodes={store.timeline.nodes}
+          {...(store.timeline.nodeChangeStart === undefined
+            ? {}
+            : { nodeChangeStart: store.timeline.nodeChangeStart })}
+          {...(store.timeline.nodeChangeBase === undefined
+            ? {}
+            : { nodeChangeBase: store.timeline.nodeChangeBase })}
+          streaming={false}
+          running
+        />,
+      ),
+    )
+    try {
+      client.emit(
+        event(2, 'team.updated', {
+          sessionId: 'session-stream',
+          activity: {
+            kind: 'message.queued',
+            id: 'team:message:queued:team-1:message-1',
+            teamId: 'team-1',
+            messageId: 'message-1',
+            senderName: 'Planner',
+            targetId: 'member-1',
+            content: 'check the queue row',
+          },
+        }),
+      )
+      await new Promise((resolve) => window.setTimeout(resolve, 24))
+
+      const node = store.timeline.nodes.find((entry) => entry.kind === 'team')
+      expect(node?.kind === 'team' ? node.activity : undefined).toEqual({
+        kind: 'message.queued',
+        id: 'team:message:queued:team-1:message-1',
+        teamId: 'team-1',
+        messageId: 'message-1',
+        senderName: 'Planner',
+        targetId: 'member-1',
+        content: 'check the queue row',
+      })
+      expect(view.container.textContent).toContain('check the queue row')
+      expect(view.container.querySelector('.dsh-timeline__card--event')).not.toBeNull()
+      // The row says who asked for what and who it was addressed to; the sender
+      // is the only attribution the reader gets, since the body is a peer's.
+      expect(
+        [...view.container.querySelectorAll('.dsh-timeline__card-meta')].map((entry) => entry.textContent),
+      ).toEqual(['From Planner', 'To member-1'])
+    } finally {
+      unsubscribe()
+      store.dispose()
+    }
+  })
+
+  it('turns the peer message card into the delivered receipt instead of adding a uuid card', async () => {
+    const client = new StreamClient()
+    const store = createAppStore(client as unknown as ProtocolClient)
+    await store.openSession('session-stream')
+
+    const view = render(
+      <Timeline
+        sessionId="session-stream"
+        nodes={store.timeline.nodes}
+        {...(store.timeline.nodeChangeStart === undefined
+          ? {}
+          : { nodeChangeStart: store.timeline.nodeChangeStart })}
+        {...(store.timeline.nodeChangeBase === undefined
+          ? {}
+          : { nodeChangeBase: store.timeline.nodeChangeBase })}
+        streaming={false}
+        running
+      />,
+    )
+    const unsubscribe = client.subscribe(() =>
+      view.rerender(
+        <Timeline
+          sessionId="session-stream"
+          nodes={store.timeline.nodes}
+          {...(store.timeline.nodeChangeStart === undefined
+            ? {}
+            : { nodeChangeStart: store.timeline.nodeChangeStart })}
+          {...(store.timeline.nodeChangeBase === undefined
+            ? {}
+            : { nodeChangeBase: store.timeline.nodeChangeBase })}
+          streaming={false}
+          running
+        />,
+      ),
+    )
+    try {
+      client.emit(
+        event(2, 'team.updated', {
+          sessionId: 'session-stream',
+          activity: {
+            kind: 'message.queued',
+            id: 'team:message:queued:team-1:team-message-1',
+            teamId: 'team-1',
+            messageId: 'team-message-1',
+            senderName: 'Planner',
+            targetId: 'member-1',
+            content: 'check the queue row',
+          },
+        }),
+      )
+      client.emit(
+        event(3, 'team.updated', {
+          sessionId: 'session-stream',
+          activity: {
+            kind: 'message.delivered',
+            id: 'team:message:delivered:team-1:team-message-1',
+            teamId: 'team-1',
+            messageId: 'team-message-1',
+            targetId: 'member-1',
+          },
+        }),
+      )
+      await new Promise((resolve) => window.setTimeout(resolve, 24))
+
+      const cards = store.timeline.nodes.filter((entry) => entry.kind === 'team')
+      expect(cards).toHaveLength(1)
+      expect(cards[0]?.kind === 'team' ? cards[0].activity : undefined).toEqual({
+        kind: 'message.delivered',
+        id: 'team:message:delivered:team-1:team-message-1',
+        teamId: 'team-1',
+        messageId: 'team-message-1',
+        senderName: 'Planner',
+        targetId: 'member-1',
+        content: 'check the queue row',
+      })
+      // The receipt is the same message, so the row keeps the body and moves to
+      // Delivered; the internal `team-message-<uuid>` is never the card's text.
+      expect(view.container.textContent).toContain('check the queue row')
+      expect(view.container.textContent).toContain('Delivered')
+      expect(view.container.textContent).toContain('To member-1')
+      expect(view.container.textContent).not.toContain('team-message-1')
     } finally {
       unsubscribe()
       store.dispose()

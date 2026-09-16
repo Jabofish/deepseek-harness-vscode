@@ -306,4 +306,47 @@ describe('optional reference and feedback remotes', () => {
       message: 'This DSH host does not expose message feedback.',
     })
   })
+
+  it('keeps every other sidecar refusal distinct from an absent capability', async () => {
+    // A live sidecar answers `target-not-found` for a message that is not in
+    // the session log, and `note-blank`/`note-too-large` for a note its own
+    // policy rejects. Reporting any of them as CAPABILITY_UNAVAILABLE would
+    // make the Webview hide the whole feedback surface for a session whose
+    // feedback works, so each refusal must keep its own code and host code.
+    const refusals = [
+      { code: 'target-not-found', expected: 'STALE_INTERACTION', retryable: false },
+      { code: 'session-not-found', expected: 'BACKEND_UNREACHABLE', retryable: false },
+      { code: 'note-blank', expected: 'INVALID_CONFIGURATION', retryable: false },
+      { code: 'note-too-large', expected: 'INVALID_CONFIGURATION', retryable: false },
+      { code: 'version-conflict', expected: 'BACKEND_BUSY', retryable: true },
+      { code: 'unannounced-refusal', expected: 'INTERNAL_ERROR', retryable: false },
+    ] as const
+
+    for (const refusal of refusals) {
+      const client = transport(() => ({
+        ok: true,
+        value: { ok: false, error: { code: refusal.code } },
+      }))
+      const repository = new Rc6MessageFeedbackRepository(client)
+
+      await expect(repository.put('s1', 'm1', 'positive')).rejects.toMatchObject({
+        code: refusal.expected,
+        retryable: refusal.retryable,
+        context: { rpcMethod: 'messageFeedback/put', rpcCode: refusal.code },
+      })
+    }
+  })
+
+  it('carries the host code of a refused list so a stale target is diagnosable', async () => {
+    const client = transport(() => ({
+      ok: true,
+      value: { ok: false, error: { code: 'target-not-found', messageId: 'm1' } },
+    }))
+    const repository = new Rc6MessageFeedbackRepository(client)
+
+    await expect(repository.list('s1')).rejects.toMatchObject({
+      code: 'STALE_INTERACTION',
+      context: { rpcMethod: 'messageFeedback/list', rpcCode: 'target-not-found' },
+    })
+  })
 })

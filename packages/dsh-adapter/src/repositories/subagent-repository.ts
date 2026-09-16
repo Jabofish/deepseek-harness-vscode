@@ -16,8 +16,7 @@ import { clientTimeZoneField } from '../client-time-zone.js'
 import { rc6Mapper } from '../versions/rc6/mapper.js'
 import { encodePromptContent } from '../attachment-codec.js'
 import { recordOrUndefined, validProjectionBlock } from './shared/guards.js'
-
-type Address = { readonly parentSessionId: string; readonly mode: 'one-shot' | 'continuable' }
+import { SubagentAddressRegistry } from './shared/subagent-addresses.js'
 
 /** Match the official web client's 50-message history pages. */
 const HISTORY_PAGE_MESSAGES = 50
@@ -30,16 +29,23 @@ export interface SubagentRepositoryOptions {
   readonly maxPromptAttachmentTotalBytes?: number
   /** 0.0.1-rc.1 predates the browser-local time-zone field. */
   readonly includeClientTimeZone?: boolean
+  /**
+   * Routing committed by the catalog, shared with the transport so a child's
+   * live stream and history reads use the same durable descriptor.
+   */
+  readonly addresses?: SubagentAddressRegistry
 }
 
 export class Rc6SubagentRepository implements SubagentRepository {
-  private readonly addresses = new Map<string, Address>()
+  private readonly addresses: SubagentAddressRegistry
   private readonly refreshGenerations = new Map<string, number>()
 
   public constructor(
     private readonly transport: DshTransport,
     private readonly options: SubagentRepositoryOptions = {},
-  ) {}
+  ) {
+    this.addresses = options.addresses ?? new SubagentAddressRegistry()
+  }
 
   public async list(sessionId: string, signal?: AbortSignal): Promise<SubagentCatalog> {
     const generation = (this.refreshGenerations.get(sessionId) ?? 0) + 1
@@ -59,13 +65,19 @@ export class Rc6SubagentRepository implements SubagentRepository {
     // refresh still returns its point-in-time view without touching routing.
     if (this.refreshGenerations.get(sessionId) !== generation)
       return { entries, parentAvailable: value.parentAvailable }
-    for (const [childId, address] of this.addresses)
-      if (address.parentSessionId === sessionId) this.addresses.delete(childId)
-    for (const entry of entries)
-      if (entry.kind === 'child')
-        this.addresses.set(entry.id, { parentSessionId: sessionId, mode: entry.mode })
+    this.addresses.replaceParent(
+      sessionId,
+      entries
+        .filter((entry): entry is SubagentView => entry.kind === 'child')
+        .map((entry) => ({ id: entry.id, mode: entry.mode })),
+    )
 
     return { entries, parentAvailable: value.parentAvailable }
+  }
+
+  /** Durable parent of a catalog-resolved child, for child-scoped ownership checks. */
+  public parentOf(childSessionId: string): string | undefined {
+    return this.addresses.parentOf(childSessionId)
   }
 
   public send(sessionId: string, message: string, signal?: AbortSignal): Promise<void>
@@ -96,7 +108,7 @@ export class Rc6SubagentRepository implements SubagentRepository {
       : isAbortSignal(modeOrSignal)
         ? modeOrSignal
         : signal
-    const address = this.addresses.get(sessionId)
+    const address = this.addresses.resolve(sessionId)
     if (address?.mode !== 'continuable') throw unavailable('one-shot subagent follow-up')
     const content = encodePromptContent(message, attachments, {
       maxImageBytes: this.options.maxPromptAttachmentBytes ?? 20 * 1024 * 1024,
@@ -129,7 +141,7 @@ export class Rc6SubagentRepository implements SubagentRepository {
     query?: SubagentHistoryQuery,
     signal?: AbortSignal,
   ): Promise<SubagentHistoryPage> {
-    const address = this.addresses.get(sessionId)
+    const address = this.addresses.resolve(sessionId)
     if (address === undefined) throw unavailable('subagent history without a current catalog entry')
     const value = requiredRecord(
       await callRpc<unknown>(
@@ -151,16 +163,22 @@ export class Rc6SubagentRepository implements SubagentRepository {
       (value.projections !== undefined && !validProjectionBlock(value.projections))
     )
       throw malformedSubagentResponse('history')
-    const mapped = rc6Mapper.history(value, sessionId)
+    // Map the hidden marker rows while calculating the page cursor: a page
+    // whose first record is the model-facing system prompt would otherwise
+    // report a cursor that leaves that record unreachable for paging.
+    const mapped = rc6Mapper.history(value, sessionId, { includeSystemMarkers: true })
+    const sequences = mapped.events.map((entry) => entry.sequence).filter((entry) => entry >= 0)
+    const oldest = sequences.length === 0 ? undefined : Math.min(...sequences)
     return {
-      events: mapped.events,
+      events: mapped.events.filter((entry) => entry.event.type !== 'session.system'),
       hasMore: mapped.hasMore,
+      ...(oldest === undefined ? {} : { beforeSequence: oldest }),
       ...(mapped.projection === undefined ? {} : { projection: mapped.projection }),
     }
   }
 
   public async interrupt(sessionId: string, signal?: AbortSignal): Promise<void> {
-    const address = this.addresses.get(sessionId)
+    const address = this.addresses.resolve(sessionId)
     if (address?.mode !== 'continuable') throw unavailable('one-shot subagent interrupt')
     const value = requiredRecord(
       await callRpc<unknown>(

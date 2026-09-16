@@ -9,6 +9,11 @@ export interface GoalView {
   readonly status: 'pending' | 'in-progress' | 'completed' | 'blocked'
   /** Upstream goal round budget, when the connected host advertises it. */
   readonly maxGoalRounds?: number
+  /**
+   * Why the host blocked the goal. The host publishes this as the only
+   * actionable detail of a blocked goal, so it must survive to the surface.
+   */
+  readonly blockedReason?: { readonly code: string; readonly message: string }
 }
 
 export interface JobView {
@@ -162,9 +167,10 @@ export type TurnEndReasonKind =
 /**
  * Display-safe failure facts carried by an error turn/end reason.
  *
- * The adapter keeps only the bounded message and stable error code. Provider
- * request ids, status details, and other upstream metadata must not cross into
- * the Webview projection.
+ * The message is the provider's own failure text, kept whole: the host bounds
+ * it nowhere and the reference client renders all of it. What the adapter
+ * strips is provider-owned metadata such as request ids and status details,
+ * which must not cross into the Webview projection.
  */
 export interface TurnEndFailure {
   readonly message: string
@@ -369,7 +375,12 @@ type BackendEventPayload =
       readonly controlBaseline?: boolean
       readonly projection?: SessionProjectionSnapshot
     }
-  /** Internal durable watermark for an upstream system/message event. */
+  /**
+   * Internal durable watermark for an upstream row that must not enter the
+   * human transcript: a `system/message` prompt, or a surface replacement copy
+   * that restates a shadowed range for the model alone. The sequence stays
+   * visible to gap detection; the content never leaves the Host.
+   */
   | { readonly type: 'session.system'; readonly sessionId: string }
   | {
       readonly type: 'session.projection'

@@ -78,15 +78,50 @@ describe('CheckpointDrawer', () => {
     expect(screen.getByText('src/main.ts')).toBeDefined()
     expect(screen.getByText('aaaaaaaaaaaa')).toBeDefined()
     fireEvent.click(screen.getByRole('button', { name: 'Restore files' }))
-    await waitFor(() => expect(props.onRestore).toHaveBeenCalledWith('dsh-checkpoint-1'))
+    // Nothing drifted from the checkpoint, so the safe policy stays on: a file
+    // that changes between this preview and the restore must not be clobbered.
+    await waitFor(() => expect(props.onRestore).toHaveBeenCalledWith('dsh-checkpoint-1', 'abort'))
   })
 
-  it('blocks restore confirmation when the preview detects an external conflict', async () => {
-    renderDrawer({ onPreview: vi.fn().mockResolvedValue(preview(checkpoint(), true)) })
+  it('restores a drifted file once the user confirms the preview that lists it', async () => {
+    const props = renderDrawer({ onPreview: vi.fn().mockResolvedValue(preview(checkpoint(), true)) })
     fireEvent.click(screen.getByRole('button', { name: 'Restore Before refactor' }))
     await waitFor(() => expect(screen.getByRole('alertdialog')).toBeDefined())
-    expect(screen.getByText('1 file(s) changed externally; restore is blocked.')).toBeDefined()
-    expect(screen.getByRole('button', { name: 'Restore files' })).toHaveProperty('disabled', true)
+
+    // The dialog states what the restore does with the drifted file, and the
+    // confirmation is what accepts the overwrite: before this, the button was
+    // disabled for every drifted file, so the restore could never do its job.
+    expect(screen.getByText('1 file(s) differ from the checkpoint and are replaced.')).toBeDefined()
+    expect(screen.getByText('changed')).toBeDefined()
+    const confirm = screen.getByRole('button', { name: 'Restore files' })
+    expect(confirm).toHaveProperty('disabled', false)
+
+    fireEvent.click(confirm)
+    await waitFor(() => expect(props.onRestore).toHaveBeenCalledWith('dsh-checkpoint-1', 'overwrite'))
+  })
+
+  it('marks a file the checkpoint never stored as added since', async () => {
+    const current = checkpoint()
+    const later: CheckpointPreview = {
+      summary: current,
+      files: [
+        {
+          relativePath: 'src/later.ts',
+          presentAtCheckpoint: false,
+          currentHash: 'c'.repeat(64),
+          conflict: true,
+          byteSize: 0,
+        },
+      ],
+      conflictCount: 1,
+    }
+    renderDrawer({ onPreview: vi.fn().mockResolvedValue(later) })
+    fireEvent.click(screen.getByRole('button', { name: 'Restore Before refactor' }))
+    await waitFor(() => expect(screen.getByRole('alertdialog')).toBeDefined())
+
+    // The checkpoint holds no content for it, so the restore removes it instead
+    // of replacing it — the row cannot say "changed".
+    expect(screen.getByText('added since')).toBeDefined()
   })
 
   it('requires a separate confirmation before deletion', async () => {

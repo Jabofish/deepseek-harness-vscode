@@ -71,6 +71,27 @@ export function unwrapRpcResultValue<T>(result: unknown, method: string): T {
   return unwrapRpcResult<T>({ result: result as RpcResult<T> }, method)
 }
 
+/**
+ * Unwrap a Remote result whose declared business value may be absent.
+ *
+ * The Gateway drops the `value` member when a Remote method returns
+ * `undefined` — JSON cannot carry one, and the envelope's optional slot is the
+ * only representation of absence. A caller whose contract declares
+ * `T | undefined` reads that absence as `undefined`; every other caller keeps
+ * the strict {@link unwrapRpcResultValue}, for which a missing value stays a
+ * protocol error.
+ */
+export function unwrapOptionalRpcResultValue<T>(result: unknown, method: string): T | undefined {
+  if (
+    typeof result === 'object' &&
+    result !== null &&
+    (result as { readonly ok?: unknown }).ok === true &&
+    !('value' in result)
+  )
+    return undefined
+  return unwrapRpcResultValue<T>(result, method)
+}
+
 export async function callRpc<T>(
   transport: DshTransport,
   method: string,
@@ -227,16 +248,24 @@ function safeRpcMessage(
   return `${fallback} Details: ${detail}`
 }
 
-/** Keep useful DSH failure text without allowing credentials or huge payloads across the boundary. */
+/**
+ * Keep the DSH failure text without allowing credentials across the boundary.
+ *
+ * The Connection RPC error envelope types `message` as an unbounded string, and
+ * the host appends its own explanation there (a rejected command's validation
+ * report, a provider failure, an endpoint's refusal). The public error text is
+ * bounded once, by the protocol layer that carries it; clipping here instead
+ * dropped the tail of the host's only explanation with no ellipsis or second
+ * surface that reveals the loss.
+ */
 function safeRpcDiagnostic(message: string | undefined): string | undefined {
   if (typeof message !== 'string') return undefined
   const compact = message.replace(/\s+/gu, ' ').trim()
   if (compact === '') return undefined
-  const redacted = compact.replace(
+  return compact.replace(
     /\b(?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|authorization|password|secret|private[_ -]?key|token|prompt|body|response)\b\s*[:=]\s*[^\s,;]+/giu,
     (match) => match.replace(/[:=].*$/u, ': [redacted]'),
   )
-  return redacted.slice(0, 320)
 }
 
 function publishedWorkspaceAttachSessionId(code: string, details: unknown): string | undefined {

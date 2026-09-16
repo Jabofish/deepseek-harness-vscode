@@ -10,6 +10,7 @@ import {
   type ChangeDetail,
   type ChangeReviewState,
   type ChangeSetFile,
+  type CheckpointConflictPolicy,
   type CheckpointPreview,
   type CheckpointSummary,
   type CustomProviderCreateResult,
@@ -338,7 +339,10 @@ export interface AppActions {
   createCheckpoint(label?: string): Promise<CheckpointSummary | undefined>
   previewCheckpoint(checkpointId: string): Promise<CheckpointPreview | undefined>
   deleteCheckpoint(checkpointId: string): Promise<void>
-  restoreCheckpoint(checkpointId: string): Promise<'completed' | 'partial' | undefined>
+  restoreCheckpoint(
+    checkpointId: string,
+    conflictPolicy: CheckpointConflictPolicy,
+  ): Promise<'completed' | 'partial' | undefined>
   refreshPromptTemplates(sessionId?: string, scope?: PromptTemplateScope): Promise<void>
   readPromptTemplate(templateId: string): Promise<PromptTemplate | undefined>
   insertPromptTemplate(
@@ -585,25 +589,70 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
    * of it never arrived. Keep the announced ranges so every rebuild can
    * re-derive the notice from what history still cannot cover.
    */
-  const unhealedGapRanges = new Map<string, Array<{ readonly from: number; readonly to: number }>>()
+  const unhealedGapRanges = new Map<string, readonly SessionSequenceRange[]>()
+  /**
+   * Raw page coverage per session. A page's presentation rows may legitimately
+   * omit sequences (hidden system rows, deltas compacted into one row), so the
+   * ledger alone cannot prove an announced hole was read. Remember what each
+   * successful page vouched for, otherwise a warning published after a failed
+   * attempt outlives the hole it describes.
+   */
+  const coveredHistoryRanges = new Map<string, readonly SessionSequenceRange[]>()
   let ledgerRebuildTimer: number | undefined
   const MAX_GAP_BACKFILL_PAGES = 4
   const GAP_BACKFILL_PAGE_MESSAGES = 200
+  const MAX_COVERED_HISTORY_SESSIONS = 32
   const gapNoticeId = (sessionId: string, fromSequence: number, toSequence: number): string =>
     `gap:${sessionId}:${fromSequence}:${toSequence}`
-  const publishUnhealedGap = (sessionId: string, fromSequence: number, toSequence: number): void => {
+  const rememberCoveredRanges = (sessionId: string, ranges: readonly SessionSequenceRange[]): void => {
+    if (ranges.length === 0) return
+    const merged = mergeSequenceRanges(coveredHistoryRanges.get(sessionId) ?? [], ranges)
+    // Re-insert so the least recently read session is evicted first.
+    coveredHistoryRanges.delete(sessionId)
+    coveredHistoryRanges.set(sessionId, merged)
+    while (coveredHistoryRanges.size > MAX_COVERED_HISTORY_SESSIONS) {
+      const oldest = coveredHistoryRanges.keys().next().value
+      if (oldest === undefined) break
+      coveredHistoryRanges.delete(oldest)
+    }
+  }
+  const historyCoversAnnouncedRange = (
+    sessionId: string,
+    history: readonly SessionHistoryEvent[],
+    fromSequence: number,
+    toSequence: number,
+  ): boolean =>
+    historyCoversSequenceRange(history, fromSequence, toSequence) ||
+    sequenceRangesCover(coveredHistoryRanges.get(sessionId) ?? [], fromSequence, toSequence)
+  /**
+   * Reconcile the session's warning rows with the announced ranges: one row per
+   * merged range, so an adjacent re-announcement refreshes the existing warning
+   * instead of adding a second one for the same contiguous hole.
+   */
+  const syncGapNotices = (timeline: TimelineState, sessionId: string): TimelineState => {
     const announced = unhealedGapRanges.get(sessionId) ?? []
-    if (!announced.some((range) => range.from === fromSequence && range.to === toSequence))
-      unhealedGapRanges.set(sessionId, [...announced, { from: fromSequence, to: toSequence }])
-    setState((current) => {
-      if (current.activeSessionId !== sessionId) return current
-      const id = gapNoticeId(sessionId, fromSequence, toSequence)
-      if (current.timeline.nodes.some((node) => node.id === id)) return current
-      const timeline = reduceTimeline(current.timeline, {
-        sequence: current.timeline.lastSequence,
-        event: { type: 'session.gap', sessionId, fromSequence, toSequence },
+    const prefix = `gap:${sessionId}:`
+    const wanted = new Set(announced.map((range) => gapNoticeId(sessionId, range.from, range.to)))
+    const kept = timeline.nodes.filter((node) => !node.id.startsWith(prefix) || wanted.has(node.id))
+    let next = kept.length === timeline.nodes.length ? timeline : { ...timeline, nodes: kept }
+    for (const range of announced) {
+      const id = gapNoticeId(sessionId, range.from, range.to)
+      if (next.nodes.some((node) => node.id === id)) continue
+      next = reduceTimeline(next, {
+        sequence: next.lastSequence,
+        event: { type: 'session.gap', sessionId, fromSequence: range.from, toSequence: range.to },
         advanceSequence: false,
       })
+    }
+    return next
+  }
+  const publishUnhealedGap = (sessionId: string, fromSequence: number, toSequence: number): void => {
+    if (historyCoversAnnouncedRange(sessionId, [], fromSequence, toSequence)) return
+    const announced = unhealedGapRanges.get(sessionId) ?? []
+    unhealedGapRanges.set(sessionId, mergeSequenceRanges(announced, [{ from: fromSequence, to: toSequence }]))
+    setState((current) => {
+      if (current.activeSessionId !== sessionId) return current
+      const timeline = syncGapNotices(current.timeline, sessionId)
       return timeline === current.timeline ? current : { ...current, timeline }
     })
   }
@@ -613,27 +662,14 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     history: readonly SessionHistoryEvent[],
   ): TimelineState => {
     const announced = unhealedGapRanges.get(sessionId)
-    const covered = new Set<string>()
-    const remaining = (announced ?? []).filter((range) => {
-      if (!historyCoversSequenceRange(history, range.from, range.to)) return true
-      covered.add(gapNoticeId(sessionId, range.from, range.to))
-      return false
-    })
-    if (covered.size === 0 && remaining.length === 0) return rebuilt
-    if (remaining.length === 0) unhealedGapRanges.delete(sessionId)
-    else if (remaining.length !== (announced ?? []).length) unhealedGapRanges.set(sessionId, remaining)
-    const kept = rebuilt.nodes.filter((node) => !covered.has(node.id))
-    let timeline = kept === rebuilt.nodes ? rebuilt : { ...rebuilt, nodes: kept }
-    for (const range of remaining) {
-      const id = gapNoticeId(sessionId, range.from, range.to)
-      if (timeline.nodes.some((node) => node.id === id)) continue
-      timeline = reduceTimeline(timeline, {
-        sequence: timeline.lastSequence,
-        event: { type: 'session.gap', sessionId, fromSequence: range.from, toSequence: range.to },
-        advanceSequence: false,
-      })
+    if (announced !== undefined) {
+      const remaining = announced.filter(
+        (range) => !historyCoversAnnouncedRange(sessionId, history, range.from, range.to),
+      )
+      if (remaining.length === 0) unhealedGapRanges.delete(sessionId)
+      else if (remaining.length !== announced.length) unhealedGapRanges.set(sessionId, remaining)
     }
-    return timeline
+    return syncGapNotices(rebuilt, sessionId)
   }
   /**
    * Command notices and agent errors are host-only rows: DSH never replays
@@ -729,7 +765,6 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         const range = entry.ranges.shift()
         if (range === undefined) break
         let beforeSeq = range.to + 1
-        let coveredSequenceRanges: readonly SessionSequenceRange[] = []
         // Pages answered after another open superseded this one can no longer
         // be merged into the session's ledger, so the read stops fetching.
         // Stopping must not lose the announcement: the range is still recorded
@@ -755,8 +790,8 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
             events = parsed.events
             hasMore = parsed.hasMore
             nextBefore = parsed.beforeSequence ?? oldestHistorySequence(parsed.events)
-            coveredSequenceRanges = mergeSequenceRanges(
-              coveredSequenceRanges,
+            rememberCoveredRanges(
+              sessionId,
               parsed.coveredSequenceRanges ?? historySequenceRanges(parsed.events),
             )
           } catch {
@@ -777,15 +812,16 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         }
         // The range memory is per session, so an unhealed hole is recorded even
         // while another session is on screen; the notice itself is re-derived
-        // when that session is opened again. Only this session's ledger can
-        // vouch for the hole: sequence numbers of another session's history
-        // say nothing about it.
+        // when that session is opened again. Only this session's own history and
+        // page windows can vouch for the hole: sequence numbers of another
+        // session's history say nothing about it.
         if (
           !disposed &&
-          !sequenceRangesCover(coveredSequenceRanges, range.from, range.to) &&
-          !(
-            state.activeSessionId === sessionId &&
-            historyCoversSequenceRange(state.history, range.from, range.to)
+          !historyCoversAnnouncedRange(
+            sessionId,
+            state.activeSessionId === sessionId ? state.history : [],
+            range.from,
+            range.to,
           )
         )
           publishUnhealedGap(sessionId, range.from, range.to)
@@ -1274,7 +1310,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     sessionId: string,
     command: string,
     attachments: readonly PromptAttachment[] = [],
-  ): Promise<boolean> => {
+  ): Promise<'executed' | 'unknown'> => {
     const result = object(
       await client.request<unknown>({
         type: 'command.execute',
@@ -1284,6 +1320,11 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     )
     if (result?.kind === 'error')
       throw new Error(typeof result.text === 'string' ? result.text : translate('app.error.dshMode'))
+    // A line outside DSH's command directory is not a command. The official
+    // client lets it fall to the default sink, where the host injects a
+    // user-invocable skill (the `/skill-name args` gesture) and any other line
+    // reaches the model as ordinary text.
+    if (result?.kind === 'unknown') return 'unknown'
     if (result !== undefined && result?.kind !== 'success') throw new Error(translate('app.error.dshMode'))
     setState((current) => {
       if (current.activeSessionId !== sessionId || current.configuration === undefined) return current
@@ -1300,7 +1341,113 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       composerPreferences = { ...composerPreferences, promptMode: nextPromptMode }
       persistWebviewState()
     }
-    return true
+    return 'executed'
+  }
+  /** Admit one ordinary turn (or subagent message) addressed to this session. */
+  const sendUserTurn = async (
+    sessionId: string,
+    text: string,
+    attachments: readonly PromptAttachment[],
+    mode: RunningInputMode,
+    subagent: ActiveSubagent | undefined,
+  ): Promise<void> => {
+    const rpcRequestId = requestId()
+    const optimisticId = `optimistic:user:${rpcRequestId}`
+    const contextRefs = state.editorContext.map((item) => item.ref.contextRef)
+    const contextWorkspaceIds = new Set(
+      state.editorContext
+        .filter((item) => contextRefs.includes(item.ref.contextRef))
+        .map((item) => item.ref.workspaceFolderId),
+    )
+    const contextWorkspaceFolderId = contextWorkspaceIds.size === 1 ? [...contextWorkspaceIds][0] : undefined
+    // A queued prompt is not a conversation turn yet.  DSH publishes the
+    // durable `message.user` event only when the queue admits it; rendering
+    // a local preview here makes the same text appear both in the timeline
+    // and in the queue dock.  Subagent sends bypass the session queue, and
+    // steer is already admitted to the running turn, so those retain the
+    // optimistic preview.
+    const showOptimisticPreview = subagent !== undefined || mode === 'steer'
+    if (subagent !== undefined) {
+      if (subagent.entry.mode === 'one-shot') throw new Error(translate('app.error.subagentReadOnly'))
+      if (!subagent.parentAvailable) throw new Error(translate('app.error.subagentParentUnavailable'))
+      if (attachments.length > 0 && state.subagentImagePrompts !== true)
+        throw new Error(translate('app.error.subagentAttachments'))
+      if (text.trim() === '') throw new Error(translate('app.error.subagentMessageRequired'))
+    }
+    const messageAttachments: readonly MessageAttachment[] = attachments.map((attachment) => ({
+      name: attachment.name,
+      ...(attachment.mimeType === undefined ? {} : { mimeType: attachment.mimeType }),
+    }))
+    if (showOptimisticPreview && (text !== '' || messageAttachments.length > 0))
+      setState((current) => {
+        if (current.activeSessionId !== sessionId) return current
+        return {
+          ...current,
+          timeline: {
+            ...current.timeline,
+            nodeChangeBase: current.timeline.nodes,
+            nodeChangeStart: current.timeline.nodes.length,
+            nodes: [
+              ...current.timeline.nodes,
+              {
+                kind: 'user-message',
+                id: optimisticId,
+                markdown: text,
+                ...(messageAttachments.length === 0 ? {} : { attachments: messageAttachments }),
+              },
+            ],
+          },
+        }
+      })
+    try {
+      if (subagent === undefined)
+        await client.request<unknown>({
+          type: 'session.sendPrompt',
+          requestId: rpcRequestId,
+          payload: {
+            sessionId,
+            text,
+            attachments: [...attachments],
+            ...(contextRefs.length === 0 ? {} : { contextRefs }),
+            ...(contextWorkspaceFolderId === undefined ? {} : { contextWorkspaceFolderId }),
+            mode,
+          },
+        })
+      else
+        await client.request<unknown>({
+          type: 'subagent.send',
+          requestId: rpcRequestId,
+          payload: {
+            sessionId,
+            message: text,
+            mode,
+            ...(attachments.length === 0 ? {} : { attachments: [...attachments] }),
+          },
+        })
+      // The Extension Host released exactly the handles this snapshot named.
+      // A chip captured while the request was in flight is a different handle
+      // that is still live on the host, so only the admitted refs drop out —
+      // mirroring how in-flight attachment drafts are kept.
+      if (subagent === undefined && contextRefs.length > 0) {
+        const admitted = new Set(contextRefs)
+        setState((current) => ({
+          ...current,
+          editorContext: current.editorContext.filter((item) => !admitted.has(item.ref.contextRef)),
+        }))
+      }
+    } catch (reason) {
+      if (showOptimisticPreview)
+        setState((current) => ({
+          ...current,
+          timeline: {
+            ...current.timeline,
+            nodeChangeBase: current.timeline.nodes,
+            nodeChangeStart: 0,
+            nodes: current.timeline.nodes.filter((node) => node.id !== optimisticId),
+          },
+        }))
+      throw reason
+    }
   }
   const unsubscribe = client.subscribe((message) => {
     const parsedEvent = parseHostDomainEvent(message)
@@ -1866,8 +2013,12 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
             activeSubagent: { entry, parentAvailable, workspaceId },
             timeline,
             history: history.events,
-            historyHasMore: false,
-            historyBeforeSequence: undefined,
+            // A child transcript is paged exactly like a parent one: without the
+            // host cursor (or a deriveable one) the transcript would stop at the
+            // newest page with no way to reach the records before it.
+            historyHasMore: history.hasMore,
+            historyBeforeSequence:
+              history.beforeSequence ?? (history.hasMore ? oldestHistorySequence(history.events) : undefined),
             historyLoading: false,
             projections: setSessionProjection(
               current.projections,
@@ -2247,25 +2398,35 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       flushPendingHistory()
       const sessionId = state.activeSessionId
       const beforeSeq = state.historyBeforeSequence
-      if (
-        sessionId === undefined ||
-        state.activeSubagent !== undefined ||
-        !state.historyHasMore ||
-        beforeSeq === undefined ||
-        state.historyLoading
-      )
+      // A child transcript pages through `subagent.history`: its records live in
+      // the parent's subagent log, so `session.history` would answer for the
+      // wrong log.
+      const childTranscript = state.activeSubagent !== undefined
+      if (sessionId === undefined || !state.historyHasMore || beforeSeq === undefined || state.historyLoading)
         return
       const version = openVersion
       setState((current) =>
         current.activeSessionId === sessionId ? { ...current, historyLoading: true } : current,
       )
       try {
-        const result = await client.request<unknown>({
-          type: 'session.history',
-          requestId: requestId(),
-          payload: { sessionId, beforeSeq, maxMessages: 200 },
-        })
-        const page = parseSessionHistoryPage(result)
+        const result = await client.request<unknown>(
+          childTranscript
+            ? {
+                type: 'subagent.history',
+                requestId: requestId(),
+                payload: { sessionId, beforeSeq },
+              }
+            : {
+                type: 'session.history',
+                requestId: requestId(),
+                payload: { sessionId, beforeSeq, maxMessages: 200 },
+              },
+        )
+        const page = childTranscript ? parseSubagentHistory(result) : parseSessionHistoryPage(result)
+        // Remember the raw window before the merge gate: a page that cannot be
+        // merged (another open superseded this one, a discontinuous cursor) still
+        // proves which sequences upstream has, which is what clears a warning.
+        rememberCoveredRanges(sessionId, historyPageCoverage(page))
         // A live stream can publish while the paging request is in flight.
         // Flush the coalesced history ledger before taking the functional
         // update so the page is merged with the newest state, not the state
@@ -2325,11 +2486,16 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
           payload: { sessionId, title },
         }),
       )
-      const acceptedTitle = typeof result?.title === 'string' ? result.title : title.trim()
+      // The host answers with the title it stored after its own normalization
+      // (control characters stripped, whitespace collapsed, truncated to its
+      // byte budget). Adopting that value keeps the row from showing a title
+      // the session log does not hold until the next refresh.
+      const accepted =
+        typeof result?.title === 'string' && result.title.trim() !== '' ? result.title : title.trim()
       setState((current) => ({
         ...current,
         sessions: current.sessions.map((session) =>
-          session.id === sessionId ? { ...session, title: acceptedTitle } : session,
+          session.id === sessionId ? { ...session, title: accepted } : session,
         ),
       }))
     },
@@ -2419,7 +2585,14 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       rememberComposerConfiguration(configuration)
       setState((current) => (current.activeSessionId === sessionId ? { ...current, configuration } : current))
     },
-    executeCommand: executeCommandRequest,
+    executeCommand: async (sessionId, command, attachments = []) => {
+      if ((await executeCommandRequest(sessionId, command, attachments)) === 'executed') return true
+      // The palette hands the picked line to the command surface; a skill row
+      // has no command behind it, so the same line is submitted as the prompt
+      // gesture it spells.
+      await sendUserTurn(sessionId, command, attachments, 'queue', undefined)
+      return true
+    },
     createSession: async (workspaceId, presetId) => {
       const workspace =
         (workspaceId === undefined
@@ -2511,121 +2684,23 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       }
     },
     sendPrompt: async (sessionId, text, attachments, mode) => {
-      const rpcRequestId = requestId()
-      const optimisticId = `optimistic:user:${rpcRequestId}`
-      const contextRefs = state.editorContext.map((item) => item.ref.contextRef)
-      const contextWorkspaceIds = new Set(
-        state.editorContext
-          .filter((item) => contextRefs.includes(item.ref.contextRef))
-          .map((item) => item.ref.workspaceFolderId),
-      )
-      const contextWorkspaceFolderId =
-        contextWorkspaceIds.size === 1 ? [...contextWorkspaceIds][0] : undefined
       const subagent =
         state.activeSessionId === sessionId && state.activeSubagent?.entry.id === sessionId
           ? state.activeSubagent
           : undefined
-      // A queued prompt is not a conversation turn yet.  DSH publishes the
-      // durable `message.user` event only when the queue admits it; rendering
-      // a local preview here makes the same text appear both in the timeline
-      // and in the queue dock.  Subagent sends bypass the session queue, and
-      // steer is already admitted to the running turn, so those retain the
-      // optimistic preview.
-      const showOptimisticPreview = subagent !== undefined || mode === 'steer'
-      if (subagent !== undefined) {
-        if (subagent.entry.mode === 'one-shot') throw new Error(translate('app.error.subagentReadOnly'))
-        if (!subagent.parentAvailable) throw new Error(translate('app.error.subagentParentUnavailable'))
-        if (attachments.length > 0 && state.subagentImagePrompts !== true)
-          throw new Error(translate('app.error.subagentAttachments'))
-        if (text.trim() === '') throw new Error(translate('app.error.subagentMessageRequired'))
-      }
-      const isSlashCommand =
-        subagent === undefined &&
-        attachments.length === 0 &&
-        contextRefs.length === 0 &&
-        parseSlashCommand(text) !== undefined
-      if (isSlashCommand) {
+      if (subagent === undefined && parseSlashCommand(text) !== undefined) {
         // Slash commands are control-plane operations.  Sending them through
         // session.prompt turns /plan, /permission, /compact, and every plugin
         // command into a visible model request.  The official WebUI routes
-        // the complete line through commands.execute instead.
-        await executeCommandRequest(sessionId, text)
-        return
+        // the complete line through commands.execute instead, and that route
+        // accepts the composer's image attachments.  Editor-context chips are
+        // not part of the command payload; they stay attached to the composer
+        // for the next message, exactly as they do on the Composer's own
+        // command path.  A line DSH answers as unknown is not a command at all
+        // and is submitted below as the prompt gesture it spells.
+        if ((await executeCommandRequest(sessionId, text, attachments)) === 'executed') return
       }
-      const messageAttachments: readonly MessageAttachment[] = attachments.map((attachment) => ({
-        name: attachment.name,
-        ...(attachment.mimeType === undefined ? {} : { mimeType: attachment.mimeType }),
-      }))
-      if (showOptimisticPreview && (text !== '' || messageAttachments.length > 0))
-        setState((current) => {
-          if (current.activeSessionId !== sessionId) return current
-          return {
-            ...current,
-            timeline: {
-              ...current.timeline,
-              nodeChangeBase: current.timeline.nodes,
-              nodeChangeStart: current.timeline.nodes.length,
-              nodes: [
-                ...current.timeline.nodes,
-                {
-                  kind: 'user-message',
-                  id: optimisticId,
-                  markdown: text,
-                  ...(messageAttachments.length === 0 ? {} : { attachments: messageAttachments }),
-                },
-              ],
-            },
-          }
-        })
-      try {
-        if (subagent === undefined)
-          await client.request<unknown>({
-            type: 'session.sendPrompt',
-            requestId: rpcRequestId,
-            payload: {
-              sessionId,
-              text,
-              attachments: [...attachments],
-              ...(contextRefs.length === 0 ? {} : { contextRefs }),
-              ...(contextWorkspaceFolderId === undefined ? {} : { contextWorkspaceFolderId }),
-              mode,
-            },
-          })
-        else
-          await client.request<unknown>({
-            type: 'subagent.send',
-            requestId: rpcRequestId,
-            payload: {
-              sessionId,
-              message: text,
-              mode,
-              ...(attachments.length === 0 ? {} : { attachments: [...attachments] }),
-            },
-          })
-        // The Extension Host released exactly the handles this snapshot named.
-        // A chip captured while the request was in flight is a different handle
-        // that is still live on the host, so only the admitted refs drop out —
-        // mirroring how in-flight attachment drafts are kept.
-        if (subagent === undefined && contextRefs.length > 0) {
-          const admitted = new Set(contextRefs)
-          setState((current) => ({
-            ...current,
-            editorContext: current.editorContext.filter((item) => !admitted.has(item.ref.contextRef)),
-          }))
-        }
-      } catch (reason) {
-        if (showOptimisticPreview)
-          setState((current) => ({
-            ...current,
-            timeline: {
-              ...current.timeline,
-              nodeChangeBase: current.timeline.nodes,
-              nodeChangeStart: 0,
-              nodes: current.timeline.nodes.filter((node) => node.id !== optimisticId),
-            },
-          }))
-        throw reason
-      }
+      await sendUserTurn(sessionId, text, attachments, mode, subagent)
     },
     cancelSession: async (sessionId) => {
       const subagent =
@@ -3167,7 +3242,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         checkpoints: current.checkpoints.filter((entry) => entry.checkpointId !== checkpointId),
       }))
     },
-    restoreCheckpoint: async (checkpointId) => {
+    restoreCheckpoint: async (checkpointId, conflictPolicy) => {
       if (typeof client.featureRequest !== 'function') return undefined
       const sessionId = state.activeSessionId
       if (sessionId === undefined) return undefined
@@ -3183,7 +3258,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
           sessionId,
           workspaceFolderId,
           expectedCurrentRevision: checkpoint.expectedRevision,
-          conflictPolicy: 'abort',
+          conflictPolicy,
         },
       })
       const operation = parseFeatureOperationResult(result)
@@ -3594,6 +3669,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       openVersion += 1
       gapBackfills.clear()
       unhealedGapRanges.clear()
+      coveredHistoryRanges.clear()
       rememberedHostOnlyNodes.clear()
       pendingHistory = []
       pendingHistorySessionId = undefined
@@ -4157,9 +4233,14 @@ function parseSubagentHistory(value: unknown): SubagentHistoryPage {
       object(projection.values) === undefined)
   )
     throw new Error(translate('app.error.malformedProjection'))
+  const hasBeforeSequence = Object.hasOwn(page, 'beforeSeq')
+  const parsedBeforeSequence = optionalSequence(page.beforeSeq)
+  if (hasBeforeSequence && parsedBeforeSequence === undefined)
+    throw new Error(translate('app.error.malformedHistory'))
   return {
     events: page.events,
     hasMore: page.hasMore,
+    ...(parsedBeforeSequence === undefined ? {} : { beforeSequence: parsedBeforeSequence }),
     ...(projection === undefined
       ? {}
       : {
@@ -6047,8 +6128,11 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
       ...(value.commandPhase === 'run' || value.commandPhase === 'done'
         ? { commandPhase: value.commandPhase }
         : {}),
+      // The host logs `command/run.args` verbatim with no length bound, and this
+      // becomes the transcript's command-input row — the only record of the line
+      // that ran, so it must not be clipped here either.
       ...(typeof value.commandInput === 'string' && value.commandInput.trim() !== ''
-        ? { commandInput: value.commandInput.slice(0, 4_096) }
+        ? { commandInput: value.commandInput }
         : {}),
     }
   }
@@ -6193,6 +6277,18 @@ function parseSessionHistoryPage(value: unknown): {
     ...(coveredSequenceRanges === undefined ? {} : { coveredSequenceRanges }),
     ...(projection === undefined ? {} : { projection }),
   }
+}
+
+/**
+ * Raw coverage a page can vouch for. A session page reports the unfiltered
+ * ranges; a child-transcript page only has the rows that reached the
+ * transcript, which is the same fallback a session page without ranges uses.
+ */
+function historyPageCoverage(page: {
+  readonly events: readonly SessionHistoryEvent[]
+  readonly coveredSequenceRanges?: readonly SessionSequenceRange[]
+}): readonly SessionSequenceRange[] {
+  return page.coveredSequenceRanges ?? historySequenceRanges(page.events)
 }
 
 function parseCoveredSequences(record: Record<string, unknown>): readonly number[] | undefined {
@@ -6890,7 +6986,10 @@ function turnEndFailure(value: unknown): TurnEndFailure | undefined {
     typeof failure.code === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$/u.test(failure.code)
       ? failure.code
       : undefined
-  return { message: redacted.slice(0, 320), ...(code === undefined ? {} : { code }) }
+  // The durable reason carries the provider adapter's own failure message, and
+  // the reference client renders it whole in its turn-error row. Clipping here
+  // would cut the user's only diagnosis with nothing on screen to reveal it.
+  return { message: redacted, ...(code === undefined ? {} : { code }) }
 }
 
 function parseTokenUsage(value: unknown): TokenUsage | undefined {
@@ -7611,7 +7710,7 @@ function parseToolLocations(
     const path = presentationPath(record?.path)
     if (path === undefined || seen.has(path)) continue
     seen.add(path)
-    const line = positivePresentationNumber(record?.line)
+    const line = nonNegativePresentationNumber(record?.line)
     locations.push({ path, ...(line === undefined ? {} : { line }) })
   }
   return locations.length === 0 ? undefined : locations
@@ -7619,7 +7718,10 @@ function parseToolLocations(
 
 function parseToolDiffs(value: unknown): readonly ToolPresentationDiff[] {
   if (!Array.isArray(value)) return []
-  return value.slice(0, 32).flatMap((entry): ToolPresentationDiff[] => {
+  // The pinned `write`/`edit` result carries one diff per applied hunk and the
+  // host caps neither the hunk count nor the group count; a scattered
+  // `replace_all` legitimately exceeds any small client-side clamp.
+  return value.flatMap((entry): ToolPresentationDiff[] => {
     const diff = object(entry)
     const path = presentationPath(diff?.path)
     // Diff text is file content: a removal-only hunk has an empty `newText`,
@@ -7654,11 +7756,15 @@ function parseSearchPresentation(value: Record<string, unknown>): ToolPresentati
     }
   }
   if (value.shape !== 'matches' || !Array.isArray(value.files)) return undefined
-  const files = value.files.slice(0, 128).flatMap((entry): ToolPresentationSearchFile[] => {
+  // The host groups every retained match by file (`GREP_MAX_MATCHES = 250`
+  // in the pinned upstream grep tool, with the meta byte cap dropping
+  // trailing groups and reporting `truncated`). Clipping here would hide the
+  // matches the host did keep while the card still reports the host's total.
+  const files = value.files.flatMap((entry): ToolPresentationSearchFile[] => {
     const file = object(entry)
     const path = presentationWorkspacePath(file?.path)
     if (file === undefined || path === undefined || !Array.isArray(file.matches)) return []
-    const matches = file.matches.slice(0, 128).flatMap((matchValue): ToolPresentationSearchMatch[] => {
+    const matches = file.matches.flatMap((matchValue): ToolPresentationSearchMatch[] => {
       const match = object(matchValue)
       const lineNumber = positivePresentationNumber(match?.lineNumber)
       const line = presentationText(match?.line, true)
@@ -7683,7 +7789,10 @@ function parseReadPresentation(value: Record<string, unknown>): ToolPresentation
   const totalLines = nonNegativePresentationNumber(value.totalLines)
   if (path === undefined || offset === undefined || totalLines === undefined || !Array.isArray(value.lines))
     return undefined
-  const lines = value.lines.slice(0, 512).flatMap((entry): ToolPresentationLine[] => {
+  // One pinned `read` call returns at most `READ_LIMIT = 2000` lines and the
+  // adapter forwards the whole window; clipping it here would silently drop
+  // file content the window total still accounts for.
+  const lines = value.lines.flatMap((entry): ToolPresentationLine[] => {
     const line = object(entry)
     const number = positivePresentationNumber(line?.number)
     const text = presentationText(line?.text, true)
@@ -7751,9 +7860,16 @@ function parseWebPresentation(value: Record<string, unknown>): ToolPresentationV
   }
 }
 
+/**
+ * The host bounds no presentation string: `write` presents the whole written
+ * file as a diff's `newText` and `bash` presents its executor's collected
+ * output (default `maxOutputBytes` 64_000 per stream). Every card that shows
+ * one of these bodies folds it for display and copies it whole, so clipping
+ * here would truncate the copy with no fold or notice to reveal it.
+ */
 function presentationText(value: unknown, allowEmpty = false): string | undefined {
   if (typeof value !== 'string' || (!allowEmpty && value.trim() === '')) return undefined
-  return value.slice(0, 4_096)
+  return value
 }
 
 function presentationTextList(value: unknown): readonly string[] | undefined {
@@ -7782,12 +7898,8 @@ function parsePresentedFiles(value: unknown): readonly PresentedFileView[] | und
     const file = object(entry)
     const path = presentationPath(file?.path)
     const hasDescription = file !== undefined && Object.hasOwn(file, 'description')
-    const description = hasDescription ? presentationText(file?.description, true) : undefined
-    if (
-      path === undefined ||
-      (hasDescription && (description === undefined || hasPresentationControlCharacter(description)))
-    )
-      return undefined
+    const description = hasDescription ? presentationDisplayText(file?.description) : undefined
+    if (path === undefined || (hasDescription && typeof file?.description !== 'string')) return undefined
     files.push({ path, ...(description === undefined ? {} : { description }) })
   }
   return files
@@ -7809,13 +7921,12 @@ function parseSubagentCatalogEntryFact(value: unknown): SubagentCatalogEntryFact
   const id = presentationIdentifier(entry?.id)
   const createdAt = nonNegativePresentationNumber(entry?.createdAt)
   const hasLabel = entry !== undefined && Object.hasOwn(entry, 'label')
-  const label = hasLabel ? presentationText(entry?.label, true) : undefined
+  const label = hasLabel ? presentationDisplayText(entry?.label) : undefined
   if (
     id === undefined ||
     createdAt === undefined ||
     (entry?.mode !== 'one-shot' && entry?.mode !== 'continuable') ||
-    (hasLabel && (label === undefined || hasPresentationControlCharacter(label))) ||
-    (entry?.mode === 'continuable' && (label === undefined || label.trim() === ''))
+    (hasLabel && typeof entry?.label !== 'string')
   )
     return undefined
   return {
@@ -7841,6 +7952,34 @@ function hasPresentationControlCharacter(value: string): boolean {
     const code = character.codePointAt(0) ?? 0
     return code <= 0x1f || (code >= 0x7f && code <= 0x9f)
   })
+}
+
+/**
+ * Display-only text such as a delivered file's description or a child label.
+ *
+ * DSH types both as plain strings and they render on a single line, so a
+ * control character is normalized rather than refused: refusing it would drop
+ * the whole durable record, deleting the deliverable card or the child entry.
+ */
+function presentationDisplayText(value: unknown): string | undefined {
+  const text = presentationText(value, true)
+  if (text === undefined) return undefined
+  let line = ''
+  let pendingSpace = false
+  for (const character of text) {
+    const code = character.codePointAt(0) ?? 0
+    if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) {
+      pendingSpace = line !== ''
+      continue
+    }
+    if (pendingSpace) {
+      line += ' '
+      pendingSpace = false
+    }
+    line += character
+  }
+  const trimmed = line.trim()
+  return trimmed === '' ? undefined : trimmed
 }
 
 function isAbsolutePresentationPath(value: string): boolean {
@@ -7979,6 +8118,7 @@ function parsePermissionRequest(value: Record<string, unknown>): PermissionReque
     !isPermissionRisk(value.risk) ||
     options === undefined ||
     (value.rpcId !== undefined && typeof value.rpcId !== 'string') ||
+    (value.callId !== undefined && !nonEmptyString(value.callId)) ||
     (value.commandLine !== undefined && typeof value.commandLine !== 'string')
   )
     return undefined
@@ -7988,6 +8128,7 @@ function parsePermissionRequest(value: Record<string, unknown>): PermissionReque
     sessionId: value.sessionId,
     title: value.title,
     description: value.description,
+    ...(value.callId === undefined ? {} : { callId: value.callId }),
     ...(value.commandLine === undefined ? {} : { commandLine: value.commandLine }),
     risk: value.risk,
     options,
@@ -8548,8 +8689,10 @@ function sameQueuedInputList(left: readonly QueuedInput[], right: readonly Queue
       previous.mode === next.mode &&
       previous.createdAt === next.createdAt &&
       previous.rpcId === next.rpcId &&
+      previous.textOnly === next.textOnly &&
       samePromptAttachmentList(previous.attachments, next.attachments) &&
-      sameMessageImageList(previous.images, next.images),
+      sameMessageImageList(previous.images, next.images) &&
+      sameStringList(previous.files, next.files),
   )
 }
 
@@ -8558,31 +8701,37 @@ function removeAdmittedQueueInput(
   event: Extract<BackendEvent, { readonly type: 'message.user' }>,
 ): readonly QueuedInput[] {
   const byRpcId = event.rpcId === undefined ? -1 : queue.findIndex((item) => item.rpcId === event.rpcId)
-  const index =
-    byRpcId >= 0
-      ? byRpcId
-      : queue.findIndex(
-          (item) =>
-            item.text === event.markdown &&
-            sameMessageAttachmentList(item.attachments, event.attachments) &&
-            sameMessageImageList(item.images, event.images),
-        )
+  const index = byRpcId >= 0 ? byRpcId : queue.findIndex((item) => isAdmittedQueueInput(item, event))
   if (index < 0) return queue
   return [...queue.slice(0, index), ...queue.slice(index + 1)]
 }
 
-function sameMessageAttachmentList(
-  queued: readonly PromptAttachment[],
-  message: readonly MessageAttachment[] | undefined,
+/**
+ * Whether a pending row is the durable message that was just admitted.
+ *
+ * The two are projections of the same host content, but not of the same
+ * fields: the row lists the names of the files it carries — an inlined text
+ * file among them — while the durable message reports those names as
+ * attachments, and its images are compared by count. Comparing the two lists
+ * field by field therefore never matched a row that carried anything, and the
+ * dock kept the row until the next queue frame. Correspondence by kind is what
+ * identifies the message, mirroring the timeline's preview matcher.
+ *
+ * The durable message may carry attachments the row never listed: editor
+ * context chips are resolved into prompt attachments inside the Extension Host
+ * and are appended after the row's own, so the row's names are the leading
+ * ones and anything beyond them belongs to content the Webview never queued.
+ */
+function isAdmittedQueueInput(
+  item: QueuedInput,
+  event: Extract<BackendEvent, { readonly type: 'message.user' }>,
 ): boolean {
-  const attachments = message ?? []
-  return (
-    queued.length === attachments.length &&
-    queued.every(
-      (attachment, index) =>
-        attachment.name === attachments[index]?.name && attachment.mimeType === attachments[index]?.mimeType,
-    )
-  )
+  if (item.text !== event.markdown) return false
+  const names = item.files ?? []
+  const attachedNames = (event.attachments ?? []).map((attachment) => attachment.name)
+  if (names.length > attachedNames.length) return false
+  if (!names.every((name, index) => name === attachedNames[index])) return false
+  return (item.images ?? []).length === (event.images ?? []).length
 }
 
 function samePromptAttachmentList(
@@ -8625,7 +8774,11 @@ function sameGoalList(left: readonly GoalView[], right: readonly GoalView[]): bo
       previous.id === next.id &&
       previous.title === next.title &&
       previous.status === next.status &&
-      previous.maxGoalRounds === next.maxGoalRounds,
+      previous.maxGoalRounds === next.maxGoalRounds &&
+      // The host can republish a still-blocked goal with a different reason;
+      // comparing only status would keep showing the superseded one.
+      previous.blockedReason?.code === next.blockedReason?.code &&
+      previous.blockedReason?.message === next.blockedReason?.message,
   )
 }
 
@@ -8697,7 +8850,10 @@ function isSkillDescriptor(value: unknown): value is SkillDescriptor {
     item.name.trim() !== '' &&
     typeof item.description === 'string' &&
     (item.whenToUse === undefined || typeof item.whenToUse === 'string') &&
-    (item.source === 'project' || item.source === 'user' || item.source === 'plugin') &&
+    (item.source === undefined ||
+      item.source === 'project' ||
+      item.source === 'user' ||
+      item.source === 'plugin') &&
     typeof item.enabled === 'boolean'
   )
 }
@@ -8709,8 +8865,14 @@ function isGoalView(value: unknown): value is GoalView {
     typeof item.id === 'string' &&
     typeof item.title === 'string' &&
     isGoalStatus(item.status) &&
-    (item.maxGoalRounds === undefined || positiveSafeInteger(item.maxGoalRounds) !== undefined)
+    (item.maxGoalRounds === undefined || positiveSafeInteger(item.maxGoalRounds) !== undefined) &&
+    (item.blockedReason === undefined || isGoalBlockedReason(item.blockedReason))
   )
+}
+
+function isGoalBlockedReason(value: unknown): value is { readonly code: string; readonly message: string } {
+  const reason = object(value)
+  return reason !== undefined && typeof reason.code === 'string' && typeof reason.message === 'string'
 }
 
 function parseGoalViews(value: unknown): readonly GoalView[] | undefined {
@@ -8964,6 +9126,10 @@ function isQueuedInput(value: unknown): value is QueuedInput {
     item.attachments.every(isPromptAttachment) &&
     (item.images === undefined ||
       (Array.isArray(item.images) && item.images.every(isMessageImageReference))) &&
+    (item.files === undefined ||
+      (Array.isArray(item.files) &&
+        item.files.every((entry) => typeof entry === 'string' && entry.trim() !== ''))) &&
+    typeof item.textOnly === 'boolean' &&
     (item.mode === 'queue' || item.mode === 'steer') &&
     typeof item.createdAt === 'string' &&
     (item.rpcId === undefined || typeof item.rpcId === 'string')

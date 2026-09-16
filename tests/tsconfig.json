@@ -3,6 +3,7 @@
   "compilerOptions": {
     "composite": true,
     "noEmit": true,
+    "allowImportingTsExtensions": true,
     "types": ["node", "vitest/globals"],
     "baseUrl": "..",
     "paths": {
@@ -22,7 +23,10 @@
     "../packages/webview-protocol/src/**/*.ts",
     "../packages/timeline/src/**/*.ts",
     "../packages/test-support/src/**/*.ts",
+    "../apps/extension/src/backend/path-safety.ts",
     "../apps/extension/src/backend/process-supervisor.ts",
-    "../apps/extension/src/backend/windows-shim.ts"
+    "../apps/extension/src/backend/windows-shim.ts",
+    "../apps/extension/src/changes/change-set-tracker.ts",
+    "../apps/extension/src/view/public-value.ts"
   ]
 }

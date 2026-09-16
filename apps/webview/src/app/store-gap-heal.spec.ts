@@ -172,6 +172,8 @@ function makeStore(
     readonly historySequences?: readonly number[]
     readonly history?: readonly unknown[]
     readonly historyPage?: unknown
+    /** Receives the 1-based session.history call index; wins over historyPage. */
+    readonly historyPageForCall?: (call: number) => unknown
     readonly openResponse?: unknown
     /** Receives the 1-based session.open call index; wins over openResponse. */
     readonly openResponseForCall?: (call: number) => unknown
@@ -183,6 +185,7 @@ function makeStore(
 } {
   const historySequences = options.historySequences ?? [1, 2, 3, 4, 5]
   let openCalls = 0
+  let historyCalls = 0
   const respond: Respond = (request) => {
     if (request.type === 'session.open') {
       openCalls += 1
@@ -203,7 +206,12 @@ function makeStore(
         }
       )
     }
-    if (request.type === 'session.history') return options.historyPage ?? { events: [], hasMore: false }
+    if (request.type === 'session.history') {
+      historyCalls += 1
+      return (
+        options.historyPageForCall?.(historyCalls) ?? options.historyPage ?? { events: [], hasMore: false }
+      )
+    }
     if (options.respond !== undefined) return options.respond(request)
     return baseResponse(request)
   }
@@ -559,6 +567,7 @@ describe('AppStore session gap healing', () => {
       sessionId,
       text: 'continue after the tool result',
       attachments: [],
+      textOnly: true,
       mode: 'queue' as const,
       createdAt: '2026-08-31T08:06:00.000Z',
     }
@@ -685,6 +694,110 @@ describe('AppStore session gap healing', () => {
     const state = store.getState()
     expect(userMessageNodes(state)).toHaveLength(5)
     expect(state.timeline.nodes.some((node) => node.id === `gap:${activeSession.id}:6:9`)).toBe(true)
+  })
+
+  it('clears a published gap notice once a later backfill read covers the hole', async () => {
+    const sessionId = activeSession.id
+    const { store, client } = makeStore({
+      historySequences: [1, 4, 5],
+      historyPageForCall: (call) => {
+        if (call === 1) throw new Error('history endpoint is down')
+        return {
+          events: [
+            historyEvent(3, {
+              type: 'message.delta',
+              sessionId,
+              messageId: 'assistant-1',
+              turn: 1,
+              step: 1,
+              delta: 'The report is complete.',
+            }),
+          ],
+          hasMore: false,
+          beforeSeq: 2,
+          // The raw window covers the announced hole even though the
+          // presentation ledger can only carry the delta row at sequence 3.
+          coveredSeqRanges: [{ from: 2, to: 3 }],
+        }
+      },
+    })
+    await store.openSession(sessionId)
+
+    client.emit(gapMessage(2, 3))
+    await flushAsync()
+    expect(store.getState().timeline.nodes.some((node) => node.id === `gap:${sessionId}:2:3`)).toBe(true)
+
+    // A re-announced hole re-fetches; this read succeeds and reports that the
+    // range is fully covered, so the warning no longer describes the transcript.
+    client.emit(gapMessage(2, 3))
+    await flushAsync()
+
+    const state = store.getState()
+    expect(historyRequests(client)).toHaveLength(2)
+    expect(state.timeline.nodes.some((node) => node.id === `gap:${sessionId}:2:3`)).toBe(false)
+    expect(
+      state.timeline.nodes.some((node) => node.kind === 'assistant-message' && node.id === 'assistant-1'),
+    ).toBe(true)
+  })
+
+  it('clears a published gap notice when paging reads a covered window', async () => {
+    const sessionId = activeSession.id
+    const { store, client } = makeStore({
+      history: [4, 5].map((sequence) => userMessageHistoryEntry(sequence)),
+      openResponse: {
+        ...activeSession,
+        history: [4, 5].map((sequence) => userMessageHistoryEntry(sequence)),
+        historyHasMore: true,
+        permissionPresets: [],
+        configuration: {
+          preset: 'standard',
+          toolMode: 'native',
+          permissionPreset: 'workspace-write',
+          planMode: false,
+          model: { providerId: 'deepseek', modelId: 'deepseek-chat' },
+        },
+      },
+      historyPageForCall: (call) => {
+        if (call === 1) throw new Error('history endpoint is down')
+        return {
+          events: [userMessageHistoryEntry(3)],
+          hasMore: false,
+          beforeSeq: 3,
+          coveredSeqRanges: [{ from: 2, to: 3 }],
+        }
+      },
+    })
+    await store.openSession(sessionId)
+
+    client.emit(gapMessage(2, 3))
+    await flushAsync()
+    expect(store.getState().timeline.nodes.some((node) => node.id === `gap:${sessionId}:2:3`)).toBe(true)
+
+    await store.loadOlderHistory()
+    const state = store.getState()
+    expect(historyRequests(client)).toHaveLength(2)
+    expect(state.timeline.nodes.some((node) => node.id === `gap:${sessionId}:2:3`)).toBe(false)
+  })
+
+  it('keeps one warning row for adjacent unhealed announcements', async () => {
+    const sessionId = activeSession.id
+    const { store, client } = makeStore({
+      respond: () => {
+        throw new Error('history endpoint is down')
+      },
+    })
+    await store.openSession(sessionId)
+
+    client.emit(gapMessage(6, 9))
+    await flushAsync()
+    client.emit(gapMessage(10, 11))
+    await flushAsync()
+
+    const notices = store.getState().timeline.nodes.filter((node) => node.id.startsWith(`gap:${sessionId}:`))
+    // Both announcements describe one contiguous hole, so the transcript must
+    // not show two overlapping warnings for it.
+    expect(notices).toHaveLength(1)
+    expect(notices[0]?.id).toBe(`gap:${sessionId}:6:11`)
   })
 
   it('republishes the ledger when a recovered event arrives below the timeline cursor', async () => {
@@ -1121,6 +1234,7 @@ describe('AppStore session gap healing', () => {
       sessionId,
       text: 'inspect the second result',
       attachments: [],
+      textOnly: true,
       mode: 'queue' as const,
       createdAt: '2026-08-31T08:06:00.000Z',
     }
@@ -1129,6 +1243,7 @@ describe('AppStore session gap healing', () => {
       sessionId,
       text: 'keep the live tail visible',
       attachments: [],
+      textOnly: true,
       mode: 'steer' as const,
       createdAt: '2026-08-31T08:07:00.000Z',
     }

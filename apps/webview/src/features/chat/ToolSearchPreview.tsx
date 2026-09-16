@@ -106,6 +106,9 @@ export function ToolSearchPreview(props: ToolSearchRenderProps): ReactElement {
           ))}
         </div>
       )}
+      {props.recovery === undefined ? null : (
+        <div className="dsh-tool-search-preview__recovery">{props.recovery}</div>
+      )}
     </div>
   )
 }

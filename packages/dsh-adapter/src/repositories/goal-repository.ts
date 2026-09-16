@@ -265,7 +265,27 @@ function goalViewsFromProjection(value: unknown): readonly GoalView[] | undefine
             ? 'completed'
             : undefined)
   if (mappedStatus === undefined) return undefined
-  return [{ id, title, status: mappedStatus, ...(maxGoalRounds === undefined ? {} : { maxGoalRounds }) }]
+  const blockedReason = goalBlockedReason(goal.blockedReason)
+  return [
+    {
+      id,
+      title,
+      status: mappedStatus,
+      ...(maxGoalRounds === undefined ? {} : { maxGoalRounds }),
+      ...(blockedReason === undefined ? {} : { blockedReason }),
+    },
+  ]
+}
+
+/** Keep the host's block reason only when both halves are present and usable. */
+function goalBlockedReason(value: unknown): { readonly code: string; readonly message: string } | undefined {
+  const record = asRecord(value)
+  if (record === undefined) return undefined
+  const code = typeof record.code === 'string' ? record.code : undefined
+  const message = typeof record.message === 'string' ? record.message : undefined
+  if (code === undefined || code.trim() === '' || message === undefined || message.trim() === '')
+    return undefined
+  return { code, message }
 }
 
 function positiveSafeInteger(value: unknown): number | undefined {

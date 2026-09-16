@@ -11,6 +11,7 @@ import {
 } from '../../apps/extension/src/backend/process-supervisor.js'
 import { resolveWindowsShim } from '../../apps/extension/src/backend/windows-shim.js'
 import { VersionedBackendFactory } from '../../packages/dsh-adapter/src/backend-factory.js'
+import type { ExportFileSystem } from '../../packages/dsh-adapter/src/repositories/export-repository.js'
 import { managedWebArguments } from '../../packages/dsh-adapter/src/launch-contract.js'
 import { VersionedBackendProbe } from '../../packages/dsh-adapter/src/probe.js'
 import type { DshBackend } from '../../packages/domain/src/backend.js'
@@ -18,6 +19,7 @@ import type { BackendEndpoint } from '../../packages/domain/src/runtime.js'
 import { Rc151VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc151/adapter.js'
 import { Rc152VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc152/adapter.js'
 import { Alpha161VersionAdapter } from '../../packages/dsh-adapter/src/versions/alpha161/adapter.js'
+import { acquireManagedRuntimeLock } from './managed-lock.js'
 import { resolveLiveRuntime } from './runtime.js'
 
 export const DEFAULT_RUNTIME_VERSION = '0.1.5-rc.1'
@@ -52,6 +54,7 @@ export interface ManagedLiveRuntime {
 export async function startManagedRuntime(options?: {
   readonly requestedRuntime?: string
   readonly runtimeVersion?: string
+  readonly exportFileSystem?: ExportFileSystem
 }): Promise<ManagedLiveRuntime> {
   const runtimeExecutable = resolveLiveRuntime(
     options?.requestedRuntime?.trim() || process.env.DSH_LIVE_RUNTIME?.trim() || 'dsh',
@@ -61,6 +64,12 @@ export async function startManagedRuntime(options?: {
   const port = await freeLoopbackPort()
   const workspace = await mkdtemp(path.join(os.tmpdir(), 'dsh-live-'))
   const steps: string[] = []
+  // The live spec files run one after another (`vitest.config.ts`), so this
+  // lock is the cross-run guard: a second shell starting its own managed DSH
+  // while this one is live would blow the supervisor's 15s readiness budget.
+  const lockWaitStart = Date.now()
+  const releaseLock = await acquireManagedRuntimeLock()
+  if (Date.now() - lockWaitStart > 1_000) steps.push(`lock wait ${Date.now() - lockWaitStart}ms`)
   const endpointCookie: { value: string | undefined } = { value: undefined }
   const supervisor = new DshProcessSupervisor({
     spawn: spawnManagedChild,
@@ -80,13 +89,21 @@ export async function startManagedRuntime(options?: {
     },
   })
   steps.push(`launch ${runtimeExecutable} ${managedWebArguments(runtimeVersion, port).join(' ')}`)
-  const started = await supervisor.start({
-    executable: runtimeExecutable,
-    version: runtimeVersion,
-    supported: true,
-    compatibility: 'known',
-    source: 'path',
-  })
+  const started = await supervisor
+    .start({
+      executable: runtimeExecutable,
+      version: runtimeVersion,
+      supported: true,
+      compatibility: 'known',
+      source: 'path',
+    })
+    .catch(async (error: unknown) => {
+      // A failed launch never reached the cleanup below; the lock must not
+      // outlive the spec that took it.
+      await rm(workspace, { recursive: true, force: true })
+      await releaseLock()
+      throw error
+    })
   const snapshot: LiveRuntimeSnapshot = {
     executable: runtimeExecutable,
     version: runtimeVersion,
@@ -99,9 +116,9 @@ export async function startManagedRuntime(options?: {
     steps.push(`managed start pid=${started.pid} endpoint=${started.endpoint.baseUrl}`)
 
     const adapters = [
-      new Alpha161VersionAdapter(adapterOptions(endpointCookie)),
-      new Rc152VersionAdapter(adapterOptions(endpointCookie)),
-      new Rc151VersionAdapter(adapterOptions(endpointCookie)),
+      new Alpha161VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
+      new Rc152VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
+      new Rc151VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
     ]
     const probe = new VersionedBackendProbe(adapters, { fetch: globalThis.fetch })
     const connected = await probe.probe({
@@ -123,24 +140,28 @@ export async function startManagedRuntime(options?: {
         await backend.close().catch(() => undefined)
         await started.stop()
         await rm(workspace, { recursive: true, force: true })
+        await releaseLock()
       },
     }
   } catch (error) {
     await started.stop().catch(() => undefined)
     await rm(workspace, { recursive: true, force: true })
+    await releaseLock()
     throw error
   }
 }
 
-export function adapterOptions(cookie: {
-  readonly value: string | undefined
-}): ConstructorParameters<typeof Rc151VersionAdapter>[0] {
+export function adapterOptions(
+  cookie: { readonly value: string | undefined },
+  exportFileSystem?: ExportFileSystem,
+): ConstructorParameters<typeof Rc151VersionAdapter>[0] {
   return {
     requestTimeoutMs: 10_000,
     retryPolicy: { maximumAttempts: 2, baseDelayMs: 100, maximumDelayMs: 500 },
     fetch: globalThis.fetch,
     samePath: (left: string, right: string) => path.resolve(left) === path.resolve(right),
     authCookie: () => cookie.value,
+    ...(exportFileSystem === undefined ? {} : { exportFileSystem }),
   }
 }
 

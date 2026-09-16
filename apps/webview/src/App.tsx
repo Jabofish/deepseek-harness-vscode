@@ -31,6 +31,7 @@ import type {
   RunningInputMode,
   WorkspaceSummary,
 } from '@dsh-vscode/domain'
+import { isImageMediaType } from '@dsh-vscode/domain'
 import { cacheHitRate } from '@dsh-vscode/timeline'
 import { EmptyState } from '@dsh-vscode/ui'
 import { Composer } from './features/composer/Composer.js'
@@ -39,6 +40,7 @@ import { AppErrorBoundary } from './features/errors/AppErrorBoundary.js'
 import { Timeline } from './features/chat/Timeline.js'
 import { StatsLine } from './features/chat/StatsLine.js'
 import { ApprovalCard } from './features/interactions/ApprovalCard.js'
+import { approvalCommand } from './features/interactions/approval-command.js'
 import { UserQuestionCard } from './features/interactions/UserQuestionCard.js'
 import { GoalTodoStrip } from './features/goals/GoalTodoStrip.js'
 import { GoalBar } from './features/goals/GoalBar.js'
@@ -86,14 +88,21 @@ import {
   type AttachmentDraftOrigin,
 } from './features/composer/attachmentDrafts.js'
 
+/** A pending approval with the command it asks to authorize, when resolvable. */
+interface PendingApproval {
+  readonly request: PermissionRequest
+  readonly command?: string
+}
+
 const WELCOME_DISMISSED_KEY = 'dsh-welcome-dismissed'
 const RUNTIME_UPDATE_DISMISSED_KEY = 'dsh-runtime-update-dismissed-version'
+
 const DEFAULT_ATTACHMENT_BYTES = 8 * 1024 * 1024
 const MAX_IMAGE_ATTACHMENT_BYTES = 20 * 1024 * 1024
 const MAX_PROMPT_IMAGE_BYTES = 200 * 1024 * 1024
 const EMPTY_OPEN_FILE_CANDIDATES: readonly OpenFileCandidate[] = []
 const EMPTY_REFERENCE_CANDIDATES: readonly ReferenceCandidate[] = []
-const EMPTY_PERMISSION_REQUESTS: readonly PermissionRequest[] = []
+const EMPTY_PERMISSION_REQUESTS: readonly PendingApproval[] = []
 const EMPTY_USER_QUESTIONS: readonly UserQuestion[] = []
 const DSH_LOCALE_SETTING_PATH = 'locale.preference'
 /** Keep host-backed child actions stable while still reading current App state. */
@@ -444,8 +453,10 @@ export function App(): ReactElement {
     () =>
       activeSessionId === undefined || state.permissions.length === 0
         ? EMPTY_PERMISSION_REQUESTS
-        : state.permissions.filter((request) => request.sessionId === activeSessionId),
-    [activeSessionId, state.permissions],
+        : state.permissions
+            .filter((request) => request.sessionId === activeSessionId)
+            .map((request) => ({ request, command: approvalCommand(request, state.timeline.nodes) })),
+    [activeSessionId, state.permissions, state.timeline.nodes],
   )
   const pendingQuestions = useMemo(
     () =>
@@ -1109,7 +1120,7 @@ export function App(): ReactElement {
           onCreate={(label) => store.createCheckpoint(label)}
           onPreview={(checkpointId) => store.previewCheckpoint(checkpointId)}
           onDelete={(checkpointId) => store.deleteCheckpoint(checkpointId)}
-          onRestore={(checkpointId) => store.restoreCheckpoint(checkpointId)}
+          onRestore={(checkpointId, conflictPolicy) => store.restoreCheckpoint(checkpointId, conflictPolicy)}
         />
         <DeferredPromptTemplatesDrawer
           key={`prompt-templates-${activeId}`}
@@ -1498,11 +1509,12 @@ export function App(): ReactElement {
                   </div>
                   {pendingPermissions.length > 0 || pendingQuestions.length > 0 ? (
                     <div className="dsh-conversation__interactions" aria-live="polite">
-                      {pendingPermissions.map((request) => (
+                      {pendingPermissions.map(({ request, command }) => (
                         <ApprovalCard
                           key={request.id}
                           request={request}
                           disabled={respondingInteractionId !== undefined}
+                          {...(command === undefined ? {} : { command })}
                           onRespond={(optionId) => {
                             setRespondingInteractionId(request.id)
                             void store
@@ -1952,10 +1964,15 @@ function readImageAttachmentLimits(value: unknown): ImageAttachmentLimits | unde
     (hasMaxImageDimension && maxImageDimension === undefined) ||
     !Array.isArray(record.mediaTypes) ||
     record.mediaTypes.length === 0 ||
-    !record.mediaTypes.every(isSupportedImageMediaType)
+    !record.mediaTypes.every(
+      (entry) => typeof entry === 'string' && isImageMediaType(entry.trim().toLowerCase()),
+    )
   )
     return undefined
-  const mediaTypes = record.mediaTypes
+  const mediaTypes = record.mediaTypes.filter(
+    (entry): entry is ImageAttachmentLimits['mediaTypes'][number] =>
+      typeof entry === 'string' && isSupportedImageMediaType(entry.trim().toLowerCase()),
+  )
   return {
     // Keep future hosts from advertising a limit beyond the opaque attachment
     // store and prompt boundary implemented by this extension.

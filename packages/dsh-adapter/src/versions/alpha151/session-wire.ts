@@ -31,6 +31,7 @@ const KNOWN_SESSION_EVENT_TYPES = new Set([
   'goal/change',
   'hook/invoked',
   'hook/result',
+  'image/offload',
   'llm/retry',
   'llm/retry-started',
   'model/selection',

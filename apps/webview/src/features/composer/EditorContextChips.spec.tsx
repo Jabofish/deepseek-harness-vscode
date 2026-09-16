@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { EditorContextItem, EditorContextPreview } from '@dsh-vscode/domain'
 
@@ -51,6 +51,11 @@ function renderChips(
   return render(<EditorContextChips {...props} />)
 }
 
+/** Settle the effects a dialog opened from an awaited Host call still owes. */
+async function flushPendingEffects(): Promise<void> {
+  await act(() => Promise.resolve())
+}
+
 /** The preview is fetched on click; every probe starts from an open dialog. */
 async function openPreview(target: EditorContextItem = item): Promise<void> {
   fireEvent.click(
@@ -59,6 +64,9 @@ async function openPreview(target: EditorContextItem = item): Promise<void> {
     }),
   )
   await screen.findByRole('dialog', { name: 'Editor context preview' })
+  // The preview text arrives from a Host round trip, so the layer's document
+  // listener is armed one task after the dialog becomes visible.
+  await flushPendingEffects()
 }
 
 describe('EditorContextChips', () => {

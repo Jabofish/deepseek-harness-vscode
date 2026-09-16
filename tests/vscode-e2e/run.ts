@@ -7,12 +7,27 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { runTests } from '@vscode/test-electron'
 
+import { resolveLiveRuntime } from '../live-dsh/runtime.ts'
+
+/** Not a path, so the extension's settings validation must reject it. */
+const INVALID_EXECUTABLE_PATH = 'relative/dsh'
+
 export async function run(): Promise<void> {
   const root = await mkdtemp(path.join(os.tmpdir(), 'dsh-vscode-e2e-'))
   const workspace = path.join(root, 'workspace')
   const settingsDirectory = path.join(workspace, '.vscode')
   const managed = process.env.DSH_VSCODE_E2E_MODE === 'managed'
-  const runtimeExecutable = process.env.DSH_VSCODE_E2E_RUNTIME
+  const invalidSettings = process.env.DSH_VSCODE_E2E_INVALID_SETTINGS === '1'
+  // `dsh.runtime.executablePath` is an absolute path by contract, so a bare
+  // command name has to be resolved before it is written. Letting it through
+  // would fail extension activation with an invalid-settings error instead of
+  // launching the runtime the environment variable asked for.
+  const requestedRuntime = process.env.DSH_VSCODE_E2E_RUNTIME?.trim()
+  const runtimeExecutable =
+    requestedRuntime === undefined || requestedRuntime === ''
+      ? undefined
+      : resolveLiveRuntime(requestedRuntime)
+  const executablePathSetting = invalidSettings ? INVALID_EXECUTABLE_PATH : runtimeExecutable
   const fixtureSockets = new Set<Duplex>()
   const observations: FixtureObservations = {
     methods: [],
@@ -71,7 +86,9 @@ export async function run(): Promise<void> {
           'dsh.connection.discoveryTimeoutMs': 3_000,
           'dsh.connection.requestTimeoutMs': 5_000,
           'dsh.runtime.autoStart': managed,
-          ...(runtimeExecutable === undefined ? {} : { 'dsh.runtime.executablePath': runtimeExecutable }),
+          ...(executablePathSetting === undefined
+            ? {}
+            : { 'dsh.runtime.executablePath': executablePathSetting }),
         },
         null,
         2,
@@ -81,6 +98,10 @@ export async function run(): Promise<void> {
     console.log(
       `[dsh-vscode-e2e] mode=${managed ? 'managed' : 'attach-only'} fixture listening on loopback port ${address.port}`,
     )
+    if (invalidSettings)
+      console.log(
+        `[dsh-vscode-e2e] invalid-settings scenario: dsh.runtime.executablePath=${INVALID_EXECUTABLE_PATH}`,
+      )
     if (managed)
       console.log(`[dsh-vscode-e2e] managed runtime: ${runtimeExecutable ?? 'discovered from PATH'}`)
     const vscodeExecutablePath = process.env.DSH_VSCODE_E2E_EXECUTABLE
@@ -94,9 +115,12 @@ export async function run(): Promise<void> {
       ...(vscodeExecutablePath === undefined ? {} : { vscodeExecutablePath }),
       extensionDevelopmentPath: path.resolve('apps/extension'),
       extensionTestsPath: path.resolve('tests/vscode-e2e/suite'),
-      // Codex/VS Code terminals can inherit this Electron switch. Passing it
-      // through makes Code.exe execute the workspace path as a Node script.
-      extensionTestsEnv: { ELECTRON_RUN_AS_NODE: undefined },
+      extensionTestsEnv: {
+        // Codex/VS Code terminals can inherit this Electron switch. Passing it
+        // through makes Code.exe execute the workspace path as a Node script.
+        ELECTRON_RUN_AS_NODE: undefined,
+        ...(invalidSettings ? { DSH_VSCODE_E2E_INVALID_SETTINGS: '1' } : {}),
+      },
       // The temp workspace must count as trusted, otherwise the extension is
       // required to refuse an automatic start and managed mode can never run.
       launchArgs: [
@@ -110,7 +134,7 @@ export async function run(): Promise<void> {
     console.log(
       `[dsh-vscode-e2e] fixture observed methods=[${observations.methods.join(',')}] mux=${observations.muxUpgrades} host=${observations.hostUpgrades}`,
     )
-    if (!managed) {
+    if (!managed && !invalidSettings) {
       // The suite asserts this too, but a suite that silently stops asking is
       // exactly the failure mode this fixture exists to catch.
       const attached =

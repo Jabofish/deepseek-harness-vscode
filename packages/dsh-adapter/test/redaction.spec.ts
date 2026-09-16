@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { redactText, safePayload } from '../src/redaction.js'
+import { redactMultilineText, redactText, safePayload } from '../src/redaction.js'
 
 describe('shared redaction', () => {
   it('takes the union of sensitive text and URL credential rules', () => {
@@ -29,5 +29,30 @@ describe('shared redaction', () => {
     expect(value).not.toHaveProperty('path')
     expect(value).not.toHaveProperty('output')
     expect(value.visible).toEqual({ nested: { deeper: { deepest: '[truncated]' } } })
+  })
+
+  it('keeps the line structure of diffs and code previews while redacting each line', () => {
+    const diff = [
+      '--- old',
+      'const token = "abc"',
+      '+  indented line',
+      '-  removed line',
+      '  unchanged',
+      '+++ new',
+    ].join('\n')
+    const value = redactMultilineText(diff, 4_096)
+
+    // A unified diff rendered inside a `<pre>` is unreadable once every run of
+    // whitespace has been folded into a single space.
+    expect(value.split('\n')).toHaveLength(6)
+    expect(value).toContain('+  indented line')
+    expect(value).toContain('\n  unchanged')
+    expect(value).not.toContain('abc')
+    expect(value).toContain('token : [redacted]')
+  })
+
+  it('normalizes CRLF and bounds multi-line text without joining lines', () => {
+    expect(redactMultilineText('one\r\ntwo\r\nthree', 4_096)).toBe('one\ntwo\nthree')
+    expect(redactMultilineText('one\ntwo\nthree', 7)).toBe('one\ntwo')
   })
 })

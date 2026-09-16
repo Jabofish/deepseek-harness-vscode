@@ -50,6 +50,28 @@ describe('GoalBar', () => {
     expect(container.firstChild).toBeNull()
   })
 
+  it('explains a blocked goal with the host block reason', () => {
+    const { container } = render(
+      <GoalBar
+        goals={[
+          {
+            ...goal,
+            status: 'blocked',
+            blockedReason: { code: 'awaiting-input', message: 'Waiting for user input' },
+          },
+        ]}
+        onUpdate={vi.fn(() => Promise.resolve())}
+      />,
+    )
+    const bar = container.querySelector('[data-goal-bar]')
+    expect(bar?.getAttribute('title')).toBe('Waiting for user input')
+  })
+
+  it('leaves the bar untitled when an unblocked goal carries no reason', () => {
+    const { container } = render(<GoalBar goals={[goal]} />)
+    expect(container.querySelector('[data-goal-bar]')?.getAttribute('title')).toBeNull()
+  })
+
   it('keeps composing Enter inside the objective editor instead of saving', () => {
     // The objective is free text a CJK user types through an IME, where Enter
     // picks a candidate and Escape cancels one. Acting on either would save a

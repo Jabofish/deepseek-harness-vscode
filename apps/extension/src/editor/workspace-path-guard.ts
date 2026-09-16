@@ -2,7 +2,13 @@ import { createHash } from 'node:crypto'
 import path from 'node:path'
 import * as vscode from 'vscode'
 
-import { AppError, isCanonicalWorkspaceRelativePath, type EditorContextRange } from '@dsh-vscode/domain'
+import {
+  AppError,
+  isCanonicalWorkspaceRelativePath,
+  isValidEditorContextRange,
+  type EditorContextPosition,
+  type EditorContextRange,
+} from '@dsh-vscode/domain'
 
 import { isPathWithin } from '../backend/path-safety.js'
 
@@ -53,20 +59,28 @@ export class WorkspacePathGuard {
     }
   }
 
-  public assertRange(document: vscode.TextDocument, range: EditorContextRange): vscode.Range {
-    if (!validPosition(document, range.start) || !validPosition(document, range.end)) throw invalidRange()
-    return new vscode.Range(range.start.line, range.start.column, range.end.line, range.end.column)
+  /**
+   * Shape-validate a navigation hint, then fit it to the document it points at.
+   * The shape is enforced because the range crosses the Webview boundary, but a
+   * line past the end of the file is a stale hint, not a malformed request: the
+   * document is already open by the time this runs, so clamping keeps the open
+   * honest instead of reporting a failure for it.
+   */
+  public clampRange(document: vscode.TextDocument, range: EditorContextRange): vscode.Range {
+    if (!isValidEditorContextRange(range)) throw invalidRange()
+    const start = clampedPosition(document, range.start)
+    const end = clampedPosition(document, range.end)
+    return new vscode.Range(start.line, start.column, end.line, end.column)
   }
 }
 
-function validPosition(
+function clampedPosition(
   document: vscode.TextDocument,
-  position: { readonly line: number; readonly column: number },
-): boolean {
-  if (!Number.isSafeInteger(position.line) || position.line < 0 || position.line >= document.lineCount)
-    return false
-  const lineLength = document.lineAt(position.line).text.length
-  return Number.isSafeInteger(position.column) && position.column >= 0 && position.column <= lineLength
+  position: EditorContextPosition,
+): { readonly line: number; readonly column: number } {
+  const line = Math.min(position.line, Math.max(0, document.lineCount - 1))
+  const lineLength = document.lineAt(line).text.length
+  return { line, column: Math.min(position.column, lineLength) }
 }
 
 function pathNotAllowed(): AppError {
@@ -80,7 +94,7 @@ function pathNotAllowed(): AppError {
 function invalidRange(): AppError {
   return new AppError({
     code: 'INVALID_CONFIGURATION',
-    message: 'The editor range is outside the current document.',
+    message: 'The editor range is not a valid position pair.',
     retryable: false,
   })
 }

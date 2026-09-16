@@ -160,6 +160,95 @@ describe('AppStore prompt admission', () => {
     store.dispose()
   })
 
+  it('retains a goal block reason and rejects a row whose reason is unusable', async () => {
+    const client = new FakeClient(response)
+    const store = createAppStore(client as unknown as ProtocolClient)
+    await store.openSession(session.id)
+
+    client.emit({
+      type: 'event',
+      name: 'goal.updated',
+      sequence: 1,
+      payload: {
+        sessionId: session.id,
+        goals: [
+          {
+            id: 'goal-1',
+            title: 'Wait for review',
+            status: 'blocked',
+            blockedReason: { code: 'awaiting-input', message: 'Waiting for user input' },
+          },
+        ],
+      },
+    })
+    await Promise.resolve()
+    expect(store.goals).toEqual([
+      {
+        id: 'goal-1',
+        title: 'Wait for review',
+        status: 'blocked',
+        blockedReason: { code: 'awaiting-input', message: 'Waiting for user input' },
+      },
+    ])
+
+    // A replaced reason on a still-blocked goal must reach the store: the
+    // host republishes the same id/status with the newer explanation.
+    client.emit({
+      type: 'event',
+      name: 'goal.updated',
+      sequence: 2,
+      payload: {
+        sessionId: session.id,
+        goals: [
+          {
+            id: 'goal-1',
+            title: 'Wait for review',
+            status: 'blocked',
+            blockedReason: { code: 'round-budget', message: 'Round budget exhausted' },
+          },
+        ],
+      },
+    })
+    await Promise.resolve()
+    expect(store.goals).toEqual([
+      {
+        id: 'goal-1',
+        title: 'Wait for review',
+        status: 'blocked',
+        blockedReason: { code: 'round-budget', message: 'Round budget exhausted' },
+      },
+    ])
+
+    // A blocked row whose reason lost a half is malformed: the whole snapshot
+    // is rejected so the last usable goal state survives.
+    client.emit({
+      type: 'event',
+      name: 'goal.updated',
+      sequence: 3,
+      payload: {
+        sessionId: session.id,
+        goals: [
+          {
+            id: 'goal-1',
+            title: 'Wait for review',
+            status: 'blocked',
+            blockedReason: { code: 'awaiting-input' },
+          },
+        ],
+      },
+    })
+    await Promise.resolve()
+    expect(store.goals).toEqual([
+      {
+        id: 'goal-1',
+        title: 'Wait for review',
+        status: 'blocked',
+        blockedReason: { code: 'round-budget', message: 'Round budget exhausted' },
+      },
+    ])
+    store.dispose()
+  })
+
   it('does not apply partial goal, todo, or queue snapshots when a row is malformed', async () => {
     const client = new FakeClient(response)
     const store = createAppStore(client as unknown as ProtocolClient)
@@ -216,6 +305,7 @@ describe('AppStore prompt admission', () => {
       sessionId: session.id,
       text: 'Keep this queue item',
       attachments: [],
+      textOnly: true,
       mode: 'queue' as const,
       createdAt: '2026-08-31T00:00:01.000Z',
     }
@@ -373,6 +463,7 @@ describe('AppStore prompt admission', () => {
       sessionId: session.id,
       text: 'queued',
       attachments: [],
+      textOnly: true,
       mode: 'queue' as const,
       createdAt: '2026-08-31T00:00:01.000Z',
     }
@@ -471,6 +562,7 @@ describe('AppStore prompt admission', () => {
       sessionId: session.id,
       text: 'queued with an attachment',
       attachments: [{ uri: 'dsh-attachment:one', name: 'one.txt', mimeType: 'text/plain' }],
+      textOnly: true,
       mode: 'queue' as const,
       createdAt: '2026-08-31T00:00:01.000Z',
     }
@@ -550,6 +642,7 @@ describe('AppStore prompt admission', () => {
       sessionId: session.id,
       text: 'queued prompt',
       attachments: [],
+      textOnly: true,
       mode: 'queue' as const,
       createdAt: '2026-08-31T00:00:01.000Z',
     }
@@ -577,6 +670,156 @@ describe('AppStore prompt admission', () => {
 
     requestDone.resolve()
     await sending
+    store.dispose()
+  })
+
+  it('retires a queued row that carries a file when the durable message has no rpcId', async () => {
+    const client = new FakeClient(response)
+    const store = createAppStore(client as unknown as ProtocolClient)
+    await store.openSession(session.id)
+
+    client.emit({
+      type: 'event',
+      name: 'queue.updated',
+      sequence: 1,
+      payload: {
+        sessionId: session.id,
+        items: [
+          {
+            id: 'queue-file-1',
+            sessionId: session.id,
+            text: '概括文件内容',
+            attachments: [],
+            files: ['思路4.md'],
+            textOnly: false,
+            mode: 'queue' as const,
+            createdAt: '2026-09-16T00:00:00.000Z',
+          },
+        ],
+      },
+    })
+    await Promise.resolve()
+    expect(store.queue).toHaveLength(1)
+
+    client.emit({
+      type: 'event',
+      name: 'message.user',
+      sequence: 2,
+      payload: {
+        sessionId: session.id,
+        messageId: 'message-1',
+        markdown: '概括文件内容',
+        source: 'user',
+        attachments: [{ name: '思路4.md' }],
+      },
+    })
+    await Promise.resolve()
+    expect(store.queue).toEqual([])
+    store.dispose()
+  })
+
+  it('keeps a queued row when the admitted message carries different attachments', async () => {
+    const client = new FakeClient(response)
+    const store = createAppStore(client as unknown as ProtocolClient)
+    await store.openSession(session.id)
+
+    client.emit({
+      type: 'event',
+      name: 'queue.updated',
+      sequence: 1,
+      payload: {
+        sessionId: session.id,
+        items: [
+          {
+            id: 'queue-image-1',
+            sessionId: session.id,
+            text: '看这张图',
+            attachments: [],
+            images: [{ attachmentId: 'image-1', mediaType: 'image/png', bytes: 4, width: 2, height: 2 }],
+            textOnly: false,
+            mode: 'queue' as const,
+            createdAt: '2026-09-16T00:00:00.000Z',
+          },
+        ],
+      },
+    })
+    await Promise.resolve()
+    expect(store.queue).toHaveLength(1)
+
+    // Same words, but the durable message carries two images: it is a
+    // different submission, so the pending row must survive.
+    client.emit({
+      type: 'event',
+      name: 'message.user',
+      sequence: 2,
+      payload: {
+        sessionId: session.id,
+        messageId: 'message-1',
+        markdown: '看这张图',
+        source: 'user',
+        images: [
+          { attachmentId: 'image-2', mediaType: 'image/png', bytes: 4, width: 2, height: 2 },
+          { attachmentId: 'image-3', mediaType: 'image/png', bytes: 4, width: 2, height: 2 },
+        ],
+      },
+    })
+    await Promise.resolve()
+    expect(store.queue).toHaveLength(1)
+    store.dispose()
+  })
+
+  it('replaces the steer preview with the durable image message instead of leaving both', async () => {
+    const client = new FakeClient(response)
+    const store = createAppStore(client as unknown as ProtocolClient)
+
+    await store.openSession(session.id)
+    await store.sendPrompt(
+      session.id,
+      '看这张图',
+      [{ uri: 'dsh-attachment:0123456789abcdef', name: 'screen.png', mimeType: 'image/png' }],
+      'steer',
+    )
+    expect(store.timeline.nodes).toHaveLength(1)
+
+    client.emit({
+      type: 'event',
+      name: 'message.user',
+      sequence: 1,
+      payload: {
+        sessionId: session.id,
+        messageId: 'message-1',
+        markdown: '看这张图',
+        source: 'user',
+        images: [{ attachmentId: 'image-1', mediaType: 'image/png', bytes: 4, width: 2, height: 2 }],
+      },
+    })
+    await Promise.resolve()
+
+    expect(store.timeline.nodes).toEqual([
+      expect.objectContaining({ kind: 'user-message', id: 'message-1', markdown: '看这张图' }),
+    ])
+    store.dispose()
+  })
+
+  it('routes a slash line to the command surface even when an image is attached', async () => {
+    const client = new FakeClient((request) =>
+      request.type === 'command.execute' ? { kind: 'success' } : response(request),
+    )
+    const store = createAppStore(client as unknown as ProtocolClient)
+
+    await store.openSession(session.id)
+    await store.sendPrompt(session.id, '/compact', [{ uri: 'attachment-1', name: 'shot.png' }], 'queue')
+
+    const executed = client.requests.filter(
+      (request): request is Extract<WebviewRequest, { type: 'command.execute' }> =>
+        request.type === 'command.execute',
+    )
+    expect(executed.map((request) => request.payload.command)).toEqual(['/compact'])
+    // The composer's own Enter adjudication hands command attachments to
+    // `command.execute`; the same keystrokes must not become a model request
+    // just because they took the ordinary submit path.
+    expect(executed[0]?.payload.attachments).toEqual([{ uri: 'attachment-1', name: 'shot.png' }])
+    expect(client.requests.some((request) => request.type === 'session.sendPrompt')).toBe(false)
     store.dispose()
   })
 })

@@ -27,12 +27,20 @@ import type {
 } from '@dsh-vscode/domain'
 
 import { safePayload } from '../../redaction.js'
+import { attachedFileEnvelope } from '../../attachment-codec.js'
 import {
   recordOrUndefined as objectOrUndefined,
   validProjectionBlock,
+  zeroBasedLine,
 } from '../../repositories/shared/guards.js'
 import { mapConfiguration, mapModelPatch, mapTodo, permissionPresetIds } from '../../projection/agent.js'
-import { projectToolPresentation } from '../../projection/tool-presentation.js'
+import {
+  presentationDiffLocations,
+  projectToolCallIntent,
+  projectToolPresentation,
+  projectToolResultMeta,
+  projectToolShellCall,
+} from '../../projection/tool-presentation.js'
 
 const CANONICAL_SESSION_EVENT_NAMES = new Set([
   'turn/start',
@@ -49,6 +57,29 @@ const CANONICAL_SESSION_EVENT_NAMES = new Set([
   'request/header',
   'request/context',
 ])
+
+const SURFACE_SESSION_EVENT_NAMES = new Set(['user/message', 'assistant/message', 'tool/result'])
+
+/**
+ * Whether an event is a model-only surface replacement rather than an append.
+ *
+ * A `{ op: 'replace' }` marker means the node shadowed an earlier surface range
+ * instead of entering the conversation at its own position: the surface fold
+ * hides that range from the model-visible surface, and the copy restates it for
+ * the model alone. A human transcript is built from append-origin events, so a
+ * copy must never become a message the reader never wrote — a landed
+ * compaction would otherwise show up as a user turn carrying the summary. Its
+ * durable sequence still has to reach the client, so the row collapses to the
+ * internal watermark marker instead of being dropped.
+ */
+export function isReplacementSurfaceEvent(name: string, value: unknown): boolean {
+  if (!SURFACE_SESSION_EVENT_NAMES.has(name)) return false
+  const envelope = objectOrUndefined(value)
+  if (envelope === undefined) return false
+  return [envelope.surfaceOp, objectOrUndefined(envelope.data)?.surfaceOp].some(
+    (candidate) => objectOrUndefined(candidate)?.op === 'replace',
+  )
+}
 
 /**
  * The pinned session-event carrier validates only the common envelope because
@@ -319,6 +350,10 @@ export const rc6Mapper = {
     const envelope = objectOrUndefined(value) ?? {}
     const data = objectOrUndefined(envelope.data) ?? envelope
     const sessionId = stringOr(envelope.sessionId ?? data.sessionId, '')
+    // A model-only replacement copy has no human-readable form here: the
+    // transcript keeps the append-origin rows it shadowed, and the copy's own
+    // sequence stays visible to the live watermark through this marker.
+    if (isReplacementSurfaceEvent(name, value)) return { type: 'session.system', sessionId }
     switch (name) {
       case 'session/status':
         return {
@@ -576,7 +611,6 @@ export const rc6Mapper = {
       case 'tool/call':
       case 'tool/result': {
         const time = eventTimestamp(envelope.time ?? data.time)
-        const message = objectOrUndefined(data.message)
         return {
           type: 'tool.updated',
           sessionId,
@@ -594,7 +628,6 @@ export const rc6Mapper = {
                   ? { completedAt: time }
                   : {}),
               ...(envelope.view === undefined ? {} : { view: envelope.view }),
-              ...(message === undefined ? {} : { outputSummary: bounded(messageText(message)) }),
             },
             name === 'tool/call' ? 'call' : 'result',
           ),
@@ -676,9 +709,14 @@ export const rc6Mapper = {
           name === 'compaction/summary' ? contentText(array(data.summary), false) || undefined : undefined
         const replacedCount = shadowedSeqs?.length
         const estimatedTokens = nonNegativeSafeNumber(data.shadowedTokenCount)
+        // A prune identifies itself by the range it shadowed. Without one, every
+        // pruned range would share a single timeline node, so the event's own
+        // durable sequence is the identity that keeps them apart.
+        const prunedRange =
+          shadowedSeqs === undefined || shadowedSeqs.length === 0 ? undefined : shadowedSeqs.join(',')
         const compactionId =
           name === 'compaction/prune'
-            ? `prune:${shadowedSeqs?.join(',') ?? stringOr(envelope.seq ?? data.seq, 'unknown')}`
+            ? `prune:${prunedRange ?? eventSequenceLabel(envelope.seq ?? data.seq)}`
             : string(data.compactionId, 'compactionId')
         return {
           type: 'compaction.updated',
@@ -959,7 +997,10 @@ export const rc6Mapper = {
           type: 'notice',
           sessionId,
           level: 'error',
-          text: data.message.slice(0, 512),
+          // The host sends its whole `errorChain` here, and this frame is the
+          // only outlet for a live failure with no turn position. The notice
+          // row renders the text in full, so the message is kept as sent.
+          text: data.message,
         }
       case 'stream/error':
         return { type: 'connection.lost', reason: 'DSH event stream reported an error.' }
@@ -1037,14 +1078,17 @@ function commandNotice(name: string, data: Record<string, unknown>, sessionId: s
   }
 }
 
-/** Preserve the structured command/run input for the UI projection. This is
- * not re-parsed from rendered text and remains bounded before leaving the
- * adapter. */
+/**
+ * Preserve the structured command/run input for the UI projection. This is not
+ * re-parsed from rendered text, and it is the transcript's only record of the
+ * line that ran: upstream logs `args` verbatim (`parseCommand` keeps the rest
+ * of the submitted line) with no length bound, so clipping it would drop the
+ * tail of the user's own command row silently.
+ */
 function commandInputText(commandName: string, rawArgs: unknown): string | undefined {
   if (!/^[a-z][a-z0-9_-]*$/iu.test(commandName)) return undefined
   const args = typeof rawArgs === 'string' ? rawArgs.trimEnd() : ''
-  const text = `/${commandName}${args}`
-  return text.length > 4_096 ? text.slice(0, 4_096) : text
+  return `/${commandName}${args}`
 }
 
 function commandNoticeText(name: string, commandName: string, detail: string | undefined): string {
@@ -1137,6 +1181,11 @@ function mapHistoryEntry(value: unknown, index: number, sessionId: string): Sess
           })()
         : parsedTime
   const type = stringOr(rawEvent?.type ?? rawEvent?.name, 'unknown')
+  // Checked before the canonical assert: a replacement copy is recognized by
+  // its marker, and rejecting or degrading its payload would either leak the
+  // model-only restatement as an unknown row or lose the durable sequence.
+  if (isReplacementSurfaceEvent(type, rawEvent))
+    return { sequence, time, event: { type: 'session.system', sessionId, sequence } }
   try {
     assertCanonicalSessionEvent(type, {
       ...(rawEvent ?? {}),
@@ -1349,7 +1398,22 @@ function tool(value: Record<string, unknown>, phase: 'call' | 'result' = 'result
   const messageIsError = value.isError === true || messageHasToolError(message)
   const viewEnvelope = objectOrUndefined(value.view)
   const view = objectOrUndefined(viewEnvelope?.view) ?? viewEnvelope
-  const presentation = projectToolPresentation(viewEnvelope, phase, contentText)
+  const name = firstString(value.toolName, value.name, view?.name, view?.toolName)
+  // Hosts from 0.1.2-alpha.1 on send no view: the tool's own `meta` payload is
+  // the card. A settled failure carries no fresh projection, so metadata that
+  // rode along with one never becomes a card either.
+  const presentation =
+    projectToolPresentation(viewEnvelope, phase, contentText) ??
+    projectToolResultMeta(phase === 'result' && !messageIsError ? value.meta : undefined, contentText) ??
+    // The call side of the same change: a pinned host projected the intended
+    // file mutation through its tool definition, and a host without the
+    // envelope has to state it from the call's own arguments. A subcall of a
+    // code-dispatch tree is presented flattened, as the reference models do.
+    (phase === 'call' && !isPtcDispatch ? projectToolCallIntent(name, value.arguments) : undefined) ??
+    // The running command of a shell call, which the same hosts used to project
+    // through `presentCall`; the reference terminal model draws it for nested
+    // dispatch calls too, so this one is not gated on the tree.
+    (phase === 'call' ? projectToolShellCall(name, value.arguments) : undefined)
   const error = objectOrUndefined(value.error)
   const input =
     value.inputSummary ??
@@ -1378,10 +1442,12 @@ function tool(value: Record<string, unknown>, phase: 'call' | 'result' = 'result
     ['queued', 'running', 'completed', 'failed', 'cancelled'] as const,
     message === undefined ? 'running' : errorText !== undefined || messageIsError ? 'failed' : 'completed',
   )
-  const name = firstString(value.toolName, value.name, view?.name, view?.toolName)
   const title = firstString(value.title, view?.title, name)
-  const category = firstString(value.category, view?.category, view?.kind, view?.card)
-  const locations = toolLocations(value.locations ?? view?.locations)
+  const derivedCategory =
+    presentation?.phase === 'result' && presentation.card === 'diff' ? 'diff' : undefined
+  const category = firstString(value.category, view?.category, view?.kind, view?.card, derivedCategory)
+  const locations =
+    toolLocations(value.locations ?? view?.locations) ?? presentationDiffLocations(presentation)
   const status =
     (errorText !== undefined || messageIsError) && mappedStatus !== 'cancelled' ? 'failed' : mappedStatus
   const turn = eventIndex(value.turn)
@@ -1401,8 +1467,8 @@ function tool(value: Record<string, unknown>, phase: 'call' | 'result' = 'result
     status,
     ...(value.startedAt === undefined ? {} : { startedAt: date(value.startedAt) }),
     ...(value.completedAt === undefined ? {} : { completedAt: date(value.completedAt) }),
-    ...(input === undefined ? {} : { inputSummary: bounded(input) }),
-    ...(output === undefined ? {} : { outputSummary: bounded(output) }),
+    ...(input === undefined ? {} : { inputSummary: fullText(input) }),
+    ...(output === undefined ? {} : { outputSummary: fullText(output) }),
     ...(errorText === undefined || errorText === '' ? {} : { error: errorText }),
     ...(locations === undefined ? {} : { locations }),
     ...(presentation === undefined ? {} : { presentation }),
@@ -1426,22 +1492,22 @@ function toolErrorText(
 ): string | undefined {
   if (value !== undefined) {
     const explicit = typeof value === 'string' ? value : identity?.message
-    const explicitText = optionalText(explicit)
+    const explicitText = fullOptionalText(explicit)
     if (explicitText !== undefined) return explicitText
     if (messageIsError) {
-      const messageTextValue = optionalText(messageError) ?? optionalText(messageOutput)
+      const messageTextValue = fullOptionalText(messageError) ?? fullOptionalText(messageOutput)
       // An empty upstream tool-result block is rendered by contentText as a
       // structural placeholder; the alpha.1 error.reason is more useful.
       if (messageTextValue !== undefined && messageTextValue !== '[tool result]') return messageTextValue
     }
     const identityText =
-      optionalText(identity?.reason) ?? optionalText(identity?.code) ?? optionalText(identity?.name)
+      fullOptionalText(identity?.reason) ?? optionalText(identity?.code) ?? optionalText(identity?.name)
     if (identityText !== undefined) return identityText
     if (typeof value === 'number' || typeof value === 'boolean') return bounded(value)
     return undefined
   }
   if (!messageIsError) return undefined
-  return optionalText(messageError) ?? optionalText(messageOutput)
+  return fullOptionalText(messageError) ?? fullOptionalText(messageOutput)
 }
 
 function toolLocations(
@@ -1462,7 +1528,7 @@ function toolLocations(
     )
       continue
     seen.add(path)
-    const line = eventIndex(record?.line)
+    const line = zeroBasedLine(record?.line)
     locations.push({ path, ...(line === undefined ? {} : { line }) })
     if (locations.length >= 32) break
   }
@@ -1495,9 +1561,9 @@ function safePresentedPath(value: unknown): string {
 
 function safePresentedDescription(value: unknown): string | undefined {
   if (value === undefined) return undefined
-  if (typeof value !== 'string' || value.length > 4_096 || hasUnsafePathCharacters(value))
-    throw new Error('Malformed deliverables/presented description')
-  return value
+  if (typeof value !== 'string') throw new Error('Malformed deliverables/presented description')
+  const description = displayLine(value)
+  return description === '' ? undefined : description
 }
 
 function safeStableIdentifier(value: unknown, label: string): string {
@@ -1519,9 +1585,9 @@ function subagentCatalogEntry(data: Record<string, unknown>): SubagentCatalogEnt
   if (data.mode !== 'one-shot' && data.mode !== 'continuable')
     throw new Error('Malformed subagent/catalog mode')
   const hasLabel = Object.hasOwn(data, 'label')
-  const label = hasLabel ? safeCatalogLabel(data.label, data.mode === 'continuable') : undefined
-  if (data.mode === 'continuable' && label === undefined)
+  if (!hasLabel && data.mode === 'continuable')
     throw new Error('Malformed subagent/catalog continuable label')
+  const label = hasLabel ? safeCatalogLabel(data.label) : undefined
   return {
     id,
     createdAt,
@@ -1530,15 +1596,37 @@ function subagentCatalogEntry(data: Record<string, unknown>): SubagentCatalogEnt
   }
 }
 
-function safeCatalogLabel(value: unknown, required: boolean): string | undefined {
-  if (
-    typeof value !== 'string' ||
-    (required && value.trim() === '') ||
-    value.length > 4_096 ||
-    hasUnsafePathCharacters(value)
-  )
-    throw new Error('Malformed subagent/catalog label')
-  return value
+function safeCatalogLabel(value: unknown): string | undefined {
+  if (typeof value !== 'string') throw new Error('Malformed subagent/catalog label')
+  const label = displayLine(value)
+  return label === '' ? undefined : label
+}
+
+/**
+ * Project model-authored display text as one bounded line.
+ *
+ * DSH types a `present` file `description` and a `subagent` label as plain
+ * strings, so a line break or tab is a valid fact. They render as single-line
+ * labels, so a control character collapses to a space: refusing the value
+ * would degrade the whole durable record — and the product surface it carries —
+ * into an unreadable frame.
+ */
+function displayLine(value: string): string {
+  let text = ''
+  let pendingSpace = false
+  for (const character of value) {
+    const code = character.codePointAt(0) ?? 0
+    if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) {
+      pendingSpace = text !== ''
+      continue
+    }
+    if (pendingSpace) {
+      text += ' '
+      pendingSpace = false
+    }
+    text += character
+  }
+  return text.trim().slice(0, 4_096)
 }
 
 function hasUnsafePathCharacters(value: string): boolean {
@@ -1584,7 +1672,12 @@ function safeFailureText(value: unknown): string | undefined {
     /\b(?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|authorization|password|secret|private[_ -]?key|token|prompt|body|response)\b\s*[:=]\s*[^\s,;]+/giu,
     (match) => match.replace(/[:=].*$/u, ': [redacted]'),
   )
-  return redacted.slice(0, 320)
+  // The host bounds this nowhere: the durable `turn/end` reason carries the
+  // provider adapter's own `LlmError` message (the provider's `error.message`
+  // for an HTTP failure), and the reference client renders it whole in its
+  // turn-error row. Clipping would cut the user's only diagnosis with no
+  // ellipsis or copy surface that reveals the loss.
+  return redacted
 }
 
 function safeFailureCode(value: unknown): string | undefined {
@@ -1601,12 +1694,25 @@ function goal(value: unknown): GoalView {
     record.status === undefined
       ? goalPhaseStatus(record.phase)
       : enumValue(record.status, ['pending', 'in-progress', 'completed', 'blocked'] as const, 'pending')
+  const blockedReason = goalBlockedReason(record.blockedReason)
   return {
     id: stringOr(record.id, 'goal'),
     title: stringOr(record.title ?? record.objective, 'Goal'),
     status,
     ...(maxGoalRounds === undefined ? {} : { maxGoalRounds }),
+    ...(blockedReason === undefined ? {} : { blockedReason }),
   }
+}
+
+/** Keep the host's block reason only when both halves are present and usable. */
+function goalBlockedReason(value: unknown): { readonly code: string; readonly message: string } | undefined {
+  const record = objectOrUndefined(value)
+  if (record === undefined) return undefined
+  const code = typeof record.code === 'string' ? record.code : undefined
+  const message = typeof record.message === 'string' ? record.message : undefined
+  if (code === undefined || code.trim() === '' || message === undefined || message.trim() === '')
+    return undefined
+  return { code, message }
 }
 
 /**
@@ -1767,9 +1873,19 @@ function workflowStopReason(value: unknown): 'completed' | 'cancelled' | 'error'
   throw new Error('Malformed workflow stop reason')
 }
 
-/** Project rc.8 experimental Team events into a bounded read-only activity row. */
+/**
+ * Project the experimental Team events into a bounded read-only activity row.
+ *
+ * The payload version selects the contract, not the surface: v1 carries a
+ * `delivery` mode on every queued message, while newer releases unified peer
+ * messages onto steer, dropped that field, and bumped the envelope to v2. Both
+ * shapes project to the same row, so keying the row on a single version would
+ * silently turn every Team event on the other host line into an unknown one.
+ */
 function teamActivity(name: string, data: Record<string, unknown>): TeamActivityView | undefined {
-  if (data.version !== 1 || typeof data.teamId !== 'string' || data.teamId.trim() === '') return undefined
+  const version = data.version
+  if ((version !== 1 && version !== 2) || typeof data.teamId !== 'string' || data.teamId.trim() === '')
+    return undefined
   if (name === 'team/member') {
     const member = objectOrUndefined(data.member)
     if (
@@ -1786,7 +1902,11 @@ function teamActivity(name: string, data: Record<string, unknown>): TeamActivity
       memberId: member.id,
       name: bounded(member.name),
       phase: member.phase,
-      ...(typeof member.error === 'string' ? { error: bounded(member.error) } : {}),
+      // The roster stores `errorMessage(error)` verbatim, so a failed
+      // provisioning can explain itself at any length the surfaced error has.
+      // The card renders this as the failure reason, and the wire budget owns
+      // the only real ceiling.
+      ...(typeof member.error === 'string' ? { error: member.error } : {}),
     }
   }
   if (name === 'team/task') {
@@ -1817,12 +1937,16 @@ function teamActivity(name: string, data: Record<string, unknown>): TeamActivity
   if (name === 'team/message/queued') {
     const message = objectOrUndefined(data.message)
     const content = message === undefined ? undefined : message.content
+    // The v1 contract types the mode as required, so a v1 payload without one
+    // is malformed; v2 has no such field to read.
+    const delivery =
+      message?.delivery === 'quiet' || message?.delivery === 'wakeup' ? message.delivery : undefined
     if (
       message === undefined ||
       typeof message.id !== 'string' ||
       typeof message.senderName !== 'string' ||
       typeof message.targetId !== 'string' ||
-      (message.delivery !== 'quiet' && message.delivery !== 'wakeup') ||
+      (version === 1 && delivery === undefined) ||
       !Array.isArray(content)
     )
       return undefined
@@ -1833,8 +1957,11 @@ function teamActivity(name: string, data: Record<string, unknown>): TeamActivity
       messageId: message.id,
       senderName: bounded(message.senderName),
       targetId: message.targetId,
-      delivery: message.delivery,
-      content: bounded(contentText(content, false)),
+      ...(delivery === undefined ? {} : { delivery }),
+      // The mailbox admits any body whose framed delivery fits
+      // `maxMessageBytes` (65,536 by default), so a peer message is routinely
+      // longer than a card-sized preview; the card shows what the sender wrote.
+      content: contentText(content, false),
     }
   }
   if (name === 'team/message/delivered') {
@@ -1866,19 +1993,28 @@ function queuedInput(value: unknown, sessionId: string): QueuedInput[] {
   )
     throw new Error('Malformed session/queue item')
   const message = objectOrUndefined(record.message)
+  // The rc.6-family mux publishes the pending message with its role and source.
+  // The alpha Session Controller strips it down to the id and its content
+  // blocks and carries the prompt correlation on the item instead, so a
+  // missing role or source is the lean shape rather than corruption. A value
+  // that is present must still be valid: this frame fails closed on garbage
+  // instead of letting the repository wipe a live queue.
   if (
     message === undefined ||
     typeof record.id !== 'string' ||
     record.id.length === 0 ||
     typeof message.id !== 'string' ||
     message.id.length === 0 ||
-    (message.role !== 'system' && message.role !== 'user' && message.role !== 'assistant') ||
+    (Object.hasOwn(message, 'role') &&
+      message.role !== 'system' &&
+      message.role !== 'user' &&
+      message.role !== 'assistant') ||
+    (Object.hasOwn(message, 'source') && !isMessageSource(message.source)) ||
     !Array.isArray(message.content) ||
     !message.content.every((entry) => {
       const block = objectOrUndefined(entry)
       return block !== undefined && typeof block.type === 'string'
-    }) ||
-    !isMessageSource(message.source)
+    })
   )
     throw new Error('Malformed session/queue item')
   try {
@@ -1888,20 +2024,75 @@ function queuedInput(value: unknown, sessionId: string): QueuedInput[] {
   }
   if (record.placement === 'context') return []
   const source = objectOrUndefined(message.source)
-  const rpcId = firstString(message.rpcId, source?.rpcId)
+  const rpcId = firstString(message.rpcId, source?.rpcId, record.rpcId)
   const images = messageImages(message)
+  const projection = queuedMessageProjection(message)
   return [
     {
       id: record.id,
       sessionId,
-      text: messageText(message),
+      text: projection.text,
       attachments: [],
       ...(images.length === 0 ? {} : { images }),
+      ...(projection.files.length === 0 ? {} : { files: projection.files }),
+      textOnly: projection.textOnly,
       mode: record.placement === 'steering' ? 'steer' : 'queue',
       createdAt: date(record.createdAt),
       ...(rpcId === undefined ? {} : { rpcId }),
     },
   ]
+}
+
+interface QueuedMessageProjection {
+  readonly text: string
+  readonly files: readonly string[]
+  readonly textOnly: boolean
+}
+
+/**
+ * Project a pending message the way its durable form is projected.
+ *
+ * A text file the adapter inlined arrives as an "Attached file: …" text block.
+ * Adopting its body as the row's text would paste the whole file into the dock
+ * and — because every block is text — mark the row editable, so one edit would
+ * replace the file with its own bytes. The envelope becomes a file name chip
+ * instead. `files` then lists every name the message carries in block order,
+ * which is also the order the durable message reports its attachments in.
+ */
+function queuedMessageProjection(value: Record<string, unknown>): QueuedMessageProjection {
+  const textParts: string[] = []
+  const files: string[] = []
+  let textOnly = true
+  for (const entry of array(value.content)) {
+    const block = objectOrUndefined(entry)
+    if (block?.type === 'text' && typeof block.text === 'string') {
+      const attached = attachedFileEnvelope(block.text)
+      if (attached !== undefined) {
+        files.push(attached.name)
+        textOnly = false
+        continue
+      }
+      if (block.text !== '') textParts.push(block.text)
+      continue
+    }
+    if (block?.type === 'file') {
+      const attachment = objectOrUndefined(block.attachment)
+      const name = typeof attachment?.name === 'string' ? attachment.name.trim() : ''
+      if (name !== '') files.push(name)
+      textOnly = false
+      continue
+    }
+    textOnly = false
+    const text = contentText([entry], false)
+    if (text !== '') textParts.push(text)
+  }
+  return { text: textParts.join('\n'), files: uniqueStrings(files), textOnly }
+}
+
+function uniqueStrings(values: readonly string[]): readonly string[] {
+  const unique: string[] = []
+  for (const value of values) if (!unique.includes(value)) unique.push(value)
+  return unique
 }
 
 function isMessageSource(value: unknown): value is Record<string, unknown> {
@@ -1916,6 +2107,10 @@ function permission(value: Record<string, unknown>): PermissionRequest {
     sessionId: stringOr(value.sessionId, ''),
     title: stringOr(value.toolName, 'Permission required'),
     description: stringOr(value.reason, 'DSH requested permission to continue.'),
+    // The request carries no command: only the pairing id. The renderer reads
+    // the command from that call, so the id travels unchanged (a value the host
+    // does not use is no pairing and must not claim to be one).
+    ...(typeof value.callId === 'string' && value.callId !== '' ? { callId: value.callId } : {}),
     ...(typeof value.commandLine === 'string' && value.commandLine.trim() !== ''
       ? { commandLine: value.commandLine.trim().slice(0, 4_096) }
       : {}),
@@ -2075,13 +2270,17 @@ interface UserMessageContent {
  * text files as a deliberately marked text block so the model can read them.
  * Recognize only that exact adapter-owned envelope and keep its filename as
  * metadata; ordinary user text is left untouched.
+ *
+ * A newer host admits real `file` parts instead, and the same filename chip
+ * reports them: the bytes stay host-side, so a message whose only content is a
+ * file must still render as something rather than vanish.
  */
 function userMessageContent(value: Record<string, unknown> | undefined): UserMessageContent {
   if (value === undefined) return { markdown: '', attachments: [], images: [] }
   const content = array(value.content)
   if (content.length === 0) {
     const text = stringOr(value.text ?? value.markdown ?? value.content, '')
-    const parsed = attachedFileBlock(text)
+    const parsed = attachedFileEnvelope(text)
     return parsed === undefined
       ? { markdown: text, attachments: [], images: [] }
       : { markdown: '', attachments: [{ name: parsed.name }], images: [] }
@@ -2093,7 +2292,7 @@ function userMessageContent(value: Record<string, unknown> | undefined): UserMes
   for (const entry of content) {
     const block = objectOrUndefined(entry)
     if (block?.type === 'text' && typeof block.text === 'string') {
-      const parsed = attachedFileBlock(block.text)
+      const parsed = attachedFileEnvelope(block.text)
       if (parsed !== undefined) {
         attachments.push({ name: parsed.name })
         continue
@@ -2107,6 +2306,14 @@ function userMessageContent(value: Record<string, unknown> | undefined): UserMes
         images.push(image)
         continue
       }
+    }
+    if (block?.type === 'file') {
+      const attachment = objectOrUndefined(block.attachment)
+      const name = typeof attachment?.name === 'string' ? attachment.name.trim() : ''
+      // An unnamed file part still has to render as something: the message
+      // carries content the client cannot read back.
+      attachments.push(name === '' ? { name: '[file]' } : { name })
+      continue
     }
     const text = contentText([entry], false)
     if (text !== '') textParts.push(text)
@@ -2197,19 +2404,6 @@ function uniqueImages(images: readonly MessageImageReference[]): readonly Messag
 
 function positiveSafeInteger(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined
-}
-
-interface AttachedFileBlock {
-  readonly name: string
-}
-
-const ATTACHED_FILE_BLOCK =
-  /^\s*Attached file: ([^\r\n]+)\r?\n\r?\n[\s\S]*\r?\n\r?\nEnd of attached file: \1\s*$/u
-
-function attachedFileBlock(value: string): AttachedFileBlock | undefined {
-  const match = ATTACHED_FILE_BLOCK.exec(value)
-  const name = match?.[1]?.trim()
-  return name === undefined || name === '' ? undefined : { name }
 }
 
 function reasoningText(value: Record<string, unknown> | undefined): string {
@@ -2312,6 +2506,12 @@ function stringOr(value: unknown, fallback: string): string {
   return typeof value === 'string' ? value : fallback
 }
 
+/** Identify an event by its own durable sequence when its payload carries none. */
+function eventSequenceLabel(value: unknown): string {
+  if (typeof value === 'string') return value === '' ? 'unknown' : value
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? String(value) : 'unknown'
+}
+
 function optionalText(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() !== '' ? bounded(value) : undefined
 }
@@ -2367,7 +2567,23 @@ function enumValue<const T extends readonly string[]>(
   return typeof value === 'string' && values.includes(value) ? value : fallback
 }
 
-function bounded(value: unknown): string {
+/**
+ * Flatten a payload to text without truncating. A capped `grep`/`glob` result
+ * carries its spill locator at the tail ("Full grep result stored at: …"), so
+ * cutting here removes the one route back to the dropped rows; the pinned
+ * reference client renders a settled result's text verbatim and unbounded for
+ * the same reason. Callers own presentation and may fold or scroll it.
+ */
+function fullText(value: unknown): string {
   const text = typeof value === 'string' ? value : JSON.stringify(safePayload(value))
-  return (text ?? '').slice(0, 4_096)
+  return text ?? ''
+}
+
+/** Non-blank host-authored text kept whole, for a surface that renders it as sent. */
+function fullOptionalText(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() !== '' ? value : undefined
+}
+
+function bounded(value: unknown): string {
+  return fullText(value).slice(0, 4_096)
 }

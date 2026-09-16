@@ -1,5 +1,6 @@
 import {
   AppError,
+  type AppErrorCode,
   type FeedbackCategory,
   type MessageFeedbackItem,
   type MessageFeedbackRating,
@@ -117,25 +118,74 @@ export class Rc6MessageFeedbackRepository implements MessageFeedbackRepository {
           const current = parseItem(result.error?.current)
           if (current !== undefined) this.versions.set(`${sessionId}:${messageId}`, current.version)
         }
-        throw new AppError({
-          code:
-            code === 'version-conflict'
-              ? 'BACKEND_BUSY'
-              : code === 'target-not-found' || code === 'unknown-command'
-                ? 'CAPABILITY_UNAVAILABLE'
-                : 'INTERNAL_ERROR',
-          message:
-            code === 'version-conflict'
-              ? 'The DSH feedback changed; retry the action.'
-              : code === 'unknown-command'
-                ? 'This DSH host does not expose message feedback.'
-                : 'The DSH feedback action was rejected.',
-          retryable: code === 'version-conflict',
-        })
+        throw feedbackError(method, code)
       }
     }
     return outer
   }
+}
+
+type FeedbackRefusal = {
+  readonly code: AppErrorCode
+  readonly message: string
+  readonly retryable: boolean
+}
+
+/**
+ * Map the sidecar's business union onto the shared vocabulary. Only
+ * `unknown-command` may claim the optional sidecar is absent: the Webview hides
+ * the entire feedback surface when it sees CAPABILITY_UNAVAILABLE, so any other
+ * refusal — an absent target, a blank or oversized note, a missing session —
+ * has to keep its own meaning instead of disabling a working feature.
+ */
+function feedbackError(method: string, code: string): AppError {
+  const refusal = ((): FeedbackRefusal => {
+    switch (code) {
+      case 'version-conflict':
+        return {
+          code: 'BACKEND_BUSY',
+          message: 'The DSH feedback changed; retry the action.',
+          retryable: true,
+        }
+      case 'unknown-command':
+        return {
+          code: 'CAPABILITY_UNAVAILABLE',
+          message: 'This DSH host does not expose message feedback.',
+          retryable: false,
+        }
+      case 'session-not-found':
+        return {
+          code: 'BACKEND_UNREACHABLE',
+          message: 'The requested DSH session was not found.',
+          retryable: false,
+        }
+      case 'target-not-found':
+        return {
+          code: 'STALE_INTERACTION',
+          message: 'The DSH message is no longer available for feedback.',
+          retryable: false,
+        }
+      case 'note-blank':
+        return {
+          code: 'INVALID_CONFIGURATION',
+          message: 'The DSH feedback note must contain non-whitespace text.',
+          retryable: false,
+        }
+      case 'note-too-large':
+        return {
+          code: 'INVALID_CONFIGURATION',
+          message: 'The DSH feedback note is too large for this host.',
+          retryable: false,
+        }
+      default:
+        return {
+          code: 'INTERNAL_ERROR',
+          message: 'The DSH feedback action was rejected.',
+          retryable: false,
+        }
+    }
+  })()
+  return new AppError({ ...refusal, context: { rpcMethod: method, rpcCode: code } })
 }
 
 function parseItem(value: unknown): MessageFeedbackItem | undefined {

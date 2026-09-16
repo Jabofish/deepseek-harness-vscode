@@ -2,16 +2,16 @@
 
 ## Unreleased
 
-- 加固 Webview 弹层的 Escape 分层、键盘导航、焦点归还、IME 输入、失败提示，以及会话、任务、设置和附件入口的交互回归。
-- 完善结构化工具结果、团队状态、历史文件引用和模型选择的展示/映射；导出时按选项正确过滤推理内容和附件。
-- 接入 DSH `0.1.6-alpha.1` 的独立精确 `alpha161` Adapter；复用已核对的 Session v3 基础 wire，并对新增 `image/offload` projection 事件执行脱敏 opaque 保留。
-- 当前未将 `image/offload` 的消息投影、终端、权限预设、归档恢复和 Skill 路径等新增 alpha 能力冒充为已完成；安装器默认仍为 `0.1.5-rc.2`。
-- 补充真实 DSH 的只读 surface/transcript smoke harness 与能力矩阵证据；本轮不改变 DSH 版本、不 bump 扩展版本，也不触发发布流程。
-- Harden Webview layering, keyboard navigation, focus restoration, IME input, failure reporting, and session/task/settings/attachment interaction regressions.
-- Improve structured tool, team-status, historical file-reference, and model-selection rendering/mapping, with option-aware export filtering for reasoning and attachments.
-- Add an exact `0.1.6-alpha.1` (`alpha161`) adapter on the audited Session v3 base wire, preserving the new `image/offload` projection event as a redacted opaque row.
-- Keep the alpha projection, terminal, permission-preset, unarchive, and skill-path surfaces explicitly unavailable; the installer default remains `0.1.5-rc.2`.
-- Add read-only real-DSH surface/transcript smoke coverage and capability-matrix evidence; no DSH version change, extension version bump, or release trigger is included.
+- 接入 DSH `0.1.6-alpha.1` 的精确 `alpha161` Adapter：复用已核对的 Session v3 基础 wire，`image/offload` 仅作脱敏 opaque 保留；新增 alpha surface（终端、权限预设、归档恢复、Skill 路径）未冒充为已完成，安装器默认仍为 `0.1.5-rc.2`。
+- 修复最新 alpha 线上的工具卡、变更审阅与检查点：结算卡改由 `tool/result` 的 `meta` 形状派生，运行中的终端/变更卡由调用参数派生，已结算的 shell 行在调用与结果相遇处结算出输出与退出码（授权条因此能看到要批准的命令）；变更行接受宿主的绝对路径并聚合文件的全部 hunk；检查点保存创建时刻的整份文件字节，恢复按预览选择 `abort`/`overwrite`。
+- 修复宿主合法文案被静默截断：适配层、渲染层与 Webview 解析不再低于宿主契约地截断工具正文、失败原因、团队消息、命令输入和列表尾部（被截断的列表写明省略数量）。
+- 修复一批交互与路由缺陷：绝对路径打开文件、子会话分页与父子路由、审批命令预览、Agent Teams 消息归并、队列编辑与 Steer 收敛、Skill 目录与命令附件参数、会话改名回执，以及非绝对 `dsh.runtime.executablePath` 导致扩展无法激活；同时加固 Webview 弹层的键盘/焦点/IME 交互、结构化预览与模型选择的展示映射、导出按选项过滤。
+- 补充真实 DSH 的 live 证据（writes、frames、paging、tool-cards、change-hunks、consistency、attachment、export、subagent-child 及跨进程受管启动锁），`docs/dsh-contract.md` 与能力矩阵同步更新；本轮不 bump 扩展版本、不触发发布。
+- Add the exact `0.1.6-alpha.1` (`alpha161`) adapter on the audited Session v3 base wire, keeping `image/offload` as a redacted opaque row; the new alpha surfaces (terminal, permission presets, unarchive, skill paths) are not claimed as done and the installer default stays `0.1.5-rc.2`.
+- Fix tool cards, change review and checkpoints on the newest alpha line: a settled card comes from the shape of `tool/result`'s `meta`, a running terminal or mutation card from the call arguments, and a settled shell row from the output and exit status its own result states (which is what lets the approval strip name the command); change rows accept the host's absolute paths and carry every hunk of a file; a checkpoint snapshots the file's whole bytes as of creation and a restore picks `abort`/`overwrite` from the preview it showed.
+- Fix host-legal text being silently truncated: the adapter, the render layer and the Webview parse no longer cut tool bodies, failure reasons, team messages, command input or a list's tail below the host contract (a capped list states how many items it omits).
+- Fix a batch of interaction and routing defects: opening an absolute path, subagent paging and parent/child routing, the approval command preview, Agent Teams message merging, queue edits and Steer convergence, the skill catalog and command attachment arguments, the rename receipt, and a non-absolute `dsh.runtime.executablePath` that kept the extension from activating; also harden the Webview overlay keyboard/focus/IME interaction, structured and model-selection presentation, and option-aware export filtering.
+- Add the real-DSH live evidence (writes, frames, paging, tool-cards, change-hunks, consistency, attachment, export, subagent-child, plus the cross-process managed-start lock) and update `docs/dsh-contract.md` and the capability matrix; no extension version bump and no release trigger in this round.
 
 ## 0.1.11
 

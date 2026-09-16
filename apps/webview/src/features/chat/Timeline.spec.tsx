@@ -1274,6 +1274,8 @@ describe('Timeline', () => {
     const trigger = screen.getByTitle('src/feature.ts')
     fireEvent.click(trigger)
     const dialog = await screen.findByRole('dialog')
+    // The modal takes the keyboard in the commit that inserts it: an outside
+    // click or an Escape must not be able to land behind it.
     expect(document.activeElement).toBe(within(dialog).getByRole('button', { name: 'Dismiss error' }))
 
     // The modal is `aria-modal`, so the keyboard has to come back to the link
@@ -1332,6 +1334,49 @@ describe('Timeline', () => {
     fireEvent.keyDown(window, { key: 'Escape' })
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(document.activeElement).toBe(trigger)
+  })
+
+  it('keeps the keyboard on the control the user chose when the timeline re-renders under the modal', async () => {
+    const openLink = vi
+      .fn<(_: string) => Promise<void>>()
+      .mockRejectedValueOnce(new Error('The editor refused this path.'))
+    const node: TimelineNode = {
+      kind: 'tool',
+      id: 'tool:read-open-rerender',
+      tool: {
+        id: 'call-read-open-rerender',
+        name: 'read',
+        category: 'read',
+        title: 'Read feature.ts',
+        status: 'completed',
+        presentation: {
+          phase: 'result',
+          card: 'read',
+          path: 'src/feature.ts',
+          offset: 11,
+          lines: [{ number: 11, text: 'export const answer = 42' }],
+          totalLines: 42,
+          lang: 'ts',
+        },
+        metadata: {},
+      },
+    }
+    const view = render(
+      <Timeline sessionId="session-1" nodes={[node]} streaming={false} onOpenLink={openLink} />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Read details' }))
+    fireEvent.click(screen.getByTitle('src/feature.ts'))
+    const dialog = await screen.findByRole('dialog')
+    const retry = within(dialog).getByRole('button', { name: 'Retry' })
+    retry.focus()
+    expect(document.activeElement).toBe(retry)
+
+    // The agent keeps streaming behind the modal, so the timeline re-renders
+    // while it is up. The dialog's own focus handling belongs to its mount:
+    // re-running it would drag the keyboard off whatever the user had reached.
+    view.rerender(<Timeline sessionId="session-1" nodes={[node]} streaming={true} onOpenLink={openLink} />)
+
+    expect(document.activeElement).toBe(retry)
   })
 
   it('keeps the refusal modal when a nested surface already consumed the Escape key', async () => {
@@ -1735,6 +1780,75 @@ describe('Timeline', () => {
     expect(screen.getByText('In progress')).toBeDefined()
     expect(screen.getByText('Queued')).toBeDefined()
     expect(screen.getByText('Wakes the target')).toBeDefined()
+  })
+
+  it('shows a delivered peer message with its body, target and mode', () => {
+    render(
+      <Timeline
+        sessionId="session-1"
+        nodes={[
+          {
+            kind: 'team',
+            id: 'team:message:team-1:team-message-1',
+            activity: {
+              kind: 'message.delivered',
+              id: 'team:message:delivered:team-1:team-message-1',
+              teamId: 'team-1',
+              messageId: 'team-message-1',
+              senderName: 'Planner',
+              targetId: 'member-2',
+              delivery: 'quiet',
+              content: 'Take the next task',
+            },
+          },
+        ]}
+        streaming={false}
+      />,
+    )
+
+    // The receipt acknowledges a message that was already shown; the row keeps
+    // the body it carried, names the target, and reports the delivery mode as a
+    // label instead of leaving the internal message id as the card's text.
+    expect(screen.getByText('Delivered')).toBeDefined()
+    expect(screen.getByText('Take the next task')).toBeDefined()
+    expect(screen.getByText('To member-2')).toBeDefined()
+    expect(screen.getByText('Delivered quietly')).toBeDefined()
+    expect(screen.queryByText('team-message-1')).toBeNull()
+  })
+
+  it('renders a peer message body as prose and names its sender', () => {
+    const body = 'Rebase the branch on main and report back.\nLeave the migration scripts alone.'
+    render(
+      <Timeline
+        sessionId="session-1"
+        nodes={[
+          {
+            kind: 'team',
+            id: 'team:message:team-1:team-message-1',
+            activity: {
+              kind: 'message.queued',
+              id: 'team:message:queued:team-1:team-message-1',
+              teamId: 'team-1',
+              messageId: 'team-message-1',
+              senderName: 'planner',
+              targetId: 'member-1',
+              content: body,
+            },
+          },
+        ]}
+        streaming={false}
+      />,
+    )
+
+    // The host admits a peer body far past one line, so the row renders it as
+    // prose — the event title style ends every line in an ellipsis — and names
+    // the sender, since the id and the target alone leave the reader guessing
+    // who asked for what.
+    const rendered = screen.getByText(/Rebase the branch on main/u)
+    expect(rendered.className).toBe('dsh-timeline__event-body')
+    expect(rendered.textContent).toBe(body)
+    expect(screen.getByText('From planner')).toBeDefined()
+    expect(screen.getByText('To member-1')).toBeDefined()
   })
 })
 

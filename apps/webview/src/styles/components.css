@@ -935,6 +935,22 @@
   font-size: var(--dsh-tool-detail-font-size);
 }
 
+/* The capped result's own text, kept below the card that replaced it: its tail
+   footer is the only route to the rows the host cap dropped. */
+.dsh-tool-search-preview__recovery {
+  max-height: 14rem;
+  overflow: auto;
+  padding: var(--dsh-space-2) var(--dsh-space-3) var(--dsh-space-3);
+  border-top: var(--dsh-border);
+  color: var(--dsh-muted);
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: var(--dsh-tool-detail-font-size);
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  tab-size: 2;
+}
+
 .dsh-tool-web-preview {
   min-width: 0;
   padding: var(--dsh-space-3);

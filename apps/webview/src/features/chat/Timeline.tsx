@@ -2,7 +2,6 @@ import {
   Fragment,
   memo,
   useCallback,
-  useEffect,
   useId,
   useLayoutEffect,
   useMemo,
@@ -246,10 +245,14 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
    * markdown/`code` fragment can be a nested node and Safari does not focus a
    * button on click. Controls inside the dialog are skipped so a retry keeps
    * pointing at the original link.
+   *
+   * The restore is a layout effect: it has to close in the same commit that
+   * removes the dialog, or the keyboard sits on `body` for a task and a key
+   * pressed in that window goes nowhere.
    */
   const openLinkTriggerRef = useRef<HTMLElement | null>(null)
   const openLinkWasOpen = useRef(false)
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (openLinkWasOpen.current && openLinkError === undefined) {
       const target = openLinkTriggerRef.current
       // Retry remounts the dialog, so the opener is deliberately kept for the
@@ -520,21 +523,38 @@ function ToolLinkErrorDialog({
 }): ReactElement {
   const titleId = useId()
   const descriptionId = useId()
+  const dialogRef = useRef<HTMLElement>(null)
   const closeRef = useRef<HTMLButtonElement>(null)
+  const onCloseRef = useRef(onClose)
+  useLayoutEffect(() => {
+    onCloseRef.current = onClose
+  }, [onClose])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    // The modal owns the keyboard while it is up, but only takes it back when
+    // the keyboard is not already inside: re-running this on every render
+    // would drag focus off whichever control the user had reached while the
+    // timeline kept streaming. A mount that starts busy (a retry still in
+    // flight) takes focus as soon as its controls are enabled.
+    const dialog = dialogRef.current
+    const active = document.activeElement
+    if (dialog !== null && active !== null && dialog.contains(active)) return
     closeRef.current?.focus()
+  }, [busy])
+
+  useLayoutEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
       // The dialog is aria-modal: the keyboard dismisses it, and the refocus
-      // effect below returns the keyboard to the control that asked for the
-      // open. A key an inner surface already consumed is not ours.
+      // effect above returns the keyboard to the control that asked for the
+      // open. A key an inner surface already consumed is not ours. Registered
+      // at layout time so the modal answers the key from its first paint.
       if (event.key !== 'Escape' || event.defaultPrevented) return
       event.preventDefault()
-      onClose()
+      onCloseRef.current()
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [onClose])
+  }, [])
 
   return (
     <div
@@ -545,6 +565,7 @@ function ToolLinkErrorDialog({
       }}
     >
       <section
+        ref={dialogRef}
         className="dsh-tool-error-modal"
         role="dialog"
         aria-modal="true"
@@ -1237,12 +1258,14 @@ function renderTeamActivity(
   activity: Extract<TimelineNode, { readonly kind: 'team' }>['activity'],
   t: Translate = (key) => key,
 ): ReactElement {
+  const body =
+    activity.kind === 'message.queued' || activity.kind === 'message.delivered' ? activity.content : undefined
   const title =
     activity.kind === 'member'
       ? activity.name
       : activity.kind === 'task'
         ? activity.subject
-        : (activity.content ?? activity.messageId)
+        : activity.messageId
   // The phase, task status and delivery values are wire identifiers; the pill
   // carries the reader-facing label and the delivery mode stays a meta detail
   // instead of replacing the message state.
@@ -1267,21 +1290,36 @@ function renderTeamActivity(
       </header>
       <ul className="dsh-timeline__event-list">
         <li>
-          <span className="dsh-timeline__event-title">{title}</span>
+          {body === undefined ? (
+            <span className="dsh-timeline__event-title">{title}</span>
+          ) : (
+            // A peer message is prose, not a label: the host admits a body far
+            // past one line (`maxMessageBytes`), so the row wraps it the way a
+            // prompt row does instead of ending it in an ellipsis. A receipt
+            // with no known body keeps the id fallback above.
+            <span className="dsh-timeline__event-body">{body}</span>
+          )}
           {activity.kind === 'task' && activity.blockedByCount > 0 ? (
             <span className="dsh-timeline__card-meta">
               {t('timeline.teamBlockedBy', { count: activity.blockedByCount })}
             </span>
           ) : null}
           {activity.kind === 'member' && activity.error !== undefined ? (
-            <span className="dsh-timeline__card-meta">{activity.error}</span>
+            // The roster stores the failure reason verbatim, so it is often a
+            // multi-line diagnostic rather than a one-line label.
+            <span className="dsh-timeline__event-error">{activity.error}</span>
           ) : null}
-          {activity.kind === 'message.queued' && activity.targetId !== '' ? (
+          {'senderName' in activity && activity.senderName !== undefined ? (
+            <span className="dsh-timeline__card-meta">
+              {t('timeline.teamSender', { sender: activity.senderName })}
+            </span>
+          ) : null}
+          {'targetId' in activity && activity.targetId !== '' ? (
             <span className="dsh-timeline__card-meta">
               {t('timeline.teamTarget', { target: activity.targetId })}
             </span>
           ) : null}
-          {activity.kind === 'message.queued' && activity.delivery !== undefined ? (
+          {'delivery' in activity && activity.delivery !== undefined ? (
             <span className="dsh-timeline__card-meta">{t(`timeline.teamDelivery.${activity.delivery}`)}</span>
           ) : null}
         </li>

@@ -106,6 +106,43 @@ describe('SessionDrawer', () => {
     expect(screen.getByText('Content matches')).toBeDefined()
   })
 
+  it('keeps a pasted search query inside the session.search wire contract', async () => {
+    const onSearch = vi.fn().mockResolvedValue([])
+    renderDrawer({ onSearch })
+    const input = screen.getByLabelText('Search sessions by title or content')
+
+    // The host refuses a query over 500 UTF-16 code units or one carrying a NUL
+    // with `bad-request`, so the field and the request must both stay inside the
+    // wire contract instead of sending text the host can only reject.
+    fireEvent.change(input, { target: { value: `${'x'.repeat(600)}\u0000tail` } })
+
+    await waitFor(() => expect(onSearch).toHaveBeenCalled())
+    const sent = onSearch.mock.calls.at(-1)?.[0] as string
+    expect(sent).toHaveLength(500)
+    expect(sent).not.toContain('\u0000')
+
+    // Truncation must not cut a surrogate pair in half: the leading 499 units
+    // plus an astral character would be 501, so the whole pair is dropped.
+    fireEvent.change(input, { target: { value: `${'y'.repeat(499)}\u{1f600}` } })
+    await waitFor(() => expect(onSearch).toHaveBeenCalledTimes(2))
+    expect(onSearch.mock.calls.at(-1)?.[0]).toBe('y'.repeat(499))
+  })
+
+  it('reports an unavailable content search instead of an empty result set', async () => {
+    const onSearch = vi.fn().mockRejectedValue(new Error('the host index is disabled'))
+    renderDrawer({ onSearch })
+    fireEvent.change(screen.getByLabelText('Search sessions by title or content'), {
+      target: { value: 'note' },
+    })
+
+    // A refused content search is not "no sessions match": the host never
+    // answered. The name filter above still applies, so the notice explains
+    // which half of the search produced nothing.
+    await waitFor(() => expect(onSearch).toHaveBeenCalledWith('note'))
+    const notice = await screen.findByRole('status')
+    expect(notice.textContent).toContain('Content search is unavailable')
+  })
+
   it('switches between manual and last-updated ordering', () => {
     renderDrawer()
     const titles = (): (string | null)[] =>

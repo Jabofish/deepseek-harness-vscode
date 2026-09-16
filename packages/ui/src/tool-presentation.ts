@@ -27,7 +27,7 @@ export function decodeToolValue(value: string | undefined): unknown {
   return decode(value)
 }
 
-/** Format one decoded value into labeled, bounded display text. */
+/** Format one decoded value into labeled display text. */
 export function formatToolValue(value: unknown, t?: PresentationTranslate): string | undefined {
   return displayValue(value, 0, t)
 }
@@ -36,14 +36,17 @@ export function formatToolValue(value: unknown, t?: PresentationTranslate): stri
  * Format one wire text value at the final UI boundary. DSH versions and
  * bridges sometimes wrap a structured result in a short human prefix or
  * encode it more than once; neither form should leak a JSON/Python object
- * representation into the conversation.
+ * representation into the conversation. The tool's own text is rendered as
+ * sent: DSH caps a tool result and a tool failure only at the protocol layer,
+ * so flattening and trimming are this boundary's whole job and a length cap
+ * here would show less than the host sent.
  */
 export function formatToolText(value: string | undefined, t?: PresentationTranslate): string | undefined {
   if (value === undefined) return undefined
   const source = value.trim()
   if (source === '') return undefined
   const decoded = decode(source)
-  if (decoded !== source) return formatToolValue(decoded, t) ?? bounded(source)
+  if (decoded !== source) return formatToolValue(decoded, t) ?? source
   const embedded = embeddedStructuredLiteral(source)
   if (embedded !== undefined) {
     const parsed = decode(embedded)
@@ -58,7 +61,7 @@ export function formatToolText(value: string | undefined, t?: PresentationTransl
       if (formatted !== undefined) return [prefix, formatted, suffix].filter((part) => part !== '').join('\n')
     }
   }
-  return bounded(source)
+  return source
 }
 
 /** Localize built-in DSH tool names while leaving third-party identifiers intact. */
@@ -144,7 +147,15 @@ function localize(
   english: string,
   params?: Readonly<Record<string, string | number>>,
 ): string {
-  return t === undefined ? english : t(key, params)
+  if (t !== undefined) return t(key, params)
+  // The English default carries the same placeholders as the translated copy,
+  // so a surface rendered without a translator still has to substitute them:
+  // a raw `{count}` must never reach a card.
+  if (params === undefined) return english
+  return Object.entries(params).reduce(
+    (text, [name, value]) => text.split(`{${name}}`).join(String(value)),
+    english,
+  )
 }
 
 /**
@@ -295,7 +306,7 @@ function visibleContent(value: unknown): readonly string[] {
 function cleanAcknowledgement(value: string, subagent: boolean, t?: PresentationTranslate): string {
   if (subagent && /^started subagent(?:\s+\S+)?[.!]?$/iu.test(value.trim()))
     return localize(t, 'presentation.subagentStarted', 'Subagent started successfully.')
-  return bounded(value)
+  return value.trim()
 }
 
 function decode(value: string | undefined): unknown {
@@ -328,17 +339,24 @@ function displayValue(value: unknown, depth = 0, t?: PresentationTranslate): str
     const text = value.trim()
     if (text === '') return undefined
     const decoded = decode(text)
-    return decoded === text ? bounded(text) : displayValue(decoded, depth + 1, t)
+    return decoded === text ? text : displayValue(decoded, depth + 1, t)
   }
   if (typeof value === 'number' || typeof value === 'boolean') return String(value)
   if (value === null) return 'null'
   if (Array.isArray(value)) {
     if (depth > 5) return '…'
-    const items = value
-      .slice(0, 64)
+    const shown = value.slice(0, 64)
+    const items = shown
       .map((entry) => displayValue(entry, depth + 1, t))
       .filter((entry): entry is string => entry !== undefined)
-    return items.length === 0 ? undefined : items.map((entry) => `• ${indent(entry)}`).join('\n')
+    // A truncated list says so: silently dropping the tail would look like the
+    // tool returned exactly these rows.
+    const omitted =
+      value.length > shown.length
+        ? [localize(t, 'presentation.moreItems', '… ({count} more)', { count: value.length - shown.length })]
+        : []
+    const lines = [...items, ...omitted]
+    return lines.length === 0 ? undefined : lines.map((entry) => `• ${indent(entry)}`).join('\n')
   }
   if (value !== null && typeof value === 'object') {
     if (depth > 5) return '…'
@@ -567,7 +585,7 @@ function field(value: unknown, key: string): unknown {
 }
 
 function text(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() !== '' ? bounded(value) : undefined
+  return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined
 }
 
 function firstString(...values: readonly unknown[]): string | undefined {
@@ -581,11 +599,6 @@ function firstString(...values: readonly unknown[]): string | undefined {
 function oneLine(value: string): string {
   const collapsed = value.replace(/\s+/gu, ' ').trim()
   return collapsed.length > 160 ? `${collapsed.slice(0, 159)}…` : collapsed
-}
-
-function bounded(value: string): string {
-  const trimmed = value.trim()
-  return trimmed.length > 2_000 ? `${trimmed.slice(0, 1_999)}…` : trimmed
 }
 
 function unique(values: readonly string[]): readonly string[] {

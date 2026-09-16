@@ -27,7 +27,7 @@ export class Rc12VersionAdapter extends Rc11VersionAdapter {
   ): Rc6SessionRepository {
     return new Rc6SessionRepository(transport, workspaces, this.options.samePath, {
       preallocatedSessionId: true,
-      includeEmptyCommandImages: true,
+      commandAttachmentWire: 'images',
       maxPromptAttachmentBytes: RC12_MAX_PROMPT_ATTACHMENT_BYTES,
       maxPromptAttachmentTotalBytes: RC12_MAX_PROMPT_ATTACHMENT_TOTAL_BYTES,
     })

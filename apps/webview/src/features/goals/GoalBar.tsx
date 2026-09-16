@@ -105,8 +105,11 @@ export const GoalBar = memo(function GoalBar(props: GoalBarProps): ReactElement 
 
   const canPause = goal.status === 'in-progress' && props.onUpdate !== undefined
   const canResume = goal.status === 'pending' && props.onUpdate !== undefined
+  // The host publishes a block reason as the only actionable detail of a
+  // blocked goal; the bar carries it so the state is explained on hover.
+  const blockedReason = goal.status === 'blocked' ? goal.blockedReason?.message : undefined
   return (
-    <div className="dsh-goal-bar" data-goal-bar>
+    <div className="dsh-goal-bar" data-goal-bar title={blockedReason}>
       <div className="dsh-goal-bar__content">
         <span className="dsh-goal-bar__glyph" aria-hidden="true">
           <Icon name="target" />

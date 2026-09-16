@@ -14,6 +14,17 @@ export function nonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim() !== ''
 }
 
+/**
+ * Convert an upstream `FileLocation.line` into the line convention used inside
+ * this extension. Upstream documents and emits it 1-based ("an optional 1-based
+ * line to focus", `read` sends its `offset`), while the Domain, the Webview
+ * protocol and every VS Code position address lines from zero. A value the
+ * upstream contract does not allow yields no hint rather than a wrong one.
+ */
+export function zeroBasedLine(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1 ? value - 1 : undefined
+}
+
 export function validProjectionBlock(value: unknown): value is ProjectionBlock {
   const record = recordOrUndefined(value)
   return (

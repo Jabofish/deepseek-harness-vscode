@@ -243,9 +243,13 @@ export class EditorContextProvider implements EditorContextPort, vscode.Disposab
     this.assertCaptureIsCurrent(lifecycleGeneration, signal)
     if (source.bytes.byteLength > EDITOR_CONTEXT_LIMITS.maxItemBytes) throw contextLimit()
     const relativePath = resolved.relativePath
+    // The chip label is a protocol field capped at 512 characters. A deep
+    // relative path or a long symbol name can exceed that on its own, and an
+    // over-budget response is replaced wholesale by the Host router, so the
+    // whole editor-context rail would fail to load.
     const label = `${input.kind}: ${relativePath}${range === undefined ? '' : `:${range.start.line + 1}`}${
       symbolName === undefined ? '' : ` ${symbolName}`
-    }`
+    }`.slice(0, 512)
     const readCurrent = async (): Promise<CurrentEditorContextContent> => {
       // Do not retain the capture request's AbortSignal in a long-lived
       // context handle. A cancellation after capture admission must not make

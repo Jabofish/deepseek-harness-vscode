@@ -41,7 +41,8 @@ export interface CheckpointStorageEntry {
 export interface CheckpointStorage {
   mkdir(directory: string): Promise<void>
   list(directory: string): Promise<readonly CheckpointStorageEntry[]>
-  readFile(filePath: string): Promise<Uint8Array>
+  /** Return undefined only when the target does not exist. */
+  readFile(filePath: string): Promise<Uint8Array | undefined>
   writeFile(filePath: string, data: Uint8Array): Promise<void>
   rename(sourcePath: string, destinationPath: string, overwrite: boolean): Promise<void>
   delete(filePath: string, recursive: boolean): Promise<void>
@@ -55,6 +56,16 @@ export interface CheckpointStoreOptions {
   readonly contentEnabled?: () => boolean
   readonly now?: () => number
   readonly makeId?: () => string
+  /**
+   * A checkpoint directory whose journal or manifest cannot be trusted is
+   * unusable, but it must not take the readable checkpoints down with it.
+   * Host callers need the report: silently skipping it hides stranded content
+   * bytes and a crash recovery that never ran.
+   */
+  readonly onStorageIssue?: (issue: {
+    readonly directory: string
+    readonly phase: 'journal' | 'manifest'
+  }) => void
 }
 
 interface StoredJournalEntry {
@@ -70,11 +81,14 @@ interface StoredJournal {
   readonly state: 'applying' | 'committed' | 'rolled-back' | 'partial-restore'
   readonly entries: readonly StoredJournalEntry[]
   readonly appliedPaths: readonly string[]
-  readonly skippedPaths: readonly string[]
+  /** The paths already drifted from the checkpoint when the restore ran. */
+  readonly conflictPaths: readonly string[]
 }
 
 const MANIFEST_FILE = 'manifest.json'
 const JOURNAL_FILE = 'journal.json'
+/** Persisted journal states that prove the apply finished; nothing reads them again. */
+const TERMINAL_JOURNAL_STATES: ReadonlySet<string> = new Set(['committed', 'rolled-back', 'partial-restore'])
 
 /**
  * Host-only checkpoint repository. It stores opaque manifests and content
@@ -112,30 +126,26 @@ export class CheckpointStore implements CheckpointRepository {
     validateCreateInput(input)
     throwIfAborted(signal)
 
-    const sourceByPath = new Map(input.files.map((file) => [file.relativePath, file]))
-    const uniquePaths = [...sourceByPath.keys()]
+    const uniquePaths = [...new Set(input.files.map((file) => file.relativePath))]
     if (uniquePaths.length > CHECKPOINT_LIMITS.maxFiles)
-      throw checkpointQuota('A checkpoint may contain at most 100 files.')
+      throw checkpointQuota(`A checkpoint may contain at most ${CHECKPOINT_LIMITS.maxFiles} files.`)
     const saveContent = this.contentEnabled()
     const files: Array<{ readonly manifest: CheckpointFile; readonly bytes?: Uint8Array }> = []
     let totalBytes = 0
     for (const relativePath of uniquePaths) {
       throwIfAborted(signal)
-      const currentBytes = await this.options.workspace.readFile(input.workspaceFolderId, relativePath)
-      const source = sourceByPath.get(relativePath)
-      const snapshotBytes =
-        source?.diff === undefined
-          ? currentBytes
-          : source.diff.oldText === null
-            ? undefined
-            : Buffer.from(source.diff.oldText, 'utf8')
-      const expectedCurrentHash = hashFor(currentBytes)
+      // The snapshot is the file as it is at creation — the only whole-file
+      // text this Host can state. A change row's diff is never that text: a
+      // call-phase card holds the model's own anchor (and a `write` states no
+      // old side at all), an applied card holds one hunk plus its context. Byte
+      // content taken from either one restored a fragment over the user's file,
+      // and a null old side restored a deletion over a file that existed.
+      const snapshotBytes = await this.options.workspace.readFile(input.workspaceFolderId, relativePath)
       if (snapshotBytes === undefined) {
         files.push({
           manifest: {
             relativePath,
             presentAtCheckpoint: false,
-            ...(expectedCurrentHash === undefined ? {} : { expectedCurrentHash }),
             byteSize: 0,
             hashAlgorithm: 'sha256',
           },
@@ -152,7 +162,7 @@ export class CheckpointStore implements CheckpointRepository {
         manifest: {
           relativePath,
           presentAtCheckpoint: true,
-          ...(expectedCurrentHash === undefined ? {} : { expectedCurrentHash }),
+          expectedCurrentHash: sha256(snapshotBytes),
           ...(saveContent
             ? { checkpointContentHash: contentHash, contentRef: `content-${files.length}.bin` }
             : {}),
@@ -295,7 +305,7 @@ export class CheckpointStore implements CheckpointRepository {
             .catch((error) => {
               throw storageCorrupt(error)
             })
-          if (sha256(stored) !== file.checkpointContentHash) throw storageCorrupt()
+          if (stored === undefined || sha256(stored) !== file.checkpointContentHash) throw storageCorrupt()
           content.set(file.relativePath, stored)
         }
       }
@@ -309,8 +319,11 @@ export class CheckpointStore implements CheckpointRepository {
       throw checkpointConflict(`The workspace changed at ${conflicts[0] ?? 'a checkpoint file'}.`)
     }
 
-    const skippedPaths = conflicts
-    const targets = manifest.files.filter((file) => !skippedPaths.includes(file.relativePath))
+    // Every listed file is a target: a file that still matches the checkpoint is
+    // written back byte-identical, and a file that changed is the one the user
+    // is asking to put back. Skipping the changed files left a restore that
+    // could not change any file at all.
+    const targets = manifest.files
     const operationId = `dsh-restore-${this.makeId()}`
     const entries: StoredJournalEntry[] = []
     for (const [index, file] of targets.entries()) {
@@ -334,7 +347,7 @@ export class CheckpointStore implements CheckpointRepository {
       state: 'applying',
       entries,
       appliedPaths: [],
-      skippedPaths,
+      conflictPaths: conflicts,
     }
     await this.writeAtomic(path.join(directory, JOURNAL_FILE), encodePersisted(journal))
     try {
@@ -343,7 +356,11 @@ export class CheckpointStore implements CheckpointRepository {
         const entry = entries.find((candidate) => candidate.relativePath === file.relativePath)
         if (entry === undefined) throw storageCorrupt()
         const latest = await this.options.workspace.readFile(manifest.workspaceFolderId, file.relativePath)
-        if (hashFor(latest) !== file.expectedCurrentHash)
+        // The scan above read every file; this re-read only asks whether one
+        // moved since, which would make the bytes just backed up stale. It must
+        // not ask whether the file still matches the checkpoint — that is what
+        // the caller already decided.
+        if (hashFor(latest) !== hashFor(current.get(file.relativePath)))
           throw checkpointConflict('A file changed during restore.')
         // Persist ownership of the target before changing it. If the next
         // write/rename is interrupted, startup recovery knows to restore the
@@ -364,32 +381,12 @@ export class CheckpointStore implements CheckpointRepository {
           await this.options.workspace.deleteFile(manifest.workspaceFolderId, file.relativePath)
         }
       }
-      if (skippedPaths.length > 0) {
-        journal = { ...journal, state: 'partial-restore' }
-        await this.writeAtomic(path.join(directory, JOURNAL_FILE), encodePersisted(journal))
-        const partial = { ...manifest, state: 'partial-restore' as const }
-        await this.writeAtomic(path.join(directory, MANIFEST_FILE), encodePersisted(partial))
-        this.manifests.set(partial.checkpointId, partial)
-        // A user-approved partial restore is terminal: nothing can restore
-        // this checkpoint again, so the per-file backups and journal would
-        // only consume quota invisibly. Reclaim them like the committed path
-        // does. A rollback that could not complete keeps its backups instead
-        // because they are the only record of the pre-restore bytes.
-        await this.cleanupJournal(directory, journal, manifest)
-        return {
-          summary: checkpointSummary(partial),
-          state: 'partial',
-          restoredPaths: journal.appliedPaths,
-          skippedPaths,
-        }
-      }
       journal = { ...journal, state: 'committed' }
       await this.cleanupJournal(directory, journal, manifest)
       return {
         summary: checkpointSummary(manifest),
         state: 'completed',
         restoredPaths: journal.appliedPaths,
-        skippedPaths: [],
       }
     } catch (error) {
       const rollback = await this.rollback(directory, manifest, journal)
@@ -416,31 +413,71 @@ export class CheckpointStore implements CheckpointRepository {
       if (entry.kind !== 'directory' || !/^checkpoint-[a-f0-9]{32}$/u.test(entry.name)) continue
       const directory = path.join(this.options.rootPath, entry.name)
       const journal = await this.readPersisted<StoredJournal>(path.join(directory, JOURNAL_FILE)).catch(
-        () => undefined,
+        () => {
+          this.reportStorageIssue(directory, 'journal')
+          return undefined
+        },
       )
-      if (journal?.state === 'applying') {
-        const manifest = await this.readPersisted<CheckpointManifest>(
-          path.join(directory, MANIFEST_FILE),
-        ).catch(() => undefined)
-        if (manifest !== undefined) {
-          const rollback = await this.rollback(directory, manifest, journal)
-          if (rollback.complete)
-            await this.cleanupJournal(directory, { ...journal, state: 'rolled-back' }, manifest)
-          else {
-            const partial = { ...manifest, state: 'partial-restore' as const }
-            await this.writeAtomic(path.join(directory, MANIFEST_FILE), encodePersisted(partial)).catch(
-              () => undefined,
-            )
-            this.manifests.set(partial.checkpointId, partial)
-          }
+      let manifest = await this.readPersisted<CheckpointManifest>(path.join(directory, MANIFEST_FILE)).catch(
+        () => {
+          this.reportStorageIssue(directory, 'manifest')
+          return undefined
+        },
+      )
+      if (journal?.state === 'applying' && manifest !== undefined) {
+        const rollback = await this.rollback(directory, manifest, journal)
+        if (rollback.complete)
+          await this.cleanupJournal(directory, { ...journal, state: 'rolled-back' }, manifest)
+        else {
+          const partial = { ...manifest, state: 'partial-restore' as const }
+          await this.writeAtomic(path.join(directory, MANIFEST_FILE), encodePersisted(partial)).catch(
+            () => undefined,
+          )
+          manifest = partial
         }
+      } else if (
+        journal !== undefined &&
+        manifest !== undefined &&
+        TERMINAL_JOURNAL_STATES.has(journal.state) &&
+        Array.isArray(journal.entries) &&
+        isManifest(manifest)
+      ) {
+        // The apply already reached a terminal state, so only a crash between
+        // the journal and manifest writes, or a failed delete, kept these files
+        // around. The journal is the proof the restore was applied for
+        // `appliedPaths`, so record that on the manifest before reclaiming the
+        // journal, backups and temp files like the live terminal paths do.
+        let reclaimable = true
+        if (journal.state === 'partial-restore' && manifest.state !== 'partial-restore') {
+          const partial = { ...manifest, state: 'partial-restore' as const }
+          const recorded = await this.writeAtomic(
+            path.join(directory, MANIFEST_FILE),
+            encodePersisted(partial),
+          ).then(
+            () => true,
+            () => false,
+          )
+          if (recorded) manifest = partial
+          // A reconciliation that could not be recorded keeps the journal: it
+          // stays the only evidence of what the interrupted restore applied.
+          else reclaimable = false
+        }
+        if (reclaimable) await this.cleanupJournal(directory, journal, manifest)
       }
-      const manifest = await this.readPersisted<CheckpointManifest>(
-        path.join(directory, MANIFEST_FILE),
-      ).catch(() => undefined)
-      if (manifest !== undefined && isManifest(manifest)) this.manifests.set(manifest.checkpointId, manifest)
+      if (manifest === undefined) continue
+      if (isManifest(manifest)) this.manifests.set(manifest.checkpointId, manifest)
+      else this.reportStorageIssue(directory, 'manifest')
     }
     this.initialized = true
+  }
+
+  private reportStorageIssue(directory: string, phase: 'journal' | 'manifest'): void {
+    try {
+      this.options.onStorageIssue?.({ directory, phase })
+    } catch {
+      // Reporting is best effort: a broken diagnostics sink must not stop the
+      // remaining checkpoints from loading.
+    }
   }
 
   private async rollback(
@@ -459,7 +496,13 @@ export class CheckpointStore implements CheckpointRepository {
         if (entry.backupRef === undefined)
           await this.options.workspace.deleteFile(manifest.workspaceFolderId, relativePath)
         else {
+          // A missing backup cannot be restored. Stop before writing anything so
+          // the path keeps whatever content the interrupted apply left behind.
           const bytes = await this.options.storage.readFile(path.join(directory, entry.backupRef))
+          if (bytes === undefined) {
+            complete = false
+            continue
+          }
           const rollbackPath = `${relativePath}.dsh-vscode-rollback-${journal.operationId}`
           await this.options.workspace.writeFile(manifest.workspaceFolderId, rollbackPath, bytes)
           await this.options.workspace.renameFile(
@@ -512,8 +555,10 @@ export class CheckpointStore implements CheckpointRepository {
     }
   }
 
-  private async readPersisted<T>(filePath: string): Promise<T> {
+  /** Read a checksummed record; undefined means the file does not exist. */
+  private async readPersisted<T>(filePath: string): Promise<T | undefined> {
     const bytes = await this.options.storage.readFile(filePath)
+    if (bytes === undefined) return undefined
     let value: unknown
     try {
       value = JSON.parse(Buffer.from(bytes).toString('utf8'))

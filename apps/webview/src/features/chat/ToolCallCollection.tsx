@@ -1,4 +1,5 @@
 import { memo, useCallback, type ReactElement } from 'react'
+import { terminalPresentationFailed } from '@dsh-vscode/domain'
 import { projectToolCallTree, type TimelineNode, type ToolCallTreeNode } from '@dsh-vscode/timeline'
 import {
   ToolRendererRegistry,
@@ -217,6 +218,9 @@ function toolSummary(tool: ToolTimelineNode['tool'], translate: Translate): stri
     title !== '' && normalizedTitle !== 'tool' && normalizedTitle !== normalizedName
       ? title
       : (toolNameLabel(name, translate) ?? (name || title || translate('timeline.toolFallback')))
-  const status = toolStatusLabel(tool.status, translate)
+  const status = toolStatusLabel(
+    terminalPresentationFailed(tool.presentation) ? 'failed' : tool.status,
+    translate,
+  )
   return label === '' ? status : `${label} · ${status}`
 }

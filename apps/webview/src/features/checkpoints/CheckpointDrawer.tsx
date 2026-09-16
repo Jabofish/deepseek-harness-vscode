@@ -1,7 +1,12 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactElement } from 'react'
-import type { CheckpointPreview, CheckpointSummary } from '@dsh-vscode/domain'
+import type {
+  CheckpointConflictPolicy,
+  CheckpointFilePreview,
+  CheckpointPreview,
+  CheckpointSummary,
+} from '@dsh-vscode/domain'
 
-import { useI18n } from '../../i18n.js'
+import { useI18n, type Translate } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
 
 export interface CheckpointDrawerProps {
@@ -11,7 +16,10 @@ export interface CheckpointDrawerProps {
   readonly onCreate: (label?: string) => Promise<CheckpointSummary | undefined>
   readonly onPreview: (checkpointId: string) => Promise<CheckpointPreview | undefined>
   readonly onDelete: (checkpointId: string) => Promise<void>
-  readonly onRestore: (checkpointId: string) => Promise<'completed' | 'partial' | undefined>
+  readonly onRestore: (
+    checkpointId: string,
+    conflictPolicy: CheckpointConflictPolicy,
+  ) => Promise<'completed' | 'partial' | undefined>
 }
 
 type DialogState =
@@ -28,6 +36,16 @@ function formatBytes(value: number): string {
 
 function statusKey(state: CheckpointSummary['state']): string {
   return `checkpoints.state.${state}`
+}
+
+/**
+ * One previewed file's label. A file that drifted is overwritten by the
+ * restore — except one the checkpoint never stored (it did not exist then),
+ * which the restore removes instead.
+ */
+function fileLabel(file: CheckpointFilePreview, t: Translate): string {
+  if (!file.conflict) return (file.currentHash ?? t('checkpoints.missingHash')).slice(0, 12)
+  return file.presentAtCheckpoint ? t('checkpoints.conflict') : t('checkpoints.addedSince')
 }
 
 /** Explicit checkpoint creation, preview, restore-confirmation and deletion UI. */
@@ -142,16 +160,21 @@ export function CheckpointDrawer(props: CheckpointDrawerProps): ReactElement {
   }
 
   const restore = (): void => {
-    if (dialog?.kind !== 'restore' || busy) return
+    if (dialog?.kind !== 'restore' || busy || preview === undefined) return
     const checkpointId = dialog.checkpoint.checkpointId
+    // The preview above lists every file that drifted from the checkpoint, so a
+    // confirmation that saw one is the user accepting the overwrite. Without a
+    // drifted file the safe policy stays on: a file that changes between this
+    // preview and the restore must not be clobbered silently.
+    const conflictPolicy: CheckpointConflictPolicy = preview.conflictCount > 0 ? 'overwrite' : 'abort'
     setBusy(true)
     setError(undefined)
     void props
-      .onRestore(checkpointId)
+      .onRestore(checkpointId, conflictPolicy)
       .then((result) => {
         if (result === undefined) throw new Error(t('checkpoints.error'))
         closeDialog()
-        setNotice(result === 'partial' ? t('checkpoints.restorePartial') : t('checkpoints.restoreCompleted'))
+        setNotice(t('checkpoints.restoreCompleted'))
       })
       .catch((reason: unknown) => {
         setError(reason instanceof Error ? reason.message : t('checkpoints.error'))
@@ -339,9 +362,7 @@ export function CheckpointDrawer(props: CheckpointDrawerProps): ReactElement {
                     <li key={file.relativePath} data-conflict={file.conflict ? 'true' : 'false'}>
                       <span title={file.relativePath}>{file.relativePath}</span>
                       <code title={file.currentHash ?? t('checkpoints.missingHash')}>
-                        {file.conflict
-                          ? t('checkpoints.conflict')
-                          : (file.currentHash ?? t('checkpoints.missingHash')).slice(0, 12)}
+                        {fileLabel(file, t)}
                       </code>
                     </li>
                   ))}
@@ -365,7 +386,7 @@ export function CheckpointDrawer(props: CheckpointDrawerProps): ReactElement {
                 <button
                   type="button"
                   className="dsh-button"
-                  disabled={busy || preview === undefined || preview.conflictCount > 0}
+                  disabled={busy || preview === undefined}
                   onClick={restore}
                 >
                   {busy ? t('checkpoints.working') : t('checkpoints.restoreConfirm')}

@@ -1,9 +1,13 @@
 import { readdir } from 'node:fs/promises'
 import { describe, expect, it } from 'vitest'
 
+import type { DshBackend } from '../../packages/domain/src/backend.js'
 import type { AppError } from '../../packages/domain/src/errors.js'
-import type { SessionSummary } from '../../packages/domain/src/sessions.js'
+import type { QueuedInput, SessionSummary } from '../../packages/domain/src/sessions.js'
 import { LIVE_TIMEOUT_MS, canConnect, startManagedRuntime } from './harness.js'
+
+/** How long the host-wide control baseline may take before a missing queue is a defect. */
+const QUEUE_BASELINE_TIMEOUT_MS = 5_000
 
 /**
  * Live read-only surface evidence for the pinned runtime build. Every call
@@ -25,11 +29,26 @@ describe.skipIf(process.env.DSH_LIVE_SMOKE !== '1')('live DSH read-only surfaces
       const observed: string[] = []
       const unavailable: string[] = []
       const unexpected: string[] = []
+      let unsubscribe = (): void => undefined
       try {
         const { backend } = runtime
+        // The host-wide control stream only runs while a listener is attached,
+        // exactly as the open view keeps it. Without this subscription the
+        // queue snapshot can never arrive and the surface below would report an
+        // unsupported capability for a healthy host.
+        unsubscribe = backend.events.subscribe(() => undefined)
         const sessions = await backend.sessions.list()
-        const sessionId = sessions.items[0]?.id
         observed.push(`sessions.list ${sessions.items.length}`)
+        // A Session's agent surfaces belong to the holder of its write lease:
+        // while another DSH keeps a Session open — a server the developer runs,
+        // for instance — the newest entries of the list refuse a read that needs
+        // a resume with `gateway/internal` ("already owned by an active write
+        // handle"). Nothing here writes, but sampling the newest Session blindly
+        // reports a healthy host as broken, so the newest Sessions are probed
+        // with the cheapest agent-scoped read and the first one that answers is
+        // the one this run samples.
+        const sampled = await selectAddressableSession(backend, sessions.items, unavailable)
+        const sessionId = sampled.id
 
         const surface = async (name: string, call: () => Promise<string>): Promise<void> => {
           try {
@@ -57,14 +76,45 @@ describe.skipIf(process.env.DSH_LIVE_SMOKE !== '1')('live DSH read-only surfaces
           const models = await backend.models.listModels()
           return `${models.length}`
         })
+        await surface('sessions.list (search)', async () => {
+          // The wire refuses a query over its 500 code-unit bound or one
+          // carrying a NUL with `bad-request`, so sampling the bound itself
+          // pins the client-side clamp to the host contract. A deployment may
+          // also disable the session-query index outright; that refusal is
+          // evidence too, not a mapping failure.
+          try {
+            const page = await backend.sessions.list({ search: 'x'.repeat(500) })
+            return `${page.items.length} item(s)`
+          } catch (error) {
+            const appError = error as Partial<AppError>
+            if (appError.context?.rpcCode === 'bad-request')
+              throw new Error(`the host refused the query bound as bad-request: ${message(error)}`, {
+                cause: error,
+              })
+            return `refused (${appError.context?.rpcCode ?? appError.code ?? 'unknown'})`
+          }
+        })
         await surface('plugins.inventory', async () => {
           const inventory = await backend.plugins.inventory()
           return `${inventory.entries.length}`
         })
+        let presetRoster: Awaited<ReturnType<typeof backend.presets.list>> | undefined
         await surface('presets.list', async () => {
           const roster = await backend.presets.list()
+          presetRoster = roster
           return `${roster.presets.length}`
         })
+        if (presetRoster !== undefined && presetRoster.presets.length > 0) {
+          const first = presetRoster.presets[0] as (typeof presetRoster.presets)[number]
+          const read = backend.presets.read
+          if (read === undefined) unavailable.push('presets.read skipped: adapter exposes no document reader')
+          else
+            await surface('presets.read', async () => {
+              const document = await read.call(backend.presets, first.id)
+              expect(document.id, `agentPreset.read must echo the requested id ${first.id}`).toBe(first.id)
+              return `${document.trust} ${document.content.length} char(s)`
+            })
+        }
         await surface('settings.schema', async () => {
           const schema = await backend.settings.schema()
           return `${schema.fields.length} field(s) in ${schema.namespaces.length} namespace(s)`
@@ -103,35 +153,85 @@ describe.skipIf(process.env.DSH_LIVE_SMOKE !== '1')('live DSH read-only surfaces
             const catalog = await backend.subagents.list(sessionId)
             return `${catalog.entries.length}`
           })
+          await surface('models.listSessionModels', async () => {
+            const catalog = await backend.models.listSessionModels(sessionId)
+            expect(
+              catalog.models.some(
+                (model) =>
+                  model.providerId === catalog.current.providerId && model.id === catalog.current.modelId,
+              ) || !catalog.routable,
+              `the session's current model ${catalog.current.providerId}/${catalog.current.modelId} must be in the routable catalog it was selected from`,
+            ).toBe(true)
+            return `${catalog.models.length} model(s) routable=${String(catalog.routable)} failure(s)=${catalog.failures.length}`
+          })
+          await surface('feedback.list', async () => {
+            const items = await backend.feedback.list(sessionId)
+            return `${items.length}`
+          })
           // `fileReferences/list` answers [] both for "no match" and for a host
           // without the optional Remote. Sampling a name that exists in the
           // session's own working directory makes an empty answer a defect.
-          const sample = await sampleWorkspaceEntry(sessions.items)
-          let fileReferenceCount: number | undefined
-          await surface('references.listFiles', async () => {
-            if (sample === undefined) return 'no readable session workspace to sample'
-            const candidates = await backend.references.listFiles(sample.sessionId, sample.name)
-            fileReferenceCount = candidates.length
-            return `${candidates.length} for ${sample.name} in ${sample.cwd}`
-          })
-          if (sample !== undefined)
-            expect(
-              fileReferenceCount,
-              `@-file completion must list ${sample.name}, which exists in ${sample.cwd}`,
-            ).toBeGreaterThan(0)
+          const sample = await sampleWorkspaceEntry(
+            backend,
+            sessions.items,
+            sampled.addressable ? sessionId : undefined,
+            unavailable,
+          )
+          if (sample === undefined)
+            unavailable.push('references.listFiles skipped: no readable session workspace')
+          else
+            await surface('references.listFiles', async () => {
+              const candidates = await backend.references.listFiles(sample.sessionId, sample.name)
+              expect(
+                candidates.length,
+                `@-file completion must list ${sample.name}, which exists in ${sample.cwd}`,
+              ).toBeGreaterThan(0)
+              return `${candidates.length} for ${sample.name} in ${sample.cwd}`
+            })
           await surface('references.listSessions', async () => {
             const candidates = await backend.references.listSessions(sessionId, '')
             return `${candidates.length}`
           })
-          await surface('sessions.listQueue', async () => {
-            const queued = await backend.sessions.listQueue(sessionId)
-            return `${queued.length}`
+          // A user-invocable skill is not a registered command: the host answers
+          // `commands/execute` with `undefined` for every line outside its
+          // command directory, which is what makes `/skill-name args` a prompt
+          // gesture instead of a command. A listed skill that the command
+          // directory does not carry is the strongest sample; a name that is
+          // absent from the directory proves the same host rule when the profile
+          // ships no skills at all.
+          const skills = await backend.skills.list(sessionId).catch(() => [])
+          const commands = await backend.commands.list(sessionId).catch(() => [])
+          const commandNames = new Set(commands.map((command) => command.name.trim().toLocaleLowerCase()))
+          const listedSkill = skills.find(
+            (skill) => skill.name.trim() !== '' && !commandNames.has(skill.name.trim().toLocaleLowerCase()),
+          )
+          const gestureName = listedSkill?.name.trim() ?? outOfDirectoryLine(commandNames)
+          await surface('commands.execute', async () => {
+            const line = `/${gestureName}`
+            expect(
+              await backend.commands.execute(sessionId, line),
+              `${line} is outside the command directory, so the host must not report a command execution`,
+            ).toEqual({ kind: 'unknown' })
+            return `${line} unresolved${listedSkill === undefined ? ' (sampled name, profile ships no skill)' : ''}`
           })
+          // The host publishes a queue cell only for a Session with a live
+          // agent, so a running Session is the target that turns this surface
+          // into evidence instead of a capability probe. A closed Session has
+          // no pending queue for the host to publish at all.
+          const queueTarget = sessions.items.find((item) => item.status === 'running')
+          if (queueTarget === undefined)
+            unavailable.push('sessions.listQueue skipped: no running session to sample')
+          else
+            await surface('sessions.listQueue', async () => {
+              const queued = await waitForQueueSnapshot(backend, queueTarget.id)
+              return `${queued.length} for the running session`
+            })
         }
 
         expect(unexpected, 'no read-only surface may fail protocol or mapping validation').toEqual([])
         expect(observed.length).toBeGreaterThanOrEqual(12)
       } finally {
+        unsubscribe()
         await runtime.stop()
         const released = !(await canConnect(runtime.snapshot.port))
         for (const step of runtime.steps) console.log(`[dsh-live-surfaces] ${step}`)
@@ -147,6 +247,89 @@ describe.skipIf(process.env.DSH_LIVE_SMOKE !== '1')('live DSH read-only surfaces
     LIVE_TIMEOUT_MS,
   )
 })
+
+/**
+ * Poll the queue snapshot while the control baseline is still in flight. The
+ * unavailability is only a defect when it outlives the baseline.
+ */
+async function waitForQueueSnapshot(backend: DshBackend, sessionId: string): Promise<readonly QueuedInput[]> {
+  const deadline = Date.now() + QUEUE_BASELINE_TIMEOUT_MS
+  for (;;) {
+    try {
+      return await backend.sessions.listQueue(sessionId)
+    } catch (error) {
+      if ((error as Partial<AppError>).code !== 'CAPABILITY_UNAVAILABLE' || Date.now() >= deadline)
+        throw error
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    }
+  }
+}
+
+/**
+ * A command-line token no registered command can own: the probe still exercises
+ * the host's own directory resolution, and never a name this extension guessed.
+ */
+function outOfDirectoryLine(commandNames: ReadonlySet<string>): string {
+  let index = 0
+  for (;;) {
+    const candidate = `dsh-live-surface-probe-${index}`
+    if (!commandNames.has(candidate)) return candidate
+    index += 1
+  }
+}
+
+/** How many of the newest Sessions the addressability walk may probe. */
+const SESSION_PROBE_LIMIT = 8
+
+/** The Session this run samples, and whether a probe answered for it. */
+interface SampledSession {
+  readonly id: string | undefined
+  readonly addressable: boolean
+}
+
+/**
+ * Pick the Session every agent-scoped surface below reads. Those surfaces
+ * belong to the holder of the Session's write lease, so a profile whose newest
+ * Session is open in a DSH the developer runs refuses them with
+ * `gateway/internal` even though every call here is a read. The walk probes the
+ * newest Sessions with the cheapest agent-scoped read and keeps the first one
+ * that answers; a host without the command directory answers every candidate
+ * with `CAPABILITY_UNAVAILABLE`, which is not a lease signal, so the walk stops
+ * there. When every candidate refuses, the newest Session is sampled anyway: a
+ * genuine mapping failure has to stay a failure instead of being explained
+ * away, and only an environment where a foreign DSH holds every recent Session
+ * turns that into a red run.
+ */
+async function selectAddressableSession(
+  backend: DshBackend,
+  sessions: readonly SessionSummary[],
+  notes: string[],
+): Promise<SampledSession> {
+  for (const candidate of sessions.slice(0, SESSION_PROBE_LIMIT)) {
+    const refusal = await probeSession(backend, candidate.id)
+    if (refusal === undefined) return { id: candidate.id, addressable: true }
+    notes.push(`session ${candidate.id} skipped: ${refusal}`)
+  }
+  return { id: sessions[0]?.id, addressable: false }
+}
+
+/**
+ * `commands/list` is the cheapest read that makes the host resume a Session,
+ * which is exactly the step a foreign lease refuses. The refusal detail comes
+ * back as a string so the caller can skip that candidate and report why; a
+ * missing command directory is not a refusal, since it would decide every
+ * Session the same way.
+ */
+async function probeSession(backend: DshBackend, sessionId: string): Promise<string | undefined> {
+  try {
+    await backend.commands.list(sessionId)
+  } catch (error) {
+    const code = (error as Partial<AppError>).code
+    if (code !== 'CAPABILITY_UNAVAILABLE')
+      return `agent surfaces refused [${code ?? 'no-code'}]: ${message(error)}`
+  }
+  return undefined
+}
 
 /** Runtime defaults for directories the local file-reference provider skips. */
 const EXCLUDED_ENTRIES = new Set([
@@ -167,15 +350,38 @@ const EXCLUDED_ENTRIES = new Set([
   '.gradle',
 ])
 
-/** Pick a real entry from a session workspace so the query cannot be vacuous. */
+/** Pick a real entry from a Session workspace the host will answer for. */
 async function sampleWorkspaceEntry(
+  backend: DshBackend,
   sessions: readonly SessionSummary[],
+  preferredId: string | undefined,
+  notes: string[],
 ): Promise<{ readonly sessionId: string; readonly cwd: string; readonly name: string } | undefined> {
-  for (const session of sessions.slice(0, 8)) {
-    if (session.cwd === undefined) continue
-    const entries = await readdir(session.cwd).catch(() => [] as string[])
+  // The Session the walk already answered for is offered first; without one,
+  // every session of the profile is offered, not a fixed prefix: old sessions
+  // point at deleted directories and subagent children carry no cwd, so a
+  // bounded slice can leave the picker assertion without any sample at all.
+  // Sessions sharing a workspace are read once, and a workspace only counts as
+  // a sample when its own Session answers the probe, so a foreign lease cannot
+  // turn the picker assertion into a failure it has nothing to do with.
+  const ordered =
+    preferredId === undefined
+      ? sessions
+      : [
+          ...sessions.filter((session) => session.id === preferredId),
+          ...sessions.filter((session) => session.id !== preferredId),
+        ]
+  const visited = new Set<string>()
+  for (const session of ordered) {
+    const cwd = session.cwd
+    if (cwd === undefined || visited.has(cwd)) continue
+    visited.add(cwd)
+    const entries = await readdir(cwd).catch(() => [] as string[])
     const name = entries.find((entry) => !entry.startsWith('.') && !EXCLUDED_ENTRIES.has(entry))
-    if (name !== undefined) return { sessionId: session.id, cwd: session.cwd, name }
+    if (name === undefined) continue
+    const refusal = session.id === preferredId ? undefined : await probeSession(backend, session.id)
+    if (refusal === undefined) return { sessionId: session.id, cwd, name }
+    notes.push(`session ${session.id} skipped: ${refusal}`)
   }
   return undefined
 }

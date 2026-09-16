@@ -13,6 +13,7 @@ function queuedInput(id: string, text = id): QueuedInput {
     sessionId: 'session-1',
     text,
     attachments: [],
+    textOnly: true,
     mode: 'queue',
     createdAt: '2026-08-31T00:00:00.000Z',
   }
@@ -22,13 +23,14 @@ function renderQueue(
   items: readonly QueuedInput[],
   running = false,
   onModeChange: (id: string, mode: QueuedInput['mode']) => void = vi.fn(),
+  onEdit: (id: string, text: string) => void = vi.fn(),
 ): void {
   render(
     <I18nProvider>
       <QueuePanel
         items={items}
         running={running}
-        onEdit={vi.fn()}
+        onEdit={onEdit}
         onRemove={vi.fn()}
         onModeChange={onModeChange}
       />
@@ -56,6 +58,7 @@ describe('QueuePanel', () => {
   it('shows queued images and prevents an edit that the pinned host cannot preserve', () => {
     const item: QueuedInput = {
       ...queuedInput('q-image', 'describe this'),
+      textOnly: false,
       images: [
         {
           attachmentId: 'image-1',
@@ -75,6 +78,28 @@ describe('QueuePanel', () => {
     expect(
       screen.getByRole('textbox', { name: 'Edit queued prompt q-image' }).getAttribute('title'),
     ).toContain('cannot be edited')
+  })
+
+  it('shows queued files and keeps their row out of the text-only edit path', () => {
+    renderQueue([{ ...queuedInput('q-file', 'read this'), textOnly: false, files: ['spec.md'] }], true)
+
+    // A text-only replacement would drop the file, so the row reports what it
+    // carries and refuses retyping instead of silently losing it.
+    expect(screen.getByText('spec.md')).toBeTruthy()
+    const editor = screen.getByRole('textbox', { name: 'Edit queued prompt q-file' })
+    expect(editor.hasAttribute('readonly')).toBe(true)
+    expect(editor.getAttribute('title')).toContain('cannot be edited')
+  })
+
+  it('sends the edited text of a text-only queued prompt', () => {
+    const onEdit = vi.fn()
+    renderQueue([queuedInput('q1', 'first')], true, vi.fn(), onEdit)
+
+    const editor = screen.getByRole('textbox', { name: 'Edit queued prompt q1' })
+    expect(editor.hasAttribute('readonly')).toBe(false)
+    fireEvent.blur(editor, { target: { value: 'second' } })
+
+    expect(onEdit).toHaveBeenCalledWith('q1', 'second')
   })
 
   it('promotes a queued prompt to steer', () => {

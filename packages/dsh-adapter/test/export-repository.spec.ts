@@ -16,6 +16,7 @@ import { AppError, type SessionExportOptions } from '@dsh-vscode/domain'
 
 import type { DshTransport, ExportFileSystem } from '../src/index.js'
 import { Rc6ExportRepository } from '../src/index.js'
+import { rc6Mapper } from '../src/versions/rc6/mapper.js'
 
 const temporaryRoots: string[] = []
 
@@ -233,6 +234,228 @@ describe('Rc6ExportRepository', () => {
     expect(blocks.map((block) => (block as { type: string }).type)).toEqual(['text', 'image'])
   })
 
+  it('redacts an inlined text-file body from an export that excludes attachments', async () => {
+    const destination = await destinationPath('inlined-file.json')
+    const repository = new Rc6ExportRepository(
+      createTransport({ events: inlinedFileRows(), hasMore: false }),
+      nodeFileSystem,
+    )
+
+    await repository.exportSession(exportOptions('json', false, false), destination)
+
+    const exported = await readFile(destination, 'utf8')
+    expect(exported).not.toContain('很长的正文')
+    expect(exported).toContain('思路4.md')
+    expect(exported).toContain('[attachment omitted]')
+
+    const markdownDestination = await destinationPath('inlined-file.md')
+    await repository.exportSession(exportOptions('markdown', false, false), markdownDestination)
+    const markdown = await readFile(markdownDestination, 'utf8')
+    expect(markdown).not.toContain('很长的正文')
+    expect(markdown).toContain('思路4.md')
+  })
+
+  it('keeps an inlined text-file body when the export includes attachments', async () => {
+    const destination = await destinationPath('inlined-file-included.json')
+    const repository = new Rc6ExportRepository(
+      createTransport({ events: inlinedFileRows(), hasMore: false }),
+      nodeFileSystem,
+    )
+
+    await repository.exportSession(exportOptions('json', false, true), destination)
+
+    await expect(readFile(destination, 'utf8')).resolves.toContain('很长的正文')
+  })
+
+  it('renders message rows as prose in a Markdown export', async () => {
+    const destination = await destinationPath('messages.md')
+    const repository = new Rc6ExportRepository(
+      createTransport({ events: messageRows(), hasMore: false }),
+      nodeFileSystem,
+    )
+
+    await repository.exportSession(exportOptions('markdown', false), destination)
+
+    const exported = await readFile(destination, 'utf8')
+    expect(exported).toContain('### user/message\n\nHow do I export a session?')
+    expect(exported).toContain('### assistant/message\n\nUse the export dialog.')
+    expect(exported).not.toContain('weighing the options')
+    // A row with no message text stays a machine record instead of prose.
+    expect(exported).toContain('### tool/call')
+    expect(exported).toContain('"callId":"c1"')
+  })
+
+  it('keeps reasoning under its own heading when a Markdown export includes it', async () => {
+    const destination = await destinationPath('messages-with-reasoning.md')
+    const repository = new Rc6ExportRepository(
+      createTransport({ events: messageRows(), hasMore: false }),
+      nodeFileSystem,
+    )
+
+    await repository.exportSession(exportOptions('markdown', true), destination)
+
+    const exported = await readFile(destination, 'utf8')
+    expect(exported).toContain('Use the export dialog.')
+    expect(exported).toContain('#### Reasoning\n\nweighing the options')
+  })
+
+  it('marks the attachments and images a Markdown export carries', async () => {
+    const destination = await destinationPath('messages-attachments.md')
+    const repository = new Rc6ExportRepository(
+      createTransport({
+        events: [
+          ...inlinedFileRows(),
+          {
+            event: {
+              type: 'assistant/message',
+              seq: 2,
+              time: 2,
+              data: {
+                turn: 1,
+                step: 1,
+                message: {
+                  id: 'm1',
+                  role: 'assistant',
+                  source: { kind: 'model', provider: 'deepseek', model: 'deepseek-chat' },
+                  content: [
+                    { type: 'text', text: 'Here is the diagram.' },
+                    {
+                      type: 'image',
+                      attachment: {
+                        attachmentId: 'a1',
+                        mediaType: 'image/png',
+                        bytes: 2048,
+                        width: 4,
+                        height: 4,
+                        name: 'diagram.png',
+                      },
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        ],
+        hasMore: false,
+      }),
+      nodeFileSystem,
+    )
+
+    await repository.exportSession(exportOptions('markdown', false), destination)
+
+    const exported = await readFile(destination, 'utf8')
+    // The inlined file body is included, so the envelope is projected as an
+    // attachment name rather than as text: without a marker the file would be
+    // missing from the readable export entirely.
+    expect(exported).toContain('概括文件内容\n\n[attachment: 思路4.md]')
+    expect(exported).toContain('Here is the diagram.\n\n[image: diagram.png (image/png, 2048 bytes)]')
+  })
+
+  it('renders a message that carries only an attachment as its marker instead of a record', async () => {
+    const destination = await destinationPath('attachment-only.md')
+    const repository = new Rc6ExportRepository(
+      createTransport({
+        events: [
+          {
+            event: {
+              type: 'user/message',
+              seq: 1,
+              time: 1,
+              data: {
+                id: 'u1',
+                role: 'user',
+                source: { kind: 'user' },
+                content: [
+                  {
+                    type: 'image',
+                    attachment: {
+                      attachmentId: 'a1',
+                      mediaType: 'image/png',
+                      bytes: 12,
+                      width: 2,
+                      height: 2,
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        ],
+        hasMore: false,
+      }),
+      nodeFileSystem,
+    )
+
+    await repository.exportSession(exportOptions('markdown', false), destination)
+
+    const exported = await readFile(destination, 'utf8')
+    expect(exported).toContain('### user/message\n\n[image: a1 (image/png, 12 bytes)]')
+    expect(exported).not.toContain('"content"')
+  })
+
+  it("leaves the host's bookkeeping rows out of a Markdown export", async () => {
+    const destination = await destinationPath('bookkeeping.md')
+    const repository = new Rc6ExportRepository(
+      createTransport({
+        events: [
+          {
+            event: {
+              type: 'request/header',
+              seq: 1,
+              time: 1,
+              data: {
+                reason: 'initial',
+                header: {
+                  config: { provider: 'deepseek', model: 'deepseek-chat' },
+                  tools: [{ name: 'search', description: 'the whole tool catalog' }],
+                },
+              },
+            },
+          },
+          {
+            event: { type: 'step/start', seq: 2, time: 2, data: { turn: 1, step: 1 } },
+          },
+          {
+            event: {
+              type: 'system/message',
+              seq: 3,
+              time: 3,
+              data: { level: 'warning', text: 'A host notice the user saw.' },
+            },
+          },
+          ...messageRows(),
+        ],
+        hasMore: false,
+      }),
+      nodeFileSystem,
+    )
+
+    await repository.exportSession(exportOptions('markdown', false), destination)
+
+    const markdown = await readFile(destination, 'utf8')
+    // A real session is mostly these rows, and a readable export must not turn
+    // them into JSON blobs the transcript never showed.
+    expect(markdown).not.toContain('request/header')
+    expect(markdown).not.toContain('the whole tool catalog')
+    expect(markdown).not.toContain('step/start')
+    // Rows the transcript does show stay in the readable shape.
+    expect(markdown).toContain('A host notice the user saw.')
+    expect(markdown).toContain('Use the export dialog.')
+
+    // The JSON export is the lossless shape and keeps every row.
+    const jsonDestination = await destinationPath('bookkeeping.json')
+    await repository.exportSession(exportOptions('json', false), jsonDestination)
+    const rows = JSON.parse(await readFile(jsonDestination, 'utf8')) as readonly Record<string, unknown>[]
+    expect(rows.map((row) => (row.event as { type: string }).type)).toEqual([
+      'request/header',
+      'step/start',
+      'system/message',
+      'user/message',
+      'assistant/message',
+      'tool/call',
+    ])
+  })
+
   it('never overwrites an existing destination without an explicit Host confirmation', async () => {
     const destination = await destinationPath('existing.json')
     await writeFile(destination, 'original bytes', 'utf8')
@@ -296,8 +519,8 @@ describe('Rc6ExportRepository', () => {
     await expect(readFile(destination)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
-  it('rejects a canonical event row that would otherwise be exported with synthetic state', async () => {
-    const destination = await destinationPath('malformed-canonical-history-row.json')
+  it('exports an unprojectable canonical row as a marked unreadable record instead of failing the session', async () => {
+    const destination = await destinationPath('unreadable-canonical-history-row.json')
     const repository = new Rc6ExportRepository(
       createTransport({
         events: [
@@ -306,10 +529,111 @@ describe('Rc6ExportRepository', () => {
               type: 'assistant/message',
               seq: 1,
               time: 1,
-              data: { turn: 1, step: 1, markdown: 'not canonical' },
+              data: {
+                turn: 1,
+                step: 1,
+                markdown: 'payload the mapper rejects',
+                authorization: 'secret-token',
+              },
+            },
+          },
+          {
+            event: {
+              type: 'user/message',
+              seq: 2,
+              time: 2,
+              data: {
+                id: 'u1',
+                role: 'user',
+                source: { kind: 'user' },
+                content: [{ type: 'text', text: 'readable row' }],
+              },
             },
           },
         ],
+        hasMore: false,
+      }),
+      nodeFileSystem,
+    )
+
+    await repository.exportSession(exportOptions('json', true), destination)
+
+    const written = JSON.parse(await readFile(destination, 'utf8')) as readonly Record<string, unknown>[]
+    expect(written).toHaveLength(2)
+    // The durable envelope survives, so the export stays sequence-complete and
+    // a reader can still see which row could not be projected.
+    expect(written[0]).toMatchObject({
+      event: { type: 'assistant/message', seq: 1, time: 1, unreadable: true },
+    })
+    // The payload is kept the way the transcript keeps it, with sensitive
+    // fields dropped, so a data rescue loses no more than the UI does.
+    expect(JSON.stringify(written[0])).toContain('payload the mapper rejects')
+    expect(JSON.stringify(written[0])).not.toContain('secret-token')
+    // A readable row in the same session is still exported normally.
+    expect(written[1]).toMatchObject({ event: { type: 'user/message', seq: 2 } })
+    expect(JSON.stringify(written[1])).toContain('readable row')
+    await expect(temporaryFiles(destination)).resolves.toEqual([])
+  })
+
+  it('still applies the reasoning exclusion inside a marked unreadable row', async () => {
+    const destination = await destinationPath('unreadable-canonical-reasoning.json')
+    const repository = new Rc6ExportRepository(
+      createTransport({
+        events: [
+          {
+            event: {
+              type: 'assistant/message',
+              seq: 1,
+              time: 1,
+              data: { turn: 1, step: 1, markdown: 'visible', reasoning: 'private reasoning' },
+            },
+          },
+        ],
+        hasMore: false,
+      }),
+      nodeFileSystem,
+    )
+
+    await repository.exportSession(exportOptions('json', false), destination)
+
+    const exported = await readFile(destination, 'utf8')
+    expect(exported).toContain('unreadable')
+    expect(exported).toContain('visible')
+    expect(exported).not.toContain('private reasoning')
+  })
+
+  it('is not stricter than the transcript for a row the mapper degrades', async () => {
+    const degraded = {
+      event: {
+        type: 'assistant/message',
+        seq: 1,
+        time: 1,
+        data: { turn: 1, step: 1, markdown: 'payload the mapper rejects' },
+      },
+    }
+    // The transcript keeps this row as an unreadable record instead of failing
+    // the session, so an export that rejects it would make a readable session
+    // impossible to export.
+    const mapped = rc6Mapper.history({ events: [degraded], hasMore: false }, 's1')
+    expect(mapped.events.map((entry) => entry.event.type)).toEqual(['unknown'])
+
+    const destination = await destinationPath('degraded-row.json')
+    const repository = new Rc6ExportRepository(
+      createTransport({ events: [degraded], hasMore: false }),
+      nodeFileSystem,
+    )
+
+    await repository.exportSession(exportOptions('json', true), destination)
+
+    const written = JSON.parse(await readFile(destination, 'utf8')) as readonly unknown[]
+    expect(written).toHaveLength(1)
+  })
+
+  it('still rejects a history row whose durable envelope is corrupt', async () => {
+    const destination = await destinationPath('corrupt-envelope-row.json')
+    const repository = new Rc6ExportRepository(
+      createTransport({
+        events: [{ event: { type: 'assistant/message', seq: '1', time: 1, data: {} } }],
         hasMore: false,
       }),
       nodeFileSystem,
@@ -515,6 +839,78 @@ function canonicalReasoningRows(): readonly unknown[] {
             ],
           },
         },
+      },
+    },
+  ]
+}
+
+/** A durable user message carrying an inlined text file, as rc.6 stores it. */
+function inlinedFileRows(): readonly unknown[] {
+  return [
+    {
+      event: {
+        type: 'user/message',
+        seq: 1,
+        time: 1,
+        data: {
+          id: 'u1',
+          role: 'user',
+          source: { kind: 'user' },
+          content: [
+            { type: 'text', text: '概括文件内容' },
+            {
+              type: 'text',
+              text: '\n\nAttached file: 思路4.md\n\n# 很长的正文\n\nEnd of attached file: 思路4.md',
+            },
+          ],
+        },
+      },
+    },
+  ]
+}
+
+/** Canonical message rows plus one tool row, as rc.6 stores them. */
+function messageRows(): readonly unknown[] {
+  return [
+    {
+      event: {
+        type: 'user/message',
+        seq: 1,
+        time: 1,
+        data: {
+          id: 'u1',
+          role: 'user',
+          source: { kind: 'user' },
+          content: [{ type: 'text', text: 'How do I export a session?' }],
+        },
+      },
+    },
+    {
+      event: {
+        type: 'assistant/message',
+        seq: 2,
+        time: 2,
+        data: {
+          turn: 1,
+          step: 1,
+          message: {
+            id: 'm1',
+            role: 'assistant',
+            source: { kind: 'model', provider: 'deepseek', model: 'deepseek-chat' },
+            content: [
+              { type: 'reasoning', text: 'weighing the options' },
+              { type: 'text', text: 'Use the export dialog.' },
+            ],
+          },
+        },
+      },
+    },
+    {
+      event: {
+        type: 'tool/call',
+        seq: 3,
+        time: 3,
+        data: { turn: 1, step: 1, callId: 'c1', name: 'search', arguments: '{}' },
       },
     },
   ]

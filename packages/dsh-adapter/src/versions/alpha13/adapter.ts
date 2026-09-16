@@ -1,6 +1,7 @@
 import type { BackendCapabilities, BackendCandidate, BackendEndpoint } from '@dsh-vscode/domain'
 
 import type { VersionAdapterIdentity } from '../../adapter-base.js'
+import type { CommandAttachmentWire } from '../../repositories/command-repository.js'
 import { Alpha5VersionAdapter, type Alpha5AdapterOptions } from '../alpha5/adapter.js'
 import type { AlphaLoopbackApiClientOptions } from '../alpha/transport.js'
 
@@ -25,6 +26,14 @@ export class Alpha13VersionAdapter extends Alpha5VersionAdapter {
     compatibilityPriority: 130,
     fallback: false,
   }
+
+  /**
+   * The 0.1.3 line renamed the commands/execute attachment parameter to
+   * `submittedAttachments` (and the directory flag to `attachments`). Every
+   * later adapter inherits this wire, so the strict Remote descriptor of a
+   * 0.1.3+ host never sees the older `images` array.
+   */
+  protected override readonly commandAttachmentWire: CommandAttachmentWire = 'submittedAttachments'
 
   public override probeCompatibility(
     _candidate: BackendCandidate,

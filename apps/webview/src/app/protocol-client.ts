@@ -29,8 +29,38 @@ interface FeatureBackendIdentity {
 // than ordinary chat/settings requests. Keep the Webview pending until the
 // Extension Host can return the real result instead of turning a slow download
 // into a misleading generic timeout.
-const RUNTIME_UPDATE_CHECK_TIMEOUT_MS = 45_000
+// A check runs `npm view` and then `npm list --global`, each with its own 30s
+// host budget, plus the runtime scan, so the client budget has to cover both
+// calls: a shorter one reports a timeout for a check the Host completes and
+// drops the version list the drawer was waiting for.
+const RUNTIME_UPDATE_CHECK_TIMEOUT_MS = 90_000
 const RUNTIME_UPDATE_INSTALL_TIMEOUT_MS = 180_000
+// Checkpoint work reads or writes every recorded file through the host file
+// API, which on a remote workspace is a round trip per file. It gets the same
+// budget as an install: timing out mid-restore reports a failure for work that
+// is already overwriting workspace files, and the late real result is dropped.
+const CHECKPOINT_TIMEOUT_MS = 180_000
+// An export is size-proportional work on the Host side: the ZIP deflates the
+// whole session, and the text formats read the entire paged history (200
+// messages per round trip). An ordinary request budget reports a failure for a
+// file the Host then finishes writing, so the export gets the long-operation
+// budget instead.
+const SESSION_EXPORT_TIMEOUT_MS = 180_000
+
+/** Per-type host budgets; any request not listed keeps the ordinary timeout. */
+const EXTENDED_TIMEOUT_MS: Readonly<Record<string, number>> = {
+  'runtime.update.check': RUNTIME_UPDATE_CHECK_TIMEOUT_MS,
+  'runtime.update.install': RUNTIME_UPDATE_INSTALL_TIMEOUT_MS,
+  'checkpoint.create': CHECKPOINT_TIMEOUT_MS,
+  'checkpoint.preview': CHECKPOINT_TIMEOUT_MS,
+  'checkpoint.restore': CHECKPOINT_TIMEOUT_MS,
+  'checkpoint.delete': CHECKPOINT_TIMEOUT_MS,
+  'session.export': SESSION_EXPORT_TIMEOUT_MS,
+}
+
+function timeoutMsFor(ordinaryTimeoutMs: number, type: string): number {
+  return Math.max(ordinaryTimeoutMs, EXTENDED_TIMEOUT_MS[type] ?? 0)
+}
 
 const timeoutError = (): Error => {
   const error = new Error(translate('app.error.timeout'))
@@ -63,12 +93,7 @@ export class ProtocolClient {
     if (this.pending.has(parsed.requestId))
       return Promise.reject(new Error(translate('app.error.duplicateRequest')))
     return new Promise<T>((resolve, reject) => {
-      const timeoutMs =
-        parsed.type === 'runtime.update.install'
-          ? Math.max(this.timeoutMs, RUNTIME_UPDATE_INSTALL_TIMEOUT_MS)
-          : parsed.type === 'runtime.update.check'
-            ? Math.max(this.timeoutMs, RUNTIME_UPDATE_CHECK_TIMEOUT_MS)
-            : this.timeoutMs
+      const timeoutMs = timeoutMsFor(this.timeoutMs, parsed.type)
       const timer = window.setTimeout(() => {
         this.pending.delete(parsed.requestId)
         reject(timeoutError())
@@ -94,10 +119,11 @@ export class ProtocolClient {
     if (this.pending.has(parsed.requestId))
       return Promise.reject(new Error(translate('app.error.duplicateRequest')))
     return new Promise<T>((resolve, reject) => {
+      const timeoutMs = timeoutMsFor(this.timeoutMs, parsed.type)
       const timer = window.setTimeout(() => {
         this.pending.delete(parsed.requestId)
         reject(timeoutError())
-      }, this.timeoutMs)
+      }, timeoutMs)
       this.pending.set(parsed.requestId, { resolve: (value) => resolve(value as T), reject, timer })
       try {
         this.api.postMessage({ protocolVersion: PROTOCOL_VERSION, message: parsed })

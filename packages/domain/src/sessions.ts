@@ -23,6 +23,15 @@ export interface ImageAttachmentLimits {
   readonly mediaTypes: readonly string[]
 }
 
+/**
+ * True for any `image/*` token, including image types this client cannot
+ * encode. An unknown type narrows what may be sent; it does not invalidate the
+ * byte and count limits advertised next to it.
+ */
+export function isImageMediaType(value: string): boolean {
+  return /^image\/[a-z0-9][a-z0-9.+-]*$/.test(value)
+}
+
 export interface SessionSummary {
   readonly id: string
   readonly workspaceId: string
@@ -83,6 +92,8 @@ export interface SessionHistoryPage {
 export interface SubagentHistoryPage {
   readonly events: readonly SessionHistoryEvent[]
   readonly hasMore: boolean
+  /** Raw oldest sequence in the page; the cursor for loading older records. */
+  readonly beforeSequence?: number
   /** Host-computed projection baseline aligned with this history tail. */
   readonly projection?: SessionProjectionSnapshot
 }
@@ -136,6 +147,24 @@ export interface QueuedInput {
   readonly attachments: readonly PromptAttachment[]
   /** Durable image references in the pending upstream message. */
   readonly images?: readonly MessageImageReference[]
+  /**
+   * Sanitized display names of the durable files attached to the pending
+   * message, in block order.
+   *
+   * A prompt part may be a file rather than text or an image. The client can
+   * neither render nor read those bytes back, so the name is the whole
+   * projection; the file itself stays behind the host boundary.
+   */
+  readonly files?: readonly string[]
+  /**
+   * Whether the pending message content is exactly text.
+   *
+   * The only queue edit the wire accepts is a text-only replacement, and the
+   * host swaps the whole content for it, so a row carrying an image or a file
+   * would silently lose that content. No surface may offer the edit unless
+   * this is true.
+   */
+  readonly textOnly: boolean
   readonly mode: RunningInputMode
   readonly createdAt: string
   /** Opaque host request correlation used to reconcile an accepted prompt. */

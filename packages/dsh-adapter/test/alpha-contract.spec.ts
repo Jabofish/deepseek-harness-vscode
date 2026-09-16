@@ -6,6 +6,9 @@ import type { AlphaEventSource } from '../src/versions/alpha/events.js'
 import { AlphaLoopbackApiClient, type AlphaWebSocket } from '../src/versions/alpha/transport.js'
 import { Alpha1VersionAdapter } from '../src/versions/alpha/adapter.js'
 import { callRpc } from '../src/versions/rc6/rpc.js'
+import { Rc6CredentialRepository } from '../src/repositories/credential-repository.js'
+import { Rc6SubagentRepository } from '../src/repositories/subagent-repository.js'
+import { SubagentAddressRegistry } from '../src/repositories/shared/subagent-addresses.js'
 
 class FakeWebSocket implements AlphaWebSocket {
   public static readonly instances: FakeWebSocket[] = []
@@ -61,7 +64,11 @@ const endpoint: BackendEndpoint = {
   baseUrl: 'http://127.0.0.1:4567',
 }
 
-function client(fetch: typeof globalThis.fetch, timeout = 1_000): AlphaLoopbackApiClient {
+function client(
+  fetch: typeof globalThis.fetch,
+  timeout = 1_000,
+  subagentAddresses?: SubagentAddressRegistry,
+): AlphaLoopbackApiClient {
   return new AlphaLoopbackApiClient({
     endpoint,
     requestTimeoutMs: timeout,
@@ -69,6 +76,7 @@ function client(fetch: typeof globalThis.fetch, timeout = 1_000): AlphaLoopbackA
     fetch,
     authCookie: () => 'dsh_session=test-cookie',
     webSocket: FakeWebSocket,
+    ...(subagentAddresses === undefined ? {} : { subagentAddresses }),
   })
 }
 
@@ -101,6 +109,25 @@ describe('DSH 0.1.2-alpha.1 Connection/Gateway contract', () => {
     const second = fetch.mock.calls[1]
     expect(second?.[0]).toMatchObject({ pathname: '/api/commands/list' })
     expect(JSON.parse(bodyText(second?.[1]))).toMatchObject({ payload: { args: { agentId: 's1' } } })
+  })
+
+  it('keeps an absent Remote value absent instead of inventing an empty object', async () => {
+    // The Gateway drops the `value` member for a Remote method that returned
+    // `undefined`. Rewriting that envelope to `value: {}` would erase the
+    // difference between "no result" and an empty one, so the absence has to
+    // survive to the caller that declared it.
+    const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(bodyText(init)) as { readonly rpcId: string }
+      return Promise.resolve(
+        new Response(JSON.stringify({ type: 'server-response', rpcId: body.rpcId, result: { ok: true } }), {
+          headers: { 'content-type': 'application/json' },
+        }),
+      )
+    })
+
+    await expect(client(fetch).remoteRequest('commands/execute', { agentId: 's1' })).resolves.toEqual({
+      ok: true,
+    })
   })
 
   it('keeps the alpha prompt requestId as the queue-correlation id', async () => {
@@ -559,6 +586,185 @@ describe('DSH 0.1.2-alpha.1 Connection/Gateway contract', () => {
     await transport.close()
   })
 
+  it('addresses a catalog-resolved child session by its durable subagent descriptor', async () => {
+    // The host refuses a session-kind address whose Session header is
+    // subagent-origin (`session/agent-busy`, "use subagent delivery for this
+    // child session"). Every session-addressed read the client performs for a
+    // child — the live follow stream and the history snapshot/page pair — has
+    // to carry the descriptor the catalog published instead.
+    FakeWebSocket.instances.length = 0
+    const subagentAddresses = new SubagentAddressRegistry()
+    const fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const pathname =
+        input instanceof URL
+          ? input.pathname
+          : new URL(typeof input === 'string' ? input : input.url).pathname
+      if (pathname === '/api/subagents/list')
+        return Promise.resolve(
+          response(init, {
+            entries: [
+              {
+                kind: 'child',
+                id: 'child-1',
+                activity: 'inactive',
+                hasChildren: false,
+                mode: 'continuable',
+                label: 'Child',
+              },
+            ],
+            parentAvailable: true,
+          }),
+        )
+      return Promise.resolve(response(init, { records: [], hasMore: false }))
+    })
+    const transport = client(fetch, 1_000, subagentAddresses)
+    const subagents = new Rc6SubagentRepository(transport, { addresses: subagentAddresses })
+    await expect(subagents.list('parent-1')).resolves.toMatchObject({ parentAvailable: true })
+
+    const snapshot = transport.request('session.history', { sessionId: 'child-1', maxMessages: 50 })
+    const socket = await waitForSocket()
+    socket.open()
+    await waitForSent(socket, 1)
+    const followOpen = JSON.parse(socket.sent[0] ?? '{}') as {
+      readonly streamId?: string
+      readonly payload?: { readonly args?: { readonly request?: Record<string, unknown> } }
+    }
+    expect(followOpen.payload?.args?.request).toMatchObject({
+      address: {
+        kind: 'subagent',
+        parentSessionId: 'parent-1',
+        childSessionId: 'child-1',
+        mode: 'continuable',
+      },
+    })
+    socket.message(
+      streamItem(
+        socket,
+        {
+          type: 'snapshot',
+          header: {},
+          cursor: 1,
+          records: [],
+          hasMore: false,
+          projections: { asOfSeq: 1, values: {} },
+        },
+        followOpen.streamId,
+      ),
+    )
+    socket.message({ type: 'end', streamId: followOpen.streamId })
+    await snapshot
+
+    const live = transport.openSessionStream('child-1', new AbortController().signal)[Symbol.asyncIterator]()
+    const liveNext = live.next()
+    await waitForSent(socket, 2)
+    const liveOpen = JSON.parse(socket.sent[1] ?? '{}') as {
+      readonly streamId?: string
+      readonly payload?: { readonly args?: { readonly request?: Record<string, unknown> } }
+    }
+    expect(liveOpen.payload?.args?.request).toMatchObject({
+      address: {
+        kind: 'subagent',
+        parentSessionId: 'parent-1',
+        childSessionId: 'child-1',
+        mode: 'continuable',
+      },
+    })
+    socket.message({ type: 'end', streamId: liveOpen.streamId })
+    await liveNext
+
+    // A Session the catalog never described keeps the ordinary address.
+    const plain = transport.request('session.history', { sessionId: 'child-2', maxMessages: 50 })
+    await waitForSent(socket, 3)
+    const plainOpen = JSON.parse(socket.sent[2] ?? '{}') as {
+      readonly streamId?: string
+      readonly payload?: { readonly args?: { readonly request?: Record<string, unknown> } }
+    }
+    expect(plainOpen.payload?.args?.request).toMatchObject({
+      address: { kind: 'session', sessionId: 'child-2' },
+    })
+    socket.message(
+      streamItem(
+        socket,
+        {
+          type: 'snapshot',
+          header: {},
+          cursor: 1,
+          records: [],
+          hasMore: false,
+          projections: { asOfSeq: 1, values: {} },
+        },
+        plainOpen.streamId,
+      ),
+    )
+    socket.message({ type: 'end', streamId: plainOpen.streamId })
+    await plain
+    await transport.close()
+  })
+
+  it('pages a subagent transcript through the child address instead of the session log', async () => {
+    FakeWebSocket.instances.length = 0
+    const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
+      Promise.resolve(
+        response(init, {
+          records: [
+            {
+              type: 'event',
+              event: { type: 'request/context', seq: 3, time: 100, data: { provider: 'p', model: 'm' } },
+            },
+          ],
+          hasMore: true,
+          projections: { asOfSeq: 7, values: {} },
+        }),
+      ),
+    )
+    const transport = client(fetch)
+
+    const history = transport.request('subagent.history', {
+      parentSessionId: 'parent',
+      childSessionId: 'child',
+      mode: 'continuable',
+      maxMessages: 50,
+      beforeSeq: 4,
+    })
+    const socket = await waitForSocket()
+    socket.open()
+    await waitForSent(socket, 1)
+    const opening = JSON.parse(socket.sent[0] ?? '{}') as { readonly streamId?: string }
+    socket.message(
+      streamItem(socket, {
+        type: 'snapshot',
+        header: {},
+        cursor: 7,
+        records: [],
+        hasMore: true,
+        projections: { asOfSeq: 7, values: {} },
+      }),
+    )
+    socket.message({ type: 'end', streamId: opening.streamId })
+
+    await expect(history).resolves.toMatchObject({
+      result: { ok: true, value: { events: [{ event: { seq: 3 } }], hasMore: true } },
+    })
+    const pageBody = JSON.parse(bodyText(fetch.mock.calls[0]?.[1])) as {
+      readonly payload: { readonly args: { readonly request: Record<string, unknown> } }
+    }
+    // `session/page` is addressed by the same child descriptor the follow
+    // stream used; falling back to the session address would page the parent
+    // log while the drawer shows the child transcript.
+    expect(pageBody.payload.args.request).toEqual({
+      address: {
+        kind: 'subagent',
+        parentSessionId: 'parent',
+        childSessionId: 'child',
+        mode: 'continuable',
+      },
+      throughSeq: 7,
+      beforeSeq: 4,
+      maxMessages: 50,
+    })
+    await transport.close()
+  })
+
   it('normalizes and validates alpha goal mutation receipts at the version boundary', async () => {
     const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
       Promise.resolve(response(init, { ref: { id: 'goal-1', revision: 2 } })),
@@ -634,6 +840,66 @@ describe('DSH 0.1.2-alpha.1 Connection/Gateway contract', () => {
       readonly payload: { readonly args: { readonly refs: string[] } }
     }
     expect(body.payload.args).toEqual({ refs: ['DEEPSEEK_API_KEY'] })
+    await transport.close()
+  })
+
+  it('projects the void credentials receipt into the legacy empty receipt', async () => {
+    // The alpha credentials Remote declares `RemoteResult<void>`, so the
+    // Gateway answers `{ok: true}` with no `value` member at all. The legacy
+    // repository contract reads a credential write receipt as an empty object,
+    // and the version transport owns that projection.
+    const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(bodyText(init)) as { readonly rpcId: string }
+      return Promise.resolve(
+        new Response(JSON.stringify({ type: 'server-response', rpcId: body.rpcId, result: { ok: true } }), {
+          headers: { 'content-type': 'application/json' },
+        }),
+      )
+    })
+    const transport = client(fetch)
+    const credentials = new Rc6CredentialRepository(transport)
+
+    await expect(credentials.setReference('DEEPSEEK_API_KEY', 'sk-test-value')).resolves.toBeUndefined()
+    await expect(credentials.unsetReference('DEEPSEEK_API_KEY')).resolves.toBeUndefined()
+
+    expect(fetch.mock.calls.map((call) => call[0])).toMatchObject([
+      { pathname: '/api/credentials/set' },
+      { pathname: '/api/credentials/unset' },
+    ])
+    const setBody = JSON.parse(bodyText(fetch.mock.calls[0]?.[1])) as {
+      readonly payload: { readonly args: { readonly ref: string; readonly value: string } }
+    }
+    expect(setBody.payload.args).toEqual({ ref: 'DEEPSEEK_API_KEY', value: 'sk-test-value' })
+    await transport.close()
+  })
+
+  it('keeps a refused credentials receipt an error instead of an empty success', async () => {
+    const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(bodyText(init)) as { readonly rpcId: string }
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            type: 'server-response',
+            rpcId: body.rpcId,
+            result: {
+              ok: false,
+              error: {
+                code: 'credential-rejected',
+                message: 'the reference is shadowed by a read-only layer',
+                details: { ref: 'DEEPSEEK_API_KEY' },
+              },
+            },
+          }),
+          { headers: { 'content-type': 'application/json' } },
+        ),
+      )
+    })
+    const transport = client(fetch)
+    const credentials = new Rc6CredentialRepository(transport)
+
+    await expect(credentials.setReference('DEEPSEEK_API_KEY', 'sk-test-value')).rejects.toMatchObject({
+      code: 'PERMISSION_DENIED',
+    })
     await transport.close()
   })
 
@@ -978,6 +1244,34 @@ describe('DSH 0.1.2-alpha.1 Connection/Gateway contract', () => {
     await transport.close()
   })
 
+  it('streams the session export past the request budget the RPC carrier uses', async () => {
+    // The archive grows with the session, so the Host can still be deflating a
+    // large one when an ordinary RPC round trip would already have timed out.
+    // Applying that budget here reports a failure for an export the Host
+    // completes, and the partial ZIP is what the user sees.
+    let aborted = false
+    const fetch = vi.fn(
+      (_input: RequestInfo | URL, init?: RequestInit) =>
+        new Promise<Response>((resolve, reject) => {
+          const timer = setTimeout(() => resolve(new Response('zip-content', { status: 200 })), 40)
+          init?.signal?.addEventListener('abort', () => {
+            aborted = true
+            clearTimeout(timer)
+            const reason: unknown = init.signal?.reason
+            reject(reason instanceof Error ? reason : new Error('The export download was aborted.'))
+          })
+        }),
+    )
+    const transport = client(fetch, 10)
+
+    try {
+      await expect(transport.downloadSessionLog('s1', false)).resolves.toBeInstanceOf(Response)
+      expect(aborted).toBe(false)
+    } finally {
+      await transport.close()
+    }
+  })
+
   it('retries alpha reads but never retries a mutation after a transport failure', async () => {
     let attempts = 0
     const fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -1047,9 +1341,9 @@ describe('DSH 0.1.2-alpha.1 Connection/Gateway contract', () => {
   })
 })
 
-function streamItem(socket: FakeWebSocket, value: unknown): unknown {
+function streamItem(socket: FakeWebSocket, value: unknown, streamId?: string): unknown {
   const opening = JSON.parse(socket.sent[0] ?? '{}') as { readonly streamId?: unknown }
-  return { type: 'item', streamId: opening.streamId, value }
+  return { type: 'item', streamId: streamId ?? opening.streamId, value }
 }
 
 function bodyText(init: RequestInit | undefined): string {
@@ -1488,3 +1782,152 @@ describe('alpha backend assembly baseline ownership', () => {
     }
   })
 })
+
+describe('alpha settled interaction reporting', () => {
+  it('reports a locally answered question as resolved for the replayed surfaces', async () => {
+    const harness = await alphaBackend()
+    try {
+      harness.socket.message({
+        type: 'item',
+        streamId: harness.eventsStreamId,
+        value: {
+          type: 'waterfall',
+          event: 'user-questions/request',
+          eventId: 'evt-q1',
+          agentId: 's1',
+          request: {
+            questions: [
+              {
+                id: 'purpose',
+                question: 'What is this for?',
+                options: [{ label: 'Docs' }, { label: 'Code' }],
+              },
+            ],
+          },
+        },
+      })
+      await waitForEvent(() => harness.received.some((event) => event.type === 'question.requested'))
+      await expect(
+        harness.backend.interactions.respondToQuestion('purpose', ['Docs']),
+      ).resolves.toBeUndefined()
+      // The Gateway drops the answering client's delivery before it settles the
+      // Remote Event, so this client never receives the `cancel` frame the alpha
+      // seam turns into a resolution. Without a local echo the Host replay cache
+      // keeps re-posting the request to every new Webview, which then renders a
+      // prompt that can no longer be answered (STALE_INTERACTION), and the task
+      // center keeps a needs-input row that only ever fails.
+      expect(harness.received.filter((event) => event.type === 'question.resolved')).toEqual([
+        { type: 'question.resolved', sessionId: 's1', questionRpcId: 'evt-q1', outcome: 'answered' },
+      ])
+    } finally {
+      await harness.close()
+    }
+  })
+
+  it('reports a locally cancelled question as resolved for the replayed surfaces', async () => {
+    const harness = await alphaBackend()
+    try {
+      harness.socket.message({
+        type: 'item',
+        streamId: harness.eventsStreamId,
+        value: {
+          type: 'waterfall',
+          event: 'user-questions/request',
+          eventId: 'evt-q2',
+          agentId: 's1',
+          request: { questions: [{ id: 'purpose', question: 'What is this for?' }] },
+        },
+      })
+      await waitForEvent(() => harness.received.some((event) => event.type === 'question.requested'))
+      await expect(harness.backend.interactions.cancelQuestion('purpose')).resolves.toBeUndefined()
+      expect(harness.received.filter((event) => event.type === 'question.resolved')).toEqual([
+        { type: 'question.resolved', sessionId: 's1', questionRpcId: 'evt-q2', outcome: 'cancelled' },
+      ])
+    } finally {
+      await harness.close()
+    }
+  })
+
+  it('reports a locally answered approval as resolved for the replayed surfaces', async () => {
+    const harness = await alphaBackend()
+    try {
+      harness.socket.message({
+        type: 'item',
+        streamId: harness.eventsStreamId,
+        value: {
+          type: 'waterfall',
+          event: 'approval/request',
+          eventId: 'evt-a1',
+          agentId: 's1',
+          request: { toolName: 'shell', reason: 'needs approval' },
+        },
+      })
+      await waitForEvent(() => harness.received.some((event) => event.type === 'permission.requested'))
+      await expect(
+        harness.backend.interactions.respondToPermission('evt-a1', 'allowed-once'),
+      ).resolves.toBeUndefined()
+      expect(harness.received.filter((event) => event.type === 'permission.resolved')).toEqual([
+        { type: 'permission.resolved', sessionId: 's1', requestId: 'evt-a1', outcome: 'allowed-once' },
+      ])
+    } finally {
+      await harness.close()
+    }
+  })
+})
+
+interface AlphaBackendHarness {
+  readonly backend: Awaited<ReturnType<Alpha1VersionAdapter['createBackend']>>
+  readonly socket: FakeWebSocket
+  readonly received: BackendEvent[]
+  readonly eventsStreamId: number
+  readonly close: () => Promise<void>
+}
+
+/** Connect one alpha backend whose `$events` waterfall stream is ready to use. */
+async function alphaBackend(): Promise<AlphaBackendHarness> {
+  FakeWebSocket.instances.length = 0
+  const adapter = new Alpha1VersionAdapter({
+    requestTimeoutMs: 1_000,
+    retryPolicy: { maximumAttempts: 1, baseDelayMs: 1, maximumDelayMs: 1 },
+    fetch: vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
+      Promise.resolve(response(init, undefined)),
+    ),
+    authCookie: () => 'dsh_session=test-cookie',
+    webSocket: FakeWebSocket,
+  })
+  const backend = await adapter.createBackend({
+    endpoint,
+    ownership: 'external',
+    capabilities: {
+      protocolVersion: 'alpha1',
+      dshVersion: '0.1.2-alpha.1',
+      features: new Set(['events']),
+    },
+  })
+  const received: BackendEvent[] = []
+  const unsubscribe = backend.events.subscribe((event) => received.push(event))
+  const socket = await waitForSocket()
+  socket.open()
+  await waitForSent(socket, 3)
+  let eventsStreamId: number | undefined
+  for (const sent of socket.sent) {
+    const frame = JSON.parse(sent) as { type?: string; endpoint?: string; streamId?: number }
+    if (frame.type === 'open' && frame.endpoint === '$events') eventsStreamId = frame.streamId
+  }
+  if (eventsStreamId === undefined) throw new Error('the alpha mux never opened $events')
+  socket.message({
+    type: 'item',
+    streamId: eventsStreamId,
+    value: { type: 'ready', clientId: 'client-1', host: { home: '/home/tester' } },
+  })
+  return {
+    backend,
+    socket,
+    received,
+    eventsStreamId,
+    close: async () => {
+      unsubscribe()
+      await backend.close()
+    },
+  }
+}

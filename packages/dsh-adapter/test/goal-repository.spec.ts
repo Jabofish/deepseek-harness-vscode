@@ -83,6 +83,51 @@ describe('Rc6GoalRepository live cache', () => {
     expect(request).not.toHaveBeenCalled()
   })
 
+  it('keeps a usable block reason from the projection and drops an unusable one', async () => {
+    const request = vi.fn(<TResponse>(): Promise<TResponse> =>
+      Promise.reject<TResponse>(new Error('goal projection should avoid history')),
+    ) as unknown as DshTransport['request']
+    const repository = new Rc6GoalRepository(transport(request))
+
+    repository.remember({
+      type: 'session.projection',
+      sessionId: 'session-5',
+      key: 'goal',
+      value: {
+        goal: {
+          id: 'goal-5',
+          revision: 3,
+          objective: 'Wait for review',
+          phase: 'blocked',
+          blockedReason: { code: 'awaiting-input', message: 'Waiting for user input' },
+        },
+      },
+    })
+    await expect(repository.list('session-5')).resolves.toEqual([
+      {
+        id: 'goal-5',
+        title: 'Wait for review',
+        status: 'blocked',
+        blockedReason: { code: 'awaiting-input', message: 'Waiting for user input' },
+      },
+    ])
+
+    for (const blockedReason of [{ code: 'awaiting-input' }, { message: 'Waiting' }, 'awaiting-input']) {
+      repository.remember({
+        type: 'session.projection',
+        sessionId: 'session-5',
+        key: 'goal',
+        value: {
+          goal: { id: 'goal-5', revision: 4, objective: 'Wait for review', phase: 'blocked', blockedReason },
+        },
+      })
+      await expect(repository.list('session-5')).resolves.toEqual([
+        { id: 'goal-5', title: 'Wait for review', status: 'blocked' },
+      ])
+    }
+    expect(request).not.toHaveBeenCalled()
+  })
+
   it('keeps usable goal state on malformed projections and clears revision refs on removal', async () => {
     const request = vi.fn(<TResponse>(): Promise<TResponse> =>
       Promise.reject<TResponse>(new Error('cached goal state should avoid history')),

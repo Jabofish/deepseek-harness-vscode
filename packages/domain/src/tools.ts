@@ -2,6 +2,11 @@ export type ToolCallStatus = 'queued' | 'running' | 'completed' | 'failed' | 'ca
 
 export interface ToolLocationView {
   readonly path: string
+  /**
+   * 0-based line, the convention VS Code positions and the editor ranges in
+   * this repository use. Upstream file locations are 1-based and are converted
+   * once, at the adapter boundary.
+   */
   readonly line?: number
 }
 
@@ -164,6 +169,12 @@ export interface PermissionRequest {
   readonly sessionId: string
   readonly title: string
   readonly description: string
+  /**
+   * Exact tool call this decision is about (`approval/requested`'s `callId`).
+   * The host sends no command with the request: a renderer resolves it from
+   * the paired call, the way DSH's own approval panel does.
+   */
+  readonly callId?: string
   /** Optional provider-supplied command preview; rc.6 normally omits it. */
   readonly commandLine?: string
   readonly risk: 'low' | 'medium' | 'high'

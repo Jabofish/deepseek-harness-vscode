@@ -2,9 +2,9 @@
 
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createElement } from 'react'
+import { createElement, type ReactElement } from 'react'
 import type { ToolCallView } from '@dsh-vscode/domain'
-import { ToolRow } from './components/ToolRow.js'
+import { ToolRow, type ToolSearchRenderProps } from './components/ToolRow.js'
 
 afterEach(() => cleanup())
 
@@ -67,6 +67,99 @@ describe('ToolRow rendering', () => {
 
     expect(document.querySelector('.dsh-tool-row__diff-file-name')?.textContent).toBe('src/feature.ts')
     expect(document.querySelector('.dsh-tool-row__diff-line--remove')?.textContent).toContain('before')
+  })
+
+  it('draws one header per file and a gap between two hunks of the same file', () => {
+    // The host computes one diff per applied hunk, so a scattered edit of one
+    // file arrives as several entries under the same path. Rendering one block
+    // per entry repeated the file name once per hunk and told the reader the
+    // card had as many files as the edit had hunks.
+    const tool: ToolCallView = {
+      id: 'multi-hunk-diff',
+      name: 'edit',
+      title: 'Edit',
+      category: 'tool',
+      status: 'completed',
+      metadata: {},
+      presentation: {
+        phase: 'result',
+        card: 'diff',
+        diffs: [
+          { path: 'src/feature.ts', oldText: 'first-old', newText: 'first-new' },
+          { path: 'src/feature.ts', oldText: 'second-old', newText: 'second-new' },
+          { path: 'src/other.ts', oldText: 'third-old', newText: 'third-new' },
+        ],
+      },
+    }
+
+    const { container } = render(createElement(ToolRow, { tool, expanded: true, onToggle: vi.fn() }))
+
+    const files = container.querySelectorAll('.dsh-tool-row__diff-file')
+    expect(files).toHaveLength(2)
+    expect(
+      [...container.querySelectorAll('.dsh-tool-row__diff-file-name')].map((node) => node.textContent),
+    ).toEqual(['src/feature.ts', 'src/other.ts'])
+    expect(files[0]?.querySelectorAll('.dsh-tool-row__diff-lines')).toHaveLength(2)
+    expect(files[0]?.querySelectorAll('.dsh-tool-row__diff-gap')).toHaveLength(1)
+    expect(files[0]?.querySelector('.dsh-tool-row__diff-gap')?.textContent).toBe('⋯')
+    // The gap belongs between the hunks of one file, not after its last hunk.
+    expect(files[1]?.querySelectorAll('.dsh-tool-row__diff-gap')).toHaveLength(0)
+  })
+
+  it('counts files rather than hunks in the diff footer', () => {
+    const tool: ToolCallView = {
+      id: 'diff-footer-count',
+      name: 'edit',
+      title: 'Edit',
+      category: 'tool',
+      status: 'completed',
+      metadata: {},
+      presentation: {
+        phase: 'result',
+        card: 'diff',
+        diffs: [
+          { path: 'src/feature.ts', oldText: 'a', newText: 'b' },
+          { path: 'src/feature.ts', oldText: 'c', newText: 'd' },
+          { path: 'src/other.ts', oldText: 'e', newText: 'f' },
+        ],
+      },
+    }
+
+    const { container } = render(createElement(ToolRow, { tool, expanded: true, onToggle: vi.fn() }))
+
+    expect(container.querySelector('.dsh-tool-row__diff-footer')?.textContent).toBe('2 files')
+  })
+
+  it('renders two hunks of one file without a duplicate-key warning', () => {
+    // React keyed each block by its path, so the second hunk of a file collided
+    // with the first and the reconciliation of an edited row was unstable.
+    const errors: string[] = []
+    const spy = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+      errors.push(args.map((value) => String(value)).join(' '))
+    })
+    const tool: ToolCallView = {
+      id: 'diff-key-collision',
+      name: 'edit',
+      title: 'Edit',
+      category: 'tool',
+      status: 'completed',
+      metadata: {},
+      presentation: {
+        phase: 'result',
+        card: 'diff',
+        diffs: [
+          { path: 'src/feature.ts', oldText: 'a', newText: 'b' },
+          { path: 'src/feature.ts', oldText: 'c', newText: 'd' },
+        ],
+      },
+    }
+    try {
+      render(createElement(ToolRow, { tool, expanded: true, onToggle: vi.fn() }))
+    } finally {
+      spy.mockRestore()
+    }
+
+    expect(errors.filter((message) => message.includes('same key'))).toEqual([])
   })
 
   it('hands structured terminal results to the optional host terminal renderer', () => {
@@ -135,6 +228,53 @@ describe('ToolRow rendering', () => {
 
     expect(document.querySelector('[data-search-renderer="paths"]')?.textContent).toBe('src/feature.ts')
     expect(document.querySelector('.dsh-tool-row__search-files')).toBeNull()
+  })
+
+  it("hands a capped search's raw result text back to renderers that replaced it", () => {
+    // The card holds the retained rows only; the `Full … stored at <locator>`
+    // footer that reaches the rows the host cap dropped lives in the result text
+    // alone, so the renderer that took over the details surface needs it.
+    const footer = 'Full glob result stored at: .dsh/spill/glob.txt. Read the file for the complete list.'
+    const searchTool = (truncated: boolean): ToolCallView => ({
+      id: 'search-recovery',
+      name: 'glob',
+      title: 'Search',
+      category: 'tool',
+      status: 'completed',
+      outputSummary: `src/feature.ts\n(${footer})`,
+      metadata: {},
+      presentation: {
+        phase: 'result',
+        card: 'search',
+        shape: 'paths',
+        paths: ['src/feature.ts'],
+        truncated,
+        total: truncated ? 900 : 1,
+      },
+    })
+
+    const seen: (string | undefined)[] = []
+    const renderSearch = (props: ToolSearchRenderProps): ReactElement => {
+      seen.push(props.recovery)
+      return createElement('output', { 'data-search-renderer': 'paths' }, props.recovery ?? 'no recovery')
+    }
+
+    const { unmount } = render(
+      createElement(ToolRow, { tool: searchTool(true), expanded: true, onToggle: vi.fn(), renderSearch }),
+    )
+    expect(seen).toEqual([`src/feature.ts\n(${footer})`])
+    unmount()
+
+    const fallback = render(
+      createElement(ToolRow, { tool: searchTool(true), expanded: true, onToggle: vi.fn() }),
+    )
+    expect(fallback.container.textContent).toContain(footer)
+    unmount()
+
+    render(
+      createElement(ToolRow, { tool: searchTool(false), expanded: true, onToggle: vi.fn(), renderSearch }),
+    )
+    expect(seen).toEqual([`src/feature.ts\n(${footer})`, undefined])
   })
 
   it('hands structured web results to the optional host web renderer', () => {
@@ -270,5 +410,71 @@ describe('ToolRow rendering', () => {
     expect(source?.querySelector('.dsh-tool-row__source-snippet')).toBeNull()
     expect(source?.querySelector('time')).toBeNull()
     expect(screen.getByRole('button', { name: sourceUrl }).textContent).toBe(sourceUrl)
+  })
+
+  it('renders a shell row whose command failed as a failed row', () => {
+    // The host settles a failing command as a completed call, so the card's own
+    // exit status is the row's only failure signal: a green "Completed" row with
+    // a red exit pill inside would state both.
+    const failing = (presentation: NonNullable<ToolCallView['presentation']>, id: string): ToolCallView => ({
+      id,
+      name: 'bash',
+      title: 'Bash',
+      category: 'tool',
+      status: 'completed',
+      metadata: {},
+      presentation,
+    })
+
+    const { container } = render(
+      createElement('div', null, [
+        createElement(ToolRow, {
+          key: 'failed',
+          tool: failing({ phase: 'result', card: 'terminal', output: 'boom', exitCode: 2 }, 'failed-exit'),
+          expanded: true,
+          onToggle: vi.fn(),
+        }),
+        createElement(ToolRow, {
+          key: 'clean',
+          tool: failing({ phase: 'result', card: 'terminal', output: 'ok', exitCode: 0 }, 'clean-exit'),
+          expanded: true,
+          onToggle: vi.fn(),
+        }),
+      ]),
+    )
+
+    const rows = container.querySelectorAll('.dsh-tool-row')
+    expect(rows[0]?.getAttribute('data-state')).toBe('error')
+    expect(rows[0]?.querySelector('.dsh-tool-row__status')?.textContent).toBe('Failed')
+    expect(rows[0]?.querySelector('.dsh-tool-row__section--error')).toBeNull()
+    expect(rows[0]?.querySelector('.dsh-tool-row__exit-pill')?.textContent).toBe('2')
+    expect(rows[1]?.getAttribute('data-state')).toBe('ok')
+    expect(rows[1]?.querySelector('.dsh-tool-row__status')?.textContent).toBe('Completed')
+  })
+
+  it('shows a long tool failure text the host sent, not a clipped preview', () => {
+    // DSH keeps a failed tool's message whole and a compiler, linter or
+    // validation failure routinely runs past any card-sized preview; the error
+    // section is the only surface that carries this text, so a clip here is the
+    // user's whole diagnosis.
+    const lines = Array.from(
+      { length: 80 },
+      (_, index) => `src/feature-${index}.ts:12:5 error no-unused-vars: 'value' is assigned but never used`,
+    )
+    const failure = `Exit code 2: 80 problems found.\n${lines.join('\n')}`
+    expect(failure.length).toBeGreaterThan(4_096)
+    const tool: ToolCallView = {
+      id: 'long-failure',
+      name: 'bash',
+      title: 'Bash',
+      category: 'tool',
+      status: 'failed',
+      error: failure,
+      metadata: {},
+    }
+
+    render(createElement(ToolRow, { tool, expanded: true, onToggle: vi.fn() }))
+
+    expect(document.querySelector('.dsh-tool-row__section--error pre')?.textContent).toBe(failure)
   })
 })

@@ -26,7 +26,14 @@ export function createVscodeCheckpointStorage(
       }
       return result
     },
-    readFile: (filePath) => Promise.resolve(workspace.fs.readFile(vscode.Uri.file(filePath))),
+    readFile: (filePath) =>
+      Promise.resolve(workspace.fs.readFile(vscode.Uri.file(filePath))).then(
+        (bytes) => bytes,
+        (error: unknown) => {
+          if (isFileNotFound(error)) return undefined
+          throw error
+        },
+      ),
     writeFile: (filePath, data) => Promise.resolve(workspace.fs.writeFile(vscode.Uri.file(filePath), data)),
     rename: (sourcePath, destinationPath, overwrite) =>
       Promise.resolve(

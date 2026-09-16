@@ -1,6 +1,8 @@
-import { useState, type ReactElement } from 'react'
+import { Fragment, useState, type ReactElement } from 'react'
+import { terminalPresentationFailed } from '@dsh-vscode/domain'
 import type {
   ToolCallView,
+  ToolLocationView,
   ToolPresentationDiff,
   ToolPresentationLine,
   ToolPresentationSource,
@@ -53,6 +55,14 @@ export interface ToolTerminalRenderProps {
 export interface ToolSearchRenderProps {
   readonly view: Extract<ToolPresentationView, { readonly card: 'search'; readonly phase: 'result' }>
   readonly translate?: PresentationTranslate
+  /**
+   * The settled raw result text, passed only when the host capped the search.
+   * The card holds the retained matches or paths, so the `Full … stored at
+   * <locator>` footer that is the one route to the dropped rows lives nowhere
+   * else once a card replaces the raw result. Absent on an uncapped result,
+   * whose card already holds every row.
+   */
+  readonly recovery?: string
 }
 
 /** Host-surface renderer for structured web search/fetch results. Link
@@ -154,7 +164,13 @@ export function toolRowModel(tool: ToolCallView, translate?: PresentationTransla
       : variant === 'skill'
         ? skillSections(tool, translate)
         : [...presentation.request, ...presentation.response]
-  const errorText = tool.error ?? (state === 'error' ? sections[sections.length - 1]?.content : undefined)
+  // A failing exit is stated by the card's own status pill; the row must not
+  // echo the bare exit number as if it were the failure text.
+  const errorText =
+    tool.error ??
+    (state === 'error' && !terminalPresentationFailed(tool.presentation)
+      ? sections[sections.length - 1]?.content
+      : undefined)
   return {
     variant,
     state,
@@ -171,7 +187,10 @@ export function ToolRow(props: ToolRowProps): ReactElement {
   const onToggle = props.onToggle ?? (() => setLocalExpanded((current) => !current))
   const model = toolRowModel(props.tool, props.translate)
   const hasDetails = model.sections.length > 0 || props.tool.error !== undefined
-  const status = toolStatusLabel(props.tool.status, props.translate)
+  const status = toolStatusLabel(
+    terminalPresentationFailed(props.tool.presentation) ? 'failed' : props.tool.status,
+    props.translate,
+  )
   const summary = model.errorSummary ?? model.summary
   const expand = label(props.translate, 'toolrow.expand', 'Expand')
   const collapse = label(props.translate, 'toolrow.collapse', 'Collapse')
@@ -233,6 +252,7 @@ export function ToolRow(props: ToolRowProps): ReactElement {
             props.renderTerminal,
             props.renderSearch,
             props.renderWeb,
+            searchRecovery(props.tool),
           )}
           {props.onOpenLink === undefined || targets.length === 0 ? null : (
             <div
@@ -256,7 +276,7 @@ export function ToolRow(props: ToolRowProps): ReactElement {
           {props.tool.error === undefined ? null : (
             <section className="dsh-tool-row__section dsh-tool-row__section--error" role="alert">
               <h4>{label(props.translate, 'toolrow.error', 'Error')}</h4>
-              <pre>{formatToolText(props.tool.error, props.translate) ?? bounded(props.tool.error)}</pre>
+              <pre>{formatToolText(props.tool.error, props.translate) ?? props.tool.error.trim()}</pre>
             </section>
           )}
         </div>
@@ -306,6 +326,19 @@ function presentationTargets(
   return targets.slice(0, 16)
 }
 
+/**
+ * The settled result text a capped search card replaced. A capped `grep`/`glob`
+ * result keeps its rows and its `Full … stored at <locator>` footer in this text
+ * only, so a card that took over the details surface has to hand it back.
+ */
+function searchRecovery(tool: ToolCallView): string | undefined {
+  const view = tool.presentation
+  if (view === undefined || view.card !== 'search' || view.phase !== 'result' || !view.truncated)
+    return undefined
+  const text = tool.outputSummary
+  return text === undefined || text.trim() === '' ? undefined : text
+}
+
 function renderStructuredDetails(
   tool: ToolCallView,
   sections: readonly ToolDetailBlock[],
@@ -316,6 +349,7 @@ function renderStructuredDetails(
   renderTerminal?: (props: ToolTerminalRenderProps) => ReactElement,
   renderSearch?: (props: ToolSearchRenderProps) => ReactElement,
   renderWeb?: (props: ToolWebRenderProps) => ReactElement,
+  recovery?: string,
 ): ReactElement {
   const view = tool.presentation
   return (
@@ -332,11 +366,12 @@ function renderStructuredDetails(
             renderTerminal,
             renderSearch,
             renderWeb,
+            recovery,
           )}
       {tool.error === undefined ? null : (
         <section className="dsh-tool-row__section dsh-tool-row__section--error" role="alert">
           <h4>{label(t, 'toolrow.error', 'Error')}</h4>
-          <pre>{formatToolText(tool.error, t) ?? bounded(tool.error)}</pre>
+          <pre>{formatToolText(tool.error, t) ?? tool.error.trim()}</pre>
         </section>
       )}
     </>
@@ -366,6 +401,7 @@ function renderPresentationView(
   renderTerminal?: (props: ToolTerminalRenderProps) => ReactElement,
   renderSearch?: (props: ToolSearchRenderProps) => ReactElement,
   renderWeb?: (props: ToolWebRenderProps) => ReactElement,
+  recovery?: string,
 ): ReactElement {
   switch (view.card) {
     case 'terminal':
@@ -375,7 +411,7 @@ function renderPresentationView(
     case 'diff':
       return renderDiffView(view, t, renderDiff)
     case 'search':
-      return renderSearchView(view, t, renderSearch, fallback)
+      return renderSearchView(view, t, renderSearch, fallback, recovery)
     case 'read':
       return renderReadView(view, t, renderCode)
     case 'web':
@@ -412,19 +448,31 @@ function renderSearchView(
   t: PresentationTranslate | undefined,
   renderSearch: ((props: ToolSearchRenderProps) => ReactElement) | undefined,
   fallback: readonly ToolDetailBlock[],
+  recovery: string | undefined,
 ): ReactElement {
   if (renderSearch !== undefined) {
     try {
       return renderSearch({
         view,
         ...(t === undefined ? {} : { translate: t }),
+        ...(recovery === undefined ? {} : { recovery }),
       })
     } catch {
       // A host renderer is an enhancement only; retain the shared view when it
       // cannot handle an otherwise validated search result.
     }
   }
-  return view.shape === 'matches' ? renderSearchMatches(view, t) : renderSections(fallback)
+  const card = view.shape === 'matches' ? renderSearchMatches(view, t) : renderSections(fallback)
+  if (recovery === undefined) return card
+  return (
+    <>
+      {card}
+      <section className="dsh-tool-row__section">
+        <h4>{label(t, 'toolrow.presentation.fullResult', 'Full result')}</h4>
+        <pre>{recovery}</pre>
+      </section>
+    </>
+  )
 }
 
 function renderTerminalResult(
@@ -484,40 +532,68 @@ function renderDiffView(
       // when the optional implementation cannot handle this payload.
     }
   }
+  const files = groupDiffFiles(view.diffs)
   return (
     <>
       <section className="dsh-tool-row__section dsh-tool-row__diff-section">
         <h4>{label(t, 'toolrow.presentation.diff', 'Diff')}</h4>
         <div className="dsh-tool-row__diff-list">
-          {view.diffs.map((diff) => (
-            <div className="dsh-tool-row__diff-file" key={diff.path}>
-              <div className="dsh-tool-row__diff-file-name">{diff.path}</div>
-              <pre className="dsh-tool-row__diff-lines">
-                {diffLines(diff.oldText, diff.newText).map((line, index) => (
-                  <span
-                    className={`dsh-tool-row__diff-line dsh-tool-row__diff-line--${line.kind}`}
-                    key={`${index}:${line.text}`}
-                  >
-                    <span className="dsh-tool-row__diff-prefix" aria-hidden="true">
-                      {line.kind === 'add' ? '+' : line.kind === 'remove' ? '−' : ' '}
-                    </span>
-                    <span>{line.text}</span>
-                  </span>
-                ))}
-              </pre>
+          {files.map((file) => (
+            <div className="dsh-tool-row__diff-file" key={file.path}>
+              <div className="dsh-tool-row__diff-file-name">{file.path}</div>
+              {file.hunks.map((hunk, hunkIndex) => (
+                <Fragment key={`${file.path}:${hunkIndex}`}>
+                  {hunkIndex > 0 ? (
+                    <div className="dsh-tool-row__diff-gap" aria-hidden="true">
+                      ⋯
+                    </div>
+                  ) : null}
+                  <pre className="dsh-tool-row__diff-lines">
+                    {diffLines(hunk.oldText, hunk.newText).map((line, index) => (
+                      <span
+                        className={`dsh-tool-row__diff-line dsh-tool-row__diff-line--${line.kind}`}
+                        key={`${index}:${line.text}`}
+                      >
+                        <span className="dsh-tool-row__diff-prefix" aria-hidden="true">
+                          {line.kind === 'add' ? '+' : line.kind === 'remove' ? '−' : ' '}
+                        </span>
+                        <span>{line.text}</span>
+                      </span>
+                    ))}
+                  </pre>
+                </Fragment>
+              ))}
             </div>
           ))}
         </div>
       </section>
-      {view.diffs.length > 1 ? (
+      {files.length > 1 ? (
         <footer className="dsh-tool-row__diff-footer">
-          {label(t, 'toolrow.presentation.fileCount', `${view.diffs.length} files`, {
-            count: view.diffs.length,
+          {label(t, 'toolrow.presentation.fileCount', `${files.length} files`, {
+            count: files.length,
           })}
         </footer>
       ) : null}
     </>
   )
+}
+
+/**
+ * The host states one diff per applied hunk, so one file arrives as a run of
+ * entries under the same path. The card is a statement about files — a name per
+ * file, and the hunks of one file told apart by the reference card's `⋯`
+ * instead of a repeated header.
+ */
+function groupDiffFiles(
+  diffs: readonly ToolPresentationDiff[],
+): readonly { readonly path: string; readonly hunks: readonly ToolPresentationDiff[] }[] {
+  const files = new Map<string, ToolPresentationDiff[]>()
+  for (const diff of diffs) {
+    const hunks = files.get(diff.path)
+    if (hunks === undefined) files.set(diff.path, [diff])
+    else hunks.push(diff)
+  }
+  return [...files].map(([path, hunks]) => ({ path, hunks }))
 }
 
 function renderSearchMatches(
@@ -709,7 +785,8 @@ function splitDiffLines(value: string): readonly string[] {
 function rowState(tool: ToolCallView): ToolRowState {
   if (tool.status === 'queued' || tool.status === 'running') return 'running'
   if (tool.status === 'cancelled') return 'stopped'
-  return tool.status === 'failed' || tool.error !== undefined ? 'error' : 'ok'
+  if (tool.status === 'failed' || tool.error !== undefined) return 'error'
+  return terminalPresentationFailed(tool.presentation) ? 'error' : 'ok'
 }
 
 function rowTitle(variant: ToolRowVariant, tool: ToolCallView, t?: PresentationTranslate): string {
@@ -839,6 +916,14 @@ function skillSections(tool: ToolCallView, t?: PresentationTranslate): readonly 
     : [{ label: label(t, 'toolrow.instructions', 'Instructions'), content: output }]
 }
 
+/**
+ * The stored hint is 0-based so it can drive an editor position; `path:line` is
+ * read by people and by every other tool in the 1-based convention.
+ */
+function locationText(location: ToolLocationView): string {
+  return location.line === undefined ? location.path : `${location.path}:${location.line + 1}`
+}
+
 function structuredSections(
   view: ToolPresentationView | undefined,
   t?: PresentationTranslate,
@@ -848,10 +933,13 @@ function structuredSections(
   const field = (key: string, fallback: string): string => label(t, `toolrow.presentation.${key}`, fallback)
   const add = (labelText: string, content: string | undefined): void => {
     if (content !== undefined && content.trim() !== '')
-      result.push({ label: labelText, content: bounded(content) })
+      result.push({ label: labelText, content: content.trim() })
   }
   const addLines = (labelText: string, lines: readonly string[]): void => {
     if (lines.length > 0) add(labelText, lines.map((line) => formatRawToolText(line, t)).join('\n'))
+  }
+  const addLocations = (labelText: string, locations: readonly ToolLocationView[]): void => {
+    addLines(labelText, locations.map(locationText))
   }
   switch (view.card) {
     case 'generic':
@@ -861,13 +949,7 @@ function structuredSections(
       )
       if (view.phase === 'call') {
         add(field('input', 'Input'), formatRawToolText(view.rawInput, t))
-        if (view.locations !== undefined)
-          addLines(
-            field('files', 'Files'),
-            view.locations.map(
-              (location) => `${location.path}${location.line === undefined ? '' : `:${location.line}`}`,
-            ),
-          )
+        if (view.locations !== undefined) addLocations(field('files', 'Files'), view.locations)
       }
       break
     case 'terminal':
@@ -885,12 +967,7 @@ function structuredSections(
         view.diffs.map((diff) => formatDiff(diff.path, diff.oldText, diff.newText)),
       )
       if (view.phase === 'call' && view.locations !== undefined)
-        addLines(
-          field('files', 'Files'),
-          view.locations.map(
-            (location) => `${location.path}${location.line === undefined ? '' : `:${location.line}`}`,
-          ),
-        )
+        addLocations(field('files', 'Files'), view.locations)
       break
     case 'search':
       if (view.shape === 'paths') {
@@ -995,7 +1072,7 @@ function visibleParts(value: unknown): readonly string[] {
   if (typeof value === 'string') {
     const decoded = decodeToolValue(value)
     if (decoded !== value) return visibleParts(decoded)
-    return value.trim() === '' ? [] : [bounded(value)]
+    return value.trim() === '' ? [] : [value.trim()]
   }
   if (Array.isArray(value)) return value.flatMap(visibleParts)
   if (value === null || typeof value !== 'object') return []
@@ -1017,11 +1094,6 @@ function stringField(value: unknown, key: string): string | undefined {
 function firstLine(value: string): string {
   const line = value.split(/\r?\n/u, 1)[0] ?? value
   return line.length > 240 ? `${line.slice(0, 239)}…` : line
-}
-
-function bounded(value: string): string {
-  const trimmed = value.trim()
-  return trimmed.length > 4_096 ? `${trimmed.slice(0, 4_095)}…` : trimmed
 }
 
 function arrayCount(value: unknown, key: string): number | undefined {

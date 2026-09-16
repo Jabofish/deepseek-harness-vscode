@@ -691,6 +691,39 @@ describe('App connected rendering', () => {
     expect(ingestAttachment).not.toHaveBeenCalled()
   })
 
+  it('pre-checks image limits that also list a type this client cannot encode', () => {
+    const state = connectedState(true)
+    const ingestAttachment = vi.fn().mockResolvedValue(undefined)
+    currentStore = {
+      ...storeFor({
+        ...state,
+        projections: {
+          s1: {
+            imageLimits: {
+              maxImageBytes: 2,
+              maxImagesPerMessage: 20,
+              maxMessageImageBytes: 100,
+              maxImagePixels: 100,
+              maxImageDimension: 10,
+              mediaTypes: ['image/png', 'image/avif'],
+            },
+          },
+        },
+      }),
+      ingestAttachment,
+    }
+    render(<App />)
+    const file = new File(['too-large'], 'screenshot.png', { type: 'image/png' })
+    fireEvent.paste(screen.getByRole('textbox', { name: 'Prompt' }), {
+      clipboardData: { files: [file] },
+    })
+
+    // The unknown type only narrows what may be sent; the advertised byte
+    // limit still applies to the types this Webview can produce.
+    expect(screen.getByRole('alert').textContent).toContain('DSH image limit of 2 B')
+    expect(ingestAttachment).not.toHaveBeenCalled()
+  })
+
   it('does not use a partially malformed image-limit projection as an admission policy', async () => {
     const state = connectedState(true)
     const ingestAttachment = vi.fn().mockResolvedValue(undefined)
@@ -1134,5 +1167,50 @@ describe('App connected rendering', () => {
     expect(interactions?.parentElement?.classList.contains('dsh-conversation')).toBe(true)
     expect(interactions?.getAttribute('aria-live')).toBe('polite')
     expect(container.querySelector('.dsh-compose-area .dsh-interaction')).toBeNull()
+  })
+
+  it('shows the command of the paired tool call on a pending approval', () => {
+    const command = 'rm -rf build && pnpm install --frozen-lockfile && pnpm build'
+    const state = connectedState(true)
+    currentStore = storeFor({
+      ...state,
+      permissions: [
+        {
+          id: 'approval-1',
+          sessionId: 's1',
+          title: 'bash',
+          description: 'The command needs approval.',
+          callId: 'call-bash-1',
+          risk: 'medium',
+          options: [
+            { id: 'allowed-once', label: 'Allow once', kind: 'allow-once' },
+            { id: 'rejected', label: 'Reject', kind: 'deny' },
+          ],
+        },
+      ],
+      timeline: {
+        ...state.timeline,
+        nodes: [
+          {
+            kind: 'tool',
+            id: 'call-bash-1',
+            tool: {
+              id: 'call-bash-1',
+              name: 'bash',
+              category: 'terminal',
+              title: command,
+              status: 'running',
+              presentation: { phase: 'call', card: 'terminal', title: command },
+              metadata: {},
+            },
+          },
+        ],
+      },
+    })
+    render(<App />)
+
+    // The request itself names the tool, not the command: what the user is
+    // authorizing only exists on the paired call.
+    expect(screen.getByText(command)).toBeDefined()
   })
 })

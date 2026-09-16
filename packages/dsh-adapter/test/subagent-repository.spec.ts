@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { DshTransport } from '../src/contracts.js'
 import { Rc6SubagentRepository } from '../src/repositories/subagent-repository.js'
+import { SubagentAddressRegistry } from '../src/repositories/shared/subagent-addresses.js'
 
 interface Call {
   readonly method: string
@@ -176,7 +177,9 @@ describe('Rc6SubagentRepository catalog', () => {
         childSessionId: 'child',
         mode: 'continuable',
         content: [{ type: 'text', text: 'still routed' }],
-        clientTimeZone: expect.stringMatching(/^[A-Za-z_]+\/[A-Za-z_0-9+-]+$|^UTC$/u) as unknown,
+        clientTimeZone: expect.stringMatching(
+          /^[A-Za-z][A-Za-z0-9_+.-]*(?:\/[A-Za-z0-9_+.-]+)+$|^UTC$/u,
+        ) as unknown,
       },
     })
   })
@@ -209,7 +212,9 @@ describe('Rc6SubagentRepository addressed operations', () => {
           { type: 'text', text: '请阅读附件' },
           { type: 'text', text: '\n\nAttached file: note.txt\n\nhi\n\nEnd of attached file: note.txt' },
         ],
-        clientTimeZone: expect.stringMatching(/^[A-Za-z_]+\/[A-Za-z_0-9+-]+$|^UTC$/u) as unknown,
+        clientTimeZone: expect.stringMatching(
+          /^[A-Za-z][A-Za-z0-9_+.-]*(?:\/[A-Za-z0-9_+.-]+)+$|^UTC$/u,
+        ) as unknown,
       },
     })
   })
@@ -255,7 +260,9 @@ describe('Rc6SubagentRepository addressed operations', () => {
         mode: 'continuable',
         delivery: 'queue',
         content: [{ type: 'text', text: 'queue follow-up' }],
-        clientTimeZone: expect.stringMatching(/^[A-Za-z_]+\/[A-Za-z_0-9+-]+$|^UTC$/u) as unknown,
+        clientTimeZone: expect.stringMatching(
+          /^[A-Za-z][A-Za-z0-9_+.-]*(?:\/[A-Za-z0-9_+.-]+)+$|^UTC$/u,
+        ) as unknown,
       },
     })
 
@@ -293,7 +300,9 @@ describe('Rc6SubagentRepository addressed operations', () => {
           { type: 'text', text: '看这张图' },
           { type: 'image', mediaType: 'image/png', data: 'iVBORw0KGgo=', name: 'screen.png' },
         ],
-        clientTimeZone: expect.stringMatching(/^[A-Za-z_]+\/[A-Za-z_0-9+-]+$|^UTC$/u) as unknown,
+        clientTimeZone: expect.stringMatching(
+          /^[A-Za-z][A-Za-z0-9_+.-]*(?:\/[A-Za-z0-9_+.-]+)+$|^UTC$/u,
+        ) as unknown,
       },
     })
   })
@@ -350,7 +359,9 @@ describe('Rc6SubagentRepository addressed operations', () => {
           childSessionId: 'continuable-child',
           mode: 'continuable',
           content: [{ type: 'text', text: 'follow up' }],
-          clientTimeZone: expect.stringMatching(/^[A-Za-z_]+\/[A-Za-z_0-9+-]+$|^UTC$/u) as unknown,
+          clientTimeZone: expect.stringMatching(
+            /^[A-Za-z][A-Za-z0-9_+.-]*(?:\/[A-Za-z0-9_+.-]+)+$|^UTC$/u,
+          ) as unknown,
         },
       },
       {
@@ -372,6 +383,45 @@ describe('Rc6SubagentRepository addressed operations', () => {
         },
       },
     ])
+  })
+
+  it('reports the oldest durable sequence as the paging cursor of a child transcript', async () => {
+    const repository = new Rc6SubagentRepository(
+      transportFor((method) => {
+        if (method === 'subagent.list') return healthyCatalog
+        if (method === 'subagent.history')
+          return {
+            events: [
+              { event: { type: 'system/message', seq: 40, time: 1_000 } },
+              { event: { type: 'turn/start', seq: 42, time: 2_000, data: { turn: 1 } } },
+            ],
+            hasMore: true,
+          }
+        throw new Error(`unexpected RPC ${method}`)
+      }),
+    )
+    await repository.list('parent')
+
+    const page = await repository.history('continuable-child')
+
+    // The hidden prompt marker still holds the oldest durable sequence: a
+    // cursor taken from the visible rows alone would leave the page after it
+    // unreachable whenever a page opens with the marker.
+    expect(page).toMatchObject({ hasMore: true, beforeSequence: 40 })
+    expect(page.events.map((entry) => entry.sequence)).toEqual([42])
+  })
+
+  it('keeps the page cursor absent when the page holds no durable record', async () => {
+    const repository = new Rc6SubagentRepository(
+      transportFor((method) => {
+        if (method === 'subagent.list') return healthyCatalog
+        if (method === 'subagent.history') return { events: [], hasMore: false }
+        throw new Error(`unexpected RPC ${method}`)
+      }),
+    )
+    await repository.list('parent')
+
+    await expect(repository.history('continuable-child')).resolves.toEqual({ events: [], hasMore: false })
   })
 
   it('rejects malformed prompt and interrupt receipts', async () => {
@@ -421,6 +471,72 @@ describe('Rc6SubagentRepository addressed operations', () => {
       code: 'CAPABILITY_UNAVAILABLE',
     })
     await expect(repository.interrupt('one-shot-child')).rejects.toMatchObject({
+      code: 'CAPABILITY_UNAVAILABLE',
+    })
+  })
+})
+
+describe('Rc6SubagentRepository parent routing', () => {
+  const child = (id: string, mode: 'one-shot' | 'continuable'): unknown => ({
+    kind: 'child',
+    id,
+    ...(mode === 'continuable' ? { label: id } : {}),
+    activity: 'inactive',
+    hasChildren: false,
+    mode,
+  })
+
+  it('publishes every catalog child to the registry the transport reads', async () => {
+    const addresses = new SubagentAddressRegistry()
+    const repository = new Rc6SubagentRepository(
+      transportFor(() => ({
+        entries: [child('child-a', 'continuable'), child('child-b', 'one-shot')],
+        parentAvailable: true,
+      })),
+      { addresses },
+    )
+
+    await repository.list('parent')
+
+    expect(repository.parentOf('child-a')).toBe('parent')
+    expect(repository.parentOf('child-b')).toBe('parent')
+    expect(repository.parentOf('never-listed')).toBeUndefined()
+    expect(addresses.resolve('child-a')).toEqual({ parentSessionId: 'parent', mode: 'continuable' })
+    expect(addresses.resolve('child-b')).toEqual({ parentSessionId: 'parent', mode: 'one-shot' })
+  })
+
+  it('drops routing for a child the newest catalog no longer lists as a child', async () => {
+    const calls: Call[] = []
+    let catalog = 0
+    const repository = new Rc6SubagentRepository(
+      transportFor((method) => {
+        if (method !== 'subagent.list') throw new Error(`unexpected RPC ${method}`)
+        catalog += 1
+        // The second refresh turns the dropped child into a diagnostic: the
+        // host keeps the row but no longer describes it as resumable, so an
+        // ownership walk must not keep authorizing it from a stale catalog.
+        return catalog === 1
+          ? {
+              entries: [child('child-a', 'continuable'), child('child-b', 'continuable')],
+              parentAvailable: true,
+            }
+          : {
+              entries: [
+                child('child-a', 'continuable'),
+                { kind: 'diagnostic', id: 'child-b', reason: 'corrupt' },
+              ],
+              parentAvailable: true,
+            }
+      }, calls),
+    )
+
+    await repository.list('parent')
+    expect(repository.parentOf('child-b')).toBe('parent')
+
+    await repository.list('parent')
+    expect(repository.parentOf('child-a')).toBe('parent')
+    expect(repository.parentOf('child-b')).toBeUndefined()
+    await expect(repository.send('child-b', 'hello')).rejects.toMatchObject({
       code: 'CAPABILITY_UNAVAILABLE',
     })
   })

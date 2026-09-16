@@ -81,6 +81,7 @@ import {
   Rc152VersionAdapter,
   VersionedBackendFactory,
   VersionedBackendProbe,
+  redactMultilineText,
   redactText,
   type ExportFileSystem,
 } from '@dsh-vscode/dsh-adapter'
@@ -98,7 +99,8 @@ import {
 } from '@dsh-vscode/webview-protocol'
 
 import { registerCommands } from './commands/register-commands.js'
-import { RedactedDiagnostics } from './backend/diagnostics.js'
+import { createAdapterOptions } from './backend/adapter-options.js'
+import { diagnosticLevel, RedactedDiagnostics } from './backend/diagnostics.js'
 import { CompanionRegistryDiscoveryProvider } from './backend/discovery/companion-provider.js'
 import { ConfiguredPortDiscoveryProvider } from './backend/discovery/configured-provider.js'
 import { DefaultPortDiscoveryProvider } from './backend/discovery/default-port-provider.js'
@@ -108,7 +110,7 @@ import { LinuxProcessDiscoveryProvider } from './backend/discovery/linux-process
 import { MacOsProcessDiscoveryProvider } from './backend/discovery/macos-process-provider.js'
 import { WindowsProcessDiscoveryProvider } from './backend/discovery/windows-process-provider.js'
 import { DshProcessSupervisor, type SpawnedChild } from './backend/process-supervisor.js'
-import { isManagedTemporaryWorkspacePath, isPathWithin } from './backend/path-safety.js'
+import { isManagedTemporaryWorkspacePath } from './backend/path-safety.js'
 import { DshRuntimeLocator, readStoredRuntimePath } from './backend/runtime-locator.js'
 import { isAbsoluteFilePath, resolveNpmExecutable, runtimePathEntries } from './backend/runtime-paths.js'
 import { TemporaryWorkspaceManager, type StoredTemporaryWorkspace } from './backend/temporary-workspace.js'
@@ -116,6 +118,7 @@ import { resolveWindowsShim } from './backend/windows-shim.js'
 import { normalizeLoopbackUrl, VsCodeConfigurationSource } from './config/configuration-source.js'
 import { DSH_DOCUMENTATION_URL, DSH_PACKAGE, OUTPUT_CHANNEL_NAME } from './constants.js'
 import { WebviewMessageRouter } from './view/message-router.js'
+import { ownsCurrentWorkspaceSession } from './view/session-ownership.js'
 import { DshWebviewViewProvider } from './view/dsh-webview-view-provider.js'
 import {
   publicWorkspaceRelativePath,
@@ -128,6 +131,7 @@ import { requestOptionalProviderApiKey, requestProviderSecret } from './vscode/c
 import { moveOrExplainSecondarySidebar } from './vscode/secondary-sidebar.js'
 import { updateContextKeys, updateEditorContextAvailabilityKeys } from './vscode/context-keys.js'
 import { DSH_CHAT_VIEW_OWNER_ID, EditorContextProvider } from './editor/editor-context-provider.js'
+import { resolveLinkTarget } from './navigation/link-target.js'
 import { NavigationService } from './navigation/navigation-service.js'
 import { ChangeSetTracker } from './changes/change-set-tracker.js'
 import { CheckpointStore } from './checkpoints/checkpoint-store.js'
@@ -141,7 +145,11 @@ import {
   createVscodePromptTemplateStorage,
   createVscodeWorkspacePromptTemplateStorage,
 } from './prompts/vscode-prompt-template-adapter.js'
-import { workspaceFolderId, WorkspacePathGuard } from './editor/workspace-path-guard.js'
+import {
+  workspaceFolderId,
+  WorkspacePathGuard,
+  type ResolvedWorkspacePath,
+} from './editor/workspace-path-guard.js'
 import {
   AttachmentStore,
   decodeCanonicalBase64,
@@ -153,6 +161,7 @@ import {
   attachmentMimeType,
   isImageMimeType,
   prepareAttachment,
+  readAttachmentFile,
   validImageBytes,
 } from './attachments/attachment-codec.js'
 
@@ -184,7 +193,9 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
   const configuration = new VsCodeConfigurationSource(vscode.workspace)
   const extensionVersion = readExtensionVersion(context)
   const channel = vscode.window.createOutputChannel(OUTPUT_CHANNEL_NAME)
-  const diagnostics = new RedactedDiagnostics(channel)
+  const diagnostics = new RedactedDiagnostics(channel, () =>
+    diagnosticLevel(vscode.workspace.getConfiguration('dsh.developer').get<string>('logLevel')),
+  )
   const currentWorkspaceFolders = (): readonly vscode.WorkspaceFolder[] => {
     const folders = vscode.workspace.workspaceFolders
     if (folders !== undefined && folders.length > 0) return folders
@@ -201,24 +212,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
   }
   const openMarkdownLink = async (href: string, revealInFolder = false): Promise<OpenLinkResult> => {
     const target = href.trim()
-    if (target === '' || target.startsWith('#'))
-      return { opened: false, message: 'This Markdown link does not contain a file target.' }
-
-    let parsed: URL | undefined
-    try {
-      parsed = new URL(target)
-    } catch {
-      parsed = undefined
-    }
-    if (parsed?.protocol === 'http:' || parsed?.protocol === 'https:') {
-      const opened = await vscode.env.openExternal(vscode.Uri.parse(target))
-      return opened ? { opened: true } : { opened: false, message: 'Unable to open the external link.' }
-    }
-
     const fileUri = target.toLowerCase().startsWith('file:') ? vscode.Uri.parse(target) : undefined
-    if (parsed?.protocol !== undefined && fileUri === undefined && !isAbsoluteFilePath(target))
-      return { opened: false, message: 'Only workspace files and http(s) links can be opened.' }
-
     const roots = [
       ...currentWorkspaceFolders().map((folder) => folder.uri.fsPath),
       ...(temporaryWorkspaceManager.current?.path === undefined
@@ -228,33 +222,24 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
         ? []
         : [temporaryWorkspaceManager.reference.path]),
     ]
-    const basePath = currentWorkspaceFolder()?.uri.fsPath ?? roots[0]
-    if (basePath === undefined)
-      return { opened: false, message: 'Open a workspace before opening a relative file link.' }
-
-    let filePath: string
-    try {
-      if (fileUri !== undefined) filePath = fileUri.fsPath
-      else {
-        const separator = target.search(/[?#]/)
-        const pathPart = separator === -1 ? target : target.slice(0, separator)
-        const decoded = decodeURIComponent(pathPart).replace(/^[/\\]+/, '')
-        if (decoded === '') return { opened: false, message: 'The file link is empty.' }
-        filePath = isAbsoluteFilePath(decoded) ? path.resolve(decoded) : path.resolve(basePath, decoded)
-      }
-    } catch {
-      return { opened: false, message: 'The file link is not valid.' }
+    const resolved = resolveLinkTarget({
+      href: target,
+      roots,
+      basePath: currentWorkspaceFolder()?.uri.fsPath ?? roots[0],
+      ...(fileUri === undefined ? {} : { fileUrlPath: fileUri.fsPath }),
+    })
+    if (resolved.kind === 'rejected') return { opened: false, message: resolved.message }
+    if (resolved.kind === 'external') {
+      const opened = await vscode.env.openExternal(vscode.Uri.parse(resolved.url))
+      return opened ? { opened: true } : { opened: false, message: 'Unable to open the external link.' }
     }
-
-    if (!roots.some((root) => isPathWithin(root, filePath)))
-      return { opened: false, message: 'Only files inside the current workspace can be opened.' }
 
     try {
       if (revealInFolder) {
-        await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(filePath))
+        await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(resolved.path))
         return { opened: true }
       }
-      const document = await vscode.workspace.openTextDocument(vscode.Uri.file(filePath))
+      const document = await vscode.workspace.openTextDocument(vscode.Uri.file(resolved.path))
       await vscode.window.showTextDocument(document, { preview: true })
       return { opened: true }
     } catch {
@@ -329,22 +314,20 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     new LinuxProcessDiscoveryProvider(),
     new MacOsProcessDiscoveryProvider(),
   ])
-  const adapterOptions = {
-    get requestTimeoutMs() {
-      return configuration.read().connection.requestTimeoutMs
-    },
-    get retryPolicy() {
-      return { maximumAttempts: 2, baseDelayMs: 100, maximumDelayMs: 500 }
-    },
-    fetch: globalThis.fetch,
-    samePath: sameWorkspacePath,
-    exportFileSystem: createExportFileSystem(vscode),
-  }
   const endpointCookies = new Map<string, string>()
   // Keep the process launch URL in the Extension Host so the browser can
   // perform its own cookie exchange. The URL is never included in Webview
   // state or messages.
   const endpointLaunchUrls = new Map<string, string>()
+  // One shared object for every adapter: spreading it would evaluate the
+  // getters here, and building the composition root must never read settings.
+  const adapterOptions = createAdapterOptions({
+    requestTimeoutMs: () => configuration.read().connection.requestTimeoutMs,
+    fetch: globalThis.fetch,
+    samePath: sameWorkspacePath,
+    exportFileSystem: createExportFileSystem(vscode),
+    authCookie: (endpoint) => endpointCookies.get(endpoint.baseUrl),
+  })
   const rememberReadyEndpoint = async (endpoint: BackendEndpoint, launchUrl?: string): Promise<void> => {
     // A managed port can be reused by a fresh DSH process. Never let a cookie
     // from the previous process authorize the new endpoint.
@@ -376,58 +359,19 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     endpointCookies.set(endpoint.baseUrl, cookie)
     endpointLaunchUrls.set(endpoint.baseUrl, launchUrl)
   }
-  const alpha2Adapter = new Alpha2VersionAdapter({
-    ...adapterOptions,
-    authCookie: (endpoint) => endpointCookies.get(endpoint.baseUrl),
-  })
-  const alpha132Adapter = new Alpha132VersionAdapter({
-    ...adapterOptions,
-    authCookie: (endpoint) => endpointCookies.get(endpoint.baseUrl),
-  })
-  const alpha151Adapter = new Alpha151VersionAdapter({
-    ...adapterOptions,
-    authCookie: (endpoint) => endpointCookies.get(endpoint.baseUrl),
-  })
-  const alpha152Adapter = new Alpha152VersionAdapter({
-    ...adapterOptions,
-    authCookie: (endpoint) => endpointCookies.get(endpoint.baseUrl),
-  })
-  const rc151Adapter = new Rc151VersionAdapter({
-    ...adapterOptions,
-    authCookie: (endpoint) => endpointCookies.get(endpoint.baseUrl),
-  })
-  const rc152Adapter = new Rc152VersionAdapter({
-    ...adapterOptions,
-    authCookie: (endpoint) => endpointCookies.get(endpoint.baseUrl),
-  })
-  const alpha161Adapter = new Alpha161VersionAdapter({
-    ...adapterOptions,
-    authCookie: (endpoint) => endpointCookies.get(endpoint.baseUrl),
-  })
-  const alpha13Adapter = new Alpha13VersionAdapter({
-    ...adapterOptions,
-    authCookie: (endpoint) => endpointCookies.get(endpoint.baseUrl),
-  })
-  const rc13Adapter = new Rc13VersionAdapter({
-    ...adapterOptions,
-    authCookie: (endpoint) => endpointCookies.get(endpoint.baseUrl),
-  })
-  const alpha3Adapter = new Alpha3VersionAdapter({
-    ...adapterOptions,
-    authCookie: (endpoint) => endpointCookies.get(endpoint.baseUrl),
-  })
-  const alpha5Adapter = new Alpha5VersionAdapter({
-    ...adapterOptions,
-    authCookie: (endpoint) => endpointCookies.get(endpoint.baseUrl),
-  })
-  const alpha4Adapter = new Alpha4VersionAdapter({
-    ...adapterOptions,
-    authCookie: (endpoint) => endpointCookies.get(endpoint.baseUrl),
-  })
-  const alpha1Adapter = new Alpha1VersionAdapter({
-    ...adapterOptions,
-    authCookie: (endpoint) => endpointCookies.get(endpoint.baseUrl),
-  })
+  const alpha2Adapter = new Alpha2VersionAdapter(adapterOptions)
+  const alpha132Adapter = new Alpha132VersionAdapter(adapterOptions)
+  const alpha151Adapter = new Alpha151VersionAdapter(adapterOptions)
+  const alpha152Adapter = new Alpha152VersionAdapter(adapterOptions)
+  const rc151Adapter = new Rc151VersionAdapter(adapterOptions)
+  const rc152Adapter = new Rc152VersionAdapter(adapterOptions)
+  const alpha161Adapter = new Alpha161VersionAdapter(adapterOptions)
+  const alpha13Adapter = new Alpha13VersionAdapter(adapterOptions)
+  const rc13Adapter = new Rc13VersionAdapter(adapterOptions)
+  const alpha3Adapter = new Alpha3VersionAdapter(adapterOptions)
+  const alpha5Adapter = new Alpha5VersionAdapter(adapterOptions)
+  const alpha4Adapter = new Alpha4VersionAdapter(adapterOptions)
+  const alpha1Adapter = new Alpha1VersionAdapter(adapterOptions)
   const rc12Adapter = new Rc12VersionAdapter(adapterOptions)
   const rc11Adapter = new Rc11VersionAdapter(adapterOptions)
   const rc8Adapter = new Rc8VersionAdapter(adapterOptions)
@@ -800,13 +744,40 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
   const changeTracker = new ChangeSetTracker({
     resolveSessionWorkspaceFolderId: async (backend, sessionId) =>
       workspaceFolderIdForSession(await backend.sessions.get(sessionId)),
-    readObservedHash: async (workspaceId, relativePath) => {
-      const resolved = changePathGuard.resolve(workspaceId, relativePath)
-      await changePathGuard.assertRegularFile(resolved)
-      const fileStat = await vscode.workspace.fs.stat(resolved.uri)
+    // The host states every change path as an absolute host path, while the
+    // review keys a change by its workspace-relative path. Fit it here, where
+    // the folder that owns the workspace id is still known.
+    toWorkspaceRelativePath: (workspaceId, hostPath) => {
+      const folder = currentWorkspaceFolders().find(
+        (candidate) => workspaceFolderId(candidate) === workspaceId,
+      )
+      if (folder === undefined) return undefined
+      return publicWorkspaceRelativePath(hostPath, folder.uri.fsPath, [folder.uri.fsPath])
+    },
+    observeChangePath: async (workspaceId, relativePath) => {
+      let resolved: ResolvedWorkspacePath
+      try {
+        resolved = changePathGuard.resolve(workspaceId, relativePath)
+      } catch {
+        return undefined
+      }
+      // A missing path is the verified post-state of a deletion. Every other
+      // stat failure (permissions, unreachable share, symlink) stays unknown.
+      let fileStat: vscode.FileStat | undefined
+      try {
+        fileStat = await vscode.workspace.fs.stat(resolved.uri)
+      } catch (error) {
+        if (!isMissingFileError(error)) return undefined
+      }
+      if (fileStat === undefined) return { kind: 'absent' }
+      if (
+        (fileStat.type & vscode.FileType.File) === 0 ||
+        (fileStat.type & vscode.FileType.SymbolicLink) !== 0
+      )
+        return undefined
       if (fileStat.size > 16 * 1024 * 1024) return undefined
       const bytes = await vscode.workspace.fs.readFile(resolved.uri)
-      return createHash('sha256').update(bytes).digest('hex')
+      return { kind: 'hash', hash: createHash('sha256').update(bytes).digest('hex') }
     },
     onChange: (change) => {
       void postChangeFeatureEvent(change)
@@ -820,6 +791,13 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     enabled: () => vscode.workspace.getConfiguration('dsh.checkpoints').get<boolean>('enabled', false),
     contentEnabled: () =>
       vscode.workspace.getConfiguration('dsh.checkpoints').get<boolean>('storeContent', false),
+    // An unusable checkpoint directory is skipped, so the only evidence a user
+    // can get is this line; the directory path itself stays out of the log.
+    onStorageIssue: (issue) =>
+      diagnostics.log('warn', 'checkpoint-storage-unreadable', {
+        code: 'STORAGE_CORRUPT',
+        phase: issue.phase,
+      }),
   })
   const checkpointUseCases = new CheckpointUseCases(checkpointStore)
   const promptTemplateStore = new PromptTemplateStore({
@@ -1066,6 +1044,33 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     }
     return reconnect(signal)
   }
+  /**
+   * A catalog-resolved child session has no workspace membership of its own —
+   * `session/list` drops a child without a cwd — so its ownership comes from
+   * the durable parent the subagent catalog published. Without this walk every
+   * child-scoped route the Webview legitimately opened from that catalog
+   * (subagent history/send/interrupt, goal/job/queue/feedback) would be
+   * refused as a foreign session.
+   */
+  const ownsSession = async (
+    sessionId: string,
+    detail: SessionDetail,
+    workspaces: readonly WorkspaceSummary[],
+    signal: AbortSignal,
+  ): Promise<boolean> => {
+    const subagents = backendService.requireBackend().subagents
+    try {
+      return await ownsCurrentWorkspaceSession({
+        sessionId,
+        detail,
+        belongs: (session) => sessionBelongsToWorkspaces(session, workspaces, currentWorkspaceFolders()),
+        parentOf: (childSessionId) => subagents.parentOf?.(childSessionId),
+        readSession: (parentId) => backendService.requireBackend().sessions.get(parentId, signal),
+      })
+    } catch (error) {
+      throw sessionOpenFailure('parent session ownership check', error)
+    }
+  }
   const requireCurrentWorkspaceSession = async (
     sessionId: string,
     signal: AbortSignal,
@@ -1115,7 +1120,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       } catch (error) {
         throw sessionOpenFailure('session summary and history read', error)
       }
-      if (!sessionBelongsToWorkspaces(detail, workspaces, currentWorkspaceFolders()))
+      if (!(await ownsSession(sessionId, detail, workspaces, signal)))
         throw sessionOpenFailure(
           'current workspace ownership check',
           new AppError({
@@ -1340,7 +1345,9 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       return {
         kind: 'editor.preview',
         contextRef: preview.contextRef,
-        redactedPreviewText: redactText(preview.text, 32_768),
+        // The preview renders inside a `<pre>`: its line breaks and indentation
+        // are the content, so only credentials are replaced.
+        redactedPreviewText: redactMultilineText(preview.text, 32_768),
         language: 'plaintext',
         truncated: preview.truncated,
         expiresAt: preview.expiresAt,
@@ -1437,10 +1444,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
         kind: 'operation',
         operationId: request.requestId,
         state: restored.state,
-        message:
-          restored.state === 'partial'
-            ? 'Checkpoint restore completed partially; conflicting files were left untouched.'
-            : 'Checkpoint restore completed.',
+        message: 'Checkpoint restore completed.',
       }
     }
     if (request.type === 'tasks.list') {
@@ -1709,9 +1713,11 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       return {
         kind: 'change.detail',
         change: featureChangeSummary(detail),
+        // The diff renders inside a `<pre>`; folding its whitespace would join
+        // every hunk into one line.
         ...(detail.redactedDiff === undefined
           ? {}
-          : { redactedDiff: redactText(detail.redactedDiff, 262_144) }),
+          : { redactedDiff: redactMultilineText(detail.redactedDiff, 262_144) }),
         truncated: detail.diffTruncated,
       }
     }
@@ -1933,9 +1939,14 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     }
     if (request.type === 'session.rename') {
       await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
-      return backendService
-        .requireBackend()
-        .sessions.rename(request.payload.sessionId, request.payload.title, signal)
+      // The host normalizes the stored title and returns what it accepted; the
+      // Webview shows that value so the row never claims a title the session
+      // log does not hold.
+      return {
+        title: await backendService
+          .requireBackend()
+          .sessions.rename(request.payload.sessionId, request.payload.title, signal),
+      }
     }
     if (request.type === 'session.remove') {
       await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
@@ -2388,13 +2399,17 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     }
     if (request.type === 'subagent.history') {
       await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
-      return publicValue(
-        await advancedUseCases.listSubagentHistory(
-          request.payload.sessionId,
-          request.payload.beforeSeq === undefined ? undefined : { beforeSequence: request.payload.beforeSeq },
-          signal,
-        ),
+      const page = await advancedUseCases.listSubagentHistory(
+        request.payload.sessionId,
+        request.payload.beforeSeq === undefined ? undefined : { beforeSequence: request.payload.beforeSeq },
+        signal,
       )
+      return publicValue({
+        events: page.events,
+        hasMore: page.hasMore,
+        ...(page.beforeSequence === undefined ? {} : { beforeSeq: page.beforeSequence }),
+        ...(page.projection === undefined ? {} : { projection: page.projection }),
+      })
     }
     if (request.type === 'subagent.send') {
       await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
@@ -2478,7 +2493,14 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       }
       return exportUseCases.exportSession(request.payload, uri.fsPath, signal, destinationExists)
     }
-    return { accepted: true }
+    // Every declared route returns above, so this branch is unreachable while
+    // the protocol and the host agree. A request the host cannot dispatch must
+    // still fail: an invented success would hide the drift from the user.
+    throw new AppError({
+      code: 'FEATURE_DISABLED',
+      message: 'The Webview request has no host route in this extension build.',
+      retryable: false,
+    })
   }
   const router = new WebviewMessageRouter({
     postMessage: post,
@@ -2992,9 +3014,7 @@ async function readOpenFileAttachment(
   if (openDocument !== undefined)
     return prepareAttachment(candidate.name, Buffer.from(openDocument.getText(), 'utf8'))
   if (candidate.uri.scheme !== 'file') return undefined
-  const info = await stat(candidate.uri.fsPath).catch(() => undefined)
-  if (info === undefined || !info.isFile()) return undefined
-  return prepareAttachment(candidate.name, await readFile(candidate.uri.fsPath))
+  return readAttachmentFile(candidate.name, candidate.uri.fsPath, { stat, readFile })
 }
 
 function openDocumentForUri(uri: vscode.Uri): vscode.TextDocument | undefined {
@@ -3395,13 +3415,7 @@ async function pathExists(filePath: string): Promise<boolean> {
     await vscode.workspace.fs.stat(vscode.Uri.file(filePath))
     return true
   } catch (error) {
-    if (
-      typeof error === 'object' &&
-      error !== null &&
-      'code' in error &&
-      (error.code === 'ENOENT' || error.code === 'FileNotFound')
-    )
-      return false
+    if (isMissingFileError(error)) return false
     throw new AppError({
       code: 'EXPORT_FAILED',
       message: 'The export destination could not be inspected.',
@@ -3409,4 +3423,13 @@ async function pathExists(filePath: string): Promise<boolean> {
       cause: error,
     })
   }
+}
+
+function isMissingFileError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error.code === 'ENOENT' || error.code === 'FileNotFound')
+  )
 }

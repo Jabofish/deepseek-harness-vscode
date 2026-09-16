@@ -1,7 +1,9 @@
 import { AppError } from '@dsh-vscode/domain'
 import { redactText } from '@dsh-vscode/dsh-adapter'
 import {
+  MAX_HOST_ERROR_MESSAGE_CHARS,
   hostMessageSchema,
+  protocolAppErrorCodeSchema,
   protocolValueWithinBudget,
   featureHostMessageSchema,
   featureWebviewEnvelopeSchema,
@@ -70,16 +72,10 @@ export class WebviewMessageRouter {
     try {
       const payload = isFeature
         ? this.dependencies.handleFeatureRequest === undefined
-          ? (() => {
-              throw new AppError({
-                code: 'FEATURE_DISABLED',
-                message: 'The staged feature route is not enabled.',
-                retryable: false,
-              })
-            })()
+          ? routeNotEnabled('The staged feature route is not enabled.')
           : await this.dependencies.handleFeatureRequest(request as FeatureRequest, controller.signal)
         : this.dependencies.handleRequest === undefined
-          ? { accepted: true }
+          ? routeNotEnabled('The Webview request route is not enabled.')
           : await this.dependencies.handleRequest(request as WebviewRequest, controller.signal)
       this.complete(request, response(request.requestId, true, payload, undefined, isFeature))
     } catch (error) {
@@ -148,6 +144,18 @@ export class WebviewMessageRouter {
   }
 }
 
+/**
+ * A request the host cannot dispatch must fail. Answering `{accepted:true}`
+ * would report work that never happened, and the Webview would render a
+ * success it can neither observe nor retry.
+ */
+function routeNotEnabled(message: string): never {
+  throw new AppError({ code: 'FEATURE_DISABLED', message, retryable: false })
+}
+
+/** An empty failure text tells the user nothing; the code still names the class. */
+const UNSHAPED_ERROR_MESSAGE = 'The DSH request failed without a describable reason.'
+
 function response(
   requestId: string,
   ok: boolean,
@@ -165,10 +173,28 @@ function response(
   const schema = feature ? featureHostMessageSchema : hostMessageSchema
   const parsed = schema.safeParse(candidate)
   if (parsed.success) return parsed.data
+  // A failure must still reach the Webview inside the wire budget. Host-supplied
+  // text (an RPC error code, a method name) is appended to the message, so an
+  // unrepresentable error used to throw out of the response path: the request
+  // stayed unanswered until the client's own timeout and the real cause lived
+  // only in the host log. Keep the code — the Webview maps it to its own text —
+  // and bound the free text.
+  if (!ok) {
+    const known = protocolAppErrorCodeSchema.safeParse(error?.code)
+    return schema.parse({
+      type: feature ? ('feature.response' as const) : ('response' as const),
+      requestId,
+      ok: false as const,
+      error: {
+        code: known.success ? known.data : 'PROTOCOL_ERROR',
+        message: (error?.message ?? '').slice(0, MAX_HOST_ERROR_MESSAGE_CHARS) || UNSHAPED_ERROR_MESSAGE,
+        retryable: error?.retryable === true,
+      },
+    })
+  }
   // A large historical transcript must never turn the response path itself
   // into an uncaught host exception. The adapter compacts streaming chunks,
   // but keep a precise protocol-level fallback for unusually large payloads.
-  if (!ok) return schema.parse(candidate)
   return schema.parse({
     type: feature ? 'feature.response' : 'response',
     requestId,
@@ -305,10 +331,16 @@ function publicErrorMessage(
   // Keep the same bounded/redacted diagnostic used for commands; otherwise a
   // native opener failure or a schema rejection is reduced to the unhelpful
   // "internal error" text and the user has no way to locate the fault.
+  // Prompt templates and checkpoints fail for authored reasons the fallback
+  // cannot name — an undeclared `{{variable}}`, a file too large to snapshot —
+  // and the code's generic text ("the configuration is invalid", "the storage
+  // quota has been reached") points at the wrong cause.
   if (
     requestType.startsWith('settings.') ||
     requestType.startsWith('models.') ||
-    requestType.startsWith('provider.')
+    requestType.startsWith('provider.') ||
+    requestType.startsWith('prompt.') ||
+    requestType.startsWith('checkpoint.')
   )
     return withFailureDetail(base, context, message, 'DSH detail: ')
   // Attaching a file and sending it are rejected for reasons the user can act
