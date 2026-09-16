@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
-import { isAbsoluteFilePath, resolveNpmExecutable, runtimePathEntries } from './runtime-paths.js'
+import {
+  isAbsoluteFilePath,
+  isWindowsFilePath,
+  resolveNpmExecutable,
+  runtimePathEntries,
+} from './runtime-paths.js'
 
 describe('runtime path resolution', () => {
   it('keeps Linux package-manager paths available to a GUI-launched host', () => {
@@ -83,5 +88,15 @@ describe('absolute path detection', () => {
   it('rejects command names, relative paths and drive-relative spellings', () => {
     const relative = ['dsh', 'dsh.cmd', 'bin/dsh', './bin/dsh', '.\\bin\\dsh', 'C:tools\\dsh.cmd']
     for (const value of relative) expect(isAbsoluteFilePath(value), value).toBe(false)
+  })
+
+  it('tells a Windows spelling from a POSIX one', () => {
+    // The caller that resolves a link has to pick a path API for the spelling
+    // it holds: a UNC or drive target is not readable by the POSIX API, which
+    // sees one segment of ordinary characters instead.
+    for (const value of ['C:\\tools\\dsh.cmd', 'D:/tools/dsh.cmd', '\\\\build\\share\\dsh.cmd'])
+      expect(isWindowsFilePath(value), value).toBe(true)
+    for (const value of ['/usr/local/bin/dsh', 'bin/dsh', 'C:tools\\dsh.cmd'])
+      expect(isWindowsFilePath(value), value).toBe(false)
   })
 })

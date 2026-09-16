@@ -99,5 +99,15 @@ export function resolveNpmExecutable(
  * count on macOS/Linux too.
  */
 export function isAbsoluteFilePath(value: string): boolean {
-  return path.isAbsolute(value) || /^[A-Za-z]:[\\/]/.test(value) || value.startsWith('\\\\')
+  return path.isAbsolute(value) || isWindowsFilePath(value)
+}
+
+/**
+ * A drive-absolute or UNC spelling. The test reads the spelling rather than
+ * the Host, because the Host that reads a path is not always the one that
+ * wrote it: a Windows path has to stay recognizable on macOS/Linux, and the
+ * POSIX API there reads its separators as ordinary characters.
+ */
+export function isWindowsFilePath(value: string): boolean {
+  return /^[A-Za-z]:[\\/]/.test(value) || value.startsWith('\\\\')
 }
