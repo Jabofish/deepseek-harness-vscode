@@ -24,6 +24,12 @@ export interface SessionControlsProps {
   readonly models: readonly ModelDescriptor[]
   /** Providers the session directory could not enumerate, with the host's reason. */
   readonly modelFailures?: readonly ModelCatalogFailure[]
+  /** True while the session model directory is being read. */
+  readonly modelLoading?: boolean
+  /** The host's reason the session model directory could not be read. */
+  readonly modelError?: string
+  /** Re-read the session model directory; omitted means this surface cannot retry. */
+  readonly onModelRetry?: () => void
   readonly presets: readonly AgentPresetDescriptor[]
   readonly permissionPresets: readonly string[]
   /** Optional command directory; omitted means capability discovery is unavailable. */
@@ -282,6 +288,9 @@ export const SessionControls = memo(function SessionControls(props: SessionContr
             models={props.models}
             value={props.configuration.model}
             {...(props.modelFailures === undefined ? {} : { failures: props.modelFailures })}
+            {...(props.modelLoading === undefined ? {} : { loading: props.modelLoading })}
+            {...(props.modelError === undefined ? {} : { error: props.modelError })}
+            {...(props.onModelRetry === undefined ? {} : { onRetry: props.onModelRetry })}
             {...(props.modelPickerOpenRequest === undefined
               ? {}
               : { openRequest: props.modelPickerOpenRequest })}

@@ -459,6 +459,12 @@ export function App(): ReactElement {
   // host knows which adapters are live. `undefined` means no directory has
   // answered, which must not read as blocked.
   const sessionModelRoutable = state.sessionModelRoutable
+  // The read's own state travels with the rows: the fallback above is what the
+  // composer can offer when the session directory has not answered, and the
+  // picker has to say so instead of presenting the global catalog as the
+  // session's own.
+  const sessionModelDirectoryLoading = state.sessionModelDirectoryLoading
+  const sessionModelDirectoryError = state.sessionModelDirectoryError
   const pendingPermissions = useMemo(
     () =>
       activeSessionId === undefined || state.permissions.length === 0
@@ -917,6 +923,11 @@ export function App(): ReactElement {
       .catch((reason: unknown) =>
         setError(reason instanceof Error ? reason.message : t('app.error.promptMode')),
       )
+  })
+  // The read's failure is stated inside the picker, so this only has to run it
+  // again: a rejection here would repeat what the menu already shows.
+  const composerOnModelRetry = useStableCallback((): void => {
+    void store.refreshSessionModels().catch(() => undefined)
   })
   const composerOnCommand = useStableCallback(
     async (command: string, commandAttachments: readonly PromptAttachment[] = []): Promise<void> => {
@@ -1673,6 +1684,11 @@ export function App(): ReactElement {
                             configuration={state.configuration}
                             models={sessionModels}
                             modelFailures={sessionModelFailures}
+                            modelLoading={sessionModelDirectoryLoading}
+                            {...(sessionModelDirectoryError === undefined
+                              ? {}
+                              : { modelError: sessionModelDirectoryError })}
+                            onModelRetry={composerOnModelRetry}
                             {...(sessionModelRoutable === undefined
                               ? {}
                               : { modelRoutable: sessionModelRoutable })}

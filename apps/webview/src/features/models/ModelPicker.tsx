@@ -29,6 +29,16 @@ export interface ModelPickerProps {
   readonly models: readonly ModelDescriptor[]
   /** Providers the directory could not enumerate, with the host's reason. */
   readonly failures?: readonly ModelCatalogFailure[]
+  /** True while the session directory is being read; the menu states it. */
+  readonly loading?: boolean
+  /**
+   * The host's own reason the session directory could not be read. A refused
+   * read is not an empty directory: the rows on screen may be the global
+   * catalog, so the menu has to say why the session's own directory is missing.
+   */
+  readonly error?: string
+  /** Re-read the directory; omitted means this surface cannot retry. */
+  readonly onRetry?: () => void
   readonly value: ModelSelection
   readonly disabled?: boolean
   readonly displayLabel?: boolean
@@ -52,11 +62,13 @@ export const ModelPicker = memo(function ModelPicker(props: ModelPickerProps): R
   const menuId = useId()
   const failures = props.failures ?? EMPTY_FAILURES
   /**
-   * A directory with nothing to show is not the same as a failure the user
-   * needs to read: the menu stays reachable while the host has something to
-   * say about why the providers are missing.
+   * The directory's state decides what the menu may say about the rows:
+   * "no models" is a verdict only an answered directory can make, so it is
+   * withheld while the read is still running or has failed. The trigger itself
+   * never dies on an unanswered directory — the menu is where the reason lives.
    */
-  const empty = props.models.length === 0 && failures.length === 0
+  const answeredEmpty =
+    props.models.length === 0 && failures.length === 0 && props.loading !== true && props.error === undefined
   /** Where the next open should land the keyboard cursor. */
   const openEntryRef = useRef<'first' | 'last'>('first')
   /**
@@ -145,16 +157,16 @@ export const ModelPicker = memo(function ModelPicker(props: ModelPickerProps): R
   useEffect(() => {
     const request = props.openRequest ?? 0
     if (request <= 0 || request <= consumedRequestRef.current) return
-    // An empty directory is the one transient reason to keep waiting: the
-    // request is spent only once there is something to show.
-    if (props.disabled || empty) return
+    // The menu can always state where the directory stands, so a requested
+    // open is spent as soon as the control is usable at all.
+    if (props.disabled === true) return
     const openPicker = window.setTimeout(() => {
       consumedRequestRef.current = request
       openMenu()
       triggerRef.current?.focus()
     }, 0)
     return () => window.clearTimeout(openPicker)
-  }, [empty, openMenu, props.disabled, props.openRequest])
+  }, [openMenu, props.disabled, props.openRequest])
 
   const moveFocus = (offset: number): void => {
     const items = menuItems(menuRef.current)
@@ -227,7 +239,7 @@ export const ModelPicker = memo(function ModelPicker(props: ModelPickerProps): R
         aria-expanded={open}
         aria-haspopup="menu"
         title={`${t('model.select')}: ${currentLabel}`}
-        disabled={props.disabled === true || empty}
+        disabled={props.disabled === true}
         onClick={() => {
           if (open) close()
           else openMenu()
@@ -287,6 +299,27 @@ export const ModelPicker = memo(function ModelPicker(props: ModelPickerProps): R
               </button>
               {pane === 'models' ? (
                 <>
+                  {props.loading === true ? (
+                    <p className="dsh-model-picker__status" role="status">
+                      {t('model.loading')}
+                    </p>
+                  ) : null}
+                  {props.error === undefined ? null : (
+                    <div className="dsh-model-picker__error">
+                      <p className="dsh-model-picker__warning" role="status">
+                        {t('model.loadFailed', { message: props.error })}
+                      </p>
+                      {props.onRetry === undefined ? null : (
+                        <button
+                          className="dsh-button dsh-button--secondary dsh-button--compact"
+                          type="button"
+                          onClick={props.onRetry}
+                        >
+                          {t('model.retry')}
+                        </button>
+                      )}
+                    </div>
+                  )}
                   {failures.length === 0 ? null : (
                     <div className="dsh-model-picker__failures">
                       {failures.map((failure) => (
@@ -300,9 +333,11 @@ export const ModelPicker = memo(function ModelPicker(props: ModelPickerProps): R
                     </div>
                   )}
                   {groups.length === 0 ? (
-                    <p className="dsh-model-picker__empty" role="status">
-                      {t('model.noModels')}
-                    </p>
+                    answeredEmpty ? (
+                      <p className="dsh-model-picker__empty" role="status">
+                        {t('model.noModels')}
+                      </p>
+                    ) : null
                   ) : (
                     groups.map((group) => (
                       <section

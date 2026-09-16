@@ -86,6 +86,12 @@ export interface ComposerProps {
   readonly models?: readonly ModelDescriptor[]
   /** Providers the session directory could not enumerate, with the host's reason. */
   readonly modelFailures?: readonly ModelCatalogFailure[]
+  /** True while the session model directory is being read. */
+  readonly modelLoading?: boolean
+  /** The host's reason the session model directory could not be read. */
+  readonly modelError?: string
+  /** Re-read the session model directory; the picker's own retry surface. */
+  readonly onModelRetry?: () => void
   /**
    * The host's verdict on whether the session's current model is served at
    * all. `false` makes the input inert with the reason on screen; `undefined`
@@ -366,6 +372,9 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
       presetMutable: props.presetMutable === true,
       surface,
       ...(props.commands === undefined ? {} : { commands: props.commands }),
+      ...(props.modelLoading === undefined ? {} : { modelLoading: props.modelLoading }),
+      ...(props.modelError === undefined ? {} : { modelError: props.modelError }),
+      ...(props.onModelRetry === undefined ? {} : { onModelRetry: props.onModelRetry }),
       ...(props.estimatedContextTokens === undefined
         ? {}
         : { estimatedContextTokens: props.estimatedContextTokens }),

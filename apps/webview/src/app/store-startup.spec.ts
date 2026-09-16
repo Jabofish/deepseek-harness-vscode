@@ -1351,6 +1351,7 @@ describe('AppStore startup session restoration', () => {
     // host will refuse, so a directory without it is no directory at all.
     expect(store.sessionModels).toEqual([])
     expect(store.sessionModelRoutable).toBeUndefined()
+    expect(store.sessionModelDirectoryError).toBe('DSH returned a malformed session model directory.')
     store.dispose()
   })
 
@@ -1380,6 +1381,7 @@ describe('AppStore startup session restoration', () => {
     // The label is what the seat shows and the id is what travels back in a
     // selection; a level missing either would render as a nameless row.
     expect(store.sessionModels).toEqual([])
+    expect(store.sessionModelDirectoryError).toBe('DSH returned a malformed session model directory.')
     store.dispose()
   })
 
@@ -1416,6 +1418,91 @@ describe('AppStore startup session restoration', () => {
     })
 
     await vi.waitFor(() => expect(store.sessionModels[0]?.reasoningLevels?.[0]?.label).toBe('Low (legacy)'))
+    store.dispose()
+  })
+
+  it('states the host reason when the session directory read is refused', async () => {
+    const client = new StartupClient((request) => {
+      if (request.type === 'models.session.list')
+        throw new Error('session.models failed: the agent is not ready')
+      return startupResponse(request)
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+
+    await store.openSession('session-active')
+    await vi.waitFor(() =>
+      expect(store.sessionModelDirectoryError).toBe('session.models failed: the agent is not ready'),
+    )
+
+    // A refused read is not an empty directory: the composer falls back to the
+    // global catalog, so without this statement nothing explains why the
+    // session's own rows are missing.
+    expect(store.sessionModels).toEqual([])
+    expect(store.sessionModelDirectoryLoading).toBe(false)
+    store.dispose()
+  })
+
+  it('keeps the last good directory when a later read is refused and replaces it on the retry', async () => {
+    let refused = false
+    let label = 'DeepSeek Chat'
+    const client = new StartupClient((request) => {
+      if (request.type === 'models.session.list') {
+        if (refused) throw new Error('host busy attaching the workspace')
+        return {
+          models: [{ id: 'deepseek-chat', providerId: 'deepseek', label, supportsReasoning: false }],
+          failures: [],
+          routable: true,
+        }
+      }
+      return startupResponse(request)
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+
+    await store.openSession('session-active')
+    await vi.waitFor(() => expect(store.sessionModels).toHaveLength(1))
+
+    refused = true
+    client.emit({
+      type: 'event',
+      name: 'remote.event',
+      sequence: 9,
+      payload: { name: 'llm/adapters-updated', args: [] },
+    })
+    await vi.waitFor(() => expect(store.sessionModelDirectoryError).toBe('host busy attaching the workspace'))
+
+    // The rows an earlier read stated survive the refusal: dropping them would
+    // move the seat onto the global fallback for a read that may succeed next.
+    expect(store.sessionModels).toHaveLength(1)
+
+    refused = false
+    label = 'DeepSeek Chat (repaired)'
+    await store.refreshSessionModels()
+
+    expect(store.sessionModelDirectoryError).toBeUndefined()
+    expect(store.sessionModels[0]?.label).toBe('DeepSeek Chat (repaired)')
+    store.dispose()
+  })
+
+  it('reports the directory read while it is still running', async () => {
+    let settleDirectory: (() => void) | undefined
+    const client = new StartupClient((request) => {
+      if (request.type === 'models.session.list')
+        return new Promise((resolve) => {
+          settleDirectory = () => resolve({ models: [], failures: [], routable: true })
+        })
+      return startupResponse(request)
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+
+    const opening = store.openSession('session-active')
+    await vi.waitFor(() => expect(store.sessionModelDirectoryLoading).toBe(true))
+
+    // Until the host answers, the directory has stated nothing: this is the
+    // flag that keeps the seat from reporting that as an empty catalog.
+    expect(store.sessionModelDirectoryError).toBeUndefined()
+    settleDirectory?.()
+    await opening
+    await vi.waitFor(() => expect(store.sessionModelDirectoryLoading).toBe(false))
     store.dispose()
   })
 

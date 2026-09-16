@@ -218,6 +218,19 @@ export interface AppState {
    * route either way, so this only decides whether the input stays usable.
    */
   readonly sessionModelRoutable: boolean | undefined
+  /**
+   * True while the session directory is being read. The seat states the read
+   * in progress; without it an unanswered directory is indistinguishable from
+   * one the host answered empty.
+   */
+  readonly sessionModelDirectoryLoading: boolean
+  /**
+   * The host's own reason the session directory could not be read, `undefined`
+   * after a read that answered. A refused read is not an empty directory: the
+   * rows shown may still come from the global catalog, so the seat has to say
+   * why the session's own directory is missing and offer another read.
+   */
+  readonly sessionModelDirectoryError: string | undefined
   readonly presets: readonly AgentPresetDescriptor[]
   readonly permissionPresets: readonly string[]
   readonly commands: readonly DynamicCommand[]
@@ -388,6 +401,11 @@ export interface AppActions {
   configurePluginCredential(ref: string): Promise<boolean>
   removePluginCredential(ref: string): Promise<void>
   refreshModelCatalog(): Promise<void>
+  /**
+   * Re-read the active session's model directory. A refused read keeps the last
+   * good directory and publishes the host's reason; this is the seat's retry.
+   */
+  refreshSessionModels(sessionId?: string): Promise<void>
   /** Discover provider models through the Host without carrying credentials in the Webview. */
   discoverModels(input: Omit<ModelDiscoveryInput, 'apiKey'>): Promise<readonly DiscoveredModel[]>
   /** Discover models for a new provider through a Host-only optional key prompt. */
@@ -488,6 +506,8 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     sessionModels: [],
     sessionModelFailures: [],
     sessionModelRoutable: undefined,
+    sessionModelDirectoryLoading: false,
+    sessionModelDirectoryError: undefined,
     presets: [],
     permissionPresets: [],
     commands: [],
@@ -1855,6 +1875,10 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
             sessionModels: [],
             sessionModelFailures: [],
             sessionModelRoutable: undefined,
+            // The directory read starts below, before the first paint, so it is
+            // in flight from the moment the session is on screen.
+            sessionModelDirectoryLoading: true,
+            sessionModelDirectoryError: undefined,
             permissionPresets: permissionPresets ?? [],
             queue: [],
             goals: [],
@@ -1908,21 +1932,10 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
           )
         })
         .catch(() => undefined)
-      void sessionModelDirectoryData
-        .then((directory) => {
-          if (version !== openVersion || directory === undefined) return
-          setState((current) =>
-            current.activeSessionId === sessionId && current.sessionModels !== directory.models
-              ? {
-                  ...current,
-                  sessionModels: directory.models,
-                  sessionModelFailures: directory.failures,
-                  sessionModelRoutable: directory.routable,
-                }
-              : current,
-          )
-        })
-        .catch(() => undefined)
+      void sessionModelDirectoryData.then((read) => {
+        if (version !== openVersion) return
+        setState((current) => mergeSessionModelDirectory(current, sessionId, read))
+      })
 
       // Queue/goal/job/feedback/subagent data is advisory. It must not keep
       // the session-open promise (and therefore startup/manual navigation)
@@ -2061,6 +2074,11 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
             sessionModels: [],
             sessionModelFailures: [],
             sessionModelRoutable: undefined,
+            // An addressed subagent has no session directory of its own — the
+            // host binds this selection to the owning Agent — so there is no
+            // read to track and nothing to state a failure about.
+            sessionModelDirectoryLoading: false,
+            sessionModelDirectoryError: undefined,
             permissionPresets: [],
             queue: [],
             goals: [],
@@ -2285,6 +2303,12 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     get sessionModelRoutable() {
       return state.sessionModelRoutable
     },
+    get sessionModelDirectoryLoading() {
+      return state.sessionModelDirectoryLoading
+    },
+    get sessionModelDirectoryError() {
+      return state.sessionModelDirectoryError
+    },
     get presets() {
       return state.presets
     },
@@ -2432,6 +2456,11 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       return items === undefined ? [] : deduplicateSessionSummaries(items)
     },
     refreshCommands: (sessionId) => refreshCommands(sessionId),
+    refreshSessionModels: async (sessionId) => {
+      const target = sessionId ?? state.activeSessionId
+      if (target === undefined) return
+      await refreshSessionModelDirectory(client, setState, target)
+    },
     openSession: open,
     loadOlderHistory: async () => {
       flushPendingHistory()
@@ -2704,6 +2733,8 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
               sessionModels: [],
               sessionModelFailures: [],
               sessionModelRoutable: undefined,
+              sessionModelDirectoryLoading: false,
+              sessionModelDirectoryError: undefined,
               permissionPresets: [],
               queue: [],
               goals: [],
@@ -4098,6 +4129,8 @@ async function refreshSessions(
             sessionModels: [],
             sessionModelFailures: [],
             sessionModelRoutable: undefined,
+            sessionModelDirectoryLoading: false,
+            sessionModelDirectoryError: undefined,
             permissionPresets: [],
             queue: [],
             goals: [],
@@ -4385,10 +4418,22 @@ interface SessionModelDirectory {
   readonly routable: boolean
 }
 
+/**
+ * One session-directory read. A read that could not answer carries the reason
+ * the seat states: the host's own message for a refused request, or the shape
+ * violation when the response cannot be read at all. Swallowing either leaves
+ * the composer showing the global catalog as if it were the session's own
+ * directory, with no way to ask again.
+ */
+type SessionModelDirectoryRead =
+  | { readonly ok: true; readonly directory: SessionModelDirectory }
+  | { readonly ok: false; readonly message: string }
+
 async function loadSessionModelDirectory(
   client: ProtocolClient,
   sessionId: string,
-): Promise<SessionModelDirectory | undefined> {
+): Promise<SessionModelDirectoryRead> {
+  const malformed = translate('app.error.malformedModelDirectory')
   try {
     const result = object(
       await client.request<unknown>({
@@ -4397,50 +4442,86 @@ async function loadSessionModelDirectory(
         payload: { sessionId },
       }),
     )
-    if (result === undefined || !Array.isArray(result.models)) return undefined
-    if (!result.models.every(isModelDescriptor)) return undefined
+    if (result === undefined || !Array.isArray(result.models) || !result.models.every(isModelDescriptor))
+      return { ok: false, message: malformed }
     // The failures are half the directory: they are the only statement about
     // the providers that could not enumerate, so a row this side cannot read
     // invalidates the fragment rather than being dropped from it.
-    if (!Array.isArray(result.failures) || !result.failures.every(isModelCatalogFailure)) return undefined
+    if (!Array.isArray(result.failures) || !result.failures.every(isModelCatalogFailure))
+      return { ok: false, message: malformed }
     // `routable` is the whole-fragment verdict and the host types it as
     // required; a fragment without it cannot say whether input is legal, so it
     // is refused rather than guessed (a guess would either lock a usable
     // composer or unlock one the host will refuse).
-    if (typeof result.routable !== 'boolean') return undefined
-    return { models: result.models, failures: result.failures, routable: result.routable }
-  } catch {
-    return undefined
+    if (typeof result.routable !== 'boolean') return { ok: false, message: malformed }
+    return {
+      ok: true,
+      directory: { models: result.models, failures: result.failures, routable: result.routable },
+    }
+  } catch (error) {
+    return { ok: false, message: errorText(error) }
+  }
+}
+
+function errorText(error: unknown): string {
+  const message = object(error)?.message
+  return typeof message === 'string' && message.trim() !== ''
+    ? message
+    : translate('app.error.hostUnspecified')
+}
+
+/**
+ * Fold one read into the state. A failed read keeps the last good directory —
+ * the open flow has the same contract, and the picker's warning and model rows
+ * must not be replaced by an empty directory the host never stated — but the
+ * failure itself is published so the seat can explain the missing rows.
+ */
+function mergeSessionModelDirectory(
+  current: AppState,
+  sessionId: string,
+  read: SessionModelDirectoryRead,
+): AppState {
+  if (current.activeSessionId !== sessionId) return current
+  if (!read.ok) {
+    if (!current.sessionModelDirectoryLoading && current.sessionModelDirectoryError === read.message)
+      return current
+    return { ...current, sessionModelDirectoryLoading: false, sessionModelDirectoryError: read.message }
+  }
+  const { models, failures, routable } = read.directory
+  if (
+    !current.sessionModelDirectoryLoading &&
+    current.sessionModelDirectoryError === undefined &&
+    sameModelDescriptorList(current.sessionModels, models) &&
+    sameModelCatalogFailureList(current.sessionModelFailures, failures) &&
+    current.sessionModelRoutable === routable
+  )
+    return current
+  return {
+    ...current,
+    sessionModels: models,
+    sessionModelFailures: failures,
+    sessionModelRoutable: routable,
+    sessionModelDirectoryLoading: false,
+    sessionModelDirectoryError: undefined,
   }
 }
 
 /**
- * Re-read one session's model directory. A failed read keeps the last good
- * directory: the open flow has the same contract, and the picker's warning
- * rows must not be replaced by an empty directory the host never stated.
+ * Re-read one session's model directory. This is also the seat's retry after a
+ * refused read, so it has to be callable on demand and stateful while it runs.
  */
 async function refreshSessionModelDirectory(
   client: ProtocolClient,
   setState: StateSetter,
   sessionId: string,
 ): Promise<void> {
-  const directory = await loadSessionModelDirectory(client, sessionId)
-  if (directory === undefined) return
-  setState((current) => {
-    if (current.activeSessionId !== sessionId) return current
-    if (
-      sameModelDescriptorList(current.sessionModels, directory.models) &&
-      sameModelCatalogFailureList(current.sessionModelFailures, directory.failures) &&
-      current.sessionModelRoutable === directory.routable
-    )
-      return current
-    return {
-      ...current,
-      sessionModels: directory.models,
-      sessionModelFailures: directory.failures,
-      sessionModelRoutable: directory.routable,
-    }
-  })
+  setState((current) =>
+    current.activeSessionId === sessionId && !current.sessionModelDirectoryLoading
+      ? { ...current, sessionModelDirectoryLoading: true }
+      : current,
+  )
+  const read = await loadSessionModelDirectory(client, sessionId)
+  setState((current) => mergeSessionModelDirectory(current, sessionId, read))
 }
 
 function withClientCommandContributions(commands: readonly DynamicCommand[]): readonly DynamicCommand[] {
@@ -5128,6 +5209,8 @@ function applyHostMessage(
             sessionModels: [],
             sessionModelFailures: [],
             sessionModelRoutable: undefined,
+            sessionModelDirectoryLoading: false,
+            sessionModelDirectoryError: undefined,
             permissionPresets: [],
             queue: [],
             goals: [],

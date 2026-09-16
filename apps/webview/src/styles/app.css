@@ -571,6 +571,24 @@ ul {
 }
 
 /*
+ * Statements about the directory read itself, above the per-provider rows: a
+ * read still running, and a read the host refused. The refusal keeps its own
+ * retry so a composer showing the global fallback is not a dead end.
+ */
+.dsh-model-picker__status {
+  margin: 0;
+  padding: var(--dsh-space-2) var(--dsh-space-3);
+  color: var(--dsh-muted);
+}
+
+.dsh-model-picker__error {
+  display: grid;
+  justify-items: start;
+  gap: var(--dsh-space-2);
+  padding: var(--dsh-space-2);
+}
+
+/*
  * A provider the host could not enumerate. The message is host prose and can
  * be arbitrarily long, so it wraps inside the menu instead of being clipped.
  */

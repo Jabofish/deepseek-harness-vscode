@@ -180,7 +180,7 @@ describe('ModelPicker failure rows', () => {
     expect(screen.getByRole('menuitemradio', { name: /DeepSeek Chat/u })).toBeDefined()
   })
 
-  it('keeps the menu reachable when every provider failed', () => {
+  it('keeps the menu reachable when every provider failed, without claiming the session has none', () => {
     renderPicker({
       models: [],
       failures: [{ providerId: 'gateway', providerName: 'Gateway', message: 'connection refused' }],
@@ -190,9 +190,10 @@ describe('ModelPicker failure rows', () => {
     openRoot()
     activate(screen.getByRole('menuitem', { name: /^Model/u }))
 
+    // The failure rows are all a failed enumeration licenses: "no models are
+    // available" would claim knowledge about the providers that never answered.
     expect(screen.getAllByRole('status').map((node) => node.textContent)).toEqual([
       'Could not load models for Gateway: connection refused',
-      'No models are available for this session.',
     ])
   })
 })
@@ -278,6 +279,76 @@ describe('ModelPicker seat statements', () => {
   })
 })
 
+describe('ModelPicker directory read states', () => {
+  afterEach(() => cleanup())
+
+  it('keeps the trigger reachable while the directory read is still running', () => {
+    renderPicker({ models: [], loading: true })
+
+    expect((trigger() as HTMLButtonElement).disabled).toBe(false)
+    openRoot()
+    activate(screen.getByRole('menuitem', { name: /^Model/u }))
+
+    expect(screen.getAllByRole('status').map((node) => node.textContent)).toEqual([
+      'Reading the session model directory…',
+    ])
+  })
+
+  it('states the refusal with the host reason and reads again on demand', () => {
+    const message = `session.models failed: ${'the host is still attaching the workspace; '.repeat(40)}`
+    const onRetry = vi.fn()
+    renderPicker({ models: [], error: message, onRetry })
+
+    openRoot()
+    activate(screen.getByRole('menuitem', { name: /^Model/u }))
+
+    expect(screen.getAllByRole('status').map((node) => node.textContent)).toEqual([
+      `Could not read the session model directory: ${message}`,
+    ])
+    activate(screen.getByRole('button', { name: 'Read again' }))
+
+    expect(onRetry).toHaveBeenCalledTimes(1)
+    // The read is only requested here: the result arrives through the props, so
+    // the menu has to stay where the user is.
+    expect(screen.getByRole('menu')).toBeDefined()
+  })
+
+  it('offers no retry where the surface cannot re-read the directory', () => {
+    renderPicker({ models: [], error: 'host refused the read' })
+
+    openRoot()
+    activate(screen.getByRole('menuitem', { name: /^Model/u }))
+
+    expect(screen.queryByRole('button', { name: 'Read again' })).toBeNull()
+  })
+
+  it('keeps the rows a later refused read could not replace', () => {
+    const onChange = vi.fn()
+    renderPicker({ error: 'host refused the read', onChange })
+
+    openRoot()
+    activate(screen.getByRole('menuitem', { name: /^Model/u }))
+
+    expect(screen.getAllByRole('status').map((node) => node.textContent)).toEqual([
+      'Could not read the session model directory: host refused the read',
+    ])
+    activate(screen.getByRole('menuitemradio', { name: /DeepSeek Chat/u }))
+
+    expect(onChange).toHaveBeenCalledWith({ providerId: 'deepseek', modelId: 'deepseek-chat' })
+  })
+
+  it('states an answered empty directory instead of an unanswered one', () => {
+    renderPicker({ models: [] })
+
+    openRoot()
+    activate(screen.getByRole('menuitem', { name: /^Model/u }))
+
+    expect(screen.getAllByRole('status').map((node) => node.textContent)).toEqual([
+      'No models are available for this session.',
+    ])
+  })
+})
+
 describe('ModelPicker open requests', () => {
   afterEach(() => cleanup())
 
@@ -319,16 +390,19 @@ describe('ModelPicker open requests', () => {
     expect(screen.queryByRole('menu')).toBeNull()
   })
 
-  it('opens once the directory arrives when the request found no models yet', async () => {
+  it('opens on the request while the directory read is still running', async () => {
     const view = renderPicker({ models: [] })
-    deliverRequest(view, { models: [] })
-    await flushOpenRequest()
-    expect(screen.queryByRole('menu')).toBeNull()
+    deliverRequest(view, { models: [], loading: true })
 
-    view.rerender(picker({ models: MODELS, openRequest: 1 }))
     await screen.findByRole('menu')
+    activate(screen.getByRole('menuitem', { name: /^Model/u }))
 
-    expect(screen.getByRole('menu')).toBeDefined()
+    // The request is spent as soon as the control is usable: the menu can
+    // always say where the read stands, so waiting for rows is no longer what
+    // a requested open means.
+    expect(screen.getAllByRole('status').map((node) => node.textContent)).toEqual([
+      'Reading the session model directory…',
+    ])
   })
 
   it('does not spend a stale request again when the picker remounts', async () => {
@@ -352,6 +426,9 @@ function renderPicker(
     readonly value?: ModelSelection
     readonly models?: readonly ModelDescriptor[]
     readonly failures?: readonly ModelCatalogFailure[]
+    readonly loading?: boolean
+    readonly error?: string
+    readonly onRetry?: () => void
     readonly disabled?: boolean
     readonly openRequest?: number
     readonly onChange?: (value: ModelSelection) => void
@@ -365,6 +442,9 @@ function picker(
     readonly value?: ModelSelection
     readonly models?: readonly ModelDescriptor[]
     readonly failures?: readonly ModelCatalogFailure[]
+    readonly loading?: boolean
+    readonly error?: string
+    readonly onRetry?: () => void
     readonly disabled?: boolean
     readonly openRequest?: number
     readonly onChange?: (value: ModelSelection) => void
@@ -376,6 +456,9 @@ function picker(
         models={options.models ?? MODELS}
         value={options.value ?? CHAT}
         {...(options.failures === undefined ? {} : { failures: options.failures })}
+        {...(options.loading === undefined ? {} : { loading: options.loading })}
+        {...(options.error === undefined ? {} : { error: options.error })}
+        {...(options.onRetry === undefined ? {} : { onRetry: options.onRetry })}
         {...(options.disabled === undefined ? {} : { disabled: options.disabled })}
         {...(options.openRequest === undefined ? {} : { openRequest: options.openRequest })}
         onChange={options.onChange ?? vi.fn()}
