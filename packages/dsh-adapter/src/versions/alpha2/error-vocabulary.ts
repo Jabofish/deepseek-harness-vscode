@@ -31,6 +31,7 @@ const ALPHA2_TO_LEGACY_RPC_CODE: Readonly<Record<string, string>> = {
   'session/model-unavailable': 'model-unavailable',
   'session/conflict': 'session-conflict',
   'session/agent-busy': 'agent-busy',
+  'session/writer-held': 'writer-held',
   'session/invalid-time-zone': 'invalid-time-zone',
   'session/workspace-attach-failed': 'workspace-attach-failed',
   'agent-preset/conflict': 'agent-preset-conflict',

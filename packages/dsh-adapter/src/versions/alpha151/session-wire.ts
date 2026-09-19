@@ -68,6 +68,9 @@ const KNOWN_SESSION_EVENT_TYPES = new Set([
   'turn/start',
   'user/message',
   'web/deepseek-search-llm-request',
+  // Introduced by DSH 0.1.6-alpha.2; it remains an opaque session record
+  // until a dedicated workspace-changes projection is implemented.
+  'workspace/changes',
 ])
 
 const SESSION_EVENT_KEYS = [

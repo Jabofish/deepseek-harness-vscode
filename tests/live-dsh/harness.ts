@@ -19,6 +19,7 @@ import type { BackendEndpoint } from '../../packages/domain/src/runtime.js'
 import { Rc151VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc151/adapter.js'
 import { Rc152VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc152/adapter.js'
 import { Alpha161VersionAdapter } from '../../packages/dsh-adapter/src/versions/alpha161/adapter.js'
+import { Alpha162VersionAdapter } from '../../packages/dsh-adapter/src/versions/alpha162/adapter.js'
 import { acquireManagedRuntimeLock } from './managed-lock.js'
 import { resolveLiveRuntime } from './runtime.js'
 
@@ -116,6 +117,7 @@ export async function startManagedRuntime(options?: {
     steps.push(`managed start pid=${started.pid} endpoint=${started.endpoint.baseUrl}`)
 
     const adapters = [
+      new Alpha162VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
       new Alpha161VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
       new Rc152VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
       new Rc151VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),

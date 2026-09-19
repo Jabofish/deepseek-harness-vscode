@@ -106,6 +106,7 @@ packages/
     src/versions/rc151/    # 0.1.5-rc.1 Session v3 + deliverables/catalog 精确入口
     src/versions/rc152/    # 0.1.5-rc.2 Session v3 + rc.2 feedback/deliverables 精确入口
     src/versions/alpha161/ # 0.1.6-alpha.1 Session v3 + projection-event 安全降级入口
+    src/versions/alpha162/ # 0.1.6-alpha.2 Session v3 + Inbox control projection 精确入口
     src/repositories/     # 每个能力域一个仓储
   timeline/
   ui/

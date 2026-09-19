@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { AppError } from '@dsh-vscode/domain'
 import type { DshTransport } from '../src/contracts.js'
 import { historyGapRecovery, Rc6SessionRepository } from '../src/repositories/session-repository.js'
 
@@ -309,6 +310,35 @@ describe('Rc6SessionRepository session removal', () => {
     await new Rc6SessionRepository(transport).remove('session-1')
 
     expect(request).toHaveBeenCalledTimes(1)
+  })
+
+  it('maps a restore to the unarchive RPC and lets the transport state whether the host has one', async () => {
+    const methods: string[] = []
+    const transport: DshTransport = {
+      request: <TResponse>(method: string) => {
+        methods.push(method)
+        // This is the rc line's own answer for a method its wire lacks; the
+        // repository must pass a host that cannot restore straight through.
+        return Promise.reject<TResponse>(
+          new AppError({
+            code: 'CAPABILITY_UNAVAILABLE',
+            message: `The connected DSH does not expose ${method}.`,
+            retryable: false,
+          }),
+        )
+      },
+      remoteRequest: <TResponse>() => Promise.resolve({ result: { ok: true, value: [] } } as TResponse),
+      openEventStream: async function* () {
+        /* fixture stream */
+      },
+      close: () => Promise.resolve(),
+    }
+
+    await expect(new Rc6SessionRepository(transport).setArchived('session-1', false)).rejects.toMatchObject({
+      code: 'CAPABILITY_UNAVAILABLE',
+      message: expect.stringContaining('workspace.unarchiveSession') as unknown as string,
+    })
+    expect(methods).toEqual(['workspace.unarchiveSession'])
   })
 })
 

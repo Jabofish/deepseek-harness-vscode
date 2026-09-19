@@ -15,6 +15,7 @@ import {
   validAlpha151SessionEventFrame,
   validAlpha151SessionSnapshot,
 } from '../alpha151/session-wire.js'
+import { normalizeAlpha162ControlFrame } from '../alpha162/session-control.js'
 
 /** The small subset of the `ws`/browser WebSocket surface used by the adapter. */
 export interface AlphaWebSocket {
@@ -33,6 +34,7 @@ export interface AlphaWebSocketConstructor {
 export type AlphaErrorCodeNormalizer = (code: string, details: Readonly<Record<string, unknown>>) => string
 
 export type AlphaSessionWireVersion = 'v0' | 'v2' | 'v3'
+export type AlphaSessionControlWireVersion = 'queue-v1' | 'inbox-v1'
 
 export interface AlphaLoopbackApiClientOptions {
   readonly endpoint: BackendEndpoint
@@ -46,6 +48,8 @@ export interface AlphaLoopbackApiClientOptions {
   readonly normalizeErrorCode?: AlphaErrorCodeNormalizer
   /** Session Controller wire profile; old alpha uses v0, alpha13 uses v2, and alpha151+ uses v3. */
   readonly sessionWireVersion?: AlphaSessionWireVersion
+  /** Session Controller control profile; alpha.2 replaces queue snapshots with Inbox projections. */
+  readonly controlWireVersion?: AlphaSessionControlWireVersion
   /**
    * Child-session routing committed by the subagent catalog. The Session
    * Controller refuses a session-kind address for a subagent-origin Session,
@@ -269,6 +273,9 @@ export class AlphaLoopbackApiClient implements DshTransport {
       case 'workspace.insertBefore':
       case 'workspace.insertSessionBefore':
       case 'workspace.archiveSession':
+      case 'workspace.unarchiveSession':
+        // Archive and restore differ only in direction: both take `{sessionId}`
+        // and answer the complete archive set this registry now holds.
         return this.legacy(`workspace/${method.slice('workspace.'.length)}`, { request: value }, signal)
       case 'skill.list':
         return this.legacy('skills/list', { request: { sessionId: value.sessionId } }, signal)
@@ -810,6 +817,12 @@ export class AlphaLoopbackApiClient implements DshTransport {
 
   private async *readControl(signal: AbortSignal): AsyncGenerator<unknown> {
     for await (const item of this.openRemoteStream('session/control', {}, signal)) {
+      if ((this.options.controlWireVersion ?? 'queue-v1') === 'inbox-v1') {
+        const frames = normalizeAlpha162ControlFrame(item)
+        if (frames === undefined) throw malformedResponse('session/control alpha.2 frame')
+        yield* frames
+        continue
+      }
       const frame = recordOrUndefined(item)
       if (frame?.type === 'baseline') {
         const value = recordOrUndefined(frame.value)

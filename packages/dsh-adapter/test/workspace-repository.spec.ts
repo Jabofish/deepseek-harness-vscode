@@ -95,3 +95,58 @@ describe('Rc6WorkspaceRepository ordering', () => {
     ])
   })
 })
+
+describe('Rc6WorkspaceRepository archive state', () => {
+  it('forgets the archive memory a restore proves stale', async () => {
+    const calls: Call[] = []
+    const repository = new Rc6WorkspaceRepository(
+      transportFor(
+        {
+          'workspace.archiveSession': { archivedSessionIds: ['s1'] },
+          'workspace.unarchiveSession': { archivedSessionIds: [] },
+          // The host's own post-restore set: the read that follows must agree
+          // with it rather than re-hiding the row from local memory.
+          'workspace.list': { items: [], archivedSessionIds: [] },
+        },
+        calls,
+      ),
+    )
+
+    await repository.archiveSession('s1')
+    expect(repository.isArchived('s1')).toBe(true)
+
+    await repository.unarchiveSession('s1')
+
+    // Both the echo and the local archive memory must let the id go: the union
+    // in every later archive-set read would otherwise hide the restored row.
+    expect(repository.isArchived('s1')).toBe(false)
+    await expect(repository.listArchivedSessionIds()).resolves.toEqual([])
+    expect(calls.map((call) => call.method)).toEqual([
+      'workspace.archiveSession',
+      'workspace.unarchiveSession',
+      'workspace.list',
+    ])
+    expect(calls[1]?.params).toEqual({ sessionId: 's1' })
+  })
+
+  it('keeps a refused restore archived instead of guessing from the error', async () => {
+    const repository = new Rc6WorkspaceRepository(
+      transportFor({ 'workspace.archiveSession': { archivedSessionIds: ['s1'] } }),
+    )
+    await repository.archiveSession('s1')
+
+    await expect(repository.unarchiveSession('s1')).rejects.toThrow(
+      /unexpected RPC workspace\.unarchiveSession/u,
+    )
+
+    expect(repository.isArchived('s1')).toBe(true)
+  })
+
+  it('refuses a malformed archive-set echo from either direction', async () => {
+    const repository = new Rc6WorkspaceRepository(
+      transportFor({ 'workspace.unarchiveSession': { archivedSessionIds: [''] } }),
+    )
+
+    await expect(repository.unarchiveSession('s1')).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
+  })
+})

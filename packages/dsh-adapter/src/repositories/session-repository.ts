@@ -522,14 +522,16 @@ export class Rc6SessionRepository implements SessionRepository {
   }
 
   public async setArchived(sessionId: string, archived: boolean, signal?: AbortSignal): Promise<void> {
-    if (!archived) throw unavailable('session unarchive')
+    // Which wire methods exist is the version adapter's statement, not this
+    // repository's: a host that cannot restore answers CAPABILITY_UNAVAILABLE
+    // by name from its transport, so refusing here would refuse hosts that can.
+    const method = archived ? 'workspace.archiveSession' : 'workspace.unarchiveSession'
     if (this.workspaceRepository !== undefined) {
-      await this.workspaceRepository.archiveSession(sessionId, signal)
+      if (archived) await this.workspaceRepository.archiveSession(sessionId, signal)
+      else await this.workspaceRepository.unarchiveSession(sessionId, signal)
       return
     }
-    const value = recordOrUndefined(
-      await callRpc<unknown>(this.transport, 'workspace.archiveSession', { sessionId }, signal),
-    )
+    const value = recordOrUndefined(await callRpc<unknown>(this.transport, method, { sessionId }, signal))
     if (value === undefined || !isNonEmptyStringArray(value.archivedSessionIds))
       throw malformedSessionResponse('session archive receipt')
   }

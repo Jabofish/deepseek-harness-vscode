@@ -11,6 +11,8 @@
 
 ## Unreleased
 
+- 接入 DSH `0.1.6-alpha.2` 的精确 `alpha162` Adapter：按上游新的 `session/control` `projections.inbox` 契约归约队列/Steer，严格拒绝 alpha.1 的 `queues` 基线，归一化 `session/writer-held`，补充畸形、取消和资源释放 fixture，并通过 managed alpha.2 完整 DSH live smoke（14 个文件、20 个测试）；完整能力仍未宣称完成，安装器默认仍为 `0.1.5-rc.2`。
+- Add the exact `0.1.6-alpha.2` (`alpha162`) adapter: project the upstream `session/control` `projections.inbox` contract into Queue/Steer, reject the alpha.1 `queues` baseline, normalize `session/writer-held`, cover malformed input, cancellation, and mux disposal, and pass the complete managed alpha.2 DSH live smoke (14 files, 20 tests); the full capability matrix is not claimed complete and the installer default remains `0.1.5-rc.2`.
 - 接入 DSH `0.1.6-alpha.1` 的精确 `alpha161` Adapter：复用已核对的 Session v3 基础 wire，`image/offload` 仅作脱敏 opaque 保留；新增 alpha surface（终端、权限预设、归档恢复、Skill 路径）未冒充为已完成，安装器默认仍为 `0.1.5-rc.2`。
 - 修复最新 alpha 线上的工具卡、变更审阅与检查点：结算卡改由 `tool/result` 的 `meta` 形状派生，运行中的终端/变更卡由调用参数派生，已结算的 shell 行在调用与结果相遇处结算出输出与退出码（授权条因此能看到要批准的命令）；变更行接受宿主的绝对路径并聚合文件的全部 hunk；检查点保存创建时刻的整份文件字节，恢复按预览选择 `abort`/`overwrite`。
 - 修复宿主合法文案被静默截断：适配层、渲染层与 Webview 解析不再低于宿主契约地截断工具正文、失败原因、团队消息、命令输入和列表尾部（被截断的列表写明省略数量）。

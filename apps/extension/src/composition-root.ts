@@ -59,6 +59,7 @@ import {
   Alpha151VersionAdapter,
   Alpha152VersionAdapter,
   Alpha161VersionAdapter,
+  Alpha162VersionAdapter,
   Alpha132VersionAdapter,
   Alpha13VersionAdapter,
   Alpha5VersionAdapter,
@@ -366,6 +367,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
   const rc151Adapter = new Rc151VersionAdapter(adapterOptions)
   const rc152Adapter = new Rc152VersionAdapter(adapterOptions)
   const alpha161Adapter = new Alpha161VersionAdapter(adapterOptions)
+  const alpha162Adapter = new Alpha162VersionAdapter(adapterOptions)
   const alpha13Adapter = new Alpha13VersionAdapter(adapterOptions)
   const rc13Adapter = new Rc13VersionAdapter(adapterOptions)
   const alpha3Adapter = new Alpha3VersionAdapter(adapterOptions)
@@ -383,6 +385,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
   const legacyRc2Adapter = new LegacyRc2VersionAdapter(adapterOptions)
   const legacyRc1Adapter = new LegacyRc1VersionAdapter(adapterOptions)
   const adapters = [
+    alpha162Adapter,
     alpha161Adapter,
     rc152Adapter,
     rc151Adapter,

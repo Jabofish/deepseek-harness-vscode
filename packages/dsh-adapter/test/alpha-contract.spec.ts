@@ -882,6 +882,33 @@ describe('DSH 0.1.2-alpha.1 Connection/Gateway contract', () => {
     await transport.close()
   })
 
+  it('restores an archived session through the alpha unarchive route', async () => {
+    const requests: { readonly pathname: string; readonly body: Record<string, unknown> }[] = []
+    const fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const pathname =
+        input instanceof URL
+          ? input.pathname
+          : new URL(typeof input === 'string' ? input : input.url).pathname
+      requests.push({ pathname, body: JSON.parse(bodyText(init)) as Record<string, unknown> })
+      return Promise.resolve(response(init, { archivedSessionIds: ['s2'] }))
+    })
+    const transport = client(fetch)
+
+    await expect(transport.request('workspace.unarchiveSession', { sessionId: 's1' })).resolves.toMatchObject(
+      { result: { ok: true, value: { archivedSessionIds: ['s2'] } } },
+    )
+
+    // The restore is its own alpha Remote method, not a flag on the archive
+    // one, and it answers the complete archive set this registry now holds.
+    expect(requests).toHaveLength(1)
+    expect(requests[0]?.pathname).toBe('/api/workspace/unarchiveSession')
+    expect(requests[0]?.body).toMatchObject({
+      method: 'workspace/unarchiveSession',
+      payload: { args: { request: { sessionId: 's1' } } },
+    })
+    await transport.close()
+  })
+
   it('normalizes and validates alpha goal mutation receipts at the version boundary', async () => {
     const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
       Promise.resolve(response(init, { ref: { id: 'goal-1', revision: 2 } })),

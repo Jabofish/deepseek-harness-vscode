@@ -9,7 +9,7 @@
 | 项目               | 固定值                                                                                                                                      |
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | 最新稳定/next DSH  | `@deepseek-ai/dsh@0.1.5-rc.2`                                                                                                               |
-| 最新 alpha 通道    | `@deepseek-ai/dsh@0.1.6-alpha.1`                                                                                                            |
+| 最新 alpha 通道    | `@deepseek-ai/dsh@0.1.6-alpha.2`                                                                                                            |
 | npm 安装通道       | `next`；`latest` 仍为 `0.1.5-rc.1`                                                                                                          |
 | 扩展安装默认       | 精确使用 `0.1.5-rc.2`                                                                                                                       |
 | Node 最低版本      | `22.19.0`                                                                                                                                   |
@@ -26,31 +26,32 @@
 
 每个已知版本保留独立的精确入口。实现可以复用，但版本身份、wire schema、错误映射和版本专属字段不能跨入口猜测。
 
-| DSH 版本        | Adapter    | 关键边界                                                                                           |
-| --------------- | ---------- | -------------------------------------------------------------------------------------------------- |
-| `0.0.1-rc.1`    | `legacy01` | 旧 unary `command.*` 与旧 Host invalidation；不发送 `clientTimeZone`，不提供 ZIP。                 |
-| `0.0.1-rc.2`    | `legacy02` | 旧 `command.*`、`session/tasks` 和 `host/remote-event`；可使用已声明的 `clientTimeZone`。          |
-| `0.0.1-rc.5`    | `legacy05` | 与 rc.6 Host wire 等价，但保留独立精确身份。                                                       |
-| `0.1.0-rc.2`    | `rc02`     | 与 rc.6 Host API 契约等价的独立入口。                                                              |
-| `0.1.0-rc.3`    | `rc03`     | 与 rc.6 Host API 契约等价的独立入口。                                                              |
-| `0.1.0-rc.6`    | `rc6`      | 固定 rc.6 契约；旧 Host 可缺少 `host.describe.home`。                                              |
-| `0.1.0-rc.7`    | `rc7`      | 复用 rc.6 wire mapper，保留版本身份。                                                              |
-| `0.1.0-rc.8`    | `rc8`      | 增加 `home`、图片限制、中断回复和 Agent Teams 事件。                                               |
-| `0.1.1-rc.1`    | `rc11`     | 复用 rc.8 wire；按条件支持空白会话复用。                                                           |
-| `0.1.1-rc.2`    | `rc12`     | 复用 rc.8 wire；不发送已移除的 `reuseWorkspaceBlank`，沿官方边界处理图片限制。                     |
-| `0.1.2-rc.1`    | `rc13`     | 使用 alpha.5 的 v0 `/api`、Cookie、`remote.mux` 和 packed history；不使用 Session v2。             |
-| `0.1.2-alpha.1` | `alpha`    | `/api` Connection、Cookie 和 `remote.mux` 的源码预适配；未作为安装默认。                           |
-| `0.1.2-alpha.2` | `alpha2`   | alpha v0；增加命名空间错误、可忽略事件和 agent-preset 组合。                                       |
-| `0.1.2-alpha.3` | `alpha3`   | 沿 alpha v0；保持扩展消费的 RPC、事件和错误边界。                                                  |
-| `0.1.2-alpha.4` | `alpha4`   | 沿 alpha v0；上游内部序号、继承事件和 Subagent 实现变化不外溢。                                    |
-| `0.1.2-alpha.5` | `alpha5`   | alpha v0 的最新安全回退入口；未知版本只从这里开始只读探测。                                        |
-| `0.1.3-alpha.1` | `alpha13`  | Session v2：`isSeeded`、event-only history、assistant stream；只精确匹配。                         |
-| `0.1.3-alpha.2` | `alpha132` | Session v2；`subagent.prompt` 严格要求 `delivery: queue \| steer`；只精确匹配。                    |
-| `0.1.5-alpha.1` | `alpha151` | Session v3、surface replacement、Host-only system watermark 和 PTC；只精确匹配。                   |
-| `0.1.5-alpha.2` | `alpha152` | Session v3；严格映射 `deliverables/presented` 与 `subagent/catalog`；只精确匹配。                  |
-| `0.1.5-rc.1`    | `rc151`    | 沿 v3 和交付/目录边界复用 alpha152；保留独立 rc 身份。                                             |
-| `0.1.5-rc.2`    | `rc152`    | 沿 rc.1 的 v3 wire；增加消息反馈分类/提交语义和交付物展示边界。                                    |
-| `0.1.6-alpha.1` | `alpha161` | 沿 rc.2 的 Connection/Gateway 与 Session v3 wire；新增 projection 事件按 opaque 保留；只精确匹配。 |
+| DSH 版本        | Adapter    | 关键边界                                                                                                                                                                                                |
+| --------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0.0.1-rc.1`    | `legacy01` | 旧 unary `command.*` 与旧 Host invalidation；不发送 `clientTimeZone`，不提供 ZIP。                                                                                                                      |
+| `0.0.1-rc.2`    | `legacy02` | 旧 `command.*`、`session/tasks` 和 `host/remote-event`；可使用已声明的 `clientTimeZone`。                                                                                                               |
+| `0.0.1-rc.5`    | `legacy05` | 与 rc.6 Host wire 等价，但保留独立精确身份。                                                                                                                                                            |
+| `0.1.0-rc.2`    | `rc02`     | 与 rc.6 Host API 契约等价的独立入口。                                                                                                                                                                   |
+| `0.1.0-rc.3`    | `rc03`     | 与 rc.6 Host API 契约等价的独立入口。                                                                                                                                                                   |
+| `0.1.0-rc.6`    | `rc6`      | 固定 rc.6 契约；旧 Host 可缺少 `host.describe.home`。                                                                                                                                                   |
+| `0.1.0-rc.7`    | `rc7`      | 复用 rc.6 wire mapper，保留版本身份。                                                                                                                                                                   |
+| `0.1.0-rc.8`    | `rc8`      | 增加 `home`、图片限制、中断回复和 Agent Teams 事件。                                                                                                                                                    |
+| `0.1.1-rc.1`    | `rc11`     | 复用 rc.8 wire；按条件支持空白会话复用。                                                                                                                                                                |
+| `0.1.1-rc.2`    | `rc12`     | 复用 rc.8 wire；不发送已移除的 `reuseWorkspaceBlank`，沿官方边界处理图片限制。                                                                                                                          |
+| `0.1.2-rc.1`    | `rc13`     | 使用 alpha.5 的 v0 `/api`、Cookie、`remote.mux` 和 packed history；不使用 Session v2。                                                                                                                  |
+| `0.1.2-alpha.1` | `alpha`    | `/api` Connection、Cookie 和 `remote.mux` 的源码预适配；未作为安装默认。                                                                                                                                |
+| `0.1.2-alpha.2` | `alpha2`   | alpha v0；增加命名空间错误、可忽略事件和 agent-preset 组合。                                                                                                                                            |
+| `0.1.2-alpha.3` | `alpha3`   | 沿 alpha v0；保持扩展消费的 RPC、事件和错误边界。                                                                                                                                                       |
+| `0.1.2-alpha.4` | `alpha4`   | 沿 alpha v0；上游内部序号、继承事件和 Subagent 实现变化不外溢。                                                                                                                                         |
+| `0.1.2-alpha.5` | `alpha5`   | alpha v0 的最新安全回退入口；未知版本只从这里开始只读探测。                                                                                                                                             |
+| `0.1.3-alpha.1` | `alpha13`  | Session v2：`isSeeded`、event-only history、assistant stream；只精确匹配。                                                                                                                              |
+| `0.1.3-alpha.2` | `alpha132` | Session v2；`subagent.prompt` 严格要求 `delivery: queue \| steer`；只精确匹配。                                                                                                                         |
+| `0.1.5-alpha.1` | `alpha151` | Session v3、surface replacement、Host-only system watermark 和 PTC；只精确匹配。                                                                                                                        |
+| `0.1.5-alpha.2` | `alpha152` | Session v3；严格映射 `deliverables/presented` 与 `subagent/catalog`；只精确匹配。                                                                                                                       |
+| `0.1.5-rc.1`    | `rc151`    | 沿 v3 和交付/目录边界复用 alpha152；保留独立 rc 身份。                                                                                                                                                  |
+| `0.1.5-rc.2`    | `rc152`    | 沿 rc.1 的 v3 wire；增加消息反馈分类/提交语义和交付物展示边界。                                                                                                                                         |
+| `0.1.6-alpha.1` | `alpha161` | 沿 rc.2 的 Connection/Gateway 与 Session v3 wire；新增 projection 事件按 opaque 保留；只精确匹配。                                                                                                      |
+| `0.1.6-alpha.2` | `alpha162` | 保留 Connection/Gateway、Cookie 与 Session v3；`session/control` 改为 `jobs` + `projections.inbox`，适配层把 Inbox 两个列表归约为队列 DTO；`session/writer-held` 归一化为可重试的忙碌错误；只精确匹配。 |
 
 ### 未知版本
 
@@ -66,11 +67,11 @@
 
 启动参数属于版本化契约，不是进程管理器可以全局添加的公共选项。
 
-| 版本                                                                                                              | 参数                                        |
-| ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
-| `0.0.1-rc.1/.2/.5`、`0.1.0-rc.2/.3/.6/.7`                                                                         | `--profile web --host 127.0.0.1 --port <n>` |
-| `0.1.0-rc.8`、`0.1.1-rc.1/.2`、`0.1.2-rc.1`、`0.1.2-alpha.1–.5`、`0.1.3-alpha.1/.2`、`0.1.5-alpha.1/.2/rc.1/rc.2` | 上述参数加 `--no-open`                      |
-| 未知版本                                                                                                          | 只使用公共参数，不猜测可选 flag。           |
+| 版本                                                                                                                                  | 参数                                        |
+| ------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
+| `0.0.1-rc.1/.2/.5`、`0.1.0-rc.2/.3/.6/.7`                                                                                             | `--profile web --host 127.0.0.1 --port <n>` |
+| `0.1.0-rc.8`、`0.1.1-rc.1/.2`、`0.1.2-rc.1`、`0.1.2-alpha.1–.5`、`0.1.3-alpha.1/.2`、`0.1.5-alpha.1/.2/rc.1/rc.2`、`0.1.6-alpha.1/.2` | 上述参数加 `--no-open`                      |
+| 未知版本                                                                                                                              | 只使用公共参数，不猜测可选 flag。           |
 
 参数由 `packages/dsh-adapter/src/launch-contract.ts` 集中生成。端口必须是已验证的 loopback 端口；不得扫描任意端口范围。
 
@@ -78,16 +79,16 @@
 
 - Legacy rc 使用各自的 unary `command.*`/Host event wire；不能把 `0.0.1-rc.1/.2` 当作 rc.6 的同一协议。
 - Alpha v0 使用 `POST /api/<namespace>/<method>` 的 Remote RPC、Cookie 握手和 `/api/remote.mux`；mux 以 `open`、`cancel`、`item`、`error`、`end` 帧承载 `$events`、follow 和 control 流。
-- `session/control` 基线的 `queues`/`jobs` 只覆盖 Host 当前 live 的 Session（即内存活动会话集）；没有 live agent 的会话没有待发队列，因此队列快照缺失是真实状态而不是主机能力缺失，客户端不得据此报“主机不支持队列”。
+- `session/control` 的 alpha.1 基线通过 `queues`/`jobs` 发送 Host 当前 live Session 的瞬时状态；`0.1.6-alpha.2` 的基线严格改为 `jobs`/`projections`，待处理输入位于 `projections.<sessionId>.values.inbox` 的 `next-turn`/`next-step` 两个列表。alpha162 只在版本缝内把这两个列表投影为既有 `session/queue` DTO，队列操作仍以消息 ID 为键；不能让 alpha.1 的 `queues` 形状穿过 alpha.2 适配器。
 - rc.6 Host 与 mux 是两个逻辑流；session 事件携带 `sessionId` 和序号，订阅携带 `lastSeq`，审批/问题响应使用 `rpcId`，工具调用与结果使用结构化视图。
-- 工具卡的 `view` envelope（`{for:'call'|'result', view:{card}}`）只属于 legacy/rc 线：`toolEventViewSchema` 在 `0.1.1-rc.2` 及更早的 apiproxy `session/event` 帧与历史记录上仍在（`{event, view}`），到 `0.1.2-rc.1`（本仓库的 `rc13`）已整体移除——那之后的每个 tag（`rc151`/`rc152`、`0.1.2-alpha.1`–`alpha.5`、`0.1.3-alpha.1/.2`、`0.1.5-alpha.*`/`rc.*`、`0.1.6-alpha.1`）历史记录都只是 `{type:'event', event}`（`SessionEventEntry` 无 `view`），`tool/call` 也只有 `name`/`arguments`，没有 call 期投影。
+- 工具卡的 `view` envelope（`{for:'call'|'result', view:{card}}`）只属于 legacy/rc 线：`toolEventViewSchema` 在 `0.1.1-rc.2` 及更早的 apiproxy `session/event` 帧与历史记录上仍在（`{event, view}`），到 `0.1.2-rc.1`（本仓库的 `rc13`）已整体移除——那之后的每个 tag（`rc151`/`rc152`、`0.1.2-alpha.1`–`alpha.5`、`0.1.3-alpha.1/.2`、`0.1.5-alpha.*`/`rc.*`、`0.1.6-alpha.1/.2`）历史记录都只是 `{type:'event', event}`（`SessionEventEntry` 无 `view`），`tool/call` 也只有 `name`/`arguments`，没有 call 期投影。
 - 这些宿主上工具自己的展示值由 `tool/result` 载荷里的 `meta` 承载：上游把工具的 `output.presentationMeta` 快照进去，并把它定义为「持久日志在回放时还原出同一张卡片」（`Session.append` 以 `isJsonValue` 校验，非可序列化值在源头被拒），因此适配层必须在 envelope 缺失时按 `meta` 的**形状**派生卡片：`diffs`（数组）为 diff 卡、搜索 `shape`（`matches`/`paths`）为搜索卡、`sources` 为网页搜索卡、`url` 为网页抓取卡、`lines` 为读卡；`diffs: []`（新建文件的空 diff）与畸形/缺字段的 `meta` 都不得产出卡片，行退化到通用路径，且**不得**按工具名建表猜测。`view` envelope 存在时仍以它为权威。读卡校验与参考卡模型及 pinned `read-render.ts` 一致：`offset ≥ 1`、行号严格递增且不超过 `totalLines`；搜索/网页的 `files`/`paths`/`sources` 必须是数组。
 - 同一批宿主上调用期的 shell 调用同样必须由**调用参数**派生终端卡，规则与官方客户端 terminal 卡模型逐条一致：前台 `bash`/`pwsh` 以 `command`（非空字符串）为标题，`description`（标准工具必带、常驻 shell 省略 `description`，两者都会运行）与 `workdir`（字符串）随卡带出；`terminal_send` 以 `text` 为标题、以它写入的会话（非空 `sessionId`）为描述；`command` 为空或非字符串、`description` 为空或非字符串、`timeoutMs` 非正有限数、`workdir` 非字符串、`run_in_background` 非布尔或为 `true`（后台调用只回执 job id，没有退出状态）、`terminal_send` 的空 `text`/空 `sessionId`、`submit` 非布尔以及越权字段不成对或值不合法都不出卡；非第一方 shell 工具（含参数里恰好带 `command` 的第三方工具）一律不派生。与文件变更不同，代码分发 PTC 子调用保留终端卡（参考模型明确为嵌套调用派生）；envelope 存在时仍以宿主投影为权威，结算期不派生调用期卡片。宿主 `approval/request` 只带 `{toolName, callId, reason}`，审批条要显示的命令正是配对调用这张卡的标题，因此这条派生同时是「授权前能看到命令」的前提。
 - 同一批宿主上 `tool/result` 只带 `{turn, step, callId, message, error?}`（`meta` 只在工具声明了 `presentationMeta` 时才有），既没有工具名也没有参数：任何逐事件映射都不可能把结果配回它的调用，因此结算卡只能在**调用与结果两半相遇的时间线合并点**派生（纯规则放在 `domain`，它是 `timeline` 与 `dsh-adapter` 都允许依赖的层）。shell 行的结算规则与官方 terminal 卡模型一致：只有当该行调用期已画出终端卡、调用参数是前台一次性 `bash`/`pwsh`（或 `terminal_send`）、且结果已结算时才结算；正文末尾的 `[killed by signal: X]` 优先于 `[exit code: N]`，命中的标记从正文摘掉（状态由卡片的胶囊承载，正文不得重复渲染），无标记即退出码 0；`renderResult` 对无输出的命令写 `(no output)` 而不是空串，所以空正文不是合法的已渲染结果，不猜状态；后台调用、常驻终端（`description` 缺省）、失败结果、以及正文末尾带溢出提示（`(Omitted <n> bytes. Full formatted result stored at: …)`，其页脚可能盖住标记）一律退回通用行；`terminal_send` 的结算只陈述输出，不发明进程状态；宿主自己给出的结算卡永不被覆盖。行状态按 `terminalFailed` 语义（退出码非零或有信号即失败）同步到工具行与折叠分组摘要，失败行的错误摘要不得退化成裸退出码数字。
 - 同一批宿主上调用期（`tool/call`）也没有任何投影（`presentCall` 值不进 Client），运行中的变更卡必须由**调用参数**派生，规则与官方客户端 diff 卡模型逐条一致：`write` 取 `file_path` + `content`（`oldText: null`，覆盖写同样如此，因为调用期看不到原内容）、`edit` 取 `file_path` + `old_string`/`new_string`（空 `old_string` 视为纯插入，即 `oldText: null`；`replace_all` 只能是布尔）、`str_replace_editor` 只在 `command` 为 `create`（`file_text`，可缺省为空文件）或 `str_replace`（`old_str`/`new_str`，`old_str` 缺省为 `null`）时出卡；参数不合法（`path`/`file_path` 为空或非字符串、`content` 非字符串、`replace_all` 非布尔）、越权字段 `sandbox_permissions`/`justification` 不成对或取值不在 `workspace-write`/`danger-full-access` 且 justification 非空白、`str_replace_editor` 的其他命令、以及代码分发 PTC 子调用一律不出卡。派生只为上述第一方文件变更工具，绝不按名字给第三方工具编造卡片；envelope 存在时仍以宿主投影为权威。结算期不派生调用期卡片，时间线保留调用期已携带的卡（成功且 `meta` 带卡时由结算卡替换），因此「打算做」永远不会被当成「已做」。
 - Alpha v0 的 Remote Event 在结算时只向*其他*仍持有投递的 Client 推送 `cancel` 帧：发起响应的 Client 一旦 `$events/result` 被接受，就再也不会收到任何帧。因此本地已接受的审批/问题结算必须由适配层按真实身份补发 `permission.resolved`（`requestId` + outcome）或 `question.resolved`（`questionRpcId` + outcome）；否则 Host 回放缓存和任务中心会一直重放一个已经无法再回答的请求（响应只会得到 `STALE_INTERACTION`）。
 - Session v2 只在 `alpha13`/`alpha132` 精确入口启用 `isSeeded`、event-only history、`assistantStream` 和 `start/chunk/end` 修订帧。
-- Session v3 只在 `alpha151`/`alpha152`/`rc151`/`rc152`/`alpha161` 精确入口启用严格 envelope、surface replacement、`system/message` 隔离和 PTC 事件；`alpha161` 的 `image/offload` 是上游消息投影事件，当前只作为脱敏 opaque unknown 保留，不伪造本地投影。
+- Session v3 只在 `alpha151`/`alpha152`/`rc151`/`rc152`/`alpha161`/`alpha162` 精确入口启用严格 envelope、surface replacement、`system/message` 隔离和 PTC 事件；`alpha161` 的 `image/offload` 与 alpha162 的 `workspace/changes` 仍只作为脱敏 opaque unknown 保留，不伪造本地投影。
 - Agent Teams 事件（`team/member`、`team/task`、`team/message/queued`、`team/message/delivered`）的 envelope 版本随发行线变化：已发布的 `0.1.2-alpha.2`–`alpha.5` 是 `version: 1`，其排队消息快照带必填 `delivery`；`0.1.6-alpha.1` 起为 `version: 2`（上游 `z.literal(2)` 严格校验），消息快照不再有 `delivery`。共享 mapper 同时接受这两种版本，v1 仍要求 `delivery`（缺失即判为畸形），v2 只在载荷携带时投影该字段；其他 envelope 版本继续 fail-closed 为 unknown。
 - `team/message/queued` 与 `team/message/delivered` 是同一条消息的两条记录：前者是已持久保存的消息本体（正文与发件人只在这里），后者是只带 `messageId`/`targetId` 的投递回执。时间线按 `teamId` + `messageId` 归并为一行，回执推进该行的状态并保留本体事实；成员与任务则各自按快照身份一行。任何一侧都不得据此伪造消息正文或把回执显示成独立卡片。消息正文与成员失败原因都是宿主原文：Mailbox 只约束发送方成帧后的整条投递（`maxMessageBytes`，默认 65 536 字节且可配置），失败原因由 `errorMessage(error)` 原样保存，因此这两段文本按普通散文渲染（换行、不省略号收尾），发件人（`senderName`）也必须出现在行上。
 - `system/message` 只在 Host 保留序号水印；系统提示词、Cookie、launch token、endpoint 和原始上游错误不进入 Webview。

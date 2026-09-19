@@ -42,10 +42,13 @@ export const SUPPORTED_DSH_VERSIONS = [
   // 0.1.6-alpha.1 retains the audited Session v3 wire and adds only
   // additive projection/optional API surfaces; it remains exact-only.
   '0.1.6-alpha.1',
+  // 0.1.6-alpha.2 keeps Session v3 but replaces the control queue snapshot
+  // with the durable Inbox projection; it has its own exact adapter.
+  '0.1.6-alpha.2',
 ] as const
 
 export const SUPPORTED_DSH_RANGE =
-  '0.0.1-rc.1/.2/.5; 0.1.0-rc.2/.3/.6/.7/.8; 0.1.1-rc.1/.2; 0.1.2-rc.1; 0.1.2-alpha.1-.5; 0.1.3-alpha.1/.2; 0.1.5-alpha.1/.2/rc.1/.2; 0.1.6-alpha.1' as const
+  '0.0.1-rc.1/.2/.5; 0.1.0-rc.2/.3/.6/.7/.8; 0.1.1-rc.1/.2; 0.1.2-rc.1; 0.1.2-alpha.1-.5; 0.1.3-alpha.1/.2; 0.1.5-alpha.1/.2/rc.1/.2; 0.1.6-alpha.1/.2' as const
 
 export const DSH_PACKAGE_NAME = '@deepseek-ai/dsh' as const
 

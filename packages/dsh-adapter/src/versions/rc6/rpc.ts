@@ -49,7 +49,8 @@ export function unwrapRpcResult<T>(response: RpcResponseLike<T>, method: string)
   throw new AppError({
     code: mapRpcError(code),
     message: safeRpcMessage(method, code, error?.message, attachmentReason),
-    retryable: code === 'cancelled' || code === 'agent-busy' || code === 'settings-conflict',
+    retryable:
+      code === 'cancelled' || code === 'agent-busy' || code === 'writer-held' || code === 'settings-conflict',
     context: {
       rpcMethod: method,
       rpcCode: code,
@@ -141,6 +142,8 @@ function mapRpcError(code: string): AppErrorCode {
       return 'BACKEND_UNREACHABLE'
     case 'agent-busy':
       return 'BACKEND_BUSY'
+    case 'writer-held':
+      return 'BACKEND_BUSY'
     case 'settings-conflict':
       return 'BACKEND_BUSY'
     case 'credential-rejected':
@@ -188,6 +191,7 @@ function safeRpcMessage(
     'unknown-command': 'The DSH command is not available in this host composition.',
     'command-error': 'The DSH command could not be applied.',
     'agent-busy': 'The DSH agent is busy.',
+    'writer-held': 'The DSH session is currently owned by another DSH writer.',
     'settings-conflict': 'The DSH settings changed; reload and retry.',
     'credential-rejected': 'The DSH credential change was rejected.',
     'bad-request': 'The DSH request was invalid.',

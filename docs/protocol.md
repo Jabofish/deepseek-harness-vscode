@@ -31,7 +31,7 @@ sequenceDiagram
 
 ## 当前请求覆盖
 
-`0.1.6-alpha.1` 使用独立 `alpha161` Adapter：其基础 Connection/Gateway 与 Session v3 wire 复用已核对的 rc.2 边界；`image/offload` 事件仅以脱敏 opaque unknown 进入统一时间线，终端、权限预设、归档恢复和 Skill 路径等新增上游 API 尚未声明为可用。该版本不改变 Webview 协议。
+`0.1.6-alpha.1` 使用独立 `alpha161` Adapter：其基础 Connection/Gateway 与 Session v3 wire 复用已核对的 rc.2 边界；`image/offload` 事件仅以脱敏 opaque unknown 进入统一时间线。`0.1.6-alpha.2` 使用独立 `alpha162` Adapter：保留 Session v3，但 `session/control` 的 Inbox projection 在 Host 侧归约为既有 Queue/Steer DTO，alpha.1 的 `queues` 基线不跨版本复用；`session/writer-held` 映射为可重试忙碌错误。两个版本新增的终端、权限预设、归档恢复和 Skill 路径等上游 API 尚未声明为可用，均不改变 Webview 协议。
 
 Schema 已为以下域定义严格 discriminated union：应用/连接/Runtime、Workspace、Session CRUD、Prompt、Queue/Steer、附件、`@` 文件/会话引用、消息反馈、模型/Provider/Secret、审批/问题、Settings、Goal、Job、Subagent、Workflow、Skill、动态命令、Plugin、Export、诊断和右栏引导。Extension Host 对请求再次校验，并通过 Application ports 路由；精确请求名与字段以 `packages/webview-protocol/src/schemas.ts` 为唯一代码来源。
 

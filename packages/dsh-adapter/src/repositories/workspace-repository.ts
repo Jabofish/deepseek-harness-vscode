@@ -86,6 +86,35 @@ export class Rc6WorkspaceRepository implements WorkspaceRepository {
     }
   }
 
+  /**
+   * Restore one archived session: the mirror of `archiveSession` in the one
+   * direction monotonic local knowledge cannot express. The commit is the only
+   * evidence that may retire that memory, so a failed restore puts the id back
+   * exactly as it was found rather than guessing from the error.
+   */
+  public async unarchiveSession(sessionId: string, signal?: AbortSignal): Promise<void> {
+    const wasArchived = this.archivedSessionIds.has(sessionId)
+    this.archivedSessionIds.delete(sessionId)
+    try {
+      const value = recordOrUndefined(
+        await callRpc<unknown>(this.transport, 'workspace.unarchiveSession', { sessionId }, signal),
+      )
+      if (value === undefined || !isStringArray(value.archivedSessionIds)) throw malformedArchiveResponse()
+      // Keeping the id in either local set would hide the restored row in every
+      // later archive-set read, because those reads union them back in.
+      this.confirmedLocalArchives.delete(sessionId)
+      this.pendingArchives.delete(sessionId)
+      this.archivedSessionIds = new Set([
+        ...value.archivedSessionIds,
+        ...this.confirmedLocalArchives,
+        ...this.pendingArchives,
+      ])
+    } catch (error) {
+      if (wasArchived) this.archivedSessionIds.add(sessionId)
+      throw error
+    }
+  }
+
   public async create(input: WorkspaceCreateInput, signal?: AbortSignal): Promise<WorkspaceSummary> {
     const value = recordOrUndefined(
       await callRpc<unknown>(this.transport, 'workspace.create', { path: input.path }, signal),
