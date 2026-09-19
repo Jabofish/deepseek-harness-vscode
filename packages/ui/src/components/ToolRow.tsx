@@ -164,6 +164,7 @@ export function toolRowModel(tool: ToolCallView, translate?: PresentationTransla
       : variant === 'skill'
         ? skillSections(tool, translate)
         : [...presentation.request, ...presentation.response]
+  const visibleSections = removeDuplicateErrorSections(sections, tool.error, translate)
   // A failing exit is stated by the card's own status pill; the row must not
   // echo the bare exit number as if it were the failure text.
   const errorText =
@@ -176,7 +177,7 @@ export function toolRowModel(tool: ToolCallView, translate?: PresentationTransla
     state,
     title,
     summary,
-    sections,
+    sections: visibleSections,
     ...(state === 'error' && errorText !== undefined ? { errorSummary: firstLine(errorText) } : {}),
   }
 }
@@ -197,7 +198,12 @@ export function ToolRow(props: ToolRowProps): ReactElement {
   const targets =
     props.onOpenLink === undefined
       ? []
-      : presentationTargets(props.tool.presentation, props.renderWeb !== undefined)
+      : presentationTargets(props.tool.presentation, props.renderWeb !== undefined, props.tool.locations)
+  const detailsPresentation = removeDuplicateErrorPresentation(
+    props.tool.presentation,
+    props.tool.error,
+    props.translate,
+  )
   return (
     <article
       className={`dsh-tool-row dsh-tool-row--${model.state}`}
@@ -243,7 +249,7 @@ export function ToolRow(props: ToolRowProps): ReactElement {
       {expanded && hasDetails ? (
         <div className="dsh-tool-row__details">
           {renderStructuredDetails(
-            props.tool,
+            detailsPresentation,
             model.sections,
             props.translate,
             props.onOpenLink,
@@ -268,7 +274,6 @@ export function ToolRow(props: ToolRowProps): ReactElement {
                   onClick={() => props.onOpenLink?.(target.href)}
                 >
                   <span>{target.label}</span>
-                  <span className="dsh-tool-row__target-href">{target.href}</span>
                 </button>
               ))}
             </div>
@@ -293,14 +298,16 @@ interface ToolPresentationTarget {
 function presentationTargets(
   view: ToolPresentationView | undefined,
   hasWebRenderer = false,
+  locations: readonly ToolLocationView[] | undefined = undefined,
 ): readonly ToolPresentationTarget[] {
-  if (view === undefined) return []
   const targets: ToolPresentationTarget[] = []
   const add = (href: string | undefined, labelText: string): void => {
     const value = href?.trim()
     if (value === undefined || value === '' || targets.some((target) => target.href === value)) return
     targets.push({ href: value, label: labelText })
   }
+  for (const location of locations ?? []) add(location.path, location.path)
+  if (view === undefined) return targets.slice(0, 16)
   switch (view.card) {
     case 'generic':
       if (view.phase === 'call')
@@ -340,7 +347,7 @@ function searchRecovery(tool: ToolCallView): string | undefined {
 }
 
 function renderStructuredDetails(
-  tool: ToolCallView,
+  view: ToolPresentationView | undefined,
   sections: readonly ToolDetailBlock[],
   t?: PresentationTranslate,
   onOpenLink?: (href: string) => void,
@@ -351,7 +358,6 @@ function renderStructuredDetails(
   renderWeb?: (props: ToolWebRenderProps) => ReactElement,
   recovery?: string,
 ): ReactElement {
-  const view = tool.presentation
   return (
     <>
       {view === undefined
@@ -368,14 +374,58 @@ function renderStructuredDetails(
             renderWeb,
             recovery,
           )}
-      {tool.error === undefined ? null : (
-        <section className="dsh-tool-row__section dsh-tool-row__section--error" role="alert">
-          <h4>{label(t, 'toolrow.error', 'Error')}</h4>
-          <pre>{formatToolText(tool.error, t) ?? tool.error.trim()}</pre>
-        </section>
-      )}
     </>
   )
+}
+
+function removeDuplicateErrorSections(
+  sections: readonly ToolDetailBlock[],
+  error: string | undefined,
+  t?: PresentationTranslate,
+): readonly ToolDetailBlock[] {
+  if (error === undefined) return sections
+  return sections.filter((section) => !sameToolText(section.content, error, t))
+}
+
+function removeDuplicateErrorPresentation(
+  view: ToolPresentationView | undefined,
+  error: string | undefined,
+  t?: PresentationTranslate,
+): ToolPresentationView | undefined {
+  if (view === undefined || error === undefined) return view
+  switch (view.card) {
+    case 'generic':
+      return view.phase === 'result' && view.content !== undefined
+        ? { ...view, content: view.content.filter((content) => !sameToolText(content, error, t)) }
+        : view
+    case 'terminal':
+      if (view.phase !== 'result' || !sameToolText(view.output, error, t)) return view
+      {
+        const withoutOutput = { ...view }
+        delete withoutOutput.output
+        return withoutOutput
+      }
+    case 'web':
+      if (view.kind !== 'search' || !sameToolText(view.answer, error, t)) return view
+      {
+        const withoutAnswer = { ...view }
+        delete withoutAnswer.answer
+        return withoutAnswer
+      }
+    default:
+      return view
+  }
+}
+
+function sameToolText(
+  first: string | undefined,
+  second: string | undefined,
+  t?: PresentationTranslate,
+): boolean {
+  if (first === undefined || second === undefined) return false
+  const firstText = formatToolText(first, t) ?? first.trim()
+  const secondText = formatToolText(second, t) ?? second.trim()
+  return firstText === secondText
 }
 
 function renderSections(sections: readonly ToolDetailBlock[]): ReactElement {

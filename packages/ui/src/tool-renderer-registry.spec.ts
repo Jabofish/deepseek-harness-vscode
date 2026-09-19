@@ -39,4 +39,19 @@ describe('ToolRendererRegistry', () => {
     })
     expect(registry.render(tool('broken_tool')).type).toBe(ToolCard)
   })
+
+  it('passes the host link opener to the generic compatibility card', () => {
+    const registry = new ToolRendererRegistry()
+    const onOpenLink = (): void => undefined
+    const element = registry.render(
+      {
+        ...tool('future_tool'),
+        locations: [{ path: 'src/future.ts', line: 0 }],
+      },
+      { onOpenLink },
+    )
+
+    expect(element.type).toBe(ToolCard)
+    expect((element.props as { readonly onOpenLink?: (href: string) => void }).onOpenLink).toBe(onOpenLink)
+  })
 })

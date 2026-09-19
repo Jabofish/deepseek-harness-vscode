@@ -2,7 +2,7 @@
 
 只有全部必需项满足才可发布。
 
-当前发布版本是 `0.1.11`（稳定版），运行时契约覆盖已发布 DSH `0.0.1-rc.1/.2/.5`、`0.1.0-rc.2/.3`、`0.1.0-rc.6` 至 `0.1.2-rc.1`、`0.1.2-alpha.2` 至 `0.1.2-alpha.5`、`0.1.3-alpha.2`、`0.1.5-alpha.1/.2/rc.1/rc.2` 和 alpha 通道 `0.1.6-alpha.1`，并包含 `0.1.2-alpha.1`、`0.1.3-alpha.1` 的源码级适配；`0.0.1-rc.1/.2` 的旧 Host API 与 rc.6 wire 分开，`0.1.3-alpha.1/.2` 使用 alpha13/alpha132 的 Session v2，`0.1.5-alpha.1/.2/rc.1/rc.2/0.1.6-alpha.1` 使用 Session v3，只有 alpha132 发送 alpha.2 新增的 subagent `delivery` 字段，alpha152/rc151/rc152 接收已核对的交付/目录事件，alpha161 对 `image/offload` 仅做脱敏 opaque 保留。安装器默认通过 npm `next` 使用精确的最新 `0.1.5-rc.2`（npm `latest` 仍为 `rc.1`）。任何非空未知版本标签仅由可安全复用已验证 wire 的 Adapter 进行兼容探测，alpha13/alpha132/alpha151/alpha152/rc151/rc152/alpha161 的版本专属 Session wire 只接受精确版本，未知运行时回退到 alpha5 v0，成功后保留真实版本并显示警告。能力矩阵仍有 `PARTIAL`，以下未勾选项代表真实缺口，不应被“构建成功”替代。
+当前发布版本是 `0.2.0`（稳定版），运行时契约覆盖已发布 DSH `0.0.1-rc.1/.2/.5`、`0.1.0-rc.2/.3`、`0.1.0-rc.6` 至 `0.1.2-rc.1`、`0.1.2-alpha.2` 至 `0.1.2-alpha.5`、`0.1.3-alpha.2`、`0.1.5-alpha.1/.2/rc.1/rc.2` 和 alpha 通道 `0.1.6-alpha.1`，并包含 `0.1.2-alpha.1`、`0.1.3-alpha.1` 的源码级适配；`0.0.1-rc.1/.2` 的旧 Host API 与 rc.6 wire 分开，`0.1.3-alpha.1/.2` 使用 alpha13/alpha132 的 Session v2，`0.1.5-alpha.1/.2/rc.1/rc.2/0.1.6-alpha.1` 使用 Session v3，只有 alpha132 发送 alpha.2 新增的 subagent `delivery` 字段，alpha152/rc151/rc152 接收已核对的交付/目录事件，alpha161 对 `image/offload` 仅做脱敏 opaque 保留。安装器默认通过 npm `next` 使用精确的最新 `0.1.5-rc.2`（npm `latest` 仍为 `rc.1`）。任何非空未知版本标签仅由可安全复用已验证 wire 的 Adapter 进行兼容探测，alpha13/alpha132/alpha151/alpha152/rc151/rc152/alpha161 的版本专属 Session wire 只接受精确版本，未知运行时回退到 alpha5 v0，成功后保留真实版本并显示警告。能力矩阵仍有 `PARTIAL`，以下未勾选项代表真实缺口，不应被“构建成功”替代。
 
 ## 功能
 

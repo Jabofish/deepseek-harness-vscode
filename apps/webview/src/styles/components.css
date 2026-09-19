@@ -490,6 +490,20 @@
   font-size: 0.85em;
 }
 
+/* A complete, unlabeled read window only needs the copy affordance. Keep the
+ * control row compact instead of showing an empty full-width gray strip. */
+.dsh-tool-code-preview__toolbar--minimal {
+  width: fit-content;
+  min-height: 0;
+  margin-inline-start: auto;
+  padding: 0;
+  background: transparent;
+}
+
+.dsh-tool-code-preview__toolbar--minimal .dsh-tool-code-preview__copy {
+  margin-inline-start: 0;
+}
+
 .dsh-tool-code-preview__window {
   min-width: 0;
   overflow: hidden;

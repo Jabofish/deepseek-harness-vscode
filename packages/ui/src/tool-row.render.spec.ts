@@ -477,4 +477,110 @@ describe('ToolRow rendering', () => {
 
     expect(document.querySelector('.dsh-tool-row__section--error pre')?.textContent).toBe(failure)
   })
+
+  it('renders one error section for a failed structured tool', () => {
+    const failure =
+      'Error: old_string was not found in "D:\\CS\\deepseek-harness-vscode\\test-workspace\\hello.txt"'
+    const tool: ToolCallView = {
+      id: 'single-structured-failure',
+      name: 'edit',
+      title: 'Edit',
+      category: 'tool',
+      status: 'failed',
+      error: failure,
+      metadata: {},
+      presentation: {
+        phase: 'result',
+        card: 'diff',
+        diffs: [{ path: 'test-workspace/hello.txt', oldText: 'Part A', newText: 'Phase 1' }],
+      },
+    }
+
+    const { container } = render(createElement(ToolRow, { tool, expanded: true, onToggle: vi.fn() }))
+
+    expect(container.querySelectorAll('.dsh-tool-row__section--error')).toHaveLength(1)
+    expect(container.querySelector('.dsh-tool-row__section--error pre')?.textContent).toBe(failure)
+  })
+
+  it('does not repeat a structured result when it is the same as the tool error', () => {
+    const failure =
+      'Error: old_string was not found in "D:\\CS\\deepseek-harness-vscode\\test-workspace\\hello.txt"'
+    const tool: ToolCallView = {
+      id: 'structured-error-result',
+      name: 'bash',
+      title: 'Bash',
+      category: 'tool',
+      status: 'failed',
+      error: failure,
+      metadata: {},
+      presentation: {
+        phase: 'result',
+        card: 'terminal',
+        output: failure,
+        exitCode: 1,
+      },
+    }
+
+    const { container } = render(createElement(ToolRow, { tool, expanded: true, onToggle: vi.fn() }))
+    const details = container.querySelector('.dsh-tool-row__details')
+    const detailsText = details?.textContent ?? ''
+
+    expect(detailsText.split(failure).length - 1).toBe(1)
+    expect(details?.querySelector('.dsh-tool-row__terminal-output')).toBeNull()
+    expect(details?.querySelectorAll('.dsh-tool-row__section--error')).toHaveLength(1)
+  })
+
+  it('renders a top-level location once for a structured result without its own target list', () => {
+    const filePath = 'D:\\CS\\deepseek-harness-vscode\\.test-workspace\\hello.txt'
+    const onOpenLink = vi.fn()
+    const tool: ToolCallView = {
+      id: 'structured-location-target',
+      name: 'grep',
+      title: 'Search',
+      category: 'tool',
+      status: 'completed',
+      locations: [{ path: filePath, line: 2 }],
+      metadata: {},
+      presentation: {
+        phase: 'result',
+        card: 'generic',
+        content: ['match found'],
+      },
+    }
+
+    render(createElement(ToolRow, { tool, expanded: true, onToggle: vi.fn(), onOpenLink }))
+
+    const target = document.querySelector<HTMLButtonElement>('.dsh-tool-row__target')
+    expect(target?.textContent).toBe(filePath)
+    expect(document.querySelectorAll('.dsh-tool-row__target')).toHaveLength(1)
+    fireEvent.click(target!)
+    expect(onOpenLink).toHaveBeenCalledWith(filePath)
+  })
+
+  it('renders one file target and forwards its path when clicked', () => {
+    const filePath = 'D:\\CS\\deepseek-harness-vscode\\.test-workspace\\hello.txt'
+    const onOpenLink = vi.fn()
+    const tool: ToolCallView = {
+      id: 'clickable-file-target',
+      name: 'edit',
+      title: 'Edit',
+      category: 'tool',
+      status: 'completed',
+      metadata: {},
+      presentation: {
+        phase: 'result',
+        card: 'diff',
+        diffs: [{ path: filePath, oldText: 'Part A', newText: 'Phase 1' }],
+      },
+    }
+
+    render(createElement(ToolRow, { tool, expanded: true, onToggle: vi.fn(), onOpenLink }))
+
+    const target = document.querySelector<HTMLButtonElement>('.dsh-tool-row__target')
+    expect(target?.textContent).toBe(filePath)
+    expect(target?.querySelector('.dsh-tool-row__target-href')).toBeNull()
+    fireEvent.click(target!)
+    expect(onOpenLink).toHaveBeenCalledOnce()
+    expect(onOpenLink).toHaveBeenCalledWith(filePath)
+  })
 })

@@ -1,5 +1,14 @@
 # Change Log
 
+## 0.2.0
+
+- 修复错误信息在工具卡和结构化工具行中重复展示的问题；通用回退、终端和搜索结果会复用同一份错误展示，不再生成两张错误卡。
+- 修复文件位置链接重复和不可点击的问题：每个目标只保留一个由宿主打开的入口，同时覆盖通用工具回退路径和宿主提供的顶层文件位置。
+- 修复“读取”预览在没有语言或元数据时显示整条空白复制栏的问题，并压缩插件清单的详情布局；补充对应的 Webview/UI 回归测试。
+- Fix duplicated error presentation across generic and structured tool renderers, including terminal and search results.
+- Fix duplicated, non-clickable file-location labels by routing one deduplicated target per location through the Extension Host opener.
+- Keep unlabeled read previews compact and add regression coverage for the tool-card, file-target, read-preview, and plugin-inventory layouts.
+
 ## Unreleased
 
 - 接入 DSH `0.1.6-alpha.1` 的精确 `alpha161` Adapter：复用已核对的 Session v3 基础 wire，`image/offload` 仅作脱敏 opaque 保留；新增 alpha surface（终端、权限预设、归档恢复、Skill 路径）未冒充为已完成，安装器默认仍为 `0.1.5-rc.2`。

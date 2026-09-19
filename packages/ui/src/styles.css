@@ -610,6 +610,7 @@
   transform: rotate(90deg);
 }
 
+.dsh-tool-card__targets,
 .dsh-tool-row__targets,
 .dsh-tool-row__diff-list,
 .dsh-tool-row__search-files,
@@ -619,6 +620,7 @@
   min-width: 0;
 }
 
+.dsh-tool-card__target,
 .dsh-tool-row__target {
   display: inline-flex;
   align-items: baseline;
@@ -632,6 +634,7 @@
   cursor: pointer;
 }
 
+.dsh-tool-card__target,
 .dsh-tool-row__target {
   min-width: 0;
   overflow: hidden;
@@ -642,17 +645,11 @@
   white-space: nowrap;
 }
 
+.dsh-tool-card__target:hover,
 .dsh-tool-row__target:hover,
+.dsh-tool-card__target:focus-visible,
 .dsh-tool-row__target:focus-visible {
   background: var(--dsh-surface-hover);
-}
-
-.dsh-tool-row__target-href {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--dsh-muted);
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .dsh-tool-row__diff-file,
