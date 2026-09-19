@@ -44,6 +44,7 @@ function connectedState(activeSession: boolean): AppState {
         ]
       : [],
     archivedSessionIds: [],
+    archivedSessions: [],
     workspaces: [
       {
         id: 'w1',
@@ -135,6 +136,9 @@ function storeFor(state: AppState): AppStore {
     forkSession: vi.fn().mockResolvedValue(undefined),
     createSession: vi.fn().mockResolvedValue(undefined),
     removeSession: vi.fn().mockResolvedValue(undefined),
+    loadArchivedSessions: vi.fn().mockResolvedValue(undefined),
+    restoreSession: vi.fn().mockResolvedValue(undefined),
+    deleteSession: vi.fn().mockResolvedValue(undefined),
     configureSession: vi.fn(),
     executeCommand: vi.fn(),
     sendPrompt: vi.fn().mockResolvedValue(undefined),
@@ -604,7 +608,6 @@ describe('App connected rendering', () => {
             canOpen: true,
             canAnswer: false,
             canSessionCancel: true,
-            canProcessStop: false,
             ownerKind: 'unknown',
             taskRevision: 1,
           },

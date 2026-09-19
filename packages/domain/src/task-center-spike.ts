@@ -15,7 +15,6 @@ export type TaskCenterTaskStatus =
   | 'cancelled'
   | 'disconnected'
   | 'unknown'
-export type TaskControlAction = 'session-cancel' | 'process-stop'
 export type TaskOwnerKind = 'extension' | 'external' | 'unknown'
 
 export interface TaskCenterEvidence {
@@ -34,7 +33,6 @@ export interface TaskCenterTask {
   readonly ownerKind: TaskOwnerKind
   readonly taskRevision: number
   readonly canSessionCancel: boolean
-  readonly canProcessStop: boolean
 }
 
 export interface TaskCenterSnapshot {
@@ -112,10 +110,4 @@ export function buildTaskCenterHierarchy(tasks: readonly TaskCenterTask[]): read
     if (!visited.has(task.taskId)) hierarchy.push(visit(task, new Set()))
   }
   return hierarchy
-}
-
-/** Process stop is reserved for extension-owned managed processes. */
-export function canControlTask(task: TaskCenterTask, action: TaskControlAction): boolean {
-  if (action === 'session-cancel') return task.sessionId !== undefined && task.canSessionCancel
-  return task.ownerKind === 'extension' && task.canProcessStop
 }

@@ -260,7 +260,6 @@ export class Rc6SessionRepository implements SessionRepository {
       ...summary,
       configuration: configurationFromRawHistory(rawHistory, agentPreset, projectionValues),
       ...(permissionPresets === undefined ? {} : { permissionPresets }),
-      goalIds: [],
       history: history.events,
       historyHasMore: history.hasMore,
       ...(history.beforeSequence === undefined ? {} : { historyBeforeSequence: history.beforeSequence }),

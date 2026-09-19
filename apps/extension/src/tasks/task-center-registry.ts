@@ -46,9 +46,9 @@ interface PendingInteraction {
  * The pinned DSH contract does not prove a global task seed/replay/ownership
  * API. Workspace scope therefore composes only the authoritative session,
  * goal, job, and subagent repositories already owned by the active backend.
- * It is deliberately reported as a partial `workspace-composed` source;
- * `process-stop` is intentionally unavailable unless a future managed process
- * control port is explicitly supplied.
+ * It is deliberately reported as a partial `workspace-composed` source.
+ * Session cancel is the only control the pinned contract can prove, so it is
+ * the only control action this projection exposes.
  */
 export class TaskCenterRegistry implements TaskRepository {
   private readonly entries = new Map<string, TaskSummary>()
@@ -323,16 +323,10 @@ export class TaskCenterRegistry implements TaskRepository {
     )
   }
 
-  public async stop(
-    taskId: string,
-    mode: 'session-cancel' | 'process-stop',
-    taskRevision: number,
-    signal?: AbortSignal,
-  ): Promise<TaskSummary> {
+  public async stop(taskId: string, taskRevision: number, signal?: AbortSignal): Promise<TaskSummary> {
     throwIfAborted(signal)
     const task = await this.get(taskId, signal)
     this.assertRevision(task, taskRevision)
-    if (mode === 'process-stop') throw taskNotOwned()
     if (!task.canSessionCancel) throw taskNotOwned()
     if (task.kind === 'subagent') await this.requireBackend().subagents.interrupt(task.sourceId, signal)
     else {
@@ -411,7 +405,6 @@ export class TaskCenterRegistry implements TaskRepository {
       canOpen: true,
       canAnswer: false,
       canSessionCancel: status === 'running' || status === 'needs-input',
-      canProcessStop: false,
       ownerKind: 'unknown',
       ...this.connectionFields(),
     })
@@ -444,7 +437,6 @@ export class TaskCenterRegistry implements TaskRepository {
       canOpen: true,
       canAnswer: false,
       canSessionCancel: false,
-      canProcessStop: false,
       ownerKind: 'unknown',
       ...this.connectionFields(),
     })
@@ -479,7 +471,6 @@ export class TaskCenterRegistry implements TaskRepository {
       canOpen: false,
       canAnswer: false,
       canSessionCancel: false,
-      canProcessStop: false,
       ownerKind: 'unknown',
       ...this.connectionFields(),
     })
@@ -509,7 +500,6 @@ export class TaskCenterRegistry implements TaskRepository {
           canOpen: false,
           canAnswer: false,
           canSessionCancel: false,
-          canProcessStop: false,
           ownerKind: 'unknown',
           ...this.connectionFields(),
         })
@@ -531,7 +521,6 @@ export class TaskCenterRegistry implements TaskRepository {
         canOpen: true,
         canAnswer: false,
         canSessionCancel: status === 'running' && entry.mode === 'continuable',
-        canProcessStop: false,
         ownerKind: 'unknown',
         ...this.connectionFields(),
       })
@@ -562,7 +551,6 @@ export class TaskCenterRegistry implements TaskRepository {
           canOpen: true,
           canAnswer: true,
           canSessionCancel: false,
-          canProcessStop: false,
           ownerKind: 'unknown',
           ...this.connectionFields(),
         }),

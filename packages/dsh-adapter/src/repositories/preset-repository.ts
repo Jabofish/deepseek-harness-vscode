@@ -19,13 +19,16 @@ export class Rc6PresetRepository implements PresetRepository {
     if (
       !Array.isArray(record.presets) ||
       typeof record.authorable !== 'boolean' ||
-      typeof record.hasDocument !== 'boolean'
+      // The native-opener capability is optional: a host or transport that did
+      // not answer it must not be read as a `false` answer, and a stated value
+      // must still be a boolean.
+      (record.hasDocument !== undefined && typeof record.hasDocument !== 'boolean')
     )
       throw malformedPresetResponse('roster')
     return {
       presets: record.presets.map(presetDescriptor),
       authorable: record.authorable,
-      hasDocument: record.hasDocument,
+      ...(typeof record.hasDocument === 'boolean' ? { hasDocument: record.hasDocument } : {}),
     }
   }
 

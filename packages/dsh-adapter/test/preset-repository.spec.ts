@@ -73,6 +73,25 @@ describe('Rc6PresetRepository roster read', () => {
     await expect(repository.list()).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
   })
 
+  it('leaves the native-opener fact absent when the transport stated none', async () => {
+    const repository = new Rc6PresetRepository(
+      transportFor({ 'agentPreset.list': { presets: [], authorable: false } }),
+    )
+
+    const roster = await repository.list()
+
+    expect(roster.authorable).toBe(false)
+    expect(Object.hasOwn(roster, 'hasDocument')).toBe(false)
+  })
+
+  it('rejects a native-opener fact that is neither boolean nor absent', async () => {
+    const repository = new Rc6PresetRepository(
+      transportFor({ 'agentPreset.list': { presets: [], authorable: false, hasDocument: 'yes' } }),
+    )
+
+    await expect(repository.list()).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
+  })
+
   it('rejects the whole roster when any entry has malformed trust', async () => {
     const repository = new Rc6PresetRepository(
       transportFor({

@@ -216,22 +216,12 @@ export const taskSummarySchema = z
     canOpen: z.boolean(),
     canAnswer: z.boolean(),
     canSessionCancel: z.boolean(),
-    canProcessStop: z.boolean(),
     ownerKind: z.enum(['extension', 'external', 'unknown']),
     backendInstanceId: id.optional(),
     connectionGeneration: generation.optional(),
     taskRevision: generation,
   })
   .strict()
-  .superRefine((value, context) => {
-    if (value.canProcessStop && value.ownerKind !== 'extension') {
-      context.addIssue({
-        code: 'custom',
-        path: ['canProcessStop'],
-        message: 'Only extension-owned tasks may expose process-stop.',
-      })
-    }
-  })
 
 export const checkpointSummarySchema = z
   .object({
@@ -475,7 +465,6 @@ export const featureRequestSchema = z.discriminatedUnion('type', [
       payload: z
         .object({
           taskId: id,
-          mode: z.enum(['session-cancel', 'process-stop']),
           taskRevision: generation,
         })
         .strict(),

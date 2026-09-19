@@ -29,7 +29,7 @@ describe('RuntimeConnectionView', () => {
       screen.getByText('DSH is connected. The extension is loading workspaces and sessions.'),
     ).toBeDefined()
     expect(screen.getByRole('heading').closest('section')?.getAttribute('aria-busy')).toBe('true')
-    expect(document.querySelector('.dsh-runtime-connection__step--active')?.textContent).toBe('Load sessions')
+    expect(document.querySelector('[aria-current="step"]')?.textContent).toBe('Load sessions')
   })
 
   it('shows the host failure and recovery actions', () => {

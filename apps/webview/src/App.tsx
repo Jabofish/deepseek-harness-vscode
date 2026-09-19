@@ -887,6 +887,13 @@ export function App(): ReactElement {
   const sessionOnRename = useStableCallback((sessionId: string, title: string): Promise<void> =>
     store.renameSession(sessionId, title),
   )
+  const sessionOnLoadArchived = useStableCallback((): Promise<void> => store.loadArchivedSessions())
+  const sessionOnRestore = useStableCallback((sessionId: string): Promise<void> =>
+    store.restoreSession(sessionId),
+  )
+  const sessionOnDelete = useStableCallback((sessionId: string): Promise<void> =>
+    store.deleteSession(sessionId),
+  )
   const sessionOnRenameWorkspace = useStableCallback((workspaceId: string, name: string): Promise<void> =>
     store.renameWorkspace(workspaceId, name),
   )
@@ -1044,6 +1051,10 @@ export function App(): ReactElement {
         onOpen={sessionOnOpen}
         onCreate={sessionOnCreate}
         onArchive={sessionOnArchive}
+        archivedSessions={state.archivedSessions}
+        onLoadArchived={sessionOnLoadArchived}
+        onRestore={sessionOnRestore}
+        onDelete={sessionOnDelete}
         onRename={sessionOnRename}
         onRenameWorkspace={sessionOnRenameWorkspace}
         onRemoveWorkspace={sessionOnRemoveWorkspace}
@@ -1055,6 +1066,8 @@ export function App(): ReactElement {
     [
       sessionOnArchive,
       sessionOnCreate,
+      sessionOnDelete,
+      sessionOnLoadArchived,
       sessionOnMoveSession,
       sessionOnMoveWorkspace,
       sessionOnOpen,
@@ -1062,8 +1075,10 @@ export function App(): ReactElement {
       sessionOnRemoveWorkspace,
       sessionOnRename,
       sessionOnRenameWorkspace,
+      sessionOnRestore,
       sessionOnSearch,
       state.activeSessionId,
+      state.archivedSessions,
       state.drawer,
       state.sessions,
       state.workspaces,
@@ -1128,7 +1143,7 @@ export function App(): ReactElement {
             await store.openSession(task.kind === 'subagent' ? task.sourceId : task.sessionId)
           }}
           onStop={async (task) => {
-            await store.stopTask(task.taskId, 'session-cancel', task.taskRevision)
+            await store.stopTask(task.taskId, task.taskRevision)
             await store.refreshTasks(activeId, false, state.taskScope)
           }}
           onAnswer={async (task, answer) => {
@@ -1513,6 +1528,7 @@ export function App(): ReactElement {
                       runtime={backend}
                       connectedDshVersion={state.connectedDshVersion}
                       compatibilityWarning={compatibilityWarning}
+                      featureProfile={state.featureProfile}
                       sessionControl={sessionControl}
                       onNewSession={headerOnNewSession}
                       onOpenSettings={headerOnOpenSettings}
@@ -1801,7 +1817,6 @@ function EmptySessionPosture(props: {
       <div className="dsh-empty-session__picker">
         <span>{t('app.workspacePicker')}</span>
         <SelectMenu
-          className="dsh-empty-session__select"
           icon="folder"
           density="regular"
           displayLabel
@@ -1821,7 +1836,6 @@ function EmptySessionPosture(props: {
         <div className="dsh-empty-session__preset">
           <span>{t('app.presetPicker')}</span>
           <SelectMenu
-            className="dsh-empty-session__select"
             icon="sparkles"
             density="regular"
             displayLabel

@@ -1,8 +1,7 @@
-import type { TaskControlAction, TaskOwnerKind, TaskCenterTaskStatus } from './task-center-spike.js'
+import type { TaskOwnerKind, TaskCenterTaskStatus } from './task-center-spike.js'
 
 export type TaskSummaryKind = 'session' | 'subagent' | 'job' | 'goal' | 'interaction' | 'unknown'
 export type TaskSummaryStatus = TaskCenterTaskStatus
-export type TaskControlMode = TaskControlAction
 export type TaskSummaryOwnerKind = TaskOwnerKind
 export type TaskActionKind = 'approval' | 'question' | 'configuration' | 'none'
 export type TaskListScope = 'current-session' | 'workspace'
@@ -32,7 +31,6 @@ export interface TaskSummary {
   readonly canOpen: boolean
   readonly canAnswer: boolean
   readonly canSessionCancel: boolean
-  readonly canProcessStop: boolean
   readonly ownerKind: TaskSummaryOwnerKind
   readonly backendInstanceId?: string
   readonly connectionGeneration?: number
@@ -67,12 +65,7 @@ export interface TaskRepository {
     signal?: AbortSignal,
   ) => Promise<TaskListSnapshot>
   get(taskId: string, signal?: AbortSignal): Promise<TaskSummary>
-  stop(
-    taskId: string,
-    mode: TaskControlMode,
-    taskRevision: number,
-    signal?: AbortSignal,
-  ): Promise<TaskSummary>
+  stop(taskId: string, taskRevision: number, signal?: AbortSignal): Promise<TaskSummary>
   answer(taskId: string, interactionId: string, answer: string, signal?: AbortSignal): Promise<TaskSummary>
 }
 

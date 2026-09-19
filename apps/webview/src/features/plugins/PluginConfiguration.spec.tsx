@@ -93,17 +93,17 @@ describe('PluginConfiguration', () => {
     window.localStorage.clear()
   })
 
-  it('shows the three upstream plugin configuration cards and saves staged settings', async () => {
+  it('lists every namespace the host describes and saves staged settings', async () => {
     const onUpdateSetting = vi.fn().mockResolvedValue(undefined)
     const onReload = vi.fn().mockResolvedValue(snapshot())
     renderConfiguration({ onUpdateSetting, onReload })
 
-    expect(screen.getByText('Shell')).toBeDefined()
-    expect(screen.getByText('Agent loop')).toBeDefined()
-    expect(screen.getByText('Web search')).toBeDefined()
+    expect(screen.getByText('shell')).toBeDefined()
+    expect(screen.getByText('agent-loop')).toBeDefined()
+    expect(screen.getByText('web-search-deepseek')).toBeDefined()
 
-    fireEvent.click(screen.getByRole('button', { name: /Shell/u }))
-    const timeout = screen.getByLabelText(/Command timeout \(ms\)/u)
+    fireEvent.click(screen.getByRole('button', { name: /shell/u }))
+    const timeout = screen.getByLabelText(/timeoutMs/u)
     fireEvent.change(timeout, { target: { value: '90000' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 
@@ -111,7 +111,7 @@ describe('PluginConfiguration', () => {
     expect(onReload).toHaveBeenCalled()
   })
 
-  it('localizes the plugin cards and keeps the secret in the host flow', async () => {
+  it('keeps the secret in the host flow under the reference the namespace states', async () => {
     window.localStorage.setItem('dsh-webview-locale', 'zh')
     const onConfigureCredential = vi.fn().mockResolvedValue(true)
     render(
@@ -127,10 +127,8 @@ describe('PluginConfiguration', () => {
       </I18nProvider>,
     )
 
-    expect(screen.getByText('终端')).toBeDefined()
-    expect(screen.getByText('Agent 循环')).toBeDefined()
-    expect(screen.getByText('网页搜索')).toBeDefined()
-    fireEvent.click(screen.getByRole('button', { name: /网页搜索/u }))
+    fireEvent.click(screen.getByRole('button', { name: /web-search-deepseek/u }))
+    expect(screen.getByText(/DEEPSEEK_API_KEY/u)).toBeDefined()
     fireEvent.click(screen.getByRole('button', { name: '配置 API Key' }))
     await waitFor(() => expect(onConfigureCredential).toHaveBeenCalledWith('DEEPSEEK_API_KEY'))
   })
@@ -138,7 +136,7 @@ describe('PluginConfiguration', () => {
   it('uses the shared SVG chevron for expandable plugin cards', () => {
     renderConfiguration()
 
-    const card = screen.getByRole('button', { name: /Shell/u })
+    const card = screen.getByRole('button', { name: /shell/u })
     const chevron = card.querySelector('.dsh-plugin-configuration__chevron')
 
     expect(chevron?.querySelector('svg.dsh-icon')).not.toBeNull()
@@ -147,5 +145,50 @@ describe('PluginConfiguration', () => {
     fireEvent.click(card)
 
     expect(chevron?.classList.contains('dsh-plugin-configuration__chevron--open')).toBe(true)
+  })
+
+  it('renders a choice control for described enum and boolean fields', async () => {
+    const base = snapshot()
+    const onUpdateSetting = vi.fn().mockResolvedValue(undefined)
+    renderConfiguration({
+      onUpdateSetting,
+      onReload: vi.fn().mockResolvedValue(base),
+      snapshot: {
+        ...base,
+        schema: {
+          ...base.schema,
+          fields: [
+            ...base.schema.fields,
+            {
+              path: 'shell.sandboxMode',
+              label: 'sandboxMode',
+              type: 'enum',
+              enumValues: ['off', 'strict'],
+              required: false,
+              restartRequired: false,
+            },
+            {
+              path: 'shell.stream',
+              label: 'stream',
+              type: 'boolean',
+              required: false,
+              restartRequired: false,
+            },
+          ],
+        },
+        values: {
+          ...base.values,
+          shell: { timeoutMs: 120_000, maxOutputBytes: 64_000, sandboxMode: 'off', stream: true },
+        },
+      },
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: /shell/u }))
+    // A choice field stages the picked value; nothing is written until Save.
+    fireEvent.change(screen.getByLabelText(/sandboxMode/u), { target: { value: 'strict' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(onUpdateSetting).toHaveBeenCalledWith('shell.sandboxMode', 'strict'))
+    expect(screen.getByLabelText(/stream/u)).toHaveProperty('value', 'true')
   })
 })

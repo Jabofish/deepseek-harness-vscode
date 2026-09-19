@@ -427,11 +427,12 @@ export class AlphaLoopbackApiClient implements DshTransport {
     if (!roster.result.ok) return roster
     const value = recordOrUndefined(roster.result.value)
     if (value === undefined) throw malformedResponse('agentPresets/list')
+    // An opener probe that did not answer states nothing: return the roster
+    // without the capability instead of claiming the host cannot open a
+    // directory, so the surface can word the action as unknown rather than
+    // offering a native open the deployment may not have.
     if (opener === undefined || !opener.result.ok)
-      return {
-        ...roster,
-        result: { ok: true, value: { ...value, hasDocument: false } },
-      }
+      return { ...roster, result: { ok: true, value: { ...value } } }
     if (typeof opener.result.value !== 'boolean')
       throw malformedResponse('settings/canOpenAgentPresetDirectory')
     return {
@@ -1776,7 +1777,9 @@ function presetRoster(value: unknown): unknown {
   if (record === undefined) throw new Error('preset roster is not an object')
   if (Object.hasOwn(record, 'hasDocument') && typeof record.hasDocument !== 'boolean')
     throw new Error('preset roster has malformed hasDocument capability')
-  return { ...record, hasDocument: record.hasDocument === true }
+  // A roster that never stated the native-opener capability must not be
+  // coerced into `false`: downstream only claims it when the host stated it.
+  return record
 }
 
 function presetDocument(value: unknown): unknown {

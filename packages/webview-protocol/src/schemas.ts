@@ -200,13 +200,6 @@ export const webviewRequestSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('workspace.list'), ...requestBase }).strict(),
   z
     .object({
-      type: z.literal('workspace.create'),
-      ...requestBase,
-      payload: z.object({ name: z.string().min(1).max(256) }).strict(),
-    })
-    .strict(),
-  z
-    .object({
       type: z.literal('workspace.rename'),
       ...requestBase,
       payload: z.object({ workspaceId: id, name: z.string().min(1).max(256) }).strict(),
@@ -312,13 +305,6 @@ export const webviewRequestSchema = z.discriminatedUnion('type', [
       type: z.literal('session.sendPrompt'),
       ...requestBase,
       payload: promptSchema.extend({ mode: z.enum(['queue', 'steer']).default('queue') }),
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal('session.enqueuePrompt'),
-      ...requestBase,
-      payload: promptSchema.extend({ mode: z.enum(['queue', 'steer']) }).strict(),
     })
     .strict(),
   z
@@ -613,27 +599,7 @@ export const webviewRequestSchema = z.discriminatedUnion('type', [
       payload: z.object({ path: z.string().min(1).max(512) }).strict(),
     })
     .strict(),
-  z
-    .object({
-      type: z.literal('settings.replace'),
-      ...requestBase,
-      payload: z.object({ values: z.record(z.string(), boundedUnknown) }).strict(),
-    })
-    .strict(),
   z.object({ type: z.literal('goal.list'), ...requestBase, payload: z.object(session).strict() }).strict(),
-  z
-    .object({
-      type: z.literal('goal.create'),
-      ...requestBase,
-      payload: z
-        .object({
-          sessionId: id,
-          title: z.string().min(1).max(1024),
-          maxGoalRounds: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
-        })
-        .strict(),
-    })
-    .strict(),
   z
     .object({
       type: z.literal('goal.update'),
@@ -690,20 +656,6 @@ export const webviewRequestSchema = z.discriminatedUnion('type', [
     .strict(),
   z
     .object({
-      type: z.literal('skill.refresh'),
-      ...requestBase,
-      payload: z.object({ sessionId: id.optional() }).strict(),
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal('skill.execute'),
-      ...requestBase,
-      payload: z.object({ sessionId: id, skillId: id, input: z.string().max(1_000_000) }).strict(),
-    })
-    .strict(),
-  z
-    .object({
       type: z.literal('command.list'),
       ...requestBase,
       payload: z.object({ sessionId: id.optional() }).strict(),
@@ -750,13 +702,6 @@ export const webviewRequestSchema = z.discriminatedUnion('type', [
     .strict(),
   z
     .object({
-      type: z.literal('preset.select'),
-      ...requestBase,
-      payload: z.object({ sessionId: id, presetId: id }).strict(),
-    })
-    .strict(),
-  z
-    .object({
       type: z.literal('session.export'),
       ...requestBase,
       payload: z
@@ -785,7 +730,6 @@ export const webviewRequestSchema = z.discriminatedUnion('type', [
       payload: z.object({ href: z.string().min(1).max(4_096) }).strict(),
     })
     .strict(),
-  z.object({ type: z.literal('view.moveRightGuide'), ...requestBase }).strict(),
 ])
 
 const hostError = z

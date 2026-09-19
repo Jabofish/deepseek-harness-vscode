@@ -2041,6 +2041,10 @@
   color: var(--dsh-danger);
 }
 
+.dsh-checkpoints-popover__conflict {
+  color: var(--dsh-warning);
+}
+
 .dsh-changes-popover__rows,
 .dsh-tasks-popover__rows,
 .dsh-checkpoints-popover__rows,
@@ -2375,12 +2379,46 @@
 }
 
 .dsh-checkpoints-popover__dialog > label,
-.dsh-prompt-templates-popover__dialog > label {
+.dsh-prompt-templates-popover__dialog > label,
+.dsh-prompt-templates-popover__dialog > .dsh-prompt-templates-popover__field {
   display: grid;
   min-width: 0;
   gap: var(--dsh-space-1);
   color: var(--dsh-muted);
   font-size: 0.74rem;
+}
+
+.dsh-prompt-templates-popover__dialog fieldset {
+  display: grid;
+  min-width: 0;
+  gap: var(--dsh-space-1);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.dsh-prompt-templates-popover__dialog legend {
+  padding: 0;
+  color: var(--dsh-muted);
+  font-size: 0.74rem;
+}
+
+.dsh-prompt-templates-popover__variable-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--dsh-space-1) var(--dsh-space-3);
+}
+
+.dsh-prompt-templates-popover__variable-options label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--dsh-space-1);
+  color: var(--dsh-muted);
+  font-size: 0.74rem;
+}
+
+.dsh-prompt-templates-popover__variable-options code {
+  color: var(--dsh-text);
 }
 
 .dsh-checkpoints-popover__dialog-actions,

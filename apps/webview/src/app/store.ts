@@ -193,6 +193,8 @@ export interface AppState {
   readonly dshUpdateProgress: DshRuntimeUpdateProgress | undefined
   readonly sessions: readonly SessionSummary[]
   readonly archivedSessionIds: readonly string[]
+  /** Rows the host still holds after archiving; loaded on demand. */
+  readonly archivedSessions: readonly SessionSummary[]
   readonly workspaces: readonly WorkspaceSummary[]
   readonly activeSessionId: string | undefined
   readonly preferredOpenFileId: string | undefined
@@ -303,6 +305,11 @@ export interface AppActions {
   forkSession(sessionId: string, atSeq?: number): Promise<void>
   createSession(workspaceId?: string, presetId?: string): Promise<void>
   removeSession(sessionId: string): Promise<void>
+  /** Archived rows the host still holds, fetched with `session.list(archived: true)`. */
+  loadArchivedSessions(): Promise<void>
+  restoreSession(sessionId: string): Promise<void>
+  /** Destructive: removes the conversation record from DSH. */
+  deleteSession(sessionId: string): Promise<void>
   configureSession(sessionId: string, configuration: AgentConfiguration): Promise<void>
   executeCommand(
     sessionId: string,
@@ -361,11 +368,7 @@ export interface AppActions {
   openChange(changeId: string): Promise<void>
   refreshTasks(sessionId?: string, includeCompleted?: boolean, scope?: TaskListScope): Promise<void>
   getTask(taskId: string): Promise<TaskSummary | undefined>
-  stopTask(
-    taskId: string,
-    mode: 'session-cancel' | 'process-stop',
-    taskRevision: number,
-  ): Promise<TaskSummary | undefined>
+  stopTask(taskId: string, taskRevision: number): Promise<TaskSummary | undefined>
   answerTask(taskId: string, interactionId: string, answer: string): Promise<TaskSummary | undefined>
   refreshCheckpoints(sessionId?: string): Promise<void>
   createCheckpoint(label?: string): Promise<CheckpointSummary | undefined>
@@ -499,6 +502,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     dshUpdateProgress: undefined,
     sessions: [],
     archivedSessionIds: [],
+    archivedSessions: [],
     workspaces: [],
     activeSessionId: undefined,
     preferredOpenFileId: composerPreferences.openFileId,
@@ -1103,6 +1107,25 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     // opener starts the same deduplicated load for the active session, while
     // keeping slow command/skill providers off the first-paint critical path.
     if (version === refreshVersion) void refreshCommands().catch(() => undefined)
+  }
+  /**
+   * The switcher's archived section is a recovery surface, so it is fetched
+   * on demand instead of riding every refresh. A refused answer propagates:
+   * an empty list would claim the host holds no archived sessions.
+   */
+  const loadArchivedSessions = async (): Promise<void> => {
+    const result = await client.request<unknown>({
+      type: 'session.list',
+      requestId: requestId(),
+      payload: { archived: true },
+    })
+    const sessions = strictListValues(object(result)?.items, isSessionSummary)
+    if (sessions === undefined) return
+    setState((current) =>
+      sameSessionSummaryList(current.archivedSessions, sessions)
+        ? current
+        : { ...current, archivedSessions: sessions },
+    )
   }
   const refreshEditorContextState = async (workspaceFolderId?: string): Promise<void> => {
     if (typeof client.featureRequest !== 'function') return
@@ -2269,6 +2292,9 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     get archivedSessionIds() {
       return state.archivedSessionIds
     },
+    get archivedSessions() {
+      return state.archivedSessions
+    },
     get workspaces() {
       return state.workspaces
     },
@@ -2728,40 +2754,8 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         ...current,
         archivedSessionIds: uniqueStrings([...current.archivedSessionIds, sessionId]),
         sessions: current.sessions.filter((session) => session.id !== sessionId),
-        ...(wasActive
-          ? {
-              activeSessionId: undefined,
-              timeline: {
-                sessionId: undefined,
-                nodes: [],
-                lastSequence: -1,
-                nodeChangeStart: 0,
-                eventCount: 0,
-              },
-              history: [],
-              historyHasMore: false,
-              historyBeforeSequence: undefined,
-              historyLoading: false,
-              projections: removeSessionProjection(current.projections, sessionId),
-              configuration: undefined,
-              sessionModels: [],
-              sessionModelFailures: [],
-              sessionModelCurrent: undefined,
-              sessionModelRoutable: undefined,
-              sessionModelDirectoryLoading: false,
-              sessionModelDirectoryError: undefined,
-              permissionPresets: [],
-              queue: [],
-              goals: [],
-              todos: [],
-              jobs: [],
-              feedback: {},
-              feedbackUnavailable: false,
-              subagents: EMPTY_SUBAGENT_CATALOG,
-              activeSubagent: undefined,
-              commands: [],
-            }
-          : {}),
+        archivedSessions: current.archivedSessions.filter((session) => session.id !== sessionId),
+        ...(wasActive ? clearedActiveSession(current, sessionId) : {}),
       }))
       await refresh()
       // Some rc.6 hosts publish the archive event after the list response.
@@ -2772,6 +2766,45 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         ...current,
         sessions: current.sessions.filter((session) => session.id !== sessionId),
       }))
+      if (wasActive) {
+        const replacement = state.sessions[0]
+        if (replacement !== undefined) await open(replacement.id)
+      }
+    },
+    loadArchivedSessions: async () => {
+      await loadArchivedSessions()
+    },
+    restoreSession: async (sessionId) => {
+      await client.request<unknown>({
+        type: 'session.archive',
+        requestId: requestId(),
+        payload: { sessionId, archived: false },
+      })
+      // The row belongs to the active surface again; drop the local archive
+      // knowledge before the refresh so a concurrent list cannot keep it
+      // hidden behind a stale archive set.
+      setState((current) => ({
+        ...current,
+        archivedSessionIds: current.archivedSessionIds.filter((id) => id !== sessionId),
+        archivedSessions: current.archivedSessions.filter((session) => session.id !== sessionId),
+      }))
+      await refresh()
+    },
+    deleteSession: async (sessionId) => {
+      const wasActive = state.activeSessionId === sessionId
+      await client.request<unknown>({
+        type: 'session.remove',
+        requestId: requestId(),
+        payload: { sessionId },
+      })
+      setState((current) => ({
+        ...current,
+        sessions: current.sessions.filter((session) => session.id !== sessionId),
+        archivedSessionIds: current.archivedSessionIds.filter((id) => id !== sessionId),
+        archivedSessions: current.archivedSessions.filter((session) => session.id !== sessionId),
+        ...(wasActive ? clearedActiveSession(current, sessionId) : {}),
+      }))
+      await refresh()
       if (wasActive) {
         const replacement = state.sessions[0]
         if (replacement !== undefined) await open(replacement.id)
@@ -3243,12 +3276,12 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       })
       return parseFeatureTasksResult(result)?.items[0]
     },
-    stopTask: async (taskId, mode, taskRevision) => {
+    stopTask: async (taskId, taskRevision) => {
       if (typeof client.featureRequest !== 'function') return undefined
       const result = await client.featureRequest<unknown>({
         type: 'tasks.stop',
         requestId: requestId(),
-        payload: { taskId, mode, taskRevision },
+        payload: { taskId, taskRevision },
       })
       const task = parseFeatureTasksResult(result)?.items[0]
       if (task !== undefined)
@@ -5717,6 +5750,46 @@ function removeSessionProjection(
   return remaining
 }
 
+/**
+ * Every session-scoped view state describes the conversation that is no
+ * longer open: leaving any of it behind would show one session's history,
+ * queue, or catalogs under the next row the user opens.
+ */
+function clearedActiveSession(current: AppState, sessionId: string): Partial<AppState> {
+  return {
+    activeSessionId: undefined,
+    timeline: {
+      sessionId: undefined,
+      nodes: [],
+      lastSequence: -1,
+      nodeChangeStart: 0,
+      eventCount: 0,
+    },
+    history: [],
+    historyHasMore: false,
+    historyBeforeSequence: undefined,
+    historyLoading: false,
+    projections: removeSessionProjection(current.projections, sessionId),
+    configuration: undefined,
+    sessionModels: [],
+    sessionModelFailures: [],
+    sessionModelCurrent: undefined,
+    sessionModelRoutable: undefined,
+    sessionModelDirectoryLoading: false,
+    sessionModelDirectoryError: undefined,
+    permissionPresets: [],
+    queue: [],
+    goals: [],
+    todos: [],
+    jobs: [],
+    feedback: {},
+    feedbackUnavailable: false,
+    subagents: EMPTY_SUBAGENT_CATALOG,
+    activeSubagent: undefined,
+    commands: [],
+  }
+}
+
 function domainEvent(name: string, payload: unknown): BackendEvent | undefined {
   const raw = object(payload)
   if (raw !== undefined && raw.sequence !== undefined && finiteEventSequence(raw.sequence) === undefined)
@@ -7473,7 +7546,6 @@ function parseFeatureTaskSummary(item: FeatureTaskSummary): TaskSummary {
     canOpen: item.canOpen,
     canAnswer: item.canAnswer,
     canSessionCancel: item.canSessionCancel,
-    canProcessStop: item.canProcessStop,
     ownerKind: item.ownerKind,
     ...(item.backendInstanceId === undefined ? {} : { backendInstanceId: item.backendInstanceId }),
     ...(item.connectionGeneration === undefined ? {} : { connectionGeneration: item.connectionGeneration }),
@@ -8573,7 +8645,6 @@ function isSessionOpenDetail(value: unknown, sessionId: string): value is Record
     return false
   }
   const permissionPresets = detail.permissionPresets
-  const goalIds = detail.goalIds
   return (
     (detail.configuration === undefined || isAgentConfiguration(detail.configuration)) &&
     (detail.history === undefined || Array.isArray(detail.history)) &&
@@ -8582,9 +8653,7 @@ function isSessionOpenDetail(value: unknown, sessionId: string): value is Record
       optionalSequence(detail.historyBeforeSequence) !== undefined) &&
     (permissionPresets === undefined ||
       (Array.isArray(permissionPresets) &&
-        permissionPresets.every((entry) => typeof entry === 'string' && entry.trim() !== ''))) &&
-    (goalIds === undefined ||
-      (Array.isArray(goalIds) && goalIds.every((entry) => typeof entry === 'string' && entry.trim() !== '')))
+        permissionPresets.every((entry) => typeof entry === 'string' && entry.trim() !== '')))
   )
 }
 
@@ -8885,13 +8954,15 @@ function parsePresetRoster(value: unknown): AgentPresetRoster | undefined {
     !Array.isArray(roster.presets) ||
     !roster.presets.every(isPresetDescriptor) ||
     typeof roster.authorable !== 'boolean' ||
-    typeof roster.hasDocument !== 'boolean'
+    // Absent means the host did not state its native-opener capability; a
+    // stated value must still be a boolean.
+    (roster.hasDocument !== undefined && typeof roster.hasDocument !== 'boolean')
   )
     return undefined
   return {
     presets: roster.presets,
     authorable: roster.authorable,
-    hasDocument: roster.hasDocument,
+    ...(typeof roster.hasDocument === 'boolean' ? { hasDocument: roster.hasDocument } : {}),
   }
 }
 

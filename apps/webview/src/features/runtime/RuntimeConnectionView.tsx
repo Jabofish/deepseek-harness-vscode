@@ -17,6 +17,18 @@ const RUNTIME_CONNECTION_STAGES: readonly RuntimeConnectionStage[] = [
   'sessions',
 ]
 
+/** Keeps the bar visibly filled while the first stage is still resolving. */
+const CONNECTION_MIN_PROGRESS = 6
+
+/** Placeholder session rows, as [title width, meta width] sizes. */
+const CONNECTION_PREVIEW_ROWS: readonly (readonly [string, string])[] = [
+  ['62%', '2rem'],
+  ['48%', '2.75rem'],
+  ['70%', '1.75rem'],
+  ['54%', '2.5rem'],
+  ['44%', '2.25rem'],
+]
+
 export interface RuntimeConnectionViewProps {
   readonly state: WebviewBackendState
   /** True while the connected host is still returning the workspace/session catalog. */
@@ -42,6 +54,13 @@ export function RuntimeConnectionView(props: RuntimeConnectionViewProps): ReactE
     props.onReadDiagnostics !== undefined &&
     props.onReconnectDiagnostics !== undefined &&
     props.onShowDiagnosticsOutput !== undefined
+  const percent = Math.max(
+    Math.round(
+      (Math.min(currentStage, RUNTIME_CONNECTION_STAGES.length) / RUNTIME_CONNECTION_STAGES.length) * 100,
+    ),
+    CONNECTION_MIN_PROGRESS,
+  )
+  const tone = failure ? 'danger' : loading ? 'loading' : 'ready'
 
   return (
     <section
@@ -50,35 +69,69 @@ export function RuntimeConnectionView(props: RuntimeConnectionViewProps): ReactE
       aria-live="polite"
       aria-busy={loading}
     >
-      <div className="dsh-runtime-connection__icon" aria-hidden="true">
-        <Icon name={failure ? 'alert' : catalogLoading ? 'check' : 'status'} />
+      <div className="dsh-runtime-connection__header">
+        <span
+          className={`dsh-runtime-connection__signal dsh-runtime-connection__signal--${tone}`}
+          aria-hidden="true"
+        >
+          <Icon name={failure ? 'alert' : loading ? 'status' : 'check'} />
+        </span>
+        <h2 id="runtime-connection-title">{copy.title}</h2>
+        {failure || props.onOpenSettings === undefined ? null : (
+          <button
+            className="dsh-icon-button"
+            type="button"
+            aria-label={t('runtime.openConnectionSettings')}
+            title={t('runtime.openConnectionSettings')}
+            onClick={props.onOpenSettings}
+          >
+            <Icon name="settings" />
+          </button>
+        )}
       </div>
-      <span className="dsh-app__eyebrow">{t('runtime.connectionProgress.eyebrow')}</span>
-      <h2 id="runtime-connection-title">{copy.title}</h2>
-      <p>{copy.description}</p>
+      {failure ? null : (
+        <div className="dsh-runtime-connection__track-row">
+          <div
+            className="dsh-runtime-connection__track"
+            role="progressbar"
+            aria-label={t('runtime.connectionProgress.stages')}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={percent}
+          >
+            <span className="dsh-runtime-connection__track-fill" style={{ width: `${percent}%` }} />
+          </div>
+          <span className="dsh-runtime-connection__percent" aria-hidden="true">
+            {`${percent}%`}
+          </span>
+        </div>
+      )}
+      {failure || !loading ? null : (
+        <div className="dsh-runtime-connection__preview" aria-hidden="true">
+          {CONNECTION_PREVIEW_ROWS.map(([name, meta]) => (
+            <div className="dsh-runtime-connection__preview-row" key={name}>
+              <span className="dsh-skeleton dsh-runtime-connection__preview-badge" />
+              <span className="dsh-skeleton dsh-runtime-connection__preview-name" style={{ width: name }} />
+              <span className="dsh-skeleton dsh-runtime-connection__preview-meta" style={{ width: meta }} />
+            </div>
+          ))}
+        </div>
+      )}
+      <p className="dsh-runtime-connection__hint">{copy.description}</p>
       {message === undefined ? null : (
         <p className="dsh-runtime-connection__message" role="alert">
           {message}
         </p>
       )}
-      <ol className="dsh-runtime-connection__steps" aria-label={t('runtime.connectionProgress.stages')}>
-        {RUNTIME_CONNECTION_STAGES.map((stage, index) => {
-          const complete = currentStage > index
-          const active = !failure && currentStage === index
-          const stateClass = complete ? 'complete' : active ? 'active' : 'pending'
-          return (
-            <li
-              key={stage}
-              className={`dsh-runtime-connection__step dsh-runtime-connection__step--${stateClass}`}
-            >
-              <span className="dsh-runtime-connection__step-marker" aria-hidden="true">
-                {complete ? <Icon name="check" /> : <span />}
-              </span>
-              <span>{t(`runtime.connectionProgress.stage.${stage}`)}</span>
+      {failure ? null : (
+        <ol className="dsh-sr-only">
+          {RUNTIME_CONNECTION_STAGES.map((stage, index) => (
+            <li key={stage} aria-current={currentStage === index ? 'step' : 'false'}>
+              {t(`runtime.connectionProgress.stage.${stage}`)}
             </li>
-          )
-        })}
-      </ol>
+          ))}
+        </ol>
+      )}
       {failure && (retryable || props.onOpenSettings !== undefined || diagnosticsReady) ? (
         <div className="dsh-runtime-connection__actions">
           {!retryable || props.onRetry === undefined ? null : (

@@ -94,7 +94,7 @@ export function projectUserText(
       parts.push(
         <span
           key={`reference:${range.start}`}
-          className={`dsh-user-reference dsh-user-reference--${range.kind}`}
+          className="dsh-user-reference"
           data-reference-kind={range.kind}
           title={range.label}
         >
@@ -105,7 +105,7 @@ export function projectUserText(
       parts.push(
         <button
           key={`reference:${range.start}`}
-          className={`dsh-user-reference dsh-user-reference--${range.kind}`}
+          className="dsh-user-reference"
           type="button"
           data-reference-kind={range.kind}
           title={range.label}

@@ -1074,12 +1074,18 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       throw sessionOpenFailure('parent session ownership check', error)
     }
   }
+  /**
+   * `allowArchived` serves only the two recovery routes that must reach a
+   * session the active surface refuses — restoring one, or deleting one for
+   * good. Such a read stays out of the active-session cache so a recovered row
+   * can never be handed to an ordinary route from there.
+   */
   const requireCurrentWorkspaceSession = async (
     sessionId: string,
     signal: AbortSignal,
-    options: { readonly fresh?: boolean } = {},
+    options: { readonly fresh?: boolean; readonly allowArchived?: boolean } = {},
   ): Promise<SessionDetail> => {
-    if (options.fresh !== true) {
+    if (options.fresh !== true && options.allowArchived !== true) {
       const cached = currentWorkspaceSessionDetails.get(sessionId)
       if (cached?.generation === currentWorkspaceSessionGeneration) return cached.detail
     }
@@ -1103,7 +1109,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       } catch (error) {
         throw sessionOpenFailure('archive state lookup', error)
       }
-      if (archivedSessionIds.includes(sessionId))
+      if (archivedSessionIds.includes(sessionId) && options.allowArchived !== true)
         throw sessionOpenFailure(
           'archive state lookup',
           new AppError({
@@ -1132,7 +1138,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
             retryable: false,
           }),
         )
-      if (generation === currentWorkspaceSessionGeneration)
+      if (generation === currentWorkspaceSessionGeneration && options.allowArchived !== true)
         currentWorkspaceSessionDetails.set(sessionId, { generation, detail })
       return detail
     })()
@@ -1543,12 +1549,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       }
       taskSessionId = current.sessionId
       taskRegistry.setCurrentSession(current.sessionId)
-      const task = await taskUseCases.stop(
-        request.payload.taskId,
-        request.payload.mode,
-        request.payload.taskRevision,
-        signal,
-      )
+      const task = await taskUseCases.stop(request.payload.taskId, request.payload.taskRevision, signal)
       return featureTaskList({
         scope: 'current-session',
         source: 'current-session',
@@ -1775,8 +1776,6 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       runtimeLocator.invalidate()
       return publicValue(snapshot)
     }
-    if (request.type === 'view.moveRightGuide')
-      return moveOrExplainSecondarySidebar(vscode.commands, vscode.window)
     if (request.type === 'diagnostics.show') {
       diagnostics.show()
       return { shown: true }
@@ -1802,21 +1801,6 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       const workspaces = await listCurrentWorkspaces(signal)
       const archivedSessionIds = await listCurrentArchivedSessionIds(workspaces, signal)
       return publicValue({ items: workspaces.map(publicWorkspaceSummary), archivedSessionIds })
-    }
-    if (request.type === 'workspace.create') {
-      const selected = await vscode.window.showOpenDialog({
-        canSelectFiles: false,
-        canSelectFolders: true,
-        canSelectMany: false,
-        openLabel: 'Use workspace folder',
-      })
-      const uri = selected?.[0]
-      if (uri === undefined) return { cancelled: true }
-      return publicValue(
-        publicWorkspaceSummary(
-          await workspaceUseCases.create({ name: request.payload.name, path: uri.fsPath }, signal),
-        ),
-      )
     }
     if (request.type === 'workspace.rename') {
       await requireCurrentWorkspaceId(request.payload.workspaceId, signal)
@@ -1952,7 +1936,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       }
     }
     if (request.type === 'session.remove') {
-      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
+      await requireCurrentWorkspaceSession(request.payload.sessionId, signal, { allowArchived: true })
       return sessionUseCases.remove(request.payload.sessionId, signal)
     }
     if (request.type === 'session.fork') {
@@ -1960,7 +1944,14 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       return publicValue(await sessionUseCases.fork(request.payload.sessionId, request.payload.atSeq, signal))
     }
     if (request.type === 'session.archive') {
-      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
+      // Restoring is the one archiving direction that must reach an archived
+      // session; archiving an archived session stays refused like any other
+      // route to it.
+      await requireCurrentWorkspaceSession(
+        request.payload.sessionId,
+        signal,
+        request.payload.archived === false ? { allowArchived: true } : {},
+      )
       return sessionUseCases.setArchived(request.payload.sessionId, request.payload.archived, signal)
     }
     if (request.type === 'session.sendPrompt') {
@@ -1998,39 +1989,6 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       attachmentTokens.release(request.payload.attachments)
       if (contextRefs.length > 0) await editorContextUseCases.release(contextRefs, contextOwner)
       return result
-    }
-    if (request.type === 'session.enqueuePrompt') {
-      const session = await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
-      const attachments = attachmentTokens.resolve(request.payload.attachments)
-      const contextRefs = request.payload.contextRefs ?? []
-      const contextOwner = contextOwnerForSession(
-        session,
-        request.payload.contextWorkspaceFolderId,
-        contextRefs.length > 0,
-      )
-      const resolvedContext =
-        contextRefs.length === 0
-          ? []
-          : await editorContextUseCases.resolveForPrompt(
-              {
-                ...contextOwner,
-                ...currentFeatureSessionBinding(request.payload.sessionId),
-                contextRefs,
-              },
-              signal,
-            )
-      const queued = await sessionUseCases.enqueuePrompt(
-        {
-          sessionId: request.payload.sessionId,
-          text: request.payload.text,
-          attachments: [...attachments, ...resolvedContext.map((entry) => entry.attachment)],
-        },
-        request.payload.mode,
-        signal,
-      )
-      attachmentTokens.release(request.payload.attachments)
-      if (contextRefs.length > 0) await editorContextUseCases.release(contextRefs, contextOwner)
-      return publicValue(queued)
     }
     if (request.type === 'session.cancel') {
       await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
@@ -2355,24 +2313,9 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     if (request.type === 'settings.update')
       return settingsUseCases.update(request.payload.path, request.payload.value, signal)
     if (request.type === 'settings.unset') return settingsUseCases.unset(request.payload.path, signal)
-    if (request.type === 'settings.replace')
-      return backendService.requireBackend().settings.replace(request.payload.values, signal)
     if (request.type === 'goal.list') {
       await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
       return publicList(await advancedUseCases.listGoals(request.payload.sessionId, signal))
-    }
-    if (request.type === 'goal.create') {
-      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
-      return publicValue(
-        await backendService
-          .requireBackend()
-          .goals.create(
-            request.payload.sessionId,
-            request.payload.title,
-            signal,
-            request.payload.maxGoalRounds,
-          ),
-      )
     }
     if (request.type === 'goal.update') {
       await requireOwnedGoal(request.payload.goalId, signal)
@@ -2434,15 +2377,6 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
         await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
       return publicList(await advancedUseCases.listSkills(request.payload.sessionId, signal))
     }
-    if (request.type === 'skill.refresh') {
-      if (request.payload.sessionId !== undefined)
-        await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
-      return publicList(await advancedUseCases.listSkills(request.payload.sessionId, signal))
-    }
-    if (request.type === 'skill.execute') {
-      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
-      return advancedUseCases.execute('skill.execute', request.payload, signal)
-    }
     if (request.type === 'command.list') {
       if (request.payload.sessionId !== undefined)
         await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
@@ -2477,10 +2411,6 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       return advancedUseCases.openPresetDocument(request.payload.presetId, signal)
     if (request.type === 'preset.remove')
       return advancedUseCases.removePreset(request.payload.presetId, signal)
-    if (request.type === 'preset.select') {
-      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
-      return advancedUseCases.selectPreset(request.payload.sessionId, request.payload.presetId, signal)
-    }
     if (request.type === 'session.export') {
       await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
       const uri = await vscode.window.showSaveDialog({ saveLabel: 'Export DSH session' })
@@ -3209,7 +3139,6 @@ function featureTaskSummary(
     canOpen: task.canOpen,
     canAnswer: task.canAnswer,
     canSessionCancel: task.canSessionCancel,
-    canProcessStop: task.canProcessStop,
     ownerKind: task.ownerKind,
     ...(task.backendInstanceId === undefined ? {} : { backendInstanceId: task.backendInstanceId }),
     ...(task.connectionGeneration === undefined ? {} : { connectionGeneration: task.connectionGeneration }),
@@ -3343,7 +3272,6 @@ function questionResponse(
 
 function requiresTrustedWorkspace(type: WebviewRequest['type']): boolean {
   switch (type) {
-    case 'workspace.create':
     case 'workspace.rename':
     case 'workspace.remove':
     case 'workspace.move':
@@ -3356,7 +3284,6 @@ function requiresTrustedWorkspace(type: WebviewRequest['type']): boolean {
     case 'session.open':
     case 'session.history':
     case 'session.sendPrompt':
-    case 'session.enqueuePrompt':
     case 'session.queue.list':
     case 'session.queue.update':
     case 'session.queue.remove':
@@ -3385,9 +3312,7 @@ function requiresTrustedWorkspace(type: WebviewRequest['type']): boolean {
     case 'interaction.question.cancel':
     case 'settings.update':
     case 'settings.unset':
-    case 'settings.replace':
     case 'settings.openDocument':
-    case 'goal.create':
     case 'goal.list':
     case 'goal.update':
     case 'goal.clear':
@@ -3396,12 +3321,9 @@ function requiresTrustedWorkspace(type: WebviewRequest['type']): boolean {
     case 'subagent.list':
     case 'subagent.history':
     case 'skill.list':
-    case 'skill.refresh':
-    case 'skill.execute':
     case 'command.list':
     case 'command.execute':
     case 'job.list':
-    case 'preset.select':
     case 'preset.read':
     case 'preset.copy':
     case 'preset.openDocument':

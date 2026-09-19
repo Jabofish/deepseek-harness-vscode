@@ -4,7 +4,6 @@ import {
   FeatureRequestLedger,
   buildTaskCenterHierarchy,
   buildTaskCenterSnapshot,
-  canControlTask,
   recoverCheckpointRestore,
   simulateCheckpointRestore,
   type TaskCenterTask,
@@ -17,7 +16,6 @@ const task = (
     parentTaskId: string
     ownerKind: 'extension' | 'external' | 'unknown'
     canSessionCancel: boolean
-    canProcessStop: boolean
   }> = {},
 ): TaskCenterTask => ({
   taskId: overrides.taskId ?? 'task-1',
@@ -28,7 +26,6 @@ const task = (
   ownerKind: overrides.ownerKind ?? 'external',
   taskRevision: 1,
   canSessionCancel: overrides.canSessionCancel ?? true,
-  canProcessStop: overrides.canProcessStop ?? true,
 })
 
 describe('feature lifecycle spikes', () => {
@@ -70,7 +67,7 @@ describe('feature lifecycle spikes', () => {
     ).toBe('global-seed')
   })
 
-  it('preserves parent-child tasks and never allows process stop of external DSH', () => {
+  it('preserves parent-child tasks in the hierarchy', () => {
     const parent = task({ taskId: 'parent' })
     const child = task({ taskId: 'child', parentTaskId: 'parent' })
     const orphan = task({ taskId: 'orphan', parentTaskId: 'missing' })
@@ -79,9 +76,6 @@ describe('feature lifecycle spikes', () => {
     expect(hierarchy[0]?.task.taskId).toBe('orphan')
     expect(hierarchy[1]?.task.taskId).toBe('parent')
     expect(hierarchy[1]?.children[0]?.task.taskId).toBe('child')
-    expect(canControlTask(parent, 'session-cancel')).toBe(true)
-    expect(canControlTask(parent, 'process-stop')).toBe(false)
-    expect(canControlTask({ ...parent, ownerKind: 'extension' }, 'process-stop')).toBe(true)
   })
 
   it('uses CAS before applying and rolls back a partial in-memory restore', () => {

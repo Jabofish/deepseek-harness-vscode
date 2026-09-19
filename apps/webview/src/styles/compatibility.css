@@ -1836,7 +1836,8 @@
   border-top: 1px solid var(--dsh-border-color, var(--dsh-border-color));
 }
 
-.dsh-plugin-configuration__field input {
+.dsh-plugin-configuration__field input,
+.dsh-plugin-configuration__field select {
   width: 100%;
   box-sizing: border-box;
 }

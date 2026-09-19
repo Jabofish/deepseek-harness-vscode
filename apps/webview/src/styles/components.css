@@ -108,6 +108,7 @@
 }
 
 .dsh-status-pill--in-progress,
+.dsh-status-pill--info,
 .dsh-status-pill--running {
   color: var(--dsh-info);
 }

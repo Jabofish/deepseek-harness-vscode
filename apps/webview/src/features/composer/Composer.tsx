@@ -755,7 +755,7 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
         <div className="dsh-composer__attachment-rail">
           {attachmentRailScrollable ? (
             <button
-              className="dsh-composer__attachment-page dsh-composer__attachment-page--previous"
+              className="dsh-composer__attachment-page"
               type="button"
               aria-label={t('composer.attachmentsPrevious')}
               onClick={() => pageAttachmentRail(attachmentRailRef.current, -1)}
@@ -822,7 +822,7 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
           </ul>
           {attachmentRailScrollable ? (
             <button
-              className="dsh-composer__attachment-page dsh-composer__attachment-page--next"
+              className="dsh-composer__attachment-page"
               type="button"
               aria-label={t('composer.attachmentsNext')}
               onClick={() => pageAttachmentRail(attachmentRailRef.current, 1)}

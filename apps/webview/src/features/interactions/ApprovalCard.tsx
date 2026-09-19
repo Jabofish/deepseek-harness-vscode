@@ -15,11 +15,7 @@ export interface ApprovalCardProps {
 export function ApprovalCard(props: ApprovalCardProps): ReactElement {
   const { t } = useI18n()
   return (
-    <section
-      className="dsh-interaction dsh-approval"
-      role="group"
-      aria-labelledby={`approval-${props.request.id}`}
-    >
+    <section className="dsh-interaction" role="group" aria-labelledby={`approval-${props.request.id}`}>
       <header className="dsh-interaction__header">
         <span className="dsh-interaction__icon" aria-hidden="true">
           <Icon name="alert" />

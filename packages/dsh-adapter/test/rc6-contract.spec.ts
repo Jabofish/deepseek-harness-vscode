@@ -1233,25 +1233,6 @@ describe('DeepSeek Harness 0.1.0-rc.6 contract', () => {
     })
   })
 
-  it('does not filter malformed session detail goal IDs into a smaller list', () => {
-    expect(() =>
-      rc6Mapper.sessionDetail({
-        sessionId: 's1',
-        updatedAt: 1_700_000_000_000,
-        running: false,
-        blank: false,
-        configuration: {
-          preset: 'standard',
-          toolMode: 'native',
-          permissionPreset: 'workspace-write',
-          planMode: false,
-          model: { providerId: 'provider-1', modelId: 'model-1' },
-        },
-        goalIds: ['goal-1', 42],
-      }),
-    ).toThrow(/Malformed session goalIds/)
-  })
-
   it('does not synthesize history sequence or time when those fields are explicitly malformed', () => {
     for (const event of [
       { type: 'turn/start', seq: '1', time: 1 },

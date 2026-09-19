@@ -58,9 +58,6 @@ export const LATEST_PUBLISHED_DSH_VERSION = '0.1.5-rc.2' as const
 /** Keep the installer default aligned with the latest package in the exact supported set. */
 export const LATEST_SUPPORTED_DSH_VERSION = LATEST_PUBLISHED_DSH_VERSION
 
-/** Newest upstream snapshot for which this checkout has a verified adapter. */
-export const LATEST_VERIFIED_DSH_VERSION = SUPPORTED_DSH_VERSIONS[SUPPORTED_DSH_VERSIONS.length - 1]
-
 /**
  * Newest adapter whose wire contract is safe to reuse for an unverified
  * runtime. This is intentionally separate from the newest exact source

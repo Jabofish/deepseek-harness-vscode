@@ -1,3 +1,4 @@
+import type { FeatureCapabilityProfile } from '@dsh-vscode/domain'
 import { memo, type ReactElement, type ReactNode } from 'react'
 import type { WebviewBackendState } from '../../app/store.js'
 import { useI18n } from '../../i18n.js'
@@ -9,6 +10,7 @@ export interface AppHeaderProps {
   readonly runtime: WebviewBackendState
   readonly connectedDshVersion?: string | undefined
   readonly compatibilityWarning?: string | undefined
+  readonly featureProfile?: FeatureCapabilityProfile | undefined
   readonly sessionControl: ReactNode
   readonly onNewSession: () => void
   readonly onOpenSettings: () => void
@@ -27,6 +29,7 @@ export const AppHeader = memo(function AppHeader(props: AppHeaderProps): ReactEl
         state={props.runtime}
         connectedDshVersion={props.connectedDshVersion}
         compatibilityWarning={props.compatibilityWarning}
+        featureProfile={props.featureProfile}
         onOpenSettings={props.onOpenSettings}
         onRetry={props.onRetryConnection}
       />

@@ -1,3 +1,5 @@
+import type { FeatureCapabilityProfile, FeatureCapabilityState } from '@dsh-vscode/domain'
+import { FEATURE_CAPABILITY_IDS } from '@dsh-vscode/domain'
 import { useCallback, useRef, useState, type ReactElement } from 'react'
 import {
   ContentFlow,
@@ -13,6 +15,7 @@ export interface RuntimeStatusProps {
   readonly state: WebviewBackendState
   readonly connectedDshVersion?: string | undefined
   readonly compatibilityWarning?: string | undefined
+  readonly featureProfile?: FeatureCapabilityProfile | undefined
   readonly onOpenSettings?: () => void
   readonly onRetry?: () => void
 }
@@ -22,10 +25,18 @@ interface RuntimeDetail {
   readonly value: string
 }
 
+/** Label keys are literals so the key-table scan can prove they resolve. */
+const CAPABILITY_STATE_KEYS: Record<FeatureCapabilityState, { readonly labelKey: string }> = {
+  'verified-contract': { labelKey: 'runtime.capability.verified-contract' },
+  'compatibility-fallback': { labelKey: 'runtime.capability.compatibility-fallback' },
+  unavailable: { labelKey: 'runtime.capability.unavailable' },
+}
+
 export function RuntimeStatus({
   state,
   connectedDshVersion,
   compatibilityWarning,
+  featureProfile,
   onOpenSettings,
   onRetry,
 }: RuntimeStatusProps): ReactElement {
@@ -138,6 +149,9 @@ export function RuntimeStatus({
               {compatibilityWarning}
             </ContentFlow>
           ) : null}
+          {state.kind === 'connected' && featureProfile !== undefined ? (
+            <CapabilityProfile profile={featureProfile} t={t} />
+          ) : null}
           {retryable || onOpenSettings !== undefined ? (
             <div className="dsh-runtime-status__actions">
               {retryable ? (
@@ -169,6 +183,48 @@ export function RuntimeStatus({
         </PopoverCard>
       ) : null}
     </div>
+  )
+}
+
+/**
+ * The host derives this profile from the connected adapter; showing it here is
+ * what makes a compatibility fallback visible instead of silent.
+ */
+function CapabilityProfile({
+  profile,
+  t,
+}: {
+  readonly profile: FeatureCapabilityProfile
+  readonly t: Translate
+}): ReactElement {
+  return (
+    <section className="dsh-runtime-status__capabilities" aria-label={t('runtime.capabilities')}>
+      <div className="dsh-runtime-status__capabilities-header">
+        <strong>{t('runtime.capabilities')}</strong>
+        <span>
+          {t(
+            profile.source === 'pinned-adapter'
+              ? 'runtime.capabilities.pinned'
+              : 'runtime.capabilities.fallback',
+          )}
+        </span>
+      </div>
+      <ul className="dsh-runtime-status__capability-list">
+        {FEATURE_CAPABILITY_IDS.map((id) => {
+          const capability = profile.capabilities[id]
+          return (
+            <li
+              key={id}
+              className={`dsh-runtime-status__capability dsh-runtime-status__capability--${capability.state}`}
+              title={capability.reason}
+            >
+              <code>{id}</code>
+              <span>{t(CAPABILITY_STATE_KEYS[capability.state].labelKey)}</span>
+            </li>
+          )
+        })}
+      </ul>
+    </section>
   )
 }
 

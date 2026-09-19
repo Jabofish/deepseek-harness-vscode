@@ -25,7 +25,6 @@ const task: TaskSummary = {
   canOpen: true,
   canAnswer: true,
   canSessionCancel: false,
-  canProcessStop: false,
   ownerKind: 'unknown',
   taskRevision: 1,
 }

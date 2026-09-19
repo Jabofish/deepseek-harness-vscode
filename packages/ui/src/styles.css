@@ -812,6 +812,31 @@
   background: color-mix(in srgb, var(--dsh-danger) 14%, transparent);
 }
 
+.dsh-tool-row__diff-gap {
+  color: var(--dsh-muted);
+  font-size: 0.85em;
+  text-align: center;
+  user-select: none;
+}
+
+.dsh-tool-row__diff-footer,
+.dsh-tool-row__search-total,
+.dsh-tool-row__read-total {
+  color: var(--dsh-muted);
+  font-size: 0.85em;
+  line-height: var(--dsh-tool-detail-line-height);
+}
+
+.dsh-tool-row__search-count {
+  min-width: 1.5em;
+  padding-inline: var(--dsh-space-1);
+  border: var(--dsh-border);
+  border-radius: var(--dsh-radius-pill);
+  background: var(--dsh-code-surface);
+  font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
+  text-align: center;
+}
+
 .dsh-sr-only {
   position: absolute;
   width: 1px;

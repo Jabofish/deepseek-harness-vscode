@@ -137,7 +137,6 @@ describe('task center Webview protocol', () => {
     canOpen: true,
     canAnswer: false,
     canSessionCancel: true,
-    canProcessStop: false,
     ownerKind: 'unknown',
     taskRevision: 1,
   } as const
@@ -187,14 +186,7 @@ describe('task center Webview protocol', () => {
 })
 
 describe('goal Webview protocol', () => {
-  it('accepts a positive safe maxGoalRounds on create and update', () => {
-    expect(
-      webviewRequestSchema.safeParse({
-        type: 'goal.create',
-        requestId: 'request-goal-create',
-        payload: { sessionId: 'session-1', title: 'Bounded work', maxGoalRounds: 7 },
-      }).success,
-    ).toBe(true)
+  it('accepts a positive safe maxGoalRounds on update', () => {
     expect(
       webviewRequestSchema.safeParse({
         type: 'goal.update',
@@ -208,9 +200,9 @@ describe('goal Webview protocol', () => {
     for (const maxGoalRounds of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
       expect(
         webviewRequestSchema.safeParse({
-          type: 'goal.create',
+          type: 'goal.update',
           requestId: 'request-goal-invalid',
-          payload: { sessionId: 'session-1', title: 'Bounded work', maxGoalRounds },
+          payload: { goalId: 'goal-1', maxGoalRounds },
         }).success,
       ).toBe(false)
     }

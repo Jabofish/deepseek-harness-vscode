@@ -220,7 +220,6 @@ export const rc6Mapper = {
       ...summary,
       configuration: mapConfiguration(record.configuration),
       ...(permissionPresets === undefined ? {} : { permissionPresets }),
-      goalIds: record.goalIds === undefined ? [] : requiredStringArray(record.goalIds, 'session goalIds'),
       ...(record.parentSessionId === undefined
         ? {}
         : { parentSessionId: string(record.parentSessionId, 'parentSessionId') }),

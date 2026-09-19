@@ -30,7 +30,8 @@ interface RosterState {
   readonly status: 'loading' | 'ready' | 'unavailable' | 'error'
   readonly rows: readonly AgentPresetDescriptor[]
   readonly authorable: boolean
-  readonly hasDocument: boolean
+  /** Absent when the host did not state whether it can open a directory natively. */
+  readonly hasDocument: boolean | undefined
   readonly error: string | undefined
 }
 
@@ -51,6 +52,21 @@ interface PresetView {
 
 /** Exported for the i18n key spec, which pins one label per blocker. */
 export type PresetCopyBlocker = 'idRequired' | 'idInvalid' | 'idTaken'
+
+/**
+ * The location action stays available whatever the host stated: the answer to
+ * the request itself says whether the directory was opened or its path
+ * revealed. Only the wording changes, and an unstated capability claims
+ * neither behavior.
+ */
+function locationLabels(hasDocument: boolean | undefined): {
+  readonly label: 'presets.openLocation' | 'presets.showLocation' | 'presets.location'
+  readonly title: 'presets.openDirectory' | 'presets.showPath' | 'presets.locationUnknown'
+} {
+  if (hasDocument === true) return { label: 'presets.openLocation', title: 'presets.openDirectory' }
+  if (hasDocument === false) return { label: 'presets.showLocation', title: 'presets.showPath' }
+  return { label: 'presets.location', title: 'presets.locationUnknown' }
+}
 
 /** Why this copy cannot be submitted yet; the host re-checks on submit. */
 function copyBlocker(
@@ -81,7 +97,7 @@ export function PresetManager(props: PresetManagerProps): ReactElement | null {
     status: 'loading',
     rows: [],
     authorable: false,
-    hasDocument: false,
+    hasDocument: undefined,
     error: undefined,
   })
   const [view, setView] = useState<PresetView | undefined>(undefined)
@@ -93,6 +109,7 @@ export function PresetManager(props: PresetManagerProps): ReactElement | null {
   const [defaultingId, setDefaultingId] = useState<string | undefined>(undefined)
   const [revealedPaths, setRevealedPaths] = useState<Readonly<Record<string, string>>>({})
   const [creatorBusy, setCreatorBusy] = useState(false)
+  const location = locationLabels(roster.hasDocument)
   const overlayRef = useRef<HTMLDivElement>(null)
   const overlayOpen =
     copy !== undefined ||
@@ -160,7 +177,7 @@ export function PresetManager(props: PresetManagerProps): ReactElement | null {
             status: 'unavailable',
             rows: [],
             authorable: false,
-            hasDocument: false,
+            hasDocument: undefined,
             error: undefined,
           })
           return
@@ -447,13 +464,10 @@ export function PresetManager(props: PresetManagerProps): ReactElement | null {
                         <button
                           className="dsh-icon-button"
                           type="button"
-                          aria-label={t(
-                            roster.hasDocument ? 'presets.openLocation' : 'presets.showLocation',
-                            {
-                              name: row.name ?? row.id,
-                            },
-                          )}
-                          title={roster.hasDocument ? t('presets.openDirectory') : t('presets.showPath')}
+                          aria-label={t(location.label, {
+                            name: row.name ?? row.id,
+                          })}
+                          title={t(location.title)}
                           onClick={() => openLocation(row.id)}
                         >
                           <Icon name="folder" />

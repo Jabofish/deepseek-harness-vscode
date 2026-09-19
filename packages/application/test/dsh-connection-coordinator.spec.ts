@@ -357,6 +357,33 @@ describe('DshConnectionCoordinator', () => {
     expect(result.state.backend.endpoint.port).toBe(4102)
   })
 
+  it('publishes strictly advancing phases when a discovered candidate is unhealthy', async () => {
+    // The flow used to publish `connecting` while still probing discovered
+    // candidates, so an unhealthy first pass rolled the stage indicator back
+    // from connecting to locating-runtime. Probing a discovered instance is
+    // still part of finding one; `connecting` belongs to the managed attach.
+    const stale = fakeCandidate(4106)
+    const process = managedProcess(4107)
+    const deps = dependencies({
+      discovery: { discover: vi.fn(async () => [stale]) },
+      probe: {
+        probe: vi.fn(async (candidate: BackendCandidate) =>
+          candidate.endpoint.port === 4107 ? fakeConnectedBackend(4107) : undefined,
+        ),
+      },
+      processSupervisor: { start: vi.fn(async () => process) },
+    })
+    const coordinator = new DshConnectionCoordinator(deps)
+    const kinds: string[] = []
+    coordinator.subscribe((state) => kinds.push(state.kind))
+
+    await coordinator.connect({ mode: 'auto', autoStart: true })
+
+    // The first emission is the replayed current state, not a transition.
+    expect(kinds.slice(1)).toEqual(['discovering', 'locating-runtime', 'starting', 'connecting', 'connected'])
+    expect(deps.processSupervisor.start).toHaveBeenCalledTimes(1)
+  })
+
   it('never starts DSH in attach-only mode', async () => {
     const deps = dependencies()
     const coordinator = new DshConnectionCoordinator(deps)

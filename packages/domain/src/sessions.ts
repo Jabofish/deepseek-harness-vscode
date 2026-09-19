@@ -56,7 +56,6 @@ export interface SessionDetail extends SessionSummary {
   readonly configuration: AgentConfiguration
   /** Permission ids exposed by the connected permission plugin, when projected. */
   readonly permissionPresets?: readonly string[]
-  readonly goalIds: readonly string[]
   readonly parentSessionId?: string
   readonly history?: readonly SessionHistoryEvent[]
   readonly historyHasMore?: boolean

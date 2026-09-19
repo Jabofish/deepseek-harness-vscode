@@ -68,7 +68,7 @@ describe('staged feature protocol contracts', () => {
       featureRequestSchema.safeParse({
         type: 'tasks.stop',
         requestId: 'task-stop',
-        payload: { taskId: 'task-1', mode: 'session-cancel', taskRevision: 4 },
+        payload: { taskId: 'task-1', taskRevision: 4 },
       }).success,
     ).toBe(true)
     expect(
@@ -88,7 +88,6 @@ describe('staged feature protocol contracts', () => {
         requestId: 'task-stop-extra',
         payload: {
           taskId: 'task-1',
-          mode: 'session-cancel',
           taskRevision: 4,
           response: 'raw model response',
         },

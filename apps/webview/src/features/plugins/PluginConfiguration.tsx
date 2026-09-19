@@ -14,82 +14,45 @@ export interface PluginConfigurationProps {
   readonly onRemoveCredential?: ((ref: string) => Promise<void>) | undefined
 }
 
-type PluginFieldType = 'number' | 'text'
+/**
+ * The pinned `settings.describe` answer names the writable field types. Text,
+ * number, truth values, and fixed choice lists all round-trip through a single
+ * control; secrets are listed separately because they are written through the
+ * credential surface, never as a value.
+ */
+type PluginFieldKind = 'text' | 'number' | 'boolean' | 'enum'
 
-interface PluginFieldDefinition {
+interface PluginField {
   readonly field: string
-  readonly type: PluginFieldType
-  readonly labelKey: string
-  readonly hintKey: string
+  readonly path: string
+  readonly kind: PluginFieldKind
+  readonly label: string
+  readonly description: string | undefined
+  /** Choice list for `boolean` and `enum`; text and number render an input. */
+  readonly options?: readonly string[]
+  readonly overridden: boolean
 }
 
-interface PluginDefinition {
+interface PluginCredential {
+  readonly field: string
+  readonly label: string
+  /** Reference the host stores the secret under, as the namespace states it. */
+  readonly reference: string
+  readonly configured: boolean
+}
+
+interface Plugin {
   readonly namespace: string
-  readonly titleKey: string
-  readonly descriptionKey: string
-  readonly fields: readonly PluginFieldDefinition[]
-  readonly credential?: { readonly field: string; readonly fallbackRef: string }
+  readonly applies: 'live' | 'restart'
+  readonly revision: number
+  readonly fields: readonly PluginField[]
+  readonly credentials: readonly PluginCredential[]
 }
 
 interface Draft {
   readonly text: string
   readonly clear: boolean
 }
-
-const PLUGINS: readonly PluginDefinition[] = [
-  {
-    namespace: 'shell',
-    titleKey: 'plugins.config.shell.title',
-    descriptionKey: 'plugins.config.shell.description',
-    fields: [
-      {
-        field: 'timeoutMs',
-        type: 'number',
-        labelKey: 'plugins.config.shell.timeoutMs',
-        hintKey: 'plugins.config.shell.timeoutMsHint',
-      },
-      {
-        field: 'maxOutputBytes',
-        type: 'number',
-        labelKey: 'plugins.config.shell.maxOutputBytes',
-        hintKey: 'plugins.config.shell.maxOutputBytesHint',
-      },
-    ],
-  },
-  {
-    namespace: 'agent-loop',
-    titleKey: 'plugins.config.agentLoop.title',
-    descriptionKey: 'plugins.config.agentLoop.description',
-    fields: [
-      {
-        field: 'maxParallelToolCalls',
-        type: 'number',
-        labelKey: 'plugins.config.agentLoop.maxParallel',
-        hintKey: 'plugins.config.agentLoop.maxParallelHint',
-      },
-    ],
-  },
-  {
-    namespace: 'web-search-deepseek',
-    titleKey: 'plugins.config.webSearch.title',
-    descriptionKey: 'plugins.config.webSearch.description',
-    fields: [
-      {
-        field: 'baseURL',
-        type: 'text',
-        labelKey: 'plugins.config.webSearch.baseUrl',
-        hintKey: 'plugins.config.webSearch.baseUrlHint',
-      },
-      {
-        field: 'maxUses',
-        type: 'number',
-        labelKey: 'plugins.config.webSearch.maxUses',
-        hintKey: 'plugins.config.webSearch.maxUsesHint',
-      },
-    ],
-    credential: { field: 'apiKey', fallbackRef: 'DEEPSEEK_API_KEY' },
-  },
-]
 
 export function PluginConfiguration(props: PluginConfigurationProps): ReactElement {
   const { t } = useI18n()
@@ -122,36 +85,35 @@ export function PluginConfiguration(props: PluginConfigurationProps): ReactEleme
     setError(undefined)
   }
 
-  const save = async (plugin: AvailablePlugin): Promise<void> => {
+  const save = async (plugin: Plugin): Promise<void> => {
     if (saving !== undefined || snapshot === undefined) return
     const pending = plugin.fields.flatMap((field) => {
-      const key = draftKey(plugin.definition.namespace, field.field)
+      const key = draftKey(plugin.namespace, field.field)
       const draft = drafts[key]
       return draft === undefined ? [] : [{ field, draft }]
     })
     if (pending.length === 0) return
     const invalid = pending.find(
       ({ field, draft }) =>
-        field.type === 'number' && !draft.clear && draft.text.trim() !== '' && !isFiniteNumber(draft.text),
+        field.kind === 'number' && !draft.clear && draft.text.trim() !== '' && !isFiniteNumber(draft.text),
     )
     if (invalid !== undefined) {
       setError(t('plugins.config.invalidNumber'))
       return
     }
-    setSaving(plugin.definition.namespace)
+    setSaving(plugin.namespace)
     setError(undefined)
     try {
       for (const { field, draft } of pending) {
-        const path = `${plugin.definition.namespace}.${field.field}`
         if (draft.clear || draft.text.trim() === '') {
-          await props.onUnsetSetting(path)
+          await props.onUnsetSetting(field.path)
         } else {
-          await props.onUpdateSetting(path, field.type === 'number' ? Number(draft.text) : draft.text.trim())
+          await props.onUpdateSetting(field.path, fieldValueFor(field.kind, draft.text))
         }
       }
       const next = await props.onReload()
       if (next === undefined) throw new Error(t('plugins.config.saveFailed'))
-      setDrafts((current) => withoutNamespace(current, plugin.definition.namespace))
+      setDrafts((current) => withoutNamespace(current, plugin.namespace))
     } catch (reason: unknown) {
       setError(reason instanceof Error ? reason.message : t('plugins.config.saveFailed'))
     } finally {
@@ -159,14 +121,12 @@ export function PluginConfiguration(props: PluginConfigurationProps): ReactEleme
     }
   }
 
-  const configureCredential = async (plugin: AvailablePlugin): Promise<void> => {
-    const credential = plugin.credential
-    if (credential === undefined || props.onConfigureCredential === undefined || credentialBusy !== undefined)
-      return
-    setCredentialBusy(plugin.definition.namespace)
+  const configureCredential = async (plugin: Plugin, credential: PluginCredential): Promise<void> => {
+    if (props.onConfigureCredential === undefined || credentialBusy !== undefined) return
+    setCredentialBusy(`${plugin.namespace}.${credential.field}`)
     setError(undefined)
     try {
-      const configured = await props.onConfigureCredential(credential.ref)
+      const configured = await props.onConfigureCredential(credential.reference)
       if (configured) await props.onReload()
     } catch (reason: unknown) {
       setError(reason instanceof Error ? reason.message : t('plugins.config.credentialFailed'))
@@ -175,14 +135,12 @@ export function PluginConfiguration(props: PluginConfigurationProps): ReactEleme
     }
   }
 
-  const removeCredential = async (plugin: AvailablePlugin): Promise<void> => {
-    const credential = plugin.credential
-    if (credential === undefined || props.onRemoveCredential === undefined || credentialBusy !== undefined)
-      return
-    setCredentialBusy(plugin.definition.namespace)
+  const removeCredential = async (plugin: Plugin, credential: PluginCredential): Promise<void> => {
+    if (props.onRemoveCredential === undefined || credentialBusy !== undefined) return
+    setCredentialBusy(`${plugin.namespace}.${credential.field}`)
     setError(undefined)
     try {
-      await props.onRemoveCredential(credential.ref)
+      await props.onRemoveCredential(credential.reference)
       await props.onReload()
     } catch (reason: unknown) {
       setError(reason instanceof Error ? reason.message : t('plugins.config.credentialFailed'))
@@ -206,7 +164,7 @@ export function PluginConfiguration(props: PluginConfigurationProps): ReactEleme
       ) : (
         <ul className="dsh-plugin-configuration__cards">
           {cards.map((plugin) => {
-            const namespace = plugin.definition.namespace
+            const namespace = plugin.namespace
             const open = expanded.has(namespace)
             const dirty = plugin.fields.some(
               (field) => drafts[draftKey(namespace, field.field)] !== undefined,
@@ -215,14 +173,20 @@ export function PluginConfiguration(props: PluginConfigurationProps): ReactEleme
               const draft = drafts[draftKey(namespace, field.field)]
               return (
                 draft !== undefined &&
-                field.type === 'number' &&
+                field.kind === 'number' &&
                 !draft.clear &&
                 draft.text.trim() !== '' &&
                 !isFiniteNumber(draft.text)
               )
             })
-            const busy = saving === namespace || credentialBusy === namespace
+            const busy = saving === namespace || credentialBusy?.startsWith(`${namespace}.`) === true
             const detailsId = `dsh-plugin-config-${namespace.replace(/[^a-z0-9]+/giu, '-')}`
+            const credentialTone =
+              plugin.credentials.length === 0
+                ? 'available'
+                : plugin.credentials.every((credential) => credential.configured)
+                  ? 'configured'
+                  : 'missing'
             return (
               <li className="dsh-plugin-configuration__card" key={namespace} data-plugin-config={namespace}>
                 <button
@@ -235,25 +199,17 @@ export function PluginConfiguration(props: PluginConfigurationProps): ReactEleme
                   <span className="dsh-plugin-configuration__header-copy">
                     <span className="dsh-plugin-configuration__title-line">
                       <span
-                        className={`dsh-plugin-status-dot dsh-plugin-status-dot--${
-                          plugin.credential === undefined
-                            ? 'available'
-                            : plugin.credential.configured
-                              ? 'configured'
-                              : 'missing'
-                        }`}
-                        data-state={
-                          plugin.credential === undefined
-                            ? 'available'
-                            : plugin.credential.configured
-                              ? 'configured'
-                              : 'missing'
-                        }
+                        className={`dsh-plugin-status-dot dsh-plugin-status-dot--${credentialTone}`}
+                        data-state={credentialTone}
                         aria-hidden="true"
                       />
-                      <strong>{t(plugin.definition.titleKey)}</strong>
+                      <strong>{namespace}</strong>
                     </span>
-                    <span>{t(plugin.definition.descriptionKey)}</span>
+                    <span>
+                      {plugin.applies === 'restart'
+                        ? t('plugins.config.applies.restart')
+                        : t('plugins.config.applies.live')}
+                    </span>
                   </span>
                   {dirty ? (
                     <span className="dsh-plugin-configuration__unsaved">{t('plugins.config.unsaved')}</span>
@@ -275,12 +231,10 @@ export function PluginConfiguration(props: PluginConfigurationProps): ReactEleme
                     {plugin.fields.map((field) => {
                       const key = draftKey(namespace, field.field)
                       const draft = drafts[key]
-                      const text =
-                        draft === undefined ? fieldValue(snapshot, namespace, field.field) : draft.text
-                      const overridden = isUserField(snapshot, namespace, field.field)
+                      const text = draft === undefined ? fieldValue(snapshot, field.path) : draft.text
                       const fieldInvalid =
                         draft !== undefined &&
-                        field.type === 'number' &&
+                        field.kind === 'number' &&
                         !draft.clear &&
                         draft.text.trim() !== '' &&
                         !isFiniteNumber(draft.text)
@@ -292,18 +246,38 @@ export function PluginConfiguration(props: PluginConfigurationProps): ReactEleme
                           key={field.field}
                         >
                           <span className="dsh-plugin-configuration__field-head">
-                            <span>{t(field.labelKey)}</span>
-                            {overridden ? <small>{t('plugins.config.overridden')}</small> : null}
+                            <span>{field.label}</span>
+                            {field.overridden ? <small>{t('plugins.config.overridden')}</small> : null}
                           </span>
-                          <input
-                            id={inputId}
-                            type="text"
-                            inputMode={field.type === 'number' ? 'numeric' : undefined}
-                            value={text}
-                            disabled={!snapshot.schema.writable || busy}
-                            aria-invalid={fieldInvalid}
-                            onChange={(event) => stage(namespace, field.field, event.currentTarget.value)}
-                          />
+                          {field.options === undefined ? (
+                            <input
+                              id={inputId}
+                              type="text"
+                              inputMode={field.kind === 'number' ? 'numeric' : undefined}
+                              value={text}
+                              disabled={!snapshot.schema.writable || busy}
+                              aria-invalid={fieldInvalid}
+                              onChange={(event) => stage(namespace, field.field, event.currentTarget.value)}
+                            />
+                          ) : (
+                            <select
+                              id={inputId}
+                              value={field.options.includes(text) ? text : ''}
+                              disabled={!snapshot.schema.writable || busy}
+                              onChange={(event) => {
+                                const value = event.currentTarget.value
+                                if (value === '') stage(namespace, field.field, '', true)
+                                else stage(namespace, field.field, value)
+                              }}
+                            >
+                              <option value="">{t('plugins.config.chooseValue')}</option>
+                              {field.options.map((option) => (
+                                <option value={option} key={option}>
+                                  {option}
+                                </option>
+                              ))}
+                            </select>
+                          )}
                           <ContentFlow
                             as="span"
                             className={
@@ -312,9 +286,11 @@ export function PluginConfiguration(props: PluginConfigurationProps): ReactEleme
                                 : 'dsh-plugin-configuration__hint'
                             }
                           >
-                            {fieldInvalid ? t('plugins.config.invalidNumber') : t(field.hintKey)}
+                            {fieldInvalid
+                              ? t('plugins.config.invalidNumber')
+                              : (field.description ?? field.path)}
                           </ContentFlow>
-                          {overridden ? (
+                          {field.overridden ? (
                             <button
                               type="button"
                               className="dsh-plugin-configuration__reset"
@@ -327,18 +303,18 @@ export function PluginConfiguration(props: PluginConfigurationProps): ReactEleme
                         </label>
                       )
                     })}
-                    {plugin.credential === undefined ? null : (
-                      <div className="dsh-plugin-configuration__credential">
+                    {plugin.credentials.map((credential) => (
+                      <div className="dsh-plugin-configuration__credential" key={credential.field}>
                         <div className="dsh-plugin-configuration__field-head">
-                          <span>{t('plugins.config.webSearch.apiKey')}</span>
+                          <span>{credential.label}</span>
                           <small>
-                            {plugin.credential.configured
+                            {credential.configured
                               ? t('plugins.config.credentialConfigured')
                               : t('plugins.config.credentialMissing')}
                           </small>
                         </div>
                         <span className="dsh-plugin-configuration__hint">
-                          {t('plugins.config.webSearch.apiKeyHint')}
+                          {t('plugins.config.credentialHint', { reference: credential.reference })}
                         </span>
                         {props.onConfigureCredential === undefined ? null : (
                           <div className="dsh-plugin-configuration__credential-actions">
@@ -346,18 +322,18 @@ export function PluginConfiguration(props: PluginConfigurationProps): ReactEleme
                               type="button"
                               className="dsh-button dsh-button--secondary dsh-button--compact"
                               disabled={busy}
-                              onClick={() => void configureCredential(plugin)}
+                              onClick={() => void configureCredential(plugin, credential)}
                             >
-                              {plugin.credential.configured
+                              {credential.configured
                                 ? t('plugins.config.credentialReplace')
                                 : t('plugins.config.credentialConfigure')}
                             </button>
-                            {plugin.credential.configured && props.onRemoveCredential !== undefined ? (
+                            {credential.configured && props.onRemoveCredential !== undefined ? (
                               <button
                                 type="button"
                                 className="dsh-button dsh-button--danger dsh-button--compact"
                                 disabled={busy}
-                                onClick={() => void removeCredential(plugin)}
+                                onClick={() => void removeCredential(plugin, credential)}
                               >
                                 {t('plugins.config.credentialRemove')}
                               </button>
@@ -365,7 +341,7 @@ export function PluginConfiguration(props: PluginConfigurationProps): ReactEleme
                           </div>
                         )}
                       </div>
-                    )}
+                    ))}
                     <div className="dsh-plugin-configuration__footer">
                       {error !== undefined ? (
                         <p className="dsh-plugin-configuration__error" role="alert">
@@ -400,51 +376,110 @@ export function PluginConfiguration(props: PluginConfigurationProps): ReactEleme
   )
 }
 
-interface AvailablePlugin {
-  readonly definition: PluginDefinition
-  readonly fields: readonly PluginFieldDefinition[]
-  readonly credential?: { readonly ref: string; readonly configured: boolean }
-}
-
-function availablePlugins(snapshot: DshSettingsSnapshot): readonly AvailablePlugin[] {
-  return PLUGINS.flatMap((definition) => {
-    if (!snapshot.schema.namespaces.some((namespace) => namespace.ns === definition.namespace)) return []
-    const fields = definition.fields.filter((field) =>
-      snapshot.schema.fields.some((candidate) => candidate.path === `${definition.namespace}.${field.field}`),
-    )
-    const credential = definition.credential
-    const namespaceValue = settingValueAt(snapshot.values, definition.namespace)
-    const secret =
-      credential === undefined
-        ? undefined
-        : snapshot.schema.namespaces
-            .find((namespace) => namespace.ns === definition.namespace)
-            ?.secrets.find((item) => item.field === credential.field)
-    if (fields.length === 0 && secret === undefined) return []
-    const availableCredential =
-      credential === undefined || secret === undefined
-        ? undefined
-        : {
-            ref: settingString(namespaceValue, 'apiKeyEnv') ?? credential.fallbackRef,
-            configured: secret.set,
-          }
+/**
+ * Every card is derived from the host's own `settings.describe` answer: the
+ * extension ships no plugin list, so a namespace DSH adds or removes appears
+ * and disappears with the host instead of with a release of this extension.
+ * Namespaces the descriptor exposes nothing writable for are not cards.
+ */
+function availablePlugins(snapshot: DshSettingsSnapshot): readonly Plugin[] {
+  return snapshot.schema.namespaces.flatMap((namespace) => {
+    const prefix = `${namespace.ns}.`
+    const values = settingValueAt(snapshot.values, namespace.ns)
+    const fields = snapshot.schema.fields.flatMap((field) => {
+      if (!field.path.startsWith(prefix) || field.path === prefix) return []
+      const name = field.path.slice(prefix.length)
+      const kind = fieldKind(field.type, field.enumValues)
+      if (kind === undefined) return []
+      return [
+        {
+          field: name,
+          path: field.path,
+          kind,
+          label: field.label.trim() === '' ? name : field.label,
+          description: field.description,
+          ...(kind === 'boolean'
+            ? { options: ['true', 'false'] as const }
+            : kind === 'enum'
+              ? { options: field.enumValues ?? [] }
+              : {}),
+          overridden: namespace.userFields.includes(name),
+        },
+      ]
+    })
+    const credentials = namespace.secrets.flatMap((secret) => {
+      // A secret is stored under the reference the namespace itself names —
+      // DSH keeps that name in a sibling `<field>Env` setting. Without a
+      // stated reference there is nothing to write, and guessing a name would
+      // store the secret under a reference no plugin reads.
+      const reference = credentialReference(values, secret.field)
+      if (reference === undefined) return []
+      const label = snapshot.schema.fields.find((field) => field.path === `${prefix}${secret.field}`)?.label
+      return [
+        {
+          field: secret.field,
+          label: label === undefined || label.trim() === '' ? secret.field : label,
+          reference,
+          configured: secret.set,
+        },
+      ]
+    })
+    if (fields.length === 0 && credentials.length === 0) return []
     return [
       {
-        definition,
+        namespace: namespace.ns,
+        applies: namespace.applies,
+        revision: namespace.revision,
         fields,
-        ...(availableCredential === undefined ? {} : { credential: availableCredential }),
+        credentials,
       },
     ]
   })
 }
 
-function fieldValue(snapshot: DshSettingsSnapshot, namespace: string, field: string): string {
-  const value = settingValueAt(snapshot.values, `${namespace}.${field}`)
-  return typeof value === 'number' || typeof value === 'string' ? String(value) : ''
+function fieldKind(
+  type: DshSettingsSnapshot['schema']['fields'][number]['type'],
+  enumValues: readonly string[] | undefined,
+): PluginFieldKind | undefined {
+  switch (type) {
+    case 'string':
+      return 'text'
+    case 'number':
+      return 'number'
+    case 'boolean':
+      return 'boolean'
+    case 'enum':
+      return enumValues === undefined || enumValues.length === 0 ? undefined : 'enum'
+    // Secrets are written through the credential surface, and object and array
+    // values have no single-control representation this panel can send back.
+    case 'secret':
+    case 'object':
+    case 'array':
+      return undefined
+  }
 }
 
-function isUserField(snapshot: DshSettingsSnapshot, namespace: string, field: string): boolean {
-  return snapshot.schema.namespaces.find((item) => item.ns === namespace)?.userFields.includes(field) === true
+function fieldValueFor(kind: PluginFieldKind, text: string): unknown {
+  switch (kind) {
+    case 'number':
+      return Number(text.trim())
+    case 'boolean':
+      return text.trim() === 'true'
+    case 'enum':
+    case 'text':
+      return text.trim()
+  }
+}
+
+function credentialReference(value: unknown, field: string): string | undefined {
+  return settingString(value, `${field}Env`) ?? settingString(value, 'apiKeyEnv')
+}
+
+function fieldValue(snapshot: DshSettingsSnapshot, path: string): string {
+  const value = settingValueAt(snapshot.values, path)
+  return typeof value === 'number' || typeof value === 'string' || typeof value === 'boolean'
+    ? String(value)
+    : ''
 }
 
 function settingValueAt(values: Readonly<Record<string, unknown>>, path: string): unknown {

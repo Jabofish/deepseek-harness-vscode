@@ -295,6 +295,10 @@ export class DshConnectionCoordinator {
         pid: process.pid,
         confidence: 100,
       }
+      // The connect phase starts once this extension has a process to attach to.
+      // Probing a discovered instance is still part of finding one, so it must
+      // not publish `connecting` ahead of `locating-runtime`/`starting`.
+      this.publish({ kind: 'connecting', candidate })
       let verified: ConnectedBackend | undefined
       try {
         verified = await this.dependencies.probe.probe(candidate, signal)
@@ -338,7 +342,6 @@ export class DshConnectionCoordinator {
       const key = `${candidate.endpoint.host}:${candidate.endpoint.port}`
       if (attemptedEndpoints.has(key)) continue
       attemptedEndpoints.add(key)
-      this.publish({ kind: 'connecting', candidate })
       try {
         const verified = await this.dependencies.probe.probe(candidate, signal)
         if (verified !== undefined) return this.attach(verified, undefined, signal, generation)

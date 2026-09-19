@@ -131,7 +131,6 @@ describe('TaskCenterRegistry', () => {
     )
     expect(tasks).toHaveLength(4)
     expect(tasks.every((task) => task.workspaceFolderId === 'folder-1')).toBe(true)
-    expect(tasks.every((task) => task.canProcessStop === false)).toBe(true)
   })
 
   it('composes a bounded workspace view from authoritative session repositories', async () => {
@@ -183,7 +182,7 @@ describe('TaskCenterRegistry', () => {
     const backgroundTask = snapshot.items.find((task) => task.taskId === 'session:session-2')
     if (backgroundTask === undefined) throw new Error('workspace session task was not projected')
     registry.setCurrentSession('session-3')
-    await registry.stop(backgroundTask.taskId, 'session-cancel', backgroundTask.taskRevision)
+    await registry.stop(backgroundTask.taskId, backgroundTask.taskRevision)
     expect(Reflect.get(current.sessions, 'cancel')).toHaveBeenCalledWith('session-2', undefined)
   })
 
@@ -219,19 +218,12 @@ describe('TaskCenterRegistry', () => {
     registry.setCurrentSession('session-1')
     const task = (await registry.list({ sessionId: 'session-1' })).find((item) => item.kind === 'session')
     if (task === undefined) throw new Error('session task was not projected')
-    await expect(
-      registry.stop('session:session-1', 'session-cancel', task.taskRevision + 1),
-    ).rejects.toMatchObject({
+    await expect(registry.stop('session:session-1', task.taskRevision + 1)).rejects.toMatchObject({
       code: 'TASK_STATE_STALE',
     })
-    const stopped = await registry.stop('session:session-1', 'session-cancel', task.taskRevision)
+    const stopped = await registry.stop('session:session-1', task.taskRevision)
     expect(cancel).toHaveBeenCalledWith('session-1', undefined)
     expect(stopped.status).toBe('cancelled')
-    await expect(
-      registry.stop('session:session-1', 'process-stop', stopped.taskRevision),
-    ).rejects.toMatchObject({
-      code: 'TASK_NOT_OWNED',
-    })
   })
 
   it('uses the subagent interrupt port for continuable children and not the parent session cancel', async () => {
@@ -244,7 +236,7 @@ describe('TaskCenterRegistry', () => {
 
     const child = (await registry.list({ sessionId: 'session-1' })).find((task) => task.kind === 'subagent')
     if (child === undefined) throw new Error('subagent task was not projected')
-    await registry.stop(child.taskId, 'session-cancel', child.taskRevision)
+    await registry.stop(child.taskId, child.taskRevision)
 
     expect(interrupt).toHaveBeenCalledWith('child-1', undefined)
     expect(cancel).not.toHaveBeenCalled()
@@ -265,7 +257,7 @@ describe('TaskCenterRegistry', () => {
     registry.setCurrentSession('session-2')
 
     await expect(registry.get(task.taskId)).rejects.toMatchObject({ code: 'TASK_NOT_OWNED' })
-    await expect(registry.stop(task.taskId, 'session-cancel', task.taskRevision)).rejects.toMatchObject({
+    await expect(registry.stop(task.taskId, task.taskRevision)).rejects.toMatchObject({
       code: 'TASK_NOT_OWNED',
     })
     expect(cancel).not.toHaveBeenCalled()
@@ -280,7 +272,7 @@ describe('TaskCenterRegistry', () => {
     const child = (await registry.list({ sessionId: 'session-1' })).find((task) => task.kind === 'subagent')
     if (child === undefined) throw new Error('one-shot subagent task was not projected')
     expect(child.canSessionCancel).toBe(false)
-    await expect(registry.stop(child.taskId, 'session-cancel', child.taskRevision)).rejects.toMatchObject({
+    await expect(registry.stop(child.taskId, child.taskRevision)).rejects.toMatchObject({
       code: 'TASK_NOT_OWNED',
     })
   })
@@ -374,7 +366,6 @@ describe('TaskCenterRegistry', () => {
         planMode: false,
         model: { providerId: 'deepseek', modelId: 'deepseek-chat' },
       },
-      goalIds: [],
     })
 
     await expect(listing).rejects.toMatchObject({ code: 'CAPABILITY_UNAVAILABLE' })

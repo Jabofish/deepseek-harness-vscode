@@ -602,7 +602,6 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                           </dd>
                         </dl>
                         <SettingCard
-                          className="dsh-settings__connection"
                           ariaLabel={t('settings.connectionTitle')}
                           title={t('settings.connectionTitle')}
                           description={t('settings.connectionHint')}

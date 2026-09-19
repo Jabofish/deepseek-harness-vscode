@@ -358,7 +358,7 @@ function publicErrorMessage(
 }
 
 /** Requests whose failure is explained by the prompt's own attachments. */
-const MESSAGE_ATTACHMENT_REQUESTS = new Set(['session.sendPrompt', 'session.enqueuePrompt', 'subagent.send'])
+const MESSAGE_ATTACHMENT_REQUESTS = new Set(['session.sendPrompt', 'subagent.send'])
 
 /**
  * Append the bounded, redacted cause (and RPC identity when present) so the

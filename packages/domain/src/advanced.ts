@@ -152,11 +152,15 @@ export interface AgentPresetDocument {
  * roster plus the two deployment facts that gate its management surface —
  * `authorable` (whether a writable preset root is configured at all) and
  * `hasDocument` (whether the host can open a preset directory natively).
+ *
+ * `hasDocument` stays absent when the host did not state the capability: a
+ * probe that never answered is not a `false` answer, so the surface must keep
+ * the location action and word it without claiming either behavior.
  */
 export interface AgentPresetRoster {
   readonly presets: readonly AgentPresetDescriptor[]
   readonly authorable: boolean
-  readonly hasDocument: boolean
+  readonly hasDocument?: boolean
 }
 
 /** `agentPreset.openDocument` answer: opened natively, or the path revealed. */

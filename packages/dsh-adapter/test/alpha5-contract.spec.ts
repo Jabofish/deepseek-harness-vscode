@@ -152,7 +152,7 @@ describe('DSH 0.1.2-alpha.5 Connection/Gateway contract', () => {
     await transport.close()
   })
 
-  it('keeps the alpha preset roster usable when the optional native-opener probe fails', async () => {
+  it('keeps the alpha preset roster usable without claiming a native opener when the probe fails', async () => {
     const fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const request = JSON.parse(bodyText(init)) as { readonly method?: string }
       if (request.method === 'agentPresets/list')
@@ -163,9 +163,13 @@ describe('DSH 0.1.2-alpha.5 Connection/Gateway contract', () => {
     })
     const transport = versionedTransport(adapter(fetch))
 
-    await expect(transport.request('agentPreset.list', {})).resolves.toMatchObject({
-      result: { ok: true, value: { presets: [], authorable: false, hasDocument: false } },
-    })
+    // A probe that never answered states nothing: the roster must not carry a
+    // fabricated `hasDocument` that reads as "the host cannot open a directory".
+    const outcome = await transport.request<{
+      readonly result: { readonly ok: boolean; readonly value: Record<string, unknown> }
+    }>('agentPreset.list', {})
+    expect(outcome).toMatchObject({ result: { ok: true, value: { presets: [], authorable: false } } })
+    expect(Object.hasOwn(outcome.result.value, 'hasDocument')).toBe(false)
     await transport.close()
   })
 

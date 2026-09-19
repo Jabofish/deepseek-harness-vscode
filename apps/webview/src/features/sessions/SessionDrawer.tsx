@@ -27,6 +27,12 @@ export interface SessionDrawerProps {
   readonly onOpen: (sessionId: string) => void
   readonly onCreate: (workspaceId: string | undefined) => void
   readonly onArchive: (sessionId: string) => Promise<void>
+  /** Archived rows the host still holds; fetched on demand by the section. */
+  readonly archivedSessions: readonly SessionSummary[]
+  readonly onLoadArchived: () => Promise<void>
+  readonly onRestore: (sessionId: string) => Promise<void>
+  /** Destructive: removes the archived conversation record from DSH. */
+  readonly onDelete: (sessionId: string) => Promise<void>
   readonly onRename: (sessionId: string, title: string) => Promise<void>
   readonly onRenameWorkspace: (workspaceId: string, name: string) => Promise<void>
   readonly onRemoveWorkspace: (workspaceId: string) => Promise<void>
@@ -90,7 +96,7 @@ function readOrderDrag(dataTransfer: DataTransfer): OrderDrag | undefined {
 
 export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerProps): ReactElement {
   const { t } = useI18n()
-  const { onSearch } = props
+  const { onLoadArchived, onSearch } = props
   const [internalOpen, setInternalOpen] = useState(false)
   const [removingSessionId, setRemovingSessionId] = useState<string>()
   const [searchQuery, setSearchQuery] = useState('')
@@ -108,6 +114,11 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
   const [removeWorkspace, setRemoveWorkspace] = useState<WorkspaceSummary>()
   const [removeError, setRemoveError] = useState<string>()
   const [moveError, setMoveError] = useState<string>()
+  const [archivedOpen, setArchivedOpen] = useState(false)
+  const [archivedError, setArchivedError] = useState<string>()
+  const [restoringSessionId, setRestoringSessionId] = useState<string>()
+  const [deleteTarget, setDeleteTarget] = useState<SessionSummary>()
+  const [deleteError, setDeleteError] = useState<string>()
   const [mutationBusy, setMutationBusy] = useState(false)
   const searchSequence = useRef(0)
   const renameInputRef = useRef<HTMLInputElement>(null)
@@ -115,6 +126,7 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
   const panelRef = useRef<HTMLDivElement>(null)
   const renameDialogRef = useRef<HTMLFormElement>(null)
   const removeDialogRef = useRef<HTMLDivElement>(null)
+  const deleteDialogRef = useRef<HTMLDivElement>(null)
   /** Both dialogs are portalled `aria-modal` surfaces; the row control that
    * opened one takes the keyboard back when it closes. */
   const dialogTriggerRef = useRef<HTMLElement | null>(null)
@@ -147,6 +159,11 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
     if (mutationBusy) return
     setRemoveWorkspace(undefined)
   }, [mutationBusy])
+  const closeDeleteDialog = useCallback((): void => {
+    if (mutationBusy) return
+    setDeleteTarget(undefined)
+    setDeleteError(undefined)
+  }, [mutationBusy])
   const closeSwitcher = (): void => {
     setOpen(false)
   }
@@ -161,7 +178,7 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
   // switcher on the pointerdown and the click toggles it straight back open.
   useDismissibleLayer({
     open,
-    refs: [triggerRef, panelRef, renameDialogRef, removeDialogRef],
+    refs: [triggerRef, panelRef, renameDialogRef, removeDialogRef, deleteDialogRef],
     onDismiss: closeSwitcher,
     onEscape: closeSwitcherAndRefocus,
   })
@@ -175,6 +192,11 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
     refs: [removeDialogRef],
     onDismiss: closeRemoveDialog,
   })
+  useDismissibleLayer({
+    open: deleteTarget !== undefined,
+    refs: [deleteDialogRef],
+    onDismiss: closeDeleteDialog,
+  })
 
   useEffect(() => {
     if (renameTarget === undefined) return
@@ -182,7 +204,22 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
     renameInputRef.current?.select()
   }, [renameTarget])
 
-  const dialogOpen = renameTarget !== undefined || removeWorkspace !== undefined
+  useEffect(() => {
+    if (!open || !archivedOpen) return
+    let cancelled = false
+    setArchivedError(undefined)
+    // A refused load must read as "the host did not answer", not as an empty
+    // archive: only the host can say which rows it still holds.
+    void onLoadArchived().catch((reason: unknown) => {
+      if (cancelled) return
+      setArchivedError(reason instanceof Error ? reason.message : t('sessions.archivedLoadFailed'))
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [archivedOpen, open, onLoadArchived, t])
+
+  const dialogOpen = renameTarget !== undefined || removeWorkspace !== undefined || deleteTarget !== undefined
   const dialogWasOpen = useRef(false)
   useEffect(() => {
     if (dialogWasOpen.current && !dialogOpen) {
@@ -273,6 +310,35 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
       .onArchive(session.id)
       .catch(() => undefined)
       .finally(() => setRemovingSessionId((current) => (current === session.id ? undefined : current)))
+  }
+
+  /**
+   * Restore and delete are host operations whose refusal must be visible: a
+   * silent failure would leave the row in the archived list looking untouched
+   * even though nothing was written.
+   */
+  const restoreArchivedSession = (session: SessionSummary): void => {
+    setArchivedError(undefined)
+    setRestoringSessionId(session.id)
+    void props
+      .onRestore(session.id)
+      .catch((reason: unknown) => {
+        setArchivedError(reason instanceof Error ? reason.message : t('sessions.restoreFailed'))
+      })
+      .finally(() => setRestoringSessionId((current) => (current === session.id ? undefined : current)))
+  }
+
+  const confirmDeleteSession = (): void => {
+    if (deleteTarget === undefined || mutationBusy) return
+    setMutationBusy(true)
+    setDeleteError(undefined)
+    void props
+      .onDelete(deleteTarget.id)
+      .then(() => setDeleteTarget(undefined))
+      .catch((reason: unknown) => {
+        setDeleteError(reason instanceof Error ? reason.message : t('sessions.deleteFailed'))
+      })
+      .finally(() => setMutationBusy(false))
   }
 
   /**
@@ -724,6 +790,88 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
               )}
             </>
           )}
+          <section className="dsh-session-switcher__archived" aria-label={t('sessions.archived')}>
+            <button
+              className="dsh-session-switcher__archived-toggle"
+              type="button"
+              aria-expanded={archivedOpen}
+              onClick={() => setArchivedOpen((current) => !current)}
+            >
+              <Icon name="box" />
+              <span className="dsh-session-switcher__archived-label">{t('sessions.archived')}</span>
+              {props.archivedSessions.length === 0 ? null : (
+                <small className="dsh-session-switcher__archived-count">
+                  {props.archivedSessions.length}
+                </small>
+              )}
+              <span className="dsh-session-switcher__chevron" aria-hidden="true">
+                <Icon name="chevron-down" />
+              </span>
+            </button>
+            {archivedOpen ? (
+              <div className="dsh-session-switcher__archived-body">
+                {archivedError === undefined ? null : (
+                  <p className="dsh-session-switcher__error" role="alert">
+                    {archivedError}
+                  </p>
+                )}
+                {props.archivedSessions.length === 0 ? (
+                  <p className="dsh-session-switcher__empty">{t('sessions.archivedEmpty')}</p>
+                ) : (
+                  <ul className="dsh-session-switcher__list" aria-label={t('sessions.archived')}>
+                    {props.archivedSessions.map((session) => {
+                      const title = displaySessionTitle(session.title, t)
+                      const workspaceName = props.workspaces.find(
+                        (workspace) => workspace.id === session.workspaceId,
+                      )?.name
+                      return (
+                        <li
+                          key={session.id}
+                          className="dsh-session-item"
+                          aria-busy={restoringSessionId === session.id}
+                        >
+                          <span className="dsh-session-item__copy">
+                            <strong title={title}>{title}</strong>
+                            {workspaceName === undefined ? null : (
+                              <span className="dsh-session-item__workspace" title={workspaceName}>
+                                {workspaceName}
+                              </span>
+                            )}
+                          </span>
+                          <div className="dsh-session-item__actions">
+                            <button
+                              className="dsh-icon-button"
+                              type="button"
+                              aria-label={t('sessions.restore', { title })}
+                              title={t('sessions.restoreTitle')}
+                              disabled={mutationBusy || restoringSessionId !== undefined}
+                              onClick={() => restoreArchivedSession(session)}
+                            >
+                              <Icon name="refresh" />
+                            </button>
+                            <button
+                              className="dsh-icon-button"
+                              type="button"
+                              aria-label={t('sessions.delete', { title })}
+                              title={t('sessions.deleteTitle')}
+                              disabled={mutationBusy || restoringSessionId !== undefined}
+                              onClick={(event) => {
+                                dialogTriggerRef.current = event.currentTarget
+                                setDeleteError(undefined)
+                                setDeleteTarget(session)
+                              }}
+                            >
+                              <Icon name="trash" />
+                            </button>
+                          </div>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                )}
+              </div>
+            ) : null}
+          </section>
         </PopoverCard>
       ) : null}
       {renameTarget === undefined || typeof document === 'undefined'
@@ -825,6 +973,53 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
                     onClick={confirmRemoveWorkspace}
                   >
                     {mutationBusy ? t('common.removing') : t('common.remove')}
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )}
+      {deleteTarget === undefined || typeof document === 'undefined'
+        ? null
+        : createPortal(
+            <div className="dsh-session-dialog__backdrop" role="presentation">
+              <div
+                ref={deleteDialogRef}
+                className="dsh-session-dialog"
+                role="alertdialog"
+                aria-modal="true"
+                aria-labelledby={`${panelId}-delete-title`}
+              >
+                <h2 id={`${panelId}-delete-title`} className="dsh-session-dialog__title">
+                  {t('sessions.deleteTitle')}
+                </h2>
+                <p className="dsh-session-dialog__description">
+                  {t('sessions.deleteConfirm', {
+                    title: displaySessionTitle(deleteTarget.title, t),
+                  })}
+                </p>
+                {deleteError === undefined ? null : (
+                  <p className="dsh-session-dialog__error" role="alert">
+                    {deleteError}
+                  </p>
+                )}
+                <div className="dsh-session-dialog__actions">
+                  <button
+                    className="dsh-button dsh-button--secondary"
+                    type="button"
+                    disabled={mutationBusy}
+                    autoFocus
+                    onClick={closeDeleteDialog}
+                  >
+                    {t('common.cancel')}
+                  </button>
+                  <button
+                    className="dsh-button dsh-button--danger"
+                    type="button"
+                    disabled={mutationBusy}
+                    onClick={confirmDeleteSession}
+                  >
+                    {mutationBusy ? t('common.removing') : t('common.delete')}
                   </button>
                 </div>
               </div>
