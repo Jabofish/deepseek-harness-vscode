@@ -127,3 +127,48 @@ describe('PluginInventory', () => {
     await waitFor(() => expect(screen.getByText('ui-settings')).toBeDefined())
   })
 })
+
+describe('preset plugin compositions', () => {
+  afterEach(() => cleanup())
+  it('shows conditional rows, default identity and broken presets, and searches compositions', async () => {
+    renderInventory(
+      vi.fn().mockResolvedValue({
+        entries: [],
+        agentPresets: [
+          {
+            id: 'custom',
+            name: 'Custom preset',
+            trust: 'user',
+            isDefault: true,
+            rows: [
+              {
+                entryId: null,
+                moduleName: 'cordis-plugin-dynamic',
+                enabled: 'conditional',
+                condition: 'ctx.available',
+                fiberPhase: null,
+              },
+              {
+                entryId: 'disabled-row',
+                moduleName: 'cordis-plugin-hidden',
+                enabled: false,
+                fiberPhase: 'active',
+              },
+            ],
+          },
+          { id: 'broken', trust: 'user', isDefault: false, broken: 'Composition unavailable', rows: [] },
+        ],
+      }),
+    )
+    await waitFor(() => expect(screen.getByText('Agent preset plugins')).toBeDefined())
+    expect(screen.getByText('Default')).toBeDefined()
+    expect(screen.getByText('Conditional', { exact: false })).toBeDefined()
+    expect(screen.getByText('ctx.available')).toBeDefined()
+    expect(screen.getByRole('alert').textContent).toBe('Composition unavailable')
+    expect(screen.queryByText('Mounted')).toBeNull()
+    fireEvent.change(screen.getByLabelText('Search plugins'), { target: { value: 'dynamic' } })
+    expect(screen.getByText('dynamic')).toBeDefined()
+    expect(screen.queryByText('hidden')).toBeNull()
+    expect(screen.queryByText('Composition unavailable')).toBeNull()
+  })
+})

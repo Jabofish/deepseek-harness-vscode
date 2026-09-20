@@ -53,6 +53,7 @@ function renderDrawer(
     showTrigger: false,
     onOpen: vi.fn(),
     onCreate: vi.fn(),
+    onAddWorkspace: vi.fn().mockResolvedValue(undefined),
     onArchive: vi.fn().mockResolvedValue(undefined),
     archivedSessions: [],
     onLoadArchived: vi.fn().mockResolvedValue(undefined),
@@ -490,5 +491,26 @@ describe('SessionDrawer', () => {
     dragSecondOntoFirst()
     await waitFor(() => expect(onMoveSession).toHaveBeenCalledTimes(2))
     await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
+  })
+})
+
+describe('workspace folder picker', () => {
+  afterEach(() => cleanup())
+  it('opens the host picker without choosing a path in the Webview', async () => {
+    const onAddWorkspace = vi.fn().mockResolvedValue(undefined)
+    renderDrawer({ onAddWorkspace })
+    fireEvent.click(screen.getByRole('button', { name: 'Add folder to workspace' }))
+    await waitFor(() => expect(onAddWorkspace).toHaveBeenCalledExactlyOnceWith())
+  })
+  it('reports picker failures and permits retry', async () => {
+    const onAddWorkspace = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Picker unavailable'))
+      .mockResolvedValue(undefined)
+    renderDrawer({ onAddWorkspace })
+    fireEvent.click(screen.getByRole('button', { name: 'Add folder to workspace' }))
+    await waitFor(() => expect(screen.getByText('Picker unavailable')).toBeDefined())
+    fireEvent.click(screen.getByRole('button', { name: 'Add folder to workspace' }))
+    await waitFor(() => expect(onAddWorkspace).toHaveBeenCalledTimes(2))
   })
 })

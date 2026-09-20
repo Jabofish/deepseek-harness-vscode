@@ -10,6 +10,7 @@ export interface CommandPaletteProps {
   readonly rows?: readonly CommandMenuRow[]
   readonly argumentOptions?: readonly CommandArgumentOption[]
   readonly onExecute: (command: string, argument?: string) => void
+  readonly onOpenSkillDocument?: (skillId: string) => void
   readonly popupSelects?: PopupSelectRegistry
   readonly onPopupSelect?: (command: string) => void
   /** Official escape tier: while equal to `query` the menu renders nothing. */
@@ -144,6 +145,7 @@ export function CommandPalette(props: CommandPaletteProps): ReactElement {
             (row): row is Extract<CommandMenuRow, { readonly kind: 'command' }> => row.kind === 'command',
           )
           .map((row) => ({ command: row.command }))
+  const selected = matches[props.highlight ?? 0]?.command
   return (
     <section className="dsh-command-palette" id={COMMAND_MENU_ID} aria-label={t('commands.aria')}>
       {matches.length === 0 ? (
@@ -180,6 +182,18 @@ export function CommandPalette(props: CommandPaletteProps): ReactElement {
           ))}
         </ul>
       )}
+      {selected?.source === 'skill' &&
+      selected.hasDocument === true &&
+      props.onOpenSkillDocument !== undefined ? (
+        <button
+          type="button"
+          className="dsh-button dsh-button--secondary dsh-button--compact"
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => props.onOpenSkillDocument?.(selected.name)}
+        >
+          {t('commands.openSkillDocument', { name: selected.name })}
+        </button>
+      ) : null}
     </section>
   )
 }

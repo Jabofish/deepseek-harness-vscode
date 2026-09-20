@@ -415,6 +415,64 @@ describe('DshRuntimeLocator caching', () => {
   })
 })
 
+describe('unusable runtime candidates', () => {
+  it('falls through to the ordinary scan when the persisted hint cannot run', async () => {
+    // A broken global install leaves the `dsh` shim in place while its package
+    // is gone, so the hint exists and its version probe fails. That is a fact
+    // about the cached candidate, not a failure of the whole lookup.
+    const hintPath = testPlatform.pathApi.join(
+      testPlatform.existingDirectory,
+      'broken',
+      testPlatform.executableName,
+    )
+    const scanned = testPlatform.pathApi.join(testPlatform.existingDirectory, testPlatform.executableName)
+    const failures: { name: string; message: string }[] = []
+    const runtime = new DshRuntimeLocator({
+      os: testPlatform.os,
+      configuredPath: () => undefined,
+      pathEntries: () => [testPlatform.existingDirectory],
+      npmGlobalPrefix: () => Promise.resolve(undefined),
+      lastKnownRuntimePath: () => ({ path: hintPath, source: 'path' }),
+      fileExists: (candidate) => Promise.resolve(candidate === hintPath || candidate === scanned),
+      executeVersion: (executable) =>
+        executable === hintPath
+          ? Promise.reject(new Error("Cannot find module 'dsh/lib/bin.js'"))
+          : Promise.resolve('0.1.1-rc.2'),
+      logProbeFailure: (failure) => failures.push(failure),
+    })
+
+    await expect(runtime.locate()).resolves.toMatchObject({
+      runtime: { executable: scanned, source: 'path', supported: true },
+      searchedLocations: [hintPath, scanned],
+    })
+    expect(failures).toEqual([
+      { name: testPlatform.executableName, message: "Cannot find module 'dsh/lib/bin.js'" },
+    ])
+  })
+
+  it('classifies a selected executable that cannot run instead of leaking a raw process error', async () => {
+    const configured = testPlatform.pathApi.join(
+      testPlatform.configuredDirectory,
+      testPlatform.executableName,
+    )
+    const runtime = new DshRuntimeLocator({
+      os: testPlatform.os,
+      configuredPath: () => configured,
+      pathEntries: () => [],
+      npmGlobalPrefix: () => Promise.resolve(undefined),
+      fileExists: () => Promise.resolve(true),
+      executeVersion: () => Promise.reject(new Error('spawn EINVAL')),
+    })
+
+    await expect(runtime.locate()).rejects.toMatchObject({
+      code: 'BACKEND_UNREACHABLE',
+      message: 'The selected DSH executable could not be run.',
+      retryable: true,
+      context: { operation: 'runtime.version', reason: 'unusable' },
+    })
+  })
+})
+
 describe('persisted runtime path hints', () => {
   it('keeps a hint written on a POSIX platform', () => {
     // The host persists this value in `globalState`; macOS/Linux installs put

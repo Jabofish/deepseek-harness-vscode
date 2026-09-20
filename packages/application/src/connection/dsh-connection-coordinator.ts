@@ -15,6 +15,7 @@ import type {
   ConnectionRequest,
   ProcessSupervisor,
   RuntimeLocator,
+  RuntimeLookupResult,
 } from './ports.js'
 
 export interface ConnectionCoordinatorDependencies {
@@ -248,7 +249,23 @@ export class DshConnectionCoordinator {
 
     this.throwIfAborted(signal)
     this.publish({ kind: 'locating-runtime' })
-    const runtimeLookup = await this.dependencies.runtimeLocator.locate(signal)
+    let runtimeLookup: RuntimeLookupResult
+    try {
+      runtimeLookup = await this.dependencies.runtimeLocator.locate(signal)
+    } catch (error) {
+      // A locate failure — a probe timeout, a selected executable that cannot
+      // run — must reach a terminal state too. Without this the last published
+      // snapshot stayed on 'locating-runtime' while the operation had already
+      // rejected, and the Webview showed a loading skeleton that never ended.
+      // The error itself keeps travelling unchanged so an unclassifiable one
+      // still reaches the diagnostics channel.
+      this.publish({
+        kind: 'failed',
+        message: error instanceof AppError ? error.message : 'The DSH runtime could not be located.',
+        retryable: error instanceof AppError ? error.retryable : true,
+      })
+      throw error
+    }
     const runtime = runtimeLookup.runtime
     if (runtime !== undefined && !runtime.supported) {
       this.publish({

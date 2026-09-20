@@ -31,7 +31,7 @@
 1. 配置端口、Known、默认端口、Windows/Linux/macOS 进程、可选 companion Provider。
 2. 并发发现、去重、排序、逐个 Probe。
 3. attach-before-spawn 协调器、连接并发合并。
-4. `dsh web --host 127.0.0.1 --port 0|fixed` 启动和 readiness。
+4. `dsh --profile web --host 127.0.0.1 --port <n>` 启动和 readiness；端口由扩展选取已验证的 loopback 空闲端口，不扫描端口范围。
 5. 外部/受管关闭语义、连接状态 UI、脱敏诊断。
 
 退出条件：已有 DSH 时 spawn 计数为 0；并发入口只产生一次工作；外部进程在扩展卸载后仍存活；只停止测试创建的 managed child。

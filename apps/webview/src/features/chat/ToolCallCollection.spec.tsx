@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { cleanup, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { TimelineNode } from '@dsh-vscode/timeline'
 
@@ -102,5 +102,27 @@ describe('ToolCallCollection', () => {
 
     expect(document.querySelector('[data-tool-call-id="child"]')).not.toBeNull()
     expect(screen.queryByRole('group', { name: 'Nested tool calls' })).toBeNull()
+  })
+})
+
+describe('tool result gallery', () => {
+  afterEach(() => cleanup())
+  it('loads nested tool images only after that tool is expanded', async () => {
+    const image = {
+      attachmentId: 'opaque-image',
+      mediaType: 'image/png' as const,
+      bytes: 80,
+      width: 2,
+      height: 1,
+    }
+    const child = toolNode('read_image', 'root')
+    const tools = [toolNode('root'), { ...child, tool: { ...child.tool, images: [image] } }]
+    const onLoadImage = vi.fn().mockResolvedValue('data:image/png;base64,iVBORw0KGgo=')
+    const props = { tools, onExpandedChange: (): void => undefined, translate, onLoadImage }
+    const view = render(<ToolCallCollection {...props} expanded={new Set()} />)
+    expect(onLoadImage).not.toHaveBeenCalled()
+    view.rerender(<ToolCallCollection {...props} expanded={new Set(['read_image'])} />)
+    await screen.findByRole('button', { name: 'timeline.openImage' })
+    expect(onLoadImage).toHaveBeenCalledExactlyOnceWith(image)
   })
 })

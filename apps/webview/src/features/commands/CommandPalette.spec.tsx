@@ -227,3 +227,39 @@ describe('parsePaletteQuery', () => {
     expect(parsePaletteQuery('/goal fix bugs')).toEqual({ name: 'goal', argument: 'fix bugs' })
   })
 })
+
+describe('skill documentation menu action', () => {
+  afterEach(() => cleanup())
+  it('opens documentation without executing the skill and hides the action for pathless rows', () => {
+    const onExecute = vi.fn()
+    const onOpenSkillDocument = vi.fn()
+    const rows: readonly DynamicCommand[] = [
+      { name: 'review', description: 'Review', source: 'skill', hasDocument: true },
+      { name: 'virtual', description: 'Virtual', source: 'skill' },
+    ]
+    const view = render(
+      <CommandPalette
+        commands={rows}
+        query="/"
+        onExecute={onExecute}
+        onOpenSkillDocument={onOpenSkillDocument}
+      />,
+    )
+    const button = screen.getByRole('button', { name: 'Open /review documentation' })
+    fireEvent.mouseDown(button)
+    fireEvent.click(button)
+    expect(onOpenSkillDocument).toHaveBeenCalledWith('review')
+    expect(onExecute).not.toHaveBeenCalled()
+    view.rerender(
+      <CommandPalette
+        commands={rows}
+        query="/virtual"
+        onExecute={onExecute}
+        onOpenSkillDocument={onOpenSkillDocument}
+      />,
+    )
+    expect(screen.queryByRole('button', { name: /documentation/u })).toBeNull()
+    fireEvent.mouseDown(screen.getByRole('option'))
+    expect(onExecute).toHaveBeenCalledWith('virtual')
+  })
+})

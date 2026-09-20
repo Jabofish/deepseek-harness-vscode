@@ -22,18 +22,18 @@ never touched. It is skipped unless explicitly enabled:
 $env:DSH_LIVE_SMOKE = '1'
 $env:DSH_LIVE_RUNTIME = 'dsh.cmd'                                     # optional; defaults to `dsh` on PATH
 $env:DSH_LIVE_RUNTIME_VERSION = '0.1.5-rc.1'                          # optional; defaults to the pinned runtime
-npx vitest run tests/live-dsh
+pnpm exec vitest run tests/live-dsh
 ```
 
 The specs that drive a real host read the same two variables inside
 `startManagedRuntime`, so `run.spec.ts`, `surfaces.spec.ts`,
 `transcript.spec.ts`, `writes.spec.ts`, `frames.spec.ts`, `paging.spec.ts`,
 `attachment.spec.ts`, `export.spec.ts`, `change-hunks.spec.ts`,
-`tool-cards.spec.ts`, `subagent-child.spec.ts` and `consistency.spec.ts`
-always launch the same build, and the printed probe line names the exact
-adapter selected for that version hint. Two specs never start a runtime:
-`runtime.spec.ts` pins the bare-name PATH resolution and `managed-lock.spec.ts`
-pins the cross-process lock itself.
+`tool-cards.spec.ts`, `subagent-child.spec.ts`, `consistency.spec.ts` and
+`skill-document.spec.ts` always launch the same build, and the printed probe
+line names the exact adapter selected for that version hint. Two specs never
+start a runtime: `runtime.spec.ts` pins the bare-name PATH resolution and
+`managed-lock.spec.ts` pins the cross-process lock itself.
 
 Seven of them exist for data-path evidence rather than a golden path:
 `writes.spec.ts` commits real writes on a throwaway home, `frames.spec.ts`

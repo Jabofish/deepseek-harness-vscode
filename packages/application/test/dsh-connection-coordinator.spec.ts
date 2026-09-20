@@ -384,6 +384,39 @@ describe('DshConnectionCoordinator', () => {
     expect(deps.processSupervisor.start).toHaveBeenCalledTimes(1)
   })
 
+  it('publishes a failed state when the runtime lookup itself fails', async () => {
+    // A locate failure used to reject with no published state at all, so the
+    // Webview stayed on the locating-runtime skeleton while app.ready already
+    // carried an error. The error must keep travelling unchanged.
+    const failures: readonly unknown[] = [
+      new AppError({
+        code: 'BACKEND_UNREACHABLE',
+        message: 'Timed out while checking the DSH runtime version.',
+        retryable: true,
+      }),
+      new Error('spawn EINVAL'),
+    ]
+    for (const failure of failures) {
+      const deps = dependencies({
+        runtimeLocator: {
+          locate: vi.fn(async () => {
+            throw failure
+          }),
+        },
+      })
+      const coordinator = new DshConnectionCoordinator(deps)
+      const states: BackendState[] = []
+      coordinator.subscribe((state) => states.push(state))
+
+      await expect(coordinator.connect({ mode: 'auto', autoStart: true })).rejects.toBe(failure)
+      expect(states.at(-1)).toMatchObject({
+        kind: 'failed',
+        retryable: true,
+        message: failure instanceof AppError ? failure.message : 'The DSH runtime could not be located.',
+      })
+    }
+  })
+
   it('never starts DSH in attach-only mode', async () => {
     const deps = dependencies()
     const coordinator = new DshConnectionCoordinator(deps)

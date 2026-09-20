@@ -35,7 +35,7 @@ Agent）的原生 VS Code 客户端。它把会话、流式回复、思考过程
 **从 GitHub Releases 安装** — 从
 [最新发布页](https://github.com/Jabofish/deepseek-harness-vscode/releases/latest)下载
 `deepseek-harness-vscode-universal.vsix`（或平台专用包：`linux-x64`、`windows-x64`、
-`darwin-x64`、`darwin-arm64`），然后在 VS Code 中执行 _Extensions: Install from VSIX..._。
+`macos-x64`、`macos-arm64`），然后在 VS Code 中执行 _Extensions: Install from VSIX..._。
 
 ## 快速开始
 
@@ -63,12 +63,12 @@ Agent）的原生 VS Code 客户端。它把会话、流式回复、思考过程
 
 ## 兼容性
 
-| 要求             | 版本                                                                                                                                                                                                                                                                                                                                                      |
-| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| VS Code          | Windows、Linux、macOS 的 `1.125+`；支持 Remote SSH、WSL 和 Dev Container                                                                                                                                                                                                                                                                                  |
-| DeepSeek Harness | 已发布 CLI/Web API `0.0.1-rc.1`/`.2`/`.5`、`0.1.0-rc.2`/`.3`、`0.1.0-rc.6` 至 `0.1.2-rc.1`、`0.1.2-alpha.2`/`0.1.2-alpha.3`/`0.1.2-alpha.4`/`0.1.2-alpha.5`、`0.1.3-alpha.2`、`0.1.5-alpha.1`/`.2`/`rc.1`/`rc.2`，以及 alpha 通道 `0.1.6-alpha.1`；所有已知 tag 均有独立适配，安装器默认通过 npm `next` 标签使用 `0.1.5-rc.2`（npm `latest` 仍为 `rc.1`） |
-| 未知版本         | 任何非空版本标签都会优先由可安全复用已验证 wire 的 Adapter 探测；alpha13/alpha132 与 alpha151/alpha152/rc151/rc152/alpha161 的 Session v2/v3 版本缝仅精确匹配，未知运行时回退到已验证的 alpha5 v0 Adapter，并保留真实版本和兼容警告                                                                                                                       |
-| Node.js          | `22.19+`，仅从扩展内安装 DSH 时需要                                                                                                                                                                                                                                                                                                                       |
+| 要求             | 版本                                                                                                                                                                                                                                                                                                                                                                                               |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| VS Code          | Windows、Linux、macOS 的 `1.125+`；支持 Remote SSH、WSL 和 Dev Container                                                                                                                                                                                                                                                                                                                           |
+| DeepSeek Harness | 已发布 CLI/Web API `0.0.1-rc.1`/`.2`/`.5`、`0.1.0-rc.2`/`.3`、`0.1.0-rc.6` 至 `0.1.2-rc.1`、`0.1.2-alpha.2`/`0.1.2-alpha.3`/`0.1.2-alpha.4`/`0.1.2-alpha.5`、`0.1.3-alpha.2`、`0.1.5-alpha.1`/`.2`/`rc.1`/`rc.2`，以及 alpha 通道 `0.1.6-alpha.1`/`.2`；所有已知 tag 均有独立适配，安装器精确安装 `0.1.5-rc.2`、不解析 dist-tag（npm `latest` 与 `next` 当前也指向它，`alpha` 为 `0.1.6-alpha.2`） |
+| 未知版本         | 任何非空版本标签都会优先由可安全复用已验证 wire 的 Adapter 探测；alpha13/alpha132 的 Session v2 与 alpha151/alpha152/rc151/rc152/alpha161/alpha162 的 Session v3 版本缝仅精确匹配，未知运行时回退到已验证的 alpha5 v0 Adapter，并保留真实版本和兼容警告                                                                                                                                            |
+| Node.js          | `22.19+`，仅从扩展内安装 DSH 时需要                                                                                                                                                                                                                                                                                                                                                                |
 
 模型、工具和高级 Agent 能力以当前连接的 DSH 实例为准；未提供的能力会明确提示，而不是静默失败。
 
@@ -90,10 +90,12 @@ Agent）的原生 VS Code 客户端。它把会话、流式回复、思考过程
 | [docs/dsh-contract.md](docs/dsh-contract.md)                 | 上游 DSH 契约基线与升级流程       |
 | [docs/protocol.md](docs/protocol.md)                         | Extension Host ↔ Webview 消息协议 |
 | [docs/security.md](docs/security.md)                         | 信任边界与强制控制                |
+| [docs/motion.md](docs/motion.md)                             | Webview 动效 token 与性能规则     |
 | [docs/development.md](docs/development.md)                   | 环境、调试与 DSH 联调模式         |
 | [docs/testing.md](docs/testing.md)                           | 测试层次、负面路径、fixture 规则  |
 | [docs/implementation-order.md](docs/implementation-order.md) | 实施阶段与退出条件                |
 | [docs/release-checklist.md](docs/release-checklist.md)       | 发布前必须满足的全部条目          |
+| [docs/adr/](docs/adr/)                                       | 已接受的架构决策                  |
 
 ## 开发
 

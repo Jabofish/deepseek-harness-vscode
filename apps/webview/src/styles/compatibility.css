@@ -578,26 +578,14 @@
 
 /* Model editor row contract: the compact row owns its own grid, so the
    surrounding editor collapses to one track instead of measuring at
-   min-content width. */
+   min-content width. The header wraps for the same reason. */
 .dsh-settings__provider-editor-head {
   display: none;
-}
-
-.dsh-settings__model-editor-head {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  align-items: start;
-  gap: 7px;
 }
 
 .dsh-settings__model-editor-head > strong {
   min-width: 0;
   white-space: nowrap;
-}
-
-.dsh-settings__model-editor-actions {
-  justify-content: flex-start;
-  flex-wrap: wrap;
 }
 
 .dsh-settings__editable-model {
@@ -611,10 +599,6 @@
   grid-column: 1;
   width: 100%;
   box-sizing: border-box;
-}
-
-.dsh-settings__editable-model-row {
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 28px 28px;
 }
 
 .dsh-settings__editable-model-row label {
@@ -1597,6 +1581,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 6px;
 }
 
@@ -1620,10 +1605,6 @@
 }
 
 .dsh-settings__editable-model {
-  display: grid;
-  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1.2fr) 90px 90px auto;
-  align-items: end;
-  gap: 5px;
   min-width: 0;
 }
 
@@ -1840,6 +1821,14 @@
 .dsh-plugin-configuration__field select {
   width: 100%;
   box-sizing: border-box;
+}
+
+.dsh-plugin-configuration__field textarea {
+  width: 100%;
+  box-sizing: border-box;
+  min-width: 0;
+  resize: vertical;
+  font-family: var(--vscode-editor-font-family, monospace);
 }
 
 .dsh-plugin-configuration__hint--error {
@@ -3150,15 +3139,6 @@
   .dsh-app__session-heading .dsh-status-pill {
     padding-inline: 5px;
     font-size: 0.64rem;
-  }
-
-  .dsh-settings__editable-model {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
-  }
-
-  .dsh-settings__editable-model label:nth-child(3),
-  .dsh-settings__editable-model label:nth-child(4) {
-    grid-column: span 1;
   }
 
   .dsh-settings__provider-add-actions,

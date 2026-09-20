@@ -372,3 +372,93 @@ describe('Rc6SettingsRepository revision conflicts', () => {
     expect((mutates[1]?.params as { expectedRevision: number }).expectedRevision).toBe(2)
   })
 })
+
+describe('structured settings credential boundary', () => {
+  it.each(['update', 'unset'] as const)(
+    'rejects %s over a secret or its container before writing',
+    async (operation) => {
+      const calls: Call[] = []
+      const repository = new Rc6SettingsRepository(
+        transportFor(
+          {
+            'settings.describe': {
+              ...DESCRIBE_FIXTURE,
+              namespaces: [
+                { ...DESCRIBE_FIXTURE.namespaces[0], secrets: [{ path: ['options', 'token'], set: true }] },
+              ],
+            },
+          },
+          calls,
+        ),
+      )
+      for (const path of ['shell.options', 'shell.options.token', 'shell.options.token.child']) {
+        const result =
+          operation === 'update' ? repository.update(path, { token: 'replacement' }) : repository.unset(path)
+        await expect(result).rejects.toMatchObject({ code: 'PERMISSION_DENIED' })
+      }
+      expect(calls.filter((call) => call.method !== 'settings.describe')).toEqual([])
+    },
+  )
+  it('sends an object as one path mutation with the current revision', async () => {
+    const calls: Call[] = []
+    const repository = new Rc6SettingsRepository(
+      transportFor(
+        {
+          'settings.describe': DESCRIBE_FIXTURE,
+          'settings.mutate': DESCRIBE_FIXTURE.namespaces[0],
+        },
+        calls,
+      ),
+    )
+    await repository.update('shell.options', { args: ['one', 'two'], enabled: false })
+    expect(calls.at(-1)).toEqual({
+      method: 'settings.mutate',
+      params: {
+        ns: 'shell',
+        expectedRevision: 4,
+        ops: [{ op: 'set', path: ['options'], value: { args: ['one', 'two'], enabled: false } }],
+      },
+    })
+  })
+})
+
+describe('nested setting overrides', () => {
+  it('marks only present user paths, including false, empty strings and arrays', async () => {
+    const repository = new Rc6SettingsRepository(
+      transportFor({
+        'settings.describe': {
+          writable: true,
+          hasDocument: true,
+          namespaces: [
+            {
+              ns: 'nested',
+              applies: 'live',
+              revision: 1,
+              secrets: [],
+              value: {},
+              user: { options: { enabled: false, label: '', items: [] } },
+              schema: {
+                uid: 6,
+                refs: {
+                  1: { type: 'boolean' },
+                  2: { type: 'string' },
+                  3: { type: 'array' },
+                  4: { type: 'string' },
+                  5: { type: 'object', dict: { enabled: 1, label: 2, items: 3, inherited: 4 } },
+                  6: { type: 'object', dict: { options: 5 } },
+                },
+              },
+            },
+          ],
+        },
+      }),
+    )
+    const schema = await repository.schema()
+    expect(schema.namespaces[0]?.userFields).toEqual([
+      'options',
+      'options.enabled',
+      'options.label',
+      'options.items',
+    ])
+  })
+})

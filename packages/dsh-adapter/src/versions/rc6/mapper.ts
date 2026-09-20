@@ -1455,11 +1455,15 @@ function tool(value: Record<string, unknown>, phase: 'call' | 'result' = 'result
   const turn = eventIndex(value.turn)
   const step = eventIndex(value.step)
   const parentCallId = firstString(value.parentCallId)
+  const callId = stringOr(
+    value.callId ?? source?.callId ?? value.subCallId ?? value.id ?? view?.callId ?? view?.id,
+    'tool-call',
+  )
+  const images =
+    phase === 'result' ? toolResultImages(message, isPtcDispatch ? value.content : undefined, callId) : []
   return {
-    id: stringOr(
-      value.callId ?? source?.callId ?? value.subCallId ?? value.id ?? view?.callId ?? view?.id,
-      'tool-call',
-    ),
+    id: callId,
+    ...(images.length === 0 ? {} : { images }),
     ...(parentCallId === undefined ? {} : { parentCallId }),
     ...(turn === undefined ? {} : { turn }),
     ...(step === undefined ? {} : { step }),
@@ -2360,6 +2364,20 @@ function messageImages(value: Record<string, unknown> | undefined): readonly Mes
     if (image !== undefined) images.push(image)
   }
   return uniqueImages(images)
+}
+
+function toolResultImages(
+  message: Record<string, unknown> | undefined,
+  dispatchContent: unknown,
+  callId: string,
+): readonly MessageImageReference[] {
+  const content = message === undefined ? array(dispatchContent) : array(message.content)
+  const blocks = content.flatMap((entry) => {
+    const block = objectOrUndefined(entry)
+    if (block?.type === 'tool-result') return block.toolCallId === callId ? array(block.content) : []
+    return [entry]
+  })
+  return messageImages({ content: blocks })
 }
 
 function imageReference(value: unknown): MessageImageReference | undefined {

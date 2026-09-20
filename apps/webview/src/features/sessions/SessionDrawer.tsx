@@ -35,6 +35,7 @@ export interface SessionDrawerProps {
   readonly onDelete: (sessionId: string) => Promise<void>
   readonly onRename: (sessionId: string, title: string) => Promise<void>
   readonly onRenameWorkspace: (workspaceId: string, name: string) => Promise<void>
+  readonly onAddWorkspace: () => Promise<void>
   readonly onRemoveWorkspace: (workspaceId: string) => Promise<void>
   readonly onMoveWorkspace: (workspaceId: string, beforeWorkspaceId?: string) => Promise<void>
   readonly onMoveSession: (workspaceId: string, sessionId: string, beforeSessionId?: string) => Promise<void>
@@ -669,6 +670,28 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
               {selectedWorkspace?.name ?? t('sessions.title')}
             </span>
             <div className="dsh-session-switcher__panel-actions">
+              <button
+                className="dsh-icon-button"
+                type="button"
+                aria-label={t('sessions.addWorkspace')}
+                title={t('sessions.addWorkspace')}
+                disabled={mutationBusy}
+                onClick={() => {
+                  setMutationBusy(true)
+                  setMoveError(undefined)
+                  void props
+                    .onAddWorkspace()
+                    .catch((reason: unknown) =>
+                      setMoveError(
+                        reason instanceof Error ? reason.message : t('sessions.addWorkspaceFailed'),
+                      ),
+                    )
+                    .finally(() => setMutationBusy(false))
+                }}
+              >
+                <Icon name="folder" />
+                <span>+</span>
+              </button>
               <button
                 className="dsh-icon-button"
                 type="button"

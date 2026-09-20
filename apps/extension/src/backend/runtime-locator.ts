@@ -21,11 +21,23 @@ export interface RuntimeLocatorDependencies {
    */
   readonly lastKnownRuntimePath?: () => RuntimePathHint | undefined
   readonly rememberRuntimePath?: (hint: RuntimePathHint) => void
+  /**
+   * Reports a candidate that exists but cannot report a version, so a broken
+   * install stays diagnosable once its failure is classified instead of thrown.
+   */
+  readonly logProbeFailure?: (failure: RuntimeProbeFailure) => void
 }
 
 export interface RuntimePathHint {
   readonly path: string
   readonly source: Exclude<DshRuntime['source'], 'configured' | 'bundled'>
+}
+
+export interface RuntimeProbeFailure {
+  /** Candidate basename; the full path stays in the Extension Host. */
+  readonly name: string
+  /** Bounded first line of the process failure. */
+  readonly message: string
 }
 
 /**
@@ -86,8 +98,18 @@ export class DshRuntimeLocator implements RuntimeLocator {
       const hintPath = pathApi(this.dependencies.os).normalize(hint.path)
       if (await this.dependencies.fileExists(hintPath)) {
         this.rememberLocation(locations, hintPath)
-        const hinted = await this.inspect({ path: hintPath, source: hint.source }, signal)
-        if (hinted.supported) {
+        let hinted: DshRuntime | undefined
+        try {
+          hinted = await this.inspect({ path: hintPath, source: hint.source }, signal)
+        } catch (error) {
+          if (signal?.aborted) throw error
+          if (isRuntimeProbeTimeout(error)) throw error
+          // The hint only caches an earlier success. One that can no longer run
+          // must fall through to the ordinary scan, exactly like a vanished
+          // one; `inspect` already reported the reason to diagnostics.
+          hinted = undefined
+        }
+        if (hinted?.supported === true) {
           const result = { runtime: hinted, searchedLocations: [...locations] }
           this.memoize(result, hintPath, hint.source)
           return result
@@ -222,6 +244,18 @@ export class DshRuntimeLocator implements RuntimeLocator {
         compatibility: isKnownDshVersion(normalizeVersion(version)) ? 'known' : 'unknown',
         source: candidate.source,
       }
+    } catch (error) {
+      // A candidate the host cannot even ask for its version — a broken npm
+      // shim, a removed package, a permission error — is a fact about that
+      // executable, not an unexpected host failure. Classify it so the locate
+      // phase always ends in a state the caller can publish, and keep the
+      // process' own reason in diagnostics where free text belongs.
+      if (error instanceof AppError) throw error
+      this.dependencies.logProbeFailure?.({
+        name: pathApi(this.dependencies.os).basename(candidate.path),
+        message: probeFailureDetail(error),
+      })
+      throw unusableRuntime(error)
     } finally {
       timeoutAbort.abort()
     }
@@ -345,6 +379,24 @@ function runtimeVersionTimeout(): AppError {
     retryable: true,
     context: { operation: 'runtime.version', timedOut: true },
   })
+}
+
+/** The executable exists but its version probe could not run to completion. */
+function unusableRuntime(cause: unknown): AppError {
+  return new AppError({
+    code: 'BACKEND_UNREACHABLE',
+    message: 'The selected DSH executable could not be run.',
+    retryable: true,
+    cause,
+    context: { operation: 'runtime.version', reason: 'unusable' },
+  })
+}
+
+/** One bounded line of a process failure; the diagnostics sink redacts it. */
+function probeFailureDetail(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error)
+  const firstLine = raw.split(/\r?\n/u, 1)[0]?.trim() ?? ''
+  return firstLine.slice(0, 512)
 }
 
 function runtimeDetectionCancelled(signal: AbortSignal): AppError {

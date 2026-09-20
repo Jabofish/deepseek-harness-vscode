@@ -1,5 +1,5 @@
 import { memo, useCallback, type ReactElement } from 'react'
-import { terminalPresentationFailed } from '@dsh-vscode/domain'
+import { terminalPresentationFailed, type MessageImageReference } from '@dsh-vscode/domain'
 import { projectToolCallTree, type TimelineNode, type ToolCallTreeNode } from '@dsh-vscode/timeline'
 import {
   ToolRendererRegistry,
@@ -14,6 +14,7 @@ import {
 import { ContentFlow } from '../../components/common/index.js'
 import { Icon } from '../../ui/Icon.js'
 import type { Translate } from '../../i18n.js'
+import { MessageImages } from './MessageImages.js'
 import { ToolCodePreview } from './ToolCodePreview.js'
 import { ToolDiffPreview } from './ToolDiffPreview.js'
 import { ToolSearchPreview } from './ToolSearchPreview.js'
@@ -28,6 +29,7 @@ export interface ToolCallCollectionProps {
   readonly onExpandedChange: (expanded: ReadonlySet<string>) => void
   readonly translate: Translate
   readonly onOpenLink?: (href: string) => void
+  readonly onLoadImage?: (image: MessageImageReference) => Promise<string | undefined>
 }
 
 const toolRendererRegistry = new ToolRendererRegistry()
@@ -94,6 +96,7 @@ function renderToolCard(tree: ToolCallTreeNode, props: ToolCallCollectionProps):
       onExpandedChange={props.onExpandedChange}
       translate={props.translate}
       {...(props.onOpenLink === undefined ? {} : { onOpenLink: props.onOpenLink })}
+      {...(props.onLoadImage === undefined ? {} : { onLoadImage: props.onLoadImage })}
     />
   )
 }
@@ -104,6 +107,7 @@ interface ToolCardViewProps {
   readonly onExpandedChange: (expanded: ReadonlySet<string>) => void
   readonly translate: Translate
   readonly onOpenLink?: (href: string) => void
+  readonly onLoadImage?: (image: MessageImageReference) => Promise<string | undefined>
 }
 
 const ToolCardView = memo(function ToolCardView(props: ToolCardViewProps): ReactElement {
@@ -130,6 +134,13 @@ const ToolCardView = memo(function ToolCardView(props: ToolCardViewProps): React
         renderWeb: renderToolWeb,
         ...(props.onOpenLink === undefined ? {} : { onOpenLink: props.onOpenLink }),
       })}
+      {expanded && (node.tool.images?.length ?? 0) > 0 ? (
+        <MessageImages
+          images={node.tool.images ?? []}
+          translate={props.translate}
+          {...(props.onLoadImage === undefined ? {} : { loadImage: props.onLoadImage })}
+        />
+      ) : null}
       {tree.children.length === 0 ? null : (
         <div
           className="dsh-timeline__tool-subcalls"
@@ -145,6 +156,7 @@ const ToolCardView = memo(function ToolCardView(props: ToolCardViewProps): React
               onExpandedChange={onExpandedChange}
               translate={props.translate}
               {...(props.onOpenLink === undefined ? {} : { onOpenLink: props.onOpenLink })}
+              {...(props.onLoadImage === undefined ? {} : { onLoadImage: props.onLoadImage })}
             />
           ))}
         </div>
@@ -177,6 +189,7 @@ function toolCollectionEqual(previous: ToolCallCollectionProps, next: ToolCallCo
   if (
     previous.onExpandedChange !== next.onExpandedChange ||
     previous.onOpenLink !== next.onOpenLink ||
+    previous.onLoadImage !== next.onLoadImage ||
     previous.translate !== next.translate ||
     previous.tools.length !== next.tools.length
   )
@@ -195,6 +208,7 @@ function toolCardViewEqual(previous: ToolCardViewProps, next: ToolCardViewProps)
     previous.tree.children === next.tree.children &&
     previous.onExpandedChange === next.onExpandedChange &&
     previous.onOpenLink === next.onOpenLink &&
+    previous.onLoadImage === next.onLoadImage &&
     previous.translate === next.translate &&
     expandedTreeEqual(previous.tree, previous.expanded, next.expanded)
   )

@@ -897,6 +897,7 @@ export function App(): ReactElement {
   const sessionOnRenameWorkspace = useStableCallback((workspaceId: string, name: string): Promise<void> =>
     store.renameWorkspace(workspaceId, name),
   )
+  const sessionOnAddWorkspace = useStableCallback((): Promise<void> => store.addWorkspaceFolder())
   const sessionOnRemoveWorkspace = useStableCallback((workspaceId: string): Promise<void> =>
     store.removeWorkspace(workspaceId),
   )
@@ -1057,6 +1058,7 @@ export function App(): ReactElement {
         onDelete={sessionOnDelete}
         onRename={sessionOnRename}
         onRenameWorkspace={sessionOnRenameWorkspace}
+        onAddWorkspace={sessionOnAddWorkspace}
         onRemoveWorkspace={sessionOnRemoveWorkspace}
         onMoveWorkspace={sessionOnMoveWorkspace}
         onMoveSession={sessionOnMoveSession}
@@ -1065,6 +1067,7 @@ export function App(): ReactElement {
     ),
     [
       sessionOnArchive,
+      sessionOnAddWorkspace,
       sessionOnCreate,
       sessionOnDelete,
       sessionOnLoadArchived,
@@ -1735,6 +1738,17 @@ export function App(): ReactElement {
                             onConfigurationChange={composerOnConfigurationChange}
                             onPromptModeChange={composerOnPromptModeChange}
                             onCommand={composerOnCommand}
+                            onOpenSkillDocument={(skillId) => {
+                              void store
+                                .openSkillDocument(active.id, skillId)
+                                .catch((reason: unknown) =>
+                                  setError(
+                                    reason instanceof Error
+                                      ? reason.message
+                                      : t('commands.openSkillDocumentFailed'),
+                                  ),
+                                )
+                            }}
                             onPopupSelect={composerOnPopupSelect}
                             onCommandQueryChange={composerOnCommandQueryChange}
                             onReferenceQueryChange={composerOnReferenceQueryChange}

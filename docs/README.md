@@ -15,7 +15,7 @@
 
 | 文档                                               | 用途                                                                      | 何时读                       |
 | -------------------------------------------------- | ------------------------------------------------------------------------- | ---------------------------- |
-| [implementation-order.md](implementation-order.md) | 六个实施阶段、任务模板与退出条件                                          | 计划任何新切片之前           |
+| [implementation-order.md](implementation-order.md) | 七个实施阶段（阶段 0–6）、任务模板与退出条件                              | 计划任何新切片之前           |
 | [capability-matrix.md](capability-matrix.md)       | 功能状态与证据的唯一清单（代码/自动测试/live）                            | 判断完成度、更新证据时       |
 | [dsh-contract.md](dsh-contract.md)                 | 上游 DSH 固定契约、支持范围、启动契约与升级流程                           | 改动 Adapter 或升级上游前    |
 | [architecture.md](architecture.md)                 | 运行时结构、包依赖方向、连接状态机、进程所有权                            | 新增组件或跨层改动前         |
@@ -40,6 +40,8 @@
 
 - 修改功能状态只更新 `capability-matrix.md`，不要在其他文档复制状态表；
 - `capability-matrix.md` 只保留当前状态、完成条件和最短证据入口，不追加按日期排列的审计记录、缺陷流水或原始运行输出；
-- 修改版本兼容信息时，同步检查 `README.md`、`README.zh-CN.md`、`apps/extension/README.md`、
-  `docs/dsh-contract.md` 和 `docs/release-checklist.md`，避免互相矛盾；
+- 修改版本兼容信息时，以 `docs/dsh-contract.md` 为唯一版本事实来源，并同步检查所有会复述版本的入口：
+  `README.md`/`README.zh-CN.md`、`apps/extension/README.md`、`apps/extension/SUPPORT.md`、
+  `CONTRIBUTING.md`、`docs/development.md` 与 `docs/release-checklist.md`；
+  `grep -rn "<旧版本号>" --include="*.md" .` 可列出残留引用；
 - 新增 ADR 使用 `adr/` 的现有编号格式，状态只能是 Accepted / Superseded。

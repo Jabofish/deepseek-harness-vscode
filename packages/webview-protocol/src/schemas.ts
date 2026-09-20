@@ -198,6 +198,7 @@ export const webviewRequestSchema = z.discriminatedUnion('type', [
     })
     .strict(),
   z.object({ type: z.literal('workspace.list'), ...requestBase }).strict(),
+  z.object({ type: z.literal('workspace.addFolder'), ...requestBase }).strict(),
   z
     .object({
       type: z.literal('workspace.rename'),
@@ -652,6 +653,13 @@ export const webviewRequestSchema = z.discriminatedUnion('type', [
       type: z.literal('skill.list'),
       ...requestBase,
       payload: z.object({ sessionId: id.optional() }).strict(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('skill.openDocument'),
+      ...requestBase,
+      payload: z.object({ ...session, skillId: id }).strict(),
     })
     .strict(),
   z

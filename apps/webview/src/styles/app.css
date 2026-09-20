@@ -3253,9 +3253,6 @@ summary.dsh-timeline__card-header,
 .dsh-settings__toolbar,
 .dsh-settings__connection-head,
 .dsh-settings__connection-actions,
-.dsh-settings__provider-head,
-.dsh-settings__provider-identity,
-.dsh-settings__provider-actions,
 .dsh-settings__runtime-update-head,
 .dsh-settings__runtime-update-controls {
   display: flex;
@@ -3264,6 +3261,46 @@ summary.dsh-timeline__card-header,
   min-width: 0;
   flex-wrap: wrap;
   gap: var(--dsh-space-3);
+}
+
+/* Provider cards keep the identity chips and the button cluster apart: the
+   buttons hold the end of the first row, and the chips flow in the space that
+   is left instead of pushing the buttons onto a line of their own. */
+.dsh-settings__provider-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  min-width: 0;
+  gap: 6px var(--dsh-space-3);
+}
+
+.dsh-settings__provider-identity,
+.dsh-settings__provider-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.dsh-settings__provider-identity {
+  gap: 4px 6px;
+}
+
+/* The id repeats the name it sits next to, so it stays quieter than the name:
+   small muted monospace instead of a chip as heavy as the text around it. */
+.dsh-settings__provider-identity code {
+  min-width: 6ch;
+  max-width: 100%;
+  color: var(--dsh-muted);
+  font-size: 0.82em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-settings__provider-actions {
+  justify-content: flex-end;
+  gap: 6px;
 }
 
 .dsh-settings__summary,
@@ -3340,13 +3377,28 @@ summary.dsh-timeline__card-header,
   font-weight: 600;
 }
 
-.dsh-settings__provider-summary,
 .dsh-settings__fields,
 .dsh-settings__custom-provider-grid,
 .dsh-settings__model-editor {
   display: grid;
   gap: var(--dsh-space-3);
   min-width: 0;
+}
+
+/* The model count and the stored-credential controls are one line of card
+   metadata: they share a wrapping row instead of stacking in a column. */
+.dsh-settings__provider-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  min-width: 0;
+  gap: 6px var(--dsh-space-3);
+  margin-top: 6px;
+}
+
+.dsh-settings__provider-summary > span:first-child {
+  color: var(--dsh-muted);
+  font-size: 0.82em;
 }
 
 .dsh-settings__runtime-update-facts {

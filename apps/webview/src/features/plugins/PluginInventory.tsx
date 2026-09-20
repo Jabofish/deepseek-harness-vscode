@@ -207,6 +207,62 @@ export function PluginInventory(props: PluginInventoryProps): ReactElement {
               })}
             </ul>
           ) : null}
+          {(state.snapshot.agentPresets?.length ?? 0) > 0 ? (
+            <section aria-label={t('plugins.presets')}>
+              <h3>{t('plugins.presets')}</h3>
+              <ul className="dsh-plugin-inventory__cards">
+                {state.snapshot.agentPresets?.flatMap((preset) => {
+                  const presetMatches = [preset.id, preset.name ?? ''].some((value) =>
+                    value.toLocaleLowerCase().includes(normalizedQuery),
+                  )
+                  const rows = presetMatches
+                    ? preset.rows
+                    : preset.rows.filter((row) =>
+                        [row.moduleName, row.entryId ?? ''].some((value) =>
+                          value.toLocaleLowerCase().includes(normalizedQuery),
+                        ),
+                      )
+                  if (!presetMatches && rows.length === 0) return []
+                  return [
+                    <li className="dsh-plugin-inventory__card" key={preset.id}>
+                      <details>
+                        <summary className="dsh-plugin-inventory__card-content">
+                          <strong>{preset.name ?? preset.id}</strong>
+                          {preset.isDefault ? <span>{t('plugins.defaultPreset')}</span> : null}
+                        </summary>
+                        <div className="dsh-plugin-inventory__card-details">
+                          <code>{preset.id}</code>
+                          {preset.broken === undefined ? null : <p role="alert">{preset.broken}</p>}
+                          <ul>
+                            {rows.map((row, index) => (
+                              <li key={`${row.entryId ?? row.moduleName}-${index}`}>
+                                <strong title={row.moduleName}>{moduleShortName(row.moduleName)}</strong>
+                                {' · '}
+                                {t(
+                                  row.enabled === 'conditional'
+                                    ? 'plugins.conditional'
+                                    : row.enabled
+                                      ? 'plugins.enabled'
+                                      : 'plugins.disabled',
+                                )}
+                                {row.enabled === true ? <> · {phaseLabel(row.fiberPhase, t)}</> : null}
+                                {row.entryId === null ? null : (
+                                  <div>
+                                    <code>{row.entryId}</code>
+                                  </div>
+                                )}
+                                {row.condition === undefined ? null : <pre>{row.condition}</pre>}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      </details>
+                    </li>,
+                  ]
+                })}
+              </ul>
+            </section>
+          ) : null}
         </div>
       ) : null}
     </section>

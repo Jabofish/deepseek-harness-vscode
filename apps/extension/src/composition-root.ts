@@ -6,6 +6,8 @@ import { execFile, spawn } from 'node:child_process'
 import { homedir } from 'node:os'
 import { promisify } from 'node:util'
 import path from 'node:path'
+import { registerWorkspaceFolders } from './backend/register-workspace-folders.js'
+import { openSkillDocument, publicSkills } from './backend/skill-documents.js'
 import {
   AppError,
   type CheckpointPreview,
@@ -256,6 +258,12 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     rememberRuntimePath: (hint) => {
       void context.globalState.update(RUNTIME_PATH_STATE_KEY, hint)
     },
+    logProbeFailure: (failure) =>
+      diagnostics.log('warn', 'runtime-probe-failed', {
+        name: failure.name,
+        status: 'unusable',
+        message: failure.message,
+      }),
     npmGlobalPrefix: async (signal) => {
       const os = platform()
       const npm = resolveNpmExecutable(os, extensionRuntimePathEntries(os, process.env))
@@ -540,35 +548,14 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     if (folders.length === 0) {
       return [await temporaryWorkspaceManager.resolve(workspaces, signal)]
     }
-    const matching = workspaces.filter(
-      (workspace) =>
-        workspace.path !== undefined &&
-        folders.some((folder) => sameWorkspacePath(workspace.path as string, folder.uri.fsPath)),
+    return registerWorkspaceFolders(
+      folders.map((folder) => folder.uri.fsPath),
+      workspaces,
+      (input, requestSignal) => workspaceUseCases.create(input, requestSignal),
+      sameWorkspacePath,
+      vscode.workspace.isTrusted,
+      signal,
     )
-    if (matching.length > 0) return matching
-
-    // Sessions created directly by DSH may already carry this folder in their
-    // durable cwd while the workspace registry has not been registered yet.
-    // Registering is idempotent in rc.6 and gives the UI a stable workspace
-    // anchor for those sessions instead of treating the folder as temporary.
-    const registered: WorkspaceSummary[] = []
-    for (const folder of folders) {
-      try {
-        registered.push(
-          await workspaceUseCases.create(
-            {
-              name: path.basename(path.normalize(folder.uri.fsPath)) || 'Workspace',
-              path: folder.uri.fsPath,
-            },
-            signal,
-          ),
-        )
-      } catch {
-        // A read-only/virtual folder can still be matched by session cwd in
-        // the request filters below; registration is only a UI anchor.
-      }
-    }
-    return registered
   }
   // Opening one session fans out into several advisory reads (queue, goals,
   // jobs, feedback, subagents, commands, and model settings). They all need
@@ -1802,6 +1789,13 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       const archivedSessionIds = await listCurrentArchivedSessionIds(workspaces, signal)
       return publicValue({ items: workspaces.map(publicWorkspaceSummary), archivedSessionIds })
     }
+    if (request.type === 'workspace.addFolder') {
+      signal.throwIfAborted()
+      // VS Code owns directory selection, workspace trust, remote URIs and
+      // persistence. Its folder-change event refreshes the DSH registration.
+      await vscode.commands.executeCommand('workbench.action.addRootFolder')
+      return { opened: true }
+    }
     if (request.type === 'workspace.rename') {
       await requireCurrentWorkspaceId(request.payload.workspaceId, signal)
       return workspaceUseCases.rename(request.payload.workspaceId, request.payload.name, signal)
@@ -2375,7 +2369,28 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     if (request.type === 'skill.list') {
       if (request.payload.sessionId !== undefined)
         await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
-      return publicList(await advancedUseCases.listSkills(request.payload.sessionId, signal))
+      return publicList(publicSkills(await advancedUseCases.listSkills(request.payload.sessionId, signal)))
+    }
+    if (request.type === 'skill.openDocument') {
+      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
+      const documentPath = await advancedUseCases.skillDocumentPath(
+        request.payload.sessionId,
+        request.payload.skillId,
+        signal,
+      )
+      await openSkillDocument(
+        documentPath,
+        async (target, lifetime) => {
+          const document = await vscode.workspace.openTextDocument(vscode.Uri.file(target))
+          lifetime.throwIfAborted()
+          await vscode.window.showTextDocument(document, {
+            preview: true,
+            viewColumn: vscode.ViewColumn.Beside,
+          })
+        },
+        signal,
+      )
+      return { opened: true }
     }
     if (request.type === 'command.list') {
       if (request.payload.sessionId !== undefined)
@@ -3321,6 +3336,7 @@ function requiresTrustedWorkspace(type: WebviewRequest['type']): boolean {
     case 'subagent.list':
     case 'subagent.history':
     case 'skill.list':
+    case 'skill.openDocument':
     case 'command.list':
     case 'command.execute':
     case 'job.list':

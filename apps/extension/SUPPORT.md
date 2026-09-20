@@ -1,24 +1,18 @@
-# Support · 支持
+# Support
 
-遇到问题时，请先确认：
+Before opening an issue, please verify:
 
-- 使用 VS Code `1.125+`。
-- 已安装 DeepSeek Harness `0.1.0-rc.6` 至 `0.1.1-rc.2`（或按扩展内的引导完成安装）。
-- DSH 与 VS Code Extension Host 在同一台本机上运行。
+- You are using VS Code `1.125+`.
+- A supported DeepSeek Harness is installed (the guided install and the installer action use the
+  exact version `0.1.5-rc.2`; other known releases have their own adapters, and an unknown version is
+  probed read-only with a compatibility warning), or you completed the guided install in the view.
+- DSH and the VS Code Extension Host run on the same machine.
 
-如果问题仍然存在，请在
-[GitHub Issues](https://github.com/Jabofish/deepseek-harness-vscode/issues) 提交：
+If the problem persists, open a
+[GitHub Issue](https://github.com/Jabofish/deepseek-harness-vscode/issues) with:
 
-1. 操作系统、VS Code 版本和 DSH 版本（`dsh --version`）。
-2. 可复现步骤和预期/实际结果。
-3. 扩展中的脱敏诊断信息（命令 `DSH: Show Redacted Diagnostics`）。
-
-请勿提交 API key、密码、访问令牌、完整提示词或其他私密内容。
-
-For support, please verify that you are using VS Code `1.125+`, DeepSeek Harness `0.1.0-rc.6`
-through `0.1.1-rc.2`, and a local Extension Host. If the issue persists, open a
-[GitHub Issue](https://github.com/Jabofish/deepseek-harness-vscode/issues) with your OS, VS Code and
-DSH versions (`dsh --version`), reproducible steps, expected versus actual behavior, and the
-extension's redacted diagnostics (`DSH: Show Redacted Diagnostics`).
+1. Your OS, VS Code version, and DSH version (`dsh --version`).
+2. Reproduction steps and the expected versus actual result.
+3. The extension's redacted diagnostics (command `DSH: Show Redacted Diagnostics`).
 
 Never include API keys, passwords, access tokens, full prompts, or other private data.

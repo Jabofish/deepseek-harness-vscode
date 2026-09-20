@@ -295,10 +295,12 @@ export interface AppActions {
   searchSessions(query: string): Promise<readonly SessionSummary[]>
   refreshCommands(sessionId?: string): Promise<void>
   openSession(sessionId: string): Promise<void>
+  openSkillDocument(sessionId: string, skillId: string): Promise<void>
   loadOlderHistory(): Promise<void>
   openSubagent(entry: SubagentView, parentAvailable: boolean): Promise<void>
   renameSession(sessionId: string, title: string): Promise<void>
   renameWorkspace(workspaceId: string, name: string): Promise<void>
+  addWorkspaceFolder(): Promise<void>
   removeWorkspace(workspaceId: string): Promise<void>
   moveWorkspace(workspaceId: string, beforeWorkspaceId?: string): Promise<void>
   moveSession(workspaceId: string, sessionId: string, beforeSessionId?: string): Promise<void>
@@ -2607,6 +2609,9 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         ),
       }))
     },
+    addWorkspaceFolder: async () => {
+      await client.request<unknown>({ type: 'workspace.addFolder', requestId: requestId() })
+    },
     renameWorkspace: async (workspaceId, name) => {
       await client.request<unknown>({
         type: 'workspace.rename',
@@ -2647,6 +2652,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       await refresh()
     },
     forkSession: async (sessionId, atSeq) => {
+      const navigationIntent = ++openIntent
       const source = state.sessions.find((session) => session.id === sessionId)
       const result = object(
         await client.request<unknown>({
@@ -2676,11 +2682,13 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         } catch (reason: unknown) {
           // The fork is already durable. Open it before surfacing a rename
           // failure so a failed cosmetic follow-up never strands the child.
-          await open(childId)
+          if (navigationIntent === openIntent) await open(childId)
+          else await refresh()
           throw reason
         }
       }
-      await open(childId)
+      if (navigationIntent === openIntent) await open(childId)
+      else await refresh()
     },
     configureSession: async (sessionId, configuration) => {
       const generation = ++configurationGeneration
@@ -2709,6 +2717,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       return true
     },
     createSession: async (workspaceId, presetId) => {
+      const navigationIntent = ++openIntent
       const workspace =
         (workspaceId === undefined
           ? undefined
@@ -2738,10 +2747,18 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       })
       const created = object(result)
       await refresh()
-      if (typeof created?.id === 'string') await open(created.id)
+      if (navigationIntent === openIntent && typeof created?.id === 'string') await open(created.id)
+    },
+    openSkillDocument: async (sessionId, skillId) => {
+      await client.request<unknown>({
+        type: 'skill.openDocument',
+        requestId: requestId(),
+        payload: { sessionId, skillId },
+      })
     },
     removeSession: async (sessionId) => {
       const wasActive = state.activeSessionId === sessionId
+      const navigationIntent = openIntent
       await client.request<unknown>({
         type: 'session.archive',
         requestId: requestId(),
@@ -2755,7 +2772,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         archivedSessionIds: uniqueStrings([...current.archivedSessionIds, sessionId]),
         sessions: current.sessions.filter((session) => session.id !== sessionId),
         archivedSessions: current.archivedSessions.filter((session) => session.id !== sessionId),
-        ...(wasActive ? clearedActiveSession(current, sessionId) : {}),
+        ...(current.activeSessionId === sessionId ? clearedActiveSession(current, sessionId) : {}),
       }))
       await refresh()
       // Some rc.6 hosts publish the archive event after the list response.
@@ -2766,7 +2783,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         ...current,
         sessions: current.sessions.filter((session) => session.id !== sessionId),
       }))
-      if (wasActive) {
+      if (wasActive && navigationIntent === openIntent && state.activeSessionId === undefined) {
         const replacement = state.sessions[0]
         if (replacement !== undefined) await open(replacement.id)
       }
@@ -2792,6 +2809,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     },
     deleteSession: async (sessionId) => {
       const wasActive = state.activeSessionId === sessionId
+      const navigationIntent = openIntent
       await client.request<unknown>({
         type: 'session.remove',
         requestId: requestId(),
@@ -2802,10 +2820,10 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         sessions: current.sessions.filter((session) => session.id !== sessionId),
         archivedSessionIds: current.archivedSessionIds.filter((id) => id !== sessionId),
         archivedSessions: current.archivedSessions.filter((session) => session.id !== sessionId),
-        ...(wasActive ? clearedActiveSession(current, sessionId) : {}),
+        ...(current.activeSessionId === sessionId ? clearedActiveSession(current, sessionId) : {}),
       }))
       await refresh()
-      if (wasActive) {
+      if (wasActive && navigationIntent === openIntent && state.activeSessionId === undefined) {
         const replacement = state.sessions[0]
         if (replacement !== undefined) await open(replacement.id)
       }
@@ -4455,6 +4473,7 @@ function mergeSkillCommands(
           : `${translate('commands.skillUserOnly')} · ${skill.description}`,
         ...(skill.whenToUse === undefined ? {} : { whenToUse: skill.whenToUse }),
         source: 'skill' as const,
+        ...(skill.hasDocument === true ? { hasDocument: true } : {}),
       },
     ]
   })
@@ -6131,7 +6150,9 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
     const parentCallId = value.tool.parentCallId
     const locations = parseToolLocations(value.tool.locations)
     const presentation = parseToolPresentation(value.tool.presentation)
+    const images = value.tool.images === undefined ? undefined : messageImages(value.tool.images)
     if (
+      (value.tool.images !== undefined && images === undefined) ||
       (value.tool.turn !== undefined && turn === undefined) ||
       (value.tool.step !== undefined && step === undefined) ||
       (parentCallId !== undefined && !nonEmptyString(parentCallId)) ||
@@ -6164,6 +6185,7 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
         ...(typeof value.tool.error === 'string' ? { error: value.tool.error } : {}),
         ...(locations === undefined ? {} : { locations }),
         ...(presentation === undefined ? {} : { presentation }),
+        ...(images === undefined ? {} : { images }),
         metadata: isRecord(value.tool.metadata) ? value.tool.metadata : {},
       },
     }
@@ -9218,6 +9240,7 @@ function isSkillDescriptor(value: unknown): value is SkillDescriptor {
     typeof item.name === 'string' &&
     item.name.trim() !== '' &&
     typeof item.description === 'string' &&
+    (item.hasDocument === undefined || typeof item.hasDocument === 'boolean') &&
     (item.whenToUse === undefined || typeof item.whenToUse === 'string') &&
     (item.source === undefined ||
       item.source === 'project' ||

@@ -41,4 +41,5 @@ These are the remaining scenarios from the original acceptance list. They need U
 
 The remaining UI flows are covered by the protocol, adapter, timeline, and application unit tests; the Electron runner is intentionally opt-in because it downloads and launches VS Code.
 
-结果以测试断言和退出码为准；不要把机器路径、端口、进程号或原始运行输出复制进项目文档。
+Evidence is the test assertions and the exit code; never copy machine paths, ports, process ids or
+raw run output into project documentation.

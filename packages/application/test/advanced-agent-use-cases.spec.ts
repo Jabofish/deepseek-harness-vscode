@@ -122,3 +122,32 @@ describe('AdvancedAgentUseCases subagent delivery', () => {
     expect(send).not.toHaveBeenCalled()
   })
 })
+
+describe('skill document resolution', () => {
+  it('resolves only current catalog identities and honors cancellation', async () => {
+    const list = vi
+      .fn()
+      .mockResolvedValue([{ id: 'review', documentPath: '/fixture/SKILL.md' }, { id: 'virtual' }])
+    const service = new BackendService()
+    service.attach(
+      { skills: { list }, events: { subscribe: () => () => {} } } as unknown as DshBackend,
+      () => {},
+    )
+    const useCases = new AdvancedAgentUseCases(service)
+    const controller = new AbortController()
+    await expect(useCases.skillDocumentPath('session', 'review', controller.signal)).resolves.toBe(
+      '/fixture/SKILL.md',
+    )
+    expect(list).toHaveBeenCalledWith('session', controller.signal)
+    for (const id of ['virtual', 'gone', '/arbitrary/SKILL.md'])
+      await expect(useCases.skillDocumentPath('session', id)).rejects.toMatchObject({
+        code: 'CAPABILITY_UNAVAILABLE',
+      })
+    list.mockImplementationOnce(() => {
+      controller.abort()
+      return Promise.resolve([{ id: 'review', documentPath: '/fixture/SKILL.md' }])
+    })
+    await expect(useCases.skillDocumentPath('session', 'review', controller.signal)).rejects.toThrow()
+    await service.detach()
+  })
+})

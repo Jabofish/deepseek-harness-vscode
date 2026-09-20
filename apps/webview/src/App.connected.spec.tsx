@@ -130,6 +130,8 @@ function storeFor(state: AppState): AppStore {
     openSubagent: vi.fn().mockResolvedValue(undefined),
     renameSession: vi.fn().mockResolvedValue(undefined),
     renameWorkspace: vi.fn().mockResolvedValue(undefined),
+    addWorkspaceFolder: vi.fn().mockResolvedValue(undefined),
+    openSkillDocument: vi.fn().mockResolvedValue(undefined),
     removeWorkspace: vi.fn().mockResolvedValue(undefined),
     moveWorkspace: vi.fn().mockResolvedValue(undefined),
     moveSession: vi.fn().mockResolvedValue(undefined),

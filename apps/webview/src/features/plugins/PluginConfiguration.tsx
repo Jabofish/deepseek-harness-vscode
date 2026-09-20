@@ -20,7 +20,7 @@ export interface PluginConfigurationProps {
  * control; secrets are listed separately because they are written through the
  * credential surface, never as a value.
  */
-type PluginFieldKind = 'text' | 'number' | 'boolean' | 'enum'
+type PluginFieldKind = 'text' | 'number' | 'boolean' | 'enum' | 'object' | 'array'
 
 interface PluginField {
   readonly field: string
@@ -93,19 +93,18 @@ export function PluginConfiguration(props: PluginConfigurationProps): ReactEleme
       return draft === undefined ? [] : [{ field, draft }]
     })
     if (pending.length === 0) return
-    const invalid = pending.find(
-      ({ field, draft }) =>
-        field.kind === 'number' && !draft.clear && draft.text.trim() !== '' && !isFiniteNumber(draft.text),
-    )
+    const invalid = pending.find(({ field, draft }) => invalidDraft(field.kind, draft))
     if (invalid !== undefined) {
-      setError(t('plugins.config.invalidNumber'))
+      setError(
+        t(invalid.field.kind === 'number' ? 'plugins.config.invalidNumber' : 'plugins.config.invalidJson'),
+      )
       return
     }
     setSaving(plugin.namespace)
     setError(undefined)
     try {
       for (const { field, draft } of pending) {
-        if (draft.clear || draft.text.trim() === '') {
+        if (draft.clear || (field.kind !== 'text' && field.kind !== 'enum' && draft.text.trim() === '')) {
           await props.onUnsetSetting(field.path)
         } else {
           await props.onUpdateSetting(field.path, fieldValueFor(field.kind, draft.text))
@@ -171,13 +170,7 @@ export function PluginConfiguration(props: PluginConfigurationProps): ReactEleme
             )
             const invalid = plugin.fields.some((field) => {
               const draft = drafts[draftKey(namespace, field.field)]
-              return (
-                draft !== undefined &&
-                field.kind === 'number' &&
-                !draft.clear &&
-                draft.text.trim() !== '' &&
-                !isFiniteNumber(draft.text)
-              )
+              return draft !== undefined && invalidDraft(field.kind, draft)
             })
             const busy = saving === namespace || credentialBusy?.startsWith(`${namespace}.`) === true
             const detailsId = `dsh-plugin-config-${namespace.replace(/[^a-z0-9]+/giu, '-')}`
@@ -232,12 +225,7 @@ export function PluginConfiguration(props: PluginConfigurationProps): ReactEleme
                       const key = draftKey(namespace, field.field)
                       const draft = drafts[key]
                       const text = draft === undefined ? fieldValue(snapshot, field.path) : draft.text
-                      const fieldInvalid =
-                        draft !== undefined &&
-                        field.kind === 'number' &&
-                        !draft.clear &&
-                        draft.text.trim() !== '' &&
-                        !isFiniteNumber(draft.text)
+                      const fieldInvalid = draft !== undefined && invalidDraft(field.kind, draft)
                       const inputId = `dsh-plugin-config-field-${namespace.replace(/[^a-z0-9]+/giu, '-')}-${field.field}`
                       return (
                         <label
@@ -249,7 +237,16 @@ export function PluginConfiguration(props: PluginConfigurationProps): ReactEleme
                             <span>{field.label}</span>
                             {field.overridden ? <small>{t('plugins.config.overridden')}</small> : null}
                           </span>
-                          {field.options === undefined ? (
+                          {field.kind === 'object' || field.kind === 'array' ? (
+                            <textarea
+                              id={inputId}
+                              rows={6}
+                              value={text}
+                              disabled={!snapshot.schema.writable || busy}
+                              aria-invalid={fieldInvalid}
+                              onChange={(event) => stage(namespace, field.field, event.currentTarget.value)}
+                            />
+                          ) : field.options === undefined ? (
                             <input
                               id={inputId}
                               type="text"
@@ -262,17 +259,21 @@ export function PluginConfiguration(props: PluginConfigurationProps): ReactEleme
                           ) : (
                             <select
                               id={inputId}
-                              value={field.options.includes(text) ? text : ''}
+                              value={
+                                draft?.clear !== true && field.options.includes(text)
+                                  ? JSON.stringify(text)
+                                  : ''
+                              }
                               disabled={!snapshot.schema.writable || busy}
                               onChange={(event) => {
                                 const value = event.currentTarget.value
                                 if (value === '') stage(namespace, field.field, '', true)
-                                else stage(namespace, field.field, value)
+                                else stage(namespace, field.field, JSON.parse(value) as string)
                               }}
                             >
                               <option value="">{t('plugins.config.chooseValue')}</option>
                               {field.options.map((option) => (
-                                <option value={option} key={option}>
+                                <option value={JSON.stringify(option)} key={option}>
                                   {option}
                                 </option>
                               ))}
@@ -287,7 +288,11 @@ export function PluginConfiguration(props: PluginConfigurationProps): ReactEleme
                             }
                           >
                             {fieldInvalid
-                              ? t('plugins.config.invalidNumber')
+                              ? t(
+                                  field.kind === 'number'
+                                    ? 'plugins.config.invalidNumber'
+                                    : 'plugins.config.invalidJson',
+                                )
                               : (field.description ?? field.path)}
                           </ContentFlow>
                           {field.overridden ? (
@@ -389,6 +394,17 @@ function availablePlugins(snapshot: DshSettingsSnapshot): readonly Plugin[] {
     const fields = snapshot.schema.fields.flatMap((field) => {
       if (!field.path.startsWith(prefix) || field.path === prefix) return []
       const name = field.path.slice(prefix.length)
+      // Never replace a redacted container: doing so could erase or overwrite
+      // credentials which are intentionally absent from the public snapshot.
+      if (
+        namespace.secrets.some(
+          (secret) =>
+            secret.field === name ||
+            secret.field.startsWith(`${name}.`) ||
+            name.startsWith(`${secret.field}.`),
+        )
+      )
+        return []
       const kind = fieldKind(field.type, field.enumValues)
       if (kind === undefined) return []
       return [
@@ -450,24 +466,27 @@ function fieldKind(
       return 'boolean'
     case 'enum':
       return enumValues === undefined || enumValues.length === 0 ? undefined : 'enum'
-    // Secrets are written through the credential surface, and object and array
-    // values have no single-control representation this panel can send back.
-    case 'secret':
     case 'object':
     case 'array':
+      return type
+    // Secrets are written through the credential surface.
+    case 'secret':
       return undefined
   }
 }
 
 function fieldValueFor(kind: PluginFieldKind, text: string): unknown {
   switch (kind) {
+    case 'object':
+    case 'array':
+      return JSON.parse(text) as unknown
     case 'number':
       return Number(text.trim())
     case 'boolean':
       return text.trim() === 'true'
     case 'enum':
     case 'text':
-      return text.trim()
+      return text
   }
 }
 
@@ -477,6 +496,7 @@ function credentialReference(value: unknown, field: string): string | undefined 
 
 function fieldValue(snapshot: DshSettingsSnapshot, path: string): string {
   const value = settingValueAt(snapshot.values, path)
+  if (typeof value === 'object' && value !== null) return JSON.stringify(value, null, 2)
   return typeof value === 'number' || typeof value === 'string' || typeof value === 'boolean'
     ? String(value)
     : ''
@@ -499,6 +519,23 @@ function settingString(value: unknown, field: string): string | undefined {
 
 function isFiniteNumber(value: string): boolean {
   return Number.isFinite(Number(value.trim()))
+}
+
+function invalidDraft(kind: PluginFieldKind, draft: Draft): boolean {
+  if (draft.clear || draft.text.trim() === '') return false
+  if (kind === 'number') return !isFiniteNumber(draft.text)
+  if (kind !== 'object' && kind !== 'array') return false
+  try {
+    const value: unknown = JSON.parse(draft.text, (_key: string, entry: unknown): unknown => {
+      if (typeof entry === 'number' && !Number.isFinite(entry)) throw new Error('Non-finite JSON number')
+      return entry
+    })
+    return kind === 'array'
+      ? !Array.isArray(value)
+      : typeof value !== 'object' || value === null || Array.isArray(value)
+  } catch {
+    return true
+  }
 }
 
 function withoutNamespace(

@@ -64,7 +64,7 @@ export class Rc6SettingsRepository implements SettingsRepository {
         ns: namespace.ns,
         applies: namespace.applies,
         revision: namespace.revision,
-        userFields: Object.keys(asObject(namespace.user)),
+        userFields: userFieldPaths(namespace),
         secrets: namespace.secrets.map((secret) => ({
           field: secret.path.join('.'),
           set: secret.set,
@@ -95,11 +95,7 @@ export class Rc6SettingsRepository implements SettingsRepository {
     if (namespace === undefined || namespace === '' || parts.length === 0)
       throw new Error('Settings path must be namespace.field')
     const descriptor = await this.namespace(namespace, signal)
-    if (
-      value === '[configured]' &&
-      descriptor.secrets.some((secret) => secret.path.join('.') === parts.join('.'))
-    )
-      throw new Error('Configured secrets must be changed through the credential surface.')
+    requireNonSecretPath(descriptor, parts)
     await this.mutate(namespace, [{ op: 'set', path: parts, value }], descriptor.revision, signal)
   }
 
@@ -107,6 +103,7 @@ export class Rc6SettingsRepository implements SettingsRepository {
     const [namespace, ...parts] = path.split('.')
     if (namespace === undefined || namespace === '' || parts.length === 0)
       throw new Error('Settings path must be namespace.field')
+    requireNonSecretPath(await this.namespace(namespace, signal), parts)
     await this.mutate(namespace, [{ op: 'unset', path: parts }], undefined, signal)
   }
 
@@ -239,6 +236,37 @@ export class Rc6SettingsRepository implements SettingsRepository {
       retryable: false,
     })
   }
+}
+
+/** Public field edits must never replace a container holding redacted secrets. */
+function requireNonSecretPath(namespace: Namespace, parts: readonly string[]): void {
+  if (
+    namespace.secrets.some((secret) => {
+      const length = Math.min(parts.length, secret.path.length)
+      return parts.slice(0, length).every((part, index) => part === secret.path[index])
+    })
+  )
+    throw new AppError({
+      code: 'PERMISSION_DENIED',
+      message: 'Configured secrets must be changed through the credential surface.',
+      retryable: false,
+    })
+}
+
+function userFieldPaths(namespace: Namespace): string[] {
+  const paths = new Set(Object.keys(asObject(namespace.user)))
+  for (const field of schemaFields(namespace.ns, namespace.schema, namespace.applies === 'restart')) {
+    const path = field.path.slice(namespace.ns.length + 1)
+    let cursor: unknown = namespace.user
+    const present = path.split('.').every((part) => {
+      const value = asObject(cursor)
+      if (!Object.prototype.hasOwnProperty.call(value, part)) return false
+      cursor = value[part]
+      return true
+    })
+    if (present) paths.add(path)
+  }
+  return [...paths]
 }
 
 function asObject(value: unknown): Record<string, unknown> {

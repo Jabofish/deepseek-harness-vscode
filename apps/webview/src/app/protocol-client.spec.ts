@@ -312,3 +312,31 @@ describe('ProtocolClient', () => {
     client.dispose()
   })
 })
+
+describe('native picker request lifetime', () => {
+  it('does not apply the ordinary RPC budget while the user selects a directory', async () => {
+    const timeout = vi.spyOn(window, 'setTimeout')
+    const client = new ProtocolClient({
+      postMessage: () => undefined,
+      getState: () => undefined,
+      setState: () => undefined,
+    })
+    try {
+      const pending = client.request({ type: 'workspace.addFolder', requestId: 'folder-picker' })
+      expect(timeout.mock.calls.map(([, duration]) => duration)).toContain(600_000)
+      client.handle({
+        protocolVersion: PROTOCOL_VERSION,
+        message: {
+          type: 'response',
+          requestId: 'folder-picker',
+          ok: true,
+          payload: { opened: true },
+        },
+      })
+      await expect(pending).resolves.toEqual({ opened: true })
+    } finally {
+      client.dispose()
+      timeout.mockRestore()
+    }
+  })
+})

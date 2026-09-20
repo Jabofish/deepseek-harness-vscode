@@ -232,3 +232,22 @@ describe('MessageImages', () => {
     expect(screen.getByRole('dialog')).toBeDefined()
   })
 })
+
+it('allows a user to retry a failed image without reopening the session', async () => {
+  const image: MessageImageReference = {
+    attachmentId: 'retry-image',
+    mediaType: 'image/png',
+    bytes: 80,
+    width: 2,
+    height: 1,
+  }
+  const loadImage = vi
+    .fn()
+    .mockRejectedValueOnce(new Error('disconnected'))
+    .mockResolvedValue('data:image/png;base64,iVBORw0KGgo=')
+  render(<MessageImages images={[image]} loadImage={loadImage} translate={(key) => key} />)
+  const retry = await screen.findByRole('button', { name: 'timeline.imageRetry' })
+  fireEvent.click(retry)
+  await screen.findByRole('button', { name: 'timeline.openImage' })
+  expect(loadImage).toHaveBeenCalledTimes(2)
+})

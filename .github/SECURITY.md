@@ -4,10 +4,10 @@
 
 Security fixes are only applied to the latest release line.
 
-| Version                   | Supported |
-| ------------------------- | --------- |
-| latest release (`0.1.10`) | Yes       |
-| older releases            | No        |
+| Version                  | Supported |
+| ------------------------ | --------- |
+| latest release (`0.2.1`) | Yes       |
+| older releases           | No        |
 
 ## Reporting a vulnerability
 
@@ -19,7 +19,7 @@ version (`dsh --version`), your platform, and a minimal reproduction.
 
 ## Scope notes
 
-The extension's security model is documented in [docs/security.md](docs/security.md). Key
+The extension's security model is documented in [docs/security.md](../docs/security.md). Key
 invariants that count as security boundaries:
 
 - The Webview is untrusted: it never receives secrets, DSH endpoints, process handles, or direct

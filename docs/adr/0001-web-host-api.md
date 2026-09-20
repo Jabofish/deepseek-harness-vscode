@@ -5,7 +5,7 @@
 
 ## 决策
 
-扩展通过 `dsh web` 暴露的 Web Host RPC 与 Host/Mux 事件实现完整产品能力。ACP/SDK 可作为未来辅助入口，但不得替代主通道；禁止解析 TUI/ANSI。
+扩展通过 `dsh --profile web` 暴露的 Web Host RPC 与 Host/Mux 事件实现完整产品能力。ACP/SDK 可作为未来辅助入口，但不得替代主通道；禁止解析 TUI/ANSI。
 
 ## 理由
 

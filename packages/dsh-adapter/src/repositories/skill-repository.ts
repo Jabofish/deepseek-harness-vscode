@@ -18,6 +18,7 @@ export class Rc6SkillRepository implements SkillRepository {
         typeof record.name !== 'string' ||
         record.name.trim() === '' ||
         typeof record.description !== 'string' ||
+        (record.path !== undefined && (typeof record.path !== 'string' || record.path.trim() === '')) ||
         (record.whenToUse !== undefined && typeof record.whenToUse !== 'string') ||
         typeof record.modelInvocable !== 'boolean'
       )
@@ -27,6 +28,7 @@ export class Rc6SkillRepository implements SkillRepository {
           id: record.name,
           name: record.name,
           description: record.description,
+          ...(typeof record.path === 'string' ? { documentPath: record.path } : {}),
           ...(typeof record.whenToUse === 'string' ? { whenToUse: record.whenToUse } : {}),
           // The catalog carries no origin, and `modelInvocable: false` marks a
           // skill only a human may run — the host already filtered out the ones

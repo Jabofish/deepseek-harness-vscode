@@ -53,7 +53,7 @@ domain         -> nothing platform-specific
 
 1. 先补充或确认 Domain 类型与仓储接口。
 2. 用脱敏 fixture 写 Adapter 契约测试，使测试先失败。
-3. 实现 rc.6 mapper、RPC 和错误映射。
+3. 实现目标版本的 mapper、RPC 和错误映射（新版本先建立独立 `versions/<version>` 入口）。
 4. 实现 Application use case；禁止向上泄漏上游类型。
 5. 实现 Extension message route 和协议 schema。
 6. 最后实现 Webview 组件、状态和可访问性测试。

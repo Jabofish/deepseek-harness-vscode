@@ -1,3 +1,5 @@
+import type { MessageImageReference } from './events.js'
+
 export type ToolCallStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
 
 export interface ToolLocationView {
@@ -141,6 +143,8 @@ export interface ToolPresentationSource {
 }
 
 export interface ToolCallView {
+  /** Durable, session-authorized result attachments; never inline URLs or bytes. */
+  readonly images?: readonly MessageImageReference[]
   readonly id: string
   /** DSH Code/PTC parent call id; root calls omit this field. */
   readonly parentCallId?: string

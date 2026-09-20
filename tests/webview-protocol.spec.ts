@@ -264,3 +264,29 @@ describe('attachment ingest schema', () => {
     ).toBe(false)
   })
 })
+
+describe('workspace directory selection boundary', () => {
+  it('accepts a picker gesture but rejects a Webview-supplied host path', () => {
+    const request = { type: 'workspace.addFolder', requestId: 'pick-folder' }
+    expect(webviewRequestSchema.safeParse(request).success).toBe(true)
+    expect(webviewRequestSchema.safeParse({ ...request, payload: { path: '/private' } }).success).toBe(false)
+  })
+})
+
+describe('skill documentation action schema', () => {
+  it('accepts catalog identity and rejects a Webview-supplied filesystem path', () => {
+    const request = {
+      type: 'skill.openDocument',
+      requestId: 'open-skill',
+      payload: { sessionId: 'session', skillId: 'review' },
+    }
+    expect(webviewRequestSchema.safeParse(request).success).toBe(true)
+    expect(
+      webviewRequestSchema.safeParse({
+        ...request,
+        payload: { ...request.payload, path: '/secret/SKILL.md' },
+      }).success,
+    ).toBe(false)
+    expect(webviewRequestSchema.safeParse({ ...request, payload: { skillId: 'review' } }).success).toBe(false)
+  })
+})

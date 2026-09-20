@@ -31,6 +31,7 @@ describe('Rc6SkillRepository skill.list', () => {
           skills: [
             {
               name: 'code-review',
+              path: '/fixture/skills/review/SKILL.md',
               description: 'Review changes.',
               whenToUse: 'Use for focused review requests.',
               modelInvocable: true,
@@ -48,6 +49,7 @@ describe('Rc6SkillRepository skill.list', () => {
     await expect(repository.list('session-1')).resolves.toEqual([
       {
         id: 'code-review',
+        documentPath: '/fixture/skills/review/SKILL.md',
         name: 'code-review',
         description: 'Review changes.',
         whenToUse: 'Use for focused review requests.',
@@ -83,5 +85,14 @@ describe('Rc6SkillRepository skill.list', () => {
     )
 
     await expect(repository.list('session-1')).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
+  })
+})
+
+describe('skill documentation wire validation', () => {
+  it.each([null, 42, ''])('rejects malformed path %j', async (path) => {
+    const repository = new Rc6SkillRepository(
+      transportFor({ skills: [{ name: 'review', description: '', modelInvocable: true, path }] }),
+    )
+    await expect(repository.list('session')).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
   })
 })

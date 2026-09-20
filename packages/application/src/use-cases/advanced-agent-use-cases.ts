@@ -54,6 +54,16 @@ export class AdvancedAgentUseCases {
     return this.backendService.requireBackend().commands.list(sessionId, signal)
   }
 
+  /** Resolve from the current session catalog; callers cannot supply filesystem paths. */
+  public async skillDocumentPath(sessionId: string, skillId: string, signal?: AbortSignal): Promise<string> {
+    signal?.throwIfAborted()
+    const skills = await this.listSkills(sessionId, signal)
+    signal?.throwIfAborted()
+    const documentPath = skills.find((skill) => skill.id === skillId)?.documentPath
+    if (documentPath === undefined) throw unavailable('skill documentation')
+    return documentPath
+  }
+
   public listPresets(signal?: AbortSignal): Promise<AgentPresetRoster> {
     return this.backendService.requireBackend().presets.list(signal)
   }

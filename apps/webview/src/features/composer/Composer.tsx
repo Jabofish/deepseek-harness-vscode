@@ -129,6 +129,7 @@ export interface ComposerProps {
   readonly onPromptModeChange?: (mode: PromptMode) => void
   readonly onCommand?: (command: string, attachments?: readonly PromptAttachment[]) => Promise<void> | void
   readonly onPopupSelect?: (command: string) => void
+  readonly onOpenSkillDocument?: (skillId: string) => void
   readonly onCommandQueryChange?: (query: string | undefined) => void
   readonly onReferenceQueryChange?: (query: string | undefined, quoted: boolean) => void
   readonly onDraftChange: (value: string | ((current: string) => string)) => void
@@ -919,6 +920,9 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
         props.commands === undefined ||
         props.commands.length === 0 ? null : (
           <CommandPalette
+            {...(props.onOpenSkillDocument === undefined
+              ? {}
+              : { onOpenSkillDocument: props.onOpenSkillDocument })}
             commands={props.commands}
             query={commandQuery}
             rows={menuRows}

@@ -639,6 +639,7 @@ function renderNode(
           onExpandedChange={setExpanded}
           translate={t}
           {...(onOpenLink === undefined ? {} : { onOpenLink })}
+          {...(onLoadImage === undefined ? {} : { onLoadImage })}
         />
       )
     case 'deliverables':
@@ -1542,6 +1543,7 @@ function renderAssistantBlocks(
           onExpandedChange={setExpanded}
           translate={t}
           {...(onOpenLink === undefined ? {} : { onOpenLink })}
+          {...(onLoadImage === undefined ? {} : { onLoadImage })}
         />
       </div>,
     )
@@ -1932,7 +1934,7 @@ function assistantBlockSignature(blocks: readonly AssistantContentBlock[]): stri
 function toolNodeSignature(node: ToolTimelineNode): string {
   const tool = node.tool
   const presentation = tool.presentation
-  return `${node.id}:${tool.status}:${tool.inputSummary?.length ?? 0}:${tool.outputSummary?.length ?? 0}:${tool.error?.length ?? 0}:${tool.locations?.map((location) => `${location.path}:${location.line ?? ''}`).join('|') ?? ''}:${presentation?.phase ?? ''}:${presentation?.card ?? ''}`
+  return `${node.id}:${tool.images?.map((image) => image.attachmentId).join('|') ?? ''}:${tool.status}:${tool.inputSummary?.length ?? 0}:${tool.outputSummary?.length ?? 0}:${tool.error?.length ?? 0}:${tool.locations?.map((location) => `${location.path}:${location.line ?? ''}`).join('|') ?? ''}:${presentation?.phase ?? ''}:${presentation?.card ?? ''}`
 }
 
 function branchUnavailableForNode(node: DisplayTimelineNode, branching: boolean): boolean {

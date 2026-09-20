@@ -140,3 +140,28 @@ describe('AppStore command dispatch', () => {
     store.dispose()
   })
 })
+
+describe('skill document command routing', () => {
+  it('preserves the public document hint and sends only session and skill identity', async () => {
+    const client = new FakeClient((request) =>
+      request.type === 'skill.list'
+        ? [{ id: 'review', name: 'review', description: 'Review', enabled: false, hasDocument: true }]
+        : response(request),
+    )
+    const store = createAppStore(client as unknown as ProtocolClient)
+    try {
+      await store.openSession('session-1')
+      await store.refreshCommands('session-1')
+      expect(store.commands.find((entry) => entry.name === 'review')).toMatchObject({
+        source: 'skill',
+        hasDocument: true,
+      })
+      await store.openSkillDocument('session-1', 'review')
+      expect(client.requests.find((request) => request.type === 'skill.openDocument')).toMatchObject({
+        payload: { sessionId: 'session-1', skillId: 'review' },
+      })
+    } finally {
+      store.dispose()
+    }
+  })
+})

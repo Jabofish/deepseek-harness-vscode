@@ -29,6 +29,7 @@ export const MessageImages = memo(function MessageImages(props: MessageImagesPro
   const [loaded, setLoaded] = useState<Readonly<Record<string, LoadedImage>>>({})
   const [loading, setLoading] = useState<ReadonlySet<string>>(new Set())
   const [failed, setFailed] = useState<ReadonlySet<string>>(new Set())
+  const [retry, setRetry] = useState(0)
   const [lightbox, setLightbox] = useState<LoadedImage | undefined>(undefined)
   const requested = useRef(new Set<string>())
   const attempts = useRef(new Map<string, number>())
@@ -88,7 +89,7 @@ export const MessageImages = memo(function MessageImages(props: MessageImagesPro
         },
       )
     }
-  }, [imageKey, loadImage, images])
+  }, [imageKey, loadImage, images, retry])
 
   useEffect(() => {
     if (lightbox === undefined) return
@@ -167,6 +168,20 @@ export const MessageImages = memo(function MessageImages(props: MessageImagesPro
               <span className="dsh-message-images__name" title={name}>
                 {name}
               </span>
+              {error && loadImage !== undefined ? (
+                <button
+                  type="button"
+                  className="dsh-button dsh-button--secondary dsh-button--compact"
+                  disabled={busy}
+                  onClick={() => {
+                    if (requested.current.has(image.attachmentId)) return
+                    attempts.current.delete(image.attachmentId)
+                    setRetry((value) => value + 1)
+                  }}
+                >
+                  {props.translate('timeline.imageRetry')}
+                </button>
+              ) : null}
             </span>
           )
         })}

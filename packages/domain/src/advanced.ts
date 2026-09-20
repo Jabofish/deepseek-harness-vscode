@@ -23,6 +23,10 @@ export interface WorkflowMember {
 }
 
 export interface SkillDescriptor {
+  /** Host-only filesystem location supplied by the skill provider; never sent to the Webview. */
+  readonly documentPath?: string
+  /** Public capability hint after the Host removes documentPath. */
+  readonly hasDocument?: boolean
   readonly id: string
   readonly name: string
   readonly description: string
@@ -32,7 +36,7 @@ export interface SkillDescriptor {
    * Where the skill came from, when the host reports it.
    *
    * The DSH catalog carries no origin: `skill.list` answers name, description,
-   * optional routing guidance and `modelInvocable` only. A client-side origin
+   * optional routing guidance/document path and `modelInvocable`. A client-side origin
    * would be a guess about the host's own directories, so an absent value means
    * exactly that the host did not say.
    */
@@ -49,6 +53,8 @@ export interface SkillDescriptor {
 }
 
 export interface DynamicCommand {
+  /** A skill-backed row whose documentation can be opened by the Host. */
+  readonly hasDocument?: boolean
   readonly name: string
   readonly description: string
   /** Optional routing guidance preserved when a skill becomes a command. */
