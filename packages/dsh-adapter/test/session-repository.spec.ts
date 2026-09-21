@@ -1708,3 +1708,73 @@ describe('Rc6SessionRepository rename receipts', () => {
     ).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
   })
 })
+
+describe('process permission catalog', () => {
+  it('uses the version reader for current-value-only projections and forwards cancellation', async () => {
+    const transport = sessionCreateTransport([])
+    transport.request = <TResponse>() =>
+      Promise.resolve({
+        result: {
+          ok: true,
+          value: {
+            events: [],
+            hasMore: false,
+            projections: { values: { permissions: { currentValue: 'workspace-write' } }, asOfSeq: 0 },
+          },
+        },
+      }) as TResponse
+    const signal = new AbortController().signal
+    const readPermissionPresets = vi.fn().mockResolvedValue(['read-only', 'workspace-write', 'auto'])
+    const repository = new Rc6SessionRepository(transport, undefined, undefined, { readPermissionPresets })
+    expect((await repository.get('session-1', signal)).permissionPresets).toEqual([
+      'read-only',
+      'workspace-write',
+      'auto',
+    ])
+    expect(readPermissionPresets).toHaveBeenCalledWith(signal)
+  })
+})
+
+describe('optional permission catalog failures', () => {
+  it.each(['BACKEND_UNREACHABLE', 'PROTOCOL_ERROR', 'REQUEST_CANCELLED'] as const)(
+    'handles %s without losing the authoritative current permission',
+    async (code) => {
+      const transport = sessionCreateTransport([])
+      transport.request = <TResponse>() =>
+        Promise.resolve({
+          result: {
+            ok: true,
+            value: {
+              events: [],
+              hasMore: false,
+              projections: { values: { permissions: { currentValue: 'read-only' } }, asOfSeq: 0 },
+            },
+          },
+        }) as TResponse
+      const error = new AppError({ code, message: 'Catalog failure', retryable: false })
+      const readPermissionPresets = vi
+        .fn()
+        .mockRejectedValueOnce(error)
+        .mockResolvedValue(['read-only', 'auto'])
+      const repository = new Rc6SessionRepository(transport, undefined, undefined, { readPermissionPresets })
+      if (code === 'REQUEST_CANCELLED') {
+        await expect(repository.get('session-1')).rejects.toBe(error)
+      } else {
+        await expect(repository.get('session-1')).resolves.toMatchObject({
+          permissionPresets: [],
+          configuration: { permissionPreset: 'read-only' },
+        })
+        expect((await repository.get('session-1')).permissionPresets).toEqual(['read-only', 'auto'])
+      }
+    },
+  )
+})
+
+it('exposes binary upload support only when enabled by the version adapter', () => {
+  const transport = sessionCreateTransport([])
+  expect(new Rc6SessionRepository(transport).supportsFileUploads).toBe(false)
+  expect(
+    new Rc6SessionRepository(transport, undefined, undefined, { supportsFileUploads: true })
+      .supportsFileUploads,
+  ).toBe(true)
+})

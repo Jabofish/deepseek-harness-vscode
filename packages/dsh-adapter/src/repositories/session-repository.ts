@@ -72,8 +72,12 @@ export class Rc6SessionRepository implements SessionRepository {
     this.resetQueueOnSubscribe = options.resetQueueOnSubscribe ?? true
     this.includesClientTimeZone = options.includeClientTimeZone ?? true
     this.executeSessionConfigurationCommand = options.executeSessionConfigCommand
+    this.readPermissionPresets = options.readPermissionPresets
+    this.supportsFileUploads = options.supportsFileUploads === true
   }
 
+  private readonly readPermissionPresets: ((signal?: AbortSignal) => Promise<readonly string[]>) | undefined
+  public readonly supportsFileUploads: boolean
   private readonly supportsPreallocatedSessionId: boolean
   private readonly supportsWorkspaceBlankReuse: boolean
   private readonly commandAttachmentWire: CommandAttachmentWire
@@ -253,7 +257,19 @@ export class Rc6SessionRepository implements SessionRepository {
     // the capability is absent at this cut, not that the hint should survive.
     const projectionValues = history.projection?.values ?? summary.projection?.values ?? {}
     this.rememberProjectionValues(sessionId, projectionValues, history.projection !== undefined)
-    const permissionPresets = permissionPresetIds(projectionValues)
+    const projectedPresets = permissionPresetIds(projectionValues)
+    let permissionPresets = projectedPresets
+    if (projectedPresets !== undefined && this.readPermissionPresets !== undefined) {
+      try {
+        permissionPresets = await this.readPermissionPresets(signal)
+      } catch (error) {
+        if (signal?.aborted === true || (error instanceof AppError && error.code === 'REQUEST_CANCELLED'))
+          throw error
+        // The catalog is optional enrichment. Preserve the current permission
+        // from the history projection, but offer no unverified alternatives.
+        permissionPresets = []
+      }
+    }
     const agentPreset = firstString(summary.agentPreset, projectionValues.agentPreset)
     const projection = history.projection ?? summary.projection
     return {
@@ -882,6 +898,7 @@ export class Rc6SessionRepository implements SessionRepository {
   private promptContentLimits(sessionId: string): PromptContentLimits {
     const imageLimits = this.imageLimitsBySession.get(sessionId)
     return {
+      allowBinaryFiles: this.supportsFileUploads,
       maxImageBytes:
         imageLimits === undefined
           ? this.maxPromptAttachmentBytes
@@ -1034,6 +1051,8 @@ export function historyGapRecovery(sessions: HistoryRecoverySource): StreamRecov
 }
 
 interface SessionRepositoryOptions {
+  readonly supportsFileUploads?: boolean
+  readonly readPermissionPresets?: ((signal?: AbortSignal) => Promise<readonly string[]>) | undefined
   /** rc.2 accepts an idempotency/preallocated sessionId without rc.1's reuse flag. */
   readonly preallocatedSessionId?: boolean
   readonly reuseWorkspaceBlank?: boolean
@@ -1354,7 +1373,7 @@ function configurationFromRawHistory(
   return {
     ...defaultConfiguration(),
     ...(agentPreset === undefined ? {} : { preset: agentPreset }),
-    permissionPreset,
+    permissionPreset: firstString(asRecord(projectionValues?.permissions).currentValue) ?? permissionPreset,
     planMode,
     ...(sandboxMode === undefined ? {} : { sandboxMode }),
     ...(approvalPolicy === undefined ? {} : { approvalPolicy }),

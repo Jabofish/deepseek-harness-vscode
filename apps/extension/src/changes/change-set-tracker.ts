@@ -1,3 +1,4 @@
+import path from 'node:path'
 import { createHash } from 'node:crypto'
 
 import {
@@ -53,6 +54,7 @@ export interface ChangeSetTrackerOptions {
     backend: DshBackend,
     sessionId: string,
   ) => Promise<string | undefined>
+  readonly onInvalidate?: (sessionId: string) => void
   readonly onChange?: (change: ChangeSetFile) => void
 }
 
@@ -62,6 +64,12 @@ export interface ChangeSetTrackerOptions {
  * output never create a change row.
  */
 export class ChangeSetTracker {
+  private readonly localTurns = new Map<string, number>()
+  private readonly turnCuts = new Map<string, number>()
+  private readonly upstream = new Map<
+    string,
+    { backend: DshBackend; sessionId: string; sequence: number; index: number }
+  >()
   private readonly entries = new Map<string, ChangeSetFile>()
   private readonly seenEvents = new Set<string>()
   private readonly sessionWorkspaceResolutions = new Map<string, Promise<string | undefined>>()
@@ -69,6 +77,7 @@ export class ChangeSetTracker {
   private readonly observeChangePath: ChangeSetTrackerOptions['observeChangePath']
   private readonly toWorkspaceRelativePath: ChangeSetTrackerOptions['toWorkspaceRelativePath']
   private readonly resolveSessionWorkspaceFolderId: ChangeSetTrackerOptions['resolveSessionWorkspaceFolderId']
+  private readonly onInvalidate: ChangeSetTrackerOptions['onInvalidate']
   private readonly onChange: ChangeSetTrackerOptions['onChange']
   private unsubscribe: (() => void) | undefined
   private backend: ConnectedBackend | undefined
@@ -82,10 +91,14 @@ export class ChangeSetTracker {
     this.toWorkspaceRelativePath = options.toWorkspaceRelativePath
     this.resolveSessionWorkspaceFolderId = options.resolveSessionWorkspaceFolderId
     this.onChange = options.onChange
+    this.onInvalidate = options.onInvalidate
   }
 
   public attach(backend: DshBackend, workspaceFolderId: () => string | undefined): void {
     this.detach()
+    this.localTurns.clear()
+    this.turnCuts.clear()
+    this.upstream.clear()
     this.entries.clear()
     this.seenEvents.clear()
     this.sessionWorkspaceResolutions.clear()
@@ -105,6 +118,9 @@ export class ChangeSetTracker {
     this.unsubscribe = undefined
     this.backend = undefined
     this.workspaceFolderId = undefined
+    this.localTurns.clear()
+    this.turnCuts.clear()
+    this.upstream.clear()
     this.entries.clear()
     this.seenEvents.clear()
     this.sessionWorkspaceResolutions.clear()
@@ -113,6 +129,9 @@ export class ChangeSetTracker {
 
   public dispose(): void {
     this.detach()
+    this.localTurns.clear()
+    this.turnCuts.clear()
+    this.upstream.clear()
     this.entries.clear()
     this.seenEvents.clear()
   }
@@ -145,6 +164,7 @@ export class ChangeSetTracker {
       const current = this.entries.get(changeId)
       const next = current === undefined ? incoming : mergeChange(current, incoming)
       if (!isActive()) return
+      if (observation.tool.turn !== undefined) this.localTurns.set(changeId, observation.tool.turn)
       this.entries.set(changeId, next)
       this.onChange?.(next)
       if (
@@ -158,12 +178,141 @@ export class ChangeSetTracker {
     this.trim()
   }
 
+  /** Recover authoritative turn summaries from durable announcements on explicit review. */
+  public async refreshAuthoritative(
+    backend: DshBackend,
+    sessionId: string,
+    workspaceFolderId: string,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
+    if (backend.workspaceChanges === undefined) return true
+    try {
+      const generation = this.attachmentGeneration
+      const session = await backend.sessions.get(sessionId, signal)
+      let before: number | undefined
+      for (let pageIndex = 0; pageIndex < 100; pageIndex += 1) {
+        throwIfAborted(signal)
+        const page = await backend.sessions.history(sessionId, before, signal)
+        for (const entry of page.events) {
+          if (entry.event.type === 'unknown' && entry.event.name === 'workspace/changes')
+            await this.readSummary(
+              backend,
+              sessionId,
+              workspaceFolderId,
+              session.cwd,
+              entry.sequence,
+              generation,
+              signal,
+            )
+        }
+        if (!page.hasMore) break
+        const next = page.beforeSequence ?? page.events[0]?.sequence
+        if (next === undefined || (before !== undefined && next >= before)) break
+        before = next
+      }
+      return true
+    } catch (error) {
+      if (
+        signal?.aborted === true ||
+        (error instanceof AppError &&
+          ['REQUEST_CANCELLED', 'PERMISSION_DENIED', 'RESOURCE_NOT_OWNED'].includes(error.code))
+      )
+        throw error
+      // Refresh is advisory; keep the last observed rows and let the caller
+      // report that this list could not be brought up to date.
+      return false
+    }
+  }
+
+  private async readSummary(
+    backend: DshBackend,
+    sessionId: string,
+    workspaceFolderId: string,
+    cwd: string | undefined,
+    sequence: number,
+    generation: number,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const summary = await backend.workspaceChanges?.summary(sessionId, sequence, signal)
+    if (summary === undefined || generation !== this.attachmentGeneration) return
+    const identity = backend.connection
+    if (identity.backendInstanceId === undefined || identity.connectionGeneration === undefined) return
+    const turnKey = `${sessionId}:${summary.turn}`
+    if ((this.turnCuts.get(turnKey) ?? -1) >= sequence) return
+    this.turnCuts.set(turnKey, sequence)
+    for (const [id, source] of this.upstream) {
+      if (id.startsWith(`upstream:${sessionId}:${summary.turn}:`) && source.sequence < sequence) {
+        this.upstream.delete(id)
+        this.entries.delete(id)
+      }
+    }
+    const fit = this.pathFitter(workspaceFolderId)
+    for (const [index, file] of summary.files.entries()) {
+      const relativePath = fit(
+        cwd === undefined || path.isAbsolute(file.path) ? file.path : path.resolve(cwd, file.path),
+      )
+      if (relativePath === undefined) continue
+      const changeId = `upstream:${sessionId}:${summary.turn}:${index}`
+      const previous = this.entries.get(changeId)
+      const existing = this.upstream.get(changeId)
+      if (existing !== undefined && existing.sequence > sequence) continue
+      const now = this.now()
+      const change: ChangeSetFile = {
+        changeId,
+        sessionId,
+        workspaceFolderId,
+        relativePath,
+        status: 'unknown',
+        additions: file.additions,
+        deletions: file.deletions,
+        diffAvailable: file.diffAvailable,
+        locations: [],
+        evidence: 'filesystemObserved',
+        applicationState: 'appliedObserved',
+        reviewState: previous?.reviewState ?? 'unreviewed',
+        sourceIds: [`workspace/changes:${sequence}`],
+        sourceInteractionIds: [],
+        sourceToolCallIds: [],
+        firstSeenAt: previous?.firstSeenAt ?? now,
+        lastSeenAt: now,
+        identity: {
+          stream: 'mux',
+          sessionId,
+          serverSeq: sequence,
+          backendInstanceId: identity.backendInstanceId,
+          connectionGeneration: identity.connectionGeneration,
+        },
+      }
+      this.upstream.set(changeId, { backend, sessionId, sequence, index })
+      this.entries.set(changeId, change)
+      this.onChange?.(change)
+    }
+    this.trim()
+    for (const id of this.upstream.keys()) if (!this.entries.has(id)) this.upstream.delete(id)
+    while (this.turnCuts.size > CHANGE_LIMITS.maxFiles * 2)
+      this.turnCuts.delete(this.turnCuts.keys().next().value as string)
+    // A new cut may only remove rows or suppress local evidence. Invalidate
+    // after committing the whole snapshot even when no file survived filtering.
+    this.onInvalidate?.(sessionId)
+  }
+
   public list(query: ChangeListQuery = {}, signal?: AbortSignal): Promise<readonly ChangeSetFile[]> {
     return Promise.resolve().then(() => {
       throwIfAborted(signal)
       const offset = parseCursor(query.cursor)
       const limit = Math.min(Math.max(query.limit ?? CHANGE_LIMITS.maxFiles, 1), CHANGE_LIMITS.maxFiles)
+      const authoritativePaths = new Set(
+        [...this.entries.values()]
+          .filter((change) => this.upstream.has(change.changeId))
+          .map((change) => `${change.sessionId}\u0000${change.relativePath}`),
+      )
       const filtered = [...this.entries.values()]
+        .filter(
+          (change) =>
+            this.upstream.has(change.changeId) ||
+            (!authoritativePaths.has(`${change.sessionId}\u0000${change.relativePath}`) &&
+              !this.turnCuts.has(`${change.sessionId}:${this.localTurns.get(change.changeId)}`)),
+        )
         .filter(
           (change) =>
             (query.workspaceFolderId === undefined || change.workspaceFolderId === query.workspaceFolderId) &&
@@ -178,11 +327,23 @@ export class ChangeSetTracker {
   }
 
   public get(changeId: string, signal?: AbortSignal): Promise<ChangeDetail> {
-    return Promise.resolve().then(() => {
+    return Promise.resolve().then(async () => {
       throwIfAborted(signal)
       const change = this.entries.get(changeId)
       if (change === undefined) throw changeUnavailable()
-      const diffText = change.diffs === undefined ? undefined : formatDiff(change.diffs)
+      const source = this.upstream.get(changeId)
+      const diffText =
+        source === undefined
+          ? change.diffs === undefined
+            ? undefined
+            : formatDiff(change.diffs)
+          : await source.backend.workspaceChanges?.diff(
+              source.sessionId,
+              source.sequence,
+              source.index,
+              signal,
+            )
+      if (source !== undefined && this.upstream.get(changeId) !== source) throw changeUnavailable()
       const diffTruncated = diffText !== undefined && byteLength(diffText) > CHANGE_LIMITS.maxDiffBytes
       return {
         ...change,
@@ -220,6 +381,29 @@ export class ChangeSetTracker {
     connection: ConnectedBackend,
     backend: DshBackend,
   ): Promise<void> {
+    if (
+      event.type === 'unknown' &&
+      event.name === 'workspace/changes' &&
+      event.sessionId !== undefined &&
+      event.sequence !== undefined &&
+      backend.workspaceChanges !== undefined
+    ) {
+      const session = await backend.sessions.get(event.sessionId)
+      const folder =
+        this.resolveSessionWorkspaceFolderId === undefined
+          ? this.workspaceFolderId?.()
+          : await this.resolveSessionWorkspace(backend, event.sessionId)
+      if (folder !== undefined)
+        await this.readSummary(
+          backend,
+          event.sessionId,
+          folder,
+          session.cwd,
+          event.sequence,
+          attachmentGeneration,
+        )
+      return
+    }
     if (event.type !== 'tool.updated') return
     const isActive = (): boolean =>
       this.attachmentGeneration === attachmentGeneration && this.backend === connection

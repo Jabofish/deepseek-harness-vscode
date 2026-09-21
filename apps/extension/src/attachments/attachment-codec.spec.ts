@@ -1,11 +1,17 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { attachmentMimeType, prepareAttachment, readAttachmentFile } from './attachment-codec.js'
+import {
+  assertAttachmentSupported,
+  isAttachmentSupported,
+  attachmentMimeType,
+  prepareAttachment,
+  readAttachmentFile,
+} from './attachment-codec.js'
 
 describe('Extension Host attachment codec', () => {
-  it('derives text MIME types and rejects binary bytes', () => {
+  it('derives text MIME types, stages binary files and rejects corrupt declared text', () => {
     expect(attachmentMimeType('README.md', Buffer.from('# dsh'))).toBe('text/markdown')
-    expect(attachmentMimeType('payload.bin', Buffer.from('# dsh'))).toBeUndefined()
+    expect(attachmentMimeType('payload.bin', Buffer.from('# dsh'))).toBe('application/octet-stream')
     expect(attachmentMimeType('notes.txt', Buffer.from([0, 1]))).toBeUndefined()
   })
 
@@ -41,3 +47,16 @@ describe('Extension Host attachment codec', () => {
     )
   })
 })
+
+it.each([false, true])(
+  'checks normalized binary attachments before staging (uploads=%s)',
+  (supportsUploads) => {
+    const input = prepareAttachment('report.pdf', Buffer.from([0, 1, 2]))
+    expect(isAttachmentSupported(input.mimeType, supportsUploads)).toBe(supportsUploads)
+    if (supportsUploads) expect(() => assertAttachmentSupported(input, supportsUploads)).not.toThrow()
+    else expect(() => assertAttachmentSupported(input, supportsUploads)).toThrow('only image and text')
+    expect(isAttachmentSupported('text/plain', supportsUploads)).toBe(true)
+    expect(isAttachmentSupported('image/png', supportsUploads)).toBe(true)
+    expect(isAttachmentSupported(undefined, supportsUploads)).toBe(false)
+  },
+)

@@ -10,6 +10,15 @@ const goal: GoalView = { id: 'g1', title: 'Ship the redesign', status: 'in-progr
 describe('GoalBar', () => {
   afterEach(() => cleanup())
 
+  it('offers resume for an active goal whose process-local continuation is disarmed', () => {
+    const onUpdate = vi.fn(() => Promise.resolve())
+    render(<GoalBar goals={[{ ...goal, activation: 'disarmed' }]} onUpdate={onUpdate} />)
+    expect(screen.queryByRole('button', { name: 'Pause goal' })).toBeNull()
+    expect(screen.getByText('Automatic continuation stopped')).toBeDefined()
+    fireEvent.click(screen.getByRole('button', { name: 'Resume goal' }))
+    expect(onUpdate).toHaveBeenCalledWith('g1', { status: 'in-progress' })
+  })
+
   it('renders the active goal with pause, edit and clear actions', () => {
     render(
       <GoalBar

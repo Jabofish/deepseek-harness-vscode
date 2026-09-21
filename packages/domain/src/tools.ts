@@ -143,6 +143,8 @@ export interface ToolPresentationSource {
 }
 
 export interface ToolCallView {
+  /** Immutable plan submitted through the structured exit_plan_mode arguments. */
+  readonly submittedPlan?: { readonly title: string; readonly markdown: string }
   /** Durable, session-authorized result attachments; never inline URLs or bytes. */
   readonly images?: readonly MessageImageReference[]
   readonly id: string

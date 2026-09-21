@@ -338,3 +338,20 @@ describe('staged feature protocol contracts', () => {
     ).toBe(true)
   })
 })
+
+it('validates session-scoped Changes invalidation events', () => {
+  const event = {
+    type: 'feature.event',
+    name: 'changes.invalidated',
+    sessionId: 's1',
+    identity: {
+      stream: 'local',
+      backendInstanceId: 'b1',
+      connectionGeneration: 1,
+      localSeq: 1,
+      sessionId: 's1',
+    },
+  }
+  expect(featureHostEventSchema.safeParse(event).success).toBe(true)
+  expect(featureHostEventSchema.safeParse({ ...event, sessionId: '' }).success).toBe(false)
+})

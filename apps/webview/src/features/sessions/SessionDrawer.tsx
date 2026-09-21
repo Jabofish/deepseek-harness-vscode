@@ -9,7 +9,7 @@ import {
   type ReactElement,
 } from 'react'
 import { createPortal } from 'react-dom'
-import type { SessionSummary, WorkspaceSummary } from '@dsh-vscode/domain'
+import type { PermissionRequest, UserQuestion, SessionSummary, WorkspaceSummary } from '@dsh-vscode/domain'
 import { PopoverCard } from '../../components/common/PopoverCard.js'
 import { useDismissibleLayer } from '../../components/common/useDismissibleLayer.js'
 import { Icon } from '../../ui/Icon.js'
@@ -17,6 +17,8 @@ import { displaySessionTitle } from './session-title.js'
 import { useI18n } from '../../i18n.js'
 
 export interface SessionDrawerProps {
+  readonly permissions?: readonly PermissionRequest[]
+  readonly questions?: readonly UserQuestion[]
   readonly sessions: readonly SessionSummary[]
   readonly workspaces: readonly WorkspaceSummary[]
   readonly activeSessionId: string | undefined
@@ -411,7 +413,18 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
     reorderWorkspaceId?: string,
   ): ReactElement => {
     const title = displaySessionTitle(session.title, t)
-    const statusLabel = t(`sessions.status.${session.status}`)
+    const waiting = props.permissions?.some((request) => request.sessionId === session.id)
+      ? 'approval'
+      : props.questions?.some(
+            (question) => question.sessionId === session.id && question.intent?.kind === 'plan-review',
+          )
+        ? 'plan-review'
+        : props.questions?.some((question) => question.sessionId === session.id)
+          ? 'answer'
+          : undefined
+    const statusLabel = t(
+      waiting === undefined ? `sessions.status.${session.status}` : `sessions.waiting.${waiting}`,
+    )
     const canReorder = sorting === 'manual' && reorderWorkspaceId !== undefined
     return (
       <li
@@ -458,7 +471,7 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
             aria-label={statusLabel}
             title={statusLabel}
           >
-            <Icon name={sessionStatusIcon(session.status)} />
+            <Icon name={waiting === undefined ? sessionStatusIcon(session.status) : 'alert'} />
           </span>
           <span className="dsh-session-item__copy">
             <strong title={title}>{title}</strong>
@@ -469,7 +482,7 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
             )}
           </span>
           <span
-            className={`dsh-status-pill dsh-session-item__status dsh-session-item__status--${sessionStatusTone(session.status)}`}
+            className={`dsh-status-pill dsh-session-item__status dsh-session-item__status--${waiting === undefined ? sessionStatusTone(session.status) : 'amber'}`}
             title={statusLabel}
           >
             <span className="dsh-session-item__status-dot" aria-hidden="true" />

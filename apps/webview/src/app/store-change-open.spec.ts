@@ -1,7 +1,12 @@
 // @vitest-environment jsdom
 
-import { describe, expect, it } from 'vitest'
-import type { FeatureRequest, HostMessage, WebviewRequest } from '@dsh-vscode/webview-protocol'
+import { describe, expect, it, vi } from 'vitest'
+import type {
+  FeatureHostEvent,
+  FeatureRequest,
+  HostMessage,
+  WebviewRequest,
+} from '@dsh-vscode/webview-protocol'
 import type { ProtocolClient } from './protocol-client.js'
 import { createAppStore } from './store.js'
 
@@ -14,6 +19,17 @@ interface RecordedFeatureRequest {
 }
 
 class RecordingClient {
+  public emptyChanges = false
+  public refreshFailed = false
+  public requestFails = false
+  private readonly featureListeners = new Set<(message: FeatureHostEvent) => void>()
+  public subscribeFeature(listener: (message: FeatureHostEvent) => void): () => void {
+    this.featureListeners.add(listener)
+    return () => this.featureListeners.delete(listener)
+  }
+  public emitFeature(message: FeatureHostEvent): void {
+    for (const listener of this.featureListeners) listener(message)
+  }
   public readonly featureRequests: RecordedFeatureRequest[] = []
   private readonly listeners = new Set<(message: HostMessage) => void>()
 
@@ -26,6 +42,7 @@ class RecordingClient {
       type: request.type,
       payload: 'payload' in request ? request.payload : undefined,
     })
+    if (request.type === 'changes.list' && this.requestFails) return Promise.reject(new Error('Offline'))
     return Promise.resolve(this.featureResponse(request) as T)
   }
 
@@ -77,10 +94,13 @@ class RecordingClient {
     if (request.type !== 'changes.list') return []
     return {
       kind: 'changes',
-      items: [
-        changeSummary('change-first-line', 'src/first.ts', 0),
-        changeSummary('change-no-line', 'src/whole-file.ts'),
-      ],
+      refreshFailed: this.refreshFailed,
+      items: this.emptyChanges
+        ? []
+        : [
+            changeSummary('change-first-line', 'src/first.ts', 0),
+            changeSummary('change-no-line', 'src/whole-file.ts'),
+          ],
     }
   }
 }
@@ -160,3 +180,50 @@ describe('store change opening', () => {
     store.dispose()
   })
 })
+
+it('refreshes a cleared Changes list on session invalidation without manual refresh', async () => {
+  const { client, store } = await openFixture()
+  try {
+    expect(store.changes).toHaveLength(2)
+    client.emptyChanges = true
+    const message = {
+      type: 'feature.event' as const,
+      name: 'changes.invalidated' as const,
+      sessionId: SESSION_ID,
+      identity: {
+        stream: 'local' as const,
+        backendInstanceId: 'backend-1',
+        connectionGeneration: 1,
+        localSeq: 2,
+        sessionId: SESSION_ID,
+      },
+    }
+    const before = client.featureRequests.length
+    client.emitFeature({ ...message, sessionId: 'another-session' })
+    expect(client.featureRequests).toHaveLength(before)
+    client.emitFeature(message)
+    await vi.waitFor(() => expect(store.changes).toEqual([]))
+  } finally {
+    store.dispose()
+  }
+})
+
+it.each(['fallback', 'request'] as const)(
+  'shows a %s failure without dropping local rows, then clears it on recovery',
+  async (mode) => {
+    const { client, store } = await openFixture()
+    try {
+      client.refreshFailed = mode === 'fallback'
+      client.requestFails = mode === 'request'
+      await store.refreshChanges(SESSION_ID)
+      expect(store.changes).toHaveLength(2)
+      expect(store.changesRefreshFailed).toBe(true)
+      client.refreshFailed = false
+      client.requestFails = false
+      await store.refreshChanges(SESSION_ID)
+      expect(store.changesRefreshFailed).toBe(false)
+    } finally {
+      store.dispose()
+    }
+  },
+)

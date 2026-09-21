@@ -1676,3 +1676,135 @@ describe('AppStore startup session restoration', () => {
     store.dispose()
   })
 })
+
+it('refreshes the permission roster when its process catalog changes', async () => {
+  let roster = ['workspace-write', 'auto']
+  const client = new StartupClient((request) =>
+    request.type === 'session.open'
+      ? { ...(startupResponse(request) as object), permissionPresets: roster }
+      : startupResponse(request),
+  )
+  const store = createAppStore(client as unknown as ProtocolClient)
+  await store.openSession('session-active')
+  expect(store.permissionPresets).toEqual(roster)
+  roster = ['read-only', 'workspace-write']
+  client.emit({
+    type: 'event',
+    name: 'remote.event',
+    sequence: 99,
+    payload: { name: 'permission-presets/catalog-changed', args: [] },
+  })
+  await vi.waitFor(() => expect(store.permissionPresets).toEqual(roster))
+  store.dispose()
+})
+
+it('keeps the permission roster fail-closed on failure and ignores superseded reads', async () => {
+  const pending: Array<(value: unknown) => void> = []
+  let invalidating = false
+  const client = new StartupClient((request) => {
+    if (request.type !== 'session.open') return startupResponse(request)
+    if (!invalidating) return { ...(startupResponse(request) as object), permissionPresets: ['auto'] }
+    return new Promise<unknown>((resolve) => pending.push(resolve))
+  })
+  const store = createAppStore(client as unknown as ProtocolClient)
+  await store.openSession('session-active')
+  invalidating = true
+  const invalidate = (sequence: number): void =>
+    client.emit({
+      type: 'event',
+      name: 'remote.event',
+      sequence,
+      payload: { name: 'permission-presets/catalog-changed', args: [] },
+    })
+  invalidate(100)
+  expect(store.permissionPresets).toEqual([])
+  invalidate(101)
+  pending[1]?.({ permissionPresets: ['workspace-write'] })
+  await vi.waitFor(() => expect(store.permissionPresets).toEqual(['workspace-write']))
+  pending[0]?.({ permissionPresets: ['auto'] })
+  await new Promise((resolve) => window.setTimeout(resolve, 0))
+  expect(store.permissionPresets).toEqual(['workspace-write'])
+  invalidate(102)
+  pending[2]?.({})
+  await new Promise((resolve) => window.setTimeout(resolve, 0))
+  expect(store.permissionPresets).toEqual([])
+  store.dispose()
+})
+
+it('invalidates plugin inventory only for plugin changes and reconnection', () => {
+  const client = new StartupClient(startupResponse)
+  const store = createAppStore(client as unknown as ProtocolClient)
+  const revision = store.pluginInventoryRevision
+  client.emit({
+    type: 'event',
+    name: 'remote.event',
+    sequence: 100,
+    payload: { name: 'plugin-manager/changed', args: [{ reason: 'plugin' }] },
+  })
+  expect(store.pluginInventoryRevision).toBe(revision + 1)
+  client.emit({
+    type: 'event',
+    name: 'remote.event',
+    sequence: 101,
+    payload: { name: 'plugin-manager/install-log', args: [] },
+  })
+  expect(store.pluginInventoryRevision).toBe(revision + 1)
+  store.dispose()
+})
+
+it('tracks background-session questions and clears them on resolution and subscription reset', async () => {
+  const client = new StartupClient(startupResponse)
+  const store = createAppStore(client as unknown as ProtocolClient)
+  await store.openSession('session-active')
+  const question = {
+    id: 'q-background',
+    sessionId: 'session-other',
+    prompt: 'Continue?',
+    allowFreeText: true,
+  }
+  client.emit({ type: 'event', name: 'question.requested', sequence: 100, payload: { question } })
+  expect(store.questions).toEqual([question])
+  client.emit({
+    type: 'event',
+    name: 'question.resolved',
+    sequence: 101,
+    payload: { sessionId: 'session-other', questionId: question.id },
+  })
+  expect(store.questions).toEqual([])
+  client.emit({ type: 'event', name: 'question.requested', sequence: 102, payload: { question } })
+  client.emit({
+    type: 'event',
+    name: 'session.subscribed',
+    sequence: 103,
+    payload: { sessionId: 'session-other', lastSequence: 102 },
+  })
+  expect(store.questions).toEqual([])
+  store.dispose()
+})
+
+it('refreshes goal activation without allowing an older read to overwrite the latest state', async () => {
+  let live = false
+  const reads: Array<(value: unknown) => void> = []
+  const client = new StartupClient((request) => {
+    if (request.type === 'goal.list' && live) return new Promise((resolve) => reads.push(resolve))
+    return startupResponse(request)
+  })
+  const store = createAppStore(client as unknown as ProtocolClient)
+  await store.openSession('session-active')
+  live = true
+  for (const sequence of [100, 101])
+    client.emit({
+      type: 'event',
+      name: 'remote.event',
+      sequence,
+      payload: { name: 'goal/activation-changed', args: [{ sessionId: 'session-active' }] },
+    })
+  expect(reads).toHaveLength(2)
+  const goal = { id: 'g1', title: 'Finish', status: 'in-progress', activation: 'armed' }
+  reads[1]?.([goal])
+  await vi.waitFor(() => expect(store.goals).toEqual([goal]))
+  reads[0]?.([{ ...goal, activation: 'disarmed' }])
+  await Promise.resolve()
+  expect(store.goals).toEqual([goal])
+  store.dispose()
+})

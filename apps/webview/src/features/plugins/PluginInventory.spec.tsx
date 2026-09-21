@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { PluginInventorySnapshot } from '@dsh-vscode/domain'
 import { PluginInventory } from './PluginInventory.js'
@@ -171,4 +171,24 @@ describe('preset plugin compositions', () => {
     expect(screen.queryByText('hidden')).toBeNull()
     expect(screen.queryByText('Composition unavailable')).toBeNull()
   })
+})
+
+it('refreshes invalidated inventory and ignores an older in-flight snapshot', async () => {
+  const pending: Array<(value: PluginInventorySnapshot) => void> = []
+  const load = vi.fn(() => new Promise<PluginInventorySnapshot>((resolve) => pending.push(resolve)))
+  const view = render(<PluginInventory revision={0} onLoadInventory={load} />)
+  view.rerender(<PluginInventory revision={1} onLoadInventory={load} />)
+  await act(async () => {
+    pending[1]?.({ entries: [] })
+    await Promise.resolve()
+  })
+  expect(screen.getByText('No plugins are available.')).toBeDefined()
+  await act(async () => {
+    pending[0]?.(snapshotFixture())
+    await Promise.resolve()
+  })
+  expect(screen.queryByText('ui-settings')).toBeNull()
+  view.rerender(<PluginInventory revision={1} onLoadInventory={() => load()} />)
+  expect(load).toHaveBeenCalledTimes(2)
+  view.unmount()
 })

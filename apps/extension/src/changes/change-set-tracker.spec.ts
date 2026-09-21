@@ -1,3 +1,4 @@
+import { AppError } from '@dsh-vscode/domain'
 import { describe, expect, it, vi } from 'vitest'
 import type {
   AsyncEventSource,
@@ -756,3 +757,118 @@ describe('ChangeSetTracker', () => {
     await vi.waitFor(() => expect(resolutions).toBe(2))
   })
 })
+
+it.each(['empty', 'filtered'] as const)(
+  'invalidates shell-only changes after a %s snapshot',
+  async (mode) => {
+    const events = eventSource()
+    let sequence = 8
+    let files = [{ path: 'shell.txt', additions: 2, deletions: 0, diffAvailable: true }]
+    const live = {
+      ...backend(events, 1),
+      sessions: {
+        get: vi.fn().mockResolvedValue({ id: 'session-1' }),
+        history: vi.fn(() =>
+          Promise.resolve({
+            hasMore: false,
+            events: [
+              {
+                sequence,
+                time: '',
+                event: { type: 'unknown', name: 'workspace/changes', sessionId: 'session-1' },
+              },
+            ],
+          }),
+        ),
+      },
+      workspaceChanges: {
+        summary: vi.fn(() => Promise.resolve({ turn: 1, total: files.length, files })),
+        diff: vi.fn().mockResolvedValue('@@ -0,0 +1,2 @@\n+one\n+two'),
+      },
+    } as unknown as DshBackend
+    const onInvalidate = vi.fn()
+    let filterAll = false
+    const tracker = new ChangeSetTracker({
+      onInvalidate,
+      toWorkspaceRelativePath: (_workspace, value) => (filterAll ? undefined : value),
+    })
+    tracker.attach(live, () => 'workspace-1')
+    await tracker.refreshAuthoritative(live, 'session-1', 'workspace-1')
+    await tracker.observeNow(observation(diffTool('completed', 'result', { turn: 1 }), 7))
+    const changes = await tracker.list()
+    expect(changes).toHaveLength(1)
+    expect(changes[0]).toMatchObject({
+      relativePath: 'shell.txt',
+      additions: 2,
+      applicationState: 'appliedObserved',
+    })
+    expect((await tracker.get(changes[0]!.changeId)).redactedDiff).toContain('+two')
+    sequence = 9
+    onInvalidate.mockClear()
+    files =
+      mode === 'empty'
+        ? []
+        : [{ path: '/outside/shell.txt', additions: 2, deletions: 0, diffAvailable: true }]
+    filterAll = mode === 'filtered'
+    await tracker.refreshAuthoritative(live, 'session-1', 'workspace-1')
+    expect(await tracker.list()).toEqual([])
+    expect(onInvalidate).toHaveBeenCalledExactlyOnceWith('session-1')
+    tracker.dispose()
+  },
+)
+
+it('does not attribute an unowned session snapshot to the current workspace', async () => {
+  const events = eventSource()
+  const resolve = vi.fn(() => Promise.resolve(undefined))
+  const summary = vi.fn()
+  const live = {
+    ...backend(events, 1),
+    sessions: { get: vi.fn().mockResolvedValue({ id: 'other', cwd: '/outside' }) },
+    workspaceChanges: { summary },
+  } as unknown as DshBackend
+  const tracker = new ChangeSetTracker({ resolveSessionWorkspaceFolderId: resolve })
+  tracker.attach(live, () => 'workspace-1')
+  events.emit({ type: 'unknown', name: 'workspace/changes', sessionId: 'other', sequence: 8, payload: {} })
+  await vi.waitFor(() => expect(resolve).toHaveBeenCalled())
+  expect(summary).not.toHaveBeenCalled()
+  expect(await tracker.list()).toEqual([])
+  tracker.dispose()
+})
+
+it.each(['get', 'history', 'summary', 'cancel'] as const)(
+  'preserves local review rows when authoritative %s fails',
+  async (failure) => {
+    const error = new AppError({
+      code: failure === 'cancel' ? 'REQUEST_CANCELLED' : 'BACKEND_UNREACHABLE',
+      message: 'Unavailable',
+      retryable: false,
+    })
+    const live = {
+      ...backend(eventSource(), 1),
+      sessions: {
+        get: failure === 'get' ? vi.fn().mockRejectedValue(error) : vi.fn().mockResolvedValue({}),
+        history:
+          failure === 'history'
+            ? vi.fn().mockRejectedValue(error)
+            : vi.fn().mockResolvedValue({
+                hasMore: false,
+                events: [{ sequence: 8, event: { type: 'unknown', name: 'workspace/changes' } }],
+              }),
+      },
+      workspaceChanges: { summary: vi.fn().mockRejectedValue(error) },
+    } as unknown as DshBackend
+    const tracker = new ChangeSetTracker()
+    tracker.attach(live, () => 'workspace-1')
+    await tracker.observeNow(observation(diffTool('completed', 'result'), 7))
+    const before = await tracker.list()
+    expect(before.length).toBeGreaterThan(0)
+    try {
+      const refresh = tracker.refreshAuthoritative(live, 'session-1', 'workspace-1')
+      if (failure === 'cancel') await expect(refresh).rejects.toBe(error)
+      else await expect(refresh).resolves.toBe(false)
+      expect(await tracker.list()).toEqual(before)
+    } finally {
+      tracker.dispose()
+    }
+  },
+)

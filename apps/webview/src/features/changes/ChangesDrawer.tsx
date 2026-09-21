@@ -7,6 +7,7 @@ import { Icon } from '../../ui/Icon.js'
 export interface ChangesDrawerProps {
   readonly changes: readonly ChangeSetFile[]
   readonly loading: boolean
+  readonly refreshFailed?: boolean
   readonly onRefresh: () => Promise<void>
   readonly onOpen: (changeId: string) => Promise<void>
   readonly onDetail: (changeId: string) => Promise<ChangeDetail | undefined>
@@ -89,7 +90,7 @@ export function ChangesDrawer(props: ChangesDrawerProps): ReactElement | null {
     triggerRef.current?.focus()
   }
 
-  if (props.changes.length === 0 && !props.loading) return null
+  if (props.changes.length === 0 && !props.loading && !props.refreshFailed) return null
   const countLabel = t('changes.count', { count: props.changes.length })
   return (
     <div ref={rootRef} className="dsh-changes-popover" onKeyDown={onKeyDown}>
@@ -108,6 +109,11 @@ export function ChangesDrawer(props: ChangesDrawerProps): ReactElement | null {
         <span>{countLabel}</span>
         <Icon name="chevron-down" />
       </button>
+      {props.refreshFailed ? (
+        <div className="dsh-changes-popover__error" role="alert">
+          {t('changes.stale')}
+        </div>
+      ) : null}
       {open ? (
         <div className="dsh-changes-popover__menu" role="dialog" aria-label={t('changes.list.aria')}>
           <div className="dsh-changes-popover__header">

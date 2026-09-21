@@ -180,3 +180,25 @@ function byteLength(value: string): number {
   }
   return bytes
 }
+
+/** Authoritative per-turn snapshots retained by the connected DSH process. */
+export interface WorkspaceChangeSource {
+  summary(
+    sessionId: string,
+    sequence: number,
+    signal?: AbortSignal,
+  ): Promise<
+    | {
+        readonly turn: number
+        readonly total: number
+        readonly files: readonly {
+          readonly path: string
+          readonly additions: number
+          readonly deletions: number
+          readonly diffAvailable: boolean
+        }[]
+      }
+    | undefined
+  >
+  diff(sessionId: string, sequence: number, index: number, signal?: AbortSignal): Promise<string | undefined>
+}

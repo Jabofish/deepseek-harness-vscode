@@ -1,3 +1,5 @@
+import type { DshTransport } from '../../contracts.js'
+import { readPermissionCatalog } from './permission-catalog.js'
 import type { VersionAdapterIdentity } from '../../adapter-base.js'
 import { Rc152VersionAdapter, type Rc152AdapterOptions } from '../rc152/adapter.js'
 
@@ -17,6 +19,12 @@ export type Alpha161AdapterOptions = Rc152AdapterOptions
  * than inferred from its semver shape.
  */
 export class Alpha161VersionAdapter extends Rc152VersionAdapter {
+  protected override permissionCatalogReader(
+    transport: DshTransport,
+  ): (signal?: AbortSignal) => Promise<readonly string[]> {
+    return (signal) => readPermissionCatalog(transport, signal)
+  }
+
   protected override readonly identity: VersionAdapterIdentity = {
     id: 'dsh-0.1.6-alpha.1',
     supportedVersion: '0.1.6-alpha.1',

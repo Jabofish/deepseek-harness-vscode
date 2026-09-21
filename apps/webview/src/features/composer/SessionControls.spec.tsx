@@ -451,3 +451,29 @@ describe('SessionControls', () => {
     )
   })
 })
+
+it('requires explicit acknowledgement before selecting experimental Auto permissions', () => {
+  const onCommand = vi.fn()
+  render(
+    <I18nProvider>
+      <SessionControls
+        configuration={configuration({ providerId: '', modelId: '' })}
+        models={[]}
+        presets={[]}
+        permissionPresets={['workspace-write', 'auto']}
+        disabled={false}
+        presetMutable
+        onChange={vi.fn()}
+        onCommand={onCommand}
+      />
+    </I18nProvider>,
+  )
+  fireEvent.click(screen.getByRole('button', { name: 'Access: Workspace Write' }))
+  fireEvent.click(screen.getByRole('option', { name: 'Auto · EXP' }))
+  expect(onCommand).not.toHaveBeenCalled()
+  expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Enable Auto' }).disabled).toBe(true)
+  fireEvent.click(screen.getByRole('checkbox'))
+  fireEvent.click(screen.getByRole('button', { name: 'Enable Auto' }))
+  expect(onCommand).toHaveBeenCalledExactlyOnceWith('/permission auto')
+  cleanup()
+})

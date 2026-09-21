@@ -1,3 +1,4 @@
+import { SubmittedPlanCard } from './SubmittedPlanCard.js'
 import { memo, useCallback, type ReactElement } from 'react'
 import { terminalPresentationFailed, type MessageImageReference } from '@dsh-vscode/domain'
 import { projectToolCallTree, type TimelineNode, type ToolCallTreeNode } from '@dsh-vscode/timeline'
@@ -41,7 +42,20 @@ const toolRendererRegistry = new ToolRendererRegistry()
  */
 export const ToolCallCollection = memo(function ToolCallCollection(
   props: ToolCallCollectionProps,
-): ReactElement | null {
+): ReactElement {
+  return (
+    <>
+      {props.tools
+        .filter((node) => node.tool.submittedPlan !== undefined)
+        .map((node) => (
+          <SubmittedPlanCard key={node.id} tool={node.tool} onOpenLink={props.onOpenLink} />
+        ))}
+      <ToolCallRows {...props} />
+    </>
+  )
+}, toolCollectionEqual)
+
+const ToolCallRows = memo(function ToolCallRows(props: ToolCallCollectionProps): ReactElement | null {
   if (props.tools.length === 0) return null
   const roots = projectToolCallTree(props.tools)
 

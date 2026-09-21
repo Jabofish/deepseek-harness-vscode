@@ -70,6 +70,13 @@ function renderDrawer(
 describe('ChangesDrawer', () => {
   afterEach(() => cleanup())
 
+  it('shows a refresh warning and retry control even without local records', () => {
+    renderDrawer({ changes: [], refreshFailed: true })
+    expect(screen.getByRole('alert').textContent).toContain('Could not refresh changes')
+    fireEvent.click(screen.getByRole('button'))
+    expect(screen.getByRole('button', { name: 'Refresh changes' })).toBeTruthy()
+  })
+
   it('keeps the trigger hidden for an empty settled session', () => {
     renderDrawer({ changes: [] })
     expect(screen.queryByRole('button', { name: '0 changes' })).toBeNull()

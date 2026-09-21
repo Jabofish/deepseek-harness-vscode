@@ -30,7 +30,8 @@ The specs that drive a real host read the same two variables inside
 `transcript.spec.ts`, `writes.spec.ts`, `frames.spec.ts`, `paging.spec.ts`,
 `attachment.spec.ts`, `export.spec.ts`, `change-hunks.spec.ts`,
 `tool-cards.spec.ts`, `subagent-child.spec.ts`, `consistency.spec.ts` and
-`skill-document.spec.ts` always launch the same build, and the printed probe
+`skill-document.spec.ts`, `permission-catalog.spec.ts` and
+`binary-upload.spec.ts` always launch the same build, and the printed probe
 line names the exact adapter selected for that version hint. Two specs never
 start a runtime: `runtime.spec.ts` pins the bare-name PATH resolution and
 `managed-lock.spec.ts` pins the cross-process lock itself.

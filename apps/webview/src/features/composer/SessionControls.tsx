@@ -159,7 +159,7 @@ export const SessionControls = memo(function SessionControls(props: SessionContr
   )
   const handlePermissionChange = useCallback(
     (preset: string): void => {
-      if (isFullAccessPreset(preset)) {
+      if (isFullAccessPreset(preset) || preset === 'auto') {
         setRiskState({ context: riskContext, pending: preset, acknowledged: false })
         return
       }
@@ -221,9 +221,9 @@ export const SessionControls = memo(function SessionControls(props: SessionContr
         className="dsh-session-controls__risk"
         style={riskPosition}
         role="alertdialog"
-        aria-label={t('controls.fullAccessQuestion')}
+        aria-label={t(riskPending === 'auto' ? 'controls.autoQuestion' : 'controls.fullAccessQuestion')}
       >
-        <p>{t('controls.fullAccessDetail')}</p>
+        <p>{t(riskPending === 'auto' ? 'controls.autoDetail' : 'controls.fullAccessDetail')}</p>
         <label>
           <input
             type="checkbox"
@@ -237,7 +237,7 @@ export const SessionControls = memo(function SessionControls(props: SessionContr
               }))
             }}
           />
-          {t('controls.fullAccessAck')}
+          {t(riskPending === 'auto' ? 'controls.autoAck' : 'controls.fullAccessAck')}
         </label>
         <div className="dsh-session-controls__risk-actions">
           <button
@@ -251,7 +251,7 @@ export const SessionControls = memo(function SessionControls(props: SessionContr
               props.onCommand(`/permission ${preset}`)
             }}
           >
-            {t('controls.fullAccessEnable')}
+            {t(riskPending === 'auto' ? 'controls.autoEnable' : 'controls.fullAccessEnable')}
           </button>
           <button
             className="dsh-button dsh-button--secondary dsh-button--compact"
@@ -434,13 +434,14 @@ function presetTranslationKey(id: string, name: string | undefined): string | un
 }
 
 export function permissionOptions(current: string, projected: readonly string[]): readonly string[] {
-  // The permissions projection is the entire switchable roster. When the
-  // projection is absent, preserve only the current configuration value and
+  // The version adapter supplies the authoritative switchable roster. When
+  // the catalog is absent, preserve only the current configuration value and
   // disable switching instead of inventing deployment-specific presets.
   return uniquePermissionOptions([current, ...projected])
 }
 
 export function formatPermissionLabel(id: string, t: Translate = (key) => key): string {
+  if (id === 'auto') return 'Auto · EXP'
   const translationKey = permissionTranslationKey(id)
   if (translationKey !== undefined) return t(translationKey)
   return formatPresetLabel(id, undefined, t)

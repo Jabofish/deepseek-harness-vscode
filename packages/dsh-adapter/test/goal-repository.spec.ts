@@ -273,3 +273,46 @@ describe('Rc6GoalRepository optimistic-concurrency tokens', () => {
     ])
   })
 })
+
+it('reads live activation and retries a read superseded by a stream edge', async () => {
+  const snapshot = { id: 'g', revision: 1, objective: 'Finish', phase: 'active', activation: 'disarmed' }
+  let settle: ((value: unknown) => void) | undefined
+  const remote = vi
+    .fn()
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          settle = resolve
+        }),
+    )
+    .mockResolvedValue({ ok: true, value: { ...snapshot, activation: 'armed' } })
+  const wire = transport(vi.fn())
+  wire.remoteRequest = remote
+  const repository = new Rc6GoalRepository(wire, true)
+  const reading = repository.list('s')
+  repository.remember({
+    type: 'remote.event',
+    name: 'goal/activation-changed',
+    args: [{ sessionId: 's', goal: { id: 'g', revision: 1, activation: 'armed' } }],
+  })
+  settle?.({ ok: true, value: snapshot })
+  await expect(reading).resolves.toEqual([
+    { id: 'g', title: 'Finish', status: 'in-progress', activation: 'armed' },
+  ])
+  expect(remote).toHaveBeenCalledWith('goals/get', { agentId: 's' }, undefined)
+  expect(repository.sessionForGoal('g')).toBe('s')
+})
+
+it('distinguishes absent goals from malformed live activation', async () => {
+  const wire = transport(vi.fn())
+  wire.remoteRequest = vi
+    .fn()
+    .mockResolvedValueOnce({ ok: true })
+    .mockResolvedValueOnce({
+      ok: true,
+      value: { id: 'g', revision: 1, objective: 'Finish', phase: 'active', activation: 'invalid' },
+    })
+  const repository = new Rc6GoalRepository(wire, true)
+  await expect(repository.list('s')).resolves.toEqual([])
+  await expect(repository.list('s')).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
+})

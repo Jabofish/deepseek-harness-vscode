@@ -78,6 +78,7 @@ export interface SettingsDrawerProps {
   readonly onRemovePreset: (presetId: string) => Promise<void>
   readonly onOpenPresetDocument: (presetId: string) => Promise<AgentPresetLocation | undefined>
   readonly onStartCreatorDraft?: () => Promise<void>
+  readonly pluginInventoryRevision?: number
   readonly onLoadPluginInventory: () => Promise<PluginInventorySnapshot | undefined>
 }
 
@@ -1361,7 +1362,10 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                   onConfigureCredential={props.onConfigurePluginCredential}
                   onRemoveCredential={props.onRemovePluginCredential}
                 />
-                <PluginInventory onLoadInventory={() => props.onLoadPluginInventory()} />
+                <PluginInventory
+                  revision={props.pluginInventoryRevision}
+                  onLoadInventory={() => props.onLoadPluginInventory()}
+                />
               </div>
             )}
           </div>

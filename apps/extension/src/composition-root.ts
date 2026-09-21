@@ -164,6 +164,8 @@ import {
   attachmentMimeType,
   isImageMimeType,
   prepareAttachment,
+  isAttachmentSupported,
+  assertAttachmentSupported,
   readAttachmentFile,
   validImageBytes,
 } from './attachments/attachment-codec.js'
@@ -705,8 +707,23 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     }
     return folders.length === 1 && folders[0] !== undefined ? workspaceFolderId(folders[0]) : undefined
   }
+  const supportsBinaryAttachments = (): boolean => {
+    try {
+      return backendService.requireBackend().sessions.supportsFileUploads === true
+    } catch {
+      return false
+    }
+  }
+  const rememberSupportedAttachment = (
+    input: StoredAttachmentInput,
+  ): ReturnType<typeof attachmentTokens.remember> => {
+    assertAttachmentSupported(input, supportsBinaryAttachments())
+    return attachmentTokens.remember(input)
+  }
   const changePathGuard = new WorkspacePathGuard(vscode.workspace)
-  const postChangeFeatureEvent = (change: ChangeSetFile): Promise<boolean> => {
+  const postChangeFeatureEvent = (
+    change: ChangeSetFile | { readonly sessionId: string },
+  ): Promise<boolean> => {
     let connection: DshBackend['connection']
     try {
       connection = backendService.requireBackend().connection
@@ -719,7 +736,6 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     return Promise.resolve(
       post({
         type: 'feature.event',
-        name: 'changes.updated',
         identity: {
           backendInstanceId: connection.backendInstanceId,
           connectionGeneration: connection.connectionGeneration,
@@ -727,11 +743,16 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
           sessionId: change.sessionId,
           localSeq: featureLocalSequence,
         },
-        change: featureChangeSummary(change),
+        ...('changeId' in change
+          ? { name: 'changes.updated' as const, change: featureChangeSummary(change) }
+          : { name: 'changes.invalidated' as const, sessionId: change.sessionId }),
       }),
     )
   }
   const changeTracker = new ChangeSetTracker({
+    onInvalidate: (sessionId) => {
+      void postChangeFeatureEvent({ sessionId })
+    },
     resolveSessionWorkspaceFolderId: async (backend, sessionId) =>
       workspaceFolderIdForSession(await backend.sessions.get(sessionId)),
     // The host states every change path as an absolute host path, while the
@@ -1677,6 +1698,14 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
           ? undefined
           : await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
       const currentWorkspaceId = featureWorkspaceFolderId(request.payload.workspaceFolderId, session)
+      const refreshed =
+        session === undefined ||
+        (await changeTracker.refreshAuthoritative(
+          backendService.requireBackend(),
+          session.id,
+          currentWorkspaceId,
+          signal,
+        ))
       const changes = await changeUseCases.list(
         {
           workspaceFolderId: currentWorkspaceId,
@@ -1689,7 +1718,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
         },
         signal,
       )
-      return { kind: 'changes', items: changes.map(featureChangeSummary) }
+      return { kind: 'changes', items: changes.map(featureChangeSummary), refreshFailed: !refreshed }
     }
     if (request.type === 'changes.detail') {
       const detail = await changeUseCases.get(request.payload.changeId, signal)
@@ -2061,8 +2090,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       if (mimeType === undefined)
         throw new AppError({
           code: 'INVALID_CONFIGURATION',
-          message:
-            'This DSH integration supports images and text-based files; this binary file is not supported.',
+          message: 'The selected file contents do not match its declared text type.',
           retryable: false,
         })
       const maximumBytes = isImageMimeType(mimeType) ? MAX_IMAGE_ATTACHMENT_BYTES : MAX_ATTACHMENT_BYTES
@@ -2080,7 +2108,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
         })
       return {
         cancelled: false,
-        attachment: attachmentTokens.remember({
+        attachment: rememberSupportedAttachment({
           name: path.basename(uri.fsPath),
           mimeType,
           dataUri: `data:${mimeType};base64,${bytes.toString('base64')}`,
@@ -2092,7 +2120,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       const bytes = decodeCanonicalBase64(dataBase64, MAX_IMAGE_ATTACHMENT_BYTES)
       return {
         cancelled: false,
-        attachment: attachmentTokens.remember(prepareAttachment(name, bytes, mimeType)),
+        attachment: rememberSupportedAttachment(prepareAttachment(name, bytes, mimeType)),
       }
     }
     if (request.type === 'attachment.preview') {
@@ -2111,18 +2139,19 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
           name: candidate.name,
           ...(candidate.mimeType === undefined ? {} : { mimeType: candidate.mimeType }),
           active: candidate.active,
-          supported: candidate.mimeType !== undefined,
+          supported: isAttachmentSupported(candidate.mimeType, supportsBinaryAttachments()),
         })),
       }
     }
     if (request.type === 'attachment.open.attach') {
       const candidate = listOpenFileCandidates().find((item) => item.id === request.payload.candidateId)
-      if (candidate === undefined || candidate.mimeType === undefined) return { cancelled: true }
+      if (candidate === undefined || !isAttachmentSupported(candidate.mimeType, supportsBinaryAttachments()))
+        return { cancelled: true }
       const attachment = await readOpenFileAttachment(candidate)
       if (attachment === undefined) return { cancelled: true }
       return {
         cancelled: false,
-        attachment: attachmentTokens.remember(attachment),
+        attachment: rememberSupportedAttachment(attachment),
       }
     }
     if (request.type === 'attachment.read') {

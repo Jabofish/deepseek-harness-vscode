@@ -244,6 +244,7 @@ export interface AppState {
   readonly presets: readonly AgentPresetDescriptor[]
   readonly permissionPresets: readonly string[]
   readonly commands: readonly DynamicCommand[]
+  readonly pluginInventoryRevision: number
   readonly goals: readonly GoalView[]
   readonly todos: readonly TodoView[]
   readonly jobs: readonly JobView[]
@@ -261,6 +262,7 @@ export interface AppState {
   readonly editorContextAvailableKinds: readonly EditorContextKind[]
   readonly editorContextLoading: boolean
   readonly changes: readonly ChangeSetFile[]
+  readonly changesRefreshFailed: boolean
   readonly changesLoading: boolean
   readonly tasks: readonly TaskSummary[]
   readonly tasksLoading: boolean
@@ -526,6 +528,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     presets: [],
     permissionPresets: [],
     commands: [],
+    pluginInventoryRevision: 0,
     goals: [],
     todos: [],
     jobs: [],
@@ -538,6 +541,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     editorContextAvailableKinds: [],
     editorContextLoading: false,
     changes: [],
+    changesRefreshFailed: false,
     changesLoading: false,
     tasks: [],
     tasksLoading: false,
@@ -922,7 +926,32 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   }
   const callbacks: { openCreatedSession?: (sessionId: string) => Promise<void> } = {}
   let refreshVersion = 0
+  let goalActivationAvailable = false
+  let goalReadGeneration = 0
+  let permissionCatalogGeneration = 0
   let openVersion = 0
+  const refreshLiveGoals = async (): Promise<void> => {
+    const sessionId = state.activeSessionId
+    if (sessionId === undefined || !goalActivationAvailable) return
+    const generation = ++goalReadGeneration
+    const version = openVersion
+    try {
+      const goals = parseGoalViews(
+        await client.request<unknown>({ type: 'goal.list', requestId: requestId(), payload: { sessionId } }),
+      )
+      if (
+        !disposed &&
+        version === openVersion &&
+        generation === goalReadGeneration &&
+        state.activeSessionId === sessionId &&
+        goals !== undefined
+      )
+        setState((current) => (sameGoalList(current.goals, goals) ? current : { ...current, goals }))
+    } catch {
+      /* Durable goal state remains available; the next live edge retries. */
+    }
+  }
+
   // Claims the "most recent view request" slot for opens that have to await a
   // catalog read before they can claim `openVersion`.
   let openIntent = 0
@@ -1177,9 +1206,20 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       if (changes !== undefined)
         setState((current) =>
           generation === changesRefreshGeneration && current.activeSessionId === sessionId
-            ? { ...current, changes }
+            ? {
+                ...current,
+                changes,
+                changesRefreshFailed: (result as { refreshFailed?: boolean }).refreshFailed === true,
+              }
             : current,
         )
+      else throw new Error('Invalid Changes response')
+    } catch {
+      setState((current) =>
+        generation === changesRefreshGeneration && current.activeSessionId === sessionId
+          ? { ...current, changesRefreshFailed: true }
+          : current,
+      )
     } finally {
       if (generation === changesRefreshGeneration)
         setState((current) => ({ ...current, changesLoading: false }))
@@ -1591,6 +1631,68 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       void refresh()
     if (
       message.type === 'event' &&
+      ((message.name === 'remote.event' && object(message.payload)?.name === 'plugin-manager/changed') ||
+        (message.name === 'connection.snapshot' && object(message.payload)?.kind === 'connected'))
+    )
+      setState((current) => ({ ...current, pluginInventoryRevision: current.pluginInventoryRevision + 1 }))
+    if (
+      message.type === 'event' &&
+      message.name === 'remote.event' &&
+      object(message.payload)?.name === 'goal/activation-changed'
+    )
+      goalActivationAvailable = true
+    if (
+      message.type === 'event' &&
+      (message.name === 'connection.lost' ||
+        (message.name === 'connection.snapshot' && object(message.payload)?.kind !== 'connected'))
+    ) {
+      goalActivationAvailable = false
+      goalReadGeneration += 1
+    }
+    if (
+      message.type === 'event' &&
+      ((message.name === 'remote.event' && object(message.payload)?.name === 'goal/activation-changed') ||
+        message.name === 'goal.updated' ||
+        message.name === 'session.status' ||
+        message.name === 'session.subscribed' ||
+        (message.name === 'connection.snapshot' && object(message.payload)?.kind === 'connected'))
+    )
+      void refreshLiveGoals()
+    if (
+      message.type === 'event' &&
+      message.name === 'remote.event' &&
+      object(message.payload)?.name === 'permission-presets/catalog-changed'
+    ) {
+      const sessionId = state.activeSessionId
+      const version = openVersion
+      const generation = ++permissionCatalogGeneration
+      // Clear the stale allowlist immediately; a failed read must not keep Auto
+      // selectable after its live integration has been removed.
+      setState((current) => ({ ...current, permissionPresets: [] }))
+      if (sessionId !== undefined)
+        void client
+          .request<unknown>({
+            type: 'session.open',
+            requestId: requestId(),
+            payload: { sessionId },
+          })
+          .then((value) => {
+            if (
+              disposed ||
+              version !== openVersion ||
+              generation !== permissionCatalogGeneration ||
+              state.activeSessionId !== sessionId
+            )
+              return
+            const permissionPresets = stringList(object(value)?.permissionPresets)
+            if (permissionPresets !== undefined) setState((current) => ({ ...current, permissionPresets }))
+          })
+          .catch(() => {
+            /* Preserve the fail-closed roster; reopening retries the read. */
+          })
+    }
+    if (
+      message.type === 'event' &&
       message.name === 'remote.event' &&
       isCommandDirectoryRefresh(message.payload)
     )
@@ -1689,6 +1791,8 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
             if (availableKinds !== undefined)
               setState((current) => ({ ...current, editorContextAvailableKinds: availableKinds }))
           }
+          if (message.name === 'changes.invalidated' && message.sessionId === state.activeSessionId)
+            void refreshChangesState(message.sessionId)
           if (message.name === 'changes.updated' && message.change.sessionId === state.activeSessionId)
             void refreshChangesState(message.change.sessionId)
           if (
@@ -1863,6 +1967,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       // but do not make their latency part of the session-open completion.
       const commandDirectoryData = loadCommandDirectory(sessionId)
       const sessionModelDirectoryData = loadSessionModelDirectory(client, sessionId)
+      const goalBaselineGeneration = goalReadGeneration
       const secondaryData = Promise.all([
         safeList<QueuedInput>(
           client,
@@ -1924,6 +2029,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
             subagents: EMPTY_SUBAGENT_CATALOG,
             activeSubagent: undefined,
             changes: [],
+            changesRefreshFailed: false,
             changesLoading: false,
             // A refresh superseded by this open can no longer clear its own
             // loading flag, so the reset has to release it.
@@ -1980,6 +2086,11 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       void secondaryData
         .then(([queue, goals, jobs, feedback, subagents]) => {
           if (version !== openVersion) return
+          if (
+            goalBaselineGeneration === goalReadGeneration &&
+            goals?.some((goal) => goal.activation !== undefined)
+          )
+            goalActivationAvailable = true
           // A gap event has already been applied live and may have triggered
           // an asynchronous history rebuild. Replaying it over the advisory
           // baseline would re-add a gap notice after the backfill removed it.
@@ -1991,7 +2102,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
               {
                 ...current,
                 ...(queue === undefined ? {} : { queue }),
-                ...(goals === undefined ? {} : { goals }),
+                ...(goals === undefined || goalBaselineGeneration !== goalReadGeneration ? {} : { goals }),
                 ...(jobs === undefined ? {} : { jobs }),
                 ...(feedback.items === undefined ? {} : { feedback: feedbackRecord(feedback.items) }),
                 ...(feedback.unavailable === undefined ? {} : { feedbackUnavailable: feedback.unavailable }),
@@ -2051,6 +2162,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
           payload: { sessionId: entry.id },
         })
         .then(parseSubagentHistory)
+      const goalBaselineGeneration = goalReadGeneration
       const secondaryData = Promise.all([
         safeList<QueuedInput>(
           client,
@@ -2125,6 +2237,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
             subagents: EMPTY_SUBAGENT_CATALOG,
             commands: [],
             changes: [],
+            changesRefreshFailed: false,
             changesLoading: false,
             editorContextLoading: false,
             tasks: [],
@@ -2148,6 +2261,12 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       persistWebviewState({ activeSessionId: entry.id })
 
       const [queue, goals, jobs, feedback, subagents] = await secondaryData
+      if (
+        version === openVersion &&
+        goalBaselineGeneration === goalReadGeneration &&
+        goals?.some((goal) => goal.activation !== undefined)
+      )
+        goalActivationAvailable = true
       if (version !== openVersion) return
       const pendingMessages = pendingMessagesFrom(pending, advisoryReplayStart)
       setState((current) =>
@@ -2155,7 +2274,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
           {
             ...current,
             ...(queue === undefined ? {} : { queue }),
-            ...(goals === undefined ? {} : { goals }),
+            ...(goals === undefined || goalBaselineGeneration !== goalReadGeneration ? {} : { goals }),
             ...(jobs === undefined ? {} : { jobs }),
             ...(feedback.items === undefined ? {} : { feedback: feedbackRecord(feedback.items) }),
             ...(feedback.unavailable === undefined ? {} : { feedbackUnavailable: feedback.unavailable }),
@@ -2360,6 +2479,9 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     get commands() {
       return state.commands
     },
+    get pluginInventoryRevision() {
+      return state.pluginInventoryRevision
+    },
     get goals() {
       return state.goals
     },
@@ -2395,6 +2517,9 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     },
     get changes() {
       return state.changes
+    },
+    get changesRefreshFailed() {
+      return state.changesRefreshFailed
     },
     get changesLoading() {
       return state.changesLoading
@@ -2871,6 +2996,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         ...current,
         goals: current.goals.map((goal) => (goal.id === goalId ? { ...goal, ...update } : goal)),
       }))
+      await refreshLiveGoals()
     },
     clearGoal: async (goalId) => {
       await client.request<unknown>({
@@ -5217,12 +5343,12 @@ function applyHostMessage(
         if (sessions !== next.sessions) next = { ...next, sessions }
       }
     }
-  } else if (event.type === 'session.subscribed' && event.sessionId === next.activeSessionId) {
+  } else if (event.type === 'session.subscribed') {
     // queue/jobs and pending interactions are process-local snapshots. The
     // pinned mux starts every subscription with `session/subscribed` and only
     // follows it with a queue/jobs frame when that snapshot is non-empty.
-    const queue = next.queue.length === 0 ? next.queue : []
-    const jobs = next.jobs.length === 0 ? next.jobs : []
+    const queue = event.sessionId !== next.activeSessionId || next.queue.length === 0 ? next.queue : []
+    const jobs = event.sessionId !== next.activeSessionId || next.jobs.length === 0 ? next.jobs : []
     const permissions =
       event.controlBaseline === false
         ? next.permissions
@@ -5267,6 +5393,8 @@ function applyHostMessage(
     const wasActive = next.activeSessionId === event.sessionId
     next = {
       ...next,
+      permissions: next.permissions.filter((request) => request.sessionId !== event.sessionId),
+      questions: next.questions.filter((question) => question.sessionId !== event.sessionId),
       sessions: next.sessions.filter((session) => session.id !== event.sessionId),
       subagents: {
         ...next.subagents,
@@ -5340,23 +5468,27 @@ function applyHostMessage(
     if (!sameTodoList(next.todos, event.todos)) next = { ...next, todos: event.todos }
   } else if (event.type === 'jobs.updated' && event.sessionId === next.activeSessionId) {
     if (!sameJobList(next.jobs, event.jobs)) next = { ...next, jobs: event.jobs }
-  } else if (event.type === 'permission.resolved' && event.sessionId === next.activeSessionId) {
-    const permissions = removeMatching(next.permissions, (request) => request.id === event.requestId)
+  } else if (event.type === 'permission.resolved') {
+    const permissions = removeMatching(
+      next.permissions,
+      (request) => request.sessionId === event.sessionId && request.id === event.requestId,
+    )
     if (permissions !== next.permissions) next = { ...next, permissions }
-  } else if (event.type === 'question.resolved' && event.sessionId === next.activeSessionId) {
+  } else if (event.type === 'question.resolved') {
     const questions = removeMatching(
       next.questions,
       (question) =>
-        question.id === event.questionId ||
-        (event.questionRpcId !== undefined && question.rpcId === event.questionRpcId),
+        question.sessionId === event.sessionId &&
+        (question.id === event.questionId ||
+          (event.questionRpcId !== undefined && question.rpcId === event.questionRpcId)),
     )
     if (questions !== next.questions) next = { ...next, questions }
-  } else if (event.type === 'permission.requested' && event.request.sessionId === next.activeSessionId) {
+  } else if (event.type === 'permission.requested') {
     next = {
       ...next,
       permissions: [...next.permissions.filter((request) => request.id !== event.request.id), event.request],
     }
-  } else if (event.type === 'question.requested' && event.question.sessionId === next.activeSessionId) {
+  } else if (event.type === 'question.requested') {
     next = {
       ...next,
       questions: [...next.questions.filter((question) => question.id !== event.question.id), event.question],
@@ -5394,6 +5526,7 @@ function withoutConnectionScopedSurfaces(state: AppState): AppState {
     editorContextAvailableKinds: [],
     editorContextLoading: false,
     changes: [],
+    changesRefreshFailed: false,
     changesLoading: false,
     tasks: [],
     tasksLoading: false,
@@ -6180,6 +6313,16 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
         status: value.tool.status,
         ...(typeof value.tool.startedAt === 'string' ? { startedAt: value.tool.startedAt } : {}),
         ...(typeof value.tool.completedAt === 'string' ? { completedAt: value.tool.completedAt } : {}),
+        ...(isRecord(value.tool.submittedPlan) &&
+        typeof value.tool.submittedPlan.title === 'string' &&
+        typeof value.tool.submittedPlan.markdown === 'string'
+          ? {
+              submittedPlan: {
+                title: value.tool.submittedPlan.title,
+                markdown: value.tool.submittedPlan.markdown,
+              },
+            }
+          : {}),
         ...(typeof value.tool.inputSummary === 'string' ? { inputSummary: value.tool.inputSummary } : {}),
         ...(typeof value.tool.outputSummary === 'string' ? { outputSummary: value.tool.outputSummary } : {}),
         ...(typeof value.tool.error === 'string' ? { error: value.tool.error } : {}),
@@ -9166,6 +9309,7 @@ function sameGoalList(left: readonly GoalView[], right: readonly GoalView[]): bo
       previous.title === next.title &&
       previous.status === next.status &&
       previous.maxGoalRounds === next.maxGoalRounds &&
+      previous.activation === next.activation &&
       // The host can republish a still-blocked goal with a different reason;
       // comparing only status would keep showing the superseded one.
       previous.blockedReason?.code === next.blockedReason?.code &&
@@ -9257,6 +9401,7 @@ function isGoalView(value: unknown): value is GoalView {
     typeof item.id === 'string' &&
     typeof item.title === 'string' &&
     isGoalStatus(item.status) &&
+    (item.activation === undefined || item.activation === 'armed' || item.activation === 'disarmed') &&
     (item.maxGoalRounds === undefined || positiveSafeInteger(item.maxGoalRounds) !== undefined) &&
     (item.blockedReason === undefined || isGoalBlockedReason(item.blockedReason))
   )

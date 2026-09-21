@@ -97,3 +97,16 @@ describe('attachment codec', () => {
     expect(textError.message).toBe('The attachment is too large.')
   })
 })
+
+it('stages binary bytes only for an explicitly supported version and enforces the shared budget', () => {
+  const attachments = [{ uri: 'data:application/octet-stream;base64,AAECAw==', name: 'archive.zip' }]
+  const limits = { maxImageBytes: 8, maxAttachmentTotalBytes: 8, maxImageTotalBytes: 8 }
+  expect(() => encodePromptContent('', attachments, limits)).toThrow('images and text-based files only')
+  expect(encodePromptContent('', attachments, { ...limits, allowBinaryFiles: true })).toEqual([
+    { type: 'text', text: '' },
+    { type: 'file-upload', data: 'AAECAw==', name: 'archive.zip' },
+  ])
+  expect(() =>
+    encodePromptContent('', attachments, { ...limits, allowBinaryFiles: true, maxAttachmentTotalBytes: 3 }),
+  ).toThrow('combined attachment size')
+})

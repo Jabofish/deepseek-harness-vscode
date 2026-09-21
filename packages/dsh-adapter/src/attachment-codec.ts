@@ -85,6 +85,7 @@ export function encodeImageAttachments(
 }
 
 export interface PromptContentLimits {
+  readonly allowBinaryFiles?: boolean
   readonly maxImageBytes: number
   readonly maxAttachmentTotalBytes: number
   readonly maxImageTotalBytes: number
@@ -164,6 +165,12 @@ export function encodePromptContent(
           retryable: false,
         })
       content.push({ type: 'image', mediaType, data: encoded, name: safeAttachmentName(attachment.name) })
+      continue
+    }
+    if (!isTextAttachment(mediaType, attachment.name, bytes) && limits.allowBinaryFiles === true) {
+      // Internal host-only staging part, replaced with an opaque receipt by the
+      // exact version transport before session/prompt is sent.
+      content.push({ type: 'file-upload', data: encoded, name: safeAttachmentName(attachment.name) })
       continue
     }
     if (!isTextAttachment(mediaType, attachment.name, bytes))

@@ -1,7 +1,7 @@
 import { AppError, type BackendEvent, type GoalRepository, type GoalView } from '@dsh-vscode/domain'
 
 import type { DshTransport } from '../contracts.js'
-import { callRpc, unavailable } from '../versions/rc6/rpc.js'
+import { callRpc, unavailable, unwrapOptionalRpcResultValue } from '../versions/rc6/rpc.js'
 import { rc6Mapper } from '../versions/rc6/mapper.js'
 import { walkHistoryPages } from './shared/guards.js'
 
@@ -13,9 +13,40 @@ export class Rc6GoalRepository implements GoalRepository {
     { readonly sessionId: string; readonly id: string; revision: number }
   >()
   private readonly goalCache = new Map<string, readonly GoalView[]>()
-  public constructor(private readonly transport: DshTransport) {}
+  private readonly liveEpochs = new Map<string, number>()
+  public constructor(
+    private readonly transport: DshTransport,
+    private readonly liveGoal = false,
+  ) {}
 
   public remember(event: BackendEvent): void {
+    if (this.liveGoal) {
+      if (event.type === 'remote.event' && event.name === 'goal/activation-changed') {
+        const payload = asRecord(event.args[0])
+        if (typeof payload?.sessionId === 'string') {
+          const sessionId = payload.sessionId
+          this.liveEpochs.set(sessionId, (this.liveEpochs.get(sessionId) ?? 0) + 1)
+          const goal = asRecord(payload.goal)
+          const ref = typeof goal?.id === 'string' ? this.refs.get(goal.id) : undefined
+          if (
+            ref?.sessionId === sessionId &&
+            ref.revision === goal?.revision &&
+            (goal?.activation === 'armed' || goal?.activation === 'disarmed')
+          )
+            this.patchCachedGoal(sessionId, ref.id, { activation: goal.activation })
+        }
+        return
+      }
+      if (
+        'sessionId' in event &&
+        (event.type === 'goal.updated' ||
+          event.type === 'session.removed' ||
+          event.type === 'session.subscribed' ||
+          (event.type === 'session.projection' && event.key === 'goal'))
+      )
+        this.liveEpochs.set(event.sessionId, (this.liveEpochs.get(event.sessionId) ?? 0) + 1)
+    }
+
     if (event.type === 'goal.updated') this.goalCache.set(event.sessionId, event.goals)
     else if (event.type === 'session.projection' && event.key === 'goal') {
       const goals = goalViewsFromProjection(event.value)
@@ -48,6 +79,7 @@ export class Rc6GoalRepository implements GoalRepository {
   }
 
   public async list(sessionId: string, signal?: AbortSignal): Promise<readonly GoalView[]> {
+    if (this.liveGoal) return this.readLive(sessionId, signal)
     const cached = this.goalCache.get(sessionId)
     if (cached !== undefined) return cached
     // rc.6 deliberately exposes goal state through the session projection and
@@ -92,6 +124,37 @@ export class Rc6GoalRepository implements GoalRepository {
     // or the projection would stay stale until the next goal change.
     if (!this.goalCache.has(sessionId)) this.goalCache.set(sessionId, goals)
     return this.goalCache.get(sessionId) ?? goals
+  }
+
+  private async readLive(sessionId: string, signal?: AbortSignal): Promise<readonly GoalView[]> {
+    // Retry a read invalidated by a newer stream edge; never install old CAS refs.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const epoch = this.liveEpochs.get(sessionId) ?? 0
+      const value = unwrapOptionalRpcResultValue<unknown>(
+        await this.transport.remoteRequest('goals/get', { agentId: sessionId }, signal),
+        'goals/get',
+      )
+      if (epoch !== (this.liveEpochs.get(sessionId) ?? 0)) continue
+      const record = asRecord(value)
+      if (
+        value !== undefined &&
+        (record === undefined ||
+          positiveSafeInteger(record.revision) === undefined ||
+          (record.activation !== 'armed' && record.activation !== 'disarmed'))
+      )
+        throw malformedGoalResponse('live view')
+      const goals = value === undefined ? [] : goalViewsFromProjection({ goal: value })
+      if (goals === undefined) throw malformedGoalResponse('live view')
+      this.liveEpochs.set(sessionId, epoch + 1)
+      replaceProjectionRefs(this.refs, sessionId, { goal: value ?? null })
+      this.goalCache.set(sessionId, goals)
+      return goals
+    }
+    throw new AppError({
+      code: 'PROTOCOL_ERROR',
+      message: 'Goal changed while reading; retry the read.',
+      retryable: true,
+    })
   }
 
   public async create(
@@ -271,6 +334,9 @@ function goalViewsFromProjection(value: unknown): readonly GoalView[] | undefine
       id,
       title,
       status: mappedStatus,
+      ...(goal.activation === 'armed' || goal.activation === 'disarmed'
+        ? { activation: goal.activation }
+        : {}),
       ...(maxGoalRounds === undefined ? {} : { maxGoalRounds }),
       ...(blockedReason === undefined ? {} : { blockedReason }),
     },

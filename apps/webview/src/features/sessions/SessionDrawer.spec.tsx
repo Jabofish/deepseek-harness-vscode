@@ -90,6 +90,29 @@ function createDataTransfer(): {
 describe('SessionDrawer', () => {
   afterEach(() => cleanup())
 
+  it('prioritizes approval, plan review and answers over running indicators', () => {
+    renderDrawer({
+      sessions: sessions.map((entry) => ({ ...entry, workspaceId: 'w1', status: 'running' })),
+      permissions: [
+        { id: 'p', sessionId: 's1', title: 'Approve', description: '', risk: 'low', options: [] },
+      ],
+      questions: [
+        {
+          id: 'q1',
+          sessionId: 's2',
+          prompt: 'Plan',
+          allowFreeText: false,
+          intent: { kind: 'plan-review', approve: 'yes' },
+        },
+        { id: 'q2', sessionId: 's3', prompt: 'Answer', allowFreeText: true },
+      ],
+    })
+    for (const label of ['Waiting for approval', 'Waiting for plan review', 'Waiting for answer']) {
+      expect(screen.getByRole('img', { name: label })).toBeDefined()
+    }
+    expect(screen.queryByRole('img', { name: 'Running' })).toBeNull()
+  })
+
   it('filters the current workspace instantly by title substring', () => {
     renderDrawer()
     fireEvent.change(screen.getByLabelText('Search sessions by title or content'), {

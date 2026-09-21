@@ -88,7 +88,7 @@
 - 同一批宿主上调用期（`tool/call`）也没有任何投影（`presentCall` 值不进 Client），运行中的变更卡必须由**调用参数**派生，规则与官方客户端 diff 卡模型逐条一致：`write` 取 `file_path` + `content`（`oldText: null`，覆盖写同样如此，因为调用期看不到原内容）、`edit` 取 `file_path` + `old_string`/`new_string`（空 `old_string` 视为纯插入，即 `oldText: null`；`replace_all` 只能是布尔）、`str_replace_editor` 只在 `command` 为 `create`（`file_text`，可缺省为空文件）或 `str_replace`（`old_str`/`new_str`，`old_str` 缺省为 `null`）时出卡；参数不合法（`path`/`file_path` 为空或非字符串、`content` 非字符串、`replace_all` 非布尔）、越权字段 `sandbox_permissions`/`justification` 不成对或取值不在 `workspace-write`/`danger-full-access` 且 justification 非空白、`str_replace_editor` 的其他命令、以及代码分发 PTC 子调用一律不出卡。派生只为上述第一方文件变更工具，绝不按名字给第三方工具编造卡片；envelope 存在时仍以宿主投影为权威。结算期不派生调用期卡片，时间线保留调用期已携带的卡（成功且 `meta` 带卡时由结算卡替换），因此「打算做」永远不会被当成「已做」。
 - Alpha v0 的 Remote Event 在结算时只向*其他*仍持有投递的 Client 推送 `cancel` 帧：发起响应的 Client 一旦 `$events/result` 被接受，就再也不会收到任何帧。因此本地已接受的审批/问题结算必须由适配层按真实身份补发 `permission.resolved`（`requestId` + outcome）或 `question.resolved`（`questionRpcId` + outcome）；否则 Host 回放缓存和任务中心会一直重放一个已经无法再回答的请求（响应只会得到 `STALE_INTERACTION`）。
 - Session v2 只在 `alpha13`/`alpha132` 精确入口启用 `isSeeded`、event-only history、`assistantStream` 和 `start/chunk/end` 修订帧。
-- Session v3 只在 `alpha151`/`alpha152`/`rc151`/`rc152`/`alpha161`/`alpha162` 精确入口启用严格 envelope、surface replacement、`system/message` 隔离和 PTC 事件；`alpha161` 的 `image/offload` 与 alpha162 的 `workspace/changes` 仍只作为脱敏 opaque unknown 保留，不伪造本地投影。
+- Session v3 只在 `alpha151`/`alpha152`/`rc151`/`rc152`/`alpha161`/`alpha162` 精确入口启用严格 envelope、surface replacement、`system/message` 隔离和 PTC 事件；`image/offload` 决策事件按 opaque 保留，图片的持久附件引用继续可读；alpha162 的 `workspace/changes` 公告由宿主审查器解析坐标，使用固定 GET summary/diff 路由读取权威快照。
 - Agent Teams 事件（`team/member`、`team/task`、`team/message/queued`、`team/message/delivered`）的 envelope 版本随发行线变化：已发布的 `0.1.2-alpha.2`–`alpha.5` 是 `version: 1`，其排队消息快照带必填 `delivery`；`0.1.6-alpha.1` 起为 `version: 2`（上游 `z.literal(2)` 严格校验），消息快照不再有 `delivery`。共享 mapper 同时接受这两种版本，v1 仍要求 `delivery`（缺失即判为畸形），v2 只在载荷携带时投影该字段；其他 envelope 版本继续 fail-closed 为 unknown。
 - `team/message/queued` 与 `team/message/delivered` 是同一条消息的两条记录：前者是已持久保存的消息本体（正文与发件人只在这里），后者是只带 `messageId`/`targetId` 的投递回执。时间线按 `teamId` + `messageId` 归并为一行，回执推进该行的状态并保留本体事实；成员与任务则各自按快照身份一行。任何一侧都不得据此伪造消息正文或把回执显示成独立卡片。消息正文与成员失败原因都是宿主原文：Mailbox 只约束发送方成帧后的整条投递（`maxMessageBytes`，默认 65 536 字节且可配置），失败原因由 `errorMessage(error)` 原样保存，因此这两段文本按普通散文渲染（换行、不省略号收尾），发件人（`senderName`）也必须出现在行上。
 - `system/message` 只在 Host 保留序号水印；系统提示词、Cookie、launch token、endpoint 和原始上游错误不进入 Webview。
@@ -97,6 +97,15 @@
 - `deliverables/presented` 映射为有界的相对文件 DTO；`subagent/catalog` 是父会话目录事实；文件打开/显示始终回到 Extension Host。
 - rc.2 的消息反馈分类、提交和撤销只通过 Host 调用真实 Remote 方法；不能用空实现或模型文本猜测结果。
 - 未知字段只在版本契约明确允许时忽略；必填字段、序号、replacement 和 frame 外壳均 fail-closed。
+
+## Alpha 权限、二进制附件与 Cordis 客户端边界
+
+- `alpha161`/`alpha162` 的 `permissions` 投影只携带 `currentValue`，可选项由 `permissionPresets/catalog` 的 `options` 读取。较早版本继续读取投影目录；不按 alpha 后缀猜测契约。`permission-presets/catalog-changed` 使当前目录失效并重读，失效期间不保留旧选项。权限 ID 原样保留；Auto 标记实验性并要求风险确认。
+- `alpha162` 的普通会话二进制附件先以 `fileUploads/upload` 的 `{ agentId, request: { data, name } }` 上传，再向 `session/prompt` 提交 `{ type: 'file', receiptId }`。receipt 只用于原接收会话，不跨会话缓存，不自动重试上传或消息写入。畸形回执、取消、超时均终止消息提交。保留单个非图片文件 8 MiB、20 个草稿附件的本地上限；图片及文本原有通路保留。旧版本、子代理和命令附件不据此声明支持二进制上传。
+- `alpha162` 的 `cordis/request-run` 被展示为仅可拒绝的交互；用户明确拒绝后调用 `dynamicCordisRunner/resolveRequestRun`，不调用普通审批 waterfall，不自动拒绝其他客户端的请求。`cordis/request-run-resolved` 清理其他客户端已结算的请求。VS Code 不加载或执行 Cordis 浏览器代码。
+- `cordis/inspect-query` 的上游只接受成功的真实页面查询结果，失败回复不会结算。插件显示需要连接 DSH Web 或停止当前回合的提示，不伪造查询结果。Cordis 浏览器运行与查询仍属明确未支持的产品面；这里修复的是静默丢弃和无拒绝入口，不能视为完整创造模式适配。
+
+证据入口：`permission-catalog.spec.ts`、`alpha162-contract.spec.ts`、`cordis-boundary.spec.ts` 与 Webview store/SessionControls 回归测试；隔离真实 DSH 验证使用 `tests/live-dsh/permission-catalog.spec.ts` 和 `binary-upload.spec.ts`。前两项已通过 alpha.2 实测，Cordis 只有契约/自动测试证据，真实 VS Code 交互仍待验证。
 
 ## Host 本地能力
 
@@ -161,3 +170,5 @@ alpha 线的 `session/modelCatalog` 不直接给出 `session.models` 的应答�
 每个 Session 保存最后提交的服务器序号。重连顺序固定为：重新订阅、比较序号、通过历史补齐缺口、去重、提交 reducer。事件不能只按时间戳排序；未知事件保留安全的类型/序号/摘要，不能阻断后续已知事件。
 
 Extension 只停止自己创建并持有句柄的 DSH 进程。外部实例必须保持运行；连接、WebSocket、订阅和临时资源在成功、失败、取消、超时和关闭路径都要释放。
+
+alpha162 另接 `goals/get` 与 `goal/activation-changed`：进程内 armed/disarmed 独立于持久 phase；旧读取不能覆盖新流事件，激活停用的 active Goal 可显式恢复。Plan 卡仅由 exit_plan_mode 的完整结构化 plan 参数构造，不从模型文本推断。

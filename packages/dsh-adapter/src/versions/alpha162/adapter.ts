@@ -16,6 +16,10 @@ export type Alpha162AdapterOptions = Alpha161AdapterOptions
  * stay separate even though the common v3 repository assembly is reused.
  */
 export class Alpha162VersionAdapter extends Alpha161VersionAdapter {
+  protected override readonly supportsWorkspaceChanges = true
+  protected override readonly supportsLiveGoal = true
+  protected override readonly supportsFileUploads = true
+
   protected override readonly identity: VersionAdapterIdentity = {
     id: 'dsh-0.1.6-alpha.2',
     supportedVersion: '0.1.6-alpha.2',
@@ -28,6 +32,8 @@ export class Alpha162VersionAdapter extends Alpha161VersionAdapter {
     return {
       ...super.createTransportOptions(endpoint),
       controlWireVersion: 'inbox-v1',
+      fileUploads: true,
+      cordisClientBoundary: true,
       normalizeErrorCode: normalizeAlpha2ErrorCode,
     }
   }

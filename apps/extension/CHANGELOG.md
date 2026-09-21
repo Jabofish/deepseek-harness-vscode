@@ -1,5 +1,12 @@
 # Change Log
 
+## Unreleased
+
+- alpha.2 会话与交互：恢复 Goal 激活控制、刷新插件清单并显示待处理会话交互；读取权威回合变更，将已提交的 Plan Markdown 保留为可复用聊天卡片。
+- 修复 DSH 0.1.6 alpha 权限选择器仅显示当前值：读取独立动态目录、监听目录失效，补齐 Auto 实验标记和风险确认。
+- DSH 0.1.6-alpha.2 支持通过会话上传回执发送 PDF、Office、压缩包等二进制附件，保留非图片单文件 8 MiB 限制。
+- alpha.2 的 Cordis 浏览器激活请求不再静默丢弃：可由用户明确拒绝；需要真实页面的查询提示转到 DSH Web 或停止回合。完整浏览器插件执行仍未支持。
+
 ## 0.2.1
 
 - 接入 DSH `0.1.6-alpha.2`（`alpha162`）与 `0.1.6-alpha.1`（`alpha161`）精确 Adapter：alpha.2 按新的 `session/control` `projections.inbox` 归约队列/Steer、严格拒绝 alpha.1 的 `queues` 基线并归一化 `session/writer-held`，alpha.1 复用已核对的 Session v3 基础 wire、`image/offload` 只作脱敏 opaque 保留；两条线补齐畸形/取消/释放 fixture 并通过 managed live smoke，真实 DSH 证据与 `docs/dsh-contract.md`、能力矩阵同步；新增 alpha surface 不冒充完成，安装器默认仍为 `0.1.5-rc.2`。

@@ -4,6 +4,7 @@ import { Icon } from '../../ui/Icon.js'
 import { useI18n } from '../../i18n.js'
 
 export interface PluginInventoryProps {
+  readonly revision?: number | undefined
   readonly onLoadInventory: () => Promise<PluginInventorySnapshot | undefined>
 }
 
@@ -61,10 +62,10 @@ export function PluginInventory(props: PluginInventoryProps): ReactElement {
     return () => {
       current = false
     }
-    // Inventory reads are explicit (mount/retry). Parent renders publish a new
+    // Inventory reads are explicit (mount/retry/invalidation). Parent renders publish a new
     // callback identity and must not turn ordinary backend events into polling.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [request])
+  }, [request, props.revision])
 
   const normalizedQuery = query.trim().toLocaleLowerCase()
   const filteredEntries = useMemo(

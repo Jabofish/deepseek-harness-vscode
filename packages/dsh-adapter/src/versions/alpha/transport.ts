@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { CordisClientBoundary } from '../alpha162/cordis-boundary.js'
 import WebSocket from 'ws'
 
 import { AppError, type BackendEndpoint } from '@dsh-vscode/domain'
@@ -37,6 +38,8 @@ export type AlphaSessionWireVersion = 'v0' | 'v2' | 'v3'
 export type AlphaSessionControlWireVersion = 'queue-v1' | 'inbox-v1'
 
 export interface AlphaLoopbackApiClientOptions {
+  readonly cordisClientBoundary?: boolean
+  readonly fileUploads?: boolean
   readonly endpoint: BackendEndpoint
   readonly requestTimeoutMs: number
   readonly retryPolicy: RetryPolicy
@@ -81,6 +84,7 @@ type LegacyResponse = { readonly rpcId: string; readonly result: AlphaResult }
  * compatibility projection consumed by the existing repositories.
  */
 export class AlphaLoopbackApiClient implements DshTransport {
+  private readonly cordisBoundary = new CordisClientBoundary()
   private readonly closed = new AbortController()
   private readonly remoteMux: AlphaRemoteMux
   private isClosed = false
@@ -110,6 +114,70 @@ export class AlphaLoopbackApiClient implements DshTransport {
       },
       signal,
     )
+  }
+
+  /** Fixed read-only routes; never accepts a caller-provided URL. */
+  public async readChanges(
+    kind: 'summary' | 'diff',
+    sessionId: string,
+    sequence: number,
+    index?: number,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
+    if (this.isClosed) throw closedError()
+    const target = new URL(`/api/changes.${kind}`, this.options.endpoint.baseUrl)
+    target.searchParams.set('sessionId', sessionId)
+    target.searchParams.set('seq', String(sequence))
+    if (index !== undefined) target.searchParams.set('index', String(index))
+    const cookie = this.options.authCookie?.(this.options.endpoint)
+    const cancellationSignal = combineSignals(signal, this.closed.signal)
+    const requestSignal = combineSignals(
+      cancellationSignal,
+      AbortSignal.timeout(this.options.requestTimeoutMs),
+    )
+    try {
+      requestSignal.throwIfAborted()
+      const response = await this.options.fetch(target, {
+        method: 'GET',
+        redirect: 'error',
+        signal: requestSignal,
+        headers: cookie === undefined ? {} : { Cookie: cookie },
+      })
+      if (!response.ok) {
+        await releaseUnreadBody(response)
+        if (response.status === 404) return undefined
+        throw httpFailure('workspace changes', response.status)
+      }
+      const reader = response.body?.getReader()
+      if (reader === undefined) throw malformedResponse('workspace changes')
+      let text = ''
+      let size = 0
+      const decoder = new TextDecoder()
+      try {
+        while (true) {
+          const chunk = await reader.read()
+          if (chunk.done) break
+          size += chunk.value.byteLength
+          if (size > 8 * 1024 * 1024) throw malformedResponse('workspace changes size')
+          text += decoder.decode(chunk.value, { stream: true })
+        }
+        requestSignal.throwIfAborted()
+        try {
+          return JSON.parse(text + decoder.decode()) as unknown
+        } catch (error) {
+          throw malformedResponse('workspace changes', error)
+        }
+      } finally {
+        await reader.cancel().catch(() => undefined)
+        reader.releaseLock()
+      }
+    } catch (error) {
+      throw normalizeTransportError(
+        'workspace changes',
+        requestSignal.aborted ? requestSignal.reason : error,
+        cancellationSignal,
+      )
+    }
   }
 
   /** Download the exact Host-owned ZIP route retained by the alpha build. */
@@ -170,6 +238,21 @@ export class AlphaLoopbackApiClient implements DshTransport {
   }
 
   public async respondEnvelope(rpcId: string, result: unknown, signal?: AbortSignal): Promise<unknown> {
+    const cordisReceipt = await this.cordisBoundary.respond(
+      rpcId,
+      result,
+      (requestId, requestSignal) =>
+        this.unary(
+          'dynamicCordisRunner/resolveRequestRun',
+          {
+            requestId,
+            resolution: { ok: false, reason: 'rejected' },
+          },
+          requestSignal,
+        ),
+      signal,
+    )
+    if (cordisReceipt !== undefined) return cordisReceipt
     const pending = this.pendingEvents.get(rpcId)
     if (pending === undefined || pending.clientId !== this.eventClientId)
       throw new AppError({
@@ -198,6 +281,7 @@ export class AlphaLoopbackApiClient implements DshTransport {
     if (this.isClosed) return Promise.resolve()
     this.isClosed = true
     this.closed.abort()
+    this.cordisBoundary.clear()
     await this.remoteMux.close()
   }
 
@@ -449,7 +533,48 @@ export class AlphaLoopbackApiClient implements DshTransport {
    */
   private async prompt(value: Record<string, unknown>, signal?: AbortSignal): Promise<LegacyResponse> {
     const requestId = isNonEmptyString(value.requestId) ? value.requestId : randomUUID()
-    const response = await this.legacy('session/prompt', { request: { ...value, requestId } }, signal)
+    const content: unknown[] = []
+    for (const part of Array.isArray(value.content) ? value.content : []) {
+      const file = recordOrUndefined(part)
+      if (file?.type !== 'file-upload') {
+        content.push(part)
+        continue
+      }
+      if (this.options.fileUploads !== true)
+        throw new AppError({
+          code: 'CAPABILITY_UNAVAILABLE',
+          message: 'This DSH version does not support binary file uploads.',
+          retryable: false,
+        })
+      const receipt = recordOrUndefined(
+        await this.unary(
+          'fileUploads/upload',
+          {
+            agentId: stringValue(value.sessionId, 'file upload sessionId'),
+            request: {
+              data: stringValue(file.data, 'file upload data'),
+              name: stringValue(file.name, 'file upload name'),
+            },
+          },
+          signal,
+        ),
+      )
+      const storedFile = recordOrUndefined(receipt?.file)
+      if (
+        !isNonEmptyString(receipt?.receiptId) ||
+        !isNonEmptyString(storedFile?.attachmentId) ||
+        typeof storedFile?.name !== 'string' ||
+        !Number.isSafeInteger(storedFile.bytes) ||
+        (storedFile.bytes as number) < 0
+      )
+        throw malformedResponse('fileUploads/upload')
+      content.push({ type: 'file', receiptId: receipt.receiptId })
+    }
+    const response = await this.legacy(
+      'session/prompt',
+      { request: { ...value, content, requestId } },
+      signal,
+    )
     return { ...response, rpcId: requestId }
   }
 
@@ -748,7 +873,11 @@ export class AlphaLoopbackApiClient implements DshTransport {
         }
         if (frame?.type === 'ready') throw malformedResponse('$events ready')
         if (frame?.type === 'emit' && validAlphaEventEmit(frame)) {
-          yield* mapEmit(frame.event, frame.args)
+          const cordisFrames =
+            this.options.cordisClientBoundary === true
+              ? this.cordisBoundary.map(frame.event, frame.args)
+              : undefined
+          yield* cordisFrames ?? mapEmit(frame.event, frame.args)
           continue
         }
         if (frame?.type === 'waterfall' && validAlphaEventWaterfall(frame)) {

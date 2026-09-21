@@ -4,6 +4,8 @@ import type { PromptAttachment, QueuedInput, SessionProjectionSnapshot } from '.
 import type { PermissionRequest, ToolCallView, UserQuestion } from './tools.js'
 
 export interface GoalView {
+  /** Process-local continuation authority, independent of durable status. */
+  readonly activation?: 'armed' | 'disarmed'
   readonly id: string
   readonly title: string
   readonly status: 'pending' | 'in-progress' | 'completed' | 'blocked'

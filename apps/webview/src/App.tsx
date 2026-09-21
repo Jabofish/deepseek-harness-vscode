@@ -1043,6 +1043,8 @@ export function App(): ReactElement {
   const sessionControl = useMemo(
     () => (
       <SessionDrawer
+        permissions={state.permissions}
+        questions={state.questions}
         sessions={state.sessions}
         workspaces={state.workspaces}
         activeSessionId={state.activeSessionId}
@@ -1082,6 +1084,8 @@ export function App(): ReactElement {
       sessionOnSearch,
       state.activeSessionId,
       state.archivedSessions,
+      state.permissions,
+      state.questions,
       state.drawer,
       state.sessions,
       state.workspaces,
@@ -1122,6 +1126,7 @@ export function App(): ReactElement {
           key={`changes-${activeId}`}
           changes={state.changes}
           loading={state.changesLoading}
+          refreshFailed={state.changesRefreshFailed}
           onRefresh={() => store.refreshChanges(activeId)}
           onOpen={(changeId) => store.openChange(changeId)}
           onDetail={(changeId) => store.getChangeDetail(changeId)}
@@ -1272,6 +1277,7 @@ export function App(): ReactElement {
     visibleExportSessionId,
     state.changes,
     state.changesLoading,
+    state.changesRefreshFailed,
     state.checkpoints,
     state.checkpointsLoading,
     state.jobs,
@@ -1337,6 +1343,7 @@ export function App(): ReactElement {
               setError(reason instanceof Error ? reason.message : t('app.error.createSession'))
             }
           }}
+          pluginInventoryRevision={store.pluginInventoryRevision}
           onLoadPluginInventory={() => store.loadPluginInventory()}
         />
         {runtimeUpdateVisible ? (

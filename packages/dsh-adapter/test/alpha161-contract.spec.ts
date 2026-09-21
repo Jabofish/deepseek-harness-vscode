@@ -466,3 +466,12 @@ async function waitFor(predicate: () => boolean): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 0))
   expect(predicate()).toBe(true)
 }
+
+it('retains offloaded image references for client display instead of parsing model placeholders', () => {
+  const attachment = { attachmentId: 'image-1', mediaType: 'image/png', bytes: 68, width: 1, height: 1 }
+  const event = rc6Mapper.event('user/message', {
+    sessionId: 's1',
+    data: { message: { id: 'm1', role: 'user', content: [{ type: 'image', attachment, offloaded: true }] } },
+  })
+  expect(event).toMatchObject({ type: 'message.user', images: [attachment] })
+})

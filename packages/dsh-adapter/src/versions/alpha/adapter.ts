@@ -1,3 +1,4 @@
+import { workspaceChangeSource } from '../alpha162/workspace-changes.js'
 import {
   type BackendCandidate,
   type BackendCapabilities,
@@ -55,11 +56,20 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
   }
 
   /** Alpha.1/2 accept only text/content blocks on the subagent wire. */
+  protected readonly supportsWorkspaceChanges: boolean = false
+  protected readonly supportsLiveGoal: boolean = false
+  protected readonly supportsFileUploads: boolean = false
   protected readonly supportsInlineSubagentImages: boolean = false
   /** Only DSH 0.1.3-alpha.2 requires `subagent.prompt.delivery`. */
   protected readonly supportsSubagentPromptDelivery: boolean = false
   /** 0.1.3-alpha.1 renamed the commands/execute attachment parameter. */
   protected readonly commandAttachmentWire: CommandAttachmentWire = 'images'
+
+  protected permissionCatalogReader(
+    _transport: DshTransport,
+  ): ((signal?: AbortSignal) => Promise<readonly string[]>) | undefined {
+    return undefined
+  }
 
   public constructor(protected readonly options: AlphaAdapterOptions) {
     super()
@@ -167,6 +177,8 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
     const workspaces = new Rc6WorkspaceRepository(transport)
     const sessions = new Rc6SessionRepository(transport, workspaces, this.options.samePath, {
       preallocatedSessionId: true,
+      supportsFileUploads: this.supportsFileUploads,
+      readPermissionPresets: this.permissionCatalogReader(transport),
       commandAttachmentWire: this.commandAttachmentWire,
       maxPromptAttachmentBytes: 20 * 1024 * 1024,
       maxPromptAttachmentTotalBytes: 200 * 1024 * 1024,
@@ -177,7 +189,7 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
       // `session/follow`; a subscription must not wipe that state.
       resetQueueOnSubscribe: false,
     })
-    const goals = new Rc6GoalRepository(transport)
+    const goals = new Rc6GoalRepository(transport, this.supportsLiveGoal)
     const jobs = new Rc6JobRepository(transport, { resetOnSubscribe: false })
     const observe = (event: BackendEvent): void => {
       interactions.remember(event)
@@ -190,6 +202,7 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
     let closed = false
     const backendValue: DshBackend = {
       connection: backend,
+      ...(this.supportsWorkspaceChanges ? { workspaceChanges: workspaceChangeSource(transport) } : {}),
       sessions,
       workspaces,
       models: new Rc6ModelRepository(transport),

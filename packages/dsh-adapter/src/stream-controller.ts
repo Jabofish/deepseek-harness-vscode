@@ -772,6 +772,7 @@ function normalizeEnvelope(value: unknown): BackendEvent | undefined {
     case 'host/credentials-changed':
     case 'host/models-changed':
     case 'host/remote-event':
+    case 'host/cordis-client-required':
     case 'host/agent-error':
     case 'approval/requested':
     case 'approval/resolved':

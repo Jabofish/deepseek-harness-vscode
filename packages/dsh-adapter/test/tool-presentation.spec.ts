@@ -926,3 +926,27 @@ describe('DSH running shell calls carry their own command', () => {
     expect(JSON.stringify(call.presentation)).toContain('curl 127.0.0.1/status')
   })
 })
+
+it('preserves submitted plan markdown from native and PTC argument objects only', () => {
+  const plan = '# Delivery plan\n\n- Verify the change\n'
+  expect(
+    mapped(rc6Mapper, 'tool/call', {
+      callId: 'plan',
+      name: 'exit_plan_mode',
+      arguments: JSON.stringify({ plan }),
+    }).submittedPlan,
+  ).toEqual({ title: 'Delivery plan', markdown: plan })
+  const event = rc6Mapper.event('tool/ptc-dispatch-start', {
+    sessionId: 's1',
+    data: { subCallId: 'plan', parentCallId: 'parent', name: 'exit_plan_mode', arguments: { plan } },
+  })
+  expect(event).toMatchObject({ type: 'tool.updated', tool: { submittedPlan: { markdown: plan } } })
+  expect(
+    mapped(rc6Mapper, 'tool/call', { callId: 'other', name: 'other', arguments: JSON.stringify({ plan }) })
+      .submittedPlan,
+  ).toBeUndefined()
+  expect(
+    mapped(rc6Mapper, 'tool/call', { callId: 'bad', name: 'exit_plan_mode', arguments: '{broken' })
+      .submittedPlan,
+  ).toBeUndefined()
+})

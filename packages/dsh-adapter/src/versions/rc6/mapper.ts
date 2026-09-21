@@ -635,6 +635,28 @@ export const rc6Mapper = {
           ),
         }
       }
+      case 'host/cordis-client-required':
+        if (
+          sessionId === '' ||
+          typeof data.approvalId !== 'string' ||
+          data.approvalId === '' ||
+          typeof envelope.rpcId !== 'string' ||
+          envelope.rpcId === ''
+        )
+          throw new Error('Malformed Cordis client interaction')
+        return {
+          type: 'permission.requested',
+          request: {
+            id: data.approvalId,
+            rpcId: envelope.rpcId,
+            sessionId,
+            title: 'Cordis browser activation requires DSH Web',
+            description:
+              'This plugin needs the DSH browser runtime. Handle it in DSH Web, or reject this activation here. VS Code cannot run its browser code.',
+            risk: 'medium',
+            options: [{ id: 'rejected', label: 'Reject', kind: 'deny' }],
+          },
+        }
       case 'approval/requested':
         if (
           sessionId === '' ||
@@ -1461,8 +1483,10 @@ function tool(value: Record<string, unknown>, phase: 'call' | 'result' = 'result
   )
   const images =
     phase === 'result' ? toolResultImages(message, isPtcDispatch ? value.content : undefined, callId) : []
+  const submittedPlan = readSubmittedPlan(name, value.arguments)
   return {
     id: callId,
+    ...(submittedPlan === undefined ? {} : { submittedPlan }),
     ...(images.length === 0 ? {} : { images }),
     ...(parentCallId === undefined ? {} : { parentCallId }),
     ...(turn === undefined ? {} : { turn }),
@@ -1489,6 +1513,22 @@ function tool(value: Record<string, unknown>, phase: 'call' | 'result' = 'result
  * falling back to a single identity field so `{name, code}` never becomes a
  * misleading JSON sentence in the timeline.
  */
+function readSubmittedPlan(name: string | undefined, argumentsValue: unknown): ToolCallView['submittedPlan'] {
+  if (name !== 'exit_plan_mode') return undefined
+  let args: unknown = argumentsValue
+  if (typeof args === 'string') {
+    try {
+      args = JSON.parse(args) as unknown
+    } catch {
+      return undefined
+    }
+  }
+  const plan = objectOrUndefined(args)?.plan
+  if (typeof plan !== 'string' || plan.length > 1_000_000) return undefined
+  const title = /^#\s+(\S[^\r\n]*)/u.exec(plan.trim())?.[1]
+  return title === undefined ? undefined : { title, markdown: plan }
+}
+
 function toolErrorText(
   value: unknown,
   identity: Record<string, unknown> | undefined,

@@ -615,6 +615,7 @@ const featureResponsePayloadSchema = z.discriminatedUnion('kind', [
   z
     .object({
       kind: z.literal('changes'),
+      refreshFailed: z.boolean().optional(),
       items: z.array(changeSummarySchema).max(200),
       nextCursor: z.string().max(2_048).optional(),
     })
@@ -748,6 +749,14 @@ export const featureResponseSchema = z.discriminatedUnion('ok', [
 ])
 
 export const featureHostEventSchema = z.discriminatedUnion('name', [
+  z
+    .object({
+      type: z.literal('feature.event'),
+      name: z.literal('changes.invalidated'),
+      identity: featureEventIdentitySchema,
+      sessionId: id,
+    })
+    .strict(),
   z
     .object({
       type: z.literal('feature.event'),

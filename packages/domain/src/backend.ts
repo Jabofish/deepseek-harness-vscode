@@ -1,3 +1,4 @@
+import type { WorkspaceChangeSource } from './changes.js'
 import type { BackendEvent, GoalView, JobView, SubagentCatalog } from './events.js'
 import type { MessageFeedbackRepository } from './feedback.js'
 import type { ReferenceRepository } from './references.js'
@@ -43,6 +44,8 @@ export interface AsyncEventSource<T> {
 }
 
 export interface SessionRepository {
+  /** Whether ordinary prompts accept binary upload receipts. Host-only capability. */
+  readonly supportsFileUploads?: boolean
   list(query?: SessionListQuery, signal?: AbortSignal): Promise<SessionPage>
   get(sessionId: string, signal?: AbortSignal): Promise<SessionDetail>
   /**
@@ -262,6 +265,7 @@ export interface ExportRepository {
 }
 
 export interface DshBackend {
+  readonly workspaceChanges?: WorkspaceChangeSource
   readonly connection: ConnectedBackend
   readonly sessions: SessionRepository
   readonly workspaces: WorkspaceRepository

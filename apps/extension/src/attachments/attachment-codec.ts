@@ -49,7 +49,7 @@ export function prepareAttachment(name: string, bytes: Buffer, hintMimeType?: st
   if (mimeType === undefined)
     throw new AppError({
       code: 'INVALID_CONFIGURATION',
-      message: 'The current file is not supported; attach an image or a text-based file instead.',
+      message: 'The current file contents do not match its declared text type.',
       retryable: false,
     })
   const maximumBytes = isImageMimeType(mimeType) ? MAX_IMAGE_ATTACHMENT_BYTES : MAX_ATTACHMENT_BYTES
@@ -78,11 +78,11 @@ export function attachmentMimeType(filePath: string, bytes: Buffer): string | un
 
   const fileName = filePath.split(/[\\/]/u).pop()?.toLowerCase() ?? ''
   const extension = extensionName(fileName)
-  if (BINARY_ATTACHMENT_EXTENSIONS.has(extension)) return undefined
+  if (BINARY_ATTACHMENT_EXTENSIONS.has(extension)) return 'application/octet-stream'
   const knownTextType =
     TEXT_ATTACHMENT_MIME_TYPES[extension] ?? (fileName === '.env' ? 'text/plain' : undefined)
   if (knownTextType !== undefined) return validTextBytes(bytes) ? knownTextType : undefined
-  return validTextBytes(bytes) ? 'text/plain' : undefined
+  return validTextBytes(bytes) ? 'text/plain' : 'application/octet-stream'
 }
 
 export function isImageMimeType(mimeType: string): boolean {
@@ -189,3 +189,18 @@ const BINARY_ATTACHMENT_EXTENSIONS = new Set([
   '.xlsx',
   '.zip',
 ])
+
+/** The codec normalizes every binary file to application/octet-stream. */
+export function isAttachmentSupported(mimeType: string | undefined, supportsFileUploads: boolean): boolean {
+  return mimeType !== undefined && (mimeType !== 'application/octet-stream' || supportsFileUploads)
+}
+
+export function assertAttachmentSupported(input: StoredAttachmentInput, supportsFileUploads: boolean): void {
+  if (!isAttachmentSupported(input.mimeType, supportsFileUploads))
+    throw new AppError({
+      code: 'CAPABILITY_UNAVAILABLE',
+      message:
+        'This DSH runtime supports only image and text attachments. Use a runtime with binary file uploads to attach this file.',
+      retryable: false,
+    })
+}
