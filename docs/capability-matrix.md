@@ -12,7 +12,7 @@
 
 ## 当前基线
 
-- 扩展发布基线为 `0.2.1`（`v0.2.1`），本批内容见 [版本更新日志](../apps/extension/CHANGELOG.md)。
+- 扩展发布目标为 `0.2.2`（`v0.2.2`），本批内容见 [版本更新日志](../apps/extension/CHANGELOG.md)。
 - 已知 DSH 版本按真实协议边界使用独立 Adapter：legacy Host、alpha family v0、Session v2 和 Session v3 不跨 wire family 猜测。安装器默认仍为 `0.1.5-rc.2`。
 - DSH `0.1.6-alpha.1` 有精确 `alpha161` Adapter：managed `--no-open` 启动、`mode=exact` 探测、只读 surface 与 transcript 归约已在 npm alpha 通道的真实运行时上通过 smoke，Connection/Gateway 与 Session v3 基础 wire 复用已核对的 `rc152` 边界，`image/offload` 仅按脱敏 opaque 保留；精确识别不代表消息投影 UI、终端、权限预设、归档恢复等新增 surface 已实现，具体范围见下表。
 - DSH `0.1.6-alpha.2` 有精确 `alpha162` Adapter：`session/control` 按 `jobs`/`projections.inbox` 归约队列与 Steer，`session/writer-held` 归一化为可重试的忙碌错误，契约 fixture 覆盖基线/增量、畸形拒绝、mux 取消与释放，managed 真实运行时的 `tests/live-dsh` smoke 已通过；VS Code/Webview 现场回放和跨平台发布矩阵未完成，故适配证据保持 `PARTIAL`。

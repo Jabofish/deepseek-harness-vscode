@@ -2,7 +2,7 @@
 
 只有全部必需项满足才可发布。
 
-当前发布版本是 `0.2.1`（稳定版）。运行时契约覆盖的 DSH 版本、版本缝、安装默认与未知版本的降级规则见
+当前发布目标是 `0.2.2`。运行时契约覆盖的 DSH 版本、版本缝、安装默认与未知版本的降级规则见
 [dsh-contract.md](dsh-contract.md)；能力状态与证据见 [capability-matrix.md](capability-matrix.md)。
 以下未勾选项代表真实缺口，不应被“构建成功”替代。
 
@@ -17,8 +17,8 @@
 
 ## 质量
 
-- [x] clean checkout 执行 `pnpm install --frozen-lockfile && pnpm check && pnpm build`（CI `check` 作业按此顺序执行，`v0.2.1` 发布提交 `e4b049c` 三平台全绿）。
-- [x] Windows、Linux、macOS 三平台 CI（Node `22.19`）通过（CI run `35486637532`，Node `22.19.0`）。
+- [x] `0.2.2` 代码提交 `99dc3ec` 执行了 `pnpm check` 和 `pnpm build`；主分支 CI `35841678559` 三平台检查通过。发布标签的构建与发布结果需另行核对。
+- [x] Windows、Linux、macOS 三平台 CI（Node `22.19.0`）通过（主分支 CI run `35841678559`）。
 - [ ] VS Code 最低支持版本 E2E 通过。
 - [ ] 真实 DSH `0.0.1-rc.1/.2/.5`、`0.1.0-rc.2/.3`、`0.1.0-rc.6` 至 `0.1.2-rc.1` smoke matrix 通过，且未知版本的安全 wire Adapter 优先、失败继续尝试、警告降级路径通过。
 - [ ] 已发布预发行版本分别完成真实 Connection、Cookie、remote.mux、Session/Workspace follow smoke 并更新能力矩阵状态与证据：`0.1.2-alpha.2`–`.5`（v0）、`0.1.3-alpha.2`（Session v2，含 subagent queue/steer）、`0.1.5-alpha.1/.2/rc.1/rc.2` 与 `0.1.6-alpha.1/.2`（Session v3，含 surface replacement、`system/message` 隔离、PTC、`deliverables/presented`、`subagent/catalog` 和 rc.2 消息反馈）、`0.1.7-alpha.1`（Session V4、projection control、pinned Workspace 和 Job rows）；未完成 live smoke 的版本不得成为安装默认。
