@@ -1,5 +1,5 @@
 import type { WorkspaceChangeSource } from './changes.js'
-import type { BackendEvent, GoalView, JobView, SubagentCatalog } from './events.js'
+import type { BackendEvent, GoalView, JobFollowFrame, JobView, SubagentCatalog } from './events.js'
 import type { MessageFeedbackRepository } from './feedback.js'
 import type { ReferenceRepository } from './references.js'
 import type {
@@ -41,6 +41,8 @@ import type { WorkspaceCreateInput, WorkspaceSummary } from './workspaces.js'
 export interface AsyncEventSource<T> {
   subscribe(listener: (event: T) => void): () => void
   close(): Promise<void>
+  /** Local settlement from a request made by this client, when the wire omits its own echo. */
+  publish?(event: T): void
 }
 
 export interface SessionRepository {
@@ -149,6 +151,27 @@ export interface GoalRepository {
 
 export interface JobRepository {
   list(sessionId: string, signal?: AbortSignal): Promise<readonly JobView[]>
+  /** Optional continuous whole-roster stream for versions with Job Controller. */
+  readonly watchRows?: (
+    this: JobRepository,
+    sessionId: string,
+    signal: AbortSignal,
+  ) => AsyncIterable<BackendEvent>
+  /** Optional non-consuming output observation stream for versions with Job Controller. */
+  readonly follow?: (
+    this: JobRepository,
+    sessionId: string,
+    jobId: string,
+    from?: number,
+    signal?: AbortSignal,
+  ) => AsyncIterable<JobFollowFrame>
+  /** Optional human-initiated cancellation supported by Job Controller. */
+  readonly kill?: (
+    this: JobRepository,
+    sessionId: string,
+    jobId: string,
+    signal?: AbortSignal,
+  ) => Promise<'requested' | 'already-finished'>
 }
 
 export interface SubagentRepository {

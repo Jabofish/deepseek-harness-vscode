@@ -1,4 +1,4 @@
-import type { AsyncEventSource, BackendEvent } from '@dsh-vscode/domain'
+import type { AsyncEventSource, BackendEvent, JobView } from '@dsh-vscode/domain'
 
 import type { DshTransport } from '../../contracts.js'
 import { DshStreamController, type StreamRecovery } from '../../stream-controller.js'
@@ -13,6 +13,7 @@ export class AlphaEventSource implements AsyncEventSource<BackendEvent> {
   private readonly global: DshStreamController
   private readonly workspace: DshStreamController
   private readonly sessions = new Map<string, DshStreamController>()
+  private readonly jobSessions = new Map<string, DshStreamController>()
   private readonly archivedSessions = new Set<string>()
   private readonly listeners = new Set<(event: BackendEvent) => void>()
   private readonly subscriptions = new Map<
@@ -26,6 +27,7 @@ export class AlphaEventSource implements AsyncEventSource<BackendEvent> {
     private readonly transport: AlphaLoopbackApiClient & DshTransport,
     private readonly observe?: (event: BackendEvent) => void,
     private readonly recover?: StreamRecovery,
+    private readonly jobRows?: (sessionId: string, signal: AbortSignal) => AsyncIterable<unknown>,
   ) {
     this.global = new DshStreamController(transport, (event) => this.handleObserved(event), recover, {
       // The global controller shares the alpha transport with the workspace
@@ -90,13 +92,22 @@ export class AlphaEventSource implements AsyncEventSource<BackendEvent> {
     )
     this.sessions.set(sessionId, controller)
     for (const listener of this.listeners) this.attach(controller, listener, sessionId)
+    if (this.jobRows !== undefined) {
+      const jobs = new DshStreamController(this.transport, (event) => this.handleObserved(event), undefined, {
+        streamSource: (signal) => this.jobRows!(sessionId, signal),
+        normalizeEvent: (frame) => normalizeJobRowsEvent(frame, sessionId),
+        closeTransport: false,
+      })
+      this.jobSessions.set(sessionId, jobs)
+      for (const listener of this.listeners) this.attach(jobs, listener, sessionId)
+    }
   }
 
   /** Re-baseline a watched session so process-local assistant chunks are replayed. */
   public async refreshSession(sessionId: string): Promise<void> {
     if (this.closed || sessionId.trim() === '' || this.archivedSessions.has(sessionId)) return
     this.watchSession(sessionId)
-    await this.sessions.get(sessionId)?.restart()
+    await Promise.all([this.sessions.get(sessionId)?.restart(), this.jobSessions.get(sessionId)?.restart()])
   }
 
   public async close(): Promise<void> {
@@ -106,13 +117,14 @@ export class AlphaEventSource implements AsyncEventSource<BackendEvent> {
     const controllers = [...this.controllers()]
     await Promise.all(controllers.map((controller) => controller.close()))
     this.sessions.clear()
+    this.jobSessions.clear()
     this.archivedSessions.clear()
     this.sessionFailureNotices.clear()
     this.subscriptions.clear()
   }
 
   private controllers(): readonly DshStreamController[] {
-    return [this.global, this.workspace, ...this.sessions.values()]
+    return [this.global, this.workspace, ...this.sessions.values(), ...this.jobSessions.values()]
   }
 
   private attach(
@@ -176,19 +188,41 @@ export class AlphaEventSource implements AsyncEventSource<BackendEvent> {
 
   private sessionIdFor(controller: DshStreamController): string | undefined {
     for (const [sessionId, candidate] of this.sessions) if (candidate === controller) return sessionId
+    for (const [sessionId, candidate] of this.jobSessions) if (candidate === controller) return sessionId
     return undefined
   }
 
   private async unwatchSession(sessionId: string): Promise<void> {
     this.clearSessionFailureNotices(sessionId)
     const controller = this.sessions.get(sessionId)
-    if (controller === undefined) return
-    this.sessions.delete(sessionId)
-    this.subscriptions.delete(controller)
-    await controller.close()
+    const jobs = this.jobSessions.get(sessionId)
+    if (controller !== undefined) {
+      this.sessions.delete(sessionId)
+      this.subscriptions.delete(controller)
+    }
+    if (jobs !== undefined) {
+      this.jobSessions.delete(sessionId)
+      this.subscriptions.delete(jobs)
+    }
+    await Promise.all([controller?.close(), jobs?.close()])
   }
 
   private clearSessionFailureNotices(sessionId: string): void {
     for (const failures of this.sessionFailureNotices.values()) failures.delete(sessionId)
+  }
+}
+
+function normalizeJobRowsEvent(value: unknown, sessionId: string): BackendEvent | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+  const record = value as Record<string, unknown>
+  if (record.type !== 'jobs.updated' || record.sessionId !== sessionId || !Array.isArray(record.jobs))
+    return undefined
+  return {
+    type: 'jobs.updated',
+    sessionId,
+    // The alpha171 repository performs strict wire validation before yielding
+    // this internal typed frame; unlike legacy `session/jobs`, this new Remote
+    // carries progress and safe output offsets that the mapper must preserve.
+    jobs: record.jobs as readonly JobView[],
   }
 }

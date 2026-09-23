@@ -1737,6 +1737,11 @@ describe('alpha backend assembly baseline ownership', () => {
       // session must not wipe what the control stream baselined.
       await expect(backend.jobs.list('s1')).resolves.toHaveLength(1)
       await expect(backend.sessions.listQueue('s1')).resolves.toHaveLength(1)
+      // A Session the control stream never named — the host broadcasts a queue
+      // frame only when pending input changes, so a Session created after the
+      // baseline stays unmentioned until its first enqueue. The reference client
+      // materializes it as an empty queue, not as unreadable state.
+      await expect(backend.sessions.listQueue('never-mentioned')).resolves.toEqual([])
     } finally {
       unsubscribe()
       await backend.close()

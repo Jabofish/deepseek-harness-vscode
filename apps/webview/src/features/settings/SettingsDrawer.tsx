@@ -1335,10 +1335,8 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                   {...(props.onStartCreatorDraft === undefined
                     ? {}
                     : { onStartCreatorDraft: props.onStartCreatorDraft })}
-                  onMakeDefault={(presetId) =>
-                    // The upstream default is the `agent-presets.default` settings
-                    // field — the same revision-guarded write the General rows use.
-                    props.onUpdateDshSetting('agent-presets.default', presetId)
+                  onMakeDefault={(presetId, settingsPath) =>
+                    props.onUpdateDshSetting(settingsPath ?? 'agent-presets.default', presetId)
                   }
                 />
               </div>

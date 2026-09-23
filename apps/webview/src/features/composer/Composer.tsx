@@ -107,6 +107,7 @@ export interface ComposerProps {
    */
   readonly modelRoutable?: boolean
   readonly presets?: readonly AgentPresetDescriptor[]
+  readonly presetSelectionEnabled?: boolean
   readonly permissionPresets?: readonly string[]
   readonly commands?: readonly DynamicCommand[]
   /** Client-owned bare-command popup decorations; host rows remain authoritative. */
@@ -383,6 +384,9 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
       ...(props.modelLoading === undefined ? {} : { modelLoading: props.modelLoading }),
       ...(props.modelError === undefined ? {} : { modelError: props.modelError }),
       ...(props.modelCurrent === undefined ? {} : { modelCurrent: props.modelCurrent }),
+      ...(props.presetSelectionEnabled === undefined
+        ? {}
+        : { presetSelectionEnabled: props.presetSelectionEnabled }),
       ...(props.onModelRetry === undefined ? {} : { onModelRetry: props.onModelRetry }),
       ...(props.estimatedContextTokens === undefined
         ? {}

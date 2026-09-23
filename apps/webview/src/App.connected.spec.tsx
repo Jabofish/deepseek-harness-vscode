@@ -87,6 +87,8 @@ function connectedState(activeSession: boolean): AppState {
     goals: [],
     todos: [],
     jobs: [],
+    jobControllerAvailable: false,
+    jobFollow: undefined,
     feedback: {},
     subagents: { entries: [], parentAvailable: false },
     activeSubagent: undefined,
@@ -147,6 +149,9 @@ function storeFor(state: AppState): AppStore {
     executeCommand: vi.fn(),
     sendPrompt: vi.fn().mockResolvedValue(undefined),
     cancelSession: vi.fn().mockResolvedValue(undefined),
+    followJob: vi.fn().mockResolvedValue(undefined),
+    stopFollowingJob: vi.fn().mockResolvedValue(undefined),
+    killJob: vi.fn().mockResolvedValue('requested'),
     updateQueue: vi.fn(),
     removeQueue: vi.fn(),
     steerQueue: vi.fn(),
@@ -230,6 +235,51 @@ function storeFor(state: AppState): AppStore {
   }
 }
 
+function renderWithMutableState(initialState: AppState): {
+  readonly createSessionCalls: Array<[string | undefined, string | undefined]>
+  readonly updateState: (state: AppState) => void
+} {
+  let currentState = initialState
+  const createSessionCalls: Array<[string | undefined, string | undefined]> = []
+  const store: AppStore = {
+    ...storeFor(initialState),
+    getState: () => currentState,
+    createSession: vi.fn((workspaceId?: string, presetId?: string) => {
+      createSessionCalls.push([workspaceId, presetId])
+      return Promise.resolve()
+    }),
+  }
+  currentStore = store
+  const view = render(<App />)
+  return {
+    createSessionCalls,
+    updateState: (state) => {
+      currentState = state
+      view.rerender(<App />)
+    },
+  }
+}
+
+function presetSelectionState(enabled: boolean, defaultPresetId: string | undefined): AppState {
+  return {
+    ...connectedState(false),
+    presetSelectionEnabled: enabled,
+    presets: ['standard', 'alternate', 'updated-default'].map((id) => ({
+      id,
+      trust: 'system' as const,
+      isDefault: id === defaultPresetId,
+      name: id,
+    })),
+  }
+}
+
+function selectEmptySessionPreset(presetId: string): void {
+  const trigger = document.querySelector('.dsh-empty-session__preset .dsh-select-menu__trigger')
+  expect(trigger).not.toBeNull()
+  fireEvent.click(trigger!)
+  fireEvent.click(screen.getByRole('option', { name: presetId }))
+}
+
 describe('App connected rendering', () => {
   afterEach(() => {
     cleanup()
@@ -251,6 +301,44 @@ describe('App connected rendering', () => {
     expect(screen.getByRole('button', { name: 'New session here' })).toBeDefined()
     expect(screen.queryByText('Create a session to begin.')).toBeDefined()
     expect(document.querySelector('.dsh-empty-state')).toBeNull()
+  })
+
+  it('uses the host default after preset selection is disabled instead of submitting the staged preset', () => {
+    const initialState = presetSelectionState(true, 'standard')
+    const { createSessionCalls, updateState } = renderWithMutableState(initialState)
+    selectEmptySessionPreset('alternate')
+
+    updateState(presetSelectionState(false, 'standard'))
+    fireEvent.click(screen.getByRole('button', { name: 'New session here' }))
+
+    expect(createSessionCalls).toEqual([['w1', 'standard']])
+  })
+
+  it('uses a newly reported host default after preset selection is disabled', () => {
+    const initialState = presetSelectionState(true, 'standard')
+    const { createSessionCalls, updateState } = renderWithMutableState(initialState)
+    selectEmptySessionPreset('alternate')
+
+    updateState(presetSelectionState(false, 'standard'))
+    updateState(presetSelectionState(false, 'updated-default'))
+    fireEvent.click(screen.getByRole('button', { name: 'New session here' }))
+
+    expect(createSessionCalls).toEqual([['w1', 'updated-default']])
+  })
+
+  it('blocks session creation when preset selection is disabled and the roster has no default', () => {
+    const { createSessionCalls } = renderWithMutableState(presetSelectionState(false, undefined))
+    const createButton = screen.getByRole('button', { name: 'New session here' })
+
+    expect((createButton as HTMLButtonElement).disabled).toBe(true)
+    expect(
+      screen.getByText(
+        /DSH did not report a default preset, so creating a session could reuse an outdated selection/,
+      ),
+    ).toBeDefined()
+    fireEvent.click(createButton)
+
+    expect(createSessionCalls).toEqual([])
   })
 
   it.each([

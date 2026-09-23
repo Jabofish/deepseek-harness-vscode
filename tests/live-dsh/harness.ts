@@ -20,10 +20,11 @@ import { Rc151VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc1
 import { Rc152VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc152/adapter.js'
 import { Alpha161VersionAdapter } from '../../packages/dsh-adapter/src/versions/alpha161/adapter.js'
 import { Alpha162VersionAdapter } from '../../packages/dsh-adapter/src/versions/alpha162/adapter.js'
+import { Alpha171VersionAdapter } from '../../packages/dsh-adapter/src/versions/alpha171/adapter.js'
 import { acquireManagedRuntimeLock } from './managed-lock.js'
 import { resolveLiveRuntime } from './runtime.js'
 
-export const DEFAULT_RUNTIME_VERSION = '0.1.5-rc.1'
+export const DEFAULT_RUNTIME_VERSION = '0.1.5-rc.2'
 export const LIVE_TIMEOUT_MS = 90_000
 
 export interface LiveRuntimeSnapshot {
@@ -64,12 +65,38 @@ export async function startManagedRuntime(options?: {
     options?.runtimeVersion?.trim() || process.env.DSH_LIVE_RUNTIME_VERSION?.trim() || DEFAULT_RUNTIME_VERSION
   const port = await freeLoopbackPort()
   const workspace = await mkdtemp(path.join(os.tmpdir(), 'dsh-live-'))
+  const previousDshHome = process.env.DSH_HOME
+  const ownsDshHome = previousDshHome === undefined || previousDshHome.trim() === ''
+  let dshHome: string | undefined
+  try {
+    dshHome = ownsDshHome ? await mkdtemp(path.join(os.tmpdir(), 'dsh-live-home-')) : undefined
+  } catch (error) {
+    await rm(workspace, { recursive: true, force: true })
+    throw error
+  }
+  if (dshHome !== undefined) process.env.DSH_HOME = dshHome
+  let dshHomeReleased = false
+  const releaseDshHome = async (): Promise<void> => {
+    if (dshHomeReleased) return
+    dshHomeReleased = true
+    if (dshHome === undefined) return
+    if (previousDshHome === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = previousDshHome
+    await rm(dshHome, { recursive: true, force: true })
+  }
   const steps: string[] = []
   // The live spec files run one after another (`vitest.config.ts`), so this
   // lock is the cross-run guard: a second shell starting its own managed DSH
   // while this one is live would blow the supervisor's 15s readiness budget.
   const lockWaitStart = Date.now()
-  const releaseLock = await acquireManagedRuntimeLock()
+  let releaseLock: () => Promise<void>
+  try {
+    releaseLock = await acquireManagedRuntimeLock()
+  } catch (error) {
+    await rm(workspace, { recursive: true, force: true })
+    await releaseDshHome()
+    throw error
+  }
   if (Date.now() - lockWaitStart > 1_000) steps.push(`lock wait ${Date.now() - lockWaitStart}ms`)
   const endpointCookie: { value: string | undefined } = { value: undefined }
   const supervisor = new DshProcessSupervisor({
@@ -102,6 +129,7 @@ export async function startManagedRuntime(options?: {
       // A failed launch never reached the cleanup below; the lock must not
       // outlive the spec that took it.
       await rm(workspace, { recursive: true, force: true })
+      await releaseDshHome()
       await releaseLock()
       throw error
     })
@@ -117,6 +145,7 @@ export async function startManagedRuntime(options?: {
     steps.push(`managed start pid=${started.pid} endpoint=${started.endpoint.baseUrl}`)
 
     const adapters = [
+      new Alpha171VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
       new Alpha162VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
       new Alpha161VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
       new Rc152VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
@@ -142,12 +171,14 @@ export async function startManagedRuntime(options?: {
         await backend.close().catch(() => undefined)
         await started.stop()
         await rm(workspace, { recursive: true, force: true })
+        await releaseDshHome()
         await releaseLock()
       },
     }
   } catch (error) {
     await started.stop().catch(() => undefined)
     await rm(workspace, { recursive: true, force: true })
+    await releaseDshHome()
     await releaseLock()
     throw error
   }

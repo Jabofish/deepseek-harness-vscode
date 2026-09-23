@@ -285,7 +285,7 @@ describe('Rc6SessionRepository blank session detail', () => {
 })
 
 describe('Rc6SessionRepository session removal', () => {
-  it('maps removal to the pinned rc.6 archive RPC', async () => {
+  it('rejects permanent deletion without issuing an archive RPC', async () => {
     const requestImplementation = <TResponse>(
       method: string,
       params: unknown,
@@ -307,9 +307,11 @@ describe('Rc6SessionRepository session removal', () => {
       close: () => Promise.resolve(),
     }
 
-    await new Rc6SessionRepository(transport).remove('session-1')
+    await expect(new Rc6SessionRepository(transport).remove('session-1')).rejects.toMatchObject({
+      code: 'CAPABILITY_UNAVAILABLE',
+    })
 
-    expect(request).toHaveBeenCalledTimes(1)
+    expect(request).not.toHaveBeenCalled()
   })
 
   it('maps a restore to the unarchive RPC and lets the transport state whether the host has one', async () => {
@@ -334,11 +336,26 @@ describe('Rc6SessionRepository session removal', () => {
       close: () => Promise.resolve(),
     }
 
-    await expect(new Rc6SessionRepository(transport).setArchived('session-1', false)).rejects.toMatchObject({
+    await expect(
+      new Rc6SessionRepository(transport, undefined, undefined, { supportsSessionRestore: true }).setArchived(
+        'session-1',
+        false,
+      ),
+    ).rejects.toMatchObject({
       code: 'CAPABILITY_UNAVAILABLE',
       message: expect.stringContaining('workspace.unarchiveSession') as unknown as string,
     })
     expect(methods).toEqual(['workspace.unarchiveSession'])
+  })
+
+  it('rejects restore before transport when the adapter did not declare it', async () => {
+    const calls: { method: string; params: unknown }[] = []
+    const repository = new Rc6SessionRepository(sessionCreateTransport(calls))
+
+    await expect(repository.setArchived('session-1', false)).rejects.toMatchObject({
+      code: 'CAPABILITY_UNAVAILABLE',
+    })
+    expect(calls).toEqual([])
   })
 })
 
@@ -1015,7 +1032,8 @@ describe('Rc6SessionRepository configuration safety', () => {
                 projections: {
                   asOfSeq: 1,
                   values: {
-                    permissions: { options: permissionOptions },
+                    permissions: { currentValue: 'workspace-write', options: permissionOptions },
+                    plan: { active: false, pending: false },
                   },
                 },
               },
@@ -1777,4 +1795,161 @@ it('exposes binary upload support only when enabled by the version adapter', () 
     new Rc6SessionRepository(transport, undefined, undefined, { supportsFileUploads: true })
       .supportsFileUploads,
   ).toBe(true)
+})
+
+it.each([undefined, { plan: { active: true, pending: false }, permissions: { currentValue: 'read-only' } }])(
+  'applies explicit off/default settings when history is silent: %j',
+  async (values) => {
+    const transport = sessionCreateTransport([])
+    transport.request = <T>() =>
+      Promise.resolve({
+        result: {
+          ok: true,
+          value: {
+            events: [],
+            hasMore: false,
+            ...(values === undefined ? {} : { projections: { asOfSeq: 0, values } }),
+          },
+        },
+      }) as T
+    const executeSessionConfigCommand = vi
+      .fn<(sessionId: string, command: string) => Promise<void>>()
+      .mockResolvedValue(undefined)
+    const repository = new Rc6SessionRepository(transport, undefined, undefined, {
+      executeSessionConfigCommand,
+      readPermissionPresets: () => Promise.resolve(['read-only', 'workspace-write']),
+    })
+    const detail = await repository.get('session-1')
+    expect(detail.configuration.planModeKnown).toBe(values !== undefined)
+    expect(detail.configuration.planMode).toBe(values !== undefined)
+    await repository.setConfiguration('session-1', {
+      preset: 'standard',
+      toolMode: 'native',
+      permissionPreset: 'workspace-write',
+      planMode: false,
+      model: { providerId: '', modelId: '' },
+    })
+    expect(executeSessionConfigCommand.mock.calls.map((call) => call[1])).toEqual([
+      '/permission workspace-write',
+      '/plan off',
+    ])
+  },
+)
+
+describe('Rc6SessionRepository queue baseline reads', () => {
+  it('answers a read that arrived before the subscription with the baseline it waited for', async () => {
+    const repository = new Rc6SessionRepository(sessionCreateTransport([]))
+
+    const pending = repository.listQueue('session-1')
+    // The mux publishes the subscription after the session-open response, so
+    // the read is already in flight when the baseline lands.
+    repository.remember({ type: 'session.subscribed', sessionId: 'session-1', lastSequence: 4 })
+
+    await expect(pending).resolves.toEqual([])
+  })
+
+  it('answers a read that races a queue frame instead of the subscription', async () => {
+    const repository = new Rc6SessionRepository(sessionCreateTransport([]))
+
+    const pending = repository.listQueue('session-1')
+    repository.remember({
+      type: 'queue.updated',
+      sessionId: 'session-1',
+      items: [
+        {
+          id: 'queued-1',
+          sessionId: 'session-1',
+          text: 'queued while opening',
+          attachments: [],
+          textOnly: true,
+          mode: 'queue',
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    })
+
+    await expect(pending).resolves.toHaveLength(1)
+  })
+
+  it('reads a baselined session without waiting for another event', async () => {
+    const repository = new Rc6SessionRepository(sessionCreateTransport([]))
+    repository.remember({ type: 'session.subscribed', sessionId: 'session-1', lastSequence: 4 })
+
+    await expect(repository.listQueue('session-1')).resolves.toEqual([])
+  })
+
+  it('keeps the wait bounded and still reports a queue it cannot read', async () => {
+    vi.useFakeTimers()
+    try {
+      const repository = new Rc6SessionRepository(sessionCreateTransport([]))
+      const pending = repository.listQueue('session-1')
+      const rejected = expect(pending).rejects.toMatchObject({ code: 'CAPABILITY_UNAVAILABLE' })
+
+      await vi.advanceTimersByTimeAsync(5_000)
+      await rejected
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('reads the empty queue of a Session the control baseline never named', async () => {
+    // The host-wide control stream lists every Session it knows and broadcasts a
+    // queue frame only when pending input changes, so a Session created after the
+    // baseline has no entry at all: empty, not unreadable.
+    const repository = new Rc6SessionRepository(sessionCreateTransport([]), undefined, undefined, {
+      queueBaseline: 'control',
+    })
+
+    await expect(repository.listQueue('session-1')).resolves.toEqual([])
+  })
+
+  it('keeps a control-baselined queue across a subscription and a later read', async () => {
+    const repository = new Rc6SessionRepository(sessionCreateTransport([]), undefined, undefined, {
+      queueBaseline: 'control',
+    })
+    repository.remember({
+      type: 'queue.updated',
+      sessionId: 'session-1',
+      items: [
+        {
+          id: 'queued-1',
+          sessionId: 'session-1',
+          text: 'queued while opening',
+          attachments: [],
+          textOnly: true,
+          mode: 'queue',
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    })
+
+    repository.remember({ type: 'session.subscribed', sessionId: 'session-1', lastSequence: 4 })
+
+    await expect(repository.listQueue('session-1')).resolves.toHaveLength(1)
+  })
+
+  it('replaces the empty control answer once a queue frame lands', async () => {
+    const repository = new Rc6SessionRepository(sessionCreateTransport([]), undefined, undefined, {
+      queueBaseline: 'control',
+    })
+    await expect(repository.listQueue('session-1')).resolves.toEqual([])
+
+    repository.remember({
+      type: 'queue.updated',
+      sessionId: 'session-1',
+      items: [
+        {
+          id: 'queued-2',
+          sessionId: 'session-1',
+          text: 'enqueued after the read',
+          attachments: [],
+          textOnly: true,
+          mode: 'queue',
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    })
+
+    await expect(repository.listQueue('session-1')).resolves.toHaveLength(1)
+  })
 })

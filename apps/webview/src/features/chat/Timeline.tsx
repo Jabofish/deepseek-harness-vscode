@@ -1731,16 +1731,7 @@ function StreamingActivity(props: {
   readonly usingTool?: boolean
   readonly translate: Translate
 }): ReactElement {
-  const phraseKeys = [
-    'timeline.activity.deepDiving',
-    'timeline.activity.thinking',
-    'timeline.activity.checking',
-    'timeline.activity.composing',
-  ] as const
-  const key =
-    props.usingTool === true
-      ? 'timeline.activity.usingTool'
-      : (phraseKeys[stableHash(props.id) % phraseKeys.length] ?? 'timeline.activity.deepDiving')
+  const key = props.usingTool === true ? 'timeline.activity.usingTool' : 'timeline.activity.responding'
   return (
     <span className="dsh-timeline__streaming-status" role="status" aria-live="polite">
       <Icon name={props.usingTool === true ? 'tool' : 'sparkles'} />
@@ -1760,12 +1751,6 @@ function assistantNodeInProgress(
     ('tools' in node &&
       node.tools.some((tool) => tool.tool.status === 'queued' || tool.tool.status === 'running'))
   )
-}
-
-function stableHash(value: string): number {
-  let hash = 0
-  for (const character of value) hash = (hash * 31 + character.charCodeAt(0)) >>> 0
-  return hash
 }
 
 const reasoningExpandedChangeCache = new WeakMap<

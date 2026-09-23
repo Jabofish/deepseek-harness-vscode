@@ -9,6 +9,11 @@ export function createWebviewHtml(webview: vscode.Webview, extensionUri: vscode.
     "default-src 'none'",
     `img-src ${webview.cspSource} data:`,
     `style-src ${webview.cspSource}`,
+    `style-src-elem ${webview.cspSource}`,
+    // Shiki and React supply bounded token colors as style attributes. Keep
+    // stylesheet elements restricted to packaged resources, and do not relax
+    // script-src or permit model-authored HTML.
+    "style-src-attr 'unsafe-inline'",
     `script-src 'nonce-${nonce}'`,
     `font-src ${webview.cspSource}`,
     "connect-src 'none'",

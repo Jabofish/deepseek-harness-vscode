@@ -1,6 +1,7 @@
 export * from './backend.js'
 export * from './feedback.js'
 export * from './advanced.js'
+export * from './plugin-metadata.js'
 export * from './errors.js'
 export * from './events.js'
 export * from './feature-contracts.js'

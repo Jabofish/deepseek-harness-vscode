@@ -1,6 +1,33 @@
 # Change Log
 
-## Unreleased
+## 0.2.2
+
+- 修复聊天 Markdown 中 HTML、Python 等已标记代码块仍显示为灰色：Webview CSP 放行内联 `style` 属性以承载 Shiki token 颜色，打包样式表与 nonce 脚本的限制保持不变，模型原始 HTML 仍被禁用；补充浏览器 CSP 验证和界面回归测试。
+- Fixed labeled HTML, Python, and other chat code blocks appearing monochrome: the Webview CSP permits inline `style` attributes for Shiki token colors while retaining packaged-stylesheet and nonce-script restrictions; raw model HTML stays disabled. Browser CSP and rendering regressions were checked.
+
+- 修复工具变更预览的新增/删除行背景在横向滚动后消失：整份 diff 共用完整可滚动宽度，短行的着色也能延伸到长行末端。
+- Fixed added/removed line backgrounds disappearing when horizontally scrolling a tool diff: all rows now share the full scrollable content width, so short rows remain colored through the end of long lines.
+
+- 修复 DSH `0.1.7-alpha.1` 适配回归：Job 跟读正常结束不再误报失败，恢复跟读保留已显示输出，立即停止可取消尚未完成的启动；Session V4 历史中的 `tool/result` 与实时流一致，`session/control` 重连基线可删除旧 projection。禁用预设选择或切换连接时不再沿用旧预设状态；归档失败会向用户提示，畸形预设元数据会在 Webview 边界被拒绝。以上有自动回归覆盖，但同一 Job、同一 offset 的旧/新 `opened` 帧尚缺协议代际标识，非空真实 Job 与 VS Code 现场验证仍未完成。
+- Fixed DSH `0.1.7-alpha.1` adaptation regressions: normal Job-follow completion no longer reports failure; resumed follow retains displayed output, and immediate stop cancels a pending start. Session V4 history now maps `tool/result` consistently with the live stream, and a reconnect control baseline removes stale projections. Disabled preset selection and connection changes no longer reuse stale preset state; archive failures are surfaced, and malformed preset metadata is rejected at the Webview boundary. Automated regressions cover these paths, but identical-offset old/new Job `opened` frames still lack a protocol generation identifier, and non-empty live Jobs plus VS Code interaction remain unverified.
+
+- 修复重新构建后在开发宿主中一激活就报错 `The argument 'filename' must be a file URL object, file URL string, or absolute path string. Received undefined`：扩展以 CJS 单文件打包，esbuild 会把 `import.meta` 置空，而上游 `@deepseek-ai/*` 模块在求值时就调用 `createRequire(import.meta.url)("../package.json")` 读取自身版本，于是激活期抛出 `ERR_INVALID_ARG_VALUE`；构建期插件现改为按上游清单内联真实版本号，遇到无法翻译的 `import.meta` 用法或产物中残留的 `import.meta.url` 读取都会直接让构建失败。
+- Fixed the error dialog shown as soon as the extension activates in a development host after a rebuild, `The argument 'filename' must be a file URL object, file URL string, or absolute path string. Received undefined`: the extension bundles to a single CJS file, where esbuild replaces `import.meta` with an empty object, while an upstream `@deepseek-ai/*` module calls `createRequire(import.meta.url)("../package.json")` during its own evaluation to read its version, so activation threw `ERR_INVALID_ARG_VALUE`. A build-time plugin now inlines the version the upstream manifest declares and fails the build on any `import.meta` use it cannot translate or on an emitted bundle that still reads `import.meta.url`.
+
+- 代码高亮改为按需语法白名单：Webview 只为 18 种常用语法生成懒加载分块（此前打包 Shiki 全量 bundle 的 300+ 个分块），其余语言与未知名按纯文本渲染；VSIX 由 693 个文件降到 97 个，Webview 的 sourcemap 不再随包发布（本地构建仍保留，供 DevTools 使用）。
+- Code highlighting now uses a bounded grammar whitelist: the Webview ships lazy chunks for 18 common languages instead of the 300+ chunks of Shiki's full bundle, and any other or unknown language falls back to plaintext. The VSIX drops from 693 files to 97 and stops publishing the Webview sourcemaps (local builds keep them for DevTools).
+
+- 修复代码高亮在真实 Webview 中一直静默失效：CSP 不含 `wasm-unsafe-eval`，浏览器拒绝 WebAssembly 编译，Shiki 的 Oniguruma 引擎从未启动，每个代码块都退化成纯文本；现改用不依赖 WebAssembly 的 JavaScript 正则引擎，18 种语法在 Chromium + 同一 CSP 下逐一验证通过，未知名仍按纯文本渲染。
+- Fixed code highlighting silently doing nothing in the real Webview: the CSP has no `wasm-unsafe-eval`, so the browser refused every WebAssembly compile, Shiki's Oniguruma engine never started, and each code block degraded to plaintext. The highlighter now uses the WebAssembly-free JavaScript regex engine; all 18 bundled grammars were verified in Chromium under the same CSP, with unknown languages still rendering as plaintext.
+
+- 接入上游 DSH `0.1.7-alpha.1` 的独立 `alpha171` Adapter：严格校验 Session V4、接入独立 Job 全量列表流、按 UTF-8 字节偏移跟读输出并支持人工停止，UI 操作由精确能力标记门控；旧版继续使用原有只读 Jobs 行为。补齐 registry-only preset/plugin inventory 字段映射与权限预设限制。Job 跟读/停止已有自动契约和界面测试，但非空真实 Job、真实跟读/停止及 VS Code 现场回放仍待验证；安装器默认保留 `0.1.5-rc.2`。
+- Added a dedicated `alpha171` adapter for upstream DSH `0.1.7-alpha.1`: it validates Session V4, streams complete Job rosters, follows output from UTF-8 byte offsets, and supports human-initiated stop. The UI gates these operations on the exact capability flag; older adapters retain their existing read-only Jobs behavior. Registry-only preset/plugin metadata and unsupported preset actions are handled explicitly. Job follow/stop have automated contract and UI coverage, while non-empty live Jobs, live follow/stop, and a real VS Code replay remain unverified. The installer default stays `0.1.5-rc.2`.
+
+- 修复右栏两处误报：检查点、提示词模板等路径作用域列表此前把 DSH workspace id 当作 VS Code 文件夹 id 送出，被宿主一律拒绝，现改由宿主在会话投影上声明所属文件夹并只以此读取；没有打开文件夹时（仅临时工作区）不再发起这类读取，也不再显示「列表可能不完整」。输入队列按上游语义读取：alpha/rc 线的队列基线来自宿主级控制流，基线之后新建的会话在其第一次入队前不会被任何帧提到，此前被当成「读不到」而永久报错，现与官方客户端一致按空队列处理（真实运行时验证：修复前等满 2s 后失败，修复后立即返回）。
+- 按运行时能力禁用 RC6/legacy 不支持的归档恢复入口，保留 Alpha 恢复；RC1 Jobs 明确提示不支持，不再伪装为空列表，RC2 任务事件不受影响。
+
+- 修正状态与操作回执：永久删除无上游接口时明确禁用；权限与 Plan 未知值不再冒充默认配置；归档状态可随上游恢复同步，Goal 清除验证真实回执。
+- 修正辅助面板的失败提示与展示：目录读取失败、变更能力缺失、检查点部分恢复明确提示；不再推测 Workflow 中断、会话完成、审批风险或模型活动，本地能力与上游能力分别标识。
 
 - alpha.2 会话与交互：恢复 Goal 激活控制、刷新插件清单并显示待处理会话交互；读取权威回合变更，将已提交的 Plan Markdown 保留为可复用聊天卡片。
 - 修复 DSH 0.1.6 alpha 权限选择器仅显示当前值：读取独立动态目录、监听目录失效，补齐 Auto 实验标记和风险确认。

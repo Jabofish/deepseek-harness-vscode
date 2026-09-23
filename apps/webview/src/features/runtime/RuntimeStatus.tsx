@@ -219,7 +219,13 @@ function CapabilityProfile({
               title={capability.reason}
             >
               <code>{id}</code>
-              <span>{t(CAPABILITY_STATE_KEYS[capability.state].labelKey)}</span>
+              <span>
+                {t(
+                  capability.upstream === 'not-applicable'
+                    ? 'runtime.capability.local'
+                    : CAPABILITY_STATE_KEYS[capability.state].labelKey,
+                )}
+              </span>
             </li>
           )
         })}

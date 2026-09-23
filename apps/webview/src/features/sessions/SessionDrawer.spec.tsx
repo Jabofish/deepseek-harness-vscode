@@ -537,3 +537,68 @@ describe('workspace folder picker', () => {
     await waitFor(() => expect(onAddWorkspace).toHaveBeenCalledTimes(2))
   })
 })
+
+afterEach(() => cleanup())
+
+it.each([false, true])('gates archived restore on advertised support: %s', async (canRestoreSessions) => {
+  const onRestore = vi.fn().mockResolvedValue(undefined)
+  renderDrawer({
+    canRestoreSessions,
+    onRestore,
+    archivedSessions: [session({ id: 'old', title: 'Archived chat' })],
+  })
+  fireEvent.click(screen.getByRole('button', { name: /Archived/u }))
+  const button = await screen.findByRole('button', { name: 'Restore session Archived chat' })
+  expect((button as HTMLButtonElement).disabled).toBe(!canRestoreSessions)
+  fireEvent.click(button)
+  expect(onRestore).toHaveBeenCalledTimes(canRestoreSessions ? 1 : 0)
+})
+
+describe('session archive failures', () => {
+  it('shows the upstream active-session rejection and releases the row action', async () => {
+    const message = "cannot archive session 's1': the session is active (turn)"
+    const onArchive = vi.fn().mockRejectedValue(new Error(message))
+    renderDrawer({ onArchive })
+
+    const archiveButton = screen.getByRole('button', { name: 'Archive session Fix login bug' })
+    fireEvent.click(archiveButton)
+
+    expect((await screen.findByRole('alert')).textContent).toContain(message)
+    expect(screen.getByTitle('Fix login bug')).toBeDefined()
+    await waitFor(() => expect(archiveButton.hasAttribute('disabled')).toBe(false))
+  })
+
+  it('shows an ordinary RPC error instead of silently keeping the session', async () => {
+    const message = 'The workspace archive request failed.'
+    const onArchive = vi.fn().mockRejectedValue(new Error(message))
+    renderDrawer({ onArchive })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Archive session Fix login bug' }))
+
+    expect((await screen.findByRole('alert')).textContent).toContain(message)
+    expect(screen.getByTitle('Fix login bug')).toBeDefined()
+  })
+
+  it('uses the existing archive error translation when rejection has no message', async () => {
+    const onArchive = vi.fn().mockRejectedValue('rejected')
+    renderDrawer({ onArchive })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Archive session Fix login bug' }))
+
+    expect((await screen.findByRole('alert')).textContent).toContain('Unable to archive session.')
+  })
+
+  it('continues to show restore failures in the archived section', async () => {
+    const onRestore = vi.fn().mockRejectedValue(new Error('The restore RPC failed.'))
+    renderDrawer({
+      canRestoreSessions: true,
+      onRestore,
+      archivedSessions: [session({ id: 'old', title: 'Archived chat' })],
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: /Archived/u }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Restore session Archived chat' }))
+
+    expect((await screen.findByRole('alert')).textContent).toContain('The restore RPC failed.')
+  })
+})

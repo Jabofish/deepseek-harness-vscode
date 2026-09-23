@@ -13,6 +13,7 @@ import { executeLegacySessionConfigCommand } from '../legacy/command-repository.
 
 /** rc.2 adds task frames and the browser-local time-zone prompt field. */
 export class LegacyRc2VersionAdapter extends LegacyRc1VersionAdapter {
+  protected override readonly supportsJobs: boolean = true
   protected override readonly identity: VersionAdapterIdentity = {
     id: 'dsh-0.0.1-rc.2',
     supportedVersion: '0.0.1-rc.2',

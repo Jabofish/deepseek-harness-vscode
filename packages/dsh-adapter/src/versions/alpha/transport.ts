@@ -17,6 +17,14 @@ import {
   validAlpha151SessionSnapshot,
 } from '../alpha151/session-wire.js'
 import { normalizeAlpha162ControlFrame } from '../alpha162/session-control.js'
+import { normalizeAlpha171ControlFrame } from '../alpha171/session-control.js'
+import {
+  normalizeAlpha171Event,
+  validAlpha171HistoryRecord,
+  validAlpha171ProjectionBaseline,
+  validAlpha171SessionEventFrame,
+  validAlpha171SessionSnapshot,
+} from '../alpha171/session-wire.js'
 
 /** The small subset of the `ws`/browser WebSocket surface used by the adapter. */
 export interface AlphaWebSocket {
@@ -34,8 +42,10 @@ export interface AlphaWebSocketConstructor {
 /** Normalize one upstream alpha Remote code into the local compatibility vocabulary. */
 export type AlphaErrorCodeNormalizer = (code: string, details: Readonly<Record<string, unknown>>) => string
 
-export type AlphaSessionWireVersion = 'v0' | 'v2' | 'v3'
-export type AlphaSessionControlWireVersion = 'queue-v1' | 'inbox-v1'
+export type AlphaSessionWireVersion = 'v0' | 'v2' | 'v3' | 'v4'
+export type AlphaSessionControlWireVersion = 'queue-v1' | 'inbox-v1' | 'projection-v2'
+export type AlphaWorkspaceWireVersion = 'archive-v1' | 'pinned-v2'
+export type AlphaPresetWireVersion = 'legacy-v1' | 'registry-v2'
 
 export interface AlphaLoopbackApiClientOptions {
   readonly cordisClientBoundary?: boolean
@@ -53,6 +63,10 @@ export interface AlphaLoopbackApiClientOptions {
   readonly sessionWireVersion?: AlphaSessionWireVersion
   /** Session Controller control profile; alpha.2 replaces queue snapshots with Inbox projections. */
   readonly controlWireVersion?: AlphaSessionControlWireVersion
+  /** Workspace follow profile; alpha171 adds a registry-global pinned-session set. */
+  readonly workspaceWireVersion?: AlphaWorkspaceWireVersion
+  /** Preset roster profile; alpha171's registry has no user-root authoring fields. */
+  readonly presetWireVersion?: AlphaPresetWireVersion
   /**
    * Child-session routing committed by the subagent catalog. The Session
    * Controller refuses a session-kind address for a subagent-origin Session,
@@ -426,9 +440,19 @@ export class AlphaLoopbackApiClient implements DshTransport {
           goalReceipt,
         )
       case 'goal.clear':
-        return this.legacy('goals/clear', { agentId: value.sessionId, ref: value.ref }, signal, () => ({
-          cleared: true,
-        }))
+        return this.legacy('goals/clear', { agentId: value.sessionId, ref: value.ref }, signal, (receipt) => {
+          const tombstone = recordOrUndefined(receipt)
+          const previous = recordOrUndefined(value.ref)
+          if (
+            previous === undefined ||
+            tombstone?.id !== previous.id ||
+            typeof previous.revision !== 'number' ||
+            !Number.isSafeInteger(tombstone?.revision) ||
+            tombstone?.revision !== previous.revision + 1
+          )
+            throw malformedResponse('goals/clear tombstone')
+          return { cleared: true }
+        })
       case 'settings.describe':
         return this.legacy('settings/describe', {}, signal)
       case 'settings.openDocument':
@@ -489,6 +513,8 @@ export class AlphaLoopbackApiClient implements DshTransport {
   }
 
   private async presetList(signal?: AbortSignal): Promise<LegacyResponse> {
+    if (this.options.presetWireVersion === 'registry-v2')
+      return this.legacy('agentPresets/list', {}, signal, presetRoster)
     // Alpha keeps the roster and native-opener capability on separate Remote
     // methods. Joining them here prevents `authorable` (a write capability)
     // from being mistaken for the unrelated ability to open a directory.
@@ -705,9 +731,11 @@ export class AlphaLoopbackApiClient implements DshTransport {
       !Array.isArray(record.records) ||
       typeof record.hasMore !== 'boolean' ||
       (record.projections !== undefined &&
-        (wireVersion === 'v3'
-          ? !validAlpha151ProjectionBaseline(record.projections)
-          : !validAlphaProjectionBaseline(record.projections)))
+        (wireVersion === 'v4'
+          ? !validAlpha171ProjectionBaseline(record.projections)
+          : wireVersion === 'v3'
+            ? !validAlpha151ProjectionBaseline(record.projections)
+            : !validAlphaProjectionBaseline(record.projections)))
     )
       throw malformedResponse('session history')
     const events = expandHistoryRecords(record.records, sessionId, wireVersion)
@@ -833,7 +861,8 @@ export class AlphaLoopbackApiClient implements DshTransport {
       baseline === undefined ||
       !Array.isArray(baseline.items) ||
       !baseline.items.every(isPlainRecord) ||
-      !isNonEmptyStringArray(baseline.archivedSessionIds)
+      !isNonEmptyStringArray(baseline.archivedSessionIds) ||
+      (this.options.workspaceWireVersion === 'pinned-v2' && !isNonEmptyStringArray(baseline.pinnedSessionIds))
     )
       throw malformedResponse('workspace/follow baseline value')
     return { rpcId: randomUUID(), result: { ok: true, value: baseline } }
@@ -947,7 +976,14 @@ export class AlphaLoopbackApiClient implements DshTransport {
 
   private async *readControl(signal: AbortSignal): AsyncGenerator<unknown> {
     for await (const item of this.openRemoteStream('session/control', {}, signal)) {
-      if ((this.options.controlWireVersion ?? 'queue-v1') === 'inbox-v1') {
+      const controlWireVersion = this.options.controlWireVersion ?? 'queue-v1'
+      if (controlWireVersion === 'projection-v2') {
+        const frames = normalizeAlpha171ControlFrame(item)
+        if (frames === undefined) throw malformedResponse('session/control alpha171 frame')
+        yield* frames
+        continue
+      }
+      if (controlWireVersion === 'inbox-v1') {
         const frames = normalizeAlpha162ControlFrame(item)
         if (frames === undefined) throw malformedResponse('session/control alpha.2 frame')
         yield* frames
@@ -1031,7 +1067,7 @@ export class AlphaLoopbackApiClient implements DshTransport {
   private async *readSession(sessionId: string, signal: AbortSignal): AsyncGenerator<unknown> {
     const wireVersion = this.options.sessionWireVersion ?? 'v0'
     const v2 = wireVersion === 'v2'
-    const assistantStream = v2 || wireVersion === 'v3'
+    const assistantStream = v2 || wireVersion === 'v3' || wireVersion === 'v4'
     const request = {
       address: this.sessionAddress(sessionId),
       maxMessages: 50,
@@ -1143,6 +1179,7 @@ export class AlphaLoopbackApiClient implements DshTransport {
   }
 
   private async *readWorkspace(signal: AbortSignal): AsyncGenerator<unknown> {
+    const pinnedWorkspace = this.options.workspaceWireVersion === 'pinned-v2'
     for await (const item of this.openRemoteStream('workspace/follow', {}, signal)) {
       const frame = recordOrUndefined(item)
       if (frame?.type === 'baseline') {
@@ -1151,11 +1188,14 @@ export class AlphaLoopbackApiClient implements DshTransport {
           value === undefined ||
           !Array.isArray(value.items) ||
           !value.items.every(isPlainRecord) ||
-          !isNonEmptyStringArray(value.archivedSessionIds)
+          !isNonEmptyStringArray(value.archivedSessionIds) ||
+          (pinnedWorkspace && !isNonEmptyStringArray(value.pinnedSessionIds))
         )
           throw malformedResponse('workspace/follow baseline')
         yield { type: 'host/workspace-changed' }
         yield { type: 'host/archived-sessions-changed', sessionIds: value.archivedSessionIds }
+        if (pinnedWorkspace)
+          yield { type: 'host/pinned-sessions-changed', sessionIds: value.pinnedSessionIds }
       } else if (frame?.type === 'upsert') {
         if (!isPlainRecord(frame.workspace)) throw malformedResponse('workspace/follow upsert')
         yield { type: 'host/workspace-changed', workspace: frame.workspace }
@@ -1169,11 +1209,15 @@ export class AlphaLoopbackApiClient implements DshTransport {
         if (!isNonEmptyStringArray(frame.archivedSessionIds))
           throw malformedResponse('workspace/follow archived')
         yield { type: 'host/archived-sessions-changed', sessionIds: frame.archivedSessionIds }
+      } else if (frame?.type === 'pinned') {
+        if (!pinnedWorkspace || !isNonEmptyStringArray(frame.pinnedSessionIds))
+          throw malformedResponse('workspace/follow pinned')
+        yield { type: 'host/pinned-sessions-changed', sessionIds: frame.pinnedSessionIds }
       } else throw malformedResponse('workspace/follow frame')
     }
   }
 
-  private async *openRemoteStream(
+  public async *openRemoteStream(
     endpoint: string,
     args: Record<string, unknown>,
     signal?: AbortSignal,
@@ -1262,6 +1306,7 @@ class AlphaRemoteMux {
     }
     signal?.addEventListener('abort', handleAbort, { once: true })
 
+    let firstFrameTimer: ReturnType<typeof setTimeout> | undefined
     try {
       let socket: AlphaWebSocket
       try {
@@ -1278,8 +1323,30 @@ class AlphaRemoteMux {
         endpoint,
         payload: { args },
       })
-      for await (const item of state.queue) yield item
+      if (
+        ['job/list', 'job/follow', 'session/follow', 'session/control', 'workspace/follow'].includes(endpoint)
+      ) {
+        firstFrameTimer = setTimeout(() => {
+          if (state.terminal) return
+          state.terminal = true
+          this.sendCancel(streamId, state)
+          state.queue.fail(
+            new AppError({
+              code: 'BACKEND_UNREACHABLE',
+              message: 'DSH did not send the stream baseline before the deadline.',
+              retryable: true,
+              context: { method: endpoint, timedOut: true },
+            }),
+          )
+        }, this.options.requestTimeoutMs)
+      }
+      for await (const item of state.queue) {
+        clearTimeout(firstFrameTimer)
+        firstFrameTimer = undefined
+        yield item
+      }
     } finally {
+      clearTimeout(firstFrameTimer)
       signal?.removeEventListener('abort', handleAbort)
       if (!state.terminal) {
         state.terminal = true
@@ -1618,6 +1685,7 @@ function mapEmit(event: unknown, args: readonly unknown[]): readonly unknown[] {
         typeof summary.blank !== 'boolean' ||
         (summary.parentSessionId !== undefined && !isNonEmptyString(summary.parentSessionId)) ||
         (summary.origin !== undefined && summary.origin !== 'subagent') ||
+        (summary.agentAvailable !== undefined && typeof summary.agentAvailable !== 'boolean') ||
         (summary.cwd !== undefined && typeof summary.cwd !== 'string') ||
         (summary.agentPreset !== undefined && typeof summary.agentPreset !== 'string')
       )
@@ -1627,6 +1695,7 @@ function mapEmit(event: unknown, args: readonly unknown[]): readonly unknown[] {
           type: 'host/session-added',
           sessionId: summary.sessionId,
           blank: summary.blank,
+          ...(summary.agentAvailable === undefined ? {} : { agentAvailable: summary.agentAvailable }),
           ...(summary.parentSessionId === undefined ? {} : { parentSessionId: summary.parentSessionId }),
           ...(summary.origin === undefined ? {} : { origin: summary.origin }),
           ...(summary.cwd === undefined ? {} : { cwd: summary.cwd }),
@@ -1703,7 +1772,13 @@ function normalizeAlphaEvent(
 ): Record<string, unknown> | undefined {
   const event = recordOrUndefined(value)
   if (event === undefined || typeof event.type !== 'string') return undefined
-  return { ...(wireVersion === 'v2' ? normalizeAlpha13Event(event) : event), sessionId }
+  const normalized =
+    wireVersion === 'v2'
+      ? normalizeAlpha13Event(event)
+      : wireVersion === 'v4'
+        ? normalizeAlpha171Event(event)
+        : event
+  return { ...normalized, sessionId }
 }
 
 /** Keep the verified v2 event surface while ignoring additive upstream keys. */
@@ -1727,6 +1802,7 @@ function expandHistoryRecords(
 ): readonly Record<string, unknown>[] {
   const v2 = wireVersion === 'v2'
   const v3 = wireVersion === 'v3'
+  const v4 = wireVersion === 'v4'
   const out: Record<string, unknown>[] = []
   for (const raw of records) {
     const record = recordOrUndefined(raw)
@@ -1736,12 +1812,17 @@ function expandHistoryRecords(
         event === undefined ||
         !(v3
           ? validAlpha151HistoryRecord(record)
-          : v2
-            ? validAlpha13HistoryRecord(record)
-            : validAlphaSessionEvent(event))
+          : v4
+            ? validAlpha171HistoryRecord(record)
+            : v2
+              ? validAlpha13HistoryRecord(record)
+              : validAlphaSessionEvent(event))
       )
         throw malformedResponse('session history event')
-      out.push({ ...(v2 ? normalizeAlpha13Event(event) : event), sessionId })
+      out.push({
+        ...(v2 ? normalizeAlpha13Event(event) : v4 ? normalizeAlpha171Event(event) : event),
+        sessionId,
+      })
     } else if (!v2 && !v3 && record?.type === 'chunks') out.push(...expandChunkRow(record.event, sessionId))
     else throw malformedResponse('session history record')
   }
@@ -1764,18 +1845,22 @@ function validAlphaWireSnapshot(
   value: unknown,
   wireVersion: AlphaSessionWireVersion,
 ): value is AlphaSessionSnapshot {
-  return wireVersion === 'v3'
-    ? validAlpha151SessionSnapshot(value)
-    : validAlphaSessionSnapshot(value, wireVersion === 'v2')
+  return wireVersion === 'v4'
+    ? validAlpha171SessionSnapshot(value)
+    : wireVersion === 'v3'
+      ? validAlpha151SessionSnapshot(value)
+      : validAlphaSessionSnapshot(value, wireVersion === 'v2')
 }
 
 function validAlphaWireEventFrame(
   value: unknown,
   wireVersion: AlphaSessionWireVersion,
 ): value is AlphaSessionEventFrame {
-  return wireVersion === 'v3'
-    ? validAlpha151SessionEventFrame(value)
-    : validAlphaSessionEventFrame(value, wireVersion === 'v2')
+  return wireVersion === 'v4'
+    ? validAlpha171SessionEventFrame(value)
+    : wireVersion === 'v3'
+      ? validAlpha151SessionEventFrame(value)
+      : validAlphaSessionEventFrame(value, wireVersion === 'v2')
 }
 
 function expandChunkRow(value: unknown, sessionId: string): readonly Record<string, unknown>[] {

@@ -19,6 +19,8 @@ export type Alpha161AdapterOptions = Rc152AdapterOptions
  * than inferred from its semver shape.
  */
 export class Alpha161VersionAdapter extends Rc152VersionAdapter {
+  protected override readonly supportsSessionRestore = true
+
   protected override permissionCatalogReader(
     transport: DshTransport,
   ): (signal?: AbortSignal) => Promise<readonly string[]> {

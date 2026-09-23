@@ -32,6 +32,7 @@ export interface SessionDrawerProps {
   /** Archived rows the host still holds; fetched on demand by the section. */
   readonly archivedSessions: readonly SessionSummary[]
   readonly onLoadArchived: () => Promise<void>
+  readonly canRestoreSessions?: boolean
   readonly onRestore: (sessionId: string) => Promise<void>
   /** Destructive: removes the archived conversation record from DSH. */
   readonly onDelete: (sessionId: string) => Promise<void>
@@ -116,6 +117,7 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
   const [renameError, setRenameError] = useState<string>()
   const [removeWorkspace, setRemoveWorkspace] = useState<WorkspaceSummary>()
   const [removeError, setRemoveError] = useState<string>()
+  const [archiveError, setArchiveError] = useState<string>()
   const [moveError, setMoveError] = useState<string>()
   const [archivedOpen, setArchivedOpen] = useState(false)
   const [archivedError, setArchivedError] = useState<string>()
@@ -308,10 +310,14 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
   }
 
   const archiveSession = (session: SessionSummary): void => {
+    setArchiveError(undefined)
     setRemovingSessionId(session.id)
     void props
       .onArchive(session.id)
-      .catch(() => undefined)
+      .catch((reason: unknown) => {
+        const message = reason instanceof Error ? reason.message : ''
+        setArchiveError(message.trim() === '' ? t('app.error.archiveSession') : message)
+      })
       .finally(() => setRemovingSessionId((current) => (current === session.id ? undefined : current)))
   }
 
@@ -764,6 +770,11 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
               {t('sessions.searchUnavailable')}
             </p>
           ) : null}
+          {archiveError === undefined ? null : (
+            <p className="dsh-session-switcher__error" role="alert">
+              {archiveError}
+            </p>
+          )}
           {moveError === undefined ? null : (
             <p className="dsh-session-switcher__error" role="alert">
               {moveError}
@@ -879,8 +890,16 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
                               className="dsh-icon-button"
                               type="button"
                               aria-label={t('sessions.restore', { title })}
-                              title={t('sessions.restoreTitle')}
-                              disabled={mutationBusy || restoringSessionId !== undefined}
+                              title={t(
+                                props.canRestoreSessions === true
+                                  ? 'sessions.restoreTitle'
+                                  : 'sessions.restoreUnavailable',
+                              )}
+                              disabled={
+                                props.canRestoreSessions !== true ||
+                                mutationBusy ||
+                                restoringSessionId !== undefined
+                              }
                               onClick={() => restoreArchivedSession(session)}
                             >
                               <Icon name="refresh" />
@@ -889,8 +908,8 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
                               className="dsh-icon-button"
                               type="button"
                               aria-label={t('sessions.delete', { title })}
-                              title={t('sessions.deleteTitle')}
-                              disabled={mutationBusy || restoringSessionId !== undefined}
+                              title={t('sessions.deleteUnavailable')}
+                              disabled
                               onClick={(event) => {
                                 dialogTriggerRef.current = event.currentTarget
                                 setDeleteError(undefined)

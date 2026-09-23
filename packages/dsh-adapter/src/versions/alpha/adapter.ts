@@ -6,6 +6,8 @@ import {
   type ConnectedBackend,
   type DshBackend,
   type BackendEvent,
+  type PluginRepository,
+  type PresetRepository,
 } from '@dsh-vscode/domain'
 
 import { DshVersionAdapterBase, type VersionAdapterIdentity } from '../../adapter-base.js'
@@ -19,7 +21,7 @@ import { Rc6ExportRepository } from '../../repositories/export-repository.js'
 import { Rc6MessageFeedbackRepository } from '../../repositories/feedback-repository.js'
 import { Rc6GoalRepository } from '../../repositories/goal-repository.js'
 import { Rc6InteractionRepository } from '../../repositories/interaction-repository.js'
-import { Rc6JobRepository } from '../../repositories/job-repository.js'
+import { Rc6JobRepository, type EventAwareJobRepository } from '../../repositories/job-repository.js'
 import { Rc6ModelRepository } from '../../repositories/model-repository.js'
 import { Rc6PluginRepository } from '../../repositories/plugin-repository.js'
 import { Rc6PresetRepository } from '../../repositories/preset-repository.js'
@@ -60,6 +62,8 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
   protected readonly supportsLiveGoal: boolean = false
   protected readonly supportsFileUploads: boolean = false
   protected readonly supportsInlineSubagentImages: boolean = false
+  /** Only the 0.1.6 alpha line exposes the upstream unarchive Remote. */
+  protected readonly supportsSessionRestore: boolean = false
   /** Only DSH 0.1.3-alpha.2 requires `subagent.prompt.delivery`. */
   protected readonly supportsSubagentPromptDelivery: boolean = false
   /** 0.1.3-alpha.1 renamed the commands/execute attachment parameter. */
@@ -112,6 +116,7 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
       const capabilities: BackendCapabilities = {
         protocolVersion: this.protocolVersion,
         dshVersion: this.supportedVersion,
+        sessionRestore: this.supportsSessionRestore && !compatibility,
         subagentImagePrompts: this.supportsInlineSubagentImages && !compatibility,
         features: new Set([
           'host',
@@ -174,9 +179,12 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
       // task center keeps a needs-input row that can only fail.
       onSettled: (event) => eventsHolder.value?.publish(event),
     })
-    const workspaces = new Rc6WorkspaceRepository(transport)
+    const workspaces = new Rc6WorkspaceRepository(transport, {
+      supportsSessionRestore: this.supportsSessionRestore,
+    })
     const sessions = new Rc6SessionRepository(transport, workspaces, this.options.samePath, {
       preallocatedSessionId: true,
+      supportsSessionRestore: this.supportsSessionRestore,
       supportsFileUploads: this.supportsFileUploads,
       readPermissionPresets: this.permissionCatalogReader(transport),
       commandAttachmentWire: this.commandAttachmentWire,
@@ -186,18 +194,24 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
       onSessionOpen: (sessionId) => eventsHolder.value?.refreshSession(sessionId),
       deriveTitleFromCwd: true,
       // Alpha baselines queues on the session/control stream, not on
-      // `session/follow`; a subscription must not wipe that state.
-      resetQueueOnSubscribe: false,
+      // `session/follow`; a subscription must not wipe that state, and a Session
+      // that stream never named has an empty queue rather than an unknown one.
+      queueBaseline: 'control',
     })
     const goals = new Rc6GoalRepository(transport, this.supportsLiveGoal)
-    const jobs = new Rc6JobRepository(transport, { resetOnSubscribe: false })
+    const jobs = this.createJobRepository(transport)
     const observe = (event: BackendEvent): void => {
       interactions.remember(event)
       sessions.remember(event)
       goals.remember(event)
       jobs.remember(event)
     }
-    const events = new AlphaEventSource(transport, observe, historyGapRecovery(sessions))
+    const events = new AlphaEventSource(
+      transport,
+      observe,
+      historyGapRecovery(sessions),
+      jobs.watchRows === undefined ? undefined : (sessionId, signal) => jobs.watchRows!(sessionId, signal),
+    )
     eventsHolder.value = events
     let closed = false
     const backendValue: DshBackend = {
@@ -220,8 +234,8 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
       settings: new Rc6SettingsRepository(transport),
       skills: new Rc6SkillRepository(transport),
       commands: new Rc6CommandRepository(transport, this.commandAttachmentWire),
-      plugins: new Rc6PluginRepository(transport),
-      presets: new Rc6PresetRepository(transport),
+      plugins: this.createPluginRepository(transport),
+      presets: this.createPresetRepository(transport),
       exports: new Rc6ExportRepository(transport, this.options.exportFileSystem),
       references: new Rc6ReferenceRepository(transport),
       feedback: new Rc6MessageFeedbackRepository(transport),
@@ -234,6 +248,21 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
       },
     }
     return Promise.resolve(backendValue)
+  }
+
+  /** Allow a release seam to replace the old session-control-backed Job source. */
+  protected createJobRepository(transport: AlphaLoopbackApiClient): EventAwareJobRepository {
+    return new Rc6JobRepository(transport, { resetOnSubscribe: false })
+  }
+
+  /** Allow a release seam to replace changed plugin-inventory fields. */
+  protected createPluginRepository(transport: AlphaLoopbackApiClient): PluginRepository {
+    return new Rc6PluginRepository(transport)
+  }
+
+  /** Allow a release seam to replace changed preset-roster fields and methods. */
+  protected createPresetRepository(transport: AlphaLoopbackApiClient): PresetRepository {
+    return new Rc6PresetRepository(transport)
   }
 }
 

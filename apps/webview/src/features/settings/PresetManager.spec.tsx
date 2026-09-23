@@ -123,6 +123,24 @@ describe('PresetManager default selection', () => {
     fireEvent.click(button)
     expect(onMakeDefault).not.toHaveBeenCalled()
   })
+
+  it('does not offer an ineffective default mutation when mode selection is hidden', async () => {
+    const onMakeDefault = vi.fn().mockResolvedValue(undefined)
+    renderManager({
+      onMakeDefault,
+      onLoadRoster: vi.fn().mockResolvedValue({
+        ...rosterFixture(),
+        modeSelectionEnabled: false,
+      }),
+    })
+    await waitFor(() => expect(screen.getByText('Built-in presets')).toBeDefined())
+
+    const button = screen.getByRole('button', { name: 'Set as default: Cordis' })
+    expect(button.hasAttribute('disabled')).toBe(true)
+    expect(button.getAttribute('title')).toContain('selection is hidden')
+    fireEvent.click(button)
+    expect(onMakeDefault).not.toHaveBeenCalled()
+  })
 })
 
 describe('PresetManager composition viewer', () => {
@@ -364,5 +382,44 @@ describe('PresetManager removal', () => {
 
     expect(screen.queryByRole('alertdialog', { name: 'Delete preset' })).toBeNull()
     expect(document.activeElement).toBe(trigger)
+  })
+})
+
+describe('registry-only preset policy', () => {
+  afterEach(() => cleanup())
+  it('withholds absent composition reads and chooser-policy default writes', async () => {
+    const read = vi.fn()
+    const makeDefault = vi.fn()
+    renderManager({
+      onLoadRoster: () =>
+        Promise.resolve({
+          ...rosterFixture(),
+          authorable: false,
+          compositionReadable: false,
+          modeSelectionEnabled: false,
+        }),
+      onReadDocument: read,
+      onMakeDefault: makeDefault,
+    })
+    await screen.findByRole('button', { name: 'In use: Standard' })
+    expect(screen.queryByRole('button', { name: 'View composition: Standard' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Set as default: Cordis' }))
+    expect(read).not.toHaveBeenCalled()
+    expect(makeDefault).not.toHaveBeenCalled()
+  })
+  it('passes the adapter default field through the existing settings write', async () => {
+    const makeDefault = vi.fn().mockResolvedValue(undefined)
+    renderManager({
+      onLoadRoster: () =>
+        Promise.resolve({
+          ...rosterFixture(),
+          defaultSettingPath: 'agent-preset-registry.selectedDefault',
+        }),
+      onMakeDefault: makeDefault,
+    })
+    fireEvent.click(await screen.findByRole('button', { name: 'Set as default: Cordis' }))
+    await waitFor(() =>
+      expect(makeDefault).toHaveBeenCalledWith('cordis', 'agent-preset-registry.selectedDefault'),
+    )
   })
 })

@@ -58,7 +58,7 @@ export class WebviewMessageRouter {
       await this.postFeatureResponse(request.requestId, {
         kind: 'operation',
         operationId: request.payload.targetRequestId,
-        state: target === undefined ? 'completed' : 'accepted',
+        state: target === undefined ? 'rejected' : 'accepted',
         ...(target === undefined ? { message: 'The target request is no longer running.' } : {}),
       })
       return
@@ -97,12 +97,16 @@ export class WebviewMessageRouter {
     message: HostMessage | FeatureHostMessage,
   ): void {
     if (!this.inFlight.delete(request.requestId)) return
-    void Promise.resolve(this.dependencies.postMessage(message)).catch((error: unknown) => {
-      // The Webview may disappear between request handling and response
-      // delivery. Keep that transport failure out of the unhandled-rejection
-      // channel while retaining a bounded diagnostic for the host.
-      this.reportUnexpectedError(unexpectedErrorEntry(request.type, error))
-    })
+    void Promise.resolve(this.dependencies.postMessage(message))
+      .then((delivered) => {
+        if (!delivered) throw new Error('The Webview did not accept the response.')
+      })
+      .catch((error: unknown) => {
+        // The Webview may disappear between request handling and response
+        // delivery. Keep that transport failure out of the unhandled-rejection
+        // channel while retaining a bounded diagnostic for the host.
+        this.reportUnexpectedError(unexpectedErrorEntry(request.type, error))
+      })
   }
 
   private async postError(

@@ -14,6 +14,7 @@ import type { Rc6WorkspaceRepository } from '../../repositories/workspace-reposi
 
 /** Exact adapter for the first published Host API contract. */
 export class LegacyRc1VersionAdapter extends Rc6VersionAdapter {
+  protected override readonly supportsJobs: boolean = false
   protected override readonly identity: VersionAdapterIdentity = {
     id: 'dsh-0.0.1-rc.1',
     supportedVersion: '0.0.1-rc.1',

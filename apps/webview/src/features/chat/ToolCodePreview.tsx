@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactElement } from 'react'
-import type { BundledLanguage, ThemedTokenWithVariants } from 'shiki'
+import type { ThemedTokenWithVariants } from 'shiki'
 import type { ToolCodeRenderProps } from '@dsh-vscode/ui'
 import { CopyButton } from './CopyButton.js'
 import { useI18n } from '../../i18n.js'
-import { getWebviewHighlighter, resolveBundledLanguage, SHIKI_THEMES } from './shiki.js'
+import { getWebviewHighlighter, resolveBundledLanguage, SHIKI_THEMES, type WebviewLanguage } from './shiki.js'
 
 const DEFAULT_MAX_LINES = 16
 const MAX_HIGHLIGHT_SOURCE_LENGTH = 64_000
@@ -165,7 +165,7 @@ export function ToolCodePreview(props: ToolCodeRenderProps): ReactElement {
 }
 
 interface HighlightedCode {
-  readonly language: BundledLanguage
+  readonly language: WebviewLanguage
   readonly source: string
   readonly tokens: readonly (readonly ThemedTokenWithVariants[])[]
 }

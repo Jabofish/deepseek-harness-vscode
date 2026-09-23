@@ -311,7 +311,15 @@ export function SubagentDrawer(props: SubagentCatalogProps): ReactElement | null
           if (next)
             void Promise.resolve()
               .then(() => props.onLoadChildren(props.parentSessionId))
-              .catch(() => undefined)
+              .then((catalog) => {
+                if (catalog === undefined) throw new Error('Subagent catalog unavailable')
+                setLoadErrors((current) => {
+                  const next = new Set(current)
+                  next.delete(props.parentSessionId)
+                  return next
+                })
+              })
+              .catch(() => setLoadErrors((current) => new Set(current).add(props.parentSessionId)))
         }}
       >
         <Icon name="users" />
@@ -329,6 +337,7 @@ export function SubagentDrawer(props: SubagentCatalogProps): ReactElement | null
           aria-label={t('subagents.tree.aria')}
           style={floatingMenuStyle(menuPosition)}
         >
+          {loadErrors.has(props.parentSessionId) ? <div role="alert">{t('subagents.loadFailed')}</div> : null}
           {rows.map(({ entry, level, parentAvailable }) => {
             if (entry.kind === 'diagnostic') {
               const reason = t(`subagents.diagnostic.${entry.reason}`)

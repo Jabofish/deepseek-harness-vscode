@@ -6,6 +6,7 @@ import type {
   AgentPresetRoster,
   CommandExecutionResult,
   GoalView,
+  JobFollowFrame,
   JobView,
   PluginInventorySnapshot,
   PromptAttachment,
@@ -27,6 +28,27 @@ export class AdvancedAgentUseCases {
 
   public listJobs(sessionId: string, signal?: AbortSignal): Promise<readonly JobView[]> {
     return this.backendService.requireBackend().jobs.list(sessionId, signal)
+  }
+
+  public followJob(
+    sessionId: string,
+    jobId: string,
+    from?: number,
+    signal?: AbortSignal,
+  ): AsyncIterable<JobFollowFrame> {
+    const repository = this.backendService.requireBackend().jobs
+    if (repository.follow === undefined) throw unavailable('job output observation')
+    return repository.follow(sessionId, jobId, from, signal)
+  }
+
+  public killJob(
+    sessionId: string,
+    jobId: string,
+    signal?: AbortSignal,
+  ): Promise<'requested' | 'already-finished'> {
+    const repository = this.backendService.requireBackend().jobs
+    if (repository.kill === undefined) return Promise.reject(unavailable('job cancellation'))
+    return repository.kill(sessionId, jobId, signal)
   }
 
   public listSubagents(sessionId: string, signal?: AbortSignal): Promise<SubagentCatalog> {

@@ -73,4 +73,20 @@ describe('ToolDiffPreview', () => {
     expect(container.textContent).toBe('')
     expect(container.querySelector('[data-diff]')).toBeNull()
   })
+
+  it('keeps every diff row inside one shared horizontal-scroll content surface', () => {
+    const { container } = render(
+      <ToolDiffPreview
+        {...diffProps({
+          diffs: [{ path: 'wide.html', oldText: null, newText: `short\n${'long'.repeat(80)}` }],
+        })}
+      />,
+    )
+
+    const body = container.querySelector('.dsh-tool-diff-preview__body')
+    const content = body?.querySelector('.dsh-tool-diff-preview__content')
+    expect(content).not.toBeNull()
+    expect(content?.querySelectorAll('.dsh-tool-diff-preview__line')).toHaveLength(3)
+    expect(body?.querySelector('.dsh-tool-diff-preview__line--add')).not.toBeNull()
+  })
 })

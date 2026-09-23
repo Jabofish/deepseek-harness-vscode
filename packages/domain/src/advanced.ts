@@ -1,3 +1,4 @@
+import type { PluginMetadata } from './plugin-metadata.js'
 export interface WorkflowSummary {
   readonly id: string
   readonly sessionId: string
@@ -105,6 +106,7 @@ export type PluginFiberPhase = 'pending' | 'loading' | 'active' | 'failed' | 'un
 export interface PluginInventoryEntry {
   readonly entryId: string
   readonly moduleName: string
+  readonly meta?: PluginMetadata
   readonly enabled: boolean
   readonly fiberPhase: PluginFiberPhase
 }
@@ -116,6 +118,7 @@ export type PresetPluginEnablement = boolean | 'conditional'
 export interface AgentPresetPluginRow {
   readonly entryId: string | null
   readonly moduleName: string
+  readonly meta?: PluginMetadata
   readonly enabled: PresetPluginEnablement
   readonly condition?: string
   readonly fiberPhase: PluginFiberPhase
@@ -132,6 +135,7 @@ export interface AgentPresetPluginGroup {
 }
 
 export interface PluginInventorySnapshot {
+  readonly managementAvailable?: boolean
   readonly entries: readonly PluginInventoryEntry[]
   readonly agentPresets?: readonly AgentPresetPluginGroup[]
 }
@@ -158,6 +162,8 @@ export interface AgentPresetDocument {
  * roster plus the two deployment facts that gate its management surface —
  * `authorable` (whether a writable preset root is configured at all) and
  * `hasDocument` (whether the host can open a preset directory natively).
+ * Newer registry-only hosts may also state whether the mode chooser is
+ * enabled; older hosts omit this optional fact.
  *
  * `hasDocument` stays absent when the host did not state the capability: a
  * probe that never answered is not a `false` answer, so the surface must keep
@@ -167,6 +173,9 @@ export interface AgentPresetRoster {
   readonly presets: readonly AgentPresetDescriptor[]
   readonly authorable: boolean
   readonly hasDocument?: boolean
+  readonly modeSelectionEnabled?: boolean
+  readonly compositionReadable?: boolean
+  readonly defaultSettingPath?: string
 }
 
 /** `agentPreset.openDocument` answer: opened natively, or the path revealed. */

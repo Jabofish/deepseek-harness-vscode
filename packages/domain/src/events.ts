@@ -26,10 +26,31 @@ export interface JobView {
   readonly status: 'running' | 'stopping' | 'completed' | 'failed' | 'killed'
   /** Kind-specific status detail ('exit code: 3'), once the producer supplied one. */
   readonly detail?: string
+  /** Producer-owned live progress line. Cleared by DSH when the job settles. */
+  readonly progress?: string
   /** Epoch ms marks the row's duration; live rows tick against the clock. */
   readonly startedAt: number
   readonly finishedAt?: number
+  /** Safe output offsets; host spill-file paths never cross the adapter boundary. */
+  readonly output?: { readonly total: number; readonly earliest: number }
 }
+
+export interface JobOutputChunk {
+  readonly at: number
+  readonly text: string
+  readonly channel?: 'stdout' | 'stderr' | 'log'
+  readonly gapBefore?: true
+}
+
+export type JobFollowFrame =
+  | { readonly type: 'opened'; readonly job: JobView; readonly from: number }
+  | {
+      readonly type: 'output'
+      readonly chunks: readonly JobOutputChunk[]
+      readonly next: number
+      readonly lossy?: true
+    }
+  | { readonly type: 'status'; readonly job: JobView }
 
 export interface SubagentView {
   readonly kind: 'child'
@@ -201,6 +222,7 @@ type BackendEventPayload =
       readonly type: 'session.added'
       readonly sessionId: string
       readonly blank?: boolean
+      readonly agentAvailable?: boolean
       readonly parentSessionId?: string
       readonly origin?: 'subagent'
       /** Session working directory from the Host creation increment. */
@@ -335,6 +357,12 @@ type BackendEventPayload =
     }
   | { readonly type: 'model.retry'; readonly retry: ModelRetrySignal }
   | { readonly type: 'jobs.updated'; readonly sessionId: string; readonly jobs: readonly JobView[] }
+  | {
+      readonly type: 'job.follow.updated'
+      readonly sessionId: string
+      readonly jobId: string
+      readonly frame: JobFollowFrame
+    }
   | { readonly type: 'queue.updated'; readonly sessionId: string; readonly items: readonly QueuedInput[] }
   | { readonly type: 'workflow.started'; readonly sessionId: string; readonly workflow: WorkflowSummary }
   | {
@@ -384,6 +412,11 @@ type BackendEventPayload =
    * visible to gap detection; the content never leaves the Host.
    */
   | { readonly type: 'session.system'; readonly sessionId: string }
+  /** Complete process-local projection set from one alpha171 control generation. */
+  | {
+      readonly type: 'session.projection.baseline'
+      readonly projections: Readonly<Record<string, SessionProjectionSnapshot>>
+    }
   | {
       readonly type: 'session.projection'
       readonly sessionId: string

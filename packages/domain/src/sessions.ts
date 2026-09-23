@@ -34,7 +34,15 @@ export function isImageMediaType(value: string): boolean {
 
 export interface SessionSummary {
   readonly id: string
+  /** DSH workspace registry identity; it is not a VS Code folder id. */
   readonly workspaceId: string
+  /**
+   * VS Code workspace folder that guards this session's paths. Only the Host
+   * can resolve it, so it is projected from cwd rather than read from DSH. An
+   * absent value means no folder is open: path-scoped surfaces are unavailable
+   * instead of failing.
+   */
+  readonly workspaceFolderId?: string
   /** Host-only DSH working directory; the public Webview projection removes it. */
   readonly cwd?: string
   readonly title: string
@@ -44,6 +52,8 @@ export interface SessionSummary {
   readonly parentSessionId?: string
   /** Durable origin; 'subagent' marks a child managed via the subagent surface. */
   readonly origin?: 'subagent'
+  /** Whether the runtime currently has an Agent attached to this Session. */
+  readonly agentAvailable?: boolean
   readonly status: SessionStatus
   readonly createdAt: string
   readonly updatedAt: string

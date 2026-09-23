@@ -136,6 +136,10 @@ function mapRpcError(code: string): AppErrorCode {
     case 'fork-unavailable':
     case 'bad-request':
       return 'INVALID_CONFIGURATION'
+    case 'workspace-session-active':
+      return 'BACKEND_BUSY'
+    case 'job-not-found':
+      return 'STALE_INTERACTION'
     case 'workspace-not-found':
       return 'BACKEND_UNREACHABLE'
     case 'workspace-attach-failed':
@@ -202,6 +206,8 @@ function safeRpcMessage(
     'workspace-invalid-path': 'The DSH workspace path is invalid.',
     'workspace-name-conflict': 'A DSH workspace with that name already exists.',
     'workspace-move-invalid': 'The DSH workspace session order could not be changed.',
+    'workspace-session-active': 'The DSH session still has active work and cannot be archived.',
+    'job-not-found': 'The DSH background job is no longer available.',
     'title-invalid': 'The DSH session title is invalid.',
     'invalid-time-zone': 'The DSH time zone is invalid.',
     'settings-rejected': 'The DSH settings change was rejected.',

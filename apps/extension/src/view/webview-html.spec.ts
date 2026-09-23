@@ -24,5 +24,11 @@ describe('createWebviewHtml', () => {
       /<script type="module" nonce="[^"]+" src="extension-root\/media\/webview\.js"><\/script>/,
     )
     expect(html).toMatch(/script-src 'nonce-[^']+'/)
+    expect(html).toContain('style-src vscode-resource:')
+    expect(html).toContain('style-src-elem vscode-resource:')
+    expect(html).toContain("style-src-attr 'unsafe-inline'")
+    expect(html).not.toMatch(/script-src[^;]*unsafe-inline/u)
+    expect(html).not.toMatch(/style-src-elem[^;]*unsafe-inline/u)
+    expect(html).not.toMatch(/unsafe-eval|wasm-unsafe-eval/u)
   })
 })

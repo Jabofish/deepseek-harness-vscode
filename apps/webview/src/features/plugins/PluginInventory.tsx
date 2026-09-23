@@ -1,3 +1,4 @@
+import { pluginLocalizedText } from '@dsh-vscode/domain'
 import { useEffect, useId, useMemo, useState, type ReactElement } from 'react'
 import type { PluginFiberPhase, PluginInventoryEntry, PluginInventorySnapshot } from '@dsh-vscode/domain'
 import { Icon } from '../../ui/Icon.js'
@@ -43,7 +44,7 @@ function matches(entry: PluginInventoryEntry, normalizedQuery: string): boolean 
  * projection of what the deployment composed.
  */
 export function PluginInventory(props: PluginInventoryProps): ReactElement {
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
   const catalogId = useId()
   const [request, setRequest] = useState(0)
   const [query, setQuery] = useState('')
@@ -127,6 +128,15 @@ export function PluginInventory(props: PluginInventoryProps): ReactElement {
           </label>
           <div className="dsh-plugin-inventory__heading">
             <h3>{t('plugins.list')}</h3>
+            {state.snapshot.managementAvailable === undefined ? null : (
+              <span>
+                {t(
+                  state.snapshot.managementAvailable
+                    ? 'plugins.managementInDsh'
+                    : 'plugins.managementUnavailable',
+                )}
+              </span>
+            )}
             <span data-plugin-count={filteredEntries.length}>{filteredEntries.length}</span>
           </div>
           {state.snapshot.entries.length === 0 ? (
@@ -139,7 +149,8 @@ export function PluginInventory(props: PluginInventoryProps): ReactElement {
             <ul className="dsh-plugin-inventory__cards">
               {filteredEntries.map((entry) => {
                 const status = phaseLabel(entry.fiberPhase, t)
-                const title = moduleShortName(entry.moduleName)
+                const title =
+                  pluginLocalizedText(entry.meta?.title, locale) ?? moduleShortName(entry.moduleName)
                 const configuration = entry.enabled ? t('plugins.enabled') : t('plugins.disabled')
                 const open = expanded === entry.entryId
                 const detailId = `${catalogId}-details-${encodeURIComponent(entry.entryId)}`
@@ -186,6 +197,10 @@ export function PluginInventory(props: PluginInventoryProps): ReactElement {
                     </button>
                     {open ? (
                       <div className="dsh-plugin-inventory__card-details" id={detailId}>
+                        {entry.meta?.description === undefined ? null : (
+                          <p>{pluginLocalizedText(entry.meta.description, locale)}</p>
+                        )}
+                        {entry.meta?.error === undefined ? null : <p role="alert">{entry.meta.error}</p>}
                         <code className="dsh-plugin-inventory__entry-value" data-loader-entry>
                           {entry.entryId}
                         </code>
@@ -237,7 +252,10 @@ export function PluginInventory(props: PluginInventoryProps): ReactElement {
                           <ul>
                             {rows.map((row, index) => (
                               <li key={`${row.entryId ?? row.moduleName}-${index}`}>
-                                <strong title={row.moduleName}>{moduleShortName(row.moduleName)}</strong>
+                                <strong title={row.moduleName}>
+                                  {pluginLocalizedText(row.meta?.title, locale) ??
+                                    moduleShortName(row.moduleName)}
+                                </strong>
                                 {' · '}
                                 {t(
                                   row.enabled === 'conditional'

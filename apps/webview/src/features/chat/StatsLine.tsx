@@ -78,6 +78,7 @@ export const StatsLine = memo(function StatsLine(props: StatsLineProps): ReactEl
     speeds.push(`${formatRate(stats.decodeTokens / (stats.decodeMs / 1_000))} tk/s`)
   return (
     <div className="dsh-stats-line" role="status" aria-label={t('stats.aria')}>
+      {props.sessionStats === undefined ? <span>{t('stats.loadedWindow')}</span> : null}
       <span>{t(stats.turns === 1 ? 'stats.turns' : 'stats.turns.plural', { count: stats.turns })}</span>
       <span aria-hidden="true">·</span>
       <span>{t(stats.steps === 1 ? 'stats.steps' : 'stats.steps.plural', { count: stats.steps })}</span>

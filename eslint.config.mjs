@@ -8,6 +8,7 @@ export default tseslint.config(
       '**/node_modules/**',
       '**/dist/**',
       '**/coverage/**',
+      'artifacts/**',
       '**/.vscode-test/**',
       'apps/extension/media/**',
       'tests/vscode-e2e/suite/**',
@@ -24,6 +25,8 @@ export default tseslint.config(
             'eslint.config.mjs',
             'vitest.config.ts',
             'apps/extension/esbuild.mjs',
+            'apps/extension/esbuild-import-meta-url.mjs',
+            'apps/extension/esbuild-import-meta-url.d.mts',
             'scripts/publish-marketplace.cjs',
           ],
         },
@@ -72,6 +75,19 @@ export default tseslint.config(
     rules: {
       '@typescript-eslint/explicit-function-return-type': 'off',
       '@typescript-eslint/no-require-imports': 'off',
+    },
+  },
+  {
+    // A plain-JavaScript build plugin carries no annotations for the typed
+    // rules to read, so the checked-any family cannot apply to it.
+    files: ['apps/extension/esbuild-import-meta-url.mjs'],
+    rules: {
+      '@typescript-eslint/explicit-function-return-type': 'off',
+      '@typescript-eslint/no-unsafe-argument': 'off',
+      '@typescript-eslint/no-unsafe-assignment': 'off',
+      '@typescript-eslint/no-unsafe-call': 'off',
+      '@typescript-eslint/no-unsafe-member-access': 'off',
+      '@typescript-eslint/no-unsafe-return': 'off',
     },
   },
 )

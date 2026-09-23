@@ -140,6 +140,7 @@ describe('DSH 0.1.5-alpha.1 Session wire v3 contract', () => {
     await expect(adapter.probe(candidate('0.1.5-alpha.1'))).resolves.toMatchObject({
       protocolVersion: 'alpha151',
       dshVersion: '0.1.5-alpha.1',
+      sessionRestore: false,
       subagentImagePrompts: true,
     })
     await expect(adapter.probe(candidate('0.1.3-alpha.2'))).resolves.toBeUndefined()

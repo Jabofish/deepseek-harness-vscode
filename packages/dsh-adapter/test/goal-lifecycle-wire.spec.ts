@@ -178,7 +178,7 @@ describe('goal lifecycle over the alpha wire', () => {
 
   it('clears through goals/clear and drops the goal from the cache and the ref map', async () => {
     const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
-      Promise.resolve(ok(init, { id: 'g-1', revision: 4 })),
+      Promise.resolve(ok(init, { id: 'g-1', revision: 5 })),
     )
     const transport = client(fetch)
     const repository = new Rc6GoalRepository(transport)
@@ -240,3 +240,20 @@ describe('goal lifecycle over the alpha wire', () => {
     await transport.close()
   })
 })
+
+it.each([undefined, {}, { id: 'other', revision: 5 }, { id: 'g-1', revision: 4 }])(
+  'rejects a clear acknowledgement without the expected tombstone: %j',
+  async (receipt) => {
+    const transport = client(
+      vi.fn((_input: RequestInfo | URL, init?: RequestInit) => Promise.resolve(ok(init, receipt))),
+    )
+    const repository = new Rc6GoalRepository(transport)
+    projectGoal(repository, 4)
+    try {
+      await expect(repository.clear('g-1')).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
+      expect(repository.sessionForGoal('g-1')).toBe('s-1')
+    } finally {
+      await transport.close()
+    }
+  },
+)

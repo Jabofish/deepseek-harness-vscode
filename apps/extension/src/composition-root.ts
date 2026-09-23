@@ -62,6 +62,7 @@ import {
   Alpha152VersionAdapter,
   Alpha161VersionAdapter,
   Alpha162VersionAdapter,
+  Alpha171VersionAdapter,
   Alpha132VersionAdapter,
   Alpha13VersionAdapter,
   Alpha5VersionAdapter,
@@ -122,6 +123,7 @@ import { normalizeLoopbackUrl, VsCodeConfigurationSource } from './config/config
 import { DSH_DOCUMENTATION_URL, DSH_PACKAGE, OUTPUT_CHANNEL_NAME } from './constants.js'
 import { WebviewMessageRouter } from './view/message-router.js'
 import { ownsCurrentWorkspaceSession } from './view/session-ownership.js'
+import { sessionWorkspaceFolderId } from './view/session-workspace-scope.js'
 import { DshWebviewViewProvider } from './view/dsh-webview-view-provider.js'
 import {
   publicWorkspaceRelativePath,
@@ -192,6 +194,80 @@ interface OpenLinkResult {
 
 export interface CompositionRoot extends vscode.Disposable {
   start(): Promise<void>
+}
+
+export class JobFollowRegistry {
+  private readonly controllers = new Map<string, AbortController>()
+  private readonly starting = new Map<string, AbortController>()
+
+  public async start<T>(
+    key: string,
+    signal: AbortSignal,
+    validate: (signal: AbortSignal) => Promise<T>,
+    follow: (value: T, signal: AbortSignal) => void | Promise<void>,
+  ): Promise<boolean> {
+    signal.throwIfAborted()
+    const controller = new AbortController()
+    const checkSignal = AbortSignal.any([signal, controller.signal])
+    this.cancelPendingStart(key)
+    this.starting.set(key, controller)
+    let pending = true
+    try {
+      const value = await validate(checkSignal)
+      if (checkSignal.aborted || this.starting.get(key) !== controller) {
+        this.cancelPendingStart(key, controller)
+        return false
+      }
+      this.starting.delete(key)
+      pending = false
+      this.stopActive(key)
+      this.controllers.set(key, controller)
+      void Promise.resolve(follow(value, controller.signal)).then(
+        () => this.finish(key, controller),
+        () => this.finish(key, controller),
+      )
+      return true
+    } catch (error) {
+      const cancelled = checkSignal.aborted || (pending && this.starting.get(key) !== controller)
+      this.cancelPendingStart(key, controller)
+      this.finish(key, controller)
+      controller.abort()
+      if (cancelled) return false
+      throw error
+    }
+  }
+
+  public stop(key: string): boolean {
+    const stoppedPending = this.cancelPendingStart(key)
+    return this.stopActive(key) || stoppedPending
+  }
+
+  public stopAll(): void {
+    for (const controller of this.controllers.values()) controller.abort()
+    for (const controller of this.starting.values()) controller.abort()
+    this.controllers.clear()
+    this.starting.clear()
+  }
+
+  private stopActive(key: string): boolean {
+    const controller = this.controllers.get(key)
+    if (controller === undefined) return false
+    this.controllers.delete(key)
+    controller.abort()
+    return true
+  }
+
+  private cancelPendingStart(key: string, expected?: AbortController): boolean {
+    const controller = this.starting.get(key)
+    if (controller === undefined || (expected !== undefined && controller !== expected)) return false
+    this.starting.delete(key)
+    controller.abort()
+    return true
+  }
+
+  private finish(key: string, controller: AbortController): void {
+    if (this.controllers.get(key) === controller) this.controllers.delete(key)
+  }
 }
 
 export function createCompositionRoot(context: vscode.ExtensionContext): CompositionRoot {
@@ -378,6 +454,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
   const rc152Adapter = new Rc152VersionAdapter(adapterOptions)
   const alpha161Adapter = new Alpha161VersionAdapter(adapterOptions)
   const alpha162Adapter = new Alpha162VersionAdapter(adapterOptions)
+  const alpha171Adapter = new Alpha171VersionAdapter(adapterOptions)
   const alpha13Adapter = new Alpha13VersionAdapter(adapterOptions)
   const rc13Adapter = new Rc13VersionAdapter(adapterOptions)
   const alpha3Adapter = new Alpha3VersionAdapter(adapterOptions)
@@ -395,6 +472,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
   const legacyRc2Adapter = new LegacyRc2VersionAdapter(adapterOptions)
   const legacyRc1Adapter = new LegacyRc1VersionAdapter(adapterOptions)
   const adapters = [
+    alpha171Adapter,
     alpha162Adapter,
     alpha161Adapter,
     rc152Adapter,
@@ -437,6 +515,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     processSupervisor: supervisor,
   })
   const backendService = new BackendService()
+  const activeJobFollows = new JobFollowRegistry()
   const runtimeInstaller = new RuntimeInstaller({
     tasks: vscode.tasks,
     window: vscode.window,
@@ -698,14 +777,25 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     const folder = currentWorkspaceFolder()
     return folder === undefined ? undefined : workspaceFolderId(folder)
   }
-  const workspaceFolderIdForSession = (session: Pick<SessionSummary, 'cwd'>): string | undefined => {
-    const folders = currentWorkspaceFolders()
-    if (folders.length === 0) return undefined
-    if (session.cwd !== undefined) {
-      const cwdFolder = folders.find((folder) => sameWorkspacePath(folder.uri.fsPath, session.cwd as string))
-      if (cwdFolder !== undefined) return workspaceFolderId(cwdFolder)
-    }
-    return folders.length === 1 && folders[0] !== undefined ? workspaceFolderId(folders[0]) : undefined
+  const workspaceFolderIdForSession = (session: Pick<SessionSummary, 'cwd'>): string | undefined =>
+    sessionWorkspaceFolderId({
+      folders: currentWorkspaceFolders().map((folder) => ({
+        id: workspaceFolderId(folder),
+        path: folder.uri.fsPath,
+      })),
+      session,
+      samePath: sameWorkspacePath,
+    })
+  /**
+   * State the VS Code folder that guards a session's paths. Only this id is
+   * accepted by feature routes, and the DSH workspace id is a different
+   * namespace, so the Webview reads the ownership here instead of inferring it.
+   */
+  const withSessionWorkspaceScope = <T extends Pick<SessionSummary, 'cwd'>>(
+    session: T,
+  ): T & { readonly workspaceFolderId?: string } => {
+    const folderId = workspaceFolderIdForSession(session)
+    return folderId === undefined ? session : { ...session, workspaceFolderId: folderId }
   }
   const supportsBinaryAttachments = (): boolean => {
     try {
@@ -960,6 +1050,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     void postEvent('connection.snapshot', payload)
   }
   const attach = (backend: DshBackend): void => {
+    stopAllJobFollows()
     invalidateCurrentWorkspaceSessionDetails()
     changeTracker.attach(backend, currentWorkspaceFolderId)
     taskRegistry.attach(backend, currentWorkspaceFolderId)
@@ -1162,6 +1253,62 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       },
     )
     return load
+  }
+  const jobFollowKey = (sessionId: string, jobId: string): string => JSON.stringify([sessionId, jobId])
+  const stopJobFollow = (sessionId: string, jobId: string): boolean =>
+    activeJobFollows.stop(jobFollowKey(sessionId, jobId))
+  const stopAllJobFollows = (): void => activeJobFollows.stopAll()
+  const startJobFollow = async (
+    sessionId: string,
+    jobId: string,
+    requestedFrom: number | undefined,
+    signal: AbortSignal,
+  ): Promise<{ readonly started: boolean }> => {
+    const started = await activeJobFollows.start(
+      jobFollowKey(sessionId, jobId),
+      signal,
+      async (checkSignal) => {
+        await requireCurrentWorkspaceSession(sessionId, checkSignal)
+        const job = (await advancedUseCases.listJobs(sessionId, checkSignal)).find(
+          (entry) => entry.id === jobId,
+        )
+        if (job === undefined)
+          throw new AppError({
+            code: 'DSH_NOT_FOUND',
+            message: 'This job is no longer visible in the selected session.',
+            retryable: false,
+          })
+        const from = requestedFrom ?? job.output?.earliest ?? 0
+        if (!Number.isSafeInteger(from) || from < 0 || from > (job.output?.total ?? Number.MAX_SAFE_INTEGER))
+          throw new AppError({
+            code: 'PROTOCOL_ERROR',
+            message: 'The requested job output cursor is invalid.',
+            retryable: false,
+          })
+        checkSignal.throwIfAborted()
+        return { from, backend: backendService.requireBackend() }
+      },
+      async ({ from, backend }, followSignal) => {
+        try {
+          for await (const frame of advancedUseCases.followJob(sessionId, jobId, from, followSignal)) {
+            backend.events.publish?.({ type: 'job.follow.updated', sessionId, jobId, frame })
+          }
+        } catch (error) {
+          if (!followSignal.aborted) {
+            diagnostics.log('warn', 'job-follow-failed', {
+              code: error instanceof AppError ? error.code : 'INTERNAL_ERROR',
+            })
+            backend.events.publish?.({
+              type: 'notice',
+              sessionId,
+              level: 'warning',
+              text: 'Job output could not be read. Start following again to retry.',
+            })
+          }
+        }
+      },
+    )
+    return { started }
   }
   const requireCurrentWorkspaceId = async (workspaceId: string, signal: AbortSignal): Promise<void> => {
     const workspaces = await listCurrentWorkspaces(signal)
@@ -1880,26 +2027,29 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       )
       return publicValue({
         ...page,
-        items: page.items.filter((session) => {
-          const belongsToCurrentWorkspace =
-            (workspaceId === undefined
-              ? workspaceIds.has(session.workspaceId)
-              : session.workspaceId === workspaceId) || sessionIds.has(session.id)
-          const sessionCwd = session.cwd
-          const belongsByCwd =
-            sessionCwd !== undefined &&
-            folders.some((folder) => sameWorkspacePath(sessionCwd, folder.uri.fsPath))
-          return (
-            (belongsToCurrentWorkspace || belongsByCwd) &&
-            archivedSessionIds.has(session.id) === includeArchived
-          )
-        }),
+        items: page.items
+          .filter((session) => {
+            const belongsToCurrentWorkspace =
+              (workspaceId === undefined
+                ? workspaceIds.has(session.workspaceId)
+                : session.workspaceId === workspaceId) || sessionIds.has(session.id)
+            const sessionCwd = session.cwd
+            const belongsByCwd =
+              sessionCwd !== undefined &&
+              folders.some((folder) => sameWorkspacePath(sessionCwd, folder.uri.fsPath))
+            return (
+              (belongsToCurrentWorkspace || belongsByCwd) &&
+              archivedSessionIds.has(session.id) === includeArchived
+            )
+          })
+          .map((session) => withSessionWorkspaceScope(session)),
       })
     }
     if (request.type === 'session.open') {
-      return publicValue(
-        await requireCurrentWorkspaceSession(request.payload.sessionId, signal, { fresh: true }),
-      )
+      const detail = await requireCurrentWorkspaceSession(request.payload.sessionId, signal, {
+        fresh: true,
+      })
+      return publicValue(withSessionWorkspaceScope(detail))
     }
     if (request.type === 'session.history') {
       await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
@@ -1935,15 +2085,17 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       }
       const resolvedConfiguration = await resolveSessionConfiguration(requestedConfiguration, signal)
       return publicValue(
-        await sessionUseCases.create(
-          {
-            workspaceId: workspace.id,
-            ...(request.payload.sessionId === undefined ? {} : { sessionId: request.payload.sessionId }),
-            ...(request.payload.reuseWorkspaceBlank === true ? { reuseWorkspaceBlank: true as const } : {}),
-            ...(request.payload.title === undefined ? {} : { title: request.payload.title }),
-            configuration: resolvedConfiguration,
-          },
-          signal,
+        withSessionWorkspaceScope(
+          await sessionUseCases.create(
+            {
+              workspaceId: workspace.id,
+              ...(request.payload.sessionId === undefined ? {} : { sessionId: request.payload.sessionId }),
+              ...(request.payload.reuseWorkspaceBlank === true ? { reuseWorkspaceBlank: true as const } : {}),
+              ...(request.payload.title === undefined ? {} : { title: request.payload.title }),
+              configuration: resolvedConfiguration,
+            },
+            signal,
+          ),
         ),
       )
     }
@@ -1964,7 +2116,11 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     }
     if (request.type === 'session.fork') {
       await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
-      return publicValue(await sessionUseCases.fork(request.payload.sessionId, request.payload.atSeq, signal))
+      return publicValue(
+        withSessionWorkspaceScope(
+          await sessionUseCases.fork(request.payload.sessionId, request.payload.atSeq, signal),
+        ),
+      )
     }
     if (request.type === 'session.archive') {
       // Restoring is the one archiving direction that must reach an archived
@@ -2362,6 +2518,25 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
       return publicList(await advancedUseCases.listJobs(request.payload.sessionId, signal))
     }
+    if (request.type === 'job.kill') {
+      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
+      const currentJobs = await advancedUseCases.listJobs(request.payload.sessionId, signal)
+      if (!currentJobs.some((job) => job.id === request.payload.jobId))
+        throw new AppError({
+          code: 'DSH_NOT_FOUND',
+          message: 'This job is no longer visible in the selected session.',
+          retryable: false,
+        })
+      return {
+        outcome: await advancedUseCases.killJob(request.payload.sessionId, request.payload.jobId, signal),
+      }
+    }
+    if (request.type === 'job.follow.start')
+      return startJobFollow(request.payload.sessionId, request.payload.jobId, request.payload.from, signal)
+    if (request.type === 'job.follow.stop') {
+      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
+      return { stopped: stopJobFollow(request.payload.sessionId, request.payload.jobId) }
+    }
     if (request.type === 'subagent.list') {
       await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
       return publicValue(await advancedUseCases.listSubagents(request.payload.sessionId, signal))
@@ -2493,6 +2668,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     onMessage: (message) => router.handle(message),
     onViewDisposed: () => {
       router.cancelAll()
+      stopAllJobFollows()
       editorContextProvider.dispose()
     },
     onMessageError: (error) => {
@@ -2634,6 +2810,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     dispose: async () => {
       runtimeUpdateLifecycle.abort()
       router.cancelAll()
+      stopAllJobFollows()
       stateSubscription()
       provider.dispose()
       changeTracker.dispose()
@@ -2856,6 +3033,8 @@ function publicState(state: BackendState): unknown {
     ...(state.kind === 'connected'
       ? {
           dshVersion: state.backend.capabilities.dshVersion,
+          sessionRestore: state.backend.capabilities.sessionRestore === true,
+          jobController: state.backend.capabilities.jobController === true,
           ...(state.backend.capabilities.subagentImagePrompts === true ? { subagentImagePrompts: true } : {}),
           ...(state.backend.backendInstanceId === undefined
             ? {}
@@ -3369,6 +3548,9 @@ function requiresTrustedWorkspace(type: WebviewRequest['type']): boolean {
     case 'command.list':
     case 'command.execute':
     case 'job.list':
+    case 'job.kill':
+    case 'job.follow.start':
+    case 'job.follow.stop':
     case 'preset.read':
     case 'preset.copy':
     case 'preset.openDocument':

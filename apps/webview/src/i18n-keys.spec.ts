@@ -91,6 +91,7 @@ const PLUGIN_PHASE: Record<Exclude<PluginFiberPhase, null>, true> = {
   unloading: true,
 }
 const APPROVAL_RISK: Record<PermissionRequest['risk'], true> = {
+  unknown: true,
   low: true,
   medium: true,
   high: true,

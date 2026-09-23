@@ -2,9 +2,15 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactEle
 import type { JobView } from '@dsh-vscode/domain'
 import { useI18n } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
+import type { JobFollowState } from '../../app/store.js'
 
 export interface JobsPopoverProps {
   readonly jobs: readonly JobView[]
+  readonly jobControllerAvailable: boolean
+  readonly following: JobFollowState | undefined
+  readonly onFollow: (jobId: string) => Promise<void>
+  readonly onStopFollowing: () => Promise<void>
+  readonly onKill: (jobId: string) => Promise<'requested' | 'already-finished'>
 }
 
 /** A job the registry still holds open, and whose duration therefore ticks. */
@@ -58,23 +64,36 @@ function ordered(jobs: readonly JobView[]): JobView[] {
  * trigger marked; the list orders live rows first and ticks their duration.
  */
 export function JobsDrawer(props: JobsPopoverProps): ReactElement | null {
-  const { jobs } = props
+  const { jobs, jobControllerAvailable, following } = props
   const { t } = useI18n()
   const [open, setOpen] = useState(false)
   const [now, setNow] = useState(() => Date.now())
+  const [actionFailed, setActionFailed] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
 
-  const rows = useMemo(() => ordered(jobs), [jobs])
+  const rows = useMemo(
+    () =>
+      ordered(
+        jobs.map((job) => {
+          const followed = following?.jobId === job.id ? following.job : undefined
+          if (followed === undefined) return job
+          if (isLive(job) && !isLive(followed)) return { ...job, ...followed }
+          if (!isLive(job) && isLive(followed)) return { ...followed, ...job }
+          return { ...job, ...followed }
+        }),
+      ),
+    [jobs, following],
+  )
   const liveCounts = useMemo(() => {
     let running = 0
     let stopping = 0
-    for (const job of jobs) {
+    for (const job of rows) {
       if (job.status === 'running') running += 1
       else if (job.status === 'stopping') stopping += 1
     }
     return { running, stopping }
-  }, [jobs])
+  }, [rows])
   const { running: runningCount, stopping: stoppingCount } = liveCounts
   const liveCount = runningCount + stoppingCount
 
@@ -118,6 +137,10 @@ export function JobsDrawer(props: JobsPopoverProps): ReactElement | null {
     setOpen(false)
     triggerRef.current?.focus()
   }
+  const runAction = (action: () => Promise<unknown>): void => {
+    setActionFailed(false)
+    void action().catch(() => setActionFailed(true))
+  }
 
   return (
     <div ref={rootRef} className="dsh-jobs-popover" onKeyDown={onKeyDown}>
@@ -142,8 +165,9 @@ export function JobsDrawer(props: JobsPopoverProps): ReactElement | null {
         <ul className="dsh-jobs-popover__menu" aria-label={t('jobs.list.aria')}>
           {rows.map((job) => {
             const live = isLive(job)
+            const isFollowing = following?.jobId === job.id && live
             const elapsed = live ? now - job.startedAt : (job.finishedAt ?? job.startedAt) - job.startedAt
-            const duration = formatDuration(elapsed, t)
+            const duration = !live && job.finishedAt === undefined ? '—' : formatDuration(elapsed, t)
             const status = t(`jobs.status.${job.status}`)
             return (
               <li key={job.id} className="dsh-jobs-popover__row" data-live={live ? 'true' : undefined}>
@@ -158,14 +182,47 @@ export function JobsDrawer(props: JobsPopoverProps): ReactElement | null {
                   {job.label}
                 </span>
                 <span className="dsh-jobs-popover__status" title={job.detail ?? status}>
-                  {job.detail ?? status}
+                  {job.progress ?? job.detail ?? status}
                 </span>
                 <span className="dsh-jobs-popover__duration">{duration}</span>
+                {jobControllerAvailable ? (
+                  <span className="dsh-jobs-popover__actions">
+                    <button
+                      type="button"
+                      aria-label={t(isFollowing ? 'jobs.stopFollowing' : 'jobs.follow')}
+                      onClick={() =>
+                        runAction(() => (isFollowing ? props.onStopFollowing() : props.onFollow(job.id)))
+                      }
+                    >
+                      {t(isFollowing ? 'jobs.stopFollowing' : 'jobs.follow')}
+                    </button>
+                    {live ? (
+                      <button
+                        type="button"
+                        aria-label={t('jobs.kill')}
+                        onClick={() => runAction(() => props.onKill(job.id))}
+                      >
+                        {t('jobs.kill')}
+                      </button>
+                    ) : null}
+                  </span>
+                ) : null}
               </li>
             )
           })}
+          {following !== undefined ? (
+            <li className="dsh-jobs-popover__output">
+              <section aria-label={t('jobs.output.aria')}>
+                {following.lossy ? <p>{t('jobs.output.lossy')}</p> : null}
+                <pre role="log" aria-live="polite">
+                  {following.chunks.map((chunk) => chunk.text).join('') || t('jobs.output.empty')}
+                </pre>
+              </section>
+            </li>
+          ) : null}
         </ul>
       ) : null}
+      {actionFailed ? <p role="alert">{t('jobs.operationFailed')}</p> : null}
     </div>
   )
 }

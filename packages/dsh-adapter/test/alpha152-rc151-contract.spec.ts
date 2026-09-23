@@ -46,16 +46,19 @@ describe('DSH 0.1.5-alpha.2 and 0.1.5-rc.1/rc.2 contract seams', () => {
     await expect(alpha152.probe(candidate('0.1.5-alpha.2'))).resolves.toMatchObject({
       protocolVersion: 'alpha152',
       dshVersion: '0.1.5-alpha.2',
+      sessionRestore: false,
     })
     await expect(rc151.probe(candidate('0.1.5-rc.1'))).resolves.toMatchObject({
       protocolVersion: 'rc151',
       dshVersion: '0.1.5-rc.1',
+      sessionRestore: false,
     })
     await expect(rc151.probe(candidate('0.1.5-alpha.2'))).resolves.toBeUndefined()
     await expect(rc151.probeCompatibility(candidate('0.1.5-rc.1'))).resolves.toBeUndefined()
     await expect(rc152.probe(candidate('0.1.5-rc.2'))).resolves.toMatchObject({
       protocolVersion: 'rc152',
       dshVersion: '0.1.5-rc.2',
+      sessionRestore: false,
     })
     await expect(rc152.probe(candidate('0.1.5-rc.1'))).resolves.toBeUndefined()
     await expect(rc152.probeCompatibility(candidate('0.1.5-rc.2'))).resolves.toBeUndefined()

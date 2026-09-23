@@ -156,6 +156,9 @@ export interface ContextPressure {
 }
 
 export interface AgentConfiguration {
+  /** False means a display fallback, not an observed runtime value. */
+  readonly permissionPresetKnown?: boolean
+  readonly planModeKnown?: boolean
   readonly preset: AgentPreset
   readonly toolMode: ToolMode
   readonly permissionPreset: PermissionPreset

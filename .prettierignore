@@ -3,6 +3,7 @@ dist
 coverage
 .vscode-test
 apps/extension/media
+apps/extension/.vscodeignore
 pnpm-lock.yaml
 DSH_VSCODE_IMPLEMENTATION_PLAN.md
 DSH_VSCODE_AGENT_FEATURE_IMPLEMENTATION_PLAN.md

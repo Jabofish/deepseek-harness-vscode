@@ -46,6 +46,7 @@ describe('DSH 0.1.6-alpha.1 contract seams', () => {
     await expect(adapter.probe(candidate('0.1.6-alpha.1'))).resolves.toMatchObject({
       protocolVersion: 'alpha161',
       dshVersion: '0.1.6-alpha.1',
+      sessionRestore: true,
     })
     await expect(adapter.probe(candidate('0.1.5-rc.2'))).resolves.toBeUndefined()
     await expect(adapter.probeCompatibility(candidate('0.1.6-alpha.1'))).resolves.toBeUndefined()

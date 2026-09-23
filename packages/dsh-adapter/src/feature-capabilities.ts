@@ -76,13 +76,13 @@ export function deriveFeatureCapabilityProfile(input: CapabilityInput): FeatureC
     // DSH RPC; content persistence remains opt-in in the extension settings.
     'CP-01': {
       state: 'verified-contract',
-      upstream: 'verified-contract',
+      upstream: 'not-applicable',
       reason: 'Local checkpoint metadata is available; content restore requires explicit extension settings.',
     },
     // PT-01 is extension-owned local state; it does not claim a new DSH RPC.
     'PT-01': {
       state: 'verified-contract',
-      upstream: 'verified-contract',
+      upstream: 'not-applicable',
       reason:
         'Local prompt template lifecycle is available; mode mapping remains bounded by DSH capabilities and approvals.',
     },
@@ -92,13 +92,13 @@ export function deriveFeatureCapabilityProfile(input: CapabilityInput): FeatureC
     // route is implemented and does not claim a new DSH RPC.
     'SY-01': {
       state: 'verified-contract',
-      upstream: 'verified-contract',
+      upstream: 'not-applicable',
       reason:
         'VS Code symbol and diagnostic context capture is available when the active document reports it.',
     },
     'RF-01': {
       state: 'verified-contract',
-      upstream: 'verified-contract',
+      upstream: 'not-applicable',
       reason: 'Extension-owned redacted diagnostics and reconnect recovery are available.',
     },
   }

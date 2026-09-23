@@ -26,7 +26,7 @@ export interface FeatureCapability {
   /** Runtime route state exposed to the application/UI. */
   readonly state: FeatureCapabilityState
   /** Upstream prerequisite evidence; this is not a claim that the route exists. */
-  readonly upstream: 'verified-contract' | 'compatibility-fallback' | 'unavailable'
+  readonly upstream: 'verified-contract' | 'compatibility-fallback' | 'unavailable' | 'not-applicable'
   readonly reason?: string
 }
 

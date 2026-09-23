@@ -97,6 +97,8 @@ const agentConfigurationSchema = z
     toolMode: z.enum(['native', 'ptc', 'code', 'both']),
     permissionPreset: id,
     planMode: z.boolean(),
+    planModeKnown: z.boolean().optional(),
+    permissionPresetKnown: z.boolean().optional(),
     sandboxMode: id.optional(),
     approvalPolicy: id.optional(),
     model: z
@@ -619,6 +621,33 @@ export const webviewRequestSchema = z.discriminatedUnion('type', [
     .object({ type: z.literal('goal.clear'), ...requestBase, payload: z.object({ goalId: id }).strict() })
     .strict(),
   z.object({ type: z.literal('job.list'), ...requestBase, payload: z.object(session).strict() }).strict(),
+  z
+    .object({
+      type: z.literal('job.kill'),
+      ...requestBase,
+      payload: z.object({ sessionId: id, jobId: id }).strict(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('job.follow.start'),
+      ...requestBase,
+      payload: z
+        .object({
+          sessionId: id,
+          jobId: id,
+          from: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+        })
+        .strict(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('job.follow.stop'),
+      ...requestBase,
+      payload: z.object({ sessionId: id, jobId: id }).strict(),
+    })
+    .strict(),
   z
     .object({ type: z.literal('subagent.list'), ...requestBase, payload: z.object(session).strict() })
     .strict(),

@@ -6,7 +6,9 @@ managed launch contract, probe and versioned adapter:
 
 - `DshProcessSupervisor` + `managedWebArguments` start `dsh --profile web
 --no-open --host 127.0.0.1 --port <free port>` in a throwaway workspace and
-  read the ready endpoint from the process output.
+  read the ready endpoint from the process output. If the caller has not set
+  `DSH_HOME`, the harness creates a throwaway DSH home for the child and
+  restores the caller's environment after teardown.
 - The launch URL is exchanged for its session cookie exactly like the
   Extension Host does, so the managed web profile's authorized RPC surface is
   reachable.
@@ -21,9 +23,14 @@ never touched. It is skipped unless explicitly enabled:
 ```powershell
 $env:DSH_LIVE_SMOKE = '1'
 $env:DSH_LIVE_RUNTIME = 'dsh.cmd'                                     # optional; defaults to `dsh` on PATH
-$env:DSH_LIVE_RUNTIME_VERSION = '0.1.5-rc.1'                          # optional; defaults to the pinned runtime
+$env:DSH_LIVE_RUNTIME_VERSION = '0.1.5-rc.2'                          # optional; defaults to the pinned runtime
 pnpm exec vitest run tests/live-dsh
 ```
+
+To exercise the source-level alpha171 adapter, install `@deepseek-ai/dsh@0.1.7-alpha.1`
+in an isolated prefix, pass its executable path through `DSH_LIVE_RUNTIME`, and set
+`DSH_LIVE_RUNTIME_VERSION=0.1.7-alpha.1`. The default remains the published rc.2
+runtime; alpha171 evidence is opt-in and must not reuse an external DSH process.
 
 The specs that drive a real host read the same two variables inside
 `startManagedRuntime`, so `run.spec.ts`, `surfaces.spec.ts`,
@@ -36,7 +43,7 @@ line names the exact adapter selected for that version hint. Two specs never
 start a runtime: `runtime.spec.ts` pins the bare-name PATH resolution and
 `managed-lock.spec.ts` pins the cross-process lock itself.
 
-Seven of them exist for data-path evidence rather than a golden path:
+Eight of them exist for data-path evidence rather than a golden path:
 `writes.spec.ts` commits real writes on a throwaway home, `frames.spec.ts`
 probes the verbs that a short-lived client would otherwise never send —
 `session.prompt` (with and without an attached image), `session.cancel`,
@@ -54,7 +61,11 @@ hunk a real runtime persisted for one file to the
 `tool-cards.spec.ts` scans the registry for a session that really holds a
 first-party shell or mutation call and asserts the cards derived for those
 rows, so it needs a profile carrying such a call and fails rather than passing
-vacuously when there is none. The
+vacuously when there is none. `queue-baseline.spec.ts` opens a Session on an
+isolated home and reads its queue in the order the Host and the Webview do: the
+control stream lists every Session it knows and broadcasts a frame only when
+pending input changes, so a Session created after that baseline is named by
+neither and still has to answer as empty instead of unreadable. The
 un-sendable verbs are aimed at an identity the host must reject (an absent
 session, message or attachment), so the call still crosses the real transport,
 the real descriptor validation and the real error mapping. A refusal answered

@@ -174,6 +174,31 @@ describe('MarkdownContent', () => {
     expect(highlighted?.querySelector('[style*="light-dark("]')).not.toBeNull()
   })
 
+  it('renders correctly labeled HTML and Python fences with token colors', async () => {
+    const highlighter = await getWebviewHighlighter()
+    await Promise.all([highlighter.loadLanguage('html'), highlighter.loadLanguage('python')])
+    const { container } = render(
+      <MarkdownContent
+        markdown={[
+          '```html',
+          '<!DOCTYPE html>',
+          '<html><body>Hello</body></html>',
+          '```',
+          '',
+          '```python',
+          'def animate():',
+          '    return True',
+          '```',
+        ].join('\n')}
+      />,
+    )
+
+    await waitFor(() => expect(container.querySelectorAll('pre.shiki')).toHaveLength(2), {
+      timeout: 5_000,
+    })
+    expect(container.querySelectorAll('pre.shiki [style*="light-dark("]').length).toBeGreaterThan(0)
+  })
+
   it('defers copy controls until a streaming message reaches its terminal render', async () => {
     const markdown = ['```ts', 'const value = 1', '```'].join('\n')
     const view = render(<MarkdownContent markdown={markdown} streaming />)

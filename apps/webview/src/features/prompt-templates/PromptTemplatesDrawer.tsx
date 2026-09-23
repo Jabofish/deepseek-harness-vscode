@@ -24,6 +24,7 @@ import { Icon } from '../../ui/Icon.js'
 import { SelectMenu } from '../../components/common/SelectMenu.js'
 
 export interface PromptTemplatesDrawerProps {
+  readonly onOpenLink?: (href: string) => void | Promise<void>
   readonly templates: readonly PromptTemplateSummary[]
   readonly loading: boolean
   readonly onRefresh: () => Promise<void>
@@ -415,7 +416,16 @@ export function PromptTemplatesDrawer(props: PromptTemplatesDrawerProps): ReactE
                   : selected.variables.map((variable) => <code key={variable}>{`{{${variable}}}`}</code>)}
               </div>
               <div className="dsh-prompt-templates-popover__markdown">
-                <MarkdownContent markdown={selected.templateText} onOpenLink={() => undefined} />
+                <MarkdownContent
+                  markdown={selected.templateText}
+                  onOpenLink={(href) => {
+                    void Promise.resolve()
+                      .then(() => props.onOpenLink?.(href))
+                      .catch((reason: unknown) =>
+                        setError(reason instanceof Error ? reason.message : t('promptTemplates.error')),
+                      )
+                  }}
+                />
               </div>
             </section>
           ) : null}

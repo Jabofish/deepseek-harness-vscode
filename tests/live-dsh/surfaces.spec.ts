@@ -3,11 +3,8 @@ import { describe, expect, it } from 'vitest'
 
 import type { DshBackend } from '../../packages/domain/src/backend.js'
 import type { AppError } from '../../packages/domain/src/errors.js'
-import type { QueuedInput, SessionSummary } from '../../packages/domain/src/sessions.js'
+import type { SessionSummary } from '../../packages/domain/src/sessions.js'
 import { LIVE_TIMEOUT_MS, canConnect, startManagedRuntime } from './harness.js'
-
-/** How long the host-wide control baseline may take before a missing queue is a defect. */
-const QUEUE_BASELINE_TIMEOUT_MS = 5_000
 
 /**
  * Live read-only surface evidence for the pinned runtime build. Every call
@@ -16,7 +13,7 @@ const QUEUE_BASELINE_TIMEOUT_MS = 5_000
  * no session is created.
  *
  *   $env:DSH_LIVE_SMOKE = '1'
- *   $env:DSH_LIVE_RUNTIME_VERSION = '0.1.5-rc.1'      # optional; defaults to the pinned runtime
+ *   $env:DSH_LIVE_RUNTIME_VERSION = '0.1.5-rc.2'      # optional; defaults to the pinned runtime
  *   npx vitest run tests/live-dsh/surfaces.spec.ts
  *
  * Only the process started here is signalled; an external DSH is never touched.
@@ -223,13 +220,16 @@ describe.skipIf(process.env.DSH_LIVE_SMOKE !== '1')('live DSH read-only surfaces
             unavailable.push('sessions.listQueue skipped: no running session to sample')
           else
             await surface('sessions.listQueue', async () => {
-              const queued = await waitForQueueSnapshot(backend, queueTarget.id)
+              const queued = await backend.sessions.listQueue(queueTarget.id)
               return `${queued.length} for the running session`
             })
         }
 
         expect(unexpected, 'no read-only surface may fail protocol or mapping validation').toEqual([])
-        expect(observed.length).toBeGreaterThanOrEqual(12)
+        // A fresh isolated DSH_HOME has no session, so the session-scoped
+        // reads are legitimately skipped. Once a session exists, the queue
+        // sample adds the twelfth observation.
+        expect(observed.length).toBeGreaterThanOrEqual(sessionId === undefined ? 11 : 12)
       } finally {
         unsubscribe()
         await runtime.stop()
@@ -247,23 +247,6 @@ describe.skipIf(process.env.DSH_LIVE_SMOKE !== '1')('live DSH read-only surfaces
     LIVE_TIMEOUT_MS,
   )
 })
-
-/**
- * Poll the queue snapshot while the control baseline is still in flight. The
- * unavailability is only a defect when it outlives the baseline.
- */
-async function waitForQueueSnapshot(backend: DshBackend, sessionId: string): Promise<readonly QueuedInput[]> {
-  const deadline = Date.now() + QUEUE_BASELINE_TIMEOUT_MS
-  for (;;) {
-    try {
-      return await backend.sessions.listQueue(sessionId)
-    } catch (error) {
-      if ((error as Partial<AppError>).code !== 'CAPABILITY_UNAVAILABLE' || Date.now() >= deadline)
-        throw error
-      await new Promise((resolve) => setTimeout(resolve, 100))
-    }
-  }
-}
 
 /**
  * A command-line token no registered command can own: the probe still exercises

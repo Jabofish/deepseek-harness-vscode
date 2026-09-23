@@ -39,6 +39,8 @@ export interface SessionControlsProps {
    */
   readonly modelCurrent?: ModelSelection
   readonly presets: readonly AgentPresetDescriptor[]
+  /** False when the upstream preset registry hides new-session mode choice. */
+  readonly presetSelectionEnabled?: boolean
   readonly permissionPresets: readonly string[]
   /** Optional command directory; omitted means capability discovery is unavailable. */
   readonly commands?: readonly DynamicCommand[]
@@ -114,8 +116,11 @@ export const SessionControls = memo(function SessionControls(props: SessionContr
   // `danger-full-access`).
   const permissionPreset = props.configuration.permissionPreset
   const availablePermissionPresets = useMemo(
-    () => permissionOptions(permissionPreset, props.permissionPresets),
-    [permissionPreset, props.permissionPresets],
+    () =>
+      props.configuration.permissionPresetKnown === false
+        ? props.permissionPresets
+        : permissionOptions(permissionPreset, props.permissionPresets),
+    [permissionPreset, props.permissionPresets, props.configuration.permissionPresetKnown],
   )
   const permissionCommandAvailable = useMemo(() => hasCommand(props.commands, 'permission'), [props.commands])
   const planCommandAvailable = useMemo(() => hasCommand(props.commands, 'plan'), [props.commands])
@@ -281,7 +286,12 @@ export const SessionControls = memo(function SessionControls(props: SessionContr
             title={props.presetMutable ? t('controls.modeSelect') : t('controls.modeLocked')}
             value={props.configuration.preset}
             options={modeOptions}
-            disabled={props.disabled || !props.presetMutable || availablePresets.length < 2}
+            disabled={
+              props.presetSelectionEnabled === false ||
+              props.disabled ||
+              !props.presetMutable ||
+              availablePresets.length < 2
+            }
             onChange={handlePresetChange}
           />
         ) : null}
@@ -326,12 +336,21 @@ export const SessionControls = memo(function SessionControls(props: SessionContr
             }`}
             icon={permissionIcon(permissionPreset)}
             displayLabel
-            label={formatPermissionLabel(permissionPreset, t)}
+            label={
+              props.configuration.permissionPresetKnown === false
+                ? t('controls.unknown')
+                : formatPermissionLabel(permissionPreset, t)
+            }
             ariaLabel={t('controls.access')}
             title={permissionCommandAvailable ? t('controls.accessChange') : t('controls.accessUnavailable')}
-            value={permissionPreset}
+            value={props.configuration.permissionPresetKnown === false ? '' : permissionPreset}
             options={permissionMenuOptions}
-            disabled={props.disabled || availablePermissionPresets.length < 2 || !permissionCommandAvailable}
+            disabled={
+              props.disabled ||
+              availablePermissionPresets.length <
+                (props.configuration.permissionPresetKnown === false ? 1 : 2) ||
+              !permissionCommandAvailable
+            }
             onChange={handlePermissionChange}
           />
         ) : null}
@@ -340,8 +359,16 @@ export const SessionControls = memo(function SessionControls(props: SessionContr
             <button
               className="dsh-session-controls__access dsh-session-controls__plan"
               type="button"
-              aria-label={props.configuration.planMode ? t('controls.planOff') : t('controls.planOn')}
-              aria-pressed={props.configuration.planMode}
+              aria-label={
+                props.configuration.planModeKnown === false
+                  ? t('controls.planUnknown')
+                  : props.configuration.planMode
+                    ? t('controls.planOff')
+                    : t('controls.planOn')
+              }
+              aria-pressed={
+                props.configuration.planModeKnown === false ? undefined : props.configuration.planMode
+              }
               title={
                 planCommandAvailable
                   ? props.configuration.planMode
@@ -354,7 +381,11 @@ export const SessionControls = memo(function SessionControls(props: SessionContr
             >
               <Icon name="plan" />
               <span className="dsh-session-controls__plan-label">
-                {props.configuration.planMode ? t('controls.planOff') : t('controls.planOn')}
+                {props.configuration.planModeKnown === false
+                  ? t('controls.planUnknown')
+                  : props.configuration.planMode
+                    ? t('controls.planOff')
+                    : t('controls.planOn')}
               </span>
             </button>
           </>

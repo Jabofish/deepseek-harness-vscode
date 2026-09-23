@@ -183,7 +183,7 @@ export interface PermissionRequest {
   readonly callId?: string
   /** Optional provider-supplied command preview; rc.6 normally omits it. */
   readonly commandLine?: string
-  readonly risk: 'low' | 'medium' | 'high'
+  readonly risk: 'low' | 'medium' | 'high' | 'unknown'
   readonly options: readonly PermissionOption[]
 }
 

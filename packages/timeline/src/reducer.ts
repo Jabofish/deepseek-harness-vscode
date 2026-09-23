@@ -582,11 +582,6 @@ export function reduceTimeline(
           node.state === 'scheduled'
         )
           nodes[index] = { ...node, state: 'cancelled' }
-        else if (node?.kind === 'workflow' && node.workflow.status === 'running')
-          nodes[index] = {
-            ...node,
-            workflow: interruptWorkflow(node.workflow),
-          }
       }
       break
     case 'tool.updated': {
@@ -1357,21 +1352,6 @@ function settleWorkflowMember(
     stages: workflow.stages.map((stage) => ({
       ...stage,
       members: stage.members.map((member) => (member.seq === seq ? { ...member, status: outcome } : member)),
-    })),
-  }
-}
-
-function interruptWorkflow(
-  workflow: Extract<TimelineNode, { readonly kind: 'workflow' }>['workflow'],
-): Extract<TimelineNode, { readonly kind: 'workflow' }>['workflow'] {
-  return {
-    ...workflow,
-    status: 'interrupted',
-    stages: workflow.stages.map((stage) => ({
-      ...stage,
-      members: stage.members.map((member) =>
-        member.status === 'running' ? { ...member, status: 'interrupted' } : member,
-      ),
     })),
   }
 }

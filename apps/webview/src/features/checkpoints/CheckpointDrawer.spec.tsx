@@ -124,6 +124,15 @@ describe('CheckpointDrawer', () => {
     expect(screen.getByText('added since')).toBeDefined()
   })
 
+  it('reports partial restoration without claiming completion', async () => {
+    renderDrawer({ onRestore: vi.fn().mockResolvedValue('partial') })
+    fireEvent.click(screen.getByRole('button', { name: 'Restore Before refactor' }))
+    await waitFor(() => expect(screen.getByRole('alertdialog')).toBeDefined())
+    fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Restore files' }))
+    await waitFor(() => expect(screen.getByText(/Checkpoint only partially restored/u)).toBeDefined())
+    expect(screen.queryByText('Checkpoint restored.')).toBeNull()
+  })
+
   it('requires a separate confirmation before deletion', async () => {
     const onDelete = vi.fn().mockResolvedValue(undefined)
     renderDrawer({ onDelete })

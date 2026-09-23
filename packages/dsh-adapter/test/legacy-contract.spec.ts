@@ -365,3 +365,18 @@ describe('DSH 0.0.1 and 0.1.0 historical adapter contracts', () => {
     await backend.close()
   })
 })
+
+it('rejects RC1 Jobs while preserving RC2 Jobs support', async () => {
+  const rc1 = await new LegacyRc1VersionAdapter(options).createBackend(connected('0.0.1-rc.1', 'legacy-rc1'))
+  const rc2 = await new LegacyRc2VersionAdapter(options).createBackend(connected('0.0.1-rc.2', 'legacy-rc2'))
+  try {
+    await expect(rc1.jobs.list('s1')).rejects.toMatchObject({ code: 'CAPABILITY_UNAVAILABLE' })
+    await expect(rc2.jobs.list('s1')).resolves.toEqual([])
+    await expect(rc1.sessions.setArchived('s1', false)).rejects.toMatchObject({
+      code: 'CAPABILITY_UNAVAILABLE',
+    })
+  } finally {
+    await rc1.close()
+    await rc2.close()
+  }
+})

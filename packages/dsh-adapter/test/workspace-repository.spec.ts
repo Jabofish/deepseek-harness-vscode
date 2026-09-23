@@ -97,6 +97,16 @@ describe('Rc6WorkspaceRepository ordering', () => {
 })
 
 describe('Rc6WorkspaceRepository archive state', () => {
+  it('rejects restore before transport when the selected contract lacks it', async () => {
+    const calls: Call[] = []
+    const repository = new Rc6WorkspaceRepository(
+      transportFor({ 'workspace.unarchiveSession': { archivedSessionIds: [] } }, calls),
+    )
+
+    await expect(repository.unarchiveSession('s1')).rejects.toMatchObject({ code: 'CAPABILITY_UNAVAILABLE' })
+    expect(calls).toEqual([])
+  })
+
   it('forgets the archive memory a restore proves stale', async () => {
     const calls: Call[] = []
     const repository = new Rc6WorkspaceRepository(
@@ -110,6 +120,7 @@ describe('Rc6WorkspaceRepository archive state', () => {
         },
         calls,
       ),
+      { supportsSessionRestore: true },
     )
 
     await repository.archiveSession('s1')
@@ -132,6 +143,7 @@ describe('Rc6WorkspaceRepository archive state', () => {
   it('keeps a refused restore archived instead of guessing from the error', async () => {
     const repository = new Rc6WorkspaceRepository(
       transportFor({ 'workspace.archiveSession': { archivedSessionIds: ['s1'] } }),
+      { supportsSessionRestore: true },
     )
     await repository.archiveSession('s1')
 
@@ -145,8 +157,49 @@ describe('Rc6WorkspaceRepository archive state', () => {
   it('refuses a malformed archive-set echo from either direction', async () => {
     const repository = new Rc6WorkspaceRepository(
       transportFor({ 'workspace.unarchiveSession': { archivedSessionIds: [''] } }),
+      { supportsSessionRestore: true },
     )
 
     await expect(repository.unarchiveSession('s1')).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
   })
+})
+
+it('accepts an external restore after an acknowledged local archive', async () => {
+  const responses = {
+    'workspace.archiveSession': { archivedSessionIds: ['s1'] },
+    'workspace.list': { items: [WORKSPACE], archivedSessionIds: ['s1'] as string[] },
+  }
+  const repository = new Rc6WorkspaceRepository(transportFor(responses))
+  await repository.archiveSession('s1')
+  expect((await repository.listWithArchiveState()).archivedSessionIds.has('s1')).toBe(true)
+  responses['workspace.list'].archivedSessionIds = []
+  expect((await repository.listWithArchiveState()).archivedSessionIds.has('s1')).toBe(false)
+})
+
+it('fences a list begun before archive without making that archive permanent', async () => {
+  let resolveList: ((value: unknown) => void) | undefined
+  const oldList = new Promise<unknown>((resolve) => {
+    resolveList = resolve
+  })
+  const base = transportFor({
+    'workspace.archiveSession': { archivedSessionIds: ['s1'] },
+    'workspace.list': { items: [WORKSPACE], archivedSessionIds: [] },
+  })
+  let first = true
+  const transport: DshTransport = {
+    ...base,
+    request: <T>(method: string, params: unknown, signal?: AbortSignal) => {
+      if (method === 'workspace.list' && first) {
+        first = false
+        return oldList as Promise<T>
+      }
+      return base.request<T>(method, params, signal)
+    },
+  }
+  const repository = new Rc6WorkspaceRepository(transport)
+  const pending = repository.listWithArchiveState()
+  await repository.archiveSession('s1')
+  resolveList?.({ result: { ok: true, value: { items: [WORKSPACE], archivedSessionIds: [] } } })
+  expect((await pending).archivedSessionIds.has('s1')).toBe(true)
+  expect((await repository.listWithArchiveState()).archivedSessionIds.has('s1')).toBe(false)
 })

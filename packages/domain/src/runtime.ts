@@ -71,6 +71,10 @@ export interface BackendCapabilities {
   readonly features: ReadonlySet<string>
   /** Alpha hosts accept browser-uploaded image parts on subagent continuations. */
   readonly subagentImagePrompts?: boolean
+  /** Selected exact adapter exposes a real archive restoration operation. */
+  readonly sessionRestore?: boolean
+  /** Exact adapter exposes alpha171 Job Controller list/follow/kill endpoints. */
+  readonly jobController?: boolean
   /** Adapter selected by the Extension Host for this connection generation. */
   readonly adapterId?: string
   /** Exact uses a pinned adapter; best-effort uses the newest verified adapter candidate. */

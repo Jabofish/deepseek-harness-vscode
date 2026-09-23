@@ -650,6 +650,11 @@
   tab-size: 2;
 }
 
+.dsh-tool-diff-preview__content {
+  min-width: 100%;
+  width: max-content;
+}
+
 .dsh-tool-diff-preview__line {
   min-height: 1.45em;
   white-space: pre;

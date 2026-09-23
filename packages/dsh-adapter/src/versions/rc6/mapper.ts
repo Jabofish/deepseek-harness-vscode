@@ -173,7 +173,7 @@ export const rc6Mapper = {
     const updatedAt = date(record.updatedAt ?? record.createdAt)
     const running = boolean(record.running, false)
     const blank = boolean(record.blank, false)
-    const status: SessionStatus = running ? 'running' : blank ? 'idle' : 'completed'
+    const status: SessionStatus = running ? 'running' : 'idle'
     const rawTitle = record.title ?? record.name ?? projectionValues?.title
     const modelRecord = objectOrUndefined(record.model)
     const rawModelLabel =
@@ -196,6 +196,7 @@ export const rc6Mapper = {
         ? {}
         : { parentSessionId: string(record.parentSessionId, 'parentSessionId') }),
       ...(record.origin === 'subagent' ? { origin: 'subagent' as const } : {}),
+      ...(typeof record.agentAvailable === 'boolean' ? { agentAvailable: record.agentAvailable } : {}),
       status,
       createdAt: date(record.createdAt ?? record.updatedAt),
       updatedAt,
@@ -356,6 +357,25 @@ export const rc6Mapper = {
     // transcript keeps the append-origin rows it shadowed, and the copy's own
     // sequence stays visible to the live watermark through this marker.
     if (isReplacementSurfaceEvent(name, value)) return { type: 'session.system', sessionId }
+    if (
+      [
+        'tool/call',
+        'tool/result',
+        'tool/code-dispatch-start',
+        'tool/ptc-dispatch-start',
+        'tool/code-dispatch',
+        'tool/ptc-dispatch',
+      ].includes(name)
+    ) {
+      const viewEnvelope = objectOrUndefined(data.view)
+      const view = objectOrUndefined(viewEnvelope?.view) ?? viewEnvelope
+      const source = objectOrUndefined(objectOrUndefined(data.message)?.source)
+      if (
+        firstString(data.callId, source?.callId, data.subCallId, data.id, view?.callId, view?.id) ===
+        undefined
+      )
+        return { type: 'unknown', sessionId, name, payload: safePayload(value) }
+    }
     switch (name) {
       case 'session/status':
         return {
@@ -390,6 +410,7 @@ export const rc6Mapper = {
           sessionId,
           title: stringOr(data.title ?? data.name, ''),
         }
+      case 'developer/message':
       case 'system/message':
         // Keep only a sequence-bearing internal marker. Never project the
         // system prompt text or its message structure beyond the adapter.
@@ -653,7 +674,7 @@ export const rc6Mapper = {
             title: 'Cordis browser activation requires DSH Web',
             description:
               'This plugin needs the DSH browser runtime. Handle it in DSH Web, or reject this activation here. VS Code cannot run its browser code.',
-            risk: 'medium',
+            risk: 'unknown',
             options: [{ id: 'rejected', label: 'Reject', kind: 'deny' }],
           },
         }
@@ -948,6 +969,7 @@ export const rc6Mapper = {
           (data.parentSessionId !== undefined &&
             (typeof data.parentSessionId !== 'string' || data.parentSessionId.trim() === '')) ||
           (data.origin !== undefined && data.origin !== 'subagent') ||
+          (data.agentAvailable !== undefined && typeof data.agentAvailable !== 'boolean') ||
           (data.cwd !== undefined && typeof data.cwd !== 'string') ||
           (data.agentPreset !== undefined && typeof data.agentPreset !== 'string')
         )
@@ -958,6 +980,7 @@ export const rc6Mapper = {
           blank: data.blank,
           ...(data.parentSessionId === undefined ? {} : { parentSessionId: data.parentSessionId }),
           ...(data.origin === undefined ? {} : { origin: data.origin }),
+          ...(data.agentAvailable === undefined ? {} : { agentAvailable: data.agentAvailable }),
           ...(data.cwd === undefined ? {} : { cwd: data.cwd }),
           ...(data.agentPreset === undefined ? {} : { agentPreset: data.agentPreset }),
         }
@@ -1898,14 +1921,28 @@ function job(value: unknown): JobView {
   if (record.finishedAt !== undefined && finishedAt === undefined) throw new Error('Malformed job finishedAt')
   if (record.detail !== undefined && typeof record.detail !== 'string')
     throw new Error('Malformed job detail')
+  if (record.progress !== undefined && typeof record.progress !== 'string')
+    throw new Error('Malformed job progress')
+  const output = record.output === undefined ? undefined : object(record.output, 'job output')
+  const outputTotal = output === undefined ? undefined : nonNegativeSafeNumber(output.total)
+  const outputEarliest = output === undefined ? undefined : nonNegativeSafeNumber(output.earliest)
+  if (
+    output !== undefined &&
+    (outputTotal === undefined || outputEarliest === undefined || outputEarliest > outputTotal)
+  )
+    throw new Error('Malformed job output offsets')
   return {
     id: string(record.id, 'job id'),
     kind: string(record.kind, 'job kind'),
     label: string(record.label, 'job label'),
     status,
     ...(record.detail === undefined ? {} : { detail: record.detail }),
+    ...(record.progress === undefined ? {} : { progress: record.progress }),
     startedAt,
     ...(finishedAt === undefined ? {} : { finishedAt }),
+    ...(outputTotal === undefined || outputEarliest === undefined
+      ? {}
+      : { output: { total: outputTotal, earliest: outputEarliest } }),
   }
 }
 
@@ -2160,7 +2197,7 @@ function permission(value: Record<string, unknown>): PermissionRequest {
     ...(typeof value.commandLine === 'string' && value.commandLine.trim() !== ''
       ? { commandLine: value.commandLine.trim().slice(0, 4_096) }
       : {}),
-    risk: 'medium',
+    risk: 'unknown',
     options: [
       { id: 'allowed-once', label: 'Allow once', kind: 'allow-once' },
       { id: 'rejected', label: 'Reject', kind: 'deny' },

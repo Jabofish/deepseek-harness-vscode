@@ -2,13 +2,13 @@
 
 ## 层次
 
-| 层          | 目标                                                                                                                                                                                 | 禁止替代                     |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------- |
-| Contract    | `0.0.1-rc.1/.2/.5`、`0.1.0-rc.2/.3`、rc.6–0.1.2-rc.1、alpha.1–alpha.5、0.1.3-alpha.1/.2、0.1.5-alpha.1/.2/rc.1/rc.2 与 0.1.6-alpha.1/.2 RPC/Event/Tool/Session-Control 形状与 mapper | 不能只 mock Domain           |
-| Unit        | 状态机、排序、去重、reducer、错误映射                                                                                                                                                | 不能靠 E2E 才发现竞态        |
-| Integration | Fake DSH socket/server、spawn 依赖、重连/资源释放                                                                                                                                    | 不能调用真实用户实例         |
-| VS Code E2E | View、命令、设置、Webview 协议、焦点和布局                                                                                                                                           | 不能只测 React DOM           |
-| Live smoke  | 固定 DSH 版本真实运行                                                                                                                                                                | 不能声称自动测试等于真实兼容 |
+| 层          | 目标                                                                                                                                                                                                    | 禁止替代                     |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
+| Contract    | `0.0.1-rc.1/.2/.5`、`0.1.0-rc.2/.3`、rc.6–0.1.2-rc.1、alpha.1–alpha.5、0.1.3-alpha.1/.2、0.1.5-alpha.1/.2/rc.1/rc.2、0.1.6-alpha.1/.2 与 0.1.7-alpha.1 RPC/Event/Tool/Session-Control/Job 形状与 mapper | 不能只 mock Domain           |
+| Unit        | 状态机、排序、去重、reducer、错误映射                                                                                                                                                                   | 不能靠 E2E 才发现竞态        |
+| Integration | Fake DSH socket/server、spawn 依赖、重连/资源释放                                                                                                                                                       | 不能调用真实用户实例         |
+| VS Code E2E | View、命令、设置、Webview 协议、焦点和布局                                                                                                                                                              | 不能只测 React DOM           |
+| Live smoke  | 固定 DSH 版本真实运行                                                                                                                                                                                   | 不能声称自动测试等于真实兼容 |
 
 ## 必测负面路径
 
@@ -31,6 +31,7 @@
 - `0.1.5-alpha.1` v3 fixture 必须覆盖严格事件 envelope、surface `startSeq/endSeq`、`system/message` 不向 Webview 透传、PTC 事件映射、assistant baseline 缺失和未知 ignorable 事件的 opaque metadata；旧 v0/v2 fixture 仍必须验证其原有字段边界。
 - `0.1.5-alpha.2`/`rc.1` fixture 必须覆盖 `deliverables/presented` 的有界文件列表、相对路径安全校验、`subagent/catalog` 的 version/mode/label 校验、精确版本选择以及交付文件在 Timeline 中的打开/显示委托；目录刷新仍需验证只刷新活动父会话。
 - `0.1.6-alpha.2` fixture 必须覆盖 `session/control` 的 `jobs`/`projections.inbox` 基线与增量、`next-turn`/`next-step` 到 Queue/Steer 的消息 ID 归约、`0.1.6-alpha.1` 的 `queues` 形状拒绝、`session/writer-held` 错误映射，以及取消/关闭时的 mux 资源释放；其 managed live smoke 已通过，但在 VS Code/Webview 现场回放和跨平台发布证据完成前不得标记为 `DONE`。
+- `0.1.7-alpha.1` fixture 必须覆盖 Session V4 first-class `tool/result` 的 `role`/`toolCallId`/source 配对、嵌套旧 `tool-result` 拒绝、projection-only control 基线与旧 Jobs 基线拒绝、Workspace `pinnedSessionIds`、独立 `job/list` rows、registry-only `agentPresets/list` 的 `modeSelectionEnabled` 与仅 list/select 端口、无 trust 的 `pluginInventory/list` preset composition、alpha.1 新增业务错误，以及取消/关闭时的 mux 资源释放；这些 read-only inventory/roster 映射已有隔离真实运行证据，`job/list`/`job/follow`/`job/kill` 及对应 UI 已接入并有自动测试覆盖；非空真实 Job 的跟读/停止与 VS Code 现场回放尚未验证，仍为待验（保持 `PARTIAL`），不得标记为 `DONE`。
 - 大流量 fixture 由生成器产生，避免提交真实会话日志。
 - 更新 DSH 依赖时先运行漂移测试，再更新 fixture；禁止直接更新 snapshot 接受未知差异。未知版本 fixture 必须覆盖真实版本标签保留、兼容模式警告、最新候选优先、候选拒绝后继续、全部候选拒绝和取消边界。
 - `packages/dsh-adapter/test/adapter-chain.spec.ts` 必须随版本链变更维护，锁定每个已支持版本的连续继承、协议身份和兼容优先级；它不能替代各版本的 wire contract fixture。

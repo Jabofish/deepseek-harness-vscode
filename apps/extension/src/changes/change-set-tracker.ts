@@ -185,7 +185,7 @@ export class ChangeSetTracker {
     workspaceFolderId: string,
     signal?: AbortSignal,
   ): Promise<boolean> {
-    if (backend.workspaceChanges === undefined) return true
+    if (backend.workspaceChanges === undefined) return false
     try {
       const generation = this.attachmentGeneration
       const session = await backend.sessions.get(sessionId, signal)

@@ -34,6 +34,7 @@ class FakeClient {
 const session = {
   id: 'session-1',
   workspaceId: 'workspace-1',
+  workspaceFolderId: 'folder-1',
   title: 'Session',
   blank: false,
   status: 'running',
@@ -44,7 +45,7 @@ const session = {
 const checkpoint = {
   checkpointId: 'checkpoint-1',
   sessionId: 'session-1',
-  workspaceFolderId: 'workspace-1',
+  workspaceFolderId: 'folder-1',
   createdAt: 10,
   label: 'Before refactor',
   fileCount: 2,
@@ -136,7 +137,8 @@ describe('AppStore checkpoint labels', () => {
     const request = client.featureRequests.find((entry) => entry.type === 'checkpoint.create')
     expect(request?.type === 'checkpoint.create' ? request.payload : undefined).toEqual({
       sessionId: 'session-1',
-      workspaceFolderId: 'workspace-1',
+      // The Host-stated folder scope, never the DSH `workspaceId`.
+      workspaceFolderId: 'folder-1',
       label: 'Before refactor',
     })
     expect(created?.label).toBe('Before refactor')
@@ -171,6 +173,25 @@ describe('AppStore checkpoint labels', () => {
     await expect(store.createCheckpoint('Before refactor')).rejects.toThrow(
       'Unable to complete the checkpoint operation.',
     )
+    store.dispose()
+  })
+
+  it('leaves a folder-scoped read unattempted when the host states no folder', async () => {
+    // The Host states no workspace folder when VS Code has none open, which is
+    // also how the extension-owned temporary workspace connects. Asking anyway
+    // is what turned an unavailable surface into a failed one.
+    const client = new FakeClient((request) => {
+      if (request.type !== 'session.open') return response(request)
+      return { ...(response(request) as Record<string, unknown>), workspaceFolderId: undefined }
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+
+    await store.openSession(session.id)
+    await store.refreshCheckpoints()
+
+    expect(client.featureRequests.filter((entry) => entry.type === 'checkpoint.list')).toEqual([])
+    expect(store.unavailableLists).not.toContain('checkpoints')
+    expect(await store.createCheckpoint('Before refactor')).toBeUndefined()
     store.dispose()
   })
 })

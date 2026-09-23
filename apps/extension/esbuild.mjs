@@ -1,6 +1,8 @@
 import { context } from 'esbuild'
 import process from 'node:process'
 
+import { createImportMetaUrlPlugin } from './esbuild-import-meta-url.mjs'
+
 const watch = process.argv.includes('--watch')
 const buildContext = await context({
   entryPoints: ['src/extension.ts'],
@@ -12,6 +14,7 @@ const buildContext = await context({
   sourcemap: true,
   target: 'node22',
   logLevel: 'info',
+  plugins: [createImportMetaUrlPlugin()],
 })
 
 if (watch) {

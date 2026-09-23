@@ -20,6 +20,13 @@
 9. Permission/Plugin/安装/重启/删除/导出等有副作用操作必须由用户显式触发。
 10. Workspace Trust 未授予时只允许连接/浏览安全元数据，禁止自动启动高权限 Agent；具体降级 UI 在实现时测试。
 
+`script-src` 不包含 `wasm-unsafe-eval`，因此 Webview 内的 WebAssembly 编译与实例化会被浏览器拒绝，这是有意
+保留的边界：Webview 依赖不得依赖 WebAssembly。代码高亮因此使用 Shiki 的 JavaScript 正则引擎
+（`shiki/engine/javascript`），不加载任何 wasm 资源。
+Shiki 的语法 token 和部分 React 控件使用内联 `style` 属性；CSP 只对 `style-src-attr` 允许这些属性，
+`style-src-elem` 仍限定在扩展打包资源，脚本仍需 nonce。模型 Markdown 的原始 HTML 继续被禁用，
+不会因为代码高亮而允许用户内容注入 `<style>` 或 `<script>`。
+
 已知实例发现的 workspace state 只保存经连接校验的 loopback port（`dsh.lastEndpoint`）；完整 endpoint
 只存在于 Extension Host 的活动连接中，不进入 Webview。旧版本曾保存 `{ endpoint }` 的兼容记录，读取时仅
 接受 loopback、端口和严格匹配的 `http://` URL，并在下一次成功连接时覆盖为 port-only 记录；该迁移不读取或

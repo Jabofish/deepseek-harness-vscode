@@ -174,7 +174,7 @@ export function CheckpointDrawer(props: CheckpointDrawerProps): ReactElement {
       .then((result) => {
         if (result === undefined) throw new Error(t('checkpoints.error'))
         closeDialog()
-        setNotice(t('checkpoints.restoreCompleted'))
+        setNotice(t(result === 'partial' ? 'checkpoints.restorePartial' : 'checkpoints.restoreCompleted'))
       })
       .catch((reason: unknown) => {
         setError(reason instanceof Error ? reason.message : t('checkpoints.error'))

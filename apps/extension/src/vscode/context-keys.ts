@@ -13,7 +13,6 @@ export function updateContextKeys(commands: typeof vscode.commands, state: Backe
       state.kind === 'discovering' ||
       state.kind === 'connecting' ||
       state.kind === 'starting',
-    'dsh.sessionRunning': state.kind === 'connected',
   }
   const updates: Promise<unknown>[] = []
   for (const [key, value] of Object.entries(values)) {

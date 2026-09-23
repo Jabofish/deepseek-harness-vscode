@@ -6,7 +6,7 @@ import {
 } from '@dsh-vscode/domain'
 
 import type { DshTransport } from '../contracts.js'
-import { callRpc } from '../versions/rc6/rpc.js'
+import { callRpc, unavailable } from '../versions/rc6/rpc.js'
 import { rc6Mapper } from '../versions/rc6/mapper.js'
 import { recordOrUndefined } from './shared/guards.js'
 
@@ -15,14 +15,27 @@ export interface Rc6WorkspaceSnapshot {
   readonly archivedSessionIds: ReadonlySet<string>
 }
 
+export interface Rc6WorkspaceRepositoryOptions {
+  readonly supportsSessionRestore?: boolean
+}
+
 export class Rc6WorkspaceRepository implements WorkspaceRepository {
   private archivedSessionIds = new Set<string>()
-  // A workspace.list request can be in flight while archiveSession commits.
-  // Keep local monotonic knowledge until the host's archive-set echo arrives,
-  // so an older list response cannot put the row back into the switcher.
-  private readonly confirmedLocalArchives = new Set<string>()
+  // Mutations fence older reads, but a read begun after their acknowledgement
+  // is authoritative, including restores performed by another client.
+  private mutationRevision = 0
+  private readSequence = 0
+  private appliedReadSequence = 0
+  private lastSnapshot: Rc6WorkspaceSnapshot | undefined
+  private readonly localArchiveChanges = new Map<string, { revision: number; archived: boolean }>()
   private readonly pendingArchives = new Set<string>()
-  public constructor(private readonly transport: DshTransport) {}
+  private readonly supportsSessionRestore: boolean
+  public constructor(
+    private readonly transport: DshTransport,
+    options: Rc6WorkspaceRepositoryOptions = {},
+  ) {
+    this.supportsSessionRestore = options.supportsSessionRestore === true
+  }
 
   public async list(signal?: AbortSignal): Promise<readonly WorkspaceSummary[]> {
     const snapshot = await this.listWithArchiveState(signal)
@@ -35,6 +48,8 @@ export class Rc6WorkspaceRepository implements WorkspaceRepository {
   }
 
   public async listWithArchiveState(signal?: AbortSignal): Promise<Rc6WorkspaceSnapshot> {
+    const revision = this.mutationRevision
+    const readSequence = ++this.readSequence
     const value = recordOrUndefined(await callRpc<unknown>(this.transport, 'workspace.list', {}, signal))
     if (
       value === undefined ||
@@ -43,19 +58,30 @@ export class Rc6WorkspaceRepository implements WorkspaceRepository {
       !isStringArray(value.archivedSessionIds)
     )
       throw malformedWorkspaceResponse('list')
-    const archivedSessionIds = new Set([
-      ...value.archivedSessionIds,
-      ...this.confirmedLocalArchives,
-      ...this.pendingArchives,
-    ])
-    this.archivedSessionIds = new Set(archivedSessionIds)
-    return {
+    if (readSequence < this.appliedReadSequence && this.lastSnapshot !== undefined)
+      return {
+        ...this.lastSnapshot,
+        archivedSessionIds: this.applyLocalArchives([...this.lastSnapshot.archivedSessionIds]),
+      }
+    for (const [id, change] of this.localArchiveChanges)
+      if (change.revision <= revision) this.localArchiveChanges.delete(id)
+    const archivedSessionIds = this.applyLocalArchives(value.archivedSessionIds)
+    this.archivedSessionIds = archivedSessionIds
+    this.appliedReadSequence = readSequence
+    this.lastSnapshot = {
       items: value.items.map((item) => rc6Mapper.workspace(item)),
-      // Keep archive state attached to this response. Session and workspace
-      // lists can be requested concurrently, so reading the mutable cache
-      // after the await can pair rows with a different snapshot.
       archivedSessionIds: new Set(archivedSessionIds),
     }
+    return this.lastSnapshot
+  }
+
+  private applyLocalArchives(ids: readonly string[]): Set<string> {
+    const result = new Set(ids)
+    for (const [id, change] of this.localArchiveChanges)
+      if (change.archived) result.add(id)
+      else result.delete(id)
+    for (const id of this.pendingArchives) result.add(id)
+    return result
   }
 
   public isArchived(sessionId: string): boolean {
@@ -63,6 +89,7 @@ export class Rc6WorkspaceRepository implements WorkspaceRepository {
   }
 
   public async archiveSession(sessionId: string, signal?: AbortSignal): Promise<void> {
+    const wasArchived = this.archivedSessionIds.has(sessionId)
     this.pendingArchives.add(sessionId)
     this.archivedSessionIds.add(sessionId)
     try {
@@ -71,28 +98,18 @@ export class Rc6WorkspaceRepository implements WorkspaceRepository {
       )
       if (value === undefined || !isStringArray(value.archivedSessionIds)) throw malformedArchiveResponse()
       this.pendingArchives.delete(sessionId)
-      for (const archivedSessionId of value.archivedSessionIds)
-        this.confirmedLocalArchives.add(archivedSessionId)
-      this.confirmedLocalArchives.add(sessionId)
-      this.archivedSessionIds = new Set([
-        ...value.archivedSessionIds,
-        ...this.confirmedLocalArchives,
-        ...this.pendingArchives,
-      ])
+      this.localArchiveChanges.set(sessionId, { revision: ++this.mutationRevision, archived: true })
+      this.archivedSessionIds = this.applyLocalArchives(value.archivedSessionIds)
     } catch (error) {
       this.pendingArchives.delete(sessionId)
-      this.archivedSessionIds.delete(sessionId)
+      if (!wasArchived) this.archivedSessionIds.delete(sessionId)
       throw error
     }
   }
 
-  /**
-   * Restore one archived session: the mirror of `archiveSession` in the one
-   * direction monotonic local knowledge cannot express. The commit is the only
-   * evidence that may retire that memory, so a failed restore puts the id back
-   * exactly as it was found rather than guessing from the error.
-   */
+  /** Restore one session and fence reads begun before the acknowledgement. */
   public async unarchiveSession(sessionId: string, signal?: AbortSignal): Promise<void> {
+    if (!this.supportsSessionRestore) throw unavailable('session restoration')
     const wasArchived = this.archivedSessionIds.has(sessionId)
     this.archivedSessionIds.delete(sessionId)
     try {
@@ -100,15 +117,9 @@ export class Rc6WorkspaceRepository implements WorkspaceRepository {
         await callRpc<unknown>(this.transport, 'workspace.unarchiveSession', { sessionId }, signal),
       )
       if (value === undefined || !isStringArray(value.archivedSessionIds)) throw malformedArchiveResponse()
-      // Keeping the id in either local set would hide the restored row in every
-      // later archive-set read, because those reads union them back in.
-      this.confirmedLocalArchives.delete(sessionId)
       this.pendingArchives.delete(sessionId)
-      this.archivedSessionIds = new Set([
-        ...value.archivedSessionIds,
-        ...this.confirmedLocalArchives,
-        ...this.pendingArchives,
-      ])
+      this.localArchiveChanges.set(sessionId, { revision: ++this.mutationRevision, archived: false })
+      this.archivedSessionIds = this.applyLocalArchives(value.archivedSessionIds)
     } catch (error) {
       if (wasArchived) this.archivedSessionIds.add(sessionId)
       throw error

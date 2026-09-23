@@ -37,7 +37,7 @@ const TOOL_RECORD_PREFIX = 'tool\u0000'
  * went vacuous before.
  *
  *   $env:DSH_LIVE_SMOKE = '1'
- *   $env:DSH_LIVE_RUNTIME_VERSION = '0.1.5-rc.1'      # optional; defaults to the pinned runtime
+ *   $env:DSH_LIVE_RUNTIME_VERSION = '0.1.5-rc.2'      # optional; defaults to the pinned runtime
  *   npx vitest run tests/live-dsh/transcript.spec.ts
  *
  * Read-only: it never sends a prompt or writes to the runtime.

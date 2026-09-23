@@ -1619,7 +1619,7 @@ describe('reduceTimeline', () => {
     ])
   })
 
-  it('interrupts a run whose step closes before run-end, keeping settled members', () => {
+  it('does not infer workflow termination from an unrelated step end', () => {
     const started = reduceTimeline(initial, {
       sequence: 1,
       event: {
@@ -1661,9 +1661,7 @@ describe('reduceTimeline', () => {
         outcome: 'completed',
       },
     })
-    // The host records run-end before the tool returns, so a run still open
-    // when its step closes was interrupted: the run and only its open members
-    // project interrupted, and the settled member keeps its real outcome.
+    // Without workflow turn ownership, only workflow events can settle it.
     const interrupted = reduceTimeline(settled, {
       sequence: 5,
       event: { type: 'step.ended', sessionId: 'session-1', turn: 1, step: 1 },
@@ -1672,13 +1670,13 @@ describe('reduceTimeline', () => {
       {
         kind: 'workflow',
         workflow: {
-          status: 'interrupted',
+          status: 'running',
           stages: [
             {
               phase: 'Fresh-agent rounds',
               members: [
                 { seq: 1, status: 'completed' },
-                { seq: 2, status: 'interrupted' },
+                { seq: 2, status: 'running' },
               ],
             },
           ],

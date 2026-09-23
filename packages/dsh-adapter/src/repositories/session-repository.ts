@@ -51,6 +51,12 @@ export class Rc6SessionRepository implements SessionRepository {
   private readonly queueOwners = new Map<string, string>()
   private readonly queues = new Map<string, readonly QueuedInput[]>()
   private readonly queueWaiters = new Map<string, Set<(items: readonly QueuedInput[]) => void>>()
+  /**
+   * Reads that arrived before the subscription published the queue baseline.
+   * The mux delivers `session/subscribed` asynchronously, so a `session.open`
+   * response can win the race against the baseline it depends on.
+   */
+  private readonly queueBaselineWaiters = new Map<string, Set<() => void>>()
   private readonly pendingQueueIdentities = new Map<string, Promise<QueuedInput | undefined>>()
   private readonly imageLimitsBySession = new Map<string, ImageAttachmentLimits>()
   public constructor(
@@ -69,15 +75,17 @@ export class Rc6SessionRepository implements SessionRepository {
     this.onSessionAccess = options.onSessionAccess
     this.onSessionOpen = options.onSessionOpen
     this.deriveTitleFromCwd = options.deriveTitleFromCwd === true
-    this.resetQueueOnSubscribe = options.resetQueueOnSubscribe ?? true
+    this.queueBaseline = options.queueBaseline ?? 'subscription'
     this.includesClientTimeZone = options.includeClientTimeZone ?? true
     this.executeSessionConfigurationCommand = options.executeSessionConfigCommand
     this.readPermissionPresets = options.readPermissionPresets
     this.supportsFileUploads = options.supportsFileUploads === true
+    this.supportsSessionRestore = options.supportsSessionRestore === true
   }
 
   private readonly readPermissionPresets: ((signal?: AbortSignal) => Promise<readonly string[]>) | undefined
   public readonly supportsFileUploads: boolean
+  private readonly supportsSessionRestore: boolean
   private readonly supportsPreallocatedSessionId: boolean
   private readonly supportsWorkspaceBlankReuse: boolean
   private readonly commandAttachmentWire: CommandAttachmentWire
@@ -86,7 +94,7 @@ export class Rc6SessionRepository implements SessionRepository {
   private readonly onSessionAccess: ((sessionId: string) => void) | undefined
   private readonly onSessionOpen: ((sessionId: string) => void | Promise<void>) | undefined
   private readonly deriveTitleFromCwd: boolean
-  private readonly resetQueueOnSubscribe: boolean
+  private readonly queueBaseline: 'subscription' | 'control'
   private readonly includesClientTimeZone: boolean
   private readonly executeSessionConfigurationCommand:
     ((sessionId: string, command: string, signal?: AbortSignal) => Promise<void>) | undefined
@@ -94,9 +102,10 @@ export class Rc6SessionRepository implements SessionRepository {
   public remember(event: BackendEvent): void {
     if (event.type !== 'queue.updated') {
       if (event.type === 'session.subscribed') {
-        if (this.resetQueueOnSubscribe) {
+        if (this.queueBaseline === 'subscription') {
           this.clearQueueState(event.sessionId)
           this.queues.set(event.sessionId, [])
+          this.notifyQueueBaseline(event.sessionId)
         }
         this.rememberProjectionValues(event.sessionId, event.projection?.values, true)
       } else if (event.type === 'session.removed') {
@@ -109,6 +118,7 @@ export class Rc6SessionRepository implements SessionRepository {
       return
     }
     this.queues.set(event.sessionId, event.items)
+    this.notifyQueueBaseline(event.sessionId)
     const previous = new Set(
       [...this.queueOwners.entries()]
         .filter(([, sessionId]) => sessionId === event.sessionId)
@@ -457,11 +467,8 @@ export class Rc6SessionRepository implements SessionRepository {
     }
   }
 
-  public async remove(sessionId: string, signal?: AbortSignal): Promise<void> {
-    // rc.6 has no destructive session.delete RPC. Its supported lifecycle
-    // operation is the registry-global archive, which removes the session
-    // from workspace listings while preserving DSH's recoverable semantics.
-    await this.setArchived(sessionId, true, signal)
+  public remove(_sessionId: string, _signal?: AbortSignal): Promise<void> {
+    return Promise.reject(unavailable('permanent session deletion'))
   }
 
   public async rename(sessionId: string, title: string, signal?: AbortSignal): Promise<string> {
@@ -537,9 +544,7 @@ export class Rc6SessionRepository implements SessionRepository {
   }
 
   public async setArchived(sessionId: string, archived: boolean, signal?: AbortSignal): Promise<void> {
-    // Which wire methods exist is the version adapter's statement, not this
-    // repository's: a host that cannot restore answers CAPABILITY_UNAVAILABLE
-    // by name from its transport, so refusing here would refuse hosts that can.
+    if (!archived && !this.supportsSessionRestore) throw unavailable('session restoration')
     const method = archived ? 'workspace.archiveSession' : 'workspace.unarchiveSession'
     if (this.workspaceRepository !== undefined) {
       if (archived) await this.workspaceRepository.archiveSession(sessionId, signal)
@@ -664,11 +669,54 @@ export class Rc6SessionRepository implements SessionRepository {
     })
   }
 
-  public listQueue(sessionId: string, _signal?: AbortSignal): Promise<readonly QueuedInput[]> {
-    if (!this.queues.has(sessionId)) return Promise.reject(unavailable('queue snapshot'))
+  public async listQueue(sessionId: string, signal?: AbortSignal): Promise<readonly QueuedInput[]> {
+    if (!this.queues.has(sessionId)) {
+      // The control stream is the queue owner: a Session it never named has
+      // nothing pending, so the read is an empty list rather than an unknown.
+      if (this.queueBaseline === 'control') return []
+      // A session that was just opened has no queue entry until its subscription
+      // lands. Wait for that baseline instead of reporting an unreadable queue,
+      // because an absent entry is a timing state, not missing Host data.
+      await this.waitForQueueBaseline(sessionId, signal)
+      if (!this.queues.has(sessionId)) throw unavailable('queue snapshot')
+    }
     const items = this.queues.get(sessionId) ?? []
     for (const item of items) this.queueOwners.set(item.id, sessionId)
-    return Promise.resolve(items)
+    return items
+  }
+
+  private notifyQueueBaseline(sessionId: string): void {
+    const waiters = this.queueBaselineWaiters.get(sessionId)
+    if (waiters === undefined) return
+    this.queueBaselineWaiters.delete(sessionId)
+    for (const waiter of waiters) waiter()
+  }
+
+  private async waitForQueueBaseline(sessionId: string, signal?: AbortSignal): Promise<void> {
+    const deadline = Date.now() + QUEUE_BASELINE_TIMEOUT_MS
+    while (!this.queues.has(sessionId) && !(signal?.aborted ?? false)) {
+      const remaining = deadline - Date.now()
+      if (remaining <= 0) return
+      await new Promise<void>((resolve) => {
+        let settled = false
+        const finish = (): void => {
+          if (settled) return
+          settled = true
+          clearTimeout(timer)
+          signal?.removeEventListener('abort', finish)
+          const waiters = this.queueBaselineWaiters.get(sessionId)
+          waiters?.delete(onBaseline)
+          if (waiters !== undefined && waiters.size === 0) this.queueBaselineWaiters.delete(sessionId)
+          resolve()
+        }
+        const onBaseline = (): void => finish()
+        const waiters = this.queueBaselineWaiters.get(sessionId) ?? new Set<() => void>()
+        waiters.add(onBaseline)
+        this.queueBaselineWaiters.set(sessionId, waiters)
+        const timer = setTimeout(finish, remaining)
+        signal?.addEventListener('abort', finish, { once: true })
+      })
+    }
   }
 
   public sessionForQueuedInput(inputId: string): string | undefined {
@@ -759,7 +807,10 @@ export class Rc6SessionRepository implements SessionRepository {
         retryable: false,
       })
     const current = await this.get(sessionId, signal)
-    const currentPermission = current.configuration.permissionPreset.trim()
+    const currentPermission =
+      current.configuration.permissionPresetKnown === false
+        ? undefined
+        : current.configuration.permissionPreset.trim()
     if (
       requestedPermission !== currentPermission &&
       current.permissionPresets !== undefined &&
@@ -847,14 +898,20 @@ export class Rc6SessionRepository implements SessionRepository {
         await apply(
           () => command(`/permission ${requestedPermission}`, signal),
           () =>
-            isPermissionPresetId(currentPermission)
+            currentPermission !== undefined && isPermissionPresetId(currentPermission)
               ? command(`/permission ${currentPermission}`)
-              : Promise.resolve(),
+              : Promise.reject(unavailable('restoring an unknown permission setting')),
         )
-      if (configuration.planMode !== current.configuration.planMode)
+      if (
+        current.configuration.planModeKnown === false ||
+        configuration.planMode !== current.configuration.planMode
+      )
         await apply(
           () => command(configuration.planMode ? '/plan' : '/plan off', signal),
-          () => command(current.configuration.planMode ? '/plan' : '/plan off'),
+          () =>
+            current.configuration.planModeKnown === false
+              ? Promise.reject(unavailable('restoring an unknown plan setting'))
+              : command(current.configuration.planMode ? '/plan' : '/plan off'),
         )
       if (modelChanged)
         await apply(
@@ -1052,6 +1109,7 @@ export function historyGapRecovery(sessions: HistoryRecoverySource): StreamRecov
 
 interface SessionRepositoryOptions {
   readonly supportsFileUploads?: boolean
+  readonly supportsSessionRestore?: boolean
   readonly readPermissionPresets?: ((signal?: AbortSignal) => Promise<readonly string[]>) | undefined
   /** rc.2 accepts an idempotency/preallocated sessionId without rc.1's reuse flag. */
   readonly preallocatedSessionId?: boolean
@@ -1076,12 +1134,21 @@ interface SessionRepositoryOptions {
   /** Alpha's list projection derives a display title from cwd when no title exists. */
   readonly deriveTitleFromCwd?: boolean
   /**
-   * The rc.6-family mux re-baselines the queue snapshot on every subscription
-   * (absence means empty). Alpha carries no queue baseline on `session/follow`;
-   * its control stream owns the queue state, so wiping on subscribe would drop
-   * baselined data until the next unrelated queue commit.
+   * Where a Session's queue baseline comes from.
+   *
+   * `subscription` (rc.6-family mux): the session stream re-baselines the queue
+   * on every subscription, so a subscription seeds the empty queue and a read
+   * that arrives first is a timing state to wait out.
+   *
+   * `control` (alpha/rc line): the host-wide control stream owns the queue. Its
+   * baseline lists every Session the host knows, and the host broadcasts a queue
+   * frame only when a Session's pending input changes — a Session created after
+   * the baseline commits none until its first enqueue. The reference client
+   * replaces a Session's queue from that baseline with `?? []`, so an entry that
+   * is absent from both is the empty queue, never an unreadable one. A
+   * subscription must also not wipe that state.
    */
-  readonly resetQueueOnSubscribe?: boolean
+  readonly queueBaseline?: 'subscription' | 'control'
 }
 
 function samePath(
@@ -1310,6 +1377,8 @@ function configurationFromRawHistory(
 ): AgentConfiguration {
   let model = projectedModelSelection(projectionValues)
   let permissionPreset = 'workspace-write'
+  let permissionPresetKnown = false
+  let planModeKnown = false
   let planMode = false
   let sandboxMode: string | undefined
   let approvalPolicy: string | undefined
@@ -1319,14 +1388,24 @@ function configurationFromRawHistory(
     const data = asRecord(event.data)
     if (event.type === 'permission/preset') {
       const preset = firstString(data.preset, data.value, data.name, asRecord(data.permission).preset)
-      if (preset !== undefined) permissionPreset = preset
+      if (preset !== undefined) {
+        permissionPreset = preset
+        permissionPresetKnown = true
+      }
       continue
     }
     if (event.type === 'plan/mode') {
       const active = booleanValue(data.active ?? data.enabled ?? data.on ?? data.value)
-      if (active !== undefined) planMode = active
-      else if (data.mode === 'plan' || data.mode === 'on' || data.mode === 'active') planMode = true
-      else if (data.mode === 'off' || data.mode === 'normal' || data.mode === 'inactive') planMode = false
+      if (active !== undefined) {
+        planMode = active
+        planModeKnown = true
+      } else if (data.mode === 'plan' || data.mode === 'on' || data.mode === 'active') {
+        planMode = true
+        planModeKnown = true
+      } else if (data.mode === 'off' || data.mode === 'normal' || data.mode === 'inactive') {
+        planMode = false
+        planModeKnown = true
+      }
       continue
     }
     if (event.type === 'sandbox/mode') {
@@ -1370,8 +1449,20 @@ function configurationFromRawHistory(
       typeof config.reasoningEffort === 'string' ? config.reasoningEffort : model.reasoningLevel
     model = { providerId, modelId, reasoningLevel }
   }
+  const projectedPermission = firstString(asRecord(projectionValues?.permissions).currentValue)
+  const projectedPlan = asRecord(projectionValues?.plan).active
+  if (projectedPermission !== undefined) {
+    permissionPreset = projectedPermission
+    permissionPresetKnown = true
+  }
+  if (typeof projectedPlan === 'boolean') {
+    planMode = projectedPlan
+    planModeKnown = true
+  }
   return {
     ...defaultConfiguration(),
+    permissionPresetKnown,
+    planModeKnown,
     ...(agentPreset === undefined ? {} : { preset: agentPreset }),
     permissionPreset: firstString(asRecord(projectionValues?.permissions).currentValue) ?? permissionPreset,
     planMode,
@@ -1503,6 +1594,7 @@ function validSessionSummaryResponse(value: unknown): boolean {
     (record.parentSessionId === undefined ||
       (typeof record.parentSessionId === 'string' && record.parentSessionId.trim() !== '')) &&
     (record.origin === undefined || record.origin === 'subagent') &&
+    (record.agentAvailable === undefined || typeof record.agentAvailable === 'boolean') &&
     (record.cwd === undefined || typeof record.cwd === 'string') &&
     (record.agentPreset === undefined || typeof record.agentPreset === 'string') &&
     (record.projections === undefined || validProjectionBlock(record.projections))
@@ -1584,6 +1676,8 @@ function findNewQueuedInput(
 
 const QUEUE_IDENTITY_TIMEOUT_MS = 2_000
 const QUEUE_IDENTITY_GRACE_MS = 30_000
+/** Bound for waiting on the subscription's queue baseline before a read fails. */
+const QUEUE_BASELINE_TIMEOUT_MS = 2_000
 
 function queuedPromptKey(input: PromptInput, mode: RunningInputMode): string {
   const value = `${mode}\u0000${input.text}\u0000${input.attachments

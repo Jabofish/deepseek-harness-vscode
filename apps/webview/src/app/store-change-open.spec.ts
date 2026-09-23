@@ -12,6 +12,8 @@ import { createAppStore } from './store.js'
 
 const SESSION_ID = 'session-change-open'
 const WORKSPACE_ID = 'workspace-change-open'
+/** The VS Code folder the Host resolved for the session; not the DSH workspace id. */
+const WORKSPACE_FOLDER_ID = 'folder-change-open'
 
 interface RecordedFeatureRequest {
   readonly type: string
@@ -61,6 +63,7 @@ class RecordingClient {
         return {
           id: SESSION_ID,
           workspaceId: WORKSPACE_ID,
+          workspaceFolderId: WORKSPACE_FOLDER_ID,
           title: 'Change fixture',
           blank: false,
           status: 'running',
@@ -109,7 +112,7 @@ function changeSummary(changeId: string, relativePath: string, line?: number): u
   return {
     changeId,
     sessionId: SESSION_ID,
-    workspaceFolderId: WORKSPACE_ID,
+    workspaceFolderId: WORKSPACE_FOLDER_ID,
     relativePath,
     status: 'modified',
     additions: 1,
@@ -159,7 +162,7 @@ describe('store change opening', () => {
     await store.openChange('change-first-line')
 
     expect(openedPayload(client)).toEqual({
-      workspaceFolderId: WORKSPACE_ID,
+      workspaceFolderId: WORKSPACE_FOLDER_ID,
       relativePath: 'src/first.ts',
       reveal: 'focus',
       range: { start: { line: 0, column: 0 }, end: { line: 0, column: 0 } },
@@ -173,7 +176,7 @@ describe('store change opening', () => {
     await store.openChange('change-no-line')
 
     expect(openedPayload(client)).toEqual({
-      workspaceFolderId: WORKSPACE_ID,
+      workspaceFolderId: WORKSPACE_FOLDER_ID,
       relativePath: 'src/whole-file.ts',
       reveal: 'focus',
     })

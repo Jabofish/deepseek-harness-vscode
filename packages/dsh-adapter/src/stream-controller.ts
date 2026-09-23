@@ -7,6 +7,8 @@ import { assertCanonicalSessionEvent, isReplacementSurfaceEvent, rc6Mapper } fro
 export interface DshStreamControllerOptions {
   /** Optional version-specific logical stream (for example alpha Remote mux). */
   readonly streamSource?: (signal: AbortSignal) => AsyncIterable<unknown>
+  /** Optional normalized frame seam for an adapter-owned typed Remote stream. */
+  readonly normalizeEvent?: (frame: unknown) => BackendEvent | undefined
   /** Shared alpha streams do not own the transport lifecycle. */
   readonly closeTransport?: boolean
 }
@@ -202,7 +204,9 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
     try {
       for await (const envelope of stream) {
         if (this.closed || signal.aborted) return
-        const event = normalizeEnvelope(envelope)
+        const event =
+          this.options.normalizeEvent?.(envelope) ??
+          (this.options.normalizeEvent === undefined ? normalizeEnvelope(envelope) : undefined)
         if (event !== undefined) {
           // A delivered frame proves this generation's transport is alive.
           // Restart the reconnect ladder, or streamSource-based controllers
@@ -232,6 +236,11 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
       this.lastTransientSequences.delete(event.sessionId)
       this.subscribedSessions.delete(event.sessionId)
       this.pendingSessionSnapshots.delete(event.sessionId)
+    }
+    if (event.type === 'session.projection.baseline') {
+      this.rememberControlProjectionBaseline(event)
+      this.emit(event)
+      return
     }
     if (
       this.options.streamSource !== undefined &&
@@ -614,6 +623,20 @@ export class DshStreamController implements AsyncEventSource<BackendEvent> {
     this.lastProjectionSequences.set(event.sessionId, perSession)
   }
 
+  private rememberControlProjectionBaseline(
+    event: Extract<BackendEvent, { readonly type: 'session.projection.baseline' }>,
+  ): void {
+    this.lastProjectionSequences.clear()
+    this.projectionBaselines.clear()
+    for (const [sessionId, projection] of Object.entries(event.projections)) {
+      this.projectionBaselines.set(sessionId, projection.asOfSequence)
+      this.lastProjectionSequences.set(
+        sessionId,
+        new Map(Object.keys(projection.values).map((key) => [key, projection.asOfSequence])),
+      )
+    }
+  }
+
   private truncateProjectionSequences(sessionId: string, lastSequence: number): void {
     const perSession = this.lastProjectionSequences.get(sessionId)
     if (perSession === undefined) return
@@ -784,6 +807,8 @@ function normalizeEnvelope(value: unknown): BackendEvent | undefined {
     case 'session/tasks':
     case 'session/projection':
       return withSequence(mapStreamEvent(frame.type, withRpcId), frame.seq)
+    case 'session/projection-baseline':
+      return normalizeProjectionBaselineFrame(frame)
     case 'stream/error':
       return { type: 'connection.lost', reason: streamErrorReason(frame.error) }
     default:
@@ -797,6 +822,34 @@ function normalizeEnvelope(value: unknown): BackendEvent | undefined {
         frame.seq,
       )
   }
+}
+
+function normalizeProjectionBaselineFrame(frame: Record<string, unknown>): BackendEvent | undefined {
+  const projections = record(frame.projections)
+  if (projections === undefined) return undefined
+  const normalized: Record<
+    string,
+    { readonly asOfSequence: number; readonly values: Readonly<Record<string, unknown>> }
+  > = Object.create(null) as Record<
+    string,
+    { readonly asOfSequence: number; readonly values: Readonly<Record<string, unknown>> }
+  >
+  for (const [sessionId, value] of Object.entries(projections)) {
+    const projection = record(value)
+    const values = record(projection?.values)
+    if (
+      sessionId.trim() === '' ||
+      projection === undefined ||
+      values === undefined ||
+      typeof projection.asOfSequence !== 'number' ||
+      !Number.isSafeInteger(projection.asOfSequence) ||
+      projection.asOfSequence < -1 ||
+      Object.is(projection.asOfSequence, -0)
+    )
+      return undefined
+    normalized[sessionId] = { asOfSequence: projection.asOfSequence, values }
+  }
+  return { type: 'session.projection.baseline', projections: normalized }
 }
 
 function normalizeAssistantStreamFrame(value: Record<string, unknown>): BackendEvent | undefined {

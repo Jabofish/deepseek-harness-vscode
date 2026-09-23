@@ -872,3 +872,14 @@ it.each(['get', 'history', 'summary', 'cancel'] as const)(
     }
   },
 )
+
+it('reports unavailable authoritative changes instead of a successful empty refresh', async () => {
+  const tracker = new ChangeSetTracker()
+  const live = backend(eventSource(), 1)
+  tracker.attach(live, () => 'workspace-1')
+  try {
+    await expect(tracker.refreshAuthoritative(live, 'session-1', 'workspace-1')).resolves.toBe(false)
+  } finally {
+    tracker.dispose()
+  }
+})

@@ -49,6 +49,50 @@ describe('DshStreamController', () => {
     expect(received).toEqual(['tokenUsage', 'contextPressure'])
   })
 
+  it('retains complete projection baselines and resets projection watermarks for a new generation', async () => {
+    const transport = streamTransport([
+      {
+        payload: {
+          type: 'session/projection-baseline',
+          projections: { s1: { asOfSequence: 12, values: { live: 'baseline' } } },
+        },
+      },
+      {
+        payload: { type: 'session/projection', sessionId: 's1', key: 'live', value: 'before drop', seq: 13 },
+      },
+      {
+        payload: {
+          type: 'session/projection-baseline',
+          projections: { s1: { asOfSequence: 7, values: {} } },
+        },
+      },
+      {
+        payload: {
+          type: 'session/projection',
+          sessionId: 's1',
+          key: 'live',
+          value: 'after reconnect',
+          seq: 8,
+        },
+      },
+    ])
+    const received: BackendEvent[] = []
+    const controller = new DshStreamController(transport)
+    controllers.push(controller)
+    controller.subscribe((event) => received.push(event))
+
+    await waitFor(() => received.length === 4)
+    expect(received).toEqual([
+      {
+        type: 'session.projection.baseline',
+        projections: { s1: { asOfSequence: 12, values: { live: 'baseline' } } },
+      },
+      { type: 'session.projection', sessionId: 's1', key: 'live', value: 'before drop', sequence: 13 },
+      { type: 'session.projection.baseline', projections: { s1: { asOfSequence: 7, values: {} } } },
+      { type: 'session.projection', sessionId: 's1', key: 'live', value: 'after reconnect', sequence: 8 },
+    ])
+  })
+
   it('dedupes an exact durable row duplicated inside an authoritative follow snapshot', async () => {
     const stream = new ControlledStream()
     const controller = new DshStreamController(streamTransport([]), undefined, undefined, {

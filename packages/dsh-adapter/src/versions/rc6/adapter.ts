@@ -56,6 +56,9 @@ export class Rc6VersionAdapter extends DshVersionAdapterBase {
   }
 
   protected readonly requiresHome: boolean = false
+  protected readonly supportsJobs: boolean = true
+  /** The pinned rc/legacy contracts expose archive only, not unarchive. */
+  protected readonly supportsSessionRestore: boolean = false
 
   public constructor(protected readonly options: Rc6AdapterOptions) {
     super()
@@ -164,7 +167,7 @@ export class Rc6VersionAdapter extends DshVersionAdapterBase {
     const workspaces = this.createWorkspaceRepository(transport)
     const sessions = this.createSessionRepository(transport, workspaces)
     const goals = new Rc6GoalRepository(transport)
-    const jobs = new Rc6JobRepository(transport)
+    const jobs = new Rc6JobRepository(transport, { supported: this.supportsJobs })
     const events = new DshStreamController(
       transport,
       (event) => {
@@ -210,7 +213,7 @@ export class Rc6VersionAdapter extends DshVersionAdapterBase {
   }
 
   protected createWorkspaceRepository(transport: DshTransport): Rc6WorkspaceRepository {
-    return new Rc6WorkspaceRepository(transport)
+    return new Rc6WorkspaceRepository(transport, { supportsSessionRestore: this.supportsSessionRestore })
   }
 
   protected createSubagentRepository(transport: DshTransport): Rc6SubagentRepository {

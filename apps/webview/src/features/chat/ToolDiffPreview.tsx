@@ -46,25 +46,27 @@ export function ToolDiffPreview(props: ToolDiffRenderProps): ReactElement {
         translate={translate}
       />
       <div className="dsh-tool-diff-preview__body">
-        {head.map((row, index) => renderRow(row, index))}
-        {hidden > 0 ? (
-          <button
-            type="button"
-            className="dsh-tool-diff-preview__fold"
-            aria-expanded={expanded}
-            aria-label={
-              expanded
+        <div className="dsh-tool-diff-preview__content">
+          {head.map((row, index) => renderRow(row, index))}
+          {hidden > 0 ? (
+            <button
+              type="button"
+              className="dsh-tool-diff-preview__fold"
+              aria-expanded={expanded}
+              aria-label={
+                expanded
+                  ? translate('toolrow.presentation.collapseDiffLines')
+                  : translate('toolrow.presentation.expandDiffLines', { count: hidden })
+              }
+              onClick={() => setExpanded((value) => !value)}
+            >
+              {expanded
                 ? translate('toolrow.presentation.collapseDiffLines')
-                : translate('toolrow.presentation.expandDiffLines', { count: hidden })
-            }
-            onClick={() => setExpanded((value) => !value)}
-          >
-            {expanded
-              ? translate('toolrow.presentation.collapseDiffLines')
-              : translate('toolrow.presentation.expandDiffLines', { count: hidden })}
-          </button>
-        ) : null}
-        {tail.map((row, index) => renderRow(row, projection.rows.length - tailLines + index))}
+                : translate('toolrow.presentation.expandDiffLines', { count: hidden })}
+            </button>
+          ) : null}
+          {tail.map((row, index) => renderRow(row, projection.rows.length - tailLines + index))}
+        </div>
       </div>
       <footer className="dsh-tool-diff-preview__footer">
         {translate('toolrow.presentation.diffSummary', {

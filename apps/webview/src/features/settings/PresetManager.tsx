@@ -18,8 +18,8 @@ export interface PresetManagerProps {
   readonly onRemove: (presetId: string) => Promise<void>
   readonly onOpenLocation: (presetId: string) => Promise<AgentPresetLocation | undefined>
   readonly onStartCreatorDraft?: () => Promise<void>
-  /** Writes the host-side `agent-presets.default` settings field. */
-  readonly onMakeDefault: (presetId: string) => Promise<void>
+  /** Writes the default field selected by the version adapter. */
+  readonly onMakeDefault: (presetId: string, settingsPath?: string) => Promise<void>
   readonly defaultWritable?: boolean
 }
 
@@ -30,6 +30,9 @@ interface RosterState {
   readonly status: 'loading' | 'ready' | 'unavailable' | 'error'
   readonly rows: readonly AgentPresetDescriptor[]
   readonly authorable: boolean
+  readonly compositionReadable?: boolean
+  readonly modeSelectionEnabled?: boolean
+  readonly defaultSettingPath?: string
   /** Absent when the host did not state whether it can open a directory natively. */
   readonly hasDocument: boolean | undefined
   readonly error: string | undefined
@@ -92,7 +95,6 @@ function copyBlocker(
  */
 export function PresetManager(props: PresetManagerProps): ReactElement | null {
   const { t } = useI18n()
-  const defaultWritable = props.defaultWritable !== false
   const [roster, setRoster] = useState<RosterState>({
     status: 'loading',
     rows: [],
@@ -106,6 +108,9 @@ export function PresetManager(props: PresetManagerProps): ReactElement | null {
   const [copy, setCopy] = useState<CopyDraft | undefined>(undefined)
   const [pendingDelete, setPendingDelete] = useState<string | undefined>(undefined)
   const [deleting, setDeleting] = useState(false)
+  const defaultWritable = props.defaultWritable !== false
+  const modeSelectionEnabled = roster.modeSelectionEnabled !== false
+  const canSetDefault = defaultWritable && modeSelectionEnabled
   const [defaultingId, setDefaultingId] = useState<string | undefined>(undefined)
   const [revealedPaths, setRevealedPaths] = useState<Readonly<Record<string, string>>>({})
   const [creatorBusy, setCreatorBusy] = useState(false)
@@ -132,7 +137,7 @@ export function PresetManager(props: PresetManagerProps): ReactElement | null {
       if (!deleting) setPendingDelete(undefined)
       return
     }
-    if (viewLoading) return
+    if (viewLoading || roster.compositionReadable === false) return
     if (viewError !== undefined) {
       setViewError(undefined)
       return
@@ -185,6 +190,15 @@ export function PresetManager(props: PresetManagerProps): ReactElement | null {
         setRoster({
           status: 'ready',
           rows: snapshot.presets,
+          ...(snapshot.compositionReadable === undefined
+            ? {}
+            : { compositionReadable: snapshot.compositionReadable }),
+          ...(snapshot.modeSelectionEnabled === undefined
+            ? {}
+            : { modeSelectionEnabled: snapshot.modeSelectionEnabled }),
+          ...(snapshot.defaultSettingPath === undefined
+            ? {}
+            : { defaultSettingPath: snapshot.defaultSettingPath }),
           authorable: snapshot.authorable,
           hasDocument: snapshot.hasDocument,
           error: undefined,
@@ -205,11 +219,14 @@ export function PresetManager(props: PresetManagerProps): ReactElement | null {
   }, [])
 
   const makeDefault = (id: string): void => {
-    if (!defaultWritable || defaultingId !== undefined) return
+    if (!canSetDefault || defaultingId !== undefined) return
     setDefaultingId(id)
     setRoster((current) => ({ ...current, error: undefined }))
-    void props
-      .onMakeDefault(id)
+    void (
+      roster.defaultSettingPath === undefined
+        ? props.onMakeDefault(id)
+        : props.onMakeDefault(id, roster.defaultSettingPath)
+    )
       .then(() => load())
       .catch((reason: unknown) =>
         setRoster((current) => ({
@@ -221,7 +238,7 @@ export function PresetManager(props: PresetManagerProps): ReactElement | null {
   }
 
   const openComposition = (id: string): void => {
-    if (viewLoading) return
+    if (viewLoading || roster.compositionReadable === false) return
     setView(undefined)
     setViewError(undefined)
     setViewLoading(true)
@@ -422,10 +439,7 @@ export function PresetManager(props: PresetManagerProps): ReactElement | null {
                   }
                   mainPressed={row.isDefault}
                   mainDisabled={
-                    row.isDefault ||
-                    row.broken !== undefined ||
-                    !defaultWritable ||
-                    defaultingId !== undefined
+                    row.isDefault || row.broken !== undefined || !canSetDefault || defaultingId !== undefined
                   }
                   mainLabel={`${
                     row.broken !== undefined
@@ -438,15 +452,17 @@ export function PresetManager(props: PresetManagerProps): ReactElement | null {
                     row.broken ??
                     (row.isDefault
                       ? t('presets.inUse')
-                      : defaultWritable
-                        ? t('presets.setDefault')
-                        : t('presets.defaultReadOnly'))
+                      : !modeSelectionEnabled
+                        ? t('presets.modeSelectionHidden')
+                        : defaultWritable
+                          ? t('presets.setDefault')
+                          : t('presets.defaultReadOnly'))
                   }
                   onMainClick={() => makeDefault(row.id)}
                   footer={
                     <>
                       {row.trust === 'system' ? (
-                        row.broken === undefined ? (
+                        roster.compositionReadable === false ? null : row.broken === undefined ? (
                           <button
                             className="dsh-icon-button"
                             type="button"

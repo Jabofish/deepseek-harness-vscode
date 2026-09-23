@@ -480,3 +480,17 @@ describe('WebviewMessageRouter unexpected failure diagnostics', () => {
     })
   })
 })
+
+it('records a refused Webview delivery instead of treating false as delivered', async () => {
+  const logUnexpectedError = vi.fn()
+  const router = new WebviewMessageRouter({
+    postMessage: () => Promise.resolve(false),
+    handleFeatureRequest: () => Promise.resolve({ kind: 'empty' }),
+    logUnexpectedError,
+  })
+  await router.handle({
+    protocolVersion: 1,
+    message: { type: 'editor.context.list', requestId: 'undelivered', payload: {} },
+  })
+  await vi.waitFor(() => expect(logUnexpectedError).toHaveBeenCalled())
+})

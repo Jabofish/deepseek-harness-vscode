@@ -1056,6 +1056,7 @@ export function App(): ReactElement {
         onArchive={sessionOnArchive}
         archivedSessions={state.archivedSessions}
         onLoadArchived={sessionOnLoadArchived}
+        canRestoreSessions={state.sessionRestore === true}
         onRestore={sessionOnRestore}
         onDelete={sessionOnDelete}
         onRename={sessionOnRename}
@@ -1084,6 +1085,7 @@ export function App(): ReactElement {
       sessionOnSearch,
       state.activeSessionId,
       state.archivedSessions,
+      state.sessionRestore,
       state.permissions,
       state.questions,
       state.drawer,
@@ -1121,7 +1123,33 @@ export function App(): ReactElement {
       <>
         {/* The keys reset popover state when the last entry disappears,
         so a refilled catalog never reopens stale. */}
-        <DeferredJobsDrawer key={state.jobs.length > 0 ? 'jobs' : 'jobs-empty'} jobs={state.jobs} />
+        {(state.unavailableLists?.length ?? 0) > 0 ? (
+          <div role="alert">
+            {t('app.listsUnavailable', {
+              lists: state
+                .unavailableLists!.map(
+                  (key) =>
+                    ({
+                      queue: t('lists.queue'),
+                      goals: t('lists.goals'),
+                      jobs: t('lists.jobs'),
+                      checkpoints: t('lists.checkpoints'),
+                      templates: t('lists.templates'),
+                    })[key] ?? key,
+                )
+                .join(', '),
+            })}
+          </div>
+        ) : null}
+        <DeferredJobsDrawer
+          key={state.jobs.length > 0 ? 'jobs' : 'jobs-empty'}
+          jobs={state.jobs}
+          jobControllerAvailable={state.jobControllerAvailable}
+          following={state.jobFollow}
+          onFollow={(jobId) => store.followJob(jobId)}
+          onStopFollowing={() => store.stopFollowingJob()}
+          onKill={(jobId) => store.killJob(jobId)}
+        />
         <DeferredChangesDrawer
           key={`changes-${activeId}`}
           changes={state.changes}
@@ -1171,6 +1199,7 @@ export function App(): ReactElement {
           onRestore={(checkpointId, conflictPolicy) => store.restoreCheckpoint(checkpointId, conflictPolicy)}
         />
         <DeferredPromptTemplatesDrawer
+          onOpenLink={timelineOnOpenLink}
           key={`prompt-templates-${activeId}`}
           templates={state.promptTemplates}
           loading={state.promptTemplatesLoading}
@@ -1280,7 +1309,11 @@ export function App(): ReactElement {
     state.changesRefreshFailed,
     state.checkpoints,
     state.checkpointsLoading,
+    state.unavailableLists,
     state.jobs,
+    state.jobControllerAvailable,
+    state.jobFollow,
+    timelineOnOpenLink,
     state.promptTemplates,
     state.promptTemplatesLoading,
     state.sessions,
@@ -1465,6 +1498,9 @@ export function App(): ReactElement {
                       <EmptySessionPosture
                         workspaces={state.workspaces}
                         presets={state.presets}
+                        {...(state.presetSelectionEnabled === undefined
+                          ? {}
+                          : { presetSelectionEnabled: state.presetSelectionEnabled })}
                         empty={state.sessions.length === 0}
                         onCreate={(workspaceId, presetId) => {
                           void store
@@ -1726,6 +1762,9 @@ export function App(): ReactElement {
                               ? {}
                               : { modelRoutable: sessionModelRoutable })}
                             presets={state.presets}
+                            {...(state.presetSelectionEnabled === undefined
+                              ? {}
+                              : { presetSelectionEnabled: state.presetSelectionEnabled })}
                             permissionPresets={state.permissionPresets}
                             commands={state.commands}
                             popupSelects={popupSelects}
@@ -1810,10 +1849,13 @@ export function App(): ReactElement {
 function EmptySessionPosture(props: {
   readonly workspaces: readonly WorkspaceSummary[]
   readonly presets: readonly AgentPresetDescriptor[]
+  readonly presetSelectionEnabled?: boolean
   readonly empty: boolean
   readonly onCreate: (workspaceId: string, presetId?: string) => void
 }): ReactElement {
-  const { t } = useI18n()
+  const { locale, t } = useI18n()
+  const hostDefaultPresetId = props.presets.find((preset) => preset.isDefault)?.id
+  const missingHostDefaultPreset = props.presetSelectionEnabled === false && hostDefaultPresetId === undefined
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState(props.workspaces[0]?.id ?? '')
   const defaultPreset = props.presets.find((preset) => preset.isDefault && preset.broken === undefined)?.id
   const [selectedPresetId, setSelectedPresetId] = useState(defaultPreset ?? props.presets[0]?.id ?? '')
@@ -1853,7 +1895,7 @@ function EmptySessionPosture(props: {
           onChange={setSelectedWorkspaceId}
         />
       </div>
-      {availablePresets.length === 0 ? null : (
+      {availablePresets.length === 0 || props.presetSelectionEnabled === false ? null : (
         <div className="dsh-empty-session__preset">
           <span>{t('app.presetPicker')}</span>
           <SelectMenu
@@ -1874,13 +1916,28 @@ function EmptySessionPosture(props: {
           <span className="dsh-sr-only">{t('app.presetStaged')}</span>
         </div>
       )}
+      {missingHostDefaultPreset ? (
+        <p role="status">
+          {t('presets.modeSelectionHidden')}.{' '}
+          {locale === 'zh'
+            ? 'DSH 未报告默认预设；创建会话可能沿用过期选择。请先在 DSH 中配置默认预设。'
+            : 'DSH did not report a default preset, so creating a session could reuse an outdated selection. Configure a default preset in DSH first.'}
+        </p>
+      ) : null}
       <button
         className="dsh-button dsh-button--primary"
         type="button"
-        disabled={selected === undefined}
+        disabled={selected === undefined || missingHostDefaultPreset}
         onClick={() => {
-          if (selected !== undefined)
-            props.onCreate(selected.id, stagedPresetId === '' ? undefined : stagedPresetId)
+          if (selected !== undefined && !missingHostDefaultPreset) {
+            const presetId =
+              props.presetSelectionEnabled === false
+                ? hostDefaultPresetId
+                : stagedPresetId === ''
+                  ? undefined
+                  : stagedPresetId
+            props.onCreate(selected.id, presetId)
+          }
         }}
       >
         {t('app.newSessionInWorkspace')}

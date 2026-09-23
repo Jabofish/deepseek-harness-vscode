@@ -1,3 +1,4 @@
+import { isPluginMetadata } from '@dsh-vscode/domain'
 import {
   parseSlashCommand,
   FEATURE_CAPABILITY_IDS,
@@ -31,6 +32,8 @@ import {
   type ExtensionSettingsSummary,
   type GoalView,
   type FeedbackCategory,
+  type JobFollowFrame,
+  type JobOutputChunk,
   type JobView,
   type MessageFeedbackItem,
   type MessageFeedbackRating,
@@ -183,6 +186,8 @@ export interface AppState {
   readonly connectedDshVersion: string | undefined
   /** True only when the selected pinned adapter accepts inline subagent images. */
   readonly subagentImagePrompts: boolean
+  readonly sessionRestore?: boolean
+  readonly jobControllerAvailable: boolean
   /** Safe compatibility warning for an unknown/fallback DSH runtime. */
   readonly dshCompatibilityWarning: string | undefined
   /** Host-projected feature readiness; no endpoint or credential data. */
@@ -242,12 +247,15 @@ export interface AppState {
    */
   readonly sessionModelDirectoryError: string | undefined
   readonly presets: readonly AgentPresetDescriptor[]
+  /** Upstream preset registry may disable the mode chooser for new sessions. */
+  readonly presetSelectionEnabled?: boolean | undefined
   readonly permissionPresets: readonly string[]
   readonly commands: readonly DynamicCommand[]
   readonly pluginInventoryRevision: number
   readonly goals: readonly GoalView[]
   readonly todos: readonly TodoView[]
   readonly jobs: readonly JobView[]
+  readonly jobFollow: JobFollowState | undefined
   /** Feedback keyed by assistant message id for the active session. */
   readonly feedback: Readonly<Record<string, MessageFeedbackItem>>
   /** True after the connected DSH explicitly reports that message feedback is unavailable. */
@@ -270,6 +278,7 @@ export interface AppState {
   readonly tasksComplete: boolean
   readonly tasksOmittedSessions: number
   readonly checkpoints: readonly CheckpointSummary[]
+  readonly unavailableLists?: readonly string[]
   readonly checkpointsLoading: boolean
   readonly promptTemplates: readonly PromptTemplateSummary[]
   readonly promptTemplatesLoading: boolean
@@ -286,6 +295,20 @@ export interface AppState {
 export interface DshSettingsSnapshot {
   readonly schema: DshSettingsSchema
   readonly values: Readonly<Record<string, unknown>>
+}
+
+export interface JobFollowState {
+  readonly jobId: string
+  readonly next: number
+  readonly chunks: readonly JobOutputChunk[]
+  readonly lossy: boolean
+  /** Local request identity used to ignore an older start failure. */
+  readonly generation?: number
+  /** The matching `opened(from)` frame must arrive before this follow is live. */
+  readonly awaitingOpenFrom?: number
+  readonly job?: JobView
+  /** An opened row may already be settled; only a terminal status frame closes output delivery. */
+  readonly terminalStatusReceived?: boolean
 }
 
 export interface AppActions {
@@ -327,6 +350,9 @@ export interface AppActions {
     mode: RunningInputMode,
   ): Promise<void>
   cancelSession(sessionId: string): Promise<void>
+  followJob(jobId: string): Promise<void>
+  stopFollowingJob(): Promise<void>
+  killJob(jobId: string): Promise<'requested' | 'already-finished'>
   updateGoal(
     goalId: string,
     update: Partial<Pick<GoalView, 'title' | 'status' | 'maxGoalRounds'>>,
@@ -500,6 +526,8 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     backend: { kind: 'idle' },
     connectedDshVersion: undefined,
     subagentImagePrompts: false,
+    sessionRestore: false,
+    jobControllerAvailable: false,
     dshCompatibilityWarning: undefined,
     featureProfile: undefined,
     dshUpdate: undefined,
@@ -526,12 +554,14 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     sessionModelDirectoryLoading: false,
     sessionModelDirectoryError: undefined,
     presets: [],
+    presetSelectionEnabled: undefined,
     permissionPresets: [],
     commands: [],
     pluginInventoryRevision: 0,
     goals: [],
     todos: [],
     jobs: [],
+    jobFollow: undefined,
     feedback: {},
     feedbackUnavailable: false,
     subagents: EMPTY_SUBAGENT_CATALOG,
@@ -549,6 +579,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     tasksComplete: true,
     tasksOmittedSessions: 0,
     checkpoints: [],
+    unavailableLists: [],
     checkpointsLoading: false,
     promptTemplates: [],
     promptTemplatesLoading: false,
@@ -594,6 +625,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     const history = mergeHistory(state.history, additions)
     if (history !== state.history) state = { ...state, history }
   }
+  let jobFollowGeneration = 0
   const scheduleNotify = (): void => {
     if (notifyTimer !== undefined) return
     notifyTimer = window.setTimeout(() => {
@@ -1194,13 +1226,22 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     sessionId: string | undefined = state.activeSessionId,
   ): Promise<void> => {
     if (typeof client.featureRequest !== 'function' || sessionId === undefined) return
+    // No folder is open for this session, so there is no workspace scope to
+    // read. Report it as nothing to show rather than as a failed refresh.
+    const workspaceFolderId = sessionWorkspaceFolderId(sessionId)
+    if (workspaceFolderId === undefined) {
+      setState((current) =>
+        current.activeSessionId === sessionId ? { ...current, changesRefreshFailed: false } : current,
+      )
+      return
+    }
     const generation = ++changesRefreshGeneration
     setState((current) => ({ ...current, changesLoading: true }))
     try {
       const result = await client.featureRequest({
         type: 'changes.list',
         requestId: requestId(),
-        payload: { sessionId, limit: 200 },
+        payload: { sessionId, workspaceFolderId, limit: 200 },
       })
       const changes = parseFeatureChangesResult(result)
       if (changes !== undefined)
@@ -1232,9 +1273,13 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   ): Promise<void> => {
     const targetSessionId = scope === 'workspace' ? undefined : sessionId
     const expectedActiveSessionId = state.activeSessionId
+    const workspaceFolderId = sessionId === undefined ? undefined : sessionWorkspaceFolderId(sessionId)
     if (
       typeof client.featureRequest !== 'function' ||
-      (scope === 'current-session' && targetSessionId === undefined)
+      (scope === 'current-session' && targetSessionId === undefined) ||
+      // Both task views are rooted in the folder the Host resolved; with no
+      // folder open there is no scope to read, so nothing is requested.
+      workspaceFolderId === undefined
     )
       return
     const generation = ++tasksRefreshGeneration
@@ -1245,6 +1290,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         requestId: requestId(),
         payload: {
           ...(targetSessionId === undefined ? {} : { sessionId: targetSessionId }),
+          workspaceFolderId,
           scope,
           includeCompleted,
           limit: 200,
@@ -1267,12 +1313,18 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       if (generation === tasksRefreshGeneration) setState((current) => ({ ...current, tasksLoading: false }))
     }
   }
+  // Path-scoped feature routes accept only the VS Code folder the Host
+  // resolved for the session; the DSH workspace id is a different namespace
+  // and a session row without this value means no folder is open at all.
   const sessionWorkspaceFolderId = (sessionId: string): string | undefined => {
     const session = state.sessions.find((candidate) => candidate.id === sessionId)
-    if (session !== undefined && session.workspaceId.trim() !== '') return session.workspaceId
-    if (state.activeSubagent?.entry.id === sessionId && state.activeSubagent.workspaceId.trim() !== '')
-      return state.activeSubagent.workspaceId
-    return undefined
+    if (session?.workspaceFolderId !== undefined) return session.workspaceFolderId
+    const subagent = state.activeSubagent
+    if (subagent?.entry.id !== sessionId) return undefined
+    // A catalog-resolved child has no workspace row of its own; its paths
+    // belong to the parent session it was delegated from.
+    return state.sessions.find((candidate) => candidate.id === subagent.entry.parentSessionId)
+      ?.workspaceFolderId
   }
   const refreshCheckpointsState = async (
     sessionId: string | undefined = state.activeSessionId,
@@ -1289,12 +1341,23 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         payload: { sessionId, workspaceFolderId },
       })
       const checkpoints = parseFeatureCheckpointsResult(result)
+      if (checkpoints === undefined) throw new Error('Invalid checkpoint list')
       if (checkpoints !== undefined)
         setState((current) =>
           generation === checkpointsRefreshGeneration && current.activeSessionId === sessionId
-            ? { ...current, checkpoints }
+            ? {
+                ...current,
+                checkpoints,
+                unavailableLists: (current.unavailableLists ?? []).filter((key) => key !== 'checkpoints'),
+              }
             : current,
         )
+    } catch {
+      if (generation === checkpointsRefreshGeneration && state.activeSessionId === sessionId)
+        setState((current) => ({
+          ...current,
+          unavailableLists: [...new Set([...(current.unavailableLists ?? []), 'checkpoints'])],
+        }))
     } finally {
       if (generation === checkpointsRefreshGeneration)
         setState((current) => ({ ...current, checkpointsLoading: false }))
@@ -1316,12 +1379,23 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         payload: { sessionId, workspaceFolderId, ...(scope === undefined ? {} : { scope }) },
       })
       const templates = parseFeaturePromptTemplatesResult(result)
+      if (templates === undefined) throw new Error('Invalid prompt template list')
       if (templates !== undefined)
         setState((current) =>
           generation === promptTemplatesRefreshGeneration && current.activeSessionId === sessionId
-            ? { ...current, promptTemplates: templates }
+            ? {
+                ...current,
+                promptTemplates: templates,
+                unavailableLists: (current.unavailableLists ?? []).filter((key) => key !== 'templates'),
+              }
             : current,
         )
+    } catch {
+      if (generation === promptTemplatesRefreshGeneration && state.activeSessionId === sessionId)
+        setState((current) => ({
+          ...current,
+          unavailableLists: [...new Set([...(current.unavailableLists ?? []), 'templates'])],
+        }))
     } finally {
       if (generation === promptTemplatesRefreshGeneration)
         setState((current) => ({ ...current, promptTemplatesLoading: false }))
@@ -1915,6 +1989,20 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       }
       sessionId = resolution.sessionId
     }
+    if (
+      state.activeSessionId !== undefined &&
+      state.activeSessionId !== sessionId &&
+      state.jobFollow !== undefined
+    ) {
+      const previousFollow = state.jobFollow
+      void client
+        .request<unknown>({
+          type: 'job.follow.stop',
+          requestId: requestId(),
+          payload: { sessionId: state.activeSessionId, jobId: previousFollow.jobId },
+        })
+        .catch(() => undefined)
+    }
     if (options.startup !== true) startupRestorePending = false
     flushPendingHistory()
     const version = ++openVersion
@@ -1954,10 +2042,13 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         sessionId,
       )
       const permissionPresets = stringList(detail?.permissionPresets)
-      const workspaceFolderId =
-        typeof detail?.workspaceId === 'string' && detail.workspaceId.trim() !== ''
-          ? detail.workspaceId
-          : state.sessions.find((session) => session.id === sessionId)?.workspaceId || undefined
+      // The Host resolves which VS Code folder guards this session's paths and
+      // states it on the open detail; a row from an earlier list is the
+      // fallback. Without it the folder-scoped surfaces are not attempted.
+      const openedWorkspaceFolderId = detail?.workspaceFolderId
+      const workspaceFolderId = nonEmptyString(openedWorkspaceFolderId)
+        ? openedWorkspaceFolderId
+        : sessionWorkspaceFolderId(sessionId)
       // History and configuration are the critical first-paint payload. Start
       // the advisory reads immediately, but publish the conversation before
       // they finish so a slow queue/catalog endpoint cannot blank the panel.
@@ -2010,7 +2101,11 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
             sessions: upsertOpenedSession(current.sessions, detail, sessionId),
             configuration: isAgentConfiguration(detail?.configuration)
               ? detail.configuration
-              : createDefaultConfiguration(current, composerPreferences),
+              : {
+                  ...createDefaultConfiguration(current, composerPreferences),
+                  planModeKnown: false,
+                  permissionPresetKnown: false,
+                },
             sessionModels: [],
             sessionModelFailures: [],
             sessionModelCurrent: undefined,
@@ -2024,6 +2119,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
             goals: [],
             todos: latestTodos(timeline),
             jobs: [],
+            jobFollow: undefined,
             feedback: {},
             feedbackUnavailable: false,
             subagents: EMPTY_SUBAGENT_CATALOG,
@@ -2040,6 +2136,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
             tasksComplete: true,
             tasksOmittedSessions: 0,
             checkpoints: [],
+            unavailableLists: [],
             checkpointsLoading: false,
             promptTemplates: [],
             promptTemplatesLoading: false,
@@ -2101,6 +2198,14 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
             replayHostMessages(
               {
                 ...current,
+                unavailableLists: [
+                  ...(current.unavailableLists ?? []).filter(
+                    (key) => !['queue', 'goals', 'jobs'].includes(key),
+                  ),
+                  ...(queue === undefined ? ['queue'] : []),
+                  ...(goals === undefined ? ['goals'] : []),
+                  ...(jobs === undefined ? ['jobs'] : []),
+                ],
                 ...(queue === undefined ? {} : { queue }),
                 ...(goals === undefined || goalBaselineGeneration !== goalReadGeneration ? {} : { goals }),
                 ...(jobs === undefined ? {} : { jobs }),
@@ -2232,6 +2337,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
             goals: [],
             todos: latestTodos(timeline),
             jobs: [],
+            jobFollow: undefined,
             feedback: {},
             feedbackUnavailable: false,
             subagents: EMPTY_SUBAGENT_CATALOG,
@@ -2246,6 +2352,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
             tasksComplete: true,
             tasksOmittedSessions: 0,
             checkpoints: [],
+            unavailableLists: [],
             checkpointsLoading: false,
             promptTemplates: [],
             promptTemplatesLoading: false,
@@ -2273,6 +2380,12 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         replayHostMessages(
           {
             ...current,
+            unavailableLists: [
+              ...(current.unavailableLists ?? []).filter((key) => !['queue', 'goals', 'jobs'].includes(key)),
+              ...(queue === undefined ? ['queue'] : []),
+              ...(goals === undefined ? ['goals'] : []),
+              ...(jobs === undefined ? ['jobs'] : []),
+            ],
             ...(queue === undefined ? {} : { queue }),
             ...(goals === undefined || goalBaselineGeneration !== goalReadGeneration ? {} : { goals }),
             ...(jobs === undefined ? {} : { jobs }),
@@ -2392,6 +2505,9 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     get connectedDshVersion() {
       return state.connectedDshVersion
     },
+    get sessionRestore() {
+      return state.sessionRestore === true
+    },
     get subagentImagePrompts() {
       return state.subagentImagePrompts
     },
@@ -2473,6 +2589,9 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     get presets() {
       return state.presets
     },
+    get presetSelectionEnabled() {
+      return state.presetSelectionEnabled
+    },
     get permissionPresets() {
       return state.permissionPresets
     },
@@ -2490,6 +2609,12 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     },
     get jobs() {
       return state.jobs
+    },
+    get jobControllerAvailable() {
+      return state.jobControllerAvailable
+    },
+    get jobFollow() {
+      return state.jobFollow
     },
     get feedback() {
       return state.feedback
@@ -2541,6 +2666,9 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     },
     get checkpoints() {
       return state.checkpoints
+    },
+    get unavailableLists() {
+      return state.unavailableLists ?? []
     },
     get checkpointsLoading() {
       return state.checkpointsLoading
@@ -3830,9 +3958,12 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         await client.request<unknown>({ type: 'preset.list', requestId: requestId() }),
       )
       if (roster !== undefined)
-        setState((current) =>
-          arraysEqual(current.presets, roster.presets) ? current : { ...current, presets: roster.presets },
-        )
+        setState((current) => {
+          const presets = arraysEqual(current.presets, roster.presets) ? current.presets : roster.presets
+          if (presets === current.presets && current.presetSelectionEnabled === roster.modeSelectionEnabled)
+            return current
+          return withPresetSelectionEnabled({ ...current, presets }, roster.modeSelectionEnabled)
+        })
       return roster
     },
     readPresetDocument: async (presetId) => {
@@ -3895,6 +4026,83 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       parsePluginInventory(
         await client.request<unknown>({ type: 'plugin.inventory', requestId: requestId() }),
       ),
+    followJob: async (jobId) => {
+      const sessionId = state.activeSessionId
+      const job = state.jobs.find((entry) => entry.id === jobId)
+      if (sessionId === undefined || job === undefined || !state.jobControllerAvailable) return
+      const prior = state.jobFollow
+      if (prior !== undefined && prior.jobId !== jobId) {
+        await client
+          .request<unknown>({
+            type: 'job.follow.stop',
+            requestId: requestId(),
+            payload: { sessionId, jobId: prior.jobId },
+          })
+          .catch(() => undefined)
+      }
+      const from = prior?.jobId === jobId ? prior.next : (job.output?.earliest ?? 0)
+      const generation = ++jobFollowGeneration
+      setState((current) => {
+        const existing = current.jobFollow?.jobId === jobId ? current.jobFollow : undefined
+        return {
+          ...current,
+          jobFollow: {
+            ...(existing ?? { jobId, next: from, chunks: [], lossy: false, job }),
+            jobId,
+            next: Math.max(existing?.next ?? from, from),
+            generation,
+            awaitingOpenFrom: from,
+            job: existing?.job ?? job,
+          },
+        }
+      })
+      try {
+        await client.request<unknown>({
+          type: 'job.follow.start',
+          requestId: requestId(),
+          payload: { sessionId, jobId, from },
+        })
+      } catch (error) {
+        setState((current) =>
+          current.jobFollow?.generation === generation ? { ...current, jobFollow: undefined } : current,
+        )
+        throw error
+      }
+    },
+    stopFollowingJob: async () => {
+      const sessionId = state.activeSessionId
+      const following = state.jobFollow
+      jobFollowGeneration += 1
+      setState((current) => ({ ...current, jobFollow: undefined }))
+      if (sessionId === undefined || following === undefined) return
+      await client.request<unknown>({
+        type: 'job.follow.stop',
+        requestId: requestId(),
+        payload: { sessionId, jobId: following.jobId },
+      })
+    },
+    killJob: async (jobId) => {
+      const sessionId = state.activeSessionId
+      if (sessionId === undefined || !state.jobControllerAvailable)
+        throw new Error(translate('jobs.unavailable'))
+      const result = object(
+        await client.request<unknown>({
+          type: 'job.kill',
+          requestId: requestId(),
+          payload: { sessionId, jobId },
+        }),
+      )
+      if (result?.outcome !== 'requested' && result?.outcome !== 'already-finished')
+        throw new Error(translate('jobs.killFailed'))
+      const rows = await safeList<JobView>(
+        client,
+        { type: 'job.list', requestId: requestId(), payload: { sessionId } },
+        isJobView,
+      )
+      if (rows !== undefined)
+        setState((current) => (current.activeSessionId === sessionId ? { ...current, jobs: rows } : current))
+      return result.outcome
+    },
     exportSession: async (options) => {
       // The host resolves `{ cancelled: true }` when the user closes the save
       // dialog; that is a successful no-op, not an error.
@@ -4131,7 +4339,9 @@ function parseFeatureCapabilityProfile(value: unknown): FeatureCapabilityProfile
     if (
       capability === undefined ||
       !['verified-contract', 'compatibility-fallback', 'unavailable'].includes(String(capability.state)) ||
-      !['verified-contract', 'compatibility-fallback', 'unavailable'].includes(String(capability.upstream))
+      !['verified-contract', 'compatibility-fallback', 'unavailable', 'not-applicable'].includes(
+        String(capability.upstream),
+      )
     )
       return undefined
     parsed[id] = {
@@ -4329,6 +4539,7 @@ async function refreshSessions(
             goals: [],
             todos: [],
             jobs: [],
+            jobFollow: undefined,
             feedback: {},
             feedbackUnavailable: false,
             subagents: EMPTY_SUBAGENT_CATALOG,
@@ -4346,7 +4557,8 @@ async function refreshSessions(
     }
     const providers = listValues(catalogValue(0)).filter(isModelProvider)
     const models = strictListValues(catalogValue(1), isModelDescriptor)
-    const presets = parsePresetRoster(catalogValue(2))?.presets
+    const presetRoster = parsePresetRoster(catalogValue(2))
+    const presets = presetRoster?.presets
     setState((current) => {
       const nextProviders =
         providers === undefined || sameModelProviderList(current.providers, providers)
@@ -4358,13 +4570,24 @@ async function refreshSessions(
         presets === undefined || samePresetDescriptorList(current.presets, presets)
           ? current.presets
           : presets
+      const nextPresetSelectionEnabled =
+        presetRoster === undefined ? current.presetSelectionEnabled : presetRoster.modeSelectionEnabled
       if (
         nextProviders === current.providers &&
         nextModels === current.models &&
-        nextPresets === current.presets
+        nextPresets === current.presets &&
+        nextPresetSelectionEnabled === current.presetSelectionEnabled
       )
         return current
-      return { ...current, providers: nextProviders, models: nextModels, presets: nextPresets }
+      return withPresetSelectionEnabled(
+        {
+          ...current,
+          providers: nextProviders,
+          models: nextModels,
+          presets: nextPresets,
+        },
+        nextPresetSelectionEnabled,
+      )
     })
   }
   if (awaitCatalogs) applyCatalogs(await catalogResults)
@@ -4836,10 +5059,12 @@ function sameSessionSummary(left: SessionSummary, right: SessionSummary): boolea
   return (
     left.id === right.id &&
     left.workspaceId === right.workspaceId &&
+    left.workspaceFolderId === right.workspaceFolderId &&
     left.title === right.title &&
     left.blank === right.blank &&
     left.parentSessionId === right.parentSessionId &&
     left.origin === right.origin &&
+    left.agentAvailable === right.agentAvailable &&
     left.status === right.status &&
     left.createdAt === right.createdAt &&
     left.updatedAt === right.updatedAt &&
@@ -5103,6 +5328,8 @@ function applyHostMessage(
         backend: { kind, searchedLocations },
         connectedDshVersion: undefined,
         subagentImagePrompts: false,
+        sessionRestore: false,
+        jobControllerAvailable: false,
         dshCompatibilityWarning: undefined,
         featureProfile: undefined,
       })
@@ -5122,6 +5349,8 @@ function applyHostMessage(
           ...base,
           connectedDshVersion: undefined,
           subagentImagePrompts: false,
+          sessionRestore: false,
+          jobControllerAvailable: false,
           dshCompatibilityWarning: undefined,
           featureProfile: undefined,
           backend: {
@@ -5138,6 +5367,8 @@ function applyHostMessage(
           ...base,
           connectedDshVersion: undefined,
           subagentImagePrompts: false,
+          sessionRestore: false,
+          jobControllerAvailable: false,
           dshCompatibilityWarning: undefined,
           featureProfile: undefined,
           backend: {
@@ -5156,6 +5387,8 @@ function applyHostMessage(
             kind === 'connected' && typeof snapshot?.dshVersion === 'string'
               ? snapshot.dshVersion
               : undefined,
+          sessionRestore: kind === 'connected' && snapshot?.sessionRestore === true,
+          jobControllerAvailable: kind === 'connected' && snapshot?.jobController === true,
           subagentImagePrompts: kind === 'connected' && snapshot?.subagentImagePrompts === true,
           dshCompatibilityWarning:
             kind === 'connected' && typeof snapshot?.compatibilityWarning === 'string'
@@ -5318,6 +5551,31 @@ function applyHostMessage(
       session.blank || session.title === event.title ? session : { ...session, title: event.title },
     )
     if (sessions !== next.sessions) next = { ...next, sessions }
+  } else if (event.type === 'session.projection.baseline') {
+    const projections = setSessionProjectionBaseline(event.projections, projectionSequences)
+    if (projections !== next.projections) next = { ...next, projections }
+    for (const [sessionId, projection] of Object.entries(event.projections))
+      for (const [key, value] of Object.entries(projection.values))
+        next = applySessionProjectionPresentation(next, sessionId, key, value)
+
+    if (next.activeSessionId !== undefined && next.configuration !== undefined) {
+      const values = event.projections[next.activeSessionId]?.values
+      const plan = object(values?.plan)
+      const permissions = object(values?.permissions)
+      const planModeKnown = typeof plan?.active === 'boolean'
+      const permissionPresetKnown =
+        typeof permissions?.currentValue === 'string' && permissions.currentValue.trim() !== ''
+      next = {
+        ...next,
+        configuration: {
+          ...next.configuration,
+          ...(planModeKnown ? { planMode: plan.active as boolean } : {}),
+          planModeKnown,
+          ...(permissionPresetKnown ? { permissionPreset: permissions.currentValue as string } : {}),
+          permissionPresetKnown,
+        },
+      }
+    }
   } else if (event.type === 'session.projection') {
     const projectionAccepted = currentProjectionSequence(
       projectionSequences,
@@ -5334,15 +5592,8 @@ function applyHostMessage(
       projectionSequences,
     )
     if (projections !== next.projections) next = { ...next, projections }
-    if (projectionAccepted && event.key === 'title' && typeof event.value === 'string') {
-      const title = event.value.trim()
-      if (title !== '') {
-        const sessions = updateSessionById(next.sessions, event.sessionId, (session) =>
-          !session.blank && session.title !== title ? { ...session, title } : session,
-        )
-        if (sessions !== next.sessions) next = { ...next, sessions }
-      }
-    }
+    if (projectionAccepted)
+      next = applySessionProjectionPresentation(next, event.sessionId, event.key, event.value)
   } else if (event.type === 'session.subscribed') {
     // queue/jobs and pending interactions are process-local snapshots. The
     // pinned mux starts every subscription with `session/subscribed` and only
@@ -5427,6 +5678,7 @@ function applyHostMessage(
             goals: [],
             todos: [],
             jobs: [],
+            jobFollow: undefined,
             feedback: {},
             feedbackUnavailable: false,
             subagents: EMPTY_SUBAGENT_CATALOG,
@@ -5468,6 +5720,11 @@ function applyHostMessage(
     if (!sameTodoList(next.todos, event.todos)) next = { ...next, todos: event.todos }
   } else if (event.type === 'jobs.updated' && event.sessionId === next.activeSessionId) {
     if (!sameJobList(next.jobs, event.jobs)) next = { ...next, jobs: event.jobs }
+  } else if (event.type === 'job.follow.updated' && event.sessionId === next.activeSessionId) {
+    if (next.jobFollow?.jobId === event.jobId) {
+      const jobFollow = reduceJobFollow(next.jobFollow, event.jobId, event.frame)
+      if (jobFollow !== next.jobFollow) next = { ...next, jobFollow }
+    }
   } else if (event.type === 'permission.resolved') {
     const permissions = removeMatching(
       next.permissions,
@@ -5501,6 +5758,8 @@ function applyHostMessage(
       backend: { kind: 'failed', message: event.reason, retryable: true },
       connectedDshVersion: undefined,
       subagentImagePrompts: false,
+      sessionRestore: false,
+      jobControllerAvailable: false,
       dshCompatibilityWarning: undefined,
       featureProfile: undefined,
     }
@@ -5516,10 +5775,12 @@ function applyHostMessage(
  * connection restart that never publishes one.
  */
 function withoutConnectionScopedSurfaces(state: AppState): AppState {
+  const withoutPresetSelection = withPresetSelectionEnabled(state, undefined)
   return {
-    ...state,
+    ...withoutPresetSelection,
     queue: [],
     jobs: [],
+    jobFollow: undefined,
     feedback: {},
     feedbackUnavailable: false,
     editorContext: [],
@@ -5541,6 +5802,11 @@ function withoutConnectionScopedSurfaces(state: AppState): AppState {
     subagents: EMPTY_SUBAGENT_CATALOG,
     commands: [],
   }
+}
+
+function withPresetSelectionEnabled(state: AppState, enabled: boolean | undefined): AppState {
+  if (state.presetSelectionEnabled === enabled) return state
+  return { ...state, presetSelectionEnabled: enabled }
 }
 
 function replayHostMessages(
@@ -5632,6 +5898,7 @@ function advancesTimelineSequence(event: BackendEvent): boolean {
     case 'archived.sessions.changed':
     case 'connection.lost':
     case 'jobs.updated':
+    case 'job.follow.updated':
     case 'permission.requested':
     case 'permission.resolved':
     case 'question.requested':
@@ -5640,6 +5907,7 @@ function advancesTimelineSequence(event: BackendEvent): boolean {
     case 'session.added':
     case 'session.activity':
     case 'session.configuration':
+    case 'session.projection.baseline':
     case 'session.projection':
     case 'session.removed':
     case 'session.status':
@@ -5686,6 +5954,7 @@ function eventMayChangeTimelineState(event: BackendEvent): boolean {
   switch (event.type) {
     case 'archived.sessions.changed':
     case 'jobs.updated':
+    case 'job.follow.updated':
     case 'permission.resolved':
     case 'permission.requested':
     case 'question.requested':
@@ -5694,6 +5963,7 @@ function eventMayChangeTimelineState(event: BackendEvent): boolean {
     case 'session.activity':
     case 'session.added':
     case 'session.configuration':
+    case 'session.projection.baseline':
     case 'session.projection':
     case 'session.removed':
     case 'session.status':
@@ -5769,8 +6039,10 @@ function configurationPatch(value: Record<string, unknown>): SessionConfiguratio
   return {
     ...(typeof value.preset === 'string' ? { preset: value.preset } : {}),
     ...(isToolMode(value.toolMode) ? { toolMode: value.toolMode } : {}),
-    ...(typeof value.permissionPreset === 'string' ? { permissionPreset: value.permissionPreset } : {}),
-    ...(typeof value.planMode === 'boolean' ? { planMode: value.planMode } : {}),
+    ...(typeof value.permissionPreset === 'string'
+      ? { permissionPreset: value.permissionPreset, permissionPresetKnown: true }
+      : {}),
+    ...(typeof value.planMode === 'boolean' ? { planMode: value.planMode, planModeKnown: true } : {}),
     ...(typeof value.sandboxMode === 'string' ? { sandboxMode: value.sandboxMode } : {}),
     ...(typeof value.approvalPolicy === 'string' ? { approvalPolicy: value.approvalPolicy } : {}),
     ...(model === undefined ? {} : { model }),
@@ -5839,6 +6111,66 @@ function setSessionProjection(
     changed = true
   }
   return changed ? { ...projections, [sessionId]: next } : projections
+}
+
+function setSessionProjectionBaseline(
+  baseline: Readonly<Record<string, SessionProjectionSnapshot>>,
+  projectionSequences?: ProjectionSequenceIndex,
+): AppState['projections'] {
+  const projections = Object.fromEntries(
+    Object.entries(baseline).map(([sessionId, projection]) => [sessionId, projection.values]),
+  )
+  projectionSequences?.perKey.clear()
+  projectionSequences?.baselines.clear()
+  for (const [sessionId, projection] of Object.entries(baseline)) {
+    projectionSequences?.baselines.set(sessionId, projection.asOfSequence)
+    projectionSequences?.perKey.set(
+      sessionId,
+      new Map(Object.keys(projection.values).map((key) => [key, projection.asOfSequence])),
+    )
+  }
+  return projections
+}
+
+function applySessionProjectionPresentation(
+  current: AppState,
+  sessionId: string,
+  key: string,
+  value: unknown,
+): AppState {
+  let next = current
+  if (sessionId === next.activeSessionId && next.configuration !== undefined) {
+    const projection = object(value)
+    const configuration = next.configuration
+    if (key === 'plan' && typeof projection?.active === 'boolean')
+      next = {
+        ...next,
+        configuration: { ...configuration, planMode: projection.active, planModeKnown: true },
+      }
+    if (
+      key === 'permissions' &&
+      typeof projection?.currentValue === 'string' &&
+      projection.currentValue.trim() !== ''
+    )
+      next = {
+        ...next,
+        configuration: {
+          ...configuration,
+          permissionPreset: projection.currentValue,
+          permissionPresetKnown: true,
+        },
+      }
+  }
+  if (key === 'title' && typeof value === 'string') {
+    const title = value.trim()
+    if (title !== '') {
+      const sessions = updateSessionById(next.sessions, sessionId, (session) =>
+        !session.blank && session.title !== title ? { ...session, title } : session,
+      )
+      if (sessions !== next.sessions) next = { ...next, sessions }
+    }
+  }
+  return next
 }
 
 function updateSessionProjection(
@@ -5934,6 +6266,7 @@ function clearedActiveSession(current: AppState, sessionId: string): Partial<App
     goals: [],
     todos: [],
     jobs: [],
+    jobFollow: undefined,
     feedback: {},
     feedbackUnavailable: false,
     subagents: EMPTY_SUBAGENT_CATALOG,
@@ -6242,6 +6575,7 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
     const hasAgentPreset = Object.hasOwn(value, 'agentPreset')
     if (
       typeof value.blank !== 'boolean' ||
+      (Object.hasOwn(value, 'agentAvailable') && typeof value.agentAvailable !== 'boolean') ||
       (hasParentSessionId &&
         (typeof value.parentSessionId !== 'string' || value.parentSessionId.trim() === '')) ||
       (hasOrigin && value.origin !== 'subagent') ||
@@ -6253,6 +6587,7 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
       type: 'session.added',
       sessionId: value.sessionId,
       blank: value.blank,
+      ...(typeof value.agentAvailable === 'boolean' ? { agentAvailable: value.agentAvailable } : {}),
       ...(typeof value.parentSessionId === 'string' ? { parentSessionId: value.parentSessionId } : {}),
       ...(value.origin === 'subagent' ? { origin: 'subagent' as const } : {}),
       ...(typeof value.cwd === 'string' ? { cwd: value.cwd } : {}),
@@ -6261,6 +6596,25 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
   }
   if (name === 'session.removed' && nonEmptyString(value.sessionId))
     return { type: 'session.removed', sessionId: value.sessionId }
+  if (name === 'session.projection.baseline') {
+    const rawProjections = object(value.projections)
+    if (rawProjections === undefined) return { type: 'unknown', name, payload }
+    const projections: Record<string, SessionProjectionSnapshot> = Object.create(null) as Record<
+      string,
+      SessionProjectionSnapshot
+    >
+    for (const [sessionId, rawProjection] of Object.entries(rawProjections)) {
+      if (!nonEmptyString(sessionId)) return { type: 'unknown', name, payload }
+      try {
+        const projection = parseSessionProjection(rawProjection)
+        if (projection === undefined) return { type: 'unknown', name, payload }
+        projections[sessionId] = projection
+      } catch {
+        return { type: 'unknown', name, payload }
+      }
+    }
+    return { type: 'session.projection.baseline', projections }
+  }
   if (
     name === 'session.projection' &&
     nonEmptyString(value.sessionId) &&
@@ -6422,6 +6776,11 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
       sessionId: value.sessionId,
       jobs: value.jobs,
     }
+  }
+  if (name === 'job.follow.updated' && nonEmptyString(value.sessionId) && nonEmptyString(value.jobId)) {
+    const frame = parseJobFollowFrame(value.frame)
+    if (frame !== undefined)
+      return { type: 'job.follow.updated', sessionId: value.sessionId, jobId: value.jobId, frame }
   }
   if (name === 'queue.updated' && nonEmptyString(value.sessionId)) {
     const items = parseQueuedInputs(value.items, value.sessionId)
@@ -8738,7 +9097,7 @@ function questionIntent(value: unknown): QuestionIntent | undefined {
 }
 
 function isPermissionRisk(value: unknown): value is PermissionRequest['risk'] {
-  return value === 'low' || value === 'medium' || value === 'high'
+  return value === 'unknown' || value === 'low' || value === 'medium' || value === 'high'
 }
 
 function isQuestionAnswerList(
@@ -8786,9 +9145,12 @@ function isSessionSummary(value: unknown): value is SessionSummary {
     typeof item.createdAt === 'string' &&
     typeof item.updatedAt === 'string' &&
     (item.cwd === undefined || typeof item.cwd === 'string') &&
+    (item.workspaceFolderId === undefined ||
+      (typeof item.workspaceFolderId === 'string' && item.workspaceFolderId.trim() !== '')) &&
     (item.parentSessionId === undefined ||
       (typeof item.parentSessionId === 'string' && item.parentSessionId.trim() !== '')) &&
     (item.origin === undefined || item.origin === 'subagent') &&
+    (item.agentAvailable === undefined || typeof item.agentAvailable === 'boolean') &&
     (item.modelLabel === undefined || typeof item.modelLabel === 'string') &&
     (item.agentPreset === undefined || typeof item.agentPreset === 'string') &&
     projectionValid
@@ -9072,8 +9434,8 @@ function normalizedModelSelection(value: unknown): ModelSelection | undefined {
 function applyKnownCommand(configuration: AgentConfiguration, command: string): AgentConfiguration {
   const parts = command.trim().replace(/^\//u, '').split(/\s+/u)
   if (parts[0] === 'permission' && parts[1] !== undefined)
-    return { ...configuration, permissionPreset: parts[1] }
-  if (parts[0] === 'plan') return { ...configuration, planMode: parts[1] !== 'off' }
+    return { ...configuration, permissionPreset: parts[1], permissionPresetKnown: true }
+  if (parts[0] === 'plan') return { ...configuration, planMode: parts[1] !== 'off', planModeKnown: true }
   return configuration
 }
 
@@ -9107,7 +9469,10 @@ function isPresetDescriptor(value: unknown): value is AgentPresetDescriptor {
     item !== undefined &&
     typeof item.id === 'string' &&
     (item.trust === 'system' || item.trust === 'user') &&
-    typeof item.isDefault === 'boolean'
+    typeof item.isDefault === 'boolean' &&
+    (item.name === undefined || typeof item.name === 'string') &&
+    (item.description === undefined || typeof item.description === 'string') &&
+    (item.broken === undefined || typeof item.broken === 'string')
   )
 }
 
@@ -9121,13 +9486,25 @@ function parsePresetRoster(value: unknown): AgentPresetRoster | undefined {
     typeof roster.authorable !== 'boolean' ||
     // Absent means the host did not state its native-opener capability; a
     // stated value must still be a boolean.
-    (roster.hasDocument !== undefined && typeof roster.hasDocument !== 'boolean')
+    (roster.hasDocument !== undefined && typeof roster.hasDocument !== 'boolean') ||
+    (roster.modeSelectionEnabled !== undefined && typeof roster.modeSelectionEnabled !== 'boolean') ||
+    (roster.compositionReadable !== undefined && typeof roster.compositionReadable !== 'boolean') ||
+    (roster.defaultSettingPath !== undefined && typeof roster.defaultSettingPath !== 'string')
   )
     return undefined
   return {
     presets: roster.presets,
+    ...(typeof roster.compositionReadable === 'boolean'
+      ? { compositionReadable: roster.compositionReadable }
+      : {}),
+    ...(typeof roster.defaultSettingPath === 'string'
+      ? { defaultSettingPath: roster.defaultSettingPath }
+      : {}),
     authorable: roster.authorable,
     ...(typeof roster.hasDocument === 'boolean' ? { hasDocument: roster.hasDocument } : {}),
+    ...(typeof roster.modeSelectionEnabled === 'boolean'
+      ? { modeSelectionEnabled: roster.modeSelectionEnabled }
+      : {}),
   }
 }
 
@@ -9140,6 +9517,7 @@ function isPluginInventoryEntry(value: unknown): value is PluginInventorySnapsho
     typeof item.entryId === 'string' &&
     item.entryId.length > 0 &&
     typeof item.moduleName === 'string' &&
+    (item.meta === undefined || isPluginMetadata(item.meta)) &&
     typeof item.enabled === 'boolean' &&
     (item.fiberPhase === null ||
       (typeof item.fiberPhase === 'string' && FIBER_PHASES.includes(item.fiberPhase)))
@@ -9170,6 +9548,7 @@ function isAgentPresetPluginRow(value: unknown): value is AgentPresetPluginRow {
     row !== undefined &&
     (row.entryId === null || (typeof row.entryId === 'string' && row.entryId.length > 0)) &&
     typeof row.moduleName === 'string' &&
+    (row.meta === undefined || isPluginMetadata(row.meta)) &&
     row.moduleName.trim() !== '' &&
     (typeof row.enabled === 'boolean' || row.enabled === 'conditional') &&
     (row.condition === undefined || typeof row.condition === 'string') &&
@@ -9180,7 +9559,12 @@ function isAgentPresetPluginRow(value: unknown): value is AgentPresetPluginRow {
 /** Parse the `pluginInventory/list` projection as one complete snapshot. */
 function parsePluginInventory(value: unknown): PluginInventorySnapshot | undefined {
   const snapshot = object(value)
-  if (snapshot === undefined || !Array.isArray(snapshot.entries)) return undefined
+  if (
+    snapshot === undefined ||
+    !Array.isArray(snapshot.entries) ||
+    (snapshot.managementAvailable !== undefined && typeof snapshot.managementAvailable !== 'boolean')
+  )
+    return undefined
   const entries: PluginInventorySnapshot['entries'][number][] = []
   for (const entry of snapshot.entries) {
     if (!isPluginInventoryEntry(entry)) return undefined
@@ -9199,6 +9583,9 @@ function parsePluginInventory(value: unknown): PluginInventorySnapshot | undefin
   return {
     entries,
     ...(parsedAgentPresets === undefined ? {} : { agentPresets: parsedAgentPresets }),
+    ...(typeof snapshot.managementAvailable === 'boolean'
+      ? { managementAvailable: snapshot.managementAvailable }
+      : {}),
   }
 }
 
@@ -9336,8 +9723,11 @@ function sameJobList(left: readonly JobView[], right: readonly JobView[]): boole
       previous.label === next.label &&
       previous.status === next.status &&
       previous.detail === next.detail &&
+      previous.progress === next.progress &&
       previous.startedAt === next.startedAt &&
-      previous.finishedAt === next.finishedAt,
+      previous.finishedAt === next.finishedAt &&
+      previous.output?.total === next.output?.total &&
+      previous.output?.earliest === next.output?.earliest,
   )
 }
 
@@ -9453,6 +9843,7 @@ function parseQueuedInputs(value: unknown, sessionId: string): readonly QueuedIn
 
 function isJobView(value: unknown): value is JobView {
   const item = object(value)
+  const output = object(item?.output)
   return (
     item !== undefined &&
     typeof item.id === 'string' &&
@@ -9465,9 +9856,103 @@ function isJobView(value: unknown): value is JobView {
     Number.isSafeInteger(item.startedAt) &&
     (item.startedAt as number) >= 0 &&
     (item.detail === undefined || typeof item.detail === 'string') &&
+    (item.progress === undefined || typeof item.progress === 'string') &&
+    (item.output === undefined ||
+      (output !== undefined &&
+        Number.isSafeInteger(output.total) &&
+        (output.total as number) >= 0 &&
+        Number.isSafeInteger(output.earliest) &&
+        (output.earliest as number) >= 0 &&
+        (output.earliest as number) <= (output.total as number))) &&
     (item.finishedAt === undefined ||
       (Number.isSafeInteger(item.finishedAt) && (item.finishedAt as number) >= 0))
   )
+}
+
+function parseJobFollowFrame(value: unknown): JobFollowFrame | undefined {
+  const frame = object(value)
+  if (frame === undefined || typeof frame.type !== 'string') return undefined
+  if (frame.type === 'opened' && isJobView(frame.job) && isSafeSequenceNumber(frame.from))
+    return { type: 'opened', job: frame.job, from: frame.from }
+  if (frame.type === 'status' && isJobView(frame.job)) return { type: 'status', job: frame.job }
+  if (
+    frame.type === 'output' &&
+    Array.isArray(frame.chunks) &&
+    frame.chunks.every(isJobOutputChunk) &&
+    isSafeSequenceNumber(frame.next) &&
+    (frame.lossy === undefined || frame.lossy === true)
+  )
+    return {
+      type: 'output',
+      chunks: frame.chunks,
+      next: frame.next,
+      ...(frame.lossy === true ? { lossy: true } : {}),
+    }
+  return undefined
+}
+
+function isJobOutputChunk(value: unknown): value is JobOutputChunk {
+  const chunk = object(value)
+  return (
+    chunk !== undefined &&
+    isSafeSequenceNumber(chunk.at) &&
+    typeof chunk.text === 'string' &&
+    (chunk.channel === undefined ||
+      chunk.channel === 'stdout' ||
+      chunk.channel === 'stderr' ||
+      chunk.channel === 'log') &&
+    (chunk.gapBefore === undefined || chunk.gapBefore === true)
+  )
+}
+
+function isSafeSequenceNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 && !Object.is(value, -0)
+}
+
+function isTerminalJobStatus(status: JobView['status']): boolean {
+  return status === 'completed' || status === 'failed' || status === 'killed'
+}
+
+function reduceJobFollow(current: JobFollowState, jobId: string, frame: JobFollowFrame): JobFollowState {
+  if (current.jobId !== jobId) return current
+  if (frame.type === 'opened') {
+    if (current.awaitingOpenFrom === undefined || frame.from !== current.awaitingOpenFrom) return current
+    return {
+      jobId: current.jobId,
+      next: Math.max(current.next, frame.from),
+      chunks: current.chunks,
+      lossy: current.lossy,
+      ...(current.generation === undefined ? {} : { generation: current.generation }),
+      terminalStatusReceived: false,
+      job: frame.job,
+    }
+  }
+  if (current.awaitingOpenFrom !== undefined || current.terminalStatusReceived === true) return current
+  const previous = current
+  if (frame.type === 'status')
+    return {
+      ...previous,
+      next: Math.max(previous.next, frame.job.output?.total ?? previous.next),
+      job: frame.job,
+      terminalStatusReceived: isTerminalJobStatus(frame.job.status),
+    }
+  if (frame.next <= previous.next) return previous
+  const additions = frame.chunks.filter((chunk) => chunk.at >= previous.next)
+  const byOffset = new Map<number, JobOutputChunk>()
+  for (const chunk of previous.chunks) byOffset.set(chunk.at, chunk)
+  for (const chunk of additions) byOffset.set(chunk.at, chunk)
+  const chunks = [...byOffset.values()].sort((left, right) => left.at - right.at)
+  let chars = chunks.reduce((total, chunk) => total + chunk.text.length, 0)
+  while (chunks.length > 1 && chars > 256 * 1024) {
+    const removed = chunks.shift()
+    chars -= removed?.text.length ?? 0
+  }
+  return {
+    ...previous,
+    next: frame.next,
+    chunks,
+    lossy: previous.lossy || frame.lossy === true || frame.chunks.some((chunk) => chunk.gapBefore === true),
+  }
 }
 
 function isMessageFeedbackItem(value: unknown): value is MessageFeedbackItem {

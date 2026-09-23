@@ -2098,6 +2098,40 @@
   font-variant-numeric: tabular-nums;
 }
 
+.dsh-jobs-popover__actions {
+  display: inline-flex;
+  flex: none;
+  gap: 4px;
+}
+
+.dsh-jobs-popover__actions button {
+  padding: 2px 5px;
+  border: 1px solid var(--dsh-border-color, var(--dsh-border-color));
+  border-radius: 4px;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.dsh-jobs-popover__output {
+  min-width: 0;
+  border-top: 1px solid var(--dsh-border-color, var(--dsh-border-color));
+}
+
+.dsh-jobs-popover__output pre {
+  max-height: 16rem;
+  overflow: auto;
+  margin: 0;
+  padding: 8px;
+  color: var(--dsh-text);
+  background: var(--dsh-bg);
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 0.72rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .dsh-subagent-tree {
   position: relative;
   display: inline-flex;

@@ -898,7 +898,7 @@ describe('DeepSeek Harness 0.1.0-rc.6 contract', () => {
         blank: false,
         projections: { values: { title: 'Actual title' } },
       }),
-    ).toMatchObject({ id: 's1', title: 'Actual title', status: 'completed' })
+    ).toMatchObject({ id: 's1', title: 'Actual title', status: 'idle' })
     expect(
       rc6Mapper.sessionSummary({
         sessionId: 'session-generated',
@@ -1647,7 +1647,7 @@ describe('rc6 stateful frame degradation', () => {
         title: 'bash',
         description: 'The command writes outside the workspace.',
         callId: 'call-1',
-        risk: 'medium',
+        risk: 'unknown',
         options: [
           { id: 'allowed-once', label: 'Allow once', kind: 'allow-once' },
           { id: 'rejected', label: 'Reject', kind: 'deny' },

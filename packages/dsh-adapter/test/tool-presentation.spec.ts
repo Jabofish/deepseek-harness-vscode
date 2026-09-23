@@ -950,3 +950,11 @@ it('preserves submitted plan markdown from native and PTC argument objects only'
       .submittedPlan,
   ).toBeUndefined()
 })
+
+it('keeps unidentified tool frames opaque rather than merging them under a fabricated id', () => {
+  for (const name of ['tool/call', 'tool/result', 'tool/ptc-dispatch']) {
+    expect(
+      rc6Mapper.event(name, { sessionId: 's1', data: { name: 'shell', arguments: { command: 'pwd' } } }),
+    ).toMatchObject({ type: 'unknown', name })
+  }
+})

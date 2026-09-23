@@ -1,0 +1,23 @@
+# Packaging is an include list. `**` drops everything, and the negations below
+# add back the runtime surface. vsce has no way to express an exclusion for the
+# package.json `files` property, and `.vscodeignore` cannot be combined with it.
+**
+!dist/**
+!resources/**
+!README.md
+!CHANGELOG.md
+!SUPPORT.md
+!LICENSE
+
+# Webview assets are matched by extension instead of `media/**` so the Webview
+# sourcemaps stay out of the package: `media/` holds 3.3 MB of lazy grammar
+# chunks and 5.1 MB of maps that the Webview never requests. Maps remain in the
+# local build output for DevTools.
+!media/*.js
+!media/*.css
+!media/*.html
+!media/*.woff
+!media/*.woff2
+!media/*.ttf
+!media/**/*.js
+!media/**/*.css

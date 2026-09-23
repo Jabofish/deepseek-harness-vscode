@@ -32,6 +32,25 @@ pnpm build
 - 不自动 commit、push 或发布，除非维护者明确要求。
 - 禁止提交构建产物、`.vsix`、真实凭据、用户路径、`DSH_VSCODE_*PLAN*.md` 和 `LOCAL_*.md`。
 
+## Webview 打包预算
+
+`pnpm build` 会重新生成 `apps/extension/media/`（入口 `webview.js` 与 `assets/` 下的懒加载分块）。Vite 默认的
+500 kB 告警阈值保持不变，超过它的分块必须能解释清楚：
+
+- 入口 `webview.js`（约 1.41 MB，gzip 约 397 kB）内联全部应用表面。VS Code 可能在扩展更新期间用缓存文档
+  恢复 Webview，此时根级动态 `import()` 会指向上一构建的哈希分块并在 `React.lazy` 内 reject，把整个会话替换成
+  错误边界（见 `apps/webview/src/App.tsx`）。只有 Shiki 这种“非首屏、可失败”的资源才使用动态 `import()`。
+- 语法高亮只打包 `apps/webview/src/features/chat/shiki.ts` 中 `languageLoaders` 列出的语言（当前 18 种）与
+  `SHIKI_THEMES` 的两个主题；每个条目都是一个懒加载分块，未命中的语言回退为纯文本。新增语言时同时更新
+  `languageLoaders` 和必要的 `LANGUAGE_ALIASES`，不要退回 Shiki 全量 bundle（会重新产生 300+ 个分块）。
+- `shiki/core`、`shiki/engine/javascript`（`oniguruma-to-es`，约 61 kB）与两个主题各自独立分块，只在首次渲染
+  代码块时请求。Webview 的 `script-src` 不含 `wasm-unsafe-eval`，浏览器会直接拒绝 `WebAssembly.instantiate`，
+  所以 Shiki 的 Oniguruma 引擎在真实 Webview 里永远起不来；不要改回 `shiki/engine/oniguruma` + `shiki/wasm`。
+
+打包 VSIX 时 `apps/extension/.vscodeignore` 使用“包含清单”写法（`**` 加逐条 `!` 反选）：vsce 的
+`package.json.files` 无法表达排除项，且不能与 `.vscodeignore` 同时使用。`media/**` 的 sourcemap 靠扩展名
+白名单排除，本地构建产物仍保留 map 供 DevTools 使用；随包发布的只有 `dist/extension.cjs.map`。
+
 ## Pull Request 必填证据
 
 - 对应 `docs/capability-matrix.md` 行和状态变化；

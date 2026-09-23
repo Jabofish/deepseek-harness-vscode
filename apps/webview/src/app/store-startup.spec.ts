@@ -1808,3 +1808,49 @@ it('refreshes goal activation without allowing an older read to overwrite the la
   expect(store.goals).toEqual([goal])
   store.dispose()
 })
+
+it('reports failed advisory lists instead of presenting an empty success', async () => {
+  const client = new StartupClient((request) => {
+    if (request.type === 'goal.list') throw new Error('Offline')
+    return startupResponse(request)
+  })
+  const store = createAppStore(client as unknown as ProtocolClient)
+  try {
+    await store.openSession(activeSession.id)
+    await vi.waitFor(() => expect(store.unavailableLists).toContain('goals'))
+  } finally {
+    store.dispose()
+  }
+})
+
+it('clears restore capability when switching away from a supporting runtime', () => {
+  const client = new StartupClient()
+  const store = createAppStore(client as unknown as ProtocolClient)
+  try {
+    expect(store.sessionRestore).toBe(false)
+    client.emit({
+      type: 'event',
+      name: 'connection.snapshot',
+      sequence: 1,
+      payload: { kind: 'connected', sessionRestore: true },
+    })
+    expect(store.sessionRestore).toBe(true)
+    client.emit({ type: 'event', name: 'connection.snapshot', sequence: 2, payload: { kind: 'connected' } })
+    expect(store.sessionRestore).toBe(false)
+    client.emit({
+      type: 'event',
+      name: 'connection.snapshot',
+      sequence: 3,
+      payload: { kind: 'connected', sessionRestore: true },
+    })
+    client.emit({
+      type: 'event',
+      name: 'connection.snapshot',
+      sequence: 4,
+      payload: { kind: 'idle' },
+    })
+    expect(store.sessionRestore).toBe(false)
+  } finally {
+    store.dispose()
+  }
+})
