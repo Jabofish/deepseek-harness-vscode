@@ -1,5 +1,6 @@
 import type { BackendDiscovery } from '@dsh-vscode/application'
 import type { BackendCandidate } from '@dsh-vscode/domain'
+import { isDshPackageVersion } from '@dsh-vscode/dsh-adapter'
 
 import { discoveryCancelled, type DiscoveryProvider } from './provider.js'
 
@@ -26,21 +27,98 @@ export class CompositeInstanceDiscovery implements BackendDiscovery {
     // allSettled deliberately isolates stale optional discovery providers, but
     // it must not turn a caller cancellation into a successful empty result.
     if (signal?.aborted) throw discoveryCancelled(signal.reason)
-    const byEndpoint = new Map<string, BackendCandidate>()
+    const byEndpoint = new Map<string, BackendCandidate[]>()
     for (const result of results) {
       if (result.status !== 'fulfilled') continue
       for (const candidate of result.value) {
         if (!isLoopbackCandidate(candidate)) continue
         const key = `${candidate.endpoint.host}:${candidate.endpoint.port}`
         const existing = byEndpoint.get(key)
-        if (existing === undefined || rank(candidate) > rank(existing)) byEndpoint.set(key, candidate)
+        if (existing === undefined) byEndpoint.set(key, [candidate])
+        else existing.push(candidate)
       }
     }
-    return [...byEndpoint.values()].sort((left, right) => {
+    return [...byEndpoint.values()].map(mergeEndpointCandidates).sort((left, right) => {
       const score = rank(right) - rank(left)
       if (score !== 0) return score
       return left.endpoint.port - right.endpoint.port
     })
+  }
+}
+
+function mergeEndpointCandidates(candidates: readonly BackendCandidate[]): BackendCandidate {
+  const winner = candidates.reduce((best, candidate) => (rank(candidate) > rank(best) ? candidate : best))
+  const processes = candidates.filter((candidate) => candidate.source === 'process-scan')
+  const processPids = new Set(
+    processes.flatMap((candidate) =>
+      candidate.pid !== undefined && Number.isSafeInteger(candidate.pid) && candidate.pid > 0
+        ? [candidate.pid]
+        : [],
+    ),
+  )
+  const manifestEvidence = processes.filter(
+    (candidate) => candidate.runtimeVersionEvidence === 'process-manifest',
+  )
+  const verifiedManifestEvidence = manifestEvidence.filter(
+    (candidate) =>
+      candidate.runtimeVersion !== undefined &&
+      isDshPackageVersion(candidate.runtimeVersion) &&
+      candidate.pid !== undefined &&
+      Number.isSafeInteger(candidate.pid) &&
+      candidate.pid > 0 &&
+      processPids.has(candidate.pid) &&
+      candidate.commandLine !== undefined &&
+      candidate.commandLine.trim() !== '',
+  )
+  const malformedManifest = verifiedManifestEvidence.length !== manifestEvidence.length
+  const distinctVersions = new Set(
+    verifiedManifestEvidence.flatMap((candidate) =>
+      candidate.runtimeVersion === undefined ? [] : [candidate.runtimeVersion],
+    ),
+  )
+  const processIdentityConflict = processPids.size > 1
+  const uniqueProcessPid = processPids.size === 1 ? [...processPids][0] : undefined
+  const runtimeVersion =
+    !malformedManifest &&
+    verifiedManifestEvidence.length > 0 &&
+    !processIdentityConflict &&
+    uniqueProcessPid !== undefined &&
+    verifiedManifestEvidence.every((candidate) => candidate.pid === uniqueProcessPid) &&
+    distinctVersions.size === 1
+      ? [...distinctVersions][0]
+      : undefined
+  const processIdentity =
+    runtimeVersion === undefined || uniqueProcessPid === undefined
+      ? undefined
+      : verifiedManifestEvidence.find(
+          (candidate) =>
+            candidate.pid === uniqueProcessPid &&
+            candidate.commandLine !== undefined &&
+            candidate.commandLine.trim() !== '',
+        )
+  const {
+    runtimeVersion: discardedVersion,
+    runtimeVersionEvidence: discardedEvidence,
+    pid: discardedPid,
+    commandLine: discardedCommandLine,
+    ...winnerWithoutIdentity
+  } = winner
+  void discardedVersion
+  void discardedEvidence
+  void discardedPid
+  void discardedCommandLine
+
+  return {
+    ...winnerWithoutIdentity,
+    ...(runtimeVersion === undefined
+      ? {}
+      : { runtimeVersion, runtimeVersionEvidence: 'process-manifest' as const }),
+    ...(processIdentity === undefined
+      ? {}
+      : {
+          pid: processIdentity.pid,
+          ...(processIdentity.commandLine === undefined ? {} : { commandLine: processIdentity.commandLine }),
+        }),
   }
 }
 

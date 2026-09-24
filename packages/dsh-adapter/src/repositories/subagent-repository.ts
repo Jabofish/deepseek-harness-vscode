@@ -143,6 +143,11 @@ export class Rc6SubagentRepository implements SubagentRepository {
   ): Promise<SubagentHistoryPage> {
     const address = this.addresses.resolve(sessionId)
     if (address === undefined) throw unavailable('subagent history without a current catalog entry')
+    const turnWindowSupported = this.transport.sessionHistoryTurnWindow === true
+    const requestedPageSize =
+      query?.pageSize !== undefined && Number.isSafeInteger(query.pageSize) && query.pageSize > 0
+        ? Math.min(query.pageSize, 500)
+        : HISTORY_PAGE_MESSAGES
     const value = requiredRecord(
       await callRpc<unknown>(
         this.transport,
@@ -151,7 +156,8 @@ export class Rc6SubagentRepository implements SubagentRepository {
           parentSessionId: address.parentSessionId,
           childSessionId: sessionId,
           mode: address.mode,
-          maxMessages: HISTORY_PAGE_MESSAGES,
+          maxMessages: turnWindowSupported ? 500 : requestedPageSize,
+          ...(turnWindowSupported ? { turnWindow: { minMessages: requestedPageSize, minTurns: 2 } } : {}),
           ...(query?.beforeSequence === undefined ? {} : { beforeSeq: query.beforeSequence }),
         },
         signal,

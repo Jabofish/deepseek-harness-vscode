@@ -116,6 +116,7 @@ describe('JobsDrawer popover', () => {
       jobControllerAvailable: true,
       following: {
         jobId: terminalJob.id,
+        followId: 'follow-1',
         next: 12,
         chunks: [{ at: 0, text: 'finished output' }],
         lossy: false,
@@ -130,5 +131,30 @@ describe('JobsDrawer popover', () => {
     expect(screen.getByRole('button', { name: 'Follow output' })).toBeDefined()
     expect(screen.queryByRole('button', { name: 'Stop following' })).toBeNull()
     expect(screen.getByRole('log').textContent).toBe('finished output')
+  })
+
+  it('shows a failed output stream as retryable while retaining captured output', () => {
+    const onFollow = vi.fn().mockResolvedValue(undefined)
+    renderJobs([job({ id: 'alpha-job', label: 'server', status: 'running', startedAt: 1_000 })], {
+      jobControllerAvailable: true,
+      onFollow,
+      following: {
+        jobId: 'alpha-job',
+        followId: 'follow-1',
+        next: 12,
+        chunks: [{ at: 0, text: 'partial output' }],
+        lossy: false,
+        error: 'stream-failed',
+      },
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: '1 running' }))
+
+    expect(screen.getByRole('button', { name: 'Follow output' })).toBeDefined()
+    expect(screen.queryByRole('button', { name: 'Stop following' })).toBeNull()
+    expect(screen.getByRole('alert')).toBeDefined()
+    expect(screen.getByRole('log').textContent).toBe('partial output')
+    fireEvent.click(screen.getByRole('button', { name: 'Follow output' }))
+    expect(onFollow).toHaveBeenCalledWith('alpha-job')
   })
 })

@@ -1,7 +1,11 @@
 import type { BackendCandidate } from '@dsh-vscode/domain'
 
 import { discoveryCancelled, isDiscoveryCancellation, type DiscoveryProvider } from './provider.js'
-import { parseDshProcessCandidates, runDiscoveryCommand } from './process-provider.js'
+import {
+  parseDshProcessCandidates,
+  resolveDshProcessRuntimeVersions,
+  runDiscoveryCommand,
+} from './process-provider.js'
 
 type DiscoveryCommand = (executable: string, args: readonly string[], signal?: AbortSignal) => Promise<string>
 
@@ -11,7 +15,7 @@ const POWERSHELL_PROCESS_ARGS = [
   '-NoProfile',
   '-NonInteractive',
   '-Command',
-  "$ErrorActionPreference='Stop'; Get-CimInstance -ClassName Win32_Process | ForEach-Object { if ($null -ne $_.CommandLine) { '{0},{1}' -f $_.CommandLine, $_.ProcessId } }",
+  "$ErrorActionPreference='Stop'; Get-CimInstance -ClassName Win32_Process | Where-Object { $null -ne $_.CommandLine } | Select-Object CommandLine,ProcessId | ConvertTo-Csv -NoTypeInformation",
 ] as const
 
 export class WindowsProcessDiscoveryProvider implements DiscoveryProvider {
@@ -27,7 +31,13 @@ export class WindowsProcessDiscoveryProvider implements DiscoveryProvider {
       runWindowsProcessListing(this.runCommand, signal),
       this.runCommand('netstat.exe', ['-ano'], signal),
     ])
-      .then(([processes, listeners]) => parseDshProcessCandidates(processes, listeners))
+      .then(async ([processes, listeners]) => {
+        const candidates = await resolveDshProcessRuntimeVersions(
+          parseDshProcessCandidates(processes, listeners),
+        )
+        if (signal?.aborted === true) throw discoveryCancelled(signal.reason)
+        return candidates
+      })
       .catch((error: unknown) => {
         if (isDiscoveryCancellation(error, signal)) throw discoveryCancelled(signal?.reason ?? error)
         return []
@@ -36,9 +46,9 @@ export class WindowsProcessDiscoveryProvider implements DiscoveryProvider {
 }
 
 /**
- * Windows 11 can omit WMIC. Keep the old parser-compatible output shape, but
- * obtain the process list through the supported CIM cmdlet without invoking a
- * shell or interpolating any user input.
+ * Windows 11 can omit WMIC. Emit escaped CSV from the CIM fallback so commas
+ * and quotes in command lines survive parsing. The command uses fixed argv and
+ * never interpolates user input.
  */
 export async function runWindowsProcessListing(
   runCommand: DiscoveryCommand = runDiscoveryCommand,

@@ -61,12 +61,16 @@ export interface AlphaLoopbackApiClientOptions {
   readonly normalizeErrorCode?: AlphaErrorCodeNormalizer
   /** Session Controller wire profile; old alpha uses v0, alpha13 uses v2, and alpha151+ uses v3. */
   readonly sessionWireVersion?: AlphaSessionWireVersion
+  /** Version-specific queue projection for Session/follow opening snapshots. */
+  readonly normalizeSessionQueueProjection?: (sessionId: string, projection: unknown) => unknown
   /** Session Controller control profile; alpha.2 replaces queue snapshots with Inbox projections. */
   readonly controlWireVersion?: AlphaSessionControlWireVersion
   /** Workspace follow profile; alpha171 adds a registry-global pinned-session set. */
   readonly workspaceWireVersion?: AlphaWorkspaceWireVersion
   /** Preset roster profile; alpha171's registry has no user-root authoring fields. */
   readonly presetWireVersion?: AlphaPresetWireVersion
+  /** Alpha.2 and 0.1.7-rc.1 add the Session Controller turnWindow request field. */
+  readonly sessionHistoryTurnWindow?: boolean
   /**
    * Child-session routing committed by the subagent catalog. The Session
    * Controller refuses a session-kind address for a subagent-origin Session,
@@ -103,8 +107,11 @@ export class AlphaLoopbackApiClient implements DshTransport {
   private readonly remoteMux: AlphaRemoteMux
   private isClosed = false
 
+  public readonly sessionHistoryTurnWindow: boolean
+
   public constructor(private readonly options: AlphaLoopbackApiClientOptions) {
     assertLoopback(options.endpoint)
+    this.sessionHistoryTurnWindow = options.sessionHistoryTurnWindow === true
     this.remoteMux = new AlphaRemoteMux(options)
   }
 
@@ -652,10 +659,8 @@ export class AlphaLoopbackApiClient implements DshTransport {
   private async history(value: Record<string, unknown>, signal?: AbortSignal): Promise<LegacyResponse> {
     const sessionId = stringValue(value.sessionId, 'session.history sessionId')
     const address = this.sessionAddress(sessionId)
-    const snapshot = await this.followSnapshot(
-      { address, ...(value.maxMessages === undefined ? {} : { maxMessages: value.maxMessages }) },
-      signal,
-    )
+    const historyWindow = this.historyWindowOptions(value)
+    const snapshot = await this.followSnapshot({ address, ...historyWindow }, signal)
     if (value.beforeSeq !== undefined) {
       const page = await this.unary(
         'session/page',
@@ -664,7 +669,7 @@ export class AlphaLoopbackApiClient implements DshTransport {
             address,
             throughSeq: snapshot.cursor,
             beforeSeq: value.beforeSeq,
-            maxMessages: value.maxMessages,
+            ...historyWindow,
           },
         },
         signal,
@@ -688,10 +693,8 @@ export class AlphaLoopbackApiClient implements DshTransport {
       childSessionId: sessionId,
       mode: value.mode === 'one-shot' ? 'one-shot' : 'continuable',
     }
-    const snapshot = await this.followSnapshot(
-      { address, ...(value.maxMessages === undefined ? {} : { maxMessages: value.maxMessages }) },
-      signal,
-    )
+    const historyWindow = this.historyWindowOptions(value)
+    const snapshot = await this.followSnapshot({ address, ...historyWindow }, signal)
     const page =
       value.beforeSeq === undefined
         ? { records: snapshot.records, hasMore: snapshot.hasMore, projections: snapshot.projections }
@@ -702,12 +705,34 @@ export class AlphaLoopbackApiClient implements DshTransport {
                 address,
                 throughSeq: snapshot.cursor,
                 beforeSeq: value.beforeSeq,
-                maxMessages: value.maxMessages,
+                ...historyWindow,
               },
             },
             signal,
           )
     return this.historyResponse(page, sessionId)
+  }
+
+  private historyWindowOptions(value: Record<string, unknown>): Record<string, unknown> {
+    const requested = recordOrUndefined(value.turnWindow)
+    if (
+      this.options.sessionHistoryTurnWindow === true &&
+      requested !== undefined &&
+      Number.isSafeInteger(requested.minMessages) &&
+      (requested.minMessages as number) > 0 &&
+      (requested.minMessages as number) <= 500 &&
+      Number.isSafeInteger(requested.minTurns) &&
+      (requested.minTurns as number) > 0
+    ) {
+      return {
+        maxMessages: 500,
+        turnWindow: {
+          minMessages: requested.minMessages,
+          minTurns: requested.minTurns,
+        },
+      }
+    }
+    return value.maxMessages === undefined ? {} : { maxMessages: value.maxMessages }
   }
 
   private async followSnapshot(
@@ -1068,9 +1093,15 @@ export class AlphaLoopbackApiClient implements DshTransport {
     const wireVersion = this.options.sessionWireVersion ?? 'v0'
     const v2 = wireVersion === 'v2'
     const assistantStream = v2 || wireVersion === 'v3' || wireVersion === 'v4'
+    const historyWindow = this.historyWindowOptions({
+      maxMessages: 50,
+      ...(this.options.sessionHistoryTurnWindow === true
+        ? { turnWindow: { minMessages: 50, minTurns: 2 } }
+        : {}),
+    })
     const request = {
       address: this.sessionAddress(sessionId),
-      maxMessages: 50,
+      ...historyWindow,
       ...(assistantStream ? { assistantStream: true } : {}),
     }
     const projector = assistantStream ? new Alpha13AssistantStreamProjector() : undefined
@@ -1078,9 +1109,21 @@ export class AlphaLoopbackApiClient implements DshTransport {
       const frame = recordOrUndefined(item)
       if (frame?.type === 'snapshot') {
         if (!validAlphaWireSnapshot(frame, wireVersion)) throw malformedResponse('session/follow snapshot')
+        let queueFrame: unknown
+        if (this.options.normalizeSessionQueueProjection !== undefined) {
+          try {
+            queueFrame = this.options.normalizeSessionQueueProjection(sessionId, frame.projections)
+          } catch (cause) {
+            // Validate the projection-derived queue before publishing any part
+            // of this snapshot so malformed Inbox state cannot partially
+            // advance the transcript or queue baseline.
+            throw malformedResponse('session/follow Inbox projection', cause)
+          }
+        }
         const events = expandHistoryRecords(frame.records, sessionId, wireVersion)
         if (projector !== undefined) for (const event of events) projector.rememberDurable(event)
         for (const event of events) yield { type: 'session/event', sessionId, event }
+        if (queueFrame !== undefined) yield queueFrame
         yield {
           type: 'session/subscribed',
           sessionId,

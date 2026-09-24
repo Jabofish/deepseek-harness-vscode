@@ -165,7 +165,7 @@ export function JobsDrawer(props: JobsPopoverProps): ReactElement | null {
         <ul className="dsh-jobs-popover__menu" aria-label={t('jobs.list.aria')}>
           {rows.map((job) => {
             const live = isLive(job)
-            const isFollowing = following?.jobId === job.id && live
+            const isFollowing = following?.jobId === job.id && following.error === undefined && live
             const elapsed = live ? now - job.startedAt : (job.finishedAt ?? job.startedAt) - job.startedAt
             const duration = !live && job.finishedAt === undefined ? '—' : formatDuration(elapsed, t)
             const status = t(`jobs.status.${job.status}`)
@@ -213,6 +213,7 @@ export function JobsDrawer(props: JobsPopoverProps): ReactElement | null {
           {following !== undefined ? (
             <li className="dsh-jobs-popover__output">
               <section aria-label={t('jobs.output.aria')}>
+                {following.error === 'stream-failed' ? <p role="alert">{t('jobs.followFailed')}</p> : null}
                 {following.lossy ? <p>{t('jobs.output.lossy')}</p> : null}
                 <pre role="log" aria-live="polite">
                   {following.chunks.map((chunk) => chunk.text).join('') || t('jobs.output.empty')}

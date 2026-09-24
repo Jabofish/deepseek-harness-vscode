@@ -259,7 +259,12 @@ describe('AppStore session gap healing', () => {
     const requests = historyRequests(client)
     expect(requests).toHaveLength(1)
     expect(requests[0]).toMatchObject({
-      payload: { sessionId: activeSession.id, beforeSeq: 10, maxMessages: 200 },
+      payload: {
+        sessionId: activeSession.id,
+        beforeSeq: 10,
+        maxMessages: 200,
+        pagePurpose: 'gap-recovery',
+      },
     })
     const state = store.getState()
     // The rebuilt timeline renders the healed range and drops the notice,

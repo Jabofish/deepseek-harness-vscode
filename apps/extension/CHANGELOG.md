@@ -1,5 +1,16 @@
 # Change Log
 
+## 0.2.3
+
+- 聊天代码高亮改为随流增量渲染：已闭合的围栏代码块在消息仍在输出时就上色，正在书写的那一行保持纯文本、下一行闭合后立即换成高亮；每个代码块按文本缓存着色结果，只有在增长到一定步长时才重新分词，高亮不再等到整条消息输出完毕。回归覆盖「完成行切换时不闪断」与「闭合围栏提前上色」，真实 Webview 浏览器复验待补。
+- Chat code highlighting now renders incrementally while a message streams: a closed fenced block is colored while the rest of the message is still arriving, the line being written stays plaintext and switches to highlighted as soon as the next line closes, and each block caches its colors by text so it is re-tokenized only after enough growth. Highlighting no longer waits for the whole message to finish. Regressions cover the completed-line carry-over and the early highlight of a closed fence; a real-Webview browser re-check is still pending.
+
+- 同步上游至 `dsh-v0.1.7-rc.1`：新增 `0.1.5-rc.3`、`0.1.7-alpha.2`、`0.1.7-rc.1` 三个独立精确 Adapter；alpha.2/rc.1 在普通会话和子代理历史中按上游 `turnWindow` 分页，补洞等严格读取保持原语义，rc1 已核实启用 Job Controller。Installer 默认改为精确 `0.1.5-rc.3`。上游缺少历史会话与非空 Job 的可复现运行验证，相关能力保持 PARTIAL。
+- Synced upstream through `dsh-v0.1.7-rc.1`: added separate exact adapters for `0.1.5-rc.3`, `0.1.7-alpha.2`, and `0.1.7-rc.1`. Alpha.2/RC1 use the upstream `turnWindow` for ordinary session and subagent transcript paging while strict recovery reads keep their existing semantics; the shipped RC1 web profile was verified to activate Job Controller. The installer now targets exact `0.1.5-rc.3`. Live validation still lacks a historical session and non-empty Job, so those capabilities remain PARTIAL.
+
+- 连接详情不再显示能力 ID、适配/回退状态等内部信息，Extension Host 也不再将能力档案发送给 Webview；DSH 版本和连接设置入口保留。
+- Connection details no longer expose internal capability IDs or adapter/fallback statuses, and the Extension Host no longer sends the capability profile to the Webview. The DSH version and connection settings entry remain available.
+
 ## 0.2.2
 
 - 修复聊天 Markdown 中 HTML、Python 等已标记代码块仍显示为灰色：Webview CSP 放行内联 `style` 属性以承载 Shiki token 颜色，打包样式表与 nonce 脚本的限制保持不变，模型原始 HTML 仍被禁用；补充浏览器 CSP 验证和界面回归测试。

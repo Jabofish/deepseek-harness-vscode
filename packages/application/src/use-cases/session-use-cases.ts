@@ -6,6 +6,7 @@ import type {
   SessionCreateInput,
   SessionDetail,
   SessionHistoryPage,
+  SessionHistoryQueryOptions,
   SessionListQuery,
   SessionPage,
 } from '@dsh-vscode/domain'
@@ -28,8 +29,9 @@ export class SessionUseCases {
     sessionId: string,
     beforeSequence?: number,
     signal?: AbortSignal,
+    options?: SessionHistoryQueryOptions,
   ): Promise<SessionHistoryPage> {
-    return this.backendService.requireBackend().sessions.history(sessionId, beforeSequence, signal)
+    return this.backendService.requireBackend().sessions.history(sessionId, beforeSequence, signal, options)
   }
 
   public remove(sessionId: string, signal?: AbortSignal): Promise<void> {

@@ -3,12 +3,14 @@ import type { BackendCandidate, BackendCapabilities, BackendEndpoint } from '@ds
 import { AppError } from '@dsh-vscode/domain'
 
 import type { DshTransport, DshVersionAdapter } from '../src/contracts.js'
+import { isDshPackageVersion, isMalformedDshVersionHint, normalizeDshVersion } from '../src/contracts.js'
 import { VersionedBackendProbe } from '../src/probe.js'
 
 function candidate(port: number): BackendCandidate {
   return {
     endpoint: { host: '127.0.0.1', port, baseUrl: `http://127.0.0.1:${port}` },
     source: 'configured',
+    runtimeVersion: '0.1.0-rc.6',
     confidence: 100,
   }
 }
@@ -37,8 +39,21 @@ describe('VersionedBackendProbe endpoint validation', () => {
   })
 })
 
+describe('DSH package version validation', () => {
+  it('uses SemVer prerelease rules while accepting valid build metadata', () => {
+    const withBuildMetadata = '0.1.7-rc.1+build.01'
+    const malformedPrerelease = '0.1.7-rc.01'
+
+    expect(isDshPackageVersion(withBuildMetadata)).toBe(true)
+    expect(isMalformedDshVersionHint(withBuildMetadata)).toBe(false)
+    expect(normalizeDshVersion(withBuildMetadata)).toBe(withBuildMetadata)
+    expect(isDshPackageVersion(malformedPrerelease)).toBe(false)
+    expect(isMalformedDshVersionHint(malformedPrerelease)).toBe(true)
+  })
+})
+
 describe('VersionedBackendProbe version classification', () => {
-  it('fails with DSH_INCOMPATIBLE when every adapter declines an unversioned DSH endpoint', async () => {
+  it('fails with DSH_INCOMPATIBLE when every exact adapter declines a known RC6 endpoint', async () => {
     const probe = vi.fn((): Promise<never> => Promise.reject(incompatibleError()))
     const adapter = { id: 'fixture', supportedVersion: 'fixture', probe, createTransport: vi.fn() }
 
@@ -197,6 +212,59 @@ describe('VersionedBackendProbe version classification', () => {
     expect(exactOnly.probe.mock.calls).toHaveLength(0)
   })
 
+  it.each(['0.1.7-rc.1 trailing', '0.1.7-rc.01'])(
+    'refuses malformed semver hint %s instead of selecting an exact or compatibility wire',
+    async (runtimeVersion) => {
+      const exact = compatibilityAdapter(
+        'exact-rc171',
+        undefined,
+        { protocolVersion: 'rc171', dshVersion: '0.1.7-rc.1', features: new Set(['session']) },
+        100,
+        false,
+      )
+      const fallback = compatibilityAdapter(
+        'safe-fallback',
+        { protocolVersion: 'fallback', dshVersion: 'fallback', features: new Set(['session']) },
+        undefined,
+        10,
+        true,
+      )
+
+      const fetch = vi.fn<typeof globalThis.fetch>()
+
+      await expect(
+        new VersionedBackendProbe([exact, fallback], { fetch }).probe({
+          ...candidate(3960),
+          runtimeVersion,
+        }),
+      ).resolves.toBeUndefined()
+      expect(exact.probe.mock.calls).toHaveLength(0)
+      expect(exact.probeCompatibility.mock.calls).toHaveLength(0)
+      expect(fallback.probe.mock.calls).toHaveLength(0)
+      expect(fallback.probeCompatibility.mock.calls).toHaveLength(0)
+      expect(fetch).not.toHaveBeenCalled()
+    },
+  )
+
+  it('does not strip build metadata into a pinned exact runtime identity', async () => {
+    const exact = compatibilityAdapter(
+      'exact-rc171',
+      undefined,
+      { protocolVersion: 'rc171', dshVersion: '0.1.7-rc.1', features: new Set(['session']) },
+      100,
+      false,
+    )
+
+    await expect(
+      new VersionedBackendProbe([exact]).probe({
+        ...candidate(3961),
+        runtimeVersion: '0.1.7-rc.1+local-build',
+      }),
+    ).resolves.toBeUndefined()
+    expect(exact.probe.mock.calls).toHaveLength(0)
+    expect(exact.probeCompatibility.mock.calls).toHaveLength(0)
+  })
+
   it('keeps exact probing for a known runtime and never enters compatibility mode', async () => {
     const adapter = compatibilityAdapter('dsh-0.1.2-alpha.3', undefined, {
       protocolVersion: 'alpha3',
@@ -218,8 +286,19 @@ describe('VersionedBackendProbe version classification', () => {
     expect(adapter.probeCompatibility.mock.calls).toHaveLength(0)
   })
 
-  it('preserves a legacy adapter best-effort result when the runtime has no version label', async () => {
-    const adapter = compatibilityAdapter('legacy-fallback', undefined, {
+  it('routes a missing runtime version only through an explicit fallback compatibility probe', async () => {
+    const exactOnly = compatibilityAdapter(
+      'exact-only',
+      undefined,
+      {
+        protocolVersion: 'must-not-run',
+        dshVersion: 'unexpected-exact',
+        features: new Set(['session']),
+      },
+      100,
+      false,
+    )
+    const adapter = compatibilityAdapter('legacy-fallback', {
       protocolVersion: 'legacy-contract',
       dshVersion: 'unknown',
       features: new Set(['session']),
@@ -227,7 +306,13 @@ describe('VersionedBackendProbe version classification', () => {
       compatibilityWarning: 'runtime version missing',
     })
 
-    const connected = await new VersionedBackendProbe([adapter]).probe(candidate(3957))
+    const versionedCandidate = candidate(3957)
+    const unversionedCandidate: BackendCandidate = {
+      endpoint: versionedCandidate.endpoint,
+      source: versionedCandidate.source,
+      confidence: versionedCandidate.confidence,
+    }
+    const connected = await new VersionedBackendProbe([exactOnly, adapter]).probe(unversionedCandidate)
 
     expect(connected?.capabilities).toMatchObject({
       dshVersion: 'unknown',
@@ -235,6 +320,10 @@ describe('VersionedBackendProbe version classification', () => {
       compatibilityMode: 'best-effort',
       featureProfile: { source: 'compatibility-fallback' },
     })
+    expect(exactOnly.probe.mock.calls).toHaveLength(0)
+    expect(exactOnly.probeCompatibility.mock.calls).toHaveLength(0)
+    expect(adapter.probe.mock.calls).toHaveLength(0)
+    expect(adapter.probeCompatibility.mock.calls).toHaveLength(1)
   })
 
   it('continues after a compatibility candidate reports an incompatible contract', async () => {

@@ -121,7 +121,7 @@ function validJobs(value: unknown): value is readonly Record<string, unknown>[] 
   return Array.isArray(value) && value.every(isPlainRecord)
 }
 
-function inboxQueueItems(value: unknown): readonly Record<string, unknown>[] | undefined {
+export function inboxQueueItems(value: unknown): readonly Record<string, unknown>[] | undefined {
   const inbox = plainRecord(value)
   if (
     inbox === undefined ||

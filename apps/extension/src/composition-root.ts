@@ -13,7 +13,6 @@ import {
   type CheckpointPreview,
   type CheckpointSummary,
   type DiagnosticsSnapshot,
-  FEATURE_CAPABILITY_IDS,
   type AgentConfiguration,
   type BackendEvent,
   type ChangeSetFile,
@@ -23,7 +22,8 @@ import {
   type DshRuntimeUpdateProgress,
   type ExtensionSettings,
   type ExtensionSettingsSummary,
-  type FeatureCapabilityProfile,
+  type JobFollowFrame,
+  type JobView,
   type EditorContextOwner,
   type EditorContextAvailability,
   type EditorContextKind,
@@ -63,6 +63,7 @@ import {
   Alpha161VersionAdapter,
   Alpha162VersionAdapter,
   Alpha171VersionAdapter,
+  Alpha172VersionAdapter,
   Alpha132VersionAdapter,
   Alpha13VersionAdapter,
   Alpha5VersionAdapter,
@@ -83,6 +84,8 @@ import {
   Rc13VersionAdapter,
   Rc151VersionAdapter,
   Rc152VersionAdapter,
+  Rc153VersionAdapter,
+  Rc171VersionAdapter,
   VersionedBackendFactory,
   VersionedBackendProbe,
   redactMultilineText,
@@ -197,11 +200,12 @@ export interface CompositionRoot extends vscode.Disposable {
 }
 
 export class JobFollowRegistry {
-  private readonly controllers = new Map<string, AbortController>()
-  private readonly starting = new Map<string, AbortController>()
+  private readonly controllers = new Map<string, RegisteredJobFollow>()
+  private readonly starting = new Map<string, RegisteredJobFollow>()
 
   public async start<T>(
     key: string,
+    followId: string,
     signal: AbortSignal,
     validate: (signal: AbortSignal) => Promise<T>,
     follow: (value: T, signal: AbortSignal) => void | Promise<void>,
@@ -210,26 +214,26 @@ export class JobFollowRegistry {
     const controller = new AbortController()
     const checkSignal = AbortSignal.any([signal, controller.signal])
     this.cancelPendingStart(key)
-    this.starting.set(key, controller)
+    this.starting.set(key, { followId, controller })
     let pending = true
     try {
       const value = await validate(checkSignal)
-      if (checkSignal.aborted || this.starting.get(key) !== controller) {
-        this.cancelPendingStart(key, controller)
+      if (checkSignal.aborted || this.starting.get(key)?.controller !== controller) {
+        this.cancelPendingStart(key, followId, controller)
         return false
       }
       this.starting.delete(key)
       pending = false
       this.stopActive(key)
-      this.controllers.set(key, controller)
+      this.controllers.set(key, { followId, controller })
       void Promise.resolve(follow(value, controller.signal)).then(
         () => this.finish(key, controller),
         () => this.finish(key, controller),
       )
       return true
     } catch (error) {
-      const cancelled = checkSignal.aborted || (pending && this.starting.get(key) !== controller)
-      this.cancelPendingStart(key, controller)
+      const cancelled = checkSignal.aborted || (pending && this.starting.get(key)?.controller !== controller)
+      this.cancelPendingStart(key, followId, controller)
       this.finish(key, controller)
       controller.abort()
       if (cancelled) return false
@@ -237,36 +241,101 @@ export class JobFollowRegistry {
     }
   }
 
-  public stop(key: string): boolean {
-    const stoppedPending = this.cancelPendingStart(key)
-    return this.stopActive(key) || stoppedPending
+  public stop(key: string, followId: string): boolean {
+    const stoppedPending = this.cancelPendingStart(key, followId)
+    const stoppedActive = this.stopActive(key, followId)
+    return stoppedPending || stoppedActive
   }
 
   public stopAll(): void {
-    for (const controller of this.controllers.values()) controller.abort()
-    for (const controller of this.starting.values()) controller.abort()
+    for (const entry of this.controllers.values()) entry.controller.abort()
+    for (const entry of this.starting.values()) entry.controller.abort()
     this.controllers.clear()
     this.starting.clear()
   }
 
-  private stopActive(key: string): boolean {
-    const controller = this.controllers.get(key)
-    if (controller === undefined) return false
+  private stopActive(key: string, followId?: string): boolean {
+    const entry = this.controllers.get(key)
+    if (entry === undefined || (followId !== undefined && entry.followId !== followId)) return false
     this.controllers.delete(key)
-    controller.abort()
+    entry.controller.abort()
     return true
   }
 
-  private cancelPendingStart(key: string, expected?: AbortController): boolean {
-    const controller = this.starting.get(key)
-    if (controller === undefined || (expected !== undefined && controller !== expected)) return false
+  private cancelPendingStart(key: string, followId?: string, expectedController?: AbortController): boolean {
+    const entry = this.starting.get(key)
+    if (
+      entry === undefined ||
+      (followId !== undefined && entry.followId !== followId) ||
+      (expectedController !== undefined && entry.controller !== expectedController)
+    )
+      return false
     this.starting.delete(key)
-    controller.abort()
+    entry.controller.abort()
     return true
   }
 
   private finish(key: string, controller: AbortController): void {
-    if (this.controllers.get(key) === controller) this.controllers.delete(key)
+    if (this.controllers.get(key)?.controller === controller) this.controllers.delete(key)
+  }
+}
+
+interface RegisteredJobFollow {
+  readonly followId: string
+  readonly controller: AbortController
+}
+
+export function resolveJobFollowOffset(
+  job: Pick<JobView, 'output'>,
+  requestedFrom: number | undefined,
+): number {
+  const from = requestedFrom ?? job.output?.earliest ?? 0
+  if (!Number.isSafeInteger(from) || from < 0)
+    throw new AppError({
+      code: 'PROTOCOL_ERROR',
+      message: 'The requested job output cursor is invalid.',
+      retryable: false,
+    })
+  return from
+}
+
+export async function relayJobFollowFrames(input: {
+  readonly sessionId: string
+  readonly jobId: string
+  readonly followId: string
+  readonly frames: AsyncIterable<JobFollowFrame>
+  readonly signal: AbortSignal
+  readonly publish: (event: BackendEvent) => void
+  readonly onFailure: (error: unknown) => void
+}): Promise<void> {
+  try {
+    for await (const frame of input.frames) {
+      input.publish({
+        type: 'job.follow.updated',
+        sessionId: input.sessionId,
+        jobId: input.jobId,
+        followId: input.followId,
+        frame,
+      })
+    }
+  } catch (error) {
+    if (input.signal.aborted) return
+    try {
+      input.publish({
+        type: 'job.follow.failed',
+        sessionId: input.sessionId,
+        jobId: input.jobId,
+        followId: input.followId,
+        reason: 'stream-failed',
+      })
+    } catch {
+      // A failed publish cannot be repaired here; keep the upstream error local.
+    }
+    try {
+      input.onFailure(error)
+    } catch {
+      // Diagnostics and the generic notice are best effort after the failure event.
+    }
   }
 }
 
@@ -455,6 +524,9 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
   const alpha161Adapter = new Alpha161VersionAdapter(adapterOptions)
   const alpha162Adapter = new Alpha162VersionAdapter(adapterOptions)
   const alpha171Adapter = new Alpha171VersionAdapter(adapterOptions)
+  const alpha172Adapter = new Alpha172VersionAdapter(adapterOptions)
+  const rc153Adapter = new Rc153VersionAdapter(adapterOptions)
+  const rc171Adapter = new Rc171VersionAdapter(adapterOptions)
   const alpha13Adapter = new Alpha13VersionAdapter(adapterOptions)
   const rc13Adapter = new Rc13VersionAdapter(adapterOptions)
   const alpha3Adapter = new Alpha3VersionAdapter(adapterOptions)
@@ -472,9 +544,12 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
   const legacyRc2Adapter = new LegacyRc2VersionAdapter(adapterOptions)
   const legacyRc1Adapter = new LegacyRc1VersionAdapter(adapterOptions)
   const adapters = [
+    rc171Adapter,
+    alpha172Adapter,
     alpha171Adapter,
     alpha162Adapter,
     alpha161Adapter,
+    rc153Adapter,
     rc152Adapter,
     rc151Adapter,
     alpha152Adapter,
@@ -1255,17 +1330,19 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     return load
   }
   const jobFollowKey = (sessionId: string, jobId: string): string => JSON.stringify([sessionId, jobId])
-  const stopJobFollow = (sessionId: string, jobId: string): boolean =>
-    activeJobFollows.stop(jobFollowKey(sessionId, jobId))
+  const stopJobFollow = (sessionId: string, jobId: string, followId: string): boolean =>
+    activeJobFollows.stop(jobFollowKey(sessionId, jobId), followId)
   const stopAllJobFollows = (): void => activeJobFollows.stopAll()
   const startJobFollow = async (
     sessionId: string,
     jobId: string,
+    followId: string,
     requestedFrom: number | undefined,
     signal: AbortSignal,
   ): Promise<{ readonly started: boolean }> => {
     const started = await activeJobFollows.start(
       jobFollowKey(sessionId, jobId),
+      followId,
       signal,
       async (checkSignal) => {
         await requireCurrentWorkspaceSession(sessionId, checkSignal)
@@ -1278,23 +1355,19 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
             message: 'This job is no longer visible in the selected session.',
             retryable: false,
           })
-        const from = requestedFrom ?? job.output?.earliest ?? 0
-        if (!Number.isSafeInteger(from) || from < 0 || from > (job.output?.total ?? Number.MAX_SAFE_INTEGER))
-          throw new AppError({
-            code: 'PROTOCOL_ERROR',
-            message: 'The requested job output cursor is invalid.',
-            retryable: false,
-          })
+        const from = resolveJobFollowOffset(job, requestedFrom)
         checkSignal.throwIfAborted()
         return { from, backend: backendService.requireBackend() }
       },
       async ({ from, backend }, followSignal) => {
-        try {
-          for await (const frame of advancedUseCases.followJob(sessionId, jobId, from, followSignal)) {
-            backend.events.publish?.({ type: 'job.follow.updated', sessionId, jobId, frame })
-          }
-        } catch (error) {
-          if (!followSignal.aborted) {
+        await relayJobFollowFrames({
+          sessionId,
+          jobId,
+          followId,
+          frames: advancedUseCases.followJob(sessionId, jobId, from, followSignal),
+          signal: followSignal,
+          publish: (event) => backend.events.publish?.(event),
+          onFailure: (error) => {
             diagnostics.log('warn', 'job-follow-failed', {
               code: error instanceof AppError ? error.code : 'INTERNAL_ERROR',
             })
@@ -1304,8 +1377,8 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
               level: 'warning',
               text: 'Job output could not be read. Start following again to retry.',
             })
-          }
-        }
+          },
+        })
       },
     )
     return { started }
@@ -2055,7 +2128,10 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
       const page = await backendService
         .requireBackend()
-        .sessions.history(request.payload.sessionId, request.payload.beforeSeq, signal)
+        .sessions.history(request.payload.sessionId, request.payload.beforeSeq, signal, {
+          ...(request.payload.maxMessages === undefined ? {} : { pageSize: request.payload.maxMessages }),
+          ...(request.payload.pagePurpose === undefined ? {} : { pagePurpose: request.payload.pagePurpose }),
+        })
       return publicValue({
         events: page.events,
         hasMore: page.hasMore,
@@ -2532,10 +2608,20 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       }
     }
     if (request.type === 'job.follow.start')
-      return startJobFollow(request.payload.sessionId, request.payload.jobId, request.payload.from, signal)
+      return startJobFollow(
+        request.payload.sessionId,
+        request.payload.jobId,
+        request.payload.followId,
+        request.payload.from,
+        signal,
+      )
     if (request.type === 'job.follow.stop') {
-      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
-      return { stopped: stopJobFollow(request.payload.sessionId, request.payload.jobId) }
+      // Start already validated session ownership. Stop only closes the exact
+      // Host-owned observer; rechecking workspace membership could strand it
+      // after the session has been removed from the current workspace.
+      return {
+        stopped: stopJobFollow(request.payload.sessionId, request.payload.jobId, request.payload.followId),
+      }
     }
     if (request.type === 'subagent.list') {
       await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
@@ -2545,7 +2631,10 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
       const page = await advancedUseCases.listSubagentHistory(
         request.payload.sessionId,
-        request.payload.beforeSeq === undefined ? undefined : { beforeSequence: request.payload.beforeSeq },
+        {
+          ...(request.payload.beforeSeq === undefined ? {} : { beforeSequence: request.payload.beforeSeq }),
+          ...(request.payload.maxMessages === undefined ? {} : { pageSize: request.payload.maxMessages }),
+        },
         signal,
       )
       return publicValue({
@@ -3042,7 +3131,6 @@ function publicState(state: BackendState): unknown {
           ...(state.backend.connectionGeneration === undefined
             ? {}
             : { connectionGeneration: state.backend.connectionGeneration }),
-          featureProfile: publicFeatureProfile(state.backend.capabilities.featureProfile),
           ...(state.backend.capabilities.compatibilityWarning === undefined
             ? {}
             : { compatibilityWarning: state.backend.capabilities.compatibilityWarning }),
@@ -3085,26 +3173,6 @@ function publicDiagnosticsSnapshot(
     ...(endpointKind === undefined ? {} : { endpointKind }),
     canReconnect,
     recentEvents: recentEvents.slice(-32),
-  }
-}
-
-function publicFeatureProfile(profile: FeatureCapabilityProfile | undefined): unknown {
-  if (profile === undefined) return undefined
-  const capabilities: Record<string, unknown> = {}
-  for (const id of FEATURE_CAPABILITY_IDS) {
-    const capability = profile.capabilities[id]
-    if (capability === undefined) continue
-    capabilities[id] = {
-      state: capability.state,
-      upstream: capability.upstream,
-      ...(capability.reason === undefined ? {} : { reason: redactText(capability.reason, 512) }),
-    }
-  }
-  return {
-    dshVersion: profile.dshVersion,
-    protocolVersion: profile.protocolVersion,
-    source: profile.source,
-    capabilities,
   }
 }
 

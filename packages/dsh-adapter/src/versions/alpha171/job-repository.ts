@@ -8,6 +8,7 @@ import {
 
 import type { EventAwareJobRepository } from '../../repositories/job-repository.js'
 import type { AlphaLoopbackApiClient } from '../alpha/transport.js'
+import { unwrapRpcResultValue } from '../rc6/rpc.js'
 
 /** Alpha171 Job Controller adapter: live rows, resumable output, and human stop. */
 export class Alpha171JobRepository implements EventAwareJobRepository {
@@ -60,6 +61,9 @@ export class Alpha171JobRepository implements EventAwareJobRepository {
     if (signal?.aborted) throw cancelled(signal.reason)
     if (from !== undefined && !isSafeCount(from)) throw malformedJobResponse('offset')
     let receivedTerminalStatus = false
+    let receivedOpenedFrame = false
+    let receivedOutputFrame = false
+    let nextOffset: number | undefined
     for await (const item of this.transport.openRemoteStream(
       'job/follow',
       { request: { sessionId, jobId, ...(from === undefined ? {} : { from }) } },
@@ -68,8 +72,50 @@ export class Alpha171JobRepository implements EventAwareJobRepository {
       if (signal?.aborted) return
       const frame = parseFollowFrame(item)
       if (frame === undefined) throw malformedJobResponse('follow frame')
-      if (frame.type === 'status' && frame.job.status !== 'running' && frame.job.status !== 'stopping')
-        receivedTerminalStatus = true
+      if (frame.type === 'opened') {
+        const expectedOpeningOffset = from ?? frame.job.output?.earliest
+        if (
+          receivedOpenedFrame ||
+          (expectedOpeningOffset !== undefined && frame.from !== expectedOpeningOffset)
+        )
+          throw malformedJobResponse('follow opened offset')
+        receivedOpenedFrame = true
+        // Host echoes the requested cursor even when it is beyond the current
+        // output tail. Its first read then clamps that cursor to this opening
+        // snapshot's total, so future output may legitimately start below
+        // `frame.from` in that case.
+        nextOffset = Math.min(frame.from, frame.job.output?.total ?? frame.from)
+      } else {
+        if (!receivedOpenedFrame || nextOffset === undefined)
+          throw malformedJobResponse('follow frame before opened')
+        if (receivedTerminalStatus) throw malformedJobResponse('follow frame after terminal status')
+        if (frame.type === 'output') {
+          if (frame.next <= nextOffset) throw malformedJobResponse('follow offset did not advance')
+          if (frame.chunks.length === 0 && frame.lossy !== true)
+            throw malformedJobResponse('follow empty output without loss')
+          let expectedOffset = nextOffset
+          for (const [index, chunk] of frame.chunks.entries()) {
+            const chunkEnd = chunk.at + new TextEncoder().encode(chunk.text).byteLength
+            if (chunkEnd <= nextOffset || (receivedOutputFrame && chunk.at < nextOffset))
+              throw malformedJobResponse('follow chunk offset')
+            if (
+              chunk.at > expectedOffset &&
+              chunk.gapBefore !== true &&
+              !(index === 0 && frame.lossy === true)
+            )
+              throw malformedJobResponse('follow unmarked gap')
+            expectedOffset = Math.max(expectedOffset, chunkEnd)
+          }
+          nextOffset = frame.next
+          receivedOutputFrame = true
+        } else {
+          if (frame.job.status === 'running' || frame.job.status === 'stopping')
+            throw malformedJobResponse('follow non-terminal status')
+          if (frame.job.output?.total === undefined || frame.job.output.total < nextOffset)
+            throw malformedJobResponse('follow status offset rollback')
+          receivedTerminalStatus = true
+        }
+      }
       yield frame
     }
     if (!signal?.aborted && !receivedTerminalStatus) throw malformedJobResponse('follow stream ended')
@@ -81,13 +127,14 @@ export class Alpha171JobRepository implements EventAwareJobRepository {
     signal?: AbortSignal,
   ): Promise<'requested' | 'already-finished'> {
     if (signal?.aborted) throw cancelled(signal.reason)
-    const value = await this.transport.remoteRequest<unknown>(
+    const result = await this.transport.remoteRequest<unknown>(
       'job/kill',
       {
         request: { sessionId, jobId },
       },
       signal,
     )
+    const value = unwrapRpcResultValue<unknown>(result, 'job/kill')
     const record = recordOrUndefined(value)
     if (
       record === undefined ||
@@ -114,15 +161,25 @@ function parseFollowFrame(value: unknown): JobFollowFrame | undefined {
     !Array.isArray(frame.chunks) ||
     !frame.chunks.every(validChunk) ||
     !isSafeCount(frame.next) ||
-    (frame.lossy !== undefined && frame.lossy !== true)
+    (frame.lossy !== undefined && frame.lossy !== true) ||
+    (frame.chunks.length === 0 && frame.lossy !== true)
   )
     return undefined
-  let priorEnd = -1
+  let priorEnd: number | undefined
+  let lastByteEnd: number | undefined
   for (const chunk of frame.chunks) {
-    if (chunk.at < priorEnd || chunk.at > frame.next) return undefined
-    priorEnd = chunk.at + new TextEncoder().encode(chunk.text).byteLength
-    if (!Number.isSafeInteger(priorEnd) || priorEnd > frame.next) return undefined
+    if (chunk.at > frame.next || (priorEnd !== undefined && chunk.at < priorEnd)) return undefined
+    if (priorEnd !== undefined && chunk.at > priorEnd && chunk.gapBefore !== true) return undefined
+    const chunkEnd = chunk.at + new TextEncoder().encode(chunk.text).byteLength
+    if (!Number.isSafeInteger(chunkEnd) || chunkEnd > frame.next) return undefined
+    priorEnd = chunkEnd
+    if (chunk.text.length === 0) {
+      if (chunk.at !== frame.next || chunk.gapBefore !== true || frame.lossy !== true) return undefined
+    } else {
+      lastByteEnd = chunkEnd
+    }
   }
+  if (lastByteEnd !== undefined && lastByteEnd !== frame.next) return undefined
   return {
     type: 'output',
     chunks: frame.chunks,

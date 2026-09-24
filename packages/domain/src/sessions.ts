@@ -98,6 +98,14 @@ export interface SessionHistoryPage {
   readonly projection?: SessionProjectionSnapshot
 }
 
+/** Host-selected behavior for a session history page read. */
+export interface SessionHistoryQueryOptions {
+  /** Minimum transcript messages desired in a page when the runtime supports it. */
+  readonly pageSize?: number
+  /** Conversation pages can align to turns; gap recovery needs exact cursor coverage. */
+  readonly pagePurpose?: 'transcript' | 'gap-recovery'
+}
+
 export interface SubagentHistoryPage {
   readonly events: readonly SessionHistoryEvent[]
   readonly hasMore: boolean
@@ -110,6 +118,8 @@ export interface SubagentHistoryPage {
 /** Cursor for loading an older page from a subagent transcript. */
 export interface SubagentHistoryQuery {
   readonly beforeSequence?: number
+  /** Minimum transcript messages desired in a page when the runtime supports it. */
+  readonly pageSize?: number
 }
 
 export interface SessionCreateInput {

@@ -59,6 +59,8 @@ export interface BackendCandidate {
   readonly source: 'configured' | 'known' | 'default-port' | 'process-scan' | 'companion'
   /** Optional host-side runtime hint; never forwarded to the Webview. */
   readonly runtimeVersion?: string
+  /** Present only after the OS listener PID and adjacent DSH package manifest were verified. */
+  readonly runtimeVersionEvidence?: 'process-manifest'
   readonly pid?: number
   readonly startedAt?: string
   readonly commandLine?: string

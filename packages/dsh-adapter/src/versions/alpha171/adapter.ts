@@ -1,12 +1,13 @@
 import type { BackendCandidate, BackendCapabilities, BackendEndpoint } from '@dsh-vscode/domain'
 
-import { normalizeDshVersion } from '../../contracts.js'
+import { isMalformedDshVersionHint, normalizeDshVersion } from '../../contracts.js'
 import { withExactAdapterCapabilities } from '../../compatibility.js'
 import { deriveFeatureCapabilityProfile } from '../../feature-capabilities.js'
 import type { VersionAdapterIdentity } from '../../adapter-base.js'
 import { Alpha162VersionAdapter, type Alpha162AdapterOptions } from '../alpha162/adapter.js'
 import type { AlphaLoopbackApiClientOptions } from '../alpha/transport.js'
 import { callRpc } from '../rc6/rpc.js'
+import { normalizeAlpha171SessionQueueProjection } from './session-control.js'
 import { Alpha171JobRepository } from './job-repository.js'
 import { Alpha171PluginRepository } from './plugin-repository.js'
 import { Alpha171PresetRepository } from './preset-repository.js'
@@ -24,6 +25,8 @@ export type Alpha171AdapterOptions = Alpha162AdapterOptions
  * from Session Control, and exposes a standalone Job Controller stream.
  */
 export class Alpha171VersionAdapter extends Alpha162VersionAdapter {
+  protected override readonly queueBaselineMode = 'control-follow' as const
+
   protected override readonly identity: VersionAdapterIdentity = {
     id: 'dsh-0.1.7-alpha.1',
     supportedVersion: '0.1.7-alpha.1',
@@ -36,8 +39,10 @@ export class Alpha171VersionAdapter extends Alpha162VersionAdapter {
     candidate: BackendCandidate,
     signal?: AbortSignal,
   ): Promise<BackendCapabilities | undefined> {
+    if (isMalformedDshVersionHint(candidate.runtimeVersion)) return undefined
     const hintedVersion = normalizeDshVersion(candidate.runtimeVersion)
-    if (hintedVersion !== this.supportedVersion) return undefined
+    if (candidate.runtimeVersion !== hintedVersion || hintedVersion !== this.supportedVersion)
+      return undefined
     const transport = this.createTransport(candidate.endpoint)
     try {
       const sessions = await callRpc<unknown>(transport, 'session.list', {}, signal)
@@ -90,6 +95,7 @@ export class Alpha171VersionAdapter extends Alpha162VersionAdapter {
       controlWireVersion: 'projection-v2',
       workspaceWireVersion: 'pinned-v2',
       presetWireVersion: 'registry-v2',
+      normalizeSessionQueueProjection: normalizeAlpha171SessionQueueProjection,
       normalizeErrorCode: normalizeAlpha171ErrorCode,
     }
   }

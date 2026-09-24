@@ -8,7 +8,7 @@ import {
   memo,
   useMemo,
   useRef,
-  useState,
+  useSyncExternalStore,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent,
   type ReactElement,
@@ -16,11 +16,34 @@ import {
 import { useI18n } from '../../i18n.js'
 import { CopyButton } from './CopyButton.js'
 import { ContentFlow } from '../../components/common/ContentFlow.js'
-import { getWebviewHighlighter, resolveBundledLanguage, SHIKI_THEMES } from './shiki.js'
+import {
+  cachedCodeHighlight,
+  codeHighlightVersion,
+  requestCodeHighlight,
+  resolveBundledLanguage,
+  subscribeCodeHighlights,
+  type WebviewLanguage,
+} from './shiki.js'
 import 'katex/dist/katex.min.css'
 
-const STREAMING_HIGHLIGHT_DEBOUNCE_MS = 120
 const STREAMING_MARKDOWN_DEFER_THRESHOLD = 4_096
+
+/**
+ * A streaming block is highlighted again once it has grown by this fraction of
+ * its own size. Tokenizing a prefix costs as much as the whole block, so a
+ * fixed step would make long blocks quadratic in the number of deltas; scaling
+ * the step keeps a block at a bounded number of runs.
+ */
+const STREAMING_HIGHLIGHT_GROWTH = 8
+const STREAMING_HIGHLIGHT_MIN_GROWTH = 256
+
+/**
+ * Shiki closes a highlighted block with an empty line for whatever follows its
+ * last newline. Streaming code reuses that line for the text still being
+ * written, so the in-progress line shows up immediately instead of waiting for
+ * the next highlight.
+ */
+const TRAILING_EMPTY_LINE = '<span class="line"></span></code></pre>'
 
 const markdownRenderer = new MarkdownIt({
   // Model output often contains soft-wrapped source lines. Standard Markdown
@@ -83,6 +106,7 @@ export const MarkdownContent = memo(function MarkdownContent({
   const { t } = useI18n()
   const contentRef = useRef<HTMLDivElement>(null)
   const markdownProjector = useMemo(() => createMarkdownProjector(), [])
+  const highlightMemory = useRef<HighlightMemory>(new Map())
   // MarkdownIt reparses the accumulated stream. Let React keep the latest
   // input authoritative while lowering render priority for long messages so
   // rapid deltas do not monopolize the Webview main thread. Short messages
@@ -90,37 +114,33 @@ export const MarkdownContent = memo(function MarkdownContent({
   const deferredMarkdown = useDeferredValue(markdown)
   const markdownForRender =
     streaming && markdown.length > STREAMING_MARKDOWN_DEFER_THRESHOLD ? deferredMarkdown : markdown
-  const rawHtml = useMemo(
+  const projection = useMemo(
     () => markdownProjector(markdownForRender, streaming),
     [markdownForRender, markdownProjector, streaming],
   )
-  const [highlightedHtml, setHighlightedHtml] = useState<
-    { readonly source: string; readonly html: string } | undefined
-  >(undefined)
-
-  // Shiki is intentionally loaded only after the first code block is present.
-  // A language is then loaded on demand and cached by the shared highlighter.
-  // This keeps the initial Webview bundle usable for ordinary chat messages.
-  useEffect(() => {
-    let cancelled = false
-    if (!rawHtml.includes('language-')) return
-    const highlight = (): void => {
-      void highlightMarkdownHtml(rawHtml).then((html) => {
-        // Avoid a no-op state update for ordinary Markdown. It would tear down
-        // the DOM-mounted copy regions once and recreate them on the next
-        // effect pass, which can race React roots while a table is classified.
-        if (!cancelled && html !== rawHtml) setHighlightedHtml({ source: rawHtml, html })
-      })
-    }
-    // Streaming deltas can arrive faster than Shiki can parse a code block.
-    // Let a quiet stream settle before highlighting, while the terminal
-    // render remains eager so completed messages do not wait on this debounce.
-    const timer = window.setTimeout(highlight, streaming ? STREAMING_HIGHLIGHT_DEBOUNCE_MS : 0)
-    return () => {
-      cancelled = true
-      window.clearTimeout(timer)
-    }
-  }, [rawHtml, streaming])
+  // Shiki stays off the render path: a missing highlight is requested during
+  // render. The highlight cache lives outside React, so the memos below read it
+  // indirectly and `highlightVersion` is their invalidation key rather than an
+  // argument.
+  const highlightVersion = useSyncExternalStore(subscribeCodeHighlights, codeHighlightVersion)
+  const frozenHtml = useMemo(
+    () => highlightRegionHtml(projection.primaryHtml, streaming, highlightMemory.current),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [projection.primaryHtml, streaming, highlightVersion],
+  )
+  const tailHtml = useMemo(
+    () =>
+      projection.tailHtml === null
+        ? null
+        : highlightRegionHtml(projection.tailHtml, true, highlightMemory.current),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [projection.tailHtml, highlightVersion],
+  )
+  const renderedHtml = useMemo(() => {
+    if (tailHtml === null) return frozenHtml
+    const tail = tailHtml === '' ? '' : `<div data-dsh-markdown-tail="true">${tailHtml}</div>`
+    return `<div data-dsh-markdown-frozen="true">${frozenHtml}</div>${tail}`
+  }, [frozenHtml, tailHtml])
 
   useEffect(() => {
     const container = contentRef.current
@@ -202,7 +222,7 @@ export const MarkdownContent = memo(function MarkdownContent({
           entry.region.replaceWith(entry.target)
       }
     }
-  }, [markdown, onOpenLink, producedFiles, rawHtml, highlightedHtml, streaming, t])
+  }, [markdown, onOpenLink, producedFiles, renderedHtml, streaming, t])
 
   const handleClick = (event: MouseEvent<HTMLDivElement>): void => {
     const target = event.target
@@ -231,14 +251,37 @@ export const MarkdownContent = memo(function MarkdownContent({
       className={`dsh-markdown${streaming ? ' dsh-markdown--streaming' : ''}`}
       onClick={handleClick}
       onKeyDown={handleKeyDown}
-      dangerouslySetInnerHTML={{
-        __html: highlightedHtml?.source === rawHtml ? highlightedHtml.html : rawHtml,
-      }}
+      dangerouslySetInnerHTML={{ __html: renderedHtml }}
     />
   )
 })
 
-function createMarkdownProjector(): (markdown: string, streaming: boolean) => string {
+interface MarkdownProjection {
+  /** Whole message, or the frozen prefix while a streaming message is split. */
+  readonly primaryHtml: string
+  /** Streaming tail region, or `null` when the message renders as one region. */
+  readonly tailHtml: string | null
+}
+
+interface HighlightedBlock {
+  readonly code: string
+  readonly html: string
+}
+
+interface HighlightSlot {
+  /** Highlight currently on screen for this block, `undefined` before the first. */
+  readonly shown: HighlightedBlock | undefined
+  /** Length of the code text whose highlight was requested last. */
+  readonly requested: number
+}
+
+/**
+ * Per-block highlight state. It lets a delta extend the colors already on
+ * screen and spaces out Shiki runs for a block that is still being written.
+ */
+type HighlightMemory = Map<string, HighlightSlot>
+
+function createMarkdownProjector(): (markdown: string, streaming: boolean) => MarkdownProjection {
   let previousFrozenSource: string | undefined
   let previousFrozenHtml: string | undefined
   let previousStreamingMarkdown: string | undefined
@@ -248,7 +291,7 @@ function createMarkdownProjector(): (markdown: string, streaming: boolean) => st
     if (!streaming) {
       previousStreamingMarkdown = undefined
       previousStreamingBlocks = undefined
-      return markdownRenderer.render(markdown)
+      return { primaryHtml: markdownRenderer.render(markdown), tailHtml: null }
     }
     const blocks =
       previousStreamingMarkdown === undefined || previousStreamingBlocks === undefined
@@ -257,25 +300,22 @@ function createMarkdownProjector(): (markdown: string, streaming: boolean) => st
           splitMarkdownBlocks(markdown))
     previousStreamingMarkdown = markdown
     previousStreamingBlocks = blocks
-    if (blocks.length <= 1) return markdownRenderer.render(markdown)
+    if (blocks.length <= 1) return { primaryHtml: markdownRenderer.render(markdown), tailHtml: null }
 
     // The last non-blank block is the only block that can still change as a
     // delta arrives. Closed fenced blocks are stable even without a following
     // blank line, so they can be frozen immediately.
     const stableCount = stableBlockCount(markdown, blocks)
-    if (stableCount === 0)
-      return `<div data-dsh-markdown-tail="true">${markdownRenderer.render(markdown)}</div>`
-
     const frozen = blocks.slice(0, stableCount).join('\n\n')
     const tail = blocks.slice(stableCount).join('\n\n')
     if (previousFrozenSource !== frozen) {
       previousFrozenSource = frozen
       previousFrozenHtml = markdownRenderer.render(frozen)
     }
-    return [
-      `<div data-dsh-markdown-frozen="true">${previousFrozenHtml ?? ''}</div>`,
-      tail === '' ? '' : `<div data-dsh-markdown-tail="true">${markdownRenderer.render(tail)}</div>`,
-    ].join('')
+    return {
+      primaryHtml: previousFrozenHtml ?? '',
+      tailHtml: tail === '' ? '' : markdownRenderer.render(tail),
+    }
   }
 }
 
@@ -335,41 +375,95 @@ function stableBlockCount(markdown: string, blocks: readonly string[]): number {
   return Math.max(0, blocks.length - 1)
 }
 
-async function highlightMarkdownHtml(html: string): Promise<string> {
+/**
+ * Replace every labeled code block in one rendered region with its Shiki HTML.
+ * Missing highlights are requested and left as plaintext for this pass, which
+ * keeps the pass synchronous: the next cache version re-renders the region with
+ * whatever landed. A grammar the Webview does not bundle stays plaintext.
+ */
+function highlightRegionHtml(html: string, streaming: boolean, memory: HighlightMemory): string {
   if (!html.includes('language-') || typeof DOMParser === 'undefined') return html
   const parsed = new DOMParser().parseFromString(`<body>${html}</body>`, 'text/html')
   const codeBlocks = Array.from(parsed.body.querySelectorAll<HTMLElement>('pre > code[class*="language-"]'))
   if (codeBlocks.length === 0) return html
-  const highlighter = await getWebviewHighlighter()
   let changed = false
   for (const code of codeBlocks) {
     const languageClass = Array.from(code.classList).find((value) => value.startsWith('language-'))
     const language = languageClass === undefined ? undefined : resolveBundledLanguage(languageClass.slice(9))
     if (language === undefined) continue
-    try {
-      await highlighter.loadLanguage(language)
-      const highlighted = highlighter.codeToHtml(code.textContent ?? '', {
-        lang: language,
-        themes: SHIKI_THEMES,
-        defaultColor: 'light-dark()',
-        // The surrounding Markdown CSS owns the surface. Shiki's default
-        // root background is an opaque theme color and would otherwise turn
-        // a light Webview code block into a dark rectangle.
-        rootStyle: false,
-      })
-      const template = parsed.createElement('template')
-      template.innerHTML = highlighted
-      const replacement = template.content.firstElementChild
-      if (replacement !== null && code.parentElement !== null) {
-        code.parentElement.replaceWith(replacement)
-        changed = true
-      }
-    } catch {
-      // Unknown grammars remain as safe Markdown plaintext. A failed lazy
-      // language import must never remove or blank a user-visible code block.
-    }
+    const highlighted = highlightedBlockHtml(language, code.textContent ?? '', streaming, memory)
+    if (highlighted === undefined) continue
+    const template = parsed.createElement('template')
+    template.innerHTML = highlighted
+    const replacement = template.content.firstElementChild
+    if (replacement === null || code.parentElement === null) continue
+    code.parentElement.replaceWith(replacement)
+    changed = true
   }
   return changed ? parsed.body.innerHTML : html
+}
+
+function highlightedBlockHtml(
+  language: WebviewLanguage,
+  code: string,
+  streaming: boolean,
+  memory: HighlightMemory,
+): string | undefined {
+  // Shiki tokenizes from left to right, so a prefix of the block always yields
+  // the same tokens as the finished block. Only the text behind the last
+  // newline is still being written: it stays plaintext, and the next highlight
+  // picks it up once its own line is complete.
+  const boundary = streaming ? code.lastIndexOf('\n') : code.length - 1
+  if (boundary < 0) return undefined
+  const stable = code.slice(0, boundary + 1)
+  const slot = blockSlot(language, code)
+  const entry = memory.get(slot)
+  // A retried attempt can replace the text with a shorter one, which makes the
+  // remembered progress meaningless until a new highlight lands.
+  const rewritten = entry?.shown !== undefined && !stable.startsWith(entry.shown.code)
+  const exact = cachedCodeHighlight(language, stable)
+  const onScreen: HighlightedBlock | undefined =
+    typeof exact === 'string' ? { code: stable, html: exact } : rewritten ? undefined : entry?.shown
+  let requested = rewritten ? 0 : Math.max(entry?.requested ?? 0, onScreen?.code.length ?? 0)
+
+  // A streaming block re-renders on every delta but is only re-tokenized once
+  // it has grown by its own step; the text in between keeps the colors already
+  // on screen and stays plaintext past that prefix.
+  if (
+    typeof exact !== 'string' &&
+    (!streaming || requested === 0 || stable.length - requested >= growthStep(stable.length))
+  ) {
+    requestCodeHighlight(language, stable)
+    requested = Math.max(requested, stable.length)
+  }
+  memory.set(slot, { shown: onScreen, requested })
+
+  if (onScreen === undefined) return undefined
+  return withPlainRemainder(onScreen.html, code.slice(onScreen.code.length))
+}
+
+/**
+ * Streaming blocks grow by a line at a time, so a fixed re-highlight interval
+ * would re-tokenize a long block once per line. Growing the step with the block
+ * keeps every block at a bounded number of runs while the in-progress text is
+ * still shown immediately.
+ */
+function growthStep(length: number): number {
+  return Math.max(STREAMING_HIGHLIGHT_MIN_GROWTH, Math.floor(length / STREAMING_HIGHLIGHT_GROWTH))
+}
+
+/** Identify a block by its first line: stable while a block grows, and the same
+ * line in the frozen and the live region of the message. */
+function blockSlot(language: WebviewLanguage, code: string): string {
+  const lineBreak = code.indexOf('\n')
+  return `${language}\u0000${lineBreak === -1 ? code : code.slice(0, lineBreak)}`
+}
+
+function withPlainRemainder(html: string, remainder: string): string | undefined {
+  if (remainder === '') return html
+  if (!html.endsWith(TRAILING_EMPTY_LINE)) return undefined
+  const start = html.slice(0, -TRAILING_EMPTY_LINE.length)
+  return `${start}<span class="line">${markdownRenderer.utils.escapeHtml(remainder)}</span></code></pre>`
 }
 
 interface MountedCopyRegion {

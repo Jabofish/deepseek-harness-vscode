@@ -4,7 +4,7 @@ Before opening an issue, please verify:
 
 - You are using VS Code `1.125+`.
 - A supported DeepSeek Harness is installed (the guided install and the installer action use the
-  exact version `0.1.5-rc.2`; other known releases have their own adapters, and an unknown version is
+  exact version `0.1.5-rc.3`; other known releases have their own adapters, and an unknown version is
   probed read-only with a compatibility warning), or you completed the guided install in the view.
 - DSH and the VS Code Extension Host run on the same machine.
 

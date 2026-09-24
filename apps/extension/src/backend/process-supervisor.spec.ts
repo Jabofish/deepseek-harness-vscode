@@ -62,6 +62,10 @@ describe('DshProcessSupervisor', () => {
     '0.1.5-alpha.2',
     '0.1.5-rc.1',
     '0.1.5-rc.2',
+    '0.1.5-rc.3',
+    '0.1.7-alpha.1',
+    '0.1.7-alpha.2',
+    '0.1.7-rc.1',
     '0.1.0-rc.99',
   ])('uses only the shared Web Profile flags for %s', async (version) => {
     let args: readonly string[] | undefined
@@ -94,6 +98,10 @@ describe('DshProcessSupervisor', () => {
         '0.1.5-alpha.2',
         '0.1.5-rc.1',
         '0.1.5-rc.2',
+        '0.1.5-rc.3',
+        '0.1.7-alpha.1',
+        '0.1.7-alpha.2',
+        '0.1.7-rc.1',
       ].includes(version),
     )
     await expect(handle.stop()).resolves.toBeUndefined()

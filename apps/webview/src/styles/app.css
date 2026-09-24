@@ -750,53 +750,6 @@ ul {
   color: var(--dsh-warning);
 }
 
-.dsh-runtime-status__capabilities {
-  display: grid;
-  gap: var(--dsh-space-1);
-  padding-inline: var(--dsh-space-3);
-}
-
-.dsh-runtime-status__capabilities-header {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--dsh-space-3);
-  color: var(--dsh-muted);
-  font-size: var(--dsh-font-size-xs);
-}
-
-.dsh-runtime-status__capability-list {
-  display: grid;
-  gap: var(--dsh-space-1);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.dsh-runtime-status__capability {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--dsh-space-3);
-  font-size: var(--dsh-font-size-xs);
-}
-
-.dsh-runtime-status__capability code {
-  color: var(--dsh-muted);
-}
-
-.dsh-runtime-status__capability--verified-contract span {
-  color: var(--dsh-success);
-}
-
-.dsh-runtime-status__capability--compatibility-fallback span {
-  color: var(--dsh-warning);
-}
-
-.dsh-runtime-status__capability--unavailable span {
-  color: var(--dsh-muted);
-}
-
 .dsh-runtime-status__actions {
   display: flex;
   align-items: center;

@@ -13,6 +13,7 @@ import {
   Alpha161VersionAdapter,
   Alpha162VersionAdapter,
   Alpha171VersionAdapter,
+  Alpha172VersionAdapter,
   AlphaVersionAdapter,
   LegacyRc1VersionAdapter,
   LegacyRc2VersionAdapter,
@@ -27,6 +28,8 @@ import {
   Rc13VersionAdapter,
   Rc151VersionAdapter,
   Rc152VersionAdapter,
+  Rc153VersionAdapter,
+  Rc171VersionAdapter,
   SUPPORTED_DSH_VERSIONS,
 } from '../src/index.js'
 
@@ -61,9 +64,12 @@ describe('version adapter family chains', () => {
       new Alpha152VersionAdapter(options),
       new Rc151VersionAdapter(options),
       new Rc152VersionAdapter(options),
+      new Rc153VersionAdapter(options),
       new Alpha161VersionAdapter(options),
       new Alpha162VersionAdapter(options),
       new Alpha171VersionAdapter(options),
+      new Alpha172VersionAdapter(options),
+      new Rc171VersionAdapter(options),
     ]
 
     expect(adapters.map((adapter) => adapter.supportedVersion)).toEqual([...SUPPORTED_DSH_VERSIONS])
@@ -142,6 +148,9 @@ describe('version adapter family chains', () => {
     const alpha161 = new Alpha161VersionAdapter(options)
     const alpha162 = new Alpha162VersionAdapter(options)
     const alpha171 = new Alpha171VersionAdapter(options)
+    const alpha172 = new Alpha172VersionAdapter(options)
+    const rc153 = new Rc153VersionAdapter(options)
+    const rc171 = new Rc171VersionAdapter(options)
 
     expect(alpha2).toBeInstanceOf(Alpha1VersionAdapter)
     expect(alpha3).toBeInstanceOf(Alpha2VersionAdapter)
@@ -156,6 +165,9 @@ describe('version adapter family chains', () => {
     expect(alpha161).toBeInstanceOf(Rc152VersionAdapter)
     expect(alpha162).toBeInstanceOf(Alpha161VersionAdapter)
     expect(alpha171).toBeInstanceOf(Alpha162VersionAdapter)
+    expect(alpha172).toBeInstanceOf(Alpha171VersionAdapter)
+    expect(rc153).toBeInstanceOf(Rc152VersionAdapter)
+    expect(rc171).toBeInstanceOf(Alpha171VersionAdapter)
     expect(alpha1).not.toBeInstanceOf(Rc6VersionAdapter)
     expect(
       [
@@ -173,6 +185,7 @@ describe('version adapter family chains', () => {
         alpha161,
         alpha162,
         alpha171,
+        alpha172,
       ].map((adapter) => adapter.supportedVersion),
     ).toEqual([
       '0.1.2-alpha.1',
@@ -189,6 +202,7 @@ describe('version adapter family chains', () => {
       '0.1.6-alpha.1',
       '0.1.6-alpha.2',
       '0.1.7-alpha.1',
+      '0.1.7-alpha.2',
     ])
     expect(
       [
@@ -206,8 +220,9 @@ describe('version adapter family chains', () => {
         alpha161,
         alpha162,
         alpha171,
+        alpha172,
       ].map((adapter) => adapter.compatibilityPriority),
-    ).toEqual([80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180, 190, 200, 210])
+    ).toEqual([80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180, 190, 200, 210, 220])
     expect(
       [
         alpha1,
@@ -224,6 +239,7 @@ describe('version adapter family chains', () => {
         alpha161,
         alpha162,
         alpha171,
+        alpha172,
       ].map((adapter) => adapter.protocolVersion),
     ).toEqual([
       'alpha1',
@@ -240,6 +256,7 @@ describe('version adapter family chains', () => {
       'alpha161',
       'alpha162',
       'alpha171',
+      'alpha172',
     ])
     expect(alpha5.fallback).toBe(true)
     expect(alpha13.fallback).toBe(false)
@@ -250,6 +267,29 @@ describe('version adapter family chains', () => {
     expect(alpha161.fallback).toBe(false)
     expect(alpha162.fallback).toBe(false)
     expect(alpha171.fallback).toBe(false)
+    expect(alpha172.fallback).toBe(false)
+  })
+
+  it('keeps the newly released stable and RC profiles exact-only', () => {
+    const rc153 = new Rc153VersionAdapter(options)
+    const rc171 = new Rc171VersionAdapter(options)
+
+    expect(rc153).toBeInstanceOf(Rc152VersionAdapter)
+    expect(rc153).toMatchObject({
+      id: 'dsh-0.1.5-rc.3',
+      supportedVersion: '0.1.5-rc.3',
+      protocolVersion: 'rc153',
+      compatibilityPriority: 185,
+      fallback: false,
+    })
+    expect(rc171).toBeInstanceOf(Alpha171VersionAdapter)
+    expect(rc171).toMatchObject({
+      id: 'dsh-0.1.7-rc.1',
+      supportedVersion: '0.1.7-rc.1',
+      protocolVersion: 'rc171',
+      compatibilityPriority: 230,
+      fallback: false,
+    })
   })
 
   it('retains the old alpha family name as a compatibility alias only', () => {

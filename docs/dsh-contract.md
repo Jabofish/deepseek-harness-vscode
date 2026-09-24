@@ -8,10 +8,11 @@
 
 | 项目               | 固定值                                                                                                                                      |
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| 最新稳定/next DSH  | `@deepseek-ai/dsh@0.1.5-rc.2`                                                                                                               |
-| 最新 alpha 通道    | `@deepseek-ai/dsh@0.1.7-alpha.1`                                                                                                            |
-| npm 安装通道       | `latest` 与 `next` 均为 `0.1.5-rc.2`，`alpha` 为 `0.1.7-alpha.1`；扩展不使用 tag 解析，精确安装 `0.1.5-rc.2`                                |
-| 扩展安装默认       | 精确使用 `0.1.5-rc.2`                                                                                                                       |
+| 最新稳定 DSH       | `@deepseek-ai/dsh@0.1.5-rc.3`                                                                                                               |
+| 最新 next DSH      | `@deepseek-ai/dsh@0.1.7-rc.1`                                                                                                               |
+| 最新 alpha 通道    | `@deepseek-ai/dsh@0.1.7-alpha.2`                                                                                                            |
+| npm 安装通道       | `latest` 为 `0.1.5-rc.3`，`next` 为 `0.1.7-rc.1`，`alpha` 为 `0.1.7-alpha.2`；扩展不解析 dist-tag，精确安装 `0.1.5-rc.3`                    |
+| 扩展安装默认       | 精确使用 `0.1.5-rc.3`                                                                                                                       |
 | Node 最低版本      | `22.19.0`                                                                                                                                   |
 | 固定 Host API 契约 | [`47f943859bef60e4160492346772ded9b24f765a`](https://github.com/deepseek-ai/deepseek-harness/tree/47f943859bef60e4160492346772ded9b24f765a) |
 
@@ -21,6 +22,8 @@
 - [Host and mux events](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/host/apiproxy/src/api/events.ts)
 - [Tool catalog](https://github.com/deepseek-ai/deepseek-harness/tree/47f943859bef60e4160492346772ded9b24f765a/packages/core/tools)
 - [DSH CLI profile reference](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/reference/README.md)
+
+此固定 SHA 是 `0.1.0-rc.5` 的历史 Host API 基线。`0.1.5-rc.2`/`rc.3` 已改用 typed Remote、Connection/Gateway 与 Session Controller；上面的旧 `rpc-map.ts` 和 `events.ts` 不作为这两个版本的 wire 比较来源，应以各自 tag 中实际存在的接口源码为准。
 
 ## 版本与 Adapter
 
@@ -50,9 +53,14 @@
 | `0.1.5-alpha.2` | `alpha152` | Session v3；严格映射 `deliverables/presented` 与 `subagent/catalog`；只精确匹配。                                                                                                                                                                                                                                                                                                                                                                |
 | `0.1.5-rc.1`    | `rc151`    | 沿 v3 和交付/目录边界复用 alpha152；保留独立 rc 身份。                                                                                                                                                                                                                                                                                                                                                                                           |
 | `0.1.5-rc.2`    | `rc152`    | 沿 rc.1 的 v3 wire；增加消息反馈分类/提交语义和交付物展示边界。                                                                                                                                                                                                                                                                                                                                                                                  |
+| `0.1.5-rc.3`    | `rc153`    | [rc.2 tag](https://github.com/deepseek-ai/deepseek-harness/tree/dsh-v0.1.5-rc.2) `fb2c4b9e` → [rc.3 tag](https://github.com/deepseek-ai/deepseek-harness/tree/dsh-v0.1.5-rc.3) `a4c74a91`；适配实际使用的 Session Controller/typed Remote、Connection/Gateway 与 `core/tools/src` 运行时源码相同；变化在包元数据、lockfile 与依赖策略工具；沿用 rc152 wire 并保留独立精确身份。                                                                  |
 | `0.1.6-alpha.1` | `alpha161` | 沿 rc.2 的 Connection/Gateway 与 Session v3 wire；新增 projection 事件按 opaque 保留；只精确匹配。                                                                                                                                                                                                                                                                                                                                               |
 | `0.1.6-alpha.2` | `alpha162` | 保留 Connection/Gateway、Cookie 与 Session v3；`session/control` 改为 `jobs` + `projections.inbox`，适配层把 Inbox 两个列表归约为队列 DTO；`session/writer-held` 归一化为可重试的忙碌错误；只精确匹配。                                                                                                                                                                                                                                          |
 | `0.1.7-alpha.1` | `alpha171` | Session V4 的 `tool/result` 使用 first-class `role: 'tool'` 消息；`session/control` 只保留 `projections`；Workspace baseline 增加 `pinnedSessionIds`；Jobs 由独立 `job/list` whole-set rows、`job/follow` 字节偏移输出流和 `job/kill` 提供；registry-only `agentPresets/list` 使用 `modeSelectionEnabled` 且只支持 list/select，`pluginInventory/list` 的 preset 组合不再携带 trust；新增 archive/job 业务错误按 alpha171 词汇映射；只精确匹配。 |
+| `0.1.7-alpha.2` | `alpha172` | [上游 tag](https://github.com/deepseek-ai/deepseek-harness/tree/dsh-v0.1.7-alpha.2) `00102833`；沿用 Session V4 与 alpha171 的控制/Workspace/Job wire，增加只用于普通历史读取的 turn-window 分页和 ToolRuntime `projectContent()` 内容块投影；精确匹配。                                                                                                                                                                                         |
+| `0.1.7-rc.1`    | `rc171`    | [上游 tag](https://github.com/deepseek-ai/deepseek-harness/tree/dsh-v0.1.7-rc.1) `46a7f68b`；Session V4 和 turn-window 分页与 alpha.2 同族，已发布 web Host 实际启用 Job Controller；独立精确身份。                                                                                                                                                                                                                                              |
+
+rc.2 → rc.3 的实际源码比较覆盖 `packages/api/session-controller/src/{index.ts,types.ts,history.ts,remote-events.ts,client/transport.ts,client/contract/events.ts}`、`packages/api/remotes/src/{client/index.ts,types.ts}`、`packages/api/gateway/src/client/{remote-stream.ts,stream-client.ts,remote-events.ts}`、`packages/client/connection/src/client/index.ts` 与 `packages/core/tools/src`。Session Controller 的 `@Remote('list'/'page')` 和 `@Remote({ mode: 'stream' }) follow`、客户端 `remote.session.follow/page` 参数与历史事件校验均在两 tag 间相同；上述运行时源码路径的差异为空。
 
 ### 未知版本
 
@@ -68,11 +76,11 @@
 
 启动参数属于版本化契约，不是进程管理器可以全局添加的公共选项。
 
-| 版本                                                                                                                                                   | 参数                                        |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------- |
-| `0.0.1-rc.1/.2/.5`、`0.1.0-rc.2/.3/.6/.7`                                                                                                              | `--profile web --host 127.0.0.1 --port <n>` |
-| `0.1.0-rc.8`、`0.1.1-rc.1/.2`、`0.1.2-rc.1`、`0.1.2-alpha.1–.5`、`0.1.3-alpha.1/.2`、`0.1.5-alpha.1/.2/rc.1/rc.2`、`0.1.6-alpha.1/.2`、`0.1.7-alpha.1` | 上述参数加 `--no-open`                      |
-| 未知版本                                                                                                                                               | 只使用公共参数，不猜测可选 flag。           |
+| 版本                                                                                                                                                                | 参数                                        |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
+| `0.0.1-rc.1/.2/.5`、`0.1.0-rc.2/.3/.6/.7`                                                                                                                           | `--profile web --host 127.0.0.1 --port <n>` |
+| `0.1.0-rc.8`、`0.1.1-rc.1/.2`、`0.1.2-rc.1`、`0.1.2-alpha.1–.5`、`0.1.3-alpha.1/.2`、`0.1.5-alpha.1/.2/rc.1/rc.2/rc.3`、`0.1.6-alpha.1/.2`、`0.1.7-alpha.1/.2/rc.1` | 上述参数加 `--no-open`                      |
+| 未知版本                                                                                                                                                            | 只使用公共参数，不猜测可选 flag。           |
 
 参数由 `packages/dsh-adapter/src/launch-contract.ts` 集中生成。端口必须是已验证的 loopback 端口；不得扫描任意端口范围。
 
@@ -82,6 +90,9 @@
 - Alpha v0 使用 `POST /api/<namespace>/<method>` 的 Remote RPC、Cookie 握手和 `/api/remote.mux`；mux 以 `open`、`cancel`、`item`、`error`、`end` 帧承载 `$events`、follow 和 control 流。
 - `session/control` 的 alpha.1 基线通过 `queues`/`jobs` 发送 Host 当前 live Session 的瞬时状态；`0.1.6-alpha.2` 的基线严格改为 `jobs`/`projections`，待处理输入位于 `projections.<sessionId>.values.inbox` 的 `next-turn`/`next-step` 两个列表。alpha162 只在版本缝内把这两个列表投影为既有 `session/queue` DTO，队列操作仍以消息 ID 为键；不能让 alpha.1 的 `queues` 形状穿过 alpha.2 适配器。
 - `0.1.7-alpha.1` 的 `session/control` 基线只接受 `projections`，不再从该流读取 Jobs；Session V4 的 `tool/result` 是带 `role: 'tool'`、`toolCallId` 和 tool source 的 first-class message，适配层验证后再投影为现有时间线内部形状；Job roster 改由 `job/list` 的 `{type:'rows', jobs}` whole-set Remote 流提供，并通过 `job/follow`/`job/kill` 提供有界的人类只读观察和停止操作。其 `agentPresets/list` 只返回部署声明与 `modeSelectionEnabled`，没有旧版用户 root/trust、read/copy/delete 或 directory opener；适配器映射为不可 author 的 system preset，并只暴露真实存在的 list/select。`pluginInventory/list` 的 preset composition 同样没有 trust，不能沿用旧版 parser。旧版适配器不注册 Job Controller 操作，保留原有列表契约。
+- DSH `0.1.7-alpha.1`、`0.1.7-alpha.2`、`0.1.7-rc.1` 的 `packages/api/job-controller/src/{observe.ts,types.ts}` 与 `packages/jobs/jobs-local/src/ring.ts` 对 Job follow 使用绝对 UTF-8 字节偏移。`readFrom(from)` 返回完整 retained chunk，因此打开后首次返回带数据的帧可以含 `at < from < at + UTF8ByteLength(text)` 的合法 overlap；恢复端按字节并在码点边界裁切前缀。ring 为保留 UTF-8 尾部会把 earliest 调整到码点边界；空文本 chunk 仅作为 `lossy: true`、`gapBefore: true` 且 `at === next` 的截断尾标志，不能当作输出显示。三 tag 的这些源文件契约一致。
+- `0.1.7-alpha.2` 与 `0.1.7-rc.1` 的 `SessionPageRequest` 和 `SessionFollowRequest` 才接受 `turnWindow`。上游 Web 客户端普通首屏和 `loadOlder()` 使用 `maxMessages: 500`、`minMessages: 50`、`minTurns: 2`；其 `loadThrough()` 跳转分页将 `minMessages` 提高到 200。扩展首屏/follow 使用 50；单页读取更早历史时按扩展选定的 pageSize（当前 200）作为 `minMessages`，不是上游普通 `loadOlder()` 的默认值。扩展只在这两个精确版本的普通 Session/Subagent transcript 读取中发送该字段；断流补漏、导出、Goal 和其他严格读取仍按既有有界序号分页，不带 turn window。
+- `0.1.7-alpha.2` 的 `ToolRuntime.projectContent()` 可以在工具执行后增加普通 `ContentBlock`；Session V4 的工具结果封套没有因此改变。扩展按既有结构化内容块映射工具结果，不解析渲染文本；alpha172 合同 fixture 覆盖一个由 hook 插入的文本块。
 - rc.6 Host 与 mux 是两个逻辑流；session 事件携带 `sessionId` 和序号，订阅携带 `lastSeq`，审批/问题响应使用 `rpcId`，工具调用与结果使用结构化视图。
 - 工具卡的 `view` envelope（`{for:'call'|'result', view:{card}}`）只属于 legacy/rc 线：`toolEventViewSchema` 在 `0.1.1-rc.2` 及更早的 apiproxy `session/event` 帧与历史记录上仍在（`{event, view}`），到 `0.1.2-rc.1`（本仓库的 `rc13`）已整体移除——那之后的每个 tag（`rc151`/`rc152`、`0.1.2-alpha.1`–`alpha.5`、`0.1.3-alpha.1/.2`、`0.1.5-alpha.*`/`rc.*`、`0.1.6-alpha.1/.2`）历史记录都只是 `{type:'event', event}`（`SessionEventEntry` 无 `view`），`tool/call` 也只有 `name`/`arguments`，没有 call 期投影。
 - 这些宿主上工具自己的展示值由 `tool/result` 载荷里的 `meta` 承载：上游把工具的 `output.presentationMeta` 快照进去，并把它定义为「持久日志在回放时还原出同一张卡片」（`Session.append` 以 `isJsonValue` 校验，非可序列化值在源头被拒），因此适配层必须在 envelope 缺失时按 `meta` 的**形状**派生卡片：`diffs`（数组）为 diff 卡、搜索 `shape`（`matches`/`paths`）为搜索卡、`sources` 为网页搜索卡、`url` 为网页抓取卡、`lines` 为读卡；`diffs: []`（新建文件的空 diff）与畸形/缺字段的 `meta` 都不得产出卡片，行退化到通用路径，且**不得**按工具名建表猜测。`view` envelope 存在时仍以它为权威。读卡校验与参考卡模型及 pinned `read-render.ts` 一致：`offset ≥ 1`、行号严格递增且不超过 `totalLines`；搜索/网页的 `files`/`paths`/`sources` 必须是数组。
@@ -90,7 +101,7 @@
 - 同一批宿主上调用期（`tool/call`）也没有任何投影（`presentCall` 值不进 Client），运行中的变更卡必须由**调用参数**派生，规则与官方客户端 diff 卡模型逐条一致：`write` 取 `file_path` + `content`（`oldText: null`，覆盖写同样如此，因为调用期看不到原内容）、`edit` 取 `file_path` + `old_string`/`new_string`（空 `old_string` 视为纯插入，即 `oldText: null`；`replace_all` 只能是布尔）、`str_replace_editor` 只在 `command` 为 `create`（`file_text`，可缺省为空文件）或 `str_replace`（`old_str`/`new_str`，`old_str` 缺省为 `null`）时出卡；参数不合法（`path`/`file_path` 为空或非字符串、`content` 非字符串、`replace_all` 非布尔）、越权字段 `sandbox_permissions`/`justification` 不成对或取值不在 `workspace-write`/`danger-full-access` 且 justification 非空白、`str_replace_editor` 的其他命令、以及代码分发 PTC 子调用一律不出卡。派生只为上述第一方文件变更工具，绝不按名字给第三方工具编造卡片；envelope 存在时仍以宿主投影为权威。结算期不派生调用期卡片，时间线保留调用期已携带的卡（成功且 `meta` 带卡时由结算卡替换），因此「打算做」永远不会被当成「已做」。
 - Alpha v0 的 Remote Event 在结算时只向*其他*仍持有投递的 Client 推送 `cancel` 帧：发起响应的 Client 一旦 `$events/result` 被接受，就再也不会收到任何帧。因此本地已接受的审批/问题结算必须由适配层按真实身份补发 `permission.resolved`（`requestId` + outcome）或 `question.resolved`（`questionRpcId` + outcome）；否则 Host 回放缓存和任务中心会一直重放一个已经无法再回答的请求（响应只会得到 `STALE_INTERACTION`）。
 - Session v2 只在 `alpha13`/`alpha132` 精确入口启用 `isSeeded`、event-only history、`assistantStream` 和 `start/chunk/end` 修订帧。
-- Session v3 只在 `alpha151`/`alpha152`/`rc151`/`rc152`/`alpha161`/`alpha162` 精确入口启用严格 envelope、surface replacement、`system/message` 隔离和 PTC 事件；`image/offload` 决策事件按 opaque 保留，图片的持久附件引用继续可读；alpha162 的 `workspace/changes` 公告由宿主审查器解析坐标，使用固定 GET summary/diff 路由读取权威快照。
+- Session v3 只在 `alpha151`/`alpha152`/`rc151`/`rc152`/`rc153`/`alpha161`/`alpha162` 精确入口启用严格 envelope、surface replacement、`system/message` 隔离和 PTC 事件；`image/offload` 决策事件按 opaque 保留，图片的持久附件引用继续可读；alpha162 的 `workspace/changes` 公告由宿主审查器解析坐标，使用固定 GET summary/diff 路由读取权威快照。
 - Agent Teams 事件（`team/member`、`team/task`、`team/message/queued`、`team/message/delivered`）的 envelope 版本随发行线变化：已发布的 `0.1.2-alpha.2`–`alpha.5` 是 `version: 1`，其排队消息快照带必填 `delivery`；`0.1.6-alpha.1` 起为 `version: 2`（上游 `z.literal(2)` 严格校验），消息快照不再有 `delivery`。共享 mapper 同时接受这两种版本，v1 仍要求 `delivery`（缺失即判为畸形），v2 只在载荷携带时投影该字段；其他 envelope 版本继续 fail-closed 为 unknown。
 - `team/message/queued` 与 `team/message/delivered` 是同一条消息的两条记录：前者是已持久保存的消息本体（正文与发件人只在这里），后者是只带 `messageId`/`targetId` 的投递回执。时间线按 `teamId` + `messageId` 归并为一行，回执推进该行的状态并保留本体事实；成员与任务则各自按快照身份一行。任何一侧都不得据此伪造消息正文或把回执显示成独立卡片。消息正文与成员失败原因都是宿主原文：Mailbox 只约束发送方成帧后的整条投递（`maxMessageBytes`，默认 65 536 字节且可配置），失败原因由 `errorMessage(error)` 原样保存，因此这两段文本按普通散文渲染（换行、不省略号收尾），发件人（`senderName`）也必须出现在行上。
 - `system/message` 只在 Host 保留序号水印；系统提示词、Cookie、launch token、endpoint 和原始上游错误不进入 Webview。

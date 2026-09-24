@@ -1137,7 +1137,7 @@ describe('AppStore history paging', () => {
     expect(client.requests).toContainEqual(
       expect.objectContaining({
         type: 'session.history',
-        payload: { sessionId: 'parent', beforeSeq: 20, maxMessages: 200 },
+        payload: { sessionId: 'parent', beforeSeq: 20, maxMessages: 200, pagePurpose: 'transcript' },
       }),
     )
     expect(store.timeline.nodes.map((node) => node.id)).toEqual(['older', 'newer'])
@@ -1634,7 +1634,7 @@ describe('AppStore session branching', () => {
     expect(client.requests).toContainEqual(
       expect.objectContaining({
         type: 'subagent.history',
-        payload: { sessionId: 'child', beforeSeq: 60 },
+        payload: { sessionId: 'child', beforeSeq: 60, maxMessages: 200 },
       }),
     )
     expect(client.requests.some((request) => request.type === 'session.history')).toBe(false)

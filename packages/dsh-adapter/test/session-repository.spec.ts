@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { AppError } from '@dsh-vscode/domain'
+import { AppError, type BackendEvent, type QueuedInput } from '@dsh-vscode/domain'
 import type { DshTransport } from '../src/contracts.js'
 import { historyGapRecovery, Rc6SessionRepository } from '../src/repositories/session-repository.js'
 
@@ -1169,6 +1169,69 @@ describe('Rc6SessionRepository configuration safety', () => {
 })
 
 describe('Rc6SessionRepository history windows', () => {
+  it('enables turn-aligned conversation pages only for transcript reads, keeping recovery strict', async () => {
+    const calls: { method: string; params: unknown }[] = []
+    const transport: DshTransport = {
+      sessionHistoryTurnWindow: true,
+      request: <TResponse>(method: string, params: unknown) => {
+        calls.push({ method, params })
+        return Promise.resolve({ result: { ok: true, value: { events: [], hasMore: false } } } as TResponse)
+      },
+      remoteRequest: <TResponse>() => Promise.reject<TResponse>(new Error('unexpected Remote')),
+      openEventStream: async function* () {
+        /* fixture stream */
+      },
+      close: () => Promise.resolve(),
+    }
+    const repository = new Rc6SessionRepository(transport)
+
+    await repository.get('session-1')
+    await repository.history('session-1', 42, undefined, { pageSize: 200, pagePurpose: 'transcript' })
+    await repository.history('session-1', 84, undefined, { pageSize: 200, pagePurpose: 'gap-recovery' })
+    await repository.historyForRecovery('session-1')
+
+    expect(calls.map(({ params }) => params)).toEqual([
+      {
+        sessionId: 'session-1',
+        maxMessages: 500,
+        turnWindow: { minMessages: 50, minTurns: 2 },
+      },
+      {
+        sessionId: 'session-1',
+        maxMessages: 500,
+        turnWindow: { minMessages: 200, minTurns: 2 },
+        beforeSeq: 42,
+      },
+      { sessionId: 'session-1', maxMessages: 200, beforeSeq: 84 },
+      { sessionId: 'session-1', maxMessages: 50 },
+    ])
+  })
+
+  it('keeps requested transcript and recovery page sizes when turnWindow is unavailable', async () => {
+    const calls: { method: string; params: unknown }[] = []
+    const transport: DshTransport = {
+      sessionHistoryTurnWindow: false,
+      request: <TResponse>(method: string, params: unknown) => {
+        calls.push({ method, params })
+        return Promise.resolve({ result: { ok: true, value: { events: [], hasMore: false } } } as TResponse)
+      },
+      remoteRequest: <TResponse>() => Promise.reject<TResponse>(new Error('unexpected Remote')),
+      openEventStream: async function* () {
+        /* fixture stream */
+      },
+      close: () => Promise.resolve(),
+    }
+    const repository = new Rc6SessionRepository(transport)
+
+    await repository.history('session-1', 42, undefined, { pageSize: 200, pagePurpose: 'transcript' })
+    await repository.history('session-1', 84, undefined, { pageSize: 200, pagePurpose: 'gap-recovery' })
+
+    expect(calls.map(({ params }) => params)).toEqual([
+      { sessionId: 'session-1', maxMessages: 200, beforeSeq: 42 },
+      { sessionId: 'session-1', maxMessages: 200, beforeSeq: 84 },
+    ])
+  })
+
   it('opens from the authoritative history page without a redundant session.list read', async () => {
     const calls: { method: string; params: unknown }[] = []
     const transport: DshTransport = {
@@ -1837,6 +1900,12 @@ it.each([undefined, { plan: { active: true, pending: false }, permissions: { cur
 )
 
 describe('Rc6SessionRepository queue baseline reads', () => {
+  const sequencedQueue = (
+    sessionId: string,
+    items: readonly QueuedInput[],
+    asOfSequence: number,
+  ): BackendEvent => Object.assign({ type: 'queue.updated' as const, sessionId, items }, { asOfSequence })
+
   it('answers a read that arrived before the subscription with the baseline it waited for', async () => {
     const repository = new Rc6SessionRepository(sessionCreateTransport([]))
 
@@ -1951,5 +2020,53 @@ describe('Rc6SessionRepository queue baseline reads', () => {
     })
 
     await expect(repository.listQueue('session-1')).resolves.toHaveLength(1)
+  })
+
+  it('keeps the newer queue projection when an older control frame arrives after follow', async () => {
+    const repository = new Rc6SessionRepository(sessionCreateTransport([]), undefined, undefined, {
+      queueBaseline: 'control-follow',
+    })
+    const first = {
+      id: 'queued-1',
+      sessionId: 'session-1',
+      text: 'first',
+      attachments: [],
+      textOnly: true,
+      mode: 'queue',
+      createdAt: '2026-09-24T00:00:00.000Z',
+    } as const
+    const second = { ...first, id: 'queued-2', text: 'second' } as const
+
+    repository.remember(sequencedQueue('session-1', [first, second], 6))
+    repository.remember(sequencedQueue('session-1', [first], 6))
+    repository.remember(sequencedQueue('session-1', [first], 5))
+
+    await expect(repository.listQueue('session-1')).resolves.toEqual([first, second])
+    expect(repository.sessionForQueuedInput('queued-2')).toBe('session-1')
+    expect(repository.sessionForQueuedInput('queued-1')).toBe('session-1')
+  })
+
+  it('accepts a lower queue projection in a replacement repository epoch', async () => {
+    const previous = new Rc6SessionRepository(sessionCreateTransport([]), undefined, undefined, {
+      queueBaseline: 'control-follow',
+    })
+    const replacement = new Rc6SessionRepository(sessionCreateTransport([]), undefined, undefined, {
+      queueBaseline: 'control-follow',
+    })
+    const oldItem = {
+      id: 'queued-old',
+      sessionId: 'session-1',
+      text: 'old process',
+      attachments: [],
+      textOnly: true,
+      mode: 'queue',
+      createdAt: '2026-09-24T00:00:00.000Z',
+    } as const
+    const newItem = { ...oldItem, id: 'queued-new', text: 'replacement process' } as const
+
+    previous.remember(sequencedQueue('session-1', [oldItem], 6))
+    replacement.remember(sequencedQueue('session-1', [newItem], 0))
+
+    await expect(replacement.listQueue('session-1')).resolves.toEqual([newItem])
   })
 })

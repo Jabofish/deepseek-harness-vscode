@@ -209,6 +209,43 @@ describe('MarkdownContent', () => {
     expect(await screen.findByRole('button', { name: 'Copy' })).toBeDefined()
   })
 
+  it('highlights a closed fence while the message is still streaming', async () => {
+    await warmHighlighter()
+    const view = render(
+      <MarkdownContent streaming markdown={'Intro\n\n```typescript\nconst first = 1\n```\n\nStill writ'} />,
+    )
+
+    await waitFor(
+      () =>
+        expect(view.container.querySelector('[data-dsh-markdown-frozen="true"] pre.shiki')).not.toBeNull(),
+      { timeout: 5_000 },
+    )
+    expect(view.container.querySelector('[data-dsh-markdown-tail="true"]')?.textContent).toContain(
+      'Still writ',
+    )
+  })
+
+  it('keeps completed lines highlighted while the rest of the fence is still written', async () => {
+    await warmHighlighter()
+    const view = render(<MarkdownContent streaming markdown={'# Title\n\n```typescript\nconst first = 1'} />)
+    expect(view.container.querySelector('pre.shiki')).toBeNull()
+
+    view.rerender(<MarkdownContent streaming markdown={'# Title\n\n```typescript\nconst first = 1\n'} />)
+    await waitFor(() => expect(view.container.querySelector('pre.shiki')).not.toBeNull(), {
+      timeout: 5_000,
+    })
+    expect(view.container.querySelector('pre.shiki')?.textContent).toBe('const first = 1\n')
+
+    // The in-progress line is shown immediately and must not drop the colors
+    // of the lines that are already complete.
+    view.rerender(
+      <MarkdownContent streaming markdown={'# Title\n\n```typescript\nconst first = 1\nlet second = '} />,
+    )
+    const block = view.container.querySelector('pre.shiki')
+    expect(block?.textContent).toBe('const first = 1\nlet second = ')
+    expect(block?.querySelector('.line')?.textContent).toBe('const first = 1')
+  })
+
   it('keeps completed streaming blocks in a frozen region', () => {
     const { container, rerender } = render(
       <MarkdownContent streaming markdown={'First paragraph.\n\nSecond paragraph is still growing'} />,

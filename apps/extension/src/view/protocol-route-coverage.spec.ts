@@ -42,6 +42,11 @@ const handleRequestBody = handlerBody(
   'const handleRequest = async (request: WebviewRequest',
   'const router = new WebviewMessageRouter({',
 )
+const sessionHistoryRequestBody = handlerBody(
+  "if (request.type === 'session.history') {",
+  "if (request.type === 'session.create') {",
+)
+const jobFollowStartBody = handlerBody('const startJobFollow = ', 'const requireCurrentWorkspaceId = ')
 
 describe('feature route coverage', () => {
   it('dispatches every declared feature request', () => {
@@ -65,6 +70,15 @@ describe('feature route coverage', () => {
 })
 
 describe('webview route coverage', () => {
+  it('validates job follow cursors without comparing them to a stale list snapshot', () => {
+    expect(jobFollowStartBody).toContain('resolveJobFollowOffset(job, requestedFrom)')
+  })
+
+  it('forwards explicit session history purpose without forcing turn alignment', () => {
+    expect(sessionHistoryRequestBody).toContain('request.payload.pagePurpose')
+    expect(sessionHistoryRequestBody).not.toMatch(/turnAligned\s*:\s*true/u)
+  })
+
   it('dispatches every declared request', () => {
     const routed = routedTypes(handleRequestBody)
     const missing = declaredTypes(webviewRequestSchema).filter((type) => !routed.has(type))

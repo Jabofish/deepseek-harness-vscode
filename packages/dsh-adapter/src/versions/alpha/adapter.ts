@@ -11,7 +11,12 @@ import {
 } from '@dsh-vscode/domain'
 
 import { DshVersionAdapterBase, type VersionAdapterIdentity } from '../../adapter-base.js'
-import { isKnownDshVersion, normalizeDshVersion, type DshTransport } from '../../contracts.js'
+import {
+  isKnownDshVersion,
+  isMalformedDshVersionHint,
+  normalizeDshVersion,
+  type DshTransport,
+} from '../../contracts.js'
 import { withBestEffortAdapterCapabilities, withExactAdapterCapabilities } from '../../compatibility.js'
 import type { Rc6AdapterOptions } from '../rc6/adapter.js'
 import type { ExportFileSystem } from '../../repositories/export-repository.js'
@@ -68,6 +73,8 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
   protected readonly supportsSubagentPromptDelivery: boolean = false
   /** 0.1.3-alpha.1 renamed the commands/execute attachment parameter. */
   protected readonly commandAttachmentWire: CommandAttachmentWire = 'images'
+  /** New Session Control profiles supplement host queues from durable follow snapshots. */
+  protected readonly queueBaselineMode: 'control' | 'control-follow' = 'control'
 
   protected permissionCatalogReader(
     _transport: DshTransport,
@@ -98,7 +105,9 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
     signal: AbortSignal | undefined,
     compatibility: boolean,
   ): Promise<BackendCapabilities | undefined> {
+    if (isMalformedDshVersionHint(candidate.runtimeVersion)) return undefined
     const hintedVersion = normalizeDshVersion(candidate.runtimeVersion)
+    if (!compatibility && candidate.runtimeVersion !== hintedVersion) return undefined
     // Exact probes are still strict. Compatibility probes are a separate,
     // read-only path for a non-empty unknown runtime label; the successful
     // response, not the release suffix, is what permits reuse of this
@@ -193,10 +202,10 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
       onSessionAccess: (sessionId) => eventsHolder.value?.watchSession(sessionId),
       onSessionOpen: (sessionId) => eventsHolder.value?.refreshSession(sessionId),
       deriveTitleFromCwd: true,
-      // Alpha baselines queues on the session/control stream, not on
-      // `session/follow`; a subscription must not wipe that state, and a Session
-      // that stream never named has an empty queue rather than an unknown one.
-      queueBaseline: 'control',
+      // Older alpha profiles baseline queues on the host-wide control stream.
+      // Alpha171+ derives the complete queue from each V4 follow projection,
+      // because fork children can inherit Inbox state without a control event.
+      queueBaseline: this.queueBaselineMode,
     })
     const goals = new Rc6GoalRepository(transport, this.supportsLiveGoal)
     const jobs = this.createJobRepository(transport)

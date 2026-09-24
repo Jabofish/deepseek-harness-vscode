@@ -11,6 +11,7 @@ import {
 
 import {
   isKnownDshVersion,
+  isMalformedDshVersionHint,
   LATEST_COMPATIBILITY_FALLBACK_DSH_VERSION,
   normalizeDshVersion,
   SUPPORTED_DSH_RANGE,
@@ -83,7 +84,9 @@ export class Rc6VersionAdapter extends DshVersionAdapterBase {
     signal: AbortSignal | undefined,
     compatibilityProbe: boolean,
   ): Promise<BackendCapabilities | undefined> {
+    if (isMalformedDshVersionHint(candidate.runtimeVersion)) return undefined
     const hintedVersion = normalizeDshVersion(candidate.runtimeVersion)
+    if (!compatibilityProbe && candidate.runtimeVersion !== hintedVersion) return undefined
     // Reject a known version before opening a transport. Unknown compatibility
     // probes intentionally bypass this exact-version guard and establish
     // compatibility from the read-only legacy handshake below.

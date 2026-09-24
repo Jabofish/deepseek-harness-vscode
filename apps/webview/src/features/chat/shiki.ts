@@ -104,3 +104,113 @@ export function resolveBundledLanguage(value: string | undefined): WebviewLangua
   if (Object.hasOwn(languageLoaders, normalized)) return normalized as WebviewLanguage
   return LANGUAGE_ALIASES[normalized]
 }
+
+/** Long transcripts keep a bounded number of block highlights. */
+const MAX_CACHED_HIGHLIGHTS = 96
+
+/** A chunk that failed to load is transient, so failed entries retry once quiet. */
+const FAILED_HIGHLIGHT_RETRY_MS = 5_000
+
+/**
+ * Completed highlights keyed by grammar and exact code text. A streaming
+ * conversation re-renders on every delta, so without this cache each delta would
+ * re-tokenize every visible block on the Webview main thread. `null` records a
+ * failed attempt, which keeps that block as plaintext until the retry timer
+ * clears the entry.
+ */
+const codeHighlights = new Map<string, string | null>()
+const pendingHighlights = new Map<string, Promise<void>>()
+const highlightListeners = new Set<() => void>()
+let highlightVersion = 0
+let failedHighlightRetry: ReturnType<typeof setTimeout> | undefined
+
+/** Subscribe to cache completions; the version changes whenever one lands. */
+export function subscribeCodeHighlights(listener: () => void): () => void {
+  highlightListeners.add(listener)
+  return () => {
+    highlightListeners.delete(listener)
+  }
+}
+
+export function codeHighlightVersion(): number {
+  return highlightVersion
+}
+
+/**
+ * Highlight for exactly this code text, `null` when the attempt failed, or
+ * `undefined` while nothing has been attempted for it. Reading never starts
+ * work, so callers can compose a render synchronously and let
+ * {@link subscribeCodeHighlights} report when a highlight becomes readable.
+ */
+export function cachedCodeHighlight(language: WebviewLanguage, code: string): string | null | undefined {
+  return codeHighlights.get(highlightKey(language, code))
+}
+
+/** Highlight `code` in the background and cache the result. */
+export function requestCodeHighlight(language: WebviewLanguage, code: string): void {
+  const key = highlightKey(language, code)
+  if (codeHighlights.has(key) || pendingHighlights.has(key)) return
+  const request = renderCodeHighlight(language, code)
+    .then(
+      (html) => {
+        storeCodeHighlight(key, html)
+      },
+      () => {
+        storeCodeHighlight(key, null)
+      },
+    )
+    .finally(() => {
+      pendingHighlights.delete(key)
+    })
+  pendingHighlights.set(key, request)
+}
+
+function highlightKey(language: WebviewLanguage, code: string): string {
+  return `${language}\u0000${code}`
+}
+
+function storeCodeHighlight(key: string, html: string | null): void {
+  codeHighlights.delete(key)
+  codeHighlights.set(key, html)
+  while (codeHighlights.size > MAX_CACHED_HIGHLIGHTS) {
+    const oldest = codeHighlights.keys().next().value
+    if (oldest === undefined) break
+    codeHighlights.delete(oldest)
+  }
+  if (html === null) scheduleFailedHighlightRetry()
+  notifyHighlights()
+}
+
+/**
+ * Grammar chunks fail once and load on a later attempt. Clearing the failed
+ * entries lets the next render ask again instead of leaving those blocks as
+ * plaintext for the rest of the session.
+ */
+function scheduleFailedHighlightRetry(): void {
+  failedHighlightRetry ??= setTimeout(() => {
+    failedHighlightRetry = undefined
+    for (const [key, html] of codeHighlights) {
+      if (html === null) codeHighlights.delete(key)
+    }
+    notifyHighlights()
+  }, FAILED_HIGHLIGHT_RETRY_MS)
+}
+
+function notifyHighlights(): void {
+  highlightVersion += 1
+  for (const listener of highlightListeners) listener()
+}
+
+async function renderCodeHighlight(language: WebviewLanguage, code: string): Promise<string> {
+  const highlighter = await getWebviewHighlighter()
+  await highlighter.loadLanguage(language)
+  return highlighter.codeToHtml(code, {
+    lang: language,
+    themes: SHIKI_THEMES,
+    defaultColor: 'light-dark()',
+    // The surrounding Markdown CSS owns the surface. Shiki's default root
+    // background is an opaque theme color and would otherwise turn a light
+    // Webview code block into a dark rectangle.
+    rootStyle: false,
+  })
+}

@@ -914,10 +914,13 @@ export const rc6Mapper = {
         // an empty queue would make the repository wipe the queue and every
         // queue-owner entry while the host still holds the items.
         if (!Array.isArray(data.items)) throw new Error('Malformed session/queue items')
+        if (Object.hasOwn(data, 'asOfSequence') && !nonNegativeSafeSequence(data.asOfSequence))
+          throw new Error('Malformed session/queue projection sequence')
         return {
           type: 'queue.updated',
           sessionId,
           items: data.items.flatMap((entry) => queuedInput(entry, sessionId)),
+          ...(typeof data.asOfSequence === 'number' ? { asOfSequence: data.asOfSequence } : {}),
         }
       case 'session/subscribed':
         if (sessionId === '' || !safeSubscriptionSequence(data.lastSeq))

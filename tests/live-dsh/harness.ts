@@ -18,13 +18,16 @@ import type { DshBackend } from '../../packages/domain/src/backend.js'
 import type { BackendEndpoint } from '../../packages/domain/src/runtime.js'
 import { Rc151VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc151/adapter.js'
 import { Rc152VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc152/adapter.js'
+import { Rc153VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc153/adapter.js'
 import { Alpha161VersionAdapter } from '../../packages/dsh-adapter/src/versions/alpha161/adapter.js'
 import { Alpha162VersionAdapter } from '../../packages/dsh-adapter/src/versions/alpha162/adapter.js'
 import { Alpha171VersionAdapter } from '../../packages/dsh-adapter/src/versions/alpha171/adapter.js'
+import { Alpha172VersionAdapter } from '../../packages/dsh-adapter/src/versions/alpha172/adapter.js'
+import { Rc171VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc171/adapter.js'
 import { acquireManagedRuntimeLock } from './managed-lock.js'
 import { resolveLiveRuntime } from './runtime.js'
 
-export const DEFAULT_RUNTIME_VERSION = '0.1.5-rc.2'
+export const DEFAULT_RUNTIME_VERSION = '0.1.5-rc.3'
 export const LIVE_TIMEOUT_MS = 90_000
 
 export interface LiveRuntimeSnapshot {
@@ -145,9 +148,12 @@ export async function startManagedRuntime(options?: {
     steps.push(`managed start pid=${started.pid} endpoint=${started.endpoint.baseUrl}`)
 
     const adapters = [
+      new Rc171VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
+      new Alpha172VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
       new Alpha171VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
       new Alpha162VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
       new Alpha161VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
+      new Rc153VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
       new Rc152VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
       new Rc151VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
     ]

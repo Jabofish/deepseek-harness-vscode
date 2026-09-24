@@ -1,7 +1,11 @@
 import type { BackendCandidate } from '@dsh-vscode/domain'
 
 import { discoveryCancelled, isDiscoveryCancellation, type DiscoveryProvider } from './provider.js'
-import { parseDshProcessCandidates, runDiscoveryCommand } from './process-provider.js'
+import {
+  parseDshProcessCandidates,
+  resolveDshProcessRuntimeVersions,
+  runDiscoveryCommand,
+} from './process-provider.js'
 
 export class LinuxProcessDiscoveryProvider implements DiscoveryProvider {
   public readonly id = 'linux-process'
@@ -14,7 +18,13 @@ export class LinuxProcessDiscoveryProvider implements DiscoveryProvider {
       runDiscoveryCommand('ps', ['-eo', 'pid=,args='], signal),
       runDiscoveryCommand('ss', ['-ltnp'], signal),
     ])
-      .then(([processes, listeners]) => parseDshProcessCandidates(processes, listeners))
+      .then(async ([processes, listeners]) => {
+        const candidates = await resolveDshProcessRuntimeVersions(
+          parseDshProcessCandidates(processes, listeners),
+        )
+        if (signal?.aborted === true) throw discoveryCancelled(signal.reason)
+        return candidates
+      })
       .catch((error: unknown) => {
         if (isDiscoveryCancellation(error, signal)) throw discoveryCancelled(signal?.reason ?? error)
         return []

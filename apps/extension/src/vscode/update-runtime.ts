@@ -5,7 +5,11 @@ import type {
   DshUpdateSnapshot,
 } from '@dsh-vscode/domain'
 import { AppError } from '@dsh-vscode/domain'
-import { DSH_PACKAGE_NAME, redactText } from '@dsh-vscode/dsh-adapter'
+import {
+  DSH_PACKAGE_NAME,
+  isDshPackageVersion as isDshSemVerVersion,
+  redactText,
+} from '@dsh-vscode/dsh-adapter'
 
 import { isSupportedNodeVersion } from './install-runtime.js'
 
@@ -13,9 +17,6 @@ const UPDATE_CHECK_TIMEOUT_MS = 30_000
 const UPDATE_INSTALL_TIMEOUT_MS = 120_000
 const UPDATE_MAX_BUFFER = 1024 * 1024
 const ANSI_ESCAPE_PATTERN = new RegExp(`${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`, 'gu')
-const VERSION_PATTERN =
-  /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u
-
 export interface RuntimeCommandOptions {
   readonly timeout: number
   readonly maxBuffer: number
@@ -314,7 +315,7 @@ export function parseNpmMetadata(output: string): RegistryMetadata {
 }
 
 export function isDshPackageVersion(value: string): boolean {
-  return VERSION_PATTERN.test(value)
+  return isDshSemVerVersion(value)
 }
 
 export function compareVersions(left: string, right: string): number {

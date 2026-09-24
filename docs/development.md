@@ -5,9 +5,9 @@
 - Node.js：`>=22.19.0 <27`，CI 使用 `22.19.0`。
 - pnpm：`11.19.0`，由根 `packageManager` 固定。
 - VS Code：扩展 `engines.vscode` 为 `^1.125.0`。
-- DSH：已发布 `0.0.1-rc.1`/`.2`/`.5`、`0.1.0-rc.2`/`.3`、`0.1.0-rc.6` 至 `0.1.2-rc.1`、`0.1.2-alpha.2` 至 `0.1.2-alpha.5`、`0.1.3-alpha.2`、`0.1.5-alpha.1`/`.2`/`rc.1`/`rc.2` 和 alpha 通道 `0.1.6-alpha.1`/`.2`、`0.1.7-alpha.1`，未发布的 `0.1.2-alpha.1`、`0.1.3-alpha.1` 仅保留源码级入口；安装器精确安装 `0.1.5-rc.2`，不解析 dist-tag。每个版本所属的 wire family、Session 版本缝、托管启动参数和未知版本降级规则以 [dsh-contract.md](dsh-contract.md) 为准；真实联调前用 `dsh --version` 确认本机运行时版本。
+- DSH：支持已发布 `0.0.1-rc.1`/`.2`/`.5`、`0.1.0-rc.2`/`.3`、`0.1.0-rc.6` 至 `0.1.2-rc.1`、`0.1.2-alpha.2` 至 `0.1.2-alpha.5`、`0.1.3-alpha.2`、`0.1.5-alpha.1`/`.2`/`rc.1`/`rc.2`/`rc.3`、`0.1.6-alpha.1`/`.2`、`0.1.7-alpha.1`/`.2` 和 `0.1.7-rc.1`；未发布的 `0.1.2-alpha.1`、`0.1.3-alpha.1` 仅保留源码级入口。安装器精确安装 `0.1.5-rc.3`，不解析 dist-tag。每个版本所属的 wire family、Session 版本缝、托管启动参数和未知版本降级规则以 [dsh-contract.md](dsh-contract.md) 为准；真实联调前用 `dsh --version` 确认本机运行时版本。
 
-版本 Adapter 结构：公共 identity/probe 形状位于 `packages/dsh-adapter/src/adapter-base.ts`；实现按真实协议边界维护 legacy rc、alpha family v0、alpha13/alpha132 Session v2、alpha151/alpha152/rc151/rc152/alpha161/alpha162 Session v3 和 alpha171 Session V4 明确入口。legacy rc 内部再区分 `0.0.1-rc.1`、`.2` 的旧 `command.*`/事件族与 `0.0.1-rc.5`、`0.1.0-rc.2/.3` 的 rc.6 Host API 族；`0.1.2-rc.1` 虽是 rc 发布号，浏览器 wire 仍沿 alpha.5，因此由 `versions/rc13` 复用 v0；`0.1.3-alpha.1` 使用 `versions/alpha13`，`.2` 使用 `versions/alpha132` 并仅在该版本启用 subagent `delivery`，`0.1.5-alpha.1/.2/rc.1/rc.2` 使用 `versions/alpha151`/`alpha152`/`rc151`/`rc152` 并仅在对应版本启用 v3 及已核对的交付/目录事件，`0.1.6-alpha.1` 使用 `versions/alpha161`，`0.1.6-alpha.2` 使用 `versions/alpha162` 并仅在精确入口启用 Inbox control projection，`0.1.7-alpha.1` 使用 `versions/alpha171` 并仅启用 Session V4、projection-only control、pinned Workspace 和 Job Controller rows；两个 0.1.6 alpha 版本的新增 projection 事件仍只安全 opaque 保留。新增版本必须先完成上游差异审计和脱敏契约 fixture，再决定是否需要新的 mapper；不能跨 wire family 猜测。
+版本 Adapter 结构：公共 identity/probe 形状位于 `packages/dsh-adapter/src/adapter-base.ts`；实现按真实协议边界维护 legacy rc、alpha family v0、Session v2、Session v3 和 Session V4 明确入口。`0.1.5-rc.3` 使用独立 `rc153` 身份并复用 rc.2 wire；`0.1.7-alpha.2` 与 `0.1.7-rc.1` 分别由 `alpha172`/`rc171` 精确识别，沿用 Session V4/Job Controller 边界，只在各自 transport profile 中启用普通历史 turnWindow。legacy rc 内部再区分 `0.0.1-rc.1`、`.2` 的旧 `command.*`/事件族与 `0.0.1-rc.5`、`0.1.0-rc.2/.3` 的 rc.6 Host API 族；`0.1.2-rc.1` 虽是 rc 发布号，浏览器 wire 仍沿 alpha.5，因此由 `versions/rc13` 复用 v0；`0.1.3-alpha.1` 使用 `versions/alpha13`，`.2` 使用 `versions/alpha132` 并仅在该版本启用 subagent `delivery`，`0.1.5-alpha.1/.2/rc.1/rc.2/rc.3` 使用对应 `versions/alpha151`/`alpha152`/`rc151`/`rc152`/`rc153` 并仅在对应版本启用 v3 及已核对的交付/目录事件，`0.1.6-alpha.1` 使用 `versions/alpha161`，`0.1.6-alpha.2` 使用 `versions/alpha162` 并仅在精确入口启用 Inbox control projection，`0.1.7-alpha.1` 使用 `versions/alpha171` 并启用 Session V4、projection-only control、pinned Workspace 和 Job Controller rows；两个 0.1.6 alpha 版本的新增 projection 事件仍只安全 opaque 保留。新增版本必须先完成上游差异审计和脱敏契约 fixture，再决定是否需要新的 mapper；不能跨 wire family 猜测。
 
 ## 首次安装
 
@@ -28,6 +28,15 @@ pnpm build
 3. 按 `F5`，选择 `Run DSH VS Code Extension`。
 4. 新 Extension Development Host 使用 `.test-workspace`，不会把测试文件混入仓库。
 5. 修改 Webview 时使用 `pnpm dev`；Vite 输出固定文件到 `apps/extension/media`，该目录不提交。
+
+F5 附加依赖 VS Code 自带 js-debug：附加 localhost 目标时它会同时请求 `127.0.0.1` 与 `[::1]`，而扩展主机的 inspector 只监听 IPv4。`[::1]` 的 `ECONNREFUSED` 先到达时整次探测直接失败（本机就是这种时序），扩展主机停在第 1 行不再继续，表现为“扩展未在 10 秒内启动，可能在第一行已停止”。`scripts/patch-js-debug-ipv6-probe.cjs` 把单个地址的失败降级为淘汰该地址，两个地址都失败时仍抛错，保留“目标未就绪就重试”的语义：
+
+```powershell
+node scripts/patch-js-debug-ipv6-probe.cjs            # 打完补丁需重载 VS Code 窗口
+node scripts/patch-js-debug-ipv6-probe.cjs --restore  # 还原为原文件
+```
+
+VS Code 更新会整体替换安装目录，补丁需要重新执行。未打补丁时 `Ctrl+F5`（运行但不调试）仍然可用：`noDebug` 下 js-debug 不加 `--inspect-brk-extensions`，扩展主机不会被暂停。
 
 如果 Extension Development Host 没有实际打开文件夹，扩展不会依赖
 `workspaceFolders` 推断工作区；连接 DSH 后，Host 会在扩展的 `globalStorageUri` 下创建或恢复
@@ -55,7 +64,7 @@ pnpm build
 
 1. 选择 `new-isolated`，或 `auto` 且确认没有可连接实例。
 2. `dsh.connection.managedPort=0` 使用随机空闲端口；固定端口用于可预测调试。
-3. 托管启动使用版本化参数数组：`0.0.1-rc.1/.2/.5`、`0.1.0-rc.2/.3`、`0.1.0-rc.6/.7` 为 `--profile web --host 127.0.0.1 --port <n>`；rc.8、`0.1.1-rc.1/.2`、`0.1.2-rc.1`、alpha.1–alpha.5、`0.1.3-alpha.1/.2`、`0.1.5-alpha.1/.2/rc.1/rc.2`、`0.1.6-alpha.1/.2` 和 `0.1.7-alpha.1` 在同一组参数中追加已由上游声明的 `--no-open`；未知版本不猜测该可选参数。
+3. 托管启动使用版本化参数数组：`0.0.1-rc.1/.2/.5`、`0.1.0-rc.2/.3`、`0.1.0-rc.6/.7` 为 `--profile web --host 127.0.0.1 --port <n>`；rc.8、`0.1.1-rc.1/.2`、`0.1.2-rc.1`、alpha.1–alpha.5、`0.1.3-alpha.1/.2`、`0.1.5-alpha.1/.2/rc.1/rc.2/rc.3`、`0.1.6-alpha.1/.2` 和 `0.1.7-alpha.1/.2/rc.1` 在同一组参数中追加已由上游声明的 `--no-open`；未知版本不猜测该可选参数。
 4. 扩展关闭后只结束本次扩展创建的进程。
 
 ## Remote SSH/WSL/Dev Container

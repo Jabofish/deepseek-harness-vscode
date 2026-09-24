@@ -1574,7 +1574,6 @@ export function App(): ReactElement {
                       runtime={backend}
                       connectedDshVersion={state.connectedDshVersion}
                       compatibilityWarning={compatibilityWarning}
-                      featureProfile={state.featureProfile}
                       sessionControl={sessionControl}
                       onNewSession={headerOnNewSession}
                       onOpenSettings={headerOnOpenSettings}

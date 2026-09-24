@@ -23,14 +23,15 @@ never touched. It is skipped unless explicitly enabled:
 ```powershell
 $env:DSH_LIVE_SMOKE = '1'
 $env:DSH_LIVE_RUNTIME = 'dsh.cmd'                                     # optional; defaults to `dsh` on PATH
-$env:DSH_LIVE_RUNTIME_VERSION = '0.1.5-rc.2'                          # optional; defaults to the pinned runtime
+$env:DSH_LIVE_RUNTIME_VERSION = '0.1.5-rc.3'                          # optional; defaults to the pinned runtime
 pnpm exec vitest run tests/live-dsh
 ```
 
-To exercise the source-level alpha171 adapter, install `@deepseek-ai/dsh@0.1.7-alpha.1`
-in an isolated prefix, pass its executable path through `DSH_LIVE_RUNTIME`, and set
-`DSH_LIVE_RUNTIME_VERSION=0.1.7-alpha.1`. The default remains the published rc.2
-runtime; alpha171 evidence is opt-in and must not reuse an external DSH process.
+To exercise the newer exact adapters, install the selected package version in an
+isolated prefix, pass its executable path through `DSH_LIVE_RUNTIME`, and set
+`DSH_LIVE_RUNTIME_VERSION` to the same exact version. This covers
+`0.1.7-alpha.1`, `0.1.7-alpha.2` and `0.1.7-rc.1`; each run still creates and
+stops its own isolated DSH process. The default runtime is `0.1.5-rc.3`.
 
 The specs that drive a real host read the same two variables inside
 `startManagedRuntime`, so `run.spec.ts`, `surfaces.spec.ts`,

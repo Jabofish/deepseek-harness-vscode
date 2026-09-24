@@ -38,12 +38,24 @@ describe('attachment ingest schema', () => {
     ).toBe(true)
   })
 
-  it('accepts bounded DSH history paging parameters and rejects an invalid cursor', () => {
+  it('accepts bounded DSH history paging intent and rejects invalid cursors or intent', () => {
     expect(
       webviewRequestSchema.safeParse({
         type: 'session.history',
         requestId: 'history-1',
-        payload: { sessionId: 'session-1', beforeSeq: 20, maxMessages: 200 },
+        payload: {
+          sessionId: 'session-1',
+          beforeSeq: 20,
+          maxMessages: 200,
+          pagePurpose: 'transcript',
+        },
+      }).success,
+    ).toBe(true)
+    expect(
+      webviewRequestSchema.safeParse({
+        type: 'session.history',
+        requestId: 'history-gap-recovery',
+        payload: { sessionId: 'session-1', pagePurpose: 'gap-recovery' },
       }).success,
     ).toBe(true)
     expect(
@@ -51,6 +63,27 @@ describe('attachment ingest schema', () => {
         type: 'session.history',
         requestId: 'history-2',
         payload: { sessionId: 'session-1', beforeSeq: -1 },
+      }).success,
+    ).toBe(false)
+    expect(
+      webviewRequestSchema.safeParse({
+        type: 'session.history',
+        requestId: 'history-invalid-purpose',
+        payload: { sessionId: 'session-1', pagePurpose: 'unknown' },
+      }).success,
+    ).toBe(false)
+    expect(
+      webviewRequestSchema.safeParse({
+        type: 'subagent.history',
+        requestId: 'subagent-history-1',
+        payload: { sessionId: 'child-1', beforeSeq: 20, maxMessages: 200 },
+      }).success,
+    ).toBe(true)
+    expect(
+      webviewRequestSchema.safeParse({
+        type: 'subagent.history',
+        requestId: 'subagent-history-2',
+        payload: { sessionId: 'child-1', maxMessages: 201 },
       }).success,
     ).toBe(false)
   })

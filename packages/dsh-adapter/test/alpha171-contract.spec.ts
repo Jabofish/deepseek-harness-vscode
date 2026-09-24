@@ -2,12 +2,18 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { BackendCandidate, BackendEndpoint } from '@dsh-vscode/domain'
 
+import { Rc6SessionRepository } from '../src/repositories/session-repository.js'
 import { Alpha171JobRepository } from '../src/versions/alpha171/job-repository.js'
 import { Alpha171PluginRepository } from '../src/versions/alpha171/plugin-repository.js'
 import { Alpha171PresetRepository } from '../src/versions/alpha171/preset-repository.js'
 import { Alpha171VersionAdapter } from '../src/versions/alpha171/adapter.js'
+import { normalizeAlpha171ControlFrame } from '../src/versions/alpha171/session-control.js'
+import { Alpha172VersionAdapter } from '../src/versions/alpha172/adapter.js'
+import { Rc171VersionAdapter } from '../src/versions/rc171/adapter.js'
 import type { AlphaLoopbackApiClient, AlphaWebSocket } from '../src/versions/alpha/transport.js'
 import { callRpc, unwrapRpcResultValue } from '../src/versions/rc6/rpc.js'
+import { rc6Mapper } from '../src/versions/rc6/mapper.js'
+import { DshStreamController } from '../src/stream-controller.js'
 
 /**
  * Fixture authority: DSH tag `dsh-v0.1.7-alpha.1`, commit
@@ -78,8 +84,68 @@ function adapter(): Alpha171VersionAdapter {
   return new Alpha171VersionAdapter(adapterOptions)
 }
 
+interface ControlAdapterProfile {
+  readonly name: string
+  readonly create: (fetch?: typeof globalThis.fetch) => Alpha171VersionAdapter
+}
+
+/**
+ * These exact profiles share the pinned InboxWireState:
+ * - `dsh-v0.1.7-alpha.2` at `00102833dfaee1da9f48a3a8eae9d34005a75218`
+ * - `dsh-v0.1.7-rc.1` at `46a7f68b0922371ce7144b668b90e377d8e799f4`
+ */
+const controlAdapterProfiles: readonly ControlAdapterProfile[] = [
+  {
+    name: 'alpha.1',
+    create: (fetch = globalThis.fetch) => new Alpha171VersionAdapter({ ...adapterOptions, fetch }),
+  },
+  {
+    name: 'alpha.2',
+    create: (fetch = globalThis.fetch) => new Alpha172VersionAdapter({ ...adapterOptions, fetch }),
+  },
+  {
+    name: 'rc.1',
+    create: (fetch = globalThis.fetch) => new Rc171VersionAdapter({ ...adapterOptions, fetch }),
+  },
+]
+
+function inboxMessage(
+  id: string,
+  text: string,
+  source: Record<string, unknown> = { kind: 'user' },
+): Record<string, unknown> {
+  return {
+    id,
+    role: 'user',
+    content: [{ type: 'text', text }],
+    source,
+  }
+}
+
+function inboxValue(
+  nextTurn: readonly unknown[] = [],
+  nextStep: readonly unknown[] = [],
+): Record<string, unknown> {
+  return { 'next-turn': nextTurn, 'next-step': nextStep }
+}
+
 function streamItem(socket: FakeWebSocket, value: unknown): unknown {
   const opening = JSON.parse(socket.sent[0] ?? '{}') as { readonly streamId?: unknown }
+  return { type: 'item', streamId: opening.streamId, value }
+}
+
+function streamItemFor(socket: FakeWebSocket, endpoint: string, value: unknown): unknown {
+  const opening = socket.sent
+    .map(
+      (sent) =>
+        JSON.parse(sent) as {
+          readonly type?: unknown
+          readonly endpoint?: unknown
+          readonly streamId?: unknown
+        },
+    )
+    .find((frame) => frame.type === 'open' && frame.endpoint === endpoint)
+  if (typeof opening?.streamId !== 'string') throw new Error(`the alpha mux never opened ${endpoint}`)
   return { type: 'item', streamId: opening.streamId, value }
 }
 
@@ -628,4 +694,555 @@ describe('DSH 0.1.7-alpha.1 contract', () => {
     })
     await transport.close()
   })
+})
+
+const malformedInboxFixtures: readonly { readonly name: string; readonly value: unknown }[] = [
+  { name: 'missing next-step list', value: { 'next-turn': [] } },
+  { name: 'unexpected list key', value: { ...inboxValue(), other: [] } },
+  { name: 'non-array next-turn list', value: { 'next-turn': 'invalid', 'next-step': [] } },
+  {
+    name: 'non-user message role',
+    value: inboxValue([{ ...inboxMessage('m-role', 'queued'), role: 'assistant' }]),
+  },
+  {
+    name: 'malformed message content',
+    value: inboxValue([{ ...inboxMessage('m-content', 'queued'), content: [{}] }]),
+  },
+  {
+    name: 'duplicate message id across lists',
+    value: inboxValue([inboxMessage('m-duplicate', 'queued')], [inboxMessage('m-duplicate', 'steering')]),
+  },
+  {
+    name: 'blank user rpcId',
+    value: inboxValue([inboxMessage('m-rpc-blank', 'queued', { kind: 'user', rpcId: '  ' })]),
+  },
+  {
+    name: 'non-string user rpcId',
+    value: inboxValue([inboxMessage('m-rpc-type', 'queued', { kind: 'user', rpcId: 42 })]),
+  },
+]
+
+for (const malformed of malformedInboxFixtures) {
+  it(`rejects ${malformed.name} in both projection forms`, () => {
+    expect(
+      normalizeAlpha171ControlFrame({
+        type: 'projection',
+        sessionId: 's-1',
+        key: 'inbox',
+        value: malformed.value,
+        seq: 13,
+      }),
+    ).toBeUndefined()
+    expect(
+      normalizeAlpha171ControlFrame({
+        type: 'baseline',
+        value: {
+          projections: {
+            's-1': { asOfSeq: 12, values: { inbox: malformed.value } },
+          },
+        },
+      }),
+    ).toBeUndefined()
+  })
+}
+
+for (const profile of controlAdapterProfiles) {
+  describe(`DSH 0.1.7-${profile.name} projection Inbox queue contract`, () => {
+    it('hydrates a fork child queue from its follow projection after control baseline', async () => {
+      FakeWebSocket.instances.length = 0
+      const transport = profile.create().createTransport(endpoint) as AlphaLoopbackApiClient
+      const repository = new Rc6SessionRepository(transport, undefined, undefined, {
+        queueBaseline: 'control-follow',
+      })
+      const controlAbort = new AbortController()
+      const control = transport.openHostStream(controlAbort.signal)[Symbol.asyncIterator]()
+      let unsubscribe: (() => void) | undefined
+      let controller: DshStreamController | undefined
+      try {
+        const baseline = control.next()
+        const socket = await waitForSocket()
+        socket.open()
+        await waitForSent(socket, 1)
+        socket.message(
+          streamItemFor(socket, 'session/control', { type: 'baseline', value: { projections: {} } }),
+        )
+        await expect(baseline).resolves.toEqual({
+          done: false,
+          value: { type: 'session/projection-baseline', projections: {} },
+        })
+
+        const received: unknown[] = []
+        controller = new DshStreamController(transport, (event) => repository.remember(event), undefined, {
+          streamSource: (signal) => transport.openSessionStream('fork-child', signal),
+          closeTransport: false,
+        })
+        unsubscribe = controller.subscribe((event) => received.push(event))
+        await waitForSent(socket, 2)
+        const queueRead = repository.listQueue('fork-child')
+        socket.message(
+          streamItemFor(socket, 'session/follow', {
+            type: 'snapshot',
+            header: { version: 4, id: 'fork-child', createdAt: 1, isSeeded: true, delegationDepth: 0 },
+            cursor: 3,
+            records: [],
+            hasMore: true,
+            projections: {
+              asOfSeq: 3,
+              values: { inbox: inboxValue([inboxMessage('inherited-q', 'inherited prompt')]) },
+            },
+            assistantStream: { revision: 0 },
+          }),
+        )
+
+        await expect(queueRead).resolves.toMatchObject([
+          { id: 'inherited-q', mode: 'queue', text: 'inherited prompt' },
+        ])
+        await vi.waitFor(() =>
+          expect(received).toContainEqual(
+            expect.objectContaining({
+              type: 'queue.updated',
+              sessionId: 'fork-child',
+              asOfSequence: 3,
+              items: [expect.objectContaining({ id: 'inherited-q', mode: 'queue' })],
+            }),
+          ),
+        )
+
+        repository.remember(
+          rc6Mapper.event('session/queue', {
+            sessionId: 'fork-child',
+            data: {
+              items: [
+                {
+                  id: 'stale-q',
+                  placement: 'queued',
+                  message: { id: 'stale-q', content: [{ type: 'text', text: 'stale prompt' }] },
+                },
+              ],
+            },
+          }),
+        )
+        socket.message(
+          streamItemFor(socket, 'session/follow', {
+            type: 'snapshot',
+            header: { version: 4, id: 'fork-child', createdAt: 1, isSeeded: true, delegationDepth: 0 },
+            cursor: 4,
+            records: [],
+            hasMore: true,
+            projections: { asOfSeq: 4, values: { inbox: inboxValue() } },
+            assistantStream: { revision: 1 },
+          }),
+        )
+        await vi.waitFor(() =>
+          expect(received).toContainEqual({
+            type: 'queue.updated',
+            sessionId: 'fork-child',
+            asOfSequence: 4,
+            items: [],
+          }),
+        )
+        await expect(repository.listQueue('fork-child')).resolves.toEqual([])
+        expect(repository.sessionForQueuedInput('stale-q')).toBeUndefined()
+
+        const queueUpdateCount = received.filter(
+          (event) =>
+            typeof event === 'object' &&
+            event !== null &&
+            (event as { type?: unknown }).type === 'queue.updated',
+        ).length
+        repository.remember(
+          rc6Mapper.event('session/queue', {
+            sessionId: 'fork-child',
+            data: {
+              items: [
+                {
+                  id: 'missing-inbox-q',
+                  placement: 'queued',
+                  message: { id: 'missing-inbox-q', content: [{ type: 'text', text: 'clear me' }] },
+                },
+              ],
+            },
+          }),
+        )
+        socket.message(
+          streamItemFor(socket, 'session/follow', {
+            type: 'snapshot',
+            header: { version: 4, id: 'fork-child', createdAt: 1, isSeeded: true, delegationDepth: 0 },
+            cursor: 5,
+            records: [],
+            hasMore: true,
+            projections: { asOfSeq: 5, values: { title: 'Fork child without inbox' } },
+            assistantStream: { revision: 2 },
+          }),
+        )
+        await vi.waitFor(() =>
+          expect(
+            received.filter(
+              (event) =>
+                typeof event === 'object' &&
+                event !== null &&
+                (event as { type?: unknown }).type === 'queue.updated',
+            ),
+          ).toHaveLength(queueUpdateCount + 1),
+        )
+        await expect(repository.listQueue('fork-child')).resolves.toEqual([])
+        expect(repository.sessionForQueuedInput('missing-inbox-q')).toBeUndefined()
+      } finally {
+        unsubscribe?.()
+        await controller?.close()
+        controlAbort.abort()
+        await control.return?.()
+        await transport.close()
+      }
+    })
+
+    it('rejects a malformed follow Inbox snapshot before yielding its durable records', async () => {
+      FakeWebSocket.instances.length = 0
+      const transport = profile.create().createTransport(endpoint) as AlphaLoopbackApiClient
+      const stream = transport.openSessionStream('fork-child', new AbortController().signal)
+      const iterator = stream[Symbol.asyncIterator]()
+      try {
+        const first = iterator.next()
+        const socket = await waitForSocket()
+        socket.open()
+        await waitForSent(socket, 1)
+        socket.message(
+          streamItemFor(socket, 'session/follow', {
+            type: 'snapshot',
+            header: { version: 4, id: 'fork-child', createdAt: 1, isSeeded: true, delegationDepth: 0 },
+            cursor: 1,
+            records: [{ type: 'event', event: { type: 'turn/start', seq: 1, time: 1, data: { turn: 1 } } }],
+            hasMore: true,
+            projections: { asOfSeq: 1, values: { inbox: { 'next-turn': 'invalid', 'next-step': [] } } },
+            assistantStream: { revision: 0 },
+          }),
+        )
+        await expect(first).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
+      } finally {
+        await iterator.return?.()
+        await transport.close()
+      }
+    })
+
+    it('projects both Inbox lists before their baseline and incremental watermarks', async () => {
+      FakeWebSocket.instances.length = 0
+      const transport = profile.create().createTransport(endpoint) as AlphaLoopbackApiClient
+      const iterator = transport.openHostStream(new AbortController().signal)[Symbol.asyncIterator]()
+      const first = iterator.next()
+      const socket = await waitForSocket()
+      socket.open()
+      await waitForSent(socket, 1)
+      const queued = inboxMessage('m-queued', 'queued text', { kind: 'user', rpcId: 'request-queued' })
+      const steering = inboxMessage('m-steering', 'steering text', { kind: 'plugin', plugin: 'test' })
+      socket.message(
+        streamItem(socket, {
+          type: 'baseline',
+          value: {
+            projections: {
+              's-1': {
+                asOfSeq: 12,
+                values: { title: 'Pinned', inbox: inboxValue([queued], [steering]) },
+              },
+            },
+          },
+        }),
+      )
+
+      const queue = await first
+      expect(queue).toEqual({
+        done: false,
+        value: {
+          type: 'session/queue',
+          sessionId: 's-1',
+          asOfSequence: 12,
+          items: [
+            {
+              id: 'm-queued',
+              placement: 'queued',
+              rpcId: 'request-queued',
+              message: { id: 'm-queued', content: [{ type: 'text', text: 'queued text' }] },
+            },
+            {
+              id: 'm-steering',
+              placement: 'steering',
+              message: { id: 'm-steering', content: [{ type: 'text', text: 'steering text' }] },
+            },
+          ],
+        },
+      })
+      const queueFrame = queue.value as {
+        readonly type: 'session/queue'
+        readonly sessionId: string
+        readonly asOfSequence: number
+        readonly items: readonly Record<string, unknown>[]
+      }
+      expect(
+        rc6Mapper.event('session/queue', {
+          sessionId: queueFrame.sessionId,
+          data: { items: queueFrame.items, asOfSequence: queueFrame.asOfSequence },
+        }),
+      ).toMatchObject({
+        type: 'queue.updated',
+        sessionId: 's-1',
+        asOfSequence: 12,
+        items: [
+          { id: 'm-queued', mode: 'queue', text: 'queued text', rpcId: 'request-queued' },
+          { id: 'm-steering', mode: 'steer', text: 'steering text' },
+        ],
+      })
+      await expect(iterator.next()).resolves.toEqual({
+        done: false,
+        value: {
+          type: 'session/projection-baseline',
+          projections: {
+            's-1': {
+              asOfSequence: 12,
+              values: { title: 'Pinned', inbox: inboxValue([queued], [steering]) },
+            },
+          },
+        },
+      })
+
+      const incrementQueue = iterator.next()
+      const next = inboxMessage('m-next', 'next step', { kind: 'user', rpcId: 'request-next' })
+      socket.message(
+        streamItem(socket, {
+          type: 'projection',
+          sessionId: 's-1',
+          key: 'inbox',
+          value: inboxValue([], [next]),
+          seq: 13,
+        }),
+      )
+      await expect(incrementQueue).resolves.toEqual({
+        done: false,
+        value: {
+          type: 'session/queue',
+          sessionId: 's-1',
+          asOfSequence: 13,
+          items: [
+            {
+              id: 'm-next',
+              placement: 'steering',
+              rpcId: 'request-next',
+              message: { id: 'm-next', content: [{ type: 'text', text: 'next step' }] },
+            },
+          ],
+        },
+      })
+      await expect(iterator.next()).resolves.toEqual({
+        done: false,
+        value: {
+          type: 'session/projection',
+          sessionId: 's-1',
+          key: 'inbox',
+          value: inboxValue([], [next]),
+          seq: 13,
+        },
+      })
+
+      const clearQueue = iterator.next()
+      socket.message(
+        streamItem(socket, {
+          type: 'projection',
+          sessionId: 's-1',
+          key: 'inbox',
+          value: inboxValue(),
+          seq: 14,
+        }),
+      )
+      await expect(clearQueue).resolves.toEqual({
+        done: false,
+        value: { type: 'session/queue', sessionId: 's-1', asOfSequence: 14, items: [] },
+      })
+      await expect(iterator.next()).resolves.toEqual({
+        done: false,
+        value: { type: 'session/projection', sessionId: 's-1', key: 'inbox', value: inboxValue(), seq: 14 },
+      })
+      await iterator.return?.()
+      await transport.close()
+    })
+
+    it('carries the prompt rpcId into repository queue identity matching', async () => {
+      FakeWebSocket.instances.length = 0
+      let promptRequestId: string | undefined
+      const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+        if (typeof init?.body !== 'string') throw new Error('fixture request body is not a JSON string')
+        const body = jsonRecord(init.body)
+        if (body.method !== 'session/prompt' || typeof body.rpcId !== 'string')
+          throw new Error('fixture request is not a session/prompt envelope')
+        const payload = body.payload
+        if (typeof payload !== 'object' || payload === null || Array.isArray(payload))
+          throw new Error('fixture prompt payload is malformed')
+        const args = (payload as Record<string, unknown>).args
+        if (typeof args !== 'object' || args === null || Array.isArray(args))
+          throw new Error('fixture prompt args are malformed')
+        const request = (args as Record<string, unknown>).request
+        if (typeof request !== 'object' || request === null || Array.isArray(request))
+          throw new Error('fixture prompt request is malformed')
+        const requestId = (request as Record<string, unknown>).requestId
+        if (typeof requestId !== 'string') throw new Error('fixture prompt requestId is missing')
+        promptRequestId = requestId
+        return Promise.resolve(alphaResponse(body.rpcId, { accepted: true }))
+      })
+      const transport = profile.create(fetch).createTransport(endpoint) as AlphaLoopbackApiClient
+      const repository = new Rc6SessionRepository(transport, undefined, undefined, {
+        queueBaseline: 'control',
+        includeClientTimeZone: false,
+      })
+      const streamAbort = new AbortController()
+      const promptAbort = new AbortController()
+      const iterator = transport.openHostStream(streamAbort.signal)[Symbol.asyncIterator]()
+      let enqueue: ReturnType<Rc6SessionRepository['enqueuePrompt']> | undefined
+      try {
+        const first = iterator.next()
+        const socket = await waitForSocket()
+        socket.open()
+        await waitForSent(socket, 1)
+        socket.message(streamItem(socket, { type: 'baseline', value: { projections: {} } }))
+        await expect(first).resolves.toEqual({
+          done: false,
+          value: { type: 'session/projection-baseline', projections: {} },
+        })
+
+        enqueue = repository.enqueuePrompt(
+          { sessionId: 's-1', text: 'prompt text', attachments: [] },
+          'queue',
+          promptAbort.signal,
+        )
+        for (let attempt = 0; attempt < 100 && promptRequestId === undefined; attempt += 1)
+          await Promise.resolve()
+        const requestId = promptRequestId
+        if (requestId === undefined) throw new Error('session/prompt did not assign its requestId')
+
+        const update = iterator.next()
+        socket.message(
+          streamItem(socket, {
+            type: 'projection',
+            sessionId: 's-1',
+            key: 'inbox',
+            value: inboxValue([inboxMessage('m-prompt', 'prompt text', { kind: 'user', rpcId: requestId })]),
+            seq: 1,
+          }),
+        )
+        const output = await update
+        expect(output).toMatchObject({
+          done: false,
+          value: { type: 'session/queue', sessionId: 's-1' },
+        })
+        const queue = output.value as {
+          readonly type: 'session/queue'
+          readonly sessionId: string
+          readonly items: readonly Record<string, unknown>[]
+        }
+        repository.remember(
+          rc6Mapper.event('session/queue', {
+            sessionId: queue.sessionId,
+            data: { items: queue.items },
+          }),
+        )
+        await expect(enqueue).resolves.toMatchObject({ id: 'm-prompt', rpcId: requestId })
+      } finally {
+        promptAbort.abort()
+        await enqueue?.catch(() => undefined)
+        streamAbort.abort()
+        await iterator.return?.()
+        await transport.close()
+      }
+    })
+  })
+}
+
+describe('Alpha171 follow-derived queue baseline reads', () => {
+  it('cancels a pending fork-child baseline read when its caller aborts', async () => {
+    const transport = adapter().createTransport(endpoint)
+    const onSessionAccess = vi.fn()
+    const repository = new Rc6SessionRepository(transport, undefined, undefined, {
+      queueBaseline: 'control-follow',
+      onSessionAccess,
+    })
+    const abort = new AbortController()
+    try {
+      const pending = repository.listQueue('fork-child', abort.signal)
+      expect(onSessionAccess).toHaveBeenCalledWith('fork-child')
+      const cancelled = expect(pending).rejects.toMatchObject({ code: 'REQUEST_CANCELLED' })
+      abort.abort()
+      await cancelled
+    } finally {
+      await transport.close()
+    }
+  })
+
+  it('bounds a fork-child read when follow never supplies a queue baseline', async () => {
+    vi.useFakeTimers()
+    const transport = adapter().createTransport(endpoint)
+    const onSessionAccess = vi.fn()
+    const repository = new Rc6SessionRepository(transport, undefined, undefined, {
+      queueBaseline: 'control-follow',
+      onSessionAccess,
+    })
+    try {
+      const pending = repository.listQueue('fork-child')
+      expect(onSessionAccess).toHaveBeenCalledWith('fork-child')
+      const timedOut = expect(pending).rejects.toMatchObject({ code: 'CAPABILITY_UNAVAILABLE' })
+      await vi.advanceTimersByTimeAsync(2_000)
+      await timedOut
+    } finally {
+      vi.useRealTimers()
+      await transport.close()
+    }
+  })
+})
+
+it('rejects malformed Inbox frames atomically before queue or projection baseline publication', async () => {
+  const valid = inboxValue([inboxMessage('m-valid', 'valid')])
+  const duplicate = inboxValue(
+    [inboxMessage('m-duplicate', 'queued')],
+    [inboxMessage('m-duplicate', 'steering')],
+  )
+  FakeWebSocket.instances.length = 0
+  const transport = adapter().createTransport(endpoint) as AlphaLoopbackApiClient
+  const iterator = transport.openHostStream(new AbortController().signal)[Symbol.asyncIterator]()
+  const first = iterator.next()
+  const socket = await waitForSocket()
+  socket.open()
+  await waitForSent(socket, 1)
+  socket.message(
+    streamItem(socket, {
+      type: 'baseline',
+      value: {
+        projections: {
+          's-valid': { asOfSeq: 1, values: { inbox: valid } },
+          's-malformed': { asOfSeq: 2, values: { inbox: duplicate } },
+        },
+      },
+    }),
+  )
+  await expect(first).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
+  await transport.close()
+
+  FakeWebSocket.instances.length = 0
+  const incrementalTransport = adapter().createTransport(endpoint) as AlphaLoopbackApiClient
+  const incrementalStream = incrementalTransport.openHostStream(new AbortController().signal)
+  const incrementalIterator = incrementalStream[Symbol.asyncIterator]()
+  const baseline = incrementalIterator.next()
+  const incrementalSocket = await waitForSocket()
+  incrementalSocket.open()
+  await waitForSent(incrementalSocket, 1)
+  incrementalSocket.message(streamItem(incrementalSocket, { type: 'baseline', value: { projections: {} } }))
+  await expect(baseline).resolves.toMatchObject({
+    value: { type: 'session/projection-baseline', projections: {} },
+  })
+  const invalidIncrement = incrementalIterator.next()
+  incrementalSocket.message(
+    streamItem(incrementalSocket, {
+      type: 'projection',
+      sessionId: 's-1',
+      key: 'inbox',
+      value: duplicate,
+      seq: 3,
+    }),
+  )
+  await expect(invalidIncrement).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
+  await incrementalTransport.close()
 })

@@ -25,6 +25,12 @@ const queueItem = {
   createdAt: '2026-08-31T08:00:00.000Z',
 } as const
 
+const nextQueueItem = {
+  ...queueItem,
+  id: 'queued-2',
+  text: 'second queued input',
+} as const
+
 const permission = {
   id: 'approval-1',
   sessionId: activeSession.id,
@@ -350,20 +356,128 @@ describe('AppStore connection restart', () => {
 
   it('leaves the open session and its surfaces alone while the connection stays connected', async () => {
     const { store, client } = makeStore()
-    client.emit(connectionSnapshot(1, 'connected', { dshVersion: '0.1.0' }))
+    client.emit(
+      connectionSnapshot(1, 'connected', {
+        dshVersion: '0.1.0',
+        backendInstanceId: 'backend-1',
+        connectionGeneration: 1,
+      }),
+    )
     await store.openSession(activeSession.id)
     await flushAsync()
-    client.emit(hostEvent(2, 'queue.updated', { sessionId: activeSession.id, items: [queueItem] }))
+    client.emit(
+      hostEvent(2, 'queue.updated', {
+        sessionId: activeSession.id,
+        items: [queueItem, nextQueueItem],
+        asOfSequence: 6,
+      }),
+    )
     await flushAsync()
 
     // A cached-backend fast path republishes the same epoch; nothing was
-    // replaced, so nothing may be re-read or dropped.
-    client.emit(connectionSnapshot(3, 'connected', { dshVersion: '0.1.0' }))
+    // replaced, so neither the surface nor its watermark may be reset.
+    client.emit(
+      connectionSnapshot(3, 'connected', {
+        dshVersion: '0.1.0',
+        backendInstanceId: 'backend-1',
+        connectionGeneration: 1,
+      }),
+    )
+    client.emit(
+      hostEvent(4, 'queue.updated', {
+        sessionId: activeSession.id,
+        items: [queueItem],
+        asOfSequence: 5,
+      }),
+    )
     await flushAsync()
 
     expect(sessionOpens(client)).toHaveLength(1)
-    expect(store.queue).toHaveLength(1)
+    expect(store.queue.map((item) => item.id)).toEqual(['queued-1', 'queued-2'])
     expect(userMessageNodes(store.getState())).toHaveLength(5)
+    store.dispose()
+    client.dispose()
+  })
+
+  it('resets the queue watermark when the backend identity changes', async () => {
+    const { store, client } = makeStore()
+    client.emit(
+      connectionSnapshot(1, 'connected', {
+        dshVersion: '0.1.0',
+        backendInstanceId: 'backend-old',
+        connectionGeneration: 7,
+      }),
+    )
+    await store.openSession(activeSession.id)
+    await flushAsync()
+    client.emit(
+      hostEvent(2, 'queue.updated', {
+        sessionId: activeSession.id,
+        items: [queueItem, nextQueueItem],
+        asOfSequence: 6,
+      }),
+    )
+    await flushAsync()
+
+    // The connection coordinator can publish the replacement identity in a
+    // connected snapshot even if an intermediate state event was missed.
+    client.emit(
+      connectionSnapshot(3, 'connected', {
+        dshVersion: '0.1.0',
+        backendInstanceId: 'backend-new',
+        connectionGeneration: 8,
+      }),
+    )
+    await flushAsync()
+    client.emit(
+      hostEvent(4, 'queue.updated', {
+        sessionId: activeSession.id,
+        items: [{ ...queueItem, id: 'queued-new', text: 'new process queue' }],
+        asOfSequence: 0,
+      }),
+    )
+    await flushAsync()
+
+    expect(store.queue.map((item) => item.id)).toEqual(['queued-new'])
+    store.dispose()
+    client.dispose()
+  })
+
+  it('does not let an older control queue replace a newer follow snapshot', async () => {
+    const { store, client } = makeStore()
+    client.emit(
+      connectionSnapshot(1, 'connected', {
+        dshVersion: '0.1.0',
+        backendInstanceId: 'backend-1',
+        connectionGeneration: 1,
+      }),
+    )
+    await store.openSession(activeSession.id)
+    await flushAsync()
+    client.emit(
+      hostEvent(2, 'queue.updated', {
+        sessionId: activeSession.id,
+        items: [queueItem, nextQueueItem],
+        asOfSequence: 6,
+      }),
+    )
+    client.emit(
+      hostEvent(3, 'queue.updated', {
+        sessionId: activeSession.id,
+        items: [queueItem],
+        asOfSequence: 6,
+      }),
+    )
+    client.emit(
+      hostEvent(4, 'queue.updated', {
+        sessionId: activeSession.id,
+        items: [queueItem],
+        asOfSequence: 5,
+      }),
+    )
+    await flushAsync()
+
+    expect(store.queue.map((item) => item.id)).toEqual(['queued-1', 'queued-2'])
     store.dispose()
     client.dispose()
   })

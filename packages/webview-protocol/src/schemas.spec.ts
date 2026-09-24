@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { diagnosticsSnapshotSchema, webviewRequestSchema } from './schemas.js'
+import {
+  diagnosticsSnapshotSchema,
+  hostEnvelopeSchema,
+  hostMessageSchema,
+  webviewRequestSchema,
+} from './schemas.js'
 import { featureRequestSchema, featureResponseSchema } from './feature-schemas.js'
 
 describe('custom provider Webview protocol', () => {
@@ -90,6 +95,27 @@ describe('custom provider Webview protocol', () => {
   })
 })
 
+describe('sequenced queue projection protocol', () => {
+  it('accepts an optional safe projection cut and rejects malformed cuts', () => {
+    const base = {
+      type: 'event',
+      name: 'queue.updated',
+      sequence: 1,
+      payload: { sessionId: 'session-1', items: [] },
+    }
+
+    expect(
+      hostMessageSchema.safeParse({ ...base, payload: { ...base.payload, asOfSequence: 6 } }).success,
+    ).toBe(true)
+    expect(
+      hostMessageSchema.safeParse({ ...base, payload: { ...base.payload, asOfSequence: -1 } }).success,
+    ).toBe(false)
+    expect(
+      hostMessageSchema.safeParse({ ...base, payload: { ...base.payload, asOfSequence: 1.5 } }).success,
+    ).toBe(false)
+  })
+})
+
 describe('diagnostics Webview protocol', () => {
   it('accepts a bounded redacted snapshot request', () => {
     expect(
@@ -116,6 +142,319 @@ describe('diagnostics Webview protocol', () => {
         canReconnect: true,
         recentEvents: [],
         endpoint: 'http://127.0.0.1:3939',
+      }).success,
+    ).toBe(false)
+  })
+})
+
+describe('Job follow Webview protocol', () => {
+  it('requires an identity on follow start and stop requests', () => {
+    const base = { sessionId: 'session-1', jobId: 'bash-1' }
+    expect(
+      webviewRequestSchema.safeParse({
+        type: 'job.follow.start',
+        requestId: 'follow-1',
+        payload: { ...base, followId: 'follow-1', from: 12 },
+      }).success,
+    ).toBe(true)
+    expect(
+      webviewRequestSchema.safeParse({
+        type: 'job.follow.stop',
+        requestId: 'stop-1',
+        payload: { ...base, followId: 'follow-1' },
+      }).success,
+    ).toBe(true)
+    expect(
+      webviewRequestSchema.safeParse({
+        type: 'job.follow.stop',
+        requestId: 'stop-2',
+        payload: base,
+      }).success,
+    ).toBe(false)
+    expect(
+      webviewRequestSchema.safeParse({
+        type: 'job.follow.start',
+        requestId: 'follow-2',
+        payload: { ...base, from: 12 },
+      }).success,
+    ).toBe(false)
+  })
+})
+
+describe('Job follow Host protocol', () => {
+  const job = {
+    id: 'bash-1',
+    kind: 'bash',
+    label: 'run build',
+    status: 'running',
+    startedAt: 1_000,
+    output: { total: 5, earliest: 0 },
+  }
+
+  it('accepts a closed Job follow output event and keeps unrelated events generic', () => {
+    expect(
+      hostEnvelopeSchema.safeParse({
+        protocolVersion: 1,
+        message: {
+          type: 'event',
+          name: 'job.follow.updated',
+          sequence: 1,
+          payload: {
+            sessionId: 'session-1',
+            jobId: 'bash-1',
+            followId: 'follow-1',
+            frame: { type: 'output', chunks: [{ at: 0, text: 'hello' }], next: 5 },
+          },
+        },
+      }).success,
+    ).toBe(true)
+    expect(
+      hostEnvelopeSchema.safeParse({
+        protocolVersion: 1,
+        message: {
+          type: 'event',
+          name: 'job.follow.updated',
+          sequence: 2,
+          payload: {
+            sessionId: 'session-1',
+            jobId: 'bash-1',
+            followId: 'follow-1',
+            frame: { type: 'output', chunks: [{ at: 4, text: 'ef' }], next: 6, lossy: true },
+          },
+        },
+      }).success,
+    ).toBe(true)
+    expect(
+      hostEnvelopeSchema.safeParse({
+        protocolVersion: 1,
+        message: {
+          type: 'event',
+          name: 'job.follow.updated',
+          sequence: 5,
+          payload: {
+            sessionId: 'session-1',
+            jobId: 'bash-1',
+            followId: 'follow-1',
+            frame: {
+              type: 'output',
+              chunks: [
+                { at: 0, text: 'a' },
+                { at: 2, text: 'c', gapBefore: true },
+              ],
+              next: 3,
+            },
+          },
+        },
+      }).success,
+    ).toBe(true)
+    expect(
+      hostEnvelopeSchema.safeParse({
+        protocolVersion: 1,
+        message: {
+          type: 'event',
+          name: 'job.follow.updated',
+          sequence: 4,
+          payload: {
+            sessionId: 'session-1',
+            jobId: 'bash-1',
+            followId: 'follow-1',
+            frame: { type: 'output', chunks: [], next: 5, lossy: true },
+          },
+        },
+      }).success,
+    ).toBe(true)
+    expect(
+      hostEnvelopeSchema.safeParse({
+        protocolVersion: 1,
+        message: {
+          type: 'event',
+          name: 'job.follow.updated',
+          sequence: 3,
+          payload: {
+            sessionId: 'session-1',
+            jobId: 'bash-1',
+            followId: 'follow-1',
+            frame: {
+              type: 'output',
+              chunks: [{ at: 4, text: '', gapBefore: true }],
+              next: 4,
+              lossy: true,
+            },
+          },
+        },
+      }).success,
+    ).toBe(true)
+    expect(
+      hostEnvelopeSchema.safeParse({
+        protocolVersion: 1,
+        message: { type: 'event', name: 'jobs.updated', sequence: 2, payload: { sessionId: 'session-1' } },
+      }).success,
+    ).toBe(true)
+  })
+
+  it('rejects malformed offsets and extra fields at every Job follow boundary', () => {
+    const base = {
+      protocolVersion: 1,
+      message: {
+        type: 'event',
+        name: 'job.follow.updated',
+        sequence: 1,
+        payload: {
+          sessionId: 'session-1',
+          jobId: 'bash-1',
+          followId: 'follow-1',
+          frame: { type: 'output', chunks: [{ at: 0, text: 'hello' }], next: 5 },
+        },
+      },
+    }
+    const malformed = [
+      {
+        ...base,
+        message: {
+          ...base.message,
+          payload: {
+            ...base.message.payload,
+            frame: { type: 'output', chunks: [{ at: 0, text: 'a' }], next: 5 },
+          },
+        },
+      },
+      {
+        ...base,
+        message: {
+          ...base.message,
+          payload: {
+            ...base.message.payload,
+            frame: {
+              type: 'output',
+              chunks: [
+                { at: 0, text: 'a' },
+                { at: 2, text: 'c' },
+              ],
+              next: 3,
+              lossy: true,
+            },
+          },
+        },
+      },
+      {
+        ...base,
+        message: {
+          ...base.message,
+          payload: {
+            ...base.message.payload,
+            frame: { type: 'output', chunks: [], next: 5 },
+          },
+        },
+      },
+      {
+        ...base,
+        message: {
+          ...base.message,
+          payload: {
+            ...base.message.payload,
+            frame: {
+              type: 'output',
+              chunks: [
+                { at: 0, text: 'a' },
+                { at: 2, text: 'c' },
+              ],
+              next: 3,
+            },
+          },
+        },
+      },
+      {
+        ...base,
+        message: {
+          ...base.message,
+          payload: {
+            ...base.message.payload,
+            frame: { type: 'output', chunks: [{ at: 9, text: 'x' }], next: 8 },
+          },
+        },
+      },
+      {
+        ...base,
+        message: {
+          ...base.message,
+          payload: { ...base.message.payload, injected: true },
+        },
+      },
+      {
+        ...base,
+        message: {
+          ...base.message,
+          payload: {
+            ...base.message.payload,
+            frame: {
+              type: 'output',
+              chunks: [{ at: 0, text: 'hello', unexpected: true }],
+              next: 5,
+            },
+          },
+        },
+      },
+      {
+        protocolVersion: 1,
+        message: {
+          type: 'event',
+          name: 'job.follow.failed',
+          sequence: 3,
+          payload: {
+            sessionId: 'session-1',
+            jobId: 'bash-1',
+            followId: 'follow-1',
+            reason: 'private upstream error',
+          },
+        },
+      },
+    ]
+
+    for (const envelope of malformed) {
+      expect(hostEnvelopeSchema.safeParse(envelope).success).toBe(false)
+      const message = typeof envelope === 'object' && envelope !== null ? envelope.message : undefined
+      expect(hostMessageSchema.safeParse(message).success).toBe(false)
+    }
+  })
+
+  it('accepts opened frames but rejects unsafe offsets and extra projected Job fields', () => {
+    const event = {
+      protocolVersion: 1,
+      message: {
+        type: 'event',
+        name: 'job.follow.updated',
+        sequence: 1,
+        payload: {
+          sessionId: 'session-1',
+          jobId: 'bash-1',
+          followId: 'follow-1',
+          frame: { type: 'opened', job, from: 0 },
+        },
+      },
+    }
+    expect(hostEnvelopeSchema.safeParse(event).success).toBe(true)
+    expect(
+      hostEnvelopeSchema.safeParse({
+        ...event,
+        message: {
+          ...event.message,
+          payload: {
+            ...event.message.payload,
+            frame: { type: 'opened', job: { ...job, internalPath: 'private' }, from: 0 },
+          },
+        },
+      }).success,
+    ).toBe(false)
+    expect(
+      hostEnvelopeSchema.safeParse({
+        ...event,
+        message: {
+          ...event.message,
+          payload: {
+            ...event.message.payload,
+            frame: { type: 'opened', job, from: Number.MAX_SAFE_INTEGER + 1 },
+          },
+        },
       }).success,
     ).toBe(false)
   })

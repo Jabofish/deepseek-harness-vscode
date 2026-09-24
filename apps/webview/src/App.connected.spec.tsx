@@ -20,14 +20,12 @@ import { I18nProvider } from './i18n.js'
 
 function connectedState(activeSession: boolean): AppState {
   return {
-    // The current connection.snapshot protocol intentionally exposes only
-    // the connection kind to the Webview, so connected state may not carry
-    // the full Extension Host backend object.
+    // The connection snapshot is a safe Host projection, not the full
+    // Extension Host backend object.
     backend: { kind: 'connected' },
     connectedDshVersion: '0.1.0-rc.6',
     subagentImagePrompts: false,
     dshCompatibilityWarning: undefined,
-    featureProfile: undefined,
     dshUpdate: undefined,
     dshUpdateProgress: undefined,
     sessions: activeSession

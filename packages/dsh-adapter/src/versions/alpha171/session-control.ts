@@ -1,8 +1,15 @@
 /** DSH 0.1.7-alpha.1 Session Controller control wire. */
 
 import { validAlpha171ProjectionBaseline } from './session-wire.js'
+import { inboxQueueItems } from '../alpha162/session-control.js'
 
 export type Alpha171ControlOutput =
+  | {
+      readonly type: 'session/queue'
+      readonly sessionId: string
+      readonly items: readonly Record<string, unknown>[]
+      readonly asOfSequence: number
+    }
   | {
       readonly type: 'session/projection-baseline'
       readonly projections: Readonly<
@@ -29,6 +36,27 @@ export function normalizeAlpha171ControlFrame(value: unknown): readonly Alpha171
   return undefined
 }
 
+/** Derive the complete queue state from one Session/follow projection snapshot. */
+export function normalizeAlpha171SessionQueueProjection(
+  sessionId: string,
+  value: unknown,
+): Alpha171ControlOutput | undefined {
+  if (!isNonEmptyString(sessionId) || !validAlpha171ProjectionBaseline(value))
+    throw new Error('Malformed alpha171 session projection baseline')
+  const projection = plainRecord(value)
+  const values = plainRecord(projection?.values)
+  if (projection === undefined || values === undefined)
+    throw new Error('Malformed alpha171 session projection')
+  const items = Object.hasOwn(values, 'inbox') ? inboxQueueItems(values.inbox) : []
+  if (items === undefined) throw new Error('Malformed alpha171 Inbox projection')
+  return {
+    type: 'session/queue',
+    sessionId,
+    items,
+    asOfSequence: projection.asOfSeq as number,
+  }
+}
+
 function baseline(value: unknown): readonly Alpha171ControlOutput[] | undefined {
   const record = plainRecord(value)
   if (record === undefined || !hasExactKeys(record, ['projections'])) return undefined
@@ -38,14 +66,25 @@ function baseline(value: unknown): readonly Alpha171ControlOutput[] | undefined 
     string,
     { readonly asOfSequence: number; readonly values: Readonly<Record<string, unknown>> }
   >
+  const queues: Alpha171ControlOutput[] = []
   for (const [sessionId, value] of Object.entries(projections)) {
     if (!isNonEmptyString(sessionId) || !validAlpha171ProjectionBaseline(value)) return undefined
     const projection = plainRecord(value)
     const values = plainRecord(projection?.values)
     if (projection === undefined || values === undefined) return undefined
+    if (Object.hasOwn(values, 'inbox')) {
+      const items = inboxQueueItems(values.inbox)
+      if (items === undefined) return undefined
+      queues.push({
+        type: 'session/queue',
+        sessionId,
+        items,
+        asOfSequence: projection.asOfSeq as number,
+      })
+    }
     output[sessionId] = { asOfSequence: projection.asOfSeq as number, values }
   }
-  return [{ type: 'session/projection-baseline', projections: output }]
+  return [...queues, { type: 'session/projection-baseline', projections: output }]
 }
 
 function projectionFrame(frame: Record<string, unknown>): readonly Alpha171ControlOutput[] | undefined {
@@ -57,15 +96,19 @@ function projectionFrame(frame: Record<string, unknown>): readonly Alpha171Contr
     !isJsonLike(frame.value)
   )
     return undefined
-  return [
-    {
-      type: 'session/projection',
-      sessionId: frame.sessionId,
-      key: frame.key,
-      value: frame.value,
-      seq: frame.seq,
-    },
-  ]
+  const projection: Alpha171ControlOutput = {
+    type: 'session/projection',
+    sessionId: frame.sessionId,
+    key: frame.key,
+    value: frame.value,
+    seq: frame.seq,
+  }
+  if (frame.key !== 'inbox') return [projection]
+  const items = inboxQueueItems(frame.value)
+  if (items === undefined) return undefined
+  // Publish the derived queue before its projection watermark, matching the
+  // alpha.2 projection contract and preventing a rejected Inbox from advancing.
+  return [{ type: 'session/queue', sessionId: frame.sessionId, items, asOfSequence: frame.seq }, projection]
 }
 
 function plainRecord(value: unknown): Record<string, unknown> | undefined {

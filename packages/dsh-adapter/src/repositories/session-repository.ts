@@ -12,6 +12,7 @@ import {
   type SessionDetail,
   type SessionHistoryEvent,
   type SessionHistoryPage,
+  type SessionHistoryQueryOptions,
   type SessionSequenceRange,
   type SessionListQuery,
   type SessionPage,
@@ -43,6 +44,12 @@ const HISTORY_PAGE_MESSAGES = 50
 const MAX_PROMPT_ATTACHMENT_BYTES = 8 * 1024 * 1024
 const MAX_PROMPT_ATTACHMENT_TOTAL_BYTES = 100 * 1024 * 1024
 
+function validHistoryPageSize(value: number | undefined): number {
+  return value !== undefined && Number.isSafeInteger(value) && value > 0
+    ? Math.min(value, 500)
+    : HISTORY_PAGE_MESSAGES
+}
+
 export class Rc6SessionRepository implements SessionRepository {
   /** The list projection is a hint that can be reused by the following open.
    * The history page remains the authoritative payload; keeping this local
@@ -50,6 +57,8 @@ export class Rc6SessionRepository implements SessionRepository {
   private readonly sessionSummaries = new Map<string, SessionSummary>()
   private readonly queueOwners = new Map<string, string>()
   private readonly queues = new Map<string, readonly QueuedInput[]>()
+  /** Monotonic Inbox projection cuts shared by control and follow streams. */
+  private readonly queueProjectionSequences = new Map<string, number>()
   private readonly queueWaiters = new Map<string, Set<(items: readonly QueuedInput[]) => void>>()
   /**
    * Reads that arrived before the subscription published the queue baseline.
@@ -94,7 +103,7 @@ export class Rc6SessionRepository implements SessionRepository {
   private readonly onSessionAccess: ((sessionId: string) => void) | undefined
   private readonly onSessionOpen: ((sessionId: string) => void | Promise<void>) | undefined
   private readonly deriveTitleFromCwd: boolean
-  private readonly queueBaseline: 'subscription' | 'control'
+  private readonly queueBaseline: 'subscription' | 'control' | 'control-follow'
   private readonly includesClientTimeZone: boolean
   private readonly executeSessionConfigurationCommand:
     ((sessionId: string, command: string, signal?: AbortSignal) => Promise<void>) | undefined
@@ -116,6 +125,24 @@ export class Rc6SessionRepository implements SessionRepository {
         this.rememberImageLimitsValue(event.sessionId, event.value)
       }
       return
+    }
+    // The alpha171+ queue is derived from versioned control/follow
+    // projections. Accepting an unversioned legacy frame in the same profile
+    // would bypass the cross-stream watermark. Older queue profiles keep their
+    // historical unsequenced behavior because they use another baseline mode.
+    if (this.queueBaseline === 'control-follow' && event.asOfSequence === undefined) return
+    if (event.asOfSequence !== undefined) {
+      if (
+        !Number.isSafeInteger(event.asOfSequence) ||
+        event.asOfSequence < 0 ||
+        Object.is(event.asOfSequence, -0)
+      )
+        return
+      const previousSequence = this.queueProjectionSequences.get(event.sessionId)
+      // A cut is a complete queue snapshot. Equal cuts are idempotent only;
+      // conflicting equal snapshots and older cross-stream frames are stale.
+      if (previousSequence !== undefined && event.asOfSequence <= previousSequence) return
+      this.queueProjectionSequences.set(event.sessionId, event.asOfSequence)
     }
     this.queues.set(event.sessionId, event.items)
     this.notifyQueueBaseline(event.sessionId)
@@ -225,7 +252,7 @@ export class Rc6SessionRepository implements SessionRepository {
     // upstream history endpoint is the authoritative read path, and the list
     // projection is already cached when the switcher has loaded it.
     let summary = this.sessionSummaries.get(sessionId)
-    const firstPage = await this.readHistoryPage(sessionId, undefined, signal)
+    const firstPage = await this.readHistoryPage(sessionId, undefined, signal, { pagePurpose: 'transcript' })
     const history = firstPage.page
     const rawHistory = firstPage.rawEvents
     if (summary === undefined) {
@@ -307,8 +334,9 @@ export class Rc6SessionRepository implements SessionRepository {
     sessionId: string,
     beforeSequence?: number,
     signal?: AbortSignal,
+    options?: SessionHistoryQueryOptions,
   ): Promise<SessionHistoryPage> {
-    return (await this.readHistoryPage(sessionId, beforeSequence, signal)).page
+    return (await this.readHistoryPage(sessionId, beforeSequence, signal, options)).page
   }
 
   /**
@@ -334,14 +362,23 @@ export class Rc6SessionRepository implements SessionRepository {
     sessionId: string,
     beforeSequence?: number,
     signal?: AbortSignal,
-    options: { readonly compact?: boolean; readonly includeSystemMarkers?: boolean } = {},
+    options: {
+      readonly compact?: boolean
+      readonly includeSystemMarkers?: boolean
+      readonly pageSize?: number
+      readonly pagePurpose?: SessionHistoryQueryOptions['pagePurpose']
+    } = {},
   ): Promise<{ readonly page: SessionHistoryPage; readonly rawEvents: readonly unknown[] }> {
+    const useTurnWindow =
+      options.pagePurpose === 'transcript' && this.transport.sessionHistoryTurnWindow === true
+    const requestedPageSize = validHistoryPageSize(options.pageSize)
     const historyValue = await callRpc<unknown>(
       this.transport,
       'session.history',
       {
         sessionId,
-        maxMessages: HISTORY_PAGE_MESSAGES,
+        maxMessages: useTurnWindow ? 500 : requestedPageSize,
+        ...(useTurnWindow ? { turnWindow: { minMessages: requestedPageSize, minTurns: 2 } } : {}),
         ...(beforeSequence === undefined ? {} : { beforeSeq: beforeSequence }),
       },
       signal,
@@ -674,10 +711,28 @@ export class Rc6SessionRepository implements SessionRepository {
       // The control stream is the queue owner: a Session it never named has
       // nothing pending, so the read is an empty list rather than an unknown.
       if (this.queueBaseline === 'control') return []
-      // A session that was just opened has no queue entry until its subscription
-      // lands. Wait for that baseline instead of reporting an unreadable queue,
-      // because an absent entry is a timing state, not missing Host data.
+      if (this.queueBaseline === 'control-follow') {
+        if (signal?.aborted === true)
+          throw new AppError({
+            code: 'REQUEST_CANCELLED',
+            message: 'The queue snapshot request was cancelled.',
+            retryable: false,
+          })
+        // A fork may inherit Inbox state without producing a live control
+        // projection frame. Open its durable follow stream and wait for the
+        // version adapter's queue snapshot derived from session.subscribed.
+        this.onSessionAccess?.(sessionId)
+      }
+      // A session that was just opened has no queue entry until its baseline
+      // lands. Wait instead of reporting an empty queue while the host is still
+      // delivering that session's authoritative snapshot.
       await this.waitForQueueBaseline(sessionId, signal)
+      if (signal?.aborted === true)
+        throw new AppError({
+          code: 'REQUEST_CANCELLED',
+          message: 'The queue snapshot request was cancelled.',
+          retryable: false,
+        })
       if (!this.queues.has(sessionId)) throw unavailable('queue snapshot')
     }
     const items = this.queues.get(sessionId) ?? []
@@ -992,6 +1047,7 @@ export class Rc6SessionRepository implements SessionRepository {
 
   private clearQueueState(sessionId: string): void {
     this.queues.delete(sessionId)
+    this.queueProjectionSequences.delete(sessionId)
     for (const [inputId, owner] of this.queueOwners) if (owner === sessionId) this.queueOwners.delete(inputId)
     const prefix = `${sessionId}\u0000`
     for (const key of this.pendingQueueIdentities.keys())
@@ -1147,8 +1203,14 @@ interface SessionRepositoryOptions {
    * replaces a Session's queue from that baseline with `?? []`, so an entry that
    * is absent from both is the empty queue, never an unreadable one. A
    * subscription must also not wipe that state.
+   *
+   * `control-follow` (alpha171+): the host-wide baseline remains useful for
+   * existing sessions, but a fork child can inherit Inbox state without a
+   * control event. For an unknown queue, open its durable follow stream and
+   * wait for the adapter to publish the queue derived from its opening
+   * projection; a missing Inbox value is an authoritative empty queue.
    */
-  readonly queueBaseline?: 'subscription' | 'control'
+  readonly queueBaseline?: 'subscription' | 'control' | 'control-follow'
 }
 
 function samePath(

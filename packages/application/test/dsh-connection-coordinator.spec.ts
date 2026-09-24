@@ -1,7 +1,13 @@
 /* The coordinator fixtures intentionally use minimal structural fakes. */
 /* eslint-disable @typescript-eslint/explicit-function-return-type, @typescript-eslint/require-await, @typescript-eslint/unbound-method, @typescript-eslint/no-unsafe-argument */
 import { describe, expect, it, vi } from 'vitest'
-import type { BackendCandidate, BackendState, DshBackend, ManagedProcessHandle } from '@dsh-vscode/domain'
+import type {
+  BackendCandidate,
+  BackendEndpoint,
+  BackendState,
+  DshBackend,
+  ManagedProcessHandle,
+} from '@dsh-vscode/domain'
 import { AppError } from '@dsh-vscode/domain'
 import { DshConnectionCoordinator } from '../src/connection/dsh-connection-coordinator.js'
 import type { ConnectionCoordinatorDependencies } from '../src/connection/dsh-connection-coordinator.js'
@@ -103,7 +109,13 @@ describe('DshConnectionCoordinator', () => {
   })
 
   it('attaches from fast discovery without waiting for the slow full pass', async () => {
-    const candidate = fakeCandidate(4103)
+    const candidate: BackendCandidate = {
+      ...fakeCandidate(4103),
+      runtimeVersion: '0.1.7-rc.1',
+      runtimeVersionEvidence: 'process-manifest',
+      pid: 25143,
+      commandLine: 'node /npm/node_modules/@deepseek-ai/dsh/lib/bin.js web',
+    }
     const discovery = {
       discoverFast: vi.fn(async () => [candidate]),
       discover: vi.fn(() => new Promise<readonly BackendCandidate[]>(() => undefined)),
@@ -121,6 +133,71 @@ describe('DshConnectionCoordinator', () => {
     expect(deps.runtimeLocator.locate).not.toHaveBeenCalled()
     expect(deps.processSupervisor.start).not.toHaveBeenCalled()
   })
+
+  it('defers unversioned fast candidates and probes the same-endpoint manifest identity first', async () => {
+    const fastCandidate = fakeCandidate(4107)
+    const exactCandidate: BackendCandidate = {
+      endpoint: endpoint(4107),
+      source: 'process-scan',
+      runtimeVersion: '0.1.7-rc.1',
+      runtimeVersionEvidence: 'process-manifest',
+      pid: 25147,
+      commandLine: 'node /npm/node_modules/@deepseek-ai/dsh/lib/bin.js web',
+      confidence: 70,
+    }
+    const discovery = {
+      discoverFast: vi.fn(async () => [fastCandidate]),
+      discover: vi.fn(async () => [exactCandidate]),
+    }
+    const probe = {
+      probe: vi.fn(async (candidate: BackendCandidate) =>
+        candidate.runtimeVersion === '0.1.7-rc.1' ? fakeConnectedBackend(4107) : undefined,
+      ),
+    }
+    const deps = dependencies({ discovery, probe })
+
+    const result = await new DshConnectionCoordinator(deps).connect({ mode: 'auto', autoStart: false })
+
+    expect(result.state.backend.endpoint.port).toBe(4107)
+    expect(discovery.discoverFast).toHaveBeenCalledTimes(1)
+    expect(discovery.discover).toHaveBeenCalledTimes(1)
+    expect(probe.probe).toHaveBeenCalledTimes(1)
+    expect(probe.probe).toHaveBeenCalledWith(exactCandidate, expect.any(AbortSignal))
+  })
+
+  it.each([
+    ['configured', 'configured'],
+    ['known', 'known'],
+    ['default port', 'default-port'],
+  ] as const)(
+    'tries an unversioned %s candidate only after full discovery confirms no manifest identity',
+    async (_label, source) => {
+      const candidate: BackendCandidate = { ...fakeCandidate(4108), source }
+      let fullDiscoveryCompleted = false
+      const discovery = {
+        discoverFast: vi.fn(async () => [candidate]),
+        discover: vi.fn(async () => {
+          fullDiscoveryCompleted = true
+          return [candidate]
+        }),
+      }
+      const probe = {
+        probe: vi.fn(async (_candidate: BackendCandidate) => {
+          expect(fullDiscoveryCompleted).toBe(true)
+          return fakeConnectedBackend(4108)
+        }),
+      }
+      const deps = dependencies({ discovery, probe })
+
+      const result = await new DshConnectionCoordinator(deps).connect({ mode: 'auto', autoStart: false })
+
+      expect(result.state.backend.endpoint.port).toBe(4108)
+      expect(discovery.discoverFast).toHaveBeenCalledTimes(1)
+      expect(discovery.discover).toHaveBeenCalledTimes(1)
+      expect(probe.probe).toHaveBeenCalledTimes(1)
+      expect(probe.probe).toHaveBeenCalledWith(candidate, expect.any(AbortSignal))
+    },
+  )
 
   it('waits for full discovery after a fast candidate fails before starting DSH', async () => {
     const fastCandidate = fakeCandidate(4104)
@@ -151,11 +228,12 @@ describe('DshConnectionCoordinator', () => {
     releaseFull?.()
     await operation
 
-    expect(probe.probe).toHaveBeenCalledTimes(3)
+    expect(probe.probe).toHaveBeenCalledTimes(2)
+    expect(probe.probe.mock.calls.map(([candidate]) => candidate.endpoint.port)).toEqual([4105, 4106])
     expect(deps.processSupervisor.start).toHaveBeenCalledTimes(1)
   })
 
-  it('probes only the user-selected custom endpoint and never discovers or starts DSH', async () => {
+  it('probes only the user-selected custom endpoint and never starts DSH', async () => {
     const selected = endpoint(4310)
     const connected = fakeConnectedBackend(4310)
     const probe = {
@@ -173,9 +251,332 @@ describe('DshConnectionCoordinator', () => {
       expect.objectContaining({ endpoint: selected, source: 'configured', confidence: 120 }),
       expect.any(AbortSignal),
     )
-    expect(deps.discovery.discover).not.toHaveBeenCalled()
+    expect(deps.discovery.discover).toHaveBeenCalledTimes(1)
     expect(deps.runtimeLocator.locate).not.toHaveBeenCalled()
     expect(deps.processSupervisor.start).not.toHaveBeenCalled()
+  })
+
+  it('borrows an exact runtime hint only from discovery of the identical custom endpoint', async () => {
+    const selected = endpoint(4316)
+    const discovered: BackendCandidate & { runtimeVersionEvidence: 'process-manifest' } = {
+      endpoint: selected,
+      source: 'process-scan',
+      runtimeVersion: '0.1.7-rc.1',
+      runtimeVersionEvidence: 'process-manifest',
+      pid: 25140,
+      commandLine: 'node /npm/node_modules/@deepseek-ai/dsh/lib/bin.js --profile web',
+      confidence: 70,
+    }
+    const discovery = { discover: vi.fn(async () => [discovered]) }
+    const connected = fakeConnectedBackend(selected.port)
+    const probe = { probe: vi.fn(async () => connected) }
+    const deps = dependencies({ discovery, probe })
+
+    await new DshConnectionCoordinator(deps).connect({ mode: 'custom', autoStart: true, endpoint: selected })
+
+    expect(discovery.discover).toHaveBeenCalledTimes(1)
+    expect(probe.probe).toHaveBeenCalledWith(
+      expect.objectContaining({
+        endpoint: selected,
+        source: 'configured',
+        confidence: 120,
+        runtimeVersion: '0.1.7-rc.1',
+        pid: 25140,
+      }),
+      expect.any(AbortSignal),
+    )
+  })
+
+  it.each(['configured', 'companion'] as const)(
+    'uses a process-manifest identity preserved on a %s custom endpoint winner',
+    async (source) => {
+      const selected = endpoint(4315)
+      // CompositeInstanceDiscovery keeps the preferred endpoint source while
+      // attaching identity verified by a same-endpoint process scan.
+      const mergedWinner: BackendCandidate = {
+        endpoint: selected,
+        source,
+        confidence: source === 'configured' ? 100 : 60,
+        runtimeVersion: '0.1.7-rc.1',
+        runtimeVersionEvidence: 'process-manifest',
+        pid: 25139,
+        commandLine: 'node /npm/node_modules/@deepseek-ai/dsh/lib/bin.js web',
+      }
+      const probe = { probe: vi.fn(async () => fakeConnectedBackend(selected.port)) }
+      const deps = dependencies({ discovery: { discover: vi.fn(async () => [mergedWinner]) }, probe })
+
+      await new DshConnectionCoordinator(deps).connect({
+        mode: 'custom',
+        autoStart: true,
+        endpoint: selected,
+      })
+
+      expect(probe.probe).toHaveBeenCalledWith(
+        expect.objectContaining({
+          endpoint: selected,
+          source: 'configured',
+          runtimeVersion: '0.1.7-rc.1',
+          runtimeVersionEvidence: 'process-manifest',
+          pid: 25139,
+        }),
+        expect.any(AbortSignal),
+      )
+    },
+  )
+
+  it('reuses the confirmed listener hint across loopback host aliases on the same port', async () => {
+    const selected = endpoint(4317)
+    const loopbackAlias: BackendCandidate & { runtimeVersionEvidence: 'process-manifest' } = {
+      endpoint: { host: 'localhost', port: selected.port, baseUrl: `http://localhost:${selected.port}` },
+      source: 'process-scan',
+      runtimeVersion: '0.1.7-rc.1',
+      runtimeVersionEvidence: 'process-manifest',
+      pid: 25141,
+      commandLine: 'node /npm/node_modules/@deepseek-ai/dsh/lib/bin.js --profile web',
+      confidence: 70,
+    }
+    const probe = {
+      probe: vi.fn(async (_candidate: BackendCandidate) => fakeConnectedBackend(selected.port)),
+    }
+    const deps = dependencies({
+      discovery: { discover: vi.fn(async () => [loopbackAlias]) },
+      probe,
+    })
+
+    await new DshConnectionCoordinator(deps).connect({ mode: 'custom', autoStart: true, endpoint: selected })
+
+    expect(probe.probe).toHaveBeenCalledWith(
+      expect.objectContaining({ endpoint: selected, source: 'configured', confidence: 120 }),
+      expect.any(AbortSignal),
+    )
+    expect(probe.probe.mock.calls[0]?.[0]?.runtimeVersion).toBe('0.1.7-rc.1')
+    expect(probe.probe.mock.calls[0]?.[0]?.pid).toBe(25141)
+  })
+
+  it('uses the verified process identity instead of stale companion PID and version on a custom alias', async () => {
+    const selected: BackendEndpoint = {
+      host: 'localhost',
+      port: 4321,
+      baseUrl: 'http://localhost:4321',
+    }
+    const processCandidate: BackendCandidate & { runtimeVersionEvidence: 'process-manifest' } = {
+      endpoint: endpoint(selected.port),
+      source: 'process-scan',
+      runtimeVersion: '0.1.7-rc.1',
+      runtimeVersionEvidence: 'process-manifest',
+      pid: 101,
+      commandLine: 'node /npm/node_modules/@deepseek-ai/dsh/lib/bin.js --profile web',
+      confidence: 70,
+    }
+    const staleCompanion: BackendCandidate = {
+      endpoint: selected,
+      source: 'companion',
+      runtimeVersion: '0.1.7-alpha.2',
+      pid: 202,
+      confidence: 60,
+    }
+    const probe = {
+      probe: vi.fn(async (_candidate: BackendCandidate) => fakeConnectedBackend(selected.port)),
+    }
+    const deps = dependencies({
+      discovery: { discover: vi.fn(async () => [processCandidate, staleCompanion]) },
+      probe,
+    })
+
+    await new DshConnectionCoordinator(deps).connect({ mode: 'custom', autoStart: true, endpoint: selected })
+
+    expect(probe.probe.mock.calls[0]?.[0]?.runtimeVersion).toBe('0.1.7-rc.1')
+    expect(probe.probe.mock.calls[0]?.[0]?.pid).toBe(101)
+  })
+
+  it('does not trust an unverified companion hint on a custom endpoint', async () => {
+    const selected = endpoint(4323)
+    const counterfeit: BackendCandidate = {
+      endpoint: selected,
+      source: 'companion',
+      runtimeVersion: '0.1.7-alpha.2',
+      pid: 202,
+      commandLine: 'node /stale/node_modules/@deepseek-ai/dsh/lib/bin.js --profile web',
+      confidence: 60,
+    }
+    const probe = {
+      probe: vi.fn(async (_candidate: BackendCandidate) => fakeConnectedBackend(selected.port)),
+    }
+    const deps = dependencies({ discovery: { discover: vi.fn(async () => [counterfeit]) }, probe })
+
+    await new DshConnectionCoordinator(deps).connect({ mode: 'custom', autoStart: true, endpoint: selected })
+
+    expect(probe.probe.mock.calls[0]?.[0]?.runtimeVersion).toBeUndefined()
+    expect(probe.probe.mock.calls[0]?.[0]?.pid).toBeUndefined()
+  })
+
+  it('requires a complete process-manifest candidate before borrowing a custom runtime hint', async () => {
+    const selected = endpoint(4324)
+    const incomplete: BackendCandidate = {
+      endpoint: selected,
+      source: 'process-scan',
+      runtimeVersion: '0.1.7-rc.1',
+      runtimeVersionEvidence: 'process-manifest',
+      pid: 101,
+      confidence: 70,
+    }
+    const probe = {
+      probe: vi.fn(async (_candidate: BackendCandidate) => fakeConnectedBackend(selected.port)),
+    }
+    const deps = dependencies({ discovery: { discover: vi.fn(async () => [incomplete]) }, probe })
+
+    await new DshConnectionCoordinator(deps).connect({ mode: 'custom', autoStart: true, endpoint: selected })
+
+    expect(probe.probe.mock.calls[0]?.[0]?.runtimeVersion).toBeUndefined()
+    expect(probe.probe.mock.calls[0]?.[0]?.pid).toBeUndefined()
+  })
+
+  it('rejects malformed SemVer from a custom process-manifest marker', async () => {
+    const selected = endpoint(4327)
+    const malformed: BackendCandidate = {
+      endpoint: selected,
+      source: 'configured',
+      runtimeVersion: '0.1.7-rc.01',
+      runtimeVersionEvidence: 'process-manifest',
+      pid: 101,
+      commandLine: 'node /one/node_modules/@deepseek-ai/dsh/lib/bin.js web',
+      confidence: 100,
+    }
+    const probe = {
+      probe: vi.fn(async (_candidate: BackendCandidate) => fakeConnectedBackend(selected.port)),
+    }
+    const deps = dependencies({ discovery: { discover: vi.fn(async () => [malformed]) }, probe })
+
+    await new DshConnectionCoordinator(deps).connect({ mode: 'custom', autoStart: true, endpoint: selected })
+
+    expect(probe.probe.mock.calls[0]?.[0]?.runtimeVersion).toBeUndefined()
+    expect(probe.probe.mock.calls[0]?.[0]?.pid).toBeUndefined()
+  })
+
+  it('fails closed on contradictory process identities for the exact custom host and port', async () => {
+    const selected = endpoint(4325)
+    const processCandidates: readonly BackendCandidate[] = [
+      {
+        endpoint: selected,
+        source: 'process-scan',
+        runtimeVersion: '0.1.7-rc.1',
+        runtimeVersionEvidence: 'process-manifest',
+        pid: 101,
+        commandLine: 'node /one/node_modules/@deepseek-ai/dsh/lib/bin.js --profile web',
+        confidence: 70,
+      },
+      {
+        endpoint: selected,
+        source: 'process-scan',
+        runtimeVersion: '0.1.7-alpha.2',
+        runtimeVersionEvidence: 'process-manifest',
+        pid: 202,
+        commandLine: 'node /two/node_modules/@deepseek-ai/dsh/lib/bin.js --profile web',
+        confidence: 70,
+      },
+    ]
+    const probe = {
+      probe: vi.fn(async (_candidate: BackendCandidate) => fakeConnectedBackend(selected.port)),
+    }
+    const deps = dependencies({ discovery: { discover: vi.fn(async () => processCandidates) }, probe })
+
+    await new DshConnectionCoordinator(deps).connect({ mode: 'custom', autoStart: true, endpoint: selected })
+
+    expect(probe.probe.mock.calls[0]?.[0]?.runtimeVersion).toBeUndefined()
+    expect(probe.probe.mock.calls[0]?.[0]?.pid).toBeUndefined()
+  })
+
+  it('fails closed when one custom endpoint PID has conflicting manifest versions', async () => {
+    const selected = endpoint(4326)
+    const candidates: readonly BackendCandidate[] = [
+      {
+        endpoint: selected,
+        source: 'process-scan',
+        runtimeVersion: '0.1.7-rc.1',
+        runtimeVersionEvidence: 'process-manifest',
+        pid: 101,
+        commandLine: 'node /one/node_modules/@deepseek-ai/dsh/lib/bin.js web',
+        confidence: 70,
+      },
+      {
+        endpoint: selected,
+        source: 'process-scan',
+        runtimeVersion: '0.1.7-alpha.2',
+        runtimeVersionEvidence: 'process-manifest',
+        pid: 101,
+        commandLine: 'node /one/node_modules/@deepseek-ai/dsh/lib/bin.js web',
+        confidence: 70,
+      },
+    ]
+    const probe = {
+      probe: vi.fn(async (_candidate: BackendCandidate) => fakeConnectedBackend(selected.port)),
+    }
+    const deps = dependencies({ discovery: { discover: vi.fn(async () => candidates) }, probe })
+
+    await new DshConnectionCoordinator(deps).connect({ mode: 'custom', autoStart: true, endpoint: selected })
+
+    expect(probe.probe.mock.calls[0]?.[0]?.runtimeVersion).toBeUndefined()
+    expect(probe.probe.mock.calls[0]?.[0]?.pid).toBeUndefined()
+  })
+
+  it('fails closed when multiple process-scan PIDs match a custom loopback alias', async () => {
+    const selected: BackendEndpoint = {
+      host: 'localhost',
+      port: 4322,
+      baseUrl: 'http://localhost:4322',
+    }
+    const processCandidates: readonly (BackendCandidate & {
+      runtimeVersionEvidence: 'process-manifest'
+    })[] = [
+      {
+        endpoint: endpoint(selected.port),
+        source: 'process-scan',
+        runtimeVersion: '0.1.7-rc.1',
+        runtimeVersionEvidence: 'process-manifest',
+        pid: 101,
+        commandLine: 'node /one/node_modules/@deepseek-ai/dsh/lib/bin.js --profile web',
+        confidence: 70,
+      },
+      {
+        endpoint: selected,
+        source: 'process-scan',
+        runtimeVersion: '0.1.7-rc.1',
+        runtimeVersionEvidence: 'process-manifest',
+        pid: 202,
+        commandLine: 'node /two/node_modules/@deepseek-ai/dsh/lib/bin.js --profile web',
+        confidence: 70,
+      },
+    ]
+    const probe = {
+      probe: vi.fn(async (_candidate: BackendCandidate) => fakeConnectedBackend(selected.port)),
+    }
+    const deps = dependencies({ discovery: { discover: vi.fn(async () => processCandidates) }, probe })
+
+    await new DshConnectionCoordinator(deps).connect({ mode: 'custom', autoStart: true, endpoint: selected })
+
+    expect(probe.probe.mock.calls[0]?.[0]?.runtimeVersion).toBeUndefined()
+    expect(probe.probe.mock.calls[0]?.[0]?.pid).toBeUndefined()
+  })
+
+  it('does not borrow a runtime hint from a different port', async () => {
+    const selected = endpoint(4318)
+    const otherPort: BackendCandidate = {
+      endpoint: endpoint(4319),
+      source: 'process-scan',
+      runtimeVersion: '0.1.7-rc.1',
+      pid: 25142,
+      commandLine: 'node /npm/node_modules/@deepseek-ai/dsh/lib/bin.js --profile web',
+      confidence: 70,
+    }
+    const probe = {
+      probe: vi.fn(async (_candidate: BackendCandidate) => fakeConnectedBackend(selected.port)),
+    }
+    const deps = dependencies({ discovery: { discover: vi.fn(async () => [otherPort]) }, probe })
+
+    await new DshConnectionCoordinator(deps).connect({ mode: 'custom', autoStart: true, endpoint: selected })
+
+    expect(probe.probe.mock.calls[0]?.[0]?.runtimeVersion).toBeUndefined()
+    expect(probe.probe.mock.calls[0]?.[0]?.pid).toBeUndefined()
   })
 
   it('passes the operation signal through when creating the backend', async () => {
@@ -225,7 +626,7 @@ describe('DshConnectionCoordinator', () => {
     await expect(
       coordinator.connect({ mode: 'custom', autoStart: true, endpoint: endpoint(4311) }),
     ).rejects.toMatchObject({ code: 'BACKEND_UNREACHABLE' })
-    expect(deps.discovery.discover).not.toHaveBeenCalled()
+    expect(deps.discovery.discover).toHaveBeenCalledTimes(1)
     expect(deps.runtimeLocator.locate).not.toHaveBeenCalled()
     expect(deps.processSupervisor.start).not.toHaveBeenCalled()
   })
@@ -248,7 +649,7 @@ describe('DshConnectionCoordinator', () => {
     await expect(
       coordinator.connect({ mode: 'custom', autoStart: true, endpoint: endpoint(4320) }),
     ).rejects.toMatchObject({ code: 'DSH_INCOMPATIBLE' })
-    expect(deps.discovery.discover).not.toHaveBeenCalled()
+    expect(deps.discovery.discover).toHaveBeenCalledTimes(1)
     expect(deps.processSupervisor.start).not.toHaveBeenCalled()
     expect(states.at(-1)).toMatchObject({ kind: 'failed', retryable: false })
   })

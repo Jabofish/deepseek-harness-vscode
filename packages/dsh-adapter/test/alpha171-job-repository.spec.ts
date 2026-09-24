@@ -48,6 +48,15 @@ function client(
   }
 }
 
+async function expectMalformedFollow(transport: AlphaLoopbackApiClient, from = 0): Promise<void> {
+  await expect(
+    (async () => {
+      for await (const _frame of new Alpha171JobRepository(transport).follow('session-1', 'job-1', from))
+        void _frame
+    })(),
+  ).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
+}
+
 describe('alpha171 Job Controller repository', () => {
   it('uses the first whole-set frame for list and closes the dedicated stream', async () => {
     let closed = false
@@ -110,7 +119,15 @@ describe('alpha171 Job Controller repository', () => {
           next: 6,
           lossy: true,
         },
-        { type: 'status', job: { ...row, status: 'completed', finishedAt: 20 } },
+        {
+          type: 'status',
+          job: {
+            ...row,
+            status: 'completed',
+            finishedAt: 20,
+            output: { total: 6, earliest: 0 },
+          },
+        },
       ),
     )
     const repository = new Alpha171JobRepository(transport.client)
@@ -248,8 +265,8 @@ describe('alpha171 Job Controller repository', () => {
     expect(released).toBe(true)
   })
 
-  it('sends the session-fenced kill and validates its receipt', async () => {
-    const transport = client(() => asyncSequence(), { outcome: 'requested' })
+  it('sends the session-fenced kill and unwraps and validates its Remote receipt', async () => {
+    const transport = client(() => asyncSequence(), { ok: true, value: { outcome: 'requested' } })
     await expect(new Alpha171JobRepository(transport.client).kill('session-1', 'job-1')).resolves.toBe(
       'requested',
     )
@@ -261,12 +278,30 @@ describe('alpha171 Job Controller repository', () => {
       undefined,
     )
 
-    const malformed = client(() => asyncSequence(), { outcome: 'stopped' })
+    const finished = client(() => asyncSequence(), { ok: true, value: { outcome: 'already-finished' } })
+    await expect(new Alpha171JobRepository(finished.client).kill('session-1', 'job-1')).resolves.toBe(
+      'already-finished',
+    )
+
+    const malformed = client(() => asyncSequence(), { ok: true, value: { outcome: 'stopped' } })
     await expect(
       new Alpha171JobRepository(malformed.client).kill('session-1', 'job-1'),
     ).rejects.toMatchObject({
       code: 'PROTOCOL_ERROR',
     })
+
+    const missingValue = client(() => asyncSequence(), { ok: true })
+    await expect(
+      new Alpha171JobRepository(missingValue.client).kill('session-1', 'job-1'),
+    ).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
+
+    const remoteError = client(() => asyncSequence(), {
+      ok: false,
+      error: { code: 'job-not-found', message: 'The job is no longer available.', details: {} },
+    })
+    await expect(
+      new Alpha171JobRepository(remoteError.client).kill('session-1', 'job-1'),
+    ).rejects.toMatchObject({ code: 'STALE_INTERACTION' })
   })
 
   it('rejects malformed offsets, chunks, job views and row frames', async () => {
@@ -286,6 +321,409 @@ describe('alpha171 Job Controller repository', () => {
     await expect(badOffsetStream[Symbol.asyncIterator]().next()).rejects.toMatchObject({
       code: 'PROTOCOL_ERROR',
     })
+  })
+
+  it('accepts upstream-valid overlap, lossy recovery, and an offset beyond the opening total', async () => {
+    const cases = [
+      {
+        from: 3,
+        openedJob: row,
+        output: {
+          type: 'output',
+          chunks: [{ at: 0, text: 'abcde' }],
+          next: 5,
+        },
+        statusJob: { ...row, status: 'completed', finishedAt: 20 },
+      },
+      {
+        from: 0,
+        openedJob: { ...row, output: { total: 6, earliest: 4 } },
+        output: {
+          type: 'output',
+          chunks: [{ at: 4, text: 'ef' }],
+          next: 6,
+          lossy: true,
+        },
+        statusJob: {
+          ...row,
+          status: 'completed',
+          finishedAt: 20,
+          output: { total: 6, earliest: 4 },
+        },
+      },
+      {
+        // A byte-less cursor advance is valid only when the upstream marks
+        // the omitted output as lossy.
+        from: 0,
+        openedJob: row,
+        output: { type: 'output', chunks: [], next: 5, lossy: true },
+        statusJob: { ...row, status: 'completed', finishedAt: 20 },
+      },
+      {
+        // An explicit per-chunk marker preserves an internal lossy hole.
+        from: 0,
+        openedJob: row,
+        output: {
+          type: 'output',
+          chunks: [
+            { at: 0, text: 'a' },
+            { at: 2, text: 'c', gapBefore: true },
+          ],
+          next: 3,
+        },
+        statusJob: { ...row, status: 'completed', finishedAt: 20 },
+      },
+      {
+        // A one-byte ring cap can trim a multi-byte code point to an empty,
+        // gap-marked UTF-8 tail while preserving its absolute end offset.
+        from: 0,
+        openedJob: { ...row, output: { total: 4, earliest: 4 } },
+        output: {
+          type: 'output',
+          chunks: [{ at: 4, text: '', gapBefore: true }],
+          next: 4,
+          lossy: true,
+        },
+        statusJob: {
+          ...row,
+          status: 'completed',
+          finishedAt: 20,
+          output: { total: 4, earliest: 4 },
+        },
+      },
+      {
+        // DSH accepts offsets beyond the current total. Its first read clamps
+        // the live cursor to that total, so later output may start before from.
+        from: 9,
+        openedJob: row,
+        output: {
+          type: 'output',
+          chunks: [{ at: 5, text: 'f' }],
+          next: 6,
+        },
+        statusJob: {
+          ...row,
+          status: 'completed',
+          finishedAt: 20,
+          output: { total: 6, earliest: 0 },
+        },
+      },
+    ]
+
+    for (const recovery of cases) {
+      const transport = client(() =>
+        asyncSequence({ type: 'opened', job: recovery.openedJob, from: recovery.from }, recovery.output, {
+          type: 'status',
+          job: recovery.statusJob,
+        }),
+      )
+      const frames: unknown[] = []
+
+      await expect(
+        (async () => {
+          for await (const frame of new Alpha171JobRepository(transport.client).follow(
+            'session-1',
+            'job-1',
+            recovery.from,
+          ))
+            frames.push(frame)
+        })(),
+      ).resolves.toBeUndefined()
+      expect(frames).toHaveLength(3)
+    }
+  })
+
+  it('accepts a removed terminal projection whose total advanced past the last output cursor', async () => {
+    const transport = client(() =>
+      asyncSequence(
+        { type: 'opened', job: { ...row, output: { total: 3, earliest: 0 } }, from: 0 },
+        { type: 'output', chunks: [{ at: 0, text: 'abc' }], next: 3 },
+        {
+          type: 'status',
+          job: {
+            ...row,
+            status: 'killed',
+            finishedAt: 20,
+            output: { total: 5, earliest: 0 },
+          },
+        },
+      ),
+    )
+    const frames: unknown[] = []
+
+    await expect(
+      (async () => {
+        for await (const frame of new Alpha171JobRepository(transport.client).follow('session-1', 'job-1'))
+          frames.push(frame)
+      })(),
+    ).resolves.toBeUndefined()
+    expect(frames).toHaveLength(3)
+  })
+
+  it('rejects unopened streams, output cursor rollback, and replayed chunks', async () => {
+    const terminal = { type: 'status', job: { ...row, status: 'completed', finishedAt: 20 } }
+    const malformedStreams = [
+      {
+        from: undefined,
+        // The upstream stream always starts with its opened anchor.
+        transport: client(() => asyncSequence({ type: 'output', chunks: [], next: 0 }, terminal)),
+      },
+      {
+        from: 3,
+        // A chunk ending at the initial offset is wholly outside readAt's [from,total) range.
+        transport: client(() =>
+          asyncSequence(
+            { type: 'opened', job: row, from: 3 },
+            { type: 'output', chunks: [{ at: 0, text: 'abc' }], next: 4 },
+            terminal,
+          ),
+        ),
+      },
+      {
+        from: 3,
+        // The opened frame must preserve an explicit request cursor exactly.
+        transport: client(() => asyncSequence({ type: 'opened', job: row, from: 4 }, terminal)),
+      },
+      {
+        from: 0,
+        // The second frame overlaps bytes already delivered by the first frame.
+        transport: client(() =>
+          asyncSequence(
+            { type: 'opened', job: row, from: 0 },
+            { type: 'output', chunks: [{ at: 0, text: 'abc' }], next: 3 },
+            { type: 'output', chunks: [{ at: 1, text: 'x' }], next: 4 },
+            terminal,
+          ),
+        ),
+      },
+      {
+        from: 0,
+        // A frame cursor is the end of this frame's last returned ring chunk.
+        transport: client(() =>
+          asyncSequence(
+            { type: 'opened', job: row, from: 0 },
+            { type: 'output', chunks: [{ at: 0, text: 'abc' }], next: 2 },
+            {
+              type: 'status',
+              job: {
+                ...row,
+                status: 'completed',
+                finishedAt: 20,
+                output: { total: 2, earliest: 0 },
+              },
+            },
+          ),
+        ),
+      },
+      {
+        from: 0,
+        // Chunks in one readAt result retain ring order and cannot overlap.
+        transport: client(() =>
+          asyncSequence(
+            { type: 'opened', job: row, from: 0 },
+            {
+              type: 'output',
+              chunks: [
+                { at: 0, text: 'abc' },
+                { at: 2, text: 'cd' },
+              ],
+              next: 4,
+            },
+            {
+              type: 'status',
+              job: {
+                ...row,
+                status: 'completed',
+                finishedAt: 20,
+                output: { total: 4, earliest: 0 },
+              },
+            },
+          ),
+        ),
+      },
+      {
+        from: 0,
+        // Chunks in one readAt result cannot run backwards by byte offset.
+        transport: client(() =>
+          asyncSequence(
+            { type: 'opened', job: row, from: 0 },
+            {
+              type: 'output',
+              chunks: [
+                { at: 3, text: 'x' },
+                { at: 0, text: 'abc' },
+              ],
+              next: 4,
+            },
+            {
+              type: 'status',
+              job: {
+                ...row,
+                status: 'completed',
+                finishedAt: 20,
+                output: { total: 4, earliest: 0 },
+              },
+            },
+          ),
+        ),
+      },
+      {
+        from: 0,
+        // Even an empty frame cannot move the absolute resume cursor backwards.
+        transport: client(() =>
+          asyncSequence(
+            { type: 'opened', job: row, from: 0 },
+            { type: 'output', chunks: [{ at: 0, text: 'abc' }], next: 3 },
+            { type: 'output', chunks: [], next: 2 },
+            terminal,
+          ),
+        ),
+      },
+      {
+        from: 3,
+        // The first output frame also cannot move behind its opening cursor.
+        transport: client(() =>
+          asyncSequence(
+            { type: 'opened', job: row, from: 3 },
+            { type: 'output', chunks: [], next: 2 },
+            terminal,
+          ),
+        ),
+      },
+    ]
+
+    for (const { transport, from } of malformedStreams) {
+      await expect(
+        (async () => {
+          for await (const _frame of new Alpha171JobRepository(transport.client).follow(
+            'session-1',
+            'job-1',
+            from,
+          ))
+            void _frame
+        })(),
+      ).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
+    }
+  })
+
+  it('rejects a non-terminal status even when followed by a terminal status', async () => {
+    const transport = client(() =>
+      asyncSequence(
+        { type: 'opened', job: row, from: 0 },
+        { type: 'status', job: row },
+        { type: 'status', job: { ...row, status: 'completed', finishedAt: 20 } },
+      ),
+    )
+
+    await expectMalformedFollow(transport.client)
+  })
+
+  it('rejects a terminal status whose total rolls back behind the last output cursor', async () => {
+    const transport = client(() =>
+      asyncSequence(
+        { type: 'opened', job: row, from: 0 },
+        { type: 'output', chunks: [{ at: 0, text: 'abc' }], next: 3 },
+        {
+          type: 'status',
+          job: {
+            ...row,
+            status: 'completed',
+            finishedAt: 20,
+            output: { total: 2, earliest: 0 },
+          },
+        },
+      ),
+    )
+
+    await expectMalformedFollow(transport.client)
+  })
+
+  it('rejects an empty output frame that repeats the prior cursor', async () => {
+    const transport = client(() =>
+      asyncSequence(
+        { type: 'opened', job: row, from: 0 },
+        { type: 'output', chunks: [{ at: 0, text: 'abc' }], next: 3 },
+        { type: 'output', chunks: [], next: 3 },
+        { type: 'status', job: { ...row, status: 'completed', finishedAt: 20 } },
+      ),
+    )
+
+    await expectMalformedFollow(transport.client)
+  })
+
+  it('rejects an empty output frame that skips bytes without the lossy marker', async () => {
+    const transport = client(() =>
+      asyncSequence(
+        { type: 'opened', job: row, from: 0 },
+        { type: 'output', chunks: [], next: 3 },
+        { type: 'status', job: { ...row, status: 'completed', finishedAt: 20 } },
+      ),
+    )
+
+    await expectMalformedFollow(transport.client)
+  })
+
+  it('rejects a byte-bearing output frame whose next cursor skips past its last chunk', async () => {
+    const transport = client(() =>
+      asyncSequence(
+        { type: 'opened', job: row, from: 0 },
+        { type: 'output', chunks: [{ at: 0, text: 'a' }], next: 5 },
+        { type: 'status', job: { ...row, status: 'completed', finishedAt: 20 } },
+      ),
+    )
+
+    await expectMalformedFollow(transport.client)
+  })
+
+  it('rejects an unmarked byte gap between output chunks', async () => {
+    const transport = client(() =>
+      asyncSequence(
+        { type: 'opened', job: row, from: 0 },
+        {
+          type: 'output',
+          chunks: [
+            { at: 0, text: 'a' },
+            { at: 2, text: 'c' },
+          ],
+          next: 3,
+        },
+        { type: 'status', job: { ...row, status: 'completed', finishedAt: 20 } },
+      ),
+    )
+
+    await expectMalformedFollow(transport.client)
+  })
+
+  it('does not let lossy output mark an internal byte gap', async () => {
+    const transport = client(() =>
+      asyncSequence(
+        { type: 'opened', job: row, from: 0 },
+        {
+          type: 'output',
+          chunks: [
+            { at: 0, text: 'a' },
+            { at: 2, text: 'c' },
+          ],
+          next: 3,
+          lossy: true,
+        },
+        { type: 'status', job: { ...row, status: 'completed', finishedAt: 20 } },
+      ),
+    )
+
+    await expectMalformedFollow(transport.client)
+  })
+
+  it('rejects an unmarked byte gap before the first returned chunk', async () => {
+    const transport = client(() =>
+      asyncSequence(
+        { type: 'opened', job: row, from: 0 },
+        { type: 'output', chunks: [{ at: 2, text: 'c' }], next: 3 },
+        { type: 'status', job: { ...row, status: 'completed', finishedAt: 20 } },
+      ),
+    )
+
+    await expectMalformedFollow(transport.client)
   })
 
   it('cancels before opening and preserves upstream failures', async () => {

@@ -49,8 +49,24 @@ describe('DshRuntimeUpdater', () => {
     expect(parsed.nextTagVersion).toBe('0.1.0-rc.8')
     expect(compareVersions('0.1.0-rc.8', '0.1.0-rc.7')).toBeGreaterThan(0)
     expect(isDshPackageVersion('0.1.0-rc.8')).toBe(true)
+    expect(isDshPackageVersion('0.1.0-rc.8+build.01')).toBe(true)
+    expect(isDshPackageVersion('0.1.0-rc.01')).toBe(false)
     expect(isDshPackageVersion('latest')).toBe(false)
     expect(isDshPackageVersion('0.1.0-rc.8 && whoami')).toBe(false)
+  })
+
+  it('rejects malformed numeric prerelease identifiers before npm commands', async () => {
+    let commandCount = 0
+    const execute: ExecuteRuntimeCommand = () => {
+      commandCount += 1
+      return Promise.resolve({ stdout: '', stderr: '' })
+    }
+
+    await expect(updater(execute).installVersion('0.1.0-rc.01')).rejects.toMatchObject({
+      code: 'INVALID_CONFIGURATION',
+      context: { operation: 'runtime.update', reason: 'invalid-version' },
+    })
+    expect(commandCount).toBe(0)
   })
 
   it('accepts npm versions-only responses used by older update paths', () => {

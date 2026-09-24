@@ -361,9 +361,24 @@ type BackendEventPayload =
       readonly type: 'job.follow.updated'
       readonly sessionId: string
       readonly jobId: string
+      readonly followId: string
       readonly frame: JobFollowFrame
     }
-  | { readonly type: 'queue.updated'; readonly sessionId: string; readonly items: readonly QueuedInput[] }
+  | {
+      readonly type: 'job.follow.failed'
+      readonly sessionId: string
+      readonly jobId: string
+      readonly followId: string
+      /** Static, non-sensitive cause category; raw adapter errors stay Host-local. */
+      readonly reason: 'stream-failed'
+    }
+  | {
+      readonly type: 'queue.updated'
+      readonly sessionId: string
+      readonly items: readonly QueuedInput[]
+      /** Complete queue projection cut, present on DSH alpha171+ wires. */
+      readonly asOfSequence?: number
+    }
   | { readonly type: 'workflow.started'; readonly sessionId: string; readonly workflow: WorkflowSummary }
   | {
       readonly type: 'workflow.member.started'

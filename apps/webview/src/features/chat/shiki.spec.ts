@@ -68,3 +68,38 @@ describe('resolveBundledLanguage', () => {
     expect(resolveBundledLanguage(undefined)).toBeUndefined()
   })
 })
+
+describe('code highlights', () => {
+  it('tokenizes each distinct code text once and reports the completion', async () => {
+    createHighlighter.mockResolvedValue(highlighter)
+    highlighter.codeToHtml.mockReturnValue('<pre class="shiki"><code>1</code></pre>')
+    const { cachedCodeHighlight, codeHighlightVersion, requestCodeHighlight } = await import('./shiki.js')
+    const version = codeHighlightVersion()
+
+    expect(cachedCodeHighlight('typescript', 'const a = 1')).toBeUndefined()
+    requestCodeHighlight('typescript', 'const a = 1')
+    // A streaming block re-renders far more often than it needs a tokenizer run.
+    requestCodeHighlight('typescript', 'const a = 1')
+    await vi.waitFor(() => expect(codeHighlightVersion()).toBe(version + 1))
+
+    expect(highlighter.codeToHtml).toHaveBeenCalledTimes(1)
+    expect(cachedCodeHighlight('typescript', 'const a = 1')).toBe('<pre class="shiki"><code>1</code></pre>')
+    expect(cachedCodeHighlight('typescript', 'const a = 2')).toBeUndefined()
+  })
+
+  it('keeps a failed highlight retryable and leaves the block readable', async () => {
+    createHighlighter.mockResolvedValue(highlighter)
+    highlighter.codeToHtml.mockImplementationOnce(() => {
+      throw new Error('grammar chunk unavailable')
+    })
+    const { cachedCodeHighlight, requestCodeHighlight } = await import('./shiki.js')
+
+    requestCodeHighlight('python', 'print(1)')
+    await vi.waitFor(() => expect(cachedCodeHighlight('python', 'print(1)')).toBeNull())
+
+    // A cached failure stops the next render from retrying immediately; the
+    // caller keeps the block as plaintext until the retry window clears it.
+    requestCodeHighlight('python', 'print(1)')
+    expect(highlighter.codeToHtml).toHaveBeenCalledTimes(1)
+  })
+})

@@ -11,7 +11,7 @@ import { LIVE_TIMEOUT_MS, canConnect, startManagedRuntime } from './harness.js'
  *
  *   $env:DSH_LIVE_SMOKE = '1'
  *   $env:DSH_LIVE_RUNTIME = 'C:\path\to\dsh.cmd'      # defaults to `dsh` on PATH
- *   $env:DSH_LIVE_RUNTIME_VERSION = '0.1.5-rc.2'      # defaults to the pinned runtime
+ *   $env:DSH_LIVE_RUNTIME_VERSION = '0.1.5-rc.3'      # defaults to the pinned runtime
  *   npx vitest run tests/live-dsh/run.spec.ts
  *
  * Only the process started here is signalled; an external DSH is never

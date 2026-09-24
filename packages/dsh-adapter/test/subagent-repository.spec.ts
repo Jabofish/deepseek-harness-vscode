@@ -10,8 +10,9 @@ interface Call {
 
 type Handler = (method: string, params: unknown) => unknown
 
-function transportFor(handler: Handler, calls: Call[] = []): DshTransport {
+function transportFor(handler: Handler, calls: Call[] = [], sessionHistoryTurnWindow = false): DshTransport {
   return {
+    sessionHistoryTurnWindow,
     request: <TResponse>(method: string, params: unknown) => {
       calls.push({ method, params })
       return Promise.resolve({ result: { ok: true, value: handler(method, params) } } as TResponse)
@@ -381,6 +382,67 @@ describe('Rc6SubagentRepository addressed operations', () => {
           childSessionId: 'continuable-child',
           mode: 'continuable',
         },
+      },
+    ])
+  })
+
+  it('uses version-gated turn windows for initial and older child transcript pages', async () => {
+    const calls: Call[] = []
+    const repository = new Rc6SubagentRepository(
+      transportFor(
+        (method) => {
+          if (method === 'subagent.list') return healthyCatalog
+          if (method === 'subagent.history') return { events: [], hasMore: false }
+          throw new Error(`unexpected RPC ${method}`)
+        },
+        calls,
+        true,
+      ),
+    )
+    await repository.list('parent')
+
+    await repository.history('continuable-child')
+    await repository.history('continuable-child', { beforeSequence: 9, pageSize: 200 })
+
+    expect(calls.filter((call) => call.method === 'subagent.history').map((call) => call.params)).toEqual([
+      {
+        parentSessionId: 'parent',
+        childSessionId: 'continuable-child',
+        mode: 'continuable',
+        maxMessages: 500,
+        turnWindow: { minMessages: 50, minTurns: 2 },
+      },
+      {
+        parentSessionId: 'parent',
+        childSessionId: 'continuable-child',
+        mode: 'continuable',
+        maxMessages: 500,
+        turnWindow: { minMessages: 200, minTurns: 2 },
+        beforeSeq: 9,
+      },
+    ])
+  })
+
+  it('keeps the requested child transcript page size when turnWindow is unavailable', async () => {
+    const calls: Call[] = []
+    const repository = new Rc6SubagentRepository(
+      transportFor((method) => {
+        if (method === 'subagent.list') return healthyCatalog
+        if (method === 'subagent.history') return { events: [], hasMore: false }
+        throw new Error(`unexpected RPC ${method}`)
+      }, calls),
+    )
+    await repository.list('parent')
+
+    await repository.history('continuable-child', { beforeSequence: 9, pageSize: 200 })
+
+    expect(calls.filter((call) => call.method === 'subagent.history').map((call) => call.params)).toEqual([
+      {
+        parentSessionId: 'parent',
+        childSessionId: 'continuable-child',
+        mode: 'continuable',
+        maxMessages: 200,
+        beforeSeq: 9,
       },
     ])
   })

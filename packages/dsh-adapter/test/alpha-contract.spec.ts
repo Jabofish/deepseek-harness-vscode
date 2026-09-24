@@ -7,6 +7,7 @@ import { AlphaLoopbackApiClient, type AlphaWebSocket } from '../src/versions/alp
 import { Alpha1VersionAdapter } from '../src/versions/alpha/adapter.js'
 import { callRpc } from '../src/versions/rc6/rpc.js'
 import { Rc6CredentialRepository } from '../src/repositories/credential-repository.js'
+import { Rc6SessionRepository } from '../src/repositories/session-repository.js'
 import { Rc6SubagentRepository } from '../src/repositories/subagent-repository.js'
 import { SubagentAddressRegistry } from '../src/repositories/shared/subagent-addresses.js'
 
@@ -68,6 +69,7 @@ function client(
   fetch: typeof globalThis.fetch,
   timeout = 1_000,
   subagentAddresses?: SubagentAddressRegistry,
+  sessionHistoryTurnWindow = false,
 ): AlphaLoopbackApiClient {
   return new AlphaLoopbackApiClient({
     endpoint,
@@ -76,6 +78,7 @@ function client(
     fetch,
     authCookie: () => 'dsh_session=test-cookie',
     webSocket: FakeWebSocket,
+    sessionHistoryTurnWindow,
     ...(subagentAddresses === undefined ? {} : { subagentAddresses }),
   })
 }
@@ -517,6 +520,96 @@ describe('DSH 0.1.2-alpha.1 Connection/Gateway contract', () => {
     await transport.close()
   })
 
+  it('forwards turn windows on both follow snapshots and older pages for supported versions', async () => {
+    FakeWebSocket.instances.length = 0
+    const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
+      Promise.resolve(response(init, { records: [], hasMore: false })),
+    )
+    const transport = client(fetch, 1_000, undefined, true)
+    const history = transport.request('session.history', {
+      sessionId: 's1',
+      beforeSeq: 42,
+      maxMessages: 500,
+      turnWindow: { minMessages: 200, minTurns: 2 },
+    })
+    const socket = await waitForSocket()
+    socket.open()
+    await answerFollow(socket, 1, {
+      type: 'snapshot',
+      header: {},
+      cursor: 70,
+      records: [],
+      hasMore: true,
+      projections: { asOfSeq: 70, values: {} },
+    })
+
+    await expect(history).resolves.toMatchObject({ result: { ok: true, value: { hasMore: false } } })
+    const followOpen = JSON.parse(socket.sent[0] ?? '{}') as {
+      readonly endpoint?: string
+      readonly payload?: { readonly args?: { readonly request?: Record<string, unknown> } }
+    }
+    expect(followOpen.endpoint).toBe('session/follow')
+    expect(followOpen.payload?.args?.request).toEqual({
+      address: { kind: 'session', sessionId: 's1' },
+      maxMessages: 500,
+      turnWindow: { minMessages: 200, minTurns: 2 },
+    })
+    const page = JSON.parse(bodyText(fetch.mock.calls[0]?.[1])) as {
+      readonly payload: { readonly args: { readonly request: Record<string, unknown> } }
+    }
+    expect(page.payload.args.request).toEqual({
+      address: { kind: 'session', sessionId: 's1' },
+      throughSeq: 70,
+      beforeSeq: 42,
+      maxMessages: 500,
+      turnWindow: { minMessages: 200, minTurns: 2 },
+    })
+    await transport.close()
+  })
+
+  it('drops turn windows for profiles that do not declare support', async () => {
+    FakeWebSocket.instances.length = 0
+    const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
+      Promise.resolve(response(init, { records: [], hasMore: false })),
+    )
+    const transport = client(fetch)
+    const history = transport.request('session.history', {
+      sessionId: 's1',
+      beforeSeq: 42,
+      maxMessages: 77,
+      turnWindow: { minMessages: 50, minTurns: 2 },
+    })
+    const socket = await waitForSocket()
+    socket.open()
+    await answerFollow(socket, 1, {
+      type: 'snapshot',
+      header: {},
+      cursor: 70,
+      records: [],
+      hasMore: true,
+      projections: { asOfSeq: 70, values: {} },
+    })
+
+    await history
+    const followOpen = JSON.parse(socket.sent[0] ?? '{}') as {
+      readonly payload?: { readonly args?: { readonly request?: Record<string, unknown> } }
+    }
+    expect(followOpen.payload?.args?.request).toEqual({
+      address: { kind: 'session', sessionId: 's1' },
+      maxMessages: 77,
+    })
+    const page = JSON.parse(bodyText(fetch.mock.calls[0]?.[1])) as {
+      readonly payload: { readonly args: { readonly request: Record<string, unknown> } }
+    }
+    expect(page.payload.args.request).toEqual({
+      address: { kind: 'session', sessionId: 's1' },
+      throughSeq: 70,
+      beforeSeq: 42,
+      maxMessages: 77,
+    })
+    await transport.close()
+  })
+
   it('wraps paginated and zero-argument alpha Remote calls in the required args object', async () => {
     FakeWebSocket.instances.length = 0
     const fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -738,7 +831,10 @@ describe('DSH 0.1.2-alpha.1 Connection/Gateway contract', () => {
     const subagents = new Rc6SubagentRepository(transport, { addresses: subagentAddresses })
     await expect(subagents.list('parent-1')).resolves.toMatchObject({ parentAvailable: true })
 
-    const snapshot = transport.request('session.history', { sessionId: 'child-1', maxMessages: 50 })
+    const snapshot = new Rc6SessionRepository(transport).history('child-1', 1, undefined, {
+      pageSize: 200,
+      pagePurpose: 'gap-recovery',
+    })
     const socket = await waitForSocket()
     socket.open()
     await waitForSent(socket, 1)
@@ -753,7 +849,9 @@ describe('DSH 0.1.2-alpha.1 Connection/Gateway contract', () => {
         childSessionId: 'child-1',
         mode: 'continuable',
       },
+      maxMessages: 200,
     })
+    expect(followOpen.payload?.args?.request).not.toHaveProperty('turnWindow')
     socket.message(
       streamItem(
         socket,
@@ -770,6 +868,22 @@ describe('DSH 0.1.2-alpha.1 Connection/Gateway contract', () => {
     )
     socket.message({ type: 'end', streamId: followOpen.streamId })
     await snapshot
+    const pageCall = fetch.mock.calls[1]
+    const pageBody = JSON.parse(bodyText(pageCall?.[1])) as {
+      readonly payload: { readonly args: { readonly request: Record<string, unknown> } }
+    }
+    expect(pageCall?.[0]).toMatchObject({ pathname: '/api/session/page' })
+    expect(pageBody.payload.args.request).toEqual({
+      address: {
+        kind: 'subagent',
+        parentSessionId: 'parent-1',
+        childSessionId: 'child-1',
+        mode: 'continuable',
+      },
+      throughSeq: 1,
+      beforeSeq: 1,
+      maxMessages: 200,
+    })
 
     const live = transport.openSessionStream('child-1', new AbortController().signal)[Symbol.asyncIterator]()
     const liveNext = live.next()

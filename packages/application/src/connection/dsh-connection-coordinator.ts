@@ -180,10 +180,60 @@ export class DshConnectionCoordinator {
         this.publish({ kind: 'failed', message: error.message, retryable: error.retryable })
         throw error
       }
+      let discovered: readonly BackendCandidate[] = []
+      try {
+        discovered = await this.dependencies.discovery.discover(signal)
+        this.throwIfAborted(signal)
+      } catch (error) {
+        if (isAbort(error, signal)) throw cancelled(error)
+        // Discovery is only an optional source of exact identity evidence for
+        // this same endpoint; failure never redirects or blocks a custom probe.
+      }
+      const exactMatches = discovered.filter((candidate) => matchesCustomEndpoint(candidate, endpoint))
+      // Composite discovery can preserve a configured or companion endpoint
+      // as the winner while attaching identity proven by a current process
+      // scan. Trust only the explicit manifest marker, never a source's raw
+      // runtimeVersion or PID fields.
+      const processCandidates = exactMatches.filter((candidate) => candidate.source === 'process-scan')
+      const manifestCandidates = exactMatches.filter(
+        (candidate) => candidate.runtimeVersionEvidence === 'process-manifest',
+      )
+      const verifiedManifestCandidates = manifestCandidates.filter(isVerifiedProcessManifestCandidate)
+      const malformedManifest = verifiedManifestCandidates.length !== manifestCandidates.length
+      const runtimeVersions = new Set(verifiedManifestCandidates.map((candidate) => candidate.runtimeVersion))
+      const processPids = new Set(
+        processCandidates.flatMap((candidate) =>
+          candidate.pid !== undefined && Number.isSafeInteger(candidate.pid) && candidate.pid > 0
+            ? [candidate.pid]
+            : [],
+        ),
+      )
+      const manifestPids = new Set(verifiedManifestCandidates.map((candidate) => candidate.pid))
+      const pids = new Set([...processPids, ...manifestPids])
+      const uniquePid = pids.size === 1 ? [...pids][0] : undefined
+      const runtimeVersionIsBoundToUniquePid =
+        uniquePid !== undefined &&
+        verifiedManifestCandidates.length > 0 &&
+        verifiedManifestCandidates.every((candidate) => candidate.pid === uniquePid)
+      const hasVerifiedRuntimeIdentity =
+        !malformedManifest &&
+        runtimeVersions.size === 1 &&
+        runtimeVersionIsBoundToUniquePid &&
+        processCandidates.every(
+          (candidate) =>
+            candidate.pid !== undefined && Number.isSafeInteger(candidate.pid) && candidate.pid > 0,
+        )
       const candidate: BackendCandidate = {
         endpoint,
         source: 'configured',
         confidence: 120,
+        ...(hasVerifiedRuntimeIdentity
+          ? {
+              runtimeVersion: [...runtimeVersions][0],
+              runtimeVersionEvidence: 'process-manifest' as const,
+            }
+          : {}),
+        ...(hasVerifiedRuntimeIdentity && uniquePid !== undefined ? { pid: uniquePid } : {}),
       }
       this.publish({ kind: 'connecting', candidate })
       try {
@@ -220,19 +270,33 @@ export class DshConnectionCoordinator {
           // Fast discovery is an optimization. A stale registry or another
           // optional source must not prevent the authoritative full pass.
         }
-        const fastResult = await this.tryCandidates(fastCandidates, signal, generation, attemptedEndpoints)
+        // Fast providers can locate endpoints but usually cannot prove which
+        // DSH wire version owns them. Keep the fast path for candidates whose
+        // adjacent package manifest was already verified; defer unversioned
+        // candidates until the bounded process discovery pass has completed.
+        const fastResult = await this.tryCandidates(
+          fastCandidates.filter(isVerifiedProcessManifestCandidate),
+          signal,
+          generation,
+          attemptedEndpoints,
+        )
         if (fastResult !== undefined) return fastResult
       }
 
       const candidates = await this.dependencies.discovery.discover(signal)
-      const result = await this.tryCandidates(candidates, signal, generation, attemptedEndpoints)
+      const result = await this.tryDiscoveredCandidates(candidates, signal, generation, attemptedEndpoints)
       if (result !== undefined) return result
       // Close the small race where another DSH appears while the first pass
       // is finishing. Only an empty first pass gets one bounded last chance;
       // failed candidates have already been fully probed.
       if (candidates.length === 0 && request.autoStart) {
         const lastChance = await this.dependencies.discovery.discover(signal)
-        const lastChanceResult = await this.tryCandidates(lastChance, signal, generation, attemptedEndpoints)
+        const lastChanceResult = await this.tryDiscoveredCandidates(
+          lastChance,
+          signal,
+          generation,
+          attemptedEndpoints,
+        )
         if (lastChanceResult !== undefined) return lastChanceResult
       }
     }
@@ -371,6 +435,24 @@ export class DshConnectionCoordinator {
     return undefined
   }
 
+  private async tryDiscoveredCandidates(
+    candidates: readonly BackendCandidate[],
+    signal: AbortSignal | undefined,
+    generation: number,
+    attemptedEndpoints: Set<string>,
+  ): Promise<ConnectionResult | undefined> {
+    const exactCandidates = candidates.filter(isVerifiedProcessManifestCandidate)
+    const exactEndpoints = new Set(exactCandidates.map(candidateEndpointKey))
+    const candidatesWithoutExactIdentity = candidates.filter(
+      (candidate) =>
+        candidate.runtimeVersionEvidence !== 'process-manifest' &&
+        !exactEndpoints.has(candidateEndpointKey(candidate)),
+    )
+    const exactResult = await this.tryCandidates(exactCandidates, signal, generation, attemptedEndpoints)
+    if (exactResult !== undefined) return exactResult
+    return this.tryCandidates(candidatesWithoutExactIdentity, signal, generation, attemptedEndpoints)
+  }
+
   private async attach(
     connected: DshBackend['connection'],
     managed: ManagedProcessHandle | undefined,
@@ -420,6 +502,56 @@ function sameRequest(left: ConnectionRequest | undefined, right: ConnectionReque
     left?.mode === right.mode &&
     left.autoStart === right.autoStart &&
     left.endpoint?.baseUrl === right.endpoint?.baseUrl
+  )
+}
+
+function matchesCustomEndpoint(candidate: BackendCandidate, selected: BackendEndpoint): boolean {
+  const discovered = candidate.endpoint
+  if (!isCanonicalLoopbackEndpoint(discovered) || !isCanonicalLoopbackEndpoint(selected)) return false
+  if (discovered.port !== selected.port) return false
+  if (discovered.host === selected.host) return discovered.baseUrl === selected.baseUrl
+  const loopbackAlias =
+    (discovered.host === '127.0.0.1' && selected.host === 'localhost') ||
+    (discovered.host === 'localhost' && selected.host === '127.0.0.1')
+  return (
+    loopbackAlias &&
+    candidate.pid !== undefined &&
+    Number.isSafeInteger(candidate.pid) &&
+    candidate.pid > 0 &&
+    candidate.commandLine !== undefined &&
+    candidate.commandLine.trim() !== ''
+  )
+}
+
+function candidateEndpointKey(candidate: BackendCandidate): string {
+  return `${candidate.endpoint.host}:${candidate.endpoint.port}`
+}
+
+function isCanonicalLoopbackEndpoint(endpoint: BackendEndpoint): boolean {
+  return endpoint.baseUrl === `http://${endpoint.host}:${endpoint.port}`
+}
+
+function isDshRuntimeVersion(value: string): boolean {
+  return /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u.test(
+    value,
+  )
+}
+
+function isVerifiedProcessManifestCandidate(candidate: BackendCandidate): candidate is BackendCandidate & {
+  readonly runtimeVersion: string
+  readonly runtimeVersionEvidence: 'process-manifest'
+  readonly pid: number
+  readonly commandLine: string
+} {
+  return (
+    candidate.runtimeVersionEvidence === 'process-manifest' &&
+    candidate.runtimeVersion !== undefined &&
+    isDshRuntimeVersion(candidate.runtimeVersion) &&
+    candidate.pid !== undefined &&
+    Number.isSafeInteger(candidate.pid) &&
+    candidate.pid > 0 &&
+    candidate.commandLine !== undefined &&
+    candidate.commandLine.trim() !== ''
   )
 }
 

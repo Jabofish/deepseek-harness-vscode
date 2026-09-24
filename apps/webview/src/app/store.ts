@@ -1,7 +1,7 @@
 import { isPluginMetadata } from '@dsh-vscode/domain'
+import { jobFollowFailedPayloadSchema, jobFollowUpdatedPayloadSchema } from '@dsh-vscode/webview-protocol'
 import {
   parseSlashCommand,
-  FEATURE_CAPABILITY_IDS,
   type AgentConfiguration,
   type AgentPresetDescriptor,
   type AgentPresetDocument,
@@ -26,7 +26,6 @@ import {
   type EditorContextKind,
   type EditorContextPreview,
   type FeatureEventIdentity,
-  type FeatureCapabilityProfile,
   isCanonicalWorkspaceRelativePath,
   isValidEditorContextRange,
   type ExtensionSettingsSummary,
@@ -190,8 +189,6 @@ export interface AppState {
   readonly jobControllerAvailable: boolean
   /** Safe compatibility warning for an unknown/fallback DSH runtime. */
   readonly dshCompatibilityWarning: string | undefined
-  /** Host-projected feature readiness; no endpoint or credential data. */
-  readonly featureProfile: FeatureCapabilityProfile | undefined
   /** Latest Host-owned npm registry snapshot for the DSH runtime. */
   readonly dshUpdate: DshUpdateSnapshot | undefined
   /** Latest phase emitted by the Host while an update request is running. */
@@ -299,6 +296,8 @@ export interface DshSettingsSnapshot {
 
 export interface JobFollowState {
   readonly jobId: string
+  /** Host-issued observer identity; frames from older follows are ignored. */
+  readonly followId: string
   readonly next: number
   readonly chunks: readonly JobOutputChunk[]
   readonly lossy: boolean
@@ -306,9 +305,13 @@ export interface JobFollowState {
   readonly generation?: number
   /** The matching `opened(from)` frame must arrive before this follow is live. */
   readonly awaitingOpenFrom?: number
+  /** Only the first byte-bearing frame after open may replay a chunk across the saved byte cursor. */
+  readonly receivedOutputBytes?: boolean
   readonly job?: JobView
   /** An opened row may already be settled; only a terminal status frame closes output delivery. */
   readonly terminalStatusReceived?: boolean
+  /** Safe failure category for the current observer; it keeps output retryable. */
+  readonly error?: 'stream-failed' | undefined
 }
 
 export interface AppActions {
@@ -483,6 +486,8 @@ type LiveHistoryAppender = (sessionId: string, entry: SessionHistoryEvent) => vo
 interface ProjectionSequenceIndex {
   readonly perKey: Map<string, Map<string, number>>
   readonly baselines: Map<string, number>
+  readonly queueBySession: Map<string, number>
+  connectionIdentity: string | undefined
 }
 
 interface PendingSessionOpen {
@@ -529,7 +534,6 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     sessionRestore: false,
     jobControllerAvailable: false,
     dshCompatibilityWarning: undefined,
-    featureProfile: undefined,
     dshUpdate: undefined,
     dshUpdateProgress: undefined,
     sessions: [],
@@ -595,6 +599,8 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   const projectionSequences: ProjectionSequenceIndex = {
     perKey: new Map(),
     baselines: new Map(),
+    queueBySession: new Map(),
+    connectionIdentity: undefined,
   }
   const listeners = new Set<() => void>()
   let notifyTimer: number | undefined
@@ -861,7 +867,12 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
             payload = await client.request<unknown>({
               type: 'session.history',
               requestId: requestId(),
-              payload: { sessionId, beforeSeq, maxMessages: GAP_BACKFILL_PAGE_MESSAGES },
+              payload: {
+                sessionId,
+                beforeSeq,
+                maxMessages: GAP_BACKFILL_PAGE_MESSAGES,
+                pagePurpose: 'gap-recovery',
+              },
             })
           } catch {
             break
@@ -1968,6 +1979,22 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     }
     return { kind: 'session', sessionId: target }
   }
+  const stopJobFollowBeforeSessionOpen = (): void => {
+    const sessionId = state.activeSessionId
+    const following = state.jobFollow
+    if (sessionId === undefined || following === undefined) return
+    jobFollowGeneration += 1
+    setState((current) =>
+      current.jobFollow?.generation === following.generation ? { ...current, jobFollow: undefined } : current,
+    )
+    void client
+      .request<unknown>({
+        type: 'job.follow.stop',
+        requestId: requestId(),
+        payload: { sessionId, jobId: following.jobId, followId: following.followId },
+      })
+      .catch(() => undefined)
+  }
   const open = async (
     requestedSessionId: string,
     options: { readonly startup?: boolean } = {},
@@ -1989,20 +2016,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       }
       sessionId = resolution.sessionId
     }
-    if (
-      state.activeSessionId !== undefined &&
-      state.activeSessionId !== sessionId &&
-      state.jobFollow !== undefined
-    ) {
-      const previousFollow = state.jobFollow
-      void client
-        .request<unknown>({
-          type: 'job.follow.stop',
-          requestId: requestId(),
-          payload: { sessionId: state.activeSessionId, jobId: previousFollow.jobId },
-        })
-        .catch(() => undefined)
-    }
+    stopJobFollowBeforeSessionOpen()
     if (options.startup !== true) startupRestorePending = false
     flushPendingHistory()
     const version = ++openVersion
@@ -2239,6 +2253,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     // A direct child open (drawer, task row) also supersedes an in-flight
     // by-id resolution inside `open`.
     openIntent += 1
+    stopJobFollowBeforeSessionOpen()
     flushPendingHistory()
     const version = ++openVersion
     feedbackReadySessions.delete(entry.id)
@@ -2514,9 +2529,6 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     get dshCompatibilityWarning() {
       return state.dshCompatibilityWarning
     },
-    get featureProfile() {
-      return state.featureProfile
-    },
     get dshUpdate() {
       return state.dshUpdate
     },
@@ -2777,12 +2789,12 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
             ? {
                 type: 'subagent.history',
                 requestId: requestId(),
-                payload: { sessionId, beforeSeq },
+                payload: { sessionId, beforeSeq, maxMessages: 200 },
               }
             : {
                 type: 'session.history',
                 requestId: requestId(),
-                payload: { sessionId, beforeSeq, maxMessages: 200 },
+                payload: { sessionId, beforeSeq, maxMessages: 200, pagePurpose: 'transcript' },
               },
         )
         const page = childTranscript ? parseSubagentHistory(result) : parseSessionHistoryPage(result)
@@ -4031,17 +4043,32 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       const job = state.jobs.find((entry) => entry.id === jobId)
       if (sessionId === undefined || job === undefined || !state.jobControllerAvailable) return
       const prior = state.jobFollow
+      // A live or opening follow already owns this job/session. Reusing it is
+      // idempotent; a second Host start could be rejected before it replaces
+      // the first observer, leaving that original stream untracked in the UI.
+      // A terminal status frame closes the observer and permits an explicit
+      // replay from the last accepted byte offset.
+      if (prior?.jobId === jobId && prior.error === undefined && prior.terminalStatusReceived !== true) return
+      const generation = ++jobFollowGeneration
       if (prior !== undefined && prior.jobId !== jobId) {
         await client
           .request<unknown>({
             type: 'job.follow.stop',
             requestId: requestId(),
-            payload: { sessionId, jobId: prior.jobId },
+            payload: { sessionId, jobId: prior.jobId, followId: prior.followId },
           })
           .catch(() => undefined)
       }
+      // Opening a different session or stopping while the prior stream was
+      // being released invalidates this action before it can start a stale one.
+      if (
+        generation !== jobFollowGeneration ||
+        state.activeSessionId !== sessionId ||
+        !state.jobControllerAvailable
+      )
+        return
+      const followId = requestId()
       const from = prior?.jobId === jobId ? prior.next : (job.output?.earliest ?? 0)
-      const generation = ++jobFollowGeneration
       setState((current) => {
         const existing = current.jobFollow?.jobId === jobId ? current.jobFollow : undefined
         return {
@@ -4049,10 +4076,13 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
           jobFollow: {
             ...(existing ?? { jobId, next: from, chunks: [], lossy: false, job }),
             jobId,
+            followId,
             next: Math.max(existing?.next ?? from, from),
             generation,
             awaitingOpenFrom: from,
+            receivedOutputBytes: false,
             job: existing?.job ?? job,
+            error: undefined,
           },
         }
       })
@@ -4060,11 +4090,20 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         await client.request<unknown>({
           type: 'job.follow.start',
           requestId: requestId(),
-          payload: { sessionId, jobId, from },
+          payload: { sessionId, jobId, followId, from },
         })
       } catch (error) {
+        void client
+          .request<unknown>({
+            type: 'job.follow.stop',
+            requestId: requestId(),
+            payload: { sessionId, jobId, followId },
+          })
+          .catch(() => undefined)
         setState((current) =>
-          current.jobFollow?.generation === generation ? { ...current, jobFollow: undefined } : current,
+          current.jobFollow?.generation === generation && current.jobFollow.followId === followId
+            ? { ...current, jobFollow: undefined }
+            : current,
         )
         throw error
       }
@@ -4078,7 +4117,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       await client.request<unknown>({
         type: 'job.follow.stop',
         requestId: requestId(),
-        payload: { sessionId, jobId: following.jobId },
+        payload: { sessionId, jobId: following.jobId, followId: following.followId },
       })
     },
     killJob: async (jobId) => {
@@ -4316,45 +4355,6 @@ function parseDshUpdateProgress(value: unknown): DshRuntimeUpdateProgress | unde
   return {
     phase,
     ...(version === undefined ? {} : { version }),
-  }
-}
-
-function parseFeatureCapabilityProfile(value: unknown): FeatureCapabilityProfile | undefined {
-  const profile = object(value)
-  const capabilities = object(profile?.capabilities)
-  if (
-    profile === undefined ||
-    capabilities === undefined ||
-    typeof profile.dshVersion !== 'string' ||
-    typeof profile.protocolVersion !== 'string' ||
-    (profile.source !== 'pinned-adapter' && profile.source !== 'compatibility-fallback')
-  )
-    return undefined
-  const parsed: Record<
-    string,
-    FeatureCapabilityProfile['capabilities'][keyof FeatureCapabilityProfile['capabilities']]
-  > = {}
-  for (const id of FEATURE_CAPABILITY_IDS) {
-    const capability = object(capabilities[id])
-    if (
-      capability === undefined ||
-      !['verified-contract', 'compatibility-fallback', 'unavailable'].includes(String(capability.state)) ||
-      !['verified-contract', 'compatibility-fallback', 'unavailable', 'not-applicable'].includes(
-        String(capability.upstream),
-      )
-    )
-      return undefined
-    parsed[id] = {
-      state: capability.state as FeatureCapabilityProfile['capabilities'][typeof id]['state'],
-      upstream: capability.upstream as FeatureCapabilityProfile['capabilities'][typeof id]['upstream'],
-      ...(typeof capability.reason === 'string' ? { reason: capability.reason.slice(0, 512) } : {}),
-    }
-  }
-  return {
-    dshVersion: profile.dshVersion.slice(0, 128),
-    protocolVersion: profile.protocolVersion.slice(0, 128),
-    source: profile.source,
-    capabilities: parsed as FeatureCapabilityProfile['capabilities'],
   }
 }
 
@@ -5304,6 +5304,14 @@ function applyHostMessage(
   if (message.name === 'connection.snapshot') {
     const snapshot = object(message.payload)
     const kind = snapshot?.kind
+    const nextConnectionIdentity = connectionIdentity(snapshot)
+    const identityChanged =
+      kind === 'connected' &&
+      nextConnectionIdentity !== undefined &&
+      projectionSequences?.connectionIdentity !== undefined &&
+      nextConnectionIdentity !== projectionSequences.connectionIdentity
+    const connectionEpochChanged =
+      kind === 'connected' && (state.backend.kind !== 'connected' || identityChanged)
     // A manual reconnect publishes stopping/idle before the new connected
     // epoch and may not emit connection.lost. Projection cuts belong to one
     // DSH process epoch, so never let the previous process watermark reject
@@ -5311,12 +5319,21 @@ function applyHostMessage(
     if (kind !== 'connected') {
       projectionSequences?.perKey.clear()
       projectionSequences?.baselines.clear()
+      projectionSequences?.queueBySession.clear()
+      if (projectionSequences !== undefined) projectionSequences.connectionIdentity = undefined
+    } else if (nextConnectionIdentity !== undefined) {
+      if (identityChanged) {
+        projectionSequences?.perKey.clear()
+        projectionSequences?.baselines.clear()
+        projectionSequences?.queueBySession.clear()
+      }
+      if (projectionSequences !== undefined) projectionSequences.connectionIdentity = nextConnectionIdentity
     }
     // Leaving `connected` means the process that owned the live queue,
     // approvals and catalogs is gone. `connected` -> `connected` is the
     // coordinator's cached-backend fast path, where every surface stays valid.
     const base =
-      state.backend.kind === 'connected' && kind !== 'connected'
+      state.backend.kind === 'connected' && (kind !== 'connected' || identityChanged)
         ? withoutConnectionScopedSurfaces(state)
         : state
     if (kind === 'runtime-missing') {
@@ -5331,7 +5348,6 @@ function applyHostMessage(
         sessionRestore: false,
         jobControllerAvailable: false,
         dshCompatibilityWarning: undefined,
-        featureProfile: undefined,
       })
     } else if (
       kind === 'idle' ||
@@ -5352,7 +5368,6 @@ function applyHostMessage(
           sessionRestore: false,
           jobControllerAvailable: false,
           dshCompatibilityWarning: undefined,
-          featureProfile: undefined,
           backend: {
             kind,
             message:
@@ -5370,7 +5385,6 @@ function applyHostMessage(
           sessionRestore: false,
           jobControllerAvailable: false,
           dshCompatibilityWarning: undefined,
-          featureProfile: undefined,
           backend: {
             kind,
             port: typeof snapshot?.port === 'number' ? snapshot.port : 0,
@@ -5394,14 +5408,12 @@ function applyHostMessage(
             kind === 'connected' && typeof snapshot?.compatibilityWarning === 'string'
               ? snapshot.compatibilityWarning
               : undefined,
-          featureProfile:
-            kind === 'connected' ? parseFeatureCapabilityProfile(snapshot?.featureProfile) : undefined,
         })
       // Every DSH process owns its own follow subscriptions. The replacement
       // process never inherits the previous one's, so the conversation on
       // screen would silently stop receiving model and tool events even
       // though the shell reports a healthy connection.
-      if (kind === 'connected' && state.backend.kind !== 'connected') onConnectionEpoch?.()
+      if (connectionEpochChanged) onConnectionEpoch?.()
     }
     return
   }
@@ -5641,6 +5653,7 @@ function applyHostMessage(
   } else if (event.type === 'session.removed') {
     projectionSequences?.perKey.delete(event.sessionId)
     projectionSequences?.baselines.delete(event.sessionId)
+    projectionSequences?.queueBySession.delete(event.sessionId)
     const wasActive = next.activeSessionId === event.sessionId
     next = {
       ...next,
@@ -5712,8 +5725,23 @@ function applyHostMessage(
       const queue = removeAdmittedQueueInput(next.queue, event)
       if (queue !== next.queue) next = { ...next, queue }
     }
-  } else if (event.type === 'queue.updated' && event.sessionId === next.activeSessionId) {
-    if (!sameQueuedInputList(next.queue, event.items)) next = { ...next, queue: event.items }
+  } else if (event.type === 'queue.updated') {
+    const previousSequence = projectionSequences?.queueBySession.get(event.sessionId)
+    const hasValidSequence =
+      event.asOfSequence === undefined ||
+      (Number.isSafeInteger(event.asOfSequence) &&
+        event.asOfSequence >= 0 &&
+        !Object.is(event.asOfSequence, -0))
+    const isStale =
+      !hasValidSequence ||
+      (previousSequence !== undefined &&
+        (event.asOfSequence === undefined || event.asOfSequence <= previousSequence))
+    if (!isStale) {
+      if (event.asOfSequence !== undefined)
+        projectionSequences?.queueBySession.set(event.sessionId, event.asOfSequence)
+      if (event.sessionId === next.activeSessionId && !sameQueuedInputList(next.queue, event.items))
+        next = { ...next, queue: event.items }
+    }
   } else if (event.type === 'goal.updated' && event.sessionId === next.activeSessionId) {
     if (!sameGoalList(next.goals, event.goals)) next = { ...next, goals: event.goals }
   } else if (event.type === 'todo.updated' && event.sessionId === next.activeSessionId) {
@@ -5721,10 +5749,13 @@ function applyHostMessage(
   } else if (event.type === 'jobs.updated' && event.sessionId === next.activeSessionId) {
     if (!sameJobList(next.jobs, event.jobs)) next = { ...next, jobs: event.jobs }
   } else if (event.type === 'job.follow.updated' && event.sessionId === next.activeSessionId) {
-    if (next.jobFollow?.jobId === event.jobId) {
+    if (next.jobFollow?.jobId === event.jobId && next.jobFollow.followId === event.followId) {
       const jobFollow = reduceJobFollow(next.jobFollow, event.jobId, event.frame)
       if (jobFollow !== next.jobFollow) next = { ...next, jobFollow }
     }
+  } else if (event.type === 'job.follow.failed' && event.sessionId === next.activeSessionId) {
+    if (next.jobFollow?.jobId === event.jobId && next.jobFollow.followId === event.followId)
+      next = { ...next, jobFollow: { ...next.jobFollow, error: event.reason } }
   } else if (event.type === 'permission.resolved') {
     const permissions = removeMatching(
       next.permissions,
@@ -5761,7 +5792,6 @@ function applyHostMessage(
       sessionRestore: false,
       jobControllerAvailable: false,
       dshCompatibilityWarning: undefined,
-      featureProfile: undefined,
     }
   }
   if (next !== state) setState(next)
@@ -5899,6 +5929,7 @@ function advancesTimelineSequence(event: BackendEvent): boolean {
     case 'connection.lost':
     case 'jobs.updated':
     case 'job.follow.updated':
+    case 'job.follow.failed':
     case 'permission.requested':
     case 'permission.resolved':
     case 'question.requested':
@@ -5955,6 +5986,7 @@ function eventMayChangeTimelineState(event: BackendEvent): boolean {
     case 'archived.sessions.changed':
     case 'jobs.updated':
     case 'job.follow.updated':
+    case 'job.follow.failed':
     case 'permission.resolved':
     case 'permission.requested':
     case 'question.requested':
@@ -6193,6 +6225,13 @@ function updateSessionProjection(
 
 function projectionAsOfSequence(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= -1 ? value : undefined
+}
+
+function connectionIdentity(snapshot: Record<string, unknown> | undefined): string | undefined {
+  const backendInstanceId = snapshot?.backendInstanceId
+  const connectionGeneration = optionalGeneration(snapshot?.connectionGeneration)
+  if (!nonEmptyString(backendInstanceId) || connectionGeneration === undefined) return undefined
+  return JSON.stringify([backendInstanceId, connectionGeneration])
 }
 
 function acceptProjectionSequence(
@@ -6777,14 +6816,41 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
       jobs: value.jobs,
     }
   }
-  if (name === 'job.follow.updated' && nonEmptyString(value.sessionId) && nonEmptyString(value.jobId)) {
-    const frame = parseJobFollowFrame(value.frame)
-    if (frame !== undefined)
-      return { type: 'job.follow.updated', sessionId: value.sessionId, jobId: value.jobId, frame }
+  if (name === 'job.follow.updated') {
+    const result = jobFollowUpdatedPayloadSchema.safeParse(value)
+    if (result.success)
+      return {
+        type: 'job.follow.updated',
+        sessionId: result.data.sessionId,
+        jobId: result.data.jobId,
+        followId: result.data.followId,
+        frame: result.data.frame,
+      }
+  }
+  if (name === 'job.follow.failed') {
+    const result = jobFollowFailedPayloadSchema.safeParse(value)
+    if (result.success)
+      return {
+        type: 'job.follow.failed',
+        sessionId: result.data.sessionId,
+        jobId: result.data.jobId,
+        followId: result.data.followId,
+        reason: 'stream-failed',
+      }
   }
   if (name === 'queue.updated' && nonEmptyString(value.sessionId)) {
+    const hasAsOfSequence = Object.hasOwn(value, 'asOfSequence')
+    const asOfSequence = hasAsOfSequence ? projectionAsOfSequence(value.asOfSequence) : undefined
+    if (hasAsOfSequence && (asOfSequence === undefined || asOfSequence < 0 || Object.is(asOfSequence, -0)))
+      return undefined
     const items = parseQueuedInputs(value.items, value.sessionId)
-    if (items !== undefined) return { type: 'queue.updated', sessionId: value.sessionId, items }
+    if (items !== undefined)
+      return {
+        type: 'queue.updated',
+        sessionId: value.sessionId,
+        items,
+        ...(asOfSequence === undefined ? {} : { asOfSequence }),
+      }
   }
   if (name === 'workflow.started' && nonEmptyString(value.sessionId) && isWorkflowSummary(value.workflow))
     return {
@@ -9869,60 +9935,22 @@ function isJobView(value: unknown): value is JobView {
   )
 }
 
-function parseJobFollowFrame(value: unknown): JobFollowFrame | undefined {
-  const frame = object(value)
-  if (frame === undefined || typeof frame.type !== 'string') return undefined
-  if (frame.type === 'opened' && isJobView(frame.job) && isSafeSequenceNumber(frame.from))
-    return { type: 'opened', job: frame.job, from: frame.from }
-  if (frame.type === 'status' && isJobView(frame.job)) return { type: 'status', job: frame.job }
-  if (
-    frame.type === 'output' &&
-    Array.isArray(frame.chunks) &&
-    frame.chunks.every(isJobOutputChunk) &&
-    isSafeSequenceNumber(frame.next) &&
-    (frame.lossy === undefined || frame.lossy === true)
-  )
-    return {
-      type: 'output',
-      chunks: frame.chunks,
-      next: frame.next,
-      ...(frame.lossy === true ? { lossy: true } : {}),
-    }
-  return undefined
-}
-
-function isJobOutputChunk(value: unknown): value is JobOutputChunk {
-  const chunk = object(value)
-  return (
-    chunk !== undefined &&
-    isSafeSequenceNumber(chunk.at) &&
-    typeof chunk.text === 'string' &&
-    (chunk.channel === undefined ||
-      chunk.channel === 'stdout' ||
-      chunk.channel === 'stderr' ||
-      chunk.channel === 'log') &&
-    (chunk.gapBefore === undefined || chunk.gapBefore === true)
-  )
-}
-
-function isSafeSequenceNumber(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 && !Object.is(value, -0)
-}
-
 function isTerminalJobStatus(status: JobView['status']): boolean {
   return status === 'completed' || status === 'failed' || status === 'killed'
 }
 
 function reduceJobFollow(current: JobFollowState, jobId: string, frame: JobFollowFrame): JobFollowState {
-  if (current.jobId !== jobId) return current
+  if (current.jobId !== jobId || current.error !== undefined) return current
   if (frame.type === 'opened') {
     if (current.awaitingOpenFrom === undefined || frame.from !== current.awaitingOpenFrom) return current
     return {
       jobId: current.jobId,
+      followId: current.followId,
       next: Math.max(current.next, frame.from),
       chunks: current.chunks,
       lossy: current.lossy,
       ...(current.generation === undefined ? {} : { generation: current.generation }),
+      receivedOutputBytes: false,
       terminalStatusReceived: false,
       job: frame.job,
     }
@@ -9936,8 +9964,62 @@ function reduceJobFollow(current: JobFollowState, jobId: string, frame: JobFollo
       job: frame.job,
       terminalStatusReceived: isTerminalJobStatus(frame.job.status),
     }
-  if (frame.next <= previous.next) return previous
-  const additions = frame.chunks.filter((chunk) => chunk.at >= previous.next)
+  if (frame.next < previous.next) return previous
+  const encoder = new TextEncoder()
+  let lastByteEnd: number | undefined
+  for (const chunk of frame.chunks) {
+    const end = chunk.at + encoder.encode(chunk.text).byteLength
+    if (!Number.isSafeInteger(end) || end > frame.next) return failJobFollow(previous)
+    if (chunk.text.length === 0) {
+      if (chunk.at !== frame.next || chunk.gapBefore !== true || frame.lossy !== true)
+        return failJobFollow(previous)
+    } else {
+      lastByteEnd = end
+    }
+  }
+  if (lastByteEnd !== undefined && lastByteEnd !== frame.next) return failJobFollow(previous)
+  if (frame.chunks.length === 0 && frame.next > previous.next && frame.lossy !== true)
+    return failJobFollow(previous)
+  const lossy =
+    previous.lossy || frame.lossy === true || frame.chunks.some((chunk) => chunk.gapBefore === true)
+  if (frame.next === previous.next)
+    return {
+      ...previous,
+      lossy,
+    }
+
+  const additions: JobOutputChunk[] = []
+  let expected = previous.next
+  for (const [index, chunk] of frame.chunks.entries()) {
+    const byteLength = encoder.encode(chunk.text).byteLength
+    const end = chunk.at + byteLength
+    if (!Number.isSafeInteger(end)) return failJobFollow(previous)
+    if (end <= previous.next) continue
+
+    let acceptedChunk = chunk
+    if (chunk.at < previous.next) {
+      if (previous.receivedOutputBytes === true) return failJobFollow(previous)
+      const suffix = utf8TextSuffixAfterBytes(chunk.text, previous.next - chunk.at)
+      if (suffix === undefined) return failJobFollow(previous)
+      acceptedChunk = {
+        at: previous.next,
+        text: suffix,
+        ...(chunk.channel === undefined ? {} : { channel: chunk.channel }),
+      }
+    }
+
+    if (
+      acceptedChunk.at > expected &&
+      acceptedChunk.gapBefore !== true &&
+      !(index === 0 && frame.lossy === true)
+    )
+      return failJobFollow(previous)
+    if (acceptedChunk.at < expected) return failJobFollow(previous)
+    expected = acceptedChunk.at + encoder.encode(acceptedChunk.text).byteLength
+    if (acceptedChunk.text.length > 0) additions.push(acceptedChunk)
+  }
+
+  if (additions.length === 0 && frame.lossy !== true) return failJobFollow(previous)
   const byOffset = new Map<number, JobOutputChunk>()
   for (const chunk of previous.chunks) byOffset.set(chunk.at, chunk)
   for (const chunk of additions) byOffset.set(chunk.at, chunk)
@@ -9951,7 +10033,24 @@ function reduceJobFollow(current: JobFollowState, jobId: string, frame: JobFollo
     ...previous,
     next: frame.next,
     chunks,
-    lossy: previous.lossy || frame.lossy === true || frame.chunks.some((chunk) => chunk.gapBefore === true),
+    lossy,
+    receivedOutputBytes: previous.receivedOutputBytes === true || additions.length > 0,
+  }
+}
+
+function failJobFollow(current: JobFollowState): JobFollowState {
+  return { ...current, error: 'stream-failed' }
+}
+
+function utf8TextSuffixAfterBytes(text: string, prefixBytes: number): string | undefined {
+  const bytes = new TextEncoder().encode(text)
+  if (prefixBytes <= 0 || prefixBytes >= bytes.byteLength) return undefined
+  const nextByte = bytes[prefixBytes]
+  if (nextByte === undefined || (nextByte & 0b1100_0000) === 0b1000_0000) return undefined
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(prefixBytes))
+  } catch {
+    return undefined
   }
 }
 

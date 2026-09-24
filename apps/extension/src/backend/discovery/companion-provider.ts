@@ -7,6 +7,7 @@ import { discoveryCancelled, isDiscoveryCancellation, type DiscoveryProvider } f
 
 export class CompanionRegistryDiscoveryProvider implements DiscoveryProvider {
   public readonly id = 'companion-registry'
+  public readonly phase = 'fallback' as const
 
   public discover(signal?: AbortSignal): Promise<readonly BackendCandidate[]> {
     if (signal?.aborted === true) return Promise.reject(discoveryCancelled(signal.reason))
@@ -39,8 +40,6 @@ function parseRegistryEntry(value: unknown): BackendCandidate | undefined {
   const record = value as Record<string, unknown>
   const host = record.host
   const port = record.port
-  const pid = record.pid
-  const version = record.version
   if (
     (host !== '127.0.0.1' && host !== 'localhost') ||
     typeof port !== 'number' ||
@@ -49,13 +48,9 @@ function parseRegistryEntry(value: unknown): BackendCandidate | undefined {
     port > 65535
   )
     return undefined
-  if (typeof pid !== 'number' || !Number.isInteger(pid) || pid < 1 || typeof version !== 'string')
-    return undefined
   return {
     endpoint: { host, port, baseUrl: `http://${host}:${port}` },
     source: 'companion',
-    runtimeVersion: version,
-    pid,
     confidence: 60,
   }
 }

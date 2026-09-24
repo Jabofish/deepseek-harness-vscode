@@ -13,7 +13,7 @@ import { LIVE_TIMEOUT_MS, canConnect, startManagedRuntime } from './harness.js'
  * no session is created.
  *
  *   $env:DSH_LIVE_SMOKE = '1'
- *   $env:DSH_LIVE_RUNTIME_VERSION = '0.1.5-rc.2'      # optional; defaults to the pinned runtime
+ *   $env:DSH_LIVE_RUNTIME_VERSION = '0.1.5-rc.3'      # optional; defaults to the pinned runtime
  *   npx vitest run tests/live-dsh/surfaces.spec.ts
  *
  * Only the process started here is signalled; an external DSH is never touched.

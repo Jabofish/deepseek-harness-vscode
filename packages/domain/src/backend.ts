@@ -30,6 +30,7 @@ import type {
   SessionCreateInput,
   SessionDetail,
   SessionHistoryPage,
+  SessionHistoryQueryOptions,
   SessionListQuery,
   SessionPage,
   SubagentHistoryPage,
@@ -55,7 +56,12 @@ export interface SessionRepository {
    * process-local follow stream after the authoritative history read.
    */
   open?(sessionId: string, signal?: AbortSignal): Promise<SessionDetail>
-  history(sessionId: string, beforeSequence?: number, signal?: AbortSignal): Promise<SessionHistoryPage>
+  history(
+    sessionId: string,
+    beforeSequence?: number,
+    signal?: AbortSignal,
+    options?: SessionHistoryQueryOptions,
+  ): Promise<SessionHistoryPage>
   readAttachment(sessionId: string, attachmentId: string, signal?: AbortSignal): Promise<PromptAttachment>
   create(input: SessionCreateInput, signal?: AbortSignal): Promise<SessionDetail>
   remove(sessionId: string, signal?: AbortSignal): Promise<void>

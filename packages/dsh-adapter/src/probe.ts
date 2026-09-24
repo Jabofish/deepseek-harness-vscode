@@ -2,7 +2,13 @@ import type { BackendCandidate, ConnectedBackend } from '@dsh-vscode/domain'
 import { AppError } from '@dsh-vscode/domain'
 
 import type { BackendProbe } from '@dsh-vscode/application'
-import { isKnownDshVersion, normalizeDshVersion, type DshVersionAdapter } from './contracts.js'
+import {
+  isDshPackageVersion,
+  isKnownDshVersion,
+  isMalformedDshVersionHint,
+  normalizeDshVersion,
+  type DshVersionAdapter,
+} from './contracts.js'
 import { withBestEffortAdapterCapabilities, withExactAdapterCapabilities } from './compatibility.js'
 
 export interface VersionedBackendProbeOptions {
@@ -44,11 +50,16 @@ export class VersionedBackendProbe implements BackendProbe {
     signal?: AbortSignal,
   ): Promise<ConnectedBackend | undefined> {
     throwIfProbeAborted(signal)
+    if (isMalformedDshVersionHint(candidate.runtimeVersion)) return undefined
     if (!(await this.preflight(candidate, signal))) return undefined
     throwIfProbeAborted(signal)
-    const hintedVersion = normalizeDshVersion(candidate.runtimeVersion)
-    const compatibilityProbe = hintedVersion !== undefined && !isKnownDshVersion(hintedVersion)
-    // An unknown runtime must be claimed only by an explicitly designated
+    const hintedVersion =
+      candidate.runtimeVersion !== undefined && isDshPackageVersion(candidate.runtimeVersion)
+        ? candidate.runtimeVersion
+        : normalizeDshVersion(candidate.runtimeVersion)
+    const compatibilityProbe = hintedVersion === undefined || !isKnownDshVersion(hintedVersion)
+    // A missing runtime identity is as unsafe for exact selection as an
+    // unknown release: it must be claimed only by an explicitly designated
     // compatibility fallback. Having a probeCompatibility method alone is
     // not sufficient: exact-only adapters can expose that hook accidentally,
     // and selecting one would misreport the wire contract for a future build.
@@ -66,10 +77,9 @@ export class VersionedBackendProbe implements BackendProbe {
           : await adapter.probe(candidate, signal)
         throwIfProbeAborted(signal)
         if (capabilities !== undefined) {
-          // A legacy adapter may already have classified an unversioned
-          // candidate as best-effort. Preserve that classification instead of
-          // letting the outer probe label it exact merely because no runtime
-          // string was available to trigger the unknown-version branch.
+          // Keep an adapter's best-effort classification when it reports one;
+          // the outer selection also marks unknown or unversioned identities
+          // best-effort before the result is returned.
           const bestEffort =
             compatibilityProbe ||
             capabilities.compatibilityMode === 'best-effort' ||
