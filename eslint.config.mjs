@@ -28,6 +28,7 @@ export default tseslint.config(
             'apps/extension/esbuild-import-meta-url.mjs',
             'apps/extension/esbuild-import-meta-url.d.mts',
             'scripts/publish-marketplace.cjs',
+            'scripts/patch-js-debug-ipv6-probe.cjs',
           ],
         },
         tsconfigRootDir: import.meta.dirname,
