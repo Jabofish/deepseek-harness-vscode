@@ -4,6 +4,7 @@
   },
   "editor.defaultFormatter": "esbenp.prettier-vscode",
   "editor.formatOnSave": true,
+  "debug.javascript.enableNetworkView": false,
   "eslint.useFlatConfig": true,
   "files.eol": "\n",
   "typescript.tsdk": "node_modules/typescript/lib",

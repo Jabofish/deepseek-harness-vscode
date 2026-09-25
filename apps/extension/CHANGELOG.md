@@ -1,5 +1,16 @@
 # Change Log
 
+## 0.2.4
+
+- 插件设置按分组折叠，搜索时自动展开；安装进度和操作保持可见。
+- Plugin settings collapse by group and expand for search; install progress and actions stay visible.
+- 代码块高亮支持 40 种按需加载的语法，包括 Rust、PHP 和常见围栏别名。
+- Code blocks lazily support 40 grammars, including Rust, PHP, and common fence aliases.
+- 新会话的普通消息发送前保留为草稿；Agent 模式可在空白会话中选择，工作区角标只计入实际显示的顶层对话。
+- New sessions stay drafts until the first ordinary message; Agent mode can be chosen before that message, and workspace counts reflect visible top-level conversations.
+- 修复 DSH `0.1.7-rc.2` 顶层会话快照省略 `delegationDepth` 时的误报；真实运行已验证创建、归档和恢复，VS Code 界面仍待复验。
+- Accept RC2 top-level session snapshots without `delegationDepth`; isolated create, archive, and restore were verified, while VS Code UI replay remains pending.
+
 ## 0.2.3
 
 - 修复 RC2 插件安装回包丢失与取消过晚时状态无法恢复：Webview 继续等待同一个 `installRequestId`，设置页切换后可恢复进度；同一 Host 已缓存的完成结果可直接恢复，恢复等待期间仍可取消，`not-running` 不会锁死重试，迟到响应不会覆盖终态；结果仍未知时只刷新目录，不会重复安装。安装、取消和等待按 ID 去重，并限制 Host 完成缓存的大小与有效期。新增回归覆盖丢包、`too-late`、等待失败/空结果、同 ID 取消重试、恢复期间取消和标签页卸载重挂。

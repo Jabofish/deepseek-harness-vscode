@@ -7,6 +7,7 @@ import {
   type PluginInventorySnapshot,
 } from '@dsh-vscode/domain'
 import { useEffect, useId, useMemo, useState, type ReactElement } from 'react'
+import { SelectMenu } from '../../components/common/SelectMenu.js'
 import { Icon } from '../../ui/Icon.js'
 import { useI18n, type Translate } from '../../i18n.js'
 
@@ -30,6 +31,11 @@ type ExpandedPlugin =
   | { readonly scope: 'global'; readonly entryId: string }
   | { readonly scope: 'session'; readonly presetId: string; readonly rowKey: string }
 
+type InventoryGroup = ExpandedPlugin['scope']
+
+const EMPTY_GROUPS: ReadonlySet<InventoryGroup> = new Set()
+const ALL_GROUPS: ReadonlySet<InventoryGroup> = new Set<InventoryGroup>(['session', 'global'])
+
 /** Localized accessible label for one root Fiber phase. */
 function phaseLabel(phase: PluginFiberPhase, t: Translate): string {
   return phase === null ? t('plugins.phase.unmounted') : t(`plugins.phase.${phase}`)
@@ -46,6 +52,11 @@ function moduleShortName(moduleName: string): string {
 
 function presetName(preset: AgentPresetPluginGroup): string {
   return preset.name?.trim() || preset.id
+}
+
+/** The host's default marker belongs to the same string in the menu and on the trigger. */
+function presetChoiceLabel(preset: AgentPresetPluginGroup, t: Translate): string {
+  return preset.isDefault ? `${presetName(preset)} (${t('plugins.defaultPreset')})` : presetName(preset)
 }
 
 /** Keep a user's inspection choice when it survives a refresh; otherwise use the host default. */
@@ -104,6 +115,27 @@ function countLabel(matches: number, total: number, searching: boolean, t: Trans
   return searching
     ? t('plugins.inventory.matchCount', { matches, total })
     : t('plugins.inventory.totalCount', { count: total })
+}
+
+/** The heading of an inventory group doubles as the disclosure for its plugin list. */
+function GroupToggle(props: {
+  readonly open: boolean
+  readonly onToggle: () => void
+  readonly bodyId: string
+  readonly label: string
+}): ReactElement {
+  return (
+    <button
+      className="dsh-plugin-inventory__group-toggle"
+      type="button"
+      aria-expanded={props.open}
+      aria-controls={props.open ? props.bodyId : undefined}
+      onClick={props.onToggle}
+    >
+      <Icon name={props.open ? 'chevron-down' : 'chevron-right'} />
+      <span>{props.label}</span>
+    </button>
+  )
 }
 
 function PluginCard(props: {
@@ -211,10 +243,15 @@ export function PluginInventory(props: PluginInventoryProps): ReactElement {
   const modeSelectId = useId()
   const sessionHeadingId = useId()
   const globalHeadingId = useId()
+  const sessionBodyId = useId()
+  const globalBodyId = useId()
   const [request, setRequest] = useState(0)
   const [query, setQuery] = useState('')
   const [selectedId, setSelectedId] = useState<string | undefined>(undefined)
   const [expanded, setExpanded] = useState<ExpandedPlugin | null>(null)
+  const [openGroups, setOpenGroups] = useState<ReadonlySet<InventoryGroup>>(EMPTY_GROUPS)
+  const [openGroupsWhileSearching, setOpenGroupsWhileSearching] =
+    useState<ReadonlySet<InventoryGroup>>(ALL_GROUPS)
   const [state, setState] = useState<ViewState>({ status: 'loading' })
 
   useEffect(() => {
@@ -260,10 +297,25 @@ export function PluginInventory(props: PluginInventoryProps): ReactElement {
   )
   const resultCount = filteredGlobal.length + filteredSession.length
   const candidateCount = globalEntries.length + sessionRows.length
+  const searching = normalizedQuery.length > 0
+  // A query must not hide its own matches, so searching starts from both groups open and keeps
+  // the user's per-group choice for after the query is cleared.
+  const openGroupsInEffect = searching ? openGroupsWhileSearching : openGroups
+
+  const toggleGroup = (group: InventoryGroup): void => {
+    const setOpen = searching ? setOpenGroupsWhileSearching : setOpenGroups
+    setOpen((current) => {
+      const next = new Set(current)
+      if (next.has(group)) next.delete(group)
+      else next.add(group)
+      return next
+    })
+  }
 
   const onQueryChange = (value: string): void => {
     const nextQuery = value.trim().toLocaleLowerCase()
     setQuery(value)
+    if (nextQuery.length > 0 && normalizedQuery.length === 0) setOpenGroupsWhileSearching(ALL_GROUPS)
     if (expanded === null || snapshot === undefined) return
 
     if (expanded.scope === 'global') {
@@ -317,18 +369,21 @@ export function PluginInventory(props: PluginInventoryProps): ReactElement {
           {selectedPreset === undefined ? null : (
             <div className="dsh-plugin-inventory__mode-selector">
               <label htmlFor={modeSelectId}>{t('plugins.inventory.chooseAgentMode')}</label>
-              <select
+              <SelectMenu
                 id={modeSelectId}
+                className="dsh-plugin-inventory__mode-picker"
+                icon="sparkles"
+                density="regular"
+                label={presetChoiceLabel(selectedPreset, t)}
+                ariaLabel={t('plugins.inventory.chooseAgentMode')}
+                title={t('plugins.inventory.chooseAgentMode')}
                 value={selectedPreset.id}
-                onChange={(event) => selectPreset(event.currentTarget.value)}
-              >
-                {presets.map((preset) => (
-                  <option key={preset.id} value={preset.id}>
-                    {presetName(preset)}
-                    {preset.isDefault ? ` (${t('plugins.defaultPreset')})` : ''}
-                  </option>
-                ))}
-              </select>
+                options={presets.map((preset) => ({
+                  value: preset.id,
+                  label: presetChoiceLabel(preset, t),
+                }))}
+                onChange={selectPreset}
+              />
             </div>
           )}
           <label className="dsh-plugin-inventory__search">
@@ -353,52 +408,58 @@ export function PluginInventory(props: PluginInventoryProps): ReactElement {
               aria-labelledby={sessionHeadingId}
             >
               <div className="dsh-plugin-inventory__heading">
-                <h3 id={sessionHeadingId}>{t('plugins.inventory.session')}</h3>
+                <h3 id={sessionHeadingId}>
+                  <GroupToggle
+                    open={openGroupsInEffect.has('session')}
+                    onToggle={() => toggleGroup('session')}
+                    bodyId={sessionBodyId}
+                    label={t('plugins.inventory.session')}
+                  />
+                </h3>
                 <span
                   data-plugin-count={filteredSession.length}
                   data-plugin-total={sessionRows.length}
-                  aria-label={countLabel(
-                    filteredSession.length,
-                    sessionRows.length,
-                    normalizedQuery.length > 0,
-                    t,
-                  )}
+                  aria-label={countLabel(filteredSession.length, sessionRows.length, searching, t)}
                 >
-                  {countLabel(filteredSession.length, sessionRows.length, normalizedQuery.length > 0, t)}
+                  {countLabel(filteredSession.length, sessionRows.length, searching, t)}
                 </span>
               </div>
               {selectedPreset.broken === undefined ? null : <p role="alert">{selectedPreset.broken}</p>}
-              <code className="dsh-plugin-inventory__preset-id">{selectedPreset.id}</code>
-              {sessionRows.length === 0 && selectedPreset.broken === undefined ? (
-                <p className="dsh-settings__empty">{t('plugins.inventory.sessionEmpty')}</p>
-              ) : null}
-              {filteredSession.length > 0 ? (
-                <ul className="dsh-plugin-inventory__cards">
-                  {filteredSession.map(({ row, index }) => {
-                    const rowKey = sessionRowKey(selectedPreset.id, row, index)
-                    const isExpanded =
-                      expanded?.scope === 'session' &&
-                      expanded.presetId === selectedPreset.id &&
-                      expanded.rowKey === rowKey
-                    return (
-                      <PluginCard
-                        key={rowKey}
-                        cardId={rowKey}
-                        entry={row}
-                        scope="session"
-                        expanded={isExpanded}
-                        onToggle={() => {
-                          setExpanded(
-                            isExpanded ? null : { scope: 'session', presetId: selectedPreset.id, rowKey },
-                          )
-                        }}
-                        detailId={`${catalogId}-details-${encodeURIComponent(rowKey)}`}
-                        locale={locale}
-                        t={t}
-                      />
-                    )
-                  })}
-                </ul>
+              {openGroupsInEffect.has('session') ? (
+                <div className="dsh-plugin-inventory__group-body" id={sessionBodyId}>
+                  <code className="dsh-plugin-inventory__preset-id">{selectedPreset.id}</code>
+                  {sessionRows.length === 0 && selectedPreset.broken === undefined ? (
+                    <p className="dsh-settings__empty">{t('plugins.inventory.sessionEmpty')}</p>
+                  ) : null}
+                  {filteredSession.length > 0 ? (
+                    <ul className="dsh-plugin-inventory__cards">
+                      {filteredSession.map(({ row, index }) => {
+                        const rowKey = sessionRowKey(selectedPreset.id, row, index)
+                        const isExpanded =
+                          expanded?.scope === 'session' &&
+                          expanded.presetId === selectedPreset.id &&
+                          expanded.rowKey === rowKey
+                        return (
+                          <PluginCard
+                            key={rowKey}
+                            cardId={rowKey}
+                            entry={row}
+                            scope="session"
+                            expanded={isExpanded}
+                            onToggle={() => {
+                              setExpanded(
+                                isExpanded ? null : { scope: 'session', presetId: selectedPreset.id, rowKey },
+                              )
+                            }}
+                            detailId={`${catalogId}-details-${encodeURIComponent(rowKey)}`}
+                            locale={locale}
+                            t={t}
+                          />
+                        )
+                      })}
+                    </ul>
+                  ) : null}
+                </div>
               ) : null}
             </section>
           )}
@@ -409,7 +470,14 @@ export function PluginInventory(props: PluginInventoryProps): ReactElement {
             aria-labelledby={globalHeadingId}
           >
             <div className="dsh-plugin-inventory__heading">
-              <h3 id={globalHeadingId}>{t('plugins.inventory.global')}</h3>
+              <h3 id={globalHeadingId}>
+                <GroupToggle
+                  open={openGroupsInEffect.has('global')}
+                  onToggle={() => toggleGroup('global')}
+                  bodyId={globalBodyId}
+                  label={t('plugins.inventory.global')}
+                />
+              </h3>
               {snapshot?.managementAvailable === undefined ? null : (
                 <span>
                   {t(
@@ -422,38 +490,39 @@ export function PluginInventory(props: PluginInventoryProps): ReactElement {
               <span
                 data-plugin-count={filteredGlobal.length}
                 data-plugin-total={globalEntries.length}
-                aria-label={countLabel(
-                  filteredGlobal.length,
-                  globalEntries.length,
-                  normalizedQuery.length > 0,
-                  t,
-                )}
+                aria-label={countLabel(filteredGlobal.length, globalEntries.length, searching, t)}
               >
-                {countLabel(filteredGlobal.length, globalEntries.length, normalizedQuery.length > 0, t)}
+                {countLabel(filteredGlobal.length, globalEntries.length, searching, t)}
               </span>
             </div>
-            {globalEntries.length === 0 ? <p className="dsh-settings__empty">{t('plugins.empty')}</p> : null}
-            {filteredGlobal.length > 0 ? (
-              <ul className="dsh-plugin-inventory__cards">
-                {filteredGlobal.map((entry) => {
-                  const isExpanded = expanded?.scope === 'global' && expanded.entryId === entry.entryId
-                  return (
-                    <PluginCard
-                      key={entry.entryId}
-                      cardId={entry.entryId}
-                      entry={entry}
-                      scope="global"
-                      expanded={isExpanded}
-                      onToggle={() => {
-                        setExpanded(isExpanded ? null : { scope: 'global', entryId: entry.entryId })
-                      }}
-                      detailId={`${catalogId}-details-${encodeURIComponent(`global:${entry.entryId}`)}`}
-                      locale={locale}
-                      t={t}
-                    />
-                  )
-                })}
-              </ul>
+            {openGroupsInEffect.has('global') ? (
+              <div className="dsh-plugin-inventory__group-body" id={globalBodyId}>
+                {globalEntries.length === 0 ? (
+                  <p className="dsh-settings__empty">{t('plugins.empty')}</p>
+                ) : null}
+                {filteredGlobal.length > 0 ? (
+                  <ul className="dsh-plugin-inventory__cards">
+                    {filteredGlobal.map((entry) => {
+                      const isExpanded = expanded?.scope === 'global' && expanded.entryId === entry.entryId
+                      return (
+                        <PluginCard
+                          key={entry.entryId}
+                          cardId={entry.entryId}
+                          entry={entry}
+                          scope="global"
+                          expanded={isExpanded}
+                          onToggle={() => {
+                            setExpanded(isExpanded ? null : { scope: 'global', entryId: entry.entryId })
+                          }}
+                          detailId={`${catalogId}-details-${encodeURIComponent(`global:${entry.entryId}`)}`}
+                          locale={locale}
+                          t={t}
+                        />
+                      )
+                    })}
+                  </ul>
+                ) : null}
+              </div>
             ) : null}
           </section>
           {normalizedQuery.length > 0 && candidateCount > 0 && resultCount === 0 ? (

@@ -848,11 +848,14 @@ export function App(): ReactElement {
     }
   }
   const submitPrompt = (mode: 'queue' | 'steer'): void => {
-    if (active === undefined) return
+    if (active === undefined && state.pendingSession === undefined) return
     const text = draft
     const attachmentSnapshot = attachments
-    void store
-      .sendPrompt(active.id, text, attachmentSnapshot, mode)
+    const submission =
+      active === undefined
+        ? store.sendPendingPrompt(text, attachmentSnapshot, mode)
+        : store.sendPrompt(active.id, text, attachmentSnapshot, mode)
+    void submission
       .then(() => {
         setDraft((current) => (current === text ? '' : current))
         // The Extension Host consumes only the handles admitted by this send;
@@ -1043,12 +1046,15 @@ export function App(): ReactElement {
         setError(reason instanceof Error ? reason.message : t('app.error.openSession')),
       )
   })
+  const beginNewDraft = useStableCallback((workspaceId?: string, presetId?: string): Promise<void> => {
+    discardAttachmentDrafts()
+    setDraft('')
+    return store.stageSession(workspaceId, presetId)
+  })
   const sessionOnCreate = useStableCallback((workspaceId: string | undefined): void => {
-    void store
-      .createSession(workspaceId)
-      .catch((reason: unknown) =>
-        setError(reason instanceof Error ? reason.message : t('app.error.createSession')),
-      )
+    void beginNewDraft(workspaceId).catch((reason: unknown) =>
+      setError(reason instanceof Error ? reason.message : t('app.error.createSession')),
+    )
   })
   const sessionOnArchive = useStableCallback((sessionId: string): Promise<void> =>
     store.removeSession(sessionId).catch((reason: unknown) => {
@@ -1227,7 +1233,8 @@ export function App(): ReactElement {
         workspaces={state.workspaces}
         activeSessionId={state.activeSessionId}
         open={state.drawer === 'sessions'}
-        showTrigger={state.activeSessionId !== undefined}
+        showTrigger={state.activeSessionId !== undefined || state.pendingSession !== undefined}
+        preferredWorkspaceId={state.pendingSession?.workspaceId}
         onOpenChange={sessionOnOpenChange}
         onOpen={sessionOnOpen}
         onCreate={sessionOnCreate}
@@ -1262,6 +1269,7 @@ export function App(): ReactElement {
       sessionOnRestore,
       sessionOnSearch,
       state.activeSessionId,
+      state.pendingSession,
       state.archivedSessions,
       state.sessionRestore,
       state.permissions,
@@ -1272,11 +1280,11 @@ export function App(): ReactElement {
     ],
   )
   const headerOnNewSession = useStableCallback((): void => {
-    void store
-      .createSession(active?.workspaceId ?? state.workspaces[0]?.id)
-      .catch((reason: unknown) =>
-        setError(reason instanceof Error ? reason.message : t('app.error.createSession')),
-      )
+    void beginNewDraft(
+      active?.workspaceId ?? state.pendingSession?.workspaceId ?? state.workspaces[0]?.id,
+    ).catch((reason: unknown) =>
+      setError(reason instanceof Error ? reason.message : t('app.error.createSession')),
+    )
   })
   const headerOnOpenSettings = useStableCallback((): void => {
     store.setDrawer('settings')
@@ -1590,7 +1598,12 @@ export function App(): ReactElement {
           onOpenPresetDocument={(presetId) => store.openPresetDocument(presetId)}
           onStartCreatorDraft={async () => {
             store.setDrawer(undefined)
+            discardAttachmentDrafts()
+            setDraft('')
             try {
+              // DSH only lets a preset be chosen while the session is still blank, and
+              // `agentPreset` is a host projection: staging it locally would show a mode
+              // the host never confirmed, so create the session with the preset instead.
               await store.createSession(undefined, 'cordis')
             } catch (reason: unknown) {
               setError(reason instanceof Error ? reason.message : t('app.error.createSession'))
@@ -1746,7 +1759,60 @@ export function App(): ReactElement {
                   </button>
                 </div>
               ) : null}
-              {active === undefined ? (
+              {active === undefined && state.pendingSession !== undefined ? (
+                <section
+                  className="dsh-conversation"
+                  data-conversation-font-size={conversationFontSize}
+                  aria-label={t('app.createSession')}
+                >
+                  <div className="dsh-conversation__topbar">
+                    <AppHeader
+                      runtime={backend}
+                      connectedDshVersion={state.connectedDshVersion}
+                      compatibilityWarning={compatibilityWarning}
+                      sessionControl={sessionControl}
+                      onNewSession={headerOnNewSession}
+                      onOpenSchedules={headerOnOpenSchedules}
+                      onOpenSettings={headerOnOpenSettings}
+                      onRetryConnection={retryConnection}
+                    />
+                  </div>
+                  <div className="dsh-app__empty">
+                    <EmptyState title={t('app.createSession')} description={t('app.workspacePickerHint')} />
+                  </div>
+                  <div className="dsh-compose-area">
+                    <Composer
+                      key={state.pendingSession.revision}
+                      disabled={backend.kind !== 'connected'}
+                      running={false}
+                      draft={draft}
+                      attachments={attachments}
+                      configuration={state.pendingSession.configuration}
+                      models={state.models}
+                      presets={state.presets}
+                      presetMutable
+                      {...(newSessionPresetSelectionEnabled === undefined
+                        ? {}
+                        : { presetSelectionEnabled: newSessionPresetSelectionEnabled })}
+                      onConfigurationChange={(configuration) => store.configurePendingSession(configuration)}
+                      onDraftChange={setDraft}
+                      onPickAttachment={composerOnPickAttachment}
+                      onIngestFiles={composerOnIngestFiles}
+                      openFileCandidates={EMPTY_OPEN_FILE_CANDIDATES}
+                      openFilePickerOpen={false}
+                      openFilePickerLoading={false}
+                      attachedOpenFileIds={[]}
+                      onToggleOpenFilePicker={() => undefined}
+                      onSelectOpenFile={() => undefined}
+                      onRemoveAttachment={composerOnRemoveAttachment}
+                      onSubmit={composerOnSubmit}
+                      onCancel={() => undefined}
+                      onSteerQueue={() => undefined}
+                      queue={[]}
+                    />
+                  </div>
+                </section>
+              ) : active === undefined ? (
                 <>
                   {sessionControl}
                   <div className="dsh-app__empty">
@@ -1759,13 +1825,9 @@ export function App(): ReactElement {
                           : { presetSelectionEnabled: newSessionPresetSelectionEnabled })}
                         empty={state.sessions.length === 0}
                         onCreate={(workspaceId, presetId) => {
-                          void store
-                            .createSession(workspaceId, presetId)
-                            .catch((reason: unknown) =>
-                              setError(
-                                reason instanceof Error ? reason.message : t('app.error.createSession'),
-                              ),
-                            )
+                          void beginNewDraft(workspaceId, presetId).catch((reason: unknown) =>
+                            setError(reason instanceof Error ? reason.message : t('app.error.createSession')),
+                          )
                         }}
                       />
                     ) : (
@@ -2045,7 +2107,9 @@ export function App(): ReactElement {
                               : { contextBreakdown: contextPressure.breakdown })}
                             promptMode={state.promptMode}
                             configurationDisabled={backend.kind !== 'connected' || activeRunning}
-                            presetMutable={activeSubagent === undefined && active.status === 'idle'}
+                            presetMutable={
+                              activeSubagent === undefined && active.blank && active.status === 'idle'
+                            }
                             onConfigurationChange={composerOnConfigurationChange}
                             onPromptModeChange={composerOnPromptModeChange}
                             onCommand={composerOnCommand}

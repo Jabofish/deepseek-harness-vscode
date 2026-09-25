@@ -62,6 +62,28 @@ describe('native alpha171 Session V4 admission', () => {
       type: 'session.system',
     })
   })
+  it('accepts an omitted top-level depth in the live V4 follow header', () => {
+    // dsh-v0.1.7-rc.2 (477b4f4): core/session/src/types.ts makes top-level
+    // delegationDepth absent, and session-controller/src/history.ts forwards
+    // that header unchanged in session/follow. The artifact codec requires 0.
+    const topLevelHeader = { version: 4, id: 's1', createdAt: 1, isSeeded: false }
+    const liveSnapshot = { ...snapshot(), header: topLevelHeader }
+    expect(validAlpha171SessionSnapshot(liveSnapshot)).toBe(true)
+    expect(liveSnapshot.header).toEqual(topLevelHeader)
+    expect(
+      validAlpha171SessionSnapshot({
+        ...snapshot(),
+        header: { ...topLevelHeader, origin: 'subagent' },
+      }),
+    ).toBe(false)
+    for (const delegationDepth of [-1, 0.5, undefined])
+      expect(
+        validAlpha171SessionSnapshot({
+          ...snapshot(),
+          header: { ...topLevelHeader, delegationDepth },
+        }),
+      ).toBe(false)
+  })
   it('preserves the RC2 Auto review error identity through V4 normalization and tool mapping', () => {
     const denial = {
       type: 'tool/result',

@@ -5,8 +5,9 @@ const appStyles = readFileSync(new URL('./app.css', import.meta.url), 'utf8')
 const compatibilityStyles = readFileSync(new URL('./compatibility.css', import.meta.url), 'utf8')
 
 // A native `<select>` is the one form control the browser gives platform chrome
-// of its own, so every shared control rule has to name it. The plugin
-// configuration is where the Webview renders one (enum and boolean fields).
+// of its own, so every shared control rule has to name it even though the
+// Webview renders choices through the themed SelectMenu. The plugin
+// configuration is where a field's own control width is decided.
 describe('Form control base styles', () => {
   it('covers the native dropdown in every shared control rule', () => {
     expect(cssRuleBodies(appStyles, 'button,\ninput,\ntextarea,\nselect').join('\n')).toContain(
@@ -24,10 +25,10 @@ describe('Form control base styles', () => {
     ).toContain('outline: 1px solid var(--dsh-focus-ring);')
   })
 
-  it('sizes the plugin configuration dropdown with the field it belongs to', () => {
+  it('sizes the plugin configuration choice with the field it belongs to', () => {
     const rule = cssRule(
       compatibilityStyles,
-      '.dsh-plugin-configuration__field input,\n.dsh-plugin-configuration__field select',
+      '.dsh-plugin-configuration__field input,\n.dsh-plugin-configuration__field select,\n.dsh-plugin-configuration__field .dsh-plugin-configuration__choice,\n.dsh-plugin-configuration__field .dsh-plugin-configuration__choice .dsh-select-menu__trigger',
     )
     expect(rule).toContain('width: 100%;')
     expect(rule).toContain('box-sizing: border-box;')

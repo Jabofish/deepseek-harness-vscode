@@ -24,6 +24,7 @@ import { Alpha162VersionAdapter } from '../../packages/dsh-adapter/src/versions/
 import { Alpha171VersionAdapter } from '../../packages/dsh-adapter/src/versions/alpha171/adapter.js'
 import { Alpha172VersionAdapter } from '../../packages/dsh-adapter/src/versions/alpha172/adapter.js'
 import { Rc171VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc171/adapter.js'
+import { Rc172VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc172/adapter.js'
 import { acquireManagedRuntimeLock } from './managed-lock.js'
 import { resolveLiveRuntime } from './runtime.js'
 
@@ -148,6 +149,7 @@ export async function startManagedRuntime(options?: {
     steps.push(`managed start pid=${started.pid} endpoint=${started.endpoint.baseUrl}`)
 
     const adapters = [
+      new Rc172VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
       new Rc171VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
       new Alpha172VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
       new Alpha171VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),

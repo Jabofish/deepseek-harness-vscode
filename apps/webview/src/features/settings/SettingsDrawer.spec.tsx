@@ -1200,6 +1200,8 @@ describe('SettingsDrawer', () => {
     renderDrawer({ onLoadPluginInventory })
     fireEvent.click(screen.getByRole('tab', { name: 'Plugins' }))
     await waitFor(() => expect(onLoadPluginInventory).toHaveBeenCalled())
+    await waitFor(() => expect(screen.getByRole('region', { name: 'Global plugins' })).toBeDefined())
+    fireEvent.click(screen.getByRole('button', { name: 'Global plugins' }))
     await waitFor(() => expect(screen.getByText('ui-settings')).toBeDefined())
   })
 

@@ -190,7 +190,12 @@
   background: var(--dsh-widget-bg);
   box-shadow: var(--dsh-shadow);
   transform-origin: top left;
-  animation: dsh-pop-in var(--dsh-motion-duration-standard) var(--dsh-motion-ease-enter) both;
+  /* `backwards`, never `both`: an entry animation that fills forwards leaves
+   * `transform: scale(1)` on the finished element, and any transform — even an
+   * identity one — makes the element the containing block for `position: fixed`
+   * descendants. Overlay menus and popovers measure the viewport, so a
+   * filled-forward transform offsets and clips them by the element's origin. */
+  animation: dsh-pop-in var(--dsh-motion-duration-standard) var(--dsh-motion-ease-enter) backwards;
 }
 
 /* Form-bound selectors may reserve their own space instead of covering the
@@ -1295,7 +1300,7 @@
   background: var(--dsh-widget-bg);
   box-shadow: var(--dsh-shadow);
   transform-origin: top left;
-  animation: dsh-pop-in var(--dsh-motion-duration-standard) var(--dsh-motion-ease-enter) both;
+  animation: dsh-pop-in var(--dsh-motion-duration-standard) var(--dsh-motion-ease-enter) backwards;
 }
 
 .dsh-popover-card[data-flip-x='true'],
@@ -1328,7 +1333,7 @@
 
 .dsh-modal-wrapper > [role='dialog'] {
   transform-origin: center;
-  animation: dsh-pop-in var(--dsh-motion-duration-standard) var(--dsh-motion-ease-enter) both;
+  animation: dsh-pop-in var(--dsh-motion-duration-standard) var(--dsh-motion-ease-enter) backwards;
 }
 
 .dsh-session-header {

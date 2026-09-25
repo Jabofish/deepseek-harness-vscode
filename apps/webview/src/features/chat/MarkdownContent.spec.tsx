@@ -199,6 +199,31 @@ describe('MarkdownContent', () => {
     expect(container.querySelectorAll('pre.shiki [style*="light-dark("]').length).toBeGreaterThan(0)
   })
 
+  it('highlights Rust and PHP fences in the chat', async () => {
+    const highlighter = await getWebviewHighlighter()
+    await Promise.all([highlighter.loadLanguage('rust'), highlighter.loadLanguage('php')])
+    const { container } = render(
+      <MarkdownContent
+        markdown={[
+          '```rust',
+          'fn main() { println!("Hello, world!"); }',
+          '```',
+          '',
+          '```php',
+          '<?php echo "Hello, world!"; ?>',
+          '```',
+        ].join('\n')}
+      />,
+    )
+
+    await waitFor(() => expect(container.querySelectorAll('pre.shiki')).toHaveLength(2), {
+      timeout: 5_000,
+    })
+    for (const block of container.querySelectorAll('pre.shiki')) {
+      expect(block.querySelector('[style*="light-dark("]')).not.toBeNull()
+    }
+  })
+
   it('defers copy controls until a streaming message reaches its terminal render', async () => {
     const markdown = ['```ts', 'const value = 1', '```'].join('\n')
     const view = render(<MarkdownContent markdown={markdown} streaming />)

@@ -382,7 +382,7 @@
 }
 
 .dsh-unified-composer:focus-within {
-  border-color: var(--dsh-input-border);
+  border-color: var(--dsh-focus-ring);
   box-shadow: none;
 }
 
@@ -1292,9 +1292,12 @@
 /* Session switcher contract -----------------------------------------------
  *
  * The session surface is one bounded popover with three stable regions:
- * header, search, and a single scrolling result area. Workspace rows and
- * session rows share the same grid rules, so long names can only consume the
- * copy column and never push status or actions outside the card.
+ * header, search, and a single scrolling result area. Workspace rows, session
+ * rows and the archived section all live in that one scroller, so a long list
+ * scrolls instead of squeezing a neighbour or overflowing the card; permanent
+ * alerts sit between search and results as the only extra child. Workspace
+ * rows and session rows share the same grid rules, so long names can only
+ * consume the copy column and never push status or actions outside the card.
  */
 
 .dsh-session-switcher__panel.dsh-popover-card {
@@ -1381,38 +1384,42 @@
   flex: 0 1 auto;
   min-width: 0;
   max-width: 10rem;
+}
+
+.dsh-session-switcher__archive-filter .dsh-select-menu__trigger {
+  width: 100%;
+  max-width: 100%;
   min-height: var(--dsh-control-height);
-  padding: 0 var(--dsh-space-2);
   border: var(--dsh-border);
   border-radius: var(--dsh-radius-sm);
   color: var(--dsh-text);
   background: var(--dsh-input-bg);
+  font-size: var(--dsh-font-size-2xs);
 }
 
 .dsh-session-switcher__workspaces {
   display: grid;
-  flex: 0 0 auto;
   min-width: 0;
-  max-height: 9rem;
   gap: var(--dsh-space-1);
   margin: 0;
-  padding: var(--dsh-space-2) var(--dsh-space-3);
-  overflow: auto;
+  padding: 0 0 var(--dsh-space-2);
   border-bottom: var(--dsh-border);
   list-style: none;
-  scrollbar-width: thin;
 }
 
 .dsh-session-switcher__workspace {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   min-width: 0;
   min-height: var(--dsh-control-height);
   gap: var(--dsh-space-2);
-  padding: var(--dsh-space-1) var(--dsh-space-2);
+  /* No block padding: the button inside is already control height, so the extra
+   * step only made the parent row taller than the session rows below it. */
+  padding: 0 var(--dsh-space-2);
   border: 1px solid transparent;
-  border-radius: var(--dsh-radius-md);
+  border-radius: var(--dsh-radius-sm);
   background: transparent;
 }
 
@@ -1420,6 +1427,23 @@
 .dsh-session-switcher__workspace:hover {
   border-color: var(--dsh-border-color);
   background: var(--dsh-surface-hover);
+}
+
+/* One rail geometry for both levels of the switcher: a uniform 2px bar on the
+ * inline-start edge of the row box. `box-shadow: inset 2px 0` tapers through the
+ * row's rounded corners, so the two rails rendered at visibly different widths
+ * and lengths, and the workspace rail sat a padding step right of the sessions.
+ * The bar is inset from the block edges because a full-height one pokes past the
+ * row radius. */
+.dsh-session-switcher__workspace--active::before,
+.dsh-session-switcher__list .dsh-session-item__button--active::before {
+  position: absolute;
+  inset-block: var(--dsh-space-1);
+  inset-inline-start: 0;
+  width: 2px;
+  background: var(--dsh-accent-line);
+  content: '';
+  pointer-events: none;
 }
 
 .dsh-session-switcher__workspace-button {
@@ -1451,17 +1475,24 @@
   height: var(--dsh-icon-size-sm);
 }
 
-.dsh-session-switcher__workspace-name,
-.dsh-session-switcher__workspace-count {
+.dsh-session-switcher__workspace-name {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.dsh-session-switcher__workspace-count {
+/* A bare 2xs digit reads as a rendering artefact: it is smaller than every
+ * glyph around it and sits flush against the row actions. It keeps its own
+ * column so one- and two-digit counts align, and the column is wider than the
+ * digits so the number never touches the buttons. */
+.dsh-session-switcher__workspace-button > .dsh-session-switcher__workspace-count {
+  min-width: 2rem;
   color: var(--dsh-muted);
-  font-size: var(--dsh-font-size-2xs);
+  font-size: var(--dsh-font-size-xs);
+  line-height: var(--dsh-line-height-tight);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
 }
 
 .dsh-session-switcher__workspace-actions,
@@ -1482,16 +1513,34 @@
   padding: var(--dsh-space-1);
 }
 
-.dsh-session-switcher__groups,
-.dsh-session-switcher__panel > .dsh-session-switcher__list {
+.dsh-session-switcher__results {
+  display: grid;
   flex: 1 1 auto;
+  align-content: start;
   min-width: 0;
   min-height: 0;
-  margin: 0;
   padding: var(--dsh-space-2) var(--dsh-space-3);
   overflow: auto;
   scrollbar-gutter: stable;
   scrollbar-width: thin;
+}
+
+/* Collections inside the scroller never scroll or cap themselves: capping a
+ * nested list is what let the archived rows push the session rows out of the
+ * card. */
+.dsh-session-switcher__results .dsh-session-switcher__workspaces,
+.dsh-session-switcher__results .dsh-session-switcher__groups,
+.dsh-session-switcher__results .dsh-session-switcher__list {
+  max-height: none;
+  padding: 0;
+  overflow: visible;
+}
+
+/* Sessions hang one level under the workspace row, so their rows — and their
+ * rails — start inside it. Without this the parent card and its children are the
+ * same width and the hierarchy reads inverted. */
+.dsh-session-switcher__results .dsh-session-switcher__list > li {
+  padding-inline-start: var(--dsh-space-3);
 }
 
 .dsh-session-switcher__groups {
@@ -1522,6 +1571,7 @@
 }
 
 .dsh-session-switcher__list .dsh-session-item__button {
+  position: relative;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
@@ -1531,7 +1581,7 @@
   gap: var(--dsh-space-2);
   padding: var(--dsh-space-1) var(--dsh-space-2);
   border: 1px solid transparent;
-  border-radius: var(--dsh-radius-md);
+  border-radius: var(--dsh-radius-sm);
   color: var(--dsh-text);
   background: transparent;
   text-align: start;
@@ -1541,6 +1591,14 @@
 .dsh-session-switcher__list .dsh-session-item__button:hover:not(:disabled) {
   border-color: var(--dsh-border-color);
   background: var(--dsh-surface-hover);
+}
+
+/* The legacy sheet paints the selected session with an inset shadow and an
+ * accent start border; both taper at the corners. The shared rail above replaces
+ * them inside the switcher. */
+.dsh-session-switcher__list .dsh-session-item__button--active {
+  box-shadow: none;
+  border-inline-start-color: var(--dsh-border-color);
 }
 
 .dsh-session-switcher__list .dsh-session-item__copy {

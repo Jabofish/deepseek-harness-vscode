@@ -11,6 +11,7 @@
 }
 
 .dsh-optional-bundles__heading,
+.dsh-optional-bundles__heading-actions,
 .dsh-optional-bundles__title-row,
 .dsh-optional-bundles__confirm-actions,
 .dsh-optional-bundles__actions {
@@ -21,24 +22,29 @@
   min-width: 0;
 }
 
+.dsh-optional-bundles__heading h2 {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .dsh-optional-bundles__heading h2,
-.dsh-optional-bundles__title-row h3,
-.dsh-optional-bundles__heading p,
-.dsh-optional-bundles__copy p {
+.dsh-optional-bundles__section-body p,
+.dsh-optional-bundles__body p {
   margin: 0;
 }
 
-.dsh-optional-bundles__heading p,
 .dsh-optional-bundles__muted,
-.dsh-optional-bundles__version {
+.dsh-optional-bundles__version,
+.dsh-optional-bundles__entry-count {
   color: var(--dsh-muted);
 }
 
-.dsh-optional-bundles__heading p {
-  margin-top: var(--dsh-space-1);
+.dsh-optional-bundles__heading-actions {
+  justify-content: flex-end;
+  flex: 0 0 auto;
 }
 
-.dsh-optional-bundles__heading button,
+.dsh-optional-bundles__heading-actions button,
 .dsh-optional-bundles__actions button {
   flex: 0 0 auto;
 }
@@ -54,9 +60,7 @@
 
 .dsh-optional-bundles__item {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: start;
-  gap: var(--dsh-space-3);
+  gap: var(--dsh-space-2);
   min-width: 0;
   padding: var(--dsh-space-3);
   border: var(--dsh-border);
@@ -64,10 +68,74 @@
   background: var(--dsh-surface-raised);
 }
 
-.dsh-optional-bundles__copy {
+/* The bundle header is the disclosure; its actions and warnings stay reachable collapsed. */
+.dsh-optional-bundles__head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--dsh-space-3);
+  min-width: 0;
+}
+
+.dsh-optional-bundles__toggle,
+.dsh-optional-bundles__section-toggle,
+.dsh-plugin-manager__standalone-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--dsh-space-2);
+  width: 100%;
+  min-width: 0;
+  padding: var(--dsh-space-1) 0;
+  border: 0;
+  border-radius: var(--dsh-radius-sm);
+  color: var(--dsh-text);
+  background: transparent;
+  text-align: start;
+}
+
+.dsh-optional-bundles__toggle:hover:not(:disabled),
+.dsh-optional-bundles__toggle:focus-visible,
+.dsh-optional-bundles__section-toggle:hover:not(:disabled),
+.dsh-optional-bundles__section-toggle:focus-visible,
+.dsh-plugin-manager__standalone-toggle:hover:not(:disabled),
+.dsh-plugin-manager__standalone-toggle:focus-visible {
+  background: var(--dsh-surface-hover);
+}
+
+.dsh-optional-bundles__toggle .dsh-icon,
+.dsh-optional-bundles__section-toggle .dsh-icon,
+.dsh-plugin-manager__standalone-toggle .dsh-icon {
+  flex: 0 0 auto;
+  color: var(--dsh-muted);
+}
+
+.dsh-optional-bundles__section-toggle {
+  justify-content: flex-start;
+}
+
+/* The disclosure is locked while an install runs, but its title must stay legible. */
+.dsh-optional-bundles__section-toggle:disabled {
+  opacity: 1;
+}
+
+.dsh-optional-bundles__section-body {
+  display: grid;
+  gap: var(--dsh-space-3);
+  min-width: 0;
+  padding-block-start: var(--dsh-space-2);
+  border-top: var(--dsh-border);
+}
+
+.dsh-optional-bundles__section-body p {
+  overflow-wrap: anywhere;
+}
+
+.dsh-optional-bundles__body {
   display: grid;
   gap: var(--dsh-space-1);
   min-width: 0;
+  padding-block-start: var(--dsh-space-2);
+  border-top: var(--dsh-border);
   overflow-wrap: anywhere;
 }
 
@@ -76,7 +144,7 @@
   flex-wrap: wrap;
 }
 
-.dsh-optional-bundles__title-row h3 {
+.dsh-optional-bundles__title-row strong {
   font-size: var(--dsh-font-size-lg);
 }
 
@@ -124,8 +192,7 @@
   min-width: 0;
 }
 
-.dsh-plugin-manager__install input,
-.dsh-plugin-manager__install select {
+.dsh-plugin-manager__install input {
   box-sizing: border-box;
   width: 100%;
   min-width: 0;
@@ -135,6 +202,12 @@
   color: var(--dsh-text);
   background: var(--dsh-surface-raised);
   font: inherit;
+}
+
+.dsh-plugin-manager__registry-picker,
+.dsh-plugin-manager__registry-picker .dsh-select-menu__trigger {
+  width: 100%;
+  min-width: 0;
 }
 
 .dsh-plugin-manager__registry {
@@ -194,7 +267,7 @@
     flex-direction: column;
   }
 
-  .dsh-optional-bundles__item {
+  .dsh-optional-bundles__head {
     grid-template-columns: minmax(0, 1fr);
   }
 

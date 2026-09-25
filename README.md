@@ -1,134 +1,45 @@
 # DeepSeek Harness for VS Code
 
-> Your DSH workspace, right beside your code.
-
-English | [简体中文](README.zh-CN.md)
+[English](README.md) | [简体中文](README.zh-CN.md)
 
 [![CI](https://github.com/Jabofish/deepseek-harness-vscode/actions/workflows/ci.yml/badge.svg)](https://github.com/Jabofish/deepseek-harness-vscode/actions/workflows/ci.yml)
-[![Marketplace listed](https://img.shields.io/badge/Marketplace-listed-0078D4?logo=visualstudiocode&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=Direwolf.deepseek-harness-client)
+[![Marketplace](https://img.shields.io/badge/Marketplace-Install-0078D4?logo=visualstudiocode&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=Direwolf.deepseek-harness-client)
 [![GitHub Release](https://img.shields.io/github/v/release/Jabofish/deepseek-harness-vscode)](https://github.com/Jabofish/deepseek-harness-vscode/releases)
 [![License](https://img.shields.io/github/license/Jabofish/deepseek-harness-vscode)](LICENSE)
 
-**DeepSeek Harness Companion for VS Code** is a native VS Code client for
-[DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness), DeepSeek's local coding
-agent. It brings sessions, streaming replies, thinking, and tool progress into the side bar so you
-can stay in the editor and stay in flow.
+**DeepSeek Harness Companion for VS Code** brings local [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness) sessions into the editor. It shows streaming replies, thinking, tool activity, approvals, and recoverable conversation history in a VS Code view.
 
-## Highlights
+## What you can do
 
-- **Sessions & context** — create, switch, resume, and archive sessions per workspace.
-- **A clear timeline** — user input, model replies, collapsed thinking, tool calls, approvals, and
-  error states each render distinctly.
-- **Control** — use the models, providers, reasoning levels, permission presets, and plan settings
-  that your DSH instance provides.
-- **Context-aware work** — send text, images, and workspace files; reference files and sessions
-  with `@`; handle approvals and user questions in place.
-- **Close the loop** — leave a rating and note on replies, and open files produced or modified by
-  tools directly.
-- **Reliable recovery** — automatic local DSH discovery with reconnect, deduplication, history gap
-  backfill, and redacted diagnostics.
-- **Local productivity extras** — prompt templates, checkpoints, a Changes drawer, and a task
-  center, all handled host-side and triggered only by explicit user action.
+- Create, switch, resume, and archive sessions in a workspace.
+- Send text, images, and supported files; reference files or sessions with `@`.
+- Follow tool progress, answer questions and approvals, and open produced files through VS Code.
+- Choose the models, providers, permissions, and agent options exposed by the connected DSH runtime.
+- Use local prompt templates, checkpoints, a Changes view, and a task center when their prerequisites are available.
 
-## Install
+The connected DSH version determines which advanced capabilities are available. Unsupported operations show a clear unavailable state. The [compatibility contract](docs/dsh-contract.md) lists exact adapter boundaries; the [capability matrix](docs/capability-matrix.md) distinguishes implementation, automated tests, and real runtime verification.
 
-**From the VS Code Marketplace** — install
-[DeepSeek Harness Companion for VS Code](https://marketplace.visualstudio.com/items?itemName=Direwolf.deepseek-harness-client)
-or search for `DeepSeek Harness` in the Extensions view.
+## Install and start
 
-**From GitHub Releases** — download `deepseek-harness-vscode-universal.vsix` (or a
-platform-specific build: `linux-x64`, `windows-x64`, `macos-x64`, `macos-arm64`) from the
-[latest release](https://github.com/Jabofish/deepseek-harness-vscode/releases/latest), then run
-_Extensions: Install from VSIX..._ in VS Code.
+Install [DeepSeek Harness Companion for VS Code](https://marketplace.visualstudio.com/items?itemName=Direwolf.deepseek-harness-client) from the Marketplace, or download a platform VSIX from the [latest GitHub Release](https://github.com/Jabofish/deepseek-harness-vscode/releases/latest) and use **Extensions: Install from VSIX...**.
 
-## Get started
+1. Open the **DeepSeek Harness** view.
+2. If DSH is missing, use the guided installer, select an existing executable, or copy the exact install command shown in the view. The installer checks its required Node.js version before running.
+3. Choose or create a workspace, start a session, and send a task.
 
-1. If DSH is not installed yet, run `npm install --global @deepseek-ai/dsh@0.1.5-rc.3` (requires
-   Node.js `22.19+`), or press the guided install action in the view.
-2. Open the `DeepSeek Harness` view in VS Code.
-3. Choose or create a workspace, start a session, and send your task.
+The extension first looks for a compatible local DSH. It starts one only when the selected connection mode permits it and discovery has finished. It never stops a DSH process it did not create.
 
-The extension discovers a compatible local DSH automatically. When none is found it offers guided
-actions to install DSH, select an existing executable, copy the install command, or open the
-documentation. Discovery always completes before anything is started, and a DSH the extension does
-not own is never stopped.
+| Connection mode | Behavior                                                                             |
+| --------------- | ------------------------------------------------------------------------------------ |
+| `auto`          | Attach to a running DSH; start an extension-owned one only if no candidate connects. |
+| `attach-only`   | Discover and attach; never start DSH.                                                |
+| `new-isolated`  | Start one dedicated extension-owned DSH.                                             |
+| `custom`        | Probe only the single validated loopback endpoint supplied by the user.              |
 
-### Connection modes
+The General settings page can check upstream package versions and install an exact verified version. Updating a global package never stops an external DSH.
 
-| Mode             | Behaviour                                                                                       |
-| ---------------- | ----------------------------------------------------------------------------------------------- |
-| `auto` (default) | Discover and attach to a running DSH; start a local instance only when none can be attached.    |
-| `attach-only`    | Discover and attach only; never start DSH.                                                      |
-| `new-isolated`   | Always start a dedicated, extension-owned DSH.                                                  |
-| `custom`         | Probe exactly one user-configured loopback endpoint (`http://127.0.0.1` or `http://localhost`). |
+## Privacy and support
 
-### Runtime updates
+DSH connections, credentials, files, and processes stay in the VS Code Extension Host. The Webview receives no secrets or direct filesystem/network access. Endpoints are restricted to validated loopback addresses; diagnostics are redacted. See the [security model](docs/architecture.md) and [support instructions](apps/extension/SUPPORT.md).
 
-The General settings page checks the npm upstream at startup and can install one exact version from
-the verified list. Updating never stops an external DSH; when a custom executable is selected, the
-global package update requires selecting or reconnecting the runtime before it is used.
-
-## Compatibility
-
-| Requirement      | Version                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| VS Code          | `1.125+` on Windows, Linux, or macOS; Remote SSH, WSL, and Dev Containers are supported                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| DeepSeek Harness | Published CLI/Web API `0.0.1-rc.1`/`.2`/`.5`, `0.1.0-rc.2`/`.3`, `0.1.0-rc.6` through `0.1.2-rc.1`, published `0.1.2-alpha.2`/`0.1.2-alpha.3`/`0.1.2-alpha.4`/`0.1.2-alpha.5`, released `0.1.3-alpha.2`, `0.1.5-alpha.1`/`.2`/`rc.1`/`rc.2`/`rc.3`, alpha-channel `0.1.6-alpha.1`/`.2` and `0.1.7-alpha.1`/`.2`, plus source-level `0.1.7-rc.1`/`.2` adapters; source-level adapters are retained for every known tag and the installer installs the exact version `0.1.5-rc.3`, never a dist-tag (npm `latest` is `0.1.5-rc.3`, `next` is `0.1.7-rc.1`, `alpha` is `0.1.7-alpha.2`) |
-| Unknown versions | Any non-empty label is probed with the newest adapter that can safely reuse a verified wire; the alpha13/alpha132 Session v2, alpha151/alpha152/rc151/rc152/alpha161/alpha162 Session v3, and alpha171/alpha172/rc171/rc172 Session V4 adapters are exact-only, so unknown runtimes fall through to the verified alpha5 v0 adapter and surface a warning                                                                                                                                                                                                                             |
-| Node.js          | `22.19+`, required only when installing DSH from within the extension                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-
-Available models, tools, and advanced agent capabilities follow the connected DSH instance;
-unsupported capabilities are surfaced clearly instead of failing silently.
-
-## Privacy & security
-
-Connections, file access, credentials, and process ownership stay in the VS Code Extension Host.
-The Webview receives no secrets and no direct filesystem or network access, logs follow an
-allowlist with prompt/body/token redaction, and every DSH endpoint must be a verified loopback
-address. See [docs/security.md](docs/security.md) for the full trust model.
-
-## Documentation
-
-Developer documentation lives in [`docs/`](docs/README.md), starting from the
-[index](docs/README.md):
-
-| Document                                                     | Purpose                                              |
-| ------------------------------------------------------------ | ---------------------------------------------------- |
-| [docs/architecture.md](docs/architecture.md)                 | Runtime structure, package boundaries, state machine |
-| [docs/capability-matrix.md](docs/capability-matrix.md)       | Single source of truth for feature status & evidence |
-| [docs/dsh-contract.md](docs/dsh-contract.md)                 | Upstream DSH contract baseline & upgrade process     |
-| [docs/protocol.md](docs/protocol.md)                         | Extension Host ↔ Webview message protocol            |
-| [docs/security.md](docs/security.md)                         | Trust boundaries and enforced controls               |
-| [docs/motion.md](docs/motion.md)                             | Webview motion tokens, reduced motion, performance   |
-| [docs/typography.md](docs/typography.md)                     | Webview type scale, role aliases, icon sizing rules  |
-| [docs/development.md](docs/development.md)                   | Environment, debugging, DSH integration modes        |
-| [docs/testing.md](docs/testing.md)                           | Test layers, negative paths, fixture rules           |
-| [docs/implementation-order.md](docs/implementation-order.md) | Implementation phases and exit criteria              |
-| [docs/release-checklist.md](docs/release-checklist.md)       | Everything required before a release                 |
-| [docs/adr/](docs/adr/)                                       | Accepted architecture decisions                      |
-
-## Development
-
-Requires Node.js `>=22.19 <27` and pnpm `11.19` (pinned through `packageManager`):
-
-```powershell
-corepack enable
-pnpm install --frozen-lockfile
-pnpm check   # format + lint + typecheck + tests
-pnpm build
-pnpm package:vsix
-```
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for change discipline and PR evidence requirements, and
-[docs/development.md](docs/development.md) for debugging and live DSH integration modes.
-
-- Pull requests and pushes to `main` run cross-platform CI on Linux, Windows, and macOS.
-- Pushing a `v*` tag packages VSIX files for Linux, Windows, and macOS (plus a universal build),
-  creates a GitHub Release, and publishes the extension to the Visual Studio Marketplace.
-
-## Changelog & license
-
-User-facing changes are tracked in
-[apps/extension/CHANGELOG.md](apps/extension/CHANGELOG.md) and mirrored on the
-[Releases page](https://github.com/Jabofish/deepseek-harness-vscode/releases). Licensed under the
-[MIT License](LICENSE).
+Developer documentation starts at the [documentation index](docs/README.md). The [contribution guide](CONTRIBUTING.md) explains validation and evidence. User-facing changes are recorded in the [extension changelog](apps/extension/CHANGELOG.md). Licensed under [MIT](LICENSE).

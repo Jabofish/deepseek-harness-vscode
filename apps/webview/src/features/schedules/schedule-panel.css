@@ -346,6 +346,12 @@
   background: var(--dsh-surface-raised);
 }
 
+.dsh-schedule-panel__timing-picker,
+.dsh-schedule-panel__timing-picker .dsh-select-menu__trigger {
+  width: 100%;
+  min-width: 0;
+}
+
 .dsh-schedule-panel__editor textarea {
   resize: vertical;
 }

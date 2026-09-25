@@ -11,6 +11,8 @@ export interface SelectMenuOption {
 }
 
 export interface SelectMenuProps {
+  /** Applied to the trigger, the labelable element an external `<label for>` targets. */
+  readonly id?: string
   readonly className?: string
   readonly icon: IconName
   readonly density?: 'compact' | 'regular'
@@ -161,6 +163,7 @@ export const SelectMenu = memo(function SelectMenu(props: SelectMenuProps): Reac
   return (
     <div ref={rootRef} className={`${className}${open ? ' dsh-select-menu--open' : ''}`}>
       <button
+        id={props.id}
         ref={triggerRef}
         className="dsh-select-menu__trigger"
         type="button"

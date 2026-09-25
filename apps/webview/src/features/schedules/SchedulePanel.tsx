@@ -22,7 +22,8 @@ import type {
 } from '@dsh-vscode/domain'
 import type { FeatureHostEvent, FeatureRequest } from '@dsh-vscode/webview-protocol'
 
-import { useI18n } from '../../i18n.js'
+import { SelectMenu, type SelectMenuOption } from '../../components/common/SelectMenu.js'
+import { useI18n, type Translate } from '../../i18n.js'
 import './schedule-panel.css'
 
 export interface SchedulePanelProps {
@@ -41,6 +42,21 @@ type DetailTab = 'rule' | 'history'
 type TimingChoice = 'keep' | 'at' | 'every' | 'daily' | 'weekly' | 'cron'
 type CreateTiming = 'after' | 'at' | 'every' | 'daily' | 'weekly' | 'cron'
 type StatusFilter = 'all' | 'active' | 'inactive'
+
+const CREATE_TIMINGS: readonly CreateTiming[] = ['after', 'at', 'every', 'daily', 'weekly', 'cron']
+const EDIT_TIMINGS: readonly TimingChoice[] = ['keep', 'at', 'every', 'daily', 'weekly', 'cron']
+
+/** Trigger and menu must name one timing identically. */
+function timingLabel(timing: CreateTiming | TimingChoice, t: Translate): string {
+  return timing === 'keep' ? t('schedules.timing.keep') : t(`schedules.kind.${timing}`)
+}
+
+function timingChoices(
+  timings: readonly (CreateTiming | TimingChoice)[],
+  t: Translate,
+): readonly SelectMenuOption[] {
+  return timings.map((timing) => ({ value: timing, label: timingLabel(timing, t) }))
+}
 
 interface EditDraft {
   readonly title: string
@@ -1143,20 +1159,20 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
             </label>
             <label>
               <span>{t('schedules.field.timing')}</span>
-              <select
+              <SelectMenu
+                className="dsh-schedule-panel__timing-picker"
+                icon="clock"
+                density="regular"
+                label={timingLabel(createDraft.timing, t)}
+                ariaLabel={t('schedules.field.timing')}
+                title={t('schedules.field.timing')}
                 value={createDraft.timing}
-                onChange={(event) => {
-                  setCreateDraft({ ...createDraft, timing: event.target.value as CreateTiming })
+                options={timingChoices(CREATE_TIMINGS, t)}
+                onChange={(value) => {
+                  setCreateDraft({ ...createDraft, timing: value as CreateTiming })
                   setCreateError(undefined)
                 }}
-              >
-                <option value="after">{t('schedules.kind.after')}</option>
-                <option value="at">{t('schedules.kind.at')}</option>
-                <option value="every">{t('schedules.kind.every')}</option>
-                <option value="daily">{t('schedules.kind.daily')}</option>
-                <option value="weekly">{t('schedules.kind.weekly')}</option>
-                <option value="cron">{t('schedules.kind.cron')}</option>
-              </select>
+              />
             </label>
             {createDraft.timing === 'after' || createDraft.timing === 'every' ? (
               <div className="dsh-schedule-panel__create-fields">
@@ -1527,17 +1543,17 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
                 </label>
                 <label>
                   <span>{t('schedules.field.timing')}</span>
-                  <select
+                  <SelectMenu
+                    className="dsh-schedule-panel__timing-picker"
+                    icon="clock"
+                    density="regular"
+                    label={timingLabel(draft.timing, t)}
+                    ariaLabel={t('schedules.field.timing')}
+                    title={t('schedules.field.timing')}
                     value={draft.timing}
-                    onChange={(event) => setDraft({ ...draft, timing: event.target.value as TimingChoice })}
-                  >
-                    <option value="keep">{t('schedules.timing.keep')}</option>
-                    <option value="at">{t('schedules.kind.at')}</option>
-                    <option value="every">{t('schedules.kind.every')}</option>
-                    <option value="daily">{t('schedules.kind.daily')}</option>
-                    <option value="weekly">{t('schedules.kind.weekly')}</option>
-                    <option value="cron">{t('schedules.kind.cron')}</option>
-                  </select>
+                    options={timingChoices(EDIT_TIMINGS, t)}
+                    onChange={(value) => setDraft({ ...draft, timing: value as TimingChoice })}
+                  />
                 </label>
                 {draft.timing === 'at' ? (
                   <div className="dsh-schedule-panel__timing-fields">

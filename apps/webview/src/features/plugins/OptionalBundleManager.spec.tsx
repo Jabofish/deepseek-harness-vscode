@@ -84,16 +84,21 @@ function ManagerHarness(props: {
   )
 }
 
+function openSection(): void {
+  const toggle = screen.getByRole('button', { name: 'DSH Plugin Manager' })
+  if (toggle.getAttribute('aria-expanded') !== 'true') fireEvent.click(toggle)
+}
+
 function mountManager(resolve: (request: FeatureRequest) => unknown = defaultResponse): MountedManager {
   const requests: FeatureRequest[] = []
   const featureRequest: OptionalBundleManagerProps['featureRequest'] = <T,>(request: FeatureRequest) => {
     requests.push(request)
     return Promise.resolve().then(() => resolve(request) as T)
   }
-  return {
-    requests,
-    render: render(<ManagerHarness featureRequest={featureRequest} />),
-  }
+  const mounted = render(<ManagerHarness featureRequest={featureRequest} />)
+  // The manager panel collapses by default, so a test that touches its body opens it first.
+  openSection()
+  return { requests, render: mounted }
 }
 
 function defaultResponse(request: FeatureRequest): unknown {
@@ -153,6 +158,13 @@ describe('OptionalBundleManager', () => {
     const { requests } = mountManager()
     expect(await screen.findByRole('heading', { name: 'DSH Plugin Manager' })).toBeTruthy()
     expect(screen.getByText('Review layer')).toBeTruthy()
+    // A bundle's own copy and the standalone list start collapsed; the actions stay reachable.
+    expect(screen.queryByText('Reviews a proposed change.')).toBeNull()
+    expect(screen.queryByText('Standalone plugin')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /^Review layer/u }))
+    expect(screen.getByText('Reviews a proposed change.')).toBeTruthy()
+    expect(screen.getByText('Review plugin')).toBeTruthy()
+    fireEvent.click(await screen.findByRole('button', { name: /^Other plugin entries/u }))
     expect(screen.getByText('Standalone plugin')).toBeTruthy()
     expect(screen.getByLabelText('Package registry')).toBeTruthy()
     expect(requests.map((request) => request.type)).toEqual(['plugin.bundles.list', 'plugin.registries.list'])
@@ -188,9 +200,8 @@ describe('OptionalBundleManager', () => {
     fireEvent.change(screen.getByLabelText('Package name or supported package source'), {
       target: { value: '@dsh-community/new-plugin' },
     })
-    fireEvent.change(screen.getByLabelText('Package registry'), {
-      target: { value: 'https://mirror.example.test/' },
-    })
+    fireEvent.click(screen.getByLabelText('Package registry'))
+    fireEvent.click(screen.getByRole('option', { name: 'https://mirror.example.test/' }))
     fireEvent.click(screen.getByRole('button', { name: 'Check package' }))
     expect(await screen.findByText('Package: @dsh-community/new-plugin · 2.0.0')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Install' }).getAttribute('disabled')).toBeNull()
@@ -278,6 +289,7 @@ describe('OptionalBundleManager', () => {
       }
       const view = render(<ManagerHarness featureRequest={featureRequest} />)
       await screen.findByRole('heading', { name: 'DSH Plugin Manager' })
+      openSection()
       fireEvent.change(screen.getByLabelText('Package name or supported package source'), {
         target: { value: '@dsh-community/new-plugin' },
       })
@@ -401,6 +413,7 @@ describe('OptionalBundleManager', () => {
     }
     const view = render(<ManagerHarness featureRequest={featureRequest} />)
     await screen.findByRole('heading', { name: 'DSH Plugin Manager' })
+    openSection()
     fireEvent.change(screen.getByLabelText('Package name or supported package source'), {
       target: { value: '@dsh-community/new-plugin' },
     })
@@ -452,6 +465,7 @@ describe('OptionalBundleManager', () => {
     await screen.findByRole('heading', { name: 'DSH Plugin Manager' })
     fireEvent.click(await screen.findByRole('button', { name: 'Enable Review layer' }))
     expect(await screen.findByText('Some changes take effect only after DSH restarts.')).toBeTruthy()
+    fireEvent.click(await screen.findByRole('button', { name: /^Other plugin entries/u }))
     fireEvent.click(await screen.findByRole('button', { name: 'Disable Standalone plugin' }))
     await waitFor(() =>
       expect(requests.some((request) => request.type === 'plugin.entry.setEnabled')).toBe(true),

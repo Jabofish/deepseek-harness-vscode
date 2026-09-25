@@ -364,11 +364,19 @@ function validateSurfaceMetadata(event: Alpha171SessionEvent): void {
 
 function validAlpha171SessionHeader(value: unknown): boolean {
   try {
-    assertReleasedV4Header(value)
+    assertReleasedV4Header(headerForArtifactValidation(value))
     return true
   } catch {
     return false
   }
+}
+
+/** The live V4 header omits top-level depth (meaning zero); the artifact validator requires it. */
+function headerForArtifactValidation(value: unknown): unknown {
+  const header = plainRecord(value)
+  return header !== undefined && !Object.hasOwn(header, 'delegationDepth') && header.origin !== 'subagent'
+    ? { ...header, delegationDepth: 0 }
+    : value
 }
 
 function validateMessageSources(event: Alpha171SessionEvent): void {
@@ -429,9 +437,11 @@ function validSnapshotRelationships(snapshot: Record<string, unknown>): boolean 
         .filter((event) => event.type === 'session/end-seed' && plainRecord(event.data)?.inherited === true)
         .at(-1)?.seq ?? 0
     restoreReleasedV4Artifact(
-      { header: snapshot.header, inheritedEventCount: inherited, events } as Parameters<
-        typeof restoreReleasedV4Artifact
-      >[0],
+      {
+        header: headerForArtifactValidation(snapshot.header),
+        inheritedEventCount: inherited,
+        events,
+      } as Parameters<typeof restoreReleasedV4Artifact>[0],
       KNOWN_SESSION_EVENT_TYPES,
     )
     return true

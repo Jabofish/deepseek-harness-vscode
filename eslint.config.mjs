@@ -30,6 +30,7 @@ export default tseslint.config(
             'apps/extension/esbuild-import-meta-url.d.mts',
             'scripts/publish-marketplace.cjs',
             'scripts/patch-js-debug-ipv6-probe.cjs',
+            'scripts/check-docs.mjs',
           ],
         },
         tsconfigRootDir: import.meta.dirname,
@@ -64,7 +65,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ['scripts/**/*.cjs'],
+    files: ['scripts/**/*.{cjs,mjs}'],
     languageOptions: {
       globals: {
         __dirname: 'readonly',
@@ -77,6 +78,7 @@ export default tseslint.config(
     rules: {
       '@typescript-eslint/explicit-function-return-type': 'off',
       '@typescript-eslint/no-require-imports': 'off',
+      '@typescript-eslint/no-unsafe-return': 'off',
     },
   },
   {

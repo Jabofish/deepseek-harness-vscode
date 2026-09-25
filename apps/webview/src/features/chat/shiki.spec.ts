@@ -54,6 +54,13 @@ describe('resolveBundledLanguage', () => {
     expect(resolveBundledLanguage('tsx')).toBe('tsx')
     expect(resolveBundledLanguage(' bash ')).toBe('shell')
     expect(resolveBundledLanguage('md')).toBe('markdown')
+    expect(resolveBundledLanguage('rs')).toBe('rust')
+    expect(resolveBundledLanguage('PHP')).toBe('php')
+    expect(resolveBundledLanguage('C++')).toBe('cpp')
+    expect(resolveBundledLanguage('dockerfile')).toBe('docker')
+    expect(resolveBundledLanguage('kt')).toBe('kotlin')
+    expect(resolveBundledLanguage('rb')).toBe('ruby')
+    expect(resolveBundledLanguage('js')).toBe('javascript')
   })
 
   it('returns undefined for every language outside the bounded set', async () => {

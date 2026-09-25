@@ -12,9 +12,10 @@
   },
   "scripts": {
     "build": "pnpm --filter @dsh-vscode/webview build && pnpm --filter deepseek-harness-client build",
-    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test",
+    "check": "pnpm format:check && pnpm docs:check && pnpm lint && pnpm typecheck && pnpm test",
     "clean": "pnpm -r --if-present clean",
     "dev": "pnpm --parallel --filter @dsh-vscode/webview --filter deepseek-harness-client dev",
+    "docs:check": "node scripts/check-docs.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint .",

@@ -1,50 +1,31 @@
-# 文档索引
+# 开发者文档
 
-本目录是开发者文档的唯一入口。使用者文档见仓库根目录的
-[README.md](../README.md)（英文）与 [README.zh-CN.md](../README.zh-CN.md)（中文）。
+本目录只描述**当前有效的规范、边界和验收条件**。一次实现经过了什么、某次门禁的输出和发布流水属于 PR、测试结果或更新日志，不追加到规范正文。修改规范时直接修订原规则，并检查被它取代的表述。
 
-## 新贡献者阅读顺序
+## 唯一职责
 
-1. [README](../README.md) — 了解产品定位与安装方式；
-2. [AGENTS.md](../AGENTS.md) — 代理操作规范（强制约束，不是建议）；
-3. [implementation-order.md](implementation-order.md) — 实施阶段与退出条件；
-4. [capability-matrix.md](capability-matrix.md) — 当前什么已完成、还缺什么证据；
-5. 按切片需要查阅 dsh-contract / architecture / protocol / security / testing。
+| 文档                                         | 唯一职责                                                                                   |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| [architecture.md](architecture.md)           | 分层、连接与进程所有权、Extension Host/Webview 协议、安全边界及其决策理由                  |
+| [dsh-contract.md](dsh-contract.md)           | DSH 版本身份、上游来源、wire 差异、启动参数与兼容策略；开发文档中唯一列出 DSH 版本号的文件 |
+| [capability-matrix.md](capability-matrix.md) | 每项能力的当前范围、尚缺的验收条件、证据入口和状态                                         |
+| [ui.md](ui.md)                               | Webview 的颜色、排版、布局、动效及可访问性规则                                             |
+| [quality.md](quality.md)                     | 开发环境、垂直切片、测试、联调、PR 和发布门禁                                              |
 
-## 文档清单
+[AGENTS.md](../AGENTS.md) 是实现代理必须先遵守的短规则；[CONTRIBUTING.md](../CONTRIBUTING.md) 是 GitHub 贡献入口。用户说明分别见 [README.md](../README.md)、[README.zh-CN.md](../README.zh-CN.md) 和 Marketplace 使用的 [扩展说明](../apps/extension/README.md)。用户可见的版本变化只写入 [扩展更新日志](../apps/extension/CHANGELOG.md)；旧决定与旧实现可从 Git 历史追溯，无需在当前规范中复制一份。
 
-| 文档                                               | 用途                                                                      | 何时读                       |
-| -------------------------------------------------- | ------------------------------------------------------------------------- | ---------------------------- |
-| [implementation-order.md](implementation-order.md) | 七个实施阶段（阶段 0–6）、任务模板与退出条件                              | 计划任何新切片之前           |
-| [capability-matrix.md](capability-matrix.md)       | 功能状态与证据的唯一清单（代码/自动测试/live）                            | 判断完成度、更新证据时       |
-| [dsh-contract.md](dsh-contract.md)                 | 上游 DSH 固定契约、支持范围、启动契约与升级流程                           | 改动 Adapter 或升级上游前    |
-| [architecture.md](architecture.md)                 | 运行时结构、包依赖方向、连接状态机、进程所有权                            | 新增组件或跨层改动前         |
-| [protocol.md](protocol.md)                         | Extension Host ↔ Webview 消息协议与流量控制                               | 改 Webview、路由或 Schema 前 |
-| [security.md](security.md)                         | 信任模型、强制控制与诊断字段 allowlist                                    | 涉及凭据/路径/进程/网络时    |
-| [testing.md](testing.md)                           | 测试层次、必测负面路径、fixture 规则、性能预算                            | 编写测试之前                 |
-| [motion.md](motion.md)                             | Webview 动效 token、keyframes、Reduced Motion 与性能规则                  | 修改动效或新增交互过渡时     |
-| [typography.md](typography.md)                     | Webview 字号 token 刻度、角色别名、会话缩放与图标尺寸规则                 | 新增或调整任意文字样式时     |
-| [layout.md](layout.md)                             | Webview 内容宽度、换行与截断规则（超长外部文本不得撑破祖先）              | 调整尺寸、溢出或截断时       |
-| [color.md](color.md)                               | Webview 颜色分层、强调色的填充/线条角色与对比度契约                       | 改主题、调色板或任意颜色时   |
-| [development.md](development.md)                   | 环境版本、调试、DSH 联调模式、依赖升级                                    | 配置环境或联调 DSH 时        |
-| [release-checklist.md](release-checklist.md)       | 发布前必须满足的全部条目                                                  | 发版之前                     |
-| [adr/](adr/)                                       | 已接受的架构决策（主通道、进程所有权、侧栏、版本化 Adapter、Secret 边界） | 做相关架构选择时             |
+## 修改时更新哪里
 
-## 仓库级文档
+| 改动                             | 必须核对的文档                                                       |
+| -------------------------------- | -------------------------------------------------------------------- |
+| 上游 DSH 契约或适配器            | `dsh-contract.md`；能力验收或证据变化时再更新 `capability-matrix.md` |
+| 跨层、进程、文件、凭据或消息边界 | `architecture.md`；涉及 UI 约束时再核对 `ui.md`                      |
+| 能力实现或验证结果               | 仅更新矩阵中对应 ID 的当前事实与证据入口；用户可见变化另写更新日志   |
+| 工作流、测试或发布要求           | `quality.md`；代理强制规则发生变化时同步 `AGENTS.md`                 |
+| 用户操作、安装或支持信息         | 对应的用户入口；英文与中文 README 保持语义一致                       |
 
-- [AGENTS.md](../AGENTS.md) — 代理操作规范（强制）；
-- [CONTRIBUTING.md](../CONTRIBUTING.md) — 贡献流程、门禁与文档联动；
-- [CHANGELOG.md](../CHANGELOG.md) → [apps/extension/CHANGELOG.md](../apps/extension/CHANGELOG.md) —
-  版本变更记录（唯一事实来源）；
-- [tests/vscode-e2e/README.md](../tests/vscode-e2e/README.md) — 端到端套件的运行方式；
-- [.github/SECURITY.md](../.github/SECURITY.md) — 漏洞报告渠道。
+现有文档中的重要条件迁移时保留为可执行规则。每项规则应写明**适用范围、必须或禁止的行为、失败时的行为、验证入口**；只记录已经核对的事实。`DONE` 需要代码、自动测试以及该能力要求的真实 DSH/VS Code 验证，不能用构建成功代替现场证据。无法确认的能力维持 `PARTIAL`。
 
-## 维护约定
+## 防退化门禁
 
-- 修改功能状态只更新 `capability-matrix.md`，不要在其他文档复制状态表；
-- `capability-matrix.md` 只保留当前状态、完成条件和最短证据入口，不追加按日期排列的审计记录、缺陷流水或原始运行输出；
-- 修改版本兼容信息时，以 `docs/dsh-contract.md` 为唯一版本事实来源，并同步检查所有会复述版本的入口：
-  `README.md`/`README.zh-CN.md`、`apps/extension/README.md`、`apps/extension/SUPPORT.md`、
-  `CONTRIBUTING.md`、`docs/development.md` 与 `docs/release-checklist.md`；
-  `grep -rn "<旧版本号>" --include="*.md" .` 可列出残留引用；
-- 新增 ADR 使用 `adr/` 的现有编号格式，状态只能是 Accepted / Superseded。
+`pnpm docs:check` 检查本地链接、文档结构、能力 ID、版本事实来源及安装默认与代码的一致性，并作为 `pnpm check` 的一部分运行。自动检查不能替代契约审阅：改上游行为时仍须核对目标 tag 的源码和脱敏 fixture；改用户行为时须核对英文、中文与 Marketplace 文案；改完成状态时须给出可复现的证据入口。

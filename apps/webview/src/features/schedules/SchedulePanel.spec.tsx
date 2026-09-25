@@ -128,6 +128,22 @@ function submitCreateForm(): void {
   fireEvent.click(button)
 }
 
+const timingLabels: Readonly<Record<string, string>> = {
+  after: 'After a delay',
+  at: 'One time',
+  every: 'Every interval',
+  daily: 'Daily',
+  weekly: 'Weekly',
+  cron: 'Cron rule',
+  keep: 'Keep current timing',
+}
+
+/** The timing control is an anchored menu: open its trigger, then pick the choice. */
+function chooseTiming(timing: string): void {
+  fireEvent.click(screen.getByLabelText('Timing'))
+  fireEvent.click(screen.getByRole('option', { name: timingLabels[timing] ?? timing }))
+}
+
 describe('SchedulePanel', () => {
   afterEach(() => cleanup())
 
@@ -153,7 +169,7 @@ describe('SchedulePanel', () => {
       fireEvent.change(screen.getByLabelText('Reminder instruction'), {
         target: { value: 'Check the garden.' },
       })
-      fireEvent.change(screen.getByLabelText('Timing'), { target: { value: item.timing } })
+      chooseTiming(item.timing)
       if (item.timing === 'at') {
         fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2099-10-20' } })
         fireEvent.change(screen.getByLabelText('Time'), { target: { value: '09:30' } })
@@ -262,7 +278,7 @@ describe('SchedulePanel', () => {
     clickCreateOpen()
     fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Canonical daily' } })
     fireEvent.change(screen.getByLabelText('Reminder instruction'), { target: { value: 'Review the day.' } })
-    fireEvent.change(screen.getByLabelText('Timing'), { target: { value: 'daily' } })
+    chooseTiming('daily')
     fireEvent.change(screen.getByLabelText('Time'), { target: { value: '10:15' } })
     fireEvent.change(screen.getByLabelText('Time zone'), { target: { value: 'US/Eastern' } })
     submitCreateForm()
@@ -293,7 +309,7 @@ describe('SchedulePanel', () => {
     fireEvent.change(screen.getByLabelText('Reminder instruction'), {
       target: { value: 'Check the service.' },
     })
-    fireEvent.change(screen.getByLabelText('Timing'), { target: { value: 'cron' } })
+    chooseTiming('cron')
     fireEvent.change(screen.getByLabelText('Cron expression'), { target: { value: '0,1 9 * * 1' } })
     fireEvent.change(screen.getByLabelText('Time zone'), { target: { value: 'UTC' } })
     submitCreateForm()
@@ -363,19 +379,19 @@ describe('SchedulePanel', () => {
     fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Validation case' } })
     fireEvent.change(screen.getByLabelText('Reminder instruction'), { target: { value: 'Do a check.' } })
 
-    fireEvent.change(screen.getByLabelText('Timing'), { target: { value: 'every' } })
+    chooseTiming('every')
     fireEvent.change(screen.getByLabelText('Interval in seconds'), { target: { value: '299' } })
     submitCreateForm()
     expect(await screen.findByRole('alert')).toBeDefined()
     expect(startSession).not.toHaveBeenCalled()
 
-    fireEvent.change(screen.getByLabelText('Timing'), { target: { value: 'daily' } })
+    chooseTiming('daily')
     fireEvent.change(screen.getByLabelText('Time zone'), { target: { value: 'Not/AZone' } })
     submitCreateForm()
     expect(await screen.findByRole('alert')).toBeDefined()
     expect(startSession).not.toHaveBeenCalled()
 
-    fireEvent.change(screen.getByLabelText('Timing'), { target: { value: 'at' } })
+    chooseTiming('at')
     fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2026-03-08' } })
     fireEvent.change(screen.getByLabelText('Time'), { target: { value: '02:30' } })
     fireEvent.change(screen.getByLabelText('Time zone'), { target: { value: 'America/New_York' } })
@@ -390,7 +406,7 @@ describe('SchedulePanel', () => {
     await waitFor(() => expect(screen.getByRole('alert').textContent).not.toBe(gapMessage))
     expect(startSession).not.toHaveBeenCalled()
 
-    fireEvent.change(screen.getByLabelText('Timing'), { target: { value: 'cron' } })
+    chooseTiming('cron')
     fireEvent.change(screen.getByLabelText('Time zone'), { target: { value: 'UTC' } })
     fireEvent.change(screen.getByLabelText('Cron expression'), { target: { value: '0 25 * * 1' } })
     submitCreateForm()
@@ -411,7 +427,7 @@ describe('SchedulePanel', () => {
     clickCreateOpen()
     fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Overlap case' } })
     fireEvent.change(screen.getByLabelText('Reminder instruction'), { target: { value: 'Check once.' } })
-    fireEvent.change(screen.getByLabelText('Timing'), { target: { value: 'at' } })
+    chooseTiming('at')
     fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2026-11-01' } })
     fireEvent.change(screen.getByLabelText('Time'), { target: { value: '01:30' } })
     fireEvent.change(screen.getByLabelText('Time zone'), { target: { value: 'America/New_York' } })
@@ -564,7 +580,7 @@ describe('SchedulePanel', () => {
     const { requests } = mountPanel()
     fireEvent.click(await screen.findByRole('button', { name: /Water the plants/u }))
     fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
-    fireEvent.change(screen.getByLabelText('Timing'), { target: { value: 'weekly' } })
+    chooseTiming('weekly')
     fireEvent.click(screen.getByRole('checkbox', { name: 'Tuesday' }))
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }))
 
@@ -644,7 +660,7 @@ describe('SchedulePanel', () => {
     mountPanel({ items: [recurring] })
     fireEvent.click(await screen.findByRole('button', { name: /Check the build/u }))
     fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
-    fireEvent.change(screen.getByLabelText('Timing'), { target: { value: 'every' } })
+    chooseTiming('every')
 
     expect(screen.getByLabelText('Interval in seconds').getAttribute('min')).toBe('300')
   })

@@ -1,33 +1,7 @@
 # Security Policy
 
-## Supported versions
+Security fixes target the latest release line. Older releases may not receive fixes; use the current release before reporting a reproduction when possible.
 
-Security fixes are only applied to the latest release line.
+Report vulnerabilities through GitHub's private **Report a vulnerability** action in this repository's Security tab. Include the extension version, DSH version, platform, and a minimal reproduction. Do not include API keys, passwords, access tokens, prompt bodies, or private workspace data.
 
-| Version                  | Supported |
-| ------------------------ | --------- |
-| latest release (`0.2.2`) | Yes       |
-| older releases           | No        |
-
-## Reporting a vulnerability
-
-Please use GitHub's private vulnerability reporting (the **Report a vulnerability** button on this
-repository's **Security** tab) instead of a public issue. Include the extension version, the DSH
-version (`dsh --version`), your platform, and a minimal reproduction.
-
-**Never include API keys, passwords, access tokens, or prompt bodies** in a report.
-
-## Scope notes
-
-The extension's security model is documented in [docs/security.md](../docs/security.md). Key
-invariants that count as security boundaries:
-
-- The Webview is untrusted: it never receives secrets, DSH endpoints, process handles, or direct
-  filesystem/network access.
-- DSH endpoints must be verified loopback addresses (`127.0.0.1` / `localhost`).
-- Child processes are spawned with fixed executables and argument arrays, never through a shell.
-- Logs follow a field allowlist with recursive redaction of prompt/body/token-like fields.
-- External DSH processes are never stopped or restarted by the extension.
-
-Reports about upstream DeepSeek Harness itself should go to the
-[upstream repository](https://github.com/deepseek-ai/deepseek-harness).
+The [architecture and trust model](../docs/architecture.md) defines the Webview, loopback, process ownership, credential, file and diagnostic boundaries. Issues in DeepSeek Harness itself should be reported to the [upstream repository](https://github.com/deepseek-ai/deepseek-harness).

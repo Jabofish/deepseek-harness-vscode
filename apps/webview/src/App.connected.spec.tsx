@@ -67,6 +67,7 @@ function connectedState(activeSession: boolean): AppState {
       },
     ],
     activeSessionId: activeSession ? 's1' : undefined,
+    pendingSession: undefined,
     preferredOpenFileId: undefined,
     timeline: { sessionId: activeSession ? 's1' : undefined, nodes: [], lastSequence: -1 },
     history: [],
@@ -202,6 +203,9 @@ function storeFor(state: AppState): AppStore {
     moveSession: vi.fn().mockResolvedValue(undefined),
     forkSession: vi.fn().mockResolvedValue(undefined),
     createSession: vi.fn().mockResolvedValue(undefined),
+    stageSession: vi.fn().mockResolvedValue(undefined),
+    configurePendingSession: vi.fn(),
+    sendPendingPrompt: vi.fn().mockResolvedValue(undefined),
     removeSession: vi.fn().mockResolvedValue(undefined),
     loadArchivedSessions: vi.fn().mockResolvedValue(undefined),
     restoreSession: vi.fn().mockResolvedValue(undefined),
@@ -311,23 +315,23 @@ function storeFor(state: AppState): AppStore {
 }
 
 function renderWithMutableState(initialState: AppState): {
-  readonly createSessionCalls: Array<[string | undefined, string | undefined]>
+  readonly stageSessionCalls: Array<[string | undefined, string | undefined]>
   readonly updateState: (state: AppState) => void
 } {
   let currentState = initialState
-  const createSessionCalls: Array<[string | undefined, string | undefined]> = []
+  const stageSessionCalls: Array<[string | undefined, string | undefined]> = []
   const store: AppStore = {
     ...storeFor(initialState),
     getState: () => currentState,
-    createSession: vi.fn((workspaceId?: string, presetId?: string) => {
-      createSessionCalls.push([workspaceId, presetId])
+    stageSession: vi.fn((workspaceId?: string, presetId?: string) => {
+      stageSessionCalls.push([workspaceId, presetId])
       return Promise.resolve()
     }),
   }
   currentStore = store
   const view = render(<App />)
   return {
-    createSessionCalls,
+    stageSessionCalls,
     updateState: (state) => {
       currentState = state
       view.rerender(<App />)
@@ -381,31 +385,60 @@ describe('App connected rendering', () => {
     expect(document.querySelector('.dsh-empty-state')).toBeNull()
   })
 
-  it('uses the host default after preset selection is disabled instead of submitting the staged preset', async () => {
+  it('renders a local draft and routes its first message through deferred creation', async () => {
+    const state = connectedState(false)
+    const sendPendingPrompt = vi.fn().mockResolvedValue(undefined)
+    const createSession = vi.fn().mockResolvedValue(undefined)
+    currentStore = {
+      ...storeFor({
+        ...state,
+        pendingSession: {
+          revision: 1,
+          workspaceId: 'w1',
+          configuration: connectedState(true).configuration!,
+        },
+      }),
+      sendPendingPrompt,
+      createSession,
+    }
+    render(<App />)
+
+    const input = document.querySelector('.dsh-composer textarea')
+    expect(input).toBeInstanceOf(HTMLTextAreaElement)
+    fireEvent.change(input!, { target: { value: 'Hello' } })
+    const form = input?.closest('form')
+    expect(form).not.toBeNull()
+    fireEvent.submit(form!)
+
+    await waitFor(() => expect(sendPendingPrompt).toHaveBeenCalledWith('Hello', [], 'queue'))
+    expect(createSession).not.toHaveBeenCalled()
+  })
+
+  it('stages the host default after preset selection is disabled', async () => {
     const initialState = presetSelectionState(true, 'standard')
-    const { createSessionCalls, updateState } = renderWithMutableState(initialState)
+    const { stageSessionCalls, updateState } = renderWithMutableState(initialState)
     await selectEmptySessionPreset('alternate')
 
     updateState(presetSelectionState(false, 'standard'))
     fireEvent.click(screen.getByRole('button', { name: 'New session here' }))
 
-    expect(createSessionCalls).toEqual([['w1', 'standard']])
+    expect(stageSessionCalls).toEqual([['w1', 'standard']])
   })
 
   it('uses a newly reported host default after preset selection is disabled', async () => {
     const initialState = presetSelectionState(true, 'standard')
-    const { createSessionCalls, updateState } = renderWithMutableState(initialState)
+    const { stageSessionCalls, updateState } = renderWithMutableState(initialState)
     await selectEmptySessionPreset('alternate')
 
     updateState(presetSelectionState(false, 'standard'))
     updateState(presetSelectionState(false, 'updated-default'))
     fireEvent.click(screen.getByRole('button', { name: 'New session here' }))
 
-    expect(createSessionCalls).toEqual([['w1', 'updated-default']])
+    expect(stageSessionCalls).toEqual([['w1', 'updated-default']])
   })
 
   it('blocks session creation when preset selection is disabled and the roster has no default', () => {
-    const { createSessionCalls } = renderWithMutableState(presetSelectionState(false, undefined))
+    const { stageSessionCalls } = renderWithMutableState(presetSelectionState(false, undefined))
     const createButton = screen.getByRole('button', { name: 'New session here' })
 
     expect((createButton as HTMLButtonElement).disabled).toBe(true)
@@ -416,7 +449,7 @@ describe('App connected rendering', () => {
     ).toBeDefined()
     fireEvent.click(createButton)
 
-    expect(createSessionCalls).toEqual([])
+    expect(stageSessionCalls).toEqual([])
   })
 
   it.each([

@@ -272,31 +272,37 @@ export const SessionControls = memo(function SessionControls(props: SessionContr
       </div>
     )
 
+  // DSH refuses `agentPresets/select` once a session has started, so the mode is
+  // only the user's to choose on a fresh seat. Show it on the toolbar exactly when
+  // choosing it is still possible; a locked one stays in the extras surface.
+  const modeMenu = (
+    <SelectMenu
+      className="dsh-session-controls__mode"
+      icon={modeIcon(props.configuration.preset, modeLabel)}
+      displayLabel
+      label={modeLabel}
+      ariaLabel={t('controls.mode')}
+      title={props.presetMutable ? t('controls.modeSelect') : t('controls.modeLocked')}
+      value={props.configuration.preset}
+      options={modeOptions}
+      disabled={
+        props.presetSelectionEnabled === false ||
+        props.disabled ||
+        !props.presetMutable ||
+        availablePresets.length < 2
+      }
+      onChange={handlePresetChange}
+    />
+  )
+
   return (
     <div
       className={`dsh-session-controls dsh-session-controls--${props.surface ?? 'all'}`}
       aria-label={t('controls.aria')}
     >
       <div ref={selectorsRef} className="dsh-session-controls__selectors">
-        {showSecondary ? (
-          <SelectMenu
-            className="dsh-session-controls__mode"
-            icon={modeIcon(props.configuration.preset, modeLabel)}
-            displayLabel
-            label={modeLabel}
-            ariaLabel={t('controls.mode')}
-            title={props.presetMutable ? t('controls.modeSelect') : t('controls.modeLocked')}
-            value={props.configuration.preset}
-            options={modeOptions}
-            disabled={
-              props.presetSelectionEnabled === false ||
-              props.disabled ||
-              !props.presetMutable ||
-              availablePresets.length < 2
-            }
-            onChange={handlePresetChange}
-          />
-        ) : null}
+        {showSecondary && !props.presetMutable ? modeMenu : null}
+        {showPrimary && props.presetMutable ? modeMenu : null}
         {showSecondary && props.promptMode !== undefined && props.onPromptModeChange !== undefined ? (
           <SelectMenu
             className="dsh-session-controls__workflow-mode"

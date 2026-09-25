@@ -11,6 +11,7 @@ import {
 import { createPortal } from 'react-dom'
 import type { PermissionRequest, UserQuestion, SessionSummary, WorkspaceSummary } from '@dsh-vscode/domain'
 import { PopoverCard } from '../../components/common/PopoverCard.js'
+import { SelectMenu } from '../../components/common/SelectMenu.js'
 import { useDismissibleLayer } from '../../components/common/useDismissibleLayer.js'
 import { Icon } from '../../ui/Icon.js'
 import { displaySessionTitle } from './session-title.js'
@@ -22,6 +23,7 @@ export interface SessionDrawerProps {
   readonly sessions: readonly SessionSummary[]
   readonly workspaces: readonly WorkspaceSummary[]
   readonly activeSessionId: string | undefined
+  readonly preferredWorkspaceId?: string | undefined
   /** Omitted or `undefined` leaves the switcher uncontrolled: it owns `open`. */
   readonly open?: boolean | undefined
   readonly onOpenChange?: (open: boolean) => void
@@ -48,6 +50,7 @@ export interface SessionDrawerProps {
 type SessionSorting = 'manual' | 'updated'
 type WorkspaceDisplay = 'current' | 'grouped'
 type ArchiveFilter = 'hide' | 'all' | 'archived'
+const ARCHIVE_FILTERS: readonly ArchiveFilter[] = ['hide', 'all', 'archived']
 const DEFAULT_WORKSPACE_NAME = 'default-workspace'
 type RenameTarget =
   | { readonly kind: 'session'; readonly id: string; readonly title: string; readonly workspaceId: string }
@@ -167,6 +170,7 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
       : props.workspaces
   const selectedWorkspace =
     visibleWorkspaces.find((workspace) => workspace.id === selectedWorkspaceId) ??
+    visibleWorkspaces.find((workspace) => workspace.id === props.preferredWorkspaceId) ??
     visibleWorkspaces.find((workspace) => workspace.id === activeSession?.workspaceId) ??
     visibleWorkspaces[0]
   const selectedWorkspaceKey = selectedWorkspace?.id
@@ -628,7 +632,7 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
                     session.workspaceId === workspace.id ||
                     workspace.sessionIds?.includes(session.id) === true,
                 ).length
-              : workspace.sessionCount}
+              : workspaceSessions(workspace).length}
           </small>
         </button>
         <div className="dsh-session-switcher__workspace-actions">
@@ -829,16 +833,19 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
               maxLength={SEARCH_QUERY_MAX_CODE_UNITS}
               onChange={(event) => setSearchQuery(sanitizeSearchQuery(event.target.value))}
             />
-            <select
+            <SelectMenu
               className="dsh-session-switcher__archive-filter"
-              aria-label={t('sessions.archiveFilter')}
+              icon="box"
+              label={t(`sessions.archiveFilter.${archiveFilter}`)}
+              ariaLabel={t('sessions.archiveFilter')}
+              title={t('sessions.archiveFilter')}
               value={archiveFilter}
-              onChange={(event) => chooseArchiveFilter(event.currentTarget.value)}
-            >
-              <option value="hide">{t('sessions.archiveFilter.hide')}</option>
-              <option value="all">{t('sessions.archiveFilter.all')}</option>
-              <option value="archived">{t('sessions.archiveFilter.archived')}</option>
-            </select>
+              options={ARCHIVE_FILTERS.map((value) => ({
+                value,
+                label: t(`sessions.archiveFilter.${value}`),
+              }))}
+              onChange={chooseArchiveFilter}
+            />
           </div>
           {contentSearchUnavailable ? (
             <p className="dsh-session-switcher__warning" role="status">
@@ -855,166 +862,168 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
               {moveError}
             </p>
           )}
-          {visibleWorkspaces.length === 0 ? null : (
-            <div className="dsh-session-switcher__workspaces" aria-label={t('sessions.workspaces')}>
-              {visibleWorkspaces.map(renderWorkspaceCard)}
-            </div>
-          )}
-          {archiveFilter === 'archived' ? null : selectedWorkspace === undefined && query === '' ? (
-            <p className="dsh-session-switcher__empty">{t('sessions.temporary')}</p>
-          ) : workspaceDisplay === 'grouped' ? (
-            <div className="dsh-session-switcher__groups">
-              {groupedWorkspaceSessions.map(({ workspace, sessions: groupSessions }) => (
-                <section
-                  className="dsh-session-switcher__group"
-                  key={workspace.id}
-                  aria-labelledby={`workspace-${workspace.id}`}
-                >
-                  <header className="dsh-session-switcher__group-header">
-                    <strong id={`workspace-${workspace.id}`}>{displayWorkspaceName(workspace.name)}</strong>
-                    <span>{workspace.sessionCount}</span>
-                  </header>
-                  {groupSessions.length === 0 ? (
-                    <p className="dsh-session-switcher__empty">
-                      {query === '' ? t('sessions.empty') : t('sessions.noMatch')}
-                    </p>
-                  ) : (
-                    <ul
-                      className="dsh-session-switcher__list"
-                      aria-label={displayWorkspaceName(workspace.name)}
-                    >
-                      {groupSessions.map((session) => renderSessionRow(session, undefined, workspace.id))}
-                    </ul>
+          <div className="dsh-session-switcher__results">
+            {visibleWorkspaces.length === 0 ? null : (
+              <div className="dsh-session-switcher__workspaces" aria-label={t('sessions.workspaces')}>
+                {visibleWorkspaces.map(renderWorkspaceCard)}
+              </div>
+            )}
+            {archiveFilter === 'archived' ? null : selectedWorkspace === undefined && query === '' ? (
+              <p className="dsh-session-switcher__empty">{t('sessions.temporary')}</p>
+            ) : workspaceDisplay === 'grouped' ? (
+              <div className="dsh-session-switcher__groups">
+                {groupedWorkspaceSessions.map(({ workspace, sessions: groupSessions }) => (
+                  <section
+                    className="dsh-session-switcher__group"
+                    key={workspace.id}
+                    aria-labelledby={`workspace-${workspace.id}`}
+                  >
+                    <header className="dsh-session-switcher__group-header">
+                      <strong id={`workspace-${workspace.id}`}>{displayWorkspaceName(workspace.name)}</strong>
+                      <span>{workspaceSessions(workspace).length}</span>
+                    </header>
+                    {groupSessions.length === 0 ? (
+                      <p className="dsh-session-switcher__empty">
+                        {query === '' ? t('sessions.empty') : t('sessions.noMatch')}
+                      </p>
+                    ) : (
+                      <ul
+                        className="dsh-session-switcher__list"
+                        aria-label={displayWorkspaceName(workspace.name)}
+                      >
+                        {groupSessions.map((session) => renderSessionRow(session, undefined, workspace.id))}
+                      </ul>
+                    )}
+                  </section>
+                ))}
+              </div>
+            ) : currentWorkspaceSessions.length === 0 && otherWorkspaceMatches.length === 0 ? (
+              <p className="dsh-session-switcher__empty">
+                {query === '' ? t('sessions.empty') : t('sessions.noMatch')}
+              </p>
+            ) : (
+              <>
+                <ul className="dsh-session-switcher__list" aria-label={t('sessions.title')}>
+                  {currentWorkspaceSessions.map((session) =>
+                    renderSessionRow(session, undefined, selectedWorkspace?.id),
                   )}
-                </section>
-              ))}
-            </div>
-          ) : currentWorkspaceSessions.length === 0 && otherWorkspaceMatches.length === 0 ? (
-            <p className="dsh-session-switcher__empty">
-              {query === '' ? t('sessions.empty') : t('sessions.noMatch')}
-            </p>
-          ) : (
-            <>
-              <ul className="dsh-session-switcher__list" aria-label={t('sessions.title')}>
-                {currentWorkspaceSessions.map((session) =>
-                  renderSessionRow(session, undefined, selectedWorkspace?.id),
-                )}
-              </ul>
-              {otherWorkspaceMatches.length === 0 ? null : (
-                <>
-                  <p className="dsh-session-switcher__group-label">{t('sessions.contentMatches')}</p>
-                  <ul className="dsh-session-switcher__list" aria-label={t('sessions.otherMatches')}>
-                    {otherWorkspaceMatches.map((session) => {
-                      const workspace = visibleWorkspaces.find(
-                        (candidate) => candidate.id === session.workspaceId,
-                      )
-                      return renderSessionRow(
-                        session,
-                        workspace === undefined ? undefined : displayWorkspaceName(workspace.name),
-                      )
-                    })}
-                  </ul>
-                </>
-              )}
-            </>
-          )}
-          {archiveFilter === 'hide' ? null : (
-            <section className="dsh-session-switcher__archived" aria-label={t('sessions.archived')}>
-              <button
-                className="dsh-session-switcher__archived-toggle"
-                type="button"
-                aria-expanded={archivedOpen}
-                disabled={archiveFilter === 'archived'}
-                onClick={() => setArchivedOpen((current) => !current)}
-              >
-                <Icon name="box" />
-                <span className="dsh-session-switcher__archived-label">{t('sessions.archived')}</span>
-                {archivedSessionsToShow.length === 0 ? null : (
-                  <small className="dsh-session-switcher__archived-count">
-                    {archivedSessionsToShow.length}
-                  </small>
-                )}
-                <span className="dsh-session-switcher__chevron" aria-hidden="true">
-                  <Icon name="chevron-down" />
-                </span>
-              </button>
-              {archivedOpen ? (
-                <div className="dsh-session-switcher__archived-body">
-                  {archivedError === undefined ? null : (
-                    <p className="dsh-session-switcher__error" role="alert">
-                      {archivedError}
-                    </p>
-                  )}
-                  {archivedLoading ? (
-                    <p className="dsh-session-switcher__empty">{t('sessions.archivedLoading')}</p>
-                  ) : archivedSessionsToShow.length === 0 ? (
-                    <p className="dsh-session-switcher__empty">{t('sessions.archivedEmpty')}</p>
-                  ) : (
-                    <ul className="dsh-session-switcher__list" aria-label={t('sessions.archived')}>
-                      {archivedSessionsToShow.map((session) => {
-                        const title = displaySessionTitle(session.title, t)
-                        const workspace = props.workspaces.find(
+                </ul>
+                {otherWorkspaceMatches.length === 0 ? null : (
+                  <>
+                    <p className="dsh-session-switcher__group-label">{t('sessions.contentMatches')}</p>
+                    <ul className="dsh-session-switcher__list" aria-label={t('sessions.otherMatches')}>
+                      {otherWorkspaceMatches.map((session) => {
+                        const workspace = visibleWorkspaces.find(
                           (candidate) => candidate.id === session.workspaceId,
                         )
-                        const workspaceName =
-                          workspace === undefined ? undefined : displayWorkspaceName(workspace.name)
-                        return (
-                          <li
-                            key={session.id}
-                            className="dsh-session-item"
-                            aria-busy={restoringSessionId === session.id}
-                          >
-                            <span className="dsh-session-item__copy">
-                              <strong title={title}>{title}</strong>
-                              {workspaceName === undefined ? null : (
-                                <span className="dsh-session-item__workspace" title={workspaceName}>
-                                  {workspaceName}
-                                </span>
-                              )}
-                            </span>
-                            <div className="dsh-session-item__actions">
-                              <button
-                                className="dsh-icon-button"
-                                type="button"
-                                aria-label={t('sessions.restore', { title })}
-                                title={t(
-                                  props.canRestoreSessions === true
-                                    ? 'sessions.restoreTitle'
-                                    : 'sessions.restoreUnavailable',
-                                )}
-                                disabled={
-                                  props.canRestoreSessions !== true ||
-                                  mutationBusy ||
-                                  restoringSessionId !== undefined
-                                }
-                                onClick={() => restoreArchivedSession(session)}
-                              >
-                                <Icon name="refresh" />
-                              </button>
-                              <button
-                                className="dsh-icon-button"
-                                type="button"
-                                aria-label={t('sessions.delete', { title })}
-                                title={t('sessions.deleteUnavailable')}
-                                disabled
-                                onClick={(event) => {
-                                  dialogTriggerRef.current = event.currentTarget
-                                  setDeleteError(undefined)
-                                  setDeleteTarget(session)
-                                }}
-                              >
-                                <Icon name="trash" />
-                              </button>
-                            </div>
-                          </li>
+                        return renderSessionRow(
+                          session,
+                          workspace === undefined ? undefined : displayWorkspaceName(workspace.name),
                         )
                       })}
                     </ul>
+                  </>
+                )}
+              </>
+            )}
+            {archiveFilter === 'hide' ? null : (
+              <section className="dsh-session-switcher__archived" aria-label={t('sessions.archived')}>
+                <button
+                  className="dsh-session-switcher__archived-toggle"
+                  type="button"
+                  aria-expanded={archivedOpen}
+                  disabled={archiveFilter === 'archived'}
+                  onClick={() => setArchivedOpen((current) => !current)}
+                >
+                  <Icon name="box" />
+                  <span className="dsh-session-switcher__archived-label">{t('sessions.archived')}</span>
+                  {archivedSessionsToShow.length === 0 ? null : (
+                    <small className="dsh-session-switcher__archived-count">
+                      {archivedSessionsToShow.length}
+                    </small>
                   )}
-                </div>
-              ) : null}
-            </section>
-          )}
+                  <span className="dsh-session-switcher__chevron" aria-hidden="true">
+                    <Icon name="chevron-down" />
+                  </span>
+                </button>
+                {archivedOpen ? (
+                  <div className="dsh-session-switcher__archived-body">
+                    {archivedError === undefined ? null : (
+                      <p className="dsh-session-switcher__error" role="alert">
+                        {archivedError}
+                      </p>
+                    )}
+                    {archivedLoading ? (
+                      <p className="dsh-session-switcher__empty">{t('sessions.archivedLoading')}</p>
+                    ) : archivedSessionsToShow.length === 0 ? (
+                      <p className="dsh-session-switcher__empty">{t('sessions.archivedEmpty')}</p>
+                    ) : (
+                      <ul className="dsh-session-switcher__list" aria-label={t('sessions.archived')}>
+                        {archivedSessionsToShow.map((session) => {
+                          const title = displaySessionTitle(session.title, t)
+                          const workspace = props.workspaces.find(
+                            (candidate) => candidate.id === session.workspaceId,
+                          )
+                          const workspaceName =
+                            workspace === undefined ? undefined : displayWorkspaceName(workspace.name)
+                          return (
+                            <li
+                              key={session.id}
+                              className="dsh-session-item"
+                              aria-busy={restoringSessionId === session.id}
+                            >
+                              <span className="dsh-session-item__copy">
+                                <strong title={title}>{title}</strong>
+                                {workspaceName === undefined ? null : (
+                                  <span className="dsh-session-item__workspace" title={workspaceName}>
+                                    {workspaceName}
+                                  </span>
+                                )}
+                              </span>
+                              <div className="dsh-session-item__actions">
+                                <button
+                                  className="dsh-icon-button"
+                                  type="button"
+                                  aria-label={t('sessions.restore', { title })}
+                                  title={t(
+                                    props.canRestoreSessions === true
+                                      ? 'sessions.restoreTitle'
+                                      : 'sessions.restoreUnavailable',
+                                  )}
+                                  disabled={
+                                    props.canRestoreSessions !== true ||
+                                    mutationBusy ||
+                                    restoringSessionId !== undefined
+                                  }
+                                  onClick={() => restoreArchivedSession(session)}
+                                >
+                                  <Icon name="refresh" />
+                                </button>
+                                <button
+                                  className="dsh-icon-button"
+                                  type="button"
+                                  aria-label={t('sessions.delete', { title })}
+                                  title={t('sessions.deleteUnavailable')}
+                                  disabled
+                                  onClick={(event) => {
+                                    dialogTriggerRef.current = event.currentTarget
+                                    setDeleteError(undefined)
+                                    setDeleteTarget(session)
+                                  }}
+                                >
+                                  <Icon name="trash" />
+                                </button>
+                              </div>
+                            </li>
+                          )
+                        })}
+                      </ul>
+                    )}
+                  </div>
+                ) : null}
+              </section>
+            )}
+          </div>
         </PopoverCard>
       ) : null}
       {renameTarget === undefined || typeof document === 'undefined'

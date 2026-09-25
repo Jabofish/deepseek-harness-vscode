@@ -74,7 +74,7 @@ function snapshot(): DshSettingsSnapshot {
 function renderConfiguration(
   overrides: Partial<Parameters<typeof PluginConfiguration>[0]> = {},
 ): ReturnType<typeof render> {
-  return render(
+  const result = render(
     <PluginConfiguration
       snapshot={snapshot()}
       onReload={vi.fn().mockResolvedValue(snapshot())}
@@ -85,12 +85,32 @@ function renderConfiguration(
       {...overrides}
     />,
   )
+  // The card list collapses by default, so a test that inspects it opens the section first.
+  fireEvent.click(screen.getByRole('button', { name: /Plugin configuration/u }))
+  return result
 }
 
 describe('PluginConfiguration', () => {
   afterEach(() => {
     cleanup()
     window.localStorage.clear()
+  })
+
+  it('collapses the whole card list by default and reveals it from the section header', () => {
+    render(
+      <PluginConfiguration
+        snapshot={snapshot()}
+        onReload={vi.fn().mockResolvedValue(snapshot())}
+        onUpdateSetting={vi.fn().mockResolvedValue(undefined)}
+        onUnsetSetting={vi.fn().mockResolvedValue(undefined)}
+      />,
+    )
+    const toggle = screen.getByRole('button', { name: /Plugin configuration/u })
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByRole('button', { name: /shell/u })).toBeNull()
+    fireEvent.click(toggle)
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    expect(screen.getByRole('button', { name: /shell/u })).toBeDefined()
   })
 
   it('lists every namespace the host describes and saves staged settings', async () => {
@@ -127,6 +147,7 @@ describe('PluginConfiguration', () => {
       </I18nProvider>,
     )
 
+    fireEvent.click(screen.getByRole('button', { name: /插件配置/u }))
     fireEvent.click(screen.getByRole('button', { name: /web-search-deepseek/u }))
     expect(screen.getByText(/DEEPSEEK_API_KEY/u)).toBeDefined()
     fireEvent.click(screen.getByRole('button', { name: '配置 API Key' }))
@@ -185,11 +206,14 @@ describe('PluginConfiguration', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /shell/u }))
     // A choice field stages the picked value; nothing is written until Save.
-    fireEvent.change(screen.getByLabelText(/sandboxMode/u), { target: { value: JSON.stringify('strict') } })
+    fireEvent.click(screen.getByLabelText(/sandboxMode/u))
+    fireEvent.click(screen.getByRole('option', { name: 'strict' }))
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 
     await waitFor(() => expect(onUpdateSetting).toHaveBeenCalledWith('shell.sandboxMode', 'strict'))
-    expect(screen.getByLabelText(/stream/u)).toHaveProperty('value', JSON.stringify('true'))
+    expect(
+      screen.getByLabelText(/stream/u).querySelector('.dsh-select-menu__trigger-text')?.textContent,
+    ).toBe('true')
   })
 })
 
@@ -335,10 +359,14 @@ describe('literal enum settings', () => {
       onUnsetSetting,
     })
     fireEvent.click(screen.getByRole('button', { name: /shell/u }))
-    const select = screen.getByLabelText<HTMLSelectElement>(/^Mode/u)
-    const option = Array.from(select.options).findLast((entry) => entry.textContent === value)
-    expect(option).toBeDefined()
-    fireEvent.change(select, { target: { value: option?.value } })
+    fireEvent.click(screen.getByLabelText(/^Mode/u))
+    // The literal is picked by its own text: the accessible name of a choice that
+    // is empty or padded would not survive whitespace normalisation.
+    const option = Array.from(
+      document.querySelectorAll<HTMLSpanElement>('.dsh-select-menu__option > span'),
+    ).findLast((entry) => entry.textContent === value)
+    if (option === undefined) throw new Error(`The declared enum value has no choice: ${value}`)
+    fireEvent.click(option)
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(onUpdateSetting).toHaveBeenCalledWith('shell.mode', value))
     expect(onUnsetSetting).not.toHaveBeenCalled()

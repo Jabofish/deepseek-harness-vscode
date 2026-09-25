@@ -92,15 +92,36 @@ function count(region: HTMLElement, attribute: 'data-plugin-count' | 'data-plugi
   return region.querySelector(`[${attribute}]`)?.getAttribute(attribute) ?? null
 }
 
+function modeTrigger(): HTMLButtonElement {
+  return screen.getByRole('button', { name: /^Choose the Agent mode to inspect/u })
+}
+
+function modeTriggerLabel(): string {
+  return modeTrigger().querySelector('.dsh-select-menu__trigger-text')?.textContent ?? ''
+}
+
+/** The mode selector is an anchored menu: open its trigger, then pick the mode. */
+function chooseMode(name: string): void {
+  fireEvent.click(modeTrigger())
+  fireEvent.click(screen.getByRole('option', { name }))
+}
+
+/** Both inventory groups start collapsed, so a test has to open the one it inspects. */
+function openGroup(name: string): void {
+  fireEvent.click(screen.getByRole('button', { name }))
+}
+
 describe('PluginInventory', () => {
   afterEach(() => cleanup())
 
   it('defaults to the host default mode and separates session composition from global inventory', async () => {
     renderInventory()
 
-    const selector = await screen.findByRole('combobox', { name: 'Choose the Agent mode to inspect' })
-    expect((selector as HTMLSelectElement).value).toBe('standard')
-    expect(within(selector).getByRole('option', { name: 'Standard mode (Default)' })).toBeDefined()
+    await screen.findByRole('button', { name: /^Choose the Agent mode to inspect/u })
+    expect(modeTriggerLabel()).toBe('Standard mode (Default)')
+    fireEvent.click(modeTrigger())
+    expect(screen.getByRole('option', { name: 'Standard mode (Default)' })).toBeDefined()
+    fireEvent.click(modeTrigger())
 
     const session = screen.getByRole('region', { name: 'Session plugins' })
     const global = screen.getByRole('region', { name: 'Global plugins' })
@@ -109,6 +130,16 @@ describe('PluginInventory', () => {
     expect(count(session, 'data-plugin-total')).toBe('3')
     expect(count(global, 'data-plugin-count')).toBe('4')
     expect(count(global, 'data-plugin-total')).toBe('4')
+    expect(
+      within(session).getByRole('button', { name: 'Session plugins' }).getAttribute('aria-expanded'),
+    ).toBe('false')
+    expect(within(global).queryByText('ui-settings')).toBeNull()
+
+    openGroup('Session plugins')
+    openGroup('Global plugins')
+    expect(
+      within(session).getByRole('button', { name: 'Session plugins' }).getAttribute('aria-expanded'),
+    ).toBe('true')
     expect(within(session).getByText('agent-session-only')).toBeDefined()
     expect(within(session).getByText('dynamic')).toBeDefined()
     expect(within(global).getByText('ui-settings')).toBeDefined()
@@ -122,8 +153,8 @@ describe('PluginInventory', () => {
     ]
     renderInventory(vi.fn().mockResolvedValue({ entries: [], agentPresets: modes }))
 
-    const selector = await screen.findByRole('combobox', { name: 'Choose the Agent mode to inspect' })
-    expect((selector as HTMLSelectElement).value).toBe('first')
+    await screen.findByRole('button', { name: /^Choose the Agent mode to inspect/u })
+    expect(modeTriggerLabel()).toBe('First mode')
     expect(screen.getByRole('region', { name: 'Session plugins' }).getAttribute('data-agent-preset-id')).toBe(
       'first',
     )
@@ -133,11 +164,12 @@ describe('PluginInventory', () => {
     const load = vi.fn().mockResolvedValue(snapshotFixture())
     renderInventory(load)
 
-    const selector = await screen.findByRole('combobox', { name: 'Choose the Agent mode to inspect' })
-    fireEvent.change(selector, { target: { value: 'analysis' } })
+    await screen.findByRole('button', { name: /^Choose the Agent mode to inspect/u })
+    chooseMode('Analysis mode')
 
-    expect((selector as HTMLSelectElement).value).toBe('analysis')
+    expect(modeTriggerLabel()).toBe('Analysis mode')
     const session = screen.getByRole('region', { name: 'Session plugins' })
+    openGroup('Session plugins')
     expect(session.getAttribute('data-agent-preset-id')).toBe('analysis')
     expect(within(session).getByText('agent-analysis-only')).toBeDefined()
     expect(within(session).queryByText('agent-session-only')).toBeNull()
@@ -169,12 +201,12 @@ describe('PluginInventory', () => {
     const load = vi.fn().mockResolvedValueOnce(before).mockResolvedValueOnce(after)
     const view = render(<PluginInventory revision={0} onLoadInventory={load} />)
 
-    const selector = await screen.findByRole('combobox', { name: 'Choose the Agent mode to inspect' })
-    fireEvent.change(selector, { target: { value: 'analysis' } })
-    expect((selector as HTMLSelectElement).value).toBe('analysis')
+    await screen.findByRole('button', { name: /^Choose the Agent mode to inspect/u })
+    chooseMode('Analysis mode')
+    expect(modeTriggerLabel()).toBe('Analysis mode')
 
     view.rerender(<PluginInventory revision={1} onLoadInventory={load} />)
-    await waitFor(() => expect((selector as HTMLSelectElement).value).toBe('new-default'))
+    await waitFor(() => expect(modeTriggerLabel()).toBe('New default (Default)'))
     expect(screen.getByRole('region', { name: 'Session plugins' }).getAttribute('data-agent-preset-id')).toBe(
       'new-default',
     )
@@ -183,8 +215,10 @@ describe('PluginInventory', () => {
   it('renders the global empty state with no selector or session section for an empty roster', async () => {
     renderInventory(vi.fn().mockResolvedValue({ entries: [], agentPresets: [] }))
 
-    expect(await screen.findByText('No plugins are available.')).toBeDefined()
-    expect(screen.queryByRole('combobox')).toBeNull()
+    await screen.findByRole('region', { name: 'Global plugins' })
+    openGroup('Global plugins')
+    expect(screen.getByText('No plugins are available.')).toBeDefined()
+    expect(screen.queryByRole('button', { name: /^Choose the Agent mode to inspect/u })).toBeNull()
     expect(screen.queryByRole('region', { name: 'Session plugins' })).toBeNull()
     expect(count(screen.getByRole('region', { name: 'Global plugins' }), 'data-plugin-count')).toBe('0')
   })
@@ -193,6 +227,7 @@ describe('PluginInventory', () => {
     renderInventory()
 
     const global = await screen.findByRole('region', { name: 'Global plugins' })
+    openGroup('Global plugins')
     const card = within(global).getByRole('button', { name: /ui-settings/u })
     expect(card.getAttribute('aria-expanded')).toBe('false')
     expect(card.hasAttribute('aria-controls')).toBe(false)
@@ -215,6 +250,7 @@ describe('PluginInventory', () => {
     renderInventory()
 
     const session = await screen.findByRole('region', { name: 'Session plugins' })
+    openGroup('Session plugins')
     const conditional = within(session).getByRole('button', { name: /dynamic/u })
     expect(conditional.textContent).toContain('Conditional')
     fireEvent.click(conditional)
@@ -235,6 +271,7 @@ describe('PluginInventory', () => {
     renderInventory()
 
     const global = await screen.findByRole('region', { name: 'Global plugins' })
+    openGroup('Global plugins')
     const card = within(global).getByRole('button', { name: /failing-gateway/u })
     fireEvent.click(card)
     const details = card.parentElement?.querySelector('.dsh-plugin-inventory__card-details')
@@ -253,6 +290,10 @@ describe('PluginInventory', () => {
     const search = screen.getByRole('searchbox', { name: 'Search plugins' })
 
     fireEvent.change(search, { target: { value: 'SESSION-ONLY' } })
+    // A query has to reveal its own matches, so searching opens both collapsed groups.
+    expect(
+      within(session).getByRole('button', { name: 'Session plugins' }).getAttribute('aria-expanded'),
+    ).toBe('true')
     expect(within(session).getByText('agent-session-only')).toBeDefined()
     expect(within(global).queryByText('ui-settings')).toBeNull()
     expect(count(session, 'data-plugin-count')).toBe('1')
@@ -273,6 +314,7 @@ describe('PluginInventory', () => {
     renderInventory()
 
     const session = await screen.findByRole('region', { name: 'Session plugins' })
+    openGroup('Session plugins')
     const card = within(session).getByRole('button', { name: /dynamic/u })
     fireEvent.click(card)
     expect(card.getAttribute('aria-expanded')).toBe('true')
@@ -311,6 +353,7 @@ describe('PluginInventory', () => {
 
     const session = await screen.findByRole('region', { name: 'Session plugins' })
     expect(within(session).getByRole('alert').textContent).toBe('Composition unavailable')
+    openGroup('Session plugins')
     expect(within(session).getByText('broken-mode')).toBeDefined()
   })
 
@@ -320,6 +363,8 @@ describe('PluginInventory', () => {
 
     await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('temporarily unavailable'))
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    await screen.findByRole('region', { name: 'Global plugins' })
+    openGroup('Global plugins')
     expect(await screen.findByText('ui-settings')).toBeDefined()
   })
 })
@@ -333,6 +378,7 @@ it('refreshes invalidated inventory and ignores an older in-flight snapshot', as
     pending[1]?.({ entries: [] })
     await Promise.resolve()
   })
+  openGroup('Global plugins')
   expect(screen.getByText('No plugins are available.')).toBeDefined()
   await act(async () => {
     pending[0]?.(snapshotFixture())

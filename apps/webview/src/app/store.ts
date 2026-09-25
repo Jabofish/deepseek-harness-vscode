@@ -220,6 +220,15 @@ export interface AppState {
   readonly archivedSessions: readonly SessionSummary[]
   readonly workspaces: readonly WorkspaceSummary[]
   readonly activeSessionId: string | undefined
+  /** A local New Session draft; no DSH session exists until its first submission. */
+  readonly pendingSession:
+    | {
+        readonly revision: number
+        readonly workspaceId: string
+        readonly configuration: AgentConfiguration
+        readonly createdSessionId?: string
+      }
+    | undefined
   readonly preferredOpenFileId: string | undefined
   readonly timeline: TimelineState
   /** The bounded, durable history window currently installed in the timeline. */
@@ -377,6 +386,13 @@ export interface AppActions {
   moveSession(workspaceId: string, sessionId: string, beforeSessionId?: string): Promise<void>
   forkSession(sessionId: string, atSeq?: number): Promise<void>
   createSession(workspaceId?: string, presetId?: string): Promise<void>
+  stageSession(workspaceId?: string, presetId?: string): Promise<void>
+  configurePendingSession(configuration: AgentConfiguration): void
+  sendPendingPrompt(
+    text: string,
+    attachments: readonly PromptAttachment[],
+    mode: RunningInputMode,
+  ): Promise<void>
   removeSession(sessionId: string): Promise<void>
   /** Archived rows the host still holds, fetched with `session.list(archived: true)`. */
   loadArchivedSessions(): Promise<void>
@@ -599,6 +615,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     archivedSessions: [],
     workspaces: [],
     activeSessionId: undefined,
+    pendingSession: undefined,
     preferredOpenFileId: composerPreferences.openFileId,
     timeline: { sessionId: undefined, nodes: [], lastSequence: -1, nodeChangeStart: 0, eventCount: 0 },
     history: [],
@@ -1121,6 +1138,8 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   let goalReadGeneration = 0
   let permissionCatalogGeneration = 0
   let openVersion = 0
+  let pendingSessionRevision = 0
+  let pendingSend: { readonly revision: number; readonly promise: Promise<void> } | undefined
   const refreshLiveGoals = async (): Promise<void> => {
     const sessionId = state.activeSessionId
     if (sessionId === undefined || !goalActivationAvailable) return
@@ -2327,6 +2346,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
           {
             ...current,
             activeSessionId: sessionId,
+            pendingSession: undefined,
             timeline,
             history,
             historyHasMore: detail?.historyHasMore === true,
@@ -2549,6 +2569,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
           {
             ...current,
             activeSessionId: entry.id,
+            pendingSession: undefined,
             activeSubagent: { entry, parentAvailable, workspaceId },
             timeline,
             history: history.events,
@@ -2777,6 +2798,9 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     },
     get activeSessionId() {
       return state.activeSessionId
+    },
+    get pendingSession() {
+      return state.pendingSession
     },
     get preferredOpenFileId() {
       return state.preferredOpenFileId
@@ -3276,6 +3300,108 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       // gesture it spells.
       await sendUserTurn(sessionId, command, attachments, 'queue', undefined)
       return true
+    },
+    stageSession: async (workspaceId, presetId) => {
+      const workspace =
+        (workspaceId === undefined
+          ? undefined
+          : state.workspaces.find((entry) => entry.id === workspaceId)) ?? state.workspaces[0]
+      if (workspace === undefined) throw new Error(translate('app.workspaceLoadingDescription'))
+      const defaultConfiguration = createDefaultConfiguration(state, composerPreferences)
+      const configuration =
+        presetId === undefined ? defaultConfiguration : { ...defaultConfiguration, preset: presetId }
+      const revision = ++pendingSessionRevision
+      const navigationIntent = ++openIntent
+      ++openVersion
+      startupRestorePending = false
+      stopJobFollowBeforeSessionOpen()
+      flushPendingHistory()
+      await discardEditorContextForSessionSwitch('')
+      if (revision !== pendingSessionRevision || navigationIntent !== openIntent) return
+      setState((current) => ({
+        ...current,
+        ...clearedActiveSession(current, current.activeSessionId ?? ''),
+        pendingSession: { revision, workspaceId: workspace.id, configuration },
+        editorContext: [],
+        editorContextAvailableKinds: [],
+        editorContextLoading: false,
+        drawer: undefined,
+      }))
+      persistWebviewState()
+    },
+    configurePendingSession: (configuration) => {
+      if (!isAgentConfiguration(configuration)) throw new Error(translate('app.error.sessionSettings'))
+      setState((current) =>
+        current.pendingSession === undefined
+          ? current
+          : {
+              ...current,
+              pendingSession: { ...current.pendingSession, configuration },
+            },
+      )
+      rememberComposerConfiguration(configuration)
+    },
+    sendPendingPrompt: (text, attachments, mode) => {
+      const pending = state.pendingSession
+      if (pending === undefined) return Promise.reject(new Error(translate('app.error.createSession')))
+      if (pendingSend?.revision === pending.revision) return pendingSend.promise
+      if (text.trim() === '' && attachments.length === 0)
+        return Promise.reject(new Error(translate('app.error.prompt')))
+      if (parseSlashCommand(text) !== undefined)
+        return Promise.reject(new Error(translate('app.error.commandBeforeFirstMessage')))
+      const send = (async () => {
+        let sessionId = pending.createdSessionId
+        if (sessionId === undefined) {
+          const workspace = state.workspaces.find((entry) => entry.id === pending.workspaceId)
+          const reusableBlank =
+            workspace === undefined
+              ? undefined
+              : findReusableBlankSession(state.sessions, state.archivedSessionIds, workspace)
+          if (state.connectedDshVersion === DSH_RC12_VERSION && reusableBlank !== undefined) {
+            sessionId = reusableBlank.id
+          } else {
+            const rc11ReusableBlank =
+              state.connectedDshVersion === DSH_RC11_VERSION ? reusableBlank : undefined
+            const result = object(
+              await client.request<unknown>({
+                type: 'session.create',
+                requestId: requestId(),
+                payload: {
+                  workspaceId: pending.workspaceId,
+                  ...(rc11ReusableBlank === undefined
+                    ? {}
+                    : { sessionId: rc11ReusableBlank.id, reuseWorkspaceBlank: true as const }),
+                  configuration: pending.configuration,
+                },
+              }),
+            )
+            if (typeof result?.id !== 'string' || result.id.trim() === '')
+              throw new Error(translate('app.error.createSession'))
+            sessionId = result.id
+          }
+          if (sessionId === undefined) throw new Error(translate('app.error.createSession'))
+          const createdSessionId = sessionId
+          setState((current) =>
+            current.pendingSession?.revision === pending.revision
+              ? {
+                  ...current,
+                  pendingSession: { ...current.pendingSession, createdSessionId },
+                }
+              : current,
+          )
+        }
+        if (state.pendingSession?.revision !== pending.revision) return
+        await refresh()
+        if (state.pendingSession?.revision !== pending.revision) return
+        await open(sessionId)
+        if (state.activeSessionId !== sessionId) return
+        await sendUserTurn(sessionId, text, attachments, mode, undefined)
+      })()
+      const promise = send.finally(() => {
+        if (pendingSend?.revision === pending.revision) pendingSend = undefined
+      })
+      pendingSend = { revision: pending.revision, promise }
+      return promise
     },
     createSession: async (workspaceId, presetId) => {
       const navigationIntent = ++openIntent

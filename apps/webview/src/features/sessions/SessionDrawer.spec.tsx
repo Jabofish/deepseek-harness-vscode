@@ -87,8 +87,34 @@ function createDataTransfer(): {
   }
 }
 
+const archiveFilterLabels = {
+  hide: 'Hide archived',
+  all: 'All conversations',
+  archived: 'Archived only',
+} as const
+
+/** The filter is a themed menu, not a native `<select>`. */
+function chooseArchiveFilter(value: keyof typeof archiveFilterLabels): void {
+  fireEvent.click(screen.getByRole('button', { name: /Archived conversation filter/u }))
+  fireEvent.click(screen.getByRole('option', { name: archiveFilterLabels[value] }))
+}
+
 describe('SessionDrawer', () => {
   afterEach(() => cleanup())
+
+  it('counts visible root conversations instead of raw workspace membership', () => {
+    renderDrawer({
+      workspaces: [{ ...workspaces[0]!, sessionCount: 11, sessionIds: ['s1', 's2', 'blank', 'child'] }],
+      sessions: [
+        sessions[0]!,
+        sessions[1]!,
+        session({ id: 'blank', title: 'New Session', blank: true }),
+        session({ id: 'child', title: 'Subagent', origin: 'subagent', parentSessionId: 's1' }),
+      ],
+    })
+    const workspaceButton = within(screen.getByLabelText('Workspaces')).getByText('Alpha').closest('button')
+    expect(workspaceButton?.querySelector('.dsh-session-switcher__workspace-count')?.textContent).toBe('2')
+  })
 
   it('localizes the default workspace display name and preserves user names', async () => {
     const onRenameWorkspace = vi.fn().mockResolvedValue(undefined)
@@ -122,23 +148,22 @@ describe('SessionDrawer', () => {
       onLoadArchived,
     })
 
-    expect(screen.queryByRole('button', { name: /Archived/u })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Archived' })).toBeNull()
     expect(screen.getByText('Fix login bug', { exact: true })).toBeDefined()
 
-    const filter = screen.getByRole('combobox', { name: 'Archived conversation filter' })
-    fireEvent.change(filter, { target: { value: 'all' } })
+    chooseArchiveFilter('all')
     expect(await screen.findByRole('button', { name: 'Restore session Archived chat' })).toBeDefined()
     expect(screen.getByText('Fix login bug', { exact: true })).toBeDefined()
     expect(onLoadArchived).toHaveBeenCalled()
 
-    fireEvent.change(filter, { target: { value: 'archived' } })
+    chooseArchiveFilter('archived')
     expect(await screen.findByRole('button', { name: 'Restore session Archived chat' })).toBeDefined()
     expect(screen.queryByText('Fix login bug', { exact: true })).toBeNull()
     const workspaceList = screen.getByLabelText('Workspaces')
     expect(within(workspaceList).getByText('Alpha')).toBeDefined()
     expect(within(workspaceList).queryByText('Beta')).toBeNull()
 
-    fireEvent.change(filter, { target: { value: 'hide' } })
+    chooseArchiveFilter('hide')
     expect(screen.queryByRole('button', { name: 'Restore session Archived chat' })).toBeNull()
     expect(screen.getByText('Fix login bug', { exact: true })).toBeDefined()
   })
@@ -600,9 +625,7 @@ it.each([false, true])('gates archived restore on advertised support: %s', async
     onRestore,
     archivedSessions: [session({ id: 'old', title: 'Archived chat' })],
   })
-  fireEvent.change(screen.getByRole('combobox', { name: 'Archived conversation filter' }), {
-    target: { value: 'all' },
-  })
+  chooseArchiveFilter('all')
   const button = await screen.findByRole('button', { name: 'Restore session Archived chat' })
   expect((button as HTMLButtonElement).disabled).toBe(!canRestoreSessions)
   fireEvent.click(button)
@@ -651,9 +674,7 @@ describe('session archive failures', () => {
       archivedSessions: [session({ id: 'old', title: 'Archived chat' })],
     })
 
-    fireEvent.change(screen.getByRole('combobox', { name: 'Archived conversation filter' }), {
-      target: { value: 'all' },
-    })
+    chooseArchiveFilter('all')
     fireEvent.click(await screen.findByRole('button', { name: 'Restore session Archived chat' }))
 
     expect((await screen.findByRole('alert')).textContent).toContain('The restore RPC failed.')
