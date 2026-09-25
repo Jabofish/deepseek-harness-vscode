@@ -23,10 +23,8 @@
 
 .dsh-optional-bundles__heading h2,
 .dsh-optional-bundles__title-row h3,
-.dsh-optional-bundles__confirm h4,
 .dsh-optional-bundles__heading p,
-.dsh-optional-bundles__copy p,
-.dsh-optional-bundles__confirm p {
+.dsh-optional-bundles__copy p {
   margin: 0;
 }
 
@@ -178,17 +176,6 @@
 
 .dsh-optional-bundles__notice--error {
   color: var(--dsh-danger);
-}
-
-.dsh-optional-bundles__confirm {
-  grid-column: 1 / -1;
-  display: grid;
-  gap: var(--dsh-space-2);
-  min-width: 0;
-  padding: var(--dsh-space-3);
-  border: 1px solid color-mix(in srgb, var(--dsh-warning) 55%, transparent);
-  border-radius: var(--dsh-radius-md);
-  background: color-mix(in srgb, var(--dsh-warning) 7%, var(--dsh-surface));
 }
 
 .dsh-optional-bundles__confirm-actions {

@@ -165,17 +165,17 @@ function contextSegments(breakdown: ContextBreakdown | undefined): readonly Cont
       {
         key: 'system' as const,
         tokens: positiveOrZero(breakdown.systemTokens),
-        className: 'dsh-context-meter__segment--system',
+        className: 'dsh-context-meter__tone--system',
       },
       {
         key: 'tools' as const,
         tokens: positiveOrZero(breakdown.toolsTokens),
-        className: 'dsh-context-meter__segment--tools',
+        className: 'dsh-context-meter__tone--tools',
       },
       {
         key: 'messages' as const,
         tokens: positiveOrZero(breakdown.messageTokens),
-        className: 'dsh-context-meter__segment--messages',
+        className: 'dsh-context-meter__tone--messages',
       },
     ] satisfies readonly ContextSegment[]
   ).filter((segment) => segment.tokens > 0)

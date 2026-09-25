@@ -22,6 +22,14 @@
   white-space: nowrap;
 }
 
+/* A button label is normally a short app string, but buttons that carry a session
+ * or tool name must truncate rather than widen their row. */
+.dsh-button {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .dsh-button {
   min-height: var(--dsh-control-height);
   padding: var(--dsh-space-2) var(--dsh-space-3);
@@ -91,12 +99,22 @@
   background: var(--dsh-surface-hover);
 }
 
+/* Toggle icon buttons mirror their label in no other way, so the pressed state
+ * has to survive without a pointer. */
+.dsh-icon-button[aria-pressed='true'] {
+  color: var(--dsh-text);
+  background: var(--dsh-selection-bg);
+}
+
 .dsh-status-pill {
   display: inline-flex;
   align-items: center;
   gap: var(--dsh-space-1);
+  min-width: 0;
   width: fit-content;
   max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
   padding: var(--dsh-space-1) var(--dsh-space-2);
   border: var(--dsh-border);
   border-radius: var(--dsh-radius-pill);
@@ -115,6 +133,26 @@
 
 .dsh-status-pill--completed {
   color: var(--dsh-success);
+}
+
+/* Neutral states: `pending` from goal/todo views and `unknown` from an
+ * unclassified approval risk. Both intentionally keep the muted pill base. */
+.dsh-status-pill--pending,
+.dsh-status-pill--unknown {
+  color: var(--dsh-muted);
+}
+
+/* Approval risk is a severity, not a lifecycle state: low reads as safe. */
+.dsh-status-pill--low {
+  color: var(--dsh-success);
+}
+
+.dsh-status-pill--medium {
+  color: var(--dsh-warning);
+}
+
+.dsh-status-pill--high {
+  color: var(--dsh-danger);
 }
 
 .dsh-status-pill--failed,
@@ -390,7 +428,7 @@
   border-radius: var(--dsh-radius-sm);
   background: var(--dsh-code-bg);
   font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
-  font-size: 0.9em;
+  font-size: var(--dsh-font-size-xs);
   overflow-wrap: break-word;
 }
 
@@ -488,7 +526,7 @@
   padding: var(--dsh-space-1) var(--dsh-space-2);
   color: var(--dsh-muted);
   background: var(--dsh-surface-hover);
-  font-size: 0.85em;
+  font-size: var(--dsh-font-size-2xs);
 }
 
 /* A complete, unlabeled read window only needs the copy affordance. Keep the
@@ -548,7 +586,7 @@
 }
 
 .dsh-tool-code-preview__body {
-  max-height: 18rem;
+  max-height: var(--dsh-tool-detail-max-height);
   margin: 0;
   overflow: auto;
   padding-block: var(--dsh-space-2);
@@ -640,7 +678,7 @@
 }
 
 .dsh-tool-diff-preview__body {
-  max-height: 18rem;
+  max-height: var(--dsh-tool-detail-max-height);
   overflow: auto;
   padding: var(--dsh-space-2) var(--dsh-space-3);
   font-family: var(--vscode-editor-font-family, monospace);
@@ -729,7 +767,7 @@
   padding: var(--dsh-space-1) var(--dsh-space-3);
   color: var(--dsh-muted);
   background: var(--dsh-surface-hover);
-  font-size: 0.85em;
+  font-size: var(--dsh-font-size-2xs);
 }
 
 .dsh-tool-terminal-preview__status {
@@ -774,7 +812,7 @@
 }
 
 .dsh-tool-terminal-preview__body {
-  max-height: 18rem;
+  max-height: var(--dsh-tool-detail-max-height);
   margin: 0;
   overflow: auto;
   padding: var(--dsh-space-2) var(--dsh-space-3);
@@ -834,7 +872,7 @@
   padding: var(--dsh-space-1) var(--dsh-space-3);
   color: var(--dsh-muted);
   background: var(--dsh-surface-hover);
-  font-size: 0.85em;
+  font-size: var(--dsh-font-size-2xs);
 }
 
 .dsh-tool-search-preview__summary {
@@ -875,7 +913,7 @@
 }
 
 .dsh-tool-search-preview__body {
-  max-height: 18rem;
+  max-height: var(--dsh-tool-detail-max-height);
   overflow: auto;
   padding: var(--dsh-space-2) 0 var(--dsh-space-3);
   font-family: var(--vscode-editor-font-family, monospace);
@@ -1015,7 +1053,7 @@
   color: var(--dsh-link);
   background: transparent;
   font: inherit;
-  font-size: 0.9em;
+  font-size: var(--dsh-font-size-xs);
   font-weight: 600;
   line-height: 1.45;
   text-align: start;
@@ -1036,7 +1074,7 @@
 .dsh-tool-web-preview__snippet {
   margin-block-start: var(--dsh-space-1);
   color: var(--dsh-muted);
-  font-size: 0.85em;
+  font-size: var(--dsh-font-size-2xs);
   line-height: 1.45;
   overflow-wrap: anywhere;
 }
@@ -1045,18 +1083,18 @@
   display: block;
   margin-block-start: var(--dsh-space-1);
   color: var(--dsh-muted);
-  font-size: 0.8em;
+  font-size: var(--dsh-font-size-2xs);
 }
 
 .dsh-tool-web-preview__truncated {
   margin-block-start: var(--dsh-space-2);
   color: var(--dsh-muted);
-  font-size: 0.85em;
+  font-size: var(--dsh-font-size-2xs);
 }
 
 .dsh-tool-web-preview__empty {
   color: var(--dsh-muted);
-  font-size: 0.85em;
+  font-size: var(--dsh-font-size-2xs);
 }
 
 .dsh-tool-web-preview--fetch {
@@ -1076,16 +1114,11 @@
   flex-wrap: wrap;
   gap: var(--dsh-space-3);
   color: var(--dsh-muted);
-  font-size: 0.85em;
+  font-size: var(--dsh-font-size-2xs);
 }
 
 .dsh-tool-web-preview__fetch-meta .dsh-tool-web-preview__truncated {
   margin-block-start: 0;
-}
-
-.dsh-markdown__frozen,
-.dsh-markdown__tail {
-  min-width: 0;
 }
 
 .dsh-markdown--streaming [data-dsh-markdown-frozen='true'] {
@@ -1635,10 +1668,11 @@
 .account-lifecycle {
   display: grid;
   gap: var(--dsh-space-2);
+  min-width: 0;
   padding: var(--dsh-space-4);
-  border: 1px solid var(--vscode-panel-border);
+  border: var(--dsh-border);
   border-radius: var(--dsh-radius-md);
-  background: var(--vscode-sideBar-background);
+  background: var(--dsh-surface);
 }
 
 .account-lifecycle h2,
@@ -1655,5 +1689,9 @@
 }
 
 .account-lifecycle [role='alert'] {
-  color: var(--vscode-errorForeground);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--dsh-space-2);
+  color: var(--dsh-danger);
 }

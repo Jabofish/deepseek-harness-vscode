@@ -23,6 +23,9 @@
 | [security.md](security.md)                         | 信任模型、强制控制与诊断字段 allowlist                                    | 涉及凭据/路径/进程/网络时    |
 | [testing.md](testing.md)                           | 测试层次、必测负面路径、fixture 规则、性能预算                            | 编写测试之前                 |
 | [motion.md](motion.md)                             | Webview 动效 token、keyframes、Reduced Motion 与性能规则                  | 修改动效或新增交互过渡时     |
+| [typography.md](typography.md)                     | Webview 字号 token 刻度、角色别名、会话缩放与图标尺寸规则                 | 新增或调整任意文字样式时     |
+| [layout.md](layout.md)                             | Webview 内容宽度、换行与截断规则（超长外部文本不得撑破祖先）              | 调整尺寸、溢出或截断时       |
+| [color.md](color.md)                               | Webview 颜色分层、强调色的填充/线条角色与对比度契约                       | 改主题、调色板或任意颜色时   |
 | [development.md](development.md)                   | 环境版本、调试、DSH 联调模式、依赖升级                                    | 配置环境或联调 DSH 时        |
 | [release-checklist.md](release-checklist.md)       | 发布前必须满足的全部条目                                                  | 发版之前                     |
 | [adr/](adr/)                                       | 已接受的架构决策（主通道、进程所有权、侧栏、版本化 Adapter、Secret 边界） | 做相关架构选择时             |

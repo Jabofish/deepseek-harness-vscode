@@ -1,59 +1,16 @@
 /* Feature-surface compatibility rules for the current Webview contract. */
 
-.dsh-workspace-card__icon {
-  flex: 0 0 24px;
-  width: 24px;
-  height: 24px;
-  display: grid;
-  place-items: center;
-  border: 1px solid color-mix(in srgb, var(--dsh-accent) 55%, var(--dsh-border-color));
-  border-radius: 7px;
-  color: var(--dsh-accent);
-  font-size: 1.1rem;
-}
-
-.dsh-workspace-card__copy {
-  min-width: 0;
-  display: grid;
-  gap: 1px;
-}
-
-.dsh-workspace-card__copy strong,
-.dsh-workspace-card__copy small {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.dsh-workspace-card__copy small,
-.dsh-sessions__empty {
-  color: var(--dsh-muted);
-  font-size: 0.8rem;
-}
-
-.dsh-session-item__button:hover:not(:disabled),
-.dsh-session-item--active .dsh-session-item__button {
+.dsh-session-item__button:hover:not(:disabled) {
   border-color: var(--dsh-border-color);
   background: var(--dsh-surface-hover);
 }
 
-.dsh-session-item--active .dsh-session-item__button {
-  border-inline-start-color: var(--dsh-accent);
-  box-shadow: inset 2px 0 var(--dsh-accent);
-}
-
 .dsh-session-item__icon {
   color: var(--dsh-muted);
-  font-size: 0.72rem;
+  font-size: var(--dsh-font-size-xs);
 }
 
-.dsh-session-item__icon--running {
-  color: var(--dsh-accent);
-}
-
-.dsh-message-avatar--system,
-.dsh-message-avatar--reasoning {
+.dsh-message-avatar--system {
   color: var(--dsh-warning);
   background: color-mix(in srgb, var(--dsh-warning) 14%, transparent);
 }
@@ -64,7 +21,7 @@
   margin: 0;
   color: inherit;
   font-family: inherit;
-  font-size: 0.92rem;
+  font-size: var(--dsh-font-size-md);
   line-height: 1.55;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -87,18 +44,14 @@
 
 .dsh-goal-bar__glyph,
 .dsh-goal-bar__glyph .dsh-icon {
-  width: 15px;
-  height: 15px;
-  flex: 0 0 15px;
-  color: var(--dsh-accent);
+  width: var(--dsh-icon-size-sm);
+  height: var(--dsh-icon-size-sm);
+  flex: 0 0 var(--dsh-icon-size-sm);
+  color: var(--dsh-accent-line);
 }
 
 .dsh-goal-strip__icon {
   color: var(--dsh-success);
-}
-
-.dsh-composer__attachment-icon {
-  color: var(--dsh-accent);
 }
 
 .dsh-interaction__icon {
@@ -127,7 +80,7 @@
 .dsh-question__header,
 .dsh-question__item-title {
   margin: 0;
-  font-size: 0.78rem;
+  font-size: var(--dsh-font-size-xs);
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -135,7 +88,7 @@
 }
 
 .dsh-question__choice--approve {
-  border-color: var(--dsh-accent);
+  border-color: var(--dsh-accent-line);
 }
 
 .dsh-interaction--plan-review .dsh-question__choice--approve {
@@ -153,7 +106,7 @@
   border-radius: var(--dsh-radius-sm);
   color: var(--dsh-muted);
   background: var(--dsh-surface-soft);
-  font-size: 0.78rem;
+  font-size: var(--dsh-font-size-xs);
 }
 
 .dsh-attachment > span {
@@ -165,11 +118,7 @@
 
 .dsh-diagnostics,
 .dsh-export,
-.dsh-settings,
-.dsh-providers,
-.dsh-plugins,
-.dsh-skills,
-.dsh-workflows {
+.dsh-settings {
   min-width: 0;
   display: grid;
   gap: 10px;
@@ -181,31 +130,23 @@
 
 .dsh-export__zip-hint {
   margin: 0;
-  font-size: 0.78rem;
+  font-size: var(--dsh-font-size-xs);
   opacity: 0.85;
 }
 
 .dsh-diagnostics h2,
 .dsh-export h2,
-.dsh-settings h2,
-.dsh-providers h2,
-.dsh-plugins h2,
-.dsh-skills h2,
-.dsh-workflows h2 {
+.dsh-settings h2 {
   min-width: 0;
   margin: 0;
   overflow-wrap: break-word;
   word-break: normal;
-  font-size: 1rem;
+  font-size: var(--dsh-font-size-lg);
 }
 
 .dsh-diagnostics p,
 .dsh-export p,
-.dsh-settings p,
-.dsh-providers > p,
-.dsh-plugins > p,
-.dsh-skills > p,
-.dsh-workflows > p {
+.dsh-settings p {
   margin: 0;
   color: var(--dsh-muted);
   overflow-wrap: break-word;
@@ -240,58 +181,6 @@
   margin-top: 3px;
 }
 
-.dsh-providers > ul,
-.dsh-plugins > ul,
-.dsh-skills > ul,
-.dsh-workflows > ul {
-  display: grid;
-  gap: 7px;
-  min-width: 0;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.dsh-providers > ul > li,
-.dsh-plugins > ul > li,
-.dsh-skills > ul > li,
-.dsh-workflows > ul > li {
-  min-width: 0;
-  display: grid;
-  gap: 6px;
-  padding: 9px;
-  border: var(--dsh-border);
-  border-radius: var(--dsh-radius-md);
-  background: color-mix(in srgb, var(--dsh-surface-raised) 50%, transparent);
-}
-
-.dsh-providers > ul > li > strong,
-.dsh-plugins > ul > li > strong,
-.dsh-skills > ul > li > strong,
-.dsh-workflows > ul > li > strong {
-  min-width: 0;
-  overflow-wrap: break-word;
-  word-break: normal;
-}
-
-.dsh-providers small,
-.dsh-providers > ul > li > ul,
-.dsh-plugins span,
-.dsh-plugins small,
-.dsh-skills span,
-.dsh-skills p,
-.dsh-workflows span,
-.dsh-workflows ol {
-  color: var(--dsh-muted);
-  font-size: 0.8rem;
-}
-
-.dsh-skills li button,
-.dsh-plugins li button,
-.dsh-workflows li button {
-  justify-self: start;
-}
-
 .dsh-runtime-missing__icon {
   flex: 0 0 42px;
   width: 42px;
@@ -300,13 +189,12 @@
   place-items: center;
   border: var(--dsh-border);
   border-radius: 11px;
-  color: var(--dsh-accent);
-  font-size: 0.75rem;
+  color: var(--dsh-accent-line);
+  font-size: var(--dsh-font-size-xs);
   letter-spacing: 0.08em;
 }
 
 .dsh-jobs,
-.dsh-subagents,
 .dsh-diagnostics {
   display: grid;
   gap: 9px;
@@ -395,7 +283,7 @@
   color: var(--dsh-muted);
   background: transparent;
   font: inherit;
-  font-size: 0.78rem;
+  font-size: var(--dsh-font-size-xs);
   line-height: 1.2;
   cursor: pointer;
 }
@@ -430,14 +318,12 @@
   color: var(--dsh-danger);
 }
 
-.dsh-jobs h2,
-.dsh-subagents h2 {
+.dsh-jobs h2 {
   margin: 0;
-  font-size: 1rem;
+  font-size: var(--dsh-font-size-lg);
 }
 
-.dsh-jobs ul,
-.dsh-subagents ul {
+.dsh-jobs ul {
   display: grid;
   gap: 6px;
   min-width: 0;
@@ -446,8 +332,7 @@
   list-style: none;
 }
 
-.dsh-jobs li,
-.dsh-subagents li {
+.dsh-jobs li {
   min-width: 0;
   display: flex;
   align-items: center;
@@ -458,33 +343,16 @@
   border-radius: var(--dsh-radius-md);
 }
 
-.dsh-jobs li strong,
-.dsh-subagents li strong {
+.dsh-jobs li strong {
   min-width: 0;
   flex: 1 1 140px;
   overflow-wrap: break-word;
   word-break: normal;
 }
 
-.dsh-jobs li span,
-.dsh-subagents li span {
+.dsh-jobs li span {
   color: var(--dsh-muted);
-  font-size: 0.8rem;
-}
-
-.dsh-context-meter__segment--system,
-.dsh-context-meter__swatch--system {
-  background: var(--dsh-muted);
-}
-
-.dsh-context-meter__segment--tools,
-.dsh-context-meter__swatch--tools {
-  background: var(--dsh-info);
-}
-
-.dsh-context-meter__segment--messages,
-.dsh-context-meter__swatch--messages {
-  background: var(--dsh-info);
+  font-size: var(--dsh-font-size-sm);
 }
 
 .dsh-context-meter__swatch {
@@ -614,7 +482,7 @@
 .dsh-session-item__rename:focus-visible,
 .dsh-session-switcher__workspace-actions .dsh-icon-button:hover:not(:disabled),
 .dsh-session-switcher__workspace-actions .dsh-icon-button:focus-visible {
-  color: var(--dsh-accent);
+  color: var(--dsh-accent-line);
 }
 
 .dsh-session-item__status--muted {
@@ -640,6 +508,7 @@
 .dsh-session-switcher__group {
   min-width: 0;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 3px;
 }
 
@@ -647,10 +516,11 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  min-width: 0;
   gap: 8px;
   padding: 2px 3px;
   color: var(--dsh-muted);
-  font-size: 0.7rem;
+  font-size: var(--dsh-font-size-2xs);
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
@@ -668,20 +538,20 @@
 
 .dsh-session-dialog__title {
   margin: 0;
-  font-size: 0.95rem;
+  font-size: var(--dsh-font-size-lg);
 }
 
 .dsh-session-dialog__description,
 .dsh-session-dialog__warning,
 .dsh-session-dialog__error {
   margin: 0;
-  font-size: 0.78rem;
+  font-size: var(--dsh-font-size-xs);
   line-height: 1.4;
 }
 
 .dsh-session-dialog__label {
   color: var(--dsh-muted);
-  font-size: 0.74rem;
+  font-size: var(--dsh-font-size-xs);
 }
 
 .dsh-session-dialog__input {
@@ -732,14 +602,16 @@
   white-space: nowrap;
 }
 
+/* Selected workspace. The button exposes selection through `aria-pressed`, so the
+ * styles hang off that state instead of a modifier class the markup never sets. */
 .dsh-session-switcher__workspace-button:hover:not(:disabled),
-.dsh-session-switcher__workspace-button--active {
+.dsh-session-switcher__workspace-button[aria-pressed='true'] {
   border-color: var(--dsh-border-color);
   background: var(--dsh-surface-hover);
 }
 
-.dsh-session-switcher__workspace-button--active {
-  box-shadow: inset 2px 0 var(--dsh-accent);
+.dsh-session-switcher__workspace-button[aria-pressed='true'] {
+  box-shadow: inset 2px 0 var(--dsh-accent-line);
 }
 
 .dsh-session-switcher__workspace-button > span:not(.dsh-session-switcher__workspace-icon) {
@@ -758,14 +630,12 @@
 }
 
 .dsh-session-switcher__list .dsh-session-item__icon .dsh-icon {
-  width: 15px;
-  height: 15px;
+  width: var(--dsh-icon-size-sm);
+  height: var(--dsh-icon-size-sm);
 }
-
-.dsh-composer__attachment-icon .dsh-icon,
 .dsh-message-avatar .dsh-icon {
-  width: 15px;
-  height: 15px;
+  width: var(--dsh-icon-size-sm);
+  height: var(--dsh-icon-size-sm);
 }
 
 .dsh-timeline__disclosure .dsh-icon {
@@ -776,7 +646,6 @@
 .dsh-session-switcher__icon .dsh-icon,
 .dsh-session-switcher__chevron .dsh-icon,
 .dsh-session-item__icon .dsh-icon,
-.dsh-composer__attachment-icon .dsh-icon,
 .dsh-message-avatar .dsh-icon,
 .dsh-timeline__disclosure .dsh-icon {
   width: 16px;
@@ -804,18 +673,6 @@
 .dsh-session-item__icon,
 .dsh-session-switcher__chevron {
   color: var(--dsh-muted);
-}
-
-.dsh-session-item__icon--completed {
-  color: var(--dsh-success);
-}
-
-.dsh-session-item__icon--failed {
-  color: var(--dsh-danger);
-}
-
-.dsh-session-item__icon--awaiting-input {
-  color: var(--dsh-warning);
 }
 
 .dsh-session-switcher__trigger .dsh-session-switcher__icon,
@@ -894,36 +751,9 @@
   height: 16px;
 }
 
-.dsh-message-actions__note {
-  position: relative;
-  display: inline-flex;
-}
-
 .dsh-message-actions__note-trigger > span[aria-hidden='true'] {
-  font-size: 15px;
+  font-size: var(--dsh-icon-size-sm);
   line-height: 1;
-}
-
-.dsh-message-actions__note-buttons {
-  display: flex;
-  justify-content: flex-end;
-  gap: 6px;
-}
-
-.dsh-message-actions__note-buttons button {
-  padding: 4px 7px;
-  border: var(--dsh-border);
-  border-radius: var(--dsh-radius-sm);
-  color: inherit;
-  background: var(--dsh-surface-soft);
-  cursor: pointer;
-  font: inherit;
-  font-size: 0.75rem;
-}
-
-.dsh-message-actions__note-buttons button:hover:not(:disabled),
-.dsh-message-actions__note-buttons button:focus-visible {
-  background: var(--dsh-surface-hover);
 }
 
 .dsh-timeline__command-input,
@@ -940,7 +770,7 @@
 .dsh-timeline__card--assistant > .dsh-timeline__card-header {
   justify-content: flex-start;
   color: var(--dsh-muted);
-  font-size: 0.76rem;
+  font-size: var(--dsh-font-size-xs);
   font-weight: 500;
 }
 
@@ -956,7 +786,7 @@
   gap: var(--dsh-space-2);
   width: min(100%, 440px);
   padding: var(--dsh-space-5) var(--dsh-space-4);
-  border: 1px dashed color-mix(in srgb, var(--dsh-accent) 55%, var(--dsh-border-color));
+  border: 1px dashed color-mix(in srgb, var(--dsh-accent-line) 55%, var(--dsh-border-color));
   border-radius: var(--dsh-radius-lg);
   background: color-mix(in srgb, var(--dsh-surface-raised) 72%, transparent);
   text-align: center;
@@ -968,7 +798,7 @@
   width: calc(var(--dsh-control-height) + var(--dsh-space-2));
   height: calc(var(--dsh-control-height) + var(--dsh-space-2));
   border-radius: 50%;
-  color: var(--dsh-accent);
+  color: var(--dsh-accent-line);
   background: color-mix(in srgb, var(--dsh-accent) 12%, transparent);
 }
 
@@ -980,7 +810,7 @@
 .dsh-empty-session p {
   max-width: 36ch;
   color: var(--dsh-muted);
-  font-size: 0.86rem;
+  font-size: var(--dsh-font-size-md);
 }
 
 .dsh-empty-session__picker {
@@ -988,7 +818,7 @@
   gap: var(--dsh-space-1);
   width: min(100%, 300px);
   color: var(--dsh-muted);
-  font-size: 0.75rem;
+  font-size: var(--dsh-font-size-xs);
   text-align: start;
 }
 
@@ -997,7 +827,7 @@
   gap: var(--dsh-space-1);
   width: min(100%, 300px);
   color: var(--dsh-muted);
-  font-size: 0.75rem;
+  font-size: var(--dsh-font-size-xs);
   text-align: start;
 }
 
@@ -1029,7 +859,7 @@
   border-inline-start: 3px solid var(--dsh-warning);
   color: var(--dsh-warning);
   background: color-mix(in srgb, var(--dsh-warning) 9%, transparent);
-  font-size: 0.8rem;
+  font-size: var(--dsh-font-size-sm);
 }
 
 .dsh-approval__takeover code {
@@ -1065,7 +895,7 @@
 
 .dsh-composer__attachment-page:hover,
 .dsh-composer__attachment-page:focus-visible {
-  color: var(--dsh-accent);
+  color: var(--dsh-accent-line);
   outline: none;
 }
 
@@ -1075,33 +905,6 @@
   opacity: 1;
 }
 
-.dsh-app__session-heading {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  overflow: hidden;
-}
-
-.dsh-app__session-heading h1 {
-  min-width: 0;
-  margin: 0;
-  overflow: hidden;
-  color: var(--dsh-text);
-  font-size: 0.98rem;
-  font-weight: 600;
-  line-height: 1.25;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.dsh-app__session-heading .dsh-status-pill {
-  flex: 0 0 auto;
-  min-height: 22px;
-  padding: 2px 7px;
-  font-size: 0.68rem;
-}
-
 /* Aggregated model-retry status row (silent, shimmer, non-blocking). */
 .dsh-timeline__retry {
   display: flex;
@@ -1109,7 +912,7 @@
   gap: 8px;
   margin: 2px 0;
   padding: 4px 10px;
-  font-size: 11px;
+  font-size: var(--dsh-font-size-xs);
   color: var(--dsh-muted, inherit);
   background: color-mix(
     in srgb,
@@ -1166,7 +969,7 @@
 .dsh-todo-list__status {
   flex: 0 0 auto;
   color: var(--dsh-muted);
-  font-size: 0.68rem;
+  font-size: var(--dsh-font-size-2xs);
 }
 
 .dsh-todo-list__chevron {
@@ -1208,7 +1011,7 @@
   min-width: 0;
   flex: 1 1 auto;
   overflow: hidden;
-  font-size: 0.74rem;
+  font-size: var(--dsh-font-size-xs);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1218,9 +1021,9 @@
 }
 
 .dsh-todo-list__state-icon {
-  width: 15px;
-  height: 15px;
-  flex: 0 0 15px;
+  width: var(--dsh-icon-size-sm);
+  height: var(--dsh-icon-size-sm);
+  flex: 0 0 var(--dsh-icon-size-sm);
   display: inline-grid;
   place-items: center;
   color: var(--dsh-muted);
@@ -1233,16 +1036,6 @@
 
 .dsh-todo-list__state-icon--completed .dsh-icon {
   animation: dsh-pop-once var(--dsh-motion-duration-fast) var(--dsh-motion-ease-pop) both;
-}
-
-.dsh-todo-list__item--completed .dsh-todo-list__state-icon,
-.dsh-todo-list__state-icon--completed {
-  color: var(--dsh-success);
-}
-
-.dsh-todo-list__item--in-progress .dsh-todo-list__state-icon,
-.dsh-todo-list__state-icon--in-progress {
-  color: var(--dsh-accent);
 }
 
 .dsh-todo-list__content {
@@ -1259,29 +1052,6 @@
 
 .dsh-composer--dragging {
   border-color: var(--dsh-focus, var(--dsh-accent));
-}
-
-.dsh-composer__dropzone {
-  position: absolute;
-  inset: 0;
-  z-index: 4;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  color: var(--dsh-muted);
-  font-size: 0.8rem;
-  background: color-mix(in srgb, var(--dsh-bg, var(--dsh-surface)) 88%, transparent);
-  border: 1px dashed var(--dsh-focus, var(--dsh-accent));
-  border-radius: var(--dsh-radius-md, 8px);
-  pointer-events: none;
-}
-
-.dsh-composer__dropzone .dsh-icon {
-  width: 20px;
-  height: 20px;
-  color: var(--dsh-focus, var(--dsh-accent));
 }
 
 .dsh-lightbox {
@@ -1303,7 +1073,7 @@
   display: grid;
   place-items: center;
   color: var(--dsh-muted);
-  font-size: 0.78rem;
+  font-size: var(--dsh-font-size-xs);
 }
 
 .dsh-composer__attachment-remove {
@@ -1351,8 +1121,8 @@
 }
 
 .dsh-open-file-picker__icon .dsh-icon {
-  width: 15px;
-  height: 15px;
+  width: var(--dsh-icon-size-sm);
+  height: var(--dsh-icon-size-sm);
 }
 
 .dsh-session-controls__access-picker .dsh-select-menu__trigger {
@@ -1374,10 +1144,10 @@
   gap: 5px;
   min-width: 0;
   padding: 6px 8px;
-  border: 1px solid color-mix(in srgb, var(--dsh-accent) 45%, var(--dsh-control-border));
+  border: 1px solid color-mix(in srgb, var(--dsh-accent-line) 45%, var(--dsh-control-border));
   border-radius: var(--dsh-radius-sm);
-  color: var(--dsh-accent);
-  font-size: 0.74rem;
+  color: var(--dsh-accent-line);
+  font-size: var(--dsh-font-size-xs);
 }
 
 .dsh-settings__runtime-update-progress-head {
@@ -1397,7 +1167,7 @@
 .dsh-settings__runtime-update-progress-head > :last-child {
   flex: 0 0 auto;
   color: var(--dsh-muted);
-  font-size: 0.72rem;
+  font-size: var(--dsh-font-size-xs);
   white-space: nowrap;
 }
 
@@ -1410,7 +1180,7 @@
   gap: 4px;
   min-width: 0;
   color: var(--dsh-muted);
-  font-size: 0.72rem;
+  font-size: var(--dsh-font-size-xs);
 }
 
 .dsh-settings__connection-endpoint input {
@@ -1422,7 +1192,7 @@
   color: var(--dsh-control-foreground);
   background: var(--dsh-control-background);
   font: inherit;
-  font-size: 0.76rem;
+  font-size: var(--dsh-font-size-xs);
 }
 
 /* Official General-section writable rows (settings.describe driven). */
@@ -1434,7 +1204,7 @@
 .dsh-presets__intro {
   margin: 0;
   color: var(--dsh-muted);
-  font-size: 0.78rem;
+  font-size: var(--dsh-font-size-xs);
 }
 
 .dsh-presets__group {
@@ -1444,7 +1214,7 @@
 
 .dsh-presets__group h3 {
   margin: 0;
-  font-size: 0.78rem;
+  font-size: var(--dsh-font-size-xs);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--dsh-muted);
@@ -1453,7 +1223,7 @@
 .dsh-presets__empty-group {
   margin: 0;
   color: var(--dsh-muted);
-  font-size: 0.76rem;
+  font-size: var(--dsh-font-size-xs);
 }
 
 .dsh-presets__creator-card {
@@ -1464,9 +1234,9 @@
   width: 100%;
   min-height: 64px;
   padding: 12px;
-  border: 1px dashed color-mix(in srgb, var(--dsh-accent) 60%, var(--dsh-border-color));
+  border: 1px dashed color-mix(in srgb, var(--dsh-accent-line) 60%, var(--dsh-border-color));
   border-radius: 6px;
-  color: var(--dsh-accent);
+  color: var(--dsh-accent-line);
   background: transparent;
   cursor: pointer;
 }
@@ -1493,7 +1263,7 @@
   display: grid;
   gap: 2px;
   margin: 0;
-  font-size: 0.72rem;
+  font-size: var(--dsh-font-size-xs);
   color: var(--dsh-muted);
 }
 
@@ -1504,6 +1274,7 @@
 
 .dsh-presets__dialog {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 10px;
   padding: 12px;
   border: 1px solid var(--dsh-control-border);
@@ -1529,6 +1300,14 @@
   margin-right: auto;
 }
 
+/* Segmented control: both tabs render as the same secondary button, so the pressed
+ * one owns an accented surface instead. */
+.dsh-presets__guide-tabs .dsh-button[aria-pressed='true'] {
+  border-color: var(--dsh-accent-line);
+  color: var(--dsh-text);
+  background: color-mix(in srgb, var(--dsh-accent-line) 14%, var(--dsh-secondary));
+}
+
 .dsh-presets__guide-intro,
 .dsh-presets__guide-content p {
   margin: 0;
@@ -1549,13 +1328,13 @@
 
 .dsh-presets__dialog h3 {
   margin: 0;
-  font-size: 0.8rem;
+  font-size: var(--dsh-font-size-sm);
 }
 
 .dsh-presets__field {
   display: grid;
   gap: 4px;
-  font-size: 0.76rem;
+  font-size: var(--dsh-font-size-xs);
 }
 
 .dsh-presets__field input {
@@ -1564,13 +1343,13 @@
   border-radius: var(--dsh-radius-sm);
   background: var(--dsh-input-bg, transparent);
   color: var(--dsh-input-text, inherit);
-  font-size: 0.78rem;
+  font-size: var(--dsh-font-size-xs);
 }
 
 .dsh-presets__dialog-error {
   margin: 0;
   color: var(--dsh-error-text, var(--dsh-danger, inherit));
-  font-size: 0.74rem;
+  font-size: var(--dsh-font-size-xs);
 }
 
 .dsh-settings__provider-kind,
@@ -1578,7 +1357,7 @@
   flex: none;
   padding: 1px 6px;
   border-radius: 999px;
-  font-size: 0.66rem;
+  font-size: var(--dsh-font-size-2xs);
   border: 1px solid var(--dsh-control-border);
   color: var(--dsh-muted);
 }
@@ -1586,30 +1365,6 @@
 .dsh-settings__provider-active {
   color: var(--dsh-chart-green, var(--dsh-success));
   border-color: color-mix(in srgb, var(--dsh-chart-green, var(--dsh-success)) 45%, transparent);
-}
-
-.dsh-settings__models > summary {
-  color: var(--dsh-muted);
-  font-size: 0.74rem;
-  cursor: pointer;
-  user-select: none;
-}
-
-.dsh-settings__models ul {
-  display: grid;
-  gap: 4px;
-  margin: 6px 0 0;
-  padding: 0;
-  list-style: none;
-}
-
-.dsh-settings__models li {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-  min-width: 0;
-  font-size: 0.76rem;
 }
 
 .dsh-settings__model-editor-head,
@@ -1629,7 +1384,7 @@
 .dsh-settings__model-editor-note {
   margin: 0;
   color: var(--dsh-muted);
-  font-size: 0.7rem;
+  font-size: var(--dsh-font-size-xs);
 }
 
 .dsh-settings__editable-models {
@@ -1649,7 +1404,7 @@
   gap: 3px;
   min-width: 0;
   color: var(--dsh-muted);
-  font-size: 0.66rem;
+  font-size: var(--dsh-font-size-2xs);
 }
 
 .dsh-settings__editable-model input {
@@ -1667,7 +1422,7 @@
 .dsh-settings__saved {
   margin: 0;
   color: var(--dsh-chart-green, var(--dsh-success));
-  font-size: 0.72rem;
+  font-size: var(--dsh-font-size-xs);
 }
 
 .dsh-settings__model-picker-backdrop {
@@ -1704,7 +1459,7 @@
 
 .dsh-settings__model-picker h3 {
   margin: 0;
-  font-size: 0.9rem;
+  font-size: var(--dsh-font-size-md);
 }
 
 .dsh-settings__model-picker ul {
@@ -1729,16 +1484,23 @@
   background: var(--dsh-control-hover);
 }
 
+/* The label is the row's click target, so it owns the focus ring; the nested
+ * checkbox only paints the native indicator. */
+.dsh-settings__model-picker li label:has(input:focus-visible) {
+  outline: 1px solid var(--dsh-focus-ring);
+  outline-offset: -1px;
+}
+
 .dsh-settings__model-picker code {
   color: var(--dsh-muted);
-  font-size: 0.68rem;
+  font-size: var(--dsh-font-size-2xs);
 }
 
 .dsh-settings__custom-provider {
   display: grid;
   gap: 8px;
   padding: 12px;
-  border: 1px dashed color-mix(in srgb, var(--dsh-accent) 60%, var(--dsh-control-border));
+  border: 1px dashed color-mix(in srgb, var(--dsh-accent-line) 60%, var(--dsh-control-border));
   border-radius: var(--dsh-radius-md, 8px);
 }
 
@@ -1747,28 +1509,15 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: 8px;
-  color: var(--dsh-accent);
+  color: var(--dsh-accent-line);
 }
 
 .dsh-settings__custom-provider-head p {
   max-width: 58ch;
   margin: 3px 0 0;
   color: var(--dsh-muted);
-  font-size: 0.7rem;
+  font-size: var(--dsh-font-size-xs);
   font-weight: normal;
-}
-
-.dsh-settings__model-label {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.dsh-settings__model-meta {
-  flex: none;
-  color: var(--dsh-muted);
-  font-size: 0.68rem;
 }
 
 .dsh-plugin-configuration {
@@ -1785,13 +1534,13 @@
 
 .dsh-plugin-configuration__intro h3 {
   margin: 0;
-  font-size: 0.86rem;
+  font-size: var(--dsh-font-size-md);
 }
 
 .dsh-plugin-configuration__intro p {
   margin: 0;
   color: var(--dsh-muted);
-  font-size: 0.76rem;
+  font-size: var(--dsh-font-size-xs);
 }
 
 .dsh-plugin-configuration__header-copy {
@@ -1802,13 +1551,13 @@
 }
 
 .dsh-plugin-configuration__header-copy strong {
-  font-size: 0.86rem;
+  font-size: var(--dsh-font-size-md);
 }
 
 .dsh-plugin-configuration__header-copy span {
   overflow: hidden;
   color: var(--dsh-muted);
-  font-size: 0.74rem;
+  font-size: var(--dsh-font-size-xs);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1817,13 +1566,13 @@
 .dsh-plugin-configuration__field-head small {
   flex: none;
   color: var(--dsh-chart-yellow, var(--dsh-warning));
-  font-size: 0.68rem;
+  font-size: var(--dsh-font-size-2xs);
 }
 
 .dsh-plugin-configuration__chevron {
   flex: none;
   color: var(--dsh-muted);
-  font-size: 1rem;
+  font-size: var(--dsh-icon-size);
   line-height: 1;
   transform: rotate(0deg);
   transition: transform var(--dsh-motion-duration-fast) var(--dsh-motion-ease-standard);
@@ -1878,7 +1627,7 @@
   border: none;
   color: var(--dsh-link, var(--dsh-link));
   font: inherit;
-  font-size: 0.7rem;
+  font-size: var(--dsh-font-size-xs);
   cursor: pointer;
 }
 
@@ -1954,7 +1703,7 @@
   color: inherit;
   background: transparent;
   font: inherit;
-  font-size: 0.78rem;
+  font-size: var(--dsh-font-size-xs);
 }
 
 .dsh-plugin-inventory__search input::placeholder {
@@ -1967,7 +1716,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 0.78rem;
+  font-size: var(--dsh-font-size-xs);
 }
 
 .dsh-plugin-inventory__status-dot {
@@ -1995,7 +1744,7 @@
   padding: 2px 7px;
   border-radius: 999px;
   border: 1px solid var(--dsh-border-color, var(--dsh-control-border));
-  font-size: 0.66rem;
+  font-size: var(--dsh-font-size-2xs);
 }
 
 .dsh-plugin-inventory__config-tag[data-enabled='true'] {
@@ -2034,7 +1783,7 @@
   background: transparent;
   color: inherit;
   font: inherit;
-  font-size: 0.72rem;
+  font-size: var(--dsh-font-size-xs);
   cursor: pointer;
 }
 
@@ -2097,7 +1846,7 @@
   min-width: 0;
   padding: 4px 6px;
   border-radius: 4px;
-  font-size: 0.74rem;
+  font-size: var(--dsh-font-size-xs);
 }
 
 .dsh-jobs-popover__row[data-live='true'] {
@@ -2107,7 +1856,7 @@
 .dsh-jobs-popover__kind {
   flex: none;
   color: var(--dsh-muted);
-  font-size: 0.68rem;
+  font-size: var(--dsh-font-size-2xs);
 }
 
 .dsh-jobs-popover__label {
@@ -2125,7 +1874,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--dsh-muted);
-  font-size: 0.68rem;
+  font-size: var(--dsh-font-size-2xs);
 }
 
 .dsh-jobs-popover__duration {
@@ -2163,7 +1912,7 @@
   color: var(--dsh-text);
   background: var(--dsh-bg);
   font-family: var(--vscode-editor-font-family, monospace);
-  font-size: 0.72rem;
+  font-size: var(--dsh-font-size-xs);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -2184,7 +1933,7 @@
   background: transparent;
   color: inherit;
   font: inherit;
-  font-size: 0.72rem;
+  font-size: var(--dsh-font-size-xs);
   cursor: pointer;
 }
 
@@ -2242,7 +1991,7 @@
   min-width: 0;
   padding: 4px 6px;
   border-radius: 4px;
-  font-size: 0.74rem;
+  font-size: var(--dsh-font-size-xs);
   cursor: pointer;
 }
 
@@ -2303,7 +2052,7 @@
 .dsh-subagent-tree__meta {
   grid-column: 3;
   color: var(--dsh-muted);
-  font-size: 0.68rem;
+  font-size: var(--dsh-font-size-2xs);
   overflow-wrap: break-word;
   word-break: normal;
 }
@@ -2315,7 +2064,7 @@
   max-width: 96px;
   overflow: hidden;
   color: var(--dsh-muted);
-  font-size: 0.65rem;
+  font-size: var(--dsh-font-size-2xs);
   font-variant-numeric: tabular-nums;
   line-height: 16px;
   text-align: right;
@@ -2331,7 +2080,7 @@
   border-radius: 6px;
   background: var(--dsh-surface-soft, color-mix(in srgb, var(--dsh-muted) 8%, transparent));
   color: var(--dsh-muted, var(--dsh-muted));
-  font-size: 0.76rem;
+  font-size: var(--dsh-font-size-xs);
 }
 
 .dsh-subagent-readonly strong {
@@ -2374,7 +2123,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 0.78rem;
+  font-size: var(--dsh-font-size-xs);
 }
 
 .dsh-workflow-runs__run-count {
@@ -2382,7 +2131,7 @@
   min-width: 0;
   overflow: hidden;
   color: var(--dsh-muted);
-  font-size: 0.7rem;
+  font-size: var(--dsh-font-size-2xs);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2390,7 +2139,7 @@
 .dsh-workflow-runs__run-status {
   flex: none;
   color: var(--dsh-muted);
-  font-size: 0.68rem;
+  font-size: var(--dsh-font-size-2xs);
 }
 
 .dsh-workflow-runs__phases {
@@ -2402,7 +2151,7 @@
 
 .dsh-workflow-runs__empty {
   color: var(--dsh-muted);
-  font-size: 0.72rem;
+  font-size: var(--dsh-font-size-xs);
 }
 
 .dsh-workflow-runs__phase {
@@ -2420,7 +2169,7 @@
   background: transparent;
   color: inherit;
   font: inherit;
-  font-size: 0.74rem;
+  font-size: var(--dsh-font-size-xs);
   text-align: left;
   cursor: pointer;
 }
@@ -2447,7 +2196,7 @@
   min-width: 0;
   overflow: hidden;
   color: var(--dsh-muted);
-  font-size: 0.68rem;
+  font-size: var(--dsh-font-size-2xs);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2455,7 +2204,7 @@
 .dsh-workflow-runs__phase-summary {
   flex: none;
   color: var(--dsh-muted);
-  font-size: 0.68rem;
+  font-size: var(--dsh-font-size-2xs);
 }
 
 .dsh-workflow-runs__members {
@@ -2476,7 +2225,7 @@
   background: transparent;
   color: inherit;
   font: inherit;
-  font-size: 0.72rem;
+  font-size: var(--dsh-font-size-xs);
   text-align: left;
   cursor: default;
 }
@@ -2505,7 +2254,7 @@
 .dsh-workflow-runs__member-status {
   flex: none;
   color: var(--dsh-muted);
-  font-size: 0.68rem;
+  font-size: var(--dsh-font-size-2xs);
 }
 
 .dsh-session-item__remove {
@@ -2577,7 +2326,7 @@
 }
 
 .dsh-session-switcher--headless .dsh-session-switcher__panel-title {
-  font-size: 0.68rem;
+  font-size: var(--dsh-font-size-2xs);
 }
 
 .dsh-session-switcher--headless .dsh-session-switcher__panel-header .dsh-button {
@@ -2619,13 +2368,13 @@
 }
 
 .dsh-session-switcher--headless .dsh-session-item__icon .dsh-icon {
-  width: 15px;
-  height: 15px;
-  flex-basis: 15px;
+  width: var(--dsh-icon-size-sm);
+  height: var(--dsh-icon-size-sm);
+  flex-basis: var(--dsh-icon-size-sm);
 }
 
 .dsh-session-switcher--headless .dsh-session-item__copy strong {
-  font-size: 0.84rem;
+  font-size: var(--dsh-font-size-sm);
   line-height: 1.2;
 }
 
@@ -2639,10 +2388,8 @@
 
 .dsh-session-switcher--headless .dsh-session-switcher__empty {
   padding: 6px 2px;
-  font-size: 0.76rem;
+  font-size: var(--dsh-font-size-xs);
 }
-
-.dsh-message-actions__note-buttons,
 .dsh-session-dialog__actions {
   flex-wrap: wrap;
 }
@@ -2829,22 +2576,12 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-
-.dsh-message-actions__note-panel,
 .dsh-open-file-picker,
 .dsh-jobs-popover__menu,
 .dsh-session-dialog,
 .dsh-tool-error-modal,
 .dsh-settings__model-picker {
   box-sizing: border-box;
-}
-
-.dsh-message-actions__note-buttons button {
-  min-width: 0;
-  max-width: 100%;
-  white-space: normal;
-  overflow-wrap: break-word;
-  word-break: normal;
 }
 
 .dsh-jobs-popover__menu {
@@ -2925,8 +2662,7 @@
   word-break: normal;
 }
 
-.dsh-settings__field-state,
-.dsh-settings__model-meta {
+.dsh-settings__field-state {
   min-width: 0;
   max-width: 100%;
   overflow-wrap: break-word;
@@ -3047,7 +2783,7 @@
   min-width: 0;
   overflow: hidden;
   color: var(--dsh-muted);
-  font-size: 0.72rem;
+  font-size: var(--dsh-font-size-xs);
   line-height: 18px;
 }
 
@@ -3090,6 +2826,13 @@
   background: var(--dsh-surface-hover, color-mix(in srgb, var(--dsh-muted) 10%, transparent));
 }
 
+/* Subagent ancestors are the only session kind the drawer never lists, so the
+ * breadcrumb marks them without relying on colour alone. */
+.dsh-session-lineage__parent--subagent {
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+
 .dsh-session-lineage__current {
   padding: 3px 4px;
   color: var(--dsh-text, inherit);
@@ -3129,7 +2872,7 @@
   border: 1px solid var(--dsh-control-border);
   border-radius: var(--dsh-radius-md);
   font: inherit;
-  font-size: 0.76rem;
+  font-size: var(--dsh-font-size-xs);
   line-height: 1.2;
 }
 
@@ -3141,13 +2884,13 @@
 .dsh-settings__runtime-update-version .dsh-select-menu__trigger {
   width: 100%;
   min-height: var(--dsh-control-height-compact);
-  font-size: 0.76rem;
+  font-size: var(--dsh-font-size-xs);
 }
 
 .dsh-settings__runtime-update-facts,
 .dsh-settings__runtime-update-notice,
 .dsh-settings__runtime-update-progress {
-  font-size: 0.76rem;
+  font-size: var(--dsh-font-size-xs);
 }
 
 @media (max-width: 420px) {
@@ -3162,10 +2905,6 @@
 }
 
 @media (max-width: 360px) {
-  .dsh-button__label {
-    display: none;
-  }
-
   .dsh-todo-list__status {
     display: none;
   }
@@ -3198,19 +2937,6 @@
 }
 
 @media (max-width: 520px) {
-  .dsh-app__session-heading {
-    gap: 6px;
-  }
-
-  .dsh-app__session-heading h1 {
-    font-size: 0.9rem;
-  }
-
-  .dsh-app__session-heading .dsh-status-pill {
-    padding-inline: 5px;
-    font-size: 0.64rem;
-  }
-
   .dsh-settings__provider-add-actions,
   .dsh-settings__model-advanced {
     grid-template-columns: minmax(0, 1fr);
@@ -3278,6 +3004,6 @@
   .dsh-context-meter__trigger {
     gap: 2px;
     padding-inline: 2px;
-    font-size: 0.66rem;
+    font-size: var(--dsh-font-size-2xs);
   }
 }

@@ -43,11 +43,36 @@ describe('Provider card layout', () => {
 
   it('keeps the provider id quiet next to the name it repeats', () => {
     expect(effective('.dsh-settings__provider-identity code', 'color')).toBe('var(--dsh-muted)')
+    // The id used to be a literal em size; it is a scale token now, so the
+    // assertion resolves the step instead of reading a number off the declaration.
     const size = effective('.dsh-settings__provider-identity code', 'font-size') ?? ''
-    expect(Number.parseFloat(size)).toBeLessThan(1)
+    expect(resolveFontSize(size)).toBeLessThan(BODY_FONT_SIZE_PX)
     expect(effective('.dsh-settings__provider-identity code', 'text-overflow')).toBe('ellipsis')
   })
 })
+
+// 13px is the webview body default; a caption shorter than it cannot compete with
+// the provider name beside it.
+const BODY_FONT_SIZE_PX = 13
+
+const steps = new Map(
+  [...tokensSource().matchAll(/(--dsh-font-size-[a-z0-9]+):\s*([\d.]+)rem/gu)].map(([, name, rem]) => [
+    name ?? '',
+    Number.parseFloat(rem ?? '') * 16,
+  ]),
+)
+
+function tokensSource(): string {
+  return readFileSync(new URL('../../../../packages/ui/src/styles.css', import.meta.url), 'utf8')
+}
+
+function resolveFontSize(value: string): number {
+  const token = /^var\((--dsh-font-size-[a-z0-9]+)\)$/u.exec(value.trim())
+  expect(token, `Resolve font-size "${value}" from the type scale`).not.toBeNull()
+  const px = steps.get(token?.[1] ?? '')
+  expect(px, `Scale token ${token?.[1]} declares a rem size`).toBeDefined()
+  return px ?? Number.POSITIVE_INFINITY
+}
 
 /** Every declared value in the cascade, grouped selectors included. */
 function declared(selector: string, property: string): readonly string[] {

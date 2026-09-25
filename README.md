@@ -100,6 +100,7 @@ Developer documentation lives in [`docs/`](docs/README.md), starting from the
 | [docs/protocol.md](docs/protocol.md)                         | Extension Host ↔ Webview message protocol            |
 | [docs/security.md](docs/security.md)                         | Trust boundaries and enforced controls               |
 | [docs/motion.md](docs/motion.md)                             | Webview motion tokens, reduced motion, performance   |
+| [docs/typography.md](docs/typography.md)                     | Webview type scale, role aliases, icon sizing rules  |
 | [docs/development.md](docs/development.md)                   | Environment, debugging, DSH integration modes        |
 | [docs/testing.md](docs/testing.md)                           | Test layers, negative paths, fixture rules           |
 | [docs/implementation-order.md](docs/implementation-order.md) | Implementation phases and exit criteria              |

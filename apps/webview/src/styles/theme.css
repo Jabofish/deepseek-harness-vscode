@@ -61,8 +61,8 @@ html[data-dsh-theme='system'] {
   --dsh-theme-surface-soft: #f3f4f6;
   --dsh-theme-surface-hover: #e8ebf0;
   --dsh-theme-input-bg: #ffffff;
-  --dsh-theme-input-border: #c8ced8;
-  --dsh-theme-link: #0969da;
+  --dsh-theme-input-border: #8b93a1;
+  --dsh-theme-link: #0a63ce;
   --dsh-theme-primary: #2563eb;
   --dsh-theme-primary-hover: #1d4ed8;
   --dsh-theme-primary-text: #ffffff;
@@ -83,7 +83,7 @@ html[data-dsh-theme='system'] {
   --dsh-theme-warning-border: #d97706;
   --dsh-theme-error-border: #dc2626;
   --dsh-theme-error-text: #b42318;
-  --dsh-theme-placeholder: #8a94a6;
+  --dsh-theme-placeholder: #6b7280;
   --dsh-theme-icon: #5b6574;
   --dsh-theme-badge-bg: #e5e7eb;
   --dsh-theme-badge-text: #344054;
@@ -107,10 +107,10 @@ html[data-dsh-theme='system'] {
   --dsh-theme-surface-soft: #30343a;
   --dsh-theme-surface-hover: #373b42;
   --dsh-theme-input-bg: #1e2023;
-  --dsh-theme-input-border: #4b5058;
+  --dsh-theme-input-border: #6d7580;
   --dsh-theme-link: #6cb6ff;
-  --dsh-theme-primary: #2f81f7;
-  --dsh-theme-primary-hover: #3b8df8;
+  --dsh-theme-primary: #2570e6;
+  --dsh-theme-primary-hover: #1a6ae0;
   --dsh-theme-primary-text: #ffffff;
   --dsh-theme-secondary: #34383e;
   --dsh-theme-secondary-hover: #3e434b;
@@ -176,6 +176,10 @@ html[data-dsh-theme='system'] {
   --dsh-warning: var(--dsh-theme-warning);
   --dsh-warning-bg: var(--dsh-theme-warning-bg);
   --dsh-info: var(--dsh-theme-info);
+  /* Only `--dsh-theme-primary` is dark enough to carry `--dsh-primary-text`; that makes
+   * it too dark to be legible as a line on the darker surfaces (2.43:1 on
+   * surface-hover), so every accent *stroke* below resolves through `--dsh-link` via
+   * `--dsh-accent-line`, which clears 4.5:1 on all seven surfaces in both palettes. */
   --dsh-accent: var(--dsh-theme-primary);
   --dsh-control-background: var(--dsh-theme-input-bg);
   --dsh-control-border: var(--dsh-theme-input-border);

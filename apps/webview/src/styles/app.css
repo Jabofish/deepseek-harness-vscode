@@ -25,6 +25,59 @@ body {
   line-height: 1.45;
 }
 
+/* Headings are text roles, not browser defaults. Without a rule of their own they
+ * would render at the UA scale (2em/1.5em/1.17em = 26/19.5/15.21px at 13px body for
+ * h1/h2/h3), which is off the type scale and does not follow the font-size setting.
+ * `:where()` keeps this at zero specificity, so every role rule below and in the UI
+ * package still wins; portalled dialogs inherit the resolved token from `:root`. */
+:where(h1, h2, h3, h4, h5, h6) {
+  font-size: var(--dsh-font-size-lg);
+}
+
+/* Externally produced content - session titles, file paths, model names, URLs,
+ * branch names - routinely arrives as one unbroken token longer than the panel.
+ * `overflow-wrap: anywhere` is the right tool rather than `break-word` because it
+ * also lowers the min-content width, so a flex or grid item stops pushing its
+ * ancestors past the viewport. Zero specificity keeps the rule inert wherever a
+ * feature already decided how its text behaves, and `white-space: pre` surfaces
+ * (code blocks, diffs, terminal output) keep scrolling instead of wrapping.
+ * `max-width: 100%` is what makes the repo's truncation trio
+ * (`overflow: hidden` + `text-overflow: ellipsis` + `white-space: nowrap`) work
+ * under shrink-to-fit sizing: without it a nowrap label in a centred grid item
+ * grows to its full text width instead of ellipsising. */
+:where(
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6,
+  p,
+  li,
+  dd,
+  dt,
+  blockquote,
+  figcaption,
+  summary,
+  label,
+  legend,
+  output,
+  time,
+  cite,
+  a,
+  span,
+  strong,
+  em,
+  small,
+  code,
+  button,
+  td,
+  th
+) {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
 /* Code also appears as a compact identifier in provider, preset, and plugin
  * cards. Give those ordinary code elements the same themed surface as code
  * blocks; pre-owned code resets to the surrounding pre surface below. */
@@ -72,6 +125,13 @@ button:disabled {
   opacity: 0.55;
 }
 
+input:disabled,
+textarea:disabled,
+select:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
 input,
 textarea,
 select {
@@ -111,6 +171,17 @@ summary:focus-visible {
   outline-offset: 1px;
 }
 
+/* Staged-value validation: the field, not the message, carries the error. */
+input[aria-invalid='true'],
+textarea[aria-invalid='true'],
+select[aria-invalid='true'] {
+  border-color: var(--dsh-danger);
+}
+
+[aria-busy='true'] {
+  cursor: progress;
+}
+
 p,
 h1,
 h2,
@@ -134,50 +205,12 @@ ul {
   padding: var(--dsh-space-4);
   background: var(--dsh-bg);
 }
-
-.dsh-app__header,
-.dsh-app__header-actions,
-.dsh-app__brand,
 .dsh-app__runtime-update,
 .dsh-app__connection-alert,
 .dsh-welcome-notice {
   min-width: 0;
 }
 
-.dsh-app__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--dsh-space-4);
-  flex: 0 0 auto;
-  border-bottom: var(--dsh-border);
-  padding-bottom: var(--dsh-space-4);
-}
-
-.dsh-app__brand {
-  display: flex;
-  align-items: center;
-  gap: var(--dsh-space-3);
-}
-
-.dsh-app__mark {
-  display: grid;
-  place-items: center;
-  width: 2.5rem;
-  height: 2.5rem;
-  flex: 0 0 auto;
-  border: var(--dsh-border);
-  border-radius: var(--dsh-radius-lg);
-  color: var(--dsh-muted);
-  background: var(--dsh-surface-raised);
-  font-size: 0.7rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-}
-
-.dsh-app__brand-copy,
-.dsh-app__session-copy,
-.dsh-sessions__heading,
 .dsh-queue__header > div,
 .dsh-welcome-notice > div,
 .dsh-app__runtime-update-copy {
@@ -186,21 +219,11 @@ ul {
   gap: var(--dsh-space-1);
 }
 
-.dsh-app__brand-copy > strong {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--dsh-text);
-  font-size: 0.95rem;
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .dsh-app__eyebrow {
   min-width: 0;
   overflow: hidden;
   color: var(--dsh-muted);
-  font-size: 0.7rem;
+  font-size: var(--dsh-font-size-2xs);
   font-weight: 600;
   letter-spacing: 0.08em;
   line-height: 1.2;
@@ -208,27 +231,15 @@ ul {
   text-transform: uppercase;
   white-space: nowrap;
 }
-
-.dsh-app__header h1,
-.dsh-app__session h2,
-.dsh-sessions h2,
 .dsh-queue h2 {
   min-width: 0;
   margin: 0;
   overflow: hidden;
   color: var(--dsh-text);
-  font-size: 1rem;
+  font-size: var(--dsh-font-size-lg);
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.dsh-app__header-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  flex-wrap: wrap;
-  gap: var(--dsh-space-2);
 }
 
 .dsh-app__body {
@@ -252,22 +263,6 @@ ul {
 
 .dsh-app__empty > * {
   width: min(100%, 42rem);
-}
-
-.dsh-app__session {
-  display: flex;
-  align-items: center;
-  min-width: 0;
-  gap: var(--dsh-space-3);
-}
-
-.dsh-app__session h2 {
-  font-size: 0.95rem;
-}
-
-.dsh-app__session-drawer-anchor {
-  min-width: 0;
-  flex: 1 1 auto;
 }
 
 .dsh-app__error,
@@ -349,9 +344,11 @@ ul {
   gap: var(--dsh-space-3);
   overflow: hidden;
   --dsh-conversation-font-scale: 1;
+  --dsh-font-size-2xs: calc(0.625rem * var(--dsh-conversation-font-scale));
   --dsh-font-size-xs: calc(0.75rem * var(--dsh-conversation-font-scale));
   --dsh-font-size-sm: calc(0.8125rem * var(--dsh-conversation-font-scale));
   --dsh-font-size-md: calc(0.875rem * var(--dsh-conversation-font-scale));
+  --dsh-font-size-lg: calc(1rem * var(--dsh-conversation-font-scale));
   --dsh-markdown-heading-1: calc(1.35rem * var(--dsh-conversation-font-scale));
   --dsh-markdown-heading-2: calc(1.15rem * var(--dsh-conversation-font-scale));
   --dsh-markdown-heading-3: calc(1rem * var(--dsh-conversation-font-scale));
@@ -443,7 +440,7 @@ ul {
   border: 1px solid transparent;
   color: var(--dsh-muted);
   background: transparent;
-  font-size: 0.84em;
+  font-size: var(--dsh-font-size-2xs);
 }
 
 .dsh-conversation__view-tab:hover:not(:disabled),
@@ -550,7 +547,7 @@ ul {
 .dsh-model-picker__group h3 {
   margin: var(--dsh-space-2) var(--dsh-space-2) 0;
   color: var(--dsh-muted);
-  font-size: 0.75em;
+  font-size: var(--dsh-font-size-2xs);
   font-weight: 600;
   text-transform: uppercase;
 }
@@ -566,9 +563,7 @@ ul {
 
 .dsh-model-picker__empty,
 .dsh-open-file-picker__empty,
-.dsh-session-switcher__empty,
-.dsh-queue__empty,
-.dsh-sessions__empty {
+.dsh-session-switcher__empty {
   margin: 0;
   padding: var(--dsh-space-3);
   color: var(--dsh-muted);
@@ -609,7 +604,7 @@ ul {
   border-radius: var(--dsh-radius-sm);
   background: var(--dsh-warning-bg);
   color: var(--dsh-warning);
-  font-size: 0.875em;
+  font-size: var(--dsh-font-size-xs);
   overflow-wrap: anywhere;
 }
 
@@ -657,10 +652,18 @@ ul {
   --dsh-runtime-status-color: var(--dsh-success);
 }
 
+/* `idle` is the only quiet state; `runtime-missing` asks for a setup step and
+ * `stopping` is a transition, so neither reads as a failure. */
+.dsh-runtime-status--idle {
+  --dsh-runtime-status-color: var(--dsh-muted);
+}
+
 .dsh-runtime-status--connecting,
 .dsh-runtime-status--discovering,
 .dsh-runtime-status--starting,
-.dsh-runtime-status--locating-runtime {
+.dsh-runtime-status--locating-runtime,
+.dsh-runtime-status--runtime-missing,
+.dsh-runtime-status--stopping {
   --dsh-runtime-status-color: var(--dsh-warning);
 }
 
@@ -796,7 +799,7 @@ ul {
   max-width: 12rem;
   padding-inline: var(--dsh-space-1);
   color: var(--dsh-muted);
-  font-size: 0.78em;
+  font-size: var(--dsh-font-size-2xs);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -821,7 +824,7 @@ ul {
   margin: 0;
   padding-inline: var(--dsh-space-2);
   color: var(--dsh-muted);
-  font-size: 0.75em;
+  font-size: var(--dsh-font-size-2xs);
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -870,7 +873,7 @@ ul {
   border-radius: var(--dsh-radius-sm);
   color: var(--dsh-text);
   background: transparent;
-  font-size: 0.84em;
+  font-size: var(--dsh-font-size-2xs);
   text-align: start;
 }
 
@@ -881,7 +884,7 @@ ul {
 
 .dsh-trajectory__row--selected {
   border-color: var(--dsh-border-color);
-  box-shadow: inset 2px 0 var(--dsh-accent);
+  box-shadow: inset 2px 0 var(--dsh-accent-line);
 }
 
 .dsh-trajectory__marker {
@@ -896,7 +899,7 @@ ul {
 }
 
 .dsh-trajectory__marker--user {
-  border-color: var(--dsh-accent);
+  border-color: var(--dsh-accent-line);
 }
 
 .dsh-trajectory__marker--message {
@@ -916,7 +919,7 @@ ul {
 .dsh-trajectory__kind,
 .dsh-trajectory__time {
   color: var(--dsh-muted);
-  font-size: 0.82em;
+  font-size: var(--dsh-font-size-2xs);
 }
 
 .dsh-trajectory__index,
@@ -935,14 +938,14 @@ ul {
 
 .dsh-trajectory__kind {
   overflow-wrap: normal;
-  font-size: 0.76em;
+  font-size: var(--dsh-font-size-2xs);
   font-weight: 600;
   letter-spacing: 0.03em;
   text-transform: uppercase;
 }
 
 .dsh-trajectory__kind--user {
-  color: var(--dsh-accent);
+  color: var(--dsh-accent-line);
 }
 
 .dsh-trajectory__kind--message {
@@ -983,7 +986,7 @@ ul {
   min-width: 0;
   margin: 0;
   overflow: hidden;
-  font-size: 0.84em;
+  font-size: var(--dsh-font-size-2xs);
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -994,7 +997,7 @@ ul {
   grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr);
   gap: var(--dsh-space-1) var(--dsh-space-3);
   margin: 0;
-  font-size: 0.78em;
+  font-size: var(--dsh-font-size-2xs);
 }
 
 .dsh-trajectory-inspector__facts dt,
@@ -1022,7 +1025,7 @@ ul {
 
 .dsh-trajectory-inspector__block summary {
   color: var(--dsh-muted);
-  font-size: 0.78em;
+  font-size: var(--dsh-font-size-2xs);
   cursor: pointer;
 }
 
@@ -1034,7 +1037,7 @@ ul {
   border-radius: var(--dsh-radius-sm);
   overflow: auto;
   font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
-  font-size: 0.78em;
+  font-size: var(--dsh-font-size-2xs);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -1046,7 +1049,7 @@ ul {
   margin: 0;
   padding: var(--dsh-space-5) var(--dsh-space-3);
   color: var(--dsh-muted);
-  font-size: 0.84em;
+  font-size: var(--dsh-font-size-2xs);
   text-align: center;
 }
 
@@ -1143,7 +1146,7 @@ ul {
 button.dsh-user-reference {
   min-height: 0;
   padding-block: 0;
-  border-color: color-mix(in srgb, var(--dsh-primary) 45%, transparent);
+  border-color: color-mix(in srgb, var(--dsh-accent-line) 45%, transparent);
   background: color-mix(in srgb, var(--dsh-primary) 12%, transparent);
   cursor: pointer;
   font: inherit;
@@ -1163,7 +1166,7 @@ button.dsh-user-reference {
 .dsh-timeline__reference-summary {
   margin-top: var(--dsh-space-1);
   color: var(--dsh-muted);
-  font-size: 0.8em;
+  font-size: var(--dsh-font-size-2xs);
 }
 
 .dsh-timeline__card--event {
@@ -1222,12 +1225,11 @@ summary.dsh-timeline__card-header,
 
 .dsh-timeline__card-meta,
 .dsh-timeline__event-group-meta,
-.dsh-timeline__assistant-duration,
 .dsh-timeline__produced-label {
   min-width: 0;
   overflow: hidden;
   color: var(--dsh-muted);
-  font-size: 0.82em;
+  font-size: var(--dsh-font-size-2xs);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1242,19 +1244,26 @@ summary.dsh-timeline__card-header,
   border-radius: 50%;
   color: var(--dsh-muted);
   background: var(--dsh-surface-soft);
-  font-size: 0.75em;
+  font-size: var(--dsh-font-size-2xs);
 }
 
-.dsh-message-avatar--assistant {
-  color: var(--dsh-info);
+/* A submitted plan is a durable artifact card: the summary stays the native
+ * disclosure so the open/closed affordance is the platform's own. */
+.dsh-submitted-plan {
+  display: grid;
+  min-width: 0;
+  gap: var(--dsh-space-2);
+  padding: var(--dsh-space-3);
+  border: var(--dsh-border);
+  border-radius: var(--dsh-radius-md);
+  background: var(--dsh-surface-raised);
 }
 
-.dsh-message-avatar--user {
-  color: var(--dsh-primary);
-}
-
-.dsh-message-avatar--reasoning {
-  color: var(--dsh-warning);
+.dsh-submitted-plan > summary {
+  cursor: pointer;
+  color: var(--dsh-text);
+  font-weight: 600;
+  overflow-wrap: anywhere;
 }
 
 .dsh-timeline__tool-group,
@@ -1317,7 +1326,7 @@ summary.dsh-timeline__card-header,
   grid-column: 1 / -1;
   min-width: 0;
   color: var(--dsh-muted);
-  font-size: 0.85em;
+  font-size: var(--dsh-font-size-2xs);
   overflow-wrap: anywhere;
 }
 
@@ -1463,7 +1472,14 @@ summary.dsh-timeline__card-header,
   line-height: var(--dsh-line-height-body);
 }
 
-.dsh-timeline__notice--warning {
+.dsh-timeline__notice--info {
+  color: var(--dsh-info);
+}
+
+.dsh-timeline__notice--warning,
+.dsh-timeline__turn-terminal--blocked,
+.dsh-timeline__turn-terminal--interrupted,
+.dsh-timeline__turn-terminal--max-tokens {
   color: var(--dsh-warning);
   background: var(--dsh-warning-bg);
 }
@@ -1474,8 +1490,7 @@ summary.dsh-timeline__card-header,
   background: var(--dsh-danger-bg);
 }
 
-.dsh-timeline__streaming,
-.dsh-timeline__live-dot {
+.dsh-timeline__streaming {
   display: inline-block;
   width: 0.5rem;
   height: 0.5rem;
@@ -1659,7 +1674,7 @@ summary.dsh-timeline__card-header,
   border-radius: 999px;
   color: var(--dsh-link);
   background: var(--dsh-surface-soft);
-  font-size: 0.82em;
+  font-size: var(--dsh-font-size-2xs);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1694,7 +1709,7 @@ summary.dsh-timeline__card-header,
   padding: var(--dsh-space-1) var(--dsh-space-2);
   color: var(--dsh-muted);
   background: var(--dsh-surface-raised);
-  font-size: 0.82em;
+  font-size: var(--dsh-font-size-2xs);
 }
 
 .dsh-timeline__history-more-skeleton {
@@ -1706,9 +1721,7 @@ summary.dsh-timeline__card-header,
 .dsh-goal-bar,
 .dsh-goal-strip,
 .dsh-queue,
-.dsh-interaction,
-.dsh-attachments,
-.dsh-sessions {
+.dsh-interaction {
   min-width: 0;
   border: var(--dsh-border);
   border-radius: var(--dsh-radius-md);
@@ -1717,8 +1730,7 @@ summary.dsh-timeline__card-header,
 
 .dsh-goal-bar,
 .dsh-goal-strip,
-.dsh-interaction,
-.dsh-sessions {
+.dsh-interaction {
   padding: var(--dsh-space-3);
 }
 
@@ -1777,8 +1789,7 @@ summary.dsh-timeline__card-header,
 .dsh-queue__item-main,
 .dsh-queue__item-actions,
 .dsh-interaction__header,
-.dsh-interaction__actions,
-.dsh-sessions__header {
+.dsh-interaction__actions {
   display: flex;
   align-items: center;
   min-width: 0;
@@ -1788,22 +1799,29 @@ summary.dsh-timeline__card-header,
 .dsh-goal-bar__content,
 .dsh-goal-strip__summary,
 .dsh-interaction__header,
-.dsh-queue__header,
-.dsh-sessions__header {
+.dsh-queue__header {
   justify-content: space-between;
 }
 
+/* Goal titles, approval subjects and question prompts come from the model, so any of them can be
+ * one unbroken token longer than the panel. A nowrap title keeps the whole string as its
+ * min-content width, and a flex item's min-content width propagates through every content-sized
+ * ancestor: measured as 1480px of min-content for a 900px panel, which is what put a horizontal
+ * scrollbar on the page. `overflow-wrap: anywhere` lowers that width to a single character, so
+ * the title now wraps instead; the two-line clamp stops a pathological title from filling the
+ * panel, and duplicates stay reachable through the existing `title` attributes. */
 .dsh-goal-bar__title,
 .dsh-goal-strip__title,
-.dsh-queue__header h2,
-.dsh-interaction__header h2,
-.dsh-sessions__heading h2 {
+.dsh-interaction__header h2 {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   min-width: 0;
   margin: 0;
   overflow: hidden;
-  font-size: 0.95rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  font-size: var(--dsh-font-size-lg);
+  white-space: normal;
 }
 
 .dsh-goal-bar__phase,
@@ -1811,7 +1829,7 @@ summary.dsh-timeline__card-header,
 .dsh-queue__count {
   flex: 0 0 auto;
   color: var(--dsh-muted);
-  font-size: 0.82em;
+  font-size: var(--dsh-font-size-2xs);
 }
 
 .dsh-goal-bar__edit,
@@ -1850,9 +1868,7 @@ summary.dsh-timeline__card-header,
 }
 
 .dsh-goal-strip__list,
-.dsh-queue__list,
-.dsh-sessions__list,
-.dsh-sessions__workspaces {
+.dsh-queue__list {
   display: grid;
   gap: var(--dsh-space-2);
   min-width: 0;
@@ -1946,7 +1962,7 @@ summary.dsh-timeline__card-header,
   border-radius: 50%;
   color: var(--dsh-muted);
   background: var(--dsh-surface-soft);
-  font-size: 0.78em;
+  font-size: var(--dsh-font-size-2xs);
 }
 
 .dsh-queue__files {
@@ -1968,7 +1984,7 @@ summary.dsh-timeline__card-header,
   border-radius: 999px;
   color: var(--dsh-muted);
   background: var(--dsh-surface-soft);
-  font-size: 0.78em;
+  font-size: var(--dsh-font-size-2xs);
 }
 
 .dsh-queue__file > span {
@@ -2003,6 +2019,13 @@ summary.dsh-timeline__card-header,
   background: var(--dsh-surface-hover);
 }
 
+/* The open session carries an accent rail; the modifier lives on the button, not
+ * on the list item, so it has to be restated at this specificity. */
+.dsh-session-item__button--active {
+  border-inline-start-color: var(--dsh-accent-line);
+  box-shadow: inset 2px 0 var(--dsh-accent-line);
+}
+
 .dsh-session-item__copy {
   display: grid;
   min-width: 0;
@@ -2021,7 +2044,7 @@ summary.dsh-timeline__card-header,
 .dsh-session-item__copy small,
 .dsh-session-item__workspace {
   color: var(--dsh-muted);
-  font-size: 0.8em;
+  font-size: var(--dsh-font-size-2xs);
 }
 
 .dsh-session-item__status {
@@ -2048,25 +2071,9 @@ summary.dsh-timeline__card-header,
   background: var(--dsh-danger);
 }
 
-.dsh-session-switcher,
-.dsh-session-switcher__details {
+.dsh-session-switcher {
   position: relative;
   min-width: 0;
-}
-
-.dsh-session-switcher__summary {
-  display: flex;
-  align-items: center;
-  width: 100%;
-  min-width: 0;
-  gap: var(--dsh-space-2);
-  padding: var(--dsh-space-2) var(--dsh-space-3);
-  border: var(--dsh-border);
-  border-radius: var(--dsh-radius-md);
-  color: var(--dsh-text);
-  background: var(--dsh-surface-raised);
-  cursor: pointer;
-  list-style: none;
 }
 
 .dsh-session-switcher__trigger {
@@ -2095,41 +2102,22 @@ summary.dsh-timeline__card-header,
   white-space: nowrap;
 }
 
-.dsh-session-switcher__summary::-webkit-details-marker {
-  display: none;
-}
-
-.dsh-session-switcher__copy,
 .dsh-session-switcher__panel-title {
   display: grid;
   min-width: 0;
   flex: 1 1 auto;
   gap: var(--dsh-space-1);
 }
-
-.dsh-session-switcher__copy strong,
-.dsh-session-switcher__copy small,
-.dsh-session-switcher__label,
 .dsh-session-switcher__panel-title {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.dsh-session-switcher__copy small,
-.dsh-session-switcher__label {
-  color: var(--dsh-muted);
-  font-size: 0.78em;
-}
-
 .dsh-session-switcher__chevron {
   flex: 0 0 auto;
   color: var(--dsh-muted);
   transition: transform var(--dsh-motion-duration-fast) var(--dsh-motion-ease-standard);
-}
-
-.dsh-session-switcher__details[open] .dsh-session-switcher__chevron {
-  transform: rotate(180deg);
 }
 
 .dsh-session-switcher__panel {
@@ -2183,7 +2171,7 @@ summary.dsh-timeline__card-header,
 .dsh-session-switcher__group-label {
   margin: var(--dsh-space-2) var(--dsh-space-2) var(--dsh-space-1);
   color: var(--dsh-muted);
-  font-size: 0.75em;
+  font-size: var(--dsh-font-size-2xs);
   font-weight: 600;
   text-transform: uppercase;
 }
@@ -2202,7 +2190,7 @@ summary.dsh-timeline__card-header,
   border: 0;
   color: var(--dsh-muted);
   background: transparent;
-  font-size: 0.75em;
+  font-size: var(--dsh-font-size-2xs);
   font-weight: 600;
   text-align: start;
   text-transform: uppercase;
@@ -2236,8 +2224,6 @@ summary.dsh-timeline__card-header,
 .dsh-session-switcher__archived-body .dsh-session-item {
   padding: var(--dsh-space-2) var(--dsh-space-3);
 }
-
-.dsh-workspace-card,
 .dsh-session-switcher__workspace {
   display: flex;
   align-items: center;
@@ -2274,7 +2260,7 @@ summary.dsh-timeline__card-header,
 
 .dsh-session-switcher__workspace-button > small {
   color: var(--dsh-muted);
-  font-size: 0.78em;
+  font-size: var(--dsh-font-size-2xs);
 }
 
 .dsh-session-switcher__workspace-actions,
@@ -2317,7 +2303,7 @@ summary.dsh-timeline__card-header,
   border-radius: var(--dsh-radius-sm);
   background: var(--dsh-warning-bg);
   color: var(--dsh-warning);
-  font-size: 0.875em;
+  font-size: var(--dsh-font-size-xs);
   overflow-wrap: anywhere;
 }
 
@@ -2369,24 +2355,13 @@ summary.dsh-timeline__card-header,
   justify-content: flex-end;
 }
 
-.dsh-composer__toolbar-spacer {
-  display: block;
-  min-width: 0;
-  flex: 1 1 auto;
-}
-
 .dsh-composer__hint {
   min-width: 0;
   overflow: hidden;
   color: var(--dsh-muted);
-  font-size: 0.78em;
+  font-size: var(--dsh-font-size-2xs);
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.dsh-composer__attach,
-.dsh-composer__current-file {
-  flex: 0 0 auto;
 }
 
 .dsh-composer__open-files {
@@ -2527,7 +2502,7 @@ summary.dsh-timeline__card-header,
 
 .dsh-open-file-picker__status {
   color: var(--dsh-muted);
-  font-size: 0.78em;
+  font-size: var(--dsh-font-size-2xs);
   white-space: nowrap;
 }
 
@@ -2656,7 +2631,7 @@ summary.dsh-timeline__card-header,
   color: var(--dsh-muted);
   background: transparent;
   font: inherit;
-  font-size: 0.72rem;
+  font-size: var(--dsh-font-size-xs);
   line-height: 1.2;
   text-align: start;
   white-space: nowrap;
@@ -2708,15 +2683,16 @@ summary.dsh-timeline__card-header,
   float: inline-start;
 }
 
-.dsh-context-meter__segment--system {
+/* One tone modifier colours both the bar segment and the breakdown swatch. */
+.dsh-context-meter__tone--system {
   background: var(--dsh-info);
 }
 
-.dsh-context-meter__segment--tools {
+.dsh-context-meter__tone--tools {
   background: var(--dsh-warning);
 }
 
-.dsh-context-meter__segment--messages {
+.dsh-context-meter__tone--messages {
   background: var(--dsh-success);
 }
 
@@ -2731,7 +2707,7 @@ summary.dsh-timeline__card-header,
 .dsh-context-meter__breakdown dd {
   margin: 0;
   color: var(--dsh-muted);
-  font-size: 0.82em;
+  font-size: var(--dsh-font-size-2xs);
 }
 
 .dsh-context-meter__breakdown dd {
@@ -2745,7 +2721,7 @@ summary.dsh-timeline__card-header,
   flex-wrap: wrap;
   gap: var(--dsh-space-1);
   color: var(--dsh-muted);
-  font-size: 0.78em;
+  font-size: var(--dsh-font-size-2xs);
   line-height: 1.35;
 }
 
@@ -2759,7 +2735,7 @@ summary.dsh-timeline__card-header,
 
 .dsh-interaction__header h2 {
   margin: 0;
-  font-size: 0.95rem;
+  font-size: var(--dsh-font-size-lg);
 }
 
 .dsh-interaction__description,
@@ -2799,7 +2775,7 @@ summary.dsh-timeline__card-header,
   display: block;
   margin-top: var(--dsh-space-1);
   color: var(--dsh-muted);
-  font-size: 0.85em;
+  font-size: var(--dsh-font-size-2xs);
 }
 
 .dsh-question__textarea {
@@ -2963,7 +2939,7 @@ summary.dsh-timeline__card-header,
 
 .dsh-runtime-connection h2 {
   min-width: 0;
-  font-size: 1.0625rem;
+  font-size: var(--dsh-font-size-lg);
   font-weight: 600;
   line-height: var(--dsh-line-height-tight);
 }
@@ -2993,10 +2969,7 @@ summary.dsh-timeline__card-header,
 
 .dsh-runtime-missing,
 .dsh-error-boundary,
-.dsh-diagnostics,
-.dsh-workflows,
-.dsh-providers,
-.dsh-skills {
+.dsh-diagnostics {
   width: min(100%, 52rem);
   min-width: 0;
   margin: auto;
@@ -3022,7 +2995,7 @@ summary.dsh-timeline__card-header,
 .dsh-runtime-missing__title-row h1,
 .dsh-error-boundary h1 {
   margin: 0;
-  font-size: 1.25rem;
+  font-size: var(--dsh-font-size-lg);
 }
 
 .dsh-runtime-missing__description,
@@ -3070,7 +3043,6 @@ summary.dsh-timeline__card-header,
 .dsh-tool-error-modal,
 .dsh-session-dialog,
 .dsh-feedback-dialog,
-.dsh-lightbox__dialog,
 .dsh-message-image-lightbox__dialog {
   display: flex;
   flex-direction: column;
@@ -3106,16 +3078,16 @@ summary.dsh-timeline__card-header,
   background: var(--dsh-surface-soft);
   cursor: pointer;
   font: inherit;
-  font-size: 0.76rem;
+  font-size: var(--dsh-font-size-xs);
   line-height: 1.2;
 }
 
 .dsh-feedback-dialog__chip:hover:not(:disabled),
 .dsh-feedback-dialog__chip:focus-visible,
 .dsh-feedback-dialog__chip[aria-pressed='true'] {
-  border-color: var(--dsh-accent);
+  border-color: var(--dsh-accent-line);
   color: var(--dsh-text);
-  background: color-mix(in srgb, var(--dsh-accent) 14%, var(--dsh-surface-soft));
+  background: color-mix(in srgb, var(--dsh-accent-line) 14%, var(--dsh-surface-soft));
 }
 
 .dsh-feedback-dialog__chip:disabled {
@@ -3151,7 +3123,7 @@ summary.dsh-timeline__card-header,
   min-width: 0;
   margin: 0;
   overflow: hidden;
-  font-size: 1rem;
+  font-size: var(--dsh-font-size-lg);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -3204,7 +3176,6 @@ summary.dsh-timeline__card-header,
 }
 
 .dsh-settings__toolbar,
-.dsh-settings__connection-head,
 .dsh-settings__connection-actions,
 .dsh-settings__runtime-update-head,
 .dsh-settings__runtime-update-controls {
@@ -3245,7 +3216,7 @@ summary.dsh-timeline__card-header,
   min-width: 6ch;
   max-width: 100%;
   color: var(--dsh-muted);
-  font-size: 0.82em;
+  font-size: var(--dsh-font-size-2xs);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3323,14 +3294,11 @@ summary.dsh-timeline__card-header,
   word-break: normal;
 }
 
-.dsh-settings__facts dt,
-.dsh-settings__field-label {
+.dsh-settings__facts dt {
   color: var(--dsh-muted);
-  font-size: 0.82em;
+  font-size: var(--dsh-font-size-2xs);
   font-weight: 600;
 }
-
-.dsh-settings__fields,
 .dsh-settings__custom-provider-grid,
 .dsh-settings__model-editor {
   display: grid;
@@ -3351,7 +3319,7 @@ summary.dsh-timeline__card-header,
 
 .dsh-settings__provider-summary > span:first-child {
   color: var(--dsh-muted);
-  font-size: 0.82em;
+  font-size: var(--dsh-font-size-2xs);
 }
 
 .dsh-settings__runtime-update-facts {
@@ -3368,8 +3336,6 @@ summary.dsh-timeline__card-header,
   min-width: 0;
   gap: var(--dsh-space-2);
 }
-
-.dsh-settings__field,
 .dsh-settings__provider-editor-field,
 .dsh-settings__model-field,
 .dsh-settings__custom-provider-grid label {
@@ -3377,9 +3343,6 @@ summary.dsh-timeline__card-header,
   min-width: 0;
   gap: var(--dsh-space-1);
 }
-
-.dsh-settings__field-value,
-.dsh-settings__provider-base-url,
 .dsh-settings__provider-kind,
 .dsh-settings__field-state {
   min-width: 0;
@@ -3394,6 +3357,55 @@ summary.dsh-timeline__card-header,
 
 .dsh-settings__secret-dot {
   letter-spacing: 0.15em;
+}
+
+/* Boolean setting switch. The control is a `role="switch"` button, so its on
+ * state rides on `aria-checked` and the thumb is the decorative span inside. */
+.dsh-settings__switch {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  width: 2.25rem;
+  min-width: 2.25rem;
+  height: 1.25rem;
+  min-height: 1.25rem;
+  padding: 2px;
+  border-color: var(--dsh-control-border);
+  border-radius: var(--dsh-radius-pill);
+  background: var(--dsh-surface-soft);
+}
+
+.dsh-settings__switch > span {
+  width: 0.875rem;
+  min-width: 0.875rem;
+  height: 0.875rem;
+  border-radius: 50%;
+  background: var(--dsh-muted);
+  transition:
+    transform var(--dsh-motion-duration-fast) var(--dsh-motion-ease-standard),
+    background-color var(--dsh-motion-duration-fast) var(--dsh-motion-ease-standard);
+}
+
+.dsh-settings__switch[aria-checked='true'] {
+  border-color: var(--dsh-accent-line);
+  background: var(--dsh-primary);
+}
+
+.dsh-settings__switch[aria-checked='true'] > span {
+  background: var(--dsh-primary-text);
+  transform: translateX(1rem);
+}
+
+.dsh-settings__number-control {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--dsh-space-2);
+  min-width: 0;
+  color: var(--dsh-muted);
+}
+
+.dsh-settings__number-input {
+  width: 5rem;
 }
 
 .dsh-settings__runtime-update-progress-track {
@@ -3521,20 +3533,18 @@ summary.dsh-timeline__card-header,
   border-radius: 999px;
   color: var(--dsh-info);
   background: color-mix(in srgb, var(--dsh-info) 12%, transparent);
-  font-size: 0.75em;
+  font-size: var(--dsh-font-size-2xs);
 }
 
 .dsh-presets__badge--broken {
   color: var(--dsh-danger);
-  background: var(--dsh-danger-bg);
+  background: color-mix(in srgb, var(--dsh-danger) 12%, transparent);
 }
 
 .dsh-presets__badge--in-use {
   color: var(--dsh-success);
   background: color-mix(in srgb, var(--dsh-success) 12%, transparent);
 }
-
-.dsh-popover__trigger,
 [class*='-popover__trigger'] {
   display: inline-flex;
   align-items: center;
@@ -3697,19 +3707,9 @@ summary.dsh-timeline__card-header,
   }
 }
 
-.dsh-message-actions__note-panel {
-  display: grid;
-  gap: var(--dsh-space-2);
-  width: min(100%, 24rem);
-}
-
-.dsh-message-actions__note-panel textarea {
-  width: 100%;
-}
-
 .dsh-message-actions__feedback-status {
   color: var(--dsh-muted);
-  font-size: 0.76rem;
+  font-size: var(--dsh-font-size-xs);
 }
 
 .dsh-todo-list {
@@ -3775,14 +3775,6 @@ summary.dsh-timeline__card-header,
     padding: var(--dsh-space-3);
   }
 
-  .dsh-app__header {
-    align-items: flex-start;
-  }
-
-  .dsh-app__header-actions {
-    justify-content: flex-start;
-  }
-
   .dsh-conversation__topbar {
     align-items: stretch;
     flex-wrap: wrap;
@@ -3811,15 +3803,11 @@ summary.dsh-timeline__card-header,
   .dsh-app {
     padding: var(--dsh-space-2);
   }
-
-  .dsh-app__header,
   .dsh-composer__toolbar {
     grid-template-columns: 1fr;
     flex-direction: column;
     align-items: stretch;
   }
-
-  .dsh-app__header-actions,
   .dsh-composer__toolbar-start,
   .dsh-composer__toolbar-controls,
   .dsh-session-controls__selectors {
@@ -3856,10 +3844,7 @@ summary.dsh-timeline__card-header,
 
   .dsh-runtime-missing,
   .dsh-error-boundary,
-  .dsh-diagnostics,
-  .dsh-workflows,
-  .dsh-providers,
-  .dsh-skills {
+  .dsh-diagnostics {
     padding: var(--dsh-space-4);
   }
 }
@@ -3895,7 +3880,7 @@ summary.dsh-timeline__card-header,
 
 .dsh-settings__connection-option small {
   color: var(--dsh-muted);
-  font-size: 0.76rem;
+  font-size: var(--dsh-font-size-xs);
   line-height: 1.4;
 }
 
@@ -3947,7 +3932,7 @@ summary.dsh-timeline__card-header,
   min-width: 0;
   overflow: hidden;
   color: var(--dsh-muted);
-  font-size: 0.78em;
+  font-size: var(--dsh-font-size-2xs);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -3977,7 +3962,7 @@ summary.dsh-timeline__card-header,
 
 .dsh-settings__provider-editor-customized > summary {
   color: var(--dsh-muted);
-  font-size: 0.72rem;
+  font-size: var(--dsh-font-size-xs);
   cursor: pointer;
 }
 
@@ -4035,7 +4020,7 @@ summary.dsh-timeline__card-header,
   border-color: var(--dsh-control-border);
   color: var(--dsh-control-foreground);
   background: var(--dsh-control-background);
-  font-size: 0.76rem;
+  font-size: var(--dsh-font-size-xs);
 }
 
 .dsh-settings__provider-api-select .dsh-select-menu__trigger:hover:not(:disabled),
@@ -4048,7 +4033,7 @@ summary.dsh-timeline__card-header,
   gap: var(--dsh-space-3);
   padding: var(--dsh-space-3);
   border: var(--dsh-border);
-  border-color: color-mix(in srgb, var(--dsh-accent) 48%, var(--dsh-border-color));
+  border-color: color-mix(in srgb, var(--dsh-accent-line) 48%, var(--dsh-border-color));
   border-radius: var(--dsh-radius-md);
   background: var(--dsh-surface-soft);
   transition: border-color var(--dsh-motion-duration-fast) var(--dsh-motion-ease-standard);
@@ -4132,7 +4117,7 @@ summary.dsh-timeline__card-header,
 
 .dsh-plugin-configuration__intro p {
   color: var(--dsh-muted);
-  font-size: 0.78rem;
+  font-size: var(--dsh-font-size-xs);
 }
 
 .dsh-plugin-configuration__cards {
@@ -4193,7 +4178,7 @@ summary.dsh-timeline__card-header,
 
 .dsh-plugin-configuration__header-copy > span:last-child {
   color: var(--dsh-muted);
-  font-size: 0.76rem;
+  font-size: var(--dsh-font-size-xs);
   line-height: 1.4;
 }
 
@@ -4270,6 +4255,18 @@ summary.dsh-timeline__card-header,
   border-radius: var(--dsh-radius-md);
   background: var(--dsh-surface-raised);
   overflow: hidden;
+}
+
+.dsh-plugin-inventory__card[data-open='true'] {
+  border-color: color-mix(in srgb, var(--dsh-accent-line) 42%, var(--dsh-border-color));
+}
+
+.dsh-plugin-inventory__card-trailing .dsh-icon {
+  transition: transform var(--dsh-motion-duration-fast) var(--dsh-motion-ease-standard);
+}
+
+.dsh-plugin-inventory__card-content[aria-expanded='true'] .dsh-icon {
+  transform: rotate(180deg);
 }
 
 .dsh-plugin-inventory__card-content {

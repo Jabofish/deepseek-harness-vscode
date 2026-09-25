@@ -171,6 +171,7 @@
   --dsh-border: 1px solid var(--dsh-border-color);
   --dsh-focus: var(--vscode-focusBorder, var(--vscode-textLink-foreground, transparent));
   --dsh-focus-ring: color-mix(in srgb, var(--dsh-focus) 62%, var(--dsh-border-color));
+  --dsh-focus-ring-width: 1px;
   --dsh-text: var(--vscode-foreground, inherit);
   --dsh-muted: var(--vscode-descriptionForeground, var(--dsh-text));
   --dsh-bg: var(--vscode-editor-background, var(--vscode-sideBar-background, transparent));
@@ -203,7 +204,13 @@
     color-mix(in srgb, var(--dsh-warning) 12%, transparent)
   );
   --dsh-info: var(--vscode-charts-blue, var(--dsh-link));
+  /* The accent splits by how it is painted. `--dsh-accent` fills areas and is
+   * allowed to trade boundary contrast for a strong button surface; anything that
+   * is drawn as a 1px line, an outline, a marker or text uses `--dsh-accent-line`,
+   * which follows the host link colour instead. Resolving through `--dsh-link`
+   * keeps light/dark palettes and host themes on one definition. */
   --dsh-accent: var(--dsh-primary);
+  --dsh-accent-line: var(--dsh-link);
   --dsh-control-background: var(--dsh-input-bg);
   --dsh-control-border: var(--dsh-input-border);
   --dsh-control-foreground: var(--dsh-input-text);
@@ -250,7 +257,7 @@
   --dsh-tool-detail-padding: var(--dsh-space-2);
   --dsh-reasoning-max-height: 18rem;
   --dsh-panel-gutter: 1rem;
-  --dsh-menu-font-size: 0.875rem;
+  --dsh-menu-font-size: var(--dsh-font-size-md);
   --dsh-menu-line-height: 1.35;
   --dsh-menu-width: 31rem;
   --dsh-menu-max-height: 28rem;
@@ -296,7 +303,7 @@
 
 .dsh-empty-state h2 {
   color: var(--dsh-text);
-  font-size: 1rem;
+  font-size: var(--dsh-font-size-lg);
 }
 
 .dsh-empty-state__actions {
@@ -368,7 +375,7 @@
   margin: 0;
   overflow: hidden;
   color: var(--dsh-text);
-  font-size: 1rem;
+  font-size: var(--dsh-font-size-lg);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -460,7 +467,7 @@
   color: var(--dsh-link);
   background: transparent;
   font: inherit;
-  font-size: 0.875em;
+  font-size: var(--dsh-font-size-xs);
   text-align: start;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -535,7 +542,7 @@
 .dsh-tool-row__status,
 .dsh-tool-row__separator {
   color: var(--dsh-muted);
-  font-size: 0.85em;
+  font-size: var(--dsh-font-size-2xs);
 }
 
 .dsh-tool-card__status {
@@ -559,7 +566,7 @@
 .dsh-tool-card__status--running,
 .dsh-tool-card__status--queued,
 .dsh-tool-row--running .dsh-tool-row__status {
-  color: var(--dsh-primary);
+  color: var(--dsh-accent-line);
 }
 
 .dsh-tool-card__status--running::before,
@@ -713,7 +720,7 @@
 }
 
 .dsh-tool-row__source--interactive:focus-visible {
-  outline: var(--dsh-focus-ring) solid var(--dsh-focus-ring-width);
+  outline: var(--dsh-focus-ring-width) solid var(--dsh-focus-ring);
   outline-offset: calc(-1 * var(--dsh-focus-ring-width));
 }
 
@@ -726,13 +733,13 @@
   padding: var(--dsh-space-2);
   color: var(--dsh-muted);
   background: var(--dsh-surface-hover);
-  font-size: 0.85em;
+  font-size: var(--dsh-font-size-2xs);
 }
 
 .dsh-tool-row__diff-lines,
 .dsh-tool-row__search-file pre,
 .dsh-tool-row__read-code {
-  max-height: 18rem;
+  max-height: var(--dsh-tool-detail-max-height);
   margin: 0;
   overflow: auto;
   white-space: pre;
@@ -785,7 +792,7 @@
 }
 
 .dsh-tool-row__source-list {
-  max-height: 18rem;
+  max-height: var(--dsh-tool-detail-max-height);
   overflow: auto;
 }
 
@@ -801,7 +808,7 @@
   display: block;
   margin: 0;
   color: var(--dsh-muted);
-  font-size: 0.85em;
+  font-size: var(--dsh-font-size-2xs);
 }
 
 .dsh-tool-row__source-url {
@@ -822,7 +829,7 @@
   padding: var(--dsh-space-1) var(--dsh-space-2);
   border-radius: 999px;
   font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
-  font-size: 0.85em;
+  font-size: var(--dsh-font-size-2xs);
   font-weight: 600;
 }
 
@@ -838,7 +845,7 @@
 
 .dsh-tool-row__diff-gap {
   color: var(--dsh-muted);
-  font-size: 0.85em;
+  font-size: var(--dsh-font-size-2xs);
   text-align: center;
   user-select: none;
 }
@@ -847,7 +854,7 @@
 .dsh-tool-row__search-total,
 .dsh-tool-row__read-total {
   color: var(--dsh-muted);
-  font-size: 0.85em;
+  font-size: var(--dsh-font-size-2xs);
   line-height: var(--dsh-tool-detail-line-height);
 }
 

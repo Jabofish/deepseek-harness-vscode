@@ -91,6 +91,7 @@ Agent）的原生 VS Code 客户端。它把会话、流式回复、思考过程
 | [docs/protocol.md](docs/protocol.md)                         | Extension Host ↔ Webview 消息协议 |
 | [docs/security.md](docs/security.md)                         | 信任边界与强制控制                |
 | [docs/motion.md](docs/motion.md)                             | Webview 动效 token 与性能规则     |
+| [docs/typography.md](docs/typography.md)                     | Webview 字号刻度与图标尺寸规则    |
 | [docs/development.md](docs/development.md)                   | 环境、调试与 DSH 联调模式         |
 | [docs/testing.md](docs/testing.md)                           | 测试层次、负面路径、fixture 规则  |
 | [docs/implementation-order.md](docs/implementation-order.md) | 实施阶段与退出条件                |

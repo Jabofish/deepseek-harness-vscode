@@ -10,6 +10,7 @@
 .dsh-schedule-panel__catalog,
 .dsh-schedule-panel__detail {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--dsh-space-3);
   min-width: 0;
   padding: var(--dsh-space-4);
@@ -30,6 +31,14 @@
   justify-content: space-between;
   gap: var(--dsh-space-2);
   min-width: 0;
+}
+
+/* A long schedule or window title must not squeeze the controls beside it; below
+ * the natural width the actions move to their own line instead of being clipped. */
+.dsh-schedule-panel__heading,
+.dsh-schedule-panel__detail-heading {
+  flex-wrap: wrap;
+  row-gap: var(--dsh-space-2);
 }
 
 .dsh-schedule-panel__heading-actions {
@@ -195,8 +204,8 @@
 
 .dsh-schedule-panel__filters button[aria-pressed='true'],
 .dsh-schedule-panel__tabs button[aria-selected='true'] {
-  border-color: var(--dsh-primary);
-  color: var(--dsh-primary);
+  border-color: var(--dsh-accent-line);
+  color: var(--dsh-accent-line);
 }
 
 .dsh-schedule-panel__count {
@@ -230,7 +239,7 @@
 }
 
 .dsh-schedule-panel__row[aria-expanded='true'] {
-  border-color: var(--dsh-primary);
+  border-color: var(--dsh-accent-line);
 }
 
 .dsh-schedule-panel__row-title {
@@ -281,6 +290,7 @@
 .dsh-schedule-panel__editor,
 .dsh-schedule-panel__history {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--dsh-space-3);
   min-width: 0;
 }
