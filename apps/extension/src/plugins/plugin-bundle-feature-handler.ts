@@ -3,6 +3,7 @@ import type {
   PluginBundleEnableConfirmation,
   PluginBundleRemoveConfirmation,
   PluginBundleUseCases,
+  PluginEntryEnableConfirmation,
   PluginInstallConfirmation,
 } from '@dsh-vscode/application'
 import type { PluginRegistry } from '@dsh-vscode/domain'
@@ -43,6 +44,7 @@ export async function handlePluginBundleFeatureRequest(
   signal: AbortSignal,
   confirmations?: {
     readonly enable?: PluginBundleEnableConfirmation
+    readonly pluginEntryEnable?: PluginEntryEnableConfirmation
     readonly install?: PluginInstallConfirmation
     readonly remove?: PluginBundleRemoveConfirmation
     readonly builds?: PluginBuildApprovalConfirmation
@@ -112,7 +114,12 @@ export async function handlePluginBundleFeatureRequest(
     case 'plugin.entry.setEnabled':
       return {
         kind: 'plugin.bundle.changed',
-        result: await bundles.setPluginEnabled(request.payload.entryId, request.payload.enabled, signal),
+        result: await bundles.setPluginEnabled(
+          request.payload.entryId,
+          request.payload.enabled,
+          signal,
+          confirmations?.pluginEntryEnable,
+        ),
       }
   }
 }

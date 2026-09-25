@@ -1306,6 +1306,7 @@ export const protocolAppErrorCodeSchema = z.enum([
   'RESOURCE_NOT_OWNED',
   'GENERATION_MISMATCH',
   'EVENT_GAP',
+  'PLUGIN_INSTALL_NOT_STARTED',
   'INTERNAL_ERROR',
 ])
 

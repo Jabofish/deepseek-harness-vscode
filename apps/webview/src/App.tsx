@@ -1288,8 +1288,28 @@ export function App(): ReactElement {
     await store.createSession(active?.workspaceId ?? state.workspaces[0]?.id)
     const sessionId = store.getState().activeSessionId
     if (sessionId === undefined) throw new Error(t('schedules.createSessionFailed'))
-    await store.sendPrompt(sessionId, prompt, [], 'queue')
-    return sessionId
+    const turn = store.watchSessionTurnEnd(sessionId)
+    try {
+      try {
+        await store.sendPrompt(sessionId, prompt, [], 'queue')
+      } catch (reason) {
+        if (isDefinitePromptRejection(reason)) throw reason
+        // A transport failure can arrive after the Host admitted the prompt.
+        // Keep this creation locked until the Session proves the turn ended.
+      }
+      await turn.completion
+      return sessionId
+    } catch (reason) {
+      if (reason instanceof Error && reason.name === 'SessionTurnWatchDisposedError') {
+        const uncertain = new Error('The schedule creation turn ended without a terminal Session event.')
+        const indeterminate = uncertain as Error & { scheduleCreateIndeterminate?: boolean }
+        indeterminate.scheduleCreateIndeterminate = true
+        throw uncertain
+      }
+      throw reason
+    } finally {
+      turn.dispose()
+    }
   })
   const openAccountPageFromSettings = useStableCallback((page: 'usage' | 'top-up'): void => {
     void store.openAccountPage(page).catch(() => setError(t('account.profile.failed')))
@@ -2088,6 +2108,31 @@ export function App(): ReactElement {
         </section>
       </main>
     </AppErrorBoundary>
+  )
+}
+
+const DEFINITE_SCHEDULE_PROMPT_REJECTION_CODES = new Set([
+  'AUTH_REQUIRED',
+  'BACKEND_BUSY',
+  'BACKEND_UNREACHABLE',
+  'CAPABILITY_UNAVAILABLE',
+  'CONTEXT_EXPIRED',
+  'CONTEXT_LIMIT',
+  'CONTEXT_STALE',
+  'FEATURE_DISABLED',
+  'INVALID_CONFIGURATION',
+  'NO_RUNNING_INSTANCE',
+  'PATH_NOT_ALLOWED',
+  'PERMISSION_DENIED',
+])
+
+function isDefinitePromptRejection(reason: unknown): boolean {
+  if (typeof reason !== 'object' || reason === null) return false
+  const details = reason as { readonly code?: unknown; readonly retryable?: unknown }
+  return (
+    typeof details.code === 'string' &&
+    details.retryable === false &&
+    DEFINITE_SCHEDULE_PROMPT_REJECTION_CODES.has(details.code)
   )
 }
 

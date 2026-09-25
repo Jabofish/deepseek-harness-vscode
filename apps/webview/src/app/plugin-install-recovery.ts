@@ -113,7 +113,7 @@ export class PluginInstallRecoveryController {
       if (payload?.kind !== 'plugin.bundle.changed' || payload.result.stage !== 'install')
         throw new Error('The install result did not match the requested operation.')
       this.settled(requestId, toDomainChangeResult(payload.result))
-    } catch {
+    } catch (error) {
       const current = this.current
       if (
         current?.requestId !== requestId ||
@@ -121,6 +121,24 @@ export class PluginInstallRecoveryController {
         current.cancellation === 'cancelled'
       )
         return
+      if (isPluginInstallNotStarted(error)) {
+        if (
+          current.cancelRequested ||
+          current.phase === 'cancelling' ||
+          current.cancellation === 'not-running'
+        ) {
+          this.settled(requestId, undefined, 'cancelled')
+          return
+        }
+        this.settled(requestId, {
+          name: 'plugin',
+          changed: false,
+          application: 'failed',
+          stage: 'install',
+          errorCode: 'operation-error',
+        })
+        return
+      }
       this.commitFor(
         requestId,
         {
@@ -318,4 +336,13 @@ function validatedPayload(value: unknown): SuccessfulFeatureResponse['payload'] 
     payload: value,
   })
   return parsed.success && parsed.data.ok ? parsed.data.payload : undefined
+}
+
+function isPluginInstallNotStarted(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    error.code === 'PLUGIN_INSTALL_NOT_STARTED'
+  )
 }

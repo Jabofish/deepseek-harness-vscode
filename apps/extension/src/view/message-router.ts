@@ -335,6 +335,8 @@ function publicErrorMessage(
     RESOURCE_NOT_OWNED: 'This resource is not owned by the current view or session.',
     GENERATION_MISMATCH: 'This request belongs to an older connection generation.',
     EVENT_GAP: 'Some DSH events were missed; the session is being synchronized.',
+    PLUGIN_INSTALL_NOT_STARTED:
+      'The DSH plugin installation did not start. Review the package source and try again.',
     INTERNAL_ERROR: 'DSH returned an internal error.',
   }
   const base = fallback[code] ?? `DSH operation failed (${code}).`

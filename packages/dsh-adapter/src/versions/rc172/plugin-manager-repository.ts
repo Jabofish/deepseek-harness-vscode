@@ -1,5 +1,6 @@
 import {
   AppError,
+  pluginInstallNotStartedError,
   type ManagedPluginEntry,
   type PluginBundleChangeResult,
   type PluginBundleFailureCode,
@@ -126,11 +127,10 @@ export class Rc172PluginBundleRepository implements PluginBundleRepository {
     },
     signal?: AbortSignal,
   ): Promise<PluginBundleChangeResult> {
-    validateInstallInput(spec, options)
-    const value = unwrapRpcResultValue<unknown>(
-      await this.transport.remoteRequest(
-        'pluginManager/installBundle',
-        {
+    const args = (() => {
+      try {
+        validateInstallInput(spec, options)
+        return {
           spec,
           options: {
             enabled: true,
@@ -138,9 +138,14 @@ export class Rc172PluginBundleRepository implements PluginBundleRepository {
             ...(options.registry === undefined ? {} : { registry: validateRegistry(options.registry) }),
             ...(options.approvedBuilds === undefined ? {} : { approvedBuilds: [...options.approvedBuilds] }),
           },
-        },
-        signal,
-      ),
+        }
+      } catch (error) {
+        // The DSH mutation Remote has not been invoked at this point.
+        throw pluginInstallNotStartedError(error)
+      }
+    })()
+    const value = unwrapRpcResultValue<unknown>(
+      await this.transport.remoteRequest('pluginManager/installBundle', args, signal),
       'pluginManager/installBundle',
     )
     return installChangeResult(value, spec)

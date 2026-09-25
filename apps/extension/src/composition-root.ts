@@ -161,7 +161,10 @@ import {
   handlePluginBundleFeatureRequest,
   PluginInstallRequestCoordinator,
 } from './plugins/plugin-bundle-feature-handler.js'
-import { createPluginBundleEnableConfirmation } from './plugins/confirm-plugin-bundle-enable.js'
+import {
+  createPluginBundleEnableConfirmation,
+  createPluginEntryEnableConfirmation,
+} from './plugins/confirm-plugin-bundle-enable.js'
 import {
   createPluginBuildApprovalConfirmation,
   createPluginInstallConfirmation,
@@ -1764,12 +1767,18 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       const translate = (message: string, detail?: string): string =>
         detail === undefined ? vscode.l10n.t(message) : vscode.l10n.t(message, detail)
       const confirmEnable = createPluginBundleEnableConfirmation(present, translate, vscode.env.language)
+      const confirmPluginEntryEnable = createPluginEntryEnableConfirmation(
+        present,
+        translate,
+        vscode.env.language,
+      )
       return handlePluginBundleFeatureRequest(
         request,
         bundles,
         signal,
         {
           enable: confirmEnable,
+          pluginEntryEnable: confirmPluginEntryEnable,
           install: createPluginInstallConfirmation(present, translate),
           remove: createPluginRemoveConfirmation(present, translate),
           builds: createPluginBuildApprovalConfirmation(present, translate),

@@ -56,6 +56,33 @@ describe('Plugin Manager feature route', () => {
     expect(inspect).toHaveBeenCalledWith('@dsh-community/not-a-bundle', null, signal)
   })
 
+  it('forwards the Host confirmation callback for an individual plugin entry enable', async () => {
+    const result = {
+      name: 'review:extension',
+      changed: true,
+      application: 'restart-required',
+      enabled: true,
+      stage: 'enable',
+    } as const
+    const setPluginEnabled = vi.fn(() => Promise.resolve(result))
+    const bundles = { setPluginEnabled } as unknown as PluginBundleUseCases
+    const signal = new AbortController().signal
+    const pluginEntryEnable = vi.fn(() => Promise.resolve(true))
+
+    await expect(
+      handlePluginBundleFeatureRequest(
+        {
+          type: 'plugin.entry.setEnabled',
+          payload: { entryId: 'review:extension', enabled: true },
+        },
+        bundles,
+        signal,
+        { pluginEntryEnable },
+      ),
+    ).resolves.toEqual({ kind: 'plugin.bundle.changed', result })
+    expect(setPluginEnabled).toHaveBeenCalledWith('review:extension', true, signal, pluginEntryEnable)
+  })
+
   it('passes installation consent and build approval through Host-owned callbacks', async () => {
     const result = {
       name: '@dsh-community/review',
@@ -489,7 +516,7 @@ describe('Plugin Manager feature route', () => {
     })
     expect(cancelInstall).toHaveBeenCalledWith('install-request-2', signal)
     expect(remove).toHaveBeenCalledWith('@dsh-community/review', signal, confirmations.remove)
-    expect(setPluginEnabled).toHaveBeenCalledWith('review:entry', false, signal)
+    expect(setPluginEnabled).toHaveBeenCalledWith('review:entry', false, signal, undefined)
     expect(setEnabled).toHaveBeenCalledWith('@dsh-community/review', true, signal, confirmations.enable)
   })
 })

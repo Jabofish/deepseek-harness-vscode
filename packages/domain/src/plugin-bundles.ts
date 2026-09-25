@@ -1,5 +1,6 @@
 import type { PluginFiberPhase } from './advanced.js'
 import type { PluginMetadata, PluginLocalizedText } from './plugin-metadata.js'
+import { AppError } from './errors.js'
 
 /** Stable Plugin Manager codes; upstream diagnostics may contain paths or process output. */
 export type PluginBundleFailureCode =
@@ -142,6 +143,11 @@ export interface PluginBundleRepository {
   listPlugins(signal?: AbortSignal): Promise<readonly ManagedPluginEntry[]>
   registries(signal?: AbortSignal): Promise<PluginRegistryCatalog>
   inspect(spec: string, registry?: PluginRegistry, signal?: AbortSignal): Promise<PluginSpecInspection>
+  /**
+   * An implementation may throw `PLUGIN_INSTALL_NOT_STARTED` only when it knows
+   * no install mutation request was invoked. All other rejections are
+   * indeterminate and must be recovered through `waitForInstall`.
+   */
   installBundle(
     spec: string,
     options: PluginInstallOptions,
@@ -152,4 +158,14 @@ export interface PluginBundleRepository {
   removeBundle(name: string, signal?: AbortSignal): Promise<PluginBundleChangeResult>
   setPluginEnabled(entryId: string, enabled: boolean, signal?: AbortSignal): Promise<PluginBundleChangeResult>
   setBundleEnabled(name: string, enabled: boolean, signal?: AbortSignal): Promise<PluginBundleChangeResult>
+}
+
+/** Mark an install failure that is known to precede the DSH install Remote. */
+export function pluginInstallNotStartedError(cause?: unknown): AppError {
+  return new AppError({
+    code: 'PLUGIN_INSTALL_NOT_STARTED',
+    message: 'DSH did not start the plugin installation. Review the package source and try again.',
+    retryable: true,
+    ...(cause === undefined ? {} : { cause }),
+  })
 }

@@ -131,6 +131,7 @@ describe('ScheduleDrawer', () => {
   it('keeps the pending create listener mounted while the user closes and reopens the drawer', async () => {
     let items: readonly ScheduleCatalogEntry[] = []
     let catalogCalls = 0
+    let finishTurn!: (sessionId: string) => void
     const listeners = new Set<(message: FeatureHostEvent) => void>()
     const featureRequestForTest: ScheduleDrawerProps['featureRequest'] = <T,>(
       request: FeatureRequest,
@@ -141,7 +142,10 @@ describe('ScheduleDrawer', () => {
       }
       return Promise.resolve(undefined as T)
     }
-    const startSchedule = (): Promise<string> => Promise.resolve('session-new')
+    const startSchedule = (): Promise<string> =>
+      new Promise((resolve) => {
+        finishTurn = resolve
+      })
     const subscribeFeature: ScheduleDrawerProps['subscribeFeature'] = (listener) => {
       listeners.add(listener)
       return () => listeners.delete(listener)
@@ -178,13 +182,17 @@ describe('ScheduleDrawer', () => {
     )
     if (submit === null) throw new Error('The create submit button is missing.')
     fireEvent.click(submit)
-    await waitFor(() =>
-      expect(document.querySelector('.dsh-schedule-panel__create-state--pending')).not.toBeNull(),
-    )
+    await waitFor(() => expect(finishTurn).toBeDefined())
 
     fireEvent.click(screen.getByRole('button', { name: 'Close schedules' }))
     expect(screen.queryByRole('dialog', { name: 'Schedules' })).toBeNull()
-    expect(catalogCalls).toBe(2)
+    expect(catalogCalls).toBe(1)
+    expect(document.querySelector('.dsh-schedule-panel__create-state--sending')).not.toBeNull()
+
+    act(() => finishTurn('session-new'))
+    await waitFor(() => expect(catalogCalls).toBe(2))
+    expect(document.querySelector('.dsh-schedule-panel__create-state--unconfirmed')).not.toBeNull()
+
     items = [
       {
         id: 'schedule-created',
@@ -205,6 +213,7 @@ describe('ScheduleDrawer', () => {
     act(() => {
       for (const listener of listeners) listener(event)
     })
+    await waitFor(() => expect(catalogCalls).toBe(3))
     await waitFor(() =>
       expect(document.querySelector('.dsh-schedule-panel__create-state--confirmed')).not.toBeNull(),
     )

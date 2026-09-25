@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { AppError } from '@dsh-vscode/domain'
-import { hostEnvelopeSchema } from '@dsh-vscode/webview-protocol'
+import { featureResponseSchema, hostEnvelopeSchema } from '@dsh-vscode/webview-protocol'
 
 import { WebviewMessageRouter } from './message-router.js'
 
@@ -32,6 +32,46 @@ describe('WebviewMessageRouter command diagnostics', () => {
       ok: true,
       payload: { kind: 'empty' },
     })
+  })
+
+  it('preserves the retryable plugin-install-not-started classification in feature responses', async () => {
+    const posted: unknown[] = []
+    const router = new WebviewMessageRouter({
+      postMessage: (message) => {
+        posted.push(message)
+        return Promise.resolve(true)
+      },
+      handleFeatureRequest: () =>
+        Promise.reject(
+          new AppError({
+            code: 'PLUGIN_INSTALL_NOT_STARTED',
+            message: 'private preflight detail',
+            retryable: true,
+          }),
+        ),
+    })
+
+    await router.handle({
+      protocolVersion: 1,
+      message: {
+        type: 'plugin.bundle.install',
+        requestId: 'plugin-install-not-started-response',
+        payload: { spec: '@dsh-community/review', installRequestId: 'install-not-started' },
+      },
+    })
+
+    expect(posted[0]).toMatchObject({
+      type: 'feature.response',
+      requestId: 'plugin-install-not-started-response',
+      ok: false,
+      error: {
+        code: 'PLUGIN_INSTALL_NOT_STARTED',
+        retryable: true,
+        message: 'The DSH plugin installation did not start. Review the package source and try again.',
+      },
+    })
+    expect(featureResponseSchema.safeParse(posted[0]).success).toBe(true)
+    expect(JSON.stringify(posted[0])).not.toContain('private preflight detail')
   })
 
   it('keeps an active requestId owned by its original request across duplicate requests and cancellation collisions', async () => {

@@ -28,7 +28,7 @@ import './schedule-panel.css'
 export interface SchedulePanelProps {
   readonly featureRequest: <T>(request: FeatureRequest) => Promise<T>
   readonly subscribeFeature: (listener: (message: FeatureHostEvent) => void) => () => void
-  /** Creates a Session and sends the serialized `schedule_create` request as its first user message. */
+  /** Creates a Session, sends the first prompt, then resolves at that Session turn's terminal event. */
   readonly onStartScheduleSession: (prompt: string) => Promise<string>
 }
 
@@ -528,6 +528,11 @@ function isHistoryPage(
   return 'records' in value
 }
 
+function isScheduleCreateIndeterminate(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) return false
+  return (value as { readonly scheduleCreateIndeterminate?: unknown }).scheduleCreateIndeterminate === true
+}
+
 function updateResultError(result: ScheduleUpdateResult): string | undefined {
   if ('message' in result) return `schedules.error.${result.code}`
   if ('record' in result) return undefined
@@ -864,6 +869,7 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
     setCreateError(undefined)
     setCreateStatus('sending')
     setSessionStarting(true)
+    let keepCreateLocked = false
     void Promise.resolve()
       .then(() => props.onStartScheduleSession(scheduleCreatePrompt(args)))
       .then((sessionId) => {
@@ -877,18 +883,25 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
         }
         setCreateStatus('pending')
         setCreateOpen(false)
-        // Sending a user request is not evidence that the Agent ran schedule_create.
-        // The catalog is authoritative and may confirm later through invalidation.
+        // The callback resolves only after this Session's turn/end. Retry stays
+        // hidden until this post-terminal catalog read confirms or clears it.
+        checkingCreateCatalog.current = true
         refreshCatalog()
       })
-      .catch(() => {
+      .catch((reason: unknown) => {
         if (!mounted.current) return
+        if (isScheduleCreateIndeterminate(reason)) {
+          keepCreateLocked = true
+          setCreateOpen(false)
+          setCreateStatus('sending')
+          return
+        }
         setCreateStatus('failed')
         setCreateError('schedules.create.failed')
         setCreateOpen(true)
       })
       .finally(() => {
-        if (mounted.current) setSessionStarting(false)
+        if (mounted.current && !keepCreateLocked) setSessionStarting(false)
       })
   }
 

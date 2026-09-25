@@ -169,7 +169,7 @@ describe('PluginBundleUseCases', () => {
         undefined,
         new AbortController().signal,
       ),
-    ).rejects.toMatchObject({ code: 'PERMISSION_DENIED' })
+    ).rejects.toMatchObject({ code: 'PLUGIN_INSTALL_NOT_STARTED', retryable: true })
   })
 
   it('requires a separate Host grant for package build scripts and then runs the approved package names', async () => {
@@ -205,7 +205,72 @@ describe('PluginBundleUseCases', () => {
         new AbortController().signal,
         () => Promise.resolve(true),
       ),
-    ).rejects.toMatchObject({ code: 'CAPABILITY_UNAVAILABLE' })
+    ).rejects.toMatchObject({ code: 'PLUGIN_INSTALL_NOT_STARTED', retryable: true })
+    expect(services.mocks.installBundle).not.toHaveBeenCalled()
+  })
+
+  it.each(['availability', 'inspection', 'confirmation'] as const)(
+    'marks %s failures as known not-started before the install Remote',
+    async (stage) => {
+      const services = useCases()
+      const confirmInstall = vi.fn(() => Promise.resolve(true))
+      if (stage === 'availability')
+        services.inventory.mockRejectedValue(new Error('registry state unavailable'))
+      if (stage === 'inspection')
+        services.mocks.inspect.mockRejectedValue(new Error('registry connection lost'))
+      if (stage === 'confirmation') confirmInstall.mockRejectedValue(new Error('confirmation host failed'))
+
+      await expect(
+        services.useCases.install(
+          '@dsh-community/review-layer',
+          `install-${stage}`,
+          null,
+          undefined,
+          new AbortController().signal,
+          confirmInstall,
+        ),
+      ).rejects.toMatchObject({ code: 'PLUGIN_INSTALL_NOT_STARTED', retryable: true })
+      expect(services.mocks.installBundle).not.toHaveBeenCalled()
+    },
+  )
+
+  it('keeps errors from the install Remote indeterminate for RC2 recovery', async () => {
+    const services = useCases()
+    const disconnect = Object.assign(new Error('connection lost after request dispatch'), {
+      code: 'BACKEND_UNREACHABLE',
+    })
+    services.mocks.installBundle.mockRejectedValue(disconnect)
+
+    await expect(
+      services.useCases.install(
+        '@dsh-community/review-layer',
+        'install-remote-error',
+        null,
+        undefined,
+        new AbortController().signal,
+        () => Promise.resolve(true),
+      ),
+    ).rejects.toBe(disconnect)
+    expect(services.mocks.installBundle).toHaveBeenCalledOnce()
+  })
+
+  it('marks an abort observed during Host preflight as not sent to the install Remote', async () => {
+    const services = useCases()
+    const controller = new AbortController()
+
+    await expect(
+      services.useCases.install(
+        '@dsh-community/review-layer',
+        'install-preflight-aborted',
+        null,
+        undefined,
+        controller.signal,
+        () => {
+          controller.abort()
+          return Promise.resolve(true)
+        },
+      ),
+    ).rejects.toMatchObject({ code: 'PLUGIN_INSTALL_NOT_STARTED', retryable: true })
     expect(services.mocks.installBundle).not.toHaveBeenCalled()
   })
 
@@ -256,6 +321,37 @@ describe('PluginBundleUseCases', () => {
       code: 'PERMISSION_DENIED',
     })
     expect(services.mocks.setPluginEnabled).toHaveBeenCalledOnce()
+  })
+
+  it('requires Host approval before enabling a plugin entry and preserves decline without calling DSH', async () => {
+    const services = useCases()
+    const disabledPlugin = { ...plugin, enabled: false }
+    services.mocks.listPlugins.mockResolvedValue([disabledPlugin])
+
+    await expect(services.useCases.setPluginEnabled(plugin.entryId, true)).rejects.toMatchObject({
+      code: 'PERMISSION_DENIED',
+    })
+    expect(services.mocks.setPluginEnabled).not.toHaveBeenCalled()
+
+    const decline = vi.fn(() => Promise.resolve(false))
+    await expect(
+      services.useCases.setPluginEnabled(plugin.entryId, true, undefined, decline),
+    ).resolves.toEqual({
+      name: plugin.entryId,
+      changed: false,
+      application: 'cancelled',
+      enabled: true,
+      stage: 'enable',
+    })
+    expect(decline).toHaveBeenCalledWith(disabledPlugin)
+    expect(services.mocks.setPluginEnabled).not.toHaveBeenCalled()
+
+    const approve = vi.fn(() => Promise.resolve(true))
+    await expect(
+      services.useCases.setPluginEnabled(plugin.entryId, true, undefined, approve),
+    ).resolves.toMatchObject({ enabled: true, application: 'applied' })
+    expect(approve).toHaveBeenCalledWith(disabledPlugin)
+    expect(services.mocks.setPluginEnabled).toHaveBeenCalledWith(plugin.entryId, true, undefined)
   })
 
   it('aborts a DSH install through the request-scoped cancellation Remote', async () => {

@@ -390,4 +390,108 @@ describe('PluginInstallRecoveryController', () => {
     expect(waitCount).toBe(2)
     expect(refreshCount).toBe(2)
   })
+
+  it('settles a known preflight failure without waiting and permits a fresh install', async () => {
+    const requests: FeatureRequest[] = []
+    let installCount = 0
+    let refreshCount = 0
+    const controller = new PluginInstallRecoveryController({
+      featureRequest: <T>(request: FeatureRequest): Promise<T> => {
+        requests.push(request)
+        if (request.type === 'plugin.bundle.install') {
+          installCount += 1
+          if (installCount === 1)
+            throw Object.assign(new Error('The host rejected preflight.'), {
+              code: 'PLUGIN_INSTALL_NOT_STARTED',
+              retryable: true,
+            })
+          return Promise.resolve({ kind: 'plugin.bundle.changed', result: installResult } as T)
+        }
+        throw new Error(`Unexpected request ${request.type}`)
+      },
+      requestId: (() => {
+        let next = 0
+        return () => `plugin-preflight-${++next}`
+      })(),
+      onStateChange: (_state, refresh) => {
+        if (refresh) refreshCount += 1
+      },
+    })
+
+    await controller.start({ spec: '@dsh-community/review' })
+    const firstInstall = requests.find((request) => request.type === 'plugin.bundle.install')
+    if (firstInstall?.type !== 'plugin.bundle.install') throw new Error('first install request missing')
+    expect(controller.state).toMatchObject({
+      requestId: firstInstall.payload.installRequestId,
+      phase: 'settled',
+      waiting: false,
+      result: {
+        name: 'plugin',
+        changed: false,
+        application: 'failed',
+        stage: 'install',
+        errorCode: 'operation-error',
+      },
+    })
+    expect(requests.filter((request) => request.type === 'plugin.bundle.waitForInstall')).toHaveLength(0)
+    expect(refreshCount).toBe(1)
+
+    await controller.start({ spec: '@dsh-community/review' })
+    const installIds = requests
+      .filter((request) => request.type === 'plugin.bundle.install')
+      .map((request) => (request.type === 'plugin.bundle.install' ? request.payload.installRequestId : ''))
+    expect(installIds).toHaveLength(2)
+    expect(installIds[1]).not.toBe(installIds[0])
+    expect(controller.state).toMatchObject({ phase: 'settled', result: installResult })
+    expect(requests.filter((request) => request.type === 'plugin.bundle.waitForInstall')).toHaveLength(0)
+    expect(refreshCount).toBe(2)
+  })
+
+  it('keeps an explicit not-running cancellation when the pending preflight later proves no install was sent', async () => {
+    const requests: FeatureRequest[] = []
+    let rejectInstall!: (error: unknown) => void
+    const controller = new PluginInstallRecoveryController({
+      featureRequest: async <T>(request: FeatureRequest): Promise<T> => {
+        requests.push(request)
+        if (request.type === 'plugin.bundle.install')
+          return new Promise<T>((_resolve, reject) => {
+            rejectInstall = reject
+          })
+        if (request.type === 'plugin.bundle.cancelInstall')
+          return { kind: 'plugin.install.cancelled', status: 'not-running' } as T
+        if (request.type === 'plugin.bundle.waitForInstall') return reply(null) as T
+        throw new Error(`Unexpected request ${request.type}`)
+      },
+      requestId: (() => {
+        let next = 0
+        return () => `plugin-preflight-cancel-${++next}`
+      })(),
+      onStateChange: () => undefined,
+    })
+
+    const installing = controller.start({ spec: '@dsh-community/review' })
+    await vi.waitFor(() => expect(rejectInstall).toBeTypeOf('function'))
+    await controller.cancel()
+    expect(controller.state).toMatchObject({
+      phase: 'unknown',
+      cancellation: 'not-running',
+      waiting: false,
+    })
+
+    rejectInstall(
+      Object.assign(new Error('registry lookup failed before install dispatch'), {
+        code: 'PLUGIN_INSTALL_NOT_STARTED',
+      }),
+    )
+    await installing
+
+    expect(controller.state).toMatchObject({
+      phase: 'settled',
+      cancellation: 'cancelled',
+      waiting: false,
+    })
+    expect(controller.state?.result).toBeUndefined()
+    expect(requests.filter((request) => request.type === 'plugin.bundle.install')).toHaveLength(1)
+    expect(requests.filter((request) => request.type === 'plugin.bundle.waitForInstall')).toHaveLength(1)
+  })
 })

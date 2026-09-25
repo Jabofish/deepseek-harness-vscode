@@ -528,11 +528,19 @@ export interface AppActions {
 export interface AppStore extends AppState, AppActions {
   getState(): AppState
   subscribe(listener: () => void): () => void
+  /** Wait for a structured turn end after observing its start in this Session. */
+  watchSessionTurnEnd(sessionId: string): { readonly completion: Promise<void>; dispose(): void }
   dispose(): void
 }
 
 type StateSetter = (next: AppState | ((current: AppState) => AppState)) => void
 type LiveHistoryAppender = (sessionId: string, entry: SessionHistoryEvent) => void
+interface SessionTurnWatcher {
+  readonly sessionId: string
+  turn: number | undefined
+  finish(): void
+  dispose(): void
+}
 interface ProjectionSequenceIndex {
   readonly perKey: Map<string, Map<string, number>>
   readonly baselines: Map<string, number>
@@ -666,6 +674,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     connectionIdentity: undefined,
   }
   const listeners = new Set<() => void>()
+  const sessionTurnWatchers = new Set<SessionTurnWatcher>()
   let notifyTimer: number | undefined
   let pendingHistorySessionId: string | undefined
   let pendingHistory: SessionHistoryEvent[] = []
@@ -1799,6 +1808,13 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       }
     }
     const parsedEvent = parseHostDomainEvent(message)
+    if (parsedEvent?.type === 'turn.started' || parsedEvent?.type === 'turn.ended') {
+      for (const watcher of sessionTurnWatchers) {
+        if (watcher.sessionId !== parsedEvent.sessionId) continue
+        if (parsedEvent.type === 'turn.started') watcher.turn = parsedEvent.turn
+        else if (watcher.turn === parsedEvent.turn) watcher.finish()
+      }
+    }
     const messageSessionId =
       parsedEvent === undefined || parsedEvent === null ? undefined : backendEventSessionId(parsedEvent)
     const previousLastSequence = state.timeline.lastSequence
@@ -2961,6 +2977,35 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     subscribe: (listener) => {
       listeners.add(listener)
       return () => listeners.delete(listener)
+    },
+    watchSessionTurnEnd: (sessionId) => {
+      let resolveCompletion!: () => void
+      let rejectCompletion!: (reason: Error) => void
+      let settled = false
+      const completion = new Promise<void>((resolve, reject) => {
+        resolveCompletion = resolve
+        rejectCompletion = reject
+      })
+      // The App may still be awaiting sendPrompt when disposal rejects this watcher.
+      void completion.catch(() => undefined)
+      const finish = (): void => {
+        if (settled) return
+        settled = true
+        sessionTurnWatchers.delete(watcher)
+        resolveCompletion()
+      }
+      const disposeWatcher = (): void => {
+        if (settled) return
+        settled = true
+        sessionTurnWatchers.delete(watcher)
+        const error = new Error('AppStore disposed before the Session turn ended.')
+        error.name = 'SessionTurnWatchDisposedError'
+        rejectCompletion(error)
+      }
+      const watcher: SessionTurnWatcher = { sessionId, turn: undefined, finish, dispose: disposeWatcher }
+      if (disposed) disposeWatcher()
+      else sessionTurnWatchers.add(watcher)
+      return { completion, dispose: disposeWatcher }
     },
     initialize: async () => {
       // The update check is independent of DSH connectivity. Start it before
@@ -4573,6 +4618,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       // disposed store. Gap backfills also read `disposed`: they outlive a
       // superseded open on purpose so their announced range is not lost.
       disposed = true
+      for (const watcher of [...sessionTurnWatchers]) watcher.dispose()
       pluginInstallRecovery.dispose()
       openVersion += 1
       accountDetailsEpoch += 1

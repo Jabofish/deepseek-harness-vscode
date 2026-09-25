@@ -529,7 +529,7 @@ describe('DSH 0.1.7-rc.2 Plugin Manager Remote contract', () => {
       invalidRepository.installBundle('https://git.example.test/repo?token=secret', {
         requestId: 'install-3',
       }),
-    ).rejects.toMatchObject({ code: 'INVALID_CONFIGURATION' })
+    ).rejects.toMatchObject({ code: 'PLUGIN_INSTALL_NOT_STARTED' })
     await expect(invalidRepository.inspect('git://user:secret@example.test/a/b.git')).rejects.toMatchObject({
       code: 'INVALID_CONFIGURATION',
     })

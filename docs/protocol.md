@@ -39,7 +39,7 @@ sequenceDiagram
 
 Schema 已为以下域定义严格 discriminated union：应用/连接/Runtime、Workspace、Session CRUD、Prompt、Queue/Steer、附件、`@` 文件/会话引用、消息反馈、模型/Provider/Secret、审批/问题、Settings、Goal、Job、Subagent、Workflow、Skill、动态命令、Plugin、Export、诊断和右栏引导。Extension Host 对请求再次校验，并通过 Application ports 路由；精确请求名与字段以 `packages/webview-protocol/src/schemas.ts` 为唯一代码来源。
 
-RC2 插件安装使用独立的 `installRequestId` 关联 DSH 安装生命周期，和单次 Webview feature request 的 `requestId` 分开。安装回包丢失或取消返回 `too-late` 时，恢复始终使用同一安装 ID：同一 Host 已完成的安装结果在有界缓存期内会投影为等待结果；缓存未命中时调用 `pluginManager/waitForInstall`。结果仍未知或读取失败时显示未知并刷新目录，不会据此再次安装。恢复等待期间仍可向 Host 发送同 ID 取消。长安装请求有单独的 10 分钟响应预算；Host 对相同安装、取消和等待请求去重，并限制完成请求缓存。
+RC2 插件安装使用独立的 `installRequestId` 关联 DSH 安装生命周期，和单次 Webview feature request 的 `requestId` 分开。安装 Remote 调用前若二次 inspect/registry、Host 确认或 Adapter 本地参数验证失败，Host 明确返回 `PLUGIN_INSTALL_NOT_STARTED`；Webview 将它显示为可重试终态，不查询等待 Remote。安装 Remote 一旦调用，错误就可能发生在 DSH 收到请求之后；安装回包丢失或取消返回 `too-late` 时，恢复始终使用同一安装 ID：同一 Host 已完成的安装结果在有界缓存期内会投影为等待结果；缓存未命中时调用 `pluginManager/waitForInstall`。结果仍未知或读取失败时显示未知并刷新目录，不会据此再次安装。恢复等待期间仍可向 Host 发送同 ID 取消。长安装请求有单独的 10 分钟响应预算；Host 对相同安装、取消和等待请求去重，并限制完成请求缓存。
 
 RC2 账号详情响应中的 `accountScopeRevision` 是 Host 生成的非负安全整数，只表达 Host 已观察到的账号作用域变化或清除；它只在单个 Host 生命周期内单调，账号 ID 仍只留在 Extension Host。Webview 按该 revision 清除上一账号的奖励提示、确认重试和待处理 UI 状态；连接身份变化时 Store 还会清空整份账号快照，避免 Host 重连后 revision 重用造成旧卡片复现。
 

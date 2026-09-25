@@ -131,7 +131,7 @@ function submitCreateForm(): void {
 describe('SchedulePanel', () => {
   afterEach(() => cleanup())
 
-  it('serializes each RC2 selector exactly and does not claim creation when the Session request is sent', async () => {
+  it('serializes each RC2 selector exactly and waits for catalog confirmation after turn end', async () => {
     const cases = [
       { timing: 'after', selector: 'after_seconds', value: 300 },
       { timing: 'at', selector: 'at', value: { date: '2099-10-20', time: '09:30:00', time_zone: 'UTC' } },
@@ -186,7 +186,7 @@ describe('SchedulePanel', () => {
         ['after_seconds', 'at', 'every_seconds', 'daily', 'weekly', 'cron'].filter((key) => key in args),
       ).toHaveLength(1)
       await waitFor(() =>
-        expect(document.querySelector('.dsh-schedule-panel__create-state--pending')).not.toBeNull(),
+        expect(document.querySelector('.dsh-schedule-panel__create-state--unconfirmed')).not.toBeNull(),
       )
       expect(document.querySelector('.dsh-schedule-panel__create-state--confirmed')).toBeNull()
       expect(document.querySelector<HTMLButtonElement>('.dsh-schedule-panel__new')?.disabled).toBe(true)
@@ -211,7 +211,7 @@ describe('SchedulePanel', () => {
     })
     submitCreateForm()
     await waitFor(() =>
-      expect(document.querySelector('.dsh-schedule-panel__create-state--pending')).not.toBeNull(),
+      expect(document.querySelector('.dsh-schedule-panel__create-state--unconfirmed')).not.toBeNull(),
     )
 
     items = [
@@ -267,7 +267,7 @@ describe('SchedulePanel', () => {
     fireEvent.change(screen.getByLabelText('Time zone'), { target: { value: 'US/Eastern' } })
     submitCreateForm()
     await waitFor(() =>
-      expect(document.querySelector('.dsh-schedule-panel__create-state--pending')).not.toBeNull(),
+      expect(document.querySelector('.dsh-schedule-panel__create-state--unconfirmed')).not.toBeNull(),
     )
     items = [
       ...items,
@@ -298,7 +298,7 @@ describe('SchedulePanel', () => {
     fireEvent.change(screen.getByLabelText('Time zone'), { target: { value: 'UTC' } })
     submitCreateForm()
     await waitFor(() =>
-      expect(document.querySelector('.dsh-schedule-panel__create-state--pending')).not.toBeNull(),
+      expect(document.querySelector('.dsh-schedule-panel__create-state--unconfirmed')).not.toBeNull(),
     )
     items = [
       ...items,
@@ -340,7 +340,7 @@ describe('SchedulePanel', () => {
     submitCreateForm()
     await waitFor(() => expect(startSession).toHaveBeenCalledTimes(2))
     await waitFor(() =>
-      expect(document.querySelector('.dsh-schedule-panel__create-state--pending')).not.toBeNull(),
+      expect(document.querySelector('.dsh-schedule-panel__create-state--unconfirmed')).not.toBeNull(),
     )
   })
 
@@ -417,7 +417,7 @@ describe('SchedulePanel', () => {
     fireEvent.change(screen.getByLabelText('Time zone'), { target: { value: 'America/New_York' } })
     submitCreateForm()
     await waitFor(() =>
-      expect(document.querySelector('.dsh-schedule-panel__create-state--pending')).not.toBeNull(),
+      expect(document.querySelector('.dsh-schedule-panel__create-state--unconfirmed')).not.toBeNull(),
     )
     items = [
       ...items,
@@ -443,22 +443,76 @@ describe('SchedulePanel', () => {
     panel.view.unmount()
   })
 
-  it('moves a request to unconfirmed only after a manual catalog check finds no record', async () => {
-    mountPanel({ onStartScheduleSession: () => Promise.resolve('session-new') })
-    await screen.findByRole('button', { name: /Water the plants/u })
+  it('keeps Retry locked through an empty catalog while the create turn is still running', async () => {
+    let finishTurn!: () => void
+    let catalogReplyCount = 0
+    const startSession = vi.fn(
+      () =>
+        new Promise<string>((resolve) => {
+          finishTurn = () => resolve('session-new')
+        }),
+    )
+    const panel = mountPanel({
+      items: [],
+      onStartScheduleSession: startSession,
+      resolve: (request) => {
+        if (request.type !== 'schedule.catalog') return defaultResponse(request, [])
+        catalogReplyCount += 1
+        if (catalogReplyCount === 3) throw new Error('catalog not yet readable')
+        return { kind: 'schedule.catalog', items: [] }
+      },
+    })
+    await screen.findByText('No scheduled reminders yet.')
     clickCreateOpen()
     fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Awaiting Agent' } })
     fireEvent.change(screen.getByLabelText('Reminder instruction'), { target: { value: 'Run later.' } })
     submitCreateForm()
-    await waitFor(() =>
-      expect(document.querySelector('.dsh-schedule-panel__create-state--pending')).not.toBeNull(),
+    await waitFor(() => expect(startSession).toHaveBeenCalledTimes(1))
+    expect(document.querySelector('.dsh-schedule-panel__create-state--sending')).not.toBeNull()
+    const sendingState = document.querySelector<HTMLElement>('.dsh-schedule-panel__create-state--sending')
+    if (sendingState === null) throw new Error('The sending state is missing.')
+    expect(within(sendingState).queryByRole('button', { name: /retry/i })).toBeNull()
+
+    const refresh = document.querySelector<HTMLButtonElement>(
+      '.dsh-schedule-panel__heading-actions .dsh-schedule-panel__icon-button',
     )
-    const check = document.querySelector<HTMLButtonElement>('.dsh-schedule-panel__create-state button')
-    if (check === null) throw new Error('The catalog check control is missing.')
+    if (refresh === null) throw new Error('The catalog refresh control is missing.')
+    const catalogCalls = panel.requests.filter((request) => request.type === 'schedule.catalog').length
+    fireEvent.click(refresh)
+    await waitFor(() =>
+      expect(panel.requests.filter((request) => request.type === 'schedule.catalog')).toHaveLength(
+        catalogCalls + 1,
+      ),
+    )
+    const form = document.querySelector<HTMLFormElement>('.dsh-schedule-panel__create-form')
+    if (form === null) throw new Error('The create form is missing.')
+    fireEvent.submit(form)
+    expect(startSession).toHaveBeenCalledTimes(1)
+    expect(within(sendingState).queryByRole('button', { name: /retry/i })).toBeNull()
+
+    await act(async () => {
+      finishTurn()
+      await Promise.resolve()
+    })
+    await waitFor(() => {
+      expect(catalogReplyCount).toBe(3)
+      expect(document.querySelector('.dsh-schedule-panel__create-state--pending')).not.toBeNull()
+    })
+    const pendingState = document.querySelector<HTMLElement>('.dsh-schedule-panel__create-state--pending')
+    if (pendingState === null) throw new Error('The pending state is missing.')
+    expect(within(pendingState).queryByRole('button', { name: /retry/i })).toBeNull()
+    const check = within(pendingState).getByRole<HTMLButtonElement>('button', { name: /check/i })
+    await waitFor(() => expect(check.disabled).toBe(false))
     fireEvent.click(check)
     await waitFor(() =>
       expect(document.querySelector('.dsh-schedule-panel__create-state--unconfirmed')).not.toBeNull(),
     )
+    const unconfirmedState = document.querySelector<HTMLElement>(
+      '.dsh-schedule-panel__create-state--unconfirmed',
+    )
+    if (unconfirmedState === null) throw new Error('The unconfirmed state is missing.')
+    expect(within(unconfirmedState).getByRole('button', { name: /retry/i })).toBeDefined()
+    panel.view.unmount()
   })
 
   it('loads, searches and filters the catalog without losing its total count', async () => {

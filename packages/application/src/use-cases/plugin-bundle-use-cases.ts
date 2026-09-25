@@ -1,8 +1,10 @@
 import {
   AppError,
+  pluginInstallNotStartedError,
   type PluginBundleChangeResult,
   type PluginInspectProblem,
   type PluginInstallCancellation,
+  type ManagedPluginEntry,
   type PluginManagerBundle,
   type PluginRegistry,
   type PluginRegistryCatalog,
@@ -12,6 +14,7 @@ import {
 import type { DshBackend } from '@dsh-vscode/domain'
 
 export type PluginBundleEnableConfirmation = (bundle: PluginManagerBundle) => Promise<boolean>
+export type PluginEntryEnableConfirmation = (plugin: ManagedPluginEntry) => Promise<boolean>
 export type PluginBundleRemoveConfirmation = (bundle: PluginManagerBundle) => Promise<boolean>
 export type PluginInstallConfirmation = (spec: string, inspection: PluginSpecInspection) => Promise<boolean>
 export type PluginBuildApprovalConfirmation = (packages: readonly string[]) => Promise<boolean>
@@ -77,6 +80,7 @@ export class PluginBundleUseCases {
     entryId: string,
     enabled: boolean,
     signal?: AbortSignal,
+    confirmEnable?: PluginEntryEnableConfirmation,
   ): Promise<PluginBundleChangeResult> {
     const repository = await this.availableRepository(signal, true)
     const plugins = await repository.listPlugins(signal)
@@ -89,6 +93,13 @@ export class PluginBundleUseCases {
         message: 'DSH protects this plugin entry from profile changes.',
         retryable: false,
       })
+    if (enabled) {
+      if (confirmEnable === undefined)
+        throw permissionRequired('Enabling a DSH plugin entry requires Host confirmation.')
+      if (!(await confirmEnable(selected)))
+        return { name: entryId, changed: false, application: 'cancelled', enabled, stage: 'enable' }
+      signal?.throwIfAborted()
+    }
     return repository.setPluginEnabled(entryId, enabled, signal)
   }
 
@@ -101,20 +112,16 @@ export class PluginBundleUseCases {
     confirmInstall?: PluginInstallConfirmation,
     confirmBuilds?: PluginBuildApprovalConfirmation,
   ): Promise<PluginBundleChangeResult> {
-    const repository = await this.availableRepository(signal, true)
-    const inspection = await repository.inspect(spec, registry, signal)
-    signal.throwIfAborted()
-    if (inspection.status === 'refused') throw inspectionFailure(inspection.problem)
-    if (inspection.bundle === false) throw inspectionFailure('not-a-bundle')
-    if (confirmInstall === undefined)
-      throw permissionRequired('Installing a DSH bundle requires Host confirmation.')
-    if (!(await confirmInstall(spec, inspection)))
-      return { name: inspection.name ?? 'plugin', changed: false, application: 'cancelled', stage: 'install' }
-    signal.throwIfAborted()
-    if (approvedBuilds !== undefined && approvedBuilds.length > 0) {
-      if (confirmBuilds === undefined)
-        throw permissionRequired('Allowing dependency build scripts requires Host confirmation.')
-      if (!(await confirmBuilds(approvedBuilds)))
+    let repository: NonNullable<DshBackend['pluginBundles']>
+    try {
+      repository = await this.availableRepository(signal, true)
+      const inspection = await repository.inspect(spec, registry, signal)
+      signal.throwIfAborted()
+      if (inspection.status === 'refused') throw inspectionFailure(inspection.problem)
+      if (inspection.bundle === false) throw inspectionFailure('not-a-bundle')
+      if (confirmInstall === undefined)
+        throw permissionRequired('Installing a DSH bundle requires Host confirmation.')
+      if (!(await confirmInstall(spec, inspection)))
         return {
           name: inspection.name ?? 'plugin',
           changed: false,
@@ -122,6 +129,22 @@ export class PluginBundleUseCases {
           stage: 'install',
         }
       signal.throwIfAborted()
+      if (approvedBuilds !== undefined && approvedBuilds.length > 0) {
+        if (confirmBuilds === undefined)
+          throw permissionRequired('Allowing dependency build scripts requires Host confirmation.')
+        if (!(await confirmBuilds(approvedBuilds)))
+          return {
+            name: inspection.name ?? 'plugin',
+            changed: false,
+            application: 'cancelled',
+            stage: 'install',
+          }
+        signal.throwIfAborted()
+      }
+    } catch (error) {
+      // These checks can query DSH for the registry/spec, but no install Remote
+      // has been invoked yet, so waitForInstall cannot recover an install id.
+      throw pluginInstallNotStartedError(error)
     }
 
     // The Webview request can be cancelled or disposed while pnpm is running. RC2 owns the process and

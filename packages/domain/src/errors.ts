@@ -31,6 +31,7 @@ export type AppErrorCode =
   | 'RESOURCE_NOT_OWNED'
   | 'GENERATION_MISMATCH'
   | 'EVENT_GAP'
+  | 'PLUGIN_INSTALL_NOT_STARTED'
   | 'INTERNAL_ERROR'
 
 export interface AppErrorDetails {

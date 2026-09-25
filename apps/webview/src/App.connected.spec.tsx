@@ -181,6 +181,7 @@ function storeFor(state: AppState): AppStore {
     ...state,
     getState: () => state,
     subscribe: () => () => undefined,
+    watchSessionTurnEnd: vi.fn(() => ({ completion: Promise.resolve(), dispose: vi.fn() })),
     initialize: vi.fn().mockResolvedValue(undefined),
     reconnect: vi.fn().mockResolvedValue(undefined),
     readDiagnostics: vi.fn().mockResolvedValue(undefined),

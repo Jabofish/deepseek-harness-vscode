@@ -216,9 +216,11 @@
   --dsh-control-height-compact: 1.75rem;
   --dsh-tool-summary-height: var(--dsh-control-height-compact);
   --dsh-tool-summary-padding: var(--dsh-space-1) var(--dsh-space-2);
+  --dsh-font-size-2xs: 0.625rem;
   --dsh-font-size-xs: 0.75rem;
   --dsh-font-size-sm: 0.8125rem;
   --dsh-font-size-md: 0.875rem;
+  --dsh-font-size-lg: 1rem;
   --dsh-markdown-heading-1: 1.35rem;
   --dsh-markdown-heading-2: 1.15rem;
   --dsh-markdown-heading-3: 1rem;
