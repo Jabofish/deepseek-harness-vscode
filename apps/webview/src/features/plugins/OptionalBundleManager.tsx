@@ -10,6 +10,7 @@ import {
   type PluginSpecInspection,
 } from '@dsh-vscode/domain'
 import type { FeatureRequest } from '@dsh-vscode/webview-protocol'
+import type { PluginInstallInput, PluginInstallRecoveryState } from '../../app/plugin-install-recovery.js'
 import { useEffect, useMemo, useState, type ReactElement } from 'react'
 import { useI18n } from '../../i18n.js'
 import './optional-bundle-manager.css'
@@ -17,6 +18,10 @@ import './optional-bundle-manager.css'
 export interface OptionalBundleManagerProps {
   readonly revision?: number
   readonly installProgress?: PluginInstallProgressView | undefined
+  readonly installOperation?: PluginInstallRecoveryState | undefined
+  readonly onStartInstall?: (input: PluginInstallInput) => Promise<void>
+  readonly onCancelInstall?: () => Promise<void>
+  readonly onRecoverInstall?: () => Promise<void>
   readonly featureRequest: <T>(request: FeatureRequest) => Promise<T>
 }
 
@@ -187,14 +192,17 @@ export function OptionalBundleManager(props: OptionalBundleManagerProps): ReactE
   const [spec, setSpec] = useState('')
   const [inspection, setInspection] = useState<PluginSpecInspection>()
   const [checking, setChecking] = useState(false)
-  const [installRequestId, setInstallRequestId] = useState<string>()
-  const [installPhase, setInstallPhase] = useState<'installing' | 'cancelling' | 'too-late'>('installing')
-  const [pendingBuilds, setPendingBuilds] = useState<readonly string[]>([])
+  const installOperation = props.installOperation
+  const installBusy = installOperation !== undefined && installOperation.phase !== 'settled'
+  const pendingBuilds = installOperation?.result?.pendingBuilds ?? []
   const matchingInstallProgress =
-    installRequestId !== undefined && props.installProgress?.requestId === installRequestId
+    installOperation !== undefined && props.installProgress?.requestId === installOperation.requestId
       ? props.installProgress
       : undefined
-  const displayedInstallPhase = matchingInstallProgress?.phase ?? installPhase
+  const displayedInstallPhase =
+    installOperation?.phase === 'unknown' || installOperation?.phase === 'settled'
+      ? installOperation.phase
+      : (matchingInstallProgress?.phase ?? installOperation?.phase)
   const currentCatalogLoadState =
     catalogLoadState !== undefined &&
     catalogLoadState.revision === props.revision &&
@@ -271,14 +279,13 @@ export function OptionalBundleManager(props: OptionalBundleManagerProps): ReactE
 
   const loadInspection = async (): Promise<void> => {
     const value = spec.trim()
-    if (value === '' || checking || busyKey !== undefined || installRequestId !== undefined) return
+    if (value === '' || checking || busyKey !== undefined || installBusy) return
     if (selectedRegistry === undefined && registryView.selected === '__custom__') {
       setNotice({ kind: 'message', key: 'plugins.manager.registry.invalid' })
       return
     }
     setChecking(true)
     setInspection(undefined)
-    setPendingBuilds([])
     setNotice(undefined)
     try {
       const response = await props.featureRequest<unknown>({
@@ -297,58 +304,32 @@ export function OptionalBundleManager(props: OptionalBundleManagerProps): ReactE
   }
 
   const runInstall = async (approved?: readonly string[]): Promise<void> => {
-    if (busyKey !== undefined || installRequestId !== undefined) return
+    if (busyKey !== undefined || installBusy || props.onStartInstall === undefined) return
     const value = spec.trim()
     if (value === '' || (selectedRegistry === undefined && registryView.selected === '__custom__')) return
-    const installId = newRequestId()
-    setInstallRequestId(installId)
-    setInstallPhase('installing')
-    setBusyKey('install')
     setNotice(undefined)
-    try {
-      const response = await props.featureRequest<unknown>({
-        type: 'plugin.bundle.install',
-        requestId: newRequestId(),
-        payload: {
-          spec: value,
-          installRequestId: installId,
-          ...(selectedRegistry === undefined ? {} : { registry: selectedRegistry }),
-          ...(approved === undefined ? {} : { approvedBuilds: [...approved] }),
-        },
-      })
-      const result = resultOf(response)
-      if (result === undefined || result.stage !== 'install') throw new Error('malformed install result')
-      setNotice({ kind: 'result', result })
-      setPendingBuilds(result.pendingBuilds ?? [])
-      setInspection(undefined)
-      setRefreshToken((count) => count + 1)
-    } catch {
-      setNotice({ kind: 'message', key: 'plugins.manager.install.uncertain' })
-      setRefreshToken((count) => count + 1)
-    } finally {
-      setInstallRequestId(undefined)
-      setBusyKey(undefined)
-    }
+    setInspection(undefined)
+    await props.onStartInstall({
+      spec: value,
+      ...(selectedRegistry === undefined ? {} : { registry: selectedRegistry }),
+      ...(approved === undefined ? {} : { approvedBuilds: [...approved] }),
+    })
   }
 
   const cancelInstall = async (): Promise<void> => {
-    if (installRequestId === undefined || installPhase === 'cancelling') return
-    setInstallPhase('cancelling')
-    try {
-      const value = object(
-        await props.featureRequest<unknown>({
-          type: 'plugin.bundle.cancelInstall',
-          requestId: newRequestId(),
-          payload: { installRequestId },
-        }),
-      )
-      if (value?.kind !== 'plugin.install.cancelled' || typeof value.status !== 'string')
-        throw new Error('bad cancel')
-      if (value.status === 'too-late') setInstallPhase('too-late')
-    } catch {
-      setNotice({ kind: 'message', key: 'plugins.manager.install.cancelFailed' })
-      setInstallPhase('installing')
-    }
+    const recoveryWaitCanBeCancelled = installOperation?.phase === 'unknown' && installOperation.waiting
+    if (
+      installOperation === undefined ||
+      !installBusy ||
+      installOperation.cancelRequested ||
+      installOperation.phase === 'applying' ||
+      installOperation.cancellation === 'cancelled' ||
+      installOperation.cancellation === 'too-late' ||
+      (installOperation.phase === 'unknown' && !recoveryWaitCanBeCancelled) ||
+      (installOperation.waiting && !recoveryWaitCanBeCancelled)
+    )
+      return
+    await props.onCancelInstall?.()
   }
 
   const applyChange = async (
@@ -356,7 +337,7 @@ export function OptionalBundleManager(props: OptionalBundleManagerProps): ReactE
     request: FeatureRequest,
     expectedEnabled?: boolean,
   ): Promise<void> => {
-    if (busyKey !== undefined || installRequestId !== undefined) return
+    if (busyKey !== undefined || installBusy) return
     setBusyKey(key)
     setNotice(undefined)
     try {
@@ -429,10 +410,7 @@ export function OptionalBundleManager(props: OptionalBundleManagerProps): ReactE
     const title =
       plugin === undefined ? (localized(meta?.title, locale) ?? moduleName) : pluginTitle(plugin, locale)
     const disabled =
-      plugin === undefined ||
-      plugin.readOnlyReason !== undefined ||
-      busyKey !== undefined ||
-      installRequestId !== undefined
+      plugin === undefined || plugin.readOnlyReason !== undefined || busyKey !== undefined || installBusy
     return (
       <li className="dsh-optional-bundles__plugin" key={`${rowId}:${entryId ?? moduleName}`}>
         <span>{title}</span>
@@ -460,7 +438,7 @@ export function OptionalBundleManager(props: OptionalBundleManagerProps): ReactE
     const title = localized(bundle.title, locale) ?? bundle.name
     const description = localized(bundle.description, locale)
     const blocked = bundle.readOnlyReason !== undefined || (!bundle.enabled && bundle.errorCode !== undefined)
-    const actionDisabled = blocked || busyKey !== undefined || installRequestId !== undefined
+    const actionDisabled = blocked || busyKey !== undefined || installBusy
     return (
       <li className="dsh-optional-bundles__item" key={bundle.name}>
         <div className="dsh-optional-bundles__copy">
@@ -544,7 +522,7 @@ export function OptionalBundleManager(props: OptionalBundleManagerProps): ReactE
               className="dsh-button dsh-button--secondary dsh-button--compact"
               type="button"
               aria-label={t('plugins.manager.remove.named', { name: title })}
-              disabled={busyKey !== undefined || installRequestId !== undefined}
+              disabled={busyKey !== undefined || installBusy}
               onClick={() => removeBundle(bundle)}
             >
               {t('plugins.manager.remove')}
@@ -561,8 +539,10 @@ export function OptionalBundleManager(props: OptionalBundleManagerProps): ReactE
     spec.trim() !== '' &&
     !checking &&
     busyKey === undefined &&
-    installRequestId === undefined &&
+    !installBusy &&
+    props.onStartInstall !== undefined &&
     !(registryView.selected === '__custom__' && selectedRegistry === undefined)
+  const recoveryWaitCanBeCancelled = installOperation?.phase === 'unknown' && installOperation.waiting
 
   return (
     <section className="dsh-optional-bundles" aria-labelledby="dsh-optional-bundles-title">
@@ -614,12 +594,11 @@ export function OptionalBundleManager(props: OptionalBundleManagerProps): ReactE
                 autoComplete="off"
                 maxLength={4_096}
                 value={spec}
-                disabled={checking || busyKey !== undefined || installRequestId !== undefined}
+                disabled={checking || busyKey !== undefined || installBusy}
                 placeholder={t('plugins.manager.install.placeholder')}
                 onChange={(event) => {
                   setSpec(event.currentTarget.value)
                   setInspection(undefined)
-                  setPendingBuilds([])
                 }}
               />
             </label>
@@ -628,7 +607,7 @@ export function OptionalBundleManager(props: OptionalBundleManagerProps): ReactE
                 <span>{t('plugins.manager.registry.label')}</span>
                 <select
                   value={registryView.selected}
-                  disabled={checking || busyKey !== undefined || installRequestId !== undefined}
+                  disabled={checking || busyKey !== undefined || installBusy}
                   onChange={(event) => {
                     const selected = event.currentTarget.value
                     setRegistryView((previous) => ({ ...previous, selected }))
@@ -654,7 +633,7 @@ export function OptionalBundleManager(props: OptionalBundleManagerProps): ReactE
                     type="url"
                     autoComplete="off"
                     value={registryView.custom}
-                    disabled={checking || busyKey !== undefined || installRequestId !== undefined}
+                    disabled={checking || busyKey !== undefined || installBusy}
                     onChange={(event) => {
                       setRegistryView((previous) => ({ ...previous, custom: event.currentTarget.value }))
                       setInspection(undefined)
@@ -673,17 +652,13 @@ export function OptionalBundleManager(props: OptionalBundleManagerProps): ReactE
                 className="dsh-button dsh-button--secondary dsh-button--compact"
                 type="button"
                 disabled={
-                  spec.trim() === '' ||
-                  checking ||
-                  busyKey !== undefined ||
-                  installRequestId !== undefined ||
-                  registryError
+                  spec.trim() === '' || checking || busyKey !== undefined || installBusy || registryError
                 }
                 onClick={() => void loadInspection()}
               >
                 {checking ? t('plugins.manager.inspect.checking') : t('plugins.manager.inspect.action')}
               </button>
-              {installRequestId === undefined ? (
+              {!installBusy ? (
                 <button
                   className="dsh-button dsh-button--primary dsh-button--compact"
                   type="button"
@@ -692,25 +667,28 @@ export function OptionalBundleManager(props: OptionalBundleManagerProps): ReactE
                 >
                   {t('plugins.manager.install.action')}
                 </button>
-              ) : (
+              ) : installOperation?.phase === 'unknown' && !recoveryWaitCanBeCancelled ? null : (
                 <button
                   className="dsh-button dsh-button--secondary dsh-button--compact"
                   type="button"
                   disabled={
+                    (installOperation?.waiting === true && !recoveryWaitCanBeCancelled) ||
+                    installOperation?.cancelRequested === true ||
+                    installOperation?.phase === 'applying' ||
+                    installOperation?.cancellation === 'cancelled' ||
+                    installOperation?.cancellation === 'too-late' ||
                     displayedInstallPhase === 'cancelling' ||
-                    displayedInstallPhase === 'too-late' ||
-                    displayedInstallPhase === 'applying'
+                    displayedInstallPhase === 'applying' ||
+                    props.onCancelInstall === undefined
                   }
                   onClick={() => void cancelInstall()}
                 >
                   {t(
-                    displayedInstallPhase === 'cancelling'
+                    displayedInstallPhase === 'cancelling' || installOperation?.cancelRequested
                       ? 'plugins.manager.install.cancelling'
-                      : displayedInstallPhase === 'too-late'
-                        ? 'plugins.manager.install.tooLate'
-                        : displayedInstallPhase === 'applying'
-                          ? 'plugins.manager.install.applying'
-                          : 'plugins.manager.install.cancel',
+                      : displayedInstallPhase === 'applying'
+                        ? 'plugins.manager.install.applying'
+                        : 'plugins.manager.install.cancel',
                   )}
                 </button>
               )}
@@ -731,7 +709,7 @@ export function OptionalBundleManager(props: OptionalBundleManagerProps): ReactE
                 {t(`plugins.manager.inspect.problem.${inspection.problem}`)}
               </p>
             ) : null}
-            {installRequestId !== undefined ? (
+            {installBusy && installOperation !== undefined ? (
               <p className="dsh-optional-bundles__muted" role="status">
                 {displayedInstallPhase === 'installing' &&
                 matchingInstallProgress?.attemptIndex !== undefined &&
@@ -741,14 +719,43 @@ export function OptionalBundleManager(props: OptionalBundleManagerProps): ReactE
                       total: matchingInstallProgress.attemptTotal,
                     })
                   : t(
-                      displayedInstallPhase === 'cancelling'
-                        ? 'plugins.manager.install.cancelling'
-                        : displayedInstallPhase === 'too-late'
-                          ? 'plugins.manager.install.tooLate'
+                      installOperation.phase === 'unknown'
+                        ? 'plugins.manager.install.unknown'
+                        : displayedInstallPhase === 'cancelling'
+                          ? 'plugins.manager.install.cancelling'
                           : displayedInstallPhase === 'applying'
                             ? 'plugins.manager.install.applying'
                             : 'plugins.manager.install.running',
                     )}
+              </p>
+            ) : null}
+            {installBusy && installOperation?.waiting === true ? (
+              <p className="dsh-optional-bundles__muted" role="status">
+                {t('plugins.manager.install.recovering')}
+              </p>
+            ) : null}
+            {installOperation?.phase === 'unknown' ? (
+              <button
+                className="dsh-button dsh-button--secondary dsh-button--compact"
+                type="button"
+                disabled={installOperation.waiting}
+                onClick={() => void props.onRecoverInstall?.()}
+              >
+                {installOperation.waiting
+                  ? t('plugins.manager.install.recovering')
+                  : t('plugins.manager.install.recover')}
+              </button>
+            ) : null}
+            {installOperation?.phase === 'settled' && installOperation.result !== undefined ? (
+              <p
+                className={`dsh-optional-bundles__notice${installOperation.result.application === 'failed' ? ' dsh-optional-bundles__notice--error' : ''}`}
+                role={installOperation.result.application === 'failed' ? 'alert' : 'status'}
+              >
+                {resultText(installOperation.result)}
+              </p>
+            ) : installOperation?.cancellation === 'cancelled' ? (
+              <p className="dsh-optional-bundles__notice" role="status">
+                {t('plugins.bundles.result.cancelled')}
               </p>
             ) : null}
             {pendingBuilds.length > 0 ? (

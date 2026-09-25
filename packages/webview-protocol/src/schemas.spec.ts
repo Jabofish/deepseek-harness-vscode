@@ -830,6 +830,7 @@ describe('RC2 Account Profile feature protocol', () => {
 
   it('accepts only account detail, acknowledgement, and page receipts with safe projections', () => {
     const details = {
+      accountScopeRevision: 1,
       profile: { status: 'ready', value: { name: 'Ada', contact: 'ada@example.test' } },
       balance: { status: 'ready', value: { wallets: [], bonusWallets: [] } },
       bonus: { status: 'ready', value: null },
@@ -940,6 +941,7 @@ describe('RC2 Plugin Manager feature protocol', () => {
         payload: { spec: '@dsh-community/review-layer', installRequestId: 'install-1' },
       },
       { type: 'plugin.bundle.cancelInstall', payload: { installRequestId: 'install-1' } },
+      { type: 'plugin.bundle.waitForInstall', payload: { installRequestId: 'install-1' } },
       { type: 'plugin.bundle.setEnabled', payload: { name: '@dsh-community/review-layer', enabled: true } },
       { type: 'plugin.bundle.remove', payload: { name: '@dsh-community/review-layer' } },
       { type: 'plugin.entry.setEnabled', payload: { entryId: 'review:entry', enabled: false } },
@@ -1057,6 +1059,48 @@ describe('RC2 Plugin Manager feature protocol', () => {
         payload: { kind: 'plugin.install.cancelled', status: 'too-late' },
       }).success,
     ).toBe(true)
+    expect(
+      featureResponseSchema.safeParse({
+        type: 'feature.response',
+        requestId: 'install-wait-result-response',
+        ok: true,
+        payload: {
+          kind: 'plugin.install.waited',
+          result: {
+            name: '@dsh-community/review-layer',
+            changed: true,
+            application: 'applied',
+            stage: 'install',
+            bundle: '@dsh-community/review-layer',
+          },
+        },
+      }).success,
+    ).toBe(true)
+    expect(
+      featureResponseSchema.safeParse({
+        type: 'feature.response',
+        requestId: 'install-wait-settled-response',
+        ok: true,
+        payload: { kind: 'plugin.install.waited', result: null },
+      }).success,
+    ).toBe(true)
+    expect(
+      featureResponseSchema.safeParse({
+        type: 'feature.response',
+        requestId: 'install-wait-open-response',
+        ok: true,
+        payload: {
+          kind: 'plugin.install.waited',
+          result: {
+            name: 'plugin',
+            changed: false,
+            application: 'cancelled',
+            stage: 'install',
+            diagnostic: 'private',
+          },
+        },
+      }).success,
+    ).toBe(false)
     const change = {
       type: 'feature.response',
       requestId: 'bundle-change-response',

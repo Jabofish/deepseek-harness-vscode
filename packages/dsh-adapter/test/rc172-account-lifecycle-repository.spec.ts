@@ -190,6 +190,7 @@ describe('Rc172AccountLifecycleRepository', () => {
     ['account/getBalance', { status: 'ready', value: [{ currency: 'BTC', balance: '1' }], bonusWallets: [] }],
     ['account/getUnnotifiedBonuses', { accountId: 'account', bonuses: [{ orderId: 'not-an-id' }] }],
     ['account/getUnnotifiedBonuses', { accountId: 'account', bonuses: 'malformed' }],
+    ['account/getUnnotifiedBonuses', { accountId: 'x'.repeat(257), bonuses: [] }],
   ] as const)('rejects malformed account response for %s', async (endpoint, value) => {
     const remoteRequest = vi
       .fn<AccountRemoteTransport['remoteRequest']>()
@@ -203,6 +204,15 @@ describe('Rc172AccountLifecycleRepository', () => {
           ? repository.getBalance(client)
           : repository.getUnnotifiedBonuses(client),
     ).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
+  })
+
+  it('preserves the exact RC2 AccountUserId even when its string is empty', async () => {
+    const remoteRequest = vi
+      .fn<AccountRemoteTransport['remoteRequest']>()
+      .mockResolvedValue(remoteSuccess({ accountId: '', bonuses: [] }))
+    const repository = new Rc172AccountLifecycleRepository({ remoteRequest, openRemoteStream: vi.fn() })
+
+    await expect(repository.getUnnotifiedBonuses(client)).resolves.toEqual({ accountId: '', bonuses: [] })
   })
 
   it('resolves account pages from the account state but rejects destinations outside the official origin', async () => {

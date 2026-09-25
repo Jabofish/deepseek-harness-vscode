@@ -38,9 +38,16 @@
 }
 
 .dsh-schedule-panel__new {
-  border-color: var(--dsh-primary) !important;
-  color: var(--dsh-on-primary) !important;
-  background: var(--dsh-primary) !important;
+  border-color: var(--dsh-primary);
+  color: var(--dsh-primary-text);
+  background: var(--dsh-primary);
+}
+
+/* The shared `button:hover:not(:disabled)` rule outweighs a bare class selector,
+ * so the filled variants restate their hover colour at matching specificity. */
+.dsh-schedule-panel__new:hover:not(:disabled),
+.dsh-schedule-panel__primary:hover:not(:disabled) {
+  background: var(--dsh-primary-hover);
 }
 
 .dsh-schedule-panel__create-form {
@@ -76,6 +83,20 @@
 
 .dsh-schedule-panel__create-state--confirmed {
   border-color: color-mix(in srgb, var(--dsh-success) 50%, var(--dsh-border-color));
+}
+
+.dsh-schedule-panel__create-state--sending,
+.dsh-schedule-panel__create-state--pending {
+  border-color: color-mix(in srgb, var(--dsh-info) 50%, var(--dsh-border-color));
+}
+
+.dsh-schedule-panel__create-state--unconfirmed {
+  border-color: color-mix(in srgb, var(--dsh-warning) 50%, var(--dsh-border-color));
+}
+
+.dsh-schedule-panel__create-state--failed {
+  border-color: color-mix(in srgb, var(--dsh-danger) 50%, var(--dsh-border-color));
+  color: var(--dsh-danger);
 }
 
 .dsh-schedule-panel__create-state-title {
@@ -135,8 +156,8 @@
 .dsh-schedule-panel__icon-button {
   flex: 0 0 auto;
   width: var(--dsh-control-height-compact);
-  padding-inline: 0 !important;
-  font-size: 1.15rem !important;
+  padding-inline: 0;
+  font-size: var(--dsh-icon-size);
 }
 
 .dsh-schedule-panel__controls {
@@ -204,7 +225,7 @@
   gap: var(--dsh-space-1);
   width: 100%;
   min-width: 0;
-  padding: var(--dsh-space-3) !important;
+  padding: var(--dsh-space-3);
   text-align: start;
 }
 
@@ -229,8 +250,9 @@
 
 .dsh-schedule-panel__status {
   width: fit-content;
-  padding: 0.1rem 0.4rem;
-  border-radius: var(--dsh-radius-sm);
+  padding: var(--dsh-space-1) var(--dsh-space-2);
+  border-radius: var(--dsh-radius-pill);
+  font-size: var(--dsh-font-size-2xs);
   color: var(--dsh-success);
   background: color-mix(in srgb, var(--dsh-success) 12%, transparent);
 }
@@ -349,14 +371,14 @@
 }
 
 .dsh-schedule-panel__primary {
-  border-color: var(--dsh-primary) !important;
-  color: var(--dsh-on-primary) !important;
-  background: var(--dsh-primary) !important;
+  border-color: var(--dsh-primary);
+  color: var(--dsh-primary-text);
+  background: var(--dsh-primary);
 }
 
 .dsh-schedule-panel__danger {
-  border-color: color-mix(in srgb, var(--dsh-danger) 60%, var(--dsh-border-color)) !important;
-  color: var(--dsh-danger) !important;
+  border-color: color-mix(in srgb, var(--dsh-danger) 60%, var(--dsh-border-color));
+  color: var(--dsh-danger);
 }
 
 .dsh-schedule-panel__confirm,
@@ -408,6 +430,14 @@
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
   border: 0;
+}
+
+/* Master/detail: an open schedule hands the reading width to the detail pane.
+ * Scoped above the breakpoint that stacks the two columns. */
+@media (min-width: 761px) {
+  .dsh-schedule-panel:has(.dsh-schedule-panel__catalog--detail) {
+    grid-template-columns: minmax(14rem, 0.68fr) minmax(0, 1.32fr);
+  }
 }
 
 @media (max-width: 760px) {

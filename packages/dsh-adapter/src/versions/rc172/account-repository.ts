@@ -282,7 +282,7 @@ function readBonusBatch(value: unknown, method: string): AccountBonusBatch | nul
   const batch = asRecord(value)
   if (
     batch === undefined ||
-    !boundedText(batch.accountId, 256) ||
+    !boundedAccountId(batch.accountId) ||
     !Array.isArray(batch.bonuses) ||
     batch.bonuses.length > 128
   )
@@ -323,6 +323,10 @@ function nullableText(value: unknown, maximumLength: number): value is string | 
 
 function boundedText(value: unknown, maximumLength: number): value is string {
   return typeof value === 'string' && value.length <= maximumLength
+}
+
+function boundedAccountId(value: unknown): value is string {
+  return boundedText(value, 256)
 }
 
 function isBoundedExponent(value: string): boolean {

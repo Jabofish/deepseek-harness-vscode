@@ -49,6 +49,7 @@ const SESSION_EXPORT_TIMEOUT_MS = 180_000
 // These requests wait for a native file/password dialog, not just an RPC.
 // Give the user time to choose or cancel while retaining a bounded lifetime.
 const NATIVE_DIALOG_TIMEOUT_MS = 600_000
+const PLUGIN_INSTALL_TIMEOUT_MS = 600_000
 
 /** Per-type host budgets; any request not listed keeps the ordinary timeout. */
 const EXTENDED_TIMEOUT_MS: Readonly<Record<string, number>> = {
@@ -56,6 +57,8 @@ const EXTENDED_TIMEOUT_MS: Readonly<Record<string, number>> = {
   'attachment.pick': NATIVE_DIALOG_TIMEOUT_MS,
   'provider.secret.configure': NATIVE_DIALOG_TIMEOUT_MS,
   'plugin.credential.configure': NATIVE_DIALOG_TIMEOUT_MS,
+  'plugin.bundle.install': PLUGIN_INSTALL_TIMEOUT_MS,
+  'plugin.bundle.waitForInstall': PLUGIN_INSTALL_TIMEOUT_MS,
   'runtime.update.check': RUNTIME_UPDATE_CHECK_TIMEOUT_MS,
   'runtime.update.install': RUNTIME_UPDATE_INSTALL_TIMEOUT_MS,
   'checkpoint.create': CHECKPOINT_TIMEOUT_MS,

@@ -43,7 +43,7 @@ export function ScheduleDrawer(props: ScheduleDrawerProps): ReactElement | null 
       ...dialog.querySelectorAll<HTMLElement>(
         'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
       ),
-    ].filter((element) => element.getAttribute('aria-hidden') !== 'true')
+    ].filter((element) => element.closest('[hidden], [inert], [aria-hidden="true"]') === null)
     const first = focusable[0]
     const last = focusable[focusable.length - 1]
     if (first === undefined || last === undefined) {

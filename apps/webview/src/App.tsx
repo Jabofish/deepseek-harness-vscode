@@ -1578,6 +1578,10 @@ export function App(): ReactElement {
           }}
           pluginInventoryRevision={store.pluginInventoryRevision}
           pluginInstallProgress={store.pluginInstallProgress}
+          pluginInstallOperation={state.pluginInstallOperation}
+          onStartPluginInstall={(input) => store.startPluginInstall(input)}
+          onCancelPluginInstall={() => store.cancelPluginInstall()}
+          onRecoverPluginInstall={() => store.recoverPluginInstall()}
           onLoadPluginInventory={() => store.loadPluginInventory()}
           featureRequest={store.featureRequest}
           accountLifecycleAvailable={state.accountLifecycleAvailable}

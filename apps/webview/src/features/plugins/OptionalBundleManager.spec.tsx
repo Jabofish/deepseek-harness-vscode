@@ -1,8 +1,13 @@
 // @vitest-environment jsdom
 
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { afterEach, describe, expect, it } from 'vitest'
+import { useMemo, useState, type ReactElement } from 'react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { FeatureRequest } from '@dsh-vscode/webview-protocol'
+import {
+  PluginInstallRecoveryController,
+  type PluginInstallRecoveryState,
+} from '../../app/plugin-install-recovery.js'
 import { OptionalBundleManager, type OptionalBundleManagerProps } from './OptionalBundleManager.js'
 
 afterEach(cleanup)
@@ -52,6 +57,33 @@ interface MountedManager {
   readonly render: ReturnType<typeof render>
 }
 
+function ManagerHarness(props: {
+  readonly featureRequest: OptionalBundleManagerProps['featureRequest']
+  readonly revision?: number
+  readonly installProgress?: OptionalBundleManagerProps['installProgress']
+}): ReactElement {
+  const [installOperation, setInstallOperation] = useState<PluginInstallRecoveryState>()
+  const controller = useMemo(() => {
+    let id = 0
+    return new PluginInstallRecoveryController({
+      featureRequest: props.featureRequest,
+      requestId: () => `plugin-test-request-${++id}`,
+      onStateChange: setInstallOperation,
+    })
+  }, [props.featureRequest])
+  return (
+    <OptionalBundleManager
+      {...(props.revision === undefined ? {} : { revision: props.revision })}
+      {...(props.installProgress === undefined ? {} : { installProgress: props.installProgress })}
+      {...(installOperation === undefined ? {} : { installOperation })}
+      onStartInstall={(input) => controller.start(input)}
+      onCancelInstall={() => controller.cancel()}
+      onRecoverInstall={() => controller.recover()}
+      featureRequest={props.featureRequest}
+    />
+  )
+}
+
 function mountManager(resolve: (request: FeatureRequest) => unknown = defaultResponse): MountedManager {
   const requests: FeatureRequest[] = []
   const featureRequest: OptionalBundleManagerProps['featureRequest'] = <T,>(request: FeatureRequest) => {
@@ -60,7 +92,7 @@ function mountManager(resolve: (request: FeatureRequest) => unknown = defaultRes
   }
   return {
     requests,
-    render: render(<OptionalBundleManager featureRequest={featureRequest} />),
+    render: render(<ManagerHarness featureRequest={featureRequest} />),
   }
 }
 
@@ -136,11 +168,11 @@ describe('OptionalBundleManager', () => {
           : { kind: 'plugin.registries', available: true, registries }
       return Promise.resolve(response as T)
     }
-    const view = render(<OptionalBundleManager revision={0} featureRequest={featureRequest} />)
+    const view = render(<ManagerHarness revision={0} featureRequest={featureRequest} />)
     await screen.findByRole('heading', { name: 'DSH Plugin Manager' })
     await waitFor(() => expect(requests).toHaveLength(2))
 
-    view.rerender(<OptionalBundleManager revision={1} featureRequest={featureRequest} />)
+    view.rerender(<ManagerHarness revision={1} featureRequest={featureRequest} />)
     await waitFor(() => expect(requests).toHaveLength(4))
     expect(requests.map((request) => request.type)).toEqual([
       'plugin.bundles.list',
@@ -187,6 +219,171 @@ describe('OptionalBundleManager', () => {
     expect(installRequest.payload.registry).toBe('https://registry.example.test/')
   })
 
+  it('keeps an unknown install recoverable across manager unmount without starting another install', async () => {
+    const requests: FeatureRequest[] = []
+    const featureRequest: OptionalBundleManagerProps['featureRequest'] = <T,>(request: FeatureRequest) => {
+      requests.push(request)
+      return Promise.resolve(defaultResponse(request) as T)
+    }
+    const installOperation: PluginInstallRecoveryState = {
+      requestId: 'private-install-request-id',
+      phase: 'unknown',
+      cancelRequested: false,
+      waiting: false,
+    }
+    const onRecoverInstall = vi.fn().mockResolvedValue(undefined)
+    const props = {
+      featureRequest,
+      installOperation,
+      onRecoverInstall,
+    } satisfies OptionalBundleManagerProps
+
+    const first = render(<OptionalBundleManager {...props} />)
+    await screen.findByRole('heading', { name: 'DSH Plugin Manager' })
+    expect(
+      screen.getByText(
+        'The install result is still unknown. Check its status before starting another install.',
+      ),
+    ).toBeTruthy()
+    expect(screen.queryByText(installOperation.requestId)).toBeNull()
+    first.unmount()
+
+    render(<OptionalBundleManager {...props} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Check install status' }))
+    expect(onRecoverInstall).toHaveBeenCalledOnce()
+    expect(requests.filter((request) => request.type === 'plugin.bundle.install')).toHaveLength(0)
+  })
+
+  it.each(['too-late', 'cancelled'] as const)(
+    'offers cancellation during a lost-reply recovery wait and handles the %s result',
+    async (status) => {
+      const requests: FeatureRequest[] = []
+      let finishWait!: (value: unknown) => void
+      let finishCancel!: (value: unknown) => void
+      let waitCount = 0
+      const featureRequest: OptionalBundleManagerProps['featureRequest'] = <T,>(request: FeatureRequest) => {
+        requests.push(request)
+        if (request.type === 'plugin.bundle.install') return Promise.reject(new Error('reply lost'))
+        if (request.type === 'plugin.bundle.waitForInstall') {
+          waitCount += 1
+          return new Promise<T>((resolve) => {
+            finishWait = resolve as (value: unknown) => void
+          })
+        }
+        if (request.type === 'plugin.bundle.cancelInstall')
+          return new Promise<T>((resolve) => {
+            finishCancel = resolve as (value: unknown) => void
+          })
+        return Promise.resolve(defaultResponse(request) as T)
+      }
+      const view = render(<ManagerHarness featureRequest={featureRequest} />)
+      await screen.findByRole('heading', { name: 'DSH Plugin Manager' })
+      fireEvent.change(screen.getByLabelText('Package name or supported package source'), {
+        target: { value: '@dsh-community/new-plugin' },
+      })
+      fireEvent.click(screen.getByRole('button', { name: 'Check package' }))
+      await screen.findByText('Package: @dsh-community/new-plugin · 2.0.0')
+      fireEvent.click(screen.getByRole('button', { name: 'Install' }))
+
+      const cancel = await screen.findByRole('button', { name: 'Cancel install' })
+      expect(cancel.getAttribute('disabled')).toBeNull()
+      expect(waitCount).toBe(1)
+      const installRequest = requests.find((request) => request.type === 'plugin.bundle.install')
+      if (installRequest?.type !== 'plugin.bundle.install') throw new Error('install request missing')
+      const installId = installRequest.payload.installRequestId
+
+      fireEvent.click(cancel)
+      const cancelRequest = await waitFor(() => {
+        const found = requests.find((request) => request.type === 'plugin.bundle.cancelInstall')
+        if (found?.type !== 'plugin.bundle.cancelInstall') throw new Error('cancel request missing')
+        return found
+      })
+      expect(cancelRequest.payload.installRequestId).toBe(installId)
+      const cancellationPending = await screen.findByRole('button', {
+        name: 'Waiting for DSH to stop and restore the profile…',
+      })
+      expect(cancellationPending.getAttribute('disabled')).not.toBeNull()
+      await act(async () => {
+        finishCancel({ kind: 'plugin.install.cancelled', status })
+        await Promise.resolve()
+      })
+
+      if (status === 'too-late') {
+        const applying = await screen.findByRole('button', {
+          name: 'Applying plugin changes to the DSH profile…',
+        })
+        expect(applying.getAttribute('disabled')).not.toBeNull()
+        await act(async () => {
+          finishWait({
+            kind: 'plugin.install.waited',
+            result: {
+              name: 'new-plugin',
+              changed: true,
+              application: 'applied',
+              stage: 'install',
+            },
+          })
+          await Promise.resolve()
+        })
+        expect(await screen.findByText('The plugin bundle was installed.')).toBeTruthy()
+      } else {
+        expect(await screen.findByText('The bundle change was cancelled.')).toBeTruthy()
+        expect(screen.queryByRole('button', { name: 'Cancel install' })).toBeNull()
+        await act(async () => {
+          finishWait({ kind: 'plugin.install.waited', result: null })
+          await Promise.resolve()
+        })
+        expect(screen.getByText('The bundle change was cancelled.')).toBeTruthy()
+      }
+
+      expect(requests.filter((request) => request.type === 'plugin.bundle.install')).toHaveLength(1)
+      expect(requests.filter((request) => request.type === 'plugin.bundle.waitForInstall')).toEqual([
+        expect.objectContaining({ payload: { installRequestId: installId } }),
+      ])
+      expect(requests.filter((request) => request.type === 'plugin.bundle.cancelInstall')).toEqual([
+        expect.objectContaining({ payload: { installRequestId: installId } }),
+      ])
+      view.unmount()
+    },
+  )
+
+  it('offers cancellation again when installing progress follows a not-running recovery', async () => {
+    const requests: FeatureRequest[] = []
+    const featureRequest: OptionalBundleManagerProps['featureRequest'] = <T,>(request: FeatureRequest) => {
+      requests.push(request)
+      return Promise.resolve(defaultResponse(request) as T)
+    }
+    const installOperation: PluginInstallRecoveryState = {
+      requestId: 'retryable-install-id',
+      phase: 'unknown',
+      cancelRequested: false,
+      waiting: false,
+      cancellation: 'not-running',
+    }
+    const onCancelInstall = vi.fn().mockResolvedValue(undefined)
+    const props = {
+      featureRequest,
+      installOperation,
+      onCancelInstall,
+    } satisfies OptionalBundleManagerProps
+    const view = render(<OptionalBundleManager {...props} />)
+    await screen.findByRole('heading', { name: 'DSH Plugin Manager' })
+    expect(screen.queryByRole('button', { name: 'Cancel install' })).toBeNull()
+
+    view.rerender(
+      <OptionalBundleManager
+        {...props}
+        installOperation={{ ...installOperation, phase: 'installing' }}
+        installProgress={{ requestId: installOperation.requestId, phase: 'installing' }}
+      />,
+    )
+    const cancel = await screen.findByRole('button', { name: 'Cancel install' })
+    expect(cancel.getAttribute('disabled')).toBeNull()
+    fireEvent.click(cancel)
+    expect(onCancelInstall).toHaveBeenCalledOnce()
+    expect(requests.filter((request) => request.type === 'plugin.bundle.install')).toHaveLength(0)
+  })
+
   it('shows safe registry attempt and applying phases while the install request is active', async () => {
     const requests: FeatureRequest[] = []
     let finishInstall: (() => void) | undefined
@@ -202,7 +399,7 @@ describe('OptionalBundleManager', () => {
         })
       return Promise.resolve(defaultResponse(request) as T)
     }
-    const view = render(<OptionalBundleManager featureRequest={featureRequest} />)
+    const view = render(<ManagerHarness featureRequest={featureRequest} />)
     await screen.findByRole('heading', { name: 'DSH Plugin Manager' })
     fireEvent.change(screen.getByLabelText('Package name or supported package source'), {
       target: { value: '@dsh-community/new-plugin' },
@@ -216,7 +413,7 @@ describe('OptionalBundleManager', () => {
     const installRequestId = installRequest.payload.installRequestId
 
     view.rerender(
-      <OptionalBundleManager
+      <ManagerHarness
         featureRequest={featureRequest}
         installProgress={{
           requestId: installRequestId,
@@ -230,7 +427,7 @@ describe('OptionalBundleManager', () => {
     expect(screen.getByRole('button', { name: 'Cancel install' }).getAttribute('disabled')).toBeNull()
 
     view.rerender(
-      <OptionalBundleManager
+      <ManagerHarness
         featureRequest={featureRequest}
         installProgress={{ requestId: installRequestId, phase: 'applying' }}
       />,

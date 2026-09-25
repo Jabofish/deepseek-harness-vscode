@@ -150,6 +150,14 @@ export class PluginBundleUseCases {
     return repository.cancelInstall(requestId, signal)
   }
 
+  public async waitForInstall(
+    requestId: string,
+    signal?: AbortSignal,
+  ): Promise<PluginBundleChangeResult | null> {
+    const repository = await this.availableRepository(signal, true)
+    return repository.waitForInstall(requestId, signal)
+  }
+
   public async remove(
     name: string,
     signal?: AbortSignal,

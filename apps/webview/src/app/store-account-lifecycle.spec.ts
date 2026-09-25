@@ -17,6 +17,7 @@ const snapshot = {
   attempt: { id: attemptId, phase: 'waiting-browser' as const },
 }
 const accountDetails = {
+  accountScopeRevision: 1,
   profile: { status: 'ready' as const, value: { name: 'Ada', contact: 'ada@example.test' } },
   balance: { status: 'ready' as const, value: { wallets: [], bonusWallets: [] } },
   bonus: { status: 'ready' as const, value: null },
@@ -77,13 +78,13 @@ class AccountStoreClient {
     for (const listener of this.hostListeners) listener(message)
   }
 
-  public update(snapshotValue: AccountLifecycleSnapshotDto): void {
+  public update(snapshotValue: AccountLifecycleSnapshotDto, generation = 1): void {
     const message: FeatureHostEvent = {
       type: 'feature.event',
       name: 'account.lifecycle.updated',
       identity: {
         backendInstanceId: 'backend-instance',
-        connectionGeneration: 1,
+        connectionGeneration: generation,
         stream: 'host',
         localSeq: 1,
       },
@@ -172,6 +173,27 @@ describe('account lifecycle store', () => {
     client.expire()
     expect(store.getState().accountProfileDetails).toBeNull()
     expect(store.getState().accountProfileLoading).toBe(false)
+    store.dispose()
+  })
+
+  it('clears account state across backend lifetimes even when the new Host reuses the same scope revision', async () => {
+    const client = new AccountStoreClient()
+    const store = createAppStore(client as unknown as ProtocolClient)
+    const signedIn: AccountLifecycleSnapshotDto = { status: 'credential-stored', attempt: null }
+    client.connected(1, true)
+    client.update(signedIn, 1)
+    await store.loadAccountDetails()
+    expect(store.getState().accountProfileDetails).toEqual(accountDetails)
+
+    client.connected(2, true)
+    expect(store.getState().accountLifecycle).toBeNull()
+    expect(store.getState().accountProfileDetails).toBeNull()
+    expect(store.getState().accountProfileLoading).toBe(false)
+
+    client.update(signedIn, 2)
+    await store.loadAccountDetails()
+    expect(store.getState().accountProfileDetails).toEqual(accountDetails)
+    expect(store.getState().accountProfileDetails?.accountScopeRevision).toBe(1)
     store.dispose()
   })
 })

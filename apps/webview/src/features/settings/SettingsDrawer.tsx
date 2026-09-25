@@ -24,6 +24,7 @@ import type {
   AccountSignOutImpactDto,
 } from '@dsh-vscode/webview-protocol'
 import type { DshSettingsSnapshot } from '../../app/store.js'
+import type { PluginInstallInput, PluginInstallRecoveryState } from '../../app/plugin-install-recovery.js'
 import {
   CONVERSATION_FONT_SIZE_OPTIONS,
   DEFAULT_CONVERSATION_FONT_SIZE_PX,
@@ -106,6 +107,10 @@ export interface SettingsDrawerProps {
   readonly onStartCreatorDraft?: () => Promise<void>
   readonly pluginInventoryRevision?: number
   readonly pluginInstallProgress?: PluginInstallProgressView | undefined
+  readonly pluginInstallOperation?: PluginInstallRecoveryState | undefined
+  readonly onStartPluginInstall?: (input: PluginInstallInput) => Promise<void>
+  readonly onCancelPluginInstall?: () => Promise<void>
+  readonly onRecoverPluginInstall?: () => Promise<void>
   readonly onLoadPluginInventory: () => Promise<PluginInventorySnapshot | undefined>
   readonly featureRequest?: <T>(request: FeatureRequest) => Promise<T>
   readonly accountLifecycleAvailable?: boolean
@@ -1533,7 +1538,21 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                 {props.featureRequest === undefined ? null : (
                   <OptionalBundleManager
                     revision={props.pluginInventoryRevision ?? 0}
-                    installProgress={props.pluginInstallProgress}
+                    {...(props.pluginInstallProgress === undefined
+                      ? {}
+                      : { installProgress: props.pluginInstallProgress })}
+                    {...(props.pluginInstallOperation === undefined
+                      ? {}
+                      : { installOperation: props.pluginInstallOperation })}
+                    {...(props.onStartPluginInstall === undefined
+                      ? {}
+                      : { onStartInstall: props.onStartPluginInstall })}
+                    {...(props.onCancelPluginInstall === undefined
+                      ? {}
+                      : { onCancelInstall: props.onCancelPluginInstall })}
+                    {...(props.onRecoverPluginInstall === undefined
+                      ? {}
+                      : { onRecoverInstall: props.onRecoverPluginInstall })}
                     featureRequest={props.featureRequest}
                   />
                 )}

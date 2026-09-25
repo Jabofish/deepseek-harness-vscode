@@ -157,7 +157,10 @@ import {
 import { TaskCenterRegistry } from './tasks/task-center-registry.js'
 import { PromptTemplateStore } from './prompts/prompt-template-store.js'
 import { handleScheduleFeatureRequest } from './schedules/schedule-feature-handler.js'
-import { handlePluginBundleFeatureRequest } from './plugins/plugin-bundle-feature-handler.js'
+import {
+  handlePluginBundleFeatureRequest,
+  PluginInstallRequestCoordinator,
+} from './plugins/plugin-bundle-feature-handler.js'
 import { createPluginBundleEnableConfirmation } from './plugins/confirm-plugin-bundle-enable.js'
 import {
   createPluginBuildApprovalConfirmation,
@@ -361,6 +364,7 @@ export async function relayJobFollowFrames(input: {
 }
 
 export function createCompositionRoot(context: vscode.ExtensionContext): CompositionRoot {
+  const pluginInstallRequests = new PluginInstallRequestCoordinator()
   const configuration = new VsCodeConfigurationSource(vscode.workspace)
   const extensionVersion = readExtensionVersion(context)
   const channel = vscode.window.createOutputChannel(OUTPUT_CHANNEL_NAME)
@@ -1745,6 +1749,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       request.type === 'plugin.spec.inspect' ||
       request.type === 'plugin.bundle.install' ||
       request.type === 'plugin.bundle.cancelInstall' ||
+      request.type === 'plugin.bundle.waitForInstall' ||
       request.type === 'plugin.bundle.setEnabled' ||
       request.type === 'plugin.bundle.remove' ||
       request.type === 'plugin.entry.setEnabled'
@@ -1759,12 +1764,18 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       const translate = (message: string, detail?: string): string =>
         detail === undefined ? vscode.l10n.t(message) : vscode.l10n.t(message, detail)
       const confirmEnable = createPluginBundleEnableConfirmation(present, translate, vscode.env.language)
-      return handlePluginBundleFeatureRequest(request, bundles, signal, {
-        enable: confirmEnable,
-        install: createPluginInstallConfirmation(present, translate),
-        remove: createPluginRemoveConfirmation(present, translate),
-        builds: createPluginBuildApprovalConfirmation(present, translate),
-      })
+      return handlePluginBundleFeatureRequest(
+        request,
+        bundles,
+        signal,
+        {
+          enable: confirmEnable,
+          install: createPluginInstallConfirmation(present, translate),
+          remove: createPluginRemoveConfirmation(present, translate),
+          builds: createPluginBuildApprovalConfirmation(present, translate),
+        },
+        pluginInstallRequests,
+      )
     }
     if (
       request.type === 'schedule.catalog' ||

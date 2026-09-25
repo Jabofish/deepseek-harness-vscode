@@ -23,7 +23,16 @@ const labels: AccountProfileLabels = {
   topUp: 'Top up',
 }
 
+const bonusNotice = {
+  orderId: '0bd8870d-2648-4c4c-95ca-d9e89f08095c',
+  message: 'A bonus has been credited to your account.',
+  amount: '10.00',
+  currency: 'CNY' as const,
+  expiresAt: '2099-10-01T00:00:00.000Z',
+}
+
 const snapshot: AccountProfileDetailsSnapshot = {
+  accountScopeRevision: 1,
   profile: { status: 'ready', value: { name: 'Test User', contact: 'u***@example.test' } },
   balance: {
     status: 'ready',
@@ -34,13 +43,7 @@ const snapshot: AccountProfileDetailsSnapshot = {
   },
   bonus: {
     status: 'ready',
-    value: {
-      orderId: '0bd8870d-2648-4c4c-95ca-d9e89f08095c',
-      message: 'A bonus has been credited to your account.',
-      amount: '10.00',
-      currency: 'CNY',
-      expiresAt: '2099-10-01T00:00:00.000Z',
-    },
+    value: bonusNotice,
   },
 }
 
@@ -97,6 +100,111 @@ describe('AccountProfile', () => {
     )
     expect(screen.getByText('A bonus has been credited to your account.')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }))
+    expect(screen.queryByText('A bonus has been credited to your account.')).toBeNull()
+    expect(onAcknowledgeBonus).toHaveBeenCalledOnce()
+  })
+
+  it('isolates notice and acknowledgement state when the Host switches account scope', async () => {
+    let resolveOldAcknowledgement!: (accepted: boolean) => void
+    const oldAcknowledgement = new Promise<boolean>((resolve) => {
+      resolveOldAcknowledgement = resolve
+    })
+    const onAcknowledgeBonus = vi
+      .fn()
+      .mockImplementationOnce(() => oldAcknowledgement)
+      .mockResolvedValueOnce(true)
+    const view = render(
+      <AccountProfile
+        snapshot={snapshot}
+        signedIn
+        labels={labels}
+        locale="en-US"
+        onRefresh={vi.fn()}
+        onAcknowledgeBonus={onAcknowledgeBonus}
+        onOpenUsage={vi.fn()}
+        onOpenTopUp={vi.fn()}
+      />,
+    )
+    await waitFor(() => expect(onAcknowledgeBonus).toHaveBeenCalledOnce())
+
+    view.rerender(
+      <AccountProfile
+        snapshot={{
+          ...snapshot,
+          accountScopeRevision: 2,
+          bonus: {
+            status: 'ready',
+            value: { ...bonusNotice, message: 'A different account bonus.' },
+          },
+        }}
+        signedIn
+        labels={labels}
+        locale="en-US"
+        onRefresh={vi.fn()}
+        onAcknowledgeBonus={onAcknowledgeBonus}
+        onOpenUsage={vi.fn()}
+        onOpenTopUp={vi.fn()}
+      />,
+    )
+
+    await waitFor(() => expect(onAcknowledgeBonus).toHaveBeenCalledTimes(2))
+    await act(() => {
+      resolveOldAcknowledgement(true)
+      return oldAcknowledgement
+    })
+    expect(screen.getByText('A different account bonus.')).toBeTruthy()
+    expect(screen.queryByText('A bonus has been credited to your account.')).toBeNull()
+  })
+
+  it('does not retain a presented notice when the account scope changes to a failed bonus read', async () => {
+    const onAcknowledgeBonus = vi.fn().mockResolvedValue(true)
+    const view = render(
+      <AccountProfile
+        snapshot={snapshot}
+        signedIn
+        labels={labels}
+        locale="en-US"
+        onRefresh={vi.fn()}
+        onAcknowledgeBonus={onAcknowledgeBonus}
+        onOpenUsage={vi.fn()}
+        onOpenTopUp={vi.fn()}
+      />,
+    )
+    await waitFor(() => expect(onAcknowledgeBonus).toHaveBeenCalledOnce())
+    view.rerender(
+      <AccountProfile
+        snapshot={{ ...snapshot, accountScopeRevision: 2, bonus: { status: 'failed' } }}
+        signedIn
+        labels={labels}
+        locale="en-US"
+        onRefresh={vi.fn()}
+        onAcknowledgeBonus={onAcknowledgeBonus}
+        onOpenUsage={vi.fn()}
+        onOpenTopUp={vi.fn()}
+      />,
+    )
+
+    expect(screen.queryByText('A bonus has been credited to your account.')).toBeNull()
+  })
+
+  it('clears a presented notice across backend lifetimes when the replacement Host reuses its scope revision', async () => {
+    const onAcknowledgeBonus = vi.fn().mockResolvedValue(true)
+    const props = {
+      signedIn: true,
+      labels,
+      locale: 'en-US',
+      onRefresh: vi.fn(),
+      onAcknowledgeBonus,
+      onOpenUsage: vi.fn(),
+      onOpenTopUp: vi.fn(),
+    } as const
+    const view = render(<AccountProfile {...props} snapshot={snapshot} />)
+    await waitFor(() => expect(onAcknowledgeBonus).toHaveBeenCalledOnce())
+
+    view.rerender(<AccountProfile {...props} signedIn={false} snapshot={null} />)
+    expect(screen.queryByText('A bonus has been credited to your account.')).toBeNull()
+    view.rerender(<AccountProfile {...props} snapshot={{ ...snapshot, bonus: { status: 'failed' } }} />)
+
     expect(screen.queryByText('A bonus has been credited to your account.')).toBeNull()
     expect(onAcknowledgeBonus).toHaveBeenCalledOnce()
   })
@@ -204,6 +312,7 @@ describe('AccountProfile', () => {
     render(
       <AccountProfile
         snapshot={{
+          accountScopeRevision: 0,
           profile: { status: 'unavailable' },
           balance: {
             status: 'ready',
@@ -273,6 +382,7 @@ describe('AccountProfile', () => {
     render(
       <AccountProfile
         snapshot={{
+          accountScopeRevision: 0,
           profile: { status: 'failed' },
           balance: { status: 'failed' },
           bonus: { status: 'unavailable' },
@@ -299,6 +409,7 @@ describe('AccountProfile', () => {
     render(
       <AccountProfile
         snapshot={{
+          accountScopeRevision: 0,
           profile: { status: 'unavailable' },
           balance: { status: 'unavailable' },
           bonus: { status: 'unavailable' },

@@ -62,6 +62,72 @@ describe('ScheduleDrawer', () => {
     expect(screen.queryByRole('dialog', { name: 'Schedules' })).toBeNull()
   })
 
+  it('cycles Tab through visible controls when the inactive history panel contains buttons', async () => {
+    const record: ScheduleCatalogEntry = {
+      id: 'schedule-one',
+      kind: 'at',
+      title: 'Water the plants',
+      prompt: 'Remind me to water the plants.',
+      scheduledAt: '2035-05-06T09:00:00.000Z',
+      sessionId: 'session-one',
+      status: 'active',
+    }
+    const featureRequestForTest: ScheduleDrawerProps['featureRequest'] = <T,>(
+      request: FeatureRequest,
+    ): Promise<T> => {
+      if (request.type === 'schedule.catalog')
+        return Promise.resolve({ kind: 'schedule.catalog', items: [record] } as T)
+      if (request.type === 'schedule.history')
+        return Promise.resolve({
+          kind: 'schedule.history',
+          result: {
+            id: record.id,
+            records: [],
+            earlierRecordsUnavailable: false,
+            earlierRecordsPruned: false,
+            retention: { days: 30, records: 500 },
+            nextBefore: 'older-delivery',
+          },
+        } as T)
+      return Promise.resolve(undefined as T)
+    }
+
+    render(
+      <I18nProvider>
+        <ScheduleDrawer
+          open
+          onClose={() => undefined}
+          featureRequest={featureRequestForTest}
+          subscribeFeature={() => () => undefined}
+          onStartScheduleSession={() => Promise.resolve('session-new')}
+        />
+      </I18nProvider>,
+    )
+
+    fireEvent.click(await screen.findByRole('button', { name: /Water the plants/u }))
+    fireEvent.click(screen.getByRole('tab', { name: 'Delivery history' }))
+    const loadOlder = await screen.findByRole('button', { name: 'Load older deliveries' })
+    const historyPanel = screen.getByRole('tabpanel', { name: 'Delivery history' })
+    expect(historyPanel.contains(loadOlder)).toBe(true)
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Reminder' }))
+    expect(historyPanel.hasAttribute('hidden')).toBe(true)
+
+    const dialog = screen.getByRole('dialog', { name: 'Schedules' })
+    const focusableSelector =
+      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    const visibleFocusable = [...dialog.querySelectorAll<HTMLElement>(focusableSelector)].filter(
+      (element) => element.closest('[hidden]') === null && element.getAttribute('aria-hidden') !== 'true',
+    )
+    const first = visibleFocusable[0]
+    const last = visibleFocusable.at(-1)
+    if (first === undefined || last === undefined) throw new Error('The dialog controls are missing.')
+
+    last.focus()
+    expect(fireEvent.keyDown(last, { key: 'Tab' })).toBe(false)
+    expect(document.activeElement).toBe(first)
+  })
+
   it('keeps the pending create listener mounted while the user closes and reopens the drawer', async () => {
     let items: readonly ScheduleCatalogEntry[] = []
     let catalogCalls = 0

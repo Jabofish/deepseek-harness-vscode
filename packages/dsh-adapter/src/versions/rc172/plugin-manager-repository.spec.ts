@@ -114,6 +114,34 @@ describe('RC2 Plugin Manager repository', () => {
     })
   })
 
+  it('accepts DSH-supported SSH Git specs while still rejecting embedded passwords', async () => {
+    const fixture = repository({
+      'pluginManager/inspect': {
+        ok: true,
+        value: { status: 'accepted', kind: 'git', bundle: null, registry: null, host: 'github.com' },
+      },
+    })
+    await expect(fixture.repository.inspect('git+ssh://git@github.com/a/b.git')).resolves.toEqual({
+      status: 'accepted',
+      kind: 'git',
+      bundle: null,
+      registry: null,
+      host: 'github.com',
+    })
+    expect(fixture.calls).toEqual([
+      { endpoint: 'pluginManager/inspect', args: { spec: 'git+ssh://git@github.com/a/b.git' } },
+    ])
+
+    const invalid = repository({})
+    await expect(invalid.repository.inspect('git+ssh://git:secret@github.com/a/b.git')).rejects.toMatchObject(
+      { code: 'INVALID_CONFIGURATION' },
+    )
+    await expect(invalid.repository.inspect('git://user:secret@example.test/a/b.git')).rejects.toMatchObject({
+      code: 'INVALID_CONFIGURATION',
+    })
+    expect(invalid.calls).toEqual([])
+  })
+
   it('maps install outcomes without returning package output, paths, or original install specs', async () => {
     const spec = 'https://git.example.test/private/repo.git'
     const fixture = repository({
@@ -124,6 +152,7 @@ describe('RC2 Plugin Manager repository', () => {
           target: spec,
           changed: false,
           application: 'failed',
+          enabled: true,
           error: { code: 'operation-error', diagnostic: 'C:\\Users\\private\\profile\nBearer secret' },
           packageResult: {
             exitCode: 1,
@@ -142,6 +171,7 @@ describe('RC2 Plugin Manager repository', () => {
       name: 'plugin',
       changed: false,
       application: 'failed',
+      enabled: true,
       stage: 'install',
       errorCode: 'operation-error',
       failureKind: 'permission',
@@ -151,6 +181,78 @@ describe('RC2 Plugin Manager repository', () => {
       endpoint: 'pluginManager/installBundle',
       args: { spec, options: { enabled: true, requestId: 'install-1', registry: null } },
     })
+  })
+
+  it('maps the upstream install completion after it changes stage and target for activation', async () => {
+    const bundleName = '@dsh-community/review-layer'
+    const spec = 'git+https://example.test/review-layer.git'
+    const fixture = repository({
+      'pluginManager/installBundle': {
+        ok: true,
+        value: {
+          stage: 'enable',
+          target: bundleName,
+          bundle: bundleName,
+          changed: true,
+          application: 'applied',
+          enabled: true,
+        },
+      },
+    })
+    await expect(fixture.repository.installBundle(spec, { requestId: 'install-success' })).resolves.toEqual({
+      name: bundleName,
+      changed: true,
+      application: 'applied',
+      enabled: true,
+      stage: 'install',
+      bundle: bundleName,
+    })
+    expect(fixture.calls).toEqual([
+      {
+        endpoint: 'pluginManager/installBundle',
+        args: { spec, options: { enabled: true, requestId: 'install-success' } },
+      },
+    ])
+  })
+
+  it('maps a confirmed upstream install cancellation and rejects target mismatches', async () => {
+    const spec = 'review-layer'
+    const cancelled = repository({
+      'pluginManager/installBundle': {
+        ok: true,
+        value: { stage: 'install', target: spec, changed: false, application: 'cancelled', enabled: true },
+      },
+    })
+    await expect(
+      cancelled.repository.installBundle(spec, { requestId: 'install-cancelled' }),
+    ).resolves.toMatchObject({ name: 'plugin', stage: 'install', application: 'cancelled', enabled: true })
+
+    const mismatched = repository({
+      'pluginManager/installBundle': {
+        ok: true,
+        value: { stage: 'install', target: 'other', changed: false, application: 'cancelled', enabled: true },
+      },
+    })
+    await expect(
+      mismatched.repository.installBundle(spec, { requestId: 'install-mismatch' }),
+    ).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
+
+    const mismatchedBundle = repository({
+      'pluginManager/installBundle': {
+        ok: true,
+        value: {
+          stage: 'enable',
+          target: '@dsh-community/other',
+          bundle: '@dsh-community/review-layer',
+          changed: true,
+          application: 'applied',
+          enabled: true,
+        },
+      },
+    })
+    await expect(
+      mismatchedBundle.repository.installBundle(spec, { requestId: 'install-bundle-mismatch' }),
+    ).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
   })
 
   it('routes request-scoped cancellation, removal, and individual plugin enablement to RC2 Remotes', async () => {

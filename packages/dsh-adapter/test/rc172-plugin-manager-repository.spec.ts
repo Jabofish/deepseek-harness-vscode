@@ -169,6 +169,40 @@ describe('DSH 0.1.7-rc.2 Plugin Manager Remote contract', () => {
     })
   })
 
+  it('accepts the upstream-supported SSH Git install form without allowing embedded credentials', async () => {
+    const { transport, calls } = recordingTransport([
+      {
+        ok: true,
+        value: { status: 'accepted', kind: 'git', bundle: null, registry: null, host: 'github.com' },
+      },
+    ])
+    const repository = new Rc172PluginBundleRepository(transport)
+
+    await expect(repository.inspect('git+ssh://git@github.com/a/b.git')).resolves.toEqual({
+      status: 'accepted',
+      kind: 'git',
+      bundle: null,
+      registry: null,
+      host: 'github.com',
+    })
+    expect(calls).toEqual([
+      {
+        endpoint: 'pluginManager/inspect',
+        args: { spec: 'git+ssh://git@github.com/a/b.git' },
+        signal: undefined,
+      },
+    ])
+
+    const invalid = recordingTransport([])
+    await expect(
+      new Rc172PluginBundleRepository(invalid.transport).inspect('git+ssh://git:secret@github.com/a/b.git'),
+    ).rejects.toMatchObject({ code: 'INVALID_CONFIGURATION' })
+    await expect(
+      new Rc172PluginBundleRepository(invalid.transport).inspect('git://user:secret@example.test/a/b.git'),
+    ).rejects.toMatchObject({ code: 'INVALID_CONFIGURATION' })
+    expect(invalid.calls).toHaveLength(0)
+  })
+
   it('routes install, request cancellation, removal, and individual plugin enablement to RC2 Remotes', async () => {
     const spec = 'https://git.example.test/private/repo.git'
     const { transport, calls } = recordingTransport([
@@ -179,6 +213,7 @@ describe('DSH 0.1.7-rc.2 Plugin Manager Remote contract', () => {
           target: spec,
           changed: false,
           application: 'failed',
+          enabled: true,
           error: { code: 'operation-error', diagnostic: 'C:\\Users\\private\\profile\\nBearer secret' },
           packageResult: {
             exitCode: 1,
@@ -217,6 +252,7 @@ describe('DSH 0.1.7-rc.2 Plugin Manager Remote contract', () => {
         name: 'plugin',
         changed: false,
         application: 'failed',
+        enabled: true,
         stage: 'install',
         errorCode: 'operation-error',
         failureKind: 'permission',
@@ -253,6 +289,213 @@ describe('DSH 0.1.7-rc.2 Plugin Manager Remote contract', () => {
     expect(JSON.stringify(calls)).not.toContain('secret')
   })
 
+  it('maps the exact successful RC2 install result after its stage and target advance to bundle activation', async () => {
+    const bundleName = '@dsh-community/optional-review'
+    const spec = 'git+https://github.com/dsh-community/optional-review.git'
+    const { transport, calls } = recordingTransport([
+      {
+        ok: true,
+        value: {
+          changed: true,
+          application: 'applied',
+          stage: 'enable',
+          target: bundleName,
+          enabled: true,
+          bundle: bundleName,
+          registries: [null],
+        },
+      },
+    ])
+    const repository = new Rc172PluginBundleRepository(transport)
+
+    await expect(repository.installBundle(spec, { requestId: 'install-success' })).resolves.toEqual({
+      name: bundleName,
+      changed: true,
+      application: 'applied',
+      enabled: true,
+      stage: 'install',
+      bundle: bundleName,
+    })
+    expect(calls).toEqual([
+      {
+        endpoint: 'pluginManager/installBundle',
+        args: { spec, options: { enabled: true, requestId: 'install-success' } },
+        signal: undefined,
+      },
+    ])
+  })
+
+  it('maps cancelled installs with their original target and rejects mismatched install targets', async () => {
+    const spec = 'dsh-package'
+    const cancelled = recordingTransport([
+      {
+        ok: true,
+        value: { changed: false, application: 'cancelled', stage: 'install', target: spec, enabled: true },
+      },
+    ])
+    await expect(
+      new Rc172PluginBundleRepository(cancelled.transport).installBundle(spec, {
+        requestId: 'install-cancelled',
+      }),
+    ).resolves.toEqual({
+      name: 'plugin',
+      changed: false,
+      application: 'cancelled',
+      enabled: true,
+      stage: 'install',
+    })
+
+    const mismatched = recordingTransport([
+      {
+        ok: true,
+        value: {
+          changed: false,
+          application: 'cancelled',
+          stage: 'install',
+          target: 'different-spec',
+          enabled: true,
+        },
+      },
+    ])
+    await expect(
+      new Rc172PluginBundleRepository(mismatched.transport).installBundle(spec, {
+        requestId: 'install-mismatch',
+      }),
+    ).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
+  })
+
+  it('rejects a successful install whose returned target does not match its bundle', async () => {
+    const repository = new Rc172PluginBundleRepository(
+      recordingTransport([
+        {
+          ok: true,
+          value: {
+            changed: true,
+            application: 'applied',
+            stage: 'enable',
+            target: '@dsh-community/other',
+            enabled: true,
+            bundle: '@dsh-community/optional-review',
+          },
+        },
+      ]).transport,
+    )
+    await expect(
+      repository.installBundle('optional-review', { requestId: 'install-target-mismatch' }),
+    ).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
+  })
+
+  it('recovers active RC2 install results, including the stage transition and settled-null contract', async () => {
+    const succeeded = recordingTransport([
+      {
+        ok: true,
+        value: {
+          target: bundleFixture.name,
+          stage: 'enable',
+          bundle: bundleFixture.name,
+          changed: true,
+          application: 'applied',
+          enabled: true,
+        },
+      },
+    ])
+    const succeededRepository = new Rc172PluginBundleRepository(succeeded.transport)
+    await expect(succeededRepository.waitForInstall('install-restore')).resolves.toEqual({
+      name: bundleFixture.name,
+      changed: true,
+      application: 'applied',
+      enabled: true,
+      stage: 'install',
+      bundle: bundleFixture.name,
+    })
+    expect(succeeded.calls).toEqual([
+      {
+        endpoint: 'pluginManager/waitForInstall',
+        args: { requestId: 'install-restore' },
+        signal: undefined,
+      },
+    ])
+
+    const failed = recordingTransport([
+      {
+        ok: true,
+        value: {
+          target: 'git+https://private.example.test/plugin.git',
+          stage: 'install',
+          changed: false,
+          application: 'failed',
+          enabled: true,
+          failedAt: 'spec-host',
+          packageResult: { kind: 'network' },
+        },
+      },
+    ])
+    await expect(
+      new Rc172PluginBundleRepository(failed.transport).waitForInstall('install-failed'),
+    ).resolves.toMatchObject({
+      name: 'plugin',
+      stage: 'install',
+      application: 'failed',
+      failureKind: 'network',
+    })
+
+    const cancelled = recordingTransport([
+      {
+        ok: true,
+        value: {
+          target: '@dsh-community/review-layer',
+          stage: 'install',
+          changed: false,
+          application: 'cancelled',
+          enabled: true,
+        },
+      },
+    ])
+    await expect(
+      new Rc172PluginBundleRepository(cancelled.transport).waitForInstall('install-cancelled'),
+    ).resolves.toMatchObject({
+      name: 'plugin',
+      stage: 'install',
+      application: 'cancelled',
+    })
+
+    const settled = recordingTransport([{ ok: true, value: null }])
+    await expect(
+      new Rc172PluginBundleRepository(settled.transport).waitForInstall('install-settled'),
+    ).resolves.toBeNull()
+
+    const invalidTarget = recordingTransport([
+      {
+        ok: true,
+        value: { target: '', stage: 'install', changed: false, application: 'cancelled', enabled: true },
+      },
+    ])
+    await expect(
+      new Rc172PluginBundleRepository(invalidTarget.transport).waitForInstall('install-invalid'),
+    ).rejects.toMatchObject({
+      code: 'PROTOCOL_ERROR',
+    })
+
+    const mismatchedBundle = recordingTransport([
+      {
+        ok: true,
+        value: {
+          target: '@dsh-community/other',
+          stage: 'enable',
+          bundle: bundleFixture.name,
+          changed: true,
+          application: 'applied',
+          enabled: true,
+        },
+      },
+    ])
+    await expect(
+      new Rc172PluginBundleRepository(mismatchedBundle.transport).waitForInstall('install-mismatched'),
+    ).rejects.toMatchObject({
+      code: 'PROTOCOL_ERROR',
+    })
+  })
+
   it('rejects malformed responses, credential-bearing inputs, and dispatch after cancellation', async () => {
     const malformedList = recordingTransport([{ ok: true, value: [{ name: 'x', optional: true }] }])
     await expect(
@@ -287,6 +530,9 @@ describe('DSH 0.1.7-rc.2 Plugin Manager Remote contract', () => {
         requestId: 'install-3',
       }),
     ).rejects.toMatchObject({ code: 'INVALID_CONFIGURATION' })
+    await expect(invalidRepository.inspect('git://user:secret@example.test/a/b.git')).rejects.toMatchObject({
+      code: 'INVALID_CONFIGURATION',
+    })
     expect(invalidInput.calls).toHaveLength(0)
 
     const cancelled = recordingTransport([])

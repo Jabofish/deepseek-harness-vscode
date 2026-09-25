@@ -843,6 +843,13 @@ export const featureRequestSchema = z.discriminatedUnion('type', [
     .strict(),
   z
     .object({
+      type: z.literal('plugin.bundle.waitForInstall'),
+      ...featureRequestBase,
+      payload: z.object({ installRequestId: id }).strict(),
+    })
+    .strict(),
+  z
+    .object({
       type: z.literal('plugin.bundle.setEnabled'),
       ...featureRequestBase,
       payload: z.object({ name: safeLabel, enabled: z.boolean() }).strict(),
@@ -1210,6 +1217,12 @@ const featureResponsePayloadSchema = z.discriminatedUnion('kind', [
     .object({
       kind: z.literal('plugin.install.cancelled'),
       status: z.enum(['cancelled', 'too-late', 'not-running']),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal('plugin.install.waited'),
+      result: pluginBundleChangeResultSchema.nullable(),
     })
     .strict(),
   z.object({ kind: z.literal('plugin.bundle.changed'), result: pluginBundleChangeResultSchema }).strict(),

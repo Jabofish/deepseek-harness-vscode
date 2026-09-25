@@ -129,13 +129,13 @@ describe('AccountLifecycleUseCases', () => {
 
     await expect(useCases.ackBonusNotified('account-1', orderId, client)).resolves.toBe(true)
     expect(backend.ackBonusNotified.mock.calls).toEqual([['account-1', orderId, client, undefined]])
-    expect(() => useCases.ackBonusNotified('bad\naccount', orderId, client)).toThrowError(
-      expect.objectContaining({ code: 'INVALID_CONFIGURATION' }),
-    )
+    await expect(useCases.ackBonusNotified('', orderId, client)).resolves.toBe(true)
+    expect(backend.ackBonusNotified.mock.calls[1]).toEqual(['', orderId, client, undefined])
+    await expect(useCases.ackBonusNotified('account\ncontrol', orderId, client)).resolves.toBe(true)
     expect(() => useCases.ackBonusNotified('account-1', 'not-an-order', client)).toThrowError(
       expect.objectContaining({ code: 'INVALID_CONFIGURATION' }),
     )
-    expect(backend.ackBonusNotified.mock.calls).toHaveLength(1)
+    expect(backend.ackBonusNotified.mock.calls).toHaveLength(3)
   })
 
   it('forwards only the constrained account page selector', async () => {

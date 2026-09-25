@@ -2,6 +2,11 @@
 
 ## 0.2.3
 
+- 修复 RC2 插件安装回包丢失与取消过晚时状态无法恢复：Webview 继续等待同一个 `installRequestId`，设置页切换后可恢复进度；同一 Host 已缓存的完成结果可直接恢复，恢复等待期间仍可取消，`not-running` 不会锁死重试，迟到响应不会覆盖终态；结果仍未知时只刷新目录，不会重复安装。安装、取消和等待按 ID 去重，并限制 Host 完成缓存的大小与有效期。新增回归覆盖丢包、`too-late`、等待失败/空结果、同 ID 取消重试、恢复期间取消和标签页卸载重挂。
+- Fixed RC2 plugin installs losing their visible state after a dropped reply or a too-late cancellation: the Webview resumes waiting on the same `installRequestId`, including after switching Settings tabs; a completed result cached by the same Host can be recovered directly, cancellation remains available while recovery is waiting, `not-running` does not lock out retries, and late responses cannot overwrite a terminal result. When the outcome remains unknown, it refreshes the catalog without reinstalling. Install, cancel, and wait requests are deduplicated by ID, with bounded Host completion caching. Regressions cover lost replies, `too-late`, failed/empty waits, same-ID cancel retry, cancellation during recovery, and tab unmount/remount.
+- 修复账号详情并发读取竞态：过期的未登录读取不再清除新账号的奖励确认映射；连接代际变化清空旧账号页面状态，即使新 Host 重用相同 revision 也不会复用旧提示。Schedule 抽屉隐藏的历史面板控件不再进入 Tab 焦点环。
+- Fixed an account detail read race so a stale signed-out response cannot clear the current account's bonus acknowledgement mapping. A connection epoch clears the previous account UI state even when a replacement Host restarts its local revision. Hidden schedule-history controls also no longer enter the Drawer Tab focus order.
+
 - 聊天代码高亮改为随流增量渲染：已闭合的围栏代码块在消息仍在输出时就上色，正在书写的那一行保持纯文本、下一行闭合后立即换成高亮；每个代码块按文本缓存着色结果，只有在增长到一定步长时才重新分词，高亮不再等到整条消息输出完毕。回归覆盖「完成行切换时不闪断」与「闭合围栏提前上色」，真实 Webview 浏览器复验待补。
 - Chat code highlighting now renders incrementally while a message streams: a closed fenced block is colored while the rest of the message is still arriving, the line being written stays plaintext and switches to highlighted as soon as the next line closes, and each block caches its colors by text so it is re-tokenized only after enough growth. Highlighting no longer waits for the whole message to finish. Regressions cover the completed-line carry-over and the early highlight of a closed fence; a real-Webview browser re-check is still pending.
 

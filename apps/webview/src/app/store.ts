@@ -123,6 +123,11 @@ import type { FeatureResponse, HostMessage, WebviewRequest } from '@dsh-vscode/w
 
 import { translate } from '../i18n.js'
 import { ProtocolClient } from './protocol-client.js'
+import {
+  PluginInstallRecoveryController,
+  type PluginInstallInput,
+  type PluginInstallRecoveryState,
+} from './plugin-install-recovery.js'
 import { getVsCodeApi } from '../vscode-api.js'
 
 const STORE_NOTIFY_BATCH_MS = 16
@@ -265,6 +270,7 @@ export interface AppState {
   readonly commands: readonly DynamicCommand[]
   readonly pluginInventoryRevision: number
   readonly pluginInstallProgress: PluginInstallProgressView | undefined
+  readonly pluginInstallOperation: PluginInstallRecoveryState | undefined
   readonly accountLifecycleAvailable: boolean
   readonly accountLifecycle: AccountLifecycleSnapshotDto | null
   readonly accountLifecycleLoading: boolean
@@ -506,6 +512,12 @@ export interface AppActions {
   openPresetDocument(presetId: string): Promise<AgentPresetLocation | undefined>
   /** Read the host's read-only plugin inventory; no mutation path exists. */
   loadPluginInventory(): Promise<PluginInventorySnapshot | undefined>
+  /** Install once, retaining the same DSH request id when its reply is uncertain. */
+  startPluginInstall(input: PluginInstallInput): Promise<void>
+  /** Make one request-scoped cancellation attempt for the active install. */
+  cancelPluginInstall(): Promise<void>
+  /** Recover the active install result using its original request id. */
+  recoverPluginInstall(): Promise<void>
   /** Lazily load one parent's subagent catalog level (`subagent.list`). */
   loadSubagentChildren(sessionId: string): Promise<SubagentCatalog | undefined>
   /** Run the host-mediated save flow for one session (`session.export`). */
@@ -601,6 +613,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     commands: [],
     pluginInventoryRevision: 0,
     pluginInstallProgress: undefined,
+    pluginInstallOperation: undefined,
     accountLifecycleAvailable: false,
     accountLifecycle: null,
     accountLifecycleLoading: false,
@@ -715,6 +728,16 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     // only the React subscriber notification is coalesced to one frame.
     scheduleNotify()
   }
+  const pluginInstallRecovery = new PluginInstallRecoveryController({
+    featureRequest: <T>(request: FeatureRequest): Promise<T> => client.featureRequest<T>(request),
+    requestId,
+    onStateChange: (pluginInstallOperation, refreshCatalog) =>
+      setState((current) => ({
+        ...current,
+        pluginInstallOperation,
+        ...(refreshCatalog ? { pluginInventoryRevision: current.pluginInventoryRevision + 1 } : {}),
+      })),
+  })
   let accountOperationEpoch = 0
   let accountDetailsEpoch = 0
   let accountConnectionIdentity: string | undefined
@@ -2056,6 +2079,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
               ...(message.attemptIndex === undefined ? {} : { attemptIndex: message.attemptIndex }),
               ...(message.attemptTotal === undefined ? {} : { attemptTotal: message.attemptTotal }),
             }
+            pluginInstallRecovery.progress(progress)
             setState((current) => ({ ...current, pluginInstallProgress: progress }))
           }
           if (message.name === 'editor.context.changed') void refreshEditorContextState()
@@ -2803,6 +2827,9 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     },
     get pluginInstallProgress() {
       return state.pluginInstallProgress
+    },
+    get pluginInstallOperation() {
+      return state.pluginInstallOperation
     },
     get accountLifecycleAvailable() {
       return state.accountLifecycleAvailable
@@ -4265,6 +4292,9 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       parsePluginInventory(
         await client.request<unknown>({ type: 'plugin.inventory', requestId: requestId() }),
       ),
+    startPluginInstall: (input) => pluginInstallRecovery.start(input),
+    cancelPluginInstall: () => pluginInstallRecovery.cancel(),
+    recoverPluginInstall: () => pluginInstallRecovery.recover(),
     followJob: async (jobId) => {
       const sessionId = state.activeSessionId
       const job = state.jobs.find((entry) => entry.id === jobId)
@@ -4543,6 +4573,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       // disposed store. Gap backfills also read `disposed`: they outlive a
       // superseded open on purpose so their announced range is not lost.
       disposed = true
+      pluginInstallRecovery.dispose()
       openVersion += 1
       accountDetailsEpoch += 1
       gapBackfills.clear()

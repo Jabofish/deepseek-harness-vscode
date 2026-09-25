@@ -147,6 +147,7 @@ export interface PluginBundleRepository {
     options: PluginInstallOptions,
     signal?: AbortSignal,
   ): Promise<PluginBundleChangeResult>
+  waitForInstall(requestId: string, signal?: AbortSignal): Promise<PluginBundleChangeResult | null>
   cancelInstall(requestId: string, signal?: AbortSignal): Promise<PluginInstallCancellation>
   removeBundle(name: string, signal?: AbortSignal): Promise<PluginBundleChangeResult>
   setPluginEnabled(entryId: string, enabled: boolean, signal?: AbortSignal): Promise<PluginBundleChangeResult>

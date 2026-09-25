@@ -15,6 +15,7 @@ type PluginBundleMocks = {
   readonly registries: Mock<PluginBundleRepository['registries']>
   readonly inspect: Mock<PluginBundleRepository['inspect']>
   readonly installBundle: Mock<PluginBundleRepository['installBundle']>
+  readonly waitForInstall: Mock<PluginBundleRepository['waitForInstall']>
   readonly cancelInstall: Mock<PluginBundleRepository['cancelInstall']>
   readonly removeBundle: Mock<PluginBundleRepository['removeBundle']>
   readonly setPluginEnabled: Mock<PluginBundleRepository['setPluginEnabled']>
@@ -68,6 +69,9 @@ function useCases(
         application: 'applied' as const,
         stage: 'install' as const,
       }),
+    ),
+    waitForInstall: vi.fn<PluginBundleRepository['waitForInstall']>(() =>
+      Promise.resolve({ name: bundle.name, changed: true, application: 'applied', stage: 'install' }),
     ),
     cancelInstall: vi.fn<PluginBundleRepository['cancelInstall']>(() =>
       Promise.resolve({ status: 'cancelled' as const }),
@@ -276,5 +280,21 @@ describe('PluginBundleUseCases', () => {
     await vi.waitFor(() => expect(services.mocks.cancelInstall).toHaveBeenCalledWith('install-5'))
     finishInstall({ name: bundle.name, changed: false, application: 'cancelled', stage: 'install' })
     await expect(pending).resolves.toMatchObject({ application: 'cancelled' })
+  })
+
+  it('waits for one known install request and preserves the upstream null-as-unknown result', async () => {
+    const services = useCases()
+    const recovered = {
+      name: bundle.name,
+      changed: true,
+      application: 'applied' as const,
+      stage: 'install' as const,
+    }
+    services.mocks.waitForInstall.mockResolvedValueOnce(recovered).mockResolvedValueOnce(null)
+
+    await expect(services.useCases.waitForInstall('install-recovery')).resolves.toEqual(recovered)
+    await expect(services.useCases.waitForInstall('install-settled')).resolves.toBeNull()
+    expect(services.mocks.waitForInstall).toHaveBeenNthCalledWith(1, 'install-recovery', undefined)
+    expect(services.mocks.waitForInstall).toHaveBeenNthCalledWith(2, 'install-settled', undefined)
   })
 })

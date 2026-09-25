@@ -41,7 +41,7 @@ export class AccountLifecycleHost {
   private readonly launchedAttempts = new Set<string>()
   private readonly initializedDefaultModelAttempts = new Set<string>()
   private readonly bonusAccountByOrderId = new Map<string, string>()
-  private readonly acknowledgingBonusOrderIds = new Set<string>()
+  private readonly acknowledgingBonusKeys = new Set<string>()
   private bonusAccountScopeId: string | undefined
   private unsubscribeAuthorization: (() => void) | undefined
   private previousSnapshot: AccountLifecycleSnapshot | undefined
@@ -49,6 +49,8 @@ export class AccountLifecycleHost {
   private expiryTask: Promise<void> | undefined
   private activeSignInCalls = 0
   private detailsGeneration = 0
+  /** Monotonic scope marker; only the Host retains the corresponding account id. */
+  private accountScopeRevision = 0
   private started = false
   private disposed = false
 
@@ -140,11 +142,11 @@ export class AccountLifecycleHost {
     const generation = ++this.detailsGeneration
     const state = await this.dependencies.useCases.getState(operationSignal)
     operationSignal.throwIfAborted()
+    if (generation !== this.detailsGeneration) return unavailableAccountDetails(this.accountScopeRevision)
     if (state.status !== 'credential-stored') {
       this.clearBonusScope()
-      return unavailableAccountDetails()
+      return unavailableAccountDetails(this.accountScopeRevision)
     }
-    if (generation !== this.detailsGeneration) return unavailableAccountDetails()
 
     const client = this.dependencies.client()
     const [profileResult, balanceResult, bonusResult] = await Promise.allSettled([
@@ -154,34 +156,34 @@ export class AccountLifecycleHost {
     ])
     operationSignal.throwIfAborted()
     // A sign-out/expiry or a newer read can supersede these responses while they are in flight.
-    if (generation !== this.detailsGeneration) return unavailableAccountDetails()
+    if (generation !== this.detailsGeneration) return unavailableAccountDetails(this.accountScopeRevision)
 
     const profile = profileView(profileResult)
     const balance = balanceView(balanceResult)
+    const profileId =
+      fulfilled(profileResult) && profileResult.value?.status === 'ready'
+        ? profileResult.value.value.id
+        : undefined
     let bonus: AccountProfileDetailsSnapshot['bonus']
     if (!fulfilled(bonusResult)) {
-      // Preserve a previously read order so a displayed notice can retry its ack
-      // after a transient read failure, just as the upstream notice lifecycle does.
+      // A successful profile can still prove that this is a different account while
+      // the independent bonus request is failing; do not retain that account's card.
+      if (profileId !== undefined && profileId !== null) this.useBonusAccountScope(profileId)
+      // When identity is the same or unknown, keep prior order mappings so a displayed
+      // notice can retry its acknowledgement after a transient read failure.
       bonus = { status: 'failed' }
     } else if (bonusResult.value === null) {
       this.clearBonusScope()
       bonus = { status: 'unavailable' }
     } else {
       const batch = bonusResult.value
-      const profileId =
-        fulfilled(profileResult) && profileResult.value?.status === 'ready'
-          ? profileResult.value.value.id
-          : undefined
       // Separate Remote reads may straddle a grant replacement. Never show a notice for a different identity.
       if (profileId !== undefined && profileId !== null && profileId !== batch.accountId) {
         this.clearBonusScope()
         bonus = { status: 'unavailable' }
       } else {
-        if (this.bonusAccountScopeId !== batch.accountId) {
-          this.bonusAccountByOrderId.clear()
-          this.bonusAccountScopeId = batch.accountId
-        }
-        const notice = firstVisibleBonus(batch)
+        this.useBonusAccountScope(batch.accountId)
+        const notice = firstVisibleBonus(batch, this.now())
         bonus = { status: 'ready', value: notice }
         if (notice !== null) {
           this.bonusAccountByOrderId.set(notice.orderId, batch.accountId)
@@ -194,16 +196,19 @@ export class AccountLifecycleHost {
       }
     }
 
-    return { profile, balance, bonus }
+    return { profile, balance, bonus, accountScopeRevision: this.accountScopeRevision }
   }
 
   /** Acknowledge only a bonus notice returned by this Host's latest account read. */
   public async acknowledgeBonus(orderId: string, signal?: AbortSignal): Promise<boolean> {
     this.assertActive()
     const accountId = this.bonusAccountByOrderId.get(orderId)
-    if (accountId === undefined || this.acknowledgingBonusOrderIds.has(orderId)) return false
+    if (accountId === undefined) return false
+    const acknowledgementKey = JSON.stringify([accountId, orderId])
+    if (this.acknowledgingBonusKeys.has(acknowledgementKey)) return false
+    const scopeGeneration = this.accountScopeRevision
     const operationSignal = this.operationSignal(signal)
-    this.acknowledgingBonusOrderIds.add(orderId)
+    this.acknowledgingBonusKeys.add(acknowledgementKey)
     try {
       const accepted = await this.dependencies.useCases.ackBonusNotified(
         accountId,
@@ -212,10 +217,17 @@ export class AccountLifecycleHost {
         operationSignal,
       )
       operationSignal.throwIfAborted()
+      if (scopeGeneration !== this.accountScopeRevision || this.bonusAccountScopeId !== accountId)
+        return false
       this.bonusAccountByOrderId.delete(orderId)
       return accepted
+    } catch (error) {
+      operationSignal.throwIfAborted()
+      if (scopeGeneration !== this.accountScopeRevision || this.bonusAccountScopeId !== accountId)
+        return false
+      throw error
     } finally {
-      this.acknowledgingBonusOrderIds.delete(orderId)
+      this.acknowledgingBonusKeys.delete(acknowledgementKey)
     }
   }
 
@@ -246,7 +258,8 @@ export class AccountLifecycleHost {
     this.launchedAttempts.clear()
     this.initializedDefaultModelAttempts.clear()
     this.bonusAccountByOrderId.clear()
-    this.acknowledgingBonusOrderIds.clear()
+    this.acknowledgingBonusKeys.clear()
+    if (this.bonusAccountScopeId !== undefined) this.accountScopeRevision += 1
     this.bonusAccountScopeId = undefined
     this.detailsGeneration += 1
     this.previousSnapshot = undefined
@@ -297,8 +310,16 @@ export class AccountLifecycleHost {
 
   private clearBonusScope(): void {
     this.bonusAccountByOrderId.clear()
+    if (this.bonusAccountScopeId !== undefined) this.accountScopeRevision += 1
     this.bonusAccountScopeId = undefined
     this.detailsGeneration += 1
+  }
+
+  private useBonusAccountScope(accountId: string): void {
+    if (this.bonusAccountScopeId === accountId) return
+    this.bonusAccountByOrderId.clear()
+    this.bonusAccountScopeId = accountId
+    this.accountScopeRevision += 1
   }
 
   private initializeDefaultModel(attemptId: string): void {
@@ -440,8 +461,7 @@ function balanceView(
   }
 }
 
-function firstVisibleBonus(batch: AccountBonusBatch): AccountBonusNoticeDisplay | null {
-  const now = Date.now()
+function firstVisibleBonus(batch: AccountBonusBatch, now: number): AccountBonusNoticeDisplay | null {
   const candidate = batch.bonuses[0]
   if (candidate === undefined) return null
   const expiresAt = Date.parse(candidate.expiresAt)
@@ -455,11 +475,12 @@ function firstVisibleBonus(batch: AccountBonusBatch): AccountBonusNoticeDisplay 
   }
 }
 
-function unavailableAccountDetails(): AccountProfileDetailsSnapshot {
+function unavailableAccountDetails(accountScopeRevision: number): AccountProfileDetailsSnapshot {
   return {
     profile: { status: 'unavailable' },
     balance: { status: 'unavailable' },
     bonus: { status: 'unavailable' },
+    accountScopeRevision,
   }
 }
 

@@ -13,7 +13,7 @@ import type {
 } from '@dsh-vscode/domain'
 
 const ATTEMPT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu
-const ACCOUNT_ID = /^[^\p{Cc}]{1,256}$/u
+const ACCOUNT_ID = /^[\s\S]{0,256}$/u
 const ORDER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu
 
 /** Application boundary for the exact RC2 account lifecycle; no upstream DTO escapes. */

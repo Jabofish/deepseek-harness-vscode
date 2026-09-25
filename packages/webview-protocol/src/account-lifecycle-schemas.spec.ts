@@ -47,6 +47,7 @@ describe('account lifecycle Webview DTO schemas', () => {
 
   it('accepts only the minimal profile, wallet, and bonus projection', () => {
     const snapshot = {
+      accountScopeRevision: 1,
       profile: { status: 'ready', value: { name: 'Ada', contact: 'ada@example.test' } },
       balance: {
         status: 'ready',
@@ -67,6 +68,9 @@ describe('account lifecycle Webview DTO schemas', () => {
       },
     }
     expect(accountProfileDetailsSnapshotSchema.parse(snapshot)).toEqual(snapshot)
+    expect(
+      accountProfileDetailsSnapshotSchema.safeParse({ ...snapshot, accountScopeRevision: -1 }).success,
+    ).toBe(false)
     expect(
       accountProfileDetailsSnapshotSchema.safeParse({
         ...snapshot,

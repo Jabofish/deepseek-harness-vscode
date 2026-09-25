@@ -206,6 +206,34 @@ describe('ProtocolClient', () => {
     }
   })
 
+  it('gives plugin install and same-request recovery enough time to finish', () => {
+    const setTimeoutSpy = vi.spyOn(window, 'setTimeout')
+    const client = new ProtocolClient({
+      postMessage: () => undefined,
+      getState: () => undefined,
+      setState: () => undefined,
+    })
+    try {
+      const install = client.featureRequest<unknown>({
+        type: 'plugin.bundle.install',
+        requestId: 'plugin-install-call-1',
+        payload: { spec: '@dsh-community/review', installRequestId: 'plugin-install-id-1' },
+      })
+      const recovery = client.featureRequest<unknown>({
+        type: 'plugin.bundle.waitForInstall',
+        requestId: 'plugin-install-wait-1',
+        payload: { installRequestId: 'plugin-install-id-1' },
+      })
+      void install.catch(() => undefined)
+      void recovery.catch(() => undefined)
+
+      expect(setTimeoutSpy.mock.calls.filter(([, timeout]) => timeout === 600_000)).toHaveLength(2)
+    } finally {
+      setTimeoutSpy.mockRestore()
+      client.dispose()
+    }
+  })
+
   it('rejects every pending request on page disposal', async () => {
     const client = new ProtocolClient({
       postMessage: () => undefined,

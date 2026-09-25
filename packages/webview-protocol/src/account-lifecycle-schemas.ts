@@ -47,6 +47,7 @@ const accountReadFailure = z.union([
 /** Safe RC2 account panel DTO; account IDs, avatar URLs, and credentials are excluded. */
 export const accountProfileDetailsSnapshotSchema = z
   .object({
+    accountScopeRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
     profile: z.union([
       z
         .object({

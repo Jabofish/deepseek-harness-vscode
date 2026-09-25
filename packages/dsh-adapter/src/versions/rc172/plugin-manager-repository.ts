@@ -143,7 +143,7 @@ export class Rc172PluginBundleRepository implements PluginBundleRepository {
       ),
       'pluginManager/installBundle',
     )
-    return changeResult(value, 'install', spec)
+    return installChangeResult(value, spec)
   }
 
   public async cancelInstall(requestId: string, signal?: AbortSignal): Promise<PluginInstallCancellation> {
@@ -156,6 +156,18 @@ export class Rc172PluginBundleRepository implements PluginBundleRepository {
     if (!isOneOf(['cancelled', 'too-late', 'not-running'] as const, record.status))
       throw malformed('cancelInstall result')
     return { status: record.status }
+  }
+
+  public async waitForInstall(
+    requestId: string,
+    signal?: AbortSignal,
+  ): Promise<PluginBundleChangeResult | null> {
+    if (!isBoundedNonEmpty(requestId, 128)) throw invalidSpec()
+    const value = unwrapRpcResultValue<unknown>(
+      await this.transport.remoteRequest('pluginManager/waitForInstall', { requestId }, signal),
+      'pluginManager/waitForInstall',
+    )
+    return value === null ? null : installRecoveryResult(value)
   }
 
   public async removeBundle(name: string, signal?: AbortSignal): Promise<PluginBundleChangeResult> {
@@ -389,6 +401,34 @@ function changeResult(
   }
 }
 
+function installChangeResult(value: unknown, expectedSpec: string): PluginBundleChangeResult {
+  const record = requiredRecord(value, 'install result')
+  if (record.stage === 'install') return changeResult(value, 'install', expectedSpec, true)
+
+  // RC2 mutates a successful install result after pnpm completes: `target` and `stage`
+  // become the installed bundle and its activation step. Preserve the call-level
+  // operation as `install` for consumers, while validating the upstream target.
+  if (record.stage !== 'enable' || !isBoundedNonEmpty(record.bundle, 512) || record.target !== record.bundle)
+    throw malformed('install result')
+  const result = changeResult(value, 'enable', record.bundle, true)
+  return { ...result, stage: 'install' }
+}
+
+function installRecoveryResult(value: unknown): PluginBundleChangeResult {
+  const record = requiredRecord(value, 'waitForInstall result')
+  if (record.stage === 'install') {
+    if (!isBoundedNonEmpty(record.target, 4_096)) throw malformed('waitForInstall result')
+    return changeResult(value, 'install', record.target, true)
+  }
+
+  // The successful install mutates the active result to the bundle's enable stage.
+  // `waitForInstall` has no original spec argument, so only validate the bundle target.
+  if (record.stage !== 'enable' || !isBoundedNonEmpty(record.bundle, 512) || record.target !== record.bundle)
+    throw malformed('waitForInstall result')
+  const result = changeResult(value, 'enable', record.bundle, true)
+  return { ...result, stage: 'install' }
+}
+
 function readManagementErrorCode(value: unknown, part: string): PluginBundleFailureCode {
   const error = requiredRecord(value, part)
   if (!isOneOf(MANAGEMENT_ERROR_CODES, error.code)) throw malformed(part)
@@ -419,11 +459,17 @@ function validateInstallInput(
 }
 
 function hasEmbeddedUrlCredentials(spec: string): boolean {
-  const urls = spec.match(/(?:git\+)?(?:https?|ssh):\/\/[^\s]+/giu) ?? []
+  const urls = spec.match(/(?:git(?:\+[a-z]+)?|https?|ssh):\/\/[^\s]+/giu) ?? []
   return urls.some((value) => {
     try {
       const url = new URL(value)
-      return url.username !== '' || url.password !== '' || url.search !== ''
+      const ssh = url.protocol === 'ssh:' || url.protocol === 'git+ssh:'
+      // DSH accepts the standard `git+ssh://git@host/repo` form. Its `git` user is a
+      // transport account, not an embedded password/token; keep rejecting passwords,
+      // query credentials, and userinfo on non-SSH package sources.
+      return (
+        url.password !== '' || url.search !== '' || (url.username !== '' && (!ssh || url.username !== 'git'))
+      )
     } catch {
       return false
     }

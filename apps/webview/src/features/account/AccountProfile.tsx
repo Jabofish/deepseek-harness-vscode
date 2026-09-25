@@ -12,11 +12,13 @@ const DEFAULT_ACK_RETRY_MAX_DELAY_MS = 60_000
 
 interface DismissedBonusNotice {
   readonly orderId: string
+  readonly accountScopeRevision: number | undefined
   readonly read: AccountProfileDetailsSnapshot['bonus'] | undefined
 }
 
 interface FailedBonusAcknowledgement {
   readonly orderId: string
+  readonly accountScopeRevision: number | undefined
 }
 
 export interface AccountProfileLabels {
@@ -68,11 +70,14 @@ export function AccountProfile({
   ackRetryMaxDelayMs = DEFAULT_ACK_RETRY_MAX_DELAY_MS,
 }: AccountProfileProps): ReactElement {
   const bonusRead = snapshot?.bonus
+  const accountScopeRevision = snapshot?.accountScopeRevision
+  const accountScopeKey = accountScopeRevision === undefined ? 'unresolved' : String(accountScopeRevision)
   const accountAvailable = signedIn && bonusRead?.status !== 'unavailable'
   const automaticallyPresented = useRef(new Set<string>())
   const inFlightAcknowledgements = useRef(new Set<string>())
   const settledAcknowledgements = useRef(new Set<string>())
   const accountGeneration = useRef(0)
+  const previousAccountScopeRevision = useRef(accountScopeRevision)
   const retryDelay = useRef(Math.max(1, ackRetryDelayMs))
   const initialRefreshRequested = useRef(false)
   const wasSignedIn = useRef(signedIn)
@@ -83,6 +88,13 @@ export function AccountProfile({
   const [dismissedNotice, setDismissedNotice] = useState<DismissedBonusNotice>()
   const [failedAcknowledgement, setFailedAcknowledgement] = useState<FailedBonusAcknowledgement>()
   const [stateScopeAvailable, setStateScopeAvailable] = useState(accountAvailable)
+  const [accountScopeStateRevision, setAccountScopeStateRevision] = useState(accountScopeRevision)
+  const accountScopeIsCurrent = accountScopeStateRevision === accountScopeRevision
+  const visiblePresentedNotice = accountScopeIsCurrent ? presentedNotice : null
+  const visibleDismissedNotice =
+    dismissedNotice?.accountScopeRevision === accountScopeRevision ? dismissedNotice : undefined
+  const visibleFailedAcknowledgement =
+    failedAcknowledgement?.accountScopeRevision === accountScopeRevision ? failedAcknowledgement : undefined
 
   if (stateScopeAvailable !== accountAvailable) {
     setStateScopeAvailable(accountAvailable)
@@ -91,6 +103,13 @@ export function AccountProfile({
       setDismissedNotice(undefined)
       setFailedAcknowledgement(undefined)
     }
+  }
+  if (accountScopeStateRevision !== accountScopeRevision) {
+    setAccountScopeStateRevision(accountScopeRevision)
+    setPresentedNotice(null)
+    setDismissedNotice(undefined)
+    setFailedAcknowledgement(undefined)
+    setRetryDelayMs(Math.max(1, ackRetryDelayMs))
   }
 
   useEffect(() => {
@@ -107,34 +126,65 @@ export function AccountProfile({
 
   const acknowledge = useCallback(
     async (orderId: string): Promise<void> => {
-      if (inFlightAcknowledgements.current.has(orderId) || settledAcknowledgements.current.has(orderId))
+      const acknowledgementKey = `${accountScopeKey}:${orderId}`
+      if (
+        inFlightAcknowledgements.current.has(acknowledgementKey) ||
+        settledAcknowledgements.current.has(acknowledgementKey)
+      )
         return
       const generation = accountGeneration.current
-      automaticallyPresented.current.add(orderId)
-      inFlightAcknowledgements.current.add(orderId)
+      automaticallyPresented.current.add(acknowledgementKey)
+      inFlightAcknowledgements.current.add(acknowledgementKey)
       try {
         const accepted = await onAcknowledgeBonus(orderId)
         if (generation !== accountGeneration.current) return
-        settledAcknowledgements.current.add(orderId)
-        setFailedAcknowledgement((current) => (current?.orderId === orderId ? undefined : current))
+        settledAcknowledgements.current.add(acknowledgementKey)
+        setFailedAcknowledgement((current) =>
+          current?.orderId === orderId && current.accountScopeRevision === accountScopeRevision
+            ? undefined
+            : current,
+        )
         retryDelay.current = Math.max(1, ackRetryDelayMs)
         setRetryDelayMs(retryDelay.current)
         if (!accepted) onRefresh()
       } catch {
         if (generation === accountGeneration.current) {
-          setFailedAcknowledgement({ orderId })
+          setFailedAcknowledgement({ orderId, accountScopeRevision })
           const delay = retryDelay.current
           retryDelay.current = Math.min(delay * 2, Math.max(delay, ackRetryMaxDelayMs))
           setRetryDelayMs(delay)
         }
       } finally {
-        inFlightAcknowledgements.current.delete(orderId)
+        inFlightAcknowledgements.current.delete(acknowledgementKey)
       }
     },
-    [ackRetryDelayMs, ackRetryMaxDelayMs, onAcknowledgeBonus, onRefresh],
+    [
+      accountScopeKey,
+      accountScopeRevision,
+      ackRetryDelayMs,
+      ackRetryMaxDelayMs,
+      onAcknowledgeBonus,
+      onRefresh,
+    ],
   )
 
   useLayoutEffect(() => {
+    if (previousAccountScopeRevision.current !== accountScopeRevision) {
+      previousAccountScopeRevision.current = accountScopeRevision
+      accountGeneration.current += 1
+      automaticallyPresented.current.clear()
+      settledAcknowledgements.current.clear()
+      inFlightAcknowledgements.current.clear()
+      setPresentedNotice(null)
+      setDismissedNotice(undefined)
+      setFailedAcknowledgement(undefined)
+      retryDelay.current = Math.max(1, ackRetryDelayMs)
+      setRetryDelayMs(retryDelay.current)
+      if (retryTimer.current !== undefined) {
+        window.clearTimeout(retryTimer.current)
+        retryTimer.current = undefined
+      }
+    }
     if (!signedIn || bonusRead?.status === 'unavailable') {
       accountGeneration.current += 1
       automaticallyPresented.current.clear()
@@ -151,31 +201,40 @@ export function AccountProfile({
     if (bonusRead.value === null) return
 
     const reofferedAfterDismissal =
-      dismissedNotice?.orderId === bonusRead.value.orderId && dismissedNotice.read !== bonusRead
+      visibleDismissedNotice?.orderId === bonusRead.value.orderId && visibleDismissedNotice.read !== bonusRead
     if (reofferedAfterDismissal) {
-      automaticallyPresented.current.delete(bonusRead.value.orderId)
-      settledAcknowledgements.current.delete(bonusRead.value.orderId)
+      const acknowledgementKey = `${accountScopeKey}:${bonusRead.value.orderId}`
+      automaticallyPresented.current.delete(acknowledgementKey)
+      settledAcknowledgements.current.delete(acknowledgementKey)
       retryDelay.current = Math.max(1, ackRetryDelayMs)
     }
-  }, [ackRetryDelayMs, bonusRead, dismissedNotice, signedIn])
+  }, [
+    accountScopeKey,
+    accountScopeRevision,
+    accountScopeStateRevision,
+    ackRetryDelayMs,
+    bonusRead,
+    signedIn,
+    visibleDismissedNotice,
+  ])
 
   const notice =
     !signedIn || bonusRead?.status === 'unavailable'
       ? null
       : bonusRead?.status === 'ready' && bonusRead.value !== null
         ? bonusRead.value
-        : presentedNotice
+        : visiblePresentedNotice
   const dismissedForThisRead =
     notice !== null &&
-    dismissedNotice?.orderId === notice.orderId &&
-    (bonusRead?.status !== 'ready' || bonusRead.value === null || dismissedNotice.read === bonusRead)
-  const failedForThisNotice = notice !== null && failedAcknowledgement?.orderId === notice.orderId
+    visibleDismissedNotice?.orderId === notice.orderId &&
+    (bonusRead?.status !== 'ready' || bonusRead.value === null || visibleDismissedNotice.read === bonusRead)
+  const failedForThisNotice = notice !== null && visibleFailedAcknowledgement?.orderId === notice.orderId
   useEffect(() => {
-    if (failedAcknowledgement === undefined || !accountAvailable) return
-    const orderId = failedAcknowledgement.orderId
+    if (visibleFailedAcknowledgement === undefined || !accountAvailable) return
+    const orderId = visibleFailedAcknowledgement.orderId
     retryTimer.current = window.setTimeout(() => {
       retryTimer.current = undefined
-      setFailedAcknowledgement((current) => (current === failedAcknowledgement ? undefined : current))
+      setFailedAcknowledgement((current) => (current === visibleFailedAcknowledgement ? undefined : current))
       void acknowledge(orderId)
     }, retryDelayMs)
     return () => {
@@ -184,21 +243,25 @@ export function AccountProfile({
         retryTimer.current = undefined
       }
     }
-  }, [accountAvailable, acknowledge, failedAcknowledgement, retryDelayMs])
+  }, [accountAvailable, acknowledge, retryDelayMs, visibleFailedAcknowledgement])
 
   const dismiss = useCallback(
     (orderId: string): void => {
-      automaticallyPresented.current.add(orderId)
-      setDismissedNotice({ orderId, read: bonusRead })
+      const acknowledgementKey = `${accountScopeKey}:${orderId}`
+      automaticallyPresented.current.add(acknowledgementKey)
+      setDismissedNotice({ orderId, accountScopeRevision, read: bonusRead })
       setFailedAcknowledgement(undefined)
       if (retryTimer.current !== undefined) {
         window.clearTimeout(retryTimer.current)
         retryTimer.current = undefined
       }
-      if (!inFlightAcknowledgements.current.has(orderId) && !settledAcknowledgements.current.has(orderId))
+      if (
+        !inFlightAcknowledgements.current.has(acknowledgementKey) &&
+        !settledAcknowledgements.current.has(acknowledgementKey)
+      )
         void acknowledge(orderId)
     },
-    [acknowledge, bonusRead],
+    [accountScopeKey, accountScopeRevision, acknowledge, bonusRead],
   )
 
   useEffect(() => {
@@ -206,8 +269,8 @@ export function AccountProfile({
       notice === null ||
       !signedIn ||
       dismissedForThisRead ||
-      settledAcknowledgements.current.has(notice.orderId) ||
-      automaticallyPresented.current.has(notice.orderId) ||
+      settledAcknowledgements.current.has(`${accountScopeKey}:${notice.orderId}`) ||
+      automaticallyPresented.current.has(`${accountScopeKey}:${notice.orderId}`) ||
       !isNoticeLive(notice)
     )
       return
@@ -224,7 +287,7 @@ export function AccountProfile({
           !intersects ||
           !isNoticeLive(notice) ||
           !element.isConnected ||
-          automaticallyPresented.current.has(notice.orderId)
+          automaticallyPresented.current.has(`${accountScopeKey}:${notice.orderId}`)
         )
           return
         setPresentedNotice(notice)
@@ -249,7 +312,7 @@ export function AccountProfile({
       cancelAfterPaint?.()
       observer?.disconnect()
     }
-  }, [acknowledge, dismissedForThisRead, notice, signedIn])
+  }, [accountScopeKey, acknowledge, dismissedForThisRead, notice, signedIn])
 
   const profile = snapshot?.profile.status === 'ready' ? snapshot.profile.value : undefined
   const balance = snapshot?.balance.status === 'ready' ? snapshot.balance.value : undefined

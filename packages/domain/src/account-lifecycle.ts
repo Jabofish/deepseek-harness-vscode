@@ -100,6 +100,8 @@ export interface AccountBonusNoticeDisplay {
 
 /** Safe account panel projection; it contains no account ids, avatar URLs, or credentials. */
 export interface AccountProfileDetailsSnapshot {
+  /** Non-sensitive Host-local revision used to isolate account-specific panel state. */
+  readonly accountScopeRevision: number
   readonly profile: AccountReadView<AccountProfileDisplay>
   readonly balance: AccountReadView<{
     readonly wallets: readonly AccountWallet[]

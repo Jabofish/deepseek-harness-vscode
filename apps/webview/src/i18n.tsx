@@ -1019,6 +1019,10 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
       'The install could not be cancelled. Its result will be checked when it finishes.',
     'plugins.manager.install.uncertain':
       'The install result could not be confirmed. The bundle list was refreshed.',
+    'plugins.manager.install.unknown':
+      'The install result is still unknown. Check its status before starting another install.',
+    'plugins.manager.install.recover': 'Check install status',
+    'plugins.manager.install.recovering': 'Checking the install status…',
     'plugins.manager.install.done': 'The plugin bundle was installed.',
     'plugins.manager.install.buildApproval': 'DSH blocked install scripts for: {names}',
     'plugins.manager.install.approveRetry': 'Review script permission and retry',
@@ -2594,6 +2598,9 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'plugins.manager.install.cancel': '取消安装',
     'plugins.manager.install.cancelFailed': '无法取消安装。安装结束后会重新检查结果。',
     'plugins.manager.install.uncertain': '无法确认安装结果，已刷新扩展包列表。',
+    'plugins.manager.install.unknown': '暂时无法确定安装结果。请先检查状态，再开始其他安装。',
+    'plugins.manager.install.recover': '检查安装状态',
+    'plugins.manager.install.recovering': '正在检查安装状态…',
     'plugins.manager.install.done': '插件扩展包已安装。',
     'plugins.manager.install.buildApproval': 'DSH 阻止了以下安装脚本：{names}',
     'plugins.manager.install.approveRetry': '检查脚本权限并重试',
