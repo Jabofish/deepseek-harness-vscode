@@ -252,6 +252,25 @@ describe('SettingsDrawer', () => {
 
     renderDrawer({ accountLifecycleAvailable: true })
     expect(await screen.findByRole('heading', { name: 'DSH account' })).toBeDefined()
+    expect(screen.getByRole('heading', { name: 'Account details' })).toBeDefined()
+  })
+
+  it('routes account refresh and official page buttons to their Host actions', async () => {
+    const onLoadAccountDetails = vi.fn().mockResolvedValue(undefined)
+    const onOpenAccountPage = vi.fn()
+    renderDrawer(
+      {
+        accountLifecycleAvailable: true,
+        accountLifecycle: { status: 'credential-stored', attempt: null },
+        onLoadAccountDetails,
+        onOpenAccountPage,
+      },
+      true,
+    )
+
+    await waitFor(() => expect(onLoadAccountDetails).toHaveBeenCalledOnce())
+    fireEvent.click(screen.getByRole('button', { name: 'View usage' }))
+    expect(onOpenAccountPage).toHaveBeenCalledWith('usage')
   })
 
   it('localizes general and model settings when Chinese is selected', async () => {

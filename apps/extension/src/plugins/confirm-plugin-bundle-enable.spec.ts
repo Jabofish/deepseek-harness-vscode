@@ -6,7 +6,10 @@ const bundle = {
   title: { en: 'Review layer', zh: '审查层' },
   enabled: false,
   installed: false,
-  hasIssue: false,
+  optional: true,
+  removable: false,
+  rows: [],
+  overrides: [],
 } as const
 
 describe('Host modal for optional bundle activation', () => {
@@ -22,7 +25,7 @@ describe('Host modal for optional bundle activation', () => {
 
     await expect(confirm(bundle)).resolves.toBe(true)
     expect(present).toHaveBeenCalledWith(
-      'Enable optional bundle "Review layer" for the current DSH profile?',
+      'Enable plugin bundle "Review layer" for the current DSH profile?',
       {
         modal: true,
         detail:

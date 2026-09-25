@@ -26,6 +26,7 @@ import {
   type ExtensionSettingsSummary,
   type JobFollowFrame,
   type JobView,
+  type PluginInstallProgressView,
   type EditorContextOwner,
   type EditorContextAvailability,
   type EditorContextKind,
@@ -158,6 +159,12 @@ import { PromptTemplateStore } from './prompts/prompt-template-store.js'
 import { handleScheduleFeatureRequest } from './schedules/schedule-feature-handler.js'
 import { handlePluginBundleFeatureRequest } from './plugins/plugin-bundle-feature-handler.js'
 import { createPluginBundleEnableConfirmation } from './plugins/confirm-plugin-bundle-enable.js'
+import {
+  createPluginBuildApprovalConfirmation,
+  createPluginInstallConfirmation,
+  createPluginRemoveConfirmation,
+} from './plugins/plugin-manager-confirmations.js'
+import { projectPluginInstallProgress } from './plugins/plugin-manager-event-projection.js'
 import { AccountLifecycleHost } from './account/account-lifecycle-host.js'
 import {
   createVscodePromptTemplateStorage,
@@ -819,10 +826,16 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
   }
   let featureLocalSequence = 0
   const postFeatureEvent = (
-    name: 'editor.context.changed' | 'editor.context.availability.changed' | 'schedule.invalidated',
+    name:
+      | 'editor.context.changed'
+      | 'editor.context.availability.changed'
+      | 'schedule.invalidated'
+      | 'plugin.manager.changed'
+      | 'plugin.install.progress',
     payload:
       | { readonly contextRef: string; readonly action: 'added' | 'updated' | 'released' }
       | { readonly availableKinds: FeatureContextKind[] }
+      | PluginInstallProgressView
       | Record<string, never>,
   ): Promise<boolean> => {
     let connection: DshBackend['connection']
@@ -857,7 +870,9 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
               identity,
               availableKinds: (payload as { readonly availableKinds: FeatureContextKind[] }).availableKinds,
             }
-          : { type: 'feature.event', name, identity }
+          : name === 'plugin.install.progress'
+            ? { type: 'feature.event', name, identity, ...(payload as PluginInstallProgressView) }
+            : { type: 'feature.event', name, identity }
     return Promise.resolve(post(event))
   }
   const postAccountFeatureEvent = (
@@ -1207,6 +1222,19 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     changeTracker.attach(backend, currentWorkspaceFolderId)
     taskRegistry.attach(backend, currentWorkspaceFolderId)
     backendService.attach(backend, (event) => {
+      if (event.type === 'remote.event' && event.name === 'plugin-manager/changed') {
+        void postFeatureEvent('plugin.manager.changed', {})
+        return
+      }
+      if (event.type === 'remote.event' && event.name === 'plugin-manager/install-log') {
+        // Package output may contain credentials, local paths, and command arguments.
+        return
+      }
+      if (event.type === 'remote.event' && event.name === 'plugin-manager/install-state') {
+        const progress = projectPluginInstallProgress(event.args)
+        if (progress !== undefined) void postFeatureEvent('plugin.install.progress', progress)
+        return
+      }
       if (event.type === 'remote.event' && event.name === 'schedule/changed') {
         // Do not forward the upstream event arguments (which may contain task
         // details) to the generic Webview event channel. Signal a Host reload.
@@ -1674,7 +1702,10 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       request.type === 'account.signIn' ||
       request.type === 'account.cancelSignIn' ||
       request.type === 'account.signOutImpact' ||
-      request.type === 'account.signOut'
+      request.type === 'account.signOut' ||
+      request.type === 'account.details.read' ||
+      request.type === 'account.bonus.ack' ||
+      request.type === 'account.page.open'
     ) {
       const account = accountLifecycleHost
       if (account === undefined)
@@ -1694,19 +1725,46 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
         }
       if (request.type === 'account.signOutImpact')
         return { kind: 'account.impact', impact: await account.getSignOutImpact(signal) }
+      if (request.type === 'account.details.read')
+        return { kind: 'account.details', snapshot: await account.readDetails(signal) }
+      if (request.type === 'account.bonus.ack')
+        return {
+          kind: 'account.bonus.ack',
+          accepted: await account.acknowledgeBonus(request.payload.orderId, signal),
+        }
+      if (request.type === 'account.page.open') {
+        await account.openAccountPage(request.payload.page, signal)
+        return { kind: 'account.page.opened', page: request.payload.page }
+      }
       const snapshot = await account.signOut(signal)
       return { kind: 'account.lifecycle', snapshot: snapshot ?? (await account.getState(signal)) }
     }
-    if (request.type === 'plugin.bundles.list' || request.type === 'plugin.bundle.setEnabled') {
+    if (
+      request.type === 'plugin.bundles.list' ||
+      request.type === 'plugin.registries.list' ||
+      request.type === 'plugin.spec.inspect' ||
+      request.type === 'plugin.bundle.install' ||
+      request.type === 'plugin.bundle.cancelInstall' ||
+      request.type === 'plugin.bundle.setEnabled' ||
+      request.type === 'plugin.bundle.remove' ||
+      request.type === 'plugin.entry.setEnabled'
+    ) {
       const backend = backendService.requireBackend()
       const bundles = new PluginBundleUseCases(backend)
-      const confirmEnable = createPluginBundleEnableConfirmation(
-        (message, options, confirmLabel) => vscode.window.showWarningMessage(message, options, confirmLabel),
-        (message, bundleTitle) =>
-          bundleTitle === undefined ? vscode.l10n.t(message) : vscode.l10n.t(message, bundleTitle),
-        vscode.env.language,
-      )
-      return handlePluginBundleFeatureRequest(request, bundles, signal, confirmEnable)
+      const present = (
+        message: string,
+        options: { readonly modal: true; readonly detail: string },
+        confirmLabel: string,
+      ): Thenable<string | undefined> => vscode.window.showWarningMessage(message, options, confirmLabel)
+      const translate = (message: string, detail?: string): string =>
+        detail === undefined ? vscode.l10n.t(message) : vscode.l10n.t(message, detail)
+      const confirmEnable = createPluginBundleEnableConfirmation(present, translate, vscode.env.language)
+      return handlePluginBundleFeatureRequest(request, bundles, signal, {
+        enable: confirmEnable,
+        install: createPluginInstallConfirmation(present, translate),
+        remove: createPluginRemoveConfirmation(present, translate),
+        builds: createPluginBuildApprovalConfirmation(present, translate),
+      })
     }
     if (
       request.type === 'schedule.catalog' ||

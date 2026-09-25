@@ -16,6 +16,11 @@ const snapshot = {
   status: 'signed-out' as const,
   attempt: { id: attemptId, phase: 'waiting-browser' as const },
 }
+const accountDetails = {
+  profile: { status: 'ready' as const, value: { name: 'Ada', contact: 'ada@example.test' } },
+  balance: { status: 'ready' as const, value: { wallets: [], bonusWallets: [] } },
+  bonus: { status: 'ready' as const, value: null },
+}
 
 class AccountStoreClient {
   public readonly accountRequests: FeatureRequest[] = []
@@ -31,7 +36,13 @@ class AccountStoreClient {
     const payload =
       request.type === 'account.signOutImpact'
         ? { kind: 'account.impact', impact: 'unknown' }
-        : { kind: 'account.lifecycle', snapshot }
+        : request.type === 'account.details.read'
+          ? { kind: 'account.details', snapshot: accountDetails }
+          : request.type === 'account.bonus.ack'
+            ? { kind: 'account.bonus.ack', accepted: true }
+            : request.type === 'account.page.open'
+              ? { kind: 'account.page.opened', page: request.payload.page }
+              : { kind: 'account.lifecycle', snapshot }
     return Promise.resolve(payload as T)
   }
 
@@ -80,6 +91,20 @@ class AccountStoreClient {
     }
     for (const listener of this.featureListeners) listener(message)
   }
+
+  public expire(): void {
+    const message: FeatureHostEvent = {
+      type: 'feature.event',
+      name: 'account.session-expired',
+      identity: {
+        backendInstanceId: 'backend-instance',
+        connectionGeneration: 1,
+        stream: 'host',
+        localSeq: 2,
+      },
+    }
+    for (const listener of this.featureListeners) listener(message)
+  }
 }
 
 describe('account lifecycle store', () => {
@@ -112,6 +137,16 @@ describe('account lifecycle store', () => {
     const liveSnapshot = { status: 'credential-stored' as const, attempt: null }
     client.update(liveSnapshot)
     expect(store.getState().accountLifecycle).toEqual(liveSnapshot)
+    await store.loadAccountDetails()
+    expect(store.getState().accountProfileDetails).toEqual(accountDetails)
+    expect(await store.acknowledgeAccountBonus(attemptId)).toBe(true)
+    await store.openAccountPage('usage')
+    expect(client.accountRequests.slice(-3).map(({ type, payload }) => ({ type, payload }))).toEqual([
+      { type: 'account.details.read', payload: {} },
+      { type: 'account.bonus.ack', payload: { orderId: attemptId } },
+      { type: 'account.page.open', payload: { page: 'usage' } },
+    ])
+    expect(JSON.stringify(client.accountRequests)).not.toMatch(/accountId|avatarUrl|https?:\/\//u)
     store.dispose()
   })
 
@@ -124,6 +159,19 @@ describe('account lifecycle store', () => {
     await store.loadAccountLifecycle()
     await store.startAccountSignIn()
     expect(client.accountRequests).toEqual([])
+    store.dispose()
+  })
+
+  it('clears cached account details when the stored session expires', async () => {
+    const client = new AccountStoreClient()
+    const store = createAppStore(client as unknown as ProtocolClient)
+    client.connected(1, true)
+    client.update({ status: 'credential-stored', attempt: null })
+    await store.loadAccountDetails()
+    expect(store.getState().accountProfileDetails).toEqual(accountDetails)
+    client.expire()
+    expect(store.getState().accountProfileDetails).toBeNull()
+    expect(store.getState().accountProfileLoading).toBe(false)
     store.dispose()
   })
 })

@@ -1,19 +1,50 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { FeatureRequest } from '@dsh-vscode/webview-protocol'
 import { OptionalBundleManager, type OptionalBundleManagerProps } from './OptionalBundleManager.js'
 
 afterEach(cleanup)
 
-const optionalProvided = {
+const bundle = {
   name: '@dsh-community/review-layer',
   title: { en: 'Review layer', zh: '审查层' },
   description: { en: 'Reviews a proposed change.' },
   enabled: false,
-  installed: false,
-  hasIssue: false,
+  installed: true,
+  optional: true,
+  removable: true,
+  rows: [{ rowId: 'review', moduleName: '@dsh-community/review-layer/review', entryId: 'review:entry' }],
+  overrides: [],
+} as const
+
+const plugin = {
+  entryId: 'review:entry',
+  moduleName: '@dsh-community/review-layer/review',
+  meta: { title: { en: 'Review plugin' } },
+  enabled: true,
+  fiberPhase: 'active',
+} as const
+
+const standalonePlugin = {
+  entryId: 'standalone:entry',
+  moduleName: '@dsh-community/standalone',
+  meta: { title: { en: 'Standalone plugin' } },
+  enabled: true,
+  fiberPhase: null,
+} as const
+
+const snapshot = {
+  available: true,
+  bundles: [bundle],
+  plugins: [plugin, standalonePlugin],
+} as const
+
+const registries = {
+  registry: 'https://registry.example.test/',
+  fallbackRegistries: ['https://mirror.example.test/'],
+  resolved: 'https://registry.example.test/',
 } as const
 
 interface MountedManager {
@@ -34,195 +65,258 @@ function mountManager(resolve: (request: FeatureRequest) => unknown = defaultRes
 }
 
 function defaultResponse(request: FeatureRequest): unknown {
-  if (request.type === 'plugin.bundles.list')
-    return { kind: 'plugin.bundles', available: true, bundles: [optionalProvided] }
+  if (request.type === 'plugin.bundles.list') return { kind: 'plugin.bundles', ...snapshot }
+  if (request.type === 'plugin.registries.list')
+    return { kind: 'plugin.registries', available: true, registries }
+  if (request.type === 'plugin.spec.inspect')
+    return {
+      kind: 'plugin.inspection',
+      inspection: {
+        status: 'accepted',
+        kind: 'registry',
+        name: '@dsh-community/new-plugin',
+        version: '2.0.0',
+        description: 'A new DSH plugin bundle.',
+        bundle: true,
+        registry: 'https://mirror.example.test/',
+      },
+    }
+  if (request.type === 'plugin.bundle.install')
+    return {
+      kind: 'plugin.bundle.changed',
+      result: { name: 'new-plugin', changed: true, application: 'applied', stage: 'install' },
+    }
   if (request.type === 'plugin.bundle.setEnabled')
     return {
       kind: 'plugin.bundle.changed',
       result: {
         name: request.payload.name,
         changed: true,
+        application: 'restart-required',
+        enabled: request.payload.enabled,
+        stage: 'enable',
+      },
+    }
+  if (request.type === 'plugin.entry.setEnabled')
+    return {
+      kind: 'plugin.bundle.changed',
+      result: {
+        name: request.payload.entryId,
+        changed: true,
         application: 'applied',
         enabled: request.payload.enabled,
+        stage: 'enable',
       },
+    }
+  if (request.type === 'plugin.bundle.remove')
+    return {
+      kind: 'plugin.bundle.changed',
+      result: { name: request.payload.name, changed: true, application: 'applied', stage: 'remove' },
     }
   throw new Error(`Unexpected feature request: ${request.type}`)
 }
 
 describe('OptionalBundleManager', () => {
-  it('renders the dynamic optional catalog, including a DSH-provided bundle', async () => {
+  it('renders live profile bundles, linked and standalone plugin entries, and DSH registry choices', async () => {
     const { requests } = mountManager()
-    expect(await screen.findByRole('heading', { name: 'Optional DSH bundles' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: 'DSH Plugin Manager' })).toBeTruthy()
     expect(screen.getByText('Review layer')).toBeTruthy()
-    expect(screen.getByText('Provided by the DSH installation')).toBeTruthy()
-    expect(requests[0]).toMatchObject({ type: 'plugin.bundles.list', payload: {} })
+    expect(screen.getByText('Standalone plugin')).toBeTruthy()
+    expect(screen.getByLabelText('Package registry')).toBeTruthy()
+    expect(requests.map((request) => request.type)).toEqual(['plugin.bundles.list', 'plugin.registries.list'])
   })
 
-  it('rereads the dynamic catalog after the shared Plugin Manager event revision changes', async () => {
+  it('rereads both live catalogs after the shared Plugin Manager revision changes', async () => {
     const requests: FeatureRequest[] = []
     const featureRequest: OptionalBundleManagerProps['featureRequest'] = <T,>(request: FeatureRequest) => {
       requests.push(request)
-      return Promise.resolve({ kind: 'plugin.bundles', available: true, bundles: [optionalProvided] } as T)
+      const response =
+        request.type === 'plugin.bundles.list'
+          ? { kind: 'plugin.bundles', ...snapshot }
+          : { kind: 'plugin.registries', available: true, registries }
+      return Promise.resolve(response as T)
     }
     const view = render(<OptionalBundleManager revision={0} featureRequest={featureRequest} />)
-    await screen.findByRole('heading', { name: 'Optional DSH bundles' })
-    await waitFor(() => expect(requests).toHaveLength(1))
+    await screen.findByRole('heading', { name: 'DSH Plugin Manager' })
+    await waitFor(() => expect(requests).toHaveLength(2))
 
     view.rerender(<OptionalBundleManager revision={1} featureRequest={featureRequest} />)
-    await waitFor(() => expect(requests).toHaveLength(2))
-    expect(requests.map((request) => request.type)).toEqual(['plugin.bundles.list', 'plugin.bundles.list'])
+    await waitFor(() => expect(requests).toHaveLength(4))
+    expect(requests.map((request) => request.type)).toEqual([
+      'plugin.bundles.list',
+      'plugin.registries.list',
+      'plugin.bundles.list',
+      'plugin.registries.list',
+    ])
   })
 
-  it('shows profile scope before action and displays restart-required status after enable intent', async () => {
-    let selected = false
-    const { requests } = mountManager((request) => {
-      if (request.type === 'plugin.bundles.list')
-        return {
-          kind: 'plugin.bundles',
-          available: true,
-          bundles: [{ ...optionalProvided, enabled: selected }],
-        }
-      if (request.type === 'plugin.bundle.setEnabled') {
-        selected = request.payload.enabled
-        return {
-          kind: 'plugin.bundle.changed',
-          result: {
-            name: request.payload.name,
-            changed: true,
-            application: 'restart-required',
-            enabled: selected,
-          },
-        }
-      }
-      throw new Error(`Unexpected feature request: ${request.type}`)
+  it('inspects a package against the chosen registry before enabling installation', async () => {
+    const { requests } = mountManager()
+    await screen.findByRole('heading', { name: 'DSH Plugin Manager' })
+    fireEvent.change(screen.getByLabelText('Package name or supported package source'), {
+      target: { value: '@dsh-community/new-plugin' },
     })
-
-    const enable = await screen.findByRole('button', { name: 'Enable Review layer' })
-    expect(screen.getByText('A change affects every session that uses this DSH profile.')).toBeTruthy()
-    expect(screen.getByText('Some changes take effect only after DSH restarts.')).toBeTruthy()
-    fireEvent.click(enable)
-    expect(requests.filter((request) => request.type === 'plugin.bundle.setEnabled')).toHaveLength(1)
-    expect(await screen.findByText('The change was saved. Restart DSH to apply it.')).toBeTruthy()
-    expect(requests.filter((request) => request.type === 'plugin.bundle.setEnabled')).toEqual([
+    fireEvent.change(screen.getByLabelText('Package registry'), {
+      target: { value: 'https://mirror.example.test/' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Check package' }))
+    expect(await screen.findByText('Package: @dsh-community/new-plugin · 2.0.0')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Install' }).getAttribute('disabled')).toBeNull()
+    expect(requests.filter((request) => request.type === 'plugin.spec.inspect')).toEqual([
       expect.objectContaining({
-        type: 'plugin.bundle.setEnabled',
-        payload: { name: '@dsh-community/review-layer', enabled: true },
+        type: 'plugin.spec.inspect',
+        payload: { spec: '@dsh-community/new-plugin', registry: 'https://mirror.example.test/' },
       }),
     ])
+  })
+
+  it('routes a confirmed install request and displays its safe outcome', async () => {
+    const { requests } = mountManager()
+    await screen.findByRole('heading', { name: 'DSH Plugin Manager' })
+    fireEvent.change(screen.getByLabelText('Package name or supported package source'), {
+      target: { value: '@dsh-community/new-plugin' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Check package' }))
+    await screen.findByText('Package: @dsh-community/new-plugin · 2.0.0')
+    fireEvent.click(screen.getByRole('button', { name: 'Install' }))
+    expect(await screen.findByText('The plugin bundle was installed.')).toBeTruthy()
+    const installRequest = requests.find((request) => request.type === 'plugin.bundle.install')
+    if (installRequest?.type !== 'plugin.bundle.install') throw new Error('install request missing')
+    expect(installRequest.payload.spec).toBe('@dsh-community/new-plugin')
+    expect(installRequest.payload.installRequestId).toEqual(expect.any(String))
+    expect(installRequest.payload.registry).toBe('https://registry.example.test/')
+  })
+
+  it('shows safe registry attempt and applying phases while the install request is active', async () => {
+    const requests: FeatureRequest[] = []
+    let finishInstall: (() => void) | undefined
+    const featureRequest: OptionalBundleManagerProps['featureRequest'] = <T,>(request: FeatureRequest) => {
+      requests.push(request)
+      if (request.type === 'plugin.bundle.install')
+        return new Promise<T>((resolve) => {
+          finishInstall = () =>
+            resolve({
+              kind: 'plugin.bundle.changed',
+              result: { name: 'new-plugin', changed: true, application: 'applied', stage: 'install' },
+            } as T)
+        })
+      return Promise.resolve(defaultResponse(request) as T)
+    }
+    const view = render(<OptionalBundleManager featureRequest={featureRequest} />)
+    await screen.findByRole('heading', { name: 'DSH Plugin Manager' })
+    fireEvent.change(screen.getByLabelText('Package name or supported package source'), {
+      target: { value: '@dsh-community/new-plugin' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Check package' }))
+    await screen.findByText('Package: @dsh-community/new-plugin · 2.0.0')
+    fireEvent.click(screen.getByRole('button', { name: 'Install' }))
+    await screen.findByText('Installing through DSH…')
+    const installRequest = requests.find((request) => request.type === 'plugin.bundle.install')
+    if (installRequest?.type !== 'plugin.bundle.install') throw new Error('install request missing')
+    const installRequestId = installRequest.payload.installRequestId
+
+    view.rerender(
+      <OptionalBundleManager
+        featureRequest={featureRequest}
+        installProgress={{
+          requestId: installRequestId,
+          phase: 'installing',
+          attemptIndex: 2,
+          attemptTotal: 3,
+        }}
+      />,
+    )
+    expect(await screen.findByText('Checking package source 2 of 3…')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Cancel install' }).getAttribute('disabled')).toBeNull()
+
+    view.rerender(
+      <OptionalBundleManager
+        featureRequest={featureRequest}
+        installProgress={{ requestId: installRequestId, phase: 'applying' }}
+      />,
+    )
+    expect((await screen.findAllByText('Applying plugin changes to the DSH profile…')).length).toBe(2)
+    expect(
+      screen
+        .getByRole('button', { name: 'Applying plugin changes to the DSH profile…' })
+        .getAttribute('disabled'),
+    ).not.toBeNull()
+
+    if (finishInstall === undefined) throw new Error('install completion missing')
+    const completeInstall = finishInstall
+    await act(async () => {
+      completeInstall()
+      await Promise.resolve()
+    })
+  })
+
+  it('dispatches bundle and plugin entry changes, and removal for removable bundles', async () => {
+    const { requests } = mountManager()
+    await screen.findByRole('heading', { name: 'DSH Plugin Manager' })
+    fireEvent.click(await screen.findByRole('button', { name: 'Enable Review layer' }))
+    expect(await screen.findByText('Some changes take effect only after DSH restarts.')).toBeTruthy()
+    fireEvent.click(await screen.findByRole('button', { name: 'Disable Standalone plugin' }))
     await waitFor(() =>
-      expect(requests.filter((request) => request.type === 'plugin.bundles.list')).toHaveLength(2),
+      expect(requests.some((request) => request.type === 'plugin.entry.setEnabled')).toBe(true),
     )
-    expect(screen.getByText('Selected')).toBeTruthy()
-  })
-
-  it('keeps a Host-declined enable action visibly cancelled', async () => {
-    mountManager((request) => {
-      if (request.type === 'plugin.bundles.list')
-        return { kind: 'plugin.bundles', available: true, bundles: [optionalProvided] }
-      if (request.type === 'plugin.bundle.setEnabled')
-        return {
-          kind: 'plugin.bundle.changed',
-          result: {
-            name: request.payload.name,
-            changed: false,
-            application: 'cancelled',
-            enabled: request.payload.enabled,
-          },
-        }
-      throw new Error(`Unexpected feature request: ${request.type}`)
-    })
-
-    fireEvent.click(await screen.findByRole('button', { name: 'Enable Review layer' }))
-    expect(await screen.findByText('The bundle change was cancelled.')).toBeTruthy()
-  })
-
-  it('does not treat a mutation result without the requested enabled state as success', async () => {
-    mountManager((request) => {
-      if (request.type === 'plugin.bundles.list')
-        return { kind: 'plugin.bundles', available: true, bundles: [optionalProvided] }
-      if (request.type === 'plugin.bundle.setEnabled')
-        return {
-          kind: 'plugin.bundle.changed',
-          result: {
-            name: request.payload.name,
-            changed: true,
-            application: 'applied',
-          },
-        }
-      throw new Error(`Unexpected feature request: ${request.type}`)
-    })
-
-    fireEvent.click(await screen.findByRole('button', { name: 'Enable Review layer' }))
-    expect(
-      await screen.findByText('The result could not be confirmed. The bundle list was refreshed.'),
-    ).toBeTruthy()
-  })
-
-  it('keeps the result visible for application failures and handles missing manager and empty catalogs', async () => {
-    mountManager((request) => {
-      if (request.type === 'plugin.bundles.list')
-        return { kind: 'plugin.bundles', available: true, bundles: [optionalProvided] }
-      if (request.type === 'plugin.bundle.setEnabled')
-        return {
-          kind: 'plugin.bundle.changed',
-          result: {
-            name: request.payload.name,
-            changed: false,
-            application: 'failed',
-            enabled: request.payload.enabled,
-            errorCode: 'incompatible-version',
-          },
-        }
-      throw new Error(`Unexpected feature request: ${request.type}`)
-    })
-
-    fireEvent.click(await screen.findByRole('button', { name: 'Enable Review layer' }))
-    expect((await screen.findByRole('alert')).textContent).toContain(
-      'DSH refused this bundle because it is incompatible with the running version.',
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove Review layer' }))
+    await waitFor(() =>
+      expect(requests.some((request) => request.type === 'plugin.bundle.remove')).toBe(true),
     )
-
-    cleanup()
-    mountManager((request) => {
-      if (request.type === 'plugin.bundles.list')
-        return { kind: 'plugin.bundles', available: false, bundles: [] }
-      throw new Error(`Unexpected feature request: ${request.type}`)
-    })
-    expect(
-      await screen.findByText('Optional bundle controls are unavailable in this DSH profile.'),
-    ).toBeTruthy()
-
-    cleanup()
-    mountManager((request) => {
-      if (request.type === 'plugin.bundles.list')
-        return { kind: 'plugin.bundles', available: true, bundles: [] }
-      throw new Error(`Unexpected feature request: ${request.type}`)
-    })
-    expect(await screen.findByText('This DSH installation offers no optional bundles.')).toBeTruthy()
+    expect(requests.filter((request) => request.type === 'plugin.bundle.setEnabled')).toEqual([
+      expect.objectContaining({ payload: { name: bundle.name, enabled: true } }),
+    ])
+    expect(requests.filter((request) => request.type === 'plugin.entry.setEnabled')).toEqual([
+      expect.objectContaining({ payload: { entryId: standalonePlugin.entryId, enabled: false } }),
+    ])
+    expect(requests.filter((request) => request.type === 'plugin.bundle.remove')).toEqual([
+      expect.objectContaining({ payload: { name: bundle.name } }),
+    ])
   })
 
-  it('retains issue/read-only facts and leaves a failed refresh recoverable', async () => {
+  it('renders refused package inspection without exposing upstream diagnostics', async () => {
+    mountManager((request) => {
+      if (request.type === 'plugin.spec.inspect')
+        return { kind: 'plugin.inspection', inspection: { status: 'refused', problem: 'not-a-bundle' } }
+      return defaultResponse(request)
+    })
+    await screen.findByRole('heading', { name: 'DSH Plugin Manager' })
+    fireEvent.change(screen.getByLabelText('Package name or supported package source'), {
+      target: { value: 'not-a-plugin' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Check package' }))
+    expect(await screen.findByText('This package does not declare a DSH plugin bundle.')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Install' }).getAttribute('disabled')).not.toBeNull()
+  })
+
+  it('keeps failed refresh recoverable and presents unavailable and empty catalogs', async () => {
     let attempts = 0
     mountManager((request) => {
-      if (request.type !== 'plugin.bundles.list')
-        throw new Error(`Unexpected feature request: ${request.type}`)
-      attempts += 1
-      if (attempts === 1) throw new Error('temporary failure')
-      return {
-        kind: 'plugin.bundles',
-        available: true,
-        bundles: [{ ...optionalProvided, hasIssue: true, readOnlyReason: 'management-required' }],
+      if (request.type === 'plugin.bundles.list') {
+        attempts += 1
+        if (attempts === 1) throw new Error('temporary failure')
+        return { kind: 'plugin.bundles', available: true, bundles: [], plugins: [] }
       }
+      if (request.type === 'plugin.registries.list')
+        return { kind: 'plugin.registries', available: false, registries: null }
+      throw new Error(`Unexpected feature request: ${request.type}`)
     })
     expect((await screen.findByRole('alert')).textContent).toContain(
       'The optional bundle list could not be loaded.',
     )
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(await screen.findByText('This DSH profile has no plugin bundles.')).toBeTruthy()
+
+    cleanup()
+    mountManager((request) => {
+      if (request.type === 'plugin.bundles.list')
+        return { kind: 'plugin.bundles', available: false, bundles: [], plugins: [] }
+      if (request.type === 'plugin.registries.list')
+        return { kind: 'plugin.registries', available: false, registries: null }
+      throw new Error(`Unexpected feature request: ${request.type}`)
+    })
     expect(
-      await screen.findByText('DSH reports an issue with this bundle; enabling it may fail.'),
+      await screen.findByText('Optional bundle controls are unavailable in this DSH profile.'),
     ).toBeTruthy()
-    expect(screen.getByText('DSH protects this bundle from profile changes.')).toBeTruthy()
-    expect(
-      screen.getByRole('button', { name: 'Enable Review layer' }).getAttribute('disabled'),
-    ).not.toBeNull()
   })
 })

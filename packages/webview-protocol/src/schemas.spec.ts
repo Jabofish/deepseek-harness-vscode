@@ -801,74 +801,263 @@ describe('message feedback Webview protocol', () => {
   })
 })
 
-describe('optional Plugin Manager feature protocol', () => {
-  it('accepts only the dynamic optional bundle read and enablement intent payloads', () => {
+describe('RC2 Account Profile feature protocol', () => {
+  it('accepts closed profile requests and rejects identity or URL input from the Webview', () => {
+    const requests = [
+      { type: 'account.details.read', payload: {} },
+      { type: 'account.bonus.ack', payload: { orderId: 'd80ff092-0cdd-4a34-b5fb-05503d8574d8' } },
+      { type: 'account.page.open', payload: { page: 'top-up' } },
+    ]
+    for (const [index, request] of requests.entries())
+      expect(
+        featureRequestSchema.safeParse({ ...request, requestId: `account-request-${index}` }).success,
+      ).toBe(true)
     expect(
       featureRequestSchema.safeParse({
-        type: 'plugin.bundles.list',
-        requestId: 'bundle-list-1',
-        payload: {},
+        type: 'account.page.open',
+        requestId: 'account-page-injection',
+        payload: { page: 'usage', url: 'https://untrusted.example.test/' },
       }).success,
-    ).toBe(true)
+    ).toBe(false)
     expect(
       featureRequestSchema.safeParse({
-        type: 'plugin.bundle.setEnabled',
-        requestId: 'bundle-set-1',
-        payload: { name: '@dsh-community/review-layer', enabled: true },
-      }).success,
-    ).toBe(true)
-    expect(
-      featureRequestSchema.safeParse({
-        type: 'plugin.bundle.setEnabled',
-        requestId: 'bundle-set-2',
-        payload: { name: '@dsh-community/review-layer', enabled: true, installed: true },
+        type: 'account.bonus.ack',
+        requestId: 'account-ack-injection',
+        payload: { orderId: 'd80ff092-0cdd-4a34-b5fb-05503d8574d8', accountId: 'host-only' },
       }).success,
     ).toBe(false)
   })
 
-  it('accepts the safe optional projection including a DSH-provided bundle and rejects upstream-only fields', () => {
-    const bundle = {
-      name: '@dsh-community/review-layer',
-      version: '1.2.3',
-      title: { en: 'Review layer', zh: '审查层' },
-      enabled: false,
-      installed: false,
-      hasIssue: false,
+  it('accepts only account detail, acknowledgement, and page receipts with safe projections', () => {
+    const details = {
+      profile: { status: 'ready', value: { name: 'Ada', contact: 'ada@example.test' } },
+      balance: { status: 'ready', value: { wallets: [], bonusWallets: [] } },
+      bonus: { status: 'ready', value: null },
     }
     expect(
       featureResponseSchema.safeParse({
         type: 'feature.response',
-        requestId: 'bundle-list-response',
+        requestId: 'account-details-response',
         ok: true,
-        payload: { kind: 'plugin.bundles', available: true, bundles: [bundle] },
+        payload: { kind: 'account.details', snapshot: details },
       }).success,
     ).toBe(true)
     expect(
       featureResponseSchema.safeParse({
         type: 'feature.response',
-        requestId: 'bundle-list-response-unsafe',
+        requestId: 'account-details-unsafe-response',
         ok: true,
         payload: {
-          kind: 'plugin.bundles',
-          available: true,
-          bundles: [
-            { ...bundle, optional: true, meta: { icon: 'https://invalid', error: 'private diagnostic' } },
-          ],
+          kind: 'account.details',
+          snapshot: {
+            ...details,
+            profile: { status: 'ready', value: { name: 'Ada', contact: null, id: 'private' } },
+          },
         },
       }).success,
     ).toBe(false)
     expect(
       featureResponseSchema.safeParse({
         type: 'feature.response',
-        requestId: 'bundle-unavailable-invalid',
+        requestId: 'account-ack-response',
         ok: true,
-        payload: { kind: 'plugin.bundles', available: false, bundles: [bundle] },
+        payload: { kind: 'account.bonus.ack', accepted: true },
+      }).success,
+    ).toBe(true)
+    expect(
+      featureResponseSchema.safeParse({
+        type: 'feature.response',
+        requestId: 'account-page-response',
+        ok: true,
+        payload: { kind: 'account.page.opened', page: 'usage' },
+      }).success,
+    ).toBe(true)
+  })
+})
+
+describe('RC2 Plugin Manager feature protocol', () => {
+  it('accepts safe invalidation and install phases without registry or log payloads', () => {
+    const identity = {
+      backendInstanceId: 'backend-1',
+      connectionGeneration: 2,
+      stream: 'local',
+      localSeq: 3,
+    }
+    expect(
+      featureHostEventSchema.safeParse({ type: 'feature.event', name: 'plugin.manager.changed', identity })
+        .success,
+    ).toBe(true)
+    expect(
+      featureHostEventSchema.safeParse({
+        type: 'feature.event',
+        name: 'plugin.install.progress',
+        identity,
+        requestId: 'plugin-manager-a1-1',
+        phase: 'installing',
+        attemptIndex: 2,
+        attemptTotal: 3,
+      }).success,
+    ).toBe(true)
+    expect(
+      featureHostEventSchema.safeParse({
+        type: 'feature.event',
+        name: 'plugin.install.progress',
+        identity,
+        requestId: 'plugin-manager-a1-1',
+        phase: 'applying',
+      }).success,
+    ).toBe(true)
+    expect(
+      featureHostEventSchema.safeParse({
+        type: 'feature.event',
+        name: 'plugin.install.progress',
+        identity,
+        requestId: 'plugin-manager-a1-1',
+        phase: 'applying',
+        registry: 'https://private.example.test/',
+      }).success,
+    ).toBe(false)
+    expect(
+      featureHostEventSchema.safeParse({
+        type: 'feature.event',
+        name: 'plugin.install.progress',
+        identity,
+        requestId: 'plugin-manager-a1-1',
+        phase: 'applying',
+        attemptIndex: 2,
+        attemptTotal: 3,
       }).success,
     ).toBe(false)
   })
 
-  it('carries a closed runtime outcome without diagnostics or arbitrary upstream data', () => {
-    const payload = {
+  it('accepts only closed lifecycle request payloads', () => {
+    const requests = [
+      { type: 'plugin.bundles.list', payload: {} },
+      { type: 'plugin.registries.list', payload: {} },
+      { type: 'plugin.spec.inspect', payload: { spec: '@dsh-community/review-layer', registry: null } },
+      {
+        type: 'plugin.bundle.install',
+        payload: { spec: '@dsh-community/review-layer', installRequestId: 'install-1' },
+      },
+      { type: 'plugin.bundle.cancelInstall', payload: { installRequestId: 'install-1' } },
+      { type: 'plugin.bundle.setEnabled', payload: { name: '@dsh-community/review-layer', enabled: true } },
+      { type: 'plugin.bundle.remove', payload: { name: '@dsh-community/review-layer' } },
+      { type: 'plugin.entry.setEnabled', payload: { entryId: 'review:entry', enabled: false } },
+    ]
+    for (const [index, request] of requests.entries()) {
+      expect(
+        featureRequestSchema.safeParse({ ...request, requestId: `bundle-request-${index}` }).success,
+      ).toBe(true)
+    }
+    expect(
+      featureRequestSchema.safeParse({
+        type: 'plugin.bundle.install',
+        requestId: 'bundle-install-unsafe',
+        payload: { spec: 'pkg', installRequestId: 'install-1', options: { enabled: true } },
+      }).success,
+    ).toBe(false)
+  })
+
+  it('accepts safe live inventories and refuses upstream-only diagnostics', () => {
+    const bundle = {
+      name: '@dsh-community/review-layer',
+      version: '1.2.3',
+      title: { en: 'Review layer', zh: '审查层' },
+      enabled: false,
+      installed: false,
+      optional: true,
+      removable: false,
+      rows: [
+        { rowId: 'review-row', moduleName: '@dsh-community/review-layer/review', entryId: 'review:entry' },
+      ],
+      overrides: [],
+    }
+    const response = {
+      type: 'feature.response',
+      requestId: 'bundle-list-response',
+      ok: true,
+      payload: {
+        kind: 'plugin.bundles',
+        available: true,
+        bundles: [bundle],
+        plugins: [
+          {
+            entryId: 'review:entry',
+            moduleName: '@dsh-community/review-layer/review',
+            enabled: false,
+            fiberPhase: null,
+          },
+        ],
+      },
+    }
+    expect(featureResponseSchema.safeParse(response).success).toBe(true)
+    expect(
+      featureResponseSchema.safeParse({
+        ...response,
+        payload: {
+          ...response.payload,
+          bundles: [{ ...bundle, meta: { icon: 'https://invalid', error: 'private diagnostic' } }],
+        },
+      }).success,
+    ).toBe(false)
+    expect(
+      featureResponseSchema.safeParse({
+        ...response,
+        payload: { ...response.payload, available: false },
+      }).success,
+    ).toBe(false)
+  })
+
+  it('validates registry choices, inspection refusals, cancellation and closed operation results', () => {
+    expect(
+      featureResponseSchema.safeParse({
+        type: 'feature.response',
+        requestId: 'registry-list-response',
+        ok: true,
+        payload: {
+          kind: 'plugin.registries',
+          available: true,
+          registries: {
+            registry: null,
+            fallbackRegistries: ['https://mirror.example.test/'],
+            resolved: 'https://registry.example.test/',
+          },
+        },
+      }).success,
+    ).toBe(true)
+    expect(
+      featureResponseSchema.safeParse({
+        type: 'feature.response',
+        requestId: 'registry-credential-response',
+        ok: true,
+        payload: {
+          kind: 'plugin.registries',
+          available: true,
+          registries: {
+            registry: null,
+            fallbackRegistries: ['https://user:secret@mirror.example.test/'],
+            resolved: null,
+          },
+        },
+      }).success,
+    ).toBe(false)
+    expect(
+      featureResponseSchema.safeParse({
+        type: 'feature.response',
+        requestId: 'inspection-response',
+        ok: true,
+        payload: { kind: 'plugin.inspection', inspection: { status: 'refused', problem: 'not-a-bundle' } },
+      }).success,
+    ).toBe(true)
+    expect(
+      featureResponseSchema.safeParse({
+        type: 'feature.response',
+        requestId: 'install-cancel-response',
+        ok: true,
+        payload: { kind: 'plugin.install.cancelled', status: 'too-late' },
+      }).success,
+    ).toBe(true)
+    const change = {
       type: 'feature.response',
       requestId: 'bundle-change-response',
       ok: true,
@@ -879,32 +1068,17 @@ describe('optional Plugin Manager feature protocol', () => {
           changed: false,
           application: 'cancelled',
           enabled: true,
+          stage: 'enable',
         },
       },
     }
-    expect(featureResponseSchema.safeParse(payload).success).toBe(true)
+    expect(featureResponseSchema.safeParse(change).success).toBe(true)
     expect(
       featureResponseSchema.safeParse({
-        ...payload,
+        ...change,
         payload: {
-          kind: 'plugin.bundle.changed',
-          result: {
-            name: '@dsh-community/review-layer',
-            changed: false,
-            application: 'cancelled',
-          },
-        },
-      }).success,
-    ).toBe(false)
-    expect(
-      featureResponseSchema.safeParse({
-        ...payload,
-        payload: {
-          kind: 'plugin.bundle.changed',
-          result: {
-            ...payload.payload.result,
-            diagnostic: 'must not enter Webview',
-          },
+          ...change.payload,
+          result: { ...change.payload.result, diagnostic: 'must not enter Webview' },
         },
       }).success,
     ).toBe(false)

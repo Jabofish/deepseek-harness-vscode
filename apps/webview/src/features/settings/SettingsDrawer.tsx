@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactElement } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react'
 import type {
   AgentPresetDocument,
   AgentPresetLocation,
@@ -13,11 +13,13 @@ import type {
   ModelDescriptor,
   ModelDiscoveryInput,
   ModelProvider,
+  PluginInstallProgressView,
   PluginInventorySnapshot,
 } from '@dsh-vscode/domain'
 import type { FeatureRequest } from '@dsh-vscode/webview-protocol'
 import type {
   AccountLifecycleErrorCodeDto,
+  AccountProfileDetailsSnapshotDto,
   AccountLifecycleSnapshotDto,
   AccountSignOutImpactDto,
 } from '@dsh-vscode/webview-protocol'
@@ -50,6 +52,7 @@ import {
   type AccountLifecycleUiError,
   type AccountLifecycleUiPhase,
 } from '../account/AccountLifecycle.js'
+import { AccountProfile, type AccountProfileLabels } from '../account/AccountProfile.js'
 import { PresetManager } from './PresetManager.js'
 import { CustomProviderCard, type CustomProviderTemplate } from './CustomProviderCard.js'
 import { ProviderSettingsEditor, type ProviderSettingChange } from './ProviderSettingsEditor.js'
@@ -102,6 +105,7 @@ export interface SettingsDrawerProps {
   readonly onOpenPresetDocument: (presetId: string) => Promise<AgentPresetLocation | undefined>
   readonly onStartCreatorDraft?: () => Promise<void>
   readonly pluginInventoryRevision?: number
+  readonly pluginInstallProgress?: PluginInstallProgressView | undefined
   readonly onLoadPluginInventory: () => Promise<PluginInventorySnapshot | undefined>
   readonly featureRequest?: <T>(request: FeatureRequest) => Promise<T>
   readonly accountLifecycleAvailable?: boolean
@@ -112,7 +116,13 @@ export interface SettingsDrawerProps {
   readonly accountSessionExpired?: boolean
   readonly accountLifecycleError?: AccountLifecycleErrorCodeDto
   readonly accountLifecycleRequestFailed?: boolean
+  readonly accountProfileDetails?: AccountProfileDetailsSnapshotDto | null
+  readonly accountProfileLoading?: boolean
+  readonly accountProfileRequestFailed?: boolean
   readonly onLoadAccountLifecycle?: () => Promise<void>
+  readonly onLoadAccountDetails?: () => Promise<void>
+  readonly onAcknowledgeAccountBonus?: (orderId: string) => Promise<boolean>
+  readonly onOpenAccountPage?: (page: 'usage' | 'top-up') => void
   readonly onStartAccountSignIn?: () => Promise<void>
   readonly onCancelAccountSignIn?: (attemptId: string) => Promise<void>
   readonly onCheckAccountSignOutImpact?: () => Promise<void>
@@ -186,6 +196,16 @@ function isRiskValue(value: string): boolean {
 
 export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
   const { t } = useI18n()
+  const { onLoadAccountDetails, onAcknowledgeAccountBonus, onOpenAccountPage } = props
+  const refreshAccountDetails = useCallback((): void => {
+    void onLoadAccountDetails?.()
+  }, [onLoadAccountDetails])
+  const acknowledgeAccountBonus = useCallback(
+    (orderId: string): Promise<boolean> => onAcknowledgeAccountBonus?.(orderId) ?? Promise.resolve(false),
+    [onAcknowledgeAccountBonus],
+  )
+  const openAccountUsage = useCallback((): void => onOpenAccountPage?.('usage'), [onOpenAccountPage])
+  const openAccountTopUp = useCallback((): void => onOpenAccountPage?.('top-up'), [onOpenAccountPage])
   const {
     open,
     dshUpdate,
@@ -638,26 +658,40 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                 aria-label={t('settings.generalAria')}
               >
                 {props.accountLifecycleAvailable === true ? (
-                  <AccountLifecycle
-                    snapshot={
-                      props.accountLifecycleLoading === true ? null : (props.accountLifecycle ?? null)
-                    }
-                    {...(props.accountLifecycleImpact === undefined
-                      ? {}
-                      : { impact: props.accountLifecycleImpact })}
-                    sessionExpired={props.accountSessionExpired === true}
-                    {...(props.accountLifecycleError === undefined
-                      ? {}
-                      : { hostError: props.accountLifecycleError })}
-                    requestFailed={props.accountLifecycleRequestFailed === true}
-                    busy={props.accountLifecycleBusy === true || props.accountLifecycleLoading === true}
-                    labels={accountLifecycleLabels(t)}
-                    onSignIn={() => void props.onStartAccountSignIn?.()}
-                    onCancelSignIn={(attemptId) => void props.onCancelAccountSignIn?.(attemptId)}
-                    onCheckSignOutImpact={() => void props.onCheckAccountSignOutImpact?.()}
-                    onSignOut={() => void props.onSignOutAccount?.()}
-                    onRetry={() => void props.onLoadAccountLifecycle?.()}
-                  />
+                  <>
+                    <AccountLifecycle
+                      snapshot={
+                        props.accountLifecycleLoading === true ? null : (props.accountLifecycle ?? null)
+                      }
+                      {...(props.accountLifecycleImpact === undefined
+                        ? {}
+                        : { impact: props.accountLifecycleImpact })}
+                      sessionExpired={props.accountSessionExpired === true}
+                      {...(props.accountLifecycleError === undefined
+                        ? {}
+                        : { hostError: props.accountLifecycleError })}
+                      requestFailed={props.accountLifecycleRequestFailed === true}
+                      busy={props.accountLifecycleBusy === true || props.accountLifecycleLoading === true}
+                      labels={accountLifecycleLabels(t)}
+                      onSignIn={() => void props.onStartAccountSignIn?.()}
+                      onCancelSignIn={(attemptId) => void props.onCancelAccountSignIn?.(attemptId)}
+                      onCheckSignOutImpact={() => void props.onCheckAccountSignOutImpact?.()}
+                      onSignOut={() => void props.onSignOutAccount?.()}
+                      onRetry={() => void props.onLoadAccountLifecycle?.()}
+                    />
+                    <AccountProfile
+                      snapshot={props.accountProfileDetails ?? null}
+                      signedIn={props.accountLifecycle?.status === 'credential-stored'}
+                      busy={props.accountProfileLoading === true}
+                      requestFailed={props.accountProfileRequestFailed === true}
+                      labels={accountProfileLabels(t)}
+                      locale={props.locale}
+                      onRefresh={refreshAccountDetails}
+                      onAcknowledgeBonus={acknowledgeAccountBonus}
+                      onOpenUsage={openAccountUsage}
+                      onOpenTopUp={openAccountTopUp}
+                    />
+                  </>
                 ) : null}
                 {settingsState === undefined ? (
                   <p className="dsh-settings__empty" role="status">
@@ -1499,6 +1533,7 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                 {props.featureRequest === undefined ? null : (
                   <OptionalBundleManager
                     revision={props.pluginInventoryRevision ?? 0}
+                    installProgress={props.pluginInstallProgress}
                     featureRequest={props.featureRequest}
                   />
                 )}
@@ -1509,6 +1544,26 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
       </section>
     </ModalWrapper>
   )
+}
+
+function accountProfileLabels(t: Translate): AccountProfileLabels {
+  return {
+    title: t('account.profile.title'),
+    refresh: t('account.profile.refresh'),
+    profile: t('account.profile.profile'),
+    balance: t('account.profile.balance'),
+    bonusBalance: t('account.profile.bonusBalance'),
+    bonusNotice: t('account.profile.bonusNotice'),
+    signedOut: t('account.signedOut'),
+    unavailable: t('account.profile.unavailable'),
+    failed: t('account.profile.failed'),
+    noBalance: t('account.profile.noBalance'),
+    unnamed: t('account.profile.unnamed'),
+    dismissBonus: t('account.profile.dismissBonus'),
+    retryBonus: t('account.profile.retryBonus'),
+    usage: t('account.profile.usage'),
+    topUp: t('account.profile.topUp'),
+  }
 }
 
 function accountLifecycleLabels(t: Translate): AccountLifecycleLabels {

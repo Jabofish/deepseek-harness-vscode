@@ -75,7 +75,7 @@ function mountPanel(
     <SchedulePanel
       featureRequest={featureRequest}
       subscribeFeature={subscribeFeature}
-      onStartScheduleSession={options.onStartScheduleSession ?? (() => undefined)}
+      onStartScheduleSession={options.onStartScheduleSession ?? (() => Promise.resolve('session-new'))}
     />,
   )
   return {
@@ -114,26 +114,351 @@ function defaultResponse(request: FeatureRequest, items: readonly ScheduleCatalo
   }
 }
 
+function clickCreateOpen(): void {
+  const button = document.querySelector<HTMLButtonElement>('.dsh-schedule-panel__new')
+  if (button === null) throw new Error('The create schedule button is missing.')
+  fireEvent.click(button)
+}
+
+function submitCreateForm(): void {
+  const button = document.querySelector<HTMLButtonElement>(
+    '.dsh-schedule-panel__create-form button[type="submit"]',
+  )
+  if (button === null) throw new Error('The create schedule submit button is missing.')
+  fireEvent.click(button)
+}
+
 describe('SchedulePanel', () => {
   afterEach(() => cleanup())
 
-  it('starts the real creation flow through a new Session callback and supports retry after failure', async () => {
+  it('serializes each RC2 selector exactly and does not claim creation when the Session request is sent', async () => {
+    const cases = [
+      { timing: 'after', selector: 'after_seconds', value: 300 },
+      { timing: 'at', selector: 'at', value: { date: '2099-10-20', time: '09:30:00', time_zone: 'UTC' } },
+      { timing: 'every', selector: 'every_seconds', value: 300 },
+      { timing: 'daily', selector: 'daily', value: { time: '10:15:00', time_zone: 'UTC' } },
+      {
+        timing: 'weekly',
+        selector: 'weekly',
+        value: { time: '10:15:00', time_zone: 'UTC', weekdays: [1, 2] },
+      },
+      { timing: 'cron', selector: 'cron', value: { expression: '0 9 * * 1', time_zone: 'UTC' } },
+    ] as const
+    for (const item of cases) {
+      const startSession = vi.fn((_prompt: string) => Promise.resolve('session-new'))
+      const panel = mountPanel({ onStartScheduleSession: startSession })
+      await screen.findByRole('button', { name: /Water the plants/u })
+      clickCreateOpen()
+      fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Quarterly check' } })
+      fireEvent.change(screen.getByLabelText('Reminder instruction'), {
+        target: { value: 'Check the garden.' },
+      })
+      fireEvent.change(screen.getByLabelText('Timing'), { target: { value: item.timing } })
+      if (item.timing === 'at') {
+        fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2099-10-20' } })
+        fireEvent.change(screen.getByLabelText('Time'), { target: { value: '09:30' } })
+        fireEvent.change(screen.getByLabelText('Time zone'), { target: { value: 'UTC' } })
+      } else if (item.timing === 'every' || item.timing === 'after') {
+        fireEvent.change(screen.getByLabelText('Interval in seconds'), { target: { value: '300' } })
+      } else if (item.timing === 'daily' || item.timing === 'weekly') {
+        fireEvent.change(screen.getByLabelText('Time'), { target: { value: '10:15' } })
+        fireEvent.change(screen.getByLabelText('Time zone'), { target: { value: 'UTC' } })
+        if (item.timing === 'weekly') fireEvent.click(screen.getByRole('checkbox', { name: 'Tuesday' }))
+      } else {
+        fireEvent.change(screen.getByLabelText('Time zone'), { target: { value: 'UTC' } })
+      }
+      submitCreateForm()
+
+      await waitFor(() => expect(startSession).toHaveBeenCalledTimes(1))
+      const instruction = startSession.mock.calls[0]?.[0]
+      if (instruction === undefined) throw new Error('The create prompt was not captured.')
+      expect(instruction).toContain('schedule_create')
+      const args = JSON.parse(instruction.slice(instruction.lastIndexOf('\n\n') + 2)) as Record<
+        string,
+        unknown
+      >
+      expect(args).toEqual({
+        title: 'Quarterly check',
+        prompt: 'Check the garden.',
+        [item.selector]: item.value,
+      })
+      expect(
+        ['after_seconds', 'at', 'every_seconds', 'daily', 'weekly', 'cron'].filter((key) => key in args),
+      ).toHaveLength(1)
+      await waitFor(() =>
+        expect(document.querySelector('.dsh-schedule-panel__create-state--pending')).not.toBeNull(),
+      )
+      expect(document.querySelector('.dsh-schedule-panel__create-state--confirmed')).toBeNull()
+      expect(document.querySelector<HTMLButtonElement>('.dsh-schedule-panel__new')?.disabled).toBe(true)
+      panel.view.unmount()
+    }
+  })
+
+  it('confirms only after invalidation refresh returns a matching new catalog record', async () => {
+    let items: readonly ScheduleCatalogEntry[] = [active]
+    const panel = mountPanel({
+      resolve: (request) =>
+        request.type === 'schedule.catalog'
+          ? { kind: 'schedule.catalog', items }
+          : defaultResponse(request, items),
+      onStartScheduleSession: () => Promise.resolve('session-new'),
+    })
+    await screen.findByRole('button', { name: /Water the plants/u })
+    clickCreateOpen()
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Quarterly check' } })
+    fireEvent.change(screen.getByLabelText('Reminder instruction'), {
+      target: { value: 'Check the garden.' },
+    })
+    submitCreateForm()
+    await waitFor(() =>
+      expect(document.querySelector('.dsh-schedule-panel__create-state--pending')).not.toBeNull(),
+    )
+
+    items = [
+      ...items,
+      {
+        id: 'schedule-created',
+        kind: 'after',
+        title: 'Quarterly check',
+        prompt: 'Check the garden.',
+        scheduledAt: '2026-10-01T09:00:00.000Z',
+        afterSeconds: 300,
+        sessionId: 'session-new',
+        status: 'active',
+      },
+    ]
+    const event: FeatureHostEvent = {
+      type: 'feature.event',
+      name: 'schedule.invalidated',
+      identity: { backendInstanceId: 'backend-one', connectionGeneration: 1, stream: 'local', localSeq: 2 },
+    }
+    act(() => panel.emit(event))
+    await waitFor(() =>
+      expect(document.querySelector('.dsh-schedule-panel__create-state--confirmed')).not.toBeNull(),
+    )
+    expect(document.querySelector('.dsh-schedule-panel__create-state-title')?.textContent).toBe(
+      'Quarterly check',
+    )
+    panel.view.unmount()
+  })
+
+  it('matches RC2 canonicalized wall times, IANA aliases, and cron fields', async () => {
+    let items: readonly ScheduleCatalogEntry[] = [active]
+    let sessionCount = 0
+    const panel = mountPanel({
+      resolve: (request) =>
+        request.type === 'schedule.catalog'
+          ? { kind: 'schedule.catalog', items }
+          : defaultResponse(request, items),
+      onStartScheduleSession: () => Promise.resolve(`session-${++sessionCount}`),
+    })
+    const invalidation = (localSeq: number): FeatureHostEvent => ({
+      type: 'feature.event',
+      name: 'schedule.invalidated',
+      identity: { backendInstanceId: 'backend-one', connectionGeneration: 1, stream: 'local', localSeq },
+    })
+    await screen.findByRole('button', { name: /Water the plants/u })
+
+    clickCreateOpen()
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Canonical daily' } })
+    fireEvent.change(screen.getByLabelText('Reminder instruction'), { target: { value: 'Review the day.' } })
+    fireEvent.change(screen.getByLabelText('Timing'), { target: { value: 'daily' } })
+    fireEvent.change(screen.getByLabelText('Time'), { target: { value: '10:15' } })
+    fireEvent.change(screen.getByLabelText('Time zone'), { target: { value: 'US/Eastern' } })
+    submitCreateForm()
+    await waitFor(() =>
+      expect(document.querySelector('.dsh-schedule-panel__create-state--pending')).not.toBeNull(),
+    )
+    items = [
+      ...items,
+      {
+        id: 'schedule-daily',
+        kind: 'daily',
+        title: 'Canonical daily',
+        prompt: 'Review the day.',
+        scheduledAt: '2026-10-02T14:15:00.000Z',
+        time: '10:15:00.000',
+        timeZone: 'America/New_York',
+        sessionId: 'session-1',
+        status: 'active',
+      },
+    ]
+    act(() => panel.emit(invalidation(2)))
+    await waitFor(() =>
+      expect(document.querySelector('.dsh-schedule-panel__create-state--confirmed')).not.toBeNull(),
+    )
+
+    clickCreateOpen()
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Canonical cron' } })
+    fireEvent.change(screen.getByLabelText('Reminder instruction'), {
+      target: { value: 'Check the service.' },
+    })
+    fireEvent.change(screen.getByLabelText('Timing'), { target: { value: 'cron' } })
+    fireEvent.change(screen.getByLabelText('Cron expression'), { target: { value: '0,1 9 * * 1' } })
+    fireEvent.change(screen.getByLabelText('Time zone'), { target: { value: 'UTC' } })
+    submitCreateForm()
+    await waitFor(() =>
+      expect(document.querySelector('.dsh-schedule-panel__create-state--pending')).not.toBeNull(),
+    )
+    items = [
+      ...items,
+      {
+        id: 'schedule-cron',
+        kind: 'cron',
+        title: 'Canonical cron',
+        prompt: 'Check the service.',
+        scheduledAt: '2026-10-05T09:00:00.000Z',
+        expression: '0-1 9 * * 1',
+        timeZone: 'UTC',
+        sessionId: 'session-2',
+        status: 'active',
+      },
+    ]
+    act(() => panel.emit(invalidation(3)))
+    await waitFor(() =>
+      expect(document.querySelector('.dsh-schedule-panel__create-state--confirmed')).not.toBeNull(),
+    )
+    expect(document.querySelector('.dsh-schedule-panel__create-state-title')?.textContent).toBe(
+      'Canonical cron',
+    )
+    panel.view.unmount()
+  })
+
+  it('preserves the form after a failed send and allows a retry', async () => {
     const startSession = vi
       .fn()
       .mockRejectedValueOnce(new Error('host unavailable'))
-      .mockResolvedValue(undefined)
+      .mockResolvedValue('session-new')
     mountPanel({ onStartScheduleSession: startSession })
-
-    const createButton = await screen.findByRole('button', { name: 'Start a session to create a reminder' })
-    fireEvent.click(createButton)
-    expect((await screen.findByRole('alert')).textContent).toContain(
-      'Could not start a session for a new reminder.',
-    )
-    expect(startSession).toHaveBeenCalledTimes(1)
-
-    fireEvent.click(createButton)
+    await screen.findByRole('button', { name: /Water the plants/u })
+    clickCreateOpen()
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Retry me' } })
+    fireEvent.change(screen.getByLabelText('Reminder instruction'), { target: { value: 'Do a check.' } })
+    submitCreateForm()
+    expect(await screen.findByRole('alert')).toBeDefined()
+    expect(screen.getByLabelText('Name')).toHaveProperty('value', 'Retry me')
+    submitCreateForm()
     await waitFor(() => expect(startSession).toHaveBeenCalledTimes(2))
-    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
+    await waitFor(() =>
+      expect(document.querySelector('.dsh-schedule-panel__create-state--pending')).not.toBeNull(),
+    )
+  })
+
+  it('cancels an unsent creation form without creating a Session', async () => {
+    const startSession = vi.fn(() => Promise.resolve('session-new'))
+    mountPanel({ onStartScheduleSession: startSession })
+    await screen.findByRole('button', { name: /Water the plants/u })
+    clickCreateOpen()
+    fireEvent.click(screen.getByRole('button', { name: /cancel/i }))
+    expect(document.querySelector('.dsh-schedule-panel__create-form')).toBeNull()
+    expect(startSession).not.toHaveBeenCalled()
+    expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'Schedules' }))
+  })
+
+  it('prevalidates the 300-second minimum, IANA zones, DST gaps, and cron grammar', async () => {
+    const startSession = vi.fn(() => Promise.resolve('session-new'))
+    mountPanel({ onStartScheduleSession: startSession })
+    await screen.findByRole('button', { name: /Water the plants/u })
+    clickCreateOpen()
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Validation case' } })
+    fireEvent.change(screen.getByLabelText('Reminder instruction'), { target: { value: 'Do a check.' } })
+
+    fireEvent.change(screen.getByLabelText('Timing'), { target: { value: 'every' } })
+    fireEvent.change(screen.getByLabelText('Interval in seconds'), { target: { value: '299' } })
+    submitCreateForm()
+    expect(await screen.findByRole('alert')).toBeDefined()
+    expect(startSession).not.toHaveBeenCalled()
+
+    fireEvent.change(screen.getByLabelText('Timing'), { target: { value: 'daily' } })
+    fireEvent.change(screen.getByLabelText('Time zone'), { target: { value: 'Not/AZone' } })
+    submitCreateForm()
+    expect(await screen.findByRole('alert')).toBeDefined()
+    expect(startSession).not.toHaveBeenCalled()
+
+    fireEvent.change(screen.getByLabelText('Timing'), { target: { value: 'at' } })
+    fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2026-03-08' } })
+    fireEvent.change(screen.getByLabelText('Time'), { target: { value: '02:30' } })
+    fireEvent.change(screen.getByLabelText('Time zone'), { target: { value: 'America/New_York' } })
+    submitCreateForm()
+    const gapValidation = await screen.findByRole('alert')
+    const gapMessage = gapValidation.textContent
+    expect(startSession).not.toHaveBeenCalled()
+
+    fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2026-02-30' } })
+    fireEvent.change(screen.getByLabelText('Time zone'), { target: { value: 'UTC' } })
+    submitCreateForm()
+    await waitFor(() => expect(screen.getByRole('alert').textContent).not.toBe(gapMessage))
+    expect(startSession).not.toHaveBeenCalled()
+
+    fireEvent.change(screen.getByLabelText('Timing'), { target: { value: 'cron' } })
+    fireEvent.change(screen.getByLabelText('Time zone'), { target: { value: 'UTC' } })
+    fireEvent.change(screen.getByLabelText('Cron expression'), { target: { value: '0 25 * * 1' } })
+    submitCreateForm()
+    expect(await screen.findByRole('alert')).toBeDefined()
+    expect(startSession).not.toHaveBeenCalled()
+  })
+
+  it('resolves an absolute DST overlap to the earlier instant used by RC2', async () => {
+    let items: readonly ScheduleCatalogEntry[] = [active]
+    const panel = mountPanel({
+      resolve: (request) =>
+        request.type === 'schedule.catalog'
+          ? { kind: 'schedule.catalog', items }
+          : defaultResponse(request, items),
+      onStartScheduleSession: () => Promise.resolve('session-new'),
+    })
+    await screen.findByRole('button', { name: /Water the plants/u })
+    clickCreateOpen()
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Overlap case' } })
+    fireEvent.change(screen.getByLabelText('Reminder instruction'), { target: { value: 'Check once.' } })
+    fireEvent.change(screen.getByLabelText('Timing'), { target: { value: 'at' } })
+    fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2026-11-01' } })
+    fireEvent.change(screen.getByLabelText('Time'), { target: { value: '01:30' } })
+    fireEvent.change(screen.getByLabelText('Time zone'), { target: { value: 'America/New_York' } })
+    submitCreateForm()
+    await waitFor(() =>
+      expect(document.querySelector('.dsh-schedule-panel__create-state--pending')).not.toBeNull(),
+    )
+    items = [
+      ...items,
+      {
+        id: 'schedule-overlap',
+        kind: 'at',
+        title: 'Overlap case',
+        prompt: 'Check once.',
+        scheduledAt: '2026-11-01T05:30:00.000Z',
+        sessionId: 'session-new',
+        status: 'active',
+      },
+    ]
+    const event: FeatureHostEvent = {
+      type: 'feature.event',
+      name: 'schedule.invalidated',
+      identity: { backendInstanceId: 'backend-one', connectionGeneration: 1, stream: 'local', localSeq: 2 },
+    }
+    act(() => panel.emit(event))
+    await waitFor(() =>
+      expect(document.querySelector('.dsh-schedule-panel__create-state--confirmed')).not.toBeNull(),
+    )
+    panel.view.unmount()
+  })
+
+  it('moves a request to unconfirmed only after a manual catalog check finds no record', async () => {
+    mountPanel({ onStartScheduleSession: () => Promise.resolve('session-new') })
+    await screen.findByRole('button', { name: /Water the plants/u })
+    clickCreateOpen()
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Awaiting Agent' } })
+    fireEvent.change(screen.getByLabelText('Reminder instruction'), { target: { value: 'Run later.' } })
+    submitCreateForm()
+    await waitFor(() =>
+      expect(document.querySelector('.dsh-schedule-panel__create-state--pending')).not.toBeNull(),
+    )
+    const check = document.querySelector<HTMLButtonElement>('.dsh-schedule-panel__create-state button')
+    if (check === null) throw new Error('The catalog check control is missing.')
+    fireEvent.click(check)
+    await waitFor(() =>
+      expect(document.querySelector('.dsh-schedule-panel__create-state--unconfirmed')).not.toBeNull(),
+    )
   })
 
   it('loads, searches and filters the catalog without losing its total count', async () => {
@@ -261,13 +586,13 @@ describe('SchedulePanel', () => {
     })
   })
 
-  it('sets the edited recurring interval minimum to the upstream 60-second limit', async () => {
+  it('sets the edited recurring interval minimum to the upstream 300-second limit', async () => {
     mountPanel({ items: [recurring] })
     fireEvent.click(await screen.findByRole('button', { name: /Check the build/u }))
     fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
     fireEvent.change(screen.getByLabelText('Timing'), { target: { value: 'every' } })
 
-    expect(screen.getByLabelText('Interval in seconds').getAttribute('min')).toBe('60')
+    expect(screen.getByLabelText('Interval in seconds').getAttribute('min')).toBe('300')
   })
 
   it('refreshes after Host invalidation and exposes retry after a catalog failure', async () => {
@@ -296,7 +621,7 @@ describe('SchedulePanel', () => {
   it('shows a genuine empty state when the Host catalog contains no reminders', async () => {
     mountPanel({ items: [] })
     expect(await screen.findByText('No scheduled reminders yet.')).toBeDefined()
-    expect(screen.getByRole('button', { name: 'Start a session to create a reminder' })).toBeDefined()
+    expect(document.querySelector('.dsh-schedule-panel__new')).not.toBeNull()
   })
 
   it('cancels outstanding feature requests when disposed', async () => {

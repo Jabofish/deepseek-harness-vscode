@@ -1,4 +1,4 @@
-import { pluginLocalizedText, type OptionalPluginBundle } from '@dsh-vscode/domain'
+import { pluginLocalizedText, type PluginManagerBundle } from '@dsh-vscode/domain'
 
 export interface PluginBundleEnableWarningOptions {
   readonly modal: true
@@ -18,12 +18,12 @@ export function createPluginBundleEnableConfirmation(
   present: PluginBundleWarningPresenter,
   translate: PluginBundleConfirmationText,
   locale: string,
-): (bundle: OptionalPluginBundle) => Promise<boolean> {
+): (bundle: PluginManagerBundle) => Promise<boolean> {
   return async (bundle) => {
     const title = pluginLocalizedText(bundle.title, locale) ?? bundle.name
     const confirmLabel = translate('Enable bundle')
     const choice = await present(
-      translate('Enable optional bundle "{0}" for the current DSH profile?', title),
+      translate('Enable plugin bundle "{0}" for the current DSH profile?', title),
       {
         modal: true,
         detail: translate(

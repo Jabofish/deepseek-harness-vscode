@@ -31,6 +31,11 @@ function repository(
       },
     })),
     subscribeAuthorizationLaunch: vi.fn(() => () => undefined),
+    getProfile: vi.fn().mockResolvedValue(null),
+    getBalance: vi.fn().mockResolvedValue(null),
+    getUnnotifiedBonuses: vi.fn().mockResolvedValue(null),
+    ackBonusNotified: vi.fn().mockResolvedValue(false),
+    getAccountPageUrl: vi.fn().mockResolvedValue('https://platform.deepseek.com/usage'),
     ...overrides,
   } satisfies MockedObject<AccountLifecycleRepository>
 }
@@ -98,6 +103,49 @@ describe('AccountLifecycleUseCases', () => {
 
     await expect(useCases.signOut(client)).resolves.toEqual(snapshot)
     expect(backend.signOut.mock.calls).toEqual([[client, undefined]])
+  })
+
+  it('forwards account detail reads with validated Host metadata and signals', async () => {
+    const controller = new AbortController()
+    const backend = repository({
+      getProfile: vi.fn().mockResolvedValue({ status: 'failed' }),
+      getBalance: vi.fn().mockResolvedValue(null),
+      getUnnotifiedBonuses: vi.fn().mockResolvedValue(null),
+    })
+    const useCases = new AccountLifecycleUseCases(backend)
+
+    await expect(useCases.readProfile(client, controller.signal)).resolves.toEqual({ status: 'failed' })
+    await expect(useCases.readBalance(client, controller.signal)).resolves.toBeNull()
+    await expect(useCases.readUnnotifiedBonuses(client, controller.signal)).resolves.toBeNull()
+    expect(backend.getProfile.mock.calls).toEqual([[client, controller.signal]])
+    expect(backend.getBalance.mock.calls).toEqual([[client, controller.signal]])
+    expect(backend.getUnnotifiedBonuses.mock.calls).toEqual([[client, controller.signal]])
+  })
+
+  it('validates bonus acknowledgement identifiers before Remote and forwards the opaque account scope', async () => {
+    const orderId = '0bd8870d-2648-4c4c-95ca-d9e89f08095c'
+    const backend = repository({ ackBonusNotified: vi.fn().mockResolvedValue(true) })
+    const useCases = new AccountLifecycleUseCases(backend)
+
+    await expect(useCases.ackBonusNotified('account-1', orderId, client)).resolves.toBe(true)
+    expect(backend.ackBonusNotified.mock.calls).toEqual([['account-1', orderId, client, undefined]])
+    expect(() => useCases.ackBonusNotified('bad\naccount', orderId, client)).toThrowError(
+      expect.objectContaining({ code: 'INVALID_CONFIGURATION' }),
+    )
+    expect(() => useCases.ackBonusNotified('account-1', 'not-an-order', client)).toThrowError(
+      expect.objectContaining({ code: 'INVALID_CONFIGURATION' }),
+    )
+    expect(backend.ackBonusNotified.mock.calls).toHaveLength(1)
+  })
+
+  it('forwards only the constrained account page selector', async () => {
+    const backend = repository({
+      getAccountPageUrl: vi.fn().mockResolvedValue('https://platform.deepseek.com/usage'),
+    })
+    const useCases = new AccountLifecycleUseCases(backend)
+
+    await expect(useCases.getAccountPageUrl('usage')).resolves.toBe('https://platform.deepseek.com/usage')
+    expect(backend.getAccountPageUrl.mock.calls).toEqual([['usage', undefined]])
   })
 
   it('forwards account state, expiry, and Host-only authorization subscriptions', async () => {

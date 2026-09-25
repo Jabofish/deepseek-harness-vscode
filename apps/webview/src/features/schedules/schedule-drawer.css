@@ -8,6 +8,10 @@
   background: color-mix(in srgb, var(--dsh-bg) 76%, transparent);
 }
 
+.dsh-schedule-drawer__backdrop[hidden] {
+  display: none;
+}
+
 .dsh-schedule-drawer {
   display: flex;
   flex-direction: column;

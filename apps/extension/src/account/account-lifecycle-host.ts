@@ -2,6 +2,12 @@ import { AppError } from '@dsh-vscode/domain'
 
 import type {
   AccountLifecycleSnapshot,
+  AccountBonusBatch,
+  AccountPage,
+  AccountProfileDetailsSnapshot,
+  AccountBonusNoticeDisplay,
+  AccountBalanceQuery,
+  AccountProfileQuery,
   AccountClientMetadata,
   BackendEndpoint,
   SignOutImpact,
@@ -10,6 +16,7 @@ import type { AccountLifecycleUseCases } from '@dsh-vscode/application'
 
 const MAX_PENDING_AUTHORIZATIONS = 8
 const AUTHORIZATION_LIFETIME_MS = 10 * 60 * 1000
+const MAX_PENDING_BONUS_ACKNOWLEDGEMENTS = 128
 
 export interface AccountLifecycleHostDependencies {
   readonly useCases: AccountLifecycleUseCases
@@ -33,11 +40,15 @@ export class AccountLifecycleHost {
   private readonly launchableAttempts = new Map<string, number>()
   private readonly launchedAttempts = new Set<string>()
   private readonly initializedDefaultModelAttempts = new Set<string>()
+  private readonly bonusAccountByOrderId = new Map<string, string>()
+  private readonly acknowledgingBonusOrderIds = new Set<string>()
+  private bonusAccountScopeId: string | undefined
   private unsubscribeAuthorization: (() => void) | undefined
   private previousSnapshot: AccountLifecycleSnapshot | undefined
   private stateTask: Promise<void> | undefined
   private expiryTask: Promise<void> | undefined
   private activeSignInCalls = 0
+  private detailsGeneration = 0
   private started = false
   private disposed = false
 
@@ -117,7 +128,110 @@ export class AccountLifecycleHost {
     operationSignal.throwIfAborted()
     if (!(await this.dependencies.confirmSignOut(impact))) return undefined
     operationSignal.throwIfAborted()
-    return this.dependencies.useCases.signOut(this.dependencies.client(), operationSignal)
+    const snapshot = await this.dependencies.useCases.signOut(this.dependencies.client(), operationSignal)
+    this.observeSnapshot(snapshot)
+    return snapshot
+  }
+
+  /** Read profile, wallet, and unnotified-bonus data independently through the local DSH controller. */
+  public async readDetails(signal?: AbortSignal): Promise<AccountProfileDetailsSnapshot> {
+    this.assertActive()
+    const operationSignal = this.operationSignal(signal)
+    const generation = ++this.detailsGeneration
+    const state = await this.dependencies.useCases.getState(operationSignal)
+    operationSignal.throwIfAborted()
+    if (state.status !== 'credential-stored') {
+      this.clearBonusScope()
+      return unavailableAccountDetails()
+    }
+    if (generation !== this.detailsGeneration) return unavailableAccountDetails()
+
+    const client = this.dependencies.client()
+    const [profileResult, balanceResult, bonusResult] = await Promise.allSettled([
+      this.dependencies.useCases.readProfile(client, operationSignal),
+      this.dependencies.useCases.readBalance(client, operationSignal),
+      this.dependencies.useCases.readUnnotifiedBonuses(client, operationSignal),
+    ])
+    operationSignal.throwIfAborted()
+    // A sign-out/expiry or a newer read can supersede these responses while they are in flight.
+    if (generation !== this.detailsGeneration) return unavailableAccountDetails()
+
+    const profile = profileView(profileResult)
+    const balance = balanceView(balanceResult)
+    let bonus: AccountProfileDetailsSnapshot['bonus']
+    if (!fulfilled(bonusResult)) {
+      // Preserve a previously read order so a displayed notice can retry its ack
+      // after a transient read failure, just as the upstream notice lifecycle does.
+      bonus = { status: 'failed' }
+    } else if (bonusResult.value === null) {
+      this.clearBonusScope()
+      bonus = { status: 'unavailable' }
+    } else {
+      const batch = bonusResult.value
+      const profileId =
+        fulfilled(profileResult) && profileResult.value?.status === 'ready'
+          ? profileResult.value.value.id
+          : undefined
+      // Separate Remote reads may straddle a grant replacement. Never show a notice for a different identity.
+      if (profileId !== undefined && profileId !== null && profileId !== batch.accountId) {
+        this.clearBonusScope()
+        bonus = { status: 'unavailable' }
+      } else {
+        if (this.bonusAccountScopeId !== batch.accountId) {
+          this.bonusAccountByOrderId.clear()
+          this.bonusAccountScopeId = batch.accountId
+        }
+        const notice = firstVisibleBonus(batch)
+        bonus = { status: 'ready', value: notice }
+        if (notice !== null) {
+          this.bonusAccountByOrderId.set(notice.orderId, batch.accountId)
+          while (this.bonusAccountByOrderId.size > MAX_PENDING_BONUS_ACKNOWLEDGEMENTS) {
+            const oldest = this.bonusAccountByOrderId.keys().next().value
+            if (oldest === undefined) break
+            this.bonusAccountByOrderId.delete(oldest)
+          }
+        }
+      }
+    }
+
+    return { profile, balance, bonus }
+  }
+
+  /** Acknowledge only a bonus notice returned by this Host's latest account read. */
+  public async acknowledgeBonus(orderId: string, signal?: AbortSignal): Promise<boolean> {
+    this.assertActive()
+    const accountId = this.bonusAccountByOrderId.get(orderId)
+    if (accountId === undefined || this.acknowledgingBonusOrderIds.has(orderId)) return false
+    const operationSignal = this.operationSignal(signal)
+    this.acknowledgingBonusOrderIds.add(orderId)
+    try {
+      const accepted = await this.dependencies.useCases.ackBonusNotified(
+        accountId,
+        orderId,
+        this.dependencies.client(),
+        operationSignal,
+      )
+      operationSignal.throwIfAborted()
+      this.bonusAccountByOrderId.delete(orderId)
+      return accepted
+    } finally {
+      this.acknowledgingBonusOrderIds.delete(orderId)
+    }
+  }
+
+  /** Open only DSH's validated official Usage or Top Up page after a user action. */
+  public async openAccountPage(page: AccountPage, signal?: AbortSignal): Promise<void> {
+    this.assertActive()
+    const operationSignal = this.operationSignal(signal)
+    const url = await this.dependencies.useCases.getAccountPageUrl(page, operationSignal)
+    operationSignal.throwIfAborted()
+    assertOfficialAccountPageUrl(url, page)
+    if (!(await this.dependencies.openExternal(url)))
+      throw new AppError({
+        code: 'INTERNAL_ERROR',
+        message: 'The account page could not be opened.',
+        retryable: true,
+      })
   }
 
   /** Abort streams and release every listener/effect before the backend transport is closed. */
@@ -131,6 +245,10 @@ export class AccountLifecycleHost {
     this.launchableAttempts.clear()
     this.launchedAttempts.clear()
     this.initializedDefaultModelAttempts.clear()
+    this.bonusAccountByOrderId.clear()
+    this.acknowledgingBonusOrderIds.clear()
+    this.bonusAccountScopeId = undefined
+    this.detailsGeneration += 1
     this.previousSnapshot = undefined
     await Promise.allSettled([this.stateTask, this.expiryTask].filter(isPromise))
   }
@@ -155,7 +273,10 @@ export class AccountLifecycleHost {
     try {
       for await (const event of this.dependencies.useCases.watchExpiry(signal)) {
         if (signal.aborted) return
-        if (event === 'session-expired') this.dependencies.publishSessionExpired()
+        if (event === 'session-expired') {
+          this.clearBonusScope()
+          this.dependencies.publishSessionExpired()
+        }
       }
     } catch {
       if (!signal.aborted) this.report('expiry-stream-failed')
@@ -163,6 +284,7 @@ export class AccountLifecycleHost {
   }
 
   private observeSnapshot(snapshot: AccountLifecycleSnapshot): void {
+    if (snapshot.status !== 'credential-stored') this.clearBonusScope()
     const previous = this.previousSnapshot
     if (
       previous !== undefined &&
@@ -171,6 +293,12 @@ export class AccountLifecycleHost {
     )
       this.initializeDefaultModel(snapshot.attempt.id)
     this.previousSnapshot = snapshot
+  }
+
+  private clearBonusScope(): void {
+    this.bonusAccountByOrderId.clear()
+    this.bonusAccountScopeId = undefined
+    this.detailsGeneration += 1
   }
 
   private initializeDefaultModel(attemptId: string): void {
@@ -285,6 +413,84 @@ function isTerminal(phase: string): boolean {
   return phase === 'succeeded' || phase === 'cancelled' || phase === 'expired' || phase === 'failed'
 }
 
+function profileView(
+  result: PromiseSettledResult<AccountProfileQuery | null>,
+): AccountProfileDetailsSnapshot['profile'] {
+  if (!fulfilled(result)) return { status: 'failed' }
+  if (result.value === null) return { status: 'unavailable' }
+  if (result.value.status === 'failed') return { status: 'failed' }
+  return {
+    status: 'ready',
+    value: {
+      name: displayText(result.value.value.name),
+      contact: displayText(result.value.value.contact),
+    },
+  }
+}
+
+function balanceView(
+  result: PromiseSettledResult<AccountBalanceQuery | null>,
+): AccountProfileDetailsSnapshot['balance'] {
+  if (!fulfilled(result)) return { status: 'failed' }
+  if (result.value === null) return { status: 'unavailable' }
+  if (result.value.status === 'failed') return { status: 'failed' }
+  return {
+    status: 'ready',
+    value: { wallets: result.value.value, bonusWallets: result.value.bonusWallets },
+  }
+}
+
+function firstVisibleBonus(batch: AccountBonusBatch): AccountBonusNoticeDisplay | null {
+  const now = Date.now()
+  const candidate = batch.bonuses[0]
+  if (candidate === undefined) return null
+  const expiresAt = Date.parse(candidate.expiresAt)
+  if (!Number.isNaN(expiresAt) && expiresAt <= now) return null
+  return {
+    orderId: candidate.orderId,
+    message: displayText(candidate.message) ?? '',
+    amount: candidate.amount,
+    currency: candidate.currency,
+    expiresAt: candidate.expiresAt,
+  }
+}
+
+function unavailableAccountDetails(): AccountProfileDetailsSnapshot {
+  return {
+    profile: { status: 'unavailable' },
+    balance: { status: 'unavailable' },
+    bonus: { status: 'unavailable' },
+  }
+}
+
+function displayText(value: string | null): string | null {
+  if (value === null) return null
+  return value.replace(/\p{Cc}/gu, ' ').slice(0, 4_096)
+}
+
+function fulfilled<T>(result: PromiseSettledResult<T>): result is PromiseFulfilledResult<T> {
+  return result.status === 'fulfilled'
+}
+
+function assertOfficialAccountPageUrl(value: string, page: AccountPage): void {
+  let url: URL
+  try {
+    url = new URL(value)
+  } catch {
+    throw invalidAccountPage()
+  }
+  const expectedPath = page === 'usage' ? '/usage' : '/top_up'
+  if (
+    url.origin !== 'https://platform.deepseek.com' ||
+    url.pathname !== expectedPath ||
+    url.username !== '' ||
+    url.password !== '' ||
+    url.search !== '' ||
+    url.hash !== ''
+  )
+    throw invalidAccountPage()
+}
+
 function isSuccessfulStoredAccount(
   snapshot: AccountLifecycleSnapshot,
 ): snapshot is AccountLifecycleSnapshot & {
@@ -302,6 +508,14 @@ function invalidEndpoint(): AppError {
   return new AppError({
     code: 'INVALID_ENDPOINT',
     message: 'The connected DSH callback origin is invalid.',
+    retryable: false,
+  })
+}
+
+function invalidAccountPage(): AppError {
+  return new AppError({
+    code: 'PROTOCOL_ERROR',
+    message: 'DSH returned an unsupported account page destination.',
     retryable: false,
   })
 }

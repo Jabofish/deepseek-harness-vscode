@@ -1284,12 +1284,20 @@ export function App(): ReactElement {
   const headerOnOpenSchedules = useStableCallback((): void => {
     store.setDrawer('schedules')
   })
-  const scheduleOnStartSession = useStableCallback(async (): Promise<void> => {
+  const scheduleOnStartSession = useStableCallback(async (prompt: string): Promise<string> => {
     await store.createSession(active?.workspaceId ?? state.workspaces[0]?.id)
-    store.setDrawer(undefined)
-    await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()))
-    document.querySelector<HTMLTextAreaElement>('.dsh-composer__textarea')?.focus()
+    const sessionId = store.getState().activeSessionId
+    if (sessionId === undefined) throw new Error(t('schedules.createSessionFailed'))
+    await store.sendPrompt(sessionId, prompt, [], 'queue')
+    return sessionId
   })
+  const openAccountPageFromSettings = useStableCallback((page: 'usage' | 'top-up'): void => {
+    void store.openAccountPage(page).catch(() => setError(t('account.profile.failed')))
+  })
+  const loadAccountDetailsFromSettings = useStableCallback((): Promise<void> => store.loadAccountDetails())
+  const acknowledgeAccountBonusFromSettings = useStableCallback((orderId: string): Promise<boolean> =>
+    store.acknowledgeAccountBonus(orderId),
+  )
   const attachedOpenFileIds = useMemo(() => Object.values(openFileAttachmentIds), [openFileAttachmentIds])
   const closeConversationActions = useCallback((): void => {
     setLocaleOpen(false)
@@ -1569,6 +1577,7 @@ export function App(): ReactElement {
             }
           }}
           pluginInventoryRevision={store.pluginInventoryRevision}
+          pluginInstallProgress={store.pluginInstallProgress}
           onLoadPluginInventory={() => store.loadPluginInventory()}
           featureRequest={store.featureRequest}
           accountLifecycleAvailable={state.accountLifecycleAvailable}
@@ -1583,11 +1592,17 @@ export function App(): ReactElement {
             ? {}
             : { accountLifecycleError: state.accountLifecycleError })}
           accountLifecycleRequestFailed={state.accountLifecycleRequestFailed}
+          accountProfileDetails={state.accountProfileDetails}
+          accountProfileLoading={state.accountProfileLoading}
+          accountProfileRequestFailed={state.accountProfileRequestFailed}
           onLoadAccountLifecycle={() => store.loadAccountLifecycle()}
           onStartAccountSignIn={() => store.startAccountSignIn()}
           onCancelAccountSignIn={(attemptId) => store.cancelAccountSignIn(attemptId)}
           onCheckAccountSignOutImpact={() => store.checkAccountSignOutImpact()}
           onSignOutAccount={() => store.signOutAccount()}
+          onLoadAccountDetails={loadAccountDetailsFromSettings}
+          onAcknowledgeAccountBonus={acknowledgeAccountBonusFromSettings}
+          onOpenAccountPage={openAccountPageFromSettings}
         />
         <ScheduleDrawer
           open={state.drawer === 'schedules'}

@@ -1,9 +1,12 @@
 import { describe, expect, it, vi, type MockedFunction, type MockedObject } from 'vitest'
 
 import type {
+  AccountBalanceQuery,
+  AccountBonusBatch,
   AccountAuthorizationLaunch,
   AccountLifecycleRepository,
   AccountLifecycleSnapshot,
+  AccountProfileQuery,
 } from '@dsh-vscode/domain'
 import { AccountLifecycleUseCases } from '@dsh-vscode/application'
 import { AccountLifecycleHost, type AccountLifecycleHostDependencies } from './account-lifecycle-host.js'
@@ -97,6 +100,11 @@ function harness(
         launchListeners.delete(listener)
       }
     }),
+    getProfile: vi.fn().mockResolvedValue(null),
+    getBalance: vi.fn().mockResolvedValue(null),
+    getUnnotifiedBonuses: vi.fn().mockResolvedValue(null),
+    ackBonusNotified: vi.fn().mockResolvedValue(false),
+    getAccountPageUrl: vi.fn().mockResolvedValue('https://platform.deepseek.com/usage'),
     ...overrides,
   } satisfies MockedObject<AccountLifecycleRepository>
   const useCases = new AccountLifecycleUseCases(repo)
@@ -361,5 +369,317 @@ describe('AccountLifecycleHost', () => {
     expect(active.streamReleases.sort()).toEqual(['expiry', 'state'])
     expect(active.repo.watch.mock.calls).toEqual([[expect.any(AbortSignal)]])
     expect(active.repo.watchExpiry.mock.calls).toEqual([[expect.any(AbortSignal)]])
+  })
+
+  it('projects profile, normal/bonus balances, and a notice without account identity or avatar URL', async () => {
+    const profile: AccountProfileQuery = {
+      status: 'ready',
+      value: {
+        id: null,
+        name: '用户甲',
+        contact: 'u***@example.test',
+        avatarUrl: 'https://images.example.test/private-avatar.png',
+      },
+    }
+    const balance: AccountBalanceQuery = {
+      status: 'ready',
+      value: [{ currency: 'CNY', balance: '20.50' }],
+      bonusWallets: [{ currency: 'CNY', balance: '3.25' }],
+    }
+    const batch: AccountBonusBatch = {
+      accountId: 'account-1',
+      bonuses: [
+        {
+          orderId: '0bd8870d-2648-4c4c-95ca-d9e89f08095c',
+          campaign: 'launch',
+          amount: '10.00',
+          currency: 'CNY',
+          grantedAt: '2026-09-01T00:00:00.000Z',
+          expiresAt: '2099-10-01T00:00:00.000Z',
+          message: '赠金已到账',
+        },
+      ],
+    }
+    const active = harness({
+      getState: vi.fn().mockResolvedValue(signedIn),
+      getProfile: vi.fn().mockResolvedValue(profile),
+      getBalance: vi.fn().mockResolvedValue(balance),
+      getUnnotifiedBonuses: vi.fn().mockResolvedValue(batch),
+    })
+    active.host.start()
+
+    await expect(active.host.readDetails()).resolves.toEqual({
+      profile: { status: 'ready', value: { name: '用户甲', contact: 'u***@example.test' } },
+      balance: {
+        status: 'ready',
+        value: {
+          wallets: [{ currency: 'CNY', balance: '20.50' }],
+          bonusWallets: [{ currency: 'CNY', balance: '3.25' }],
+        },
+      },
+      bonus: {
+        status: 'ready',
+        value: {
+          orderId: '0bd8870d-2648-4c4c-95ca-d9e89f08095c',
+          message: '赠金已到账',
+          amount: '10.00',
+          currency: 'CNY',
+          expiresAt: '2099-10-01T00:00:00.000Z',
+        },
+      },
+    })
+    const serialized = JSON.stringify(await active.host.readDetails())
+    expect(serialized).not.toContain('account-1')
+    expect(serialized).not.toContain('private-avatar')
+    await active.host.dispose()
+  })
+
+  it('keeps account identity in the Host and acknowledges only a notice returned by its current read', async () => {
+    const orderId = '0bd8870d-2648-4c4c-95ca-d9e89f08095c'
+    const active = harness({
+      getState: vi.fn().mockResolvedValue(signedIn),
+      getProfile: vi
+        .fn()
+        .mockResolvedValue({ status: 'ready', value: { id: 'account-1', name: null, contact: null } }),
+      getUnnotifiedBonuses: vi.fn().mockResolvedValue({
+        accountId: 'account-1',
+        bonuses: [
+          {
+            orderId,
+            campaign: 'launch',
+            amount: '1',
+            currency: 'USD',
+            grantedAt: '2026-09-01',
+            expiresAt: '2099-10-01',
+            message: 'bonus',
+          },
+        ],
+      }),
+      ackBonusNotified: vi.fn().mockResolvedValue(true),
+    })
+    active.host.start()
+    await active.host.readDetails()
+
+    await expect(active.host.acknowledgeBonus('unknown-order')).resolves.toBe(false)
+    await expect(active.host.acknowledgeBonus(orderId)).resolves.toBe(true)
+    await expect(active.host.acknowledgeBonus(orderId)).resolves.toBe(false)
+    expect(active.repo.ackBonusNotified.mock.calls).toEqual([
+      ['account-1', orderId, client, expect.any(AbortSignal)],
+    ])
+    await active.host.dispose()
+  })
+
+  it('retains the account scope through a transient bonus-read failure so the ack can retry', async () => {
+    const orderId = '0bd8870d-2648-4c4c-95ca-d9e89f08095c'
+    const batch: AccountBonusBatch = {
+      accountId: 'account-1',
+      bonuses: [
+        {
+          orderId,
+          campaign: 'launch',
+          amount: '1',
+          currency: 'USD',
+          grantedAt: '2026-09-01',
+          expiresAt: '2099-10-01',
+          message: 'bonus',
+        },
+      ],
+    }
+    const active = harness({
+      getState: vi.fn().mockResolvedValue(signedIn),
+      getProfile: vi.fn().mockResolvedValue({
+        status: 'ready',
+        value: { id: 'account-1', name: null, contact: null },
+      }),
+      getUnnotifiedBonuses: vi.fn().mockResolvedValueOnce(batch).mockRejectedValueOnce(new Error('offline')),
+      ackBonusNotified: vi.fn().mockResolvedValue(true),
+    })
+    active.host.start()
+    await active.host.readDetails()
+    await expect(active.host.readDetails()).resolves.toMatchObject({ bonus: { status: 'failed' } })
+    await expect(active.host.acknowledgeBonus(orderId)).resolves.toBe(true)
+    expect(active.repo.ackBonusNotified.mock.calls).toHaveLength(1)
+    await active.host.dispose()
+  })
+
+  it('drops a prior notice acknowledgement scope when a complete read names another account', async () => {
+    const orderId = '0bd8870d-2648-4c4c-95ca-d9e89f08095c'
+    const active = harness({
+      getState: vi.fn().mockResolvedValue(signedIn),
+      getProfile: vi.fn().mockResolvedValue({
+        status: 'ready',
+        value: { id: 'account-1', name: null, contact: null },
+      }),
+      getUnnotifiedBonuses: vi.fn().mockResolvedValue({
+        accountId: 'account-1',
+        bonuses: [
+          {
+            orderId,
+            campaign: 'launch',
+            amount: '1',
+            currency: 'USD',
+            grantedAt: '2026-09-01',
+            expiresAt: '2099-10-01',
+            message: 'bonus',
+          },
+        ],
+      }),
+    })
+    active.host.start()
+    await active.host.readDetails()
+    active.repo.getProfile.mockResolvedValue({
+      status: 'ready',
+      value: { id: 'account-2', name: null, contact: null },
+    })
+    active.repo.getUnnotifiedBonuses.mockResolvedValue({ accountId: 'account-2', bonuses: [] })
+
+    await expect(active.host.readDetails()).resolves.toMatchObject({
+      bonus: { status: 'ready', value: null },
+    })
+    await expect(active.host.acknowledgeBonus(orderId)).resolves.toBe(false)
+    expect(active.repo.ackBonusNotified.mock.calls).toHaveLength(0)
+    await active.host.dispose()
+  })
+
+  it('retains a displayed notice scope when the same account has no remaining unnotified bonus', async () => {
+    const orderId = '0bd8870d-2648-4c4c-95ca-d9e89f08095c'
+    const active = harness({
+      getState: vi.fn().mockResolvedValue(signedIn),
+      getProfile: vi.fn().mockResolvedValue({
+        status: 'ready',
+        value: { id: 'account-1', name: null, contact: null },
+      }),
+      getUnnotifiedBonuses: vi.fn().mockResolvedValueOnce({
+        accountId: 'account-1',
+        bonuses: [
+          {
+            orderId,
+            campaign: 'launch',
+            amount: '1',
+            currency: 'USD',
+            grantedAt: '2026-09-01',
+            expiresAt: '2099-10-01',
+            message: 'bonus',
+          },
+        ],
+      }),
+    })
+    active.host.start()
+    await active.host.readDetails()
+    active.repo.getUnnotifiedBonuses.mockResolvedValue({ accountId: 'account-1', bonuses: [] })
+    await expect(active.host.readDetails()).resolves.toMatchObject({
+      bonus: { status: 'ready', value: null },
+    })
+    active.repo.ackBonusNotified.mockResolvedValue(true)
+    await expect(active.host.acknowledgeBonus(orderId)).resolves.toBe(true)
+    expect(active.repo.ackBonusNotified.mock.calls).toEqual([
+      ['account-1', orderId, client, expect.any(AbortSignal)],
+    ])
+    await active.host.dispose()
+  })
+
+  it('deduplicates concurrent acknowledgement requests for the same bonus', async () => {
+    const orderId = '0bd8870d-2648-4c4c-95ca-d9e89f08095c'
+    const active = harness({
+      getState: vi.fn().mockResolvedValue(signedIn),
+      getProfile: vi.fn().mockResolvedValue({
+        status: 'ready',
+        value: { id: 'account-1', name: null, contact: null },
+      }),
+      getUnnotifiedBonuses: vi.fn().mockResolvedValue({
+        accountId: 'account-1',
+        bonuses: [
+          {
+            orderId,
+            campaign: 'launch',
+            amount: '1',
+            currency: 'USD',
+            grantedAt: '2026-09-01',
+            expiresAt: '2099-10-01',
+            message: 'bonus',
+          },
+        ],
+      }),
+    })
+    let resolveAcknowledgement!: (accepted: boolean) => void
+    active.repo.ackBonusNotified.mockImplementation(
+      () => new Promise<boolean>((resolve) => (resolveAcknowledgement = resolve)),
+    )
+    active.host.start()
+    await active.host.readDetails()
+
+    const first = active.host.acknowledgeBonus(orderId)
+    await expect(active.host.acknowledgeBonus(orderId)).resolves.toBe(false)
+    expect(active.repo.ackBonusNotified.mock.calls).toHaveLength(1)
+    resolveAcknowledgement(true)
+    await expect(first).resolves.toBe(true)
+    await active.host.dispose()
+  })
+
+  it('does not make account detail requests while signed out and clears bonus scope', async () => {
+    const active = harness({ getState: vi.fn().mockResolvedValue(snapshot) })
+    active.host.start()
+
+    await expect(active.host.readDetails()).resolves.toEqual({
+      profile: { status: 'unavailable' },
+      balance: { status: 'unavailable' },
+      bonus: { status: 'unavailable' },
+    })
+    expect(active.repo.getProfile.mock.calls).toHaveLength(0)
+    expect(active.repo.getBalance.mock.calls).toHaveLength(0)
+    expect(active.repo.getUnnotifiedBonuses.mock.calls).toHaveLength(0)
+    await active.host.dispose()
+  })
+
+  it('keeps profile, wallet, and bonus query failures independent and propagates cancellation', async () => {
+    const active = harness({
+      getState: vi.fn().mockResolvedValue(signedIn),
+      getProfile: vi.fn().mockRejectedValue(new Error('profile offline')),
+      getBalance: vi.fn().mockResolvedValue({
+        status: 'ready',
+        value: [{ currency: 'USD', balance: '2.50' }],
+        bonusWallets: [],
+      }),
+      getUnnotifiedBonuses: vi.fn().mockRejectedValue(new Error('bonus offline')),
+    })
+    active.host.start()
+
+    await expect(active.host.readDetails()).resolves.toEqual({
+      profile: { status: 'failed' },
+      balance: {
+        status: 'ready',
+        value: { wallets: [{ currency: 'USD', balance: '2.50' }], bonusWallets: [] },
+      },
+      bonus: { status: 'failed' },
+    })
+    await active.host.dispose()
+
+    const cancelled = harness({ getState: vi.fn().mockResolvedValue(signedIn) })
+    cancelled.host.start()
+    const controller = new AbortController()
+    controller.abort(new DOMException('cancelled', 'AbortError'))
+    await expect(cancelled.host.readDetails(controller.signal)).rejects.toBe(controller.signal.reason)
+    expect(cancelled.repo.getProfile.mock.calls).toHaveLength(0)
+    await cancelled.host.dispose()
+  })
+
+  it('opens only the validated official Usage or Top Up page through the Host', async () => {
+    const active = harness({
+      getAccountPageUrl: vi.fn().mockResolvedValue('https://platform.deepseek.com/top_up'),
+    })
+    active.host.start()
+
+    await active.host.openAccountPage('top-up')
+    expect(active.openExternal).toHaveBeenCalledExactlyOnceWith('https://platform.deepseek.com/top_up')
+    expect(active.repo.getAccountPageUrl.mock.calls).toEqual([['top-up', expect.any(AbortSignal)]])
+    await active.host.dispose()
+
+    const rejected = harness({
+      getAccountPageUrl: vi.fn().mockResolvedValue('https://attacker.example/top_up'),
+    })
+    rejected.host.start()
+    await expect(rejected.host.openAccountPage('top-up')).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
+    expect(rejected.openExternal).not.toHaveBeenCalled()
+    await rejected.host.dispose()
   })
 })

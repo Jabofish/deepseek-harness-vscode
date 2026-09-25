@@ -37,29 +37,29 @@ function recordingTransport(responses: readonly unknown[]): {
   return { transport, calls }
 }
 
-describe('DSH 0.1.7-rc.2 optional bundle Remote contract', () => {
-  it('dynamically projects optional entries including installation-provided bundles and omits private diagnostics', async () => {
+const bundleFixture = {
+  name: '@dsh-community/optional-review',
+  version: '1.2.3',
+  meta: {
+    title: { en: 'Optional review', zh: '可选审查' },
+    description: { en: 'Reviews a proposed change.' },
+    icon: 'https://assets.invalid/icon.svg',
+  },
+  enabled: false,
+  installed: false,
+  optional: true,
+  removable: false,
+  rows: [{ rowId: 'review', moduleName: '@dsh-community/optional-review/review', entryId: 'review:entry' }],
+  overrides: [],
+}
+
+describe('DSH 0.1.7-rc.2 Plugin Manager Remote contract', () => {
+  it('projects live bundles and plugin entries while omitting untrusted metadata', async () => {
     const { transport, calls } = recordingTransport([
       {
         ok: true,
         value: [
-          {
-            name: '@dsh-community/optional-review',
-            version: '1.2.3',
-            meta: {
-              title: { en: 'Optional review', zh: '可选审查' },
-              description: { en: 'Reviews a proposed change.' },
-              icon: 'https://assets.invalid/icon.svg',
-              error: 'sensitive metadata diagnostic',
-            },
-            description: 'Fallback description',
-            enabled: false,
-            installed: false,
-            optional: true,
-            removable: false,
-            rows: [{ moduleName: 'private-row-module' }],
-            overrides: ['private-row-id'],
-          },
+          { ...bundleFixture, meta: { ...bundleFixture.meta, error: 'private metadata diagnostic' } },
           {
             name: '@profile/managed-dependency',
             enabled: true,
@@ -68,24 +68,26 @@ describe('DSH 0.1.7-rc.2 optional bundle Remote contract', () => {
             removable: true,
             rows: [],
             overrides: [],
+            error: { code: 'incompatible-version', diagnostic: 'private profile path' },
           },
+        ],
+      },
+      {
+        ok: true,
+        value: [
           {
-            name: '@dsh-community/selected-review',
+            entryId: 'review:entry',
+            moduleName: '@dsh-community/optional-review/review',
             enabled: true,
-            installed: true,
-            optional: true,
-            removable: false,
-            error: { code: 'incompatible-version', diagnostic: 'private profile path and runtime detail' },
-            rows: [],
-            overrides: [],
+            fiberPhase: 'active',
           },
         ],
       },
     ])
     const signal = new AbortController().signal
+    const repository = new Rc172PluginBundleRepository(transport)
 
-    const result = await new Rc172PluginBundleRepository(transport).listOptionalBundles(signal)
-    expect(result).toEqual([
+    await expect(repository.listBundles(signal)).resolves.toEqual([
       {
         name: '@dsh-community/optional-review',
         version: '1.2.3',
@@ -93,85 +95,169 @@ describe('DSH 0.1.7-rc.2 optional bundle Remote contract', () => {
         description: { en: 'Reviews a proposed change.' },
         enabled: false,
         installed: false,
-        hasIssue: false,
+        optional: true,
+        removable: false,
+        rows: [
+          { rowId: 'review', moduleName: '@dsh-community/optional-review/review', entryId: 'review:entry' },
+        ],
+        overrides: [],
       },
       {
-        name: '@dsh-community/selected-review',
+        name: '@profile/managed-dependency',
         enabled: true,
         installed: true,
-        hasIssue: true,
+        optional: false,
+        removable: true,
+        rows: [],
+        overrides: [],
+        errorCode: 'incompatible-version',
       },
     ])
-    expect(calls).toEqual([{ endpoint: 'pluginManager/listBundles', args: {}, signal }])
-    expect(JSON.stringify(result)).not.toContain('private')
+    await expect(repository.listPlugins(signal)).resolves.toEqual([
+      {
+        entryId: 'review:entry',
+        moduleName: '@dsh-community/optional-review/review',
+        enabled: true,
+        fiberPhase: 'active',
+      },
+    ])
+    expect(calls.map(({ endpoint }) => endpoint)).toEqual([
+      'pluginManager/listBundles',
+      'pluginManager/listPlugins',
+    ])
+    expect(JSON.stringify(calls)).not.toContain('private')
   })
 
-  it('sends only the exact dynamic bundle name and enabled flag, and sanitizes a failed result', async () => {
+  it('reads registries and maps package inspection refusals without upstream reason text', async () => {
     const { transport, calls } = recordingTransport([
       {
         ok: true,
         value: {
-          changed: false,
-          application: 'failed',
-          stage: 'enable',
-          target: '@dsh-community/optional-review',
-          enabled: true,
-          error: { code: 'incompatible-version', diagnostic: 'private profile path and dependency tree' },
-          warnings: ['private-loader-row-id'],
+          registry: null,
+          fallbackRegistries: ['https://mirror.example.test/'],
+          resolved: 'https://registry.example.test/',
+        },
+      },
+      {
+        ok: true,
+        value: {
+          status: 'refused',
+          problem: 'network',
+          reason: 'private endpoint/path token=secret',
+          registries: ['https://registry.example.test/'],
         },
       },
     ])
-    const signal = new AbortController().signal
+    const repository = new Rc172PluginBundleRepository(transport)
 
-    const result = await new Rc172PluginBundleRepository(transport).setBundleEnabled(
-      '@dsh-community/optional-review',
-      true,
-      signal,
+    await expect(repository.registries()).resolves.toEqual({
+      registry: null,
+      fallbackRegistries: ['https://mirror.example.test/'],
+      resolved: 'https://registry.example.test/',
+    })
+    await expect(
+      repository.inspect('@dsh-community/missing', 'https://mirror.example.test/'),
+    ).resolves.toEqual({
+      status: 'refused',
+      problem: 'network',
+      registries: ['https://registry.example.test/'],
+    })
+    expect(calls[1]).toEqual({
+      endpoint: 'pluginManager/inspect',
+      args: { spec: '@dsh-community/missing', options: { registry: 'https://mirror.example.test/' } },
+      signal: undefined,
+    })
+  })
+
+  it('routes install, request cancellation, removal, and individual plugin enablement to RC2 Remotes', async () => {
+    const spec = 'https://git.example.test/private/repo.git'
+    const { transport, calls } = recordingTransport([
+      {
+        ok: true,
+        value: {
+          stage: 'install',
+          target: spec,
+          changed: false,
+          application: 'failed',
+          error: { code: 'operation-error', diagnostic: 'C:\\Users\\private\\profile\\nBearer secret' },
+          packageResult: {
+            exitCode: 1,
+            output: 'registry token=secret',
+            logPath: 'C:\\Users\\private\\pnpm.log',
+            kind: 'permission',
+          },
+          failedAt: 'registry',
+        },
+      },
+      { ok: true, value: { status: 'too-late' } },
+      {
+        ok: true,
+        value: {
+          target: '@dsh-community/optional-review',
+          stage: 'remove',
+          changed: true,
+          application: 'applied',
+        },
+      },
+      {
+        ok: true,
+        value: {
+          target: 'review:entry',
+          stage: 'enable',
+          changed: true,
+          application: 'applied',
+          enabled: false,
+        },
+      },
+    ])
+    const repository = new Rc172PluginBundleRepository(transport)
+
+    await expect(repository.installBundle(spec, { requestId: 'install-1', registry: null })).resolves.toEqual(
+      {
+        name: 'plugin',
+        changed: false,
+        application: 'failed',
+        stage: 'install',
+        errorCode: 'operation-error',
+        failureKind: 'permission',
+        failedAt: 'registry',
+      },
     )
-    expect(result).toEqual({
-      name: '@dsh-community/optional-review',
-      changed: false,
-      application: 'failed',
-      enabled: true,
-      errorCode: 'incompatible-version',
+    await expect(repository.cancelInstall('install-1')).resolves.toEqual({ status: 'too-late' })
+    await expect(repository.removeBundle('@dsh-community/optional-review')).resolves.toMatchObject({
+      stage: 'remove',
+      changed: true,
+    })
+    await expect(repository.setPluginEnabled('review:entry', false)).resolves.toMatchObject({
+      enabled: false,
+      stage: 'enable',
     })
     expect(calls).toEqual([
       {
-        endpoint: 'pluginManager/setBundleEnabled',
-        args: { name: '@dsh-community/optional-review', enabled: true },
-        signal,
+        endpoint: 'pluginManager/installBundle',
+        args: { spec, options: { enabled: true, requestId: 'install-1', registry: null } },
+        signal: undefined,
+      },
+      { endpoint: 'pluginManager/cancelInstall', args: { requestId: 'install-1' }, signal: undefined },
+      {
+        endpoint: 'pluginManager/removeBundle',
+        args: { name: '@dsh-community/optional-review' },
+        signal: undefined,
+      },
+      {
+        endpoint: 'pluginManager/setPluginEnabled',
+        args: { id: 'review:entry', enabled: false },
+        signal: undefined,
       },
     ])
-    expect(JSON.stringify(result)).not.toContain('private')
+    expect(JSON.stringify(calls)).not.toContain('secret')
   })
 
-  it('preserves immediate, restart-required, overridden, and cancelled outcomes', async () => {
-    for (const application of ['applied', 'restart-required', 'overridden', 'cancelled'] as const) {
-      const { transport } = recordingTransport([
-        {
-          ok: true,
-          value: {
-            changed: true,
-            application,
-            stage: 'enable',
-            target: '@dsh-community/optional-review',
-            enabled: false,
-          },
-        },
-      ])
-      await expect(
-        new Rc172PluginBundleRepository(transport).setBundleEnabled('@dsh-community/optional-review', false),
-      ).resolves.toMatchObject({ application, changed: true, enabled: false })
-    }
-  })
-
-  it('rejects malformed catalog and change records and propagates cancellation before dispatch', async () => {
+  it('rejects malformed responses, credential-bearing inputs, and dispatch after cancellation', async () => {
     const malformedList = recordingTransport([{ ok: true, value: [{ name: 'x', optional: true }] }])
     await expect(
-      new Rc172PluginBundleRepository(malformedList.transport).listOptionalBundles(),
-    ).rejects.toMatchObject({
-      code: 'PROTOCOL_ERROR',
-    })
+      new Rc172PluginBundleRepository(malformedList.transport).listBundles(),
+    ).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
 
     const malformedChange = recordingTransport([
       {
@@ -191,29 +277,23 @@ describe('DSH 0.1.7-rc.2 optional bundle Remote contract', () => {
       ),
     ).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
 
-    const missingEnabled = recordingTransport([
-      {
-        ok: true,
-        value: {
-          changed: true,
-          application: 'applied',
-          stage: 'enable',
-          target: '@dsh-community/optional-review',
-        },
-      },
-    ])
+    const invalidInput = recordingTransport([])
+    const invalidRepository = new Rc172PluginBundleRepository(invalidInput.transport)
     await expect(
-      new Rc172PluginBundleRepository(missingEnabled.transport).setBundleEnabled(
-        '@dsh-community/optional-review',
-        true,
-      ),
-    ).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
+      invalidRepository.inspect('pkg', 'https://user:secret@registry.example.test/'),
+    ).rejects.toMatchObject({ code: 'INVALID_CONFIGURATION' })
+    await expect(
+      invalidRepository.installBundle('https://git.example.test/repo?token=secret', {
+        requestId: 'install-3',
+      }),
+    ).rejects.toMatchObject({ code: 'INVALID_CONFIGURATION' })
+    expect(invalidInput.calls).toHaveLength(0)
 
     const cancelled = recordingTransport([])
     const controller = new AbortController()
     controller.abort()
     await expect(
-      new Rc172PluginBundleRepository(cancelled.transport).listOptionalBundles(controller.signal),
+      new Rc172PluginBundleRepository(cancelled.transport).listBundles(controller.signal),
     ).rejects.toMatchObject({ name: 'AbortError' })
     expect(cancelled.calls).toHaveLength(1)
   })

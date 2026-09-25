@@ -1,6 +1,7 @@
 import { isPluginMetadata } from '@dsh-vscode/domain'
 import {
   accountLifecycleSnapshotSchema,
+  accountProfileDetailsSnapshotSchema,
   accountSignOutImpactSchema,
   jobFollowFailedPayloadSchema,
   jobFollowUpdatedPayloadSchema,
@@ -11,6 +12,7 @@ import type {
   AccountLifecycleErrorCodeDto,
   AccountLifecycleSnapshotDto,
   AccountSignOutImpactDto,
+  AccountProfileDetailsSnapshotDto,
 } from '@dsh-vscode/webview-protocol'
 import {
   parseSlashCommand,
@@ -59,6 +61,7 @@ import {
   type PermissionRequest,
   type PermissionOption,
   type PluginInventorySnapshot,
+  type PluginInstallProgressView,
   type PresentedFileView,
   type PromptTemplate,
   type PromptTemplateDraft,
@@ -261,6 +264,7 @@ export interface AppState {
   readonly permissionPresets: readonly string[]
   readonly commands: readonly DynamicCommand[]
   readonly pluginInventoryRevision: number
+  readonly pluginInstallProgress: PluginInstallProgressView | undefined
   readonly accountLifecycleAvailable: boolean
   readonly accountLifecycle: AccountLifecycleSnapshotDto | null
   readonly accountLifecycleLoading: boolean
@@ -269,6 +273,9 @@ export interface AppState {
   readonly accountSessionExpired: boolean
   readonly accountLifecycleError: AccountLifecycleErrorCodeDto | undefined
   readonly accountLifecycleRequestFailed: boolean
+  readonly accountProfileDetails: AccountProfileDetailsSnapshotDto | null
+  readonly accountProfileLoading: boolean
+  readonly accountProfileRequestFailed: boolean
   readonly goals: readonly GoalView[]
   readonly todos: readonly TodoView[]
   readonly jobs: readonly JobView[]
@@ -342,6 +349,9 @@ export interface AppActions {
   cancelAccountSignIn(attemptId: string): Promise<void>
   checkAccountSignOutImpact(): Promise<void>
   signOutAccount(): Promise<void>
+  loadAccountDetails(): Promise<void>
+  acknowledgeAccountBonus(orderId: string): Promise<boolean>
+  openAccountPage(page: 'usage' | 'top-up'): Promise<void>
   initialize(): Promise<void>
   reconnect(): Promise<void>
   readDiagnostics(): Promise<DiagnosticsSnapshot | undefined>
@@ -590,6 +600,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     permissionPresets: [],
     commands: [],
     pluginInventoryRevision: 0,
+    pluginInstallProgress: undefined,
     accountLifecycleAvailable: false,
     accountLifecycle: null,
     accountLifecycleLoading: false,
@@ -598,6 +609,9 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     accountSessionExpired: false,
     accountLifecycleError: undefined,
     accountLifecycleRequestFailed: false,
+    accountProfileDetails: null,
+    accountProfileLoading: false,
+    accountProfileRequestFailed: false,
     goals: [],
     todos: [],
     jobs: [],
@@ -702,11 +716,18 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     scheduleNotify()
   }
   let accountOperationEpoch = 0
+  let accountDetailsEpoch = 0
   let accountConnectionIdentity: string | undefined
   const parseAccountSnapshotPayload = (value: unknown): AccountLifecycleSnapshotDto | undefined => {
     const payload = object(value)
     if (payload?.kind !== 'account.lifecycle') return undefined
     const parsed = accountLifecycleSnapshotSchema.safeParse(payload.snapshot)
+    return parsed.success ? parsed.data : undefined
+  }
+  const parseAccountDetailsPayload = (value: unknown): AccountProfileDetailsSnapshotDto | undefined => {
+    const payload = object(value)
+    if (payload?.kind !== 'account.details') return undefined
+    const parsed = accountProfileDetailsSnapshotSchema.safeParse(payload.snapshot)
     return parsed.success ? parsed.data : undefined
   }
   const requestAccountSnapshot = async (
@@ -720,11 +741,17 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     return parsed
   }
   const commitAccountSnapshot = (snapshot: AccountLifecycleSnapshotDto): void => {
+    const clearDetails =
+      snapshot.status !== 'credential-stored' || state.accountLifecycle?.status !== snapshot.status
+    if (clearDetails) accountDetailsEpoch += 1
     setState((current) => ({
       ...current,
       accountLifecycle: snapshot,
       accountLifecycleError: undefined,
       accountLifecycleRequestFailed: false,
+      ...(clearDetails
+        ? { accountProfileDetails: null, accountProfileLoading: false, accountProfileRequestFailed: false }
+        : {}),
     }))
   }
   const runAccountSnapshotAction = async (
@@ -1745,6 +1772,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       if (identity !== accountConnectionIdentity) {
         accountConnectionIdentity = identity
         accountOperationEpoch += 1
+        accountDetailsEpoch += 1
       }
     }
     const parsedEvent = parseHostDomainEvent(message)
@@ -1821,10 +1849,14 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       void refresh()
     if (
       message.type === 'event' &&
-      ((message.name === 'remote.event' && object(message.payload)?.name === 'plugin-manager/changed') ||
-        (message.name === 'connection.snapshot' && object(message.payload)?.kind === 'connected'))
+      message.name === 'connection.snapshot' &&
+      object(message.payload)?.kind === 'connected'
     )
-      setState((current) => ({ ...current, pluginInventoryRevision: current.pluginInventoryRevision + 1 }))
+      setState((current) => ({
+        ...current,
+        pluginInventoryRevision: current.pluginInventoryRevision + 1,
+        pluginInstallProgress: undefined,
+      }))
     if (
       message.type === 'event' &&
       message.name === 'remote.event' &&
@@ -1838,6 +1870,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     ) {
       goalActivationAvailable = false
       goalReadGeneration += 1
+      setState((current) => ({ ...current, pluginInstallProgress: undefined }))
     }
     if (
       message.type === 'event' &&
@@ -1976,21 +2009,55 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     typeof client.subscribeFeature === 'function'
       ? client.subscribeFeature((message) => {
           if (message.name === 'account.lifecycle.updated') {
+            const clearDetails =
+              message.snapshot.status !== 'credential-stored' ||
+              state.accountLifecycle?.status !== message.snapshot.status
+            if (clearDetails) accountDetailsEpoch += 1
             setState((current) => ({
               ...current,
               accountLifecycle: message.snapshot,
               accountLifecycleError: undefined,
               accountLifecycleRequestFailed: false,
+              ...(clearDetails
+                ? {
+                    accountProfileDetails: null,
+                    accountProfileLoading: false,
+                    accountProfileRequestFailed: false,
+                  }
+                : {}),
             }))
           }
-          if (message.name === 'account.session-expired')
-            setState((current) => ({ ...current, accountSessionExpired: true }))
+          if (message.name === 'account.session-expired') {
+            accountDetailsEpoch += 1
+            setState((current) => ({
+              ...current,
+              accountSessionExpired: true,
+              accountProfileDetails: null,
+              accountProfileLoading: false,
+              accountProfileRequestFailed: false,
+            }))
+          }
           if (message.name === 'account.lifecycle.error')
             setState((current) => ({
               ...current,
               accountLifecycleError: message.code,
               accountLifecycleRequestFailed: true,
             }))
+          if (message.name === 'plugin.manager.changed')
+            setState((current) => ({
+              ...current,
+              pluginInventoryRevision: current.pluginInventoryRevision + 1,
+              pluginInstallProgress: undefined,
+            }))
+          if (message.name === 'plugin.install.progress') {
+            const progress: PluginInstallProgressView = {
+              requestId: message.requestId,
+              phase: message.phase,
+              ...(message.attemptIndex === undefined ? {} : { attemptIndex: message.attemptIndex }),
+              ...(message.attemptTotal === undefined ? {} : { attemptTotal: message.attemptTotal }),
+            }
+            setState((current) => ({ ...current, pluginInstallProgress: progress }))
+          }
           if (message.name === 'editor.context.changed') void refreshEditorContextState()
           if (message.name === 'editor.context.availability.changed') {
             const availableKinds = parseEditorContextAvailableKinds(message.availableKinds)
@@ -2734,6 +2801,9 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     get pluginInventoryRevision() {
       return state.pluginInventoryRevision
     },
+    get pluginInstallProgress() {
+      return state.pluginInstallProgress
+    },
     get accountLifecycleAvailable() {
       return state.accountLifecycleAvailable
     },
@@ -2757,6 +2827,15 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     },
     get accountLifecycleRequestFailed() {
       return state.accountLifecycleRequestFailed
+    },
+    get accountProfileDetails() {
+      return state.accountProfileDetails
+    },
+    get accountProfileLoading() {
+      return state.accountProfileLoading
+    },
+    get accountProfileRequestFailed() {
+      return state.accountProfileRequestFailed
     },
     get goals() {
       return state.goals
@@ -4377,6 +4456,73 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     },
     signOutAccount: () =>
       runAccountSnapshotAction({ type: 'account.signOut', requestId: requestId(), payload: {} }),
+    loadAccountDetails: async () => {
+      if (!state.accountLifecycleAvailable) return
+      if (state.accountLifecycle?.status !== 'credential-stored') {
+        accountDetailsEpoch += 1
+        setState((current) => ({
+          ...current,
+          accountProfileDetails: null,
+          accountProfileLoading: false,
+          accountProfileRequestFailed: false,
+        }))
+        return
+      }
+      const epoch = ++accountDetailsEpoch
+      setState((current) => ({ ...current, accountProfileLoading: true, accountProfileRequestFailed: false }))
+      try {
+        const details = parseAccountDetailsPayload(
+          await client.featureRequest<unknown>({
+            type: 'account.details.read',
+            requestId: requestId(),
+            payload: {},
+          }),
+        )
+        if (details === undefined) throw new Error(translate('account.profile.failed'))
+        if (epoch === accountDetailsEpoch && state.accountLifecycle?.status === 'credential-stored')
+          setState((current) => ({
+            ...current,
+            accountProfileDetails: details,
+            accountProfileRequestFailed: false,
+          }))
+      } catch {
+        if (epoch === accountDetailsEpoch)
+          setState((current) => ({ ...current, accountProfileRequestFailed: true }))
+      } finally {
+        if (epoch === accountDetailsEpoch)
+          setState((current) => ({ ...current, accountProfileLoading: false }))
+      }
+    },
+    acknowledgeAccountBonus: async (orderId) => {
+      if (!state.accountLifecycleAvailable || state.accountLifecycle?.status !== 'credential-stored')
+        return false
+      const epoch = accountDetailsEpoch
+      const payload = object(
+        await client.featureRequest<unknown>({
+          type: 'account.bonus.ack',
+          requestId: requestId(),
+          payload: { orderId },
+        }),
+      )
+      if (payload?.kind !== 'account.bonus.ack' || typeof payload.accepted !== 'boolean')
+        throw new Error(translate('account.profile.failed'))
+      if (epoch !== accountDetailsEpoch || state.accountLifecycle?.status !== 'credential-stored')
+        return false
+      return payload.accepted
+    },
+    openAccountPage: async (page) => {
+      if (!state.accountLifecycleAvailable || state.accountLifecycle?.status !== 'credential-stored')
+        throw new Error(translate('account.signedOut'))
+      const payload = object(
+        await client.featureRequest<unknown>({
+          type: 'account.page.open',
+          requestId: requestId(),
+          payload: { page },
+        }),
+      )
+      if (payload?.kind !== 'account.page.opened' || payload.page !== page)
+        throw new Error(translate('account.profile.failed'))
+    },
     setDrawer: (drawer) => {
       const openingSessionsDrawer = drawer === 'sessions' && state.drawer !== 'sessions'
       setState((current) => ({ ...current, drawer }))
@@ -4398,6 +4544,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       // superseded open on purpose so their announced range is not lost.
       disposed = true
       openVersion += 1
+      accountDetailsEpoch += 1
       gapBackfills.clear()
       unhealedGapRanges.clear()
       coveredHistoryRanges.clear()
@@ -6058,6 +6205,9 @@ function withoutConnectionScopedSurfaces(state: AppState): AppState {
     accountSessionExpired: false,
     accountLifecycleError: undefined,
     accountLifecycleRequestFailed: false,
+    accountProfileDetails: null,
+    accountProfileLoading: false,
+    accountProfileRequestFailed: false,
   }
 }
 

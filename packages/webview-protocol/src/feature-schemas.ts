@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import {
   accountLifecycleErrorCodeSchema,
+  accountProfileDetailsSnapshotSchema,
   accountLifecycleSnapshotSchema,
   accountSignOutImpactSchema,
 } from './account-lifecycle-schemas.js'
@@ -240,7 +241,64 @@ const pluginBundleTextSchema = z.union([
         context.addIssue({ code: 'custom', message: 'Localized bundle text has invalid locale keys.' })
     }),
 ])
-const optionalPluginBundleSchema = z
+const pluginMetadataSchema = z
+  .object({
+    title: pluginBundleTextSchema.optional(),
+    description: pluginBundleTextSchema.optional(),
+  })
+  .strict()
+const pluginRegistryUrlSchema = z
+  .string()
+  .max(2_048)
+  .url()
+  .refine((value) => {
+    try {
+      const url = new URL(value)
+      return (
+        (url.protocol === 'http:' || url.protocol === 'https:') &&
+        url.username === '' &&
+        url.password === '' &&
+        url.search === '' &&
+        url.hash === ''
+      )
+    } catch {
+      return false
+    }
+  }, 'Registry URLs cannot contain credentials or query data.')
+const pluginRegistrySchema = z.union([z.literal(null), pluginRegistryUrlSchema])
+const pluginBundleErrorCodeSchema = z.enum([
+  'management-required',
+  'unaddressable',
+  'unknown-plugin',
+  'invalid-spec',
+  'ambiguous-install',
+  'not-bundle',
+  'not-removable',
+  'stop-profile',
+  'bundle-in-use',
+  'stale-approval',
+  'incompatible-version',
+  'operation-error',
+])
+const managedPluginEntrySchema = z
+  .object({
+    entryId: safeLabel,
+    moduleName: safeLabel,
+    meta: pluginMetadataSchema.optional(),
+    enabled: z.boolean(),
+    fiberPhase: z.enum(['pending', 'loading', 'active', 'failed', 'unloading']).nullable(),
+    readOnlyReason: z.enum(['management-required', 'unaddressable']).optional(),
+  })
+  .strict()
+const pluginBundleRowSchema = z
+  .object({
+    rowId: safeLabel,
+    moduleName: safeLabel,
+    meta: pluginMetadataSchema.optional(),
+    entryId: safeLabel.optional(),
+  })
+  .strict()
+const managedPluginBundleSchema = z
   .object({
     name: safeLabel,
     version: z.string().max(128).optional(),
@@ -248,8 +306,12 @@ const optionalPluginBundleSchema = z
     description: pluginBundleTextSchema.optional(),
     enabled: z.boolean(),
     installed: z.boolean(),
-    hasIssue: z.boolean(),
+    optional: z.boolean(),
+    removable: z.boolean(),
     readOnlyReason: z.enum(['management-required', 'unaddressable']).optional(),
+    errorCode: pluginBundleErrorCodeSchema.optional(),
+    rows: z.array(pluginBundleRowSchema).max(2_000),
+    overrides: z.array(safeLabel).max(2_000),
   })
   .strict()
 const pluginBundleChangeResultSchema = z
@@ -257,20 +319,62 @@ const pluginBundleChangeResultSchema = z
     name: safeLabel,
     changed: z.boolean(),
     application: z.enum(['applied', 'restart-required', 'overridden', 'failed', 'cancelled']),
-    enabled: z.boolean(),
-    errorCode: z
+    enabled: z.boolean().optional(),
+    stage: z.enum(['install', 'enable', 'remove']).optional(),
+    errorCode: pluginBundleErrorCodeSchema.optional(),
+    failureKind: z
       .enum([
-        'management-required',
-        'unaddressable',
-        'unknown-plugin',
-        'not-bundle',
-        'not-removable',
-        'stop-profile',
-        'bundle-in-use',
-        'incompatible-version',
-        'operation-error',
+        'pnpm-missing',
+        'timeout',
+        'not-found',
+        'no-matching-version',
+        'network',
+        'disk-full',
+        'permission',
+        'build-blocked',
+        'integrity',
+        'unknown',
       ])
       .optional(),
+    failedAt: z.enum(['registry', 'spec-host']).optional(),
+    bundle: safeLabel.optional(),
+    pendingBuilds: z.array(safeLabel).max(256).optional(),
+  })
+  .strict()
+const pluginInspectionSchema = z.discriminatedUnion('status', [
+  z
+    .object({
+      status: z.literal('accepted'),
+      kind: z.enum(['registry', 'path', 'git', 'tarball']),
+      name: safeLabel.optional(),
+      version: z.string().max(128).optional(),
+      description: z.string().max(4_096).optional(),
+      bundle: z.boolean().nullable(),
+      registry: pluginRegistrySchema,
+      host: z.string().max(255).optional(),
+    })
+    .strict(),
+  z
+    .object({
+      status: z.literal('refused'),
+      problem: z.enum([
+        'invalid-spec',
+        'already-installed',
+        'not-found',
+        'not-a-package',
+        'not-a-bundle',
+        'network',
+        'unknown',
+      ]),
+      registries: z.array(pluginRegistrySchema).max(64).optional(),
+    })
+    .strict(),
+])
+const pluginRegistriesSchema = z
+  .object({
+    registry: pluginRegistrySchema,
+    fallbackRegistries: z.array(pluginRegistryUrlSchema).max(64),
+    resolved: pluginRegistrySchema,
   })
   .strict()
 const schedulePrompt = z.string().min(1).max(16_000_000)
@@ -702,9 +806,60 @@ export const featureRequestSchema = z.discriminatedUnion('type', [
     .strict(),
   z
     .object({
+      type: z.literal('plugin.registries.list'),
+      ...featureRequestBase,
+      payload: z.object({}).strict(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('plugin.spec.inspect'),
+      ...featureRequestBase,
+      payload: z
+        .object({ spec: z.string().min(1).max(4_096), registry: pluginRegistrySchema.optional() })
+        .strict(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('plugin.bundle.install'),
+      ...featureRequestBase,
+      payload: z
+        .object({
+          spec: z.string().min(1).max(4_096),
+          installRequestId: id,
+          registry: pluginRegistrySchema.optional(),
+          approvedBuilds: z.array(safeLabel).max(256).optional(),
+        })
+        .strict(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('plugin.bundle.cancelInstall'),
+      ...featureRequestBase,
+      payload: z.object({ installRequestId: id }).strict(),
+    })
+    .strict(),
+  z
+    .object({
       type: z.literal('plugin.bundle.setEnabled'),
       ...featureRequestBase,
       payload: z.object({ name: safeLabel, enabled: z.boolean() }).strict(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('plugin.bundle.remove'),
+      ...featureRequestBase,
+      payload: z.object({ name: safeLabel }).strict(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('plugin.entry.setEnabled'),
+      ...featureRequestBase,
+      payload: z.object({ entryId: safeLabel, enabled: z.boolean() }).strict(),
     })
     .strict(),
   z
@@ -729,6 +884,27 @@ export const featureRequestSchema = z.discriminatedUnion('type', [
     .strict(),
   z
     .object({ type: z.literal('account.signOut'), ...featureRequestBase, payload: z.object({}).strict() })
+    .strict(),
+  z
+    .object({
+      type: z.literal('account.details.read'),
+      ...featureRequestBase,
+      payload: z.object({}).strict(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('account.bonus.ack'),
+      ...featureRequestBase,
+      payload: z.object({ orderId: z.string().uuid() }).strict(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('account.page.open'),
+      ...featureRequestBase,
+      payload: z.object({ page: z.enum(['usage', 'top-up']) }).strict(),
+    })
     .strict(),
   z
     .object({
@@ -931,6 +1107,9 @@ const featureResponsePayloadSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('empty') }).strict(),
   z.object({ kind: z.literal('account.lifecycle'), snapshot: accountLifecycleSnapshotSchema }).strict(),
   z.object({ kind: z.literal('account.impact'), impact: accountSignOutImpactSchema }).strict(),
+  z.object({ kind: z.literal('account.details'), snapshot: accountProfileDetailsSnapshotSchema }).strict(),
+  z.object({ kind: z.literal('account.bonus.ack'), accepted: z.boolean() }).strict(),
+  z.object({ kind: z.literal('account.page.opened'), page: z.enum(['usage', 'top-up']) }).strict(),
   z
     .object({
       kind: z.literal('editor.context'),
@@ -999,17 +1178,40 @@ const featureResponsePayloadSchema = z.discriminatedUnion('kind', [
     .object({
       kind: z.literal('plugin.bundles'),
       available: z.boolean(),
-      bundles: z.array(optionalPluginBundleSchema).max(5_000),
+      bundles: z.array(managedPluginBundleSchema).max(5_000),
+      plugins: z.array(managedPluginEntrySchema).max(10_000),
     })
     .strict()
     .superRefine((value, context) => {
-      if (!value.available && value.bundles.length !== 0)
+      if (!value.available && (value.bundles.length !== 0 || value.plugins.length !== 0))
         context.addIssue({
           code: 'custom',
           path: ['bundles'],
           message: 'Unavailable Plugin Manager has no catalog.',
         })
     }),
+  z
+    .object({
+      kind: z.literal('plugin.registries'),
+      available: z.boolean(),
+      registries: pluginRegistriesSchema.nullable(),
+    })
+    .strict()
+    .superRefine((value, context) => {
+      if (!value.available && value.registries !== null)
+        context.addIssue({
+          code: 'custom',
+          path: ['registries'],
+          message: 'Unavailable Plugin Manager has no registries.',
+        })
+    }),
+  z.object({ kind: z.literal('plugin.inspection'), inspection: pluginInspectionSchema }).strict(),
+  z
+    .object({
+      kind: z.literal('plugin.install.cancelled'),
+      status: z.enum(['cancelled', 'too-late', 'not-running']),
+    })
+    .strict(),
   z.object({ kind: z.literal('plugin.bundle.changed'), result: pluginBundleChangeResultSchema }).strict(),
   z
     .object({
@@ -1193,6 +1395,36 @@ export const featureHostEventSchema = z.discriminatedUnion('name', [
       identity: featureEventIdentitySchema,
     })
     .strict(),
+  z
+    .object({
+      type: z.literal('feature.event'),
+      name: z.literal('plugin.manager.changed'),
+      identity: featureEventIdentitySchema,
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('feature.event'),
+      name: z.literal('plugin.install.progress'),
+      identity: featureEventIdentitySchema,
+      requestId: z
+        .string()
+        .min(1)
+        .max(128)
+        .regex(/^[A-Za-z0-9._:-]+$/u),
+      phase: z.enum(['installing', 'cancelling', 'applying']),
+      attemptIndex: z.number().int().min(1).max(64).optional(),
+      attemptTotal: z.number().int().min(1).max(64).optional(),
+    })
+    .strict()
+    .superRefine((value, context) => {
+      const hasIndex = value.attemptIndex !== undefined
+      const hasTotal = value.attemptTotal !== undefined
+      if (hasIndex !== hasTotal || (hasIndex && value.phase !== 'installing'))
+        context.addIssue({ code: 'custom', message: 'Install attempts only accompany an installing phase.' })
+      if (hasIndex && value.attemptIndex! > value.attemptTotal!)
+        context.addIssue({ code: 'custom', message: 'Install attempt index exceeds the attempt count.' })
+    }),
   z
     .object({
       type: z.literal('feature.event'),

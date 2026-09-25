@@ -1,4 +1,4 @@
-import { useEffect, useRef, type KeyboardEvent, type ReactElement } from 'react'
+import { useEffect, useRef, useState, type KeyboardEvent, type ReactElement } from 'react'
 import type { FeatureHostEvent, FeatureRequest } from '@dsh-vscode/webview-protocol'
 
 import { useI18n } from '../../i18n.js'
@@ -12,13 +12,16 @@ export interface ScheduleDrawerProps {
   readonly onClose: () => void
   readonly featureRequest: <T>(request: FeatureRequest) => Promise<T>
   readonly subscribeFeature: (listener: (message: FeatureHostEvent) => void) => () => void
-  readonly onStartScheduleSession: () => void | Promise<void>
+  readonly onStartScheduleSession: (prompt: string) => Promise<string>
 }
 
 export function ScheduleDrawer(props: ScheduleDrawerProps): ReactElement | null {
   const { t } = useI18n()
+  const [hasOpened, setHasOpened] = useState(props.open)
   const dialogRef = useRef<HTMLDivElement>(null)
   const closeRef = useRef<HTMLButtonElement>(null)
+
+  if (props.open && !hasOpened) setHasOpened(true)
 
   useDismissibleLayer({ open: props.open, refs: [dialogRef], onDismiss: props.onClose })
 
@@ -57,15 +60,15 @@ export function ScheduleDrawer(props: ScheduleDrawerProps): ReactElement | null 
     }
   }
 
-  if (!props.open) return null
+  if (!props.open && !hasOpened) return null
 
   return (
-    <div className="dsh-schedule-drawer__backdrop">
+    <div className="dsh-schedule-drawer__backdrop" hidden={!props.open}>
       <div
         ref={dialogRef}
         className="dsh-schedule-drawer"
         role="dialog"
-        aria-modal="true"
+        aria-modal={props.open}
         aria-label={t('schedules.title')}
         onKeyDown={trapTab}
       >

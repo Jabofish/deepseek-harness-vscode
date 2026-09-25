@@ -34,6 +34,82 @@ export interface AccountClientMetadata {
   readonly timezoneOffsetSeconds: number
 }
 
+export type AccountWalletCurrency = 'CNY' | 'USD'
+
+/** Display identity returned by the authenticated RC2 account controller. */
+export interface AccountPlatformProfile {
+  /** Host-only identity used to bind bonus acknowledgements to the same account. */
+  readonly id: string | null
+  readonly name: string | null
+  readonly contact: string | null
+  /** Never projected into the Webview: it would trigger a remote image request. */
+  readonly avatarUrl?: string | null
+}
+
+export interface AccountWallet {
+  readonly currency: AccountWalletCurrency
+  /** Decimal string, preserving DSH's source precision. */
+  readonly balance: string
+}
+
+export type AccountProfileQuery =
+  { readonly status: 'ready'; readonly value: AccountPlatformProfile } | { readonly status: 'failed' }
+
+export type AccountBalanceQuery =
+  | {
+      readonly status: 'ready'
+      readonly value: readonly AccountWallet[]
+      readonly bonusWallets: readonly AccountWallet[]
+    }
+  | { readonly status: 'failed' }
+
+export interface AccountBonusNotification {
+  readonly orderId: string
+  readonly campaign: string
+  readonly amount: string
+  readonly currency: AccountWalletCurrency
+  readonly grantedAt: string
+  readonly expiresAt: string
+  /** Localized plain text authored by DSH Platform. */
+  readonly message: string
+}
+
+/** The account id stays in the Extension Host and is never copied to the Webview. */
+export interface AccountBonusBatch {
+  readonly accountId: string
+  readonly bonuses: readonly AccountBonusNotification[]
+}
+
+export type AccountReadView<T> =
+  | { readonly status: 'ready'; readonly value: T }
+  | { readonly status: 'unavailable' }
+  | { readonly status: 'failed' }
+
+export interface AccountProfileDisplay {
+  readonly name: string | null
+  readonly contact: string | null
+}
+
+export interface AccountBonusNoticeDisplay {
+  readonly orderId: string
+  readonly message: string
+  readonly amount: string
+  readonly currency: AccountWalletCurrency
+  readonly expiresAt: string
+}
+
+/** Safe account panel projection; it contains no account ids, avatar URLs, or credentials. */
+export interface AccountProfileDetailsSnapshot {
+  readonly profile: AccountReadView<AccountProfileDisplay>
+  readonly balance: AccountReadView<{
+    readonly wallets: readonly AccountWallet[]
+    readonly bonusWallets: readonly AccountWallet[]
+  }>
+  readonly bonus: AccountReadView<AccountBonusNoticeDisplay | null>
+}
+
+export type AccountPage = 'usage' | 'top-up'
+
 /**
  * Internal Host-only effect emitted by the pinned adapter. `url` can contain
  * PKCE and authorization query parameters and must never enter a Webview DTO,
@@ -58,6 +134,16 @@ export interface AccountLifecycleRepository {
   watch(signal: AbortSignal): AsyncIterable<AccountLifecycleSnapshot>
   watchExpiry(signal: AbortSignal): AsyncIterable<'session-expired'>
   subscribeAuthorizationLaunch(listener: (launch: AccountAuthorizationLaunch) => void): () => void
+  getProfile(client: AccountClientMetadata, signal?: AbortSignal): Promise<AccountProfileQuery | null>
+  getBalance(client: AccountClientMetadata, signal?: AbortSignal): Promise<AccountBalanceQuery | null>
+  getUnnotifiedBonuses(client: AccountClientMetadata, signal?: AbortSignal): Promise<AccountBonusBatch | null>
+  ackBonusNotified(
+    accountId: string,
+    orderId: string,
+    client: AccountClientMetadata,
+    signal?: AbortSignal,
+  ): Promise<boolean>
+  getAccountPageUrl(page: AccountPage, signal?: AbortSignal): Promise<string>
 }
 
 export type SignOutImpact = 'none' | 'running' | 'unknown'

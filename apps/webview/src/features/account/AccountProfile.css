@@ -1,0 +1,72 @@
+.account-profile {
+  display: grid;
+  gap: 12px;
+  color: var(--vscode-foreground);
+}
+
+.account-profile__header,
+.account-profile__actions,
+.account-profile__wallets li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.account-profile__header h3 {
+  margin: 0;
+}
+
+.account-profile__section {
+  display: grid;
+  gap: 6px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.account-profile__section p,
+.account-profile__bonus p {
+  margin: 0;
+}
+
+.account-profile__identity {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.account-profile__name {
+  overflow-wrap: anywhere;
+  font-weight: 600;
+}
+
+.account-profile__contact,
+.account-profile__section p {
+  color: var(--vscode-descriptionForeground);
+  overflow-wrap: anywhere;
+}
+
+.account-profile__wallets {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.account-profile__wallets li strong {
+  font-variant-numeric: tabular-nums;
+}
+
+.account-profile__bonus {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 6px;
+}
+
+.account-profile__actions {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}

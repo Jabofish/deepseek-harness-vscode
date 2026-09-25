@@ -95,6 +95,7 @@ function connectedState(activeSession: boolean): AppState {
     permissionPresets: [],
     commands: [],
     pluginInventoryRevision: 0,
+    pluginInstallProgress: undefined,
     accountLifecycleAvailable: false,
     accountLifecycle: null,
     accountLifecycleLoading: false,
@@ -103,6 +104,9 @@ function connectedState(activeSession: boolean): AppState {
     accountSessionExpired: false,
     accountLifecycleError: undefined,
     accountLifecycleRequestFailed: false,
+    accountProfileDetails: null,
+    accountProfileLoading: false,
+    accountProfileRequestFailed: false,
     goals: [],
     todos: [],
     jobs: [],
@@ -294,6 +298,9 @@ function storeFor(state: AppState): AppStore {
     cancelAccountSignIn: vi.fn().mockResolvedValue(undefined),
     checkAccountSignOutImpact: vi.fn().mockResolvedValue(undefined),
     signOutAccount: vi.fn().mockResolvedValue(undefined),
+    loadAccountDetails: vi.fn().mockResolvedValue(undefined),
+    acknowledgeAccountBonus: vi.fn().mockResolvedValue(true),
+    openAccountPage: vi.fn().mockResolvedValue(undefined),
     dispose: vi.fn(),
   }
 }

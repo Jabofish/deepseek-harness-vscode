@@ -2,13 +2,19 @@ import { AppError } from '@dsh-vscode/domain'
 
 import type {
   AccountAuthorizationLaunch,
+  AccountBalanceQuery,
+  AccountBonusBatch,
   AccountClientMetadata,
   AccountLifecycleRepository,
   AccountLifecycleSnapshot,
+  AccountPage,
+  AccountProfileQuery,
   SignOutImpact,
 } from '@dsh-vscode/domain'
 
 const ATTEMPT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu
+const ACCOUNT_ID = /^[^\p{Cc}]{1,256}$/u
+const ORDER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu
 
 /** Application boundary for the exact RC2 account lifecycle; no upstream DTO escapes. */
 export class AccountLifecycleUseCases {
@@ -61,6 +67,51 @@ export class AccountLifecycleUseCases {
 
   public subscribeAuthorizationLaunch(listener: (launch: AccountAuthorizationLaunch) => void): () => void {
     return this.repository.subscribeAuthorizationLaunch(listener)
+  }
+
+  /** Read DSH's display-safe profile outcome; Platform failures stay independent of wallet reads. */
+  public readProfile(
+    client: AccountClientMetadata,
+    signal?: AbortSignal,
+  ): Promise<AccountProfileQuery | null> {
+    validateClient(client)
+    return this.repository.getProfile(client, signal)
+  }
+
+  /** Read the normal and bonus wallet outcomes from the exact RC2 Remote. */
+  public readBalance(
+    client: AccountClientMetadata,
+    signal?: AbortSignal,
+  ): Promise<AccountBalanceQuery | null> {
+    validateClient(client)
+    return this.repository.getBalance(client, signal)
+  }
+
+  /** Read server-authored bonus notices for the active account. */
+  public readUnnotifiedBonuses(
+    client: AccountClientMetadata,
+    signal?: AbortSignal,
+  ): Promise<AccountBonusBatch | null> {
+    validateClient(client)
+    return this.repository.getUnnotifiedBonuses(client, signal)
+  }
+
+  public ackBonusNotified(
+    accountId: string,
+    orderId: string,
+    client: AccountClientMetadata,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
+    validateClient(client)
+    if (!ACCOUNT_ID.test(accountId) || !ORDER_ID.test(orderId))
+      throw invalidAccountInput('bonus acknowledgement')
+    return this.repository.ackBonusNotified(accountId, orderId, client, signal)
+  }
+
+  /** Resolve a user-facing Platform page using only the pinned account/getState Remote. */
+  public getAccountPageUrl(page: AccountPage, signal?: AbortSignal): Promise<string> {
+    if (page !== 'usage' && page !== 'top-up') throw invalidAccountInput('account page')
+    return this.repository.getAccountPageUrl(page, signal)
   }
 }
 

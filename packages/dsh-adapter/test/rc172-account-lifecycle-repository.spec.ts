@@ -87,6 +87,149 @@ describe('Rc172AccountLifecycleRepository', () => {
     ])
   })
 
+  it('reads profile, normal and bonus wallets, and bonus notices through the pinned account Remotes', async () => {
+    const bonus = {
+      orderId: '0bd8870d-2648-4c4c-95ca-d9e89f08095c',
+      campaign: 'launch',
+      amount: '10.00',
+      currency: 'CNY',
+      grantedAt: '2026-09-01T00:00:00.000Z',
+      expiresAt: '2026-10-01T00:00:00.000Z',
+      message: '赠金已到账',
+    }
+    const remoteRequest = vi
+      .fn<AccountRemoteTransport['remoteRequest']>()
+      .mockResolvedValueOnce(
+        remoteSuccess({
+          status: 'ready',
+          value: {
+            id: 'account-1',
+            name: '用户',
+            contact: 'u***@example.test',
+            avatarUrl: 'https://img.example/a',
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        remoteSuccess({
+          status: 'ready',
+          value: [{ currency: 'CNY', balance: '20.50' }],
+          bonusWallets: [{ currency: 'CNY', balance: '3.25' }],
+        }),
+      )
+      .mockResolvedValueOnce(remoteSuccess({ accountId: 'account-1', bonuses: [bonus] }))
+      .mockResolvedValueOnce(remoteSuccess(true))
+    const repository = new Rc172AccountLifecycleRepository({ remoteRequest, openRemoteStream: vi.fn() })
+
+    await expect(repository.getProfile(client)).resolves.toEqual({
+      status: 'ready',
+      value: {
+        id: 'account-1',
+        name: '用户',
+        contact: 'u***@example.test',
+        avatarUrl: 'https://img.example/a',
+      },
+    })
+    await expect(repository.getBalance(client)).resolves.toEqual({
+      status: 'ready',
+      value: [{ currency: 'CNY', balance: '20.50' }],
+      bonusWallets: [{ currency: 'CNY', balance: '3.25' }],
+    })
+    await expect(repository.getUnnotifiedBonuses(client)).resolves.toEqual({
+      accountId: 'account-1',
+      bonuses: [bonus],
+    })
+    await expect(repository.ackBonusNotified('account-1', bonus.orderId, client)).resolves.toBe(true)
+    expect(remoteRequest.mock.calls.map(([endpoint, args]) => [endpoint, args])).toEqual([
+      ['account/getProfile', { client }],
+      ['account/getBalance', { client }],
+      ['account/getUnnotifiedBonuses', { client }],
+      ['account/ackBonusNotified', { accountId: 'account-1', orderId: bonus.orderId, client }],
+    ])
+  })
+
+  it('preserves independent failed and absent profile/balance outcomes', async () => {
+    const remoteRequest = vi
+      .fn<AccountRemoteTransport['remoteRequest']>()
+      .mockResolvedValueOnce(remoteSuccess({ status: 'failed' }))
+      .mockResolvedValueOnce(remoteSuccess(null))
+    const repository = new Rc172AccountLifecycleRepository({ remoteRequest, openRemoteStream: vi.fn() })
+
+    await expect(repository.getProfile(client)).resolves.toEqual({ status: 'failed' })
+    await expect(repository.getBalance(client)).resolves.toBeNull()
+  })
+
+  it('forwards request cancellation and preserves transport failures for detail calls', async () => {
+    const controller = new AbortController()
+    const timeout = new Error('request timeout')
+    const remoteRequest = vi.fn<AccountRemoteTransport['remoteRequest']>().mockRejectedValue(timeout)
+    const repository = new Rc172AccountLifecycleRepository({ remoteRequest, openRemoteStream: vi.fn() })
+
+    await expect(repository.getProfile(client, controller.signal)).rejects.toBe(timeout)
+    expect(remoteRequest).toHaveBeenCalledExactlyOnceWith('account/getProfile', { client }, controller.signal)
+
+    const cancelled = new AbortController()
+    cancelled.abort(new DOMException('cancelled', 'AbortError'))
+    const cancellation = cancelled.signal.reason as Error
+    const abortingTransport = vi.fn<AccountRemoteTransport['remoteRequest']>().mockRejectedValue(cancellation)
+    const abortingRepository = new Rc172AccountLifecycleRepository({
+      remoteRequest: abortingTransport,
+      openRemoteStream: vi.fn(),
+    })
+
+    await expect(abortingRepository.getBalance(client, cancelled.signal)).rejects.toBe(cancellation)
+    expect(abortingTransport).toHaveBeenCalledExactlyOnceWith(
+      'account/getBalance',
+      { client },
+      cancelled.signal,
+    )
+  })
+
+  it.each([
+    ['account/getProfile', { status: 'ready', value: { id: 'account', name: 'name' } }],
+    ['account/getBalance', { status: 'ready', value: [{ currency: 'BTC', balance: '1' }], bonusWallets: [] }],
+    ['account/getUnnotifiedBonuses', { accountId: 'account', bonuses: [{ orderId: 'not-an-id' }] }],
+    ['account/getUnnotifiedBonuses', { accountId: 'account', bonuses: 'malformed' }],
+  ] as const)('rejects malformed account response for %s', async (endpoint, value) => {
+    const remoteRequest = vi
+      .fn<AccountRemoteTransport['remoteRequest']>()
+      .mockResolvedValue(remoteSuccess(value))
+    const repository = new Rc172AccountLifecycleRepository({ remoteRequest, openRemoteStream: vi.fn() })
+
+    await expect(
+      endpoint === 'account/getProfile'
+        ? repository.getProfile(client)
+        : endpoint === 'account/getBalance'
+          ? repository.getBalance(client)
+          : repository.getUnnotifiedBonuses(client),
+    ).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
+  })
+
+  it('resolves account pages from the account state but rejects destinations outside the official origin', async () => {
+    const remoteRequest = vi
+      .fn<AccountRemoteTransport['remoteRequest']>()
+      .mockResolvedValueOnce(remoteSuccess(accountView({ status: 'credential-stored' })))
+      .mockResolvedValueOnce(
+        remoteSuccess(
+          accountView({
+            status: 'credential-stored',
+            links: {
+              usageUrl: 'https://platform.deepseek.com/usage',
+              topUpUrl: 'https://attacker.example/top_up',
+            },
+          }),
+        ),
+      )
+    const repository = new Rc172AccountLifecycleRepository({ remoteRequest, openRemoteStream: vi.fn() })
+
+    await expect(repository.getAccountPageUrl('usage')).resolves.toBe('https://platform.deepseek.com/usage')
+    await expect(repository.getAccountPageUrl('top-up')).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
+    expect(remoteRequest.mock.calls.map(([endpoint, args]) => [endpoint, args])).toEqual([
+      ['account/getState', {}],
+      ['account/getState', {}],
+    ])
+  })
+
   it('subscribes to reconnect-safe account state and expiry streams and releases on abort', async () => {
     const closed: string[] = []
     const openRemoteStream = vi

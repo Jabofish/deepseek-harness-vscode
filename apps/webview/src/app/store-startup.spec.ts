@@ -1732,7 +1732,7 @@ it('keeps the permission roster fail-closed on failure and ignores superseded re
   store.dispose()
 })
 
-it('invalidates plugin inventory only for plugin changes and reconnection', () => {
+it('ignores unprojected Plugin Manager wire events and invalidates inventory on reconnection', () => {
   const client = new StartupClient(startupResponse)
   const store = createAppStore(client as unknown as ProtocolClient)
   const revision = store.pluginInventoryRevision
@@ -1742,12 +1742,19 @@ it('invalidates plugin inventory only for plugin changes and reconnection', () =
     sequence: 100,
     payload: { name: 'plugin-manager/changed', args: [{ reason: 'plugin' }] },
   })
-  expect(store.pluginInventoryRevision).toBe(revision + 1)
+  expect(store.pluginInventoryRevision).toBe(revision)
   client.emit({
     type: 'event',
     name: 'remote.event',
     sequence: 101,
     payload: { name: 'plugin-manager/install-log', args: [] },
+  })
+  expect(store.pluginInventoryRevision).toBe(revision)
+  client.emit({
+    type: 'event',
+    name: 'connection.snapshot',
+    sequence: 102,
+    payload: { kind: 'connected' },
   })
   expect(store.pluginInventoryRevision).toBe(revision + 1)
   store.dispose()

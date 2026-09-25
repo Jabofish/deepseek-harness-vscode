@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   accountLifecycleErrorCodeSchema,
+  accountProfileDetailsSnapshotSchema,
   accountLifecycleSnapshotSchema,
   accountSignOutImpactSchema,
 } from './account-lifecycle-schemas.js'
@@ -42,5 +43,50 @@ describe('account lifecycle Webview DTO schemas', () => {
     expect(accountSignOutImpactSchema.safeParse('active').success).toBe(false)
     expect(accountLifecycleErrorCodeSchema.safeParse('browser-open-failed').success).toBe(true)
     expect(accountLifecycleErrorCodeSchema.safeParse('secret-token').success).toBe(false)
+  })
+
+  it('accepts only the minimal profile, wallet, and bonus projection', () => {
+    const snapshot = {
+      profile: { status: 'ready', value: { name: 'Ada', contact: 'ada@example.test' } },
+      balance: {
+        status: 'ready',
+        value: {
+          wallets: [{ currency: 'CNY', balance: '12.30' }],
+          bonusWallets: [{ currency: 'USD', balance: '0.5' }],
+        },
+      },
+      bonus: {
+        status: 'ready',
+        value: {
+          orderId: id,
+          message: 'Welcome',
+          amount: '2.00',
+          currency: 'CNY',
+          expiresAt: '2026-10-01T00:00:00.000Z',
+        },
+      },
+    }
+    expect(accountProfileDetailsSnapshotSchema.parse(snapshot)).toEqual(snapshot)
+    expect(
+      accountProfileDetailsSnapshotSchema.safeParse({
+        ...snapshot,
+        profile: { status: 'ready', value: { name: 'Ada', contact: null, id: 'account-1' } },
+      }).success,
+    ).toBe(false)
+    expect(
+      accountProfileDetailsSnapshotSchema.safeParse({
+        ...snapshot,
+        profile: {
+          status: 'ready',
+          value: { name: 'Ada', contact: null, avatarUrl: 'https://example.test/a.png' },
+        },
+      }).success,
+    ).toBe(false)
+    expect(
+      accountProfileDetailsSnapshotSchema.safeParse({
+        ...snapshot,
+        bonus: { status: 'ready', value: { ...snapshot.bonus.value, accountId: 'account-1' } },
+      }).success,
+    ).toBe(false)
   })
 })
