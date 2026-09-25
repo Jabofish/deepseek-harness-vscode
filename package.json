@@ -18,7 +18,7 @@
     "docs:check": "node scripts/check-docs.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "lint": "eslint .",
+    "lint": "node --max-old-space-size=4096 ./node_modules/eslint/bin/eslint.js .",
     "package:vsix": "pnpm build && pnpm --filter deepseek-harness-client package:vsix",
     "test": "vitest run --passWithNoTests",
     "test:watch": "vitest",
