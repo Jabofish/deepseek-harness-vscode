@@ -8,6 +8,8 @@
 - Fixed preflight failures from inspect, registry lookup, Host confirmation, or adapter validation being mistaken for an unknown install result: known not-sent failures now settle into a retryable terminal state instead of waiting on a recovery request that returns `null`; disconnects after invoking the Remote remain indeterminate and continue recovery with the same ID.
 - 修复单个插件 entry 启用没有 Host 确认，以及 Agent turn 未结束时 Schedule 重试可能重复创建提醒的问题：启用前显示 Host 风险确认；创建重试等待对应 turn 结束并检查目录后再放行。
 - Fixed plugin entry enabling without Host confirmation and duplicate schedule creation on retry while an Agent turn is active. Enabling now requires a Host risk confirmation; schedule retry waits for the matching turn to end and the catalog to be checked.
+- 修复 RC2 插件安装取消与预检竞态：取消会中止尚未发送安装 Remote 的预检/确认；取消消息先到时会在有界期限内保留意图，避免后续继续安装；Remote 已开始时仍可按同一 ID 重试 `not-running` 取消。
+- Fixed RC2 plugin install cancellation racing with preflight: cancellation now aborts before the install Remote is sent, a bounded intent prevents a later install when cancellation arrives first, and `not-running` remains retryable by the same ID once the Remote stage is active.
 - 修复账号详情并发读取竞态：过期的未登录读取不再清除新账号的奖励确认映射；连接代际变化清空旧账号页面状态，即使新 Host 重用相同 revision 也不会复用旧提示。Schedule 抽屉隐藏的历史面板控件不再进入 Tab 焦点环。
 - Fixed an account detail read race so a stale signed-out response cannot clear the current account's bonus acknowledgement mapping. A connection epoch clears the previous account UI state even when a replacement Host restarts its local revision. Hidden schedule-history controls also no longer enter the Drawer Tab focus order.
 

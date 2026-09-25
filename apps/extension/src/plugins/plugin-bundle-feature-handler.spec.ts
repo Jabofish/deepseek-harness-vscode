@@ -122,6 +122,7 @@ describe('Plugin Manager feature route', () => {
       signal,
       confirmations.install,
       confirmations.builds,
+      undefined,
     )
   })
 
@@ -369,33 +370,87 @@ describe('Plugin Manager feature route', () => {
     expect(cancelInstall).toHaveBeenCalledOnce()
   })
 
-  it.each(['cancelled', 'too-late'] as const)(
-    'retries a settled not-running cancellation after DSH registers the same request (%s)',
-    async (secondStatus) => {
-      const cancelInstall = vi
-        .fn()
-        .mockResolvedValueOnce({ status: 'not-running' as const })
-        .mockResolvedValueOnce({ status: secondStatus })
-      const install = vi.fn(() =>
-        Promise.resolve({
-          name: '@dsh-community/review-layer',
-          changed: true,
-          application: 'applied' as const,
-          stage: 'install' as const,
-        }),
+  it('latches cancellation received before the install handler starts', async () => {
+    const cancelInstall = vi.fn(() => Promise.resolve({ status: 'not-running' as const }))
+    const install = vi.fn(
+      (
+        _spec: string,
+        _requestId: string,
+        _registry: unknown,
+        _approvedBuilds: unknown,
+        installSignal: AbortSignal,
+      ) => {
+        expect(installSignal.aborted).toBe(true)
+        return Promise.reject(
+          Object.assign(new Error('cancelled before install Remote'), {
+            code: 'PLUGIN_INSTALL_NOT_STARTED',
+          }),
+        )
+      },
+    )
+    const bundles = { cancelInstall, install } as unknown as PluginBundleUseCases
+    const signal = new AbortController().signal
+    const coordinator = new PluginInstallRequestCoordinator()
+    const installRequestId = 'install-cancel-before-handler'
+    const cancelRequest = {
+      type: 'plugin.bundle.cancelInstall' as const,
+      payload: { installRequestId },
+    }
+
+    await expect(
+      handlePluginBundleFeatureRequest(cancelRequest, bundles, signal, undefined, coordinator),
+    ).resolves.toEqual({ kind: 'plugin.install.cancelled', status: 'not-running' })
+    await expect(
+      handlePluginBundleFeatureRequest(
+        {
+          type: 'plugin.bundle.install',
+          payload: { spec: '@dsh-community/review-layer', installRequestId },
+        },
+        bundles,
+        signal,
+        undefined,
+        coordinator,
+      ),
+    ).rejects.toMatchObject({ code: 'PLUGIN_INSTALL_NOT_STARTED' })
+
+    expect(cancelInstall).toHaveBeenCalledOnce()
+    expect(install).toHaveBeenCalledOnce()
+  })
+
+  it('expires unused pre-handler cancellation intent after the bounded recovery window', async () => {
+    vi.useFakeTimers()
+    try {
+      const cancelInstall = vi.fn(() => Promise.resolve({ status: 'not-running' as const }))
+      const install = vi.fn(
+        (
+          _spec: string,
+          _requestId: string,
+          _registry: unknown,
+          _approvedBuilds: unknown,
+          installSignal: AbortSignal,
+        ) =>
+          Promise.resolve({
+            name: '@dsh-community/review-layer',
+            changed: true,
+            application: installSignal.aborted ? ('cancelled' as const) : ('applied' as const),
+            stage: 'install' as const,
+          }),
       )
       const bundles = { cancelInstall, install } as unknown as PluginBundleUseCases
       const signal = new AbortController().signal
       const coordinator = new PluginInstallRequestCoordinator()
-      const installRequestId = `install-retry-${secondStatus}`
-      const cancelRequest = {
-        type: 'plugin.bundle.cancelInstall' as const,
-        payload: { installRequestId },
-      }
+      const installRequestId = 'install-expired-cancel-intent'
 
       await expect(
-        handlePluginBundleFeatureRequest(cancelRequest, bundles, signal, undefined, coordinator),
+        handlePluginBundleFeatureRequest(
+          { type: 'plugin.bundle.cancelInstall', payload: { installRequestId } },
+          bundles,
+          signal,
+          undefined,
+          coordinator,
+        ),
       ).resolves.toEqual({ kind: 'plugin.install.cancelled', status: 'not-running' })
+      await vi.advanceTimersByTimeAsync(30 * 60_000 + 1)
       await expect(
         handlePluginBundleFeatureRequest(
           {
@@ -407,20 +462,242 @@ describe('Plugin Manager feature route', () => {
           undefined,
           coordinator,
         ),
-      ).resolves.toMatchObject({ kind: 'plugin.bundle.changed' })
-      await expect(
-        handlePluginBundleFeatureRequest(cancelRequest, bundles, signal, undefined, coordinator),
-      ).resolves.toEqual({ kind: 'plugin.install.cancelled', status: secondStatus })
-      await expect(
-        handlePluginBundleFeatureRequest(cancelRequest, bundles, signal, undefined, coordinator),
-      ).resolves.toEqual({ kind: 'plugin.install.cancelled', status: secondStatus })
+      ).resolves.toMatchObject({ kind: 'plugin.bundle.changed', result: { application: 'applied' } })
+      expect(install.mock.calls[0]?.[4]?.aborted).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 
-      expect(install).toHaveBeenCalledOnce()
-      expect(cancelInstall).toHaveBeenCalledTimes(2)
-      expect(cancelInstall).toHaveBeenNthCalledWith(1, installRequestId, signal)
-      expect(cancelInstall).toHaveBeenNthCalledWith(2, installRequestId, signal)
-    },
-  )
+  it('bounds outstanding cancellation intents before issuing another Remote cancel', async () => {
+    const cancelInstall = vi.fn(() => Promise.resolve({ status: 'not-running' as const }))
+    const bundles = { cancelInstall } as unknown as PluginBundleUseCases
+    const signal = new AbortController().signal
+    const coordinator = new PluginInstallRequestCoordinator()
+
+    for (let index = 0; index < 128; index += 1) {
+      await expect(
+        handlePluginBundleFeatureRequest(
+          {
+            type: 'plugin.bundle.cancelInstall',
+            payload: { installRequestId: `install-cancel-cap-${index}` },
+          },
+          bundles,
+          signal,
+          undefined,
+          coordinator,
+        ),
+      ).resolves.toEqual({ kind: 'plugin.install.cancelled', status: 'not-running' })
+    }
+
+    await expect(
+      handlePluginBundleFeatureRequest(
+        {
+          type: 'plugin.bundle.cancelInstall',
+          payload: { installRequestId: 'install-cancel-cap-overflow' },
+        },
+        bundles,
+        signal,
+        undefined,
+        coordinator,
+      ),
+    ).rejects.toThrow('Too many plugin install cancellations are active.')
+    expect(cancelInstall).toHaveBeenCalledTimes(128)
+  })
+
+  it('aborts install preflight when cancellation arrives while it is running', async () => {
+    const cancelInstall = vi.fn(() => Promise.resolve({ status: 'not-running' as const }))
+    let installSignal: AbortSignal | undefined
+    const install = vi.fn(
+      (
+        _spec: string,
+        _requestId: string,
+        _registry: unknown,
+        _approvedBuilds: unknown,
+        signalForInstall: AbortSignal,
+      ) => {
+        installSignal = signalForInstall
+        return new Promise((_resolve, reject) => {
+          signalForInstall.addEventListener(
+            'abort',
+            () =>
+              reject(
+                Object.assign(new Error('cancelled during preflight'), {
+                  code: 'PLUGIN_INSTALL_NOT_STARTED',
+                }),
+              ),
+            { once: true },
+          )
+        })
+      },
+    )
+    const bundles = { cancelInstall, install } as unknown as PluginBundleUseCases
+    const signal = new AbortController().signal
+    const coordinator = new PluginInstallRequestCoordinator()
+    const installRequestId = 'install-cancel-during-preflight'
+    const cancelRequest = {
+      type: 'plugin.bundle.cancelInstall' as const,
+      payload: { installRequestId },
+    }
+    const installRequest = handlePluginBundleFeatureRequest(
+      {
+        type: 'plugin.bundle.install',
+        payload: { spec: '@dsh-community/review-layer', installRequestId },
+      },
+      bundles,
+      signal,
+      undefined,
+      coordinator,
+    )
+
+    await vi.waitFor(() => expect(install).toHaveBeenCalledOnce())
+    await expect(
+      handlePluginBundleFeatureRequest(cancelRequest, bundles, signal, undefined, coordinator),
+    ).resolves.toEqual({ kind: 'plugin.install.cancelled', status: 'not-running' })
+    await expect(installRequest).rejects.toMatchObject({ code: 'PLUGIN_INSTALL_NOT_STARTED' })
+    expect(installSignal?.aborted).toBe(true)
+    expect(cancelInstall).toHaveBeenCalledOnce()
+  })
+
+  it('shares one Remote cancellation between an active install abort and the cancel request', async () => {
+    let finishInstall!: (result: unknown) => void
+    let finishCancellation!: (result: { readonly status: 'cancelled' }) => void
+    let installSignal: AbortSignal | undefined
+    const installRequestId = 'install-shared-cancellation'
+    const cancelInstall = vi.fn(
+      () =>
+        new Promise<{ readonly status: 'cancelled' }>((resolve) => {
+          finishCancellation = resolve
+        }),
+    )
+    const install = vi.fn(
+      (
+        _spec: string,
+        _requestId: string,
+        _registry: unknown,
+        _approvedBuilds: unknown,
+        signalForInstall: AbortSignal,
+        _confirmInstall: unknown,
+        _confirmBuilds: unknown,
+        cancelRemote: ((requestId: string) => Promise<unknown>) | undefined,
+      ) => {
+        installSignal = signalForInstall
+        return new Promise((resolve) => {
+          finishInstall = resolve
+          signalForInstall.addEventListener(
+            'abort',
+            () => {
+              void cancelRemote?.(installRequestId)
+            },
+            { once: true },
+          )
+        })
+      },
+    )
+    const bundles = { install, cancelInstall } as unknown as PluginBundleUseCases
+    const signal = new AbortController().signal
+    const coordinator = new PluginInstallRequestCoordinator()
+    const installRequest = handlePluginBundleFeatureRequest(
+      {
+        type: 'plugin.bundle.install',
+        payload: { spec: '@dsh-community/review-layer', installRequestId },
+      },
+      bundles,
+      signal,
+      undefined,
+      coordinator,
+    )
+    await vi.waitFor(() => expect(install).toHaveBeenCalledOnce())
+
+    const cancellationRequest = handlePluginBundleFeatureRequest(
+      { type: 'plugin.bundle.cancelInstall', payload: { installRequestId } },
+      bundles,
+      signal,
+      undefined,
+      coordinator,
+    )
+    await vi.waitFor(() => expect(cancelInstall).toHaveBeenCalledOnce())
+    expect(installSignal?.aborted).toBe(true)
+    finishCancellation({ status: 'cancelled' })
+
+    await expect(cancellationRequest).resolves.toEqual({
+      kind: 'plugin.install.cancelled',
+      status: 'cancelled',
+    })
+    finishInstall({
+      name: '@dsh-community/review-layer',
+      changed: false,
+      application: 'cancelled',
+      stage: 'install',
+    })
+    await expect(installRequest).resolves.toMatchObject({ kind: 'plugin.bundle.changed' })
+    expect(cancelInstall).toHaveBeenCalledOnce()
+  })
+
+  it('retries a not-running Remote cancellation while the same install is active', async () => {
+    let finishInstall!: (result: unknown) => void
+    let installSignal: AbortSignal | undefined
+    const cancelInstall = vi
+      .fn()
+      .mockResolvedValueOnce({ status: 'not-running' as const })
+      .mockResolvedValueOnce({ status: 'too-late' as const })
+    const install = vi.fn(
+      (
+        _spec: string,
+        _requestId: string,
+        _registry: unknown,
+        _approvedBuilds: unknown,
+        signalForInstall: AbortSignal,
+      ) => {
+        installSignal = signalForInstall
+        return new Promise((resolve) => {
+          finishInstall = resolve
+        })
+      },
+    )
+    const bundles = { cancelInstall, install } as unknown as PluginBundleUseCases
+    const signal = new AbortController().signal
+    const coordinator = new PluginInstallRequestCoordinator()
+    const installRequestId = 'install-retry-active-remote'
+    const cancelRequest = {
+      type: 'plugin.bundle.cancelInstall' as const,
+      payload: { installRequestId },
+    }
+    const installRequest = handlePluginBundleFeatureRequest(
+      {
+        type: 'plugin.bundle.install',
+        payload: { spec: '@dsh-community/review-layer', installRequestId },
+      },
+      bundles,
+      signal,
+      undefined,
+      coordinator,
+    )
+    await vi.waitFor(() => expect(install).toHaveBeenCalledOnce())
+
+    await expect(
+      handlePluginBundleFeatureRequest(cancelRequest, bundles, signal, undefined, coordinator),
+    ).resolves.toEqual({ kind: 'plugin.install.cancelled', status: 'not-running' })
+    expect(installSignal?.aborted).toBe(true)
+    await expect(
+      handlePluginBundleFeatureRequest(cancelRequest, bundles, signal, undefined, coordinator),
+    ).resolves.toEqual({ kind: 'plugin.install.cancelled', status: 'too-late' })
+    await expect(
+      handlePluginBundleFeatureRequest(cancelRequest, bundles, signal, undefined, coordinator),
+    ).resolves.toEqual({ kind: 'plugin.install.cancelled', status: 'too-late' })
+
+    finishInstall({
+      name: '@dsh-community/review-layer',
+      changed: true,
+      application: 'applied',
+      stage: 'install',
+    })
+    await expect(installRequest).resolves.toMatchObject({ kind: 'plugin.bundle.changed' })
+    expect(cancelInstall).toHaveBeenCalledTimes(2)
+    expect(cancelInstall).toHaveBeenNthCalledWith(1, installRequestId, signal)
+    expect(cancelInstall).toHaveBeenNthCalledWith(2, installRequestId, signal)
+    expect(install).toHaveBeenCalledOnce()
+  })
 
   it('retries cancellation after a Remote error instead of retaining a rejected result', async () => {
     const cancelInstall = vi

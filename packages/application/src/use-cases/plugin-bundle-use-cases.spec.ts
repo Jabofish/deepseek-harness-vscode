@@ -363,6 +363,7 @@ describe('PluginBundleUseCases', () => {
       }),
     )
     const controller = new AbortController()
+    const cancelInstallRemote = vi.fn(() => Promise.resolve({ status: 'cancelled' as const }))
     const pending = services.useCases.install(
       '@dsh-community/review-layer',
       'install-5',
@@ -370,12 +371,16 @@ describe('PluginBundleUseCases', () => {
       undefined,
       controller.signal,
       () => Promise.resolve(true),
+      undefined,
+      cancelInstallRemote,
     )
     await vi.waitFor(() => expect(services.mocks.installBundle).toHaveBeenCalledOnce())
     controller.abort()
-    await vi.waitFor(() => expect(services.mocks.cancelInstall).toHaveBeenCalledWith('install-5'))
+    await vi.waitFor(() => expect(cancelInstallRemote).toHaveBeenCalledWith('install-5'))
     finishInstall({ name: bundle.name, changed: false, application: 'cancelled', stage: 'install' })
     await expect(pending).resolves.toMatchObject({ application: 'cancelled' })
+    expect(cancelInstallRemote).toHaveBeenCalledOnce()
+    expect(services.mocks.cancelInstall).not.toHaveBeenCalled()
   })
 
   it('waits for one known install request and preserves the upstream null-as-unknown result', async () => {

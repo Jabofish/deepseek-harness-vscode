@@ -6,7 +6,7 @@ import type {
   PluginEntryEnableConfirmation,
   PluginInstallConfirmation,
 } from '@dsh-vscode/application'
-import type { PluginRegistry } from '@dsh-vscode/domain'
+import type { PluginInstallCancellation, PluginRegistry } from '@dsh-vscode/domain'
 import { featureResponseSchema } from '@dsh-vscode/webview-protocol'
 
 export type PluginBundleFeatureRequest =
@@ -68,26 +68,36 @@ export async function handlePluginBundleFeatureRequest(
         inspection: await bundles.inspect(request.payload.spec, request.payload.registry, signal),
       }
     case 'plugin.bundle.install': {
-      const run = async (): Promise<unknown> => ({
+      const cancelInstallRemote =
+        coordinator === undefined
+          ? undefined
+          : (installRequestId: string) =>
+              coordinator.cancelRemote(installRequestId, () => bundles.cancelInstall(installRequestId))
+      const run = async (installSignal: AbortSignal = signal): Promise<unknown> => ({
         kind: 'plugin.bundle.changed',
         result: await bundles.install(
           request.payload.spec,
           request.payload.installRequestId,
           request.payload.registry,
           request.payload.approvedBuilds,
-          signal,
+          installSignal,
           confirmations?.install,
           confirmations?.builds,
+          cancelInstallRemote,
         ),
       })
-      return coordinator === undefined ? run() : coordinator.install(request.payload.installRequestId, run)
+      return coordinator === undefined
+        ? run()
+        : coordinator.install(request.payload.installRequestId, signal, run)
     }
     case 'plugin.bundle.cancelInstall': {
-      const run = async (): Promise<unknown> => ({
-        kind: 'plugin.install.cancelled',
-        ...(await bundles.cancelInstall(request.payload.installRequestId, signal)),
-      })
-      return coordinator === undefined ? run() : coordinator.cancel(request.payload.installRequestId, run)
+      const run = (): Promise<PluginInstallCancellation> =>
+        bundles.cancelInstall(request.payload.installRequestId, signal)
+      const cancellation =
+        coordinator === undefined
+          ? await run()
+          : await coordinator.cancel(request.payload.installRequestId, run)
+      return { kind: 'plugin.install.cancelled', ...cancellation }
     }
     case 'plugin.bundle.waitForInstall': {
       const run = async (): Promise<unknown> => ({
@@ -129,17 +139,84 @@ export class PluginInstallRequestCoordinator {
   private readonly installs = new Map<string, TrackedRequest>()
   private readonly cancellations = new Map<string, TrackedRequest>()
   private readonly waits = new Map<string, TrackedRequest>()
+  private readonly cancellationSignals = new Map<string, InstallCancellationSignal>()
 
-  public install(requestId: string, run: () => Promise<unknown>): Promise<unknown> {
-    return this.once(this.installs, requestId, run, true)
+  public install(
+    requestId: string,
+    requestSignal: AbortSignal,
+    run: (signal: AbortSignal) => Promise<unknown>,
+  ): Promise<unknown> {
+    const cancellation = this.cancellationSignal(requestId, true)
+    const operation = this.once(
+      this.installs,
+      requestId,
+      () => {
+        const combined = combineAbortSignals(requestSignal, cancellation.controller.signal)
+        return run(combined.signal).finally(() => combined.dispose())
+      },
+      true,
+    )
+    return operation.finally(() => this.releaseCancellationSignal(requestId, cancellation))
   }
 
-  public cancel(requestId: string, run: () => Promise<unknown>): Promise<unknown> {
+  public cancel(
+    requestId: string,
+    run: () => Promise<PluginInstallCancellation>,
+  ): Promise<PluginInstallCancellation> {
+    // Latch intent before the Remote call starts. A cancel may overtake the
+    // install handler, or land while its Host-side inspect/confirmation is
+    // still running; the install's combined signal covers both windows.
+    this.cancellationSignal(requestId, false).controller.abort()
     // Cancellation is only coalesced while its Remote call is in flight. A
     // settled `not-running` may precede DSH registering the install request;
     // the same id must reach the Remote again when the user retries. Terminal
     // outcomes stay cached so duplicate cancel messages cannot reverse them.
-    return this.once(this.cancellations, requestId, run, isTerminalCancellation)
+    return this.cancelRemote(requestId, run)
+  }
+
+  /** Share the Remote cancellation promise with the install AbortSignal handler. */
+  public cancelRemote(
+    requestId: string,
+    run: () => Promise<PluginInstallCancellation>,
+  ): Promise<PluginInstallCancellation> {
+    return this.once(
+      this.cancellations,
+      requestId,
+      run,
+      isTerminalCancellation,
+    ) as Promise<PluginInstallCancellation>
+  }
+
+  private cancellationSignal(requestId: string, activeInstall: boolean): InstallCancellationSignal {
+    this.pruneCancellationSignals()
+    const existing = this.cancellationSignals.get(requestId)
+    if (existing !== undefined) {
+      if (activeInstall) existing.activeInstall = true
+      return existing
+    }
+    if (this.cancellationSignals.size >= MAX_TRACKED_INSTALL_REQUESTS)
+      throw new Error('Too many plugin install cancellations are active.')
+    const cancellation: InstallCancellationSignal = {
+      controller: new AbortController(),
+      createdAt: Date.now(),
+      activeInstall,
+    }
+    this.cancellationSignals.set(requestId, cancellation)
+    return cancellation
+  }
+
+  private releaseCancellationSignal(requestId: string, cancellation: InstallCancellationSignal): void {
+    if (this.cancellationSignals.get(requestId) !== cancellation) return
+    cancellation.activeInstall = false
+    this.cancellationSignals.delete(requestId)
+  }
+
+  private pruneCancellationSignals(): void {
+    const expiredBefore = Date.now() - INSTALL_REQUEST_CACHE_TTL_MS
+    for (const [requestId, cancellation] of this.cancellationSignals) {
+      if (!cancellation.activeInstall && cancellation.createdAt <= expiredBefore)
+        this.cancellationSignals.delete(requestId)
+    }
   }
 
   public wait(requestId: string, run: () => Promise<unknown>): Promise<unknown> {
@@ -208,6 +285,17 @@ interface TrackedRequest {
   outcome?: RequestOutcome
 }
 
+interface InstallCancellationSignal {
+  readonly controller: AbortController
+  readonly createdAt: number
+  activeInstall: boolean
+}
+
+interface CombinedAbortSignal {
+  readonly signal: AbortSignal
+  dispose(): void
+}
+
 type RequestOutcome =
   { readonly status: 'fulfilled'; readonly value: unknown } | { readonly status: 'rejected' }
 
@@ -216,10 +304,7 @@ type RetentionPolicy = boolean | ((value: unknown) => boolean)
 function isTerminalCancellation(value: unknown): boolean {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
   const payload = value as Record<string, unknown>
-  return (
-    payload.kind === 'plugin.install.cancelled' &&
-    (payload.status === 'cancelled' || payload.status === 'too-late')
-  )
+  return payload.status === 'cancelled' || payload.status === 'too-late'
 }
 
 function projectCompletedInstall(value: unknown): unknown {
@@ -237,3 +322,23 @@ function projectCompletedInstall(value: unknown): unknown {
 
 const MAX_TRACKED_INSTALL_REQUESTS = 128
 const INSTALL_REQUEST_CACHE_TTL_MS = 30 * 60_000
+
+function combineAbortSignals(...signals: readonly AbortSignal[]): CombinedAbortSignal {
+  const controller = new AbortController()
+  const sources: AbortSignal[] = []
+  const abort = (): void => controller.abort()
+  for (const signal of signals) {
+    if (signal.aborted) {
+      controller.abort()
+      break
+    }
+    signal.addEventListener('abort', abort, { once: true })
+    sources.push(signal)
+  }
+  return {
+    signal: controller.signal,
+    dispose: () => {
+      for (const source of sources) source.removeEventListener('abort', abort)
+    },
+  }
+}

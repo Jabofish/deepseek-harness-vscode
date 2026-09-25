@@ -18,6 +18,7 @@ export type PluginEntryEnableConfirmation = (plugin: ManagedPluginEntry) => Prom
 export type PluginBundleRemoveConfirmation = (bundle: PluginManagerBundle) => Promise<boolean>
 export type PluginInstallConfirmation = (spec: string, inspection: PluginSpecInspection) => Promise<boolean>
 export type PluginBuildApprovalConfirmation = (packages: readonly string[]) => Promise<boolean>
+export type PluginInstallCancellationRemote = (requestId: string) => Promise<PluginInstallCancellation>
 
 /** Application boundary for the exact RC2 profile Plugin Manager. */
 export class PluginBundleUseCases {
@@ -111,6 +112,7 @@ export class PluginBundleUseCases {
     signal: AbortSignal,
     confirmInstall?: PluginInstallConfirmation,
     confirmBuilds?: PluginBuildApprovalConfirmation,
+    cancelInstallRemote?: PluginInstallCancellationRemote,
   ): Promise<PluginBundleChangeResult> {
     let repository: NonNullable<DshBackend['pluginBundles']>
     try {
@@ -150,7 +152,11 @@ export class PluginBundleUseCases {
     // The Webview request can be cancelled or disposed while pnpm is running. RC2 owns the process and
     // file restoration, so tell its request-scoped cancellation Remote before relinquishing this call.
     const cancelUpstream = (): void => {
-      void repository.cancelInstall(requestId).catch(() => undefined)
+      const cancellation =
+        cancelInstallRemote === undefined
+          ? repository.cancelInstall(requestId)
+          : cancelInstallRemote(requestId)
+      void cancellation.catch(() => undefined)
     }
     signal.addEventListener('abort', cancelUpstream, { once: true })
     try {
