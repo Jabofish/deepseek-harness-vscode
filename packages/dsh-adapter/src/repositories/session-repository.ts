@@ -72,7 +72,7 @@ export class Rc6SessionRepository implements SessionRepository {
     private readonly transport: DshTransport,
     private readonly workspaceRepository?: Rc6WorkspaceRepository,
     private readonly pathComparator: ((left: string, right: string) => boolean) | undefined = undefined,
-    options: SessionRepositoryOptions = {},
+    options: Rc6SessionRepositoryOptions = {},
   ) {
     this.supportsPreallocatedSessionId =
       options.preallocatedSessionId === true || options.reuseWorkspaceBlank === true
@@ -1163,7 +1163,7 @@ export function historyGapRecovery(sessions: HistoryRecoverySource): StreamRecov
   }
 }
 
-interface SessionRepositoryOptions {
+export interface Rc6SessionRepositoryOptions {
   readonly supportsFileUploads?: boolean
   readonly supportsSessionRestore?: boolean
   readonly readPermissionPresets?: ((signal?: AbortSignal) => Promise<readonly string[]>) | undefined

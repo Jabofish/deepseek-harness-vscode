@@ -5,9 +5,25 @@ import {
   hostMessageSchema,
   webviewRequestSchema,
 } from './schemas.js'
-import { featureRequestSchema, featureResponseSchema } from './feature-schemas.js'
+import { featureHostEventSchema, featureRequestSchema, featureResponseSchema } from './feature-schemas.js'
 
 describe('custom provider Webview protocol', () => {
+  it('accepts the fixed keyboard-shortcuts host action without a dynamic command payload', () => {
+    expect(
+      webviewRequestSchema.safeParse({
+        type: 'settings.openKeyboardShortcuts',
+        requestId: 'keyboard-shortcuts-1',
+      }).success,
+    ).toBe(true)
+    expect(
+      webviewRequestSchema.safeParse({
+        type: 'settings.openKeyboardShortcuts',
+        requestId: 'keyboard-shortcuts-2',
+        payload: { command: 'arbitrary.command' },
+      }).success,
+    ).toBe(false)
+  })
+
   it('accepts only the non-secret provider draft and its CAS revision', () => {
     const result = webviewRequestSchema.safeParse({
       type: 'provider.custom.create',
@@ -591,6 +607,165 @@ describe('subagent Webview protocol', () => {
   })
 })
 
+describe('Schedule feature protocol', () => {
+  const record = {
+    id: 'schedule-1',
+    kind: 'weekly',
+    title: 'Weekly review',
+    prompt: '[redacted prompt]',
+    scheduledAt: '2026-10-02T09:00:00.000Z',
+    time: '09:00:00',
+    timeZone: 'Europe/Paris',
+    weekdays: [1, 3, 5],
+  }
+
+  it('accepts only the pinned Schedule catalog, list, history, update, and delete requests', () => {
+    const requests = [
+      { type: 'schedule.catalog', payload: {} },
+      { type: 'schedule.list', payload: { sessionId: 'session-1' } },
+      {
+        type: 'schedule.history',
+        payload: { sessionId: 'session-1', id: 'schedule-1', limit: 20, before: 'message-2' },
+      },
+      {
+        type: 'schedule.update',
+        payload: {
+          sessionId: 'session-1',
+          id: 'schedule-1',
+          expected: record,
+          change: { kind: 'at', at: { date: '2026-10-03', time: '10:15:00', timeZone: 'Europe/Paris' } },
+          title: 'Updated title',
+        },
+      },
+      { type: 'schedule.delete', payload: { sessionId: 'session-1', id: 'schedule-1' } },
+    ]
+    for (const [index, request] of requests.entries()) {
+      expect(featureRequestSchema.safeParse({ ...request, requestId: `schedule-${index}` }).success).toBe(
+        true,
+      )
+    }
+    const declared = featureRequestSchema.options.map((option) => option.shape.type.value)
+    expect(declared).not.toContain('schedule.create')
+  })
+
+  it('rejects unbounded history pages, empty updates, malformed weekly rules, and unknown fields', () => {
+    expect(
+      featureRequestSchema.safeParse({
+        type: 'schedule.history',
+        requestId: 'history-too-large',
+        payload: { sessionId: 'session-1', id: 'schedule-1', limit: 101 },
+      }).success,
+    ).toBe(false)
+    expect(
+      featureRequestSchema.safeParse({
+        type: 'schedule.update',
+        requestId: 'update-empty',
+        payload: { sessionId: 'session-1', id: 'schedule-1', expected: record },
+      }).success,
+    ).toBe(false)
+    expect(
+      featureRequestSchema.safeParse({
+        type: 'schedule.update',
+        requestId: 'update-bad-rule',
+        payload: {
+          sessionId: 'session-1',
+          id: 'schedule-1',
+          expected: { ...record, weekdays: [1, 1] },
+          prompt: 'updated',
+        },
+      }).success,
+    ).toBe(false)
+    expect(
+      featureRequestSchema.safeParse({
+        type: 'schedule.delete',
+        requestId: 'delete-extra',
+        payload: { sessionId: 'session-1', id: 'schedule-1', prompt: 'must not transit' },
+      }).success,
+    ).toBe(false)
+  })
+
+  it('accepts history, update, deletion, and payload-free invalidation projections', () => {
+    const receipt = {
+      scheduledAt: '2026-10-01T09:00:00.000Z',
+      deliveredAt: '2026-10-01T09:00:01.000Z',
+      messageId: 'message-1',
+    }
+    expect(
+      featureResponseSchema.safeParse({
+        type: 'feature.response',
+        requestId: 'catalog-response',
+        ok: true,
+        payload: {
+          kind: 'schedule.catalog',
+          items: [{ ...record, sessionId: 'session-1', status: 'inactive', lastDelivery: receipt }],
+        },
+      }).success,
+    ).toBe(true)
+    expect(
+      featureResponseSchema.safeParse({
+        type: 'feature.response',
+        requestId: 'history-response',
+        ok: true,
+        payload: {
+          kind: 'schedule.history',
+          result: {
+            id: 'schedule-1',
+            records: [{ ...receipt, prompt: '[redacted saved prompt]' }],
+            earlierRecordsUnavailable: false,
+            earlierRecordsPruned: true,
+            retention: { days: 30, records: 200 },
+            nextBefore: 'message-1',
+          },
+        },
+      }).success,
+    ).toBe(true)
+    expect(
+      featureResponseSchema.safeParse({
+        type: 'feature.response',
+        requestId: 'update-response',
+        ok: true,
+        payload: { kind: 'schedule.updated', result: { id: 'schedule-1', updated: true, record } },
+      }).success,
+    ).toBe(true)
+    expect(
+      featureResponseSchema.safeParse({
+        type: 'feature.response',
+        requestId: 'delete-response',
+        ok: true,
+        payload: {
+          kind: 'schedule.deleted',
+          result: { id: 'schedule-1', deleted: false, code: 'schedule_not_found' },
+        },
+      }).success,
+    ).toBe(true)
+    expect(
+      featureHostEventSchema.safeParse({
+        type: 'feature.event',
+        name: 'schedule.invalidated',
+        identity: {
+          backendInstanceId: 'backend-1',
+          connectionGeneration: 2,
+          stream: 'local',
+          localSeq: 3,
+        },
+      }).success,
+    ).toBe(true)
+    expect(
+      featureHostEventSchema.safeParse({
+        type: 'feature.event',
+        name: 'schedule.invalidated',
+        identity: {
+          backendInstanceId: 'backend-1',
+          connectionGeneration: 2,
+          stream: 'local',
+          localSeq: 3,
+        },
+        prompt: 'raw upstream data is disallowed',
+      }).success,
+    ).toBe(false)
+  })
+})
+
 describe('message feedback Webview protocol', () => {
   it('accepts the upstream feedback category on submit and note updates', () => {
     for (const type of ['feedback.toggle', 'feedback.note'] as const) {
@@ -620,6 +795,116 @@ describe('message feedback Webview protocol', () => {
           messageId: 'message-1',
           rating: 'positive',
           category: 'not-a-category',
+        },
+      }).success,
+    ).toBe(false)
+  })
+})
+
+describe('optional Plugin Manager feature protocol', () => {
+  it('accepts only the dynamic optional bundle read and enablement intent payloads', () => {
+    expect(
+      featureRequestSchema.safeParse({
+        type: 'plugin.bundles.list',
+        requestId: 'bundle-list-1',
+        payload: {},
+      }).success,
+    ).toBe(true)
+    expect(
+      featureRequestSchema.safeParse({
+        type: 'plugin.bundle.setEnabled',
+        requestId: 'bundle-set-1',
+        payload: { name: '@dsh-community/review-layer', enabled: true },
+      }).success,
+    ).toBe(true)
+    expect(
+      featureRequestSchema.safeParse({
+        type: 'plugin.bundle.setEnabled',
+        requestId: 'bundle-set-2',
+        payload: { name: '@dsh-community/review-layer', enabled: true, installed: true },
+      }).success,
+    ).toBe(false)
+  })
+
+  it('accepts the safe optional projection including a DSH-provided bundle and rejects upstream-only fields', () => {
+    const bundle = {
+      name: '@dsh-community/review-layer',
+      version: '1.2.3',
+      title: { en: 'Review layer', zh: '审查层' },
+      enabled: false,
+      installed: false,
+      hasIssue: false,
+    }
+    expect(
+      featureResponseSchema.safeParse({
+        type: 'feature.response',
+        requestId: 'bundle-list-response',
+        ok: true,
+        payload: { kind: 'plugin.bundles', available: true, bundles: [bundle] },
+      }).success,
+    ).toBe(true)
+    expect(
+      featureResponseSchema.safeParse({
+        type: 'feature.response',
+        requestId: 'bundle-list-response-unsafe',
+        ok: true,
+        payload: {
+          kind: 'plugin.bundles',
+          available: true,
+          bundles: [
+            { ...bundle, optional: true, meta: { icon: 'https://invalid', error: 'private diagnostic' } },
+          ],
+        },
+      }).success,
+    ).toBe(false)
+    expect(
+      featureResponseSchema.safeParse({
+        type: 'feature.response',
+        requestId: 'bundle-unavailable-invalid',
+        ok: true,
+        payload: { kind: 'plugin.bundles', available: false, bundles: [bundle] },
+      }).success,
+    ).toBe(false)
+  })
+
+  it('carries a closed runtime outcome without diagnostics or arbitrary upstream data', () => {
+    const payload = {
+      type: 'feature.response',
+      requestId: 'bundle-change-response',
+      ok: true,
+      payload: {
+        kind: 'plugin.bundle.changed',
+        result: {
+          name: '@dsh-community/review-layer',
+          changed: false,
+          application: 'cancelled',
+          enabled: true,
+        },
+      },
+    }
+    expect(featureResponseSchema.safeParse(payload).success).toBe(true)
+    expect(
+      featureResponseSchema.safeParse({
+        ...payload,
+        payload: {
+          kind: 'plugin.bundle.changed',
+          result: {
+            name: '@dsh-community/review-layer',
+            changed: false,
+            application: 'cancelled',
+          },
+        },
+      }).success,
+    ).toBe(false)
+    expect(
+      featureResponseSchema.safeParse({
+        ...payload,
+        payload: {
+          kind: 'plugin.bundle.changed',
+          result: {
+            ...payload.payload.result,
+            diagnostic: 'must not enter Webview',
+          },
         },
       }).success,
     ).toBe(false)

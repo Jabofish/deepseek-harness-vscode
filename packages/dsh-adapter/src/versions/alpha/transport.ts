@@ -59,6 +59,8 @@ export interface AlphaLoopbackApiClientOptions {
   readonly webSocket?: AlphaWebSocketConstructor
   /** Optional version-specific Remote error compatibility profile. */
   readonly normalizeErrorCode?: AlphaErrorCodeNormalizer
+  /** Exact Alpha.2+ contract for structured Auto Review denial errors. */
+  readonly autoReviewDenialContract?: boolean
   /** Session Controller wire profile; old alpha uses v0, alpha13 uses v2, and alpha151+ uses v3. */
   readonly sessionWireVersion?: AlphaSessionWireVersion
   /** Version-specific queue projection for Session/follow opening snapshots. */
@@ -69,7 +71,7 @@ export interface AlphaLoopbackApiClientOptions {
   readonly workspaceWireVersion?: AlphaWorkspaceWireVersion
   /** Preset roster profile; alpha171's registry has no user-root authoring fields. */
   readonly presetWireVersion?: AlphaPresetWireVersion
-  /** Alpha.2 and 0.1.7-rc.1 add the Session Controller turnWindow request field. */
+  /** Alpha.2, rc.1, and rc.2 add the Session Controller turnWindow request field. */
   readonly sessionHistoryTurnWindow?: boolean
   /**
    * Child-session routing committed by the subagent catalog. The Session
@@ -763,7 +765,12 @@ export class AlphaLoopbackApiClient implements DshTransport {
             : !validAlphaProjectionBaseline(record.projections)))
     )
       throw malformedResponse('session history')
-    const events = expandHistoryRecords(record.records, sessionId, wireVersion)
+    const events = expandHistoryRecords(
+      record.records,
+      sessionId,
+      wireVersion,
+      this.options.autoReviewDenialContract === true,
+    )
     return {
       rpcId: randomUUID(),
       result: {
@@ -1120,7 +1127,12 @@ export class AlphaLoopbackApiClient implements DshTransport {
             throw malformedResponse('session/follow Inbox projection', cause)
           }
         }
-        const events = expandHistoryRecords(frame.records, sessionId, wireVersion)
+        const events = expandHistoryRecords(
+          frame.records,
+          sessionId,
+          wireVersion,
+          this.options.autoReviewDenialContract === true,
+        )
         if (projector !== undefined) for (const event of events) projector.rememberDurable(event)
         for (const event of events) yield { type: 'session/event', sessionId, event }
         if (queueFrame !== undefined) yield queueFrame
@@ -1147,7 +1159,12 @@ export class AlphaLoopbackApiClient implements DshTransport {
         }
       } else if (frame?.type === 'event') {
         if (!validAlphaWireEventFrame(frame, wireVersion)) throw malformedResponse('session/follow event')
-        const event = normalizeAlphaEvent(frame.event, sessionId, wireVersion)
+        const event = normalizeAlphaEvent(
+          frame.event,
+          sessionId,
+          wireVersion,
+          this.options.autoReviewDenialContract === true,
+        )
         if (event === undefined) throw malformedResponse('session/follow event')
         if (projector === undefined) yield { type: 'session/event', sessionId, event }
         else {
@@ -1272,26 +1289,36 @@ export class AlphaLoopbackApiClient implements DshTransport {
 
   private async withRetry<T>(method: string, operation: () => Promise<T>, signal?: AbortSignal): Promise<T> {
     let last: AppError | undefined
+    const retrySignal = combineSignals(signal, this.closed.signal)
     for (let attempt = 0; attempt < Math.max(1, this.options.retryPolicy.maximumAttempts); attempt += 1) {
       if (signal?.aborted === true) throw cancelled(signal.reason)
+      if (this.isConnectionClosed()) throw closedError()
       try {
         return await operation()
       } catch (error) {
         const normalized = normalizeTransportError(method, error, signal)
         last = normalized
+        if (signalIsAborted(signal)) throw normalized
+        if (this.isConnectionClosed()) throw closedError()
         if (
           !normalized.retryable ||
           !isAlphaIdempotentMethod(method) ||
           attempt + 1 >= this.options.retryPolicy.maximumAttempts
         )
           throw normalized
-        await delay(
-          Math.min(
-            this.options.retryPolicy.maximumDelayMs,
-            this.options.retryPolicy.baseDelayMs * 2 ** attempt,
-          ),
-          signal,
-        )
+        try {
+          await delay(
+            Math.min(
+              this.options.retryPolicy.maximumDelayMs,
+              this.options.retryPolicy.baseDelayMs * 2 ** attempt,
+            ),
+            retrySignal,
+          )
+        } catch (error) {
+          if (signalIsAborted(signal)) throw cancelled(signal?.reason)
+          if (this.isConnectionClosed()) throw closedError()
+          throw error
+        }
       }
     }
     throw (
@@ -1302,6 +1329,10 @@ export class AlphaLoopbackApiClient implements DshTransport {
         retryable: true,
       })
     )
+  }
+
+  private isConnectionClosed(): boolean {
+    return this.isClosed
   }
 }
 
@@ -1711,6 +1742,11 @@ const ALPHA_IDEMPOTENT_METHODS = new Set([
   'directoryPicker/list',
   'subagents/list',
   'subagents/catalog',
+  // DSH 0.1.7-rc.2 Schedule Remote reads are safe to retry. Keep the two
+  // mutating schedule endpoints out of this allowlist.
+  'schedule/catalog',
+  'schedule/list',
+  'schedule/history',
 ])
 
 function isAlphaIdempotentMethod(method: string): boolean {
@@ -1812,6 +1848,7 @@ function normalizeAlphaEvent(
   value: unknown,
   sessionId: string,
   wireVersion: AlphaSessionWireVersion = 'v0',
+  autoReviewDenialContract = false,
 ): Record<string, unknown> | undefined {
   const event = recordOrUndefined(value)
   if (event === undefined || typeof event.type !== 'string') return undefined
@@ -1821,7 +1858,7 @@ function normalizeAlphaEvent(
       : wireVersion === 'v4'
         ? normalizeAlpha171Event(event)
         : event
-  return { ...normalized, sessionId }
+  return { ...withAutoReviewDenialContract(normalized, autoReviewDenialContract), sessionId }
 }
 
 /** Keep the verified v2 event surface while ignoring additive upstream keys. */
@@ -1842,6 +1879,7 @@ function expandHistoryRecords(
   records: readonly unknown[],
   sessionId: string,
   wireVersion: AlphaSessionWireVersion = 'v0',
+  autoReviewDenialContract = false,
 ): readonly Record<string, unknown>[] {
   const v2 = wireVersion === 'v2'
   const v3 = wireVersion === 'v3'
@@ -1863,7 +1901,10 @@ function expandHistoryRecords(
       )
         throw malformedResponse('session history event')
       out.push({
-        ...(v2 ? normalizeAlpha13Event(event) : v4 ? normalizeAlpha171Event(event) : event),
+        ...withAutoReviewDenialContract(
+          v2 ? normalizeAlpha13Event(event) : v4 ? normalizeAlpha171Event(event) : event,
+          autoReviewDenialContract,
+        ),
         sessionId,
       })
     } else if (!v2 && !v3 && record?.type === 'chunks') out.push(...expandChunkRow(record.event, sessionId))
@@ -1882,6 +1923,13 @@ function expandHistoryRecords(
       return sequenceDelta === 0 ? left.index - right.index : sequenceDelta
     })
     .map(({ event }) => event)
+}
+
+function withAutoReviewDenialContract(
+  event: Record<string, unknown>,
+  enabled: boolean,
+): Record<string, unknown> {
+  return enabled && event.type === 'tool/result' ? { ...event, autoReviewDenialContract: true } : event
 }
 
 function validAlphaWireSnapshot(
@@ -2562,6 +2610,10 @@ function closedError(): AppError {
     message: 'The DSH connection is closed.',
     retryable: false,
   })
+}
+
+function signalIsAborted(signal: AbortSignal | undefined): boolean {
+  return signal?.aborted === true
 }
 
 /**

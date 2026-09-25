@@ -53,11 +53,12 @@ function createClient(
   fetch: typeof globalThis.fetch = vi.fn(),
   requestTimeoutMs = 1_000,
   maximumAttempts = 1,
+  retryDelayMs = 1,
 ): LoopbackApiClient {
   return new LoopbackApiClient({
     endpoint: { host: '127.0.0.1', port: 4567, baseUrl: 'http://127.0.0.1:4567' },
     requestTimeoutMs,
-    retryPolicy: { maximumAttempts, baseDelayMs: 1, maximumDelayMs: 1 },
+    retryPolicy: { maximumAttempts, baseDelayMs: retryDelayMs, maximumDelayMs: retryDelayMs },
     fetch,
     webSocket: FakeWebSocket as unknown as typeof globalThis.WebSocket,
   })
@@ -104,6 +105,34 @@ describe('LoopbackApiClient rc.6 event transport', () => {
       retryable: false,
     })
     expect(malformedFetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('retries RC2 Schedule read Remotes but never replays update or delete', async () => {
+    const fetch = vi.fn(() => Promise.resolve(new Response('', { status: 503 })))
+    const client = createClient(fetch, 1_000, 3)
+
+    for (const [index, endpoint] of ['schedule/catalog', 'schedule/list', 'schedule/history'].entries()) {
+      await expect(client.remoteRequest(endpoint, {})).rejects.toMatchObject({
+        code: 'BACKEND_UNREACHABLE',
+        retryable: true,
+        context: { method: endpoint, status: 503 },
+      })
+      expect(fetch).toHaveBeenCalledTimes((index + 1) * 3)
+    }
+
+    await expect(client.remoteRequest('schedule/update', {})).rejects.toMatchObject({
+      code: 'BACKEND_UNREACHABLE',
+      retryable: true,
+      context: { method: 'schedule/update', status: 503 },
+    })
+    expect(fetch).toHaveBeenCalledTimes(10)
+
+    await expect(client.remoteRequest('schedule/delete', {})).rejects.toMatchObject({
+      code: 'BACKEND_UNREACHABLE',
+      retryable: true,
+      context: { method: 'schedule/delete', status: 503 },
+    })
+    expect(fetch).toHaveBeenCalledTimes(11)
   })
 
   it('releases the unread body of every failed RPC response so the loopback connection returns to the pool', async () => {
@@ -178,6 +207,37 @@ describe('LoopbackApiClient rc.6 event transport', () => {
       context: { method: 'session.list' },
     })
   })
+
+  it('stops an idempotent retry backoff when the transport closes', async () => {
+    const fetch = vi.fn(() => Promise.reject(new TypeError('fetch failed')))
+    const client = createClient(fetch, 1_000, 2, 60_000)
+    const caller = new AbortController()
+    const pending = client.request('session.list', {}, caller.signal)
+    let settled = false
+    void pending.then(
+      () => {
+        settled = true
+      },
+      () => {
+        settled = true
+      },
+    )
+
+    try {
+      await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce())
+      await client.close()
+      await new Promise<void>((resolve) => setTimeout(resolve, 0))
+
+      expect(settled).toBe(true)
+      await expect(pending).rejects.toMatchObject({ code: 'BACKEND_UNREACHABLE', retryable: false })
+      expect(fetch).toHaveBeenCalledOnce()
+    } finally {
+      caller.abort()
+      await client.close()
+      await pending.catch(() => undefined)
+    }
+  })
+
   it('accepts mixed-case Typert namespaces used by optional DSH remotes', async () => {
     const fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       const request = JSON.parse(await new Response(init?.body ?? null).text()) as { readonly rpcId: string }

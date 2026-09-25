@@ -90,6 +90,59 @@ function createDataTransfer(): {
 describe('SessionDrawer', () => {
   afterEach(() => cleanup())
 
+  it('localizes the default workspace display name and preserves user names', async () => {
+    const onRenameWorkspace = vi.fn().mockResolvedValue(undefined)
+    renderDrawer({
+      workspaces: [
+        { ...workspaces[0]!, name: 'default-workspace' },
+        { ...workspaces[1]!, name: 'My named workspace' },
+      ],
+      onRenameWorkspace,
+    })
+
+    expect(screen.getAllByText('Default workspace')).toHaveLength(2)
+    expect(screen.getByText('My named workspace')).toBeDefined()
+    expect(screen.queryByText('default-workspace')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Rename workspace Default workspace' })).toBeDefined()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Rename workspace Default workspace' }))
+    const dialog = screen.getByRole('dialog', { name: 'Rename workspace' })
+    const input = within(dialog).getByLabelText('Workspace name')
+    if (!(input instanceof HTMLInputElement)) throw new Error('Workspace name field is not an input.')
+    expect(input.value).toBe('Default workspace')
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Rename workspace' })).toBeNull())
+    expect(onRenameWorkspace).not.toHaveBeenCalled()
+  })
+
+  it('filters archived conversations and hides workspaces without archived sessions', async () => {
+    const onLoadArchived = vi.fn().mockResolvedValue(undefined)
+    renderDrawer({
+      archivedSessions: [session({ id: 'old', title: 'Archived chat', workspaceId: 'w1' })],
+      onLoadArchived,
+    })
+
+    expect(screen.queryByRole('button', { name: /Archived/u })).toBeNull()
+    expect(screen.getByText('Fix login bug', { exact: true })).toBeDefined()
+
+    const filter = screen.getByRole('combobox', { name: 'Archived conversation filter' })
+    fireEvent.change(filter, { target: { value: 'all' } })
+    expect(await screen.findByRole('button', { name: 'Restore session Archived chat' })).toBeDefined()
+    expect(screen.getByText('Fix login bug', { exact: true })).toBeDefined()
+    expect(onLoadArchived).toHaveBeenCalled()
+
+    fireEvent.change(filter, { target: { value: 'archived' } })
+    expect(await screen.findByRole('button', { name: 'Restore session Archived chat' })).toBeDefined()
+    expect(screen.queryByText('Fix login bug', { exact: true })).toBeNull()
+    const workspaceList = screen.getByLabelText('Workspaces')
+    expect(within(workspaceList).getByText('Alpha')).toBeDefined()
+    expect(within(workspaceList).queryByText('Beta')).toBeNull()
+
+    fireEvent.change(filter, { target: { value: 'hide' } })
+    expect(screen.queryByRole('button', { name: 'Restore session Archived chat' })).toBeNull()
+    expect(screen.getByText('Fix login bug', { exact: true })).toBeDefined()
+  })
+
   it('prioritizes approval, plan review and answers over running indicators', () => {
     renderDrawer({
       sessions: sessions.map((entry) => ({ ...entry, workspaceId: 'w1', status: 'running' })),
@@ -547,7 +600,9 @@ it.each([false, true])('gates archived restore on advertised support: %s', async
     onRestore,
     archivedSessions: [session({ id: 'old', title: 'Archived chat' })],
   })
-  fireEvent.click(screen.getByRole('button', { name: /Archived/u }))
+  fireEvent.change(screen.getByRole('combobox', { name: 'Archived conversation filter' }), {
+    target: { value: 'all' },
+  })
   const button = await screen.findByRole('button', { name: 'Restore session Archived chat' })
   expect((button as HTMLButtonElement).disabled).toBe(!canRestoreSessions)
   fireEvent.click(button)
@@ -596,7 +651,9 @@ describe('session archive failures', () => {
       archivedSessions: [session({ id: 'old', title: 'Archived chat' })],
     })
 
-    fireEvent.click(screen.getByRole('button', { name: /Archived/u }))
+    fireEvent.change(screen.getByRole('combobox', { name: 'Archived conversation filter' }), {
+      target: { value: 'all' },
+    })
     fireEvent.click(await screen.findByRole('button', { name: 'Restore session Archived chat' }))
 
     expect((await screen.findByRole('alert')).textContent).toContain('The restore RPC failed.')

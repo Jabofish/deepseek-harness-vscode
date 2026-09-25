@@ -1566,6 +1566,82 @@ describe('DSH 0.1.2-alpha.1 Connection/Gateway contract', () => {
     await transport.close()
   })
 
+  it('retries rc.2 Schedule Remote reads but never retries a schedule mutation', async () => {
+    const attempts = new Map<string, number>()
+    const fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const pathname =
+        input instanceof URL
+          ? input.pathname
+          : new URL(typeof input === 'string' ? input : input.url).pathname
+      const method = pathname.replace('/api/', '')
+      const count = (attempts.get(method) ?? 0) + 1
+      attempts.set(method, count)
+      if (['schedule/catalog', 'schedule/list', 'schedule/history'].includes(method)) {
+        if (count === 1) return Promise.reject(new Error('connection reset'))
+        return Promise.resolve(response(init, []))
+      }
+      if (['schedule/update', 'schedule/delete'].includes(method)) {
+        return Promise.reject(new Error('connection reset'))
+      }
+      return Promise.reject(new Error('unexpected request'))
+    })
+    const transport = new AlphaLoopbackApiClient({
+      endpoint,
+      requestTimeoutMs: 1_000,
+      retryPolicy: { maximumAttempts: 2, baseDelayMs: 1, maximumDelayMs: 1 },
+      fetch,
+      authCookie: () => 'dsh_session=test-cookie',
+      webSocket: FakeWebSocket,
+    })
+
+    for (const method of ['schedule/catalog', 'schedule/list', 'schedule/history']) {
+      await expect(transport.remoteRequest(method, {})).resolves.toEqual({ ok: true, value: [] })
+      expect(attempts.get(method)).toBe(2)
+    }
+    for (const method of ['schedule/update', 'schedule/delete']) {
+      await expect(transport.remoteRequest(method, {})).rejects.toMatchObject({ code: 'BACKEND_UNREACHABLE' })
+      expect(attempts.get(method)).toBe(1)
+    }
+    await transport.close()
+  })
+
+  it('stops an idempotent retry backoff when the alpha transport closes', async () => {
+    const fetch = vi.fn(() => Promise.reject(new TypeError('fetch failed')))
+    const transport = new AlphaLoopbackApiClient({
+      endpoint,
+      requestTimeoutMs: 1_000,
+      retryPolicy: { maximumAttempts: 2, baseDelayMs: 60_000, maximumDelayMs: 60_000 },
+      fetch,
+      authCookie: () => 'dsh_session=test-cookie',
+      webSocket: FakeWebSocket,
+    })
+    const caller = new AbortController()
+    const pending = transport.request('session.list', {}, caller.signal)
+    let settled = false
+    void pending.then(
+      () => {
+        settled = true
+      },
+      () => {
+        settled = true
+      },
+    )
+
+    try {
+      await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce())
+      await transport.close()
+      await new Promise<void>((resolve) => setTimeout(resolve, 0))
+
+      expect(settled).toBe(true)
+      await expect(pending).rejects.toMatchObject({ code: 'BACKEND_UNREACHABLE', retryable: false })
+      expect(fetch).toHaveBeenCalledOnce()
+    } finally {
+      caller.abort()
+      await transport.close()
+      await pending.catch(() => undefined)
+    }
+  })
+
   it('fails closed on a malformed alpha server envelope', async () => {
     const fetch = vi.fn(() =>
       Promise.resolve(new Response('{bad', { headers: { 'content-type': 'application/json' } })),

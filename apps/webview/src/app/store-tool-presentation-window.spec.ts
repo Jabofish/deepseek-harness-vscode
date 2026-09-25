@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { describe, expect, it } from 'vitest'
+import type { ToolCallView } from '@dsh-vscode/domain'
 import type { HostMessage, WebviewRequest } from '@dsh-vscode/webview-protocol'
 import type { ProtocolClient } from './protocol-client.js'
 import { createAppStore } from './store.js'
@@ -70,6 +71,11 @@ function settle(milliseconds = 24): Promise<void> {
 function presentationOf(store: ReturnType<typeof createAppStore>, callId: string): unknown {
   const node = store.timeline.nodes.find((entry) => entry.kind === 'tool' && entry.tool.id === callId)
   return node?.kind === 'tool' ? node.tool.presentation : undefined
+}
+
+function toolOf(store: ReturnType<typeof createAppStore>, callId: string): ToolCallView | undefined {
+  const node = store.timeline.nodes.find((entry) => entry.kind === 'tool' && entry.tool.id === callId)
+  return node?.kind === 'tool' ? node.tool : undefined
 }
 
 function readLines(value: unknown): readonly { readonly number: number; readonly text: string }[] {
@@ -173,5 +179,56 @@ describe('store tool presentation windows', () => {
     expect(presentation.card).toBe('search')
     expect(presentation.files).toHaveLength(250)
     expect(presentation.files?.reduce((sum, file) => sum + file.matches.length, 0)).toBe(250)
+  })
+
+  it('preserves a validated Auto review denial through the Webview event projection', async () => {
+    const client = new StreamClient()
+    const store = createAppStore(client as unknown as ProtocolClient)
+    await store.openSession(SESSION_ID)
+    client.emit({
+      type: 'event',
+      name: 'tool.updated',
+      sequence: 3,
+      payload: {
+        sessionId: SESSION_ID,
+        tool: {
+          id: 'call-auto-review-denied',
+          name: 'future_tool',
+          status: 'failed',
+          error: 'ordinary raw error',
+          autoReviewDenial: { reason: 'raw reviewer reason' },
+          metadata: {},
+        },
+      },
+    })
+    await settle()
+
+    expect(toolOf(store, 'call-auto-review-denied')?.autoReviewDenial).toEqual({
+      reason: 'raw reviewer reason',
+    })
+  })
+
+  it('rejects malformed Auto review denial payloads at the Webview projection boundary', async () => {
+    const client = new StreamClient()
+    const store = createAppStore(client as unknown as ProtocolClient)
+    await store.openSession(SESSION_ID)
+    client.emit({
+      type: 'event',
+      name: 'tool.updated',
+      sequence: 4,
+      payload: {
+        sessionId: SESSION_ID,
+        tool: {
+          id: 'call-malformed-auto-review-denial',
+          name: 'future_tool',
+          status: 'failed',
+          autoReviewDenial: { reason: { unexpected: 'object' } },
+          metadata: {},
+        },
+      },
+    })
+    await settle()
+
+    expect(toolOf(store, 'call-malformed-auto-review-denial')).toBeUndefined()
   })
 })

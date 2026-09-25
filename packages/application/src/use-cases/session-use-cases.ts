@@ -1,3 +1,4 @@
+import { AppError } from '@dsh-vscode/domain'
 import type {
   PromptAttachment,
   PromptInput,
@@ -15,6 +16,17 @@ import type { BackendService } from '../services/backend-service.js'
 
 export class SessionUseCases {
   public constructor(private readonly backendService: BackendService) {}
+
+  public initializeDefaultModel(signal?: AbortSignal): Promise<void> {
+    const sessions = this.backendService.requireBackend().sessions
+    if (sessions.initializeDefaultModel === undefined)
+      throw new AppError({
+        code: 'CAPABILITY_UNAVAILABLE',
+        message: 'This DSH host does not expose default model initialization.',
+        retryable: false,
+      })
+    return sessions.initializeDefaultModel(signal)
+  }
 
   public list(query?: SessionListQuery, signal?: AbortSignal): Promise<SessionPage> {
     return this.backendService.requireBackend().sessions.list(query, signal)

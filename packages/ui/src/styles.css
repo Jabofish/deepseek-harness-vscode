@@ -448,6 +448,28 @@
   cursor: default;
 }
 
+.dsh-tool-row__collapsed-link {
+  display: block;
+  max-width: calc(100% - 2 * var(--dsh-space-3));
+  margin: 0 var(--dsh-space-3) var(--dsh-space-2);
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  color: var(--dsh-link);
+  background: transparent;
+  font: inherit;
+  font-size: 0.875em;
+  text-align: start;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.dsh-tool-row__collapsed-link:hover,
+.dsh-tool-row__collapsed-link:focus-visible {
+  text-decoration: underline;
+}
+
 .dsh-tool-card__icon,
 .dsh-tool-row__icon,
 .dsh-tool-card__disclosure,

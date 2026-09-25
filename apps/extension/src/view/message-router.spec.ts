@@ -34,6 +34,292 @@ describe('WebviewMessageRouter command diagnostics', () => {
     })
   })
 
+  it('keeps an active requestId owned by its original request across duplicate requests and cancellation collisions', async () => {
+    const posted: unknown[] = []
+    let resolveRequest!: (value: unknown) => void
+    let requestSignal: AbortSignal | undefined
+    const handleRequest = vi.fn((_request, signal: AbortSignal) => {
+      requestSignal = signal
+      return new Promise<unknown>((resolve) => {
+        resolveRequest = resolve
+      })
+    })
+    const router = new WebviewMessageRouter({
+      postMessage: (message) => {
+        posted.push(message)
+        return Promise.resolve(true)
+      },
+      handleRequest,
+    })
+    const original = {
+      protocolVersion: 1,
+      message: { type: 'session.list', requestId: 'shared-request', payload: {} },
+    }
+
+    const pending = router.handle(original)
+    await vi.waitFor(() => expect(handleRequest).toHaveBeenCalledOnce())
+    await router.handle(original)
+    await router.handle({
+      protocolVersion: 1,
+      message: {
+        type: 'feature.request.cancel',
+        requestId: 'shared-request',
+        payload: { targetRequestId: 'shared-request' },
+      },
+    })
+
+    expect(requestSignal?.aborted).toBe(false)
+    expect(posted).toEqual([])
+
+    resolveRequest({ owner: 'original' })
+    await pending
+
+    expect(handleRequest).toHaveBeenCalledOnce()
+    expect(posted).toHaveLength(1)
+    expect(posted[0]).toMatchObject({
+      type: 'response',
+      requestId: 'shared-request',
+      ok: true,
+      payload: { owner: 'original' },
+    })
+  })
+
+  it('keeps a requestId reserved until its terminal response is accepted by the Webview', async () => {
+    const posted: unknown[] = []
+    let acceptResponse!: (accepted: boolean) => void
+    const responseDelivery = new Promise<boolean>((resolve) => {
+      acceptResponse = resolve
+    })
+    const handleRequest = vi.fn().mockResolvedValue({ owner: 'first' })
+    const router = new WebviewMessageRouter({
+      postMessage: (message) => {
+        posted.push(message)
+        return responseDelivery
+      },
+      handleRequest,
+    })
+    const request = {
+      protocolVersion: 1,
+      message: { type: 'session.list', requestId: 'response-window', payload: {} },
+    }
+
+    const pending = router.handle(request)
+    await vi.waitFor(() => expect(posted).toHaveLength(1))
+    await router.handle(request)
+
+    expect(handleRequest).toHaveBeenCalledOnce()
+    expect(posted).toHaveLength(1)
+
+    acceptResponse(true)
+    await pending
+    expect(posted).toHaveLength(1)
+  })
+
+  it('accepts only the first concurrent cancellation and emits one terminal response per id', async () => {
+    const posted: unknown[] = []
+    let resolveRequest!: (value: unknown) => void
+    let acceptFirstCancellation!: (accepted: boolean) => void
+    const firstCancellationDelivery = new Promise<boolean>((resolve) => {
+      acceptFirstCancellation = resolve
+    })
+    const requestResult = new Promise<unknown>((resolve) => {
+      resolveRequest = resolve
+    })
+    const handleRequest = vi.fn(() => requestResult)
+    const router = new WebviewMessageRouter({
+      postMessage: (message) => {
+        posted.push(message)
+        if (message.type === 'feature.response' && message.requestId === 'cancel-first')
+          return firstCancellationDelivery
+        return Promise.resolve(true)
+      },
+      handleRequest,
+    })
+    const original = router.handle({
+      protocolVersion: 1,
+      message: { type: 'session.list', requestId: 'cancel-target', payload: {} },
+    })
+    await vi.waitFor(() => expect(handleRequest).toHaveBeenCalledOnce())
+
+    const firstCancellation = router.handle({
+      protocolVersion: 1,
+      message: {
+        type: 'feature.request.cancel',
+        requestId: 'cancel-first',
+        payload: { targetRequestId: 'cancel-target' },
+      },
+    })
+    await vi.waitFor(() => expect(posted).toHaveLength(1))
+
+    await router.handle({
+      protocolVersion: 1,
+      message: {
+        type: 'feature.request.cancel',
+        requestId: 'cancel-first',
+        payload: { targetRequestId: 'cancel-target' },
+      },
+    })
+    await router.handle({
+      protocolVersion: 1,
+      message: {
+        type: 'feature.request.cancel',
+        requestId: 'cancel-second',
+        payload: { targetRequestId: 'cancel-target' },
+      },
+    })
+
+    expect(posted).toHaveLength(2)
+    expect(
+      posted.find((message) => (message as { requestId?: string }).requestId === 'cancel-first'),
+    ).toMatchObject({
+      type: 'feature.response',
+      requestId: 'cancel-first',
+      ok: true,
+      payload: { kind: 'operation', operationId: 'cancel-target', state: 'accepted' },
+    })
+    expect(
+      posted.find((message) => (message as { requestId?: string }).requestId === 'cancel-second'),
+    ).toMatchObject({
+      type: 'feature.response',
+      requestId: 'cancel-second',
+      ok: true,
+      payload: { kind: 'operation', operationId: 'cancel-target', state: 'rejected' },
+    })
+
+    acceptFirstCancellation(true)
+    await firstCancellation
+    resolveRequest({ settled: true })
+    await original
+
+    expect(posted).toHaveLength(3)
+    expect(
+      posted.filter((message) => (message as { requestId?: string }).requestId === 'cancel-first'),
+    ).toHaveLength(1)
+    expect(
+      posted.filter((message) => (message as { requestId?: string }).requestId === 'cancel-second'),
+    ).toHaveLength(1)
+    expect(
+      posted.filter((message) => (message as { requestId?: string }).requestId === 'cancel-target'),
+    ).toHaveLength(1)
+    expect(
+      posted.find((message) => (message as { requestId?: string }).requestId === 'cancel-target'),
+    ).toMatchObject({
+      type: 'response',
+      requestId: 'cancel-target',
+      ok: true,
+      payload: { settled: true },
+    })
+  })
+
+  it('rejects cancellation after the target entered terminal response delivery', async () => {
+    const posted: unknown[] = []
+    let acceptTargetResponse!: (accepted: boolean) => void
+    const targetResponseDelivery = new Promise<boolean>((resolve) => {
+      acceptTargetResponse = resolve
+    })
+    const router = new WebviewMessageRouter({
+      postMessage: (message) => {
+        posted.push(message)
+        if (message.type === 'response' && message.requestId === 'responding-target')
+          return targetResponseDelivery
+        return Promise.resolve(true)
+      },
+      handleRequest: () => Promise.resolve({ settled: true }),
+    })
+
+    const target = router.handle({
+      protocolVersion: 1,
+      message: { type: 'session.list', requestId: 'responding-target', payload: {} },
+    })
+    await vi.waitFor(() => expect(posted).toHaveLength(1))
+    await router.handle({
+      protocolVersion: 1,
+      message: {
+        type: 'feature.request.cancel',
+        requestId: 'cancel-responding-target',
+        payload: { targetRequestId: 'responding-target' },
+      },
+    })
+
+    expect(
+      posted.find((message) => (message as { requestId?: string }).requestId === 'cancel-responding-target'),
+    ).toMatchObject({
+      type: 'feature.response',
+      requestId: 'cancel-responding-target',
+      payload: { kind: 'operation', state: 'rejected' },
+    })
+    expect(
+      posted.filter((message) => (message as { requestId?: string }).requestId === 'responding-target'),
+    ).toHaveLength(1)
+
+    acceptTargetResponse(true)
+    await target
+    expect(posted).toHaveLength(2)
+  })
+
+  it('rejects a cancellation that targets its own requestId', async () => {
+    const posted: unknown[] = []
+    const router = new WebviewMessageRouter({
+      postMessage: (message) => {
+        posted.push(message)
+        return Promise.resolve(true)
+      },
+    })
+
+    await router.handle({
+      protocolVersion: 1,
+      message: {
+        type: 'feature.request.cancel',
+        requestId: 'self-cancel',
+        payload: { targetRequestId: 'self-cancel' },
+      },
+    })
+
+    expect(posted).toHaveLength(1)
+    expect(posted[0]).toMatchObject({
+      type: 'feature.response',
+      requestId: 'self-cancel',
+      ok: true,
+      payload: { kind: 'operation', operationId: 'self-cancel', state: 'rejected' },
+    })
+  })
+
+  it('does not answer an invalid envelope with a synthetic id that could settle a live request', async () => {
+    const posted: unknown[] = []
+    let resolveRequest!: (value: unknown) => void
+    const handleRequest = vi.fn(
+      () =>
+        new Promise<unknown>((resolve) => {
+          resolveRequest = resolve
+        }),
+    )
+    const router = new WebviewMessageRouter({
+      postMessage: (message) => {
+        posted.push(message)
+        return Promise.resolve(true)
+      },
+      handleRequest,
+    })
+    const pending = router.handle({
+      protocolVersion: 1,
+      message: { type: 'session.list', requestId: 'invalid', payload: {} },
+    })
+    await vi.waitFor(() => expect(handleRequest).toHaveBeenCalledOnce())
+
+    await router.handle({ protocolVersion: 1, message: { type: 'not.a.request', requestId: 'other-id' } })
+    expect(posted).toEqual([])
+
+    resolveRequest({ owner: 'original' })
+    await pending
+    expect(posted).toHaveLength(1)
+    expect(posted[0]).toMatchObject({
+      type: 'response',
+      requestId: 'invalid',
+      ok: true,
+      payload: { owner: 'original' },
+    })
+  })
+
   it('keeps an unconfigured feature route explicitly disabled', async () => {
     const posted: unknown[] = []
     const router = new WebviewMessageRouter({

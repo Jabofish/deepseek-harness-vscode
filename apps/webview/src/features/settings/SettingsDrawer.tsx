@@ -15,9 +15,24 @@ import type {
   ModelProvider,
   PluginInventorySnapshot,
 } from '@dsh-vscode/domain'
+import type { FeatureRequest } from '@dsh-vscode/webview-protocol'
+import type {
+  AccountLifecycleErrorCodeDto,
+  AccountLifecycleSnapshotDto,
+  AccountSignOutImpactDto,
+} from '@dsh-vscode/webview-protocol'
 import type { DshSettingsSnapshot } from '../../app/store.js'
 import {
   CONVERSATION_FONT_SIZE_OPTIONS,
+  DEFAULT_CONVERSATION_FONT_SIZE_PX,
+  DSH_UI_SETTING_PATHS,
+  MAX_CONVERSATION_FONT_SIZE_PX,
+  MIN_CONVERSATION_FONT_SIZE_PX,
+  dshUiPreferences as readDshUiPreferences,
+  findDshSettingsField,
+  isConversationFontSizePx,
+  isPerformanceUsageMode,
+  isTranscriptViewMode,
   isThemePreference,
   type ConversationFontSize,
   type ThemePreference,
@@ -27,7 +42,14 @@ import { SettingCard, SettingRow } from '../../components/common/SettingCard.js'
 import { SelectMenu } from '../../components/common/SelectMenu.js'
 import { Icon } from '../../ui/Icon.js'
 import { PluginInventory } from '../plugins/PluginInventory.js'
+import { OptionalBundleManager } from '../plugins/OptionalBundleManager.js'
 import { PluginConfiguration } from '../plugins/PluginConfiguration.js'
+import {
+  AccountLifecycle,
+  type AccountLifecycleLabels,
+  type AccountLifecycleUiError,
+  type AccountLifecycleUiPhase,
+} from '../account/AccountLifecycle.js'
 import { PresetManager } from './PresetManager.js'
 import { CustomProviderCard, type CustomProviderTemplate } from './CustomProviderCard.js'
 import { ProviderSettingsEditor, type ProviderSettingChange } from './ProviderSettingsEditor.js'
@@ -57,6 +79,7 @@ export interface SettingsDrawerProps {
   readonly onLoadSettings: () => Promise<ExtensionSettingsSummary | undefined>
   readonly onLoadDshSettings: () => Promise<DshSettingsSnapshot | undefined>
   readonly onOpenDshSettingsDocument: () => Promise<void>
+  readonly onOpenKeyboardShortcuts: () => Promise<void>
   readonly onUpdateDshSetting: (path: string, value: unknown) => Promise<void>
   readonly onUnsetDshSetting: (path: string) => Promise<void>
   readonly onCreateCustomProvider: (draft: CustomProviderDraft) => Promise<CustomProviderCreateResult>
@@ -80,6 +103,20 @@ export interface SettingsDrawerProps {
   readonly onStartCreatorDraft?: () => Promise<void>
   readonly pluginInventoryRevision?: number
   readonly onLoadPluginInventory: () => Promise<PluginInventorySnapshot | undefined>
+  readonly featureRequest?: <T>(request: FeatureRequest) => Promise<T>
+  readonly accountLifecycleAvailable?: boolean
+  readonly accountLifecycle?: AccountLifecycleSnapshotDto | null
+  readonly accountLifecycleLoading?: boolean
+  readonly accountLifecycleBusy?: boolean
+  readonly accountLifecycleImpact?: AccountSignOutImpactDto
+  readonly accountSessionExpired?: boolean
+  readonly accountLifecycleError?: AccountLifecycleErrorCodeDto
+  readonly accountLifecycleRequestFailed?: boolean
+  readonly onLoadAccountLifecycle?: () => Promise<void>
+  readonly onStartAccountSignIn?: () => Promise<void>
+  readonly onCancelAccountSignIn?: (attemptId: string) => Promise<void>
+  readonly onCheckAccountSignOutImpact?: () => Promise<void>
+  readonly onSignOutAccount?: () => Promise<void>
 }
 
 type SettingsTab = 'general' | 'models' | 'presets' | 'plugins'
@@ -110,6 +147,7 @@ const GENERAL_SETTING_ROWS: readonly {
   readonly path: string
   readonly labelKey: string
   readonly hintKey: string
+  readonly defaultValue?: string
 }[] = [
   {
     path: 'permission.defaultPreset',
@@ -122,9 +160,22 @@ const GENERAL_SETTING_ROWS: readonly {
     hintKey: 'settings.appearance.hint',
   },
   {
+    path: 'ui-chat.transcriptView',
+    labelKey: 'settings.transcriptView.label',
+    hintKey: 'settings.transcriptView.hint',
+    defaultValue: 'standard',
+  },
+  {
+    path: 'ui-chat.performanceUsage',
+    labelKey: 'settings.performanceUsage.label',
+    hintKey: 'settings.performanceUsage.hint',
+    defaultValue: 'detailed',
+  },
+  {
     path: 'ui-conversation.busyEnter',
     labelKey: 'settings.enter.label',
     hintKey: 'settings.enter.hint',
+    defaultValue: 'queue',
   },
 ]
 
@@ -144,18 +195,21 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
     onLoadSettings,
     onLoadDshSettings,
     onLocaleFromDsh,
+    onThemeChange,
     onUpdateDshSetting,
     onOpenChange,
   } = props
   const [tab, setTab] = useState<SettingsTab>('general')
   const [settingsState, setSettingsState] = useState<LoadedSettings | undefined>(undefined)
   const [dshState, setDshState] = useState<DshSettingsState>({ status: 'loading' })
+  const dshUiPreferences = dshState.status === 'ready' ? readDshUiPreferences(dshState.snapshot) : undefined
   const [savingPath, setSavingPath] = useState<string | undefined>(undefined)
   const [saveError, setSaveError] = useState<string | undefined>(undefined)
   const [riskPending, setRiskPending] = useState<RiskPending | undefined>(undefined)
   const [riskAcknowledged, setRiskAcknowledged] = useState(false)
   const [busyField, setBusyField] = useState<string | undefined>(undefined)
   const [documentError, setDocumentError] = useState<string | undefined>(undefined)
+  const [keyboardShortcutsError, setKeyboardShortcutsError] = useState<string | undefined>(undefined)
   const [dshUpdateBusy, setDshUpdateBusy] = useState<'check' | 'install' | undefined>(undefined)
   const [dshUpdateError, setDshUpdateError] = useState<string | undefined>(undefined)
   const [selectedDshVersion, setSelectedDshVersion] = useState<string | undefined>(undefined)
@@ -224,6 +278,8 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
           if (snapshot !== undefined) {
             const hostLocale = settingValueAt(snapshot.values, 'locale.preference')
             if (isLocale(hostLocale)) onLocaleFromDsh(hostLocale)
+            const preferences = readDshUiPreferences(snapshot)
+            if (preferences.theme !== undefined) onThemeChange(preferences.theme)
           }
           setDshState(snapshot === undefined ? { status: 'unavailable' } : { status: 'ready', snapshot })
         }
@@ -231,7 +287,7 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
     return () => {
       cancelled = true
     }
-  }, [open, onLoadDshSettings, onLocaleFromDsh, dshState.status])
+  }, [open, onLoadDshSettings, onLocaleFromDsh, onThemeChange, dshState.status])
 
   useEffect(() => {
     if (!open) {
@@ -245,6 +301,7 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
 
   const saveSetting = (path: string, value: unknown): void => {
     if (savingPath !== undefined) return
+    if (dshState.status !== 'ready' || !isValidGeneralSettingChange(dshState.snapshot, path, value)) return
     const themeValue = path === 'ui-theme.preference' && isThemePreference(value) ? value : undefined
     const previousTheme = props.theme
     setSaveError(undefined)
@@ -266,9 +323,9 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
           .then((snapshot) => {
             if (snapshot !== undefined) {
               setDshState({ status: 'ready', snapshot })
-              const authoritativeTheme = settingValueAt(snapshot.values, 'ui-theme.preference')
-              if (themeValue !== undefined && isThemePreference(authoritativeTheme))
-                props.onThemeChange(authoritativeTheme)
+              const preferences = readDshUiPreferences(snapshot)
+              if (themeValue !== undefined && preferences.theme !== undefined)
+                onThemeChange(preferences.theme)
             }
           }),
       )
@@ -355,6 +412,20 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
       .onOpenDshSettingsDocument()
       .catch((reason: unknown) =>
         setDocumentError(reason instanceof Error ? reason.message : t('settings.openDocumentFailed')),
+      )
+      .finally(() => setBusyField(undefined))
+  }
+
+  const openKeyboardShortcuts = (): void => {
+    if (busyField !== undefined) return
+    setKeyboardShortcutsError(undefined)
+    setBusyField('keyboard-shortcuts')
+    void props
+      .onOpenKeyboardShortcuts()
+      .catch((reason: unknown) =>
+        setKeyboardShortcutsError(
+          reason instanceof Error ? reason.message : t('settings.keyboardShortcutsFailed'),
+        ),
       )
       .finally(() => setBusyField(undefined))
   }
@@ -566,6 +637,28 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                 aria-labelledby="dsh-settings-tab-general"
                 aria-label={t('settings.generalAria')}
               >
+                {props.accountLifecycleAvailable === true ? (
+                  <AccountLifecycle
+                    snapshot={
+                      props.accountLifecycleLoading === true ? null : (props.accountLifecycle ?? null)
+                    }
+                    {...(props.accountLifecycleImpact === undefined
+                      ? {}
+                      : { impact: props.accountLifecycleImpact })}
+                    sessionExpired={props.accountSessionExpired === true}
+                    {...(props.accountLifecycleError === undefined
+                      ? {}
+                      : { hostError: props.accountLifecycleError })}
+                    requestFailed={props.accountLifecycleRequestFailed === true}
+                    busy={props.accountLifecycleBusy === true || props.accountLifecycleLoading === true}
+                    labels={accountLifecycleLabels(t)}
+                    onSignIn={() => void props.onStartAccountSignIn?.()}
+                    onCancelSignIn={(attemptId) => void props.onCancelAccountSignIn?.(attemptId)}
+                    onCheckSignOutImpact={() => void props.onCheckAccountSignOutImpact?.()}
+                    onSignOut={() => void props.onSignOutAccount?.()}
+                    onRetry={() => void props.onLoadAccountLifecycle?.()}
+                  />
+                ) : null}
                 {settingsState === undefined ? (
                   <p className="dsh-settings__empty" role="status">
                     {t('settings.loading')}
@@ -881,7 +974,16 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                       {t('settings.loadingDsh')}
                     </p>
                   ) : dshState.status === 'unavailable' ? (
-                    <p className="dsh-settings__empty">{t('settings.dshUnavailable')}</p>
+                    <>
+                      <p className="dsh-settings__empty">{t('settings.dshUnavailable')}</p>
+                      <button
+                        className="dsh-button dsh-button--secondary dsh-button--compact"
+                        type="button"
+                        onClick={() => setDshState({ status: 'loading' })}
+                      >
+                        {t('runtime.retry')}
+                      </button>
+                    </>
                   ) : (
                     <>
                       {!dshState.snapshot.schema.writable ? (
@@ -897,9 +999,11 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                               path: row.path,
                               label: t(row.labelKey),
                               hint: t(row.hintKey),
+                              ...(row.defaultValue === undefined ? {} : { defaultValue: row.defaultValue }),
                             }}
                             fields={dshState.snapshot.schema.fields}
                             values={dshState.snapshot.values}
+                            writable={dshState.snapshot.schema.writable}
                             selectedValue={row.path === 'ui-theme.preference' ? props.theme : undefined}
                             saving={savingPath === row.path}
                             disabled={!dshState.snapshot.schema.writable || savingPath !== undefined}
@@ -925,6 +1029,13 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                           />
                         ))}
                       </ul>
+                      {renderCodingToolsSetting(
+                        dshState.snapshot,
+                        dshUiPreferences?.codingToolsEnabled,
+                        savingPath,
+                        (value) => saveSetting(DSH_UI_SETTING_PATHS.codingTools, value),
+                        t,
+                      )}
                       {saveError === undefined ? null : (
                         <p className="dsh-settings__error" role="alert">
                           {saveError}
@@ -937,32 +1048,24 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                   ariaLabel={t('settings.conversationAppearance')}
                   title={t('settings.conversationAppearance')}
                 >
-                  <SettingRow
-                    title={t('settings.conversationFontSize')}
-                    description={t('settings.conversationFontSizeHint')}
-                    control={
-                      <div
-                        className="dsh-settings__segment"
-                        role="group"
-                        aria-label={t('settings.conversationFontSize')}
-                      >
-                        {CONVERSATION_FONT_SIZE_OPTIONS.map((size) => (
-                          <button
-                            key={size}
-                            className={`dsh-settings__segment-item${
-                              size === props.conversationFontSize ? ' dsh-settings__segment-item--active' : ''
-                            }`}
-                            type="button"
-                            aria-pressed={size === props.conversationFontSize}
-                            disabled={size === props.conversationFontSize}
-                            onClick={() => props.onConversationFontSizeChange(size)}
-                          >
-                            {t(`settings.value.${size}`)}
-                          </button>
-                        ))}
-                      </div>
-                    }
-                  />
+                  {dshState.status === 'ready' &&
+                  findDshSettingsField(dshState.snapshot, DSH_UI_SETTING_PATHS.fontSize)?.type === 'number' &&
+                  !dshState.snapshot.schema.writable ? null : (
+                    <SettingRow
+                      title={t('settings.conversationFontSize')}
+                      description={t('settings.conversationFontSizeHint')}
+                      control={renderFontSizeControl(
+                        dshState,
+                        dshUiPreferences?.fontSize,
+                        props.conversationFontSize,
+                        savingPath,
+                        saveError,
+                        (value) => saveSetting(DSH_UI_SETTING_PATHS.fontSize, value),
+                        props.onConversationFontSizeChange,
+                        t,
+                      )}
+                    />
+                  )}
                 </SettingCard>
                 <p className="dsh-settings__note">{t('settings.hostNote')}</p>
                 {dshState.status === 'ready' && dshState.snapshot.schema.hasDocument ? (
@@ -983,6 +1086,27 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                     )}
                   </div>
                 ) : null}
+                <SettingCard
+                  ariaLabel={t('settings.keyboardShortcuts')}
+                  title={t('settings.keyboardShortcuts')}
+                >
+                  <p className="dsh-settings__description">{t('settings.keyboardShortcutsHint')}</p>
+                  <div className="dsh-settings__document-action">
+                    <button
+                      className="dsh-button dsh-button--secondary dsh-button--compact"
+                      type="button"
+                      disabled={busyField !== undefined}
+                      onClick={openKeyboardShortcuts}
+                    >
+                      {t('settings.keyboardShortcutsOpen')}
+                    </button>
+                    {keyboardShortcutsError === undefined ? null : (
+                      <span className="dsh-settings__error" role="alert">
+                        {keyboardShortcutsError}
+                      </span>
+                    )}
+                  </div>
+                </SettingCard>
               </div>
             ) : tab === 'models' ? (
               <div
@@ -1326,6 +1450,14 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                 aria-label={t('settings.presetsAria')}
               >
                 <PresetManager
+                  codingToolsEnabled={
+                    dshState.status !== 'ready'
+                      ? false
+                      : findDshSettingsField(dshState.snapshot, DSH_UI_SETTING_PATHS.codingTools)?.type ===
+                          'boolean'
+                        ? (dshUiPreferences?.codingToolsEnabled ?? true)
+                        : undefined
+                  }
                   defaultWritable={dshState.status === 'ready' && dshState.snapshot.schema.writable}
                   onLoadRoster={() => props.onLoadPresetRoster()}
                   onReadDocument={(presetId) => props.onReadPresetDocument(presetId)}
@@ -1364,6 +1496,12 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                   revision={props.pluginInventoryRevision}
                   onLoadInventory={() => props.onLoadPluginInventory()}
                 />
+                {props.featureRequest === undefined ? null : (
+                  <OptionalBundleManager
+                    revision={props.pluginInventoryRevision ?? 0}
+                    featureRequest={props.featureRequest}
+                  />
+                )}
               </div>
             )}
           </div>
@@ -1371,6 +1509,50 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
       </section>
     </ModalWrapper>
   )
+}
+
+function accountLifecycleLabels(t: Translate): AccountLifecycleLabels {
+  const phases: Record<AccountLifecycleUiPhase, string> = {
+    initializing: t('account.phase.initializing'),
+    'waiting-browser': t('account.phase.waitingBrowser'),
+    exchanging: t('account.phase.exchanging'),
+    committing: t('account.phase.committing'),
+    succeeded: t('account.phase.succeeded'),
+    cancelled: t('account.phase.cancelled'),
+    expired: t('account.phase.expired'),
+    failed: t('account.phase.failed'),
+  }
+  const errors: Record<AccountLifecycleUiError, string> = {
+    network: t('account.error.network'),
+    protocol: t('account.error.protocol'),
+    expired: t('account.error.expired'),
+    storage: t('account.error.storage'),
+  }
+  return {
+    title: t('account.title'),
+    loading: t('account.loading'),
+    signedOut: t('account.signedOut'),
+    credentialStored: t('account.credentialStored'),
+    signIn: t('account.signIn'),
+    cancelSignIn: t('account.cancelSignIn'),
+    checkSignOutImpact: t('account.checkSignOutImpact'),
+    signOut: t('account.signOut'),
+    sessionExpired: t('account.sessionExpired'),
+    requestFailed: t('account.requestFailed'),
+    retry: t('account.retry'),
+    phases,
+    errors,
+    hostErrors: {
+      'state-stream-failed': t('account.hostError.stateStream'),
+      'expiry-stream-failed': t('account.hostError.expiryStream'),
+      'browser-open-failed': t('account.hostError.browserOpen'),
+    },
+    impacts: {
+      none: t('account.impact.none'),
+      running: t('account.impact.running'),
+      unknown: t('account.impact.unknown'),
+    },
+  }
 }
 
 function deriveCustomProviderTemplate(
@@ -1466,10 +1648,163 @@ function providerSettingsPath(provider: ModelProvider): string | undefined {
   return [namespace, ...settingsPath].join('.')
 }
 
+function isValidGeneralSettingChange(snapshot: DshSettingsSnapshot, path: string, value: unknown): boolean {
+  const field = findDshSettingsField(snapshot, path)
+  if (field === undefined || !snapshot.schema.writable) return false
+  if (path === DSH_UI_SETTING_PATHS.codingTools) return field.type === 'boolean' && typeof value === 'boolean'
+  if (path === DSH_UI_SETTING_PATHS.fontSize)
+    return field.type === 'number' && isConversationFontSizePx(value)
+  if (field.type !== 'enum' || typeof value !== 'string' || !field.enumValues?.includes(value)) return false
+  if (path === DSH_UI_SETTING_PATHS.transcriptView) return isTranscriptViewMode(value)
+  if (path === DSH_UI_SETTING_PATHS.performanceUsage) return isPerformanceUsageMode(value)
+  return true
+}
+
+function renderCodingToolsSetting(
+  snapshot: DshSettingsSnapshot,
+  value: boolean | undefined,
+  savingPath: string | undefined,
+  onChange: (value: boolean) => void,
+  t: Translate,
+): ReactElement | null {
+  const field = findDshSettingsField(snapshot, DSH_UI_SETTING_PATHS.codingTools)
+  if (field?.type !== 'boolean' || !snapshot.schema.writable) return null
+  const label = t('settings.codingTools.label')
+  const saving = savingPath === DSH_UI_SETTING_PATHS.codingTools
+  const enabled = value ?? true
+  return (
+    <SettingRow
+      title={label}
+      description={t('settings.codingTools.hint')}
+      status={
+        <>
+          {field.restartRequired ? (
+            <span className="dsh-setting-row__status-note" title={t('settings.restartTitle')}>
+              {t('settings.restart')}
+            </span>
+          ) : null}
+          {saving ? (
+            <span className="dsh-setting-row__status-saving" role="status">
+              {t('settings.saving')}
+            </span>
+          ) : null}
+        </>
+      }
+      control={
+        <button
+          className="dsh-settings__switch"
+          type="button"
+          role="switch"
+          aria-label={label}
+          aria-checked={enabled}
+          disabled={!snapshot.schema.writable || savingPath !== undefined}
+          onClick={() => onChange(!enabled)}
+        >
+          <span aria-hidden="true" />
+        </button>
+      }
+    />
+  )
+}
+
+function renderFontSizeControl(
+  dshState: DshSettingsState,
+  hostFontSize: number | undefined,
+  localFontSize: ConversationFontSize,
+  savingPath: string | undefined,
+  error: string | undefined,
+  onHostChange: (value: number) => void,
+  onLocalChange: (value: ConversationFontSize) => void,
+  t: Translate,
+): ReactElement {
+  const field =
+    dshState.status === 'ready'
+      ? findDshSettingsField(dshState.snapshot, DSH_UI_SETTING_PATHS.fontSize)
+      : undefined
+  if (dshState.status === 'ready' && field?.type === 'number') {
+    return (
+      <FontSizeSettingControl
+        key={`${hostFontSize ?? DEFAULT_CONVERSATION_FONT_SIZE_PX}:${error ?? ''}:${savingPath === DSH_UI_SETTING_PATHS.fontSize ? 'saving' : 'idle'}`}
+        value={hostFontSize ?? DEFAULT_CONVERSATION_FONT_SIZE_PX}
+        disabled={!dshState.snapshot.schema.writable || savingPath !== undefined}
+        saving={savingPath === DSH_UI_SETTING_PATHS.fontSize}
+        error={error}
+        onCommit={onHostChange}
+        translate={t}
+      />
+    )
+  }
+  return (
+    <div className="dsh-settings__segment" role="group" aria-label={t('settings.conversationFontSize')}>
+      {CONVERSATION_FONT_SIZE_OPTIONS.map((size) => (
+        <button
+          key={size}
+          className={`dsh-settings__segment-item${
+            size === localFontSize ? ' dsh-settings__segment-item--active' : ''
+          }`}
+          type="button"
+          aria-pressed={size === localFontSize}
+          disabled={size === localFontSize}
+          onClick={() => onLocalChange(size)}
+        >
+          {t(`settings.value.${size}`)}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+interface FontSizeSettingControlProps {
+  readonly value: number
+  readonly disabled: boolean
+  readonly saving: boolean
+  readonly error: string | undefined
+  readonly onCommit: (value: number) => void
+  readonly translate: Translate
+}
+
+function FontSizeSettingControl(props: FontSizeSettingControlProps): ReactElement {
+  const [draft, setDraft] = useState(String(props.value))
+
+  const commit = (): void => {
+    const value = Number(draft)
+    if (isConversationFontSizePx(value)) {
+      if (value !== props.value) props.onCommit(value)
+      return
+    }
+    setDraft(String(props.value))
+  }
+
+  return (
+    <div className="dsh-settings__number-control">
+      <input
+        className="dsh-settings__number-input"
+        type="number"
+        min={MIN_CONVERSATION_FONT_SIZE_PX}
+        max={MAX_CONVERSATION_FONT_SIZE_PX}
+        step={1}
+        aria-label={props.translate('settings.conversationFontSize')}
+        aria-busy={props.saving}
+        disabled={props.disabled}
+        value={draft}
+        onChange={(event) => setDraft(event.currentTarget.value)}
+        onBlur={commit}
+      />
+      <span>{props.translate('settings.pixels')}</span>
+    </div>
+  )
+}
+
 interface GeneralSettingRowProps {
-  readonly row: { readonly path: string; readonly label: string; readonly hint: string }
+  readonly row: {
+    readonly path: string
+    readonly label: string
+    readonly hint: string
+    readonly defaultValue?: string
+  }
   readonly fields: readonly DshSettingsSchema['fields'][number][]
   readonly values: Readonly<Record<string, unknown>>
+  readonly writable: boolean
   readonly selectedValue?: string | undefined
   readonly saving: boolean
   readonly disabled: boolean
@@ -1487,10 +1822,34 @@ interface GeneralSettingRowProps {
 function GeneralSettingRow(props: GeneralSettingRowProps): ReactElement | null {
   const { t } = useI18n()
   const field = props.fields.find((entry) => entry.path === props.row.path)
-  const options = field?.enumValues
-  if (field === undefined || options === undefined || options.length === 0) return null
-  const current = props.selectedValue ?? settingValueAt(props.values, props.row.path)
-  const currentLabel = typeof current === 'string' ? current : undefined
+  if (
+    !props.writable &&
+    (props.row.path === DSH_UI_SETTING_PATHS.transcriptView ||
+      props.row.path === DSH_UI_SETTING_PATHS.performanceUsage)
+  )
+    return null
+  const options = field?.enumValues?.filter((option) => {
+    if (props.row.path === DSH_UI_SETTING_PATHS.transcriptView) return isTranscriptViewMode(option)
+    if (props.row.path === DSH_UI_SETTING_PATHS.performanceUsage) return isPerformanceUsageMode(option)
+    return true
+  })
+  if (field?.type !== 'enum' || options === undefined || options.length === 0) return null
+  const savedValue = settingValueAt(props.values, props.row.path)
+  const normalizedSavedValue =
+    props.row.path === DSH_UI_SETTING_PATHS.transcriptView
+      ? savedValue === 'normal'
+        ? 'standard'
+        : savedValue === 'expanded'
+          ? 'detailed'
+          : savedValue
+      : savedValue
+  const candidate = props.selectedValue ?? normalizedSavedValue ?? props.row.defaultValue
+  const currentLabel =
+    typeof candidate === 'string' && options.includes(candidate)
+      ? candidate
+      : props.row.defaultValue !== undefined && options.includes(props.row.defaultValue)
+        ? props.row.defaultValue
+        : options[0]
   return (
     <SettingRow
       as="li"
@@ -1663,6 +2022,10 @@ function formatSettingValue(value: string, t: (key: string) => string): string {
     'system',
     'queue',
     'steer',
+    'compact',
+    'standard',
+    'detailed',
+    'verbose',
   ])
   if (localized.has(value)) return t(`settings.value.${value}`)
   if (!value.includes('-')) return value

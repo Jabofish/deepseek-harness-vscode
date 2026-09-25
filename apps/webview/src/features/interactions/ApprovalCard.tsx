@@ -13,7 +13,9 @@ export interface ApprovalCardProps {
 }
 
 export function ApprovalCard(props: ApprovalCardProps): ReactElement {
-  const { t } = useI18n()
+  const { locale, t } = useI18n()
+  const description =
+    props.request.displayReason?.[locale] ?? props.request.displayReason?.en ?? props.request.description
   return (
     <section className="dsh-interaction" role="group" aria-labelledby={`approval-${props.request.id}`}>
       <header className="dsh-interaction__header">
@@ -26,7 +28,7 @@ export function ApprovalCard(props: ApprovalCardProps): ReactElement {
         </div>
       </header>
       <ContentFlow as="p" className="dsh-interaction__description">
-        {props.request.description}
+        {description}
       </ContentFlow>
       <div className="dsh-approval__takeover" role="status">
         <span>{t('approval.takeover')}</span>

@@ -2,7 +2,7 @@
 
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { AppState, AppStore } from './app/store.js'
+import type { AppState, AppStore, DshSettingsSnapshot } from './app/store.js'
 
 let currentStore: AppStore
 
@@ -11,7 +11,20 @@ vi.mock('./app/store.js', () => ({
 }))
 
 vi.mock('./features/chat/Timeline.js', () => ({
-  Timeline: () => <div data-testid="timeline">Timeline</div>,
+  Timeline: (props: {
+    readonly transcriptView?: string
+    readonly performanceUsage?: string
+    readonly codingToolsEnabled?: boolean
+  }) => (
+    <div
+      data-testid="timeline"
+      data-transcript-view={props.transcriptView}
+      data-performance-usage={props.performanceUsage}
+      data-coding-tools-enabled={props.codingToolsEnabled}
+    >
+      Timeline
+    </div>
+  ),
 }))
 
 import { App } from './App.js'
@@ -82,6 +95,14 @@ function connectedState(activeSession: boolean): AppState {
     permissionPresets: [],
     commands: [],
     pluginInventoryRevision: 0,
+    accountLifecycleAvailable: false,
+    accountLifecycle: null,
+    accountLifecycleLoading: false,
+    accountLifecycleBusy: false,
+    accountLifecycleImpact: undefined,
+    accountSessionExpired: false,
+    accountLifecycleError: undefined,
+    accountLifecycleRequestFailed: false,
     goals: [],
     todos: [],
     jobs: [],
@@ -111,6 +132,42 @@ function connectedState(activeSession: boolean): AppState {
     questions: [],
     busyEnter: 'queue',
     drawer: undefined,
+  }
+}
+
+function dshUiSettingsSnapshot(enabled?: boolean, busyEnter?: 'queue' | 'steer'): DshSettingsSnapshot {
+  const fields: DshSettingsSnapshot['schema']['fields'][number][] = []
+  const values: Record<string, unknown> = {}
+  if (enabled !== undefined) {
+    fields.push({
+      path: 'ui-settings.enabled',
+      label: 'enabled',
+      type: 'boolean',
+      required: false,
+      restartRequired: false,
+    })
+    values['ui-settings'] = { enabled }
+  }
+  if (busyEnter !== undefined) {
+    fields.push({
+      path: 'ui-conversation.busyEnter',
+      label: 'busyEnter',
+      type: 'enum',
+      required: false,
+      enumValues: ['queue', 'steer'],
+      restartRequired: false,
+    })
+    values['ui-conversation'] = { busyEnter }
+  }
+  return {
+    schema: {
+      version: 'rc2-settings-v1',
+      writable: true,
+      hasDocument: false,
+      fields,
+      namespaces: [],
+    },
+    values,
   }
 }
 
@@ -202,8 +259,9 @@ function storeFor(state: AppState): AppStore {
     checkDshUpdates: vi.fn().mockResolvedValue(undefined),
     installDshVersion: vi.fn().mockResolvedValue(undefined),
     readSettings: vi.fn().mockResolvedValue(undefined),
-    readDshSettings: vi.fn().mockResolvedValue(undefined),
+    readDshSettings: vi.fn().mockResolvedValue(dshUiSettingsSnapshot()),
     openDshSettingsDocument: vi.fn().mockResolvedValue(undefined),
+    openKeyboardShortcuts: vi.fn().mockResolvedValue(undefined),
     updateDshSetting: vi.fn().mockResolvedValue(undefined),
     unsetDshSetting: vi.fn().mockResolvedValue(undefined),
     createCustomProvider: vi.fn().mockResolvedValue({
@@ -229,6 +287,13 @@ function storeFor(state: AppState): AppStore {
     clearGoal: vi.fn().mockResolvedValue(undefined),
     exportSession: vi.fn().mockResolvedValue(undefined),
     setDrawer: vi.fn(),
+    featureRequest: vi.fn().mockResolvedValue(undefined),
+    subscribeFeature: vi.fn(() => () => undefined),
+    loadAccountLifecycle: vi.fn().mockResolvedValue(undefined),
+    startAccountSignIn: vi.fn().mockResolvedValue(undefined),
+    cancelAccountSignIn: vi.fn().mockResolvedValue(undefined),
+    checkAccountSignOutImpact: vi.fn().mockResolvedValue(undefined),
+    signOutAccount: vi.fn().mockResolvedValue(undefined),
     dispose: vi.fn(),
   }
 }
@@ -271,10 +336,13 @@ function presetSelectionState(enabled: boolean, defaultPresetId: string | undefi
   }
 }
 
-function selectEmptySessionPreset(presetId: string): void {
+async function selectEmptySessionPreset(presetId: string): Promise<void> {
+  await waitFor(() =>
+    expect(document.querySelector('.dsh-empty-session__preset .dsh-select-menu__trigger')).not.toBeNull(),
+  )
   const trigger = document.querySelector('.dsh-empty-session__preset .dsh-select-menu__trigger')
-  expect(trigger).not.toBeNull()
-  fireEvent.click(trigger!)
+  if (trigger === null) throw new Error('preset selection did not appear after DSH settings loaded')
+  fireEvent.click(trigger)
   fireEvent.click(screen.getByRole('option', { name: presetId }))
 }
 
@@ -301,10 +369,10 @@ describe('App connected rendering', () => {
     expect(document.querySelector('.dsh-empty-state')).toBeNull()
   })
 
-  it('uses the host default after preset selection is disabled instead of submitting the staged preset', () => {
+  it('uses the host default after preset selection is disabled instead of submitting the staged preset', async () => {
     const initialState = presetSelectionState(true, 'standard')
     const { createSessionCalls, updateState } = renderWithMutableState(initialState)
-    selectEmptySessionPreset('alternate')
+    await selectEmptySessionPreset('alternate')
 
     updateState(presetSelectionState(false, 'standard'))
     fireEvent.click(screen.getByRole('button', { name: 'New session here' }))
@@ -312,10 +380,10 @@ describe('App connected rendering', () => {
     expect(createSessionCalls).toEqual([['w1', 'standard']])
   })
 
-  it('uses a newly reported host default after preset selection is disabled', () => {
+  it('uses a newly reported host default after preset selection is disabled', async () => {
     const initialState = presetSelectionState(true, 'standard')
     const { createSessionCalls, updateState } = renderWithMutableState(initialState)
-    selectEmptySessionPreset('alternate')
+    await selectEmptySessionPreset('alternate')
 
     updateState(presetSelectionState(false, 'standard'))
     updateState(presetSelectionState(false, 'updated-default'))
@@ -432,15 +500,215 @@ describe('App connected rendering', () => {
     currentStore = storeFor(connectedState(true))
     render(<App />)
 
+    await waitFor(() => expect(screen.getByRole('tab', { name: 'Trajectory' })).toBeDefined())
     fireEvent.click(screen.getByRole('tab', { name: 'Trajectory' }))
 
     await waitFor(() => expect(screen.getByLabelText('Trajectory ledger')).toBeDefined())
   })
 
-  it('exposes tabpanel relationships and arrow-key navigation for conversation views', () => {
+  it('keeps Developer Tools surfaces gated until the first rc2 settings snapshot is accepted', async () => {
+    let resolveSettings: ((snapshot: DshSettingsSnapshot) => void) | undefined
+    const pendingSettings = new Promise<DshSettingsSnapshot>((resolve) => {
+      resolveSettings = resolve
+    })
+    const readDshSettings = vi.fn().mockReturnValue(pendingSettings)
+    currentStore = { ...storeFor(connectedState(true)), readDshSettings }
+
+    render(<App />)
+
+    expect(screen.queryByRole('tab', { name: 'Trajectory' })).toBeNull()
+    expect(screen.getByTestId('timeline').getAttribute('data-coding-tools-enabled')).toBe('false')
+    act(() => resolveSettings?.(dshUiSettingsSnapshot(true)))
+    await waitFor(() => expect(screen.getByRole('tab', { name: 'Trajectory' })).toBeDefined())
+    expect(screen.getByTestId('timeline').getAttribute('data-coding-tools-enabled')).toBe('true')
+  })
+
+  it('keeps Developer Tools surfaces gated after the first settings read fails', async () => {
+    const readDshSettings = vi.fn().mockRejectedValue(new Error('offline'))
+    currentStore = { ...storeFor(connectedState(true)), readDshSettings }
+
+    render(<App />)
+
+    await waitFor(() => expect(readDshSettings).toHaveBeenCalledTimes(1))
+    expect(screen.queryByRole('tab', { name: 'Trajectory' })).toBeNull()
+    expect(screen.getByTestId('timeline').getAttribute('data-coding-tools-enabled')).toBe('false')
+  })
+
+  it('retains the last accepted Developer Tools state when a reconnect read fails', async () => {
+    const readDshSettings = vi
+      .fn()
+      .mockResolvedValueOnce(dshUiSettingsSnapshot(true))
+      .mockRejectedValueOnce(new Error('temporary offline'))
+    let state: AppState = connectedState(true)
+    const store: AppStore = {
+      ...storeFor(state),
+      getState: () => state,
+      readDshSettings,
+    }
+    currentStore = store
+    const view = render(<App />)
+
+    await waitFor(() => expect(screen.getByRole('tab', { name: 'Trajectory' })).toBeDefined())
+    state = { ...connectedState(true), backend: { kind: 'idle' } }
+    view.rerender(<App />)
+    state = connectedState(true)
+    view.rerender(<App />)
+
+    await waitFor(() => expect(readDshSettings).toHaveBeenCalledTimes(2))
+    expect(screen.getByRole('tab', { name: 'Trajectory' })).toBeDefined()
+    expect(screen.getByTestId('timeline').getAttribute('data-coding-tools-enabled')).toBe('true')
+  })
+
+  it('clears the old settings gate after a confirmed DSH version change', async () => {
+    let rejectNewVersion: ((reason: Error) => void) | undefined
+    const nextVersionRead = new Promise<DshSettingsSnapshot>((_resolve, reject) => {
+      rejectNewVersion = reject
+    })
+    const readDshSettings = vi
+      .fn()
+      .mockResolvedValueOnce(dshUiSettingsSnapshot(true))
+      .mockReturnValueOnce(nextVersionRead)
+    let state = connectedState(true)
+    const store: AppStore = {
+      ...storeFor(state),
+      getState: () => state,
+      readDshSettings,
+    }
+    currentStore = store
+    const view = render(<App />)
+
+    await waitFor(() => expect(screen.getByRole('tab', { name: 'Trajectory' })).toBeDefined())
+    state = { ...state, connectedDshVersion: '0.1.0-rc.7' }
+    view.rerender(<App />)
+
+    expect(screen.queryByRole('tab', { name: 'Trajectory' })).toBeNull()
+    await waitFor(() => expect(readDshSettings).toHaveBeenCalledTimes(2))
+    act(() => rejectNewVersion?.(new Error('new DSH unavailable')))
+    expect(screen.queryByRole('tab', { name: 'Trajectory' })).toBeNull()
+    expect(screen.getByTestId('timeline').getAttribute('data-coding-tools-enabled')).toBe('false')
+  })
+
+  it('does not let a pre-write settings read restore the old Developer Tools value', async () => {
+    let resolvePreWriteRead: ((snapshot: DshSettingsSnapshot) => void) | undefined
+    const preWriteRead = new Promise<DshSettingsSnapshot>((resolve) => {
+      resolvePreWriteRead = resolve
+    })
+    let readCount = 0
+    const readDshSettings = vi.fn(() => {
+      readCount += 1
+      if (readCount <= 2) return Promise.resolve(dshUiSettingsSnapshot(true))
+      if (readCount === 3) return preWriteRead
+      return Promise.reject(new Error('refresh unavailable'))
+    })
+    const updateDshSetting = vi.fn().mockResolvedValue(undefined)
+    let state = { ...connectedState(true), drawer: 'settings' as const }
+    const store: AppStore = {
+      ...storeFor(state),
+      getState: () => state,
+      readDshSettings,
+      updateDshSetting,
+    }
+    currentStore = store
+    const view = render(<App />)
+
+    const developerTools = await screen.findByRole('switch', { name: 'Developer Tools' })
+    await waitFor(() => expect(readDshSettings).toHaveBeenCalledTimes(2))
+    state = { ...state, backend: { kind: 'idle' } }
+    view.rerender(<App />)
+    state = { ...state, backend: { kind: 'connected' } }
+    view.rerender(<App />)
+    await waitFor(() => expect(readDshSettings).toHaveBeenCalledTimes(3))
+
+    fireEvent.click(developerTools)
+    await waitFor(() => expect(updateDshSetting).toHaveBeenCalledWith('ui-settings.enabled', false))
+    await waitFor(() => expect(screen.queryByRole('tab', { name: 'Trajectory' })).toBeNull())
+    act(() => resolvePreWriteRead?.(dshUiSettingsSnapshot(true)))
+
+    expect(screen.queryByRole('tab', { name: 'Trajectory' })).toBeNull()
+    expect(screen.getByTestId('timeline').getAttribute('data-coding-tools-enabled')).toBe('false')
+  })
+
+  it('uses the accepted Host busy-send value after a successful write even if refresh fails', async () => {
+    const active = connectedState(true)
+    const runningState = {
+      ...active,
+      drawer: 'settings' as const,
+      sessions: active.sessions.map((session) => ({ ...session, status: 'running' as const })),
+    }
+    const readDshSettings = vi
+      .fn()
+      .mockResolvedValueOnce(dshUiSettingsSnapshot(true, 'queue'))
+      .mockResolvedValueOnce(dshUiSettingsSnapshot(true, 'queue'))
+      .mockRejectedValue(new Error('refresh unavailable'))
+    const sendPrompt = vi.fn().mockResolvedValue(undefined)
+    const updateDshSetting = vi.fn().mockResolvedValue(undefined)
+    currentStore = {
+      ...storeFor(runningState),
+      readDshSettings,
+      sendPrompt,
+      updateDshSetting,
+    }
+    render(
+      <I18nProvider>
+        <App />
+      </I18nProvider>,
+    )
+
+    const busyEnter = await screen.findByRole('group', { name: 'Composer Enter' })
+    fireEvent.click(within(busyEnter).getByRole('button', { name: 'steer' }))
+    await waitFor(() => expect(updateDshSetting).toHaveBeenCalledWith('ui-conversation.busyEnter', 'steer'))
+    await waitFor(() => expect(readDshSettings).toHaveBeenCalledTimes(3))
+
+    const prompt = screen.getByRole('textbox', { name: 'Prompt' })
+    fireEvent.change(prompt, { target: { value: 'follow-up' } })
+    fireEvent.keyDown(prompt, { key: 'Enter' })
+
+    await waitFor(() => expect(sendPrompt).toHaveBeenCalledWith('s1', 'follow-up', [], 'steer'))
+  })
+
+  it('applies a successful Developer Tools setting update to the application gate', async () => {
+    const updateDshSetting = vi.fn().mockResolvedValue(undefined)
+    let codingToolsEnabled = true
+    currentStore = {
+      ...storeFor({ ...connectedState(true), drawer: 'settings' }),
+      readDshSettings: vi
+        .fn()
+        .mockImplementation(() => Promise.resolve(dshUiSettingsSnapshot(codingToolsEnabled))),
+      updateDshSetting: vi.fn((path: string, value: unknown) => {
+        updateDshSetting(path, value)
+        if (path === 'ui-settings.enabled' && typeof value === 'boolean') codingToolsEnabled = value
+        return Promise.resolve()
+      }),
+    }
+    render(<App />)
+
+    const developerTools = await screen.findByRole('switch', { name: 'Developer Tools' })
+    expect(screen.getByRole('tab', { name: 'Trajectory' })).toBeDefined()
+    fireEvent.click(developerTools)
+
+    await waitFor(() => expect(updateDshSetting).toHaveBeenCalledWith('ui-settings.enabled', false))
+    await waitFor(() => expect(screen.queryByRole('tab', { name: 'Trajectory' })).toBeNull())
+    expect(screen.getByTestId('timeline').getAttribute('data-coding-tools-enabled')).toBe('false')
+  })
+
+  it('uses rc2 Developer Tools to disable new-session mode selection', async () => {
+    const state = presetSelectionState(true, 'standard')
+    const readDshSettings = vi.fn().mockResolvedValue(dshUiSettingsSnapshot(false))
+    currentStore = {
+      ...storeFor(state),
+      readDshSettings,
+    }
+    render(<App />)
+
+    await waitFor(() => expect(readDshSettings).toHaveBeenCalled())
+    expect(document.querySelector('.dsh-empty-session__preset .dsh-select-menu__trigger')).toBeNull()
+  })
+
+  it('exposes tabpanel relationships and arrow-key navigation for conversation views', async () => {
     currentStore = storeFor(connectedState(true))
     render(<App />)
 
+    await waitFor(() => expect(screen.getByRole('tab', { name: 'Trajectory' })).toBeDefined())
     const chat = screen.getByRole('tab', { name: 'Chat' })
     const trajectory = screen.getByRole('tab', { name: 'Trajectory' })
     expect(chat.getAttribute('aria-controls')).toBe('dsh-conversation-panel-chat')
@@ -542,6 +810,16 @@ describe('App connected rendering', () => {
     expect(screen.getByRole('heading', { name: "DeepSeek Harness isn't ready yet" })).toBeDefined()
     fireEvent.click(screen.getByRole('button', { name: 'Open settings' }))
     expect(setDrawer).toHaveBeenCalledWith('settings')
+  })
+
+  it('opens reminder management from the connected conversation header', () => {
+    const setDrawer = vi.fn()
+    currentStore = { ...storeFor(connectedState(true)), setDrawer }
+
+    render(<App />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Schedules' }))
+    expect(setDrawer).toHaveBeenCalledWith('schedules')
   })
 
   it('keeps the subagent catalog trigger visible when the host reports children', async () => {

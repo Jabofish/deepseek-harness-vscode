@@ -46,6 +46,34 @@ describe('StatsLine', () => {
     expect(screen.getByText('cache 25%')).toBeDefined()
   })
 
+  it('keeps compact performance usage to output speed and cache hit', () => {
+    render(
+      <StatsLine
+        nodes={[
+          { kind: 'user-message', id: 'u1', markdown: 'Run' },
+          {
+            kind: 'assistant-message',
+            id: 'a1',
+            markdown: 'Done',
+            streaming: false,
+            timing: { stepStartTime: 1_000, firstTokenTime: 1_800, completedTime: 4_800 },
+            usage: { inputTokens: 20, outputTokens: 120 },
+          },
+        ]}
+        usage={{ inputTokens: 1_000, outputTokens: 120, cacheReadTokens: 500, cacheWriteTokens: 0 }}
+        cacheHit={0.5}
+        performanceUsage="compact"
+      />,
+    )
+
+    expect(screen.getByText('40 tk/s')).toBeDefined()
+    expect(screen.getByText('cache 33%')).toBeDefined()
+    expect(screen.queryByText('1 turn')).toBeNull()
+    expect(screen.queryByText('↑1.0K')).toBeNull()
+    expect(screen.queryByText('TTFT 0.8s')).toBeNull()
+    expect(document.querySelector('.dsh-stats-line')?.getAttribute('data-performance-usage')).toBe('compact')
+  })
+
   it('renders a placeholder row when nothing has happened yet', () => {
     const { container } = render(<StatsLine nodes={[]} usage={undefined} cacheHit={0} />)
     expect(container.querySelector('.dsh-stats-line')).toBeDefined()

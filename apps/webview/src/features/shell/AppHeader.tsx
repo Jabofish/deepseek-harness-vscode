@@ -11,6 +11,7 @@ export interface AppHeaderProps {
   readonly compatibilityWarning?: string | undefined
   readonly sessionControl: ReactNode
   readonly onNewSession: () => void
+  readonly onOpenSchedules: () => void
   readonly onOpenSettings: () => void
   readonly onRetryConnection: () => void
 }
@@ -30,6 +31,15 @@ export const AppHeader = memo(function AppHeader(props: AppHeaderProps): ReactEl
         onOpenSettings={props.onOpenSettings}
         onRetry={props.onRetryConnection}
       />
+      <button
+        className="dsh-icon-button"
+        type="button"
+        aria-label={t('schedules.title')}
+        title={t('schedules.title')}
+        onClick={props.onOpenSchedules}
+      >
+        <Icon name="clock" />
+      </button>
       <button
         className="dsh-icon-button"
         type="button"

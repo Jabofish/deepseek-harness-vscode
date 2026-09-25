@@ -142,6 +142,12 @@ export interface ToolPresentationSource {
   readonly publishedAt?: string
 }
 
+/** Exact DSH Auto Review denial identity, projected only for settled error results. */
+export interface ToolAutoReviewDenialView {
+  /** Raw upstream reason; presentation normalizes it at the final UI boundary. */
+  readonly reason?: string
+}
+
 export interface ToolCallView {
   /** Immutable plan submitted through the structured exit_plan_mode arguments. */
   readonly submittedPlan?: { readonly title: string; readonly markdown: string }
@@ -162,6 +168,8 @@ export interface ToolCallView {
   readonly inputSummary?: string
   readonly outputSummary?: string
   readonly error?: string
+  /** Structured Auto Review denial; absent for every ordinary tool failure. */
+  readonly autoReviewDenial?: ToolAutoReviewDenialView
   /** Host-safe file locations emitted by mutation tool cards. */
   readonly locations?: readonly ToolLocationView[]
   /** Bounded DSH render intent; absent on rc.6 and unknown future cards. */
@@ -175,6 +183,8 @@ export interface PermissionRequest {
   readonly sessionId: string
   readonly title: string
   readonly description: string
+  /** Optional localized presentation text from DSH; `description` remains the reason fallback. */
+  readonly displayReason?: { readonly en: string; readonly [locale: string]: string }
   /**
    * Exact tool call this decision is about (`approval/requested`'s `callId`).
    * The host sends no command with the request: a renderer resolves it from

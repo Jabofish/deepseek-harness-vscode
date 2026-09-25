@@ -30,6 +30,7 @@ describe('managed Web Profile launch contract', () => {
     ['0.1.7-alpha.1', true],
     ['0.1.7-alpha.2', true],
     ['0.1.7-rc.1', true],
+    ['0.1.7-rc.2', true],
     ['0.1.0-rc.99', false],
   ])('uses --no-open by default except for early versions: %s', (version, noOpen) => {
     const args = managedWebArguments(version, 4317)

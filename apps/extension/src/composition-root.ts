@@ -17,6 +17,8 @@ import {
   type BackendEvent,
   type ChangeSetFile,
   type BackendEndpoint,
+  type AccountLifecycleSnapshot,
+  type SignOutImpact,
   type BackendState,
   type DshBackend,
   type DshRuntimeUpdateProgress,
@@ -39,6 +41,7 @@ import {
 } from '@dsh-vscode/domain'
 import {
   AdvancedAgentUseCases,
+  AccountLifecycleUseCases,
   BackendService,
   ChangeUseCases,
   CheckpointUseCases,
@@ -48,9 +51,11 @@ import {
   InteractionUseCases,
   ModelSettingsUseCases,
   NavigationUseCases,
+  PluginBundleUseCases,
   PromptTemplateUseCases,
   ProviderSettingsUseCases,
   RuntimeUseCases,
+  ScheduleUseCases,
   SessionUseCases,
   SettingsUseCases,
   TaskUseCases,
@@ -86,6 +91,7 @@ import {
   Rc152VersionAdapter,
   Rc153VersionAdapter,
   Rc171VersionAdapter,
+  Rc172VersionAdapter,
   VersionedBackendFactory,
   VersionedBackendProbe,
   redactMultilineText,
@@ -149,6 +155,10 @@ import {
 } from './checkpoints/vscode-checkpoint-adapter.js'
 import { TaskCenterRegistry } from './tasks/task-center-registry.js'
 import { PromptTemplateStore } from './prompts/prompt-template-store.js'
+import { handleScheduleFeatureRequest } from './schedules/schedule-feature-handler.js'
+import { handlePluginBundleFeatureRequest } from './plugins/plugin-bundle-feature-handler.js'
+import { createPluginBundleEnableConfirmation } from './plugins/confirm-plugin-bundle-enable.js'
+import { AccountLifecycleHost } from './account/account-lifecycle-host.js'
 import {
   createVscodePromptTemplateStorage,
   createVscodeWorkspacePromptTemplateStorage,
@@ -176,6 +186,10 @@ import {
 } from './attachments/attachment-codec.js'
 
 type FeatureResponsePayload = Extract<FeatureResponse, { readonly ok: true }>['payload']
+type AccountFeatureHostEvent =
+  | Extract<FeatureHostEvent, { readonly name: 'account.lifecycle.updated' }>
+  | Extract<FeatureHostEvent, { readonly name: 'account.session-expired' }>
+  | Extract<FeatureHostEvent, { readonly name: 'account.lifecycle.error' }>
 type FeatureContextKind = 'selection' | 'open-document' | 'diagnostic' | 'symbol'
 
 const execFileAsync = promisify(execFile)
@@ -527,6 +541,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
   const alpha172Adapter = new Alpha172VersionAdapter(adapterOptions)
   const rc153Adapter = new Rc153VersionAdapter(adapterOptions)
   const rc171Adapter = new Rc171VersionAdapter(adapterOptions)
+  const rc172Adapter = new Rc172VersionAdapter(adapterOptions)
   const alpha13Adapter = new Alpha13VersionAdapter(adapterOptions)
   const rc13Adapter = new Rc13VersionAdapter(adapterOptions)
   const alpha3Adapter = new Alpha3VersionAdapter(adapterOptions)
@@ -544,6 +559,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
   const legacyRc2Adapter = new LegacyRc2VersionAdapter(adapterOptions)
   const legacyRc1Adapter = new LegacyRc1VersionAdapter(adapterOptions)
   const adapters = [
+    rc172Adapter,
     rc171Adapter,
     alpha172Adapter,
     alpha171Adapter,
@@ -590,6 +606,12 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     processSupervisor: supervisor,
   })
   const backendService = new BackendService()
+  let accountLifecycleHost: AccountLifecycleHost | undefined
+  const disposeAccountLifecycleHost = async (): Promise<void> => {
+    const previous = accountLifecycleHost
+    accountLifecycleHost = undefined
+    await previous?.dispose()
+  }
   const activeJobFollows = new JobFollowRegistry()
   const runtimeInstaller = new RuntimeInstaller({
     tasks: vscode.tasks,
@@ -797,10 +819,11 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
   }
   let featureLocalSequence = 0
   const postFeatureEvent = (
-    name: 'editor.context.changed' | 'editor.context.availability.changed',
+    name: 'editor.context.changed' | 'editor.context.availability.changed' | 'schedule.invalidated',
     payload:
       | { readonly contextRef: string; readonly action: 'added' | 'updated' | 'released' }
-      | { readonly availableKinds: FeatureContextKind[] },
+      | { readonly availableKinds: FeatureContextKind[] }
+      | Record<string, never>,
   ): Promise<boolean> => {
     let connection: DshBackend['connection']
     try {
@@ -827,13 +850,66 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
             contextRef: (payload as { readonly contextRef: string }).contextRef,
             action: (payload as { readonly action: 'added' | 'updated' | 'released' }).action,
           }
-        : {
-            type: 'feature.event',
-            name,
-            identity,
-            availableKinds: (payload as { readonly availableKinds: FeatureContextKind[] }).availableKinds,
-          }
+        : name === 'editor.context.availability.changed'
+          ? {
+              type: 'feature.event',
+              name,
+              identity,
+              availableKinds: (payload as { readonly availableKinds: FeatureContextKind[] }).availableKinds,
+            }
+          : { type: 'feature.event', name, identity }
     return Promise.resolve(post(event))
+  }
+  const postAccountFeatureEvent = (
+    build: (
+      identity: Extract<FeatureHostEvent, { readonly name: 'account.lifecycle.updated' }>['identity'],
+    ) => AccountFeatureHostEvent,
+  ): Promise<boolean> => {
+    let connection: DshBackend['connection']
+    try {
+      connection = backendService.requireBackend().connection
+    } catch {
+      return Promise.resolve(false)
+    }
+    const backendInstanceId = connection.backendInstanceId
+    const connectionGeneration = connection.connectionGeneration
+    if (backendInstanceId === undefined || connectionGeneration === undefined) return Promise.resolve(false)
+    featureLocalSequence += 1
+    return Promise.resolve(
+      post(
+        build({
+          backendInstanceId,
+          connectionGeneration,
+          stream: 'host',
+          localSeq: featureLocalSequence,
+        }),
+      ),
+    )
+  }
+  const publishAccountSnapshot = (snapshot: AccountLifecycleSnapshot): void => {
+    void postAccountFeatureEvent((identity) => ({
+      type: 'feature.event',
+      name: 'account.lifecycle.updated',
+      identity,
+      snapshot,
+    }))
+  }
+  const publishAccountSessionExpired = (): void => {
+    void postAccountFeatureEvent((identity) => ({
+      type: 'feature.event',
+      name: 'account.session-expired',
+      identity,
+    }))
+  }
+  const publishAccountError = (
+    code: 'state-stream-failed' | 'expiry-stream-failed' | 'browser-open-failed',
+  ): void => {
+    void postAccountFeatureEvent((identity) => ({
+      type: 'feature.event',
+      name: 'account.lifecycle.error',
+      identity,
+      code,
+    }))
   }
   const postEditorContextAvailabilityEvent = async (): Promise<void> => {
     try {
@@ -1124,12 +1200,19 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     const payload = publicState(state)
     void postEvent('connection.snapshot', payload)
   }
-  const attach = (backend: DshBackend): void => {
+  const attach = async (backend: DshBackend): Promise<void> => {
+    await disposeAccountLifecycleHost()
     stopAllJobFollows()
     invalidateCurrentWorkspaceSessionDetails()
     changeTracker.attach(backend, currentWorkspaceFolderId)
     taskRegistry.attach(backend, currentWorkspaceFolderId)
     backendService.attach(backend, (event) => {
+      if (event.type === 'remote.event' && event.name === 'schedule/changed') {
+        // Do not forward the upstream event arguments (which may contain task
+        // details) to the generic Webview event channel. Signal a Host reload.
+        void postFeatureEvent('schedule.invalidated', {})
+        return
+      }
       if (
         event.type === 'workspace.changed' ||
         event.type === 'workspace.removed' ||
@@ -1140,6 +1223,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       )
         invalidateCurrentWorkspaceSessionDetails()
       if (event.type === 'connection.lost') {
+        void disposeAccountLifecycleHost()
         invalidateCurrentWorkspaceSessionDetails()
         changeTracker.detach()
         taskRegistry.detach()
@@ -1148,6 +1232,48 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       }
       void postBackendEvent(backend, event)
     })
+    if (backend.account !== undefined) {
+      const useCases = new AccountLifecycleUseCases(backend.account)
+      accountLifecycleHost = new AccountLifecycleHost({
+        useCases,
+        endpoint: () => backend.connection.endpoint,
+        client: () => ({
+          version: extensionVersion,
+          locale: vscode.env.language || 'en',
+          timezoneOffsetSeconds: -new Date().getTimezoneOffset() * 60,
+        }),
+        openExternal: async (url) => await vscode.env.openExternal(vscode.Uri.parse(url)),
+        ...(backend.sessions.initializeDefaultModel === undefined
+          ? {}
+          : {
+              initializeDefaultModel: (signal: AbortSignal) => sessionUseCases.initializeDefaultModel(signal),
+              reportDiagnostic: () => diagnostics.log('warn', 'account-default-model-initialization-failed'),
+            }),
+        publishSnapshot: publishAccountSnapshot,
+        publishSessionExpired: publishAccountSessionExpired,
+        reportError: publishAccountError,
+        confirmSignOut: async (impact: SignOutImpact) => {
+          const detail =
+            impact === 'running'
+              ? vscode.l10n.t('DSH reports running account tasks. Signing out may interrupt them. Continue?')
+              : impact === 'unknown'
+                ? vscode.l10n.t(
+                    'DSH could not confirm whether account tasks are running. Signing out may interrupt them. Continue?',
+                  )
+                : vscode.l10n.t(
+                    'No running account tasks were detected. Remove the stored DSH account grant?',
+                  )
+          const confirmLabel = vscode.l10n.t('Sign out')
+          const choice = await vscode.window.showWarningMessage(
+            vscode.l10n.t('Sign out of the DSH account?'),
+            { modal: true, detail },
+            confirmLabel,
+          )
+          return choice === confirmLabel
+        },
+      })
+      accountLifecycleHost.start()
+    }
   }
   const connect = async (signal?: AbortSignal): Promise<unknown> => {
     const current = configuration.read()
@@ -1168,7 +1294,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       // endpoint in the live Host connection, not in durable workspace state.
       port: result.backend.connection.endpoint.port,
     })
-    attach(result.backend)
+    await attach(result.backend)
     // Commands may connect before the Webview exists. app.ready must always
     // receive a fresh authoritative snapshot even when the initial publish
     // had no recipient.
@@ -1179,6 +1305,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
   const reconnect = async (signal?: AbortSignal): Promise<unknown> => {
     if (reconnectOperation !== undefined) return reconnectOperation
     const operation = (async (): Promise<unknown> => {
+      await disposeAccountLifecycleHost()
       changeTracker.detach()
       taskRegistry.detach()
       editorContextProvider.dispose()
@@ -1542,6 +1669,76 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     }
   }
   const handleFeatureRequest = async (request: FeatureRequest, signal: AbortSignal): Promise<unknown> => {
+    if (
+      request.type === 'account.state' ||
+      request.type === 'account.signIn' ||
+      request.type === 'account.cancelSignIn' ||
+      request.type === 'account.signOutImpact' ||
+      request.type === 'account.signOut'
+    ) {
+      const account = accountLifecycleHost
+      if (account === undefined)
+        throw new AppError({
+          code: 'CAPABILITY_UNAVAILABLE',
+          message: 'The connected DSH version does not expose account lifecycle controls.',
+          retryable: false,
+        })
+      if (request.type === 'account.state')
+        return { kind: 'account.lifecycle', snapshot: await account.getState(signal) }
+      if (request.type === 'account.signIn')
+        return { kind: 'account.lifecycle', snapshot: await account.startSignIn(signal) }
+      if (request.type === 'account.cancelSignIn')
+        return {
+          kind: 'account.lifecycle',
+          snapshot: await account.cancelSignIn(request.payload.attemptId, signal),
+        }
+      if (request.type === 'account.signOutImpact')
+        return { kind: 'account.impact', impact: await account.getSignOutImpact(signal) }
+      const snapshot = await account.signOut(signal)
+      return { kind: 'account.lifecycle', snapshot: snapshot ?? (await account.getState(signal)) }
+    }
+    if (request.type === 'plugin.bundles.list' || request.type === 'plugin.bundle.setEnabled') {
+      const backend = backendService.requireBackend()
+      const bundles = new PluginBundleUseCases(backend)
+      const confirmEnable = createPluginBundleEnableConfirmation(
+        (message, options, confirmLabel) => vscode.window.showWarningMessage(message, options, confirmLabel),
+        (message, bundleTitle) =>
+          bundleTitle === undefined ? vscode.l10n.t(message) : vscode.l10n.t(message, bundleTitle),
+        vscode.env.language,
+      )
+      return handlePluginBundleFeatureRequest(request, bundles, signal, confirmEnable)
+    }
+    if (
+      request.type === 'schedule.catalog' ||
+      request.type === 'schedule.list' ||
+      request.type === 'schedule.history' ||
+      request.type === 'schedule.update' ||
+      request.type === 'schedule.delete'
+    ) {
+      const backend = backendService.requireBackend()
+      if (backend.schedules === undefined)
+        throw new AppError({
+          code: 'CAPABILITY_UNAVAILABLE',
+          message: 'The connected DSH version does not expose scheduled tasks.',
+          retryable: false,
+        })
+      const schedules = new ScheduleUseCases(backend.schedules)
+      if (request.type === 'schedule.catalog') {
+        const [items, workspaces] = await Promise.all([
+          schedules.catalog(signal),
+          listCurrentWorkspaces(signal),
+        ])
+        const currentWorkspaceSessionIds = new Set(
+          workspaces.flatMap((workspace) => workspace.sessionIds ?? []),
+        )
+        return {
+          kind: 'schedule.catalog',
+          items: items.filter((item) => currentWorkspaceSessionIds.has(item.sessionId)),
+        }
+      }
+      await requireCurrentWorkspaceSession(request.payload.sessionId, signal, { allowArchived: true })
+      return handleScheduleFeatureRequest(request, schedules, signal)
+    }
     if (request.type === 'editor.context.capture') {
       const owner = featureContextOwner(request.payload.workspaceFolderId)
       const item = await editorContextUseCases.capture(
@@ -2563,6 +2760,10 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     }
     if (request.type === 'settings.read') return publicValue(await settingsUseCases.read(signal))
     if (request.type === 'settings.openDocument') return settingsUseCases.openDocument(signal)
+    if (request.type === 'settings.openKeyboardShortcuts') {
+      await vscode.commands.executeCommand('workbench.action.openGlobalKeybindings')
+      return undefined
+    }
     if (request.type === 'extensionSettings.read')
       return publicValue(publicExtensionSettings(configuration.read(), extensionVersion))
     if (request.type === 'settings.update')
@@ -2899,6 +3100,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     dispose: async () => {
       runtimeUpdateLifecycle.abort()
       router.cancelAll()
+      await disposeAccountLifecycleHost()
       stopAllJobFollows()
       stateSubscription()
       provider.dispose()
@@ -3124,6 +3326,7 @@ function publicState(state: BackendState): unknown {
           dshVersion: state.backend.capabilities.dshVersion,
           sessionRestore: state.backend.capabilities.sessionRestore === true,
           jobController: state.backend.capabilities.jobController === true,
+          accountLifecycleAvailable: state.backend.capabilities.features.has('account-lifecycle'),
           ...(state.backend.capabilities.subagentImagePrompts === true ? { subagentImagePrompts: true } : {}),
           ...(state.backend.backendInstanceId === undefined
             ? {}
@@ -3604,6 +3807,7 @@ function requiresTrustedWorkspace(type: WebviewRequest['type']): boolean {
     case 'settings.update':
     case 'settings.unset':
     case 'settings.openDocument':
+    case 'settings.openKeyboardShortcuts':
     case 'goal.list':
     case 'goal.update':
     case 'goal.clear':

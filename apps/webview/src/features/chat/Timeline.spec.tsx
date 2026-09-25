@@ -79,6 +79,54 @@ describe('Timeline', () => {
     expect(screen.getByText('Using a tool…')).toBeDefined()
   })
 
+  it('applies the selected transcript presentation to reasoning, step metadata, and turn grouping', () => {
+    const nodes: readonly TimelineNode[] = [
+      {
+        kind: 'reasoning',
+        id: 'reasoning-1',
+        markdown: 'Private reasoning preview',
+        streaming: false,
+      },
+      {
+        kind: 'assistant-message',
+        id: 'assistant-1',
+        markdown: 'First answer',
+        streaming: false,
+        turn: 1,
+        step: 1,
+        turnCompleted: true,
+      },
+      {
+        kind: 'assistant-message',
+        id: 'assistant-2',
+        markdown: 'Second answer',
+        streaming: false,
+        turn: 2,
+        step: 0,
+        turnCompleted: true,
+      },
+    ]
+    const view = render(
+      <Timeline sessionId="session-1" nodes={nodes} streaming={false} transcriptView="standard" />,
+    )
+
+    expect(document.querySelector('.dsh-timeline')?.getAttribute('data-transcript-view')).toBe('standard')
+    expect(document.querySelectorAll('.dsh-timeline__card--assistant')).toHaveLength(2)
+    expect(document.querySelector('.dsh-timeline__reasoning-preview')).not.toBeNull()
+
+    view.rerender(<Timeline sessionId="session-1" nodes={nodes} streaming={false} transcriptView="compact" />)
+    expect(document.querySelector('.dsh-timeline')?.getAttribute('data-transcript-view')).toBe('compact')
+    expect(document.querySelector('.dsh-timeline__reasoning-preview')).toBeNull()
+
+    view.rerender(
+      <Timeline sessionId="session-1" nodes={nodes} streaming={false} transcriptView="detailed" />,
+    )
+    expect(screen.getByText('Turn 1 · step 1')).toBeDefined()
+
+    view.rerender(<Timeline sessionId="session-1" nodes={nodes} streaming={false} transcriptView="verbose" />)
+    expect(document.querySelectorAll('.dsh-timeline__card--assistant')).toHaveLength(3)
+  })
+
   it('projects hidden session-reference context onto the preceding user turn', () => {
     const onOpenLink = vi.fn()
     render(
@@ -672,7 +720,7 @@ describe('Timeline', () => {
     expect(collapsedContent?.parentElement?.parentElement?.getAttribute('data-open')).toBe('false')
     expect(screen.getByRole('heading', { name: 'Done' })).toBeDefined()
     expect(screen.getByText('result')).toBeDefined()
-    expect(screen.getByText('Ran for 3m 08s')).toBeDefined()
+    expect(screen.queryByText('Ran for 3m 08s')).toBeNull()
 
     fireEvent.click(reasoningToggle)
     expect(container.querySelector('.dsh-timeline__reasoning-preview-content')?.textContent).toBe(

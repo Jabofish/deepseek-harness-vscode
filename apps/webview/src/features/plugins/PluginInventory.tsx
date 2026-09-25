@@ -1,8 +1,14 @@
-import { pluginLocalizedText } from '@dsh-vscode/domain'
+import {
+  pluginLocalizedText,
+  type AgentPresetPluginGroup,
+  type AgentPresetPluginRow,
+  type PluginFiberPhase,
+  type PluginInventoryEntry,
+  type PluginInventorySnapshot,
+} from '@dsh-vscode/domain'
 import { useEffect, useId, useMemo, useState, type ReactElement } from 'react'
-import type { PluginFiberPhase, PluginInventoryEntry, PluginInventorySnapshot } from '@dsh-vscode/domain'
 import { Icon } from '../../ui/Icon.js'
-import { useI18n } from '../../i18n.js'
+import { useI18n, type Translate } from '../../i18n.js'
 
 export interface PluginInventoryProps {
   readonly revision?: number | undefined
@@ -14,8 +20,18 @@ type ViewState =
   | { readonly status: 'error' }
   | { readonly status: 'ready'; readonly snapshot: PluginInventorySnapshot }
 
+type PluginRow = PluginInventoryEntry | AgentPresetPluginRow
+
+const EMPTY_PRESETS: readonly AgentPresetPluginGroup[] = []
+const EMPTY_PLUGIN_ENTRIES: readonly PluginInventoryEntry[] = []
+const EMPTY_PRESET_ROWS: readonly AgentPresetPluginRow[] = []
+
+type ExpandedPlugin =
+  | { readonly scope: 'global'; readonly entryId: string }
+  | { readonly scope: 'session'; readonly presetId: string; readonly rowKey: string }
+
 /** Localized accessible label for one root Fiber phase. */
-function phaseLabel(phase: PluginFiberPhase, t: (key: string) => string): string {
+function phaseLabel(phase: PluginFiberPhase, t: Translate): string {
   return phase === null ? t('plugins.phase.unmounted') : t(`plugins.phase.${phase}`)
 }
 
@@ -28,27 +44,177 @@ function moduleShortName(moduleName: string): string {
     .replace(/^dsh-(?:host-|client-)?/, '')
 }
 
-/** Whether an inventory row matches the local catalog query. */
-function matches(entry: PluginInventoryEntry, normalizedQuery: string): boolean {
-  if (normalizedQuery.length === 0) return true
-  return [entry.moduleName, entry.entryId].some((value) =>
-    value.toLocaleLowerCase().includes(normalizedQuery),
+function presetName(preset: AgentPresetPluginGroup): string {
+  return preset.name?.trim() || preset.id
+}
+
+/** Keep a user's inspection choice when it survives a refresh; otherwise use the host default. */
+function selectedPresetId(
+  presets: readonly AgentPresetPluginGroup[],
+  requestedId: string | undefined,
+): string | undefined {
+  if (requestedId !== undefined && presets.some((preset) => preset.id === requestedId)) return requestedId
+  return presets.find((preset) => preset.isDefault)?.id ?? presets[0]?.id
+}
+
+function matchesValues(values: readonly (string | undefined | null)[], normalizedQuery: string): boolean {
+  return (
+    normalizedQuery.length === 0 ||
+    values.some((value) => value?.toLocaleLowerCase().includes(normalizedQuery) === true)
   )
 }
 
-/**
- * The read-only plugin inventory, mirroring the upstream Settings section:
- * a search box over the loader projection, one expandable card per entry with
- * its configuration tag and — when enabled — its root Cordis fiber phase. The
- * pinned rc.6 contract publishes no mutation path, so the section is purely a
- * projection of what the deployment composed.
- */
+/** Search visible metadata and stable inventory identifiers without inspecting opaque payloads. */
+function matchesGlobal(entry: PluginInventoryEntry, normalizedQuery: string, locale: string): boolean {
+  return matchesValues(
+    [
+      entry.entryId,
+      entry.moduleName,
+      pluginLocalizedText(entry.meta?.title, locale),
+      pluginLocalizedText(entry.meta?.description, locale),
+    ],
+    normalizedQuery,
+  )
+}
+
+function matchesSession(
+  row: AgentPresetPluginRow,
+  preset: AgentPresetPluginGroup,
+  normalizedQuery: string,
+  locale: string,
+): boolean {
+  return matchesValues(
+    [
+      preset.id,
+      presetName(preset),
+      row.entryId,
+      row.moduleName,
+      pluginLocalizedText(row.meta?.title, locale),
+      pluginLocalizedText(row.meta?.description, locale),
+    ],
+    normalizedQuery,
+  )
+}
+
+function sessionRowKey(presetId: string, row: AgentPresetPluginRow, index: number): string {
+  return `${encodeURIComponent(presetId)}:${encodeURIComponent(row.entryId ?? row.moduleName)}:${index}`
+}
+
+function countLabel(matches: number, total: number, searching: boolean, t: Translate): string {
+  return searching
+    ? t('plugins.inventory.matchCount', { matches, total })
+    : t('plugins.inventory.totalCount', { count: total })
+}
+
+function PluginCard(props: {
+  readonly cardId: string
+  readonly entry: PluginRow
+  readonly scope: 'session' | 'global'
+  readonly expanded: boolean
+  readonly onToggle: () => void
+  readonly detailId: string
+  readonly locale: string
+  readonly t: Translate
+}): ReactElement {
+  const { entry, scope, t, locale } = props
+  const title = pluginLocalizedText(entry.meta?.title, locale) ?? moduleShortName(entry.moduleName)
+  const enabled = entry.enabled === true
+  const conditional = entry.enabled === 'conditional'
+  const configuration = conditional
+    ? t('plugins.conditional')
+    : enabled
+      ? t('plugins.enabled')
+      : t('plugins.disabled')
+  const status = phaseLabel(entry.fiberPhase, t)
+  const condition = 'condition' in entry ? entry.condition : undefined
+  const entryId = entry.entryId
+
+  return (
+    <li
+      className="dsh-plugin-inventory__card"
+      key={props.cardId}
+      data-plugin-scope={scope}
+      data-plugin-entry={entryId ?? undefined}
+      data-plugin-row={scope === 'session' ? props.cardId : undefined}
+      data-open={props.expanded ? 'true' : undefined}
+    >
+      <button
+        className="dsh-plugin-inventory__card-content"
+        type="button"
+        aria-expanded={props.expanded}
+        aria-controls={props.expanded ? props.detailId : undefined}
+        onClick={props.onToggle}
+      >
+        <strong className="dsh-plugin-inventory__card-title" title={entry.moduleName}>
+          {title}
+        </strong>
+        <span className="dsh-plugin-inventory__card-trailing">
+          {enabled ? (
+            <span
+              className="dsh-plugin-inventory__status-dot"
+              data-phase={entry.fiberPhase ?? 'unobserved'}
+              role="img"
+              aria-label={status}
+              title={status}
+            />
+          ) : null}
+          <span
+            className="dsh-plugin-inventory__config-tag"
+            data-enabled={conditional ? 'conditional' : enabled ? 'true' : 'false'}
+          >
+            {configuration}
+          </span>
+          <Icon name="chevron-down" />
+        </span>
+      </button>
+      {props.expanded ? (
+        <div className="dsh-plugin-inventory__card-details" id={props.detailId}>
+          {entry.meta?.description === undefined ? null : (
+            <p>{pluginLocalizedText(entry.meta.description, locale)}</p>
+          )}
+          {entry.meta?.error === undefined ? null : <p role="alert">{entry.meta.error}</p>}
+          {entryId === null ? null : (
+            <code className="dsh-plugin-inventory__entry-value" data-loader-entry>
+              {entryId}
+            </code>
+          )}
+          <dl className="dsh-plugin-inventory__details">
+            <div>
+              <dt>{t('plugins.configuration')}</dt>
+              <dd>{configuration}</dd>
+            </div>
+            {enabled ? (
+              <div>
+                <dt>{t('plugins.cordisStatus')}</dt>
+                <dd>{status}</dd>
+              </div>
+            ) : null}
+            {condition === undefined ? null : (
+              <div>
+                <dt>{t('plugins.inventory.condition')}</dt>
+                <dd>
+                  <code>{condition}</code>
+                </dd>
+              </div>
+            )}
+          </dl>
+        </div>
+      ) : null}
+    </li>
+  )
+}
+
+/** Read-only projection of the host's per-preset composition and global plugin inventory. */
 export function PluginInventory(props: PluginInventoryProps): ReactElement {
   const { t, locale } = useI18n()
   const catalogId = useId()
+  const modeSelectId = useId()
+  const sessionHeadingId = useId()
+  const globalHeadingId = useId()
   const [request, setRequest] = useState(0)
   const [query, setQuery] = useState('')
-  const [expanded, setExpanded] = useState<PluginInventoryEntry['entryId'] | null>(null)
+  const [selectedId, setSelectedId] = useState<string | undefined>(undefined)
+  const [expanded, setExpanded] = useState<ExpandedPlugin | null>(null)
   const [state, setState] = useState<ViewState>({ status: 'loading' })
 
   useEffect(() => {
@@ -58,6 +224,10 @@ export function PluginInventory(props: PluginInventoryProps): ReactElement {
       .catch(() => undefined)
       .then((snapshot) => {
         if (!current) return
+        setExpanded(null)
+        if (snapshot !== undefined) {
+          setSelectedId((previous) => selectedPresetId(snapshot.agentPresets ?? [], previous))
+        }
         setState(snapshot === undefined ? { status: 'error' } : { status: 'ready', snapshot })
       })
     return () => {
@@ -68,28 +238,59 @@ export function PluginInventory(props: PluginInventoryProps): ReactElement {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [request, props.revision])
 
+  const snapshot = state.status === 'ready' ? state.snapshot : undefined
+  const presets = snapshot?.agentPresets ?? EMPTY_PRESETS
+  const selectedPreset =
+    presets.find((preset) => preset.id === selectedId) ??
+    presets.find((preset) => preset.isDefault) ??
+    presets[0]
+  const globalEntries = snapshot?.entries ?? EMPTY_PLUGIN_ENTRIES
+  const sessionRows = selectedPreset?.rows ?? EMPTY_PRESET_ROWS
   const normalizedQuery = query.trim().toLocaleLowerCase()
-  const filteredEntries = useMemo(
-    () =>
-      state.status === 'ready'
-        ? state.snapshot.entries.filter((entry) => matches(entry, normalizedQuery))
-        : [],
-    [normalizedQuery, state],
+  const filteredGlobal = useMemo(
+    () => globalEntries.filter((entry) => matchesGlobal(entry, normalizedQuery, locale)),
+    [globalEntries, locale, normalizedQuery],
   )
+  const filteredSession = useMemo(
+    () =>
+      selectedPreset?.rows
+        .map((row, index) => ({ row, index }))
+        .filter(({ row }) => matchesSession(row, selectedPreset, normalizedQuery, locale)) ?? [],
+    [locale, normalizedQuery, selectedPreset],
+  )
+  const resultCount = filteredGlobal.length + filteredSession.length
+  const candidateCount = globalEntries.length + sessionRows.length
 
-  // Upstream collapses an expanded card once the query filters it out; folding
-  // that into the query change keeps it out of a cascading effect.
   const onQueryChange = (value: string): void => {
-    setQuery(value)
-    if (expanded === null || state.status !== 'ready') return
-    const entry = state.snapshot.entries.find((item) => item.entryId === expanded)
     const nextQuery = value.trim().toLocaleLowerCase()
-    if (entry === undefined || !matches(entry, nextQuery)) setExpanded(null)
+    setQuery(value)
+    if (expanded === null || snapshot === undefined) return
+
+    if (expanded.scope === 'global') {
+      const entry = snapshot.entries.find((item) => item.entryId === expanded.entryId)
+      if (entry === undefined || !matchesGlobal(entry, nextQuery, locale)) setExpanded(null)
+      return
+    }
+
+    if (selectedPreset?.id !== expanded.presetId) {
+      setExpanded(null)
+      return
+    }
+    const indexedRow = selectedPreset.rows
+      .map((row, index) => ({ row, index }))
+      .find(({ row, index }) => sessionRowKey(selectedPreset.id, row, index) === expanded.rowKey)
+    const row = indexedRow?.row
+    if (row === undefined || !matchesSession(row, selectedPreset, nextQuery, locale)) setExpanded(null)
   }
 
   const retry = (): void => {
     setState({ status: 'loading' })
     setRequest((value) => value + 1)
+  }
+
+  const selectPreset = (value: string): void => {
+    setSelectedId(value)
+    setExpanded(null)
   }
 
   return (
@@ -113,6 +314,23 @@ export function PluginInventory(props: PluginInventoryProps): ReactElement {
       ) : null}
       {state.status === 'ready' ? (
         <div className="dsh-plugin-inventory__catalog">
+          {selectedPreset === undefined ? null : (
+            <div className="dsh-plugin-inventory__mode-selector">
+              <label htmlFor={modeSelectId}>{t('plugins.inventory.chooseAgentMode')}</label>
+              <select
+                id={modeSelectId}
+                value={selectedPreset.id}
+                onChange={(event) => selectPreset(event.currentTarget.value)}
+              >
+                {presets.map((preset) => (
+                  <option key={preset.id} value={preset.id}>
+                    {presetName(preset)}
+                    {preset.isDefault ? ` (${t('plugins.defaultPreset')})` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <label className="dsh-plugin-inventory__search">
             <Icon name="search" />
             <span className="dsh-sr-only">{t('plugins.search')}</span>
@@ -126,161 +344,122 @@ export function PluginInventory(props: PluginInventoryProps): ReactElement {
               }}
             />
           </label>
-          <div className="dsh-plugin-inventory__heading">
-            <h3>{t('plugins.list')}</h3>
-            {state.snapshot.managementAvailable === undefined ? null : (
-              <span>
-                {t(
-                  state.snapshot.managementAvailable
-                    ? 'plugins.managementInDsh'
-                    : 'plugins.managementUnavailable',
+
+          {selectedPreset === undefined ? null : (
+            <section
+              className="dsh-plugin-inventory__group"
+              data-plugin-scope="session"
+              data-agent-preset-id={selectedPreset.id}
+              aria-labelledby={sessionHeadingId}
+            >
+              <div className="dsh-plugin-inventory__heading">
+                <h3 id={sessionHeadingId}>{t('plugins.inventory.session')}</h3>
+                <span
+                  data-plugin-count={filteredSession.length}
+                  data-plugin-total={sessionRows.length}
+                  aria-label={countLabel(
+                    filteredSession.length,
+                    sessionRows.length,
+                    normalizedQuery.length > 0,
+                    t,
+                  )}
+                >
+                  {countLabel(filteredSession.length, sessionRows.length, normalizedQuery.length > 0, t)}
+                </span>
+              </div>
+              {selectedPreset.broken === undefined ? null : <p role="alert">{selectedPreset.broken}</p>}
+              <code className="dsh-plugin-inventory__preset-id">{selectedPreset.id}</code>
+              {sessionRows.length === 0 && selectedPreset.broken === undefined ? (
+                <p className="dsh-settings__empty">{t('plugins.inventory.sessionEmpty')}</p>
+              ) : null}
+              {filteredSession.length > 0 ? (
+                <ul className="dsh-plugin-inventory__cards">
+                  {filteredSession.map(({ row, index }) => {
+                    const rowKey = sessionRowKey(selectedPreset.id, row, index)
+                    const isExpanded =
+                      expanded?.scope === 'session' &&
+                      expanded.presetId === selectedPreset.id &&
+                      expanded.rowKey === rowKey
+                    return (
+                      <PluginCard
+                        key={rowKey}
+                        cardId={rowKey}
+                        entry={row}
+                        scope="session"
+                        expanded={isExpanded}
+                        onToggle={() => {
+                          setExpanded(
+                            isExpanded ? null : { scope: 'session', presetId: selectedPreset.id, rowKey },
+                          )
+                        }}
+                        detailId={`${catalogId}-details-${encodeURIComponent(rowKey)}`}
+                        locale={locale}
+                        t={t}
+                      />
+                    )
+                  })}
+                </ul>
+              ) : null}
+            </section>
+          )}
+
+          <section
+            className="dsh-plugin-inventory__group"
+            data-plugin-scope="global"
+            aria-labelledby={globalHeadingId}
+          >
+            <div className="dsh-plugin-inventory__heading">
+              <h3 id={globalHeadingId}>{t('plugins.inventory.global')}</h3>
+              {snapshot?.managementAvailable === undefined ? null : (
+                <span>
+                  {t(
+                    snapshot.managementAvailable
+                      ? 'plugins.managementInDsh'
+                      : 'plugins.managementUnavailable',
+                  )}
+                </span>
+              )}
+              <span
+                data-plugin-count={filteredGlobal.length}
+                data-plugin-total={globalEntries.length}
+                aria-label={countLabel(
+                  filteredGlobal.length,
+                  globalEntries.length,
+                  normalizedQuery.length > 0,
+                  t,
                 )}
+              >
+                {countLabel(filteredGlobal.length, globalEntries.length, normalizedQuery.length > 0, t)}
               </span>
-            )}
-            <span data-plugin-count={filteredEntries.length}>{filteredEntries.length}</span>
-          </div>
-          {state.snapshot.entries.length === 0 ? (
-            <p className="dsh-settings__empty">{t('plugins.empty')}</p>
-          ) : null}
-          {state.snapshot.entries.length > 0 && filteredEntries.length === 0 ? (
-            <p className="dsh-settings__empty">{t('plugins.noMatch')}</p>
-          ) : null}
-          {filteredEntries.length > 0 ? (
-            <ul className="dsh-plugin-inventory__cards">
-              {filteredEntries.map((entry) => {
-                const status = phaseLabel(entry.fiberPhase, t)
-                const title =
-                  pluginLocalizedText(entry.meta?.title, locale) ?? moduleShortName(entry.moduleName)
-                const configuration = entry.enabled ? t('plugins.enabled') : t('plugins.disabled')
-                const open = expanded === entry.entryId
-                const detailId = `${catalogId}-details-${encodeURIComponent(entry.entryId)}`
-                return (
-                  <li
-                    className="dsh-plugin-inventory__card"
-                    key={entry.entryId}
-                    data-plugin-entry={entry.entryId}
-                    data-open={open ? 'true' : undefined}
-                  >
-                    <button
-                      className="dsh-plugin-inventory__card-content"
-                      type="button"
-                      aria-expanded={open}
-                      aria-controls={detailId}
-                      aria-label={
-                        entry.enabled ? `${title}, ${status}, ${configuration}` : `${title}, ${configuration}`
-                      }
-                      onClick={() => {
-                        setExpanded((current) => (current === entry.entryId ? null : entry.entryId))
-                      }}
-                    >
-                      <strong className="dsh-plugin-inventory__card-title" title={entry.moduleName}>
-                        {title}
-                      </strong>
-                      <span className="dsh-plugin-inventory__card-trailing">
-                        {entry.enabled ? (
-                          <span
-                            className="dsh-plugin-inventory__status-dot"
-                            data-phase={entry.fiberPhase ?? 'unobserved'}
-                            role="img"
-                            aria-label={status}
-                            title={status}
-                          />
-                        ) : null}
-                        <span
-                          className="dsh-plugin-inventory__config-tag"
-                          data-enabled={entry.enabled ? 'true' : 'false'}
-                        >
-                          {configuration}
-                        </span>
-                        <Icon name="chevron-down" />
-                      </span>
-                    </button>
-                    {open ? (
-                      <div className="dsh-plugin-inventory__card-details" id={detailId}>
-                        {entry.meta?.description === undefined ? null : (
-                          <p>{pluginLocalizedText(entry.meta.description, locale)}</p>
-                        )}
-                        {entry.meta?.error === undefined ? null : <p role="alert">{entry.meta.error}</p>}
-                        <code className="dsh-plugin-inventory__entry-value" data-loader-entry>
-                          {entry.entryId}
-                        </code>
-                        <dl className="dsh-plugin-inventory__details">
-                          <div>
-                            <dt>{t('plugins.configuration')}</dt>
-                            <dd>{configuration}</dd>
-                          </div>
-                          {entry.enabled ? (
-                            <div>
-                              <dt>{t('plugins.cordisStatus')}</dt>
-                              <dd>{status}</dd>
-                            </div>
-                          ) : null}
-                        </dl>
-                      </div>
-                    ) : null}
-                  </li>
-                )
-              })}
-            </ul>
-          ) : null}
-          {(state.snapshot.agentPresets?.length ?? 0) > 0 ? (
-            <section aria-label={t('plugins.presets')}>
-              <h3>{t('plugins.presets')}</h3>
+            </div>
+            {globalEntries.length === 0 ? <p className="dsh-settings__empty">{t('plugins.empty')}</p> : null}
+            {filteredGlobal.length > 0 ? (
               <ul className="dsh-plugin-inventory__cards">
-                {state.snapshot.agentPresets?.flatMap((preset) => {
-                  const presetMatches = [preset.id, preset.name ?? ''].some((value) =>
-                    value.toLocaleLowerCase().includes(normalizedQuery),
+                {filteredGlobal.map((entry) => {
+                  const isExpanded = expanded?.scope === 'global' && expanded.entryId === entry.entryId
+                  return (
+                    <PluginCard
+                      key={entry.entryId}
+                      cardId={entry.entryId}
+                      entry={entry}
+                      scope="global"
+                      expanded={isExpanded}
+                      onToggle={() => {
+                        setExpanded(isExpanded ? null : { scope: 'global', entryId: entry.entryId })
+                      }}
+                      detailId={`${catalogId}-details-${encodeURIComponent(`global:${entry.entryId}`)}`}
+                      locale={locale}
+                      t={t}
+                    />
                   )
-                  const rows = presetMatches
-                    ? preset.rows
-                    : preset.rows.filter((row) =>
-                        [row.moduleName, row.entryId ?? ''].some((value) =>
-                          value.toLocaleLowerCase().includes(normalizedQuery),
-                        ),
-                      )
-                  if (!presetMatches && rows.length === 0) return []
-                  return [
-                    <li className="dsh-plugin-inventory__card" key={preset.id}>
-                      <details>
-                        <summary className="dsh-plugin-inventory__card-content">
-                          <strong>{preset.name ?? preset.id}</strong>
-                          {preset.isDefault ? <span>{t('plugins.defaultPreset')}</span> : null}
-                        </summary>
-                        <div className="dsh-plugin-inventory__card-details">
-                          <code>{preset.id}</code>
-                          {preset.broken === undefined ? null : <p role="alert">{preset.broken}</p>}
-                          <ul>
-                            {rows.map((row, index) => (
-                              <li key={`${row.entryId ?? row.moduleName}-${index}`}>
-                                <strong title={row.moduleName}>
-                                  {pluginLocalizedText(row.meta?.title, locale) ??
-                                    moduleShortName(row.moduleName)}
-                                </strong>
-                                {' · '}
-                                {t(
-                                  row.enabled === 'conditional'
-                                    ? 'plugins.conditional'
-                                    : row.enabled
-                                      ? 'plugins.enabled'
-                                      : 'plugins.disabled',
-                                )}
-                                {row.enabled === true ? <> · {phaseLabel(row.fiberPhase, t)}</> : null}
-                                {row.entryId === null ? null : (
-                                  <div>
-                                    <code>{row.entryId}</code>
-                                  </div>
-                                )}
-                                {row.condition === undefined ? null : <pre>{row.condition}</pre>}
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      </details>
-                    </li>,
-                  ]
                 })}
               </ul>
-            </section>
+            ) : null}
+          </section>
+          {normalizedQuery.length > 0 && candidateCount > 0 && resultCount === 0 ? (
+            <p className="dsh-settings__empty" role="status">
+              {t('plugins.noMatch')}
+            </p>
           ) : null}
         </div>
       ) : null}

@@ -17,6 +17,8 @@ import type {
   JobView,
   PermissionRequest,
   PluginFiberPhase,
+  ScheduleMutationFailure,
+  ScheduleRecord,
   SessionExportOptions,
   SessionStatus,
   TeamMemberPhase,
@@ -131,6 +133,42 @@ const SUBAGENT_DIAGNOSTIC_REASON: Record<SubagentDiagnosticView['reason'], true>
   corrupt: true,
   unsupported: true,
   unavailable: true,
+}
+const SCHEDULE_KIND: Record<ScheduleRecord['kind'], true> = {
+  at: true,
+  after: true,
+  every: true,
+  daily: true,
+  weekly: true,
+  cron: true,
+}
+const SCHEDULE_STATUS: Record<'active' | 'inactive', true> = { active: true, inactive: true }
+const SCHEDULE_FILTER: Record<'all' | 'active' | 'inactive', true> = {
+  all: true,
+  active: true,
+  inactive: true,
+}
+const SCHEDULE_WEEKDAY: Record<'1' | '2' | '3' | '4' | '5' | '6' | '7', true> = {
+  '1': true,
+  '2': true,
+  '3': true,
+  '4': true,
+  '5': true,
+  '6': true,
+  '7': true,
+}
+const SCHEDULE_RESULT_CODE: Record<ScheduleMutationFailure['code'], true> = {
+  schedule_not_found: true,
+  schedule_ended: true,
+  schedule_conflict: true,
+  invalid_prompt: true,
+  invalid_selector: true,
+  invalid_rule: true,
+  invalid_time_zone: true,
+  not_future: true,
+  time_out_of_range: true,
+  frequency_too_high: true,
+  internal_error: true,
 }
 const RUNTIME_CONNECTION_STAGE: Record<RuntimeConnectionStage, true> = {
   discovering: true,
@@ -438,6 +476,11 @@ describe('webview translation keys', () => {
       ['runtime.status.', Object.keys(RUNTIME_STATUS_TEMPLATE)],
       ['message.feedbackCategory.', Object.keys(FEEDBACK_CATEGORY)],
       ['subagents.diagnostic.', Object.keys(SUBAGENT_DIAGNOSTIC_REASON)],
+      ['schedules.kind.', Object.keys(SCHEDULE_KIND)],
+      ['schedules.status.', Object.keys(SCHEDULE_STATUS)],
+      ['schedules.filter.', Object.keys(SCHEDULE_FILTER)],
+      ['schedules.weekday.', Object.keys(SCHEDULE_WEEKDAY)],
+      ['schedules.error.', Object.keys(SCHEDULE_RESULT_CODE)],
       ['runtime.connectionProgress.stage.', Object.keys(RUNTIME_CONNECTION_STAGE)],
       ['timeline.teamStatus.', Object.keys(TEAM_STATUS_VALUE)],
       ['timeline.teamDelivery.', Object.keys(TEAM_DELIVERY_MODE)],

@@ -43,7 +43,7 @@ export interface ModelPickerProps {
   readonly disabled?: boolean
   readonly displayLabel?: boolean
   readonly openRequest?: number
-  readonly onChange: (value: ModelSelection) => void
+  readonly onChange: (value: ModelSelection) => void | Promise<void>
 }
 
 /**
@@ -56,6 +56,9 @@ export const ModelPicker = memo(function ModelPicker(props: ModelPickerProps): R
   const { t } = useI18n()
   const [open, setOpen] = useState(false)
   const [pane, setPane] = useState<ModelPane>('root')
+  const [applying, setApplying] = useState(false)
+  const [applyError, setApplyError] = useState(false)
+  const applyingRef = useRef(false)
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -177,6 +180,7 @@ export const ModelPicker = memo(function ModelPicker(props: ModelPickerProps): R
   }
 
   const onTriggerKeyDown = (event: KeyboardEvent<HTMLButtonElement>): void => {
+    if (applying) return
     if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
     event.preventDefault()
     openMenu(event.key === 'ArrowDown' ? 'first' : 'last')
@@ -199,30 +203,55 @@ export const ModelPicker = memo(function ModelPicker(props: ModelPickerProps): R
     }
   }
 
+  const applySelection = (value: ModelSelection): void => {
+    if (applyingRef.current) return
+    setApplyError(false)
+    let result: void | Promise<void>
+    try {
+      result = props.onChange(value)
+    } catch {
+      setApplyError(true)
+      return
+    }
+    const finish = (): void => {
+      close()
+      triggerRef.current?.focus()
+    }
+    if (result === undefined) {
+      finish()
+      return
+    }
+    applyingRef.current = true
+    setApplying(true)
+    void result
+      .then(finish)
+      .catch(() => setApplyError(true))
+      .finally(() => {
+        applyingRef.current = false
+        setApplying(false)
+      })
+  }
+
   const selectModel = (model: ModelDescriptor): void => {
     const sameRoute = props.value.providerId === model.providerId && props.value.modelId === model.id
     // Choosing a route states the route alone: the adapter resolves the effort
     // for a model it has not been asked about yet, while a level the session
     // already carries survives re-picking the model it belongs to.
     const reasoningLevel = sameRoute ? props.value.reasoningLevel : undefined
-    props.onChange({
+    applySelection({
       providerId: model.providerId,
       modelId: model.id,
       ...(reasoningLevel === undefined ? {} : { reasoningLevel }),
     })
-    close()
-    triggerRef.current?.focus()
   }
 
   const selectReasoningLevel = (reasoningLevel: string | undefined): void => {
     if (selected === undefined) return
-    props.onChange({
+    applySelection({
       providerId: selected.providerId,
       modelId: selected.id,
       ...(reasoningLevel === undefined ? {} : { reasoningLevel }),
     })
-    close()
-    triggerRef.current?.focus()
   }
 
   return (
@@ -240,7 +269,9 @@ export const ModelPicker = memo(function ModelPicker(props: ModelPickerProps): R
         aria-haspopup="menu"
         title={`${t('model.select')}: ${currentLabel}`}
         disabled={props.disabled === true}
+        aria-disabled={applying}
         onClick={() => {
+          if (applying) return
           if (open) close()
           else openMenu()
         }}
@@ -258,6 +289,7 @@ export const ModelPicker = memo(function ModelPicker(props: ModelPickerProps): R
           className="dsh-select-menu__menu dsh-model-picker__menu"
           role="menu"
           aria-label={t('model.select')}
+          aria-busy={applying}
           style={menuPosition}
           onKeyDown={onMenuKeyDown}
         >
@@ -359,6 +391,7 @@ export const ModelPicker = memo(function ModelPicker(props: ModelPickerProps): R
                               type="button"
                               role="menuitemradio"
                               aria-checked={isSelected}
+                              aria-disabled={applying}
                               onClick={() => selectModel(model)}
                             >
                               <span>{model.label}</span>
@@ -380,6 +413,7 @@ export const ModelPicker = memo(function ModelPicker(props: ModelPickerProps): R
                       type="button"
                       role="menuitemradio"
                       aria-checked={effectiveReasoningLevel === undefined}
+                      aria-disabled={applying}
                       onClick={() => selectReasoningLevel(undefined)}
                     >
                       <span>{t('model.defaultEffort')}</span>
@@ -397,6 +431,7 @@ export const ModelPicker = memo(function ModelPicker(props: ModelPickerProps): R
                         type="button"
                         role="menuitemradio"
                         aria-checked={isSelected}
+                        aria-disabled={applying}
                         onClick={() => selectReasoningLevel(reasoningLevel.id)}
                       >
                         <span>{reasoningLevel.label}</span>
@@ -408,6 +443,15 @@ export const ModelPicker = memo(function ModelPicker(props: ModelPickerProps): R
               )}
             </>
           )}
+          {applying ? (
+            <p className="dsh-model-picker__status" role="status">
+              {t('model.applying')}
+            </p>
+          ) : applyError ? (
+            <p className="dsh-model-picker__warning" role="alert">
+              {t('model.applyFailed')}
+            </p>
+          ) : null}
         </div>
       ) : null}
     </div>

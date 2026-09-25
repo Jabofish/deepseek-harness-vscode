@@ -125,6 +125,57 @@ function dshSettingsFixture(): DshSettingsSnapshot {
   }
 }
 
+function rc2GeneralSettingsFixture(
+  options: { writable?: boolean; values?: DshSettingsSnapshot['values'] } = {},
+): DshSettingsSnapshot {
+  const base = dshSettingsFixture()
+  return {
+    schema: {
+      ...base.schema,
+      version: 'rc2-settings-v1',
+      writable: options.writable ?? true,
+      fields: [
+        ...base.schema.fields,
+        {
+          path: 'ui-chat.transcriptView',
+          label: 'transcriptView',
+          type: 'enum',
+          required: false,
+          enumValues: ['compact', 'standard', 'detailed', 'verbose'],
+          restartRequired: false,
+        },
+        {
+          path: 'ui-chat.performanceUsage',
+          label: 'performanceUsage',
+          type: 'enum',
+          required: false,
+          enumValues: ['compact', 'detailed'],
+          restartRequired: false,
+        },
+        {
+          path: 'ui-settings.enabled',
+          label: 'enabled',
+          type: 'boolean',
+          required: false,
+          restartRequired: false,
+        },
+        {
+          path: 'ui-theme.fontSize',
+          label: 'fontSize',
+          type: 'number',
+          required: false,
+          restartRequired: false,
+        },
+      ],
+    },
+    values: options.values ?? {
+      ...base.values,
+      'ui-theme': { preference: 'system', fontSize: 14 },
+      'ui-settings': { enabled: true },
+    },
+  }
+}
+
 function drawerElement(
   overrides: Partial<Parameters<typeof SettingsDrawer>[0]> = {},
   localized = false,
@@ -141,6 +192,7 @@ function drawerElement(
       onLoadSettings={vi.fn().mockResolvedValue(settingsFixture())}
       onLoadDshSettings={vi.fn().mockResolvedValue(dshSettingsFixture())}
       onOpenDshSettingsDocument={vi.fn().mockResolvedValue(undefined)}
+      onOpenKeyboardShortcuts={vi.fn().mockResolvedValue(undefined)}
       onUpdateDshSetting={vi.fn().mockResolvedValue(undefined)}
       onUnsetDshSetting={vi.fn().mockResolvedValue(undefined)}
       onCreateCustomProvider={vi.fn().mockResolvedValue({
@@ -182,6 +234,24 @@ describe('SettingsDrawer', () => {
   afterEach(() => {
     cleanup()
     window.localStorage.clear()
+  })
+
+  it('opens VS Code keyboard shortcuts from General settings', async () => {
+    const onOpenKeyboardShortcuts = vi.fn().mockResolvedValue(undefined)
+    renderDrawer({ onOpenKeyboardShortcuts })
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Open keyboard shortcuts' }))
+
+    await waitFor(() => expect(onOpenKeyboardShortcuts).toHaveBeenCalledOnce())
+  })
+
+  it('mounts account controls only when the selected Host advertises the capability', async () => {
+    renderDrawer()
+    expect(screen.queryByRole('heading', { name: 'DSH account' })).toBeNull()
+    cleanup()
+
+    renderDrawer({ accountLifecycleAvailable: true })
+    expect(await screen.findByRole('heading', { name: 'DSH account' })).toBeDefined()
   })
 
   it('localizes general and model settings when Chinese is selected', async () => {
@@ -470,6 +540,98 @@ describe('SettingsDrawer', () => {
     expect(screen.getByRole('button', { name: 'Workspace Write', pressed: true })).toBeDefined()
   })
 
+  it('renders the rc2 General preferences with their upstream defaults', async () => {
+    renderDrawer({ onLoadDshSettings: vi.fn().mockResolvedValue(rc2GeneralSettingsFixture({ values: {} })) })
+
+    const transcript = await screen.findByRole('group', { name: 'Workflow display' })
+    const performance = screen.getByRole('group', { name: 'Performance and usage' })
+    expect(within(transcript).getByRole('button', { name: 'Standard', pressed: true })).toBeDefined()
+    expect(within(performance).getByRole('button', { name: 'Detailed', pressed: true })).toBeDefined()
+    expect(screen.getByRole('switch', { name: 'Developer Tools', checked: true })).toBeDefined()
+    expect(screen.getByRole('spinbutton', { name: 'Conversation font size' })).toHaveProperty('value', '14')
+  })
+
+  it('writes transcript, usage, coding-tools, and font-size choices through the Host settings channel', async () => {
+    const initial = rc2GeneralSettingsFixture()
+    const onLoadDshSettings = vi.fn().mockResolvedValue(initial)
+    const onUpdateDshSetting = vi.fn().mockResolvedValue(undefined)
+    renderDrawer({ onLoadDshSettings, onUpdateDshSetting })
+
+    const transcript = await screen.findByRole('group', { name: 'Workflow display' })
+    fireEvent.click(within(transcript).getByRole('button', { name: 'Compact' }))
+    await waitFor(() => expect(onUpdateDshSetting).toHaveBeenCalledWith('ui-chat.transcriptView', 'compact'))
+    await waitFor(() => expect(onLoadDshSettings).toHaveBeenCalledTimes(2))
+
+    fireEvent.click(
+      within(screen.getByRole('group', { name: 'Performance and usage' })).getByRole('button', {
+        name: 'Compact',
+      }),
+    )
+    await waitFor(() =>
+      expect(onUpdateDshSetting).toHaveBeenCalledWith('ui-chat.performanceUsage', 'compact'),
+    )
+    fireEvent.click(screen.getByRole('switch', { name: 'Developer Tools' }))
+    await waitFor(() => expect(onUpdateDshSetting).toHaveBeenCalledWith('ui-settings.enabled', false))
+    const fontSize = screen.getByRole<HTMLInputElement>('spinbutton', { name: 'Conversation font size' })
+    fireEvent.change(fontSize, { target: { value: '16' } })
+    fireEvent.blur(fontSize)
+    await waitFor(() => expect(onUpdateDshSetting).toHaveBeenCalledWith('ui-theme.fontSize', 16))
+  })
+
+  it('does not invent rc2 controls for an older schema and keeps the local font fallback', async () => {
+    renderDrawer({ onLoadDshSettings: vi.fn().mockResolvedValue(dshSettingsFixture()) })
+
+    await screen.findByRole('group', { name: 'Appearance' })
+    expect(screen.queryByRole('group', { name: 'Workflow display' })).toBeNull()
+    expect(screen.queryByRole('group', { name: 'Performance and usage' })).toBeNull()
+    expect(screen.queryByRole('switch', { name: 'Developer Tools' })).toBeNull()
+    expect(screen.getByRole('group', { name: 'Conversation font size' })).toBeDefined()
+  })
+
+  it('hides new controls when the rc2 settings schema is read-only', async () => {
+    renderDrawer({
+      onLoadDshSettings: vi.fn().mockResolvedValue(rc2GeneralSettingsFixture({ writable: false })),
+    })
+
+    await waitFor(() => expect(screen.getByText(/settings provider is read-only/i)).toBeDefined())
+    expect(screen.queryByRole('group', { name: 'Workflow display' })).toBeNull()
+    expect(screen.queryByRole('group', { name: 'Performance and usage' })).toBeNull()
+    expect(screen.queryByRole('switch', { name: 'Developer Tools' })).toBeNull()
+    expect(screen.queryByRole('spinbutton', { name: 'Conversation font size' })).toBeNull()
+  })
+
+  it('keeps rc2 controls unavailable while the settings snapshot is loading or fails', async () => {
+    let resolveSettings: ((snapshot: DshSettingsSnapshot) => void) | undefined
+    const pendingSettings = new Promise<DshSettingsSnapshot>((resolve) => {
+      resolveSettings = resolve
+    })
+    renderDrawer({ onLoadDshSettings: vi.fn().mockReturnValue(pendingSettings) })
+    expect(screen.getByText(/loading DSH settings/i)).toBeDefined()
+    expect(screen.queryByRole('switch', { name: 'Developer Tools' })).toBeNull()
+    act(() => resolveSettings?.(rc2GeneralSettingsFixture()))
+    expect(await screen.findByRole('switch', { name: 'Developer Tools' })).toBeDefined()
+
+    cleanup()
+    renderDrawer({ onLoadDshSettings: vi.fn().mockRejectedValue(new Error('offline')) })
+    expect(await screen.findByText(/DSH preferences are unavailable/)).toBeDefined()
+    expect(screen.queryByRole('group', { name: 'Workflow display' })).toBeNull()
+    expect(screen.queryByRole('switch', { name: 'Developer Tools' })).toBeNull()
+  })
+
+  it('keeps an rc2 preference unchanged after a failed Host update', async () => {
+    const onUpdateDshSetting = vi.fn().mockRejectedValue(new Error('settings-conflict'))
+    renderDrawer({
+      onLoadDshSettings: vi.fn().mockResolvedValue(rc2GeneralSettingsFixture()),
+      onUpdateDshSetting,
+    })
+
+    const developerTools = await screen.findByRole('switch', { name: 'Developer Tools' })
+    fireEvent.click(developerTools)
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('settings-conflict'))
+    expect(screen.getByRole('switch', { name: 'Developer Tools', checked: true })).toBeDefined()
+    expect(onUpdateDshSetting).toHaveBeenCalledWith('ui-settings.enabled', false)
+  })
+
   it('writes a picked value through the settings update channel and reloads', async () => {
     const fixture = dshSettingsFixture()
     const onUpdateDshSetting = vi.fn().mockResolvedValue(undefined)
@@ -680,6 +842,20 @@ describe('SettingsDrawer', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Models' }))
     expect(screen.getByText(/Loading DSH settings/)).toBeDefined()
     expect(screen.queryByText('amazon-bedrock')).toBeNull()
+  })
+
+  it('lets the user retry DSH settings after the initial read fails', async () => {
+    const onLoadDshSettings = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValue(dshSettingsFixture())
+    renderDrawer({ onLoadDshSettings }, true)
+
+    expect(await screen.findByText(/DSH preferences are unavailable/)).toBeDefined()
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+
+    await waitFor(() => expect(onLoadDshSettings).toHaveBeenCalledTimes(2))
+    expect(await screen.findByRole('group', { name: 'Composer Enter' })).toBeDefined()
   })
 
   it('configures a secret and refreshes the catalog afterwards', async () => {

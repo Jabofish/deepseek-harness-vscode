@@ -1,6 +1,9 @@
 import type { WorkspaceChangeSource } from './changes.js'
 import type { BackendEvent, GoalView, JobFollowFrame, JobView, SubagentCatalog } from './events.js'
 import type { MessageFeedbackRepository } from './feedback.js'
+import type { ScheduleRepository } from './schedules.js'
+import type { PluginBundleRepository } from './plugin-bundles.js'
+import type { AccountLifecycleRepository } from './account-lifecycle.js'
 import type { ReferenceRepository } from './references.js'
 import type {
   DshSettingsSchema,
@@ -49,6 +52,8 @@ export interface AsyncEventSource<T> {
 export interface SessionRepository {
   /** Whether ordinary prompts accept binary upload receipts. Host-only capability. */
   readonly supportsFileUploads?: boolean
+  /** Initialize the backend's default model after a supported account login. */
+  readonly initializeDefaultModel?: (signal?: AbortSignal) => Promise<void>
   list(query?: SessionListQuery, signal?: AbortSignal): Promise<SessionPage>
   get(sessionId: string, signal?: AbortSignal): Promise<SessionDetail>
   /**
@@ -294,6 +299,8 @@ export interface ExportRepository {
 }
 
 export interface DshBackend {
+  /** Optional account lifecycle exposed only by the exact RC2 profile. */
+  readonly account?: AccountLifecycleRepository
   readonly workspaceChanges?: WorkspaceChangeSource
   readonly connection: ConnectedBackend
   readonly sessions: SessionRepository
@@ -308,7 +315,11 @@ export interface DshBackend {
   readonly skills: SkillRepository
   readonly commands: CommandRepository
   readonly plugins: PluginRepository
+  /** Optional RC2 profile-wide controls for installation-provided optional bundles. */
+  readonly pluginBundles?: PluginBundleRepository
   readonly presets: PresetRepository
+  /** Optional until the connected exact DSH contract exposes Schedule Remote. */
+  readonly schedules?: ScheduleRepository
   readonly exports: ExportRepository
   readonly references: ReferenceRepository
   readonly feedback: MessageFeedbackRepository

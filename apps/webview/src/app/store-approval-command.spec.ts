@@ -90,7 +90,7 @@ function toolCallEvent(sequence: number, presentation: unknown, title: string): 
   }
 }
 
-function approvalEvent(sequence: number, callId?: string): HostMessage {
+function approvalEvent(sequence: number, callId?: string, displayReason?: unknown): HostMessage {
   return {
     type: 'event',
     name: 'permission.requested',
@@ -102,6 +102,7 @@ function approvalEvent(sequence: number, callId?: string): HostMessage {
         sessionId: SESSION_ID,
         title: 'bash',
         description: 'The command needs approval.',
+        ...(displayReason === undefined ? {} : { displayReason }),
         ...(callId === undefined ? {} : { callId }),
         risk: 'medium',
         options: [
@@ -129,7 +130,36 @@ describe('approval command resolution', () => {
 
     const request = store.permissions[0]
     expect(request?.callId).toBe('call-bash-1')
+    expect(request?.displayReason).toBeUndefined()
     expect(request === undefined ? undefined : approvalCommand(request, store.timeline.nodes)).toBe(COMMAND)
+    store.dispose()
+  })
+
+  it('retains a valid localized display reason from a permission event', async () => {
+    const client = new StreamClient()
+    const store = createAppStore(client as unknown as ProtocolClient)
+    await store.openSession(SESSION_ID)
+
+    const displayReason = {
+      en: 'Allow this command to modify workspace files?',
+      zh: '允许此命令修改工作区文件吗？',
+    }
+    client.emit(approvalEvent(1, undefined, displayReason))
+    await settle()
+
+    expect(store.permissions[0]?.displayReason).toEqual(displayReason)
+    store.dispose()
+  })
+
+  it('discards malformed localized display reasons instead of creating an approval', async () => {
+    const client = new StreamClient()
+    const store = createAppStore(client as unknown as ProtocolClient)
+    await store.openSession(SESSION_ID)
+
+    client.emit(approvalEvent(1, undefined, { en: 'Approval required', zh: 42 }))
+    await settle()
+
+    expect(store.permissions).toEqual([])
     store.dispose()
   })
 

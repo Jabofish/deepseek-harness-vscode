@@ -1194,7 +1194,7 @@ describe('AppStore startup session restoration', () => {
     store.dispose()
   })
 
-  it('refreshes the cached model directory on rc.1 and legacy owner invalidations', async () => {
+  it('refreshes the cached model directory on rc.2, rc.1, and legacy owner invalidations', async () => {
     const client = new StartupClient()
     const store = createAppStore(client as unknown as ProtocolClient)
 
@@ -1202,6 +1202,7 @@ describe('AppStore startup session restoration', () => {
     for (const [sequence, name] of [
       [7, 'credentials/reference-updated'],
       [8, 'credentials/updated'],
+      [9, 'credentials/record-updated'],
     ] as const) {
       const before = client.requests.filter(
         (request) => request.type === 'providers.list' || request.type === 'models.list',
@@ -1306,7 +1307,7 @@ describe('AppStore startup session restoration', () => {
       type: 'event',
       name: 'remote.event',
       sequence: 9,
-      payload: { name: 'credentials/reference-updated', args: ['gateway-key'] },
+      payload: { name: 'credentials/record-updated', args: ['gateway-key'] },
     })
 
     // A failure row must not outlive the cause the user has just repaired, and

@@ -30,6 +30,7 @@ import {
   Rc152VersionAdapter,
   Rc153VersionAdapter,
   Rc171VersionAdapter,
+  Rc172VersionAdapter,
   SUPPORTED_DSH_VERSIONS,
 } from '../src/index.js'
 
@@ -70,6 +71,7 @@ describe('version adapter family chains', () => {
       new Alpha171VersionAdapter(options),
       new Alpha172VersionAdapter(options),
       new Rc171VersionAdapter(options),
+      new Rc172VersionAdapter(options),
     ]
 
     expect(adapters.map((adapter) => adapter.supportedVersion)).toEqual([...SUPPORTED_DSH_VERSIONS])
@@ -273,6 +275,7 @@ describe('version adapter family chains', () => {
   it('keeps the newly released stable and RC profiles exact-only', () => {
     const rc153 = new Rc153VersionAdapter(options)
     const rc171 = new Rc171VersionAdapter(options)
+    const rc172 = new Rc172VersionAdapter(options)
 
     expect(rc153).toBeInstanceOf(Rc152VersionAdapter)
     expect(rc153).toMatchObject({
@@ -280,6 +283,14 @@ describe('version adapter family chains', () => {
       supportedVersion: '0.1.5-rc.3',
       protocolVersion: 'rc153',
       compatibilityPriority: 185,
+      fallback: false,
+    })
+    expect(rc172).toBeInstanceOf(Rc171VersionAdapter)
+    expect(rc172).toMatchObject({
+      id: 'dsh-0.1.7-rc.2',
+      supportedVersion: '0.1.7-rc.2',
+      protocolVersion: 'rc172',
+      compatibilityPriority: 240,
       fallback: false,
     })
     expect(rc171).toBeInstanceOf(Alpha171VersionAdapter)

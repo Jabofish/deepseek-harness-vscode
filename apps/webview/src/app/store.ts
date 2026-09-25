@@ -1,5 +1,17 @@
 import { isPluginMetadata } from '@dsh-vscode/domain'
-import { jobFollowFailedPayloadSchema, jobFollowUpdatedPayloadSchema } from '@dsh-vscode/webview-protocol'
+import {
+  accountLifecycleSnapshotSchema,
+  accountSignOutImpactSchema,
+  jobFollowFailedPayloadSchema,
+  jobFollowUpdatedPayloadSchema,
+  type FeatureHostEvent,
+  type FeatureRequest,
+} from '@dsh-vscode/webview-protocol'
+import type {
+  AccountLifecycleErrorCodeDto,
+  AccountLifecycleSnapshotDto,
+  AccountSignOutImpactDto,
+} from '@dsh-vscode/webview-protocol'
 import {
   parseSlashCommand,
   type AgentConfiguration,
@@ -82,6 +94,7 @@ import {
   type SubagentView,
   type TokenUsage,
   type TodoView,
+  type ToolAutoReviewDenialView,
   type ToolPresentationDiff,
   type ToolPresentationLine,
   type ToolPresentationSearchFile,
@@ -224,10 +237,9 @@ export interface AppState {
    */
   readonly sessionModelCurrent: ModelSelection | undefined
   /**
-   * Whether the host serves the session's current selection at all, as the
-   * directory states it. `undefined` means no directory has answered yet,
-   * which is not the same as unroutable; the host refuses a prompt it cannot
-   * route either way, so this only decides whether the input stays usable.
+   * Whether the host currently lists the session's selection. `undefined`
+   * means no directory has answered yet; DSH rc.2 still accepts a prompt for
+   * an unlisted model so the runtime can return its actionable error.
    */
   readonly sessionModelRoutable: boolean | undefined
   /**
@@ -249,6 +261,14 @@ export interface AppState {
   readonly permissionPresets: readonly string[]
   readonly commands: readonly DynamicCommand[]
   readonly pluginInventoryRevision: number
+  readonly accountLifecycleAvailable: boolean
+  readonly accountLifecycle: AccountLifecycleSnapshotDto | null
+  readonly accountLifecycleLoading: boolean
+  readonly accountLifecycleBusy: boolean
+  readonly accountLifecycleImpact: AccountSignOutImpactDto | undefined
+  readonly accountSessionExpired: boolean
+  readonly accountLifecycleError: AccountLifecycleErrorCodeDto | undefined
+  readonly accountLifecycleRequestFailed: boolean
   readonly goals: readonly GoalView[]
   readonly todos: readonly TodoView[]
   readonly jobs: readonly JobView[]
@@ -285,7 +305,7 @@ export interface AppState {
   readonly questions: readonly UserQuestion[]
   /** Host-side `ui-conversation.busyEnter` preference driving the composer. */
   readonly busyEnter: RunningInputMode
-  readonly drawer: 'sessions' | 'jobs' | 'subagents' | 'settings' | undefined
+  readonly drawer: 'sessions' | 'jobs' | 'subagents' | 'settings' | 'schedules' | undefined
 }
 
 /** Schema-driven DSH host settings snapshot (describe + resolved values). */
@@ -315,6 +335,13 @@ export interface JobFollowState {
 }
 
 export interface AppActions {
+  featureRequest<T>(this: void, request: FeatureRequest): Promise<T>
+  subscribeFeature(this: void, listener: (message: FeatureHostEvent) => void): () => void
+  loadAccountLifecycle(): Promise<void>
+  startAccountSignIn(): Promise<void>
+  cancelAccountSignIn(attemptId: string): Promise<void>
+  checkAccountSignOutImpact(): Promise<void>
+  signOutAccount(): Promise<void>
   initialize(): Promise<void>
   reconnect(): Promise<void>
   readDiagnostics(): Promise<DiagnosticsSnapshot | undefined>
@@ -436,6 +463,7 @@ export interface AppActions {
   readSettings(): Promise<ExtensionSettingsSummary | undefined>
   readDshSettings(): Promise<DshSettingsSnapshot | undefined>
   openDshSettingsDocument(): Promise<void>
+  openKeyboardShortcuts(): Promise<void>
   updateDshSetting(path: string, value: unknown): Promise<void>
   unsetDshSetting(path: string): Promise<void>
   createCustomProvider(draft: CustomProviderDraft): Promise<CustomProviderCreateResult>
@@ -562,6 +590,14 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     permissionPresets: [],
     commands: [],
     pluginInventoryRevision: 0,
+    accountLifecycleAvailable: false,
+    accountLifecycle: null,
+    accountLifecycleLoading: false,
+    accountLifecycleBusy: false,
+    accountLifecycleImpact: undefined,
+    accountSessionExpired: false,
+    accountLifecycleError: undefined,
+    accountLifecycleRequestFailed: false,
     goals: [],
     todos: [],
     jobs: [],
@@ -664,6 +700,59 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     // still reduced synchronously so ordering and reads stay authoritative;
     // only the React subscriber notification is coalesced to one frame.
     scheduleNotify()
+  }
+  let accountOperationEpoch = 0
+  let accountConnectionIdentity: string | undefined
+  const parseAccountSnapshotPayload = (value: unknown): AccountLifecycleSnapshotDto | undefined => {
+    const payload = object(value)
+    if (payload?.kind !== 'account.lifecycle') return undefined
+    const parsed = accountLifecycleSnapshotSchema.safeParse(payload.snapshot)
+    return parsed.success ? parsed.data : undefined
+  }
+  const requestAccountSnapshot = async (
+    request: Extract<
+      FeatureRequest,
+      { readonly type: 'account.state' | 'account.signIn' | 'account.cancelSignIn' | 'account.signOut' }
+    >,
+  ): Promise<AccountLifecycleSnapshotDto> => {
+    const parsed = parseAccountSnapshotPayload(await client.featureRequest<unknown>(request))
+    if (parsed === undefined) throw new Error(translate('account.requestFailed'))
+    return parsed
+  }
+  const commitAccountSnapshot = (snapshot: AccountLifecycleSnapshotDto): void => {
+    setState((current) => ({
+      ...current,
+      accountLifecycle: snapshot,
+      accountLifecycleError: undefined,
+      accountLifecycleRequestFailed: false,
+    }))
+  }
+  const runAccountSnapshotAction = async (
+    request: Extract<
+      FeatureRequest,
+      { readonly type: 'account.signIn' | 'account.cancelSignIn' | 'account.signOut' }
+    >,
+    clearExpired = false,
+  ): Promise<void> => {
+    if (!state.accountLifecycleAvailable) return
+    const epoch = accountOperationEpoch
+    setState((current) => ({
+      ...current,
+      accountLifecycleBusy: true,
+      accountLifecycleRequestFailed: false,
+      accountLifecycleError: undefined,
+      ...(clearExpired ? { accountSessionExpired: false } : {}),
+    }))
+    try {
+      const snapshot = await requestAccountSnapshot(request)
+      if (epoch === accountOperationEpoch && state.accountLifecycleAvailable) commitAccountSnapshot(snapshot)
+    } catch {
+      if (epoch === accountOperationEpoch)
+        setState((current) => ({ ...current, accountLifecycleRequestFailed: true }))
+    } finally {
+      if (epoch === accountOperationEpoch)
+        setState((current) => ({ ...current, accountLifecycleBusy: false }))
+    }
   }
   // Sequence holes reach the store as `session.gap` events. The timeline gate
   // drops anything at or below its cursor, so a healed hole can only become
@@ -1642,6 +1731,22 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     }
   }
   const unsubscribe = client.subscribe((message) => {
+    if (
+      message.type === 'event' &&
+      (message.name === 'connection.snapshot' || message.name === 'connection.lost')
+    ) {
+      const snapshot = message.name === 'connection.snapshot' ? object(message.payload) : undefined
+      const identity =
+        snapshot?.kind === 'connected' &&
+        typeof snapshot.backendInstanceId === 'string' &&
+        typeof snapshot.connectionGeneration === 'number'
+          ? `${snapshot.backendInstanceId}:${snapshot.connectionGeneration}`
+          : undefined
+      if (identity !== accountConnectionIdentity) {
+        accountConnectionIdentity = identity
+        accountOperationEpoch += 1
+      }
+    }
     const parsedEvent = parseHostDomainEvent(message)
     const messageSessionId =
       parsedEvent === undefined || parsedEvent === null ? undefined : backendEventSessionId(parsedEvent)
@@ -1870,6 +1975,22 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   const unsubscribeFeature =
     typeof client.subscribeFeature === 'function'
       ? client.subscribeFeature((message) => {
+          if (message.name === 'account.lifecycle.updated') {
+            setState((current) => ({
+              ...current,
+              accountLifecycle: message.snapshot,
+              accountLifecycleError: undefined,
+              accountLifecycleRequestFailed: false,
+            }))
+          }
+          if (message.name === 'account.session-expired')
+            setState((current) => ({ ...current, accountSessionExpired: true }))
+          if (message.name === 'account.lifecycle.error')
+            setState((current) => ({
+              ...current,
+              accountLifecycleError: message.code,
+              accountLifecycleRequestFailed: true,
+            }))
           if (message.name === 'editor.context.changed') void refreshEditorContextState()
           if (message.name === 'editor.context.availability.changed') {
             const availableKinds = parseEditorContextAvailableKinds(message.availableKinds)
@@ -2612,6 +2733,30 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     },
     get pluginInventoryRevision() {
       return state.pluginInventoryRevision
+    },
+    get accountLifecycleAvailable() {
+      return state.accountLifecycleAvailable
+    },
+    get accountLifecycle() {
+      return state.accountLifecycle
+    },
+    get accountLifecycleLoading() {
+      return state.accountLifecycleLoading
+    },
+    get accountLifecycleBusy() {
+      return state.accountLifecycleBusy
+    },
+    get accountLifecycleImpact() {
+      return state.accountLifecycleImpact
+    },
+    get accountSessionExpired() {
+      return state.accountSessionExpired
+    },
+    get accountLifecycleError() {
+      return state.accountLifecycleError
+    },
+    get accountLifecycleRequestFailed() {
+      return state.accountLifecycleRequestFailed
     },
     get goals() {
       return state.goals
@@ -3879,6 +4024,9 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     openDshSettingsDocument: async () => {
       await client.request<unknown>({ type: 'settings.openDocument', requestId: requestId() })
     },
+    openKeyboardShortcuts: async () => {
+      await client.request<unknown>({ type: 'settings.openKeyboardShortcuts', requestId: requestId() })
+    },
     updateDshSetting: async (path, value) => {
       await client.request<unknown>({
         type: 'settings.update',
@@ -4164,6 +4312,71 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         )
       return catalog
     },
+    featureRequest: <T>(request: FeatureRequest): Promise<T> => client.featureRequest<T>(request),
+    subscribeFeature: (listener) => client.subscribeFeature(listener),
+    loadAccountLifecycle: async () => {
+      if (!state.accountLifecycleAvailable) return
+      const epoch = accountOperationEpoch
+      setState((current) => ({
+        ...current,
+        accountLifecycleLoading: true,
+        accountLifecycleRequestFailed: false,
+        accountLifecycleError: undefined,
+      }))
+      try {
+        const snapshot = await requestAccountSnapshot({
+          type: 'account.state',
+          requestId: requestId(),
+          payload: {},
+        })
+        if (epoch === accountOperationEpoch && state.accountLifecycleAvailable)
+          commitAccountSnapshot(snapshot)
+      } catch {
+        if (epoch === accountOperationEpoch)
+          setState((current) => ({ ...current, accountLifecycleRequestFailed: true }))
+      } finally {
+        if (epoch === accountOperationEpoch)
+          setState((current) => ({ ...current, accountLifecycleLoading: false }))
+      }
+    },
+    startAccountSignIn: () =>
+      runAccountSnapshotAction({ type: 'account.signIn', requestId: requestId(), payload: {} }, true),
+    cancelAccountSignIn: (attemptId) =>
+      runAccountSnapshotAction({
+        type: 'account.cancelSignIn',
+        requestId: requestId(),
+        payload: { attemptId },
+      }),
+    checkAccountSignOutImpact: async () => {
+      if (!state.accountLifecycleAvailable) return
+      const epoch = accountOperationEpoch
+      try {
+        const payload = object(
+          await client.featureRequest<unknown>({
+            type: 'account.signOutImpact',
+            requestId: requestId(),
+            payload: {},
+          }),
+        )
+        const impact =
+          payload?.kind === 'account.impact'
+            ? accountSignOutImpactSchema.safeParse(payload.impact)
+            : undefined
+        if (epoch === accountOperationEpoch && impact?.success === true)
+          setState((current) => ({ ...current, accountLifecycleImpact: impact.data }))
+        else if (epoch === accountOperationEpoch)
+          setState((current) => ({ ...current, accountLifecycleRequestFailed: true }))
+      } catch {
+        if (epoch === accountOperationEpoch)
+          setState((current) => ({
+            ...current,
+            accountLifecycleImpact: 'unknown',
+            accountLifecycleRequestFailed: true,
+          }))
+      }
+    },
+    signOutAccount: () =>
+      runAccountSnapshotAction({ type: 'account.signOut', requestId: requestId(), payload: {} }),
     setDrawer: (drawer) => {
       const openingSessionsDrawer = drawer === 'sessions' && state.drawer !== 'sessions'
       setState((current) => ({ ...current, drawer }))
@@ -4987,6 +5200,7 @@ function isModelCatalogRefresh(value: unknown): boolean {
     // settings/model cache live after a credential change.
     name === 'credentials/updated' ||
     name === 'credentials/reference-updated' ||
+    name === 'credentials/record-updated' ||
     name === 'llm/adapters-updated' ||
     name === 'settings/document-updated'
   )
@@ -5347,6 +5561,7 @@ function applyHostMessage(
         subagentImagePrompts: false,
         sessionRestore: false,
         jobControllerAvailable: false,
+        accountLifecycleAvailable: false,
         dshCompatibilityWarning: undefined,
       })
     } else if (
@@ -5367,6 +5582,7 @@ function applyHostMessage(
           subagentImagePrompts: false,
           sessionRestore: false,
           jobControllerAvailable: false,
+          accountLifecycleAvailable: false,
           dshCompatibilityWarning: undefined,
           backend: {
             kind,
@@ -5384,6 +5600,7 @@ function applyHostMessage(
           subagentImagePrompts: false,
           sessionRestore: false,
           jobControllerAvailable: false,
+          accountLifecycleAvailable: false,
           dshCompatibilityWarning: undefined,
           backend: {
             kind,
@@ -5403,6 +5620,7 @@ function applyHostMessage(
               : undefined,
           sessionRestore: kind === 'connected' && snapshot?.sessionRestore === true,
           jobControllerAvailable: kind === 'connected' && snapshot?.jobController === true,
+          accountLifecycleAvailable: kind === 'connected' && snapshot?.accountLifecycleAvailable === true,
           subagentImagePrompts: kind === 'connected' && snapshot?.subagentImagePrompts === true,
           dshCompatibilityWarning:
             kind === 'connected' && typeof snapshot?.compatibilityWarning === 'string'
@@ -5791,6 +6009,7 @@ function applyHostMessage(
       subagentImagePrompts: false,
       sessionRestore: false,
       jobControllerAvailable: false,
+      accountLifecycleAvailable: false,
       dshCompatibilityWarning: undefined,
     }
   }
@@ -5831,6 +6050,14 @@ function withoutConnectionScopedSurfaces(state: AppState): AppState {
     questions: [],
     subagents: EMPTY_SUBAGENT_CATALOG,
     commands: [],
+    accountLifecycleAvailable: false,
+    accountLifecycle: null,
+    accountLifecycleLoading: false,
+    accountLifecycleBusy: false,
+    accountLifecycleImpact: undefined,
+    accountSessionExpired: false,
+    accountLifecycleError: undefined,
+    accountLifecycleRequestFailed: false,
   }
 }
 
@@ -6676,6 +6903,7 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
     const parentCallId = value.tool.parentCallId
     const locations = parseToolLocations(value.tool.locations)
     const presentation = parseToolPresentation(value.tool.presentation)
+    const autoReviewDenial = parseToolAutoReviewDenial(value.tool.autoReviewDenial)
     const images = value.tool.images === undefined ? undefined : messageImages(value.tool.images)
     if (
       (value.tool.images !== undefined && images === undefined) ||
@@ -6689,6 +6917,8 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
       (value.tool.inputSummary !== undefined && typeof value.tool.inputSummary !== 'string') ||
       (value.tool.outputSummary !== undefined && typeof value.tool.outputSummary !== 'string') ||
       (value.tool.error !== undefined && typeof value.tool.error !== 'string') ||
+      (value.tool.autoReviewDenial !== undefined && autoReviewDenial === undefined) ||
+      (autoReviewDenial !== undefined && value.tool.status !== 'failed') ||
       (value.tool.metadata !== undefined && !isRecord(value.tool.metadata))
     )
       return { type: 'unknown', name, payload }
@@ -6719,6 +6949,7 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
         ...(typeof value.tool.inputSummary === 'string' ? { inputSummary: value.tool.inputSummary } : {}),
         ...(typeof value.tool.outputSummary === 'string' ? { outputSummary: value.tool.outputSummary } : {}),
         ...(typeof value.tool.error === 'string' ? { error: value.tool.error } : {}),
+        ...(autoReviewDenial === undefined ? {} : { autoReviewDenial }),
         ...(locations === undefined ? {} : { locations }),
         ...(presentation === undefined ? {} : { presentation }),
         ...(images === undefined ? {} : { images }),
@@ -8624,6 +8855,12 @@ function parseToolLocations(
   return locations.length === 0 ? undefined : locations
 }
 
+function parseToolAutoReviewDenial(value: unknown): ToolAutoReviewDenialView | undefined {
+  if (!isRecord(value) || Object.keys(value).some((key) => key !== 'reason')) return undefined
+  if (value.reason !== undefined && typeof value.reason !== 'string') return undefined
+  return typeof value.reason === 'string' ? { reason: value.reason } : {}
+}
+
 function parseToolDiffs(value: unknown): readonly ToolPresentationDiff[] {
   if (!Array.isArray(value)) return []
   // The pinned `write`/`edit` result carries one diff per applied hunk and the
@@ -9018,6 +9255,8 @@ function isPermissionKind(value: unknown): value is 'allow-once' | 'deny' {
 
 function parsePermissionRequest(value: Record<string, unknown>): PermissionRequest | undefined {
   const options = parsePermissionOptions(value.options)
+  const displayReason =
+    value.displayReason === undefined ? undefined : parseDisplayReason(value.displayReason)
   if (
     !nonEmptyString(value.id) ||
     !nonEmptyString(value.sessionId) ||
@@ -9025,6 +9264,7 @@ function parsePermissionRequest(value: Record<string, unknown>): PermissionReque
     typeof value.description !== 'string' ||
     !isPermissionRisk(value.risk) ||
     options === undefined ||
+    (value.displayReason !== undefined && displayReason === undefined) ||
     (value.rpcId !== undefined && typeof value.rpcId !== 'string') ||
     (value.callId !== undefined && !nonEmptyString(value.callId)) ||
     (value.commandLine !== undefined && typeof value.commandLine !== 'string')
@@ -9036,11 +9276,24 @@ function parsePermissionRequest(value: Record<string, unknown>): PermissionReque
     sessionId: value.sessionId,
     title: value.title,
     description: value.description,
+    ...(displayReason === undefined ? {} : { displayReason }),
     ...(value.callId === undefined ? {} : { callId: value.callId }),
     ...(value.commandLine === undefined ? {} : { commandLine: value.commandLine }),
     risk: value.risk,
     options,
   }
+}
+
+function parseDisplayReason(value: unknown): PermissionRequest['displayReason'] | undefined {
+  const localized = object(value)
+  if (
+    localized === undefined ||
+    !Object.hasOwn(localized, 'en') ||
+    typeof localized.en !== 'string' ||
+    !Object.values(localized).every((entry) => typeof entry === 'string')
+  )
+    return undefined
+  return { ...localized } as NonNullable<PermissionRequest['displayReason']>
 }
 
 function parsePermissionOptions(value: unknown): readonly PermissionOption[] | undefined {

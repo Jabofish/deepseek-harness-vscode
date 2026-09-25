@@ -6,8 +6,11 @@ import {
   type ConnectedBackend,
   type DshBackend,
   type BackendEvent,
+  type AccountLifecycleRepository,
   type PluginRepository,
+  type PluginBundleRepository,
   type PresetRepository,
+  type ScheduleRepository,
 } from '@dsh-vscode/domain'
 
 import { DshVersionAdapterBase, type VersionAdapterIdentity } from '../../adapter-base.js'
@@ -31,7 +34,11 @@ import { Rc6ModelRepository } from '../../repositories/model-repository.js'
 import { Rc6PluginRepository } from '../../repositories/plugin-repository.js'
 import { Rc6PresetRepository } from '../../repositories/preset-repository.js'
 import { Rc6ReferenceRepository } from '../../repositories/reference-repository.js'
-import { historyGapRecovery, Rc6SessionRepository } from '../../repositories/session-repository.js'
+import {
+  historyGapRecovery,
+  Rc6SessionRepository,
+  type Rc6SessionRepositoryOptions,
+} from '../../repositories/session-repository.js'
 import { Rc6SettingsRepository } from '../../repositories/settings-repository.js'
 import { Rc6SkillRepository } from '../../repositories/skill-repository.js'
 import { Rc6SubagentRepository } from '../../repositories/subagent-repository.js'
@@ -69,6 +76,8 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
   protected readonly supportsInlineSubagentImages: boolean = false
   /** Only the 0.1.6 alpha line exposes the upstream unarchive Remote. */
   protected readonly supportsSessionRestore: boolean = false
+  /** Only exact DSH RC2 exposes the account-controller Remote. */
+  protected readonly supportsAccountLifecycle: boolean = false
   /** Only DSH 0.1.3-alpha.2 requires `subagent.prompt.delivery`. */
   protected readonly supportsSubagentPromptDelivery: boolean = false
   /** 0.1.3-alpha.1 renamed the commands/execute attachment parameter. */
@@ -142,6 +151,7 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
           'presets',
           'references',
           'feedback',
+          ...(this.supportsAccountLifecycle ? ['account-lifecycle'] : []),
         ]),
       }
       return compatibility
@@ -191,7 +201,7 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
     const workspaces = new Rc6WorkspaceRepository(transport, {
       supportsSessionRestore: this.supportsSessionRestore,
     })
-    const sessions = new Rc6SessionRepository(transport, workspaces, this.options.samePath, {
+    const sessions = this.createSessionRepository(transport, workspaces, {
       preallocatedSessionId: true,
       supportsSessionRestore: this.supportsSessionRestore,
       supportsFileUploads: this.supportsFileUploads,
@@ -209,6 +219,9 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
     })
     const goals = new Rc6GoalRepository(transport, this.supportsLiveGoal)
     const jobs = this.createJobRepository(transport)
+    const schedules = this.createScheduleRepository(transport)
+    const pluginBundles = this.createPluginBundleRepository(transport)
+    const account = this.createAccountLifecycleRepository(transport)
     const observe = (event: BackendEvent): void => {
       interactions.remember(event)
       sessions.remember(event)
@@ -244,7 +257,10 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
       skills: new Rc6SkillRepository(transport),
       commands: new Rc6CommandRepository(transport, this.commandAttachmentWire),
       plugins: this.createPluginRepository(transport),
+      ...(pluginBundles === undefined ? {} : { pluginBundles }),
+      ...(account === undefined ? {} : { account }),
       presets: this.createPresetRepository(transport),
+      ...(schedules === undefined ? {} : { schedules }),
       exports: new Rc6ExportRepository(transport, this.options.exportFileSystem),
       references: new Rc6ReferenceRepository(transport),
       feedback: new Rc6MessageFeedbackRepository(transport),
@@ -272,6 +288,34 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
   /** Allow a release seam to replace changed preset-roster fields and methods. */
   protected createPresetRepository(transport: AlphaLoopbackApiClient): PresetRepository {
     return new Rc6PresetRepository(transport)
+  }
+
+  /** Allow exact release profiles to add session Remote capabilities. */
+  protected createSessionRepository(
+    transport: AlphaLoopbackApiClient,
+    workspaces: Rc6WorkspaceRepository,
+    options: Rc6SessionRepositoryOptions,
+  ): Rc6SessionRepository {
+    return new Rc6SessionRepository(transport, workspaces, this.options.samePath, options)
+  }
+
+  /** Only exact adapter profiles with the Schedule Remote expose this port. */
+  protected createScheduleRepository(_transport: AlphaLoopbackApiClient): ScheduleRepository | undefined {
+    return undefined
+  }
+
+  /** Only exact adapter profiles with RC2 Plugin Manager Remotes expose bundle controls. */
+  protected createPluginBundleRepository(
+    _transport: AlphaLoopbackApiClient,
+  ): PluginBundleRepository | undefined {
+    return undefined
+  }
+
+  /** Only the exact RC2 profile exposes the pinned account-controller Remotes. */
+  protected createAccountLifecycleRepository(
+    _transport: AlphaLoopbackApiClient,
+  ): AccountLifecycleRepository | undefined {
+    return undefined
   }
 }
 

@@ -37,6 +37,7 @@ import {
 } from '../../components/common/index.js'
 import { Icon } from '../../ui/Icon.js'
 import { useI18n, type Translate } from '../../i18n.js'
+import type { PerformanceUsageMode, TranscriptViewMode } from '../../app/ui-preferences.js'
 
 type FeedbackSubmit = (
   messageId: string,
@@ -130,6 +131,9 @@ export interface TimelineProps {
   readonly streaming: boolean
   /** Conversation chrome owns this preference when the Timeline is embedded in App. */
   readonly showDshEvents?: boolean
+  readonly transcriptView?: TranscriptViewMode
+  readonly performanceUsage?: PerformanceUsageMode
+  readonly codingToolsEnabled?: boolean
   /** Authoritative session-level running bit from the host status stream. */
   readonly running?: boolean
   readonly assistantLabel?: string
@@ -173,6 +177,9 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
   const olderHistoryRequestRef = useRef(false)
   const [expandedDetails, setExpandedDetails] = useState<ReadonlySet<string>>(new Set())
   const showDshEvents = props.showDshEvents ?? false
+  const transcriptView = props.transcriptView ?? 'standard'
+  const performanceUsage = props.performanceUsage ?? 'detailed'
+  const codingToolsEnabled = props.codingToolsEnabled ?? true
   // The reducer keeps authoritative assistant step ids so separate visible
   // answers cannot be fused. Thinking-only steps are different: the official
   // conversation surface presents one collapsed thinking block for a
@@ -180,8 +187,22 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
   const displayProjector = useMemo(() => createDisplayNodeProjector(), [])
   const nodeSignatureProjector = useMemo(() => createNodeSignatureProjector(), [])
   const displayProjection = useMemo(
-    () => displayProjector(props.nodes, showDshEvents, props.nodeChangeStart, props.nodeChangeBase),
-    [displayProjector, props.nodeChangeBase, props.nodeChangeStart, props.nodes, showDshEvents],
+    () =>
+      displayProjector(
+        props.nodes,
+        showDshEvents,
+        transcriptView,
+        props.nodeChangeStart,
+        props.nodeChangeBase,
+      ),
+    [
+      displayProjector,
+      props.nodeChangeBase,
+      props.nodeChangeStart,
+      props.nodes,
+      showDshEvents,
+      transcriptView,
+    ],
   )
   const displayNodes = displayProjection.nodes
   const running = props.running ?? props.streaming
@@ -348,6 +369,8 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
       running,
       feedback: props.feedback,
       feedbackUnavailable: props.feedbackUnavailable,
+      transcriptView,
+      performanceUsage,
       onFeedback: hasFeedback ? stableOnFeedback : undefined,
       onFeedbackSubmit: props.onFeedbackSubmit === undefined ? undefined : stableOnFeedbackSubmit,
       onFeedbackPrepare: props.onFeedbackPrepare === undefined ? undefined : stableOnFeedbackPrepare,
@@ -366,6 +389,7 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
       props.branching,
       props.feedback,
       props.feedbackUnavailable,
+      performanceUsage,
       props.onFeedbackSubmit,
       props.onFeedbackPrepare,
       requestOpenLink,
@@ -377,6 +401,7 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
       stableOnLoadImage,
       stableOnOpenSession,
       stableOnShowInFolder,
+      transcriptView,
       t,
       userTextFacts,
     ],
@@ -408,6 +433,9 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
         ref={scrollRef}
         className="dsh-timeline"
         data-scroll-follow={isPinnedToBottom ? 'pinned' : 'free'}
+        data-transcript-view={transcriptView}
+        data-performance-usage={performanceUsage}
+        data-coding-tools-enabled={codingToolsEnabled}
         aria-label={t('timeline.aria')}
         onScroll={handleScroll}
       >
@@ -629,6 +657,8 @@ function renderNode(
   onFeedbackPrepare?: FeedbackPrepare,
   t: Translate = (key) => key,
   feedbackUnavailable = false,
+  transcriptView: TranscriptViewMode = 'standard',
+  performanceUsage: PerformanceUsageMode = 'detailed',
 ): ReactElement {
   switch (node.kind) {
     case 'tool':
@@ -722,6 +752,8 @@ function renderNode(
         onFeedbackSubmit,
         onFeedbackPrepare,
         feedbackUnavailable,
+        transcriptView,
+        performanceUsage,
       )
     case 'goal':
       return (
@@ -955,8 +987,11 @@ function renderNode(
         onFeedbackSubmit,
         onFeedbackPrepare,
         feedbackUnavailable,
+        transcriptView,
+        performanceUsage,
       )
     case 'reasoning':
+      if (transcriptView === 'compact') return <></>
       return renderAssistantTurn(
         {
           kind: 'assistant-turn',
@@ -989,6 +1024,8 @@ function renderNode(
         undefined,
         undefined,
         feedbackUnavailable,
+        transcriptView,
+        performanceUsage,
       )
   }
 }
@@ -1008,6 +1045,8 @@ interface TimelineNodeRenderContext {
   readonly running: boolean
   readonly feedback: Readonly<Record<string, MessageFeedbackItem>> | undefined
   readonly feedbackUnavailable: boolean | undefined
+  readonly transcriptView: TranscriptViewMode
+  readonly performanceUsage: PerformanceUsageMode
   readonly onFeedback: ((messageId: string, rating: MessageFeedbackRating) => void) | undefined
   readonly onFeedbackSubmit: FeedbackSubmit | undefined
   readonly onFeedbackPrepare: FeedbackPrepare | undefined
@@ -1034,6 +1073,8 @@ function renderTimelineNode(node: DisplayTimelineNode, context: TimelineNodeRend
     context.onFeedbackPrepare,
     context.t,
     context.feedbackUnavailable,
+    context.transcriptView,
+    context.performanceUsage,
   )
 }
 
@@ -1070,6 +1111,8 @@ function timelineRowContextEqual(
     previous.onFeedbackSubmit !== next.onFeedbackSubmit ||
     previous.onFeedbackPrepare !== next.onFeedbackPrepare ||
     previous.feedbackUnavailable !== next.feedbackUnavailable ||
+    previous.transcriptView !== next.transcriptView ||
+    previous.performanceUsage !== next.performanceUsage ||
     previous.t !== next.t
   )
     return false
@@ -1346,30 +1389,43 @@ function renderAssistantTurn(
   onFeedbackSubmit?: FeedbackSubmit,
   onFeedbackPrepare?: FeedbackPrepare,
   feedbackUnavailable = false,
+  transcriptView: TranscriptViewMode = 'standard',
+  performanceUsage: PerformanceUsageMode = 'detailed',
 ): ReactElement {
   const inProgress = assistantNodeInProgress(node)
   const actionsUnavailable = running || inProgress || (node.turn !== undefined && node.turnCompleted !== true)
   const producedFiles = producedFilePaths(node.tools)
-  const durationLabel = assistantDurationLabel(node.timing, t)
-  const metricsLabel = assistantMetricsLabel(node.timing, node.usage, t)
+  const metricsLabel =
+    performanceUsage === 'detailed' ? assistantMetricsLabel(node.timing, node.usage, t) : undefined
+  const detailLabel =
+    transcriptView === 'detailed' && node.turn !== undefined && node.step !== undefined
+      ? t('timeline.stepMetadata', { turn: node.turn, step: node.step })
+      : undefined
   return (
     <div className="dsh-timeline__message-stack">
       <article className="dsh-timeline__card dsh-timeline__card--assistant">
         <header className="dsh-timeline__card-header">
           <strong>{node.modelLabel ?? assistantLabel}</strong>
+          {detailLabel === undefined ? null : <span className="dsh-timeline__card-meta">{detailLabel}</span>}
           {node.interrupted === true ? (
             <span className="dsh-timeline__card-meta">{t('timeline.interrupted')}</span>
           ) : null}
-          {durationLabel === undefined ? null : (
-            <span className="dsh-timeline__assistant-duration">{durationLabel}</span>
-          )}
           {metricsLabel === undefined ? null : (
             <span className="dsh-timeline__assistant-metrics" title={metricsLabel}>
               {metricsLabel}
             </span>
           )}
         </header>
-        {renderAssistantBlocks(node, expanded, setExpanded, onOpenLink, onLoadImage, t, producedFiles)}
+        {renderAssistantBlocks(
+          node,
+          expanded,
+          setExpanded,
+          onOpenLink,
+          onLoadImage,
+          t,
+          producedFiles,
+          transcriptView,
+        )}
         {renderProducedFiles(producedFiles, onOpenLink, onShowInFolder, t)}
       </article>
       {node.markdown.trim() === '' || actionsUnavailable ? null : (
@@ -1411,29 +1467,33 @@ function renderAssistantMessage(
   onFeedbackSubmit?: FeedbackSubmit,
   onFeedbackPrepare?: FeedbackPrepare,
   feedbackUnavailable = false,
+  transcriptView: TranscriptViewMode = 'standard',
+  performanceUsage: PerformanceUsageMode = 'detailed',
 ): ReactElement {
   const inProgress = assistantNodeInProgress(node)
   const actionsUnavailable = running || inProgress || (node.turn !== undefined && node.turnCompleted !== true)
-  const durationLabel = assistantDurationLabel(node.timing, t)
-  const metricsLabel = assistantMetricsLabel(node.timing, node.usage, t)
+  const metricsLabel =
+    performanceUsage === 'detailed' ? assistantMetricsLabel(node.timing, node.usage, t) : undefined
+  const detailLabel =
+    transcriptView === 'detailed' && node.turn !== undefined && node.step !== undefined
+      ? t('timeline.stepMetadata', { turn: node.turn, step: node.step })
+      : undefined
   return (
     <div className="dsh-timeline__message-stack">
       <article className="dsh-timeline__card dsh-timeline__card--assistant">
         <header className="dsh-timeline__card-header">
           <strong>{node.modelLabel ?? assistantLabel}</strong>
+          {detailLabel === undefined ? null : <span className="dsh-timeline__card-meta">{detailLabel}</span>}
           {node.interrupted === true ? (
             <span className="dsh-timeline__card-meta">{t('timeline.interrupted')}</span>
           ) : null}
-          {durationLabel === undefined ? null : (
-            <span className="dsh-timeline__assistant-duration">{durationLabel}</span>
-          )}
           {metricsLabel === undefined ? null : (
             <span className="dsh-timeline__assistant-metrics" title={metricsLabel}>
               {metricsLabel}
             </span>
           )}
         </header>
-        {node.reasoning === undefined ? null : (
+        {node.reasoning === undefined || transcriptView === 'compact' ? null : (
           <ReasoningDisclosure
             id={`reasoning:${node.id}`}
             markdown={node.reasoning.markdown}
@@ -1482,6 +1542,7 @@ function renderAssistantBlocks(
   onLoadImage: ((image: MessageImageReference) => Promise<string | undefined>) | undefined,
   t: Translate,
   producedFiles: readonly string[],
+  transcriptView: TranscriptViewMode,
 ): ReactElement[] {
   const blocks = node.blocks.length === 0 ? assistantBlocksFromAggregates(node) : node.blocks
   const lastMessageIndex = blocks.reduce(
@@ -1494,6 +1555,7 @@ function renderAssistantBlocks(
     const block = blocks[index]
     if (block === undefined) continue
     if (block.kind === 'reasoning') {
+      if (transcriptView === 'compact') continue
       rendered.push(
         <Fragment key={`reasoning:${block.id}:${index}`}>
           <ReasoningDisclosure
@@ -1821,25 +1883,6 @@ function formatTokenCount(value: number): string {
 }
 
 /**
- * Render the same completed-run duration that DSH exposes in chat chrome.
- * Missing boundaries stay hidden: a historical or interrupted message must
- * not display a duration invented by the Webview clock.
- */
-function assistantDurationLabel(
-  timing: AssistantTiming | undefined,
-  t: Translate = (key) => key,
-): string | undefined {
-  const start = timing?.stepStartTime
-  const end = timing?.completedTime
-  if (start === undefined || start === null || end === undefined || end === null) return undefined
-  const totalSeconds = Math.max(0, Math.floor((end - start) / 1_000))
-  const minutes = Math.floor(totalSeconds / 60)
-  const seconds = totalSeconds % 60
-  const duration = minutes > 0 ? `${minutes}m ${String(seconds).padStart(2, '0')}s` : `${seconds}s`
-  return t('timeline.ranFor', { duration })
-}
-
-/**
  * Per-message hover telemetry. Every value is derived only from DSH durable
  * timing/usage fields; the Webview never starts its own stopwatch for a
  * completed message.
@@ -1958,6 +2001,7 @@ function formatEventPayload(value: unknown, t: Translate = (key) => key): string
 interface DisplayNodeProjectionCache {
   readonly sourceNodes: readonly TimelineNode[]
   readonly showDshEvents: boolean
+  readonly transcriptView: TranscriptViewMode
   /** Raw-node prefix that ends at a collapse/event boundary. */
   readonly stableRawLength: number
   /** Display nodes corresponding to the stable raw prefix. */
@@ -1972,12 +2016,20 @@ interface DisplayNodeProjection {
 function createDisplayNodeProjector(): (
   nodes: readonly TimelineNode[],
   showDshEvents: boolean,
+  transcriptView: TranscriptViewMode,
   nodeChangeStart?: number,
   nodeChangeBase?: readonly TimelineNode[],
 ) => DisplayNodeProjection {
   let previous: DisplayNodeProjectionCache | undefined
-  return (nodes, showDshEvents, nodeChangeStart, nodeChangeBase) => {
-    const projection = projectDisplayNodes(nodes, showDshEvents, previous, nodeChangeStart, nodeChangeBase)
+  return (nodes, showDshEvents, transcriptView, nodeChangeStart, nodeChangeBase) => {
+    const projection = projectDisplayNodes(
+      nodes,
+      showDshEvents,
+      transcriptView,
+      previous,
+      nodeChangeStart,
+      nodeChangeBase,
+    )
     previous = projection.cache
     return projection
   }
@@ -1986,13 +2038,14 @@ function createDisplayNodeProjector(): (
 function projectDisplayNodes(
   nodes: readonly TimelineNode[],
   showDshEvents: boolean,
+  transcriptView: TranscriptViewMode,
   previous: DisplayNodeProjectionCache | undefined,
   nodeChangeStart?: number,
   nodeChangeBase?: readonly TimelineNode[],
 ): DisplayNodeProjection {
   let start = 0
   let prefix: readonly DisplayTimelineNode[] = []
-  if (previous?.showDshEvents === showDshEvents) {
+  if (previous?.showDshEvents === showDshEvents && previous.transcriptView === transcriptView) {
     const commonPrefix =
       nodeChangeStart === undefined || nodeChangeBase !== previous.sourceNodes
         ? commonNodePrefixLength(previous.sourceNodes, nodes)
@@ -2005,12 +2058,17 @@ function projectDisplayNodes(
 
   const suffix = nodes.slice(start)
   const display = prepareVisibleNodes(suffix, showDshEvents)
-  const projected = collapseAssistantTurns(display, prefix)
+  const project = (
+    visible: readonly DisplayTimelineNode[],
+    stable: readonly DisplayTimelineNode[],
+  ): readonly DisplayTimelineNode[] =>
+    transcriptView === 'verbose' ? [...stable, ...visible] : collapseAssistantTurns(visible, stable)
+  const projected = project(display, prefix)
   const stableRawLength = latestDisplayBoundary(nodes, start)
   let stableDisplayNodes = prefix
   if (stableRawLength === nodes.length) stableDisplayNodes = projected
   else if (stableRawLength > start) {
-    stableDisplayNodes = collapseAssistantTurns(
+    stableDisplayNodes = project(
       prepareVisibleNodes(nodes.slice(start, stableRawLength), showDshEvents),
       prefix,
     )
@@ -2021,6 +2079,7 @@ function projectDisplayNodes(
     cache: {
       sourceNodes: nodes,
       showDshEvents,
+      transcriptView,
       stableRawLength,
       stableDisplayNodes,
     },

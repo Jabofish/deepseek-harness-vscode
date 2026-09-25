@@ -482,6 +482,7 @@ describe('DeepSeek Harness 0.1.0-rc.6 contract', () => {
   it('uses replayed tool-result text instead of rendering a structured error identity as JSON', () => {
     const mapped = rc6Mapper.event('tool/result', {
       sessionId: 's1',
+      autoReviewDenialContract: true,
       data: {
         callId: 'call-structured-error',
         error: { name: 'AttachmentError', code: 'MODEL_DOES_NOT_SUPPORT_IMAGES' },
@@ -507,6 +508,147 @@ describe('DeepSeek Harness 0.1.0-rc.6 contract', () => {
       },
     })
     expect(JSON.stringify(mapped)).not.toContain('AttachmentError')
+  })
+
+  it('projects only the exact Auto review denial from the matching error result block', () => {
+    const mapped = rc6Mapper.event('tool/result', {
+      sessionId: 's1',
+      autoReviewDenialContract: true,
+      data: {
+        callId: 'call-auto-review-denied',
+        name: 'shell',
+        error: {
+          name: 'AutoReviewDeniedError',
+          code: 'AUTO_REVIEW_DENIED',
+          reason: '  blocked by scope\nrequest review  ',
+        },
+        message: {
+          content: [
+            {
+              type: 'tool-result',
+              toolCallId: 'call-auto-review-denied',
+              isError: true,
+              content: [{ type: 'text', text: 'ordinary tool failure text' }],
+            },
+          ],
+        },
+      },
+    })
+
+    expect(mapped).toMatchObject({
+      type: 'tool.updated',
+      tool: {
+        id: 'call-auto-review-denied',
+        status: 'failed',
+        autoReviewDenial: { reason: '  blocked by scope\nrequest review  ' },
+      },
+    })
+  })
+
+  it('leaves the RC6 and pre-alpha.2 shared path on ordinary error semantics', () => {
+    const mapped = rc6Mapper.event('tool/result', {
+      sessionId: 's1',
+      data: {
+        callId: 'call-auto-review-unversioned',
+        error: { name: 'AutoReviewDeniedError', code: 'AUTO_REVIEW_DENIED' },
+        message: {
+          content: [
+            {
+              type: 'tool-result',
+              toolCallId: 'call-auto-review-unversioned',
+              isError: true,
+              content: [],
+            },
+          ],
+        },
+      },
+    })
+
+    expect(mapped).toMatchObject({
+      type: 'tool.updated',
+      tool: { id: 'call-auto-review-unversioned', status: 'failed' },
+    })
+    expect(mapped).not.toHaveProperty('tool.autoReviewDenial')
+  })
+
+  it('keeps ordinary tool failures separate and never reads denial markers from error prose', () => {
+    const ordinaryFailure = rc6Mapper.event('tool/result', {
+      sessionId: 's1',
+      autoReviewDenialContract: true,
+      data: {
+        callId: 'call-ordinary-failure',
+        error: { name: 'ToolExecutionError', code: 'TOOL_FAILED' },
+        message: {
+          content: [
+            {
+              type: 'tool-result',
+              toolCallId: 'call-ordinary-failure',
+              isError: true,
+              content: [{ type: 'text', text: 'AutoReviewDeniedError AUTO_REVIEW_DENIED' }],
+            },
+          ],
+        },
+      },
+    })
+    const nonErrorResult = rc6Mapper.event('tool/result', {
+      sessionId: 's1',
+      autoReviewDenialContract: true,
+      data: {
+        callId: 'call-non-error-denial',
+        error: { name: 'AutoReviewDeniedError', code: 'AUTO_REVIEW_DENIED' },
+        message: {
+          content: [
+            {
+              type: 'tool-result',
+              toolCallId: 'call-non-error-denial',
+              isError: false,
+            },
+          ],
+        },
+      },
+    })
+
+    expect(ordinaryFailure).toMatchObject({
+      type: 'tool.updated',
+      tool: {
+        id: 'call-ordinary-failure',
+        status: 'failed',
+        error: 'AutoReviewDeniedError AUTO_REVIEW_DENIED',
+      },
+    })
+    expect(ordinaryFailure).not.toHaveProperty('tool.autoReviewDenial')
+    expect(nonErrorResult).not.toHaveProperty('tool.autoReviewDenial')
+  })
+
+  it('keeps an exact denial without a malformed non-string reason', () => {
+    const mapped = rc6Mapper.event('tool/result', {
+      sessionId: 's1',
+      autoReviewDenialContract: true,
+      data: {
+        callId: 'call-auto-review-malformed-reason',
+        error: {
+          name: 'AutoReviewDeniedError',
+          code: 'AUTO_REVIEW_DENIED',
+          reason: { unexpected: 'object' },
+        },
+        message: {
+          content: [
+            {
+              type: 'tool-result',
+              toolCallId: 'call-auto-review-malformed-reason',
+              isError: true,
+              content: [],
+            },
+          ],
+        },
+      },
+    })
+
+    expect(mapped).toMatchObject({
+      type: 'tool.updated',
+      tool: { id: 'call-auto-review-malformed-reason', status: 'failed', autoReviewDenial: {} },
+    })
+    expect(mapped).not.toHaveProperty('tool.autoReviewDenial.reason')
   })
 
   it('keeps a failed tool result whose error text is longer than 4096 characters', () => {
@@ -1638,6 +1780,10 @@ describe('rc6 stateful frame degradation', () => {
         toolName: 'bash',
         callId: 'call-1',
         reason: 'The command writes outside the workspace.',
+        displayReason: {
+          en: 'Allow this command to modify workspace files?',
+          zh: '允许此命令修改工作区文件吗？',
+        },
       }),
     ).toEqual({
       type: 'permission.requested',
@@ -1646,6 +1792,10 @@ describe('rc6 stateful frame degradation', () => {
         sessionId: 's1',
         title: 'bash',
         description: 'The command writes outside the workspace.',
+        displayReason: {
+          en: 'Allow this command to modify workspace files?',
+          zh: '允许此命令修改工作区文件吗？',
+        },
         callId: 'call-1',
         risk: 'unknown',
         options: [
@@ -1654,6 +1804,22 @@ describe('rc6 stateful frame degradation', () => {
         ],
       },
     })
+  })
+
+  it('rejects a malformed localized approval display reason', () => {
+    // DSH 0.1.7-rc.2 at 477b4f420553e8a52c2fbccc464d7561b239c443 keeps
+    // `displayReason` on the live approval request only; it requires an English
+    // fallback and string values for every locale.
+    for (const displayReason of [null, [], { zh: '需要审批' }, { en: 'Approval required', zh: 7 }]) {
+      expect(() =>
+        rc6Mapper.event('approval/requested', {
+          sessionId: 's1',
+          approvalId: 'approval-1',
+          toolName: 'bash',
+          displayReason,
+        }),
+      ).toThrow(/Malformed approval\/requested/)
+    }
   })
 
   it('rejects malformed interaction and host notice frames instead of clearing or inventing state', () => {

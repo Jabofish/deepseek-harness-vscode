@@ -33,108 +33,116 @@ export interface MessageRouterDependencies {
   readonly logUnexpectedError?: (entry: UnexpectedErrorEntry) => void
 }
 
+interface InFlightRequest {
+  readonly controller: AbortController
+  readonly kind: 'request' | 'cancellation'
+  phase: 'running' | 'responding'
+}
+
 export class WebviewMessageRouter {
-  private readonly inFlight = new Map<string, AbortController>()
+  private readonly inFlight = new Map<string, InFlightRequest>()
 
   public constructor(private readonly dependencies: MessageRouterDependencies) {}
 
   public async handle(rawMessage: unknown): Promise<void> {
-    if (!protocolValueWithinBudget(rawMessage)) {
-      await this.postError('invalid', 'The Webview request exceeds the protocol limits.', false)
-      return
-    }
+    // An invalid envelope has no trustworthy correlation id. Never answer it
+    // with a fabricated id such as "invalid": that could settle an unrelated
+    // live request which happens to use the same id.
+    if (!protocolValueWithinBudget(rawMessage)) return
     const legacy = webviewEnvelopeSchema.safeParse(rawMessage)
     const feature = featureWebviewEnvelopeSchema.safeParse(rawMessage)
-    if (!legacy.success && !feature.success) {
-      await this.postError('invalid', 'Invalid Webview request.', false)
-      return
-    }
+    if (!legacy.success && !feature.success) return
     const isFeature = feature.success && !legacy.success
     const request = (isFeature ? feature.data.message : legacy.success ? legacy.data.message : undefined) as
       WebviewRequest | FeatureRequest
+    // Once a request id is occupied, a second envelope cannot be answered
+    // independently: both responses would target the same Webview promise.
+    // Ignore the duplicate and preserve the original operation's ownership.
+    if (this.inFlight.has(request.requestId)) return
+    const operation: InFlightRequest = {
+      controller: new AbortController(),
+      kind: isFeature && request.type === 'feature.request.cancel' ? 'cancellation' : 'request',
+      phase: 'running',
+    }
+    this.inFlight.set(request.requestId, operation)
     if (isFeature && request.type === 'feature.request.cancel') {
-      const target = this.inFlight.get(request.payload.targetRequestId)
-      if (target !== undefined) target.abort()
-      await this.postFeatureResponse(request.requestId, {
-        kind: 'operation',
-        operationId: request.payload.targetRequestId,
-        state: target === undefined ? 'rejected' : 'accepted',
-        ...(target === undefined ? { message: 'The target request is no longer running.' } : {}),
-      })
+      const target =
+        request.payload.targetRequestId === request.requestId
+          ? undefined
+          : this.inFlight.get(request.payload.targetRequestId)
+      const accepted =
+        target !== undefined &&
+        target.kind === 'request' &&
+        target.phase === 'running' &&
+        !target.controller.signal.aborted
+      if (accepted) target.controller.abort()
+      await this.complete(
+        request.requestId,
+        request.type,
+        response(
+          request.requestId,
+          true,
+          {
+            kind: 'operation',
+            operationId: request.payload.targetRequestId,
+            state: accepted ? 'accepted' : 'rejected',
+            ...(accepted ? {} : { message: 'The target request is no longer running.' }),
+          },
+          undefined,
+          true,
+        ),
+      )
       return
     }
-    if (this.inFlight.has(request.requestId)) {
-      await this.postError(request.requestId, 'A request with this id is already running.', true, isFeature)
-      return
-    }
-    const controller = new AbortController()
-    this.inFlight.set(request.requestId, controller)
     try {
       const payload = isFeature
         ? this.dependencies.handleFeatureRequest === undefined
           ? routeNotEnabled('The staged feature route is not enabled.')
-          : await this.dependencies.handleFeatureRequest(request as FeatureRequest, controller.signal)
+          : await this.dependencies.handleFeatureRequest(
+              request as FeatureRequest,
+              operation.controller.signal,
+            )
         : this.dependencies.handleRequest === undefined
           ? routeNotEnabled('The Webview request route is not enabled.')
-          : await this.dependencies.handleRequest(request as WebviewRequest, controller.signal)
-      this.complete(request, response(request.requestId, true, payload, undefined, isFeature))
+          : await this.dependencies.handleRequest(request as WebviewRequest, operation.controller.signal)
+      await this.complete(
+        request.requestId,
+        request.type,
+        response(request.requestId, true, payload, undefined, isFeature),
+      )
     } catch (error) {
       if (!(error instanceof AppError)) this.reportUnexpectedError(unexpectedErrorEntry(request.type, error))
-      this.complete(
-        request,
+      await this.complete(
+        request.requestId,
+        request.type,
         response(request.requestId, false, undefined, publicError(error, request.type), isFeature),
       )
     }
   }
 
   public cancelAll(): void {
-    for (const controller of this.inFlight.values()) controller.abort()
+    for (const operation of this.inFlight.values())
+      if (operation.kind === 'request' && operation.phase === 'running') operation.controller.abort()
     this.inFlight.clear()
   }
 
-  private complete(
-    request: WebviewRequest | FeatureRequest,
-    message: HostMessage | FeatureHostMessage,
-  ): void {
-    if (!this.inFlight.delete(request.requestId)) return
-    void Promise.resolve(this.dependencies.postMessage(message))
-      .then((delivered) => {
-        if (!delivered) throw new Error('The Webview did not accept the response.')
-      })
-      .catch((error: unknown) => {
-        // The Webview may disappear between request handling and response
-        // delivery. Keep that transport failure out of the unhandled-rejection
-        // channel while retaining a bounded diagnostic for the host.
-        this.reportUnexpectedError(unexpectedErrorEntry(request.type, error))
-      })
-  }
-
-  private async postError(
+  private async complete(
     requestId: string,
-    message: string,
-    retryable: boolean,
-    feature = false,
+    requestType: string,
+    message: HostMessage | FeatureHostMessage,
   ): Promise<void> {
-    const value = response(
-      requestId,
-      false,
-      undefined,
-      { code: 'PROTOCOL_ERROR', message, retryable },
-      feature,
-    )
+    const operation = this.inFlight.get(requestId)
+    if (operation === undefined) return
+    operation.phase = 'responding'
     try {
-      await this.dependencies.postMessage(value)
+      const delivered = await this.dependencies.postMessage(message)
+      if (!delivered) throw new Error('The Webview did not accept the response.')
     } catch (error) {
-      this.reportUnexpectedError(unexpectedErrorEntry('protocol.error', error))
-    }
-  }
-
-  private async postFeatureResponse(requestId: string, payload: unknown): Promise<void> {
-    const value = response(requestId, true, payload, undefined, true)
-    try {
-      await this.dependencies.postMessage(value)
-    } catch (error) {
-      this.reportUnexpectedError(unexpectedErrorEntry('feature.request.cancel', error))
+      // Keep the id occupied until its terminal response has been accepted or
+      // refused, so a duplicate cannot race the original response in transit.
+      this.reportUnexpectedError(unexpectedErrorEntry(requestType, error))
+    } finally {
+      if (this.inFlight.get(requestId) === operation) this.inFlight.delete(requestId)
     }
   }
 

@@ -1,4 +1,9 @@
-import type { BackendCandidate, BackendCapabilities, BackendEndpoint } from '@dsh-vscode/domain'
+import type {
+  BackendCandidate,
+  BackendCapabilities,
+  BackendEndpoint,
+  PresetRepository,
+} from '@dsh-vscode/domain'
 
 import { isMalformedDshVersionHint, normalizeDshVersion } from '../../contracts.js'
 import { withExactAdapterCapabilities } from '../../compatibility.js'
@@ -108,7 +113,7 @@ export class Alpha171VersionAdapter extends Alpha162VersionAdapter {
     return new Alpha171PluginRepository(transport)
   }
 
-  protected override createPresetRepository(transport: AlphaLoopbackApiClient): Alpha171PresetRepository {
+  protected override createPresetRepository(transport: AlphaLoopbackApiClient): PresetRepository {
     return new Alpha171PresetRepository(transport)
   }
 }

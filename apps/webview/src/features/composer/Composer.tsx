@@ -100,10 +100,9 @@ export interface ComposerProps {
    */
   readonly modelCurrent?: ModelSelection
   /**
-   * The host's verdict on whether the session's current model is served at
-   * all. `false` makes the input inert with the reason on screen; `undefined`
-   * (no directory answered yet) leaves it alone. The picker stays usable
-   * either way, because choosing a served model is the way out.
+   * Whether the host currently advertises the session's selected model.
+   * DSH rc.2 accepts prompts for unavailable models and returns the actionable
+   * runtime/provider error, so this is a status hint rather than a send gate.
    */
   readonly modelRoutable?: boolean
   readonly presets?: readonly AgentPresetDescriptor[]
@@ -126,7 +125,7 @@ export interface ComposerProps {
   /** Handles whose preview request settled without an image (expired draft or
    * Host refusal); the lightbox must say so instead of loading forever. */
   readonly attachmentPreviewFailures?: readonly string[]
-  readonly onConfigurationChange?: (configuration: AgentConfiguration) => void
+  readonly onConfigurationChange?: (configuration: AgentConfiguration) => void | Promise<void>
   readonly onPromptModeChange?: (mode: PromptMode) => void
   readonly onCommand?: (command: string, attachments?: readonly PromptAttachment[]) => Promise<void> | void
   readonly onPopupSelect?: (command: string) => void
@@ -281,13 +280,10 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
   const onCommand = props.onCommand
   const models = props.models ?? EMPTY_MODELS
   const modelFailures = props.modelFailures ?? EMPTY_MODEL_FAILURES
-  // Official composer-block semantics: a session whose current model no
-  // adapter serves becomes an inert editor carrying the reason, rather than a
-  // send that cannot be routed. It is an affordance, not enforcement — the
-  // host refuses such a prompt either way — and it never touches the model
-  // picker, which is the way out of the state.
+  // Keep model availability visible, but let DSH rc.2 decide whether the
+  // runtime can serve a prompt so it can return an actionable provider error.
   const modelUnavailable = props.modelRoutable === false
-  const inputBlocked = props.inputDisabled === true || modelUnavailable
+  const inputBlocked = props.inputDisabled === true
   const presets = props.presets ?? EMPTY_PRESETS
   const editorContext = props.editorContext ?? EMPTY_EDITOR_CONTEXT
   const editorContextAvailableKinds = props.editorContextAvailableKinds ?? EMPTY_EDITOR_CONTEXT_KINDS
@@ -908,7 +904,7 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
               composing.current = false
             }, 10)
           }}
-          placeholder={modelUnavailable ? t('composer.modelUnavailable') : t('composer.placeholder')}
+          placeholder={t('composer.placeholder')}
           rows={1}
         />
         {referenceToken === undefined || props.references === undefined || !referenceMenuOpen ? null : (

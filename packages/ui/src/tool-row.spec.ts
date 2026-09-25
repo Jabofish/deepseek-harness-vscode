@@ -81,6 +81,21 @@ describe('ToolRow', () => {
     })
   })
 
+  it('uses safe localized fallback copy when an Auto review denial has no displayable reason', () => {
+    const model = toolRowModel(
+      tool({ status: 'failed', autoReviewDenial: { reason: ' \n ' }, error: 'raw error should stay hidden' }),
+    )
+
+    expect(model).toMatchObject({
+      state: 'error',
+      summary: 'Rejected by Auto review',
+      errorSummary: 'Rejected by Auto review',
+      autoReviewOutput:
+        'Tool was not executed. Manual approval is required to continue. Reason: Auto review did not authorize this action',
+      sections: [],
+    })
+  })
+
   it('summarizes todo progress and answered questions from their durable payloads', () => {
     const todo = toolRowModel(
       tool({

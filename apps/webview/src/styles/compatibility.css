@@ -1511,6 +1511,42 @@
   background: var(--dsh-surface);
 }
 
+.dsh-presets__dialog--guide {
+  width: min(600px, calc(100vw - 24px));
+  max-height: min(82vh, 720px);
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+}
+
+.dsh-presets__guide-actions,
+.dsh-presets__guide-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.dsh-presets__guide-actions {
+  margin-right: auto;
+}
+
+.dsh-presets__guide-intro,
+.dsh-presets__guide-content p {
+  margin: 0;
+  color: var(--dsh-muted);
+  line-height: 1.5;
+}
+
+.dsh-presets__guide-content {
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 2px;
+  line-height: 1.5;
+}
+
+.dsh-presets__guide-content p + p {
+  margin-top: 12px;
+}
+
 .dsh-presets__dialog h3 {
   margin: 0;
   font-size: 0.8rem;

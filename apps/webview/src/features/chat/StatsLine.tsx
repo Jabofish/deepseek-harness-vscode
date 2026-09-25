@@ -3,6 +3,7 @@ import type { SessionStatsProjection, TokenUsage } from '@dsh-vscode/domain'
 import { billedInputTokens, cacheHitPercent } from '@dsh-vscode/timeline'
 import type { TimelineNode } from '@dsh-vscode/timeline'
 import { useI18n } from '../../i18n.js'
+import type { PerformanceUsageMode } from '../../app/ui-preferences.js'
 
 export interface StatsLineProps {
   readonly nodes: readonly TimelineNode[]
@@ -13,6 +14,7 @@ export interface StatsLineProps {
   readonly cacheHit: number
   /** Whole-log DSH projection; the visible-node fold is only a fallback. */
   readonly sessionStats?: SessionStatsProjection | undefined
+  readonly performanceUsage?: PerformanceUsageMode
 }
 
 type WindowStats = SessionStatsProjection
@@ -51,6 +53,7 @@ const nodeStatsCache = new WeakMap<object, NodeStats>()
  */
 export const StatsLine = memo(function StatsLine(props: StatsLineProps): ReactElement {
   const { t } = useI18n()
+  const presentation = props.performanceUsage ?? 'detailed'
   const statsProjector = useMemo(() => createStatsProjector(), [])
   const stats = useMemo(
     () => props.sessionStats ?? statsProjector(props.nodes, props.nodeChangeStart, props.nodeChangeBase),
@@ -76,8 +79,35 @@ export const StatsLine = memo(function StatsLine(props: StatsLineProps): ReactEl
   if (stats.ttftSteps > 0) speeds.push(`TTFT ${formatDuration(stats.ttftMs / stats.ttftSteps)}`)
   if (stats.decodeMs > 0 && stats.decodeTokens > 0)
     speeds.push(`${formatRate(stats.decodeTokens / (stats.decodeMs / 1_000))} tk/s`)
+  if (presentation === 'compact') {
+    const outputSpeed =
+      stats.decodeMs > 0 && stats.decodeTokens > 0
+        ? `${formatRate(stats.decodeTokens / (stats.decodeMs / 1_000))} tk/s`
+        : undefined
+    if (outputSpeed === undefined && props.usage === undefined)
+      return <div className="dsh-stats-line" aria-hidden="true" data-performance-usage="compact" />
+    return (
+      <div
+        className="dsh-stats-line"
+        role="status"
+        aria-label={t('stats.aria')}
+        data-performance-usage="compact"
+      >
+        {outputSpeed === undefined ? null : <span title={t('stats.speed')}>{outputSpeed}</span>}
+        {outputSpeed !== undefined && props.usage !== undefined ? <span aria-hidden="true">·</span> : null}
+        {props.usage === undefined ? null : (
+          <span title={t('stats.cache')}>{t('stats.cacheShort', { percent: cachePercent })}</span>
+        )}
+      </div>
+    )
+  }
   return (
-    <div className="dsh-stats-line" role="status" aria-label={t('stats.aria')}>
+    <div
+      className="dsh-stats-line"
+      role="status"
+      aria-label={t('stats.aria')}
+      data-performance-usage="detailed"
+    >
       {props.sessionStats === undefined ? <span>{t('stats.loadedWindow')}</span> : null}
       <span>{t(stats.turns === 1 ? 'stats.turns' : 'stats.turns.plural', { count: stats.turns })}</span>
       <span aria-hidden="true">·</span>

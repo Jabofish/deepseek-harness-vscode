@@ -97,6 +97,44 @@ describe('ModelPicker keyboard and focus contract', () => {
     expect(document.activeElement).toBe(trigger())
   })
 
+  it('shows progress until an asynchronous model change completes', async () => {
+    let resolveChange: (() => void) | undefined
+    const onChange = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveChange = resolve
+        }),
+    )
+    renderPicker({ onChange })
+
+    openRoot()
+    activate(screen.getByRole('menuitem', { name: /^Model/u }))
+    activate(screen.getByRole('menuitemradio', { name: /DeepSeek Reasoner/u }))
+
+    expect(screen.getByText('Switching model…')).toBeDefined()
+    expect(screen.getByRole('menu').getAttribute('aria-busy')).toBe('true')
+    expect(trigger().getAttribute('aria-disabled')).toBe('true')
+    expect(screen.getByRole('menu')).toBeDefined()
+
+    await act(() => Promise.resolve(resolveChange?.()))
+    expect(screen.queryByRole('menu')).toBeNull()
+    expect(document.activeElement).toBe(trigger())
+  })
+
+  it('keeps the picker open and announces a failed asynchronous model change', async () => {
+    const onChange = vi.fn().mockRejectedValue(new Error('write failed'))
+    renderPicker({ onChange })
+
+    openRoot()
+    activate(screen.getByRole('menuitem', { name: /^Model/u }))
+    activate(screen.getByRole('menuitemradio', { name: /DeepSeek Reasoner/u }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain('Could not switch models. Check the connection and try again.')
+    expect(screen.getByRole('menu')).toBeDefined()
+    expect(trigger().getAttribute('aria-disabled')).toBe('false')
+  })
+
   it('keeps the keyboard inside the pane after switching panes', () => {
     renderPicker({ value: REASONER })
 
@@ -431,7 +469,7 @@ function renderPicker(
     readonly onRetry?: () => void
     readonly disabled?: boolean
     readonly openRequest?: number
-    readonly onChange?: (value: ModelSelection) => void
+    readonly onChange?: (value: ModelSelection) => void | Promise<void>
   } = {},
 ): ReturnType<typeof render> {
   return render(picker(options))
@@ -447,7 +485,7 @@ function picker(
     readonly onRetry?: () => void
     readonly disabled?: boolean
     readonly openRequest?: number
-    readonly onChange?: (value: ModelSelection) => void
+    readonly onChange?: (value: ModelSelection) => void | Promise<void>
   } = {},
 ): ReactElement {
   return (

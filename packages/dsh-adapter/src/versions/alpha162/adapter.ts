@@ -32,6 +32,9 @@ export class Alpha162VersionAdapter extends Alpha161VersionAdapter {
     return {
       ...super.createTransportOptions(endpoint),
       controlWireVersion: 'inbox-v1',
+      // The 0.1.6-alpha.2 contract stores the exact Auto Review error identity
+      // on settled tool/result records; earlier alpha profiles do not.
+      autoReviewDenialContract: true,
       fileUploads: true,
       cordisClientBoundary: true,
       normalizeErrorCode: normalizeAlpha2ErrorCode,

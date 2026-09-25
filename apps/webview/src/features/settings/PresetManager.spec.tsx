@@ -16,6 +16,8 @@ function rosterFixture(): AgentPresetRoster {
         description: 'The default composition.',
       },
       { id: 'cordis', trust: 'system', isDefault: false, name: 'Cordis' },
+      { id: 'ptc', trust: 'system', isDefault: false, name: 'PTC' },
+      { id: 'minimal', trust: 'system', isDefault: false, name: 'Minimal' },
       {
         id: 'my-copy',
         trust: 'user',
@@ -67,6 +69,31 @@ describe('PresetManager roster', () => {
     const broken = screen.getByRole('button', { name: /^Broken: broken-copy/ })
     expect(broken).toHaveProperty('disabled', true)
     expect(screen.getByText('missing agent.cordis.yml')).toBeDefined()
+  })
+
+  it('localizes rc.2 built-in modes when the Remote roster omits names and descriptions', async () => {
+    renderManager({
+      onLoadRoster: vi.fn().mockResolvedValue({
+        authorable: false,
+        compositionReadable: true,
+        defaultSettingPath: 'agent-preset-registry.selectedDefault',
+        presets: [
+          { id: 'standard', trust: 'system', isDefault: true },
+          { id: 'ptc', trust: 'system', isDefault: false },
+          { id: 'minimal', trust: 'system', isDefault: false },
+          { id: 'cordis', trust: 'system', isDefault: false },
+        ],
+      } satisfies AgentPresetRoster),
+    })
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'In use: Standard' })).toBeDefined())
+    expect(screen.getByRole('button', { name: 'Set as default: PTC' })).toBeDefined()
+    expect(screen.getByRole('button', { name: 'Set as default: Minimal' })).toBeDefined()
+    expect(screen.getByRole('button', { name: 'Set as default: Creator' })).toBeDefined()
+    expect(
+      screen.getByText('For most code, file, and research tasks. Agent uses tools as needed.'),
+    ).toBeDefined()
+    expect(screen.queryByText('No description')).toBeNull()
   })
 
   it('renders nothing for a deployment that composes no presets', async () => {
@@ -164,14 +191,73 @@ describe('PresetManager composition viewer', () => {
     expect(screen.queryByRole('dialog', { name: 'Preset composition' })).toBeNull()
   })
 
-  it('withholds the viewer for a broken shipped row', async () => {
+  it('offers the read-only viewer for custom and broken declarations', async () => {
+    const onReadDocument = vi.fn().mockImplementation((id: string) =>
+      Promise.resolve({
+        id,
+        trust: id === 'broken-system' ? 'system' : 'user',
+        content: `plugins:\n  - ${id}\n`,
+      } satisfies AgentPresetDocument),
+    )
+    renderManager({
+      onReadDocument,
+      onLoadRoster: vi.fn().mockResolvedValue({
+        ...rosterFixture(),
+        compositionReadable: true,
+        presets: [
+          ...rosterFixture().presets,
+          { id: 'broken-system', trust: 'system', isDefault: false, broken: 'invalid composition' },
+        ],
+      }),
+    })
+    await waitFor(() => expect(screen.getByText('Built-in presets')).toBeDefined())
+
+    fireEvent.click(screen.getByRole('button', { name: 'View composition: My copy' }))
+    await screen.findByRole('dialog', { name: 'Preset composition' })
+    expect(onReadDocument).toHaveBeenCalledWith('my-copy')
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+
+    fireEvent.click(screen.getByRole('button', { name: 'View composition: broken-system' }))
+    await screen.findByRole('dialog', { name: 'Preset composition' })
+    expect(onReadDocument).toHaveBeenCalledWith('broken-system')
+  })
+
+  it('opens localized mode explanations and use guidance without changing the default', async () => {
+    const onMakeDefault = vi.fn()
+    renderManager({ onMakeDefault })
+    await waitFor(() => expect(screen.getByText('Built-in presets')).toBeDefined())
+    const trigger = screen.getByRole('button', { name: 'Mode details: Standard' })
+    fireEvent.click(trigger)
+
+    const dialog = await screen.findByRole('dialog', { name: 'Standard · guide' })
+    expect(within(dialog).getByText(/Choose Standard mode/)).toBeDefined()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'How to use' }))
+    expect(within(dialog).getByText(/search form loses results/)).toBeDefined()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
+
+    expect(screen.queryByRole('dialog', { name: 'Standard · guide' })).toBeNull()
+    expect(document.activeElement).toBe(trigger)
+    expect(onMakeDefault).not.toHaveBeenCalled()
+  })
+
+  it('keeps guide keyboard focus inside and restores it after Escape', async () => {
     renderManager()
     await waitFor(() => expect(screen.getByText('Built-in presets')).toBeDefined())
-    // Only the unbroken system rows carry a viewer affordance.
-    expect(
-      screen.queryByRole('button', { name: 'View composition: Standard' }) === undefined ||
-        screen.queryByRole('button', { name: 'View composition: Cordis' }) !== undefined,
-    ).toBe(true)
+    const trigger = screen.getByRole('button', { name: 'Mode details: Standard' })
+    fireEvent.click(trigger)
+    const dialog = await screen.findByRole('dialog', { name: 'Standard · guide' })
+    const close = within(dialog).getByRole('button', { name: 'Close' })
+    const first = within(dialog).getByRole('button', { name: 'Mode details' })
+
+    expect(document.activeElement).toBe(close)
+    fireEvent.keyDown(close, { key: 'Tab' })
+    expect(document.activeElement).toBe(first)
+    fireEvent.keyDown(first, { key: 'Tab', shiftKey: true })
+    expect(document.activeElement).toBe(close)
+    fireEvent.keyDown(dialog, { key: 'Escape' })
+
+    expect(screen.queryByRole('dialog', { name: 'Standard · guide' })).toBeNull()
+    expect(document.activeElement).toBe(trigger)
   })
 
   it('closes the composition viewer on Escape', async () => {
@@ -421,5 +507,31 @@ describe('registry-only preset policy', () => {
     await waitFor(() =>
       expect(makeDefault).toHaveBeenCalledWith('cordis', 'agent-preset-registry.selectedDefault'),
     )
+  })
+
+  it('starts the Creator task when DSH does not expose a writable preset directory', async () => {
+    const onStartCreatorDraft = vi.fn().mockResolvedValue(undefined)
+    renderManager({
+      onLoadRoster: vi.fn().mockResolvedValue({
+        ...rosterFixture(),
+        authorable: false,
+        compositionReadable: true,
+      }),
+      onStartCreatorDraft,
+      codingToolsEnabled: true,
+    })
+    const button = await screen.findByRole('button', { name: 'Ask Agent to create a mode' })
+    expect(button.hasAttribute('disabled')).toBe(false)
+    fireEvent.click(button)
+    await waitFor(() => expect(onStartCreatorDraft).toHaveBeenCalledOnce())
+  })
+
+  it('gates the Creator entry when rc.2 Developer Tools are disabled', async () => {
+    const onStartCreatorDraft = vi.fn()
+    renderManager({ onStartCreatorDraft, codingToolsEnabled: false })
+    const button = await screen.findByRole('button', { name: 'Ask Agent to create a mode' })
+    expect(button.hasAttribute('disabled')).toBe(true)
+    fireEvent.click(button)
+    expect(onStartCreatorDraft).not.toHaveBeenCalled()
   })
 })

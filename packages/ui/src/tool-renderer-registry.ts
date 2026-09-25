@@ -45,6 +45,9 @@ export class ToolRendererRegistry {
   }
 
   public render(tool: ToolCallView, options: Omit<ToolRendererProps, 'tool'> = {}): ReactElement {
+    // The denial card is a cross-tool system state. It takes precedence over
+    // plugin renderers so no renderer can accidentally expose the call body.
+    if (tool.autoReviewDenial !== undefined) return createElement(ToolRow, { tool, ...options })
     const renderer = this.renderers.get(normalize(tool.name))
     if (renderer === undefined) {
       // The generic card is the compatibility path. A built-in row is only

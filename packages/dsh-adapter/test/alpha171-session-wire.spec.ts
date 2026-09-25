@@ -62,6 +62,49 @@ describe('native alpha171 Session V4 admission', () => {
       type: 'session.system',
     })
   })
+  it('preserves the RC2 Auto review error identity through V4 normalization and tool mapping', () => {
+    const denial = {
+      type: 'tool/result',
+      seq: 4,
+      time: 5,
+      surfaceOp: 'append',
+      data: {
+        turn: 1,
+        step: 1,
+        error: {
+          name: 'AutoReviewDeniedError',
+          code: 'AUTO_REVIEW_DENIED',
+          reason: 'manual confirmation required',
+        },
+        message: {
+          id: 'tool-message-denied',
+          role: 'tool',
+          source: { kind: 'tool', callId: 'call-auto-review-denied' },
+          toolCallId: 'call-auto-review-denied',
+          content: [{ type: 'text', text: 'reviewer result text' }],
+          isError: true,
+        },
+      },
+    }
+
+    expect(validAlpha171SessionEvent(denial)).toBe(true)
+    const normalized = normalizeAlpha171Event(denial)
+    expect(normalized.data).toMatchObject({ error: denial.data.error })
+    const mapped = rc6Mapper.event('tool/result', {
+      sessionId: 's1',
+      autoReviewDenialContract: true,
+      data: normalized.data,
+    })
+
+    expect(mapped).toMatchObject({
+      type: 'tool.updated',
+      tool: {
+        id: 'call-auto-review-denied',
+        status: 'failed',
+        autoReviewDenial: { reason: 'manual confirmation required' },
+      },
+    })
+  })
   it.each([2, 3, 5])('rejects non-V4 header version %s', (version) => {
     expect(validAlpha171SessionSnapshot({ ...snapshot(), header: { ...header, version } })).toBe(false)
   })

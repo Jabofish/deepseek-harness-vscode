@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactElement,
 } from 'react'
@@ -58,6 +59,7 @@ import { SessionLineage } from './features/subagents/SessionLineage.js'
 import { SubagentDrawer } from './features/subagents/SubagentDrawer.js'
 import { DiagnosticsDrawer } from './features/diagnostics/DiagnosticsDrawer.js'
 import { SettingsDrawer } from './features/settings/SettingsDrawer.js'
+import { ScheduleDrawer } from './features/schedules/ScheduleDrawer.js'
 import { TrajectoryView } from './features/trajectory/TrajectoryView.js'
 import { AppHeader } from './features/shell/AppHeader.js'
 import { ConversationActionsMenu } from './features/shell/ConversationActionsMenu.js'
@@ -65,6 +67,7 @@ import { ConversationEventToggle } from './features/shell/ConversationEventToggl
 import {
   createAppStore,
   type AppStore,
+  type DshSettingsSnapshot,
   type OpenFileCandidate,
   type ReferenceCandidate,
 } from './app/store.js'
@@ -73,6 +76,10 @@ import {
   rememberConversationFontSize,
   readThemePreference,
   rememberThemePreference,
+  DSH_UI_SETTING_PATHS,
+  dshUiPreferences,
+  findDshSettingsField,
+  withDshSettingValue,
   type ConversationFontSize,
   type ThemePreference,
 } from './app/ui-preferences.js'
@@ -82,6 +89,7 @@ import { SelectMenu } from './components/common/SelectMenu.js'
 import { useDismissibleLayer } from './components/common/useDismissibleLayer.js'
 import { hasVsCodeApi } from './vscode-api.js'
 import { PopupSelectRegistry } from './features/commands/popupSelectRegistry.js'
+import { presetDisplayName } from './features/settings/preset-display.js'
 import {
   attachmentDraftKey,
   browserFileOrigin,
@@ -150,6 +158,10 @@ export function App(): ReactElement {
     () => store.getState(),
     () => store.getState(),
   )
+  useEffect(() => {
+    if (state.accountLifecycleAvailable && state.drawer === 'settings' && state.accountLifecycle === null)
+      void store.loadAccountLifecycle()
+  }, [state.accountLifecycleAvailable, state.accountLifecycle, state.drawer, store])
   const [draft, setDraft] = useState('')
   const [attachments, setAttachments] = useState<PromptAttachment[]>([])
   const [attachmentPreviews, setAttachmentPreviews] = useState<Record<string, string>>({})
@@ -204,26 +216,187 @@ export function App(): ReactElement {
     readConversationFontSize(),
   )
   const [themePreference, setThemePreferenceState] = useState<ThemePreference>(() => readThemePreference())
+  const [dshSettingsSnapshot, setDshSettingsSnapshot] = useState<DshSettingsSnapshot | undefined>()
+  const [dshSettingsSnapshotVersion, setDshSettingsSnapshotVersion] = useState<string | undefined>()
+  const dshSettingsSnapshotRef = useRef<DshSettingsSnapshot | undefined>(undefined)
+  const dshSettingsSnapshotVersionRef = useRef<string | undefined>(undefined)
+  const dshSettingsReadSequenceRef = useRef(0)
+  const dshSettingsAcceptedReadSequenceRef = useRef(0)
+  const dshSettingsWriteSequenceRef = useRef(0)
+  const dshSettingsWritesPendingRef = useRef(0)
+  const dshSettingsVersionEpochRef = useRef(0)
+  const dshSettingsTrackedVersionRef = useRef<string | undefined>(undefined)
+  const [dshSettingsReadState, setDshSettingsReadState] = useState<'loading' | 'unavailable' | 'ready'>(
+    'loading',
+  )
   const localeControlRef = useRef<HTMLSpanElement>(null)
 
-  const onConversationTabKeyDown = useCallback((event: ReactKeyboardEvent<HTMLButtonElement>): void => {
-    const current = event.currentTarget.dataset.conversationView
-    if (current !== 'chat' && current !== 'trajectory') return
-    const views = ['chat', 'trajectory'] as const
-    const currentIndex = views.indexOf(current)
-    let nextIndex: number | undefined
-    if (event.key === 'ArrowRight' || event.key === 'ArrowDown') nextIndex = (currentIndex + 1) % views.length
-    else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp')
-      nextIndex = (currentIndex - 1 + views.length) % views.length
-    else if (event.key === 'Home') nextIndex = 0
-    else if (event.key === 'End') nextIndex = views.length - 1
-    if (nextIndex === undefined) return
-    event.preventDefault()
-    const next = views[nextIndex]
-    if (next === undefined) return
-    setConversationView(next)
-    document.getElementById(CONVERSATION_VIEW_IDS[next].tab)?.focus()
-  }, [])
+  const adoptDshSettingsSnapshot = useCallback(
+    (snapshot: DshSettingsSnapshot): void => {
+      dshSettingsSnapshotRef.current = snapshot
+      dshSettingsSnapshotVersionRef.current = state.connectedDshVersion
+      setDshSettingsSnapshot(snapshot)
+      setDshSettingsSnapshotVersion(state.connectedDshVersion)
+      setDshSettingsReadState('ready')
+      const preferences = dshUiPreferences(snapshot)
+      const hostTheme = preferences.theme
+      if (hostTheme !== undefined) {
+        setThemePreferenceState(hostTheme)
+        rememberThemePreference(hostTheme)
+      }
+      if (preferences.codingToolsEnabled === false) setConversationView('chat')
+    },
+    [state.connectedDshVersion],
+  )
+
+  const readDshSettingsForUi = useStableCallback(async (): Promise<DshSettingsSnapshot | undefined> => {
+    const readSequence = ++dshSettingsReadSequenceRef.current
+    const writeSequence = dshSettingsWriteSequenceRef.current
+    const versionEpoch = dshSettingsVersionEpochRef.current
+    const startedDuringWrite = dshSettingsWritesPendingRef.current > 0
+    const requestedVersion = state.connectedDshVersion
+    const snapshot = await store.readDshSettings()
+    if (
+      state.backend.kind !== 'connected' ||
+      state.connectedDshVersion !== requestedVersion ||
+      dshSettingsVersionEpochRef.current !== versionEpoch ||
+      readSequence < dshSettingsAcceptedReadSequenceRef.current ||
+      writeSequence !== dshSettingsWriteSequenceRef.current ||
+      startedDuringWrite ||
+      dshSettingsWritesPendingRef.current > 0
+    )
+      return undefined
+    dshSettingsAcceptedReadSequenceRef.current = readSequence
+    if (snapshot !== undefined) adoptDshSettingsSnapshot(snapshot)
+    else if (dshSettingsSnapshotRef.current === undefined) setDshSettingsReadState('unavailable')
+    return snapshot
+  })
+
+  const updateDshSettingForUi = useStableCallback(async (path: string, value: unknown): Promise<void> => {
+    const versionAtStart = state.connectedDshVersion
+    dshSettingsWriteSequenceRef.current += 1
+    dshSettingsWritesPendingRef.current += 1
+    let updateFailed = false
+    let updateFailure: unknown
+    try {
+      await store.updateDshSetting(path, value)
+    } catch (reason: unknown) {
+      updateFailed = true
+      updateFailure = reason
+    } finally {
+      dshSettingsWritesPendingRef.current = Math.max(0, dshSettingsWritesPendingRef.current - 1)
+    }
+    if (updateFailed) {
+      if (
+        state.backend.kind === 'connected' &&
+        state.connectedDshVersion === versionAtStart &&
+        dshSettingsSnapshotRef.current === undefined
+      ) {
+        await readDshSettingsForUi().catch(() => {
+          if (dshSettingsSnapshotRef.current === undefined) setDshSettingsReadState('unavailable')
+        })
+      }
+      throw updateFailure
+    }
+    if (state.backend.kind !== 'connected' || state.connectedDshVersion !== versionAtStart) return
+    const current = dshSettingsSnapshotRef.current
+    if (current === undefined) {
+      await readDshSettingsForUi().catch(() => undefined)
+      return
+    }
+    const updated = withDshSettingValue(current, path, value)
+    if (updated !== undefined) adoptDshSettingsSnapshot(updated)
+  })
+
+  useLayoutEffect(() => {
+    if (state.backend.kind !== 'connected' || state.connectedDshVersion === undefined) return
+    const previousVersion = dshSettingsTrackedVersionRef.current
+    dshSettingsTrackedVersionRef.current = state.connectedDshVersion
+    if (previousVersion === undefined || previousVersion === state.connectedDshVersion) return
+    dshSettingsVersionEpochRef.current += 1
+    const acceptedVersion = dshSettingsSnapshotVersionRef.current
+    if (acceptedVersion !== undefined && acceptedVersion !== state.connectedDshVersion) {
+      dshSettingsSnapshotRef.current = undefined
+      dshSettingsSnapshotVersionRef.current = undefined
+      setDshSettingsSnapshot(undefined)
+      setDshSettingsSnapshotVersion(undefined)
+      setDshSettingsReadState('loading')
+    }
+  }, [state.backend.kind, state.connectedDshVersion])
+
+  useEffect(() => {
+    if (state.backend.kind !== 'connected') return
+    if (dshSettingsSnapshotRef.current === undefined) setDshSettingsReadState('loading')
+    let cancelled = false
+    void readDshSettingsForUi().catch(() => {
+      if (!cancelled && dshSettingsSnapshotRef.current === undefined) setDshSettingsReadState('unavailable')
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [readDshSettingsForUi, state.backend.kind, state.connectedDshVersion])
+
+  const settingsSnapshotMatchesVersion =
+    state.connectedDshVersion === undefined || dshSettingsSnapshotVersion === state.connectedDshVersion
+  const currentDshSettingsReady =
+    dshSettingsReadState === 'ready' && settingsSnapshotMatchesVersion && dshSettingsSnapshot !== undefined
+  const readyDshSettings = currentDshSettingsReady ? dshSettingsSnapshot : undefined
+  const readyDshUiPreferences =
+    readyDshSettings === undefined ? undefined : dshUiPreferences(readyDshSettings)
+  const settingsDrawerVersionKey =
+    state.connectedDshVersion ?? dshSettingsSnapshotVersion ?? 'unknown-dsh-version'
+  const codingToolsField =
+    readyDshSettings === undefined
+      ? undefined
+      : findDshSettingsField(readyDshSettings, DSH_UI_SETTING_PATHS.codingTools)
+  const codingToolsFieldSupported = codingToolsField?.type === 'boolean'
+  const codingToolsEnabled = !currentDshSettingsReady
+    ? false
+    : codingToolsFieldSupported
+      ? (readyDshUiPreferences?.codingToolsEnabled ?? false)
+      : codingToolsField === undefined
+        ? true
+        : false
+  const newSessionPresetSelectionEnabled = !currentDshSettingsReady
+    ? false
+    : codingToolsFieldSupported
+      ? codingToolsEnabled
+      : codingToolsField === undefined
+        ? state.presetSelectionEnabled
+        : false
+  const transcriptView = readyDshUiPreferences?.transcriptView ?? 'standard'
+  const performanceUsage = readyDshUiPreferences?.performanceUsage ?? 'detailed'
+  const hostConversationFontSizePx = readyDshUiPreferences?.fontSize
+  const conversationFontStyle =
+    hostConversationFontSizePx === undefined
+      ? undefined
+      : ({
+          fontSize: `${hostConversationFontSizePx}px`,
+          '--dsh-conversation-font-scale': String(hostConversationFontSizePx / 14),
+        } as CSSProperties)
+
+  const onConversationTabKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLButtonElement>): void => {
+      const current = event.currentTarget.dataset.conversationView
+      if (current !== 'chat' && current !== 'trajectory') return
+      const views: readonly ('chat' | 'trajectory')[] = codingToolsEnabled ? ['chat', 'trajectory'] : ['chat']
+      const currentIndex = views.indexOf(current)
+      let nextIndex: number | undefined
+      if (event.key === 'ArrowRight' || event.key === 'ArrowDown')
+        nextIndex = (currentIndex + 1) % views.length
+      else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp')
+        nextIndex = (currentIndex - 1 + views.length) % views.length
+      else if (event.key === 'Home') nextIndex = 0
+      else if (event.key === 'End') nextIndex = views.length - 1
+      if (nextIndex === undefined) return
+      event.preventDefault()
+      const next = views[nextIndex]
+      if (next === undefined) return
+      setConversationView(next)
+      document.getElementById(CONVERSATION_VIEW_IDS[next].tab)?.focus()
+    },
+    [codingToolsEnabled],
+  )
 
   const setConversationFontSize = useCallback((next: ConversationFontSize): void => {
     setConversationFontSizeState(next)
@@ -239,13 +412,13 @@ export function App(): ReactElement {
     (next: Locale): void => {
       setLocale(next)
       if (state.backend.kind !== 'connected') return
-      void store.updateDshSetting(DSH_LOCALE_SETTING_PATH, next).catch((reason: unknown) => {
+      void updateDshSettingForUi(DSH_LOCALE_SETTING_PATH, next).catch((reason: unknown) => {
         // The extension UI remains usable even when an older/read-only DSH
         // cannot persist its matching response-language preference.
         setError(reason instanceof Error ? reason.message : t('settings.updateFailed'))
       })
     },
-    [setError, setLocale, state.backend.kind, store, t],
+    [setError, setLocale, state.backend.kind, t, updateDshSettingForUi],
   )
 
   useLayoutEffect(() => {
@@ -425,7 +598,7 @@ export function App(): ReactElement {
   )
   const activeSessionId = active?.id
   const showDshEvents =
-    dshEventVisibility.visible && dshEventVisibility.sessionId !== undefined
+    codingToolsEnabled && dshEventVisibility.visible && dshEventVisibility.sessionId !== undefined
       ? dshEventVisibility.sessionId === activeSessionId
       : false
   const visibleOpenFilePickerOpen =
@@ -445,7 +618,7 @@ export function App(): ReactElement {
     openFilePickerSessionId !== undefined &&
     openFilePickerSessionId === activeSessionId
   const setShowDshEvents = useStableCallback((visible: boolean): void => {
-    if (activeSessionId === undefined) return
+    if (!codingToolsEnabled || activeSessionId === undefined) return
     setDshEventVisibility({ sessionId: activeSessionId, visible })
   })
   const sessionModels = state.sessionModels.length > 0 ? state.sessionModels : state.models
@@ -921,14 +1094,17 @@ export function App(): ReactElement {
   const composerOnPreviewEditorContext = useStableCallback(
     (contextRef: string): Promise<EditorContextPreview | undefined> => store.previewEditorContext(contextRef),
   )
-  const composerOnConfigurationChange = useStableCallback((configuration: AgentConfiguration): void => {
-    if (active === undefined) return
-    void store
-      .configureSession(active.id, configuration)
-      .catch((reason: unknown) =>
-        setError(reason instanceof Error ? reason.message : t('app.error.sessionSettings')),
-      )
-  })
+  const composerOnConfigurationChange = useStableCallback(
+    async (configuration: AgentConfiguration): Promise<void> => {
+      if (active === undefined) return
+      try {
+        await store.configureSession(active.id, configuration)
+      } catch (reason: unknown) {
+        setError(reason instanceof Error ? reason.message : t('app.error.sessionSettings'))
+        throw reason
+      }
+    },
+  )
   const composerOnPromptModeChange = useStableCallback((mode: PromptMode): void => {
     void store
       .setPromptMode(mode)
@@ -1029,11 +1205,13 @@ export function App(): ReactElement {
           : { nodeChangeBase: state.timeline.nodeChangeBase })}
         usage={composerUsage}
         cacheHit={cacheHitRate(composerUsage)}
+        performanceUsage={performanceUsage}
         {...(sessionStats === undefined ? {} : { sessionStats })}
       />
     ),
     [
       composerUsage,
+      performanceUsage,
       sessionStats,
       state.timeline.nodeChangeBase,
       state.timeline.nodeChangeStart,
@@ -1103,6 +1281,15 @@ export function App(): ReactElement {
   const headerOnOpenSettings = useStableCallback((): void => {
     store.setDrawer('settings')
   })
+  const headerOnOpenSchedules = useStableCallback((): void => {
+    store.setDrawer('schedules')
+  })
+  const scheduleOnStartSession = useStableCallback(async (): Promise<void> => {
+    await store.createSession(active?.workspaceId ?? state.workspaces[0]?.id)
+    store.setDrawer(undefined)
+    await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()))
+    document.querySelector<HTMLTextAreaElement>('.dsh-composer__textarea')?.focus()
+  })
   const attachedOpenFileIds = useMemo(() => Object.values(openFileAttachmentIds), [openFileAttachmentIds])
   const closeConversationActions = useCallback((): void => {
     setLocaleOpen(false)
@@ -1150,16 +1337,18 @@ export function App(): ReactElement {
           onStopFollowing={() => store.stopFollowingJob()}
           onKill={(jobId) => store.killJob(jobId)}
         />
-        <DeferredChangesDrawer
-          key={`changes-${activeId}`}
-          changes={state.changes}
-          loading={state.changesLoading}
-          refreshFailed={state.changesRefreshFailed}
-          onRefresh={() => store.refreshChanges(activeId)}
-          onOpen={(changeId) => store.openChange(changeId)}
-          onDetail={(changeId) => store.getChangeDetail(changeId)}
-          onMarkReviewed={(changeId, reviewState) => store.markChangeReviewed(changeId, reviewState)}
-        />
+        {codingToolsEnabled ? (
+          <DeferredChangesDrawer
+            key={`changes-${activeId}`}
+            changes={state.changes}
+            loading={state.changesLoading}
+            refreshFailed={state.changesRefreshFailed}
+            onRefresh={() => store.refreshChanges(activeId)}
+            onOpen={(changeId) => store.openChange(changeId)}
+            onDetail={(changeId) => store.getChangeDetail(changeId)}
+            onMarkReviewed={(changeId, reviewState) => store.markChangeReviewed(changeId, reviewState)}
+          />
+        ) : null}
         <DeferredTasksDrawer
           key={`tasks-${activeId}`}
           tasks={state.tasks}
@@ -1238,7 +1427,7 @@ export function App(): ReactElement {
           onReconnect={() => store.reconnect()}
           onShowOutput={() => store.showDiagnostics()}
         />
-        {dshEventCount > 0 ? (
+        {codingToolsEnabled && dshEventCount > 0 ? (
           <ConversationEventToggle
             count={dshEventCount}
             pressed={showDshEvents}
@@ -1326,12 +1515,14 @@ export function App(): ReactElement {
     state.tasksOmittedSessions,
     store,
     t,
+    codingToolsEnabled,
     showDshEvents,
   ])
   return (
     <AppErrorBoundary>
       <main className="dsh-app" data-dsh-theme={themePreference}>
         <DeferredSettingsDrawer
+          key={settingsDrawerVersionKey}
           open={state.drawer === 'settings'}
           onOpenChange={(open) => store.setDrawer(open ? 'settings' : undefined)}
           connected={backend.kind === 'connected'}
@@ -1351,9 +1542,10 @@ export function App(): ReactElement {
           providers={state.providers}
           models={state.models}
           onLoadSettings={() => store.readSettings()}
-          onLoadDshSettings={() => store.readDshSettings()}
+          onLoadDshSettings={readDshSettingsForUi}
           onOpenDshSettingsDocument={() => store.openDshSettingsDocument()}
-          onUpdateDshSetting={(path, value) => store.updateDshSetting(path, value)}
+          onOpenKeyboardShortcuts={() => store.openKeyboardShortcuts()}
+          onUpdateDshSetting={updateDshSettingForUi}
           onUnsetDshSetting={(path) => store.unsetDshSetting(path)}
           onCreateCustomProvider={(draft) => store.createCustomProvider(draft)}
           onDiscoverModels={(input) => store.discoverModels(input)}
@@ -1378,6 +1570,31 @@ export function App(): ReactElement {
           }}
           pluginInventoryRevision={store.pluginInventoryRevision}
           onLoadPluginInventory={() => store.loadPluginInventory()}
+          featureRequest={store.featureRequest}
+          accountLifecycleAvailable={state.accountLifecycleAvailable}
+          accountLifecycle={state.accountLifecycle}
+          accountLifecycleLoading={state.accountLifecycleLoading}
+          accountLifecycleBusy={state.accountLifecycleBusy}
+          {...(state.accountLifecycleImpact === undefined
+            ? {}
+            : { accountLifecycleImpact: state.accountLifecycleImpact })}
+          accountSessionExpired={state.accountSessionExpired}
+          {...(state.accountLifecycleError === undefined
+            ? {}
+            : { accountLifecycleError: state.accountLifecycleError })}
+          accountLifecycleRequestFailed={state.accountLifecycleRequestFailed}
+          onLoadAccountLifecycle={() => store.loadAccountLifecycle()}
+          onStartAccountSignIn={() => store.startAccountSignIn()}
+          onCancelAccountSignIn={(attemptId) => store.cancelAccountSignIn(attemptId)}
+          onCheckAccountSignOutImpact={() => store.checkAccountSignOutImpact()}
+          onSignOutAccount={() => store.signOutAccount()}
+        />
+        <ScheduleDrawer
+          open={state.drawer === 'schedules'}
+          onClose={() => store.setDrawer(undefined)}
+          featureRequest={store.featureRequest}
+          subscribeFeature={store.subscribeFeature}
+          onStartScheduleSession={scheduleOnStartSession}
         />
         {runtimeUpdateVisible ? (
           <div className="dsh-app__runtime-update dsh-toast" role="status">
@@ -1498,9 +1715,9 @@ export function App(): ReactElement {
                       <EmptySessionPosture
                         workspaces={state.workspaces}
                         presets={state.presets}
-                        {...(state.presetSelectionEnabled === undefined
+                        {...(newSessionPresetSelectionEnabled === undefined
                           ? {}
-                          : { presetSelectionEnabled: state.presetSelectionEnabled })}
+                          : { presetSelectionEnabled: newSessionPresetSelectionEnabled })}
                         empty={state.sessions.length === 0}
                         onCreate={(workspaceId, presetId) => {
                           void store
@@ -1529,6 +1746,10 @@ export function App(): ReactElement {
                 <section
                   className="dsh-conversation"
                   data-conversation-font-size={conversationFontSize}
+                  {...(hostConversationFontSizePx === undefined
+                    ? {}
+                    : { 'data-conversation-font-size-px': hostConversationFontSizePx })}
+                  {...(conversationFontStyle === undefined ? {} : { style: conversationFontStyle })}
                   aria-label={active.title.trim() === '' ? t('app.conversation') : active.title}
                 >
                   <div className="dsh-conversation__topbar">
@@ -1553,22 +1774,24 @@ export function App(): ReactElement {
                       >
                         {t('app.chat')}
                       </button>
-                      <button
-                        id={CONVERSATION_VIEW_IDS.trajectory.tab}
-                        data-conversation-view="trajectory"
-                        className={`dsh-conversation__view-tab${
-                          conversationView === 'trajectory' ? ' dsh-conversation__view-tab--active' : ''
-                        }`}
-                        type="button"
-                        role="tab"
-                        aria-selected={conversationView === 'trajectory'}
-                        aria-controls={CONVERSATION_VIEW_IDS.trajectory.panel}
-                        tabIndex={conversationView === 'trajectory' ? 0 : -1}
-                        onKeyDown={onConversationTabKeyDown}
-                        onClick={() => setConversationView('trajectory')}
-                      >
-                        {t('app.trajectory')}
-                      </button>
+                      {codingToolsEnabled ? (
+                        <button
+                          id={CONVERSATION_VIEW_IDS.trajectory.tab}
+                          data-conversation-view="trajectory"
+                          className={`dsh-conversation__view-tab${
+                            conversationView === 'trajectory' ? ' dsh-conversation__view-tab--active' : ''
+                          }`}
+                          type="button"
+                          role="tab"
+                          aria-selected={conversationView === 'trajectory'}
+                          aria-controls={CONVERSATION_VIEW_IDS.trajectory.panel}
+                          tabIndex={conversationView === 'trajectory' ? 0 : -1}
+                          onKeyDown={onConversationTabKeyDown}
+                          onClick={() => setConversationView('trajectory')}
+                        >
+                          {t('app.trajectory')}
+                        </button>
+                      ) : null}
                     </div>
                     <AppHeader
                       runtime={backend}
@@ -1576,6 +1799,7 @@ export function App(): ReactElement {
                       compatibilityWarning={compatibilityWarning}
                       sessionControl={sessionControl}
                       onNewSession={headerOnNewSession}
+                      onOpenSchedules={headerOnOpenSchedules}
                       onOpenSettings={headerOnOpenSettings}
                       onRetryConnection={retryConnection}
                     />
@@ -1678,6 +1902,9 @@ export function App(): ReactElement {
                         : { nodeChangeBase: state.timeline.nodeChangeBase })}
                       streaming={streaming}
                       showDshEvents={showDshEvents}
+                      transcriptView={transcriptView}
+                      performanceUsage={performanceUsage}
+                      codingToolsEnabled={codingToolsEnabled}
                       running={activeRunning}
                       {...(state.timeline.activeTurn === undefined
                         ? {}
@@ -1761,16 +1988,16 @@ export function App(): ReactElement {
                               ? {}
                               : { modelRoutable: sessionModelRoutable })}
                             presets={state.presets}
-                            {...(state.presetSelectionEnabled === undefined
+                            {...(newSessionPresetSelectionEnabled === undefined
                               ? {}
-                              : { presetSelectionEnabled: state.presetSelectionEnabled })}
+                              : { presetSelectionEnabled: newSessionPresetSelectionEnabled })}
                             permissionPresets={state.permissionPresets}
                             commands={state.commands}
                             popupSelects={popupSelects}
                             references={visibleReferenceCandidates}
                             referenceLoading={visibleReferenceLoading}
                             {...(imageLimits === undefined ? {} : { imageLimits })}
-                            busyEnter={state.busyEnter}
+                            busyEnter={readyDshUiPreferences?.busyEnter ?? state.busyEnter}
                             modelPickerOpenRequest={modelPickerOpenRequest}
                             {...(estimatedContextTokens === undefined ? {} : { estimatedContextTokens })}
                             {...(contextWindowTokens === undefined ? {} : { contextWindowTokens })}
@@ -1902,13 +2129,13 @@ function EmptySessionPosture(props: {
             density="regular"
             displayLabel
             menuMode="flow"
-            label={stagedPreset?.name ?? stagedPreset?.id ?? t('app.presetPicker')}
+            label={stagedPreset === undefined ? t('app.presetPicker') : presetDisplayName(stagedPreset, t)}
             ariaLabel={t('app.presetPicker')}
             title={t('app.presetPicker')}
             value={stagedPresetId}
             options={availablePresets.map((preset) => ({
               value: preset.id,
-              label: preset.name ?? preset.id,
+              label: presetDisplayName(preset, t),
             }))}
             onChange={setSelectedPresetId}
           />

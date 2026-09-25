@@ -1627,3 +1627,33 @@
     justify-content: flex-start;
   }
 }
+.dsh-timeline[data-coding-tools-enabled='false'] .dsh-tool-row__diff-section,
+.dsh-timeline[data-coding-tools-enabled='false'] .dsh-tool-diff-preview {
+  display: none !important;
+}
+
+.account-lifecycle {
+  display: grid;
+  gap: var(--dsh-space-2);
+  padding: var(--dsh-space-4);
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: var(--dsh-radius-md);
+  background: var(--vscode-sideBar-background);
+}
+
+.account-lifecycle h2,
+.account-lifecycle p {
+  margin: 0;
+}
+
+.account-lifecycle__attempt,
+.account-lifecycle__sign-out {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--dsh-space-2);
+}
+
+.account-lifecycle [role='alert'] {
+  color: var(--vscode-errorForeground);
+}

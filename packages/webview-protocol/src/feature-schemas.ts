@@ -1,4 +1,9 @@
 import { z } from 'zod'
+import {
+  accountLifecycleErrorCodeSchema,
+  accountLifecycleSnapshotSchema,
+  accountSignOutImpactSchema,
+} from './account-lifecycle-schemas.js'
 
 /**
  * Strict schemas for the staged editor/review/task/recovery surface.
@@ -222,6 +227,210 @@ export const taskSummarySchema = z
     taskRevision: generation,
   })
   .strict()
+
+const scheduleTimestamp = z.string().datetime({ offset: false })
+const pluginBundleTextSchema = z.union([
+  z.string().max(4_096),
+  z
+    .object({ en: z.string().max(4_096) })
+    .catchall(z.string().max(4_096))
+    .superRefine((value, context) => {
+      const entries = Object.entries(value)
+      if (entries.length > 16 || !entries.every(([locale]) => /^[A-Za-z0-9-]{1,32}$/u.test(locale)))
+        context.addIssue({ code: 'custom', message: 'Localized bundle text has invalid locale keys.' })
+    }),
+])
+const optionalPluginBundleSchema = z
+  .object({
+    name: safeLabel,
+    version: z.string().max(128).optional(),
+    title: pluginBundleTextSchema.optional(),
+    description: pluginBundleTextSchema.optional(),
+    enabled: z.boolean(),
+    installed: z.boolean(),
+    hasIssue: z.boolean(),
+    readOnlyReason: z.enum(['management-required', 'unaddressable']).optional(),
+  })
+  .strict()
+const pluginBundleChangeResultSchema = z
+  .object({
+    name: safeLabel,
+    changed: z.boolean(),
+    application: z.enum(['applied', 'restart-required', 'overridden', 'failed', 'cancelled']),
+    enabled: z.boolean(),
+    errorCode: z
+      .enum([
+        'management-required',
+        'unaddressable',
+        'unknown-plugin',
+        'not-bundle',
+        'not-removable',
+        'stop-profile',
+        'bundle-in-use',
+        'incompatible-version',
+        'operation-error',
+      ])
+      .optional(),
+  })
+  .strict()
+const schedulePrompt = z.string().min(1).max(16_000_000)
+const scheduleTitle = z.string().min(1).max(120)
+const scheduleDate = z.string().regex(/^\d{4}-\d\d-\d\d$/u)
+const scheduleTime = z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,3})?$/u)
+const scheduleAtInputSchema = z.union([
+  z.string().datetime({ offset: true }),
+  z.object({ date: scheduleDate, time: scheduleTime, timeZone: z.string().min(1).max(256) }).strict(),
+])
+
+/** Closed, Webview-safe projection of rc.2 Schedule rules. */
+export const scheduleRecordSchema = z.discriminatedUnion('kind', [
+  z
+    .object({
+      id,
+      kind: z.literal('at'),
+      title: scheduleTitle,
+      prompt: schedulePrompt,
+      scheduledAt: scheduleTimestamp,
+    })
+    .strict(),
+  z
+    .object({
+      id,
+      kind: z.literal('after'),
+      title: scheduleTitle,
+      prompt: schedulePrompt,
+      scheduledAt: scheduleTimestamp,
+      afterSeconds: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    })
+    .strict(),
+  z
+    .object({
+      id,
+      kind: z.literal('every'),
+      title: scheduleTitle,
+      prompt: schedulePrompt,
+      scheduledAt: scheduleTimestamp,
+      everySeconds: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    })
+    .strict(),
+  z
+    .object({
+      id,
+      kind: z.literal('daily'),
+      title: scheduleTitle,
+      prompt: schedulePrompt,
+      scheduledAt: scheduleTimestamp,
+      time: scheduleTime,
+      timeZone: z.string().min(1).max(256),
+    })
+    .strict(),
+  z
+    .object({
+      id,
+      kind: z.literal('weekly'),
+      title: scheduleTitle,
+      prompt: schedulePrompt,
+      scheduledAt: scheduleTimestamp,
+      time: scheduleTime,
+      timeZone: z.string().min(1).max(256),
+      weekdays: z.array(z.number().int().min(1).max(7)).min(1).max(7),
+    })
+    .strict()
+    .superRefine((value, context) => {
+      if (new Set(value.weekdays).size !== value.weekdays.length)
+        context.addIssue({ code: 'custom', path: ['weekdays'], message: 'Weekdays cannot repeat.' })
+    }),
+  z
+    .object({
+      id,
+      kind: z.literal('cron'),
+      title: scheduleTitle,
+      prompt: schedulePrompt,
+      scheduledAt: scheduleTimestamp,
+      expression: z.string().min(1).max(256),
+      timeZone: z.string().min(1).max(256),
+    })
+    .strict(),
+])
+
+const scheduleDeliveryReceiptSchema = z
+  .object({
+    scheduledAt: scheduleTimestamp,
+    deliveredAt: scheduleTimestamp,
+    messageId: id,
+  })
+  .strict()
+
+export const scheduleCatalogEntrySchema = z.intersection(
+  scheduleRecordSchema,
+  z
+    .object({
+      sessionId: id,
+      status: z.enum(['active', 'inactive']),
+      lastDelivery: scheduleDeliveryReceiptSchema.optional(),
+    })
+    .strict(),
+)
+
+const scheduleDeliveryRecordSchema = z
+  .object({
+    ...scheduleDeliveryReceiptSchema.shape,
+    prompt: z.string().max(16_000_000).optional(),
+  })
+  .strict()
+
+const scheduleHistoryPayloadSchema = z.union([
+  z
+    .object({
+      id,
+      records: z.array(scheduleDeliveryRecordSchema).max(100),
+      earlierRecordsUnavailable: z.boolean(),
+      earlierRecordsPruned: z.boolean(),
+      retention: z
+        .object({
+          days: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+          records: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+        })
+        .strict(),
+      nextBefore: id.optional(),
+    })
+    .strict(),
+  z.object({ id, code: z.enum(['schedule_not_found', 'delivery_cursor_not_found']) }).strict(),
+])
+
+const scheduleToolFailureSchema = z
+  .object({
+    code: z.enum([
+      'invalid_prompt',
+      'invalid_selector',
+      'invalid_rule',
+      'invalid_time_zone',
+      'not_future',
+      'time_out_of_range',
+      'frequency_too_high',
+      'internal_error',
+    ]),
+    message: z.string().min(1).max(2_000),
+  })
+  .strict()
+
+const scheduleUpdatePayloadSchema = z.union([
+  z.object({ id, updated: z.boolean(), record: scheduleRecordSchema }).strict(),
+  z
+    .object({
+      id,
+      updated: z.literal(false),
+      code: z.enum(['schedule_not_found', 'schedule_ended', 'schedule_conflict']),
+    })
+    .strict(),
+  scheduleToolFailureSchema,
+])
+
+const scheduleDeletePayloadSchema = z.union([
+  z.object({ id, deleted: z.literal(true) }).strict(),
+  z.object({ id, deleted: z.literal(false), code: z.literal('schedule_not_found') }).strict(),
+  scheduleToolFailureSchema,
+])
 
 export const checkpointSummarySchema = z
   .object({
@@ -479,6 +688,143 @@ export const featureRequestSchema = z.discriminatedUnion('type', [
     .strict(),
   z
     .object({
+      type: z.literal('schedule.catalog'),
+      ...featureRequestBase,
+      payload: z.object({}).strict(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('plugin.bundles.list'),
+      ...featureRequestBase,
+      payload: z.object({}).strict(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('plugin.bundle.setEnabled'),
+      ...featureRequestBase,
+      payload: z.object({ name: safeLabel, enabled: z.boolean() }).strict(),
+    })
+    .strict(),
+  z
+    .object({ type: z.literal('account.state'), ...featureRequestBase, payload: z.object({}).strict() })
+    .strict(),
+  z
+    .object({ type: z.literal('account.signIn'), ...featureRequestBase, payload: z.object({}).strict() })
+    .strict(),
+  z
+    .object({
+      type: z.literal('account.cancelSignIn'),
+      ...featureRequestBase,
+      payload: z.object({ attemptId: z.string().uuid() }).strict(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('account.signOutImpact'),
+      ...featureRequestBase,
+      payload: z.object({}).strict(),
+    })
+    .strict(),
+  z
+    .object({ type: z.literal('account.signOut'), ...featureRequestBase, payload: z.object({}).strict() })
+    .strict(),
+  z
+    .object({
+      type: z.literal('schedule.list'),
+      ...featureRequestBase,
+      payload: z.object({ sessionId: id }).strict(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('schedule.history'),
+      ...featureRequestBase,
+      payload: z
+        .object({ sessionId: id, id, limit: z.number().int().min(1).max(100), before: id.optional() })
+        .strict(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('schedule.update'),
+      ...featureRequestBase,
+      payload: z
+        .object({
+          sessionId: id,
+          id,
+          expected: scheduleRecordSchema,
+          change: z
+            .discriminatedUnion('kind', [
+              z.object({ kind: z.literal('at'), at: scheduleAtInputSchema }).strict(),
+              z
+                .object({
+                  kind: z.literal('every'),
+                  seconds: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+                })
+                .strict(),
+              z
+                .object({
+                  kind: z.literal('daily'),
+                  time: scheduleTime,
+                  timeZone: z.string().min(1).max(256),
+                })
+                .strict(),
+              z
+                .object({
+                  kind: z.literal('weekly'),
+                  time: scheduleTime,
+                  timeZone: z.string().min(1).max(256),
+                  weekdays: z.array(z.number().int().min(1).max(7)).min(1).max(7),
+                })
+                .strict()
+                .superRefine((value, context) => {
+                  if (new Set(value.weekdays).size !== value.weekdays.length)
+                    context.addIssue({
+                      code: 'custom',
+                      path: ['weekdays'],
+                      message: 'Weekdays cannot repeat.',
+                    })
+                }),
+              z
+                .object({
+                  kind: z.literal('cron'),
+                  expression: z.string().min(1).max(256),
+                  timeZone: z.string().min(1).max(256),
+                })
+                .strict(),
+            ])
+            .optional()
+            .superRefine((change, context) => {
+              if (change?.kind === 'weekly' && new Set(change.weekdays).size !== change.weekdays.length)
+                context.addIssue({ code: 'custom', path: ['weekdays'], message: 'Weekdays cannot repeat.' })
+            }),
+          title: scheduleTitle.optional(),
+          prompt: schedulePrompt.optional(),
+        })
+        .strict()
+        .superRefine((value, context) => {
+          if (value.change === undefined && value.title === undefined && value.prompt === undefined)
+            context.addIssue({ code: 'custom', message: 'A Schedule update must change at least one field.' })
+          if (value.id !== value.expected.id)
+            context.addIssue({
+              code: 'custom',
+              path: ['expected', 'id'],
+              message: 'Expected rule identity must match.',
+            })
+        }),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('schedule.delete'),
+      ...featureRequestBase,
+      payload: z.object({ sessionId: id, id }).strict(),
+    })
+    .strict(),
+  z
+    .object({
       type: z.literal('prompt.template.list'),
       ...featureRequestBase,
       payload: z
@@ -583,6 +929,8 @@ export const featureWebviewEnvelopeSchema = z
 
 const featureResponsePayloadSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('empty') }).strict(),
+  z.object({ kind: z.literal('account.lifecycle'), snapshot: accountLifecycleSnapshotSchema }).strict(),
+  z.object({ kind: z.literal('account.impact'), impact: accountSignOutImpactSchema }).strict(),
   z
     .object({
       kind: z.literal('editor.context'),
@@ -638,6 +986,31 @@ const featureResponsePayloadSchema = z.discriminatedUnion('kind', [
       omittedSessions: z.number().int().nonnegative().max(64),
     })
     .strict(),
+  z
+    .object({ kind: z.literal('schedule.catalog'), items: z.array(scheduleCatalogEntrySchema).max(10_000) })
+    .strict(),
+  z
+    .object({ kind: z.literal('schedule.records'), items: z.array(scheduleRecordSchema).max(10_000) })
+    .strict(),
+  z.object({ kind: z.literal('schedule.history'), result: scheduleHistoryPayloadSchema }).strict(),
+  z.object({ kind: z.literal('schedule.updated'), result: scheduleUpdatePayloadSchema }).strict(),
+  z.object({ kind: z.literal('schedule.deleted'), result: scheduleDeletePayloadSchema }).strict(),
+  z
+    .object({
+      kind: z.literal('plugin.bundles'),
+      available: z.boolean(),
+      bundles: z.array(optionalPluginBundleSchema).max(5_000),
+    })
+    .strict()
+    .superRefine((value, context) => {
+      if (!value.available && value.bundles.length !== 0)
+        context.addIssue({
+          code: 'custom',
+          path: ['bundles'],
+          message: 'Unavailable Plugin Manager has no catalog.',
+        })
+    }),
+  z.object({ kind: z.literal('plugin.bundle.changed'), result: pluginBundleChangeResultSchema }).strict(),
   z
     .object({
       kind: z.literal('checkpoints'),
@@ -752,6 +1125,29 @@ export const featureHostEventSchema = z.discriminatedUnion('name', [
   z
     .object({
       type: z.literal('feature.event'),
+      name: z.literal('account.lifecycle.updated'),
+      identity: featureEventIdentitySchema,
+      snapshot: accountLifecycleSnapshotSchema,
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('feature.event'),
+      name: z.literal('account.session-expired'),
+      identity: featureEventIdentitySchema,
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('feature.event'),
+      name: z.literal('account.lifecycle.error'),
+      identity: featureEventIdentitySchema,
+      code: accountLifecycleErrorCodeSchema,
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('feature.event'),
       name: z.literal('changes.invalidated'),
       identity: featureEventIdentitySchema,
       sessionId: id,
@@ -788,6 +1184,13 @@ export const featureHostEventSchema = z.discriminatedUnion('name', [
       name: z.literal('tasks.updated'),
       identity: featureEventIdentitySchema,
       task: taskSummarySchema,
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('feature.event'),
+      name: z.literal('schedule.invalidated'),
+      identity: featureEventIdentitySchema,
     })
     .strict(),
   z

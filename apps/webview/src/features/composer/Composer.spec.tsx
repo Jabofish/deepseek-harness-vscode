@@ -675,10 +675,10 @@ describe('Composer', () => {
   })
 })
 
-describe('Composer model block', () => {
+describe('Composer model availability notice', () => {
   afterEach(() => cleanup())
 
-  it('makes the input inert with the host reason when no adapter serves the model', () => {
+  it('keeps the input usable and shows the host reason when the selected model is not routable', () => {
     const configuration: AgentConfiguration = {
       preset: 'standard',
       toolMode: 'native',
@@ -689,6 +689,7 @@ describe('Composer model block', () => {
     render(
       <Composer
         {...baseProps()}
+        draft="hello"
         configuration={configuration}
         models={[
           {
@@ -704,28 +705,26 @@ describe('Composer model block', () => {
     )
     const textarea = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })
 
-    expect(textarea.disabled).toBe(true)
-    expect(textarea.getAttribute('placeholder')).toBe(
-      'This model is unavailable — select a model to continue',
-    )
+    expect(textarea.disabled).toBe(false)
+    expect(textarea.getAttribute('placeholder')).toBe('Message…')
     expect(screen.getByRole('status').textContent).toBe(
-      'This model is unavailable — select a model to continue',
+      'This model is not currently listed as available; DSH may ask you to sign in',
     )
-    expect(screen.getByRole('button', { name: 'Send message' }).hasAttribute('disabled')).toBe(true)
-    // Choosing a served model is the way out, so the block never reaches the picker.
+    expect(screen.getByRole('button', { name: 'Send message' }).hasAttribute('disabled')).toBe(false)
+    // Choosing a served model remains available, but is not required to send a prompt to DSH.
     expect(screen.getByRole('button', { name: /^Model and reasoning/u }).hasAttribute('disabled')).toBe(false)
   })
 
-  it('drops a submit that arrives while the model is unroutable', () => {
+  it('passes a submit to DSH while the selected model is unroutable', () => {
     const onSubmit = vi.fn()
     render(<Composer {...baseProps()} draft="hello" modelRoutable={false} onSubmit={onSubmit} />)
 
     fireEvent.submit(composerForm())
 
-    expect(onSubmit).not.toHaveBeenCalled()
+    expect(onSubmit).toHaveBeenCalledOnce()
   })
 
-  it('keeps Stop reachable while a turn runs under the block', () => {
+  it('keeps Stop reachable while a turn runs with an unavailable model notice', () => {
     const onSubmit = vi.fn()
     const onCancel = vi.fn()
     render(

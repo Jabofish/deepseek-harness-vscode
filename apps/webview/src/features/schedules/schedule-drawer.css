@@ -1,0 +1,53 @@
+.dsh-schedule-drawer__backdrop {
+  position: fixed;
+  z-index: 70;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: var(--dsh-panel-gutter);
+  background: color-mix(in srgb, var(--dsh-bg) 76%, transparent);
+}
+
+.dsh-schedule-drawer {
+  display: flex;
+  flex-direction: column;
+  width: min(100%, 86rem);
+  height: min(100%, 54rem);
+  min-width: 0;
+  overflow: hidden;
+  border: var(--dsh-border);
+  border-radius: var(--dsh-radius-lg);
+  color: var(--dsh-text);
+  background: var(--dsh-bg);
+  box-shadow: var(--dsh-shadow);
+}
+
+.dsh-schedule-drawer__close {
+  align-self: flex-end;
+  flex: 0 0 auto;
+  margin: var(--dsh-space-2) var(--dsh-space-2) 0;
+}
+
+.dsh-schedule-drawer__content {
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: 0 var(--dsh-space-3) var(--dsh-space-3);
+}
+
+@media (max-width: 760px) {
+  .dsh-schedule-drawer__backdrop {
+    padding: 0;
+  }
+
+  .dsh-schedule-drawer {
+    width: 100%;
+    height: 100%;
+    border-radius: 0;
+  }
+
+  .dsh-schedule-drawer__content {
+    padding-inline: var(--dsh-space-2);
+  }
+}

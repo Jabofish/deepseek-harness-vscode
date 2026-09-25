@@ -10,6 +10,12 @@ import { PresetCard } from '../../components/common/PresetCard.js'
 import { useDismissibleLayer } from '../../components/common/useDismissibleLayer.js'
 import { Icon } from '../../ui/Icon.js'
 import { useI18n } from '../../i18n.js'
+import {
+  builtInPresetId,
+  presetDisplayDescription,
+  presetDisplayName,
+  type BuiltInPresetId,
+} from './preset-display.js'
 
 export interface PresetManagerProps {
   readonly onLoadRoster: () => Promise<AgentPresetRoster | undefined>
@@ -21,6 +27,8 @@ export interface PresetManagerProps {
   /** Writes the default field selected by the version adapter. */
   readonly onMakeDefault: (presetId: string, settingsPath?: string) => Promise<void>
   readonly defaultWritable?: boolean
+  /** rc.2 Developer Tools preference gates preset selection and creation. */
+  readonly codingToolsEnabled?: boolean | undefined
 }
 
 /** Ids a preset directory may be named, mirroring the host's own rule. */
@@ -71,6 +79,32 @@ function locationLabels(hasDocument: boolean | undefined): {
   return { label: 'presets.location', title: 'presets.locationUnknown' }
 }
 
+type PresetGuidePage = 'explanation' | 'usage'
+type PresetGuideId = BuiltInPresetId
+
+const presetGuides = {
+  standard: {
+    intro: 'presets.guide.standardIntro',
+    explanation: 'presets.guide.standardExplanation',
+    usage: 'presets.guide.standardUsage',
+  },
+  ptc: {
+    intro: 'presets.guide.ptcIntro',
+    explanation: 'presets.guide.ptcExplanation',
+    usage: 'presets.guide.ptcUsage',
+  },
+  minimal: {
+    intro: 'presets.guide.minimalIntro',
+    explanation: 'presets.guide.minimalExplanation',
+    usage: 'presets.guide.minimalUsage',
+  },
+  cordis: {
+    intro: 'presets.guide.cordisIntro',
+    explanation: 'presets.guide.cordisExplanation',
+    usage: 'presets.guide.cordisUsage',
+  },
+} as const
+
 /** Why this copy cannot be submitted yet; the host re-checks on submit. */
 function copyBlocker(
   draft: CopyDraft,
@@ -85,10 +119,9 @@ function copyBlocker(
 }
 
 /**
- * The agent-preset management surface, mirroring the upstream settings
- * section: the roster as cards grouped by trust, a copy dialog as the only
- * way a preset is created, a read-only viewer over shipped compositions, and
- * a location action leading to a user preset's files.
+ * The agent-preset management surface: the roster as cards grouped by trust,
+ * version-supported authoring actions, built-in mode guidance, a read-only
+ * viewer over declared compositions, and a location action for user presets.
  *
  * The Webview edits no composition text — a copy is host-side, and everything
  * after creation happens in the preset's own files.
@@ -103,13 +136,17 @@ export function PresetManager(props: PresetManagerProps): ReactElement | null {
     error: undefined,
   })
   const [view, setView] = useState<PresetView | undefined>(undefined)
+  const [guide, setGuide] = useState<
+    { readonly id: PresetGuideId; readonly title: string; readonly page: PresetGuidePage } | undefined
+  >(undefined)
   const [viewLoading, setViewLoading] = useState(false)
   const [viewError, setViewError] = useState<string | undefined>(undefined)
   const [copy, setCopy] = useState<CopyDraft | undefined>(undefined)
   const [pendingDelete, setPendingDelete] = useState<string | undefined>(undefined)
   const [deleting, setDeleting] = useState(false)
   const defaultWritable = props.defaultWritable !== false
-  const modeSelectionEnabled = roster.modeSelectionEnabled !== false
+  const codingToolsEnabled = props.codingToolsEnabled !== false
+  const modeSelectionEnabled = codingToolsEnabled && roster.modeSelectionEnabled !== false
   const canSetDefault = defaultWritable && modeSelectionEnabled
   const [defaultingId, setDefaultingId] = useState<string | undefined>(undefined)
   const [revealedPaths, setRevealedPaths] = useState<Readonly<Record<string, string>>>({})
@@ -119,6 +156,7 @@ export function PresetManager(props: PresetManagerProps): ReactElement | null {
   const overlayOpen =
     copy !== undefined ||
     pendingDelete !== undefined ||
+    guide !== undefined ||
     viewLoading ||
     viewError !== undefined ||
     view !== undefined
@@ -135,6 +173,10 @@ export function PresetManager(props: PresetManagerProps): ReactElement | null {
     }
     if (pendingDelete !== undefined) {
       if (!deleting) setPendingDelete(undefined)
+      return
+    }
+    if (guide !== undefined) {
+      setGuide(undefined)
       return
     }
     if (viewLoading || roster.compositionReadable === false) return
@@ -360,8 +402,8 @@ export function PresetManager(props: PresetManagerProps): ReactElement | null {
       <button
         className="dsh-presets__creator-card"
         type="button"
-        disabled={!roster.authorable || creatorBusy}
-        title={roster.authorable ? t('presets.creatorDraftTitle') : t('presets.noWritableRoot')}
+        disabled={!codingToolsEnabled || creatorBusy}
+        title={codingToolsEnabled ? t('presets.creatorDraftTitle') : t('presets.creatorDraftDisabled')}
         onClick={() => {
           if (creatorBusy) return
           setCreatorBusy(true)
@@ -406,67 +448,72 @@ export function PresetManager(props: PresetManagerProps): ReactElement | null {
           <section className="dsh-presets__group" key={trust}>
             <h3>{t(heading)}</h3>
             <ul className="dsh-presets__cards">
-              {group.map((row) => (
-                <PresetCard
-                  key={row.id}
-                  className={
-                    row.broken !== undefined
-                      ? 'dsh-preset-card--broken'
-                      : row.isDefault
-                        ? 'dsh-preset-card--active'
-                        : undefined
-                  }
-                  title={row.name ?? row.id}
-                  description={row.description ?? t('presets.noDescription')}
-                  id={row.id}
-                  reason={row.broken}
-                  tags={
-                    <>
-                      {row.broken !== undefined ? (
-                        <span className="dsh-presets__badge dsh-presets__badge--broken">
-                          {t('presets.broken')}
+              {group.map((row) => {
+                const name = presetDisplayName(row, t)
+                const description = presetDisplayDescription(row, t)
+                return (
+                  <PresetCard
+                    key={row.id}
+                    className={
+                      row.broken !== undefined
+                        ? 'dsh-preset-card--broken'
+                        : row.isDefault
+                          ? 'dsh-preset-card--active'
+                          : undefined
+                    }
+                    title={name}
+                    description={description}
+                    id={row.id}
+                    reason={row.broken}
+                    tags={
+                      <>
+                        {row.broken !== undefined ? (
+                          <span className="dsh-presets__badge dsh-presets__badge--broken">
+                            {t('presets.broken')}
+                          </span>
+                        ) : null}
+                        <span className="dsh-presets__badge">
+                          {row.trust === 'user' ? t('presets.custom') : t('presets.builtIn')}
                         </span>
-                      ) : null}
-                      <span className="dsh-presets__badge">
-                        {row.trust === 'user' ? t('presets.custom') : t('presets.builtIn')}
-                      </span>
-                      {row.isDefault ? (
-                        <span className="dsh-presets__badge dsh-presets__badge--in-use">
-                          {t('presets.inUse')}
-                        </span>
-                      ) : null}
-                    </>
-                  }
-                  mainPressed={row.isDefault}
-                  mainDisabled={
-                    row.isDefault || row.broken !== undefined || !canSetDefault || defaultingId !== undefined
-                  }
-                  mainLabel={`${
-                    row.broken !== undefined
-                      ? t('presets.broken')
-                      : row.isDefault
+                        {row.isDefault ? (
+                          <span className="dsh-presets__badge dsh-presets__badge--in-use">
+                            {t('presets.inUse')}
+                          </span>
+                        ) : null}
+                      </>
+                    }
+                    mainPressed={row.isDefault}
+                    mainDisabled={
+                      row.isDefault ||
+                      row.broken !== undefined ||
+                      !canSetDefault ||
+                      defaultingId !== undefined
+                    }
+                    mainLabel={`${
+                      row.broken !== undefined
+                        ? t('presets.broken')
+                        : row.isDefault
+                          ? t('presets.inUse')
+                          : t('presets.setDefault')
+                    }: ${name}`}
+                    mainTitle={
+                      row.broken ??
+                      (row.isDefault
                         ? t('presets.inUse')
-                        : t('presets.setDefault')
-                  }: ${row.name ?? row.id}`}
-                  mainTitle={
-                    row.broken ??
-                    (row.isDefault
-                      ? t('presets.inUse')
-                      : !modeSelectionEnabled
-                        ? t('presets.modeSelectionHidden')
-                        : defaultWritable
-                          ? t('presets.setDefault')
-                          : t('presets.defaultReadOnly'))
-                  }
-                  onMainClick={() => makeDefault(row.id)}
-                  footer={
-                    <>
-                      {row.trust === 'system' ? (
-                        roster.compositionReadable === false ? null : row.broken === undefined ? (
+                        : !modeSelectionEnabled
+                          ? t('presets.modeSelectionHidden')
+                          : defaultWritable
+                            ? t('presets.setDefault')
+                            : t('presets.defaultReadOnly'))
+                    }
+                    onMainClick={() => makeDefault(row.id)}
+                    footer={
+                      <>
+                        {roster.compositionReadable === false ? null : (
                           <button
                             className="dsh-icon-button"
                             type="button"
-                            aria-label={t('presets.viewComposition', { name: row.name ?? row.id })}
+                            aria-label={t('presets.viewComposition', { name })}
                             title={t('presets.viewCompositionTitle')}
                             onClick={(event) => {
                               restoreFocusRef.current = event.currentTarget
@@ -475,74 +522,105 @@ export function PresetManager(props: PresetManagerProps): ReactElement | null {
                           >
                             <Icon name="file" />
                           </button>
-                        ) : null
-                      ) : (
+                        )}
+                        {row.trust === 'user' ? (
+                          <button
+                            className="dsh-icon-button"
+                            type="button"
+                            aria-label={t(location.label, {
+                              name,
+                            })}
+                            title={t(location.title)}
+                            onClick={() => openLocation(row.id)}
+                          >
+                            <Icon name="folder" />
+                          </button>
+                        ) : null}
+                        {builtInPresetId(row) === undefined ? null : (
+                          <div className="dsh-presets__guide-actions">
+                            <button
+                              className="dsh-button dsh-button--secondary dsh-button--compact"
+                              type="button"
+                              aria-label={t('presets.modeExplanationFor', { name })}
+                              onClick={(event) => {
+                                const id = builtInPresetId(row)
+                                if (id === undefined) return
+                                restoreFocusRef.current = event.currentTarget
+                                setGuide({ id, title: name, page: 'explanation' })
+                              }}
+                            >
+                              {t('presets.modeExplanation')}
+                            </button>
+                            <button
+                              className="dsh-button dsh-button--secondary dsh-button--compact"
+                              type="button"
+                              aria-label={t('presets.howToUseFor', { name })}
+                              onClick={(event) => {
+                                const id = builtInPresetId(row)
+                                if (id === undefined) return
+                                restoreFocusRef.current = event.currentTarget
+                                setGuide({ id, title: name, page: 'usage' })
+                              }}
+                            >
+                              {t('presets.howToUse')}
+                            </button>
+                          </div>
+                        )}
                         <button
                           className="dsh-icon-button"
                           type="button"
-                          aria-label={t(location.label, {
-                            name: row.name ?? row.id,
-                          })}
-                          title={t(location.title)}
-                          onClick={() => openLocation(row.id)}
-                        >
-                          <Icon name="folder" />
-                        </button>
-                      )}
-                      <button
-                        className="dsh-icon-button"
-                        type="button"
-                        disabled={!roster.authorable || row.broken !== undefined}
-                        aria-label={t('presets.copy', { name: row.name ?? row.id })}
-                        title={
-                          row.broken !== undefined
-                            ? t('presets.copyBroken')
-                            : roster.authorable
-                              ? t('presets.copyTitle')
-                              : t('presets.noWritableRoot')
-                        }
-                        onClick={(event) => {
-                          restoreFocusRef.current = event.currentTarget
-                          setView(undefined)
-                          setCopy({
-                            from: row.id,
-                            fromTitle: row.name ?? row.id,
-                            id: '',
-                            name: '',
-                            saving: false,
-                            error: undefined,
-                          })
-                        }}
-                      >
-                        <Icon name="add" />
-                      </button>
-                      {row.trust === 'user' ? (
-                        <button
-                          className="dsh-icon-button"
-                          type="button"
-                          disabled={deleting}
-                          aria-label={t('presets.delete', { name: row.name ?? row.id })}
-                          title={t('presets.deleteTitle')}
+                          disabled={!roster.authorable || row.broken !== undefined}
+                          aria-label={t('presets.copy', { name })}
+                          title={
+                            row.broken !== undefined
+                              ? t('presets.copyBroken')
+                              : roster.authorable
+                                ? t('presets.copyTitle')
+                                : t('presets.noWritableRoot')
+                          }
                           onClick={(event) => {
                             restoreFocusRef.current = event.currentTarget
-                            setPendingDelete(row.id)
+                            setView(undefined)
+                            setCopy({
+                              from: row.id,
+                              fromTitle: name,
+                              id: '',
+                              name: '',
+                              saving: false,
+                              error: undefined,
+                            })
                           }}
                         >
-                          <Icon name="trash" />
+                          <Icon name="add" />
                         </button>
-                      ) : null}
-                    </>
-                  }
-                  revealed={
-                    revealedPaths[row.id] === undefined ? undefined : (
-                      <p className="dsh-presets__revealed">
-                        <span>{t('presets.directory')}</span>
-                        <code>{revealedPaths[row.id]}</code>
-                      </p>
-                    )
-                  }
-                />
-              ))}
+                        {row.trust === 'user' ? (
+                          <button
+                            className="dsh-icon-button"
+                            type="button"
+                            disabled={deleting}
+                            aria-label={t('presets.delete', { name })}
+                            title={t('presets.deleteTitle')}
+                            onClick={(event) => {
+                              restoreFocusRef.current = event.currentTarget
+                              setPendingDelete(row.id)
+                            }}
+                          >
+                            <Icon name="trash" />
+                          </button>
+                        ) : null}
+                      </>
+                    }
+                    revealed={
+                      revealedPaths[row.id] === undefined ? undefined : (
+                        <p className="dsh-presets__revealed">
+                          <span>{t('presets.directory')}</span>
+                          <code>{revealedPaths[row.id]}</code>
+                        </p>
+                      )
+                    }
+                  />
+                )
+              })}
             </ul>
             {trust === 'user' ? creatorCard : null}
           </section>
@@ -669,6 +747,73 @@ export function PresetManager(props: PresetManagerProps): ReactElement | null {
                 </div>
               </div>,
             )}
+      {guide === undefined
+        ? null
+        : portalled(
+            <div className="dsh-presets__modal-backdrop" role="presentation">
+              <div
+                ref={overlayRef}
+                className="dsh-presets__dialog dsh-presets__dialog--guide"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="dsh-presets-guide-title"
+                onKeyDownCapture={(event) => {
+                  if (event.key === 'Escape') {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    setGuide(undefined)
+                    return
+                  }
+                  if (event.key !== 'Tab') return
+                  const focusable = Array.from(
+                    event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not([disabled])'),
+                  )
+                  const first = focusable[0]
+                  const last = focusable[focusable.length - 1]
+                  if (event.shiftKey && document.activeElement === first) {
+                    event.preventDefault()
+                    last?.focus()
+                  } else if (!event.shiftKey && document.activeElement === last) {
+                    event.preventDefault()
+                    first?.focus()
+                  }
+                }}
+              >
+                <h3 id="dsh-presets-guide-title">{t('presets.guideHeading', { name: guide.title })}</h3>
+                <p className="dsh-presets__guide-intro">{t(presetGuides[guide.id].intro)}</p>
+                <div className="dsh-presets__guide-tabs" role="group" aria-label={t('presets.guideSections')}>
+                  {(['explanation', 'usage'] as const).map((page) => (
+                    <button
+                      key={page}
+                      className="dsh-button dsh-button--secondary dsh-button--compact"
+                      type="button"
+                      aria-pressed={guide.page === page}
+                      onClick={() => setGuide({ ...guide, page })}
+                    >
+                      {page === 'explanation' ? t('presets.modeExplanation') : t('presets.howToUse')}
+                    </button>
+                  ))}
+                </div>
+                <div className="dsh-presets__guide-content" role="region" aria-live="polite">
+                  {t(presetGuides[guide.id][guide.page])
+                    .split('\n\n')
+                    .map((paragraph, index) => (
+                      <p key={`${index}-${paragraph.slice(0, 24)}`}>{paragraph}</p>
+                    ))}
+                </div>
+                <div className="dsh-presets__dialog-actions">
+                  <button
+                    className="dsh-button dsh-button--secondary dsh-button--compact"
+                    type="button"
+                    autoFocus
+                    onClick={() => setGuide(undefined)}
+                  >
+                    {t('presets.close')}
+                  </button>
+                </div>
+              </div>
+            </div>,
+          )}
       {pendingDelete === undefined
         ? null
         : portalled(

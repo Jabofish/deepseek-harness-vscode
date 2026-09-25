@@ -1360,17 +1360,33 @@
 }
 
 .dsh-session-switcher__search {
+  display: flex;
   flex: 0 0 auto;
+  align-items: center;
   min-width: 0;
+  gap: var(--dsh-space-2);
   padding: var(--dsh-space-2) var(--dsh-space-3);
   border-bottom: var(--dsh-border);
 }
 
 .dsh-session-switcher__search input {
   display: block;
-  width: 100%;
+  flex: 1 1 9rem;
+  width: auto;
   min-width: 0;
   min-height: var(--dsh-control-height);
+}
+
+.dsh-session-switcher__archive-filter {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 10rem;
+  min-height: var(--dsh-control-height);
+  padding: 0 var(--dsh-space-2);
+  border: var(--dsh-border);
+  border-radius: var(--dsh-radius-sm);
+  color: var(--dsh-text);
+  background: var(--dsh-input-bg);
 }
 
 .dsh-session-switcher__workspaces {

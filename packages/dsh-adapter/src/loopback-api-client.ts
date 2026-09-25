@@ -83,12 +83,7 @@ export class LoopbackApiClient extends AbstractApiClient implements DshTransport
   }
 
   protected override async doFetch(input: URL, init?: RequestInit): Promise<Response> {
-    if (this.isClosed)
-      throw new AppError({
-        code: 'BACKEND_UNREACHABLE',
-        message: 'The DSH connection is closed.',
-        retryable: true,
-      })
+    if (this.isClosed) throw closedConnectionError()
     const target = new URL(input.pathname + input.search, this.options.endpoint.baseUrl)
     if (target.origin !== new URL(this.options.endpoint.baseUrl).origin) {
       throw new AppError({
@@ -106,16 +101,7 @@ export class LoopbackApiClient extends AbstractApiClient implements DshTransport
   }
 
   public request<TResponse>(method: string, params: unknown, signal?: AbortSignal): Promise<TResponse> {
-    if (this.isClosed)
-      return Promise.reject(
-        new AppError({
-          code: 'BACKEND_UNREACHABLE',
-          message: 'The DSH connection is closed.',
-          // Retrying against a closed client can never succeed; keep this
-          // permanent so withRetry does not burn its attempts.
-          retryable: false,
-        }),
-      )
+    if (this.isClosed) return Promise.reject(closedConnectionError())
     return this.withRetry(method, () => this.dispatch(method, params, signal), signal) as Promise<TResponse>
   }
 
@@ -625,26 +611,52 @@ export class LoopbackApiClient extends AbstractApiClient implements DshTransport
     const attempts = IDEMPOTENT_METHODS.has(method)
       ? Math.max(1, this.options.retryPolicy.maximumAttempts)
       : 1
+    const retrySignal = mergeSignals(signal, this.closed.signal)
     let lastError: unknown
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       if (signal?.aborted === true) throw cancelled(signal.reason)
+      if (this.isConnectionClosed()) throw closedConnectionError()
       try {
         return await operation()
       } catch (error) {
         const normalized = normalizeTransportError(method, error, signal)
         lastError = normalized
+        if (signalIsAborted(signal)) throw normalized
+        if (this.isConnectionClosed()) throw closedConnectionError()
         if (!normalized.retryable || attempt + 1 >= attempts) throw normalized
-        await delay(
-          Math.min(
-            this.options.retryPolicy.maximumDelayMs,
-            this.options.retryPolicy.baseDelayMs * 2 ** attempt,
-          ),
-          signal,
-        )
+        try {
+          await delay(
+            Math.min(
+              this.options.retryPolicy.maximumDelayMs,
+              this.options.retryPolicy.baseDelayMs * 2 ** attempt,
+            ),
+            retrySignal,
+          )
+        } catch (error) {
+          if (signalIsAborted(signal)) throw cancelled(signal?.reason)
+          if (this.isConnectionClosed()) throw closedConnectionError()
+          throw error
+        }
       }
     }
     throw lastError
   }
+
+  private isConnectionClosed(): boolean {
+    return this.isClosed
+  }
+}
+
+function closedConnectionError(): AppError {
+  return new AppError({
+    code: 'BACKEND_UNREACHABLE',
+    message: 'The DSH connection is closed.',
+    retryable: false,
+  })
+}
+
+function signalIsAborted(signal: AbortSignal | undefined): boolean {
+  return signal?.aborted === true
 }
 
 type WebSocketItem =
@@ -702,6 +714,9 @@ const IDEMPOTENT_METHODS = new Set([
   'credentials.describe',
   'subagent.list',
   'subagent.history',
+  'schedule/catalog',
+  'schedule/list',
+  'schedule/history',
 ])
 
 const MUX_FRAME_TYPES = frameTypes(muxFrameSchema)

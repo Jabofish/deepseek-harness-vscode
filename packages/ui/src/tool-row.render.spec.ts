@@ -309,6 +309,72 @@ describe('ToolRow rendering', () => {
     expect(document.querySelector('.dsh-tool-row__targets')).toBeNull()
   })
 
+  it('opens a fetched page from a collapsed row without expanding it', () => {
+    const href = 'https://example.test/collapsed-page'
+    const tool: ToolCallView = {
+      id: 'web-fetch-collapsed',
+      name: 'web_fetch',
+      title: 'Fetch',
+      category: 'tool',
+      status: 'completed',
+      metadata: {},
+      presentation: {
+        phase: 'result',
+        card: 'web',
+        kind: 'fetch',
+        url: href,
+        statusCode: 200,
+        truncated: false,
+      },
+    }
+    const onOpenLink = vi.fn()
+    const onToggle = vi.fn()
+
+    render(
+      createElement(ToolRow, {
+        tool,
+        expanded: false,
+        onToggle,
+        onOpenLink,
+        renderWeb: ({ view }) => createElement('output', { 'data-web-renderer': view.kind }, 'custom web'),
+      }),
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: `Open fetched page ${href}` }))
+    expect(onOpenLink).toHaveBeenCalledExactlyOnceWith(href)
+    expect(onToggle).not.toHaveBeenCalled()
+    expect(document.querySelector('.dsh-tool-row__details')).toBeNull()
+  })
+
+  it('shows only the not-executed and manual-approval explanation for Auto review denial', () => {
+    const tool: ToolCallView = {
+      id: 'auto-review-denied',
+      name: 'future_custom_tool',
+      title: 'Custom action',
+      category: 'tool',
+      status: 'failed',
+      inputSummary: '{"secretArgument":"private input"}',
+      outputSummary: 'private output',
+      error: 'raw error text',
+      autoReviewDenial: { reason: 'blocked by scope\nrequest review' },
+      metadata: {},
+    }
+    const { container } = render(createElement(ToolRow, { tool, expanded: true, onToggle: vi.fn() }))
+    const details = container.querySelector('.dsh-tool-row__details')
+    const detailsText = details?.textContent ?? ''
+
+    expect(container.querySelector('.dsh-tool-row__summary-text')?.textContent).toBe(
+      'Rejected by Auto review',
+    )
+    expect(details?.querySelector('[role="alert"]')?.textContent).toBe(
+      'Rejected by Auto reviewTool was not executed. Manual approval is required to continue. Reason: blocked by scope request review',
+    )
+    expect(detailsText).not.toContain('private input')
+    expect(detailsText).not.toContain('private output')
+    expect(detailsText).not.toContain('raw error text')
+    expect(container.querySelectorAll('.dsh-tool-row__section--error')).toHaveLength(1)
+  })
+
   it('hands structured read lines to the optional host code renderer', () => {
     const tool: ToolCallView = {
       id: 'read-code-renderer',

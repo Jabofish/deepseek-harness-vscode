@@ -43,12 +43,12 @@ the verified list. Updating never stops an external DSH.
   `0.1.0-rc.6` through `0.1.2-rc.1` Host/Web API, published
   `0.1.2-alpha.2`/`0.1.2-alpha.3`/`0.1.2-alpha.4`/`0.1.2-alpha.5`, `0.1.3-alpha.2`,
   `0.1.5-alpha.1`/`.2`/`rc.1`/`.2`/`.3` and alpha-channel `0.1.6-alpha.1`/`.2`, `0.1.7-alpha.1`/`.2`,
-  and `0.1.7-rc.1`; source-level adapters are retained for every known tag, and the installer installs
+  and `0.1.7-rc.1`/`.2`; source-level adapters are retained for every known tag, and the installer installs
   the exact version `0.1.5-rc.3`
   rather than resolving a dist-tag
 - Unknown versions reporting a non-empty label are probed with the newest verified adapter first;
   the alpha13/alpha132 Session v2, alpha151/alpha152/rc151/rc152/alpha161/alpha162 Session v3, and
-  alpha171/alpha172/rc171 Session V4 adapters are exact-only, and successful best-effort connections preserve the real version and
+  alpha171/alpha172/rc171/rc172 Session V4 adapters are exact-only, and successful best-effort connections preserve the real version and
   show a warning
 - Node.js `22.19+` when installing DSH from within the extension
 

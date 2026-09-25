@@ -102,6 +102,7 @@ export interface ToolRowModel {
   readonly summary: string
   readonly sections: readonly ToolDetailBlock[]
   readonly errorSummary?: string
+  readonly autoReviewOutput?: string
 }
 
 /**
@@ -153,9 +154,21 @@ export function isSpecializedTool(tool: ToolCallView): boolean {
 
 export function toolRowModel(tool: ToolCallView, translate?: PresentationTranslate): ToolRowModel {
   const variant = classifyTool(tool.name)
+  const title = rowTitle(variant, tool, translate)
+  if (tool.autoReviewDenial !== undefined) {
+    const summary = label(translate, 'toolrow.autoReview.rejected', 'Rejected by Auto review')
+    return {
+      variant,
+      state: 'error',
+      title,
+      summary,
+      sections: [],
+      errorSummary: summary,
+      autoReviewOutput: autoReviewDenialOutput(tool.autoReviewDenial.reason, translate),
+    }
+  }
   const presentation = toolPresentation(tool, translate)
   const state = rowState(tool)
-  const title = rowTitle(variant, tool, translate)
   const summary = rowSummary(variant, tool, translate)
   const structured = structuredSections(tool.presentation, translate)
   const sections =
@@ -187,9 +200,12 @@ export function ToolRow(props: ToolRowProps): ReactElement {
   const expanded = props.expanded ?? localExpanded
   const onToggle = props.onToggle ?? (() => setLocalExpanded((current) => !current))
   const model = toolRowModel(props.tool, props.translate)
-  const hasDetails = model.sections.length > 0 || props.tool.error !== undefined
+  const hasDetails =
+    model.sections.length > 0 || props.tool.error !== undefined || model.autoReviewOutput !== undefined
   const status = toolStatusLabel(
-    terminalPresentationFailed(props.tool.presentation) ? 'failed' : props.tool.status,
+    props.tool.autoReviewDenial !== undefined || terminalPresentationFailed(props.tool.presentation)
+      ? 'failed'
+      : props.tool.status,
     props.translate,
   )
   const summary = model.errorSummary ?? model.summary
@@ -204,6 +220,14 @@ export function ToolRow(props: ToolRowProps): ReactElement {
     props.tool.error,
     props.translate,
   )
+  const collapsedFetchUrl =
+    !expanded &&
+    props.onOpenLink !== undefined &&
+    props.tool.presentation?.phase === 'result' &&
+    props.tool.presentation.card === 'web' &&
+    props.tool.presentation.kind === 'fetch'
+      ? props.tool.presentation.url
+      : undefined
   return (
     <article
       className={`dsh-tool-row dsh-tool-row--${model.state}`}
@@ -246,42 +270,62 @@ export function ToolRow(props: ToolRowProps): ReactElement {
           </span>
         ) : null}
       </button>
+      {collapsedFetchUrl === undefined ? null : (
+        <button
+          className="dsh-tool-row__collapsed-link"
+          type="button"
+          title={collapsedFetchUrl}
+          aria-label={`${label(props.translate, 'toolrow.fetch.open', 'Open fetched page')} ${collapsedFetchUrl}`}
+          onClick={() => props.onOpenLink?.(collapsedFetchUrl)}
+        >
+          {collapsedFetchUrl}
+        </button>
+      )}
       {expanded && hasDetails ? (
         <div className="dsh-tool-row__details">
-          {renderStructuredDetails(
-            detailsPresentation,
-            model.sections,
-            props.translate,
-            props.onOpenLink,
-            props.renderCode,
-            props.renderDiff,
-            props.renderTerminal,
-            props.renderSearch,
-            props.renderWeb,
-            searchRecovery(props.tool),
-          )}
-          {props.onOpenLink === undefined || targets.length === 0 ? null : (
-            <div
-              className="dsh-tool-row__targets"
-              aria-label={label(props.translate, 'toolrow.presentation.open', 'Open')}
-            >
-              {targets.map((target) => (
-                <button
-                  key={`${target.href}:${target.label}`}
-                  type="button"
-                  className="dsh-tool-row__target"
-                  title={target.href}
-                  onClick={() => props.onOpenLink?.(target.href)}
+          {model.autoReviewOutput === undefined ? (
+            <>
+              {renderStructuredDetails(
+                detailsPresentation,
+                model.sections,
+                props.translate,
+                props.onOpenLink,
+                props.renderCode,
+                props.renderDiff,
+                props.renderTerminal,
+                props.renderSearch,
+                props.renderWeb,
+                searchRecovery(props.tool),
+              )}
+              {props.onOpenLink === undefined || targets.length === 0 ? null : (
+                <div
+                  className="dsh-tool-row__targets"
+                  aria-label={label(props.translate, 'toolrow.presentation.open', 'Open')}
                 >
-                  <span>{target.label}</span>
-                </button>
-              ))}
-            </div>
-          )}
-          {props.tool.error === undefined ? null : (
+                  {targets.map((target) => (
+                    <button
+                      key={`${target.href}:${target.label}`}
+                      type="button"
+                      className="dsh-tool-row__target"
+                      title={target.href}
+                      onClick={() => props.onOpenLink?.(target.href)}
+                    >
+                      <span>{target.label}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {props.tool.error === undefined ? null : (
+                <section className="dsh-tool-row__section dsh-tool-row__section--error" role="alert">
+                  <h4>{label(props.translate, 'toolrow.error', 'Error')}</h4>
+                  <pre>{formatToolText(props.tool.error, props.translate) ?? props.tool.error.trim()}</pre>
+                </section>
+              )}
+            </>
+          ) : (
             <section className="dsh-tool-row__section dsh-tool-row__section--error" role="alert">
-              <h4>{label(props.translate, 'toolrow.error', 'Error')}</h4>
-              <pre>{formatToolText(props.tool.error, props.translate) ?? props.tool.error.trim()}</pre>
+              <h4>{label(props.translate, 'toolrow.autoReview.rejected', 'Rejected by Auto review')}</h4>
+              <pre>{model.autoReviewOutput}</pre>
             </section>
           )}
         </div>
@@ -833,10 +877,25 @@ function splitDiffLines(value: string): readonly string[] {
 }
 
 function rowState(tool: ToolCallView): ToolRowState {
+  if (tool.autoReviewDenial !== undefined) return 'error'
   if (tool.status === 'queued' || tool.status === 'running') return 'running'
   if (tool.status === 'cancelled') return 'stopped'
   if (tool.status === 'failed' || tool.error !== undefined) return 'error'
   return terminalPresentationFailed(tool.presentation) ? 'error' : 'ok'
+}
+
+function autoReviewDenialOutput(reason: string | undefined, t?: PresentationTranslate): string {
+  const normalized = reason
+    ?.trim()
+    .replace(/[\r\n\u2028\u2029]+/gu, ' ')
+    .trim()
+  const visibleReason =
+    normalized === undefined || normalized === ''
+      ? label(t, 'toolrow.autoReview.reasonFallback', 'Auto review did not authorize this action')
+      : normalized
+  return t === undefined
+    ? `Tool was not executed. Manual approval is required to continue. Reason: ${visibleReason}`
+    : t('toolrow.autoReview.notExecuted', { reason: visibleReason })
 }
 
 function rowTitle(variant: ToolRowVariant, tool: ToolCallView, t?: PresentationTranslate): string {

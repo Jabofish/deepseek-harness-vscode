@@ -586,6 +586,7 @@ export const webviewRequestSchema = z.discriminatedUnion('type', [
     .strict(),
   z.object({ type: z.literal('settings.read'), ...requestBase }).strict(),
   z.object({ type: z.literal('settings.openDocument'), ...requestBase }).strict(),
+  z.object({ type: z.literal('settings.openKeyboardShortcuts'), ...requestBase }).strict(),
   // Extension-local facts (connection/runtime defaults). The DSH host settings
   // snapshot travels on settings.read; the two must not be conflated.
   z.object({ type: z.literal('extensionSettings.read'), ...requestBase }).strict(),

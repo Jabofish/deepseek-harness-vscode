@@ -353,6 +353,7 @@ export const rc6Mapper = {
     const envelope = objectOrUndefined(value) ?? {}
     const data = objectOrUndefined(envelope.data) ?? envelope
     const sessionId = stringOr(envelope.sessionId ?? data.sessionId, '')
+    const autoReviewDenialContract = envelope.autoReviewDenialContract === true
     // A model-only replacement copy has no human-readable form here: the
     // transcript keeps the append-origin rows it shadowed, and the copy's own
     // sequence stays visible to the live watermark through this marker.
@@ -653,6 +654,7 @@ export const rc6Mapper = {
               ...(envelope.view === undefined ? {} : { view: envelope.view }),
             },
             name === 'tool/call' ? 'call' : 'result',
+            name === 'tool/result' && autoReviewDenialContract,
           ),
         }
       }
@@ -685,7 +687,8 @@ export const rc6Mapper = {
           data.approvalId.length === 0 ||
           typeof data.toolName !== 'string' ||
           (data.callId !== undefined && typeof data.callId !== 'string') ||
-          (data.reason !== undefined && typeof data.reason !== 'string')
+          (data.reason !== undefined && typeof data.reason !== 'string') ||
+          (data.displayReason !== undefined && !isLocalizedText(data.displayReason))
         )
           throw new Error('Malformed approval/requested')
         return {
@@ -1441,7 +1444,11 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value)
 }
 
-function tool(value: Record<string, unknown>, phase: 'call' | 'result' = 'result'): ToolCallView {
+function tool(
+  value: Record<string, unknown>,
+  phase: 'call' | 'result' = 'result',
+  autoReviewDenialContract = false,
+): ToolCallView {
   const message = objectOrUndefined(value.message)
   const source = objectOrUndefined(message?.source)
   const isPtcDispatch = typeof value.subCallId === 'string' || typeof value.parentCallId === 'string'
@@ -1507,6 +1514,9 @@ function tool(value: Record<string, unknown>, phase: 'call' | 'result' = 'result
     value.callId ?? source?.callId ?? value.subCallId ?? value.id ?? view?.callId ?? view?.id,
     'tool-call',
   )
+  const autoReviewDenial = autoReviewDenialContract
+    ? toolAutoReviewDenial(value.error, message, callId, phase)
+    : undefined
   const images =
     phase === 'result' ? toolResultImages(message, isPtcDispatch ? value.content : undefined, callId) : []
   const submittedPlan = readSubmittedPlan(name, value.arguments)
@@ -1526,6 +1536,7 @@ function tool(value: Record<string, unknown>, phase: 'call' | 'result' = 'result
     ...(input === undefined ? {} : { inputSummary: fullText(input) }),
     ...(output === undefined ? {} : { outputSummary: fullText(output) }),
     ...(errorText === undefined || errorText === '' ? {} : { error: errorText }),
+    ...(autoReviewDenial === undefined ? {} : { autoReviewDenial }),
     ...(locations === undefined ? {} : { locations }),
     ...(presentation === undefined ? {} : { presentation }),
     metadata: objectOrUndefined(safePayload(view)) ?? {},
@@ -2187,12 +2198,14 @@ function isMessageSource(value: unknown): value is Record<string, unknown> {
 }
 
 function permission(value: Record<string, unknown>): PermissionRequest {
+  const displayReason = localizedText(value.displayReason)
   return {
     id: stringOr(value.approvalId ?? value.id, 'approval'),
     ...(typeof value.rpcId === 'string' ? { rpcId: value.rpcId } : {}),
     sessionId: stringOr(value.sessionId, ''),
     title: stringOr(value.toolName, 'Permission required'),
     description: stringOr(value.reason, 'DSH requested permission to continue.'),
+    ...(displayReason === undefined ? {} : { displayReason }),
     // The request carries no command: only the pairing id. The renderer reads
     // the command from that call, so the id travels unchanged (a value the host
     // does not use is no pairing and must not claim to be one).
@@ -2206,6 +2219,21 @@ function permission(value: Record<string, unknown>): PermissionRequest {
       { id: 'rejected', label: 'Reject', kind: 'deny' },
     ],
   }
+}
+
+function localizedText(value: unknown): PermissionRequest['displayReason'] | undefined {
+  if (!isLocalizedText(value)) return undefined
+  return { ...value }
+}
+
+function isLocalizedText(value: unknown): value is NonNullable<PermissionRequest['displayReason']> {
+  const record = objectOrUndefined(value)
+  return (
+    record !== undefined &&
+    Object.hasOwn(record, 'en') &&
+    typeof record.en === 'string' &&
+    Object.values(record).every((entry) => typeof entry === 'string')
+  )
 }
 
 function question(value: Record<string, unknown>): UserQuestion {
@@ -2329,6 +2357,28 @@ function messageHasToolError(value: Record<string, unknown> | undefined): boolea
     const block = objectOrUndefined(entry)
     return block?.type === 'tool-result' && block.isError === true
   })
+}
+
+/**
+ * Keep the pinned DSH denial identity only from the matching, error-marked
+ * result block. Tool error prose is deliberately not inspected for markers.
+ */
+function toolAutoReviewDenial(
+  errorValue: unknown,
+  message: Record<string, unknown> | undefined,
+  callId: string,
+  phase: 'call' | 'result',
+): { readonly reason?: string } | undefined {
+  if (phase !== 'result') return undefined
+  const result = contentEntries(message?.content)
+    .map((entry) => objectOrUndefined(entry))
+    .find((block) => block?.type === 'tool-result' && block.toolCallId === callId && block.isError === true)
+  if (result === undefined) return undefined
+  // RC2 Session V4 stores this identity on the `tool/result` event data. The
+  // message block supplies the corresponding error verdict and call identity.
+  const error = objectOrUndefined(errorValue)
+  if (error?.name !== 'AutoReviewDeniedError' || error.code !== 'AUTO_REVIEW_DENIED') return undefined
+  return typeof error.reason === 'string' ? { reason: error.reason } : {}
 }
 
 function messageToolErrorText(value: Record<string, unknown>): string {

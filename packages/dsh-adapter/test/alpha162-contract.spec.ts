@@ -6,6 +6,7 @@ import { Alpha162VersionAdapter } from '../src/versions/alpha162/adapter.js'
 import type { AlphaLoopbackApiClient, AlphaWebSocket } from '../src/versions/alpha/transport.js'
 import { DshStreamController } from '../src/stream-controller.js'
 import { callRpc } from '../src/versions/rc6/rpc.js'
+import { rc6Mapper } from '../src/versions/rc6/mapper.js'
 
 /**
  * Fixture authority: DSH tag `dsh-v0.1.6-alpha.2`, commit
@@ -179,6 +180,65 @@ describe('DSH 0.1.6-alpha.2 Session-Control contract', () => {
       value: { type: 'session/projection', sessionId: 's-1', key: 'inbox', seq: 13 },
     })
 
+    await transport.close()
+  })
+
+  it('maps Auto review denial from the pinned alpha.2 V3 result contract', async () => {
+    FakeWebSocket.instances.length = 0
+    const transport = adapter().createTransport(endpoint) as AlphaLoopbackApiClient
+    const iterator = transport.openSessionStream('s-1', new AbortController().signal)[Symbol.asyncIterator]()
+    const first = iterator.next()
+    const socket = await waitForSocket()
+    socket.open()
+    await waitForSent(socket, 1)
+    socket.message(
+      streamItem(socket, {
+        type: 'event',
+        event: {
+          type: 'tool/result',
+          seq: 7,
+          time: 8,
+          surfaceOp: 'append',
+          data: {
+            turn: 0,
+            step: 0,
+            error: {
+              name: 'AutoReviewDeniedError',
+              code: 'AUTO_REVIEW_DENIED',
+              reason: 'manual confirmation required',
+            },
+            message: {
+              id: 'tool-message-denied',
+              role: 'user',
+              source: { kind: 'tool', callId: 'call-auto-review-denied' },
+              content: [
+                {
+                  type: 'tool-result',
+                  toolCallId: 'call-auto-review-denied',
+                  content: [{ type: 'text', text: 'reviewer result text' }],
+                  isError: true,
+                },
+              ],
+            },
+          },
+        },
+      }),
+    )
+
+    const firstFrame = await first
+    expect(firstFrame.value).toMatchObject({
+      type: 'session/event',
+      event: { type: 'tool/result', autoReviewDenialContract: true },
+    })
+    const mapped = rc6Mapper.event('tool/result', (firstFrame.value as { readonly event: unknown }).event)
+    expect(mapped).toMatchObject({
+      type: 'tool.updated',
+      tool: {
+        id: 'call-auto-review-denied',
+        status: 'failed',
+        autoReviewDenial: { reason: 'manual confirmation required' },
+      },
+    })
     await transport.close()
   })
 

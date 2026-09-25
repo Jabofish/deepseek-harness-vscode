@@ -40,6 +40,19 @@ describe('ToolRendererRegistry', () => {
     expect(registry.render(tool('broken_tool')).type).toBe(ToolCard)
   })
 
+  it('routes Auto review denials through the safe system card before a custom renderer', () => {
+    const registry = new ToolRendererRegistry()
+    registry.register('future_tool', () => createElement('span', undefined, 'custom renderer'))
+
+    expect(
+      registry.render({
+        ...tool('future_tool'),
+        status: 'failed',
+        autoReviewDenial: {},
+      }).type,
+    ).toBe(ToolRow)
+  })
+
   it('passes the host link opener to the generic compatibility card', () => {
     const registry = new ToolRendererRegistry()
     const onOpenLink = (): void => undefined

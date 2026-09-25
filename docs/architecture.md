@@ -47,7 +47,7 @@ flowchart TB
 | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- | ----------------------------- |
 | `packages/domain`           | 稳定业务类型、错误、仓储接口                                                                                                        | 无平台依赖                              | VS Code、React、HTTP、process |
 | `packages/application`      | 用例、连接协调、端口接口                                                                                                            | Domain                                  | DSH wire type、VS Code UI     |
-| `packages/dsh-adapter`      | legacy rc、alpha v0、Session v2/v3/V4 的版本化 RPC/Event 映射、仓储和流恢复；精确支持至 `0.1.5-rc.3`、`0.1.7-alpha.2`、`0.1.7-rc.1` | Domain、Application ports、固定上游包   | VS Code、React                |
+| `packages/dsh-adapter`      | legacy rc、alpha v0、Session v2/v3/V4 的版本化 RPC/Event 映射、仓储和流恢复；精确支持至 `0.1.5-rc.3`、`0.1.7-alpha.2`、`0.1.7-rc.2` | Domain、Application ports、固定上游包   | VS Code、React                |
 | `packages/webview-protocol` | Host/Webview 版本化消息 Schema                                                                                                      | Zod                                     | 传输实现、Secret              |
 | `packages/timeline`         | 事件归并、回放、可见窗口                                                                                                            | Domain                                  | React、VS Code、HTTP          |
 | `packages/ui`               | 无业务副作用的可复用 UI                                                                                                             | React、Domain view DTO                  | DSH、VS Code API              |
@@ -111,6 +111,7 @@ packages/
     src/versions/alpha171/ # 0.1.7-alpha.1 Session V4 + projection control/Job rows 精确入口
     src/versions/alpha172/ # 0.1.7-alpha.2 Session V4 + 精确 turnWindow 入口
     src/versions/rc171/    # 0.1.7-rc.1 Session V4 + active Job Controller/turnWindow 入口
+    src/versions/rc172/    # 0.1.7-rc.2 exact identity + preset registry Remote 入口
     src/repositories/     # 每个能力域一个仓储
   timeline/
   ui/

@@ -55,7 +55,7 @@ export interface SessionControlsProps {
   /** Keep the primary model selector in the toolbar and move secondary
    * session switches into the composer's extras surface. */
   readonly surface?: 'all' | 'primary' | 'secondary'
-  readonly onChange: (configuration: AgentConfiguration) => void
+  readonly onChange: (configuration: AgentConfiguration) => void | Promise<void>
   readonly onCommand: (command: string) => void
   readonly onPromptModeChange?: (mode: PromptMode) => void
 }
@@ -149,7 +149,9 @@ export const SessionControls = memo(function SessionControls(props: SessionContr
     [availablePermissionPresets, t],
   )
   const handlePresetChange = useCallback(
-    (preset: string): void => onChange({ ...configuration, preset }),
+    (preset: string): void => {
+      void Promise.resolve(onChange({ ...configuration, preset })).catch(() => undefined)
+    },
     [configuration, onChange],
   )
   const handlePromptModeChange = useCallback(
@@ -159,7 +161,7 @@ export const SessionControls = memo(function SessionControls(props: SessionContr
     [onPromptModeChange],
   )
   const handleModelChange = useCallback(
-    (model: ModelSelection): void => onChange({ ...configuration, model }),
+    (model: ModelSelection): void | Promise<void> => onChange({ ...configuration, model }),
     [configuration, onChange],
   )
   const handlePermissionChange = useCallback(
@@ -434,12 +436,12 @@ export function modeIcon(id: string, label: string): IconName {
 function presetTranslationKey(id: string, name: string | undefined): string | undefined {
   const values = [id, name ?? ''].map((value) => value.trim().toLocaleLowerCase())
   const exact = new Map<string, string>([
-    ['standard', 'controls.mode.standard'],
+    ['standard', 'presets.builtin.standard.name'],
     ['default', 'controls.mode.standard'],
-    ['cordis', 'controls.mode.cordis'],
+    ['cordis', 'presets.builtin.cordis.name'],
     ['plan', 'controls.mode.plan'],
     ['planning', 'controls.mode.plan'],
-    ['ptc', 'controls.mode.code'],
+    ['ptc', 'presets.builtin.ptc.name'],
     ['code', 'controls.mode.code'],
     ['coding', 'controls.mode.code'],
     ['developer', 'controls.mode.code'],
@@ -454,7 +456,7 @@ function presetTranslationKey(id: string, name: string | undefined): string | un
     ['subagent', 'controls.mode.subagent'],
     ['delegate', 'controls.mode.subagent'],
     ['fast', 'controls.mode.fast'],
-    ['minimal', 'controls.mode.fast'],
+    ['minimal', 'presets.builtin.minimal.name'],
     ['light', 'controls.mode.fast'],
   ])
   for (const value of values) {

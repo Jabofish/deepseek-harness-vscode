@@ -327,6 +327,10 @@ describe('SessionControls', () => {
         key === 'controls.mode.research' ? '研究' : key,
       ),
     ).toBe('研究')
+    expect(formatPresetLabel('standard', undefined)).toBe('presets.builtin.standard.name')
+    expect(formatPresetLabel('ptc', undefined)).toBe('presets.builtin.ptc.name')
+    expect(formatPresetLabel('minimal', undefined)).toBe('presets.builtin.minimal.name')
+    expect(formatPresetLabel('cordis', undefined)).toBe('presets.builtin.cordis.name')
   })
 
   it('requires acknowledgement before sending the exact full-access command', () => {
