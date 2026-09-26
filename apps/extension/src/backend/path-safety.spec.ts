@@ -28,6 +28,14 @@ function createDirectoryLink(target: string, linkPath: string): void {
 }
 
 describe('path safety', () => {
+  it.skipIf(process.platform !== 'win32')(
+    'refuses an unavailable UNC share despite lexical containment',
+    () => {
+      const root = `\\\\localhost\\dsh-vscode-unavailable-${process.pid}\\ws`
+      expect(isPathWithin(root, `${root}\\src\\main.ts`)).toBe(false)
+    },
+  )
+
   it('keeps path containment checks boundary-aware', () => {
     const root = path.join(process.cwd(), 'global-storage')
 

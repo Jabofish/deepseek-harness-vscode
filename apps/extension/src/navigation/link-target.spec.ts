@@ -1,6 +1,32 @@
 import path from 'node:path'
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import type * as PathSafety from '../backend/path-safety.js'
+
+vi.mock('../backend/path-safety.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof PathSafety>()
+  const { default: nodePath } = await import('node:path')
+  return {
+    ...actual,
+    isPathWithin: (root: string, candidate: string): boolean => {
+      // The UNC share in this pure resolver fixture is synthetic and is not
+      // mounted in the test process, so use Windows lexical containment here.
+      if (root.startsWith('\\\\') && candidate.startsWith('\\\\')) {
+        const relative = nodePath.win32.relative(
+          nodePath.win32.resolve(root).toLowerCase(),
+          nodePath.win32.resolve(candidate).toLowerCase(),
+        )
+        return (
+          relative === '' ||
+          (relative !== '..' &&
+            !relative.startsWith(`..${nodePath.win32.sep}`) &&
+            !nodePath.win32.isAbsolute(relative))
+        )
+      }
+      return actual.isPathWithin(root, candidate)
+    },
+  }
+})
 
 import { resolveLinkTarget, type LinkTarget } from './link-target.js'
 
@@ -76,6 +102,20 @@ describe('link target resolution', () => {
     expect(resolveLinkTarget({ href: target, roots: [root], basePath: root })).toEqual({
       kind: 'file',
       path: target,
+    })
+    expect(
+      resolveLinkTarget({ href: '\\\\server\\share\\other\\main.ts', roots: [root], basePath: root }),
+    ).toEqual({ kind: 'rejected', message: 'Only files inside the current workspace can be opened.' })
+    expect(
+      resolveLinkTarget({ href: '\\\\server\\other-share\\ws\\main.ts', roots: [root], basePath: root }),
+    ).toEqual({ kind: 'rejected', message: 'Only files inside the current workspace can be opened.' })
+  })
+
+  it('does not reinterpret an outside drive-absolute target as workspace-relative', () => {
+    const root = 'C:\\ws'
+    expect(resolveLinkTarget({ href: 'C:\\other\\main.ts', roots: [root], basePath: root })).toEqual({
+      kind: 'rejected',
+      message: 'Only files inside the current workspace can be opened.',
     })
   })
 

@@ -689,7 +689,6 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     },
     environment: () => runtimeEnvironment(),
   })
-  const runtimeUpdateLifecycle = new AbortController()
   const runtimeUseCases = new RuntimeUseCases({
     install: () => runtimeInstaller.install(),
     selectExecutable: () => runtimeInstaller.selectExecutable(),
@@ -3183,25 +3182,10 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
           })
         }),
       )
-      // Warm the connection while VS Code is still settling after startup:
-      // discovery plus a managed start takes seconds, and the panel's
-      // app.ready then returns through the coordinator's cached-backend fast
-      // path instead of paying that chain while the user waits. The
-      // coordinator only spawns a process after discovery finished empty, and
-      // a concurrent app.ready request shares this same in-flight operation.
-      // A failed warm-up stays silent; the next app.ready retries the full
-      // chain exactly as it does today.
-      const connectionWarmup = connect().catch(() => undefined)
-      // The update check spawns npm subprocesses whose CPU cost stretches the
-      // startup window; chain it after the warm-up instead of racing it.
-      void connectionWarmup
-        .then(() => runtimeUpdater.checkForUpdates(false, runtimeUpdateLifecycle.signal))
-        .catch(() => undefined)
       return Promise.resolve()
     },
     dispose: async () => {
       const errors = await runCleanupSequence([
-        () => runtimeUpdateLifecycle.abort(),
         () => router.cancelAll(),
         () => disposeAccountLifecycleHost(),
         () => stopAllJobFollows(),

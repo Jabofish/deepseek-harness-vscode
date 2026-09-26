@@ -1,5 +1,12 @@
 # Change Log
 
+## Unreleased
+
+- 修复工作区外的 Windows 盘符或 UNC 绝对链接被误当作工作区相对路径；链接仍须通过真实路径归属校验。
+- Fixed Windows drive and UNC links outside the workspace being reinterpreted as relative paths; file links still require canonical workspace ownership.
+- 扩展激活时只注册命令和界面，不再提前连接或启动 DSH，也不在后台运行 npm 更新检查；首次打开 DeepSeek Harness 面板或显式连接时才连接，面板打开后仍会检查更新。
+- Extension activation now registers commands and the view without connecting to or starting DSH or checking npm for updates in the background. Opening the DeepSeek Harness view or explicitly connecting starts the connection; opening the view still checks for updates.
+
 ## 0.2.4
 
 - 修复提醒面板把「上游组合未启用 Schedule 服务」报成加载失败：DSH 发布的 web profile 默认关闭 `schedule` 与 `ui-schedule`，此时目录读取以 HTTP 404 结束，面板现在识别 `CAPABILITY_UNAVAILABLE`，说明原因并禁用创建入口，未确认目录时也不再显示 `0 of 0`；在 `$DSH_HOME/cordis.patch.yml` 启用后重试即可恢复。已在 `0.1.7-rc.2` 的隔离 home 上复核：未打补丁时目录返回 `CAPABILITY_UNAVAILABLE`，打补丁后同一请求返回空目录。

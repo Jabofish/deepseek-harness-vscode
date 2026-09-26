@@ -83,13 +83,14 @@ export function resolveLinkTarget(request: LinkTargetRequest): LinkTarget {
  * — including the Markdown convention of a `/`-prefixed workspace-root-relative
  * link, which is how `/src/main.ts` stays openable — is read relative to the
  * workspace base, the behavior every relative and root-relative link was
- * already opened with.
+ * already opened with. A drive or UNC absolute path is never root-relative:
+ * if no owned root contains it, preserve that path for the final rejection.
  */
 function workspaceFilePath(decoded: string, basePath: string, roots: readonly string[]): string | undefined {
   if (isAbsoluteFilePath(decoded)) {
     const absolute = resolveInOwnDialect(decoded)
     if (roots.some((root) => isOwnedPath(root, absolute))) return absolute
-    if (isHostStatedPath(absolute, roots)) return absolute
+    if (isWindowsFilePath(decoded) || isHostStatedPath(absolute, roots)) return absolute
   }
   const relative = decoded.replace(/^[/\\]+/u, '')
   return relative === '' ? undefined : path.resolve(basePath, relative)

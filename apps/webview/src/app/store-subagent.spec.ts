@@ -66,8 +66,9 @@ function answer(request: WebviewRequest): unknown {
     case 'subagent.list':
       return { entries: [], parentAvailable: false }
     case 'session.list':
-    case 'workspace.list':
       return { items: [] }
+    case 'workspace.list':
+      return []
     case 'session.queue.list':
     case 'goal.list':
     case 'job.list':
@@ -119,7 +120,7 @@ describe('AppStore subagent transport routing', () => {
     store.dispose()
   })
 
-  it('routes a session open of a registered subagent child through the parent catalog', async () => {
+  it('routes a newly announced subagent child through the parent catalog', async () => {
     const parent = {
       id: 'parent',
       workspaceId: 'workspace',
@@ -136,10 +137,11 @@ describe('AppStore subagent transport routing', () => {
       origin: 'subagent',
       parentSessionId: 'parent',
     }
+    let childVisible = false
     const client = new FakeClient((request) => {
       switch (request.type) {
         case 'session.list':
-          return { items: [parent, childSummary] }
+          return { items: childVisible ? [parent, childSummary] : [parent] }
         case 'subagent.list':
           return request.payload.sessionId === 'parent'
             ? { entries: [child()], parentAvailable: true }
@@ -166,6 +168,16 @@ describe('AppStore subagent transport routing', () => {
     const store = createAppStore(client as unknown as ProtocolClient)
 
     await store.refreshSessions()
+    childVisible = true
+    client.emit({
+      type: 'event',
+      name: 'session.added',
+      sequence: 1,
+      payload: { sessionId: 'child', blank: false, parentSessionId: 'parent', origin: 'subagent' },
+    })
+    await vi.waitFor(() =>
+      expect(store.getState().sessions.some((session) => session.id === 'child')).toBe(true),
+    )
     await store.openSession('child')
 
     expect(store.activeSubagent).toMatchObject({
@@ -382,6 +394,12 @@ describe('AppStore subagent transport routing', () => {
     const listener = vi.fn()
     store.subscribe(listener)
 
+    await store.refreshSessions()
+    await vi.waitFor(() => expect(listener).toHaveBeenCalled())
+    expect(store.getState().sessionDirectoryStatus).toBe('ready')
+    listener.mockClear()
+    client.requests.length = 0
+
     client.emit({
       type: 'event',
       name: 'session.added',
@@ -397,6 +415,9 @@ describe('AppStore subagent transport routing', () => {
 
     expect(listener).not.toHaveBeenCalled()
     expect(store.subagents.entries).toHaveLength(0)
+    expect(client.requests).toContainEqual(
+      expect.objectContaining({ type: 'session.list', payload: { archived: false } }),
+    )
     store.dispose()
   })
 

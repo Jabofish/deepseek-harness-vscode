@@ -4,6 +4,7 @@ import * as vscode from 'vscode'
 
 const ATTACH_TIMEOUT_MS = 20_000
 const POLL_INTERVAL_MS = 250
+const IDLE_OBSERVATION_MS = 4_000
 const EXTENSION_ID = 'Direwolf.deepseek-harness-client'
 
 export async function run() {
@@ -34,6 +35,25 @@ export async function run() {
   if (process.env.DSH_VSCODE_E2E_INVALID_SETTINGS === '1') {
     await assertInvalidSettingIsReported()
     return
+  }
+
+  if (mode === 'attach-only') {
+    const port = settings['dsh.connection.attachPorts']?.[0]
+    assert.equal(typeof port, 'number', 'attach-only mode must record the fixture port')
+    await new Promise((resolve) => setTimeout(resolve, IDLE_OBSERVATION_MS))
+    const beforeConnect = await readObservations(port)
+    assert.deepEqual(
+      {
+        methods: beforeConnect.methods,
+        muxUpgrades: beforeConnect.muxUpgrades,
+        hostUpgrades: beforeConnect.hostUpgrades,
+      },
+      { methods: [], muxUpgrades: 0, hostUpgrades: 0 },
+      'activating the extension without opening its view must not connect to DSH',
+    )
+    await vscode.commands.executeCommand('workbench.view.extension.dsh-container')
+    await waitForAttachObservations(port)
+    console.log('[dsh-vscode-e2e] opening the DSH view connected to the fixture')
   }
 
   await vscode.commands.executeCommand('dsh.connect')
