@@ -3,7 +3,17 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 /** Shared extension/DSH UI languages, mirroring the upstream locale axis (en is the base). */
 export type Locale = 'en' | 'zh'
 
-const LOCALE_STORAGE_KEY = 'dsh-webview-locale'
+export const LOCALE_STORAGE_KEY = 'dsh-webview-locale'
+export const LOCALE_EXPLICIT_STORAGE_KEY = 'dsh-webview-locale-explicit'
+
+/** Map the supported language families to the dictionaries shipped by this Webview. */
+export function localeFromLanguageTag(value: unknown): Locale | undefined {
+  if (typeof value !== 'string') return undefined
+  const tag = value.trim()
+  if (/^zh(?:-[A-Za-z0-9]{1,8})*$/iu.test(tag)) return 'zh'
+  if (/^en(?:-[A-Za-z0-9]{1,8})*$/iu.test(tag)) return 'en'
+  return undefined
+}
 
 /** Per-locale dictionaries; keys are stable identifiers. */
 const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> = {
@@ -415,6 +425,9 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'stats.speed': 'First-token latency and decode throughput',
     'stats.input': 'Input tokens (cache read included in hit rate)',
     'stats.output': 'Output tokens',
+    'stats.cacheRead': 'Cache read tokens',
+    'stats.cacheWrite': 'Cache write tokens',
+    'stats.reasoning': 'Reasoning tokens',
     'stats.cache': 'Cache hit rate',
     'stats.cacheShort': 'cache {percent}%',
     'stats.totalTokens': 'Total billed and cache tokens',
@@ -643,6 +656,8 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'sessions.empty': 'No sessions in this workspace.',
     'sessions.noMatch': 'No sessions match this search.',
     'sessions.searchUnavailable': 'Content search is unavailable; showing name matches.',
+    'sessions.searchMore':
+      'More than 20 content matches were found. Only the first 20 are shown; refine your search to find other sessions.',
     'sessions.contentMatches': 'Content matches',
     'sessions.otherMatches': 'Matching sessions in other workspaces',
     'sessions.waiting.approval': 'Waiting for approval',
@@ -806,6 +821,8 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'settings.preferences': 'DSH preferences',
     'settings.loadingDsh': 'Loading DSH settings…',
     'settings.dshUnavailable': 'DSH preferences are unavailable until the host connection is established.',
+    'settings.revisionRefreshRequired':
+      'The change was saved, but the latest settings could not be loaded. Refresh before making another change.',
     'settings.readOnly': 'This DSH settings provider is read-only.',
     'settings.hostNote':
       'Connection and runtime changes are applied by the Extension Host and never sent to the Webview as secrets.',
@@ -850,7 +867,14 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'settings.modelAdvanced': 'Advanced model settings',
     'settings.modelIdRequired': 'Every configured model needs a model ID.',
     'settings.modelIdDuplicate': 'Every configured model must have a unique model ID.',
+    'settings.modelInputRequired': 'Select at least one input type.',
     'settings.invalidCapacity': '{field} must be a positive integer, optionally using K or M.',
+    'settings.inputTypes': 'Input types',
+    'settings.inputText': 'Text',
+    'settings.inputImage': 'Image',
+    'settings.inputTypesInherited': 'Inherited: {types}',
+    'settings.useInheritedInputTypes': 'Use inherited',
+    'settings.deepseekAccount': 'DeepSeek Account',
     'settings.selectAllModels': 'Select all',
     'settings.deselectAllModels': 'Deselect all',
     'settings.addProvider': 'Add provider',
@@ -1199,6 +1223,8 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'app.error.releaseAttachment': 'Unable to release the attachment.',
     'app.error.attachPasted': 'Unable to attach the pasted or dropped file.',
     'app.error.prompt': 'Prompt failed.',
+    'app.error.promptTimeout':
+      'The prompt response timed out. DSH may still have accepted it; check the session before retrying.',
     'app.error.listOpenFiles': 'Unable to list open files.',
     'app.error.openFileGone': 'The selected open file is no longer available.',
     'app.error.attachSelectedFile': 'Unable to attach the selected file.',
@@ -1361,6 +1387,9 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'timeline.metrics.ranFor': 'Ran for {duration}',
     'timeline.metrics.ttft': 'TTFT {duration}',
     'timeline.metrics.rate': '{rate}',
+    'timeline.tokenUsage': 'Token usage',
+    'timeline.uncachedInputTokens': 'Uncached input tokens',
+    'timeline.totalTokens': 'Total tokens',
     'timeline.stepMetadata': 'Turn {turn} · step {step}',
     'timeline.toolFallback': 'Tool',
     'trajectory.searchPlaceholder': 'Search {count} records',
@@ -1508,7 +1537,7 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'schedules.create.retry': 'Retry request',
     'schedules.create.dismiss': 'Dismiss confirmation',
     'schedules.create.afterHelp': 'Run the reminder once after this many seconds.',
-    'schedules.create.everyHelp': 'Repeated intervals must be at least 300 seconds.',
+    'schedules.create.everyHelp': 'Repeated intervals must be at least 60 seconds.',
     'schedules.create.timeZoneHelp': 'Use an IANA time zone such as America/New_York.',
     'schedules.create.dstHelp':
       'A local time skipped by daylight saving is rejected. If the time occurs twice, DSH uses the earlier instant.',
@@ -1520,7 +1549,7 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'schedules.create.validation.titleLength': 'The reminder name must be 120 characters or fewer.',
     'schedules.create.validation.prompt': 'Enter the instruction DSH should run for this reminder.',
     'schedules.create.validation.after': 'Enter a positive whole number of seconds.',
-    'schedules.create.validation.every': 'Enter an interval of at least 300 whole seconds.',
+    'schedules.create.validation.every': 'Enter an interval of at least 60 whole seconds.',
     'schedules.create.validation.timeZone': 'Enter a valid IANA time zone.',
     'schedules.create.validation.dateTime': 'Enter a valid calendar date and time.',
     'schedules.create.validation.dstGap':
@@ -1542,6 +1571,9 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'schedules.count': '{visible} of {total} schedules',
     'schedules.stale': 'Could not refresh schedules. Showing the last available list.',
     'schedules.loadFailed': 'Could not load schedules.',
+    'schedules.unavailable': 'This DSH does not provide the schedule service.',
+    'schedules.unavailableHint':
+      'The DSH web profile ships with schedule disabled, so reminders cannot be listed or created here. Enable the schedule and ui-schedule entries in cordis.patch.yml under DSH_HOME (~/.dsh by default), then reconnect.',
     'schedules.retry': 'Retry',
     'schedules.loading': 'Loading schedules…',
     'schedules.empty': 'No scheduled reminders yet.',
@@ -1550,11 +1582,19 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'schedules.next': 'Next: {time}',
     'schedules.detail.label': 'Schedule details',
     'schedules.session': 'Original session: {id}',
+    'schedules.linkedSession.label': 'Open original session: {title}',
+    'schedules.linkedSession.loading': 'Checking whether the original session is available…',
+    'schedules.linkedSession.error': 'Could not verify the original session in this workspace.',
+    'schedules.linkedSession.archived': 'The original session is archived and cannot be opened here.',
+    'schedules.linkedSession.missing': 'The original session is not available in this workspace.',
+    'schedules.moreActions': 'More task actions',
     'schedules.close': 'Close schedules',
     'schedules.closeDetail': 'Close schedule details',
     'schedules.detail.tabs': 'Schedule detail views',
     'schedules.detail.rule': 'Reminder',
     'schedules.detail.history': 'Delivery history',
+    'schedules.detail.missingFromCatalog':
+      'This reminder is missing from the current catalog. Editing and deletion are unavailable until it returns.',
     'schedules.status.active': 'Active',
     'schedules.status.inactive': 'Inactive',
     'schedules.kind.at': 'One time',
@@ -1587,17 +1627,21 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'schedules.edit': 'Edit',
     'schedules.save': 'Save changes',
     'schedules.cancel': 'Cancel',
+    'schedules.update.unsaved': 'Unsaved changes',
+    'schedules.update.saving': 'Saving…',
     'schedules.delete': 'Delete',
     'schedules.delete.confirmTitle': 'Confirm reminder deletion',
     'schedules.delete.confirm': 'Delete “{title}” and its saved delivery history?',
     'schedules.delete.confirmAction': 'Delete reminder',
     'schedules.update.success': 'Reminder updated.',
     'schedules.update.failed': 'The reminder could not be updated.',
+    'schedules.update.validation.every': 'Enter an interval of at least 60 whole seconds.',
     'schedules.delete.failed': 'The reminder could not be deleted.',
     'schedules.error.schedule_not_found':
       'This reminder is no longer available. Refresh the list and try again.',
     'schedules.error.schedule_ended': 'This reminder has ended and can no longer be changed.',
-    'schedules.error.schedule_conflict': 'This reminder changed elsewhere. Refresh it before editing again.',
+    'schedules.error.schedule_conflict':
+      'This reminder changed elsewhere. Review the current values and save again.',
     'schedules.error.invalid_prompt': 'Enter a non-empty reminder name and instruction.',
     'schedules.error.invalid_selector': 'Choose one supported timing rule.',
     'schedules.error.invalid_rule': 'The timing rule is invalid.',
@@ -1611,8 +1655,11 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'schedules.history.unavailable': 'Some earlier delivery records may not be available.',
     'schedules.history.pruned': 'Older delivery records were removed by the Host retention limit.',
     'schedules.history.retention': 'History is retained for {days} days, up to {records} deliveries.',
+    'schedules.history.retention.show': 'Show delivery history retention rules',
+    'schedules.history.retention.hide': 'Hide delivery history retention rules',
     'schedules.history.scheduledFor': 'Scheduled for {time}',
     'schedules.history.loadOlder': 'Load older deliveries',
+    'schedules.history.refresh': 'Refresh delivery records',
     'schedules.history.missing': 'This reminder is no longer available.',
     'schedules.history.cursorExpired': 'This history page is no longer available. Reload the history.',
     'schedules.history.failed': 'Could not load delivery history.',
@@ -1749,7 +1796,7 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'tasks.answerInput': '任务回答',
     'tasks.stop': '停止 {title}',
     'tasks.kind.session': '会话',
-    'tasks.kind.subagent': '子代理',
+    'tasks.kind.subagent': '子智能体',
     'tasks.kind.job': '作业',
     'tasks.kind.goal': '目标',
     'tasks.kind.interaction': '待处理',
@@ -1893,13 +1940,13 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'commands.openSkillDocumentFailed': '无法打开技能文档。',
     'presets.defaultReadOnly': '此部署中的默认预设为只读',
     'presets.modeSelectionHidden': '此部署隐藏了预设选择',
-    'subagents.count.running': '{count} 个子代理运行中',
-    'subagents.count': '{count} 个子代理',
-    'subagents.trigger': '子代理',
-    'subagents.summary': '子代理：{count} 个',
-    'subagents.summary.running': '子代理：{count} 个，其中 {running} 个运行中',
+    'subagents.count.running': '{count} 个子智能体运行中',
+    'subagents.count': '{count} 个子智能体',
+    'subagents.trigger': '子智能体',
+    'subagents.summary': '子智能体：{count} 个',
+    'subagents.summary.running': '子智能体：{count} 个，其中 {running} 个运行中',
     'subagents.diagnostics': '{count} 个不可用记录',
-    'subagents.tree.aria': '子代理',
+    'subagents.tree.aria': '子智能体',
     'subagents.loading': '加载中…',
     'subagents.loadFailed': '加载失败 · 展开后重试',
     'subagents.mode.oneShot': '单次',
@@ -1912,15 +1959,15 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'subagents.diagnostic.unavailable': '子会话历史不可用',
     'subagents.branch.expand': '展开 {label}',
     'subagents.branch.collapse': '折叠 {label}',
-    'subagents.readOnly.title': '只读子代理历史',
+    'subagents.readOnly.title': '只读子智能体历史',
     'subagents.readOnly.oneShot': '一次性任务不支持后续消息。',
-    'subagents.readOnly.parent': '父会话当前不在线；重新打开父会话后才能继续此子代理。',
+    'subagents.readOnly.parent': '父会话当前不在线；重新打开父会话后才能继续此子智能体。',
     'subagents.status.running': '运行中',
     'subagents.status.awaiting-input': '等待输入',
     'subagents.status.completed': '已完成',
     'subagents.status.failed': '失败',
     'subagents.status.idle': '空闲',
-    'subagents.unnamed': '未命名子代理',
+    'subagents.unnamed': '未命名子智能体',
     'subagents.tokens': '{count} token',
     'locale.label': '界面语言',
     'locale.english': 'English',
@@ -2028,6 +2075,9 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'stats.speed': '首字延迟与解码吞吐',
     'stats.input': '输入 token（缓存读取计入命中率）',
     'stats.output': '输出 token',
+    'stats.cacheRead': '缓存读取 token',
+    'stats.cacheWrite': '缓存写入 token',
+    'stats.reasoning': '推理 token',
     'stats.cache': '缓存命中率',
     'stats.cacheShort': '缓存 {percent}%',
     'stats.totalTokens': '计费与缓存 token 总计',
@@ -2077,8 +2127,8 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'composer.noOpenFiles': '没有已打开的文件。',
     'composer.references': '文件和会话',
     'composer.referencesFiles': '文件和目录',
-    'composer.referencesSessions': '会话和子代理',
-    'composer.referenceSubagent': '运行中的子代理',
+    'composer.referencesSessions': '会话和子智能体',
+    'composer.referenceSubagent': '运行中的子智能体',
     'composer.referencesLoading': '正在搜索文件和会话…',
     'composer.noReferences': '没有匹配的文件或会话。',
     'composer.adding': '添加中…',
@@ -2250,6 +2300,7 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'sessions.empty': '此工作区中没有会话。',
     'sessions.noMatch': '没有符合搜索条件的会话。',
     'sessions.searchUnavailable': '内容搜索暂不可用，仅显示名称匹配。',
+    'sessions.searchMore': '内容匹配项超过 20 个，目前仅显示前 20 个。请缩小搜索范围以查找其他会话。',
     'sessions.contentMatches': '内容匹配',
     'sessions.otherMatches': '其他工作区中匹配的会话',
     'sessions.waiting.approval': '等待审批',
@@ -2404,6 +2455,7 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'settings.preferences': 'DSH 偏好设置',
     'settings.loadingDsh': '正在加载 DSH 设置…',
     'settings.dshUnavailable': '建立宿主连接后才能使用 DSH 偏好设置。',
+    'settings.revisionRefreshRequired': '修改已保存，但无法读取最新设置。请刷新后再继续修改。',
     'settings.readOnly': '此 DSH 设置提供方为只读。',
     'settings.hostNote': '连接和运行时更改由扩展宿主应用，Secret 绝不会发送到 Webview。',
     'settings.openDocument': '打开配置文件',
@@ -2446,7 +2498,14 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'settings.modelAdvanced': '模型高级设置',
     'settings.modelIdRequired': '每个模型都必须填写模型 ID。',
     'settings.modelIdDuplicate': '每个模型都必须有唯一的模型 ID。',
+    'settings.modelInputRequired': '至少选择一种输入类型。',
     'settings.invalidCapacity': '{field} 必须是正整数，也可以使用 K 或 M 后缀。',
+    'settings.inputTypes': '输入类型',
+    'settings.inputText': '文本',
+    'settings.inputImage': '图像',
+    'settings.inputTypesInherited': '继承：{types}',
+    'settings.useInheritedInputTypes': '恢复继承',
+    'settings.deepseekAccount': 'DeepSeek 账号',
     'settings.selectAllModels': '全选',
     'settings.deselectAllModels': '取消全选',
     'settings.addProvider': '添加 Provider',
@@ -2769,6 +2828,7 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'app.error.releaseAttachment': '无法释放附件。',
     'app.error.attachPasted': '无法添加粘贴或拖放的文件。',
     'app.error.prompt': '发送失败。',
+    'app.error.promptTimeout': '提示词请求响应超时。DSH 可能已接收，请先检查会话再重试。',
     'app.error.listOpenFiles': '无法列出已打开的文件。',
     'app.error.openFileGone': '所选文件已不可用。',
     'app.error.attachSelectedFile': '无法添加所选文件。',
@@ -2779,7 +2839,7 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'app.error.createSession': '无法创建会话。',
     'app.error.commandBeforeFirstMessage': '请先发送一条消息，再使用会话命令。',
     'app.error.archiveSession': '无法归档会话。',
-    'app.error.openSubagent': '无法打开子代理历史。',
+    'app.error.openSubagent': '无法打开子智能体历史。',
     'app.error.openLink': '无法打开链接的文件。',
     'app.error.feedback': '无法保存回复反馈。',
     'app.error.editQueue': '无法编辑排队提示。',
@@ -2930,6 +2990,9 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'timeline.metrics.ranFor': '用时 {duration}',
     'timeline.metrics.ttft': '首 token {duration}',
     'timeline.metrics.rate': '{rate}',
+    'timeline.tokenUsage': 'Token 用量',
+    'timeline.uncachedInputTokens': '未缓存输入 token',
+    'timeline.totalTokens': '总 token',
     'timeline.stepMetadata': '第 {turn} 轮 · 步骤 {step}',
     'timeline.toolFallback': '工具',
     'trajectory.searchPlaceholder': '搜索 {count} 条记录',
@@ -2962,7 +3025,7 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'controls.mode.research': '研究',
     'controls.mode.chat': '对话',
     'controls.mode.agent': '代理',
-    'controls.mode.subagent': '子代理',
+    'controls.mode.subagent': '子智能体',
     'controls.mode.fast': '快速',
     'controls.fullAccess': '完全访问',
     'toolcard.status.queued': '排队中',
@@ -2979,10 +3042,10 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'presentation.result': '结果',
     'presentation.task': '任务',
     'presentation.instructions': '指令',
-    'presentation.subagent': '子代理',
+    'presentation.subagent': '子智能体',
     'presentation.tool': '工具',
     'presentation.detail': '详情',
-    'presentation.subagentStarted': '子代理已成功启动。',
+    'presentation.subagentStarted': '子智能体已成功启动。',
     'presentation.tool.askUserQuestion': '询问用户',
     'presentation.field.questions': '问题',
     'presentation.field.question': '问题',
@@ -3057,15 +3120,15 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'app.error.disposed': 'Webview 协议客户端已销毁。',
     'app.error.duplicateRequest': '重复的请求 ID。',
     'app.error.webviewDisposed': 'Webview 已销毁。',
-    'app.error.subagentReadOnly': '一次性子代理对话为只读。',
-    'app.error.subagentParentUnavailable': '父会话不可用，无法进行子代理追问。',
-    'app.error.subagentAttachments': '子代理追问消息不支持附件。',
-    'app.error.subagentMessageRequired': '需要输入子代理追问消息。',
-    'app.error.subagentInterrupt': '一次性子代理对话无法中断。',
-    'app.error.malformedCatalog': 'DSH 返回了格式错误的子代理目录。',
+    'app.error.subagentReadOnly': '一次性子智能体对话为只读。',
+    'app.error.subagentParentUnavailable': '父会话不可用，无法进行子智能体追问。',
+    'app.error.subagentAttachments': '子智能体追问消息不支持附件。',
+    'app.error.subagentMessageRequired': '需要输入子智能体追问消息。',
+    'app.error.subagentInterrupt': '一次性子智能体对话无法中断。',
+    'app.error.malformedCatalog': 'DSH 返回了格式错误的子智能体目录。',
     'app.error.malformedModelDirectory': 'DSH 返回了格式错误的会话模型目录。',
-    'app.error.malformedHistory': 'DSH 返回了格式错误的子代理历史页。',
-    'app.error.malformedProjection': 'DSH 返回了格式错误的子代理投影基线。',
+    'app.error.malformedHistory': 'DSH 返回了格式错误的子智能体历史页。',
+    'app.error.malformedProjection': 'DSH 返回了格式错误的子智能体投影基线。',
     'app.error.connectionFailed': '连接失败。',
     'app.error.portConflict': '端口冲突。',
     'commands.modelDescription': '为这个对话选择模型',
@@ -3088,7 +3151,7 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'schedules.create.retry': '重试请求',
     'schedules.create.dismiss': '关闭创建提示',
     'schedules.create.afterHelp': '在指定秒数后执行一次提醒。',
-    'schedules.create.everyHelp': '重复间隔至少为 300 秒。',
+    'schedules.create.everyHelp': '重复间隔至少为 60 秒。',
     'schedules.create.timeZoneHelp': '请输入 IANA 时区，例如 America/New_York。',
     'schedules.create.dstHelp': '夏令时跳过的本地时间会被拒绝；若时间重复，DSH 会采用较早的时刻。',
     'schedules.create.dstRecurringHelp': '重复提醒会在所选时区保持这个墙上时间。',
@@ -3097,7 +3160,7 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'schedules.create.validation.titleLength': '提醒名称不能超过 120 个字符。',
     'schedules.create.validation.prompt': '请输入此提醒要执行的指令。',
     'schedules.create.validation.after': '请输入大于零的整数秒数。',
-    'schedules.create.validation.every': '请输入至少 300 秒的整数间隔。',
+    'schedules.create.validation.every': '请输入至少 60 秒的整数间隔。',
     'schedules.create.validation.timeZone': '请输入有效的 IANA 时区。',
     'schedules.create.validation.dateTime': '请输入有效的日历日期和时间。',
     'schedules.create.validation.dstGap': '此本地时间因夏令时切换而不存在。',
@@ -3117,6 +3180,9 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'schedules.count': '显示 {visible} 条，共 {total} 条提醒',
     'schedules.stale': '无法刷新提醒，当前显示的是最近一次成功加载的列表。',
     'schedules.loadFailed': '无法加载提醒。',
+    'schedules.unavailable': '当前 DSH 未提供提醒服务。',
+    'schedules.unavailableHint':
+      'DSH 的 web profile 默认关闭 schedule，这里无法列出或创建提醒。请在 DSH_HOME（默认 ~/.dsh）下的 cordis.patch.yml 中启用 schedule 与 ui-schedule 条目，然后重新连接。',
     'schedules.retry': '重试',
     'schedules.loading': '正在加载提醒…',
     'schedules.empty': '还没有定时提醒。',
@@ -3125,11 +3191,18 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'schedules.next': '下次触发：{time}',
     'schedules.detail.label': '提醒详情',
     'schedules.session': '原始会话：{id}',
+    'schedules.linkedSession.label': '打开原始会话：{title}',
+    'schedules.linkedSession.loading': '正在确认原始会话是否可用…',
+    'schedules.linkedSession.error': '无法确认原始会话是否属于当前工作区。',
+    'schedules.linkedSession.archived': '原始会话已归档，无法在此打开。',
+    'schedules.linkedSession.missing': '当前工作区中没有可用的原始会话。',
+    'schedules.moreActions': '更多提醒操作',
     'schedules.close': '关闭提醒管理',
     'schedules.closeDetail': '关闭提醒详情',
     'schedules.detail.tabs': '提醒详情视图',
     'schedules.detail.rule': '提醒内容',
     'schedules.detail.history': '投递记录',
+    'schedules.detail.missingFromCatalog': '此提醒目前不在目录中。它重新出现前无法编辑或删除。',
     'schedules.status.active': '启用中',
     'schedules.status.inactive': '已结束',
     'schedules.kind.at': '单次',
@@ -3162,16 +3235,19 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'schedules.edit': '编辑',
     'schedules.save': '保存更改',
     'schedules.cancel': '取消',
+    'schedules.update.unsaved': '有未保存的更改',
+    'schedules.update.saving': '正在保存…',
     'schedules.delete': '删除',
     'schedules.delete.confirmTitle': '确认删除提醒',
     'schedules.delete.confirm': '删除“{title}”及其保存的投递记录？',
     'schedules.delete.confirmAction': '删除提醒',
     'schedules.update.success': '提醒已更新。',
     'schedules.update.failed': '无法更新提醒。',
+    'schedules.update.validation.every': '请输入至少 60 秒的整数间隔。',
     'schedules.delete.failed': '无法删除提醒。',
     'schedules.error.schedule_not_found': '此提醒已不可用，请刷新列表后重试。',
     'schedules.error.schedule_ended': '此提醒已结束，无法再更改。',
-    'schedules.error.schedule_conflict': '此提醒已在其他位置更改，请刷新后再编辑。',
+    'schedules.error.schedule_conflict': '此提醒已在其他位置更改，请检查当前内容后重新保存。',
     'schedules.error.invalid_prompt': '请填写非空的提醒名称和指令。',
     'schedules.error.invalid_selector': '请选择一种受支持的时间规则。',
     'schedules.error.invalid_rule': '时间规则无效。',
@@ -3185,8 +3261,11 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'schedules.history.unavailable': '部分较早的投递记录可能不可用。',
     'schedules.history.pruned': '较早的投递记录已按 Host 保留规则清理。',
     'schedules.history.retention': '投递记录保留 {days} 天，最多 {records} 条。',
+    'schedules.history.retention.show': '显示投递记录保留规则',
+    'schedules.history.retention.hide': '隐藏投递记录保留规则',
     'schedules.history.scheduledFor': '计划时间：{time}',
     'schedules.history.loadOlder': '加载更早记录',
+    'schedules.history.refresh': '刷新投递记录',
     'schedules.history.missing': '此提醒已不可用。',
     'schedules.history.cursorExpired': '此历史页已不可用，请重新加载记录。',
     'schedules.history.failed': '无法加载投递记录。',
@@ -3199,6 +3278,8 @@ export type Translate = (key: string, params?: Readonly<Record<string, string | 
 export interface I18nContextValue {
   readonly locale: Locale
   readonly setLocale: (locale: Locale) => void
+  /** Adopt Host state without persisting an inferred fallback or writing back to DSH. */
+  readonly adoptLocaleFromHost: (value: unknown, hasExplicitPreference: boolean) => void
   /** Translate one key with `{placeholder}` interpolation; en falls through to the key's base text. */
   readonly t: Translate
 }
@@ -3221,21 +3302,38 @@ export function translate(key: string, params?: Readonly<Record<string, string |
 
 const I18nContext = createContext<I18nContextValue | undefined>(undefined)
 
-function storedLocale(): Locale {
+function storedLocale(): Locale | undefined {
   try {
     const stored = window.localStorage.getItem(LOCALE_STORAGE_KEY)
-    return stored === 'zh' ? 'zh' : 'en'
-  } catch {
+    if (stored === null) return undefined
+    const normalized = localeFromLanguageTag(stored)
+    if (window.localStorage.getItem(LOCALE_EXPLICIT_STORAGE_KEY) === 'true') return normalized ?? 'en'
+    // Before the explicit marker existed, opening Settings could pass the
+    // Host's effective `en` through setLocale. Preserve legacy Chinese picks,
+    // but let ambiguous legacy English follow the editor's initial default.
+    if (normalized === 'zh') return 'zh'
+    if (stored === 'en') return undefined
     return 'en'
+  } catch {
+    return undefined
   }
 }
 
+function localeFromDocument(): Locale {
+  if (typeof document === 'undefined') return 'en'
+  return localeFromLanguageTag(document.documentElement.lang) ?? 'en'
+}
+
 /**
- * UI locale provider. The Webview keeps the shared preference in localStorage
- * for first paint; App mirrors user changes to DSH's `locale.preference`.
+ * UI locale provider. Explicit user choices persist in localStorage; App adopts
+ * explicit DSH state separately and uses VS Code's document language only as
+ * the initial fallback.
  */
 export function I18nProvider(props: { readonly children: ReactNode }): React.JSX.Element {
-  const [locale, setLocaleState] = useState<Locale>(storedLocale)
+  // Capture VS Code's language once as a default. It is never persisted and
+  // loses to either an explicit Webview choice or an explicit DSH setting.
+  const [editorLocale] = useState<Locale>(localeFromDocument)
+  const [locale, setLocaleState] = useState<Locale>(() => storedLocale() ?? editorLocale)
   useEffect(() => {
     document.documentElement.lang = locale === 'zh' ? 'zh-CN' : 'en'
     setActiveLocale(locale)
@@ -3245,10 +3343,21 @@ export function I18nProvider(props: { readonly children: ReactNode }): React.JSX
     setActiveLocale(next)
     try {
       window.localStorage.setItem(LOCALE_STORAGE_KEY, next)
+      window.localStorage.setItem(LOCALE_EXPLICIT_STORAGE_KEY, 'true')
     } catch {
       // Storage can be unavailable in sandboxed frames; the choice stays for this view.
     }
   }, [])
+  const adoptLocaleFromHost = useCallback(
+    (value: unknown, hasExplicitPreference: boolean): void => {
+      const next = hasExplicitPreference
+        ? (localeFromLanguageTag(value) ?? 'en')
+        : (storedLocale() ?? editorLocale)
+      setLocaleState(next)
+      setActiveLocale(next)
+    },
+    [editorLocale],
+  )
   const t = useCallback<I18nContextValue['t']>(
     (key, params) => {
       const template = DICTIONARIES[locale][key] ?? DICTIONARIES.en[key] ?? key
@@ -3259,7 +3368,10 @@ export function I18nProvider(props: { readonly children: ReactNode }): React.JSX
     },
     [locale],
   )
-  const value = useMemo(() => ({ locale, setLocale, t }), [locale, setLocale, t])
+  const value = useMemo(
+    () => ({ locale, setLocale, adoptLocaleFromHost, t }),
+    [locale, setLocale, adoptLocaleFromHost, t],
+  )
   return <I18nContext.Provider value={value}>{props.children}</I18nContext.Provider>
 }
 
@@ -3267,6 +3379,7 @@ export function I18nProvider(props: { readonly children: ReactNode }): React.JSX
 const FALLBACK: I18nContextValue = {
   locale: 'en',
   setLocale: () => {},
+  adoptLocaleFromHost: () => {},
   t: (key, params) => {
     const template = DICTIONARIES.en[key] ?? key
     if (params === undefined) return template

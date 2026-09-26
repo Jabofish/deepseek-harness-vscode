@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -63,14 +63,12 @@ describe.skipIf(process.env.DSH_LIVE_SMOKE !== '1')('live write-verb frames on a
   it(
     'reaches the real host for verbs whose success path needs a running turn',
     async () => {
-      const previousHome = process.env.DSH_HOME
       const home = await mkdtemp(path.join(os.tmpdir(), 'dsh-live-home-'))
-      process.env.DSH_HOME = home
       const steps: string[] = []
       const skipped: string[] = []
       let runtime: ManagedLiveRuntime | undefined
       try {
-        runtime = await startManagedRuntime()
+        runtime = await startManagedRuntime({ dshHome: home, removeDshHomeOnStop: true })
         const { backend } = runtime
         const unsubscribe = backend.events.subscribe(() => undefined)
         try {
@@ -98,9 +96,6 @@ describe.skipIf(process.env.DSH_LIVE_SMOKE !== '1')('live write-verb frames on a
           released = !(await canConnect(runtime.snapshot.port))
           steps.push(`managed stop port ${runtime.snapshot.port} released=${String(released)}`)
         }
-        if (previousHome === undefined) delete process.env.DSH_HOME
-        else process.env.DSH_HOME = previousHome
-        await rm(home, { recursive: true, force: true })
         for (const step of steps) console.log(`[dsh-live-frames] ${step}`)
         for (const line of skipped) console.log(`[dsh-live-frames] skipped ${line}`)
         if (released !== undefined)

@@ -1,13 +1,19 @@
 import { describe, expect, it } from 'vitest'
 
 import type { DshBackend } from '../../packages/domain/src/backend.js'
-import { LIVE_TIMEOUT_MS, startManagedRuntime } from './harness.js'
+import {
+  hasLiveHistoryFixture,
+  LIVE_TIMEOUT_MS,
+  requireLiveHistoryFixtureHome,
+  startManagedRuntime,
+} from './harness.js'
 
 interface ChildSample {
   readonly childId: string
   readonly parentId: string
   readonly mode: 'one-shot' | 'continuable'
 }
+const skipLiveHistoryProbe = process.env.DSH_LIVE_SMOKE !== '1' || !hasLiveHistoryFixture()
 
 /**
  * A child Session is only reachable through the durable descriptor its parent
@@ -15,17 +21,16 @@ interface ChildSample {
  * a subagent-origin Session ("use subagent delivery for this child session"),
  * on `session/follow` and `session/history` alike.
  *
- * A child only exists once someone delegates from the DSH UI, and this suite
- * must not create one in the developer's own profile, so the spec samples every
- * listed session's catalog and records that the child leg was not reachable
- * when the profile holds none. The catalog reads themselves are always
- * asserted against the real host.
+ * A child only exists once someone delegates from the DSH UI. This suite reads
+ * a sanitized disposable history fixture that already contains one; it never
+ * creates a child in the developer's own profile. A fixture without a
+ * catalog-published child is incomplete, not a successful sample.
  */
-describe.skipIf(process.env.DSH_LIVE_SMOKE !== '1')('live subagent child addressing', () => {
+describe.skipIf(skipLiveHistoryProbe)('live subagent child addressing', () => {
   it(
     'reads a catalog-published child through its durable subagent address',
     async () => {
-      const runtime = await startManagedRuntime()
+      const runtime = await startManagedRuntime({ dshHome: requireLiveHistoryFixtureHome() })
       const { backend } = runtime
       // The Extension Host subscribes on connect; keep the same session/follow
       // stream open for the whole read instead of querying an idle backend.
@@ -41,12 +46,11 @@ describe.skipIf(process.env.DSH_LIVE_SMOKE !== '1')('live subagent child address
         )
         if (sessions.items.length > 0) expect(scan.answered).toBeGreaterThan(0)
 
-        if (scan.child === undefined) {
-          console.log(
-            '[live subagent child] no catalog-published child in this profile; child leg not sampled',
-          )
-          return
-        }
+        expect(
+          scan.child,
+          'the history fixture must contain a parent whose catalog publishes a child Session',
+        ).toBeDefined()
+        if (scan.child === undefined) return
         const { childId, parentId } = scan.child
         // The ownership walk the Extension Host runs for every child-scoped
         // route depends on this durable parent link.

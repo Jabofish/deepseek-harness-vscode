@@ -149,13 +149,16 @@ describe('ProviderSettingsEditor write-time validation', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
 
     await waitFor(() =>
-      expect(onSave).toHaveBeenCalledWith([
-        {
-          kind: 'set',
-          path: 'llm-deepseek.models',
-          value: [{ id: 'vision-model', inputModalities: ['text'] }],
-        },
-      ], 3),
+      expect(onSave).toHaveBeenCalledWith(
+        [
+          {
+            kind: 'set',
+            path: 'llm-deepseek.models',
+            value: [{ id: 'vision-model', inputModalities: ['text'] }],
+          },
+        ],
+        3,
+      ),
     )
     await waitFor(() => expect(onClose).toHaveBeenCalledWith(true))
   })
@@ -168,9 +171,10 @@ describe('ProviderSettingsEditor write-time validation', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
 
     await waitFor(() =>
-      expect(onSave).toHaveBeenCalledWith([
-        { kind: 'set', path: 'llm-deepseek.models', value: [{ id: 'model-a' }] },
-      ], 3),
+      expect(onSave).toHaveBeenCalledWith(
+        [{ kind: 'set', path: 'llm-deepseek.models', value: [{ id: 'model-a' }] }],
+        3,
+      ),
     )
   })
 
@@ -217,13 +221,16 @@ describe('ProviderSettingsEditor write-time validation', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
 
     await waitFor(() =>
-      expect(onSave).toHaveBeenCalledWith([
-        {
-          kind: 'set',
-          path: 'llm-deepseek-account.models',
-          value: [{ id: 'account-model', inputModalities: ['text', 'image'] }],
-        },
-      ], 3),
+      expect(onSave).toHaveBeenCalledWith(
+        [
+          {
+            kind: 'set',
+            path: 'llm-deepseek-account.models',
+            value: [{ id: 'account-model', inputModalities: ['text', 'image'] }],
+          },
+        ],
+        3,
+      ),
     )
     await waitFor(() => expect(onClose).toHaveBeenCalledWith(true))
   })
@@ -287,13 +294,16 @@ describe('ProviderSettingsEditor write-time validation', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
 
     await waitFor(() =>
-      expect(onSave).toHaveBeenCalledWith([
-        {
-          kind: 'set',
-          path: 'llm-pi-ai.providers.openai.models',
-          value: [{ id: 'vision-model', input: ['text'] }],
-        },
-      ], 3),
+      expect(onSave).toHaveBeenCalledWith(
+        [
+          {
+            kind: 'set',
+            path: 'llm-pi-ai.providers.openai.models',
+            value: [{ id: 'vision-model', input: ['text'] }],
+          },
+        ],
+        3,
+      ),
     )
   })
 })

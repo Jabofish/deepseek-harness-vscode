@@ -9,11 +9,18 @@ import {
   reduceTimelineBatch,
   type TimelineState,
 } from '../../packages/timeline/src/index.js'
-import { LIVE_TIMEOUT_MS, canConnect, startManagedRuntime } from './harness.js'
+import {
+  hasLiveHistoryFixture,
+  LIVE_TIMEOUT_MS,
+  canConnect,
+  requireLiveHistoryFixtureHome,
+  startManagedRuntime,
+} from './harness.js'
 
 const MAX_PAGES = 6
 /** How many of the newest registry rows may be sampled before the evidence is a blank-only registry. */
 const SESSION_SAMPLE_LIMIT = 5
+const skipLiveHistoryProbe = process.env.DSH_LIVE_SMOKE !== '1' || !hasLiveHistoryFixture()
 /** The ledger namespaces every tool record id away from a node id; see `buildTrajectory`. */
 const TOOL_RECORD_PREFIX = 'tool\u0000'
 
@@ -40,13 +47,14 @@ const TOOL_RECORD_PREFIX = 'tool\u0000'
  *   $env:DSH_LIVE_RUNTIME_VERSION = '0.1.5-rc.3'      # optional; defaults to the pinned runtime
  *   npx vitest run tests/live-dsh/transcript.spec.ts
  *
- * Read-only: it never sends a prompt or writes to the runtime.
+ * It never sends a prompt or a DSH write request. Startup state stays inside
+ * the disposable history fixture.
  */
-describe.skipIf(process.env.DSH_LIVE_SMOKE !== '1')('live DSH transcript reduction', () => {
+describe.skipIf(skipLiveHistoryProbe)('live DSH transcript reduction', () => {
   it(
     'reduces a real session history without losing or unreadable rows',
     async () => {
-      const runtime = await startManagedRuntime()
+      const runtime = await startManagedRuntime({ dshHome: requireLiveHistoryFixtureHome() })
       try {
         const { backend } = runtime
         const sessions = await backend.sessions.list()

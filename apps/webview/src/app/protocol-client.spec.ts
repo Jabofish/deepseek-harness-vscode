@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { PROTOCOL_VERSION, type ProtocolEnvelope } from '@dsh-vscode/webview-protocol'
-import { ProtocolClient } from './protocol-client.js'
+import { ProtocolClient, publicProtocolErrorMessage } from './protocol-client.js'
 
 const listeners = new Set<(event: MessageEvent<unknown>) => void>()
 
@@ -70,6 +70,138 @@ describe('ProtocolClient', () => {
     await expect(request).rejects.toMatchObject({ code: 'BACKEND_BUSY' })
     expect(postMessage).toHaveBeenCalledTimes(1)
     client.dispose()
+  })
+
+  it('marks only a validated Host error summary for user display', async () => {
+    const client = new ProtocolClient({
+      postMessage: () => undefined,
+      getState: () => undefined,
+      setState: () => undefined,
+    })
+    const request = client.request({ type: 'app.ready', requestId: 'safe-host-error' })
+    client.handle({
+      protocolVersion: PROTOCOL_VERSION,
+      message: {
+        type: 'response',
+        requestId: 'safe-host-error',
+        ok: false,
+        error: {
+          code: 'BACKEND_BUSY',
+          message: 'The DSH instance is busy.',
+          retryable: true,
+        },
+      },
+    })
+
+    const reason = await request.catch((error: unknown) => error)
+    expect(publicProtocolErrorMessage(reason)).toBe('The DSH instance is busy.')
+    expect(publicProtocolErrorMessage(new Error('raw diagnostic'))).toBeUndefined()
+    client.dispose()
+  })
+
+  it('bounds a prompt request, asks the Host to cancel it, and ignores a late success', async () => {
+    const posted: ProtocolEnvelope[] = []
+    const timeoutCallbacks: Array<() => void> = []
+    const timeoutSpy = vi.spyOn(window, 'setTimeout').mockImplementation((handler) => {
+      if (typeof handler === 'function') timeoutCallbacks.push(handler as () => void)
+      return timeoutCallbacks.length as unknown as ReturnType<typeof setTimeout>
+    })
+    const client = new ProtocolClient({
+      postMessage: (message) => posted.push(message),
+      getState: () => undefined,
+      setState: () => undefined,
+    })
+    try {
+      const request = client.request<unknown>({
+        type: 'session.sendPrompt',
+        requestId: 'send-prompt-timeout',
+        payload: { sessionId: 'session-1', text: 'hello', attachments: [], mode: 'queue' },
+      })
+      const outcome = request.then(
+        (value) => ({ status: 'resolved' as const, value }),
+        (reason: unknown) => ({
+          status: 'rejected' as const,
+          message: publicProtocolErrorMessage(reason),
+        }),
+      )
+
+      expect(timeoutSpy.mock.calls[0]?.[1]).toBe(30_000)
+      expect(timeoutCallbacks).toHaveLength(1)
+      timeoutCallbacks[0]?.()
+      const result = await outcome
+      expect(result).toEqual({
+        status: 'rejected',
+        message:
+          'The prompt response timed out. DSH may still have accepted it; check the session before retrying.',
+      })
+      expect(posted).toHaveLength(2)
+      const cancellation = posted[1]?.message
+      expect(cancellation?.type).toBe('feature.request.cancel')
+      if (cancellation?.type !== 'feature.request.cancel') throw new Error('prompt cancel was not routed')
+      expect(cancellation.payload.targetRequestId).toBe('send-prompt-timeout')
+
+      client.handle({
+        protocolVersion: PROTOCOL_VERSION,
+        message: {
+          type: 'feature.response',
+          requestId: cancellation.requestId,
+          ok: true,
+          payload: { kind: 'operation', operationId: 'send-prompt-timeout', state: 'accepted' },
+        },
+      })
+      client.handle({
+        protocolVersion: PROTOCOL_VERSION,
+        message: {
+          type: 'response',
+          requestId: 'send-prompt-timeout',
+          ok: true,
+          payload: { accepted: true },
+        },
+      })
+
+      expect(await outcome).toBe(result)
+      expect(publicProtocolErrorMessage(new Error('raw diagnostic'))).toBeUndefined()
+    } finally {
+      client.dispose()
+      timeoutSpy.mockRestore()
+    }
+  })
+
+  it('keeps a prompt success that settles before its timeout callback', async () => {
+    const posted: ProtocolEnvelope[] = []
+    const timeoutCallbacks: Array<() => void> = []
+    const timeoutSpy = vi.spyOn(window, 'setTimeout').mockImplementation((handler) => {
+      if (typeof handler === 'function') timeoutCallbacks.push(handler as () => void)
+      return timeoutCallbacks.length as unknown as ReturnType<typeof setTimeout>
+    })
+    const client = new ProtocolClient({
+      postMessage: (message) => posted.push(message),
+      getState: () => undefined,
+      setState: () => undefined,
+    })
+    try {
+      const request = client.request<unknown>({
+        type: 'session.sendPrompt',
+        requestId: 'send-prompt-success',
+        payload: { sessionId: 'session-1', text: 'hello', attachments: [], mode: 'queue' },
+      })
+      client.handle({
+        protocolVersion: PROTOCOL_VERSION,
+        message: {
+          type: 'response',
+          requestId: 'send-prompt-success',
+          ok: true,
+          payload: { accepted: true },
+        },
+      })
+      timeoutCallbacks[0]?.()
+
+      await expect(request).resolves.toEqual({ accepted: true })
+      expect(posted).toHaveLength(1)
+    } finally {
+      client.dispose()
+      timeoutSpy.mockRestore()
+    }
   })
 
   it('keeps a session export alive past the ordinary request timeout', async () => {
@@ -183,12 +315,13 @@ describe('ProtocolClient', () => {
           sessionId: 'session-1',
           workspaceFolderId: 'workspace-1',
           expectedCurrentRevision: 1,
+          previewId: 'dsh-preview-test-1',
           conflictPolicy: 'abort',
         },
       })
 
-      // Restoring a checkpoint writes every recorded file back through the host
-      // file API; on a remote workspace that is a network round trip per file.
+      // Restoring a checkpoint writes every recorded file back through the
+      // Host file API and can exceed the chat request timeout.
       expect(setTimeoutSpy.mock.calls.map(([, timeout]) => timeout)).toContain(180_000)
       client.handle({
         protocolVersion: PROTOCOL_VERSION,

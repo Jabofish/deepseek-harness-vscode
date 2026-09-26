@@ -60,6 +60,7 @@ import { SubagentDrawer } from './features/subagents/SubagentDrawer.js'
 import { DiagnosticsDrawer } from './features/diagnostics/DiagnosticsDrawer.js'
 import { SettingsDrawer } from './features/settings/SettingsDrawer.js'
 import { ScheduleDrawer } from './features/schedules/ScheduleDrawer.js'
+import { resolveScheduleSessionLink } from './features/schedules/session-link.js'
 import { TrajectoryView } from './features/trajectory/TrajectoryView.js'
 import { AppHeader } from './features/shell/AppHeader.js'
 import { ConversationActionsMenu } from './features/shell/ConversationActionsMenu.js'
@@ -71,6 +72,7 @@ import {
   type OpenFileCandidate,
   type ReferenceCandidate,
 } from './app/store.js'
+import { publicProtocolErrorMessage } from './app/protocol-client.js'
 import {
   readConversationFontSize,
   rememberConversationFontSize,
@@ -79,6 +81,7 @@ import {
   DSH_UI_SETTING_PATHS,
   dshUiPreferences,
   findDshSettingsField,
+  readDshSettingValue,
   withDshSettingValue,
   type ConversationFontSize,
   type ThemePreference,
@@ -113,6 +116,12 @@ const EMPTY_REFERENCE_CANDIDATES: readonly ReferenceCandidate[] = []
 const EMPTY_PERMISSION_REQUESTS: readonly PendingApproval[] = []
 const EMPTY_USER_QUESTIONS: readonly UserQuestion[] = []
 const DSH_LOCALE_SETTING_PATH = 'locale.preference'
+interface AcknowledgedDshSettingWrite {
+  readonly path: string
+  readonly value: unknown
+  readonly expectedRevision: number
+}
+
 /** Keep host-backed child actions stable while still reading current App state. */
 function useStableCallback<Args extends unknown[], Result>(
   callback: (...args: Args) => Result,
@@ -148,8 +157,9 @@ const CONVERSATION_VIEW_IDS = {
 } as const
 
 export function App(): ReactElement {
-  const { locale, setLocale, t } = useI18n()
+  const { locale, setLocale, adoptLocaleFromHost, t } = useI18n()
   const store = useMemo(() => createAppStore(), [])
+  const mountedRef = useRef(true)
   const initializedStoreRef = useRef<AppStore | undefined>(undefined)
   const disposeTimerRef = useRef<number | undefined>(undefined)
   const popupSelects = useMemo(() => new PopupSelectRegistry(), [])
@@ -158,6 +168,12 @@ export function App(): ReactElement {
     () => store.getState(),
     () => store.getState(),
   )
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
   useEffect(() => {
     if (state.accountLifecycleAvailable && state.drawer === 'settings' && state.accountLifecycle === null)
       void store.loadAccountLifecycle()
@@ -218,27 +234,44 @@ export function App(): ReactElement {
   const [themePreference, setThemePreferenceState] = useState<ThemePreference>(() => readThemePreference())
   const [dshSettingsSnapshot, setDshSettingsSnapshot] = useState<DshSettingsSnapshot | undefined>()
   const [dshSettingsSnapshotVersion, setDshSettingsSnapshotVersion] = useState<string | undefined>()
+  const [dshSettingsSnapshotConnectionEpoch, setDshSettingsSnapshotConnectionEpoch] = useState<
+    number | undefined
+  >()
   const dshSettingsSnapshotRef = useRef<DshSettingsSnapshot | undefined>(undefined)
   const dshSettingsSnapshotVersionRef = useRef<string | undefined>(undefined)
   const dshSettingsReadSequenceRef = useRef(0)
   const dshSettingsAcceptedReadSequenceRef = useRef(0)
   const dshSettingsWriteSequenceRef = useRef(0)
   const dshSettingsWritesPendingRef = useRef(0)
+  const dshSettingsSnapshotMustRefreshRef = useRef(false)
+  const dshSettingsCommittedValuePendingRefreshRef = useRef(false)
   const dshSettingsVersionEpochRef = useRef(0)
+  const dshSettingsTrackedConnectedRef = useRef(false)
   const dshSettingsTrackedVersionRef = useRef<string | undefined>(undefined)
+  const dshSettingsTrackedConnectionEpochRef = useRef<number | undefined>(undefined)
   const [dshSettingsReadState, setDshSettingsReadState] = useState<'loading' | 'unavailable' | 'ready'>(
     'loading',
   )
   const localeControlRef = useRef<HTMLSpanElement>(null)
+  const adoptExplicitLocaleFromDsh = useCallback(
+    (value: Locale): void => adoptLocaleFromHost(value, true),
+    [adoptLocaleFromHost],
+  )
 
   const adoptDshSettingsSnapshot = useCallback(
     (snapshot: DshSettingsSnapshot): void => {
+      const connectionEpoch = state.connectionEpoch ?? 0
+      dshSettingsCommittedValuePendingRefreshRef.current = false
       dshSettingsSnapshotRef.current = snapshot
       dshSettingsSnapshotVersionRef.current = state.connectedDshVersion
       setDshSettingsSnapshot(snapshot)
       setDshSettingsSnapshotVersion(state.connectedDshVersion)
+      setDshSettingsSnapshotConnectionEpoch(connectionEpoch)
       setDshSettingsReadState('ready')
       const preferences = dshUiPreferences(snapshot)
+      const localeField = findDshSettingsField(snapshot, DSH_LOCALE_SETTING_PATH)
+      const hostLocale = readDshSettingValue(snapshot.values, DSH_LOCALE_SETTING_PATH)
+      adoptLocaleFromHost(hostLocale, localeField?.type === 'string' && typeof hostLocale === 'string')
       const hostTheme = preferences.theme
       if (hostTheme !== undefined) {
         setThemePreferenceState(hostTheme)
@@ -246,7 +279,7 @@ export function App(): ReactElement {
       }
       if (preferences.codingToolsEnabled === false) setConversationView('chat')
     },
-    [state.connectedDshVersion],
+    [adoptLocaleFromHost, state.connectedDshVersion, state.connectionEpoch],
   )
 
   const readDshSettingsForUi = useStableCallback(async (): Promise<DshSettingsSnapshot | undefined> => {
@@ -255,10 +288,27 @@ export function App(): ReactElement {
     const versionEpoch = dshSettingsVersionEpochRef.current
     const startedDuringWrite = dshSettingsWritesPendingRef.current > 0
     const requestedVersion = state.connectedDshVersion
-    const snapshot = await store.readDshSettings()
+    const requestedConnectionEpoch = state.connectionEpoch ?? 0
+    let snapshot: DshSettingsSnapshot | undefined
+    try {
+      snapshot = await store.readDshSettings()
+    } catch (reason: unknown) {
+      if (dshSettingsSnapshotMustRefreshRef.current && !dshSettingsCommittedValuePendingRefreshRef.current) {
+        dshSettingsSnapshotRef.current = undefined
+        dshSettingsSnapshotVersionRef.current = undefined
+        setDshSettingsSnapshot(undefined)
+        setDshSettingsSnapshotVersion(undefined)
+        setDshSettingsSnapshotConnectionEpoch(undefined)
+        setDshSettingsReadState('unavailable')
+      }
+      throw reason
+    }
+    const currentState = store.getState()
     if (
-      state.backend.kind !== 'connected' ||
-      state.connectedDshVersion !== requestedVersion ||
+      currentState.backend.kind !== 'connected' ||
+      currentState.connectedDshVersion !== requestedVersion ||
+      (currentState.connectionEpoch ?? 0) !== requestedConnectionEpoch ||
+      dshSettingsTrackedConnectionEpochRef.current !== requestedConnectionEpoch ||
       dshSettingsVersionEpochRef.current !== versionEpoch ||
       readSequence < dshSettingsAcceptedReadSequenceRef.current ||
       writeSequence !== dshSettingsWriteSequenceRef.current ||
@@ -267,62 +317,225 @@ export function App(): ReactElement {
     )
       return undefined
     dshSettingsAcceptedReadSequenceRef.current = readSequence
-    if (snapshot !== undefined) adoptDshSettingsSnapshot(snapshot)
-    else if (dshSettingsSnapshotRef.current === undefined) setDshSettingsReadState('unavailable')
-    return snapshot
-  })
-
-  const updateDshSettingForUi = useStableCallback(async (path: string, value: unknown): Promise<void> => {
-    const versionAtStart = state.connectedDshVersion
-    dshSettingsWriteSequenceRef.current += 1
-    dshSettingsWritesPendingRef.current += 1
-    let updateFailed = false
-    let updateFailure: unknown
-    try {
-      await store.updateDshSetting(path, value)
-    } catch (reason: unknown) {
-      updateFailed = true
-      updateFailure = reason
-    } finally {
-      dshSettingsWritesPendingRef.current = Math.max(0, dshSettingsWritesPendingRef.current - 1)
-    }
-    if (updateFailed) {
-      if (
-        state.backend.kind === 'connected' &&
-        state.connectedDshVersion === versionAtStart &&
-        dshSettingsSnapshotRef.current === undefined
-      ) {
-        await readDshSettingsForUi().catch(() => {
-          if (dshSettingsSnapshotRef.current === undefined) setDshSettingsReadState('unavailable')
-        })
-      }
-      throw updateFailure
-    }
-    if (state.backend.kind !== 'connected' || state.connectedDshVersion !== versionAtStart) return
-    const current = dshSettingsSnapshotRef.current
-    if (current === undefined) {
-      await readDshSettingsForUi().catch(() => undefined)
-      return
-    }
-    const updated = withDshSettingValue(current, path, value)
-    if (updated !== undefined) adoptDshSettingsSnapshot(updated)
-  })
-
-  useLayoutEffect(() => {
-    if (state.backend.kind !== 'connected' || state.connectedDshVersion === undefined) return
-    const previousVersion = dshSettingsTrackedVersionRef.current
-    dshSettingsTrackedVersionRef.current = state.connectedDshVersion
-    if (previousVersion === undefined || previousVersion === state.connectedDshVersion) return
-    dshSettingsVersionEpochRef.current += 1
-    const acceptedVersion = dshSettingsSnapshotVersionRef.current
-    if (acceptedVersion !== undefined && acceptedVersion !== state.connectedDshVersion) {
+    if (snapshot !== undefined) {
+      dshSettingsSnapshotMustRefreshRef.current = false
+      adoptDshSettingsSnapshot(snapshot)
+    } else if (
+      dshSettingsSnapshotMustRefreshRef.current &&
+      !dshSettingsCommittedValuePendingRefreshRef.current
+    ) {
       dshSettingsSnapshotRef.current = undefined
       dshSettingsSnapshotVersionRef.current = undefined
       setDshSettingsSnapshot(undefined)
       setDshSettingsSnapshotVersion(undefined)
-      setDshSettingsReadState('loading')
+      setDshSettingsSnapshotConnectionEpoch(undefined)
+      setDshSettingsReadState('unavailable')
+    } else if (dshSettingsSnapshotRef.current === undefined) setDshSettingsReadState('unavailable')
+    return snapshot
+  })
+
+  const recordAcknowledgedDshSettingWrite = useStableCallback(
+    (
+      write: AcknowledgedDshSettingWrite,
+      snapshotAtStart: DshSettingsSnapshot | undefined,
+      versionAtStart: string | undefined,
+      connectionEpochAtStart: number,
+      versionEpochAtStart: number,
+    ): void => {
+      const currentState = store.getState()
+      const namespace = write.path.split('.', 1)[0]
+      if (
+        snapshotAtStart === undefined ||
+        dshSettingsSnapshotRef.current !== snapshotAtStart ||
+        namespace === undefined ||
+        currentState.backend.kind !== 'connected' ||
+        currentState.connectedDshVersion !== versionAtStart ||
+        (currentState.connectionEpoch ?? 0) !== connectionEpochAtStart ||
+        dshSettingsTrackedConnectionEpochRef.current !== connectionEpochAtStart ||
+        dshSettingsVersionEpochRef.current !== versionEpochAtStart ||
+        snapshotAtStart.schema.namespaces.find((entry) => entry.ns === namespace)?.revision !==
+          write.expectedRevision
+      )
+        return
+      const accepted = withDshSettingValue(snapshotAtStart, write.path, write.value)
+      if (accepted === undefined) return
+      dshSettingsCommittedValuePendingRefreshRef.current = true
+      dshSettingsSnapshotRef.current = accepted
+      dshSettingsSnapshotVersionRef.current = versionAtStart
+      setDshSettingsSnapshot(accepted)
+      setDshSettingsSnapshotVersion(versionAtStart)
+      setDshSettingsSnapshotConnectionEpoch(connectionEpochAtStart)
+      setDshSettingsReadState('ready')
+    },
+  )
+
+  const writeDshSettingsForUi = useStableCallback(
+    async (write: () => Promise<void>, acknowledgedWrite?: AcknowledgedDshSettingWrite): Promise<void> => {
+      const versionAtStart = state.connectedDshVersion
+      const connectionEpochAtStart = state.connectionEpoch ?? 0
+      const versionEpochAtStart = dshSettingsVersionEpochRef.current
+      const snapshotAtStart = dshSettingsSnapshotRef.current
+      dshSettingsWriteSequenceRef.current += 1
+      dshSettingsWritesPendingRef.current += 1
+      dshSettingsSnapshotMustRefreshRef.current = true
+      let writeFailure: unknown
+      try {
+        await write()
+      } catch (reason: unknown) {
+        writeFailure = reason
+      } finally {
+        const currentState = store.getState()
+        if (
+          currentState.backend.kind === 'connected' &&
+          currentState.connectedDshVersion === versionAtStart &&
+          (currentState.connectionEpoch ?? 0) === connectionEpochAtStart &&
+          dshSettingsTrackedConnectionEpochRef.current === connectionEpochAtStart &&
+          dshSettingsVersionEpochRef.current === versionEpochAtStart
+        ) {
+          dshSettingsWritesPendingRef.current = Math.max(0, dshSettingsWritesPendingRef.current - 1)
+        }
+      }
+      const currentState = store.getState()
+      const sameConnection =
+        currentState.backend.kind === 'connected' &&
+        currentState.connectedDshVersion === versionAtStart &&
+        (currentState.connectionEpoch ?? 0) === connectionEpochAtStart &&
+        dshSettingsTrackedConnectionEpochRef.current === connectionEpochAtStart &&
+        dshSettingsVersionEpochRef.current === versionEpochAtStart
+      if (!sameConnection) {
+        if (writeFailure !== undefined)
+          throw writeFailure instanceof Error ? writeFailure : new Error(t('settings.updateFailed'))
+        return
+      }
+      if (writeFailure === undefined && acknowledgedWrite !== undefined)
+        recordAcknowledgedDshSettingWrite(
+          acknowledgedWrite,
+          snapshotAtStart,
+          versionAtStart,
+          connectionEpochAtStart,
+          versionEpochAtStart,
+        )
+      const refreshed = await readDshSettingsForUi().catch(() => undefined)
+      if (refreshed === undefined && !dshSettingsCommittedValuePendingRefreshRef.current) {
+        dshSettingsSnapshotRef.current = undefined
+        dshSettingsSnapshotVersionRef.current = undefined
+        setDshSettingsSnapshot(undefined)
+        setDshSettingsSnapshotVersion(undefined)
+        setDshSettingsSnapshotConnectionEpoch(undefined)
+        setDshSettingsReadState('unavailable')
+      }
+      if (writeFailure !== undefined)
+        throw writeFailure instanceof Error ? writeFailure : new Error(t('settings.updateFailed'))
+    },
+  )
+
+  const trackDshSettingsWriteForUi = useStableCallback(
+    async (write: () => Promise<void>, acknowledgedWrite?: AcknowledgedDshSettingWrite): Promise<void> => {
+      const versionAtStart = state.connectedDshVersion
+      const connectionEpochAtStart = state.connectionEpoch ?? 0
+      const versionEpochAtStart = dshSettingsVersionEpochRef.current
+      const snapshotAtStart = dshSettingsSnapshotRef.current
+      dshSettingsWriteSequenceRef.current += 1
+      dshSettingsWritesPendingRef.current += 1
+      dshSettingsSnapshotMustRefreshRef.current = true
+      try {
+        await write()
+        if (acknowledgedWrite !== undefined)
+          recordAcknowledgedDshSettingWrite(
+            acknowledgedWrite,
+            snapshotAtStart,
+            versionAtStart,
+            connectionEpochAtStart,
+            versionEpochAtStart,
+          )
+      } finally {
+        const currentState = store.getState()
+        if (
+          currentState.backend.kind === 'connected' &&
+          currentState.connectedDshVersion === versionAtStart &&
+          (currentState.connectionEpoch ?? 0) === connectionEpochAtStart &&
+          dshSettingsTrackedConnectionEpochRef.current === connectionEpochAtStart &&
+          dshSettingsVersionEpochRef.current === versionEpochAtStart
+        ) {
+          dshSettingsWritesPendingRef.current = Math.max(0, dshSettingsWritesPendingRef.current - 1)
+        }
+      }
+    },
+  )
+
+  const updateDshSettingForUi = useStableCallback(
+    async (path: string, value: unknown, expectedRevision: number): Promise<void> =>
+      writeDshSettingsForUi(() => store.updateDshSetting(path, value, expectedRevision), {
+        path,
+        value,
+        expectedRevision,
+      }),
+  )
+  const updateDshSettingFromDrawer = useStableCallback(
+    async (path: string, value: unknown, expectedRevision: number): Promise<void> =>
+      trackDshSettingsWriteForUi(() => store.updateDshSetting(path, value, expectedRevision), {
+        path,
+        value,
+        expectedRevision,
+      }),
+  )
+  const unsetDshSettingFromDrawer = useStableCallback(
+    async (path: string, expectedRevision: number): Promise<void> =>
+      trackDshSettingsWriteForUi(() => store.unsetDshSetting(path, expectedRevision)),
+  )
+  const mutateDshSettingsFromDrawer = useStableCallback(
+    async (
+      namespace: string,
+      operations: Parameters<typeof store.mutateDshSettings>[1],
+      expectedRevision: number,
+    ): Promise<void> =>
+      trackDshSettingsWriteForUi(() => store.mutateDshSettings(namespace, operations, expectedRevision)),
+  )
+
+  useLayoutEffect(() => {
+    const connected = state.backend.kind === 'connected'
+    const wasConnected = dshSettingsTrackedConnectedRef.current
+    dshSettingsTrackedConnectedRef.current = connected
+    if (!connected) {
+      if (wasConnected) {
+        // Invalidate every outstanding settings read before it can adopt data
+        // from the disconnected Host into the local/editor fallback state.
+        dshSettingsVersionEpochRef.current += 1
+        dshSettingsWritesPendingRef.current = 0
+        dshSettingsSnapshotMustRefreshRef.current = false
+        dshSettingsCommittedValuePendingRefreshRef.current = false
+        adoptLocaleFromHost(undefined, false)
+      }
+      return
     }
-  }, [state.backend.kind, state.connectedDshVersion])
+    const previousVersion = dshSettingsTrackedVersionRef.current
+    const previousConnectionEpoch = dshSettingsTrackedConnectionEpochRef.current
+    const currentConnectionEpoch = state.connectionEpoch ?? 0
+    dshSettingsTrackedVersionRef.current = state.connectedDshVersion
+    dshSettingsTrackedConnectionEpochRef.current = currentConnectionEpoch
+    if (!wasConnected) {
+      // Treat reconnection as a fresh Host generation even if its version tag
+      // matches the previous process.
+      dshSettingsVersionEpochRef.current += 1
+    } else if (previousConnectionEpoch !== currentConnectionEpoch) {
+      // A connected snapshot with a new backend identity is a new Host even
+      // when its reported DSH version is unchanged.
+      dshSettingsVersionEpochRef.current += 1
+    } else if (previousVersion !== state.connectedDshVersion) {
+      dshSettingsVersionEpochRef.current += 1
+    } else {
+      return
+    }
+    dshSettingsWritesPendingRef.current = 0
+    dshSettingsSnapshotMustRefreshRef.current = false
+    dshSettingsCommittedValuePendingRefreshRef.current = false
+    adoptLocaleFromHost(undefined, false)
+    dshSettingsSnapshotRef.current = undefined
+    dshSettingsSnapshotVersionRef.current = undefined
+    setDshSettingsSnapshot(undefined)
+    setDshSettingsSnapshotVersion(undefined)
+    setDshSettingsReadState('loading')
+  }, [adoptLocaleFromHost, state.backend.kind, state.connectedDshVersion, state.connectionEpoch])
 
   useEffect(() => {
     if (state.backend.kind !== 'connected') return
@@ -334,17 +547,23 @@ export function App(): ReactElement {
     return () => {
       cancelled = true
     }
-  }, [readDshSettingsForUi, state.backend.kind, state.connectedDshVersion])
+  }, [
+    adoptLocaleFromHost,
+    readDshSettingsForUi,
+    state.backend.kind,
+    state.connectedDshVersion,
+    state.connectionEpoch,
+  ])
 
-  const settingsSnapshotMatchesVersion =
-    state.connectedDshVersion === undefined || dshSettingsSnapshotVersion === state.connectedDshVersion
+  const settingsSnapshotMatchesConnection =
+    (state.connectedDshVersion === undefined || dshSettingsSnapshotVersion === state.connectedDshVersion) &&
+    dshSettingsSnapshotConnectionEpoch === (state.connectionEpoch ?? 0)
   const currentDshSettingsReady =
-    dshSettingsReadState === 'ready' && settingsSnapshotMatchesVersion && dshSettingsSnapshot !== undefined
+    dshSettingsReadState === 'ready' && settingsSnapshotMatchesConnection && dshSettingsSnapshot !== undefined
   const readyDshSettings = currentDshSettingsReady ? dshSettingsSnapshot : undefined
   const readyDshUiPreferences =
     readyDshSettings === undefined ? undefined : dshUiPreferences(readyDshSettings)
-  const settingsDrawerVersionKey =
-    state.connectedDshVersion ?? dshSettingsSnapshotVersion ?? 'unknown-dsh-version'
+  const settingsDrawerVersionKey = `${state.connectedDshVersion ?? dshSettingsSnapshotVersion ?? 'unknown-dsh-version'}:${state.connectionEpoch ?? 0}`
   const codingToolsField =
     readyDshSettings === undefined
       ? undefined
@@ -412,7 +631,19 @@ export function App(): ReactElement {
     (next: Locale): void => {
       setLocale(next)
       if (state.backend.kind !== 'connected') return
-      void updateDshSettingForUi(DSH_LOCALE_SETTING_PATH, next).catch((reason: unknown) => {
+      if (dshSettingsSnapshotMustRefreshRef.current) {
+        setError(t('settings.revisionRefreshRequired'))
+        return
+      }
+      const settingsNamespace = DSH_LOCALE_SETTING_PATH.split('.')[0]
+      const expectedRevision = dshSettingsSnapshotRef.current?.schema.namespaces.find(
+        (entry) => entry.ns === settingsNamespace,
+      )?.revision
+      if (expectedRevision === undefined) {
+        setError(t('settings.updateFailed'))
+        return
+      }
+      void updateDshSettingForUi(DSH_LOCALE_SETTING_PATH, next, expectedRevision).catch((reason: unknown) => {
         // The extension UI remains usable even when an older/read-only DSH
         // cannot persist its matching response-language preference.
         setError(reason instanceof Error ? reason.message : t('settings.updateFailed'))
@@ -847,16 +1078,22 @@ export function App(): ReactElement {
         )
     }
   }
-  const submitPrompt = (mode: 'queue' | 'steer'): void => {
-    if (active === undefined && state.pendingSession === undefined) return
+  const submitPrompt = (mode: 'queue' | 'steer'): Promise<void> => {
+    if (active === undefined && state.pendingSession === undefined) return Promise.resolve()
     const text = draft
     const attachmentSnapshot = attachments
-    const submission =
-      active === undefined
-        ? store.sendPendingPrompt(text, attachmentSnapshot, mode)
-        : store.sendPrompt(active.id, text, attachmentSnapshot, mode)
-    void submission
+    let submission: Promise<void>
+    try {
+      submission =
+        active === undefined
+          ? store.sendPendingPrompt(text, attachmentSnapshot, mode)
+          : store.sendPrompt(active.id, text, attachmentSnapshot, mode)
+    } catch (reason) {
+      submission = Promise.reject(reason instanceof Error ? reason : new Error(t('app.error.prompt')))
+    }
+    return submission
       .then(() => {
+        if (!mountedRef.current) return
         setDraft((current) => (current === text ? '' : current))
         // The Extension Host consumes only the handles admitted by this send;
         // keep any draft attachments the user added while it was in flight.
@@ -866,7 +1103,9 @@ export function App(): ReactElement {
         )
         setOpenFilePickerOpen(false)
       })
-      .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : t('app.error.prompt')))
+      .catch((reason: unknown) => {
+        if (mountedRef.current) setError(publicProtocolErrorMessage(reason) ?? t('app.error.prompt'))
+      })
   }
   /**
    * Loads the open-file snapshot that both the composer menu row and the
@@ -1088,9 +1327,7 @@ export function App(): ReactElement {
     (workspaceId: string, sessionId: string, beforeSessionId?: string): Promise<void> =>
       store.moveSession(workspaceId, sessionId, beforeSessionId),
   )
-  const sessionOnSearch = useStableCallback((query: string): Promise<readonly SessionSummary[]> =>
-    store.searchSessions(query),
-  )
+  const sessionOnSearch = useStableCallback((query: string) => store.searchSessions(query))
   const composerOnCaptureEditorContext = useStableCallback((kind: EditorContextKind): Promise<void> =>
     store.captureEditorContext(kind),
   )
@@ -1184,20 +1421,18 @@ export function App(): ReactElement {
   const composerOnRemoveAttachment = useStableCallback((uri: string): void => {
     removeAttachmentDrafts([uri], true)
   })
-  const composerOnSubmit = useStableCallback((mode: RunningInputMode): void => submitPrompt(mode))
+  const composerOnSubmit = useStableCallback((mode: RunningInputMode): Promise<void> => submitPrompt(mode))
   const composerOnCancel = useStableCallback((): void => {
     if (active === undefined) return
     void store
       .cancelSession(active.id)
       .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : t('app.error.cancel')))
   })
-  const composerOnSteerQueue = useStableCallback((): void => {
-    void store
-      .steerAllQueued()
-      .catch((reason: unknown) =>
-        setError(reason instanceof Error ? reason.message : t('app.error.steerAll')),
-      )
-  })
+  const composerOnSteerQueue = useStableCallback((): Promise<void> =>
+    store.steerAllQueued().catch((reason: unknown) => {
+      if (mountedRef.current) setError(publicProtocolErrorMessage(reason) ?? t('app.error.steerAll'))
+    }),
+  )
   const composerUsage = projectedTokenUsage ?? state.timeline.tokenUsage
   const composerStatus = useMemo(
     () => (
@@ -1291,6 +1526,39 @@ export function App(): ReactElement {
   })
   const headerOnOpenSchedules = useStableCallback((): void => {
     store.setDrawer('schedules')
+  })
+  const getScheduleLinkedSession = useStableCallback((sessionId: string) => {
+    const current = store.getState()
+    return resolveScheduleSessionLink(
+      sessionId,
+      current.backend.kind === 'connected' ? (current.sessionDirectoryStatus ?? 'loading') : 'loading',
+      current.sessions,
+      current.workspaces,
+      current.archivedSessionIds,
+    )
+  })
+  const scheduleOnOpenLinkedSession = useStableCallback((sessionId: string): void => {
+    const current = store.getState()
+    if (current.backend.kind !== 'connected') return
+    if (
+      resolveScheduleSessionLink(
+        sessionId,
+        current.sessionDirectoryStatus ?? 'loading',
+        current.sessions,
+        current.workspaces,
+        current.archivedSessionIds,
+      ).status !== 'available'
+    )
+      return
+    discardAttachmentDrafts()
+    void store
+      .openSession(sessionId)
+      .then(() => {
+        if (store.getState().drawer === 'schedules') store.setDrawer(undefined)
+      })
+      .catch((reason: unknown) =>
+        setError(reason instanceof Error ? reason.message : t('app.error.openSession')),
+      )
   })
   const scheduleOnStartSession = useStableCallback(async (prompt: string): Promise<string> => {
     await store.createSession(active?.workspaceId ?? state.workspaces[0]?.id)
@@ -1421,7 +1689,9 @@ export function App(): ReactElement {
           onCreate={(label) => store.createCheckpoint(label)}
           onPreview={(checkpointId) => store.previewCheckpoint(checkpointId)}
           onDelete={(checkpointId) => store.deleteCheckpoint(checkpointId)}
-          onRestore={(checkpointId, conflictPolicy) => store.restoreCheckpoint(checkpointId, conflictPolicy)}
+          onRestore={(checkpointId, previewId, conflictPolicy) =>
+            store.restoreCheckpoint(checkpointId, previewId, conflictPolicy)
+          }
         />
         <DeferredPromptTemplatesDrawer
           onOpenLink={timelineOnOpenLink}
@@ -1572,7 +1842,7 @@ export function App(): ReactElement {
           onThemeChange={setThemePreference}
           locale={locale}
           onLocaleChange={applyLocale}
-          onLocaleFromDsh={setLocale}
+          onLocaleFromDsh={adoptExplicitLocaleFromDsh}
           conversationFontSize={conversationFontSize}
           onConversationFontSizeChange={setConversationFontSize}
           providers={state.providers}
@@ -1581,8 +1851,9 @@ export function App(): ReactElement {
           onLoadDshSettings={readDshSettingsForUi}
           onOpenDshSettingsDocument={() => store.openDshSettingsDocument()}
           onOpenKeyboardShortcuts={() => store.openKeyboardShortcuts()}
-          onUpdateDshSetting={updateDshSettingForUi}
-          onUnsetDshSetting={(path) => store.unsetDshSetting(path)}
+          onUpdateDshSetting={updateDshSettingFromDrawer}
+          onUnsetDshSetting={unsetDshSettingFromDrawer}
+          onMutateDshSettings={mutateDshSettingsFromDrawer}
           onCreateCustomProvider={(draft) => store.createCustomProvider(draft)}
           onDiscoverModels={(input) => store.discoverModels(input)}
           onDiscoverCustomModels={(input) => store.discoverCustomProviderModels(input)}
@@ -1647,6 +1918,9 @@ export function App(): ReactElement {
           featureRequest={store.featureRequest}
           subscribeFeature={store.subscribeFeature}
           onStartScheduleSession={scheduleOnStartSession}
+          getLinkedSession={getScheduleLinkedSession}
+          onOpenLinkedSession={scheduleOnOpenLinkedSession}
+          connectionEpoch={state.connectionEpoch ?? 0}
         />
         {runtimeUpdateVisible ? (
           <div className="dsh-app__runtime-update dsh-toast" role="status">
@@ -2346,18 +2620,32 @@ function readTokenUsageProjection(value: unknown): TokenUsage | undefined {
   if (record === undefined) return undefined
   const inputTokens = nonNegativeTokenCount(record.uncachedInputTokens ?? record.inputTokens)
   const outputTokens = nonNegativeTokenCount(record.outputTokens)
+  const hasDeclaredTotal = Object.hasOwn(record, 'totalTokens')
+  const declaredTotal = exactNonNegativeTokenCount(record.totalTokens)
   const cacheReadTokens = nonNegativeTokenCount(record.cacheReadTokens)
   const cacheWriteTokens = nonNegativeTokenCount(record.cacheWriteTokens)
   if (
     inputTokens === undefined ||
     outputTokens === undefined ||
+    (hasDeclaredTotal && declaredTotal === undefined) ||
     (record.cacheReadTokens !== undefined && cacheReadTokens === undefined) ||
     (record.cacheWriteTokens !== undefined && cacheWriteTokens === undefined)
   )
     return undefined
+  const totalTokens =
+    declaredTotal ??
+    (cacheReadTokens === undefined || cacheWriteTokens === undefined
+      ? undefined
+      : exactNonNegativeTokenSum([
+          exactNonNegativeTokenCount(record.uncachedInputTokens ?? record.inputTokens),
+          exactNonNegativeTokenCount(record.outputTokens),
+          exactNonNegativeTokenCount(record.cacheReadTokens),
+          exactNonNegativeTokenCount(record.cacheWriteTokens),
+        ]))
   return {
     inputTokens,
     outputTokens,
+    ...(totalTokens === undefined ? {} : { totalTokens }),
     ...(cacheReadTokens === undefined ? {} : { cacheReadTokens }),
     ...(cacheWriteTokens === undefined ? {} : { cacheWriteTokens }),
   }
@@ -2485,6 +2773,20 @@ function formatByteSize(value: number): string {
 
 function nonNegativeTokenCount(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.floor(value) : undefined
+}
+
+function exactNonNegativeTokenCount(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined
+}
+
+function exactNonNegativeTokenSum(values: readonly (number | undefined)[]): number | undefined {
+  let total = 0
+  for (const value of values) {
+    if (value === undefined) return undefined
+    total += value
+    if (!Number.isSafeInteger(total)) return undefined
+  }
+  return total
 }
 
 function nonNegativeMetric(value: unknown): number | undefined {

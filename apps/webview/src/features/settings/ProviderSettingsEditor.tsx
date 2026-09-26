@@ -44,7 +44,9 @@ interface ProviderFieldRef {
 export function ProviderSettingsEditor(props: ProviderSettingsEditorProps): ReactElement {
   const { t } = useI18n()
   const settingsNs = props.provider.settingsNs?.trim() ?? ''
-  const displayedRevision = props.settings.schema.namespaces.find((entry) => entry.ns === settingsNs)?.revision
+  const displayedRevision = props.settings.schema.namespaces.find(
+    (entry) => entry.ns === settingsNs,
+  )?.revision
   const [openedAtRevision] = useState(() => displayedRevision)
   const settingsPath = props.provider.settingsPath ?? []
   const prefix = settingsNs === '' ? [] : [settingsNs, ...settingsPath]

@@ -1392,10 +1392,7 @@ describe('DshStreamController ordered gap recovery', () => {
     const releases = new Map<string, () => void>()
     const recoveryBarriers = new Map<string, Promise<void>>()
     for (const sessionId of ['s1', 's2'])
-      recoveryBarriers.set(
-        sessionId,
-        new Promise<void>((resolve) => releases.set(sessionId, resolve)),
-      )
+      recoveryBarriers.set(sessionId, new Promise<void>((resolve) => releases.set(sessionId, resolve)))
     const controller = new DshStreamController(
       streamTransport([]),
       undefined,

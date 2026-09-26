@@ -36,7 +36,9 @@ describe('resolveScheduleSessionLink', () => {
   })
 
   it('blocks archived, missing and unconfirmed Workspace membership', () => {
-    expect(resolveScheduleSessionLink('session-one', 'ready', [session], [workspace], ['session-one'])).toEqual({
+    expect(
+      resolveScheduleSessionLink('session-one', 'ready', [session], [workspace], ['session-one']),
+    ).toEqual({
       status: 'archived',
     })
     expect(resolveScheduleSessionLink('session-missing', 'ready', [session], [workspace], [])).toEqual({
@@ -45,7 +47,9 @@ describe('resolveScheduleSessionLink', () => {
     expect(
       resolveScheduleSessionLink('session-one', 'ready', [session], [{ ...workspace, sessionIds: [] }], []),
     ).toEqual({ status: 'missing' })
-    expect(resolveScheduleSessionLink('session-one', 'ready', [session], [], [])).toEqual({ status: 'missing' })
+    expect(resolveScheduleSessionLink('session-one', 'ready', [session], [], [])).toEqual({
+      status: 'missing',
+    })
   })
 
   it('does not infer availability from stale rows while metadata is loading or failed', () => {

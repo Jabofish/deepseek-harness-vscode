@@ -83,9 +83,11 @@ import {
   type SessionConfigurationPatch,
   type SessionExportOptions,
   type SessionHistoryEvent,
+  type SessionPage,
   type SessionSequenceRange,
   type SessionProjectionSnapshot,
   type SessionSummary,
+  type SettingsPathOperation,
   type SkillDescriptor,
   type TeamActivityView,
   type TaskListScope,
@@ -202,6 +204,8 @@ export type WebviewBackendState =
 
 export interface AppState {
   readonly backend: WebviewBackendState
+  /** Monotonic opaque counter for a newly observed connected backend epoch. */
+  readonly connectionEpoch?: number
   /** Safe connected-host version copied from the Extension Host snapshot. */
   readonly connectedDshVersion: string | undefined
   /** True only when the selected pinned adapter accepts inline subagent images. */
@@ -215,6 +219,8 @@ export interface AppState {
   /** Latest phase emitted by the Host while an update request is running. */
   readonly dshUpdateProgress: DshRuntimeUpdateProgress | undefined
   readonly sessions: readonly SessionSummary[]
+  /** Whether the Session and Workspace rosters have a usable shared snapshot. */
+  readonly sessionDirectoryStatus?: 'loading' | 'ready' | 'error'
   readonly archivedSessionIds: readonly string[]
   /** Rows the host still holds after archiving; loaded on demand. */
   readonly archivedSessions: readonly SessionSummary[]
@@ -372,7 +378,7 @@ export interface AppActions {
   readDiagnostics(): Promise<DiagnosticsSnapshot | undefined>
   showDiagnostics(): Promise<void>
   refreshSessions(): Promise<void>
-  searchSessions(query: string): Promise<readonly SessionSummary[]>
+  searchSessions(query: string): Promise<SessionPage>
   refreshCommands(sessionId?: string): Promise<void>
   openSession(sessionId: string): Promise<void>
   openSkillDocument(sessionId: string, skillId: string): Promise<void>
@@ -468,6 +474,7 @@ export interface AppActions {
   deleteCheckpoint(checkpointId: string): Promise<void>
   restoreCheckpoint(
     checkpointId: string,
+    previewId: string,
     conflictPolicy: CheckpointConflictPolicy,
   ): Promise<'completed' | 'partial' | undefined>
   refreshPromptTemplates(sessionId?: string, scope?: PromptTemplateScope): Promise<void>
@@ -496,8 +503,13 @@ export interface AppActions {
   readDshSettings(): Promise<DshSettingsSnapshot | undefined>
   openDshSettingsDocument(): Promise<void>
   openKeyboardShortcuts(): Promise<void>
-  updateDshSetting(path: string, value: unknown): Promise<void>
-  unsetDshSetting(path: string): Promise<void>
+  updateDshSetting(path: string, value: unknown, expectedRevision: number): Promise<void>
+  unsetDshSetting(path: string, expectedRevision: number): Promise<void>
+  mutateDshSettings(
+    namespace: string,
+    operations: readonly SettingsPathOperation[],
+    expectedRevision: number,
+  ): Promise<void>
   createCustomProvider(draft: CustomProviderDraft): Promise<CustomProviderCreateResult>
   configureProviderSecret(providerId: string, field: string): Promise<boolean>
   removeProviderSecret(providerId: string, field: string): Promise<void>
@@ -603,6 +615,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   let composerPreferences = persistedWebviewState.composerPreferences ?? {}
   let state: AppState = {
     backend: { kind: 'idle' },
+    connectionEpoch: 0,
     connectedDshVersion: undefined,
     subagentImagePrompts: false,
     sessionRestore: false,
@@ -611,6 +624,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     dshUpdate: undefined,
     dshUpdateProgress: undefined,
     sessions: [],
+    sessionDirectoryStatus: 'loading',
     archivedSessionIds: [],
     archivedSessions: [],
     workspaces: [],
@@ -1138,6 +1152,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   let goalReadGeneration = 0
   let permissionCatalogGeneration = 0
   let openVersion = 0
+  let sessionModelDirectoryGeneration = 0
   let pendingSessionRevision = 0
   let pendingSend: { readonly revision: number; readonly promise: Promise<void> } | undefined
   const refreshLiveGoals = async (): Promise<void> => {
@@ -1166,6 +1181,20 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   // catalog read before they can claim `openVersion`.
   let openIntent = 0
   let disposed = false
+  const refreshSessionModelDirectoryForSession = (sessionId: string): Promise<void> => {
+    // This store projects one active session's catalog. An off-screen refresh
+    // has nowhere useful to merge and must not retire that active session's
+    // pending directory read.
+    if (state.activeSessionId !== sessionId) return Promise.resolve()
+    const generation = ++sessionModelDirectoryGeneration
+    const version = openVersion
+    return refreshSessionModelDirectory(
+      client,
+      setState,
+      sessionId,
+      () => !disposed && version === openVersion && generation === sessionModelDirectoryGeneration,
+    )
+  }
   // A newly-created store has not yet made its one automatic session choice.
   // Keep that decision pending when the first registry snapshot is empty: the
   // DSH workspace/session registries can publish in adjacent turns.
@@ -1811,6 +1840,14 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   const unsubscribe = client.subscribe((message) => {
     if (
       message.type === 'event' &&
+      (message.name === 'connection.lost' ||
+        (message.name === 'connection.snapshot' && object(message.payload)?.kind !== 'connected'))
+    )
+      // Retire reads from the connection that is going away. The replacement
+      // session open starts a fresh generation when it can read its own catalog.
+      sessionModelDirectoryGeneration += 1
+    if (
+      message.type === 'event' &&
       (message.name === 'connection.snapshot' || message.name === 'connection.lost')
     ) {
       const snapshot = message.name === 'connection.snapshot' ? object(message.payload) : undefined
@@ -1988,8 +2025,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       // this re-read a failure row the picker is showing would outlive its
       // cause, for example after the user repairs the credential it names.
       const refreshSessionId = state.activeSessionId
-      if (refreshSessionId !== undefined)
-        void refreshSessionModelDirectory(client, setState, refreshSessionId)
+      if (refreshSessionId !== undefined) void refreshSessionModelDirectoryForSession(refreshSessionId)
     }
     if (
       message.type === 'event' &&
@@ -2267,6 +2303,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     if (options.startup !== true) startupRestorePending = false
     flushPendingHistory()
     const version = ++openVersion
+    const modelDirectoryGeneration = ++sessionModelDirectoryGeneration
     feedbackReadySessions.delete(sessionId)
     editorContextRefreshGeneration += 1
     changesRefreshGeneration += 1
@@ -2433,8 +2470,12 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         })
         .catch(() => undefined)
       void sessionModelDirectoryData.then((read) => {
-        if (version !== openVersion) return
-        setState((current) => mergeSessionModelDirectory(current, sessionId, read))
+        if (version !== openVersion || modelDirectoryGeneration !== sessionModelDirectoryGeneration) return
+        setState((current) =>
+          version === openVersion && modelDirectoryGeneration === sessionModelDirectoryGeneration
+            ? mergeSessionModelDirectory(current, sessionId, read)
+            : current,
+        )
       })
 
       // Queue/goal/job/feedback/subagent data is advisory. It must not keep
@@ -3073,20 +3114,31 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     refreshSessions: refresh,
     searchSessions: async (query) => {
       const trimmed = query.trim()
-      if (trimmed === '') return []
+      if (trimmed === '') return { items: [] }
       const result = await client.request<unknown>({
         type: 'session.list',
         requestId: requestId(),
         payload: { search: trimmed, archived: false },
       })
       const items = strictListValues(result, isSessionSummary)
-      return items === undefined ? [] : deduplicateSessionSummaries(items)
+      const record = object(result)
+      if (items === undefined) throw new Error('Malformed session search response.')
+      if (
+        record !== undefined &&
+        Object.hasOwn(record, 'searchHasMore') &&
+        typeof record.searchHasMore !== 'boolean'
+      )
+        throw new Error('Malformed session search response.')
+      return {
+        items: deduplicateSessionSummaries(items),
+        ...(typeof record?.searchHasMore === 'boolean' ? { searchHasMore: record.searchHasMore } : {}),
+      }
     },
     refreshCommands: (sessionId) => refreshCommands(sessionId),
     refreshSessionModels: async (sessionId) => {
       const target = sessionId ?? state.activeSessionId
       if (target === undefined) return
-      await refreshSessionModelDirectory(client, setState, target)
+      await refreshSessionModelDirectoryForSession(target)
     },
     openSession: open,
     loadOlderHistory: async () => {
@@ -3291,7 +3343,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       // `false` would keep the composer inert for a selection the host now
       // serves, and a stale `true` would unlock one it no longer does.
       if (previousProvider === configuration.model.providerId) return
-      await refreshSessionModelDirectory(client, setState, sessionId)
+      await refreshSessionModelDirectoryForSession(sessionId)
     },
     executeCommand: async (sessionId, command, attachments = []) => {
       if ((await executeCommandRequest(sessionId, command, attachments)) === 'executed') return true
@@ -3601,6 +3653,8 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       // best-effort (a closed delivery window turns the item back into the
       // next waking Queue item), so failures of one row must not abort the rest.
       const targets = state.queue.filter((item) => item.mode === 'queue')
+      let firstFailure: unknown
+      let failed = false
       for (const item of targets) {
         try {
           await client.request<unknown>({
@@ -3608,10 +3662,14 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
             requestId: requestId(),
             payload: { inputId: item.id },
           })
-        } catch {
-          // Best-effort, matching the official queue dock semantics.
+        } catch (reason: unknown) {
+          // Try every row, then report one failure to the App's public-error
+          // boundary instead of silently losing a rejected steer request.
+          if (!failed) firstFailure = reason
+          failed = true
         }
       }
+      if (failed) throw firstFailure
     },
     loadFeedback: async (sessionId) => {
       applyFeedbackSnapshot(sessionId, await requestFeedbackSnapshot(sessionId, true))
@@ -3953,7 +4011,10 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       if (typeof client.featureRequest !== 'function') return
       const change = state.changes.find((entry) => entry.changeId === changeId)
       if (change === undefined) return
-      const location = change.locations[0]
+      const location =
+        change.locations.find(
+          (candidate) => candidate.path === change.relativePath && candidate.line !== undefined,
+        ) ?? change.locations.find((candidate) => candidate.path === change.relativePath)
       await client.featureRequest<unknown>({
         type: 'navigation.open',
         requestId: requestId(),
@@ -4075,7 +4136,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         checkpoints: current.checkpoints.filter((entry) => entry.checkpointId !== checkpointId),
       }))
     },
-    restoreCheckpoint: async (checkpointId, conflictPolicy) => {
+    restoreCheckpoint: async (checkpointId, previewId, conflictPolicy) => {
       if (typeof client.featureRequest !== 'function') return undefined
       const sessionId = state.activeSessionId
       if (sessionId === undefined) return undefined
@@ -4091,6 +4152,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
           sessionId,
           workspaceFolderId,
           expectedCurrentRevision: checkpoint.expectedRevision,
+          previewId,
           conflictPolicy,
         },
       })
@@ -4304,18 +4366,33 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     openKeyboardShortcuts: async () => {
       await client.request<unknown>({ type: 'settings.openKeyboardShortcuts', requestId: requestId() })
     },
-    updateDshSetting: async (path, value) => {
+    updateDshSetting: async (path, value, expectedRevision) => {
       await client.request<unknown>({
         type: 'settings.update',
         requestId: requestId(),
-        payload: { path, value },
+        payload: { path, value, expectedRevision },
       })
     },
-    unsetDshSetting: async (path) => {
+    unsetDshSetting: async (path, expectedRevision) => {
       await client.request<unknown>({
         type: 'settings.unset',
         requestId: requestId(),
-        payload: { path },
+        payload: { path, expectedRevision },
+      })
+    },
+    mutateDshSettings: async (namespace, operations, expectedRevision) => {
+      await client.request<unknown>({
+        type: 'settings.mutate',
+        requestId: requestId(),
+        payload: {
+          namespace,
+          operations: operations.map((operation) =>
+            operation.op === 'set'
+              ? { op: 'set', path: [...operation.path], value: operation.value }
+              : { op: 'unset', path: [...operation.path] },
+          ),
+          expectedRevision,
+        },
       })
     },
     createCustomProvider: async (draft) => {
@@ -4747,6 +4824,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       for (const watcher of [...sessionTurnWatchers]) watcher.dispose()
       pluginInstallRecovery.dispose()
       openVersion += 1
+      sessionModelDirectoryGeneration += 1
       accountDetailsEpoch += 1
       gapBackfills.clear()
       unhealedGapRanges.clear()
@@ -4995,6 +5073,12 @@ async function refreshSessions(
   isCurrent: () => boolean = () => true,
   awaitCatalogs = true,
 ): Promise<void> {
+  if (isCurrent())
+    setState((current) =>
+      current.sessionDirectoryStatus === 'ready'
+        ? current
+        : { ...current, sessionDirectoryStatus: 'loading' },
+    )
   const criticalResults = Promise.allSettled([
     client.request<unknown>({
       type: 'session.list',
@@ -5020,6 +5104,7 @@ async function refreshSessions(
       ? strictListValues(value(workspaceResult), isWorkspaceSummary)
       : undefined
   if (!isCurrent()) return
+  const sessionDirectoryStatus = rawSessions === undefined || rawWorkspaces === undefined ? 'error' : 'ready'
   setState((current) => {
     // Keep local archive knowledge monotonic while the host publishes the
     // archive-set echo. This prevents a stale concurrent session.list from
@@ -5061,6 +5146,7 @@ async function refreshSessions(
     const hasVisibilitySnapshot = rawSessions !== undefined || archivedFromHost !== undefined
     if (
       stableSessions === current.sessions &&
+      current.sessionDirectoryStatus === sessionDirectoryStatus &&
       archivedSessionIds === current.archivedSessionIds &&
       stableWorkspaces === current.workspaces &&
       !(hasVisibilitySnapshot && activeSessionIsArchived)
@@ -5069,6 +5155,7 @@ async function refreshSessions(
     return {
       ...current,
       sessions: stableSessions,
+      sessionDirectoryStatus,
       archivedSessionIds,
       // A transient workspace.list failure must not turn a known temporary
       // workspace into an apparently successful empty snapshot. The host is
@@ -5508,6 +5595,7 @@ async function refreshSessionModelDirectory(
   client: ProtocolClient,
   setState: StateSetter,
   sessionId: string,
+  isCurrent: () => boolean,
 ): Promise<void> {
   setState((current) =>
     current.activeSessionId === sessionId && !current.sessionModelDirectoryLoading
@@ -5515,7 +5603,7 @@ async function refreshSessionModelDirectory(
       : current,
   )
   const read = await loadSessionModelDirectory(client, sessionId)
-  setState((current) => mergeSessionModelDirectory(current, sessionId, read))
+  setState((current) => (isCurrent() ? mergeSessionModelDirectory(current, sessionId, read) : current))
 }
 
 function withClientCommandContributions(commands: readonly DynamicCommand[]): readonly DynamicCommand[] {
@@ -5741,6 +5829,7 @@ function sameModelDescriptorList(
       previous.providerId !== next.providerId ||
       previous.label !== next.label ||
       previous.contextWindow !== next.contextWindow ||
+      !sameStringList(previous.inputModalities, next.inputModalities) ||
       previous.supportsReasoning !== next.supportsReasoning ||
       previous.defaultReasoningLevel !== next.defaultReasoningLevel ||
       !sameReasoningLevelList(previous.reasoningLevels, next.reasoningLevels)
@@ -5964,6 +6053,13 @@ function applyHostMessage(
         setState({
           ...base,
           backend: { kind },
+          connectionEpoch: connectionEpochChanged
+            ? (state.connectionEpoch ?? 0) + 1
+            : (base.connectionEpoch ?? 0),
+          sessionDirectoryStatus:
+            kind === 'connected' && !connectionEpochChanged
+              ? (base.sessionDirectoryStatus ?? 'loading')
+              : 'loading',
           connectedDshVersion:
             kind === 'connected' && typeof snapshot?.dshVersion === 'string'
               ? snapshot.dshVersion
@@ -6377,6 +6473,7 @@ function withoutConnectionScopedSurfaces(state: AppState): AppState {
   const withoutPresetSelection = withPresetSelectionEnabled(state, undefined)
   return {
     ...withoutPresetSelection,
+    sessionDirectoryStatus: 'loading',
     queue: [],
     jobs: [],
     jobFollow: undefined,
@@ -7093,6 +7190,7 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
       (value.markdown !== undefined && typeof value.markdown !== 'string') ||
       (value.reasoning !== undefined && typeof value.reasoning !== 'string') ||
       (value.modelLabel !== undefined && typeof value.modelLabel !== 'string') ||
+      (Object.hasOwn(value, 'usage') && usage === undefined) ||
       (value.turn !== undefined && turn === undefined) ||
       (value.step !== undefined && step === undefined) ||
       (value.time !== undefined && time === undefined)
@@ -7117,13 +7215,20 @@ function parseDomainEvent(name: string, payload: unknown): BackendEvent | undefi
     const turn = finiteEventIndex(value.turn)
     const step = finiteEventIndex(value.step)
     const time = finiteEventTimestamp(value.time)
-    if (turn === undefined || step === undefined || (value.time !== undefined && time === undefined))
+    const usage = parseTokenUsage(value.usage)
+    if (
+      turn === undefined ||
+      step === undefined ||
+      (value.time !== undefined && time === undefined) ||
+      (Object.hasOwn(value, 'usage') && usage === undefined)
+    )
       return { type: 'unknown', name, payload }
     return {
       type: 'assistant.attempt',
       sessionId: value.sessionId,
       turn,
       step,
+      ...(usage === undefined ? {} : { usage }),
       ...(time === undefined ? {} : { time }),
     }
   }
@@ -8494,10 +8599,12 @@ function parseTokenUsage(value: unknown): TokenUsage | undefined {
   const inputTokens = tokenCount(inputValue)
   const outputTokens = tokenCount(record.outputTokens)
   if (inputTokens === undefined || outputTokens === undefined) return undefined
+  const totalTokens = tokenCount(record.totalTokens)
   const cacheReadTokens = tokenCount(record.cacheReadTokens)
   const cacheWriteTokens = tokenCount(record.cacheWriteTokens)
   const reasoningTokens = tokenCount(record.reasoningTokens)
   if (
+    (Object.prototype.hasOwnProperty.call(record, 'totalTokens') && totalTokens === undefined) ||
     (Object.prototype.hasOwnProperty.call(record, 'cacheReadTokens') && cacheReadTokens === undefined) ||
     (Object.prototype.hasOwnProperty.call(record, 'cacheWriteTokens') && cacheWriteTokens === undefined) ||
     (Object.prototype.hasOwnProperty.call(record, 'reasoningTokens') && reasoningTokens === undefined)
@@ -8506,6 +8613,7 @@ function parseTokenUsage(value: unknown): TokenUsage | undefined {
   return {
     inputTokens,
     outputTokens,
+    ...(totalTokens === undefined ? {} : { totalTokens }),
     ...(cacheReadTokens === undefined ? {} : { cacheReadTokens }),
     ...(cacheWriteTokens === undefined ? {} : { cacheWriteTokens }),
     ...(reasoningTokens === undefined ? {} : { reasoningTokens }),
@@ -8616,6 +8724,7 @@ function parseFeatureCheckpointPreviewResult(value: unknown): CheckpointPreview 
     return undefined
   const preview: FeatureCheckpointPreview = parsed.data.payload.preview
   return {
+    previewId: preview.previewId,
     summary: parseFeatureCheckpointSummary(preview.summary),
     files: preview.files.map((file) => ({
       relativePath: file.relativePath,
@@ -9914,6 +10023,7 @@ function isModelDescriptor(value: unknown): value is ModelDescriptor {
     typeof item.id !== 'string' ||
     typeof item.providerId !== 'string' ||
     typeof item.label !== 'string' ||
+    !validModelInputModalities(item.inputModalities) ||
     typeof item.supportsReasoning !== 'boolean' ||
     (item.defaultReasoningLevel !== undefined && !nonBlankString(item.defaultReasoningLevel))
   )
@@ -9927,6 +10037,15 @@ function isModelDescriptor(value: unknown): value is ModelDescriptor {
       const entry = object(level)
       return entry !== undefined && nonBlankString(entry.id) && nonBlankString(entry.label)
     })
+  )
+}
+
+function validModelInputModalities(value: unknown): boolean {
+  // The pinned RC2 catalog contract is an optional array of advertised values;
+  // unlike the user settings override, an empty catalog declaration is valid.
+  return (
+    value === undefined ||
+    (Array.isArray(value) && value.every((entry) => entry === 'text' || entry === 'image'))
   )
 }
 

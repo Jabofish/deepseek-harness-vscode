@@ -755,6 +755,76 @@ describe('Store to Timeline streamed rendering', () => {
     store.dispose()
   })
 
+  it('carries RC2 attempt usage through retry history into the completed Turn disclosure', async () => {
+    const client = new StreamClient()
+    const store = createAppStore(client as unknown as ProtocolClient)
+    await store.openSession('session-stream')
+
+    const push = async (sequence: number, name: string, payload: unknown): Promise<void> => {
+      const sequencedPayload =
+        typeof payload === 'object' && payload !== null && !Array.isArray(payload)
+          ? { ...payload, sequence }
+          : payload
+      client.emit(event(sequence, name, sequencedPayload))
+      await new Promise((resolve) => window.setTimeout(resolve, 24))
+    }
+
+    await push(1, 'turn.started', { sessionId: 'session-stream', turn: 1 })
+    await push(2, 'step.started', { sessionId: 'session-stream', turn: 1, step: 1 })
+    await push(3, 'assistant.attempt', {
+      sessionId: 'session-stream',
+      turn: 1,
+      step: 1,
+      usage: { inputTokens: 4, outputTokens: 2, totalTokens: 7, cacheReadTokens: 1, cacheWriteTokens: 0 },
+    })
+    await push(4, 'model.retry', {
+      retry: { sessionId: 'session-stream', id: 'retry-1', turn: 1, step: 1, attempt: 1, state: 'scheduled' },
+    })
+    await push(5, 'model.retry', {
+      retry: { sessionId: 'session-stream', id: 'retry-1', turn: 1, step: 1, attempt: 1, state: 'started' },
+    })
+    await push(6, 'message.completed', {
+      sessionId: 'session-stream',
+      messageId: 'assistant-final',
+      turn: 1,
+      step: 1,
+      markdown: 'Answer',
+      usage: { inputTokens: 6, outputTokens: 3, totalTokens: 11, cacheReadTokens: 2, cacheWriteTokens: 0 },
+    })
+    await push(7, 'step.ended', { sessionId: 'session-stream', turn: 1, step: 1 })
+    await push(8, 'turn.ended', { sessionId: 'session-stream', turn: 1, reason: 'completed' })
+
+    const node = store.timeline.nodes.find(
+      (entry) => entry.kind === 'assistant-message' && entry.id === 'assistant-final',
+    )
+    expect(node).toMatchObject({
+      kind: 'assistant-message',
+      turnCompleted: true,
+      turnUsage: {
+        inputTokens: 10,
+        outputTokens: 5,
+        totalTokens: 18,
+        cacheReadTokens: 3,
+        cacheWriteTokens: 0,
+      },
+    })
+
+    const view = render(
+      <Timeline
+        sessionId="session-stream"
+        nodes={store.timeline.nodes}
+        streaming={false}
+        performanceUsage="detailed"
+      />,
+    )
+    fireEvent.click(view.getByText('Token usage'))
+    expect(view.getByText('Uncached input tokens')).toBeDefined()
+    expect(view.getByText('10')).toBeDefined()
+    expect(view.getByText('18')).toBeDefined()
+    expect(view.container.textContent).toContain('Answer')
+    store.dispose()
+  })
+
   it('does not turn a malformed optional usage bucket into a complete usage object', async () => {
     const client = new StreamClient()
     const store = createAppStore(client as unknown as ProtocolClient)
@@ -770,9 +840,15 @@ describe('Store to Timeline streamed rendering', () => {
     )
     await new Promise((resolve) => window.setTimeout(resolve, 24))
 
-    const node = store.timeline.nodes.find((entry) => entry.id === 'assistant-invalid-usage')
-    expect(node).toEqual(expect.objectContaining({ kind: 'assistant-message' }))
-    expect(node).not.toHaveProperty('usage')
+    const rejected = store.timeline.nodes.find(
+      (node) => node.kind === 'event' && node.name === 'message.completed',
+    )
+    expect(rejected).toBeDefined()
+    if (rejected?.kind === 'event')
+      expect(rejected.payload).toMatchObject({ messageId: 'assistant-invalid-usage' })
+    expect(store.timeline.nodes).not.toContainEqual(
+      expect.objectContaining({ kind: 'assistant-message', id: 'assistant-invalid-usage' }),
+    )
     store.dispose()
   })
 

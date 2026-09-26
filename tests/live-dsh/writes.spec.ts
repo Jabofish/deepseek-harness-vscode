@@ -42,14 +42,12 @@ describe.skipIf(process.env.DSH_LIVE_SMOKE !== '1')('live DSH write paths on an 
   it(
     'commits, observes and reverts real writes without touching the user profile',
     async () => {
-      const previousHome = process.env.DSH_HOME
       const home = await mkdtemp(path.join(os.tmpdir(), 'dsh-live-home-'))
-      process.env.DSH_HOME = home
       const steps: string[] = []
       const skipped: string[] = []
       let runtime: ManagedLiveRuntime | undefined
       try {
-        runtime = await startManagedRuntime()
+        runtime = await startManagedRuntime({ dshHome: home, removeDshHomeOnStop: true })
         const { backend } = runtime
         const unsubscribe = backend.events.subscribe(() => undefined)
         try {
@@ -69,9 +67,6 @@ describe.skipIf(process.env.DSH_LIVE_SMOKE !== '1')('live DSH write paths on an 
           released = !(await canConnect(runtime.snapshot.port))
           steps.push(`managed stop port ${runtime.snapshot.port} released=${String(released)}`)
         }
-        if (previousHome === undefined) delete process.env.DSH_HOME
-        else process.env.DSH_HOME = previousHome
-        await rm(home, { recursive: true, force: true })
         for (const step of steps) console.log(`[dsh-live-writes] ${step}`)
         for (const line of skipped) console.log(`[dsh-live-writes] skipped ${line}`)
         if (released !== undefined)
@@ -132,7 +127,7 @@ async function settingsRoundTrip(backend: DshBackend, steps: string[], skipped: 
   const refusals: string[] = []
   for (const { path: fieldPath, namespace, current } of candidates) {
     try {
-      await backend.settings.update(fieldPath, !current)
+      await backend.settings.update(fieldPath, !current, settingsNamespaceRevision(schema, namespace))
     } catch (error) {
       const rpcCode = (error as Partial<AppError>).context?.rpcCode
       if (typeof rpcCode !== 'string' || !rpcCode.startsWith('settings/')) throw error
@@ -147,8 +142,10 @@ async function settingsRoundTrip(backend: DshBackend, steps: string[], skipped: 
       .find((entry) => entry.ns === namespace)
       ?.userFields.includes(fieldPath.slice(namespace.length + 1))
     const revert = overridden === true ? 'update' : 'unset'
-    if (overridden === true) await backend.settings.update(fieldPath, current)
-    else await backend.settings.unset(fieldPath)
+    const latestSchema = await backend.settings.schema()
+    const expectedRevision = settingsNamespaceRevision(latestSchema, namespace)
+    if (overridden === true) await backend.settings.update(fieldPath, current, expectedRevision)
+    else await backend.settings.unset(fieldPath, expectedRevision)
     const restored = valuesAfter(await backend.settings.read(), namespace, fieldPath)
     expect(restored, `${fieldPath} must be restored by the ${revert}`).toBe(current)
     steps.push(`settings.${revert} ${fieldPath} restored`)
@@ -157,6 +154,12 @@ async function settingsRoundTrip(backend: DshBackend, steps: string[], skipped: 
   skipped.push(
     `settings write skipped: the host refused every boolean candidate (${refusals.slice(0, 3).join('; ')})`,
   )
+}
+
+function settingsNamespaceRevision(schema: DshSettingsSchema, namespace: string): number {
+  const revision = schema.namespaces.find((entry) => entry.ns === namespace)?.revision
+  if (revision !== undefined && Number.isSafeInteger(revision) && revision >= 0) return revision
+  throw new Error(`The live settings schema has no valid revision for ${namespace}.`)
 }
 
 /**

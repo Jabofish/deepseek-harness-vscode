@@ -6,12 +6,19 @@ import type { ChangeDiff } from '../../packages/domain/src/changes.js'
 import { ChangeSetTracker } from '../../apps/extension/src/changes/change-set-tracker.js'
 import { publicWorkspaceRelativePath } from '../../apps/extension/src/view/public-value.js'
 
-import { LIVE_TIMEOUT_MS, canConnect, startManagedRuntime } from './harness.js'
+import {
+  hasLiveHistoryFixture,
+  LIVE_TIMEOUT_MS,
+  canConnect,
+  requireLiveHistoryFixtureHome,
+  startManagedRuntime,
+} from './harness.js'
 
 /** History pages read per registry row while looking for hunk-bearing rows. */
 const MAX_PAGES = 3
 /** Registry rows scanned at most; the scan stops once a multi-hunk row is in hand. */
 const SESSION_SCAN_LIMIT = 80
+const skipLiveHistoryProbe = process.env.DSH_LIVE_SMOKE !== '1' || !hasLiveHistoryFixture()
 
 /**
  * Live change-review evidence: every hunk the host really sent for one file
@@ -30,15 +37,15 @@ const SESSION_SCAN_LIMIT = 80
  *   $env:DSH_LIVE_SMOKE = '1'
  *   npx vitest run tests/live-dsh/change-hunks.spec.ts
  *
- * Read-only: it starts the managed runtime, reads history and stops the process
- * it started. It never sends a prompt, never writes to the runtime, and never
- * touches an external DSH.
+ * It starts the managed runtime against the disposable history fixture, reads
+ * history and stops the process it started. It never sends a prompt or a DSH
+ * write request, and never touches an external DSH.
  */
-describe.skipIf(process.env.DSH_LIVE_SMOKE !== '1')('live change-review hunks', () => {
+describe.skipIf(skipLiveHistoryProbe)('live change-review hunks', () => {
   it(
     'keeps every hunk a real settled mutation row carried',
     async () => {
-      const runtime = await startManagedRuntime()
+      const runtime = await startManagedRuntime({ dshHome: requireLiveHistoryFixtureHome() })
       try {
         const sessions = await runtime.backend.sessions.list()
         expect(sessions.items.length, 'the live runtime must expose at least one session').toBeGreaterThan(0)

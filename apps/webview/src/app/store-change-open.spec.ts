@@ -24,6 +24,8 @@ class RecordingClient {
   public emptyChanges = false
   public refreshFailed = false
   public requestFails = false
+  public firstChangeLocations:
+    readonly { readonly relativePath: string; readonly line?: number }[] | undefined
   private readonly featureListeners = new Set<(message: FeatureHostEvent) => void>()
   public subscribeFeature(listener: (message: FeatureHostEvent) => void): () => void {
     this.featureListeners.add(listener)
@@ -101,14 +103,19 @@ class RecordingClient {
       items: this.emptyChanges
         ? []
         : [
-            changeSummary('change-first-line', 'src/first.ts', 0),
+            changeSummary('change-first-line', 'src/first.ts', 0, this.firstChangeLocations),
             changeSummary('change-no-line', 'src/whole-file.ts'),
           ],
     }
   }
 }
 
-function changeSummary(changeId: string, relativePath: string, line?: number): unknown {
+function changeSummary(
+  changeId: string,
+  relativePath: string,
+  line?: number,
+  locations?: readonly { readonly relativePath: string; readonly line?: number }[],
+): unknown {
   return {
     changeId,
     sessionId: SESSION_ID,
@@ -121,7 +128,7 @@ function changeSummary(changeId: string, relativePath: string, line?: number): u
     applicationState: 'proposed',
     reviewState: 'unreviewed',
     sourceIds: ['tool-1'],
-    locations: [{ relativePath, ...(line === undefined ? {} : { line }) }],
+    locations: locations ?? [{ relativePath, ...(line === undefined ? {} : { line }) }],
     firstSeenAt: 1_000,
     lastSeenAt: 1_100,
     identity: {
@@ -139,11 +146,14 @@ function settle(milliseconds = 24): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, milliseconds))
 }
 
-async function openFixture(): Promise<{
+async function openFixture(
+  firstChangeLocations?: readonly { readonly relativePath: string; readonly line?: number }[],
+): Promise<{
   readonly client: RecordingClient
   readonly store: ReturnType<typeof createAppStore>
 }> {
   const client = new RecordingClient()
+  client.firstChangeLocations = firstChangeLocations
   const store = createAppStore(client as unknown as ProtocolClient)
   await store.openSession(SESSION_ID)
   await store.refreshChanges(SESSION_ID)
@@ -179,6 +189,21 @@ describe('store change opening', () => {
       workspaceFolderId: WORKSPACE_FOLDER_ID,
       relativePath: 'src/whole-file.ts',
       reveal: 'focus',
+    })
+    store.dispose()
+  })
+
+  it('uses a later valid line hint when the first location only identifies the file', async () => {
+    const { client, store } = await openFixture([
+      { relativePath: 'src/first.ts' },
+      { relativePath: 'src/first.ts', line: 7 },
+    ])
+
+    await store.openChange('change-first-line')
+
+    expect(openedPayload(client)).toMatchObject({
+      relativePath: 'src/first.ts',
+      range: { start: { line: 7, column: 0 }, end: { line: 7, column: 0 } },
     })
     store.dispose()
   })

@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -9,12 +9,10 @@ describe.skipIf(process.env.DSH_LIVE_SMOKE !== '1')('live archive restoration', 
   it(
     'matches the selected upstream contract for archive restoration',
     async () => {
-      const previousHome = process.env.DSH_HOME
       const home = await mkdtemp(path.join(os.tmpdir(), 'dsh-archive-home-'))
-      process.env.DSH_HOME = home
       let runtime: ManagedLiveRuntime | undefined
       try {
-        runtime = await startManagedRuntime()
+        runtime = await startManagedRuntime({ dshHome: home, removeDshHomeOnStop: true })
         const { backend } = runtime
         const workspace = await backend.workspaces.create({
           name: 'Archive test',
@@ -49,9 +47,6 @@ describe.skipIf(process.env.DSH_LIVE_SMOKE !== '1')('live archive restoration', 
         }
       } finally {
         await runtime?.stop()
-        if (previousHome === undefined) delete process.env.DSH_HOME
-        else process.env.DSH_HOME = previousHome
-        await rm(home, { recursive: true, force: true })
       }
     },
     LIVE_TIMEOUT_MS,

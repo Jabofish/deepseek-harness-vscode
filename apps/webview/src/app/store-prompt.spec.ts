@@ -165,6 +165,41 @@ describe('AppStore prompt admission', () => {
     store.dispose()
   })
 
+  it('tries every queued steer and reports a rejected request after the batch', async () => {
+    const client = new FakeClient((request) => {
+      if (request.type !== 'session.queue.steer') return response(request)
+      return request.payload.inputId === 'queue-1'
+        ? Promise.reject(new Error('raw transport diagnostic'))
+        : undefined
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+    await store.openSession(session.id)
+    const queued = ['queue-1', 'queue-2'].map((id, index) => ({
+      id,
+      sessionId: session.id,
+      text: `queued ${index + 1}`,
+      attachments: [],
+      textOnly: true,
+      mode: 'queue' as const,
+      createdAt: `2026-08-31T00:00:0${index + 1}.000Z`,
+    }))
+    client.emit({
+      type: 'event',
+      name: 'queue.updated',
+      sequence: 1,
+      payload: { sessionId: session.id, items: queued },
+    })
+    await Promise.resolve()
+
+    await expect(store.steerAllQueued()).rejects.toThrow('raw transport diagnostic')
+    const steerRequests = client.requests.filter(
+      (request): request is Extract<WebviewRequest, { type: 'session.queue.steer' }> =>
+        request.type === 'session.queue.steer',
+    )
+    expect(steerRequests.map((request) => request.payload.inputId)).toEqual(['queue-1', 'queue-2'])
+    store.dispose()
+  })
+
   it('retains a goal block reason and rejects a row whose reason is unusable', async () => {
     const client = new FakeClient(response)
     const store = createAppStore(client as unknown as ProtocolClient)
@@ -526,6 +561,34 @@ describe('AppStore prompt admission', () => {
     await store.refreshModelCatalog()
     expect(store.providers).toEqual([provider])
     expect(store.models).toEqual([model])
+    store.dispose()
+  })
+
+  it('rejects unsupported input modalities and keeps the last complete model catalog', async () => {
+    const provider = { id: 'deepseek', name: 'DeepSeek', kind: 'builtin', configurable: false, fields: [] }
+    const model = {
+      id: 'deepseek-chat',
+      providerId: 'deepseek',
+      label: 'DeepSeek Chat',
+      supportsReasoning: false,
+    }
+    let malformed = false
+    const client = new FakeClient((request) => {
+      if (request.type === 'providers.list') return [provider]
+      if (request.type === 'models.list')
+        return [malformed ? { ...model, inputModalities: ['audio'] } : model]
+      return response(request)
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+
+    await store.refreshModelCatalog()
+    const lastCompleteModels = store.models
+    expect(lastCompleteModels).toEqual([model])
+
+    malformed = true
+    await store.refreshModelCatalog()
+
+    expect(store.models).toBe(lastCompleteModels)
     store.dispose()
   })
 

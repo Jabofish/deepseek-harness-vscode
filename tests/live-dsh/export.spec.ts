@@ -5,13 +5,20 @@ import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import type { ExportFileSystem } from '../../packages/dsh-adapter/src/repositories/export-repository.js'
-import { LIVE_TIMEOUT_MS, canConnect, startManagedRuntime } from './harness.js'
+import {
+  hasLiveHistoryFixture,
+  LIVE_TIMEOUT_MS,
+  canConnect,
+  requireLiveHistoryFixtureHome,
+  startManagedRuntime,
+} from './harness.js'
 
 const MAX_HISTORY_PAGES = 4
 /** How many of the newest registry rows may be skipped before giving up on finding history. */
 const SESSION_SAMPLE_LIMIT = 5
 /** A ZIP archive always opens with a local file header, never a text or error body. */
 const ZIP_SIGNATURE = [0x50, 0x4b, 0x03, 0x04]
+const skipLiveHistoryProbe = process.env.DSH_LIVE_SMOKE !== '1' || !hasLiveHistoryFixture()
 
 /**
  * Live export evidence: export a real session through the adapter that the
@@ -24,15 +31,19 @@ const ZIP_SIGNATURE = [0x50, 0x4b, 0x03, 0x04]
  *   $env:DSH_LIVE_RUNTIME_VERSION = '0.1.6-alpha.1'   # optional; defaults to the pinned runtime
  *   npx vitest run tests/live-dsh/export.spec.ts
  *
- * The destination is a temporary directory this spec owns and removes; nothing
- * is written next to the user's sessions and no session content is printed.
+ * The export destination is a temporary directory this spec owns and removes;
+ * startup state stays inside the disposable history fixture, nothing is written
+ * next to a user's sessions, and no session content is printed.
  */
-describe.skipIf(process.env.DSH_LIVE_SMOKE !== '1')('live DSH session export', () => {
+describe.skipIf(skipLiveHistoryProbe)('live DSH session export', () => {
   it(
     'exports a real session as JSON and as the Host ZIP archive',
     async () => {
       const root = await mkdtemp(path.join(os.tmpdir(), 'dsh-vscode-live-export-'))
-      const runtime = await startManagedRuntime({ exportFileSystem: nodeExportFileSystem })
+      const runtime = await startManagedRuntime({
+        dshHome: requireLiveHistoryFixtureHome(),
+        exportFileSystem: nodeExportFileSystem,
+      })
       try {
         const { backend } = runtime
         const sessions = await backend.sessions.list()

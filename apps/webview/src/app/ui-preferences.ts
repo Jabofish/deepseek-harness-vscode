@@ -154,13 +154,13 @@ export function dshUiPreferences(snapshot: DshSettingsSnapshot): DshUiPreference
     codingToolsField?.type === 'boolean'
       ? typeof codingToolsValue === 'boolean'
         ? codingToolsValue
-        : true
+        : undefined
       : undefined
 
   return { theme, fontSize, transcriptView, performanceUsage, busyEnter, codingToolsEnabled }
 }
 
-function readDshSettingValue(values: Readonly<Record<string, unknown>>, path: string): unknown {
+export function readDshSettingValue(values: Readonly<Record<string, unknown>>, path: string): unknown {
   if (Object.prototype.hasOwnProperty.call(values, path)) return values[path]
   let current: unknown = values
   for (const part of path.split('.')) {

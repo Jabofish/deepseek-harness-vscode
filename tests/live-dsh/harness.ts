@@ -15,7 +15,7 @@ import type { ExportFileSystem } from '../../packages/dsh-adapter/src/repositori
 import { managedWebArguments } from '../../packages/dsh-adapter/src/launch-contract.js'
 import { VersionedBackendProbe } from '../../packages/dsh-adapter/src/probe.js'
 import type { DshBackend } from '../../packages/domain/src/backend.js'
-import type { BackendEndpoint } from '../../packages/domain/src/runtime.js'
+import type { BackendEndpoint, ManagedProcessHandle } from '../../packages/domain/src/runtime.js'
 import { Rc151VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc151/adapter.js'
 import { Rc152VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc152/adapter.js'
 import { Rc153VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc153/adapter.js'
@@ -25,11 +25,22 @@ import { Alpha171VersionAdapter } from '../../packages/dsh-adapter/src/versions/
 import { Alpha172VersionAdapter } from '../../packages/dsh-adapter/src/versions/alpha172/adapter.js'
 import { Rc171VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc171/adapter.js'
 import { Rc172VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc172/adapter.js'
-import { acquireManagedRuntimeLock } from './managed-lock.js'
+import { acquireManagedRuntimeScope, type ManagedRuntimeScope } from './runtime-scope.js'
 import { resolveLiveRuntime } from './runtime.js'
 
 export const DEFAULT_RUNTIME_VERSION = '0.1.5-rc.3'
 export const LIVE_TIMEOUT_MS = 90_000
+
+/** Read-only history probes require an explicitly seeded, disposable profile. */
+export function hasLiveHistoryFixture(): boolean {
+  return liveHistoryFixtureHome() !== undefined
+}
+
+export function requireLiveHistoryFixtureHome(): string {
+  const home = liveHistoryFixtureHome()
+  if (home === undefined) throw new Error('This live DSH probe requires a history fixture home.')
+  return home
+}
 
 export interface LiveRuntimeSnapshot {
   readonly executable: string
@@ -47,6 +58,35 @@ export interface ManagedLiveRuntime {
   stop(): Promise<void>
 }
 
+/** Retry owned-child cleanup before releasing any resources the child may use. */
+export async function startManagedProcessWithCleanup<T>(
+  start: () => Promise<T>,
+  disposeSupervisor: () => Promise<void>,
+  cleanupScope: () => Promise<void>,
+): Promise<T> {
+  try {
+    return await start()
+  } catch (error) {
+    try {
+      await disposeSupervisor()
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [error, cleanupError],
+        'The managed DSH launch failed and its process cleanup could not be confirmed.',
+        { cause: cleanupError },
+      )
+    }
+    try {
+      await cleanupScope()
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], 'The managed DSH launch cleanup failed.', {
+        cause: cleanupError,
+      })
+    }
+    throw error
+  }
+}
+
 /**
  * Start an isolated, extension-owned DSH exactly as the Extension Host does and
  * return a connected backend. Only the process started here is signalled; an
@@ -60,6 +100,10 @@ export interface ManagedLiveRuntime {
 export async function startManagedRuntime(options?: {
   readonly requestedRuntime?: string
   readonly runtimeVersion?: string
+  /** A fixture-owned isolated home used when the live test seeds DSH state. */
+  readonly dshHome?: string
+  /** Remove a test-created DSH home only after the managed process is confirmed stopped. */
+  readonly removeDshHomeOnStop?: boolean
   readonly exportFileSystem?: ExportFileSystem
 }): Promise<ManagedLiveRuntime> {
   const runtimeExecutable = resolveLiveRuntime(
@@ -69,39 +113,8 @@ export async function startManagedRuntime(options?: {
     options?.runtimeVersion?.trim() || process.env.DSH_LIVE_RUNTIME_VERSION?.trim() || DEFAULT_RUNTIME_VERSION
   const port = await freeLoopbackPort()
   const workspace = await mkdtemp(path.join(os.tmpdir(), 'dsh-live-'))
-  const previousDshHome = process.env.DSH_HOME
-  const ownsDshHome = previousDshHome === undefined || previousDshHome.trim() === ''
-  let dshHome: string | undefined
-  try {
-    dshHome = ownsDshHome ? await mkdtemp(path.join(os.tmpdir(), 'dsh-live-home-')) : undefined
-  } catch (error) {
-    await rm(workspace, { recursive: true, force: true })
-    throw error
-  }
-  if (dshHome !== undefined) process.env.DSH_HOME = dshHome
-  let dshHomeReleased = false
-  const releaseDshHome = async (): Promise<void> => {
-    if (dshHomeReleased) return
-    dshHomeReleased = true
-    if (dshHome === undefined) return
-    if (previousDshHome === undefined) delete process.env.DSH_HOME
-    else process.env.DSH_HOME = previousDshHome
-    await rm(dshHome, { recursive: true, force: true })
-  }
+  const launchArguments = managedWebArguments(runtimeVersion, port)
   const steps: string[] = []
-  // The live spec files run one after another (`vitest.config.ts`), so this
-  // lock is the cross-run guard: a second shell starting its own managed DSH
-  // while this one is live would blow the supervisor's 15s readiness budget.
-  const lockWaitStart = Date.now()
-  let releaseLock: () => Promise<void>
-  try {
-    releaseLock = await acquireManagedRuntimeLock()
-  } catch (error) {
-    await rm(workspace, { recursive: true, force: true })
-    await releaseDshHome()
-    throw error
-  }
-  if (Date.now() - lockWaitStart > 1_000) steps.push(`lock wait ${Date.now() - lockWaitStart}ms`)
   const endpointCookie: { value: string | undefined } = { value: undefined }
   const supervisor = new DshProcessSupervisor({
     spawn: spawnManagedChild,
@@ -120,23 +133,34 @@ export async function startManagedRuntime(options?: {
       )
     },
   })
-  steps.push(`launch ${runtimeExecutable} ${managedWebArguments(runtimeVersion, port).join(' ')}`)
-  const started = await supervisor
-    .start({
-      executable: runtimeExecutable,
-      version: runtimeVersion,
-      supported: true,
-      compatibility: 'known',
-      source: 'path',
+  const lockWaitStart = Date.now()
+  let runtimeScope: Awaited<ReturnType<typeof acquireManagedRuntimeScope>>
+  try {
+    runtimeScope = await acquireManagedRuntimeScope(options?.dshHome, {
+      removeRequestedHome: options?.removeDshHomeOnStop === true,
     })
-    .catch(async (error: unknown) => {
-      // A failed launch never reached the cleanup below; the lock must not
-      // outlive the spec that took it.
-      await rm(workspace, { recursive: true, force: true })
-      await releaseDshHome()
-      await releaseLock()
-      throw error
-    })
+  } catch (error) {
+    await rm(workspace, { recursive: true, force: true })
+    throw error
+  }
+  // The live spec files run one after another (`vitest.config.ts`), so this
+  // lock is the cross-run guard: a second shell starting its own managed DSH
+  // while this one is live would blow the supervisor's 15s readiness budget.
+  // The scope acquires the lock before overriding the process-wide DSH_HOME.
+  if (Date.now() - lockWaitStart > 1_000) steps.push(`lock wait ${Date.now() - lockWaitStart}ms`)
+  steps.push(`launch ${runtimeExecutable} ${launchArguments.join(' ')}`)
+  const started = await startManagedProcessWithCleanup(
+    () =>
+      supervisor.start({
+        executable: runtimeExecutable,
+        version: runtimeVersion,
+        supported: true,
+        compatibility: 'known',
+        source: 'path',
+      }),
+    () => supervisor.dispose(),
+    () => cleanupRuntimeScope(workspace, runtimeScope),
+  )
   const snapshot: LiveRuntimeSnapshot = {
     executable: runtimeExecutable,
     version: runtimeVersion,
@@ -177,19 +201,69 @@ export async function startManagedRuntime(options?: {
       steps,
       stop: async () => {
         await backend.close().catch(() => undefined)
-        await started.stop()
-        await rm(workspace, { recursive: true, force: true })
-        await releaseDshHome()
-        await releaseLock()
+        await stopManagedProcessWithRetry(started, () => supervisor.dispose())
+        await cleanupRuntimeScope(workspace, runtimeScope)
+        steps.push('managed process stopped; runtime scope released')
       },
     }
   } catch (error) {
-    await started.stop().catch(() => undefined)
-    await rm(workspace, { recursive: true, force: true })
-    await releaseDshHome()
-    await releaseLock()
+    try {
+      await stopManagedProcessWithRetry(started, () => supervisor.dispose())
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [error, cleanupError],
+        'The managed DSH probe failed and its process cleanup could not be confirmed.',
+        { cause: cleanupError },
+      )
+    }
+    try {
+      await cleanupRuntimeScope(workspace, runtimeScope)
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], 'The managed DSH probe cleanup failed.', {
+        cause: cleanupError,
+      })
+    }
     throw error
   }
+}
+
+/** Preserve the supervisor's retryable handle when its first stop attempt fails. */
+export async function stopManagedProcessWithRetry(
+  started: Pick<ManagedProcessHandle, 'stop'>,
+  disposeSupervisor: () => Promise<void>,
+): Promise<void> {
+  try {
+    await started.stop()
+  } catch (stopError) {
+    try {
+      await disposeSupervisor()
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [stopError, cleanupError],
+        'The managed DSH process could not be stopped after a cleanup retry.',
+        { cause: cleanupError },
+      )
+    }
+  }
+}
+
+async function cleanupRuntimeScope(workspace: string, runtimeScope: ManagedRuntimeScope): Promise<void> {
+  const failures: unknown[] = []
+  try {
+    await rm(workspace, { recursive: true, force: true })
+  } catch (error) {
+    failures.push(error)
+  }
+  try {
+    await runtimeScope.release()
+  } catch (error) {
+    failures.push(error)
+  }
+  if (failures.length === 1) throw failures[0]
+  if (failures.length > 1)
+    throw new AggregateError(failures, 'The managed DSH workspace and runtime scope cleanup failed.', {
+      cause: failures[0],
+    })
 }
 
 export function adapterOptions(
@@ -204,6 +278,11 @@ export function adapterOptions(
     authCookie: () => cookie.value,
     ...(exportFileSystem === undefined ? {} : { exportFileSystem }),
   }
+}
+
+function liveHistoryFixtureHome(): string | undefined {
+  const home = process.env.DSH_LIVE_HISTORY_FIXTURE_HOME?.trim()
+  return home === undefined || home === '' ? undefined : home
 }
 
 export function assertLoopbackEndpoint(endpoint: BackendEndpoint): void {

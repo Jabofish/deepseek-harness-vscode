@@ -1,13 +1,26 @@
 import { describe, expect, it } from 'vitest'
 
-import type { SessionHistoryPage, SessionSequenceRange } from '../../packages/domain/src/sessions.js'
-import { LIVE_TIMEOUT_MS, canConnect, startManagedRuntime } from './harness.js'
+import type { SessionRepository } from '../../packages/domain/src/backend.js'
+import type {
+  SessionDetail,
+  SessionHistoryPage,
+  SessionSequenceRange,
+  SessionSummary,
+} from '../../packages/domain/src/sessions.js'
+import {
+  hasLiveHistoryFixture,
+  LIVE_TIMEOUT_MS,
+  canConnect,
+  requireLiveHistoryFixtureHome,
+  startManagedRuntime,
+} from './harness.js'
 
 /** Upper bound on pages one run may read; a longer Session stops the walk. */
 const PAGE_LIMIT = 40
 
 /** How many list rows may be warmed with a detail read before giving up on sampling. */
 const CANDIDATE_LIMIT = 12
+const skipLiveHistoryProbe = process.env.DSH_LIVE_SMOKE !== '1' || !hasLiveHistoryFixture()
 
 /**
  * Live paging evidence for the "load older" path. `session.history` without a
@@ -21,14 +34,15 @@ const CANDIDATE_LIMIT = 12
  *   $env:DSH_LIVE_RUNTIME_VERSION = '0.1.6-alpha.1'
  *   npx vitest run tests/live-dsh/paging.spec.ts
  *
- * Nothing is mutated: the profile is only read. Only the process started here
- * is signalled; an external DSH is never touched.
+ * It never sends a prompt or a DSH write request. Startup state stays inside
+ * the disposable history fixture. Only the process started here is signalled;
+ * an external DSH is never touched.
  */
-describe.skipIf(process.env.DSH_LIVE_SMOKE !== '1')('live DSH history paging', () => {
+describe.skipIf(skipLiveHistoryProbe)('live DSH history paging', () => {
   it(
     'walks a real Session backwards to its first event without stalling, overlapping or hiding a hole',
     async () => {
-      const runtime = await startManagedRuntime()
+      const runtime = await startManagedRuntime({ dshHome: requireLiveHistoryFixtureHome() })
       const evidence: string[] = []
       const divergences: string[] = []
       let released: boolean | undefined
@@ -36,9 +50,9 @@ describe.skipIf(process.env.DSH_LIVE_SMOKE !== '1')('live DSH history paging', (
         const { backend } = runtime
         const unsubscribe = backend.events.subscribe(() => undefined)
         try {
-          const target = await sampleLongSession(backend, evidence)
+          const target = await sampleLongSession(backend.sessions, evidence)
           if (target === undefined) {
-            evidence.push('no Session with an older page was available; the walk needs a long Session')
+            divergences.push('the history fixture must contain at least one Session spanning multiple pages')
           } else {
             await walkBackwards(backend, target, evidence, divergences)
           }
@@ -67,15 +81,15 @@ describe.skipIf(process.env.DSH_LIVE_SMOKE !== '1')('live DSH history paging', (
  * refuses to claim evidence from a Session the host answers in one page.
  */
 async function sampleLongSession(
-  backend: Awaited<ReturnType<typeof startManagedRuntime>>['backend'],
+  backend: Pick<SessionRepository, 'list' | 'get'>,
   evidence: string[],
 ): Promise<{ readonly sessionId: string; readonly newestSequence: number } | undefined> {
-  const page = await backend.sessions.list()
+  const page = await backend.list()
   const candidates = page.items.slice(0, CANDIDATE_LIMIT)
-  let longest: { readonly sessionId: string; readonly newestSequence: number } | undefined
+  let singlePageSessions = 0
   for (const row of candidates) {
     try {
-      const detail = await backend.sessions.get(row.id)
+      const detail = await backend.get(row.id)
       const history = detail.history ?? []
       const newest = history.at(-1)?.sequence
       if (newest === undefined) continue
@@ -85,18 +99,64 @@ async function sampleLongSession(
         )
         return { sessionId: row.id, newestSequence: newest }
       }
-      if (longest === undefined || newest > longest.newestSequence)
-        longest = { sessionId: row.id, newestSequence: newest }
+      singlePageSessions += 1
     } catch {
       // A Session-kind address can refuse a row that is not a Session at all;
       // sampling walks past it instead of treating the list as unusable.
     }
   }
-  if (longest !== undefined)
-    evidence.push(
-      `sampled ${longest.sessionId} newestSeq=${longest.newestSequence} hasMore=false (single page)`,
+  if (singlePageSessions > 0)
+    evidence.push(`sampled ${singlePageSessions} single-page Session(s); none exercised the cursor path`)
+  return undefined
+}
+
+describe('sampleLongSession', () => {
+  it('does not treat single-page history as cursor-path evidence', async () => {
+    const evidence: string[] = []
+    const target = await sampleLongSession(
+      createPagingProbe([{ id: 'single-page', newestSequence: 42, hasMore: false }]),
+      evidence,
     )
-  return longest
+
+    expect(target).toBeUndefined()
+    expect(evidence).toContain('sampled 1 single-page Session(s); none exercised the cursor path')
+  })
+
+  it('selects a Session only when its detail reports an older page', async () => {
+    const target = await sampleLongSession(
+      createPagingProbe([
+        { id: 'newer-single-page', newestSequence: 900, hasMore: false },
+        { id: 'older-paged-session', newestSequence: 21, hasMore: true },
+      ]),
+      [],
+    )
+
+    expect(target).toEqual({ sessionId: 'older-paged-session', newestSequence: 21 })
+  })
+})
+
+function createPagingProbe(
+  samples: readonly {
+    readonly id: string
+    readonly newestSequence: number
+    readonly hasMore: boolean
+  }[],
+): Pick<SessionRepository, 'list' | 'get'> {
+  const byId = new Map(samples.map((sample) => [sample.id, sample] as const))
+  return {
+    list: () =>
+      Promise.resolve({
+        items: samples.map(({ id }) => ({ id }) as unknown as SessionSummary),
+      }),
+    get: (sessionId) => {
+      const sample = byId.get(sessionId)
+      if (sample === undefined) return Promise.reject(new Error('unknown paging probe session'))
+      return Promise.resolve({
+        history: [{ sequence: sample.newestSequence }],
+        historyHasMore: sample.hasMore,
+      } as unknown as SessionDetail)
+    },
+  }
 }
 
 /**

@@ -20,6 +20,8 @@ interface Pending {
   readonly timer: number
 }
 
+const publicRequestErrors = new WeakSet<Error>()
+
 interface FeatureBackendIdentity {
   readonly backendInstanceId: string
   readonly connectionGeneration: number
@@ -72,10 +74,17 @@ function timeoutMsFor(ordinaryTimeoutMs: number, type: string): number {
   return Math.max(ordinaryTimeoutMs, EXTENDED_TIMEOUT_MS[type] ?? 0)
 }
 
-const timeoutError = (): Error => {
-  const error = new Error(translate('app.error.timeout'))
+const timeoutError = (requestType: string): Error => {
+  const promptRequest = requestType === 'session.sendPrompt' || requestType === 'subagent.send'
+  const error = new Error(translate(promptRequest ? 'app.error.promptTimeout' : 'app.error.timeout'))
   Object.assign(error, { retryable: true })
+  publicRequestErrors.add(error)
   return error
+}
+
+/** Only validated Host summaries and local safe timeout messages may be shown verbatim. */
+export function publicProtocolErrorMessage(reason: unknown): string | undefined {
+  return reason instanceof Error && publicRequestErrors.has(reason) ? reason.message : undefined
 }
 
 export class ProtocolClient {
@@ -105,8 +114,14 @@ export class ProtocolClient {
     return new Promise<T>((resolve, reject) => {
       const timeoutMs = timeoutMsFor(this.timeoutMs, parsed.type)
       const timer = window.setTimeout(() => {
+        if (this.pending.get(parsed.requestId)?.timer !== timer) return
         this.pending.delete(parsed.requestId)
-        reject(timeoutError())
+        reject(timeoutError(parsed.type))
+        // A prompt send can still be running in the Host after the local
+        // waiter expires; request cancellation is best effort, so the UI
+        // reports that delivery is unconfirmed instead of claiming failure.
+        if (parsed.type === 'session.sendPrompt' || parsed.type === 'subagent.send')
+          this.cancelTimedOutRequest(parsed.requestId)
       }, timeoutMs)
       this.pending.set(parsed.requestId, { resolve: (value) => resolve(value as T), reject, timer })
       try {
@@ -131,8 +146,9 @@ export class ProtocolClient {
     return new Promise<T>((resolve, reject) => {
       const timeoutMs = timeoutMsFor(this.timeoutMs, parsed.type)
       const timer = window.setTimeout(() => {
+        if (this.pending.get(parsed.requestId)?.timer !== timer) return
         this.pending.delete(parsed.requestId)
-        reject(timeoutError())
+        reject(timeoutError(parsed.type))
       }, timeoutMs)
       this.pending.set(parsed.requestId, { resolve: (value) => resolve(value as T), reject, timer })
       try {
@@ -171,6 +187,7 @@ export class ProtocolClient {
       else {
         const error = new Error(message.error?.message ?? translate('app.error.hostUnspecified'))
         if (message.error !== undefined) Object.assign(error, message.error)
+        publicRequestErrors.add(error)
         pending.reject(error)
       }
       return
@@ -195,6 +212,7 @@ export class ProtocolClient {
       else {
         const error = new Error(message.error.message)
         Object.assign(error, message.error)
+        publicRequestErrors.add(error)
         pending.reject(error)
       }
       return
@@ -298,6 +316,16 @@ export class ProtocolClient {
     this.featureGenerations.clear()
     this.featureBackendIdentity = undefined
     this.featureConnectionKnown = false
+  }
+
+  private cancelTimedOutRequest(targetRequestId: string): void {
+    const requestId =
+      globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`
+    void this.featureRequest({
+      type: 'feature.request.cancel',
+      requestId,
+      payload: { targetRequestId },
+    }).catch(() => undefined)
   }
 }
 

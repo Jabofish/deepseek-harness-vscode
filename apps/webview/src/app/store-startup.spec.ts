@@ -180,6 +180,31 @@ describe('AppStore startup session restoration', () => {
     store.dispose()
   })
 
+  it('marks the Session and Workspace roster loading until both snapshots validate', async () => {
+    let releaseSessions: ((value: unknown) => void) | undefined
+    let malformedSessions = false
+    const sessions = new Promise<unknown>((resolve) => {
+      releaseSessions = resolve
+    })
+    const client = new StartupClient((request) => {
+      if (request.type === 'session.list') return malformedSessions ? { items: [{}] } : sessions
+      if (request.type === 'workspace.list') return { items: [workspace] }
+      return startupResponse(request)
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+
+    const pending = store.refreshSessions()
+    expect(store.getState().sessionDirectoryStatus).toBe('loading')
+    releaseSessions?.({ items: [activeSession] })
+    await pending
+    expect(store.getState().sessionDirectoryStatus).toBe('ready')
+
+    malformedSessions = true
+    await store.refreshSessions()
+    expect(store.getState().sessionDirectoryStatus).toBe('error')
+    store.dispose()
+  })
+
   it('opens the remembered session before the busy-enter settings read finishes', async () => {
     let releaseSettings: ((value: unknown) => void) | undefined
     const settings = new Promise<unknown>((resolve) => {
@@ -1318,6 +1343,141 @@ describe('AppStore startup session restoration', () => {
     store.dispose()
   })
 
+  it('does not let an older session directory read overwrite a newer result', async () => {
+    const resolveReads: Array<(value: unknown) => void> = []
+    const client = new StartupClient((request) => {
+      if (request.type === 'models.session.list') return new Promise((resolve) => resolveReads.push(resolve))
+      return startupResponse(request)
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+
+    const opening = store.openSession('session-active')
+    await vi.waitFor(() => expect(resolveReads).toHaveLength(1))
+    await opening
+
+    const retry = store.refreshSessionModels()
+    await vi.waitFor(() => expect(resolveReads).toHaveLength(2))
+    resolveReads[1]?.({
+      models: [{ id: 'new-chat', providerId: 'new-provider', label: 'New Chat', supportsReasoning: false }],
+      failures: [],
+      current: { providerId: 'new-provider', modelId: 'new-chat' },
+      routable: true,
+    })
+    await retry
+    expect(store.sessionModels[0]?.id).toBe('new-chat')
+
+    resolveReads[0]?.({
+      models: [{ id: 'old-chat', providerId: 'old-provider', label: 'Old Chat', supportsReasoning: false }],
+      failures: [],
+      current: { providerId: 'old-provider', modelId: 'old-chat' },
+      routable: false,
+    })
+    await new Promise((resolve) => window.setTimeout(resolve, 0))
+    expect(store.sessionModelCurrent?.modelId).toBe('new-chat')
+    expect(store.sessionModels[0]?.id).toBe('new-chat')
+    expect(store.sessionModelRoutable).toBe(true)
+    store.dispose()
+  })
+
+  it('retires a pending model directory read when the DSH connection changes', async () => {
+    const resolveReads: Array<(value: unknown) => void> = []
+    const client = new StartupClient((request) => {
+      if (request.type === 'models.session.list') return new Promise((resolve) => resolveReads.push(resolve))
+      return startupResponse(request)
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+    client.emit({
+      type: 'event',
+      name: 'connection.snapshot',
+      sequence: 1,
+      payload: {
+        kind: 'connected',
+        backendInstanceId: 'backend-old',
+        connectionGeneration: 1,
+        dshVersion: '0.1.7-rc.2',
+      },
+    })
+
+    const opening = store.openSession('session-active')
+    await vi.waitFor(() => expect(resolveReads).toHaveLength(1))
+    await opening
+    client.emit({
+      type: 'event',
+      name: 'connection.snapshot',
+      sequence: 2,
+      payload: { kind: 'stopping' },
+    })
+    resolveReads[0]?.({
+      models: [{ id: 'old-chat', providerId: 'old-provider', label: 'Old Chat', supportsReasoning: false }],
+      failures: [],
+      current: { providerId: 'old-provider', modelId: 'old-chat' },
+      routable: false,
+    })
+    await new Promise((resolve) => window.setTimeout(resolve, 0))
+    expect(store.sessionModelCurrent).toBeUndefined()
+
+    client.emit({
+      type: 'event',
+      name: 'connection.snapshot',
+      sequence: 3,
+      payload: {
+        kind: 'connected',
+        backendInstanceId: 'backend-new',
+        connectionGeneration: 2,
+        dshVersion: '0.1.7-rc.2',
+      },
+    })
+    await vi.waitFor(() => expect(resolveReads).toHaveLength(2))
+    resolveReads[1]?.({
+      models: [{ id: 'new-chat', providerId: 'new-provider', label: 'New Chat', supportsReasoning: false }],
+      failures: [],
+      current: { providerId: 'new-provider', modelId: 'new-chat' },
+      routable: true,
+    })
+    await vi.waitFor(() => expect(store.sessionModelCurrent?.modelId).toBe('new-chat'))
+    expect(store.sessionModelRoutable).toBe(true)
+    store.dispose()
+  })
+
+  it('does not let an off-screen session refresh supersede the active session catalog', async () => {
+    let resolveActiveRead: ((value: unknown) => void) | undefined
+    let modelReadCount = 0
+    const client = new StartupClient((request) => {
+      if (request.type === 'models.session.list') {
+        modelReadCount += 1
+        if (modelReadCount === 1)
+          return new Promise((resolve) => {
+            resolveActiveRead = resolve
+          })
+        return {
+          models: [],
+          failures: [],
+          current: { providerId: 'ignored', modelId: 'ignored' },
+          routable: false,
+        }
+      }
+      return startupResponse(request)
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+
+    const opening = store.openSession('session-active')
+    await vi.waitFor(() => expect(resolveActiveRead).toBeDefined())
+    await opening
+
+    await store.refreshSessionModels('session-closed')
+    expect(client.requests.filter((request) => request.type === 'models.session.list')).toHaveLength(1)
+    resolveActiveRead?.({
+      models: [
+        { id: 'active-chat', providerId: 'active-provider', label: 'Active Chat', supportsReasoning: false },
+      ],
+      failures: [],
+      current: { providerId: 'active-provider', modelId: 'active-chat' },
+      routable: true,
+    })
+    await vi.waitFor(() => expect(store.sessionModelCurrent?.modelId).toBe('active-chat'))
+    store.dispose()
+  })
+
   it("keeps the host's verdict that the session model is unroutable", async () => {
     const client = new StartupClient((request) => {
       if (request.type === 'models.session.list')
@@ -1643,6 +1803,45 @@ describe('AppStore startup session restoration', () => {
     expect(store.providers).toBe(providers)
     expect(store.models).toBe(models)
     expect(listener).not.toHaveBeenCalled()
+    store.dispose()
+  })
+
+  it('updates same-identity catalog rows when input modalities change and accepts omitted or empty values', async () => {
+    const provider = { id: 'deepseek', name: 'DeepSeek', kind: 'builtin', configurable: false, fields: [] }
+    const model = {
+      id: 'deepseek-chat',
+      providerId: 'deepseek',
+      label: 'DeepSeek Chat',
+      supportsReasoning: false,
+    }
+    let inputModalities: readonly string[] | undefined
+    const client = new StartupClient((request) => {
+      if (request.type === 'providers.list') return [provider]
+      if (request.type === 'models.list')
+        return [
+          {
+            ...model,
+            ...(inputModalities === undefined ? {} : { inputModalities }),
+          },
+        ]
+      return startupResponse(request)
+    })
+    const store = createAppStore(client as unknown as ProtocolClient)
+
+    await store.refreshModelCatalog()
+    const withoutDeclaration = store.models
+    expect(withoutDeclaration[0]?.inputModalities).toBeUndefined()
+
+    inputModalities = []
+    await store.refreshModelCatalog()
+    const emptyDeclaration = store.models
+    expect(emptyDeclaration).not.toBe(withoutDeclaration)
+    expect(emptyDeclaration[0]?.inputModalities).toEqual([])
+
+    inputModalities = ['text', 'image']
+    await store.refreshModelCatalog()
+    expect(store.models).not.toBe(emptyDeclaration)
+    expect(store.models[0]?.inputModalities).toEqual(['text', 'image'])
     store.dispose()
   })
 

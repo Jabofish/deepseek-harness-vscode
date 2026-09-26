@@ -5,7 +5,13 @@ import type { SessionHistoryEvent } from '../../packages/domain/src/sessions.js'
 import type { ToolCallView } from '../../packages/domain/src/tools.js'
 import { reduceTimelineBatch, type TimelineState } from '../../packages/timeline/src/index.js'
 
-import { LIVE_TIMEOUT_MS, canConnect, startManagedRuntime } from './harness.js'
+import {
+  hasLiveHistoryFixture,
+  LIVE_TIMEOUT_MS,
+  canConnect,
+  requireLiveHistoryFixtureHome,
+  startManagedRuntime,
+} from './harness.js'
 
 /** History pages read per registry row while looking for card-bearing sessions. */
 const MAX_PAGES = 3
@@ -30,15 +36,17 @@ const SESSION_SCAN_LIMIT = 80
  *   $env:DSH_LIVE_SMOKE = '1'
  *   npx vitest run tests/live-dsh/tool-cards.spec.ts
  *
- * Read-only: it never sends a prompt or writes to the runtime. It needs a
- * profile whose history holds at least one shell or mutation call; without one
- * the invariants would be vacuous, so that is a failure rather than a pass.
+ * It never sends a prompt or a DSH write request; startup state stays in the
+ * disposable history fixture. It needs a fixture whose events hold at least
+ * one shell or mutation call;
+ * without one the invariants would be vacuous, so that is a failure rather than
+ * a pass.
  */
-describe.skipIf(process.env.DSH_LIVE_SMOKE !== '1')('live DSH tool cards', () => {
+describe.skipIf(process.env.DSH_LIVE_SMOKE !== '1' || !hasLiveHistoryFixture())('live DSH tool cards', () => {
   it(
     'states each first-party tool card from the row it was derived from',
     async () => {
-      const runtime = await startManagedRuntime()
+      const runtime = await startManagedRuntime({ dshHome: requireLiveHistoryFixtureHome() })
       try {
         const sessions = await runtime.backend.sessions.list()
         expect(sessions.items.length, 'the live runtime must expose at least one session').toBeGreaterThan(0)

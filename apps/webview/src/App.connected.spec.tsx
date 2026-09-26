@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import type { ReactElement } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AppState, AppStore, DshSettingsSnapshot } from './app/store.js'
 
@@ -29,13 +30,14 @@ vi.mock('./features/chat/Timeline.js', () => ({
 
 import { App } from './App.js'
 import { CONVERSATION_FONT_SIZE_STORAGE_KEY, THEME_PREFERENCE_STORAGE_KEY } from './app/ui-preferences.js'
-import { I18nProvider } from './i18n.js'
+import { I18nProvider, LOCALE_EXPLICIT_STORAGE_KEY, LOCALE_STORAGE_KEY, useI18n } from './i18n.js'
 
 function connectedState(activeSession: boolean): AppState {
   return {
     // The connection snapshot is a safe Host projection, not the full
     // Extension Host backend object.
     backend: { kind: 'connected' },
+    connectionEpoch: 1,
     connectedDshVersion: '0.1.0-rc.6',
     subagentImagePrompts: false,
     dshCompatibilityWarning: undefined,
@@ -171,9 +173,67 @@ function dshUiSettingsSnapshot(enabled?: boolean, busyEnter?: 'queue' | 'steer')
       writable: true,
       hasDocument: false,
       fields,
-      namespaces: [],
+      namespaces: [
+        ...(enabled === undefined
+          ? []
+          : [
+              {
+                ns: 'ui-settings',
+                applies: 'live' as const,
+                revision: 1,
+                userFields: ['enabled'],
+                secrets: [],
+              },
+            ]),
+        ...(busyEnter === undefined
+          ? []
+          : [
+              {
+                ns: 'ui-conversation',
+                applies: 'live' as const,
+                revision: 1,
+                userFields: ['busyEnter'],
+                secrets: [],
+              },
+            ]),
+      ],
     },
     values,
+  }
+}
+
+function dshLocaleSettingsSnapshot(preference: string, advertised = true): DshSettingsSnapshot {
+  const base = dshUiSettingsSnapshot()
+  return {
+    ...base,
+    schema: {
+      ...base.schema,
+      fields: advertised
+        ? [
+            ...base.schema.fields,
+            {
+              path: 'locale.preference',
+              label: 'preference',
+              type: 'string',
+              required: false,
+              restartRequired: false,
+            },
+          ]
+        : base.schema.fields,
+      namespaces: advertised
+        ? [
+            ...base.schema.namespaces,
+            {
+              ns: 'locale',
+              applies: 'live',
+              revision: 1,
+              userFields: ['preference'],
+              secrets: [],
+            },
+          ]
+        : base.schema.namespaces,
+    },
+    values: { locale: { preference } },
   }
 }
 
@@ -189,7 +249,7 @@ function storeFor(state: AppState): AppStore {
     showDiagnostics: vi.fn().mockResolvedValue(undefined),
     configureConnection: vi.fn().mockResolvedValue(undefined),
     refreshSessions: vi.fn().mockResolvedValue(undefined),
-    searchSessions: vi.fn().mockResolvedValue([]),
+    searchSessions: vi.fn().mockResolvedValue({ items: [] }),
     refreshCommands: vi.fn().mockResolvedValue(undefined),
     openSession: vi.fn().mockResolvedValue(undefined),
     loadOlderHistory: vi.fn().mockResolvedValue(undefined),
@@ -274,6 +334,7 @@ function storeFor(state: AppState): AppStore {
     openKeyboardShortcuts: vi.fn().mockResolvedValue(undefined),
     updateDshSetting: vi.fn().mockResolvedValue(undefined),
     unsetDshSetting: vi.fn().mockResolvedValue(undefined),
+    mutateDshSettings: vi.fn().mockResolvedValue(undefined),
     createCustomProvider: vi.fn().mockResolvedValue({
       profileCommitted: true,
       credentialConfigured: false,
@@ -312,6 +373,11 @@ function storeFor(state: AppState): AppStore {
     openAccountPage: vi.fn().mockResolvedValue(undefined),
     dispose: vi.fn(),
   }
+}
+
+function ActiveLocaleOutput(): ReactElement {
+  const { locale } = useI18n()
+  return <output data-testid="active-locale">{locale}</output>
 }
 
 function renderWithMutableState(initialState: AppState): {
@@ -366,6 +432,7 @@ describe('App connected rendering', () => {
   afterEach(() => {
     cleanup()
     window.localStorage.clear()
+    document.documentElement.lang = 'en'
   })
 
   it.each([false, true])('renders the page when connected (active=%s)', (activeSession) => {
@@ -412,6 +479,123 @@ describe('App connected rendering', () => {
 
     await waitFor(() => expect(sendPendingPrompt).toHaveBeenCalledWith('Hello', [], 'queue'))
     expect(createSession).not.toHaveBeenCalled()
+  })
+
+  it('keeps a failed active prompt for retry without rendering an untrusted error message', async () => {
+    let rejectSubmission: (reason: Error) => void = () => undefined
+    const submission = new Promise<void>((_resolve, reject) => {
+      rejectSubmission = reject
+    })
+    const sendPrompt = vi.fn().mockReturnValueOnce(submission).mockResolvedValue(undefined)
+    currentStore = { ...storeFor(connectedState(true)), sendPrompt }
+    render(<App />)
+
+    const prompt = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })
+    fireEvent.change(prompt, { target: { value: 'retry this prompt' } })
+    fireEvent.keyDown(prompt, { key: 'Enter' })
+    await waitFor(() => expect(sendPrompt).toHaveBeenCalledWith('s1', 'retry this prompt', [], 'queue'))
+    expect(screen.getByRole('button', { name: 'Send message' }).hasAttribute('disabled')).toBe(true)
+
+    await act(async () => {
+      rejectSubmission(new Error('Host delivery failed: raw prompt diagnostics'))
+      await submission.catch(() => undefined)
+    })
+
+    expect(await screen.findByText('Prompt failed.')).toBeDefined()
+    expect(screen.queryByText('Host delivery failed: raw prompt diagnostics')).toBeNull()
+    expect(prompt.value).toBe('retry this prompt')
+    expect(screen.getByRole('button', { name: 'Send message' }).hasAttribute('disabled')).toBe(false)
+
+    fireEvent.keyDown(prompt, { key: 'Enter' })
+    await waitFor(() => expect(sendPrompt).toHaveBeenCalledTimes(2))
+  })
+
+  it('sanitizes a failed empty-draft queue steer and permits retry after settlement', async () => {
+    const active = connectedState(true)
+    const runningState = {
+      ...active,
+      sessions: active.sessions.map((session) => ({ ...session, status: 'running' as const })),
+      queue: [
+        {
+          id: 'queue-1',
+          sessionId: 's1',
+          text: 'queued follow-up',
+          attachments: [],
+          textOnly: true,
+          mode: 'queue' as const,
+          createdAt: '2026-08-17T05:00:00.000Z',
+        },
+      ],
+    }
+    const steerAllQueued = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('raw queue transport diagnostic'))
+      .mockResolvedValue(undefined)
+    currentStore = { ...storeFor(runningState), steerAllQueued }
+    render(<App />)
+
+    const prompt = screen.getByRole('textbox', { name: 'Prompt' })
+    fireEvent.keyDown(prompt, { key: 'Enter', ctrlKey: true })
+    expect(steerAllQueued).toHaveBeenCalledTimes(1)
+    expect(await screen.findByText('Steering the queue failed.')).toBeDefined()
+    expect(screen.queryByText('raw queue transport diagnostic')).toBeNull()
+
+    fireEvent.keyDown(prompt, { key: 'Enter', ctrlKey: true })
+    await waitFor(() => expect(steerAllQueued).toHaveBeenCalledTimes(2))
+  })
+
+  it('retains attachments after a failed busy steer and retries with the accelerated queue mode', async () => {
+    const active = connectedState(true)
+    const runningState = {
+      ...active,
+      sessions: active.sessions.map((session) => ({ ...session, status: 'running' as const })),
+    }
+    const uri = 'dsh-attachment:00000000-0000-4000-8000-000000000021'
+    const attachment = { uri, name: 'notes.txt', mimeType: 'text/plain' }
+    let rejectFirstSubmission: ((reason: Error) => void) | undefined
+    const firstSubmission = new Promise<void>((_resolve, reject) => {
+      rejectFirstSubmission = reject
+    })
+    const sendPrompt = vi.fn().mockReturnValueOnce(firstSubmission).mockResolvedValue(undefined)
+    const ingestAttachment = vi.fn().mockResolvedValue(attachment)
+    const readDshSettings = vi.fn().mockResolvedValue(dshUiSettingsSnapshot(true, 'steer'))
+    currentStore = {
+      ...storeFor(runningState),
+      ingestAttachment,
+      readDshSettings,
+      sendPrompt,
+    }
+    render(<App />)
+
+    await waitFor(() => expect(readDshSettings).toHaveBeenCalled())
+    const prompt = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })
+    fireEvent.paste(prompt, {
+      clipboardData: { files: [new File(['notes'], 'notes.txt', { type: 'text/plain' })] },
+    })
+    await waitFor(() => expect(ingestAttachment).toHaveBeenCalled())
+    await screen.findByRole('button', { name: 'Remove notes.txt' })
+
+    fireEvent.change(prompt, { target: { value: 'retry with the attachment' } })
+    fireEvent.keyDown(prompt, { key: 'Enter' })
+    await waitFor(() =>
+      expect(sendPrompt).toHaveBeenCalledWith('s1', 'retry with the attachment', [attachment], 'steer'),
+    )
+    fireEvent.keyDown(prompt, { key: 'Enter' })
+    expect(sendPrompt).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      rejectFirstSubmission?.(new Error('Host delivery failed: raw prompt diagnostics'))
+      await firstSubmission.catch(() => undefined)
+    })
+    expect(await screen.findByText('Prompt failed.')).toBeDefined()
+    expect(prompt.value).toBe('retry with the attachment')
+    expect(screen.getByRole('button', { name: 'Remove notes.txt' })).toBeDefined()
+
+    fireEvent.keyDown(prompt, { key: 'Enter', ctrlKey: true })
+    await waitFor(() =>
+      expect(sendPrompt).toHaveBeenCalledWith('s1', 'retry with the attachment', [attachment], 'queue'),
+    )
+    expect(sendPrompt).toHaveBeenCalledTimes(2)
   })
 
   it('stages the host default after preset selection is disabled', async () => {
@@ -579,7 +763,7 @@ describe('App connected rendering', () => {
     expect(screen.getByTestId('timeline').getAttribute('data-coding-tools-enabled')).toBe('false')
   })
 
-  it('retains the last accepted Developer Tools state when a reconnect read fails', async () => {
+  it('fails closed when the new connection generation cannot read Developer Tools settings', async () => {
     const readDshSettings = vi
       .fn()
       .mockResolvedValueOnce(dshUiSettingsSnapshot(true))
@@ -596,12 +780,157 @@ describe('App connected rendering', () => {
     await waitFor(() => expect(screen.getByRole('tab', { name: 'Trajectory' })).toBeDefined())
     state = { ...connectedState(true), backend: { kind: 'idle' } }
     view.rerender(<App />)
-    state = connectedState(true)
+    state = { ...connectedState(true), connectionEpoch: 2 }
     view.rerender(<App />)
 
     await waitFor(() => expect(readDshSettings).toHaveBeenCalledTimes(2))
+    expect(screen.queryByRole('tab', { name: 'Trajectory' })).toBeNull()
+    expect(screen.getByTestId('timeline').getAttribute('data-coding-tools-enabled')).toBe('false')
+  })
+
+  it('rereads settings and remounts SettingsDrawer when the backend identity changes at the same DSH version', async () => {
+    let state: AppState = { ...connectedState(true), drawer: 'settings' }
+    const readDshSettings = vi.fn().mockResolvedValue(dshUiSettingsSnapshot(true))
+    const store: AppStore = {
+      ...storeFor(state),
+      getState: () => state,
+      readDshSettings,
+    }
+    currentStore = store
+    const view = render(<App />)
+
+    await screen.findByRole('tab', { name: 'General' })
+    await waitFor(() => expect(readDshSettings).toHaveBeenCalled())
+    const readsBeforeStableRerender = readDshSettings.mock.calls.length
+    fireEvent.click(screen.getByRole('tab', { name: 'Models' }))
+    expect(screen.getByRole('tab', { name: 'Models' }).getAttribute('aria-selected')).toBe('true')
+
+    view.rerender(<App />)
+    expect(readDshSettings).toHaveBeenCalledTimes(readsBeforeStableRerender)
+    expect(screen.getByRole('tab', { name: 'Models' }).getAttribute('aria-selected')).toBe('true')
+
+    state = { ...state, connectionEpoch: 2 }
+    view.rerender(<App />)
+
+    await waitFor(() => expect(readDshSettings.mock.calls.length).toBeGreaterThan(readsBeforeStableRerender))
+    await waitFor(() =>
+      expect(screen.getByRole('tab', { name: 'General' }).getAttribute('aria-selected')).toBe('true'),
+    )
+    expect(screen.getByRole('tab', { name: 'Models' }).getAttribute('aria-selected')).toBe('false')
+  })
+
+  it('ignores an older connection generation settings read that resolves after the current one', async () => {
+    let resolveOldRead: (snapshot: DshSettingsSnapshot) => void = () => undefined
+    let resolveCurrentRead: (snapshot: DshSettingsSnapshot) => void = () => undefined
+    const oldRead = new Promise<DshSettingsSnapshot>((resolve) => {
+      resolveOldRead = resolve
+    })
+    const currentRead = new Promise<DshSettingsSnapshot>((resolve) => {
+      resolveCurrentRead = resolve
+    })
+    let state: AppState = { ...connectedState(true), connectionEpoch: 10 }
+    const readDshSettings = vi.fn().mockReturnValueOnce(oldRead).mockReturnValueOnce(currentRead)
+    const store: AppStore = {
+      ...storeFor(state),
+      getState: () => state,
+      readDshSettings,
+    }
+    currentStore = store
+    const view = render(<App />)
+
+    await waitFor(() => expect(readDshSettings).toHaveBeenCalledTimes(1))
+    state = { ...state, connectionEpoch: 11 }
+    view.rerender(<App />)
+    await waitFor(() => expect(readDshSettings).toHaveBeenCalledTimes(2))
+    expect(screen.queryByRole('tab', { name: 'Trajectory' })).toBeNull()
+
+    await act(async () => {
+      resolveCurrentRead(dshUiSettingsSnapshot(true))
+      await currentRead
+    })
+    expect(await screen.findByRole('tab', { name: 'Trajectory' })).toBeDefined()
+
+    await act(async () => {
+      resolveOldRead(dshUiSettingsSnapshot(false))
+      await oldRead
+    })
     expect(screen.getByRole('tab', { name: 'Trajectory' })).toBeDefined()
     expect(screen.getByTestId('timeline').getAttribute('data-coding-tools-enabled')).toBe('true')
+  })
+
+  it('does not let a successful write from the previous connection generation update current settings', async () => {
+    let resolveOldWrite: () => void = () => undefined
+    const oldWrite = new Promise<void>((resolve) => {
+      resolveOldWrite = resolve
+    })
+    let state: AppState = { ...connectedState(true), drawer: 'settings', connectionEpoch: 20 }
+    const readDshSettings = vi.fn().mockResolvedValue(dshUiSettingsSnapshot(true))
+    const updateDshSetting = vi.fn().mockReturnValue(oldWrite)
+    const store: AppStore = {
+      ...storeFor(state),
+      getState: () => state,
+      readDshSettings,
+      updateDshSetting,
+    }
+    currentStore = store
+    const view = render(<App />)
+
+    await screen.findByRole('tab', { name: 'Trajectory' })
+    const developerTools = await screen.findByRole('switch', { name: 'Developer Tools' })
+    fireEvent.click(developerTools)
+    await waitFor(() => expect(updateDshSetting).toHaveBeenCalledWith('ui-settings.enabled', false, 1))
+
+    const readsBeforeReconnect = readDshSettings.mock.calls.length
+    state = { ...state, connectionEpoch: 21 }
+    view.rerender(<App />)
+    await waitFor(() => expect(readDshSettings.mock.calls.length).toBeGreaterThan(readsBeforeReconnect))
+    expect(await screen.findByRole('tab', { name: 'Trajectory' })).toBeDefined()
+
+    await act(async () => {
+      resolveOldWrite()
+      await oldWrite
+    })
+    expect(screen.getByRole('tab', { name: 'Trajectory' })).toBeDefined()
+    expect(screen.getByRole('switch', { name: 'Developer Tools' }).getAttribute('aria-checked')).toBe('true')
+  })
+
+  it('keeps a refused previous-generation write from changing the new Host settings', async () => {
+    let rejectOldWrite: (reason: Error) => void = () => undefined
+    const oldWrite = new Promise<void>((_resolve, reject) => {
+      rejectOldWrite = reject
+    })
+    let state: AppState = { ...connectedState(true), drawer: 'settings', connectionEpoch: 30 }
+    const readDshSettings = vi.fn().mockResolvedValue(dshUiSettingsSnapshot(true))
+    const updateDshSetting = vi.fn().mockReturnValue(oldWrite)
+    const store: AppStore = {
+      ...storeFor(state),
+      getState: () => state,
+      readDshSettings,
+      updateDshSetting,
+    }
+    currentStore = store
+    const view = render(<App />)
+
+    await screen.findByRole('tab', { name: 'Trajectory' })
+    fireEvent.click(await screen.findByRole('switch', { name: 'Developer Tools' }))
+    await waitFor(() => expect(updateDshSetting).toHaveBeenCalledWith('ui-settings.enabled', false, 1))
+
+    const readsBeforeReconnect = readDshSettings.mock.calls.length
+    state = { ...state, connectionEpoch: 31 }
+    view.rerender(<App />)
+    await waitFor(() => expect(readDshSettings.mock.calls.length).toBeGreaterThan(readsBeforeReconnect))
+    await screen.findByRole('tab', { name: 'Trajectory' })
+    const readsAfterReconnect = readDshSettings.mock.calls.length
+
+    await act(async () => {
+      rejectOldWrite(new Error('previous Host refused the update'))
+      await oldWrite.catch(() => undefined)
+    })
+    // SettingsDrawer refreshes the current Host after a refused update. The
+    // callback is generation-aware, so this is one current-host read only.
+    expect(readDshSettings).toHaveBeenCalledTimes(readsAfterReconnect + 1)
+    expect(screen.getByRole('tab', { name: 'Trajectory' })).toBeDefined()
+    expect(screen.getByRole('switch', { name: 'Developer Tools' }).getAttribute('aria-checked')).toBe('true')
   })
 
   it('clears the old settings gate after a confirmed DSH version change', async () => {
@@ -665,7 +994,7 @@ describe('App connected rendering', () => {
     await waitFor(() => expect(readDshSettings).toHaveBeenCalledTimes(3))
 
     fireEvent.click(developerTools)
-    await waitFor(() => expect(updateDshSetting).toHaveBeenCalledWith('ui-settings.enabled', false))
+    await waitFor(() => expect(updateDshSetting).toHaveBeenCalledWith('ui-settings.enabled', false, 1))
     await waitFor(() => expect(screen.queryByRole('tab', { name: 'Trajectory' })).toBeNull())
     act(() => resolvePreWriteRead?.(dshUiSettingsSnapshot(true)))
 
@@ -701,14 +1030,46 @@ describe('App connected rendering', () => {
 
     const busyEnter = await screen.findByRole('group', { name: 'Composer Enter' })
     fireEvent.click(within(busyEnter).getByRole('button', { name: 'steer' }))
-    await waitFor(() => expect(updateDshSetting).toHaveBeenCalledWith('ui-conversation.busyEnter', 'steer'))
+    await waitFor(() =>
+      expect(updateDshSetting).toHaveBeenCalledWith('ui-conversation.busyEnter', 'steer', 1),
+    )
     await waitFor(() => expect(readDshSettings).toHaveBeenCalledTimes(3))
+    expect(within(busyEnter).getByRole('button', { name: 'steer' }).getAttribute('aria-pressed')).toBe('true')
 
     const prompt = screen.getByRole('textbox', { name: 'Prompt' })
     fireEvent.change(prompt, { target: { value: 'follow-up' } })
     fireEvent.keyDown(prompt, { key: 'Enter' })
 
     await waitFor(() => expect(sendPrompt).toHaveBeenCalledWith('s1', 'follow-up', [], 'steer'))
+    expect(updateDshSetting).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not replay a rejected settings write when its refresh also fails', async () => {
+    const readDshSettings = vi
+      .fn()
+      .mockResolvedValueOnce(dshUiSettingsSnapshot(true, 'queue'))
+      .mockResolvedValueOnce(dshUiSettingsSnapshot(true, 'queue'))
+      .mockRejectedValue(new Error('refresh unavailable'))
+    const updateDshSetting = vi.fn().mockRejectedValue(new Error('write rejected'))
+    const state = { ...connectedState(true), drawer: 'settings' as const }
+    const store: AppStore = {
+      ...storeFor(state),
+      getState: () => state,
+      readDshSettings,
+      updateDshSetting,
+    }
+    currentStore = store
+    const view = render(<App />)
+
+    const busyEnter = await screen.findByRole('group', { name: 'Composer Enter' })
+    fireEvent.click(within(busyEnter).getByRole('button', { name: 'steer' }))
+    await waitFor(() => expect(updateDshSetting).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(readDshSettings).toHaveBeenCalledTimes(3))
+
+    view.rerender(<App />)
+
+    expect(updateDshSetting).toHaveBeenCalledTimes(1)
+    expect(screen.getByTestId('timeline').getAttribute('data-coding-tools-enabled')).toBe('false')
   })
 
   it('applies a successful Developer Tools setting update to the application gate', async () => {
@@ -719,8 +1080,8 @@ describe('App connected rendering', () => {
       readDshSettings: vi
         .fn()
         .mockImplementation(() => Promise.resolve(dshUiSettingsSnapshot(codingToolsEnabled))),
-      updateDshSetting: vi.fn((path: string, value: unknown) => {
-        updateDshSetting(path, value)
+      updateDshSetting: vi.fn((path: string, value: unknown, expectedRevision: number) => {
+        updateDshSetting(path, value, expectedRevision)
         if (path === 'ui-settings.enabled' && typeof value === 'boolean') codingToolsEnabled = value
         return Promise.resolve()
       }),
@@ -731,7 +1092,7 @@ describe('App connected rendering', () => {
     expect(screen.getByRole('tab', { name: 'Trajectory' })).toBeDefined()
     fireEvent.click(developerTools)
 
-    await waitFor(() => expect(updateDshSetting).toHaveBeenCalledWith('ui-settings.enabled', false))
+    await waitFor(() => expect(updateDshSetting).toHaveBeenCalledWith('ui-settings.enabled', false, 1))
     await waitFor(() => expect(screen.queryByRole('tab', { name: 'Trajectory' })).toBeNull())
     expect(screen.getByTestId('timeline').getAttribute('data-coding-tools-enabled')).toBe('false')
   })
@@ -1071,6 +1432,32 @@ describe('App connected rendering', () => {
     expect(screen.queryByText('↓100')).toBeNull()
   })
 
+  it('derives the RC2 projected total from its complete four-bucket aggregate', () => {
+    const state = connectedState(true)
+    currentStore = storeFor({
+      ...state,
+      projections: {
+        s1: {
+          tokenUsage: { uncachedInputTokens: 100, outputTokens: 10, cacheReadTokens: 5, cacheWriteTokens: 2 },
+        },
+      },
+    })
+    render(<App />)
+
+    expect(screen.getByText('Σ 117 tokens')).toBeDefined()
+  })
+
+  it('does not infer a projected total from incomplete legacy cache buckets', () => {
+    const state = connectedState(true)
+    currentStore = storeFor({
+      ...state,
+      projections: { s1: { tokenUsage: { uncachedInputTokens: 100, outputTokens: 10, cacheReadTokens: 5 } } },
+    })
+    render(<App />)
+
+    expect(screen.queryByText(/Σ/u)).toBeNull()
+  })
+
   it('does not render a partial context-pressure projection as complete', () => {
     const state = connectedState(true)
     currentStore = storeFor({
@@ -1402,13 +1789,24 @@ describe('App connected rendering', () => {
   })
 
   it('applies the selected interface language across the conversation and export surfaces', async () => {
-    const updateDshSetting = vi.fn().mockResolvedValue(undefined)
-    currentStore = { ...storeFor(connectedState(true)), updateDshSetting }
+    let dshLocale = 'en'
+    const readDshSettings = vi.fn(() => Promise.resolve(dshLocaleSettingsSnapshot(dshLocale)))
+    const updateDshSetting = vi.fn((path: string, value: unknown) => {
+      if (path === 'locale.preference' && typeof value === 'string') dshLocale = value
+      return Promise.resolve()
+    })
+    currentStore = {
+      ...storeFor(connectedState(true)),
+      readDshSettings,
+      updateDshSetting,
+    }
     render(
       <I18nProvider>
         <App />
       </I18nProvider>,
     )
+
+    await waitFor(() => expect(readDshSettings).toHaveBeenCalledTimes(1))
 
     fireEvent.click(screen.getByRole('button', { name: 'Conversation tools' }))
     fireEvent.click(screen.getByRole('button', { name: 'Interface language' }))
@@ -1423,7 +1821,7 @@ describe('App connected rendering', () => {
     await waitFor(() => expect(screen.getByRole('heading', { name: '导出会话' })).toBeDefined())
     expect(screen.getByText('包含附件')).toBeDefined()
     expect(screen.getByRole('button', { name: '选择保存位置并导出' })).toBeDefined()
-    await waitFor(() => expect(updateDshSetting).toHaveBeenCalledWith('locale.preference', 'zh'))
+    await waitFor(() => expect(updateDshSetting).toHaveBeenCalledWith('locale.preference', 'zh', 1))
   })
 
   it('keeps the conversation tools panel open when Escape closes the interface-language menu', () => {
@@ -1529,9 +1927,15 @@ describe('App connected rendering', () => {
   })
 
   it('uses the Settings language control for the shared extension and DSH preference', async () => {
-    const updateDshSetting = vi.fn().mockResolvedValue(undefined)
+    let dshLocale = 'en'
+    const readDshSettings = vi.fn(() => Promise.resolve(dshLocaleSettingsSnapshot(dshLocale)))
+    const updateDshSetting = vi.fn((path: string, value: unknown) => {
+      if (path === 'locale.preference' && typeof value === 'string') dshLocale = value
+      return Promise.resolve()
+    })
     currentStore = {
       ...storeFor({ ...connectedState(true), drawer: 'settings' }),
+      readDshSettings,
       updateDshSetting,
     }
 
@@ -1545,8 +1949,205 @@ describe('App connected rendering', () => {
     fireEvent.click(within(group).getByRole('button', { name: '中文' }))
 
     expect(document.documentElement.lang).toBe('zh-CN')
-    await waitFor(() => expect(updateDshSetting).toHaveBeenCalledWith('locale.preference', 'zh'))
+    await waitFor(() => expect(updateDshSetting).toHaveBeenCalledWith('locale.preference', 'zh', 1))
+    expect(window.localStorage.getItem(LOCALE_EXPLICIT_STORAGE_KEY)).toBe('true')
   })
+
+  it.each([
+    { preference: 'en', local: 'zh', advertised: true, expected: 'Message…', lang: 'en' },
+    { preference: 'zh-Hans', local: 'en', advertised: true, expected: '输入消息…', lang: 'zh-CN' },
+    { preference: 'fr-FR', local: 'zh', advertised: true, expected: 'Message…', lang: 'en' },
+    { preference: 'en', local: 'zh', advertised: false, expected: '输入消息…', lang: 'zh-CN' },
+  ])(
+    'adopts only an advertised DSH locale preference ($preference, advertised=$advertised)',
+    async ({ preference, local, advertised, expected, lang }) => {
+      window.localStorage.setItem(LOCALE_STORAGE_KEY, local)
+      window.localStorage.setItem(LOCALE_EXPLICIT_STORAGE_KEY, 'true')
+      document.documentElement.lang = local === 'zh' ? 'en' : 'zh-CN'
+      const updateDshSetting = vi.fn().mockResolvedValue(undefined)
+      const readDshSettings = vi.fn().mockResolvedValue(dshLocaleSettingsSnapshot(preference, advertised))
+      currentStore = {
+        ...storeFor(connectedState(true)),
+        readDshSettings,
+        updateDshSetting,
+      }
+
+      render(
+        <I18nProvider>
+          <App />
+        </I18nProvider>,
+      )
+
+      await screen.findByPlaceholderText(expected)
+      await waitFor(() => expect(document.documentElement.lang).toBe(lang))
+      expect(readDshSettings).toHaveBeenCalled()
+      expect(window.localStorage.getItem(LOCALE_STORAGE_KEY)).toBe(local)
+      expect(window.localStorage.getItem(LOCALE_EXPLICIT_STORAGE_KEY)).toBe('true')
+      expect(updateDshSetting).not.toHaveBeenCalled()
+    },
+  )
+
+  it('keeps the editor language fallback when DSH settings cannot be read', async () => {
+    document.documentElement.lang = 'zh-Hant'
+    const readDshSettings = vi.fn().mockRejectedValue(new Error('settings are unavailable'))
+    currentStore = { ...storeFor(connectedState(true)), readDshSettings }
+
+    render(
+      <I18nProvider>
+        <App />
+      </I18nProvider>,
+    )
+
+    await screen.findByPlaceholderText('输入消息…')
+    await waitFor(() => expect(document.documentElement.lang).toBe('zh-CN'))
+    expect(window.localStorage.getItem(LOCALE_STORAGE_KEY)).toBeNull()
+    expect(window.localStorage.getItem(LOCALE_EXPLICIT_STORAGE_KEY)).toBeNull()
+  })
+
+  it('restores the editor locale after the connected DSH disconnects', async () => {
+    document.documentElement.lang = 'zh-Hans'
+    let state = connectedState(true)
+    const store: AppStore = {
+      ...storeFor(state),
+      getState: () => state,
+      readDshSettings: vi.fn().mockResolvedValue(dshLocaleSettingsSnapshot('en')),
+    }
+    currentStore = store
+    const tree = (): ReactElement => (
+      <I18nProvider>
+        <>
+          <ActiveLocaleOutput />
+          <App />
+        </>
+      </I18nProvider>
+    )
+    const view = render(tree())
+
+    await screen.findByPlaceholderText('Message…')
+    expect(screen.getByTestId('active-locale').textContent).toBe('en')
+    expect(document.documentElement.lang).toBe('en')
+
+    state = { ...state, backend: { kind: 'idle' } }
+    view.rerender(tree())
+
+    await waitFor(() => expect(screen.getByTestId('active-locale').textContent).toBe('zh'))
+    expect(document.documentElement.lang).toBe('zh-CN')
+    expect(window.localStorage.getItem(LOCALE_STORAGE_KEY)).toBeNull()
+    expect(window.localStorage.getItem(LOCALE_EXPLICIT_STORAGE_KEY)).toBeNull()
+  })
+
+  it('keeps an explicit local locale through disconnect and DSH version replacement', async () => {
+    window.localStorage.setItem(LOCALE_STORAGE_KEY, 'zh')
+    window.localStorage.setItem(LOCALE_EXPLICIT_STORAGE_KEY, 'true')
+    document.documentElement.lang = 'en'
+    let state = connectedState(true)
+    const readDshSettings = vi
+      .fn()
+      .mockResolvedValueOnce(dshLocaleSettingsSnapshot('en'))
+      .mockResolvedValue(dshUiSettingsSnapshot())
+    const store: AppStore = {
+      ...storeFor(state),
+      getState: () => state,
+      readDshSettings,
+    }
+    currentStore = store
+    const tree = (): ReactElement => (
+      <I18nProvider>
+        <>
+          <ActiveLocaleOutput />
+          <App />
+        </>
+      </I18nProvider>
+    )
+    const view = render(tree())
+
+    await waitFor(() => expect(screen.getByTestId('active-locale').textContent).toBe('en'))
+    expect(document.documentElement.lang).toBe('en')
+
+    state = { ...state, backend: { kind: 'idle' } }
+    view.rerender(tree())
+    await waitFor(() => expect(screen.getByTestId('active-locale').textContent).toBe('zh'))
+    expect(document.documentElement.lang).toBe('zh-CN')
+
+    state = {
+      ...state,
+      backend: { kind: 'connected' },
+      connectedDshVersion: '0.1.0-rc.7',
+    }
+    view.rerender(tree())
+    await waitFor(() => expect(readDshSettings).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(screen.getByTestId('active-locale').textContent).toBe('zh'))
+    expect(document.documentElement.lang).toBe('zh-CN')
+    expect(window.localStorage.getItem(LOCALE_STORAGE_KEY)).toBe('zh')
+    expect(window.localStorage.getItem(LOCALE_EXPLICIT_STORAGE_KEY)).toBe('true')
+  })
+
+  it.each(['disconnect', 'version replacement'] as const)(
+    'ignores a successful settings read that arrives after %s',
+    async (transition) => {
+      window.localStorage.setItem(LOCALE_STORAGE_KEY, 'zh')
+      window.localStorage.setItem(LOCALE_EXPLICIT_STORAGE_KEY, 'true')
+      document.documentElement.lang = 'en'
+      let resolveOldRead: (snapshot: DshSettingsSnapshot) => void = () => undefined
+      let resolveNewRead: (snapshot: DshSettingsSnapshot) => void = () => undefined
+      const oldRead = new Promise<DshSettingsSnapshot>((resolve) => {
+        resolveOldRead = resolve
+      })
+      const newRead = new Promise<DshSettingsSnapshot>((resolve) => {
+        resolveNewRead = resolve
+      })
+      let state = connectedState(true)
+      const readDshSettings = vi
+        .fn()
+        .mockImplementationOnce(() => oldRead)
+        .mockImplementation(() => newRead)
+      const store: AppStore = {
+        ...storeFor(state),
+        getState: () => state,
+        readDshSettings,
+      }
+      currentStore = store
+      const tree = (): ReactElement => (
+        <I18nProvider>
+          <>
+            <ActiveLocaleOutput />
+            <App />
+          </>
+        </I18nProvider>
+      )
+      const view = render(tree())
+
+      await screen.findByPlaceholderText('输入消息…')
+      await waitFor(() => expect(readDshSettings).toHaveBeenCalledTimes(1))
+      if (transition === 'disconnect') {
+        state = { ...state, backend: { kind: 'idle' } }
+      } else {
+        state = { ...state, connectedDshVersion: '0.1.0-rc.7' }
+      }
+      view.rerender(tree())
+
+      if (transition === 'version replacement') {
+        await waitFor(() => expect(readDshSettings).toHaveBeenCalledTimes(2))
+      }
+      await waitFor(() => expect(screen.getByTestId('active-locale').textContent).toBe('zh'))
+      await act(async () => {
+        resolveOldRead(dshLocaleSettingsSnapshot('en'))
+        await oldRead
+      })
+      expect(screen.getByTestId('active-locale').textContent).toBe('zh')
+      expect(window.localStorage.getItem(LOCALE_STORAGE_KEY)).toBe('zh')
+      expect(window.localStorage.getItem(LOCALE_EXPLICIT_STORAGE_KEY)).toBe('true')
+
+      if (transition === 'version replacement') {
+        await act(async () => {
+          resolveNewRead(dshUiSettingsSnapshot())
+          await newRead
+        })
+        await waitFor(() => expect(screen.getByTestId('active-locale').textContent).toBe('zh'))
+      }
+      await waitFor(() => expect(document.documentElement.lang).toBe('zh-CN'))
+    },
+  )
 
   it('keeps structured todo content directly above the composer', () => {
     const state = connectedState(true)

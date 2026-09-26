@@ -2,13 +2,20 @@ import { describe, expect, it } from 'vitest'
 
 import type { AppError } from '../../packages/domain/src/errors.js'
 import type { SessionDetail, SessionHistoryEvent } from '../../packages/domain/src/sessions.js'
-import { LIVE_TIMEOUT_MS, canConnect, startManagedRuntime } from './harness.js'
+import {
+  hasLiveHistoryFixture,
+  LIVE_TIMEOUT_MS,
+  canConnect,
+  requireLiveHistoryFixtureHome,
+  startManagedRuntime,
+} from './harness.js'
 
 /** How many membership-only Sessions one run may probe with a detail read. */
 const MEMBERS_ONLY_PROBE_LIMIT = 5
 
 /** How many real Sessions one run may read; each `get` is one history page. */
 const SAMPLE_LIMIT = 12
+const skipLiveHistoryProbe = process.env.DSH_LIVE_SMOKE !== '1' || !hasLiveHistoryFixture()
 
 /**
  * Upstream records the adapter keeps as opaque unknowns on purpose: they write
@@ -35,14 +42,15 @@ const DOCUMENTED_OPAQUE_ROWS = new Set([
  *   $env:DSH_LIVE_RUNTIME_VERSION = '0.1.6-alpha.1'
  *   npx vitest run tests/live-dsh/consistency.spec.ts
  *
- * Nothing is mutated: the profile is only read. Only the process started here
- * is signalled; an external DSH is never touched.
+ * It never sends a prompt or a DSH write request. Startup state stays inside
+ * the disposable history fixture. Only the process started here is signalled;
+ * an external DSH is never touched.
  */
-describe.skipIf(process.env.DSH_LIVE_SMOKE !== '1')('live DSH session read-path consistency', () => {
+describe.skipIf(skipLiveHistoryProbe)('live DSH session read-path consistency', () => {
   it(
     'derives the same Session facts from a cold-cache detail read and the host list row',
     async () => {
-      const runtime = await startManagedRuntime()
+      const runtime = await startManagedRuntime({ dshHome: requireLiveHistoryFixtureHome() })
       const evidence: string[] = []
       const divergences: string[] = []
       let released: boolean | undefined

@@ -391,6 +391,57 @@ describe('PluginInstallRecoveryController', () => {
     expect(refreshCount).toBe(2)
   })
 
+  it('keeps the applying phase recoverable after a failed status query', async () => {
+    const requests: FeatureRequest[] = []
+    let rejectInstall!: (error: unknown) => void
+    let waitCount = 0
+    const controller = new PluginInstallRecoveryController({
+      featureRequest: async <T>(request: FeatureRequest): Promise<T> => {
+        requests.push(request)
+        if (request.type === 'plugin.bundle.install')
+          return new Promise<T>((_resolve, reject) => {
+            rejectInstall = reject
+          })
+        if (request.type === 'plugin.bundle.waitForInstall') {
+          waitCount += 1
+          return waitCount === 1
+            ? Promise.reject(new Error('status query timed out'))
+            : Promise.resolve(reply(installResult) as T)
+        }
+        throw new Error(`Unexpected request ${request.type}`)
+      },
+      requestId: (() => {
+        let next = 0
+        return () => `plugin-applying-recovery-${++next}`
+      })(),
+      onStateChange: () => undefined,
+    })
+
+    const installing = controller.start({ spec: '@dsh-community/review' })
+    const installId = controller.state?.requestId
+    if (installId === undefined) throw new Error('install id missing')
+    controller.progress({ requestId: installId, phase: 'applying' })
+    rejectInstall(new Error('install reply lost'))
+    await installing
+
+    expect(controller.state).toMatchObject({
+      requestId: installId,
+      phase: 'applying',
+      waiting: false,
+    })
+    await controller.recover()
+    expect(controller.state).toMatchObject({
+      requestId: installId,
+      phase: 'settled',
+      result: installResult,
+    })
+    expect(requests.filter((request) => request.type === 'plugin.bundle.install')).toHaveLength(1)
+    expect(requests.filter((request) => request.type === 'plugin.bundle.waitForInstall')).toEqual([
+      expect.objectContaining({ payload: { installRequestId: installId } }),
+      expect.objectContaining({ payload: { installRequestId: installId } }),
+    ])
+  })
+
   it('settles a known preflight failure without waiting and permits a fresh install', async () => {
     const requests: FeatureRequest[] = []
     let installCount = 0

@@ -108,8 +108,10 @@ function response(request: WebviewRequest | FeatureRequest): unknown {
     case 'checkpoint.preview':
       return contractPayload({
         kind: 'checkpoint.preview',
-        preview: { summary: checkpoint, files: [], conflictCount: 0 },
+        preview: { previewId: 'dsh-preview-test-1', summary: checkpoint, files: [], conflictCount: 0 },
       })
+    case 'checkpoint.restore':
+      return contractPayload({ kind: 'operation', operationId: request.requestId, state: 'completed' })
     default:
       return undefined
   }
@@ -151,9 +153,32 @@ describe('AppStore checkpoint labels', () => {
     const store = createAppStore(client as unknown as ProtocolClient)
 
     await store.openSession(session.id)
+    await store.refreshCheckpoints()
     const preview = await store.previewCheckpoint(checkpoint.checkpointId)
 
     expect(preview?.summary.label).toBe('Before refactor')
+    store.dispose()
+  })
+
+  it('sends the host-issued preview id with a restore confirmation', async () => {
+    const client = new FakeClient(response)
+    const store = createAppStore(client as unknown as ProtocolClient)
+
+    await store.openSession(session.id)
+    await store.refreshCheckpoints()
+    const preview = await store.previewCheckpoint(checkpoint.checkpointId)
+    expect(preview?.previewId).toBe('dsh-preview-test-1')
+    await store.restoreCheckpoint(checkpoint.checkpointId, preview?.previewId ?? '', 'overwrite')
+
+    const request = client.featureRequests.find((entry) => entry.type === 'checkpoint.restore')
+    expect(request?.type === 'checkpoint.restore' ? request.payload : undefined).toEqual({
+      checkpointId: checkpoint.checkpointId,
+      sessionId: session.id,
+      workspaceFolderId: 'folder-1',
+      expectedCurrentRevision: checkpoint.expectedRevision,
+      previewId: 'dsh-preview-test-1',
+      conflictPolicy: 'overwrite',
+    })
     store.dispose()
   })
 
