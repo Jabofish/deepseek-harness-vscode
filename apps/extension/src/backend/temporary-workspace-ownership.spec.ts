@@ -712,13 +712,18 @@ describe('TemporaryWorkspaceOwnershipStore', () => {
   it('does not rebind an old sidecar when another directory wins the missing restore path', async () => {
     const root = temporaryRoot()
     const directory = path.join(root, 'workspace-123')
+    const replacementDirectory = path.join(root, 'workspace-123-replacement')
     const markerPath = path.join(root, '.workspace-123.dsh-vscode-owner')
     mkdirSync(directory)
     const store = new TemporaryWorkspaceOwnershipStore(root)
     const ownershipToken = await store.create(directory)
     const originalMarker = readFileSync(markerPath, 'utf8')
-    rmSync(directory, { recursive: true })
+    // Allocate the replacement while the original inode is still occupied so
+    // the filesystem cannot immediately recycle its identity after deletion.
+    mkdirSync(replacementDirectory)
     const replacementFile = path.join(directory, 'replacement-user-data.txt')
+    writeFileSync(path.join(replacementDirectory, path.basename(replacementFile)), 'preserve replacement data')
+    rmSync(directory, { recursive: true })
     const createWorkspace =
       vi.fn<(input: WorkspaceCreateInput, signal?: AbortSignal) => Promise<WorkspaceSummary>>()
     const manager = filesystemManager(
@@ -730,8 +735,7 @@ describe('TemporaryWorkspaceOwnershipStore', () => {
         createDirectoryExclusive: async (directoryPath) => {
           // Simulate another creator winning between the manager's missing-path
           // check and its exclusive mkdir syscall.
-          await mkdir(directoryPath)
-          writeFileSync(replacementFile, 'preserve replacement data')
+          renameSync(replacementDirectory, directoryPath)
           await mkdir(directoryPath)
         },
       },
@@ -786,11 +790,18 @@ describe('TemporaryWorkspaceOwnershipStore', () => {
   it('leaves the exclusively created directory alone when marker restoration fails', async () => {
     const root = temporaryRoot()
     const directory = path.join(root, 'workspace-123')
+    const replacementDirectory = path.join(root, 'workspace-123-replacement')
+    const createdDirectory = path.join(root, 'workspace-123-created')
     const markerPath = path.join(root, '.workspace-123.dsh-vscode-owner')
     mkdirSync(directory)
     const store = new TemporaryWorkspaceOwnershipStore(root)
     const ownershipToken = await store.create(directory)
     const originalMarker = readFileSync(markerPath, 'utf8')
+    // Keep a distinct replacement identity allocated before the old directory
+    // is removed; some filesystems may immediately reuse a freed inode.
+    mkdirSync(replacementDirectory)
+    const replacementFile = path.join(directory, 'replacement-user-data.txt')
+    writeFileSync(path.join(replacementDirectory, path.basename(replacementFile)), 'preserve replacement data')
     rmSync(directory, { recursive: true })
     const removeDirectory = vi.fn<(directoryPath: string) => Promise<void>>()
     const manager = filesystemManager(
@@ -798,6 +809,11 @@ describe('TemporaryWorkspaceOwnershipStore', () => {
       { id: 'persisted-workspace', path: directory, ownershipToken },
       store,
       {
+        createDirectoryExclusive: async (directoryPath) => {
+          await store.createDirectoryExclusive(directoryPath)
+          renameSync(directoryPath, createdDirectory)
+          renameSync(replacementDirectory, directoryPath)
+        },
         createOwnershipMarker: () => Promise.reject(new Error('marker storage is unavailable')),
         removeDirectory,
       },
@@ -807,6 +823,8 @@ describe('TemporaryWorkspaceOwnershipStore', () => {
 
     expect(removeDirectory).not.toHaveBeenCalled()
     expect(isManagedTemporaryWorkspacePath(root, directory)).toBe(true)
+    expect(readFileSync(replacementFile, 'utf8')).toBe('preserve replacement data')
+    expect(existsSync(createdDirectory)).toBe(true)
     expect(readFileSync(markerPath, 'utf8')).toBe(originalMarker)
     expect(await store.read(directory, ownershipToken)).toBeUndefined()
   })
