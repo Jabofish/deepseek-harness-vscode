@@ -1,13 +1,18 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { BackendEvent, JobFollowFrame } from '@dsh-vscode/domain'
+import type { BackendEndpoint, BackendEvent, JobFollowFrame } from '@dsh-vscode/domain'
 
 vi.mock('vscode', () => ({}))
 
-import { JobFollowRegistry, relayJobFollowFrames, resolveJobFollowOffset } from './composition-root.js'
+import {
+  createManagedEndpointLoginHandler,
+  JobFollowRegistry,
+  relayJobFollowFrames,
+  resolveJobFollowOffset,
+} from './composition-root.js'
 
-function deferred(): { readonly promise: Promise<void>; readonly resolve: () => void } {
-  let resolve!: () => void
-  const promise = new Promise<void>((resolvePromise) => {
+function deferred<T = void>(): { readonly promise: Promise<T>; readonly resolve: (value: T) => void } {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((resolvePromise) => {
     resolve = resolvePromise
   })
   return { promise, resolve }
@@ -210,5 +215,83 @@ describe('Job follow stream relay', () => {
     expect(started).toBe(true)
     expect(events).toEqual([{ type: 'job.follow.updated', ...identity, frame }])
     expect(reportedErrors).toEqual([])
+  })
+})
+
+describe('managed endpoint login cancellation', () => {
+  const endpoint: BackendEndpoint = {
+    host: '127.0.0.1',
+    port: 4317,
+    baseUrl: 'http://127.0.0.1:4317',
+  }
+
+  it('passes the startup signal to the login fetch so abort stops the request', async () => {
+    const started = deferred()
+    const endpointCookies = new Map([[endpoint.baseUrl, 'old-session=stale']])
+    const endpointLaunchUrls = new Map([[endpoint.baseUrl, 'https://127.0.0.1:4317/?token=stale']])
+    let receivedSignal: AbortSignal | null | undefined
+    const fetcher: typeof globalThis.fetch = (_input, init) => {
+      receivedSignal = init?.signal
+      started.resolve()
+      return new Promise<Response>((_resolve, reject) => {
+        if (receivedSignal?.aborted) {
+          reject(new DOMException('Aborted', 'AbortError'))
+          return
+        }
+        receivedSignal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), {
+          once: true,
+        })
+      })
+    }
+    const rememberReadyEndpoint = createManagedEndpointLoginHandler(
+      endpointCookies,
+      endpointLaunchUrls,
+      fetcher,
+    )
+    const controller = new AbortController()
+    const login = rememberReadyEndpoint(endpoint, 'https://127.0.0.1:4317/?token=one-use', controller.signal)
+
+    await started.promise
+    controller.abort()
+
+    await expect(login).rejects.toHaveProperty('name', 'AbortError')
+    expect(receivedSignal).toBe(controller.signal)
+    expect(receivedSignal?.aborted).toBe(true)
+    expect(endpointCookies.has(endpoint.baseUrl)).toBe(false)
+    expect(endpointLaunchUrls.has(endpoint.baseUrl)).toBe(false)
+  })
+
+  it('does not cache a late login response after startup cancellation', async () => {
+    const started = deferred()
+    const response = deferred<Response>()
+    const endpointCookies = new Map<string, string>()
+    const endpointLaunchUrls = new Map<string, string>()
+    let receivedSignal: AbortSignal | null | undefined
+    const fetcher: typeof globalThis.fetch = (_input, init) => {
+      receivedSignal = init?.signal
+      started.resolve()
+      return response.promise
+    }
+    const rememberReadyEndpoint = createManagedEndpointLoginHandler(
+      endpointCookies,
+      endpointLaunchUrls,
+      fetcher,
+    )
+    const controller = new AbortController()
+    const login = rememberReadyEndpoint(endpoint, 'https://127.0.0.1:4317/?token=one-use', controller.signal)
+
+    await started.promise
+    controller.abort()
+    response.resolve(
+      new Response(null, {
+        status: 302,
+        headers: { 'set-cookie': 'DSH_SESSION=fresh; Path=/' },
+      }),
+    )
+
+    await expect(login).rejects.toHaveProperty('name', 'AbortError')
+    expect(receivedSignal).toBe(controller.signal)
+    expect(endpointCookies.has(endpoint.baseUrl)).toBe(false)
+    expect(endpointLaunchUrls.has(endpoint.baseUrl)).toBe(false)
   })
 })

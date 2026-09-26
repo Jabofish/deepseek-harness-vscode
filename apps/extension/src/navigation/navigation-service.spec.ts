@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 import * as vscode from 'vscode'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi, type Mock } from 'vitest'
 
 import { NavigationService } from './navigation-service.js'
 import { workspaceFolderId } from '../editor/workspace-path-guard.js'
@@ -65,11 +65,24 @@ interface Harness {
   readonly service: NavigationService
   readonly folderId: string
   readonly root: string
-  readonly editor: { selection?: unknown; revealRange: ReturnType<typeof vi.fn> }
-  readonly showTextDocument: ReturnType<typeof vi.fn>
+  readonly document: NavigationDocument
+  readonly openTextDocument: Mock<() => Promise<NavigationDocument>>
+  readonly stat: Mock<() => Promise<{ readonly type: number }>>
+  readonly showTextDocument: Mock<() => Promise<NavigationEditor>>
+  readonly editor: NavigationEditor
   readonly executeCommand: ReturnType<typeof vi.fn>
   readonly revealRange: ReturnType<typeof vi.fn>
   readonly lines: string[]
+}
+
+interface NavigationDocument {
+  readonly lineCount: number
+  lineAt(line: number): { readonly text: string }
+}
+
+interface NavigationEditor {
+  selection?: unknown
+  revealRange: ReturnType<typeof vi.fn>
 }
 
 function createHarness(
@@ -86,17 +99,19 @@ function createHarness(
     revealRange: vi.fn(),
   }
   const showTextDocument = vi.fn(() => Promise.resolve(editor))
+  const openTextDocument = vi.fn(() => Promise.resolve(document))
   const executeCommand = vi.fn(() => Promise.resolve())
+  const stat = vi.fn(() => Promise.resolve({ type: statType }))
   const workspace = {
     workspaceFolders: [folder],
     fs: {
-      stat: vi.fn(() => Promise.resolve({ type: statType })),
+      stat,
       readFile: vi.fn(),
       writeFile: vi.fn(),
       delete: vi.fn(),
       rename: vi.fn(),
     },
-    openTextDocument: vi.fn(() => Promise.resolve(document)),
+    openTextDocument,
   }
   const window = { showTextDocument }
   const service = new NavigationService({
@@ -108,8 +123,11 @@ function createHarness(
     service,
     folderId: workspaceFolderId(folder as unknown as vscode.WorkspaceFolder),
     root,
-    editor,
+    document,
+    openTextDocument,
+    stat,
     showTextDocument,
+    editor,
     executeCommand,
     revealRange: editor.revealRange,
     lines: [...lines],
@@ -266,5 +284,95 @@ describe('NavigationService', () => {
     await expect(harness.service.openFile(harness.folderId, 'a.ts')).rejects.toMatchObject({
       code: 'REQUEST_CANCELLED',
     })
+  })
+
+  it('does not show a document when cancellation arrives while it is opening', async () => {
+    const root = temporaryRoot()
+    writeFileSync(path.join(root, 'a.ts'), 'first\n')
+    const harness = createHarness(root)
+    let resolveDocument!: (document: typeof harness.document) => void
+    let notifyDocumentOpenStarted!: () => void
+    const documentOpenStarted = new Promise<void>((resolve) => {
+      notifyDocumentOpenStarted = resolve
+    })
+    const pendingDocument = new Promise<typeof harness.document>((resolve) => {
+      resolveDocument = resolve
+    })
+    harness.openTextDocument.mockImplementationOnce(() => {
+      notifyDocumentOpenStarted()
+      return pendingDocument
+    })
+    const controller = new AbortController()
+
+    const opening = harness.service.openFile(harness.folderId, 'a.ts', undefined, controller.signal)
+    await documentOpenStarted
+    expect(harness.openTextDocument).toHaveBeenCalledOnce()
+    controller.abort()
+    resolveDocument(harness.document)
+
+    await expect(opening).rejects.toMatchObject({ code: 'REQUEST_CANCELLED' })
+    expect(harness.showTextDocument).not.toHaveBeenCalled()
+  })
+
+  it('does not apply a location after cancellation while the editor is being shown', async () => {
+    const root = temporaryRoot()
+    writeFileSync(path.join(root, 'a.ts'), 'first\nsecond\n')
+    const harness = createHarness(root)
+    let resolveEditor!: (editor: typeof harness.editor) => void
+    let notifyEditorShowStarted!: () => void
+    const editorShowStarted = new Promise<void>((resolve) => {
+      notifyEditorShowStarted = resolve
+    })
+    const pendingEditor = new Promise<typeof harness.editor>((resolve) => {
+      resolveEditor = resolve
+    })
+    harness.showTextDocument.mockImplementationOnce(() => {
+      notifyEditorShowStarted()
+      return pendingEditor
+    })
+    const controller = new AbortController()
+
+    const opening = harness.service.openFile(
+      harness.folderId,
+      'a.ts',
+      { start: { line: 1, column: 0 }, end: { line: 1, column: 0 } },
+      controller.signal,
+    )
+    await editorShowStarted
+    expect(harness.showTextDocument).toHaveBeenCalledOnce()
+    controller.abort()
+    resolveEditor(harness.editor)
+
+    await expect(opening).rejects.toMatchObject({ code: 'REQUEST_CANCELLED' })
+    expect(harness.editor.selection).toBeUndefined()
+    expect(harness.revealRange).not.toHaveBeenCalled()
+  })
+
+  it('does not execute a diff after cancellation during file validation', async () => {
+    const root = temporaryRoot()
+    writeFileSync(path.join(root, 'a.ts'), 'first\n')
+    const harness = createHarness(root)
+    let resolveStat!: (value: { readonly type: number }) => void
+    let notifyValidationStarted!: () => void
+    const validationStarted = new Promise<void>((resolve) => {
+      notifyValidationStarted = resolve
+    })
+    const pendingStat = new Promise<{ readonly type: number }>((resolve) => {
+      resolveStat = resolve
+    })
+    harness.stat.mockImplementationOnce(() => {
+      notifyValidationStarted()
+      return pendingStat
+    })
+    const controller = new AbortController()
+
+    const opening = harness.service.openDiff(harness.folderId, 'a.ts', 'before', undefined, controller.signal)
+    await validationStarted
+    expect(harness.stat).toHaveBeenCalledOnce()
+    controller.abort()
+    resolveStat({ type: vscode.FileType.File })
+
+    await expect(opening).rejects.toMatchObject({ code: 'REQUEST_CANCELLED' })
+    expect(harness.executeCommand).not.toHaveBeenCalled()
   })
 })

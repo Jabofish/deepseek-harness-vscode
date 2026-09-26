@@ -14,6 +14,9 @@ class MemoryStorage implements CheckpointStorage {
   readonly files = new Map<string, Uint8Array>()
   readonly directories = new Set<string>()
   failRenames = 0
+  failRenameDestination: string | undefined
+  failDeletePath: string | undefined
+  afterRename: ((destinationPath: string) => void) | undefined
 
   public mkdir(directory: string): Promise<void> {
     this.directories.add(this.normalize(directory))
@@ -49,22 +52,28 @@ class MemoryStorage implements CheckpointStorage {
   }
 
   public rename(sourcePath: string, destinationPath: string, overwrite: boolean): Promise<void> {
+    const source = this.normalize(sourcePath)
+    const destination = this.normalize(destinationPath)
     if (this.failRenames > 0) {
       this.failRenames -= 1
       throw new Error('injected storage rename failure')
     }
-    const source = this.normalize(sourcePath)
-    const destination = this.normalize(destinationPath)
+    if (this.failRenameDestination === destination) {
+      this.failRenameDestination = undefined
+      throw new Error('injected storage rename failure for destination')
+    }
     const bytes = this.files.get(source)
     if (bytes === undefined) throw new Error('missing source storage file')
     if (!overwrite && this.files.has(destination)) throw new Error('destination already exists')
     this.files.delete(source)
     this.files.set(destination, bytes)
+    this.afterRename?.(destination)
     return Promise.resolve()
   }
 
   public delete(filePath: string, recursive: boolean): Promise<void> {
     const target = this.normalize(filePath)
+    if (target === this.failDeletePath) throw new Error('injected storage delete failure')
     if (recursive) {
       const prefix = `${target}${path.sep}`
       for (const candidate of [...this.files.keys()])
@@ -84,23 +93,34 @@ class MemoryStorage implements CheckpointStorage {
 
 class MemoryWorkspace implements CheckpointWorkspaceAccess {
   readonly files = new Map<string, Uint8Array>()
+  readonly mutations: string[] = []
   /** Destination paths of the renames that reached the workspace, in order. */
   readonly renames: string[] = []
   failRenames = 0
   afterRename: (() => void) | undefined
+  readGate:
+    { readonly relativePath: string; readonly wait: Promise<void>; readonly onWait: () => void } | undefined
 
-  public readFile(_workspaceFolderId: string, relativePath: string): Promise<Uint8Array | undefined> {
+  public async readFile(_workspaceFolderId: string, relativePath: string): Promise<Uint8Array | undefined> {
+    const gate = this.readGate
+    if (gate?.relativePath === relativePath) {
+      this.readGate = undefined
+      gate.onWait()
+      await gate.wait
+    }
     const bytes = this.files.get(relativePath)
-    return Promise.resolve(bytes === undefined ? undefined : new Uint8Array(bytes))
+    return bytes === undefined ? undefined : new Uint8Array(bytes)
   }
 
   public writeFile(_workspaceFolderId: string, relativePath: string, data: Uint8Array): Promise<void> {
     this.files.set(relativePath, new Uint8Array(data))
+    this.mutations.push(`write:${relativePath}`)
     return Promise.resolve()
   }
 
   public deleteFile(_workspaceFolderId: string, relativePath: string): Promise<void> {
     this.files.delete(relativePath)
+    this.mutations.push(`delete:${relativePath}`)
     return Promise.resolve()
   }
 
@@ -120,6 +140,7 @@ class MemoryWorkspace implements CheckpointWorkspaceAccess {
     this.files.delete(sourceRelativePath)
     this.files.set(destinationRelativePath, bytes)
     this.renames.push(destinationRelativePath)
+    this.mutations.push(`rename:${sourceRelativePath}:${destinationRelativePath}`)
     this.afterRename?.()
     return Promise.resolve()
   }
@@ -130,6 +151,7 @@ function createStore(
   workspace: MemoryWorkspace,
   contentEnabled: boolean,
   onStorageIssue?: (issue: { readonly directory: string; readonly phase: 'journal' | 'manifest' }) => void,
+  workspaceTrusted: boolean | (() => boolean) = true,
 ): CheckpointStore {
   let sequence = 0
   return new CheckpointStore({
@@ -138,10 +160,22 @@ function createStore(
     workspace,
     enabled: () => true,
     contentEnabled: () => contentEnabled,
+    workspaceTrusted: typeof workspaceTrusted === 'function' ? workspaceTrusted : () => workspaceTrusted,
     now: () => 1_000 + sequence,
     makeId: () => `id-${++sequence}`,
     ...(onStorageIssue === undefined ? {} : { onStorageIssue }),
   })
+}
+
+async function restoreWithPreview(
+  store: CheckpointStore,
+  checkpointId: string,
+  expectedRevision: number,
+  conflictPolicy: 'abort' | 'overwrite',
+  signal?: AbortSignal,
+): Promise<Awaited<ReturnType<CheckpointStore['restore']>>> {
+  const preview = await store.preview(checkpointId)
+  return store.restore(checkpointId, expectedRevision, preview.previewId, conflictPolicy, signal)
 }
 
 /**
@@ -162,6 +196,14 @@ function changeInput(...relativePaths: readonly string[]): CheckpointCreateInput
 function checkpointDirectory(rootPath: string, checkpointId: string): string {
   const digest = createHash('sha256').update(checkpointId, 'utf8').digest('hex').slice(0, 32)
   return path.join(rootPath, `checkpoint-${digest}`)
+}
+
+function deferred(): { readonly promise: Promise<void>; readonly resolve: () => void } {
+  let resolve!: () => void
+  const promise = new Promise<void>((complete) => {
+    resolve = complete
+  })
+  return { promise, resolve }
 }
 
 function persisted<T>(payload: T): Uint8Array {
@@ -192,6 +234,7 @@ describe('CheckpointStore', () => {
       rootPath: 'checkpoint-root',
       storage,
       workspace,
+      workspaceTrusted: () => true,
     })
 
     await expect(store.create(changeInput())).rejects.toMatchObject({ code: 'FEATURE_DISABLED' })
@@ -213,9 +256,11 @@ describe('CheckpointStore', () => {
       fileCount: 1,
     })
     expect([...storage.files.keys()].some((file) => file.endsWith('content-0.bin'))).toBe(false)
-    await expect(store.restore(summary.checkpointId, 1, 'abort')).rejects.toMatchObject({
-      code: 'CAPABILITY_UNAVAILABLE',
-    })
+    await expect(store.restore(summary.checkpointId, 1, 'dsh-preview-unused', 'abort')).rejects.toMatchObject(
+      {
+        code: 'CAPABILITY_UNAVAILABLE',
+      },
+    )
     expect(await store.list({ workspaceFolderId: 'workspace-1', sessionId: 'session-1' })).toHaveLength(1)
   })
 
@@ -236,7 +281,12 @@ describe('CheckpointStore', () => {
     expect(
       Buffer.from((await storage.readFile(path.join(directory, 'content-0.bin'))) ?? []).toString(),
     ).toBe(wholeFile)
-    const restored = await store.restore(summary.checkpointId, summary.expectedRevision ?? 0, 'abort')
+    const restored = await restoreWithPreview(
+      store,
+      summary.checkpointId,
+      summary.expectedRevision ?? 0,
+      'abort',
+    )
     expect(restored).toMatchObject({ state: 'completed', restoredPaths: ['src/main.ts'] })
     expect(workspace.renames).toEqual(['src/main.ts'])
   })
@@ -265,7 +315,7 @@ describe('CheckpointStore', () => {
     ])
     await workspace.writeFile('workspace-1', 'src/kept.ts', Buffer.from('rewritten\n'))
     await expect(
-      store.restore(summary.checkpointId, summary.expectedRevision ?? 0, 'abort'),
+      restoreWithPreview(store, summary.checkpointId, summary.expectedRevision ?? 0, 'abort'),
     ).rejects.toMatchObject({ code: 'CHECKPOINT_CONFLICT' })
     expect(Buffer.from(workspace.files.get('src/kept.ts') ?? []).toString()).toBe('rewritten\n')
   })
@@ -278,11 +328,11 @@ describe('CheckpointStore', () => {
     const summary = await store.create(changeInput())
     await workspace.writeFile('workspace-1', 'src/main.ts', Buffer.from('external'))
 
-    await expect(store.restore(summary.checkpointId, 1, 'abort')).rejects.toMatchObject({
+    await expect(restoreWithPreview(store, summary.checkpointId, 1, 'abort')).rejects.toMatchObject({
       code: 'CHECKPOINT_CONFLICT',
     })
     expect(Buffer.from(workspace.files.get('src/main.ts') ?? []).toString()).toBe('external')
-    await expect(store.restore(summary.checkpointId, 1, 'abort')).rejects.toMatchObject({
+    await expect(restoreWithPreview(store, summary.checkpointId, 1, 'abort')).rejects.toMatchObject({
       code: 'CAPABILITY_UNAVAILABLE',
     })
   })
@@ -295,7 +345,7 @@ describe('CheckpointStore', () => {
     const summary = await store.create(changeInput())
     workspace.failRenames = 1
 
-    await expect(store.restore(summary.checkpointId, 1, 'abort')).rejects.toMatchObject({
+    await expect(restoreWithPreview(store, summary.checkpointId, 1, 'abort')).rejects.toMatchObject({
       code: 'STORAGE_CORRUPT',
     })
     expect(Buffer.from(workspace.files.get('src/main.ts') ?? []).toString()).toBe('new')
@@ -310,7 +360,7 @@ describe('CheckpointStore', () => {
     const directory = checkpointDirectory('checkpoint-root', summary.checkpointId)
     await storage.writeFile(path.join(directory, 'content-0.bin'), Buffer.from('tampered'))
 
-    await expect(store.restore(summary.checkpointId, 1, 'abort')).rejects.toMatchObject({
+    await expect(restoreWithPreview(store, summary.checkpointId, 1, 'abort')).rejects.toMatchObject({
       code: 'STORAGE_CORRUPT',
     })
     expect((await store.get(summary.checkpointId)).state).toBe('corrupt')
@@ -369,8 +419,126 @@ describe('CheckpointStore', () => {
 
     await recovered.initialize()
 
-    // The manifest is still readable, so the checkpoint itself stays listed.
-    expect(await recovered.list({ workspaceFolderId: 'workspace-1' })).toHaveLength(1)
+    // The manifest cannot be used without knowing whether an interrupted
+    // applying journal still needs rollback.
+    expect(await recovered.list({ workspaceFolderId: 'workspace-1' })).toEqual([])
+    await expect(recovered.get(created.checkpointId)).rejects.toMatchObject({
+      code: 'CAPABILITY_UNAVAILABLE',
+    })
+    expect(issues).toEqual([{ directory: path.normalize(directory), phase: 'journal' }])
+  })
+
+  it('keeps a checkpoint unavailable when an applying journal fails its checksum', async () => {
+    const storage = new MemoryStorage()
+    const workspace = new MemoryWorkspace()
+    workspace.files.set('src/main.ts', Buffer.from('before'))
+    const first = createStore(storage, workspace, true)
+    const created = await first.create(changeInput())
+    const directory = checkpointDirectory('checkpoint-root', created.checkpointId)
+    const backup = Buffer.from('before')
+    await storage.writeFile(path.join(directory, 'backup-0.bin'), backup)
+    await workspace.writeFile('workspace-1', 'src/main.ts', Buffer.from('partially applied'))
+    const journalPayload = {
+      operationId: 'checksum-crash',
+      checkpointId: created.checkpointId,
+      state: 'applying',
+      entries: [
+        {
+          relativePath: 'src/main.ts',
+          backupRef: 'backup-0.bin',
+          tempPath: 'src/main.ts.dsh-vscode-tmp-checksum-crash',
+          originalPresent: true,
+        },
+      ],
+      appliedPaths: ['src/main.ts'],
+      conflictPaths: [],
+    }
+    const envelope = JSON.parse(Buffer.from(persisted(journalPayload)).toString('utf8')) as {
+      payload: { appliedPaths: string[] }
+    }
+    envelope.payload.appliedPaths.push('src/other.ts')
+    await storage.writeFile(path.join(directory, 'journal.json'), Buffer.from(JSON.stringify(envelope)))
+    const issues: Array<{ readonly directory: string; readonly phase: string }> = []
+    const recovered = createStore(storage, workspace, true, (issue) => issues.push(issue))
+
+    await recovered.initialize()
+
+    expect(await recovered.list({ workspaceFolderId: 'workspace-1' })).toEqual([])
+    await expect(recovered.get(created.checkpointId)).rejects.toMatchObject({
+      code: 'CAPABILITY_UNAVAILABLE',
+    })
+    await expect(restoreWithPreview(recovered, created.checkpointId, 1, 'overwrite')).rejects.toMatchObject({
+      code: 'CAPABILITY_UNAVAILABLE',
+    })
+    expect(Buffer.from(workspace.files.get('src/main.ts') ?? []).toString()).toBe('partially applied')
+    expect(storage.files.has(path.join(directory, 'journal.json'))).toBe(true)
+    expect(issues).toEqual([{ directory: path.normalize(directory), phase: 'journal' }])
+  })
+
+  it('reports a checksummed journal with an invalid applying shape and skips its manifest', async () => {
+    const storage = new MemoryStorage()
+    const workspace = new MemoryWorkspace()
+    workspace.files.set('src/main.ts', Buffer.from('before'))
+    const first = createStore(storage, workspace, true)
+    const created = await first.create(changeInput())
+    const directory = checkpointDirectory('checkpoint-root', created.checkpointId)
+    await workspace.writeFile('workspace-1', 'src/main.ts', Buffer.from('partially applied'))
+    await storage.writeFile(
+      path.join(directory, 'journal.json'),
+      persisted({
+        operationId: 'shape-crash',
+        checkpointId: created.checkpointId,
+        state: 'applying',
+        entries: 'not-an-array',
+        appliedPaths: ['src/main.ts'],
+        conflictPaths: [],
+      }),
+    )
+    const issues: Array<{ readonly directory: string; readonly phase: string }> = []
+    const recovered = createStore(storage, workspace, true, (issue) => issues.push(issue))
+
+    await expect(recovered.initialize()).resolves.toBeUndefined()
+
+    expect(await recovered.list({ workspaceFolderId: 'workspace-1' })).toEqual([])
+    expect(Buffer.from(workspace.files.get('src/main.ts') ?? []).toString()).toBe('partially applied')
+    expect(issues).toEqual([{ directory: path.normalize(directory), phase: 'journal' }])
+  })
+
+  it('does not treat an applying journal with no applied paths as a completed rollback', async () => {
+    const storage = new MemoryStorage()
+    const workspace = new MemoryWorkspace()
+    workspace.files.set('src/main.ts', Buffer.from('before'))
+    const first = createStore(storage, workspace, true)
+    const created = await first.create(changeInput())
+    const directory = checkpointDirectory('checkpoint-root', created.checkpointId)
+    await storage.writeFile(path.join(directory, 'backup-0.bin'), Buffer.from('before'))
+    await workspace.writeFile('workspace-1', 'src/main.ts', Buffer.from('partially applied'))
+    await storage.writeFile(
+      path.join(directory, 'journal.json'),
+      persisted({
+        operationId: 'empty-apply-crash',
+        checkpointId: created.checkpointId,
+        state: 'applying',
+        entries: [
+          {
+            relativePath: 'src/main.ts',
+            backupRef: 'backup-0.bin',
+            tempPath: 'src/main.ts.dsh-vscode-tmp-empty-apply-crash',
+            originalPresent: true,
+          },
+        ],
+        appliedPaths: [],
+        conflictPaths: [],
+      }),
+    )
+    const issues: Array<{ readonly directory: string; readonly phase: string }> = []
+    const recovered = createStore(storage, workspace, true, (issue) => issues.push(issue))
+
+    await recovered.initialize()
+
+    expect(await recovered.list({ workspaceFolderId: 'workspace-1' })).toEqual([])
+    expect(Buffer.from(workspace.files.get('src/main.ts') ?? []).toString()).toBe('partially applied')
+    expect(storage.files.has(path.join(directory, 'journal.json'))).toBe(true)
     expect(issues).toEqual([{ directory: path.normalize(directory), phase: 'journal' }])
   })
 
@@ -403,6 +571,107 @@ describe('CheckpointStore', () => {
     expect(Buffer.from(workspace.files.get('src/main.ts') ?? []).toString()).toBe('new')
     expect(await recovered.get(summary.checkpointId)).toMatchObject({ state: 'content-ready' })
     expect(storage.files.has(path.join(directory, 'journal.json'))).toBe(false)
+  })
+
+  it('cleans a crashed preparing journal without touching any workspace path', async () => {
+    const storage = new MemoryStorage()
+    const workspace = new MemoryWorkspace()
+    workspace.files.set('src/main.ts', Buffer.from('before'))
+    const first = createStore(storage, workspace, true)
+    const summary = await first.create(changeInput())
+    const directory = checkpointDirectory('checkpoint-root', summary.checkpointId)
+    await workspace.writeFile('workspace-1', 'src/main.ts', Buffer.from('edited after crash'))
+    const tempPath = 'src/main.ts.dsh-vscode-tmp-crashed-preparation'
+    await workspace.writeFile('workspace-1', tempPath, Buffer.from('preexisting workspace file'))
+    const mutationsBeforeRecovery = [...workspace.mutations]
+    await storage.writeFile(path.join(directory, 'backup-0.bin'), Buffer.from('edited after crash'))
+    await storage.writeFile(path.join(directory, 'backup-0.bin.tmp-crash'), Buffer.from('partial'))
+    await storage.writeFile(
+      path.join(directory, 'journal.json'),
+      persisted({
+        operationId: 'crashed-preparation',
+        checkpointId: summary.checkpointId,
+        state: 'preparing',
+        entries: [
+          {
+            relativePath: 'src/main.ts',
+            backupRef: 'backup-0.bin',
+            tempPath,
+            originalPresent: true,
+          },
+        ],
+        appliedPaths: [],
+        conflictPaths: [],
+      }),
+    )
+    await storage.writeFile(path.join(directory, 'journal.json.tmp-crash'), Buffer.from('partial'))
+
+    const recovered = createStore(storage, workspace, true)
+    await recovered.initialize()
+
+    expect(workspace.mutations).toEqual(mutationsBeforeRecovery)
+    expect(Buffer.from(workspace.files.get('src/main.ts') ?? []).toString()).toBe('edited after crash')
+    expect(Buffer.from(workspace.files.get(tempPath) ?? []).toString()).toBe('preexisting workspace file')
+    expect(
+      [...storage.files.keys()]
+        .filter((filePath) => path.dirname(filePath) === path.normalize(directory))
+        .sort(),
+    ).toEqual([path.join(directory, 'content-0.bin'), path.join(directory, 'manifest.json')].sort())
+  })
+
+  it('does not run startup recovery while the workspace is untrusted', async () => {
+    const storage = new MemoryStorage()
+    const workspace = new MemoryWorkspace()
+    workspace.files.set('src/main.ts', Buffer.from('before'))
+    const first = createStore(storage, workspace, true)
+    const summary = await first.create(changeInput())
+    const directory = checkpointDirectory('checkpoint-root', summary.checkpointId)
+    await workspace.writeFile('workspace-1', 'src/main.ts', Buffer.from('partially-written'))
+    await storage.writeFile(path.join(directory, 'backup-0.bin'), Buffer.from('before'))
+    await storage.writeFile(
+      path.join(directory, 'journal.json'),
+      persisted({
+        operationId: 'untrusted-crash',
+        checkpointId: summary.checkpointId,
+        state: 'applying',
+        entries: [
+          {
+            relativePath: 'src/main.ts',
+            backupRef: 'backup-0.bin',
+            tempPath: 'src/main.ts.dsh-vscode-tmp-untrusted-crash',
+            originalPresent: true,
+          },
+        ],
+        appliedPaths: ['src/main.ts'],
+        conflictPaths: [],
+      }),
+    )
+
+    const untrusted = createStore(storage, workspace, true, undefined, false)
+    await expect(untrusted.list({ workspaceFolderId: 'workspace-1' })).rejects.toMatchObject({
+      code: 'PERMISSION_DENIED',
+    })
+
+    expect(Buffer.from(workspace.files.get('src/main.ts') ?? []).toString()).toBe('partially-written')
+    expect(storage.files.has(path.join(directory, 'journal.json'))).toBe(true)
+  })
+
+  it('rechecks workspace trust before restoring after initialization', async () => {
+    const storage = new MemoryStorage()
+    const workspace = new MemoryWorkspace()
+    workspace.files.set('src/main.ts', Buffer.from('before'))
+    let trusted = true
+    const store = createStore(storage, workspace, true, undefined, () => trusted)
+    const summary = await store.create(changeInput())
+    await workspace.writeFile('workspace-1', 'src/main.ts', Buffer.from('changed'))
+    const preview = await store.preview(summary.checkpointId)
+    trusted = false
+
+    await expect(
+      store.restore(summary.checkpointId, 1, preview.previewId, 'overwrite'),
+    ).rejects.toMatchObject({ code: 'PERMISSION_DENIED' })
+    expect(Buffer.from(workspace.files.get('src/main.ts') ?? []).toString()).toBe('changed')
+    expect(workspace.renames).toEqual([])
   })
 
   it('leaves the workspace file alone when the interrupted restore lost its backup', async () => {
@@ -456,11 +725,280 @@ describe('CheckpointStore', () => {
       if (renameCount === 1) controller.abort()
     }
 
-    await expect(store.restore(summary.checkpointId, 1, 'abort', controller.signal)).rejects.toMatchObject({
-      code: 'REQUEST_CANCELLED',
+    await expect(
+      restoreWithPreview(store, summary.checkpointId, 1, 'abort', controller.signal),
+    ).rejects.toMatchObject({ code: 'REQUEST_CANCELLED' })
+    expect(Buffer.from(workspace.files.get('src/one.ts') ?? []).toString()).toBe('new-one')
+    expect(Buffer.from(workspace.files.get('src/two.ts') ?? []).toString()).toBe('new-two')
+    await expect(restoreWithPreview(store, summary.checkpointId, 1, 'overwrite')).resolves.toMatchObject({
+      state: 'completed',
+    })
+  })
+
+  it('cleans completed backups when storage fails partway through preparation', async () => {
+    const storage = new MemoryStorage()
+    const workspace = new MemoryWorkspace()
+    workspace.files.set('src/one.ts', Buffer.from('new-one'))
+    workspace.files.set('src/two.ts', Buffer.from('new-two'))
+    const store = createStore(storage, workspace, true)
+    const summary = await store.create(changeInput('src/one.ts', 'src/two.ts'))
+    const directory = checkpointDirectory('checkpoint-root', summary.checkpointId)
+    storage.failRenameDestination = path.join(directory, 'backup-1.bin')
+
+    await expect(restoreWithPreview(store, summary.checkpointId, 1, 'overwrite')).rejects.toMatchObject({
+      code: 'STORAGE_CORRUPT',
+    })
+
+    expect(Buffer.from(workspace.files.get('src/one.ts') ?? []).toString()).toBe('new-one')
+    expect(Buffer.from(workspace.files.get('src/two.ts') ?? []).toString()).toBe('new-two')
+    expect(
+      [...storage.files.keys()].some((filePath) =>
+        /(?:backup-\d+\.bin(?:\.tmp-.+)?|journal\.json(?:\.tmp-.+)?$)/u.test(path.basename(filePath)),
+      ),
+    ).toBe(false)
+  })
+
+  it('keeps an incomplete preparation journal and blocks retries until startup cleanup succeeds', async () => {
+    const storage = new MemoryStorage()
+    const workspace = new MemoryWorkspace()
+    workspace.files.set('src/one.ts', Buffer.from('new-one'))
+    workspace.files.set('src/two.ts', Buffer.from('new-two'))
+    const store = createStore(storage, workspace, true)
+    const summary = await store.create(changeInput('src/one.ts', 'src/two.ts'))
+    const directory = checkpointDirectory('checkpoint-root', summary.checkpointId)
+    storage.failRenameDestination = path.join(directory, 'backup-1.bin')
+    storage.failDeletePath = path.join(directory, 'backup-0.bin')
+
+    await expect(restoreWithPreview(store, summary.checkpointId, 1, 'overwrite')).rejects.toMatchObject({
+      code: 'STORAGE_CORRUPT',
+    })
+    expect(storage.files.has(path.join(directory, 'journal.json'))).toBe(true)
+    await expect(restoreWithPreview(store, summary.checkpointId, 1, 'overwrite')).rejects.toMatchObject({
+      code: 'STORAGE_CORRUPT',
     })
     expect(Buffer.from(workspace.files.get('src/one.ts') ?? []).toString()).toBe('new-one')
     expect(Buffer.from(workspace.files.get('src/two.ts') ?? []).toString()).toBe('new-two')
+
+    storage.failDeletePath = undefined
+    const recovered = createStore(storage, workspace, true)
+    await recovered.initialize()
+    expect(storage.files.has(path.join(directory, 'journal.json'))).toBe(false)
+    expect(storage.files.has(path.join(directory, 'backup-0.bin'))).toBe(false)
+    expect(Buffer.from(workspace.files.get('src/one.ts') ?? []).toString()).toBe('new-one')
+    expect(Buffer.from(workspace.files.get('src/two.ts') ?? []).toString()).toBe('new-two')
+  })
+
+  it('cleans preparation artifacts when cancellation arrives between backup writes', async () => {
+    const storage = new MemoryStorage()
+    const workspace = new MemoryWorkspace()
+    workspace.files.set('src/one.ts', Buffer.from('new-one'))
+    workspace.files.set('src/two.ts', Buffer.from('new-two'))
+    const store = createStore(storage, workspace, true)
+    const summary = await store.create(changeInput('src/one.ts', 'src/two.ts'))
+    const directory = checkpointDirectory('checkpoint-root', summary.checkpointId)
+    const controller = new AbortController()
+    storage.afterRename = (destinationPath) => {
+      if (destinationPath === path.join(directory, 'backup-0.bin')) controller.abort()
+    }
+
+    await expect(
+      restoreWithPreview(store, summary.checkpointId, 1, 'overwrite', controller.signal),
+    ).rejects.toMatchObject({ code: 'REQUEST_CANCELLED' })
+
+    expect(Buffer.from(workspace.files.get('src/one.ts') ?? []).toString()).toBe('new-one')
+    expect(Buffer.from(workspace.files.get('src/two.ts') ?? []).toString()).toBe('new-two')
+    expect(
+      [...storage.files.keys()].some((filePath) =>
+        /^(?:backup-\d+\.bin|journal\.json)/u.test(path.basename(filePath)),
+      ),
+    ).toBe(false)
+  })
+
+  it('rejects a concurrent restore for the same checkpoint during its read preflight', async () => {
+    const storage = new MemoryStorage()
+    const workspace = new MemoryWorkspace()
+    workspace.files.set('src/main.ts', Buffer.from('new'))
+    const store = createStore(storage, workspace, true)
+    const summary = await store.create(changeInput())
+    const firstPreview = await store.preview(summary.checkpointId)
+    const secondPreview = await store.preview(summary.checkpointId)
+    const readStarted = deferred()
+    const readRelease = deferred()
+    workspace.readGate = {
+      relativePath: 'src/main.ts',
+      wait: readRelease.promise,
+      onWait: readStarted.resolve,
+    }
+
+    const firstRestore = store.restore(summary.checkpointId, 1, firstPreview.previewId, 'overwrite')
+    await readStarted.promise
+    await expect(
+      store.restore(summary.checkpointId, 1, secondPreview.previewId, 'overwrite'),
+    ).rejects.toMatchObject({ code: 'CHECKPOINT_CONFLICT' })
+    readRelease.resolve()
+    await expect(firstRestore).resolves.toMatchObject({ state: 'completed' })
+  })
+
+  it('does not let checkpoint deletion remove backups during an active restore', async () => {
+    const storage = new MemoryStorage()
+    const workspace = new MemoryWorkspace()
+    workspace.files.set('src/one.ts', Buffer.from('new-one'))
+    workspace.files.set('src/two.ts', Buffer.from('new-two'))
+    const store = createStore(storage, workspace, true)
+    const summary = await store.create(changeInput('src/one.ts', 'src/two.ts'))
+    const preview = await store.preview(summary.checkpointId)
+    const renameStarted = deferred()
+    const renameRelease = deferred()
+    const renameFile = workspace.renameFile.bind(workspace)
+    let pauseNextRename = true
+    workspace.renameFile = async (workspaceFolderId, sourcePath, destinationPath, overwrite) => {
+      if (pauseNextRename && destinationPath === 'src/two.ts') {
+        pauseNextRename = false
+        renameStarted.resolve()
+        await renameRelease.promise
+      }
+      await renameFile(workspaceFolderId, sourcePath, destinationPath, overwrite)
+    }
+
+    const restore = store.restore(summary.checkpointId, 1, preview.previewId, 'overwrite')
+    await renameStarted.promise
+    workspace.failRenames = 1
+    const deletion = await store.delete(summary.checkpointId).then(
+      () => ({ succeeded: true as const }),
+      (error: unknown) => ({ succeeded: false as const, error }),
+    )
+    renameRelease.resolve()
+    await expect(restore).rejects.toBeDefined()
+
+    expect(deletion).toMatchObject({
+      succeeded: false,
+      error: { code: 'CHECKPOINT_CONFLICT' },
+    })
+    expect(Buffer.from(workspace.files.get('src/one.ts') ?? []).toString()).toBe('new-one')
+    expect(Buffer.from(workspace.files.get('src/two.ts') ?? []).toString()).toBe('new-two')
+    await expect(store.get(summary.checkpointId)).resolves.toMatchObject({ state: 'content-ready' })
+    await expect(
+      store.restore(summary.checkpointId, 1, preview.previewId, 'overwrite'),
+    ).resolves.toMatchObject({ state: 'completed' })
+    await expect(store.delete(summary.checkpointId)).resolves.toBeUndefined()
+    await expect(store.get(summary.checkpointId)).rejects.toMatchObject({ code: 'CAPABILITY_UNAVAILABLE' })
+  })
+
+  it('preserves a partial restore journal and backups until startup recovery succeeds', async () => {
+    const storage = new MemoryStorage()
+    const workspace = new MemoryWorkspace()
+    workspace.files.set('src/one.ts', Buffer.from('checkpoint-one'))
+    workspace.files.set('src/two.ts', Buffer.from('checkpoint-two'))
+    const store = createStore(storage, workspace, true)
+    const summary = await store.create(changeInput('src/one.ts', 'src/two.ts'))
+    const directory = checkpointDirectory('checkpoint-root', summary.checkpointId)
+    await workspace.writeFile('workspace-1', 'src/one.ts', Buffer.from('external-one'))
+    await workspace.writeFile('workspace-1', 'src/two.ts', Buffer.from('external-two'))
+    const preview = await store.preview(summary.checkpointId)
+    const renameFile = workspace.renameFile.bind(workspace)
+    let appliedFirstFile = false
+    let failedSecondApply = false
+    workspace.renameFile = async (workspaceFolderId, sourcePath, destinationPath, overwrite) => {
+      if (destinationPath === 'src/one.ts') {
+        if (appliedFirstFile) throw new Error('injected rollback failure')
+        appliedFirstFile = true
+      } else if (destinationPath === 'src/two.ts' && !failedSecondApply) {
+        failedSecondApply = true
+        throw new Error('injected apply failure')
+      }
+      await renameFile(workspaceFolderId, sourcePath, destinationPath, overwrite)
+    }
+
+    await expect(
+      store.restore(summary.checkpointId, 1, preview.previewId, 'overwrite'),
+    ).rejects.toMatchObject({ code: 'CHECKPOINT_PARTIAL' })
+
+    const journalPath = path.join(directory, 'journal.json')
+    expect(await storage.readFile(journalPath)).toBeDefined()
+    expect(await storage.readFile(path.join(directory, 'backup-0.bin'))).toBeDefined()
+    expect(await storage.readFile(path.join(directory, 'backup-1.bin'))).toBeDefined()
+    expect(Buffer.from(workspace.files.get('src/one.ts') ?? []).toString()).toBe('checkpoint-one')
+    expect(Buffer.from(workspace.files.get('src/two.ts') ?? []).toString()).toBe('external-two')
+    await expect(store.delete(summary.checkpointId)).rejects.toMatchObject({ code: 'CHECKPOINT_CONFLICT' })
+    const applyingJournalBytes = await storage.readFile(journalPath)
+    expect(applyingJournalBytes).toBeDefined()
+    if (applyingJournalBytes === undefined) throw new Error('The incomplete journal fixture is missing.')
+    const applyingJournal = JSON.parse(Buffer.from(applyingJournalBytes).toString('utf8')) as {
+      readonly payload: Record<string, unknown>
+    }
+    await storage.writeFile(journalPath, Buffer.from('invalid journal'))
+    await expect(store.delete(summary.checkpointId)).rejects.toMatchObject({ code: 'STORAGE_CORRUPT' })
+    expect(await storage.readFile(path.join(directory, 'backup-0.bin'))).toBeDefined()
+    await storage.writeFile(
+      journalPath,
+      persisted({ ...applyingJournal.payload, checkpointId: 'another-checkpoint' }),
+    )
+    await expect(store.delete(summary.checkpointId)).rejects.toMatchObject({ code: 'STORAGE_CORRUPT' })
+    expect(await storage.readFile(path.join(directory, 'backup-0.bin'))).toBeDefined()
+    await storage.writeFile(journalPath, applyingJournalBytes)
+
+    workspace.renameFile = renameFile
+    const recovered = createStore(storage, workspace, true)
+    await recovered.initialize()
+    expect(Buffer.from(workspace.files.get('src/one.ts') ?? []).toString()).toBe('external-one')
+    expect(Buffer.from(workspace.files.get('src/two.ts') ?? []).toString()).toBe('external-two')
+    expect(await storage.readFile(journalPath)).toBeUndefined()
+    await expect(recovered.get(summary.checkpointId)).resolves.toMatchObject({ state: 'partial-restore' })
+    await storage.writeFile(journalPath, persisted({ ...applyingJournal.payload, state: 'rolled-back' }))
+    await storage.writeFile(path.join(directory, 'backup-0.bin'), Buffer.from('orphaned settled backup'))
+    await expect(recovered.delete(summary.checkpointId)).resolves.toBeUndefined()
+    expect(await storage.readFile(path.join(directory, 'backup-0.bin'))).toBeUndefined()
+  })
+
+  it('does not let a restore start while checkpoint deletion is in progress', async () => {
+    const storage = new MemoryStorage()
+    const workspace = new MemoryWorkspace()
+    workspace.files.set('src/main.ts', Buffer.from('at-checkpoint'))
+    const store = createStore(storage, workspace, true)
+    const summary = await store.create(changeInput())
+    await workspace.writeFile('workspace-1', 'src/main.ts', Buffer.from('external edit'))
+    const preview = await store.preview(summary.checkpointId)
+    const deletionStarted = deferred()
+    const deletionRelease = deferred()
+    const deletePath = storage.delete.bind(storage)
+    storage.delete = async (filePath, recursive) => {
+      if (recursive) {
+        deletionStarted.resolve()
+        await deletionRelease.promise
+      }
+      await deletePath(filePath, recursive)
+    }
+
+    const deletion = store.delete(summary.checkpointId)
+    await deletionStarted.promise
+    const restoration = await store.restore(summary.checkpointId, 1, preview.previewId, 'overwrite').then(
+      () => ({ succeeded: true as const }),
+      (error: unknown) => ({ succeeded: false as const, error }),
+    )
+    deletionRelease.resolve()
+    await deletion
+
+    expect(restoration).toMatchObject({
+      succeeded: false,
+      error: { code: 'CHECKPOINT_CONFLICT' },
+    })
+    expect(Buffer.from(workspace.files.get('src/main.ts') ?? []).toString()).toBe('external edit')
+  })
+
+  it('releases the checkpoint operation lock when deletion fails so deletion can be retried', async () => {
+    const storage = new MemoryStorage()
+    const workspace = new MemoryWorkspace()
+    workspace.files.set('src/main.ts', Buffer.from('current'))
+    const store = createStore(storage, workspace, true)
+    const summary = await store.create(changeInput())
+    const directory = checkpointDirectory('checkpoint-root', summary.checkpointId)
+    storage.failDeletePath = directory
+
+    await expect(store.delete(summary.checkpointId)).rejects.toThrow('injected storage delete failure')
+
+    storage.failDeletePath = undefined
+    await expect(store.delete(summary.checkpointId)).resolves.toBeUndefined()
+    await expect(store.get(summary.checkpointId)).rejects.toMatchObject({ code: 'CAPABILITY_UNAVAILABLE' })
   })
 
   it('puts back a changed file, recreates a deleted one and removes one added since', async () => {
@@ -476,7 +1014,7 @@ describe('CheckpointStore', () => {
     await workspace.deleteFile('workspace-1', 'src/two.ts')
     await workspace.writeFile('workspace-1', 'src/removed.ts', Buffer.from('added later\n'))
 
-    const restored = await store.restore(summary.checkpointId, 1, 'overwrite')
+    const restored = await restoreWithPreview(store, summary.checkpointId, 1, 'overwrite')
 
     expect(restored).toMatchObject({
       state: 'completed',
@@ -488,6 +1026,32 @@ describe('CheckpointStore', () => {
     expect((await store.get(summary.checkpointId)).state).toBe('content-ready')
   })
 
+  it('refuses overwrite when a file changes after the confirmed preview', async () => {
+    const storage = new MemoryStorage()
+    const workspace = new MemoryWorkspace()
+    workspace.files.set('src/one.ts', Buffer.from('one at checkpoint'))
+    workspace.files.set('src/two.ts', Buffer.from('two at checkpoint'))
+    const store = createStore(storage, workspace, true)
+    const summary = await store.create(changeInput('src/one.ts', 'src/two.ts', 'src/removed.ts'))
+    await workspace.writeFile('workspace-1', 'src/one.ts', Buffer.from('one before preview'))
+    const preview = await store.preview(summary.checkpointId)
+    expect(preview.conflictCount).toBe(1)
+
+    // This second edit did not appear in the dialog. A global overwrite choice
+    // for `src/one.ts` must not authorize the later edit or deletion of the
+    // other two paths.
+    await workspace.writeFile('workspace-1', 'src/two.ts', Buffer.from('two after preview'))
+    await workspace.writeFile('workspace-1', 'src/removed.ts', Buffer.from('added after preview'))
+
+    await expect(
+      store.restore(summary.checkpointId, 1, preview.previewId, 'overwrite'),
+    ).rejects.toMatchObject({ code: 'CHECKPOINT_CONFLICT' })
+    expect(Buffer.from(workspace.files.get('src/one.ts') ?? []).toString()).toBe('one before preview')
+    expect(Buffer.from(workspace.files.get('src/two.ts') ?? []).toString()).toBe('two after preview')
+    expect(Buffer.from(workspace.files.get('src/removed.ts') ?? []).toString()).toBe('added after preview')
+    expect(workspace.renames).toEqual([])
+  })
+
   it('reclaims journal and backup storage after a restore that replaced changed files', async () => {
     const storage = new MemoryStorage()
     const workspace = new MemoryWorkspace()
@@ -497,7 +1061,7 @@ describe('CheckpointStore', () => {
     const summary = await store.create(changeInput('src/one.ts', 'src/two.ts'))
     await workspace.writeFile('workspace-1', 'src/two.ts', Buffer.from('external'))
 
-    await store.restore(summary.checkpointId, 1, 'overwrite')
+    await restoreWithPreview(store, summary.checkpointId, 1, 'overwrite')
 
     // The backups the restore wrote before touching the workspace are per-file
     // copies of the pre-restore bytes: nothing can read them again once the
@@ -533,7 +1097,7 @@ describe('CheckpointStore', () => {
           { relativePath: 'src/main.ts', backupRef: 'backup-0.bin', tempPath, originalPresent: true },
         ],
         appliedPaths: ['src/main.ts'],
-        skippedPaths: ['src/main.ts'],
+        conflictPaths: [],
       }),
     )
 

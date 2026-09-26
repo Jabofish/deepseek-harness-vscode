@@ -77,6 +77,7 @@ Alpha `session/modelCatalog` 的部署默认、可路由 Provider、分组与失
 - 二进制文件只在声明该上传能力的普通会话开放，单个非图片文件本地上限为 8 MiB，一个草稿最多 20 个附件；选择、拖放、粘贴都必须在 Host 暂存前按相同规则拒绝不支持的候选，图片和文本沿原有通路。
 - Cordis `request-run` 只提供用户显式拒绝入口；`inspect-query` 失败不伪造成功结果，也不在 VS Code 执行浏览器代码。
 - Schedule 创建若上游没有 Remote，只通过 DSH 自己的 Agent 工具与同一会话的结构化终态确认；Plugin Manager 的安装与只读 plugin inventory 是不同能力，未知结果不重试安装。
+- 上游发布的 `@deepseek-ai/dsh-web-app` 组合默认禁用 `schedule`、`ui-schedule` 与 `time-context`，因此受管 `web` profile 下每个 `schedule/*` 请求都以 HTTP 404 结束，必须映射为 `CAPABILITY_UNAVAILABLE`；面板据此说明「本 DSH 未提供提醒服务」并禁用创建入口，而不是报加载失败或显示 `0 of 0`。重试只在用户于 `$DSH_HOME/cordis.patch.yml` 以 `disabled: false` 重新启用这些条目后才有意义。已在 `0.1.7-rc.2` 上对同一隔离 home 的前后两次受管启动复核（禁用时 404 → `CAPABILITY_UNAVAILABLE`，启用后目录返回空列表）。
 - Goal 的持久 phase 与进程内 armed 状态分别读取；旧请求不能覆盖较新的流事件。Plan 卡只从完整结构化 `exit_plan_mode` 参数建立。
 
 ### Schedule、Plugin 与账号的长操作

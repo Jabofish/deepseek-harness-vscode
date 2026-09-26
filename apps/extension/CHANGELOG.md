@@ -2,8 +2,14 @@
 
 ## 0.2.4
 
+- 修复提醒面板把「上游组合未启用 Schedule 服务」报成加载失败：DSH 发布的 web profile 默认关闭 `schedule` 与 `ui-schedule`，此时目录读取以 HTTP 404 结束，面板现在识别 `CAPABILITY_UNAVAILABLE`，说明原因并禁用创建入口，未确认目录时也不再显示 `0 of 0`；在 `$DSH_HOME/cordis.patch.yml` 启用后重试即可恢复。已在 `0.1.7-rc.2` 的隔离 home 上复核：未打补丁时目录返回 `CAPABILITY_UNAVAILABLE`，打补丁后同一请求返回空目录。
+- Fixed the reminder panel reporting an upstream composition without the Schedule service as a load failure: the DSH web profile ships `schedule` and `ui-schedule` disabled, so the catalog request ends in HTTP 404; the panel now recognizes `CAPABILITY_UNAVAILABLE`, states the cause, disables the create entry, and stops showing `0 of 0` for a catalog it never read. Retry recovers once the entries are enabled in `$DSH_HOME/cordis.patch.yml`. Re-verified on `0.1.7-rc.2` with an isolated home: the unpatched catalog answered `CAPABILITY_UNAVAILABLE`, and the patched one answered an empty directory.
+- 会话内容搜索超过 20 项时提示结果有上限，建议缩小搜索范围；当前视图和按工作区分组视图都会显示正文命中，包括活动会话；仅查看归档会话时按标题过滤，不会请求活动会话的内容搜索。
+- Session content search warns when more than 20 matches exist and suggests refining broad queries; current and grouped views show content matches, including the active session, while archived-only view filters titles locally instead of searching active sessions.
 - 插件设置按分组折叠，搜索时自动展开；安装进度和操作保持可见。
 - Plugin settings collapse by group and expand for search; install progress and actions stay visible.
+- 插件安装进入应用阶段后，若状态查询失败，仍可按同一安装 ID 继续查询；结果未知时不会重启安装。
+- Plugin installs remain recoverable by the same request ID after applying begins, even when a status query fails; an unknown result never starts a second install.
 - 代码块高亮支持 40 种按需加载的语法，包括 Rust、PHP 和常见围栏别名。
 - Code blocks lazily support 40 grammars, including Rust, PHP, and common fence aliases.
 - 新会话的普通消息发送前保留为草稿；Agent 模式可在空白会话中选择，工作区角标只计入实际显示的顶层对话。

@@ -6,7 +6,12 @@ import type {
   PluginEntryEnableConfirmation,
   PluginInstallConfirmation,
 } from '@dsh-vscode/application'
-import type { PluginInstallCancellation, PluginRegistry } from '@dsh-vscode/domain'
+import { createHash } from 'node:crypto'
+import {
+  pluginInstallNotStartedError,
+  type PluginInstallCancellation,
+  type PluginRegistry,
+} from '@dsh-vscode/domain'
 import { featureResponseSchema } from '@dsh-vscode/webview-protocol'
 
 export type PluginBundleFeatureRequest =
@@ -88,7 +93,12 @@ export async function handlePluginBundleFeatureRequest(
       })
       return coordinator === undefined
         ? run()
-        : coordinator.install(request.payload.installRequestId, signal, run)
+        : coordinator.install(
+            request.payload.installRequestId,
+            signal,
+            run,
+            installRequestIdentity(request.payload),
+          )
     }
     case 'plugin.bundle.cancelInstall': {
       const run = (): Promise<PluginInstallCancellation> =>
@@ -145,18 +155,22 @@ export class PluginInstallRequestCoordinator {
     requestId: string,
     requestSignal: AbortSignal,
     run: (signal: AbortSignal) => Promise<unknown>,
+    identity: string,
   ): Promise<unknown> {
-    const cancellation = this.cancellationSignal(requestId, true)
-    const operation = this.once(
+    return this.once(
       this.installs,
       requestId,
       () => {
+        const cancellation = this.cancellationSignal(requestId, true)
         const combined = combineAbortSignals(requestSignal, cancellation.controller.signal)
-        return run(combined.signal).finally(() => combined.dispose())
+        return run(combined.signal).finally(() => {
+          combined.dispose()
+          this.releaseCancellationSignal(requestId, cancellation)
+        })
       },
       true,
+      identity,
     )
-    return operation.finally(() => this.releaseCancellationSignal(requestId, cancellation))
   }
 
   public cancel(
@@ -234,10 +248,14 @@ export class PluginInstallRequestCoordinator {
     requestId: string,
     run: () => Promise<unknown>,
     retain: RetentionPolicy,
+    identity?: string,
   ): Promise<unknown> {
     this.prune(requests)
     const existing = requests.get(requestId)
-    if (existing !== undefined) return existing.promise
+    if (existing !== undefined) {
+      if (existing.identity !== identity) return Promise.reject(pluginInstallNotStartedError())
+      return existing.promise
+    }
     if (requests.size >= MAX_TRACKED_INSTALL_REQUESTS) {
       const oldestSettled = [...requests.entries()]
         .filter(([, entry]) => entry.settledAt !== undefined)
@@ -247,7 +265,10 @@ export class PluginInstallRequestCoordinator {
     if (requests.size >= MAX_TRACKED_INSTALL_REQUESTS)
       return Promise.reject(new Error('Too many plugin install requests are active.'))
     const result = Promise.resolve().then(run)
-    const entry: TrackedRequest = { promise: result }
+    const entry: TrackedRequest = {
+      promise: result,
+      ...(identity === undefined ? {} : { identity }),
+    }
     requests.set(requestId, entry)
     void result.then(
       (value) => this.settled(requests, requestId, entry, retain, { status: 'fulfilled', value }),
@@ -281,6 +302,8 @@ export class PluginInstallRequestCoordinator {
 
 interface TrackedRequest {
   readonly promise: Promise<unknown>
+  /** Non-reversible install-input digest; never retain or log the package spec itself. */
+  readonly identity?: string
   settledAt?: number
   outcome?: RequestOutcome
 }
@@ -318,6 +341,17 @@ function projectCompletedInstall(value: unknown): unknown {
   const payload = parsed.data.payload
   if (payload.kind !== 'plugin.bundle.changed' || payload.result.stage !== 'install') return undefined
   return { kind: 'plugin.install.waited', result: payload.result }
+}
+
+function installRequestIdentity(
+  payload: Extract<PluginBundleFeatureRequest, { readonly type: 'plugin.bundle.install' }>['payload'],
+): string {
+  const registry = payload.registry === undefined ? ['omitted'] : ['provided', payload.registry]
+  const approvedBuilds =
+    payload.approvedBuilds === undefined ? ['omitted'] : ['provided', ...payload.approvedBuilds]
+  return createHash('sha256')
+    .update(JSON.stringify([payload.spec, registry, approvedBuilds]), 'utf8')
+    .digest('hex')
 }
 
 const MAX_TRACKED_INSTALL_REQUESTS = 128

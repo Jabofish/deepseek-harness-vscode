@@ -88,4 +88,63 @@ describe('RedactedDiagnostics', () => {
     expect(diagnostics.recentEvents(0)).toEqual([])
     diagnostics.dispose()
   })
+
+  it('does not expose exception stacks and absolute paths through the Webview snapshot', () => {
+    const { channel } = fakeChannel()
+    const diagnostics = new RedactedDiagnostics(channel)
+    const privatePath = 'C:\\Users\\fixture-user\\private-project\\source.ts'
+
+    diagnostics.log('error', 'request-unexpected', {
+      requestType: 'session.open',
+      name: '{"name":"token=secret-in-error-name","stack":"at open (C:\\Users\\fixture-user\\private-project\\source.ts)"}',
+      message: `Unable to open ${privatePath}`,
+      stack: `at open (${privatePath}:4:2)`,
+      state: '{"message":"private serialized details"}',
+    })
+
+    const recent = diagnostics.recentEvents()
+    expect(recent).toHaveLength(1)
+    const snapshotLine = recent[0] ?? ''
+    const snapshotEntry = JSON.parse(snapshotLine) as { fields: Record<string, unknown> }
+    expect(snapshotEntry.fields).toEqual({ requestType: 'session.open', errorKind: 'Error' })
+    expect(snapshotLine).not.toContain('fixture-user')
+    expect(snapshotLine).not.toContain('secret-in-error-name')
+    expect(snapshotLine).not.toContain('private serialized details')
+    expect(snapshotLine).not.toContain('at open')
+    diagnostics.dispose()
+  })
+
+  it('retains a safe error class name in the readable snapshot', () => {
+    const { lines, channel } = fakeChannel()
+    const diagnostics = new RedactedDiagnostics(channel)
+    diagnostics.log('error', 'request-unexpected', {
+      requestType: 'session.open',
+      name: 'TypeError',
+      message: 'The host operation failed.',
+      stack: 'at open (internal.ts:4:2)',
+    })
+
+    const snapshotLine = diagnostics.recentEvents()[0] ?? ''
+    const snapshotEntry = JSON.parse(snapshotLine) as { fields: Record<string, unknown> }
+    expect(snapshotEntry.fields).toEqual({ requestType: 'session.open', errorKind: 'TypeError' })
+    expect(lines[0]).toContain('The host operation failed.')
+    expect(lines[0]).toContain('at open')
+    diagnostics.dispose()
+  })
+
+  it('normalizes unknown event names before writing local or public diagnostics', () => {
+    const { lines, channel } = fakeChannel()
+    const diagnostics = new RedactedDiagnostics(channel)
+    const privateEvent = 'secret-CUsers-fixture-private-project-token'
+
+    diagnostics.log('warn', privateEvent, { state: 'connected' })
+
+    const snapshotLine = diagnostics.recentEvents()[0] ?? ''
+    const snapshotEntry = JSON.parse(snapshotLine) as { event: string }
+    expect(snapshotEntry.event).toBe('diagnostic')
+    expect(snapshotLine).not.toContain(privateEvent)
+    expect(lines[0]).toContain('"event":"diagnostic"')
+    expect(lines[0]).not.toContain(privateEvent)
+    diagnostics.dispose()
+  })
 })

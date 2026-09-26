@@ -26,7 +26,11 @@ export class DshWebviewViewProvider implements vscode.WebviewViewProvider, vscod
       enableScripts: true,
       localResourceRoots: [vscode.Uri.joinPath(this.dependencies.extensionUri, 'media')],
     }
-    webviewView.webview.html = createWebviewHtml(webviewView.webview, this.dependencies.extensionUri)
+    webviewView.webview.html = createWebviewHtml(
+      webviewView.webview,
+      this.dependencies.extensionUri,
+      vscode.env.language,
+    )
     this.disposables.push(
       webviewView.webview.onDidReceiveMessage((message: unknown) => {
         // VS Code does not await message listeners. Assimilate both a

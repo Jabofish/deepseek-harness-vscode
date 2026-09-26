@@ -53,8 +53,8 @@ function fileNotFound(): Error {
   return Object.assign(new Error('ENOENT: no such file or directory'), { code: 'FileNotFound' })
 }
 
-function createHarness(root: string): WorkspaceHarness {
-  const folder = { uri: { scheme: 'file', fsPath: root }, name: 'workspace', index: 0 }
+function createHarness(root: string, workspaceScheme = 'file'): WorkspaceHarness {
+  const folder = { uri: { scheme: workspaceScheme, fsPath: root }, name: 'workspace', index: 0 }
   const entries = new Map<string, FakeEntry>()
   const failures = new Map<string, Error>()
   const key = (fsPath: string): string => (process.platform === 'win32' ? fsPath.toLowerCase() : fsPath)
@@ -284,6 +284,31 @@ describe('checkpoint workspace access', () => {
     })
     expect(harness.writeCount()).toBe(0)
     expect(harness.remove).not.toHaveBeenCalled()
+  })
+
+  it('refuses unsupported workspace URI schemes before touching workspace files', async () => {
+    const root = temporaryRoot()
+    const harness = createHarness(root, 'vscode-remote')
+    harness.put('src/note.txt', 1, 'leave this alone')
+    const workspace = createVscodeCheckpointWorkspace(harness.workspace)
+
+    await expect(workspace.readFile(harness.folderId, 'src/note.txt')).rejects.toMatchObject({
+      code: 'CAPABILITY_UNAVAILABLE',
+    })
+    await expect(
+      workspace.writeFile(harness.folderId, 'src/note.txt', new TextEncoder().encode('overwrite')),
+    ).rejects.toMatchObject({ code: 'CAPABILITY_UNAVAILABLE' })
+    await expect(workspace.deleteFile(harness.folderId, 'src/note.txt')).rejects.toMatchObject({
+      code: 'CAPABILITY_UNAVAILABLE',
+    })
+    await expect(
+      workspace.renameFile(harness.folderId, 'src/note.txt', 'src/renamed.txt', true),
+    ).rejects.toMatchObject({ code: 'CAPABILITY_UNAVAILABLE' })
+
+    expect(harness.readFile).not.toHaveBeenCalled()
+    expect(harness.writeCount()).toBe(0)
+    expect(harness.remove).not.toHaveBeenCalled()
+    expect(harness.rename).not.toHaveBeenCalled()
   })
 })
 

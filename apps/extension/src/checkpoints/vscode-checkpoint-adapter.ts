@@ -9,7 +9,7 @@ import type {
 } from './checkpoint-store.js'
 import { WorkspacePathGuard } from '../editor/workspace-path-guard.js'
 
-/** Adapt VS Code's local/remote file API to the checkpoint transaction seam. */
+/** Adapt VS Code's file-scheme workspace API; unsupported URI schemes fail closed. */
 export function createVscodeCheckpointStorage(
   workspace: typeof vscode.workspace = vscode.workspace,
 ): CheckpointStorage {
@@ -51,34 +51,49 @@ export function createVscodeCheckpointWorkspace(
   const guard = new WorkspacePathGuard(workspace)
   return {
     readFile: async (workspaceFolderId, relativePath) => {
-      const resolved = guard.resolve(workspaceFolderId, relativePath)
+      const resolved = resolveCheckpointPath(guard, workspaceFolderId, relativePath)
       const stat = await readStat(workspace, resolved.uri)
       if (stat === undefined) return undefined
       await guard.assertRegularFile(resolved)
       return workspace.fs.readFile(resolved.uri)
     },
     writeFile: async (workspaceFolderId, relativePath, data) => {
-      const resolved = guard.resolve(workspaceFolderId, relativePath)
+      const resolved = resolveCheckpointPath(guard, workspaceFolderId, relativePath)
       const stat = await readStat(workspace, resolved.uri)
       if (stat !== undefined) await guard.assertRegularFile(resolved)
       await workspace.fs.writeFile(resolved.uri, data)
     },
     deleteFile: async (workspaceFolderId, relativePath) => {
-      const resolved = guard.resolve(workspaceFolderId, relativePath)
+      const resolved = resolveCheckpointPath(guard, workspaceFolderId, relativePath)
       const stat = await readStat(workspace, resolved.uri)
       if (stat === undefined) return
       await guard.assertRegularFile(resolved)
       await workspace.fs.delete(resolved.uri, { recursive: false, useTrash: false })
     },
     renameFile: async (workspaceFolderId, sourceRelativePath, destinationRelativePath, overwrite) => {
-      const source = guard.resolve(workspaceFolderId, sourceRelativePath)
+      const source = resolveCheckpointPath(guard, workspaceFolderId, sourceRelativePath)
       await guard.assertRegularFile(source)
-      const destination = guard.resolve(workspaceFolderId, destinationRelativePath)
+      const destination = resolveCheckpointPath(guard, workspaceFolderId, destinationRelativePath)
       const destinationStat = await readStat(workspace, destination.uri)
       if (destinationStat !== undefined) await guard.assertRegularFile(destination)
       await workspace.fs.rename(source.uri, destination.uri, { overwrite })
     },
   }
+}
+
+function resolveCheckpointPath(
+  guard: WorkspacePathGuard,
+  workspaceFolderId: string,
+  relativePath: string,
+): ReturnType<WorkspacePathGuard['resolve']> {
+  const resolved = guard.resolve(workspaceFolderId, relativePath)
+  if (resolved.workspaceFolder.uri.scheme !== 'file')
+    throw new AppError({
+      code: 'CAPABILITY_UNAVAILABLE',
+      message: 'Checkpoint access is unavailable for this workspace.',
+      retryable: false,
+    })
+  return resolved
 }
 
 async function readStat(

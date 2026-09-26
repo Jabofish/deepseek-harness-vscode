@@ -54,6 +54,7 @@ export interface CheckpointStoreOptions {
   readonly workspace: CheckpointWorkspaceAccess
   readonly enabled?: () => boolean
   readonly contentEnabled?: () => boolean
+  readonly workspaceTrusted?: () => boolean
   readonly now?: () => number
   readonly makeId?: () => string
   /**
@@ -78,15 +79,25 @@ interface StoredJournalEntry {
 interface StoredJournal {
   readonly operationId: string
   readonly checkpointId: string
-  readonly state: 'applying' | 'committed' | 'rolled-back' | 'partial-restore'
+  readonly state: 'preparing' | 'applying' | 'committed' | 'rolled-back' | 'partial-restore'
   readonly entries: readonly StoredJournalEntry[]
   readonly appliedPaths: readonly string[]
   /** The paths already drifted from the checkpoint when the restore ran. */
   readonly conflictPaths: readonly string[]
 }
 
+interface StoredPreviewSnapshot {
+  readonly checkpointId: string
+  readonly workspaceFolderId: string
+  readonly expectedRevision: number
+  readonly fileHashes: ReadonlyMap<string, string | undefined>
+  readonly expiresAt: number
+}
+
 const MANIFEST_FILE = 'manifest.json'
 const JOURNAL_FILE = 'journal.json'
+const PREVIEW_SNAPSHOT_TTL_MS = 5 * 60_000
+const MAX_PREVIEW_SNAPSHOTS = 64
 /** Persisted journal states that prove the apply finished; nothing reads them again. */
 const TERMINAL_JOURNAL_STATES: ReadonlySet<string> = new Set(['committed', 'rolled-back', 'partial-restore'])
 
@@ -100,7 +111,12 @@ export class CheckpointStore implements CheckpointRepository {
   private readonly makeId: () => string
   private readonly enabled: () => boolean
   private readonly contentEnabled: () => boolean
+  private readonly workspaceTrusted: () => boolean
+  private readonly previewSnapshots = new Map<string, StoredPreviewSnapshot>()
   private readonly manifests = new Map<string, CheckpointManifest>()
+  private readonly restoringCheckpointIds = new Set<string>()
+  private readonly deletingCheckpointIds = new Set<string>()
+  private readonly preparationCleanupBlocked = new Set<string>()
   private initialized = false
   private initializing: Promise<void> | undefined
 
@@ -109,9 +125,11 @@ export class CheckpointStore implements CheckpointRepository {
     this.makeId = options.makeId ?? (() => randomUUID())
     this.enabled = options.enabled ?? (() => false)
     this.contentEnabled = options.contentEnabled ?? (() => false)
+    this.workspaceTrusted = options.workspaceTrusted ?? (() => false)
   }
 
   public async initialize(signal?: AbortSignal): Promise<void> {
+    this.assertWorkspaceTrusted()
     if (this.initialized) return
     if (this.initializing !== undefined) return this.initializing
     this.initializing = this.loadAndRecover(signal).finally(() => {
@@ -236,10 +254,12 @@ export class CheckpointStore implements CheckpointRepository {
     throwIfAborted(signal)
     const manifest = this.requireManifest(checkpointId)
     const files: CheckpointFilePreview[] = []
+    const fileHashes = new Map<string, string | undefined>()
     for (const file of manifest.files) {
       throwIfAborted(signal)
       const current = await this.options.workspace.readFile(manifest.workspaceFolderId, file.relativePath)
       const currentHash = hashFor(current)
+      fileHashes.set(file.relativePath, currentHash)
       files.push({
         relativePath: file.relativePath,
         presentAtCheckpoint: file.presentAtCheckpoint,
@@ -249,7 +269,14 @@ export class CheckpointStore implements CheckpointRepository {
         byteSize: file.byteSize,
       })
     }
+    const previewId = this.rememberPreviewSnapshot({
+      checkpointId: manifest.checkpointId,
+      workspaceFolderId: manifest.workspaceFolderId,
+      expectedRevision: manifest.expectedRevision,
+      fileHashes,
+    })
     return {
+      previewId,
       summary: checkpointSummary(manifest),
       files,
       conflictCount: files.filter((file) => file.conflict).length,
@@ -260,15 +287,54 @@ export class CheckpointStore implements CheckpointRepository {
     await this.initialize(signal)
     throwIfAborted(signal)
     const manifest = this.requireManifest(checkpointId)
+    if (this.restoringCheckpointIds.has(checkpointId) || this.deletingCheckpointIds.has(checkpointId))
+      throw checkpointConflict('A checkpoint operation is already in progress.')
     if (manifest.state === 'deleted') return
-    await this.options.storage.delete(this.directoryFor(manifest.checkpointId), true)
-    this.manifests.set(manifest.checkpointId, { ...manifest, state: 'deleted' })
-    this.manifests.delete(manifest.checkpointId)
+    this.deletingCheckpointIds.add(checkpointId)
+    try {
+      if (manifest.state === 'partial-restore') {
+        let recoveryJournal: StoredJournal | undefined
+        try {
+          const persistedJournal = await this.readPersisted<unknown>(
+            path.join(this.directoryFor(manifest.checkpointId), JOURNAL_FILE),
+          )
+          if (
+            persistedJournal !== undefined &&
+            (!isStoredJournal(persistedJournal) ||
+              !isJournalForManifest(
+                persistedJournal,
+                manifest,
+                this.directoryFor(manifest.checkpointId),
+                this.options.rootPath,
+              ))
+          )
+            throw storageCorrupt()
+          recoveryJournal = persistedJournal
+        } catch (error) {
+          if (error instanceof AppError) throw error
+          throw storageCorrupt(error)
+        }
+        if (
+          recoveryJournal !== undefined &&
+          recoveryJournal.state !== 'committed' &&
+          recoveryJournal.state !== 'rolled-back'
+        )
+          throw checkpointConflict(
+            'This checkpoint still has pending restore recovery and cannot be deleted.',
+          )
+      }
+      await this.options.storage.delete(this.directoryFor(manifest.checkpointId), true)
+      this.manifests.set(manifest.checkpointId, { ...manifest, state: 'deleted' })
+      this.manifests.delete(manifest.checkpointId)
+    } finally {
+      this.deletingCheckpointIds.delete(checkpointId)
+    }
   }
 
   public async restore(
     checkpointId: string,
     expectedRevision: number,
+    previewId: string,
     conflictPolicy: CheckpointConflictPolicy,
     signal?: AbortSignal,
   ): Promise<CheckpointRestoreOutcome> {
@@ -284,124 +350,170 @@ export class CheckpointStore implements CheckpointRepository {
         message: 'This checkpoint does not contain opt-in content that can be restored.',
         retryable: false,
       })
+    const previewSnapshot = this.requirePreviewSnapshot(previewId, checkpointId, manifest)
+    if (this.preparationCleanupBlocked.has(checkpointId)) throw storageCorrupt()
+    if (this.restoringCheckpointIds.has(checkpointId) || this.deletingCheckpointIds.has(checkpointId))
+      throw checkpointConflict('A checkpoint operation is already in progress.')
+    this.restoringCheckpointIds.add(checkpointId)
 
-    const directory = this.directoryFor(manifest.checkpointId)
-    const current = new Map<string, Uint8Array | undefined>()
-    const conflicts: string[] = []
-    const content = new Map<string, Uint8Array>()
     try {
-      for (const file of manifest.files) {
-        throwIfAborted(signal)
-        const bytes = await this.options.workspace.readFile(manifest.workspaceFolderId, file.relativePath)
-        current.set(file.relativePath, bytes)
-        if (hashFor(bytes) !== file.expectedCurrentHash) conflicts.push(file.relativePath)
-        if (
-          file.presentAtCheckpoint &&
-          file.contentRef !== undefined &&
-          file.checkpointContentHash !== undefined
-        ) {
-          const stored = await this.options.storage
-            .readFile(path.join(directory, file.contentRef))
-            .catch((error) => {
-              throw storageCorrupt(error)
-            })
-          if (stored === undefined || sha256(stored) !== file.checkpointContentHash) throw storageCorrupt()
-          content.set(file.relativePath, stored)
+      const directory = this.directoryFor(manifest.checkpointId)
+      const current = new Map<string, Uint8Array | undefined>()
+      const conflicts: string[] = []
+      const content = new Map<string, Uint8Array>()
+      try {
+        for (const file of manifest.files) {
+          throwIfAborted(signal)
+          const bytes = await this.options.workspace.readFile(manifest.workspaceFolderId, file.relativePath)
+          if (
+            !previewSnapshot.fileHashes.has(file.relativePath) ||
+            hashFor(bytes) !== previewSnapshot.fileHashes.get(file.relativePath)
+          ) {
+            this.previewSnapshots.delete(previewId)
+            throw checkpointConflict('The workspace changed after the preview. Review the checkpoint again.')
+          }
+          current.set(file.relativePath, bytes)
+          if (hashFor(bytes) !== file.expectedCurrentHash) conflicts.push(file.relativePath)
+          if (
+            file.presentAtCheckpoint &&
+            file.contentRef !== undefined &&
+            file.checkpointContentHash !== undefined
+          ) {
+            const stored = await this.options.storage
+              .readFile(path.join(directory, file.contentRef))
+              .catch((error) => {
+                throw storageCorrupt(error)
+              })
+            if (stored === undefined || sha256(stored) !== file.checkpointContentHash) throw storageCorrupt()
+            content.set(file.relativePath, stored)
+          }
         }
+      } catch (error) {
+        if (error instanceof AppError && error.code === 'STORAGE_CORRUPT')
+          await this.markState(manifest, 'corrupt').catch(() => undefined)
+        throw error
       }
-    } catch (error) {
-      if (error instanceof AppError && error.code === 'STORAGE_CORRUPT')
-        await this.markState(manifest, 'corrupt').catch(() => undefined)
-      throw error
-    }
-    if (conflicts.length > 0 && conflictPolicy === 'abort') {
-      await this.markState(manifest, 'stale')
-      throw checkpointConflict(`The workspace changed at ${conflicts[0] ?? 'a checkpoint file'}.`)
-    }
+      if (conflicts.length > 0 && conflictPolicy === 'abort') {
+        await this.markState(manifest, 'stale')
+        throw checkpointConflict(`The workspace changed at ${conflicts[0] ?? 'a checkpoint file'}.`)
+      }
 
-    // Every listed file is a target: a file that still matches the checkpoint is
-    // written back byte-identical, and a file that changed is the one the user
-    // is asking to put back. Skipping the changed files left a restore that
-    // could not change any file at all.
-    const targets = manifest.files
-    const operationId = `dsh-restore-${this.makeId()}`
-    const entries: StoredJournalEntry[] = []
-    for (const [index, file] of targets.entries()) {
-      throwIfAborted(signal)
-      const bytes = current.get(file.relativePath)
-      const backupRef = bytes === undefined ? undefined : `backup-${index}.bin`
-      if (backupRef !== undefined && bytes !== undefined)
-        await this.writeAtomic(path.join(directory, backupRef), bytes)
-      entries.push({
-        relativePath: file.relativePath,
-        ...(backupRef === undefined ? {} : { backupRef }),
-        ...(file.presentAtCheckpoint
-          ? { tempPath: `${file.relativePath}.dsh-vscode-tmp-${operationId}` }
-          : {}),
-        originalPresent: bytes !== undefined,
-      })
-    }
-    let journal: StoredJournal = {
-      operationId,
-      checkpointId: manifest.checkpointId,
-      state: 'applying',
-      entries,
-      appliedPaths: [],
-      conflictPaths: conflicts,
-    }
-    await this.writeAtomic(path.join(directory, JOURNAL_FILE), encodePersisted(journal))
-    try {
-      for (const file of targets) {
+      // Every listed file is a target: a file that still matches the checkpoint is
+      // written back byte-identical, and a file that changed is the one the user
+      // is asking to put back. Skipping the changed files left a restore that
+      // could not change any file at all.
+      const targets = manifest.files
+      const operationId = `dsh-restore-${this.makeId()}`
+      const entries: StoredJournalEntry[] = []
+      for (const [index, file] of targets.entries()) {
+        const bytes = current.get(file.relativePath)
+        const backupRef = bytes === undefined ? undefined : `backup-${index}.bin`
+        entries.push({
+          relativePath: file.relativePath,
+          ...(backupRef === undefined ? {} : { backupRef }),
+          ...(file.presentAtCheckpoint
+            ? { tempPath: `${file.relativePath}.dsh-vscode-tmp-${operationId}` }
+            : {}),
+          originalPresent: bytes !== undefined,
+        })
+      }
+      let journal: StoredJournal = {
+        operationId,
+        checkpointId: manifest.checkpointId,
+        state: 'preparing',
+        entries,
+        appliedPaths: [],
+        conflictPaths: conflicts,
+      }
+      await this.writeAtomic(path.join(directory, JOURNAL_FILE), encodePersisted(journal))
+      try {
+        for (const entry of entries) {
+          throwIfAborted(signal)
+          if (entry.backupRef === undefined) continue
+          const bytes = current.get(entry.relativePath)
+          if (bytes === undefined) throw storageCorrupt()
+          await this.writeAtomic(path.join(directory, entry.backupRef), bytes)
+        }
         throwIfAborted(signal)
-        const entry = entries.find((candidate) => candidate.relativePath === file.relativePath)
-        if (entry === undefined) throw storageCorrupt()
-        const latest = await this.options.workspace.readFile(manifest.workspaceFolderId, file.relativePath)
-        // The scan above read every file; this re-read only asks whether one
-        // moved since, which would make the bytes just backed up stale. It must
-        // not ask whether the file still matches the checkpoint — that is what
-        // the caller already decided.
-        if (hashFor(latest) !== hashFor(current.get(file.relativePath)))
-          throw checkpointConflict('A file changed during restore.')
-        // Persist ownership of the target before changing it. If the next
-        // write/rename is interrupted, startup recovery knows to restore the
-        // backed-up original even though the apply did not finish.
-        journal = { ...journal, appliedPaths: [...journal.appliedPaths, file.relativePath] }
-        await this.writeAtomic(path.join(directory, JOURNAL_FILE), encodePersisted(journal))
-        if (file.presentAtCheckpoint) {
-          const bytes = content.get(file.relativePath)
-          if (bytes === undefined || entry.tempPath === undefined) throw storageCorrupt()
-          await this.options.workspace.writeFile(manifest.workspaceFolderId, entry.tempPath, bytes)
-          await this.options.workspace.renameFile(
-            manifest.workspaceFolderId,
-            entry.tempPath,
-            file.relativePath,
-            true,
+      } catch (error) {
+        try {
+          await this.cleanupPreparingJournal(directory, journal)
+        } catch {
+          this.preparationCleanupBlocked.add(checkpointId)
+          this.reportStorageIssue(directory, 'journal')
+        }
+        throw normalizeStorageError(error)
+      }
+      try {
+        for (const file of targets) {
+          throwIfAborted(signal)
+          const entry = entries.find((candidate) => candidate.relativePath === file.relativePath)
+          if (entry === undefined) throw storageCorrupt()
+          const latest = await this.options.workspace.readFile(manifest.workspaceFolderId, file.relativePath)
+          // The scan above read every file; this re-read only asks whether one
+          // moved since, which would make the bytes just backed up stale. It must
+          // not ask whether the file still matches the checkpoint — that is what
+          // the caller already decided.
+          if (hashFor(latest) !== hashFor(current.get(file.relativePath)))
+            throw checkpointConflict('A file changed during restore.')
+          // Persist ownership of the target before changing it. If the next
+          // write/rename is interrupted, startup recovery knows to restore the
+          // backed-up original even though the apply did not finish.
+          const nextJournal: StoredJournal = {
+            ...journal,
+            state: 'applying',
+            appliedPaths: [...journal.appliedPaths, file.relativePath],
+          }
+          await this.writeAtomic(path.join(directory, JOURNAL_FILE), encodePersisted(nextJournal))
+          journal = nextJournal
+          if (file.presentAtCheckpoint) {
+            const bytes = content.get(file.relativePath)
+            if (bytes === undefined || entry.tempPath === undefined) throw storageCorrupt()
+            await this.options.workspace.writeFile(manifest.workspaceFolderId, entry.tempPath, bytes)
+            await this.options.workspace.renameFile(
+              manifest.workspaceFolderId,
+              entry.tempPath,
+              file.relativePath,
+              true,
+            )
+          } else {
+            await this.options.workspace.deleteFile(manifest.workspaceFolderId, file.relativePath)
+          }
+        }
+        journal = { ...journal, state: 'committed' }
+        await this.cleanupJournal(directory, journal, manifest)
+        this.previewSnapshots.delete(previewId)
+        return {
+          summary: checkpointSummary(manifest),
+          state: 'completed',
+          restoredPaths: journal.appliedPaths,
+        }
+      } catch (error) {
+        if (journal.state === 'preparing') {
+          try {
+            await this.cleanupPreparingJournal(directory, journal)
+          } catch {
+            this.preparationCleanupBlocked.add(checkpointId)
+            this.reportStorageIssue(directory, 'journal')
+          }
+          throw normalizeStorageError(error)
+        }
+        const rollback = await this.rollback(directory, manifest, journal)
+        if (!rollback.complete) {
+          const partial = { ...manifest, state: 'partial-restore' as const }
+          await this.writeAtomic(path.join(directory, MANIFEST_FILE), encodePersisted(partial)).catch(
+            () => undefined,
           )
-        } else {
-          await this.options.workspace.deleteFile(manifest.workspaceFolderId, file.relativePath)
+          this.manifests.set(partial.checkpointId, partial)
+          throw checkpointPartial()
         }
-      }
-      journal = { ...journal, state: 'committed' }
-      await this.cleanupJournal(directory, journal, manifest)
-      return {
-        summary: checkpointSummary(manifest),
-        state: 'completed',
-        restoredPaths: journal.appliedPaths,
-      }
-    } catch (error) {
-      const rollback = await this.rollback(directory, manifest, journal)
-      if (!rollback.complete) {
-        const partial = { ...manifest, state: 'partial-restore' as const }
-        await this.writeAtomic(path.join(directory, MANIFEST_FILE), encodePersisted(partial)).catch(
+        await this.cleanupJournal(directory, { ...journal, state: 'rolled-back' }, manifest).catch(
           () => undefined,
         )
-        this.manifests.set(partial.checkpointId, partial)
-        throw checkpointPartial()
+        throw normalizeStorageError(error)
       }
-      await this.cleanupJournal(directory, { ...journal, state: 'rolled-back' }, manifest).catch(
-        () => undefined,
-      )
-      throw normalizeStorageError(error)
+    } finally {
+      this.restoringCheckpointIds.delete(checkpointId)
     }
   }
 
@@ -412,19 +524,55 @@ export class CheckpointStore implements CheckpointRepository {
       throwIfAborted(signal)
       if (entry.kind !== 'directory' || !/^checkpoint-[a-f0-9]{32}$/u.test(entry.name)) continue
       const directory = path.join(this.options.rootPath, entry.name)
-      const journal = await this.readPersisted<StoredJournal>(path.join(directory, JOURNAL_FILE)).catch(
-        () => {
+      let journal: StoredJournal | undefined
+      try {
+        const persistedJournal = await this.readPersisted<unknown>(path.join(directory, JOURNAL_FILE))
+        if (persistedJournal !== undefined && !isStoredJournal(persistedJournal)) throw storageCorrupt()
+        journal = persistedJournal
+      } catch {
+        // Without a trustworthy journal, a readable manifest cannot prove that
+        // a previous restore completed or was rolled back. Keep the checkpoint
+        // unavailable and preserve the damaged journal for recovery tooling.
+        this.reportStorageIssue(directory, 'journal')
+        continue
+      }
+      let manifest: CheckpointManifest | undefined
+      try {
+        const persistedManifest = await this.readPersisted<unknown>(path.join(directory, MANIFEST_FILE))
+        if (persistedManifest !== undefined && !isManifest(persistedManifest)) throw storageCorrupt()
+        manifest = persistedManifest
+      } catch {
+        this.reportStorageIssue(directory, 'manifest')
+        continue
+      }
+      if (journal !== undefined) {
+        if (
+          manifest === undefined ||
+          !isJournalForManifest(journal, manifest, directory, this.options.rootPath)
+        ) {
           this.reportStorageIssue(directory, 'journal')
-          return undefined
-        },
-      )
-      let manifest = await this.readPersisted<CheckpointManifest>(path.join(directory, MANIFEST_FILE)).catch(
-        () => {
-          this.reportStorageIssue(directory, 'manifest')
-          return undefined
-        },
-      )
-      if (journal?.state === 'applying' && manifest !== undefined) {
+          continue
+        }
+      }
+      if (journal?.state === 'preparing') {
+        if (manifest !== undefined) {
+          if (
+            manifest.checkpointId === journal.checkpointId &&
+            this.directoryFor(manifest.checkpointId) === directory &&
+            isPreparingJournal(journal)
+          ) {
+            try {
+              await this.cleanupPreparingJournal(directory, journal)
+            } catch {
+              this.preparationCleanupBlocked.add(manifest.checkpointId)
+              this.reportStorageIssue(directory, 'journal')
+            }
+          } else {
+            this.preparationCleanupBlocked.add(manifest.checkpointId)
+            this.reportStorageIssue(directory, 'journal')
+          }
+        } else this.reportStorageIssue(directory, 'journal')
+      } else if (journal?.state === 'applying' && manifest !== undefined) {
         const rollback = await this.rollback(directory, manifest, journal)
         if (rollback.complete)
           await this.cleanupJournal(directory, { ...journal, state: 'rolled-back' }, manifest)
@@ -438,9 +586,7 @@ export class CheckpointStore implements CheckpointRepository {
       } else if (
         journal !== undefined &&
         manifest !== undefined &&
-        TERMINAL_JOURNAL_STATES.has(journal.state) &&
-        Array.isArray(journal.entries) &&
-        isManifest(manifest)
+        TERMINAL_JOURNAL_STATES.has(journal.state)
       ) {
         // The apply already reached a terminal state, so only a crash between
         // the journal and manifest writes, or a failed delete, kept these files
@@ -465,8 +611,7 @@ export class CheckpointStore implements CheckpointRepository {
         if (reclaimable) await this.cleanupJournal(directory, journal, manifest)
       }
       if (manifest === undefined) continue
-      if (isManifest(manifest)) this.manifests.set(manifest.checkpointId, manifest)
-      else this.reportStorageIssue(directory, 'manifest')
+      this.manifests.set(manifest.checkpointId, manifest)
     }
     this.initialized = true
   }
@@ -533,6 +678,30 @@ export class CheckpointStore implements CheckpointRepository {
           .catch(() => undefined)
     }
     await this.options.storage.delete(path.join(directory, JOURNAL_FILE), false).catch(() => undefined)
+  }
+
+  /** A preparing transaction has not changed the workspace; reclaim its storage only. */
+  private async cleanupPreparingJournal(directory: string, journal: StoredJournal): Promise<void> {
+    if (!isPreparingJournal(journal)) throw storageCorrupt()
+    const backupRefs = journal.entries.flatMap((entry) =>
+      entry.backupRef === undefined ? [] : [entry.backupRef],
+    )
+    const files = await this.options.storage.list(directory)
+    const cleanupPaths: string[] = []
+    let journalPath: string | undefined
+    for (const file of files) {
+      if (file.kind !== 'file') continue
+      if (file.name === JOURNAL_FILE) {
+        journalPath = path.join(directory, file.name)
+        continue
+      }
+      const belongsToPreparation =
+        /^journal\.json\.tmp-[A-Za-z0-9_-]+$/u.test(file.name) ||
+        backupRefs.some((backupRef) => file.name === backupRef || file.name.startsWith(`${backupRef}.tmp-`))
+      if (belongsToPreparation) cleanupPaths.push(path.join(directory, file.name))
+    }
+    for (const cleanupPath of cleanupPaths) await this.options.storage.delete(cleanupPath, false)
+    if (journalPath !== undefined) await this.options.storage.delete(journalPath, false)
   }
 
   private async markState(manifest: CheckpointManifest, state: CheckpointManifest['state']): Promise<void> {
@@ -613,6 +782,49 @@ export class CheckpointStore implements CheckpointRepository {
       retryable: false,
     })
   }
+
+  private assertWorkspaceTrusted(): void {
+    if (this.workspaceTrusted()) return
+    throw new AppError({
+      code: 'PERMISSION_DENIED',
+      message: 'Trust this workspace before accessing checkpoint files.',
+      retryable: false,
+    })
+  }
+
+  private rememberPreviewSnapshot(input: Omit<StoredPreviewSnapshot, 'expiresAt'>): string {
+    const now = this.now()
+    for (const [previewId, snapshot] of this.previewSnapshots)
+      if (snapshot.expiresAt <= now) this.previewSnapshots.delete(previewId)
+    while (this.previewSnapshots.size >= MAX_PREVIEW_SNAPSHOTS) {
+      const oldest = this.previewSnapshots.keys().next().value
+      if (oldest === undefined) break
+      this.previewSnapshots.delete(oldest)
+    }
+    const previewId = `dsh-preview-${this.makeId()}`
+    this.previewSnapshots.set(previewId, { ...input, expiresAt: now + PREVIEW_SNAPSHOT_TTL_MS })
+    return previewId
+  }
+
+  private requirePreviewSnapshot(
+    previewId: string,
+    checkpointId: string,
+    manifest: CheckpointManifest,
+  ): StoredPreviewSnapshot {
+    const now = this.now()
+    for (const [currentId, snapshot] of this.previewSnapshots)
+      if (snapshot.expiresAt <= now) this.previewSnapshots.delete(currentId)
+    const snapshot = this.previewSnapshots.get(previewId)
+    if (
+      snapshot === undefined ||
+      snapshot.checkpointId !== checkpointId ||
+      snapshot.workspaceFolderId !== manifest.workspaceFolderId ||
+      snapshot.expectedRevision !== manifest.expectedRevision ||
+      snapshot.fileHashes.size !== manifest.files.length
+    )
+      throw checkpointConflict('The restore preview expired. Review the checkpoint again.')
+    return snapshot
+  }
 }
 
 function validateCreateInput(input: CheckpointCreateInput): void {
@@ -669,6 +881,108 @@ function isManifest(value: unknown): value is CheckpointManifest {
       value.state === 'partial-restore' ||
       value.state === 'deleted')
   )
+}
+
+function isStoredJournal(value: unknown): value is StoredJournal {
+  if (!isRecord(value)) return false
+  const entries = value.entries
+  const appliedPaths = value.appliedPaths
+  const conflictPaths = value.conflictPaths
+  if (
+    typeof value.operationId !== 'string' ||
+    !/^[A-Za-z0-9_-]{1,128}$/u.test(value.operationId) ||
+    typeof value.checkpointId !== 'string' ||
+    value.checkpointId.trim() === '' ||
+    (value.state !== 'preparing' &&
+      value.state !== 'applying' &&
+      value.state !== 'committed' &&
+      value.state !== 'rolled-back' &&
+      value.state !== 'partial-restore') ||
+    !Array.isArray(entries) ||
+    !Array.isArray(appliedPaths) ||
+    !Array.isArray(conflictPaths)
+  )
+    return false
+
+  const relativePaths = new Set<string>()
+  const orderedRelativePaths: string[] = []
+  const backupRefs = new Set<string>()
+  for (const entry of entries) {
+    if (!isRecord(entry)) return false
+    const hasBackupRef = Object.hasOwn(entry, 'backupRef')
+    const hasTempPath = Object.hasOwn(entry, 'tempPath')
+    if (
+      typeof entry.relativePath !== 'string' ||
+      !isCanonicalWorkspaceRelativePath(entry.relativePath) ||
+      typeof entry.originalPresent !== 'boolean' ||
+      entry.originalPresent !== hasBackupRef ||
+      (hasBackupRef &&
+        (typeof entry.backupRef !== 'string' ||
+          !/^backup-\d+\.bin$/u.test(entry.backupRef) ||
+          backupRefs.has(entry.backupRef))) ||
+      (hasTempPath && typeof entry.tempPath !== 'string') ||
+      relativePaths.has(entry.relativePath)
+    )
+      return false
+    if (typeof entry.backupRef === 'string') backupRefs.add(entry.backupRef)
+    relativePaths.add(entry.relativePath)
+    orderedRelativePaths.push(entry.relativePath)
+  }
+
+  const validJournalPaths = (paths: unknown): paths is string[] =>
+    Array.isArray(paths) &&
+    paths.every(
+      (relativePath) =>
+        typeof relativePath === 'string' &&
+        isCanonicalWorkspaceRelativePath(relativePath) &&
+        relativePaths.has(relativePath),
+    ) &&
+    new Set(paths).size === paths.length
+
+  const appliedPathPrefix =
+    Array.isArray(appliedPaths) &&
+    appliedPaths.every((relativePath, index) => orderedRelativePaths[index] === relativePath)
+  const hasAppliedPaths = Array.isArray(appliedPaths) && appliedPaths.length > 0
+  const appliedEveryEntry = Array.isArray(appliedPaths) && appliedPaths.length === entries.length
+
+  return (
+    validJournalPaths(appliedPaths) &&
+    validJournalPaths(conflictPaths) &&
+    appliedPathPrefix &&
+    ((value.state === 'preparing' && appliedPaths.length === 0) ||
+      (value.state === 'applying' && hasAppliedPaths) ||
+      (value.state === 'committed' && appliedEveryEntry) ||
+      ((value.state === 'rolled-back' || value.state === 'partial-restore') && hasAppliedPaths))
+  )
+}
+
+function isJournalForManifest(
+  journal: StoredJournal,
+  manifest: CheckpointManifest,
+  directory: string,
+  rootPath: string,
+): boolean {
+  if (
+    journal.checkpointId !== manifest.checkpointId ||
+    path.join(rootPath, `checkpoint-${sha256(Buffer.from(journal.checkpointId)).slice(0, 32)}`) !==
+      directory ||
+    journal.entries.length !== manifest.files.length
+  )
+    return false
+  return manifest.files.every((file, index) => {
+    const entry = journal.entries[index]
+    return (
+      entry !== undefined &&
+      entry.relativePath === file.relativePath &&
+      entry.backupRef === (entry.originalPresent ? `backup-${index}.bin` : undefined) &&
+      entry.tempPath ===
+        (file.presentAtCheckpoint ? `${file.relativePath}.dsh-vscode-tmp-${journal.operationId}` : undefined)
+    )
+  })
+}
+
+function isPreparingJournal(value: unknown): value is StoredJournal {
+  return isStoredJournal(value) && value.state === 'preparing'
 }
 
 function isCheckpointFile(value: unknown): value is CheckpointFile {

@@ -64,16 +64,18 @@ Fixture 只留结构必需字段，路径、Prompt、名称、模型输出和 ke
 
 ### 隔离真实 DSH
 
-只有明确启用才运行 `tests/live-dsh/`；测试创建独立工作区与 DSH home，只启动并停止自己持有的进程，完成 Cookie 交换、精确 Adapter 探测、Session/Workspace 读取、订阅与端口释放。运行包版本必须显式记录，不能用一条未标明版本的 smoke 证明整个矩阵。
+只有明确启用才运行 `tests/live-dsh/`；测试使用独立工作区和隔离的 DSH home（默认新建空目录，可选使用脱敏、可丢弃的预置历史夹具），只启动并停止自己持有的进程，完成 Cookie 交换、精确 Adapter 探测、Session/Workspace 读取、订阅与端口释放。运行包版本必须显式记录，不能用一条未标明版本的 smoke 证明整个矩阵。默认空 home 只覆盖不依赖历史的路径；读取历史的测试只有在显式提供位于系统临时目录中的预置 home 后才运行。
 
 ```powershell
 $env:DSH_LIVE_SMOKE = '1'
 $env:DSH_LIVE_RUNTIME = '<dsh-executable>'
 $env:DSH_LIVE_RUNTIME_VERSION = '<exact-supported-version>'
+# Optional: a sanitized, disposable DSH home stored directly under the OS temp directory.
+$env:DSH_LIVE_HISTORY_FIXTURE_HOME = '<preseeded-temp-dsh-home>'
 pnpm exec vitest run tests/live-dsh
 ```
 
-可执行文件可以是绝对路径或 PATH 中可解析的命令；Windows 的 `.cmd` shim 必须由 harness 解析到可执行入口，不能以 `shell: true` 绕过。Live 文件串行运行，跨 shell 的 managed lock 防止并发启动；测试失败仍须释放自己的资源。空隔离 home 不具备历史会话或非空 Job 时，只声明实际覆盖的路径，不把跳过的路径标为通过。
+可执行文件可以是绝对路径或 PATH 中可解析的命令；Windows 的 `.cmd` shim 必须由 harness 解析到可执行入口，不能以 `shell: true` 绕过。Live 文件串行运行，跨 shell 的 managed lock 防止并发启动；测试失败仍须释放自己的资源。历史夹具只能是系统临时目录的直接子目录，不得指向用户生产 profile；不提供时，历史会话、跨页读取、工具卡、导出、子代理子会话和变更审阅测试会跳过，不能把跳过记录算成通过或能力证据。
 
 ### VS Code 现场验证
 

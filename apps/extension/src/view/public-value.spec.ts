@@ -4,6 +4,13 @@ import { rc6Mapper } from '@dsh-vscode/dsh-adapter'
 import { publicWorkspaceRelativePath, publicWorkspaceSummary, sanitizePublicValue } from './public-value.js'
 
 describe('public Webview value projection', () => {
+  it('retains the bounded session-search signal for the Webview', () => {
+    expect(sanitizePublicValue({ items: [], searchHasMore: true })).toEqual({
+      items: [],
+      searchHasMore: true,
+    })
+  })
+
   it('removes workspace paths while retaining opaque membership ids', () => {
     expect(
       publicWorkspaceSummary({

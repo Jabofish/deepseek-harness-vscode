@@ -38,7 +38,9 @@ export class NavigationService implements NavigationPort, vscode.Disposable {
     await this.guard.assertRegularFile(resolved)
     this.assertUsable(signal)
     const document = await this.workspace.openTextDocument(resolved.uri)
+    this.assertUsable(signal)
     const editor = await this.window.showTextDocument(document, { preview: true, preserveFocus })
+    this.assertUsable(signal)
     if (range !== undefined) {
       const vscodeRange = this.guard.clampRange(document, range)
       editor.selection = new vscode.Selection(vscodeRange.start, vscodeRange.end)
@@ -86,6 +88,7 @@ export class NavigationService implements NavigationPort, vscode.Disposable {
     this.assertUsable(signal)
     const resolved = this.guard.resolve(workspaceFolderId, relativePath)
     await this.guard.assertRegularFile(resolved)
+    this.assertUsable(signal)
     if (before.length > 262_144 || (after?.length ?? 0) > 262_144)
       throw new AppError({
         code: 'CONTEXT_LIMIT',

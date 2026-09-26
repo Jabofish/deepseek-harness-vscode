@@ -1,10 +1,141 @@
 import { describe, expect, it, vi } from 'vitest'
 import { AppError } from '@dsh-vscode/domain'
+import { Rc6CredentialRepository, type DshTransport } from '@dsh-vscode/dsh-adapter'
 import { featureResponseSchema, hostEnvelopeSchema } from '@dsh-vscode/webview-protocol'
 
 import { WebviewMessageRouter } from './message-router.js'
 
+describe('WebviewMessageRouter custom provider validation', () => {
+  it.each([
+    ['unsupported input type', { input: ['audio'] }],
+    ['non-array input modalities', { inputModalities: 'image' }],
+    ['empty explicit input modalities', { inputModalities: [] }],
+  ])('rejects %s before invoking the Host route', async (_name, modelMetadata) => {
+    const handleRequest = vi.fn().mockResolvedValue({ profileCommitted: true })
+    const postMessage = vi.fn().mockResolvedValue(true)
+    const router = new WebviewMessageRouter({ postMessage, handleRequest })
+
+    await router.handle({
+      protocolVersion: 1,
+      message: {
+        type: 'provider.custom.create',
+        requestId: 'provider-create-1',
+        payload: {
+          settingsNamespace: 'llm-pi-ai',
+          collectionPath: ['providers'],
+          providerId: 'gateway',
+          api: 'openai-completions',
+          baseUrl: 'http://127.0.0.1:9000/v1',
+          models: [{ id: 'gateway-chat', ...modelMetadata }],
+          expectedRevision: 7,
+        },
+      },
+    })
+
+    expect(handleRequest).not.toHaveBeenCalled()
+    expect(postMessage).not.toHaveBeenCalled()
+  })
+})
+
 describe('WebviewMessageRouter command diagnostics', () => {
+  it.each([
+    ['provider.secret.configure', 'store'],
+    ['provider.secret.remove', 'remove'],
+  ])('keeps raw credential details out of serialized %s errors', async (requestType, operation) => {
+    const posted: unknown[] = []
+    const password = 'password=credential-secret-value'
+    const rejection = new AppError({
+      code: 'PERMISSION_DENIED',
+      message: `credential provider rejected ${password}`,
+      retryable: false,
+      cause: new Error(`credential backend detail ${password}`),
+      context: { diagnostic: password },
+    })
+    const transport: DshTransport = {
+      request: <TResponse>(method: string): Promise<TResponse> => {
+        if (method === 'credentials.set' || method === 'credentials.unset') return Promise.reject(rejection)
+        const value = {
+          'llm.providers': {
+            providers: [
+              {
+                provider: 'openai',
+                displayName: 'OpenAI',
+                settingsNs: 'llm-pi-ai',
+                settingsPath: [],
+                active: true,
+              },
+            ],
+          },
+          'settings.describe': {
+            writable: true,
+            hasDocument: true,
+            namespaces: [
+              {
+                ns: 'llm-pi-ai',
+                schema: {
+                  uid: 1,
+                  refs: {
+                    1: { type: 'object', dict: { apiKeyEnv: 2 } },
+                    2: { type: 'string', meta: { role: 'credential-ref' } },
+                  },
+                },
+                value: { apiKeyEnv: 'OPENAI_API_KEY' },
+                applies: 'live',
+                secrets: [],
+                revision: 0,
+              },
+            ],
+          },
+          'credentials.describe': {
+            credentials: { OPENAI_API_KEY: { configured: false, writable: true } },
+          },
+        }[method]
+        return Promise.resolve({ result: { ok: true, value } } as TResponse)
+      },
+      remoteRequest: <TResponse>() => Promise.reject<TResponse>(new Error('unexpected Remote request')),
+      openEventStream: async function* () {},
+      close: () => Promise.resolve(),
+    }
+    const credentials = new Rc6CredentialRepository(transport)
+    const router = new WebviewMessageRouter({
+      postMessage: (message) => {
+        posted.push(message)
+        return Promise.resolve(true)
+      },
+      handleRequest: () =>
+        operation === 'store'
+          ? credentials.setSecret('openai', 'apiKeyEnv', password)
+          : credentials.removeSecret('openai', 'apiKeyEnv'),
+    })
+
+    await router.handle({
+      protocolVersion: 1,
+      message: {
+        type: requestType,
+        requestId: `credential-${operation}-error`,
+        payload: { providerId: 'openai', field: 'apiKeyEnv' },
+      },
+    })
+
+    const response = posted[0] as {
+      readonly type?: string
+      readonly requestId?: string
+      readonly ok?: boolean
+      readonly error?: { readonly code?: string; readonly message?: string; readonly retryable?: boolean }
+    }
+    expect(response).toMatchObject({
+      type: 'response',
+      requestId: `credential-${operation}-error`,
+      ok: false,
+      error: { code: 'PERMISSION_DENIED', retryable: false },
+    })
+    expect(response.error?.message).not.toContain(password)
+    expect(response.error?.message).not.toContain('password')
+    expect(JSON.stringify(posted[0])).not.toContain(password)
+    expect(JSON.stringify(posted[0])).not.toContain('password')
+    expect(hostEnvelopeSchema.safeParse({ protocolVersion: 1, message: response }).success).toBe(true)
+  })
+
   it('routes a strict feature request to the feature handler', async () => {
     const posted: unknown[] = []
     const handleFeatureRequest = vi.fn().mockResolvedValue({ kind: 'empty' })

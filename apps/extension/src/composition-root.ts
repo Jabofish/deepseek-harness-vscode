@@ -1,7 +1,7 @@
 import * as vscode from 'vscode'
 import { createHash } from 'node:crypto'
 import { readFileSync, realpathSync } from 'node:fs'
-import { access, mkdir, mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, readFile, stat } from 'node:fs/promises'
 import { execFile, spawn } from 'node:child_process'
 import { homedir } from 'node:os'
 import { promisify } from 'node:util'
@@ -115,6 +115,7 @@ import {
 import { registerCommands } from './commands/register-commands.js'
 import { createAdapterOptions } from './backend/adapter-options.js'
 import { diagnosticLevel, RedactedDiagnostics } from './backend/diagnostics.js'
+import { runCleanupSequence } from './backend/cleanup-sequence.js'
 import { CompanionRegistryDiscoveryProvider } from './backend/discovery/companion-provider.js'
 import { ConfiguredPortDiscoveryProvider } from './backend/discovery/configured-provider.js'
 import { DefaultPortDiscoveryProvider } from './backend/discovery/default-port-provider.js'
@@ -124,10 +125,21 @@ import { LinuxProcessDiscoveryProvider } from './backend/discovery/linux-process
 import { MacOsProcessDiscoveryProvider } from './backend/discovery/macos-process-provider.js'
 import { WindowsProcessDiscoveryProvider } from './backend/discovery/windows-process-provider.js'
 import { DshProcessSupervisor, type SpawnedChild } from './backend/process-supervisor.js'
-import { isManagedTemporaryWorkspacePath } from './backend/path-safety.js'
+import {
+  isManagedTemporaryWorkspacePath,
+  isManagedTemporaryWorkspacePathMissing,
+} from './backend/path-safety.js'
 import { DshRuntimeLocator, readStoredRuntimePath } from './backend/runtime-locator.js'
 import { isAbsoluteFilePath, resolveNpmExecutable, runtimePathEntries } from './backend/runtime-paths.js'
-import { TemporaryWorkspaceManager, type StoredTemporaryWorkspace } from './backend/temporary-workspace.js'
+import {
+  TemporaryWorkspaceManager,
+  type LegacyTemporaryWorkspaceReference,
+  type StoredTemporaryWorkspace,
+} from './backend/temporary-workspace.js'
+import {
+  isTemporaryWorkspaceOwnershipToken,
+  TemporaryWorkspaceOwnershipStore,
+} from './backend/temporary-workspace-ownership.js'
 import { resolveWindowsShim } from './backend/windows-shim.js'
 import { normalizeLoopbackUrl, VsCodeConfigurationSource } from './config/configuration-source.js'
 import { DSH_DOCUMENTATION_URL, DSH_PACKAGE, OUTPUT_CHANNEL_NAME } from './constants.js'
@@ -512,37 +524,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     exportFileSystem: createExportFileSystem(vscode),
     authCookie: (endpoint) => endpointCookies.get(endpoint.baseUrl),
   })
-  const rememberReadyEndpoint = async (endpoint: BackendEndpoint, launchUrl?: string): Promise<void> => {
-    // A managed port can be reused by a fresh DSH process. Never let a cookie
-    // from the previous process authorize the new endpoint.
-    endpointCookies.delete(endpoint.baseUrl)
-    endpointLaunchUrls.delete(endpoint.baseUrl)
-    if (launchUrl === undefined) return
-    let response: Response
-    try {
-      response = await globalThis.fetch(launchUrl, { method: 'GET', redirect: 'manual' })
-    } catch {
-      throw new AppError({
-        code: 'BACKEND_UNREACHABLE',
-        message: 'The managed DSH web login could not be completed.',
-        retryable: true,
-      })
-    }
-    const headers = response.headers as Headers & { getSetCookie?: () => string[] }
-    const setCookies = headers.getSetCookie?.() ?? [headers.get('set-cookie') ?? '']
-    const cookie = setCookies
-      .map((value) => value.split(';', 1)[0]?.trim() ?? '')
-      .find((value) => /^[^=;\s]+=[^;\r\n]+$/u.test(value))
-    if (response.status < 300 || response.status >= 400 || cookie === undefined) {
-      throw new AppError({
-        code: 'BACKEND_UNREACHABLE',
-        message: 'The managed DSH web login returned no session cookie.',
-        retryable: true,
-      })
-    }
-    endpointCookies.set(endpoint.baseUrl, cookie)
-    endpointLaunchUrls.set(endpoint.baseUrl, launchUrl)
-  }
+  const rememberReadyEndpoint = createManagedEndpointLoginHandler(endpointCookies, endpointLaunchUrls)
   const alpha2Adapter = new Alpha2VersionAdapter(adapterOptions)
   const alpha132Adapter = new Alpha132VersionAdapter(adapterOptions)
   const alpha151Adapter = new Alpha151VersionAdapter(adapterOptions)
@@ -703,22 +685,39 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
   const providerSettingsUseCases = new ProviderSettingsUseCases(backendService)
   const advancedUseCases = new AdvancedAgentUseCases(backendService)
   const exportUseCases = new ExportUseCases(backendService)
-  const initialTemporaryWorkspaceReference = readStoredTemporaryWorkspace(
-    context.globalState.get<unknown>(TEMPORARY_WORKSPACE_STATE_KEY),
+  const storedTemporaryWorkspaceState = context.globalState.get<unknown>(TEMPORARY_WORKSPACE_STATE_KEY)
+  const initialTemporaryWorkspaceReference = readStoredTemporaryWorkspace(storedTemporaryWorkspaceState)
+  const initialLegacyTemporaryWorkspaceReference = readLegacyTemporaryWorkspace(storedTemporaryWorkspaceState)
+  const temporaryWorkspaceOwnershipStore = new TemporaryWorkspaceOwnershipStore(
+    context.globalStorageUri.fsPath,
   )
   const temporaryWorkspaceManager = new TemporaryWorkspaceManager({
     rootPath: context.globalStorageUri.fsPath,
     ...(initialTemporaryWorkspaceReference === undefined
       ? {}
       : { initialReference: initialTemporaryWorkspaceReference }),
+    ...(initialLegacyTemporaryWorkspaceReference === undefined
+      ? {}
+      : { initialLegacyReference: initialLegacyTemporaryWorkspaceReference }),
     createWorkspace: (input, signal) => workspaceUseCases.create(input, signal),
     ensureDirectory: async (directoryPath) => {
       await mkdir(directoryPath, { recursive: true })
     },
+    createDirectoryExclusive: (directoryPath) =>
+      temporaryWorkspaceOwnershipStore.createDirectoryExclusive(directoryPath),
     createTemporaryDirectory: (prefix) => mkdtemp(prefix),
-    removeDirectory: (directoryPath) => rm(directoryPath, { recursive: true, force: true }),
+    createOwnershipMarker: (directoryPath, expectedOwnershipToken) =>
+      temporaryWorkspaceOwnershipStore.create(directoryPath, expectedOwnershipToken),
+    readOwnershipMarker: (directoryPath, expectedOwnershipToken) =>
+      temporaryWorkspaceOwnershipStore.read(directoryPath, expectedOwnershipToken),
+    removeOwnershipMarker: (directoryPath, ownershipToken) =>
+      temporaryWorkspaceOwnershipStore.remove(directoryPath, ownershipToken),
+    removeOwnedDirectory: (directoryPath, ownershipToken) =>
+      temporaryWorkspaceOwnershipStore.removeOwnedDirectory(directoryPath, ownershipToken),
     isManagedPath: (candidatePath) =>
       isManagedTemporaryWorkspacePath(context.globalStorageUri.fsPath, candidatePath),
+    isManagedPathMissing: (candidatePath) =>
+      isManagedTemporaryWorkspacePathMissing(context.globalStorageUri.fsPath, candidatePath),
     samePath: sameWorkspacePath,
     persistReference: async (reference) => {
       await context.globalState.update(TEMPORARY_WORKSPACE_STATE_KEY, reference)
@@ -1065,6 +1064,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     enabled: () => vscode.workspace.getConfiguration('dsh.checkpoints').get<boolean>('enabled', false),
     contentEnabled: () =>
       vscode.workspace.getConfiguration('dsh.checkpoints').get<boolean>('storeContent', false),
+    workspaceTrusted: () => vscode.workspace.isTrusted,
     // An unusable checkpoint directory is skipped, so the only evidence a user
     // can get is this line; the directory path itself stays out of the log.
     onStorageIssue: (issue) =>
@@ -1948,6 +1948,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       const restored = await checkpointUseCases.restore(
         request.payload.checkpointId,
         request.payload.expectedCurrentRevision,
+        request.payload.previewId,
         request.payload.conflictPolicy,
         signal,
       )
@@ -2845,8 +2846,21 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     if (request.type === 'extensionSettings.read')
       return publicValue(publicExtensionSettings(configuration.read(), extensionVersion))
     if (request.type === 'settings.update')
-      return settingsUseCases.update(request.payload.path, request.payload.value, signal)
-    if (request.type === 'settings.unset') return settingsUseCases.unset(request.payload.path, signal)
+      return settingsUseCases.update(
+        request.payload.path,
+        request.payload.value,
+        request.payload.expectedRevision,
+        signal,
+      )
+    if (request.type === 'settings.unset')
+      return settingsUseCases.unset(request.payload.path, request.payload.expectedRevision, signal)
+    if (request.type === 'settings.mutate')
+      return settingsUseCases.mutate(
+        request.payload.namespace,
+        request.payload.operations,
+        request.payload.expectedRevision,
+        signal,
+      )
     if (request.type === 'goal.list') {
       await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
       return publicList(await advancedUseCases.listGoals(request.payload.sessionId, signal))
@@ -3176,19 +3190,26 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       return Promise.resolve()
     },
     dispose: async () => {
-      runtimeUpdateLifecycle.abort()
-      router.cancelAll()
-      await disposeAccountLifecycleHost()
-      stopAllJobFollows()
-      stateSubscription()
-      provider.dispose()
-      changeTracker.dispose()
-      taskRegistry.dispose()
-      await backendService.detach()
-      await coordinator.disconnect()
-      endpointLaunchUrls.clear()
-      attachmentTokens.clear()
-      channel.dispose()
+      const errors = await runCleanupSequence([
+        () => runtimeUpdateLifecycle.abort(),
+        () => router.cancelAll(),
+        () => disposeAccountLifecycleHost(),
+        () => stopAllJobFollows(),
+        () => stateSubscription(),
+        () => provider.dispose(),
+        () => changeTracker.dispose(),
+        () => taskRegistry.dispose(),
+        () => backendService.detach(),
+        () => coordinator.disconnect(),
+        () => supervisor.dispose(),
+        () => endpointLaunchUrls.clear(),
+        () => attachmentTokens.clear(),
+        () => channel.dispose(),
+      ])
+      if (errors.length > 0)
+        throw new AggregateError(errors, 'The DSH connection and process could not be shut down cleanly.', {
+          cause: errors[0],
+        })
     },
   }
   return root
@@ -3253,6 +3274,25 @@ function extensionRuntimePathEntries(
 function readStoredTemporaryWorkspace(value: unknown): StoredTemporaryWorkspace | undefined {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
   const record = value as Record<string, unknown>
+  const id = record.id
+  const workspacePath = record.path
+  const ownershipToken = record.ownershipToken
+  if (
+    typeof id !== 'string' ||
+    id.trim() === '' ||
+    typeof workspacePath !== 'string' ||
+    workspacePath.trim() === '' ||
+    !isAbsoluteFilePath(workspacePath) ||
+    !isTemporaryWorkspaceOwnershipToken(ownershipToken)
+  )
+    return undefined
+  return { id, path: workspacePath, ownershipToken }
+}
+
+function readLegacyTemporaryWorkspace(value: unknown): LegacyTemporaryWorkspaceReference | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+  const record = value as Record<string, unknown>
+  if (Object.hasOwn(record, 'ownershipToken')) return undefined
   const id = record.id
   const workspacePath = record.path
   if (
@@ -3646,6 +3686,7 @@ function featureCheckpointPreview(
   preview: CheckpointPreview,
 ): Extract<FeatureResponsePayload, { readonly kind: 'checkpoint.preview' }>['preview'] {
   return {
+    previewId: preview.previewId,
     summary: featureCheckpointSummary(preview.summary),
     files: preview.files.map((file) => ({
       relativePath: file.relativePath,
@@ -3884,6 +3925,7 @@ function requiresTrustedWorkspace(type: WebviewRequest['type']): boolean {
     case 'interaction.question.cancel':
     case 'settings.update':
     case 'settings.unset':
+    case 'settings.mutate':
     case 'settings.openDocument':
     case 'settings.openKeyboardShortcuts':
     case 'goal.list':
@@ -3934,4 +3976,47 @@ function isMissingFileError(error: unknown): boolean {
     'code' in error &&
     (error.code === 'ENOENT' || error.code === 'FileNotFound')
   )
+}
+
+export function createManagedEndpointLoginHandler(
+  endpointCookies: Map<string, string>,
+  endpointLaunchUrls: Map<string, string>,
+  fetcher: typeof globalThis.fetch = globalThis.fetch,
+): (endpoint: BackendEndpoint, launchUrl: string | undefined, signal: AbortSignal) => Promise<void> {
+  return async (endpoint, launchUrl, signal) => {
+    // A managed port can be reused by a fresh DSH process. Never let a cookie
+    // from the previous process authorize the new endpoint.
+    endpointCookies.delete(endpoint.baseUrl)
+    endpointLaunchUrls.delete(endpoint.baseUrl)
+    signal.throwIfAborted()
+    if (launchUrl === undefined) return
+    let response: Response
+    try {
+      response = await fetcher(launchUrl, { method: 'GET', redirect: 'manual', signal })
+    } catch (error) {
+      signal.throwIfAborted()
+      throw new AppError({
+        code: 'BACKEND_UNREACHABLE',
+        message: 'The managed DSH web login could not be completed.',
+        retryable: true,
+        cause: error,
+      })
+    }
+    signal.throwIfAborted()
+    const headers = response.headers as Headers & { getSetCookie?: () => string[] }
+    const setCookies = headers.getSetCookie?.() ?? [headers.get('set-cookie') ?? '']
+    const cookie = setCookies
+      .map((value) => value.split(';', 1)[0]?.trim() ?? '')
+      .find((value) => /^[^=;\s]+=[^;\r\n]+$/u.test(value))
+    if (response.status < 300 || response.status >= 400 || cookie === undefined) {
+      throw new AppError({
+        code: 'BACKEND_UNREACHABLE',
+        message: 'The managed DSH web login returned no session cookie.',
+        retryable: true,
+      })
+    }
+    signal.throwIfAborted()
+    endpointCookies.set(endpoint.baseUrl, cookie)
+    endpointLaunchUrls.set(endpoint.baseUrl, launchUrl)
+  }
 }
