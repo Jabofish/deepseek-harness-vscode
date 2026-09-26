@@ -34,6 +34,8 @@ function rosterFixture(): AgentPresetRoster {
     ],
     authorable: true,
     hasDocument: true,
+    canOpenPresetLocation: true,
+    canRemoveUserPresets: true,
   }
 }
 
@@ -95,6 +97,78 @@ describe('PresetManager roster', () => {
       screen.getByText('For most code, file, and research tasks. Agent uses tools as needed.'),
     ).toBeDefined()
     expect(screen.queryByText('No description')).toBeNull()
+  })
+
+  it('hides unsupported RC2 user-preset management actions but keeps selection and composition reads', async () => {
+    const onMakeDefault = vi.fn().mockResolvedValue(undefined)
+    const onReadDocument = vi.fn().mockResolvedValue({
+      id: 'my-copy',
+      trust: 'user',
+      content: 'plugins:\n  - tool-fs\n',
+    } satisfies AgentPresetDocument)
+    const onOpenLocation = vi.fn()
+    const onRemove = vi.fn()
+    const onCopy = vi.fn()
+    renderManager({
+      onLoadRoster: vi.fn().mockResolvedValue({
+        ...rosterFixture(),
+        authorable: false,
+        canOpenPresetLocation: false,
+        canRemoveUserPresets: false,
+        compositionReadable: true,
+        defaultSettingPath: 'agent-preset-registry.selectedDefault',
+      }),
+      onMakeDefault,
+      onReadDocument,
+      onOpenLocation,
+      onRemove,
+      onCopy,
+    })
+
+    const select = await screen.findByRole('button', { name: 'Set as default: My copy' })
+    expect(select.hasAttribute('disabled')).toBe(false)
+    expect(screen.queryByRole('button', { name: 'Open location: My copy' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Delete preset: My copy' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Copy preset: My copy' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Copy preset: Standard' })).toBeNull()
+
+    fireEvent.click(select)
+    await waitFor(() =>
+      expect(onMakeDefault).toHaveBeenCalledWith('my-copy', 'agent-preset-registry.selectedDefault'),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'View composition: My copy' }))
+    await screen.findByRole('dialog', { name: 'Preset composition' })
+
+    expect(onReadDocument).toHaveBeenCalledWith('my-copy')
+    expect(onOpenLocation).not.toHaveBeenCalled()
+    expect(onRemove).not.toHaveBeenCalled()
+    expect(onCopy).not.toHaveBeenCalled()
+  })
+
+  it('guides an empty read-only RC2 custom group to Creator bundle management', async () => {
+    const onStartCreatorDraft = vi.fn().mockResolvedValue(undefined)
+    renderManager({
+      onLoadRoster: vi.fn().mockResolvedValue({
+        presets: [
+          { id: 'standard', trust: 'system', isDefault: true },
+          { id: 'cordis', trust: 'system', isDefault: false },
+        ],
+        authorable: false,
+        canOpenPresetLocation: false,
+        canRemoveUserPresets: false,
+        compositionReadable: true,
+      }),
+      onStartCreatorDraft,
+    })
+
+    const creator = await screen.findByRole('button', { name: 'Ask Agent to create a mode' })
+    expect(
+      screen.getByText(/Creator mode to build and install a bundle that declares one.*DSH loads it/),
+    ).toBeDefined()
+    expect(screen.queryByText(/Copy a built-in preset/)).toBeNull()
+
+    fireEvent.click(creator)
+    await waitFor(() => expect(onStartCreatorDraft).toHaveBeenCalledOnce())
   })
 
   it('renders nothing for a deployment that composes no presets', async () => {
@@ -367,11 +441,11 @@ describe('PresetManager copy dialog', () => {
     expect(screen.getByRole('dialog', { name: 'Copy preset' })).toBeDefined()
   })
 
-  it('disables copying when the deployment has no writable root', async () => {
+  it('does not render copy actions when the deployment has no writable root', async () => {
     const onLoadRoster = vi.fn().mockResolvedValue({ ...rosterFixture(), authorable: false })
     renderManager({ onLoadRoster })
     await waitFor(() => expect(screen.getByText('Built-in presets')).toBeDefined())
-    expect(screen.getByRole('button', { name: 'Copy preset: Standard' })).toHaveProperty('disabled', true)
+    expect(screen.queryByRole('button', { name: 'Copy preset: Standard' })).toBeNull()
   })
 
   it('closes the copy dialog on Escape without sending anything', async () => {

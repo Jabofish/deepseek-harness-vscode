@@ -39,6 +39,8 @@ interface RosterState {
   readonly rows: readonly AgentPresetDescriptor[]
   readonly authorable: boolean
   readonly compositionReadable?: boolean
+  readonly canOpenPresetLocation?: boolean
+  readonly canRemoveUserPresets?: boolean
   readonly modeSelectionEnabled?: boolean
   readonly defaultSettingPath?: string
   /** Absent when the host did not state whether it can open a directory natively. */
@@ -237,6 +239,12 @@ export function PresetManager(props: PresetManagerProps): ReactElement | null {
           ...(snapshot.compositionReadable === undefined
             ? {}
             : { compositionReadable: snapshot.compositionReadable }),
+          ...(snapshot.canOpenPresetLocation === undefined
+            ? {}
+            : { canOpenPresetLocation: snapshot.canOpenPresetLocation }),
+          ...(snapshot.canRemoveUserPresets === undefined
+            ? {}
+            : { canRemoveUserPresets: snapshot.canRemoveUserPresets }),
           ...(snapshot.modeSelectionEnabled === undefined
             ? {}
             : { modeSelectionEnabled: snapshot.modeSelectionEnabled }),
@@ -426,7 +434,7 @@ export function PresetManager(props: PresetManagerProps): ReactElement | null {
 
   return (
     <div className="dsh-presets">
-      <p className="dsh-presets__intro">{t('presets.intro')}</p>
+      <p className="dsh-presets__intro">{t(roster.authorable ? 'presets.intro' : 'presets.introReadOnly')}</p>
       {roster.error === undefined ? null : (
         <p className="dsh-settings__error" role="alert">
           {roster.error}
@@ -443,7 +451,10 @@ export function PresetManager(props: PresetManagerProps): ReactElement | null {
           return trust === 'user' ? (
             <section className="dsh-presets__group" key={trust}>
               <h3>{t(heading)}</h3>
-              {creatorCard ?? <p className="dsh-presets__empty-group">{t('presets.emptyCustom')}</p>}
+              {creatorCard}
+              <p className="dsh-presets__empty-group">
+                {t(roster.authorable ? 'presets.emptyCustom' : 'presets.emptyCustomCreator')}
+              </p>
             </section>
           ) : null
         return (
@@ -525,7 +536,7 @@ export function PresetManager(props: PresetManagerProps): ReactElement | null {
                             <Icon name="file" />
                           </button>
                         )}
-                        {row.trust === 'user' ? (
+                        {row.trust === 'user' && roster.canOpenPresetLocation !== false ? (
                           <button
                             className="dsh-icon-button"
                             type="button"
@@ -568,34 +579,32 @@ export function PresetManager(props: PresetManagerProps): ReactElement | null {
                             </button>
                           </div>
                         )}
-                        <button
-                          className="dsh-icon-button"
-                          type="button"
-                          disabled={!roster.authorable || row.broken !== undefined}
-                          aria-label={t('presets.copy', { name })}
-                          title={
-                            row.broken !== undefined
-                              ? t('presets.copyBroken')
-                              : roster.authorable
-                                ? t('presets.copyTitle')
-                                : t('presets.noWritableRoot')
-                          }
-                          onClick={(event) => {
-                            restoreFocusRef.current = event.currentTarget
-                            setView(undefined)
-                            setCopy({
-                              from: row.id,
-                              fromTitle: name,
-                              id: '',
-                              name: '',
-                              saving: false,
-                              error: undefined,
-                            })
-                          }}
-                        >
-                          <Icon name="add" />
-                        </button>
-                        {row.trust === 'user' ? (
+                        {roster.authorable ? (
+                          <button
+                            className="dsh-icon-button"
+                            type="button"
+                            disabled={row.broken !== undefined}
+                            aria-label={t('presets.copy', { name })}
+                            title={
+                              row.broken !== undefined ? t('presets.copyBroken') : t('presets.copyTitle')
+                            }
+                            onClick={(event) => {
+                              restoreFocusRef.current = event.currentTarget
+                              setView(undefined)
+                              setCopy({
+                                from: row.id,
+                                fromTitle: name,
+                                id: '',
+                                name: '',
+                                saving: false,
+                                error: undefined,
+                              })
+                            }}
+                          >
+                            <Icon name="add" />
+                          </button>
+                        ) : null}
+                        {row.trust === 'user' && roster.canRemoveUserPresets !== false ? (
                           <button
                             className="dsh-icon-button"
                             type="button"

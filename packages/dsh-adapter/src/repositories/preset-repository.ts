@@ -28,6 +28,8 @@ export class Rc6PresetRepository implements PresetRepository {
     return {
       presets: record.presets.map(presetDescriptor),
       authorable: record.authorable,
+      canOpenPresetLocation: true,
+      canRemoveUserPresets: true,
       ...(typeof record.hasDocument === 'boolean' ? { hasDocument: record.hasDocument } : {}),
     }
   }

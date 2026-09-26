@@ -227,16 +227,19 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
     open: renameTarget !== undefined,
     refs: [renameDialogRef],
     onDismiss: closeRenameDialog,
+    trapFocus: true,
   })
   useDismissibleLayer({
     open: removeWorkspace !== undefined,
     refs: [removeDialogRef],
     onDismiss: closeRemoveDialog,
+    trapFocus: true,
   })
   useDismissibleLayer({
     open: deleteTarget !== undefined,
     refs: [deleteDialogRef],
     onDismiss: closeDeleteDialog,
+    trapFocus: true,
   })
 
   useEffect(() => {
@@ -271,9 +274,8 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
     if (dialogWasOpen.current && !dialogOpen) {
       const target = dialogTriggerRef.current
       dialogTriggerRef.current = null
-      // The renamed or removed row can be gone by now; body focus beats a
-      // detached node.
       if (target !== null && target.isConnected) target.focus()
+      else (triggerRef.current ?? panelRef.current)?.focus()
     }
     dialogWasOpen.current = dialogOpen
   }, [dialogOpen])
@@ -786,6 +788,7 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
           className="dsh-session-switcher__panel"
           role="dialog"
           aria-label={t('sessions.title')}
+          tabIndex={-1}
         >
           <header className="dsh-session-switcher__panel-header">
             <span
@@ -1074,6 +1077,7 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby={renameDialogId}
+                tabIndex={-1}
                 onSubmit={submitRename}
               >
                 <h2 id={renameDialogId} className="dsh-session-dialog__title">
@@ -1131,6 +1135,7 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
                 role="alertdialog"
                 aria-modal="true"
                 aria-labelledby={`${panelId}-remove-title`}
+                tabIndex={-1}
               >
                 <h2 id={`${panelId}-remove-title`} className="dsh-session-dialog__title">
                   {t('sessions.removeWorkspaceTitle')}
@@ -1179,6 +1184,7 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
                 role="alertdialog"
                 aria-modal="true"
                 aria-labelledby={`${panelId}-delete-title`}
+                tabIndex={-1}
               >
                 <h2 id={`${panelId}-delete-title`} className="dsh-session-dialog__title">
                   {t('sessions.deleteTitle')}

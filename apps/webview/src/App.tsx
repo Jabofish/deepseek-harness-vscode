@@ -2483,16 +2483,23 @@ function EmptySessionPosture(props: {
 }): ReactElement {
   const { locale, t } = useI18n()
   const hostDefaultPresetId = props.presets.find((preset) => preset.isDefault)?.id
-  const missingHostDefaultPreset = props.presetSelectionEnabled === false && hostDefaultPresetId === undefined
+  const missingHostDefaultPreset =
+    props.presetSelectionEnabled === false && props.presets.length > 0 && hostDefaultPresetId === undefined
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState(props.workspaces[0]?.id ?? '')
-  const defaultPreset = props.presets.find((preset) => preset.isDefault && preset.broken === undefined)?.id
-  const [selectedPresetId, setSelectedPresetId] = useState(defaultPreset ?? props.presets[0]?.id ?? '')
+  const [selectedPresetId, setSelectedPresetId] = useState<string | undefined>(undefined)
   const selected =
     props.workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? props.workspaces[0]
   const availablePresets = props.presets.filter((preset) => preset.broken === undefined)
   const stagedPreset =
-    availablePresets.find((preset) => preset.id === selectedPresetId) ?? availablePresets[0]
+    availablePresets.find((preset) => preset.id === selectedPresetId) ??
+    availablePresets.find((preset) => preset.isDefault) ??
+    availablePresets[0]
   const stagedPresetId = stagedPreset?.id ?? ''
+  const oneShotPresetId =
+    props.presetSelectionEnabled !== false &&
+    availablePresets.some((preset) => preset.id === selectedPresetId)
+      ? selectedPresetId
+      : undefined
 
   if (props.workspaces.length === 0)
     return <EmptyState title={t('app.workspaceLoading')} description={t('app.workspaceLoadingDescription')} />
@@ -2558,12 +2565,7 @@ function EmptySessionPosture(props: {
         disabled={selected === undefined || missingHostDefaultPreset}
         onClick={() => {
           if (selected !== undefined && !missingHostDefaultPreset) {
-            const presetId =
-              props.presetSelectionEnabled === false
-                ? hostDefaultPresetId
-                : stagedPresetId === ''
-                  ? undefined
-                  : stagedPresetId
+            const presetId = props.presetSelectionEnabled === false ? undefined : oneShotPresetId
             props.onCreate(selected.id, presetId)
           }
         }}

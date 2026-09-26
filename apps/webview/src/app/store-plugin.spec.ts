@@ -85,6 +85,24 @@ describe('AppStore plugin inventory projection', () => {
     store.dispose()
   })
 
+  it('retains RC2 inventory groups without inventing preset ownership', async () => {
+    const remoteGroup = {
+      id: 'standard',
+      name: 'Standard mode',
+      isDefault: true,
+      rows: [],
+    }
+    const store = createAppStore(
+      new PluginClient({ entries: [], agentPresets: [remoteGroup] }) as unknown as ProtocolClient,
+    )
+
+    await expect(store.loadPluginInventory()).resolves.toEqual({
+      entries: [],
+      agentPresets: [remoteGroup],
+    })
+    store.dispose()
+  })
+
   it('rejects a plugin snapshot containing a malformed group', async () => {
     const store = createAppStore(
       new PluginClient({
@@ -93,6 +111,18 @@ describe('AppStore plugin inventory projection', () => {
           { id: 'bad', trust: 'system', isDefault: false, rows: [{ moduleName: 'missing-id' }] },
           { id: 'good', trust: 'user', isDefault: false, rows: [] },
         ],
+      }) as unknown as ProtocolClient,
+    )
+
+    await expect(store.loadPluginInventory()).resolves.toBeUndefined()
+    store.dispose()
+  })
+
+  it('rejects an ownership value outside the fields supported by the inventory DTO', async () => {
+    const store = createAppStore(
+      new PluginClient({
+        entries: [],
+        agentPresets: [{ id: 'mode', trust: 'deployment', isDefault: false, rows: [] }],
       }) as unknown as ProtocolClient,
     )
 

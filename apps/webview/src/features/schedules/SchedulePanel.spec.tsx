@@ -2,6 +2,7 @@
 
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { ReactElement } from 'react'
 import type { ScheduleCatalogEntry, ScheduleDeliveryRecord, ScheduleRecord } from '@dsh-vscode/domain'
 import type { FeatureHostEvent, FeatureRequest } from '@dsh-vscode/webview-protocol'
 import { SchedulePanel, type SchedulePanelProps } from './SchedulePanel.js'
@@ -65,7 +66,7 @@ function mountPanel(
     return () => listeners.delete(listener)
   }
   let connectionEpoch = options.connectionEpoch ?? 0
-  const panel = () => (
+  const panel = (): ReactElement => (
     <SchedulePanel
       featureRequest={featureRequest}
       subscribeFeature={subscribeFeature}
@@ -835,7 +836,10 @@ describe('SchedulePanel', () => {
     expect(screen.getByRole('button', { name: 'Cancel' }).matches(':disabled')).toBe(true)
     const request = panel.requests.find((item) => item.type === 'schedule.update')
     if (request === undefined) throw new Error('The update request is missing.')
-    await act(async () => finishUpdate?.(defaultResponse(request, [active])))
+    await act(async () => {
+      finishUpdate?.(defaultResponse(request, [active]))
+      await Promise.resolve()
+    })
     await screen.findByRole('button', { name: 'Edit' })
   })
 
@@ -1042,7 +1046,7 @@ describe('SchedulePanel', () => {
           request.payload.targetRequestId === staleRequest.requestId,
       ),
     ).toBe(true)
-    await act(async () =>
+    await act(async () => {
       finishStalePage?.({
         kind: 'schedule.history',
         result: {
@@ -1051,8 +1055,9 @@ describe('SchedulePanel', () => {
           earlierRecordsUnavailable: false,
           earlierRecordsPruned: false,
         },
-      }),
-    )
+      })
+      await Promise.resolve()
+    })
     expect(screen.queryByText('Stale saved prompt.')).toBeNull()
 
     fireEvent.click(screen.getByRole('tab', { name: 'Delivery history' }))
@@ -1061,7 +1066,7 @@ describe('SchedulePanel', () => {
     )
     const history = screen.getByRole('tabpanel', { name: 'Delivery history' })
     expect(within(history).getByRole('status').textContent).toBe('Loading delivery history…')
-    await act(async () =>
+    await act(async () => {
       finishFreshPage?.({
         kind: 'schedule.history',
         result: {
@@ -1070,8 +1075,9 @@ describe('SchedulePanel', () => {
           earlierRecordsUnavailable: false,
           earlierRecordsPruned: false,
         },
-      }),
-    )
+      })
+      await Promise.resolve()
+    })
     expect(await within(history).findByText('Fresh saved prompt.')).toBeDefined()
     expect(screen.queryByText('Stale saved prompt.')).toBeNull()
     expect(historyReads).toBe(2)
@@ -1134,7 +1140,7 @@ describe('SchedulePanel', () => {
       prompt: 'Earlier saved prompt.',
     }
     let historyPage = 0
-    const panel = mountPanel({
+    mountPanel({
       items: [active],
       resolve: (request) => {
         if (request.type !== 'schedule.history') return defaultResponse(request, [active])
@@ -1191,7 +1197,7 @@ describe('SchedulePanel', () => {
         messageId: 'receipt-message-id',
       },
     }
-    const panel = mountPanel({
+    mountPanel({
       items: [recurring],
       resolve: (request) =>
         request.type === 'schedule.history'

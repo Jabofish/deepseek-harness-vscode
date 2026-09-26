@@ -598,7 +598,7 @@ describe('App connected rendering', () => {
     expect(sendPrompt).toHaveBeenCalledTimes(2)
   })
 
-  it('stages the host default after preset selection is disabled', async () => {
+  it('lets the Host resolve the default after preset selection is disabled', async () => {
     const initialState = presetSelectionState(true, 'standard')
     const { stageSessionCalls, updateState } = renderWithMutableState(initialState)
     await selectEmptySessionPreset('alternate')
@@ -606,19 +606,52 @@ describe('App connected rendering', () => {
     updateState(presetSelectionState(false, 'standard'))
     fireEvent.click(screen.getByRole('button', { name: 'New session here' }))
 
-    expect(stageSessionCalls).toEqual([['w1', 'standard']])
+    expect(stageSessionCalls).toEqual([['w1', undefined]])
   })
 
-  it('uses a newly reported host default after preset selection is disabled', async () => {
+  it('tracks the Host default while the new-session page is open', async () => {
     const initialState = presetSelectionState(true, 'standard')
     const { stageSessionCalls, updateState } = renderWithMutableState(initialState)
-    await selectEmptySessionPreset('alternate')
-
-    updateState(presetSelectionState(false, 'standard'))
-    updateState(presetSelectionState(false, 'updated-default'))
+    updateState(presetSelectionState(true, 'updated-default'))
+    await waitFor(() =>
+      expect(document.querySelector('.dsh-empty-session__preset .dsh-select-menu__trigger')).not.toBeNull(),
+    )
+    const presetPicker = document.querySelector('.dsh-empty-session__preset .dsh-select-menu__trigger')
+    expect(presetPicker?.textContent ?? '').toContain('updated-default')
     fireEvent.click(screen.getByRole('button', { name: 'New session here' }))
 
-    expect(stageSessionCalls).toEqual([['w1', 'updated-default']])
+    expect(stageSessionCalls).toEqual([['w1', undefined]])
+  })
+
+  it('uses a manual preset for one new task, then returns to the latest Host default', async () => {
+    const { stageSessionCalls, updateState } = renderWithMutableState(presetSelectionState(true, 'standard'))
+    await selectEmptySessionPreset('alternate')
+    fireEvent.click(screen.getByRole('button', { name: 'New session here' }))
+
+    updateState(connectedState(true))
+    updateState(presetSelectionState(true, 'updated-default'))
+    await waitFor(() =>
+      expect(document.querySelector('.dsh-empty-session__preset .dsh-select-menu__trigger')).not.toBeNull(),
+    )
+    const presetPicker = document.querySelector('.dsh-empty-session__preset .dsh-select-menu__trigger')
+    expect(presetPicker?.textContent ?? '').toContain('updated-default')
+    fireEvent.click(screen.getByRole('button', { name: 'New session here' }))
+
+    expect(stageSessionCalls).toEqual([
+      ['w1', 'alternate'],
+      ['w1', undefined],
+    ])
+  })
+
+  it('creates through Host composition when the optional preset registry is empty', () => {
+    const state = { ...connectedState(false), presetSelectionEnabled: false, presets: [] }
+    const { stageSessionCalls } = renderWithMutableState(state)
+    const createButton = screen.getByRole('button', { name: 'New session here' })
+
+    expect((createButton as HTMLButtonElement).disabled).toBe(false)
+    fireEvent.click(createButton)
+
+    expect(stageSessionCalls).toEqual([['w1', undefined]])
   })
 
   it('blocks session creation when preset selection is disabled and the roster has no default', () => {

@@ -117,7 +117,8 @@ describe('alpha event stream readiness barrier', () => {
     FakeWebSocket.instances.length = 0
     const paths: string[] = []
     const fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
-      paths.push(new URL(String(input)).pathname)
+      const requestUrl = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+      paths.push(new URL(requestUrl).pathname)
       return Promise.resolve(
         rpcResponse(init, {
           options: [

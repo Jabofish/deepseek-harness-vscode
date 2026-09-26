@@ -89,6 +89,12 @@ interface EditDraft {
   readonly expression: string
 }
 
+interface EditState {
+  readonly editing: boolean
+  readonly draft?: EditDraft
+  readonly baseline?: { readonly key: string; readonly draft: EditDraft }
+}
+
 interface CreateDraft extends Omit<EditDraft, 'timing'> {
   readonly timing: CreateTiming
 }
@@ -694,9 +700,9 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [selectedKey, setSelectedKey] = useState<string | undefined>()
+  const [selectedRecord, setSelectedRecord] = useState<ScheduleCatalogEntry | undefined>()
   const [tab, setTab] = useState<DetailTab>('rule')
-  const [draft, setDraft] = useState<EditDraft>()
-  const [editing, setEditing] = useState(false)
+  const [editState, setEditState] = useState<EditState>({ editing: false })
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [moreActionsOpen, setMoreActionsOpen] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -710,11 +716,7 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
   const [createError, setCreateError] = useState<string>()
   const [confirmedCreate, setConfirmedCreate] = useState<ScheduleCatalogEntry>()
   const [history, setHistory] = useState<HistoryView>(EMPTY_HISTORY)
-  const draftRef = useRef(draft)
-  const editingRef = useRef(editing)
-  const editBaselineRef = useRef<{ readonly key: string; readonly draft: EditDraft } | undefined>(undefined)
-  draftRef.current = draft
-  editingRef.current = editing
+  const { draft, editing } = editState
   const pendingRequestIds = useRef(new Set<string>())
   const catalogGeneration = useRef(0)
   const historyGeneration = useRef(0)
@@ -731,6 +733,23 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
   const previousSelectedKey = useRef(selectedKey)
   const pendingCreate = useRef<PendingCreate | undefined>(undefined)
   const checkingCreateCatalog = useRef(false)
+
+  const rememberSelectedRecord = (record: ScheduleCatalogEntry | undefined): void => {
+    selectedRecordRef.current = record
+    setSelectedRecord(record)
+  }
+
+  const updateEditDraft = (update: (current: EditDraft) => EditDraft): void => {
+    setEditState((current) =>
+      current.draft === undefined ? current : { ...current, draft: update(current.draft) },
+    )
+  }
+
+  const patchEditDraft = (patch: Partial<EditDraft>): void => {
+    setEditState((current) =>
+      current.draft === undefined ? current : { ...current, draft: { ...current.draft, ...patch } },
+    )
+  }
 
   const setActiveTab = (nextTab: DetailTab): void => {
     if (tabRef.current === 'history' && nextTab !== 'history') {
@@ -775,15 +794,18 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
             (record) => scheduleKey(record) === selectedKeyRef.current,
           )
           if (refreshedSelection !== undefined) {
-            selectedRecordRef.current = refreshedSelection
+            rememberSelectedRecord(refreshedSelection)
             const key = scheduleKey(refreshedSelection)
-            const baseline = editBaselineRef.current
-            const currentDraft = draftRef.current
-            if (editingRef.current && currentDraft !== undefined && baseline?.key === key) {
+            setEditState((current) => {
+              const baseline = current.baseline
+              if (!current.editing || current.draft === undefined || baseline?.key !== key) return current
               const nextBaseline = initialDraft(refreshedSelection)
-              if (sameEditDraft(currentDraft, baseline.draft)) setDraft(nextBaseline)
-              editBaselineRef.current = { key, draft: nextBaseline }
-            }
+              return {
+                ...current,
+                draft: sameEditDraft(current.draft, baseline.draft) ? nextBaseline : current.draft,
+                baseline: { key, draft: nextBaseline },
+              }
+            })
           }
         }
         setRecords(payload.items)
@@ -799,7 +821,7 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
           setCreateStatus('confirmed')
           setCreateError(undefined)
           selectedKeyRef.current = scheduleKey(created)
-          selectedRecordRef.current = created
+          rememberSelectedRecord(created)
           setSelectedKey(scheduleKey(created))
         } else if (checkingCreateCatalog.current) {
           checkingCreateCatalog.current = false
@@ -952,27 +974,21 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
   const selectedFromCatalog = records.find((record) => scheduleKey(record) === selectedKey)
   const selected =
     selectedFromCatalog ??
-    (selectedKey !== undefined &&
-    selectedRecordRef.current !== undefined &&
-    scheduleKey(selectedRecordRef.current) === selectedKey
-      ? selectedRecordRef.current
+    (selectedKey !== undefined && selectedRecord !== undefined && scheduleKey(selectedRecord) === selectedKey
+      ? selectedRecord
       : undefined)
   const selectedInCatalog = selectedFromCatalog !== undefined
   const draftDirty =
     selected !== undefined &&
     draft !== undefined &&
-    editBaselineRef.current?.key === scheduleKey(selected) &&
-    !sameEditDraft(draft, editBaselineRef.current.draft)
+    editState.baseline?.key === scheduleKey(selected) &&
+    !sameEditDraft(draft, editState.baseline.draft)
   const selectedLinkedSession =
     selected === undefined ? undefined : props.getLinkedSession(selected.sessionId)
 
   const resetSelectedDetails = (): void => {
     setActiveTab('rule')
-    setDraft(undefined)
-    draftRef.current = undefined
-    editBaselineRef.current = undefined
-    setEditing(false)
-    editingRef.current = false
+    setEditState({ editing: false })
     setConfirmDelete(false)
     setMoreActionsOpen(false)
     setOperationError(undefined)
@@ -990,13 +1006,13 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
     const key = scheduleKey(record)
     if (selectedKeyRef.current !== key) resetSelectedDetails()
     selectedKeyRef.current = key
-    selectedRecordRef.current = record
+    rememberSelectedRecord(record)
     setSelectedKey(key)
   }
 
   const closeDetails = (): void => {
     selectedKeyRef.current = undefined
-    selectedRecordRef.current = undefined
+    rememberSelectedRecord(undefined)
     resetSelectedDetails()
     setSelectedKey(undefined)
   }
@@ -1088,11 +1104,11 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
     setOperationError(undefined)
     setOperationNotice(undefined)
     const initial = initialDraft(selected)
-    draftRef.current = initial
-    editBaselineRef.current = { key: scheduleKey(selected), draft: initial }
-    setDraft(initial)
-    setEditing(true)
-    editingRef.current = true
+    setEditState({
+      editing: true,
+      draft: initial,
+      baseline: { key: scheduleKey(selected), draft: initial },
+    })
   }
 
   const submitEdit = (event: FormEvent<HTMLFormElement>): void => {
@@ -1139,11 +1155,7 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
         }
         if (selectedKeyRef.current === operationKey) {
           setOperationNotice('schedules.update.success')
-          setEditing(false)
-          setDraft(undefined)
-          editingRef.current = false
-          draftRef.current = undefined
-          editBaselineRef.current = undefined
+          setEditState({ editing: false })
         }
         refreshCatalog()
       })
@@ -1833,7 +1845,7 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
                       value={draft.title}
                       maxLength={120}
                       required
-                      onChange={(event) => setDraft({ ...draft, title: event.target.value })}
+                      onChange={(event) => patchEditDraft({ title: event.currentTarget.value })}
                     />
                   </label>
                   <label>
@@ -1842,7 +1854,7 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
                       value={draft.prompt}
                       required
                       rows={5}
-                      onChange={(event) => setDraft({ ...draft, prompt: event.target.value })}
+                      onChange={(event) => patchEditDraft({ prompt: event.currentTarget.value })}
                     />
                   </label>
                   <label>
@@ -1856,7 +1868,7 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
                       title={t('schedules.field.timing')}
                       value={draft.timing}
                       options={timingChoices(EDIT_TIMINGS, t)}
-                      onChange={(value) => setDraft({ ...draft, timing: value as TimingChoice })}
+                      onChange={(value) => patchEditDraft({ timing: value as TimingChoice })}
                     />
                   </label>
                   {draft.timing === 'at' ? (
@@ -1867,7 +1879,7 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
                           type="date"
                           required
                           value={draft.date}
-                          onChange={(event) => setDraft({ ...draft, date: event.target.value })}
+                          onChange={(event) => patchEditDraft({ date: event.currentTarget.value })}
                         />
                       </label>
                       <label>
@@ -1877,7 +1889,7 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
                           step="0.001"
                           required
                           value={draft.time}
-                          onChange={(event) => setDraft({ ...draft, time: event.target.value })}
+                          onChange={(event) => patchEditDraft({ time: event.currentTarget.value })}
                         />
                       </label>
                       <label>
@@ -1885,7 +1897,7 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
                         <input
                           required
                           value={draft.timeZone}
-                          onChange={(event) => setDraft({ ...draft, timeZone: event.target.value })}
+                          onChange={(event) => patchEditDraft({ timeZone: event.currentTarget.value })}
                         />
                       </label>
                     </div>
@@ -1899,7 +1911,7 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
                         step="1"
                         required
                         value={draft.seconds}
-                        onChange={(event) => setDraft({ ...draft, seconds: event.target.value })}
+                        onChange={(event) => patchEditDraft({ seconds: event.currentTarget.value })}
                       />
                     </label>
                   ) : null}
@@ -1912,7 +1924,7 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
                           step="0.001"
                           required
                           value={draft.time}
-                          onChange={(event) => setDraft({ ...draft, time: event.target.value })}
+                          onChange={(event) => patchEditDraft({ time: event.currentTarget.value })}
                         />
                       </label>
                       <label>
@@ -1920,7 +1932,7 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
                         <input
                           required
                           value={draft.timeZone}
-                          onChange={(event) => setDraft({ ...draft, timeZone: event.target.value })}
+                          onChange={(event) => patchEditDraft({ timeZone: event.currentTarget.value })}
                         />
                       </label>
                       {draft.timing === 'weekly' ? (
@@ -1931,14 +1943,15 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
                               <input
                                 type="checkbox"
                                 checked={draft.weekdays.includes(day)}
-                                onChange={(event) =>
-                                  setDraft({
-                                    ...draft,
-                                    weekdays: event.target.checked
-                                      ? [...draft.weekdays, day]
-                                      : draft.weekdays.filter((value) => value !== day),
-                                  })
-                                }
+                                onChange={(event) => {
+                                  const checked = event.currentTarget.checked
+                                  updateEditDraft((current) => ({
+                                    ...current,
+                                    weekdays: checked
+                                      ? [...current.weekdays, day]
+                                      : current.weekdays.filter((value) => value !== day),
+                                  }))
+                                }}
                               />
                               <span>{t(`schedules.weekday.${day}`)}</span>
                             </label>
@@ -1954,7 +1967,7 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
                         <input
                           required
                           value={draft.expression}
-                          onChange={(event) => setDraft({ ...draft, expression: event.target.value })}
+                          onChange={(event) => patchEditDraft({ expression: event.currentTarget.value })}
                         />
                       </label>
                       <label>
@@ -1962,7 +1975,7 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
                         <input
                           required
                           value={draft.timeZone}
-                          onChange={(event) => setDraft({ ...draft, timeZone: event.target.value })}
+                          onChange={(event) => patchEditDraft({ timeZone: event.currentTarget.value })}
                         />
                       </label>
                     </div>
@@ -1975,11 +1988,7 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
                       type="button"
                       disabled={busy}
                       onClick={() => {
-                        setEditing(false)
-                        editingRef.current = false
-                        setDraft(undefined)
-                        draftRef.current = undefined
-                        editBaselineRef.current = undefined
+                        setEditState({ editing: false })
                         setOperationError(undefined)
                       }}
                     >

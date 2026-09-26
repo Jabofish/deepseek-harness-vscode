@@ -147,11 +147,11 @@ export function CommandPalette(props: CommandPaletteProps): ReactElement {
           .map((row) => ({ command: row.command }))
   const selected = matches[props.highlight ?? 0]?.command
   return (
-    <section className="dsh-command-palette" id={COMMAND_MENU_ID} aria-label={t('commands.aria')}>
+    <section className="dsh-command-palette" aria-label={t('commands.aria')}>
       {matches.length === 0 ? (
         <p role="status">{t('commands.noMatch', { query: props.query })}</p>
       ) : (
-        <ul role="listbox" aria-label={t('commands.aria')}>
+        <ul id={COMMAND_MENU_ID} role="listbox" aria-label={t('commands.aria')}>
           {matches.map(({ command }, index) => (
             <li key={command.name} ref={scrollHighlighted(index, props.highlight)}>
               <button
@@ -221,11 +221,7 @@ function renderArgumentPalette(
   const matches = rankedOptions ?? rankArgumentOptions(options, argument)
 
   return (
-    <section
-      className="dsh-command-palette"
-      id={COMMAND_MENU_ID}
-      aria-label={t('commands.arguments', { command: command.name })}
-    >
+    <section className="dsh-command-palette" aria-label={t('commands.arguments', { command: command.name })}>
       {options.length === 0 ? (
         <p role="status">
           <strong>/{command.name}</strong>
@@ -234,7 +230,11 @@ function renderArgumentPalette(
       ) : matches.length === 0 ? (
         <p role="status">{t('commands.noArguments')}</p>
       ) : (
-        <ul role="listbox" aria-label={t('commands.arguments', { command: command.name })}>
+        <ul
+          id={COMMAND_MENU_ID}
+          role="listbox"
+          aria-label={t('commands.arguments', { command: command.name })}
+        >
           {matches.map((option, index) => (
             <li key={option.value} ref={scrollHighlighted(index, highlight)}>
               <button

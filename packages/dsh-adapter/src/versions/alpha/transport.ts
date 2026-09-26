@@ -2692,6 +2692,13 @@ function signalIsAborted(signal: AbortSignal | undefined): boolean {
   return signal?.aborted === true
 }
 
+function rejectionError(reason: unknown): Error {
+  // AbortSignal and WebSocket failure paths can carry arbitrary reasons. Keep
+  // existing Error instances (including AppError classifications) intact, and
+  // retain non-Error values as causes while satisfying Promise's Error contract.
+  return reason instanceof Error ? reason : new Error('The alpha DSH stream failed.', { cause: reason })
+}
+
 /**
  * Callers never read a non-2xx body, and an unconsumed fetch body pins its
  * socket instead of returning it to the pool. Release it explicitly so
@@ -2724,7 +2731,7 @@ function combineSignals(...signals: (AbortSignal | undefined | number)[]): Abort
 }
 
 function awaitWithSignal<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
-  if (signal.aborted) return Promise.reject(signal.reason)
+  if (signal.aborted) return Promise.reject(rejectionError(signal.reason))
   return new Promise<T>((resolve, reject) => {
     let settled = false
     const cleanup = (): void => signal.removeEventListener('abort', onAbort)
@@ -2732,7 +2739,7 @@ function awaitWithSignal<T>(promise: Promise<T>, signal: AbortSignal): Promise<T
       if (settled) return
       settled = true
       cleanup()
-      reject(signal.reason)
+      reject(rejectionError(signal.reason))
     }
     signal.addEventListener('abort', onAbort, { once: true })
     void promise.then(
@@ -2746,7 +2753,7 @@ function awaitWithSignal<T>(promise: Promise<T>, signal: AbortSignal): Promise<T
         if (settled) return
         settled = true
         cleanup()
-        reject(error)
+        reject(rejectionError(error))
       },
     )
   })

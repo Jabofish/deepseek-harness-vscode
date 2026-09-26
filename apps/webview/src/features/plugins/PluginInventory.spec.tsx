@@ -3,6 +3,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AgentPresetPluginGroup, PluginInventorySnapshot } from '@dsh-vscode/domain'
+import { I18nProvider, LOCALE_EXPLICIT_STORAGE_KEY, LOCALE_STORAGE_KEY } from '../../i18n.js'
 import { PluginInventory } from './PluginInventory.js'
 
 function snapshotFixture(): PluginInventorySnapshot {
@@ -37,8 +38,6 @@ function snapshotFixture(): PluginInventorySnapshot {
     agentPresets: [
       {
         id: 'standard',
-        name: 'Standard mode',
-        trust: 'system',
         isDefault: true,
         rows: [
           {
@@ -65,7 +64,6 @@ function snapshotFixture(): PluginInventorySnapshot {
       {
         id: 'analysis',
         name: 'Analysis mode',
-        trust: 'user',
         isDefault: false,
         rows: [
           {
@@ -88,12 +86,28 @@ function renderInventory(
   return render(<PluginInventory onLoadInventory={onLoadInventory} />)
 }
 
+function renderInventoryInLocale(
+  locale: 'en' | 'zh',
+  snapshot: PluginInventorySnapshot,
+): ReturnType<typeof render> {
+  document.documentElement.lang = locale === 'zh' ? 'zh-CN' : 'en'
+  window.localStorage.removeItem(LOCALE_STORAGE_KEY)
+  window.localStorage.removeItem(LOCALE_EXPLICIT_STORAGE_KEY)
+  return render(
+    <I18nProvider>
+      <PluginInventory onLoadInventory={vi.fn().mockResolvedValue(snapshot)} />
+    </I18nProvider>,
+  )
+}
+
 function count(region: HTMLElement, attribute: 'data-plugin-count' | 'data-plugin-total'): string | null {
   return region.querySelector(`[${attribute}]`)?.getAttribute(attribute) ?? null
 }
 
 function modeTrigger(): HTMLButtonElement {
-  return screen.getByRole('button', { name: /^Choose the Agent mode to inspect/u })
+  return screen.getByRole('button', {
+    name: /^(?:Choose the Agent mode to inspect|选择要查看的 Agent 模式)(?::.*)?$/u,
+  })
 }
 
 function modeTriggerLabel(): string {
@@ -112,15 +126,19 @@ function openGroup(name: string): void {
 }
 
 describe('PluginInventory', () => {
-  afterEach(() => cleanup())
+  afterEach(() => {
+    cleanup()
+    document.documentElement.lang = 'en'
+    window.localStorage.clear()
+  })
 
   it('defaults to the host default mode and separates session composition from global inventory', async () => {
     renderInventory()
 
     await screen.findByRole('button', { name: /^Choose the Agent mode to inspect/u })
-    expect(modeTriggerLabel()).toBe('Standard mode (Default)')
+    expect(modeTriggerLabel()).toBe('Standard (Default)')
     fireEvent.click(modeTrigger())
-    expect(screen.getByRole('option', { name: 'Standard mode (Default)' })).toBeDefined()
+    expect(screen.getByRole('option', { name: 'Standard (Default)' })).toBeDefined()
     fireEvent.click(modeTrigger())
 
     const session = screen.getByRole('region', { name: 'Session plugins' })
@@ -148,8 +166,8 @@ describe('PluginInventory', () => {
 
   it('uses the first host mode when the roster has no default', async () => {
     const modes: readonly AgentPresetPluginGroup[] = [
-      { id: 'first', name: 'First mode', trust: 'system', isDefault: false, rows: [] },
-      { id: 'second', name: 'Second mode', trust: 'user', isDefault: false, rows: [] },
+      { id: 'first', name: 'First mode', isDefault: false, rows: [] },
+      { id: 'second', name: 'Second mode', isDefault: false, rows: [] },
     ]
     renderInventory(vi.fn().mockResolvedValue({ entries: [], agentPresets: modes }))
 
@@ -185,14 +203,12 @@ describe('PluginInventory', () => {
         {
           id: 'first-after-refresh',
           name: 'First after refresh',
-          trust: 'user',
           isDefault: false,
           rows: [],
         },
         {
           id: 'new-default',
           name: 'New default',
-          trust: 'system',
           isDefault: true,
           rows: [],
         },
@@ -310,6 +326,56 @@ describe('PluginInventory', () => {
     expect(screen.getByRole('status').textContent).toContain('No matching plugins.')
   })
 
+  it('finds rows in other presets and links each match to its owning preset', async () => {
+    renderInventory()
+
+    const session = await screen.findByRole('region', { name: 'Session plugins' })
+    const search = screen.getByRole('searchbox', { name: 'Search plugins' })
+    fireEvent.change(search, { target: { value: 'ANALYSIS-ONLY' } })
+
+    expect(within(session).queryByText('agent-analysis-only')).toBeNull()
+    expect(screen.getByRole('status').textContent).toContain('other presets: 1')
+    const destination = screen.getByRole('button', { name: 'View matches in Analysis mode' })
+    expect(destination.getAttribute('data-agent-preset-id')).toBe('analysis')
+
+    fireEvent.click(destination)
+    expect(session.getAttribute('data-agent-preset-id')).toBe('analysis')
+    expect(within(session).getByText('agent-analysis-only')).toBeDefined()
+  })
+
+  it.each([
+    { locale: 'en' as const, shippedName: 'Standard' },
+    { locale: 'zh' as const, shippedName: '标准模式' },
+  ])(
+    'localizes shipped preset names in $locale and preserves custom names',
+    async ({ locale, shippedName }) => {
+      renderInventoryInLocale(locale, {
+        entries: [],
+        agentPresets: [
+          { id: 'standard', isDefault: true, rows: [] },
+          { id: 'research-team', name: '研究组 Mode', isDefault: false, rows: [] },
+        ],
+      })
+
+      await screen.findByRole('button', { name: /Choose|选择/u })
+      expect(modeTriggerLabel()).toContain(shippedName)
+      fireEvent.click(modeTrigger())
+      const options = screen.getAllByRole('option').map((option) => option.textContent)
+      expect(options.some((label) => label?.includes(shippedName))).toBe(true)
+      expect(options).toContain('研究组 Mode')
+    },
+  )
+
+  it('preserves explicit names even when the id matches a shipped preset', async () => {
+    renderInventoryInLocale('zh', {
+      entries: [],
+      agentPresets: [{ id: 'standard', name: '项目标准', isDefault: false, rows: [] }],
+    })
+
+    await screen.findByRole('button', { name: /选择要查看的 Agent 模式/u })
+    expect(modeTriggerLabel()).toBe('项目标准')
+  })
+
   it('collapses an expanded row when search filters it out', async () => {
     renderInventory()
 
@@ -342,7 +408,6 @@ describe('PluginInventory', () => {
           {
             id: 'broken-mode',
             name: 'Broken mode',
-            trust: 'user',
             isDefault: true,
             broken: 'Composition unavailable',
             rows: [],

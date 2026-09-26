@@ -13,24 +13,41 @@ import { unwrapRpcResultValue } from '../rc6/rpc.js'
 // shipped rows have one of these ids and publish no name; named or other rows
 // are custom presets. The Remote roster and read document carry no trust field.
 const RC172_BUILT_IN_PRESET_IDS = new Set(['standard', 'ptc', 'minimal', 'cordis'])
+const LIST_AGENT_PRESETS = 'agentPresets/list'
 
 /** DSH 0.1.7-rc.2's registry-backed preset surface. */
 export class Rc172PresetRepository implements PresetRepository {
   public constructor(private readonly transport: DshTransport) {}
 
   public async list(signal?: AbortSignal): Promise<AgentPresetRoster> {
-    const value = unwrapRpcResultValue<unknown>(
-      await this.transport.remoteRequest('agentPresets/list', {}, signal),
-      'agentPresets/list',
-    )
-    const record = requiredRecord(value, 'roster')
-    if (!Array.isArray(record.presets)) throw malformedPresetResponse('roster')
+    try {
+      const value = unwrapRpcResultValue<unknown>(
+        await this.transport.remoteRequest(LIST_AGENT_PRESETS, {}, signal),
+        LIST_AGENT_PRESETS,
+      )
+      const record = requiredRecord(value, 'roster')
+      if (!Array.isArray(record.presets)) throw malformedPresetResponse('roster')
 
-    return {
-      presets: record.presets.map(presetDescriptor),
-      authorable: false,
-      compositionReadable: true,
-      defaultSettingPath: 'agent-preset-registry.selectedDefault',
+      return {
+        presets: record.presets.map(presetDescriptor),
+        authorable: false,
+        canOpenPresetLocation: false,
+        canRemoveUserPresets: false,
+        compositionReadable: true,
+        defaultSettingPath: 'agent-preset-registry.selectedDefault',
+      }
+    } catch (error) {
+      if (!isOptionalRegistryUnavailable(error)) throw error
+      // RC2 permits profiles without the preset registry.  An unavailable
+      // invocation has no roster or default to project; leave session creation
+      // to the host's own composition and default.
+      return {
+        presets: [],
+        authorable: false,
+        canOpenPresetLocation: false,
+        canRemoveUserPresets: false,
+        compositionReadable: false,
+      }
     }
   }
 
@@ -97,6 +114,14 @@ function presetDescriptor(value: unknown): AgentPresetDescriptor {
 
 function presetTrust(id: string, name: unknown): 'system' | 'user' {
   return name === undefined && RC172_BUILT_IN_PRESET_IDS.has(id) ? 'system' : 'user'
+}
+
+function isOptionalRegistryUnavailable(error: unknown): boolean {
+  return (
+    error instanceof AppError &&
+    error.context?.rpcMethod === LIST_AGENT_PRESETS &&
+    error.context.rpcCode === 'gateway/invocation-unavailable'
+  )
 }
 
 function requiredRecord(value: unknown, part: string): Record<string, unknown> {

@@ -57,6 +57,8 @@ describe('Rc6PresetRepository roster read', () => {
 
     expect(calls).toEqual([{ method: 'agentPreset.list', params: {} }])
     expect(roster.authorable).toBe(true)
+    expect(roster.canOpenPresetLocation).toBe(true)
+    expect(roster.canRemoveUserPresets).toBe(true)
     expect(roster.hasDocument).toBe(true)
     expect(roster.presets.map((preset) => preset.id)).toEqual([
       'standard',

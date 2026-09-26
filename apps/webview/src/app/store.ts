@@ -528,7 +528,7 @@ export interface AppActions {
   discoverCustomProviderModels(
     input: Omit<ModelDiscoveryInput, 'apiKey'>,
   ): Promise<readonly DiscoveredModel[]>
-  /** Read the full preset roster with its authorable/hasDocument facts. */
+  /** Read the preset roster with the adapter's management and display capabilities. */
   loadPresetRoster(): Promise<AgentPresetRoster | undefined>
   /** Open one shipped preset's composition in the read-only viewer. */
   readPresetDocument(presetId: string): Promise<AgentPresetDocument | undefined>
@@ -586,8 +586,20 @@ interface PendingSessionOpen {
   ready: boolean
 }
 
+type PresetSessionSyncTarget =
+  | {
+      readonly kind: 'active'
+      readonly sessionId: string
+      readonly configuration: AgentConfiguration
+    }
+  | {
+      readonly kind: 'pending'
+      readonly revision: number
+      readonly createdSessionId?: string
+      readonly configuration: AgentConfiguration
+    }
+
 interface ComposerPreferences {
-  readonly preset?: string
   readonly model?: ModelSelection
   readonly openFileId?: string
   readonly promptMode?: PromptMode
@@ -1135,13 +1147,10 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     vscodeApi.setState(persistedWebviewState)
   }
   const rememberComposerConfiguration = (configuration: AgentConfiguration): void => {
-    const preset = configuration.preset.trim()
     const model = normalizedModelSelection(configuration.model)
-    const rememberedPreset = preset === '' ? composerPreferences.preset : preset
     const rememberedModel = model ?? composerPreferences.model
     composerPreferences = {
       ...composerPreferences,
-      ...(rememberedPreset === undefined ? {} : { preset: rememberedPreset }),
       ...(rememberedModel === undefined ? {} : { model: rememberedModel }),
     }
     persistWebviewState()
@@ -1153,8 +1162,120 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   let permissionCatalogGeneration = 0
   let openVersion = 0
   let sessionModelDirectoryGeneration = 0
+  let configurationGeneration = 0
+  let presetRosterGeneration = 0
   let pendingSessionRevision = 0
   let pendingSend: { readonly revision: number; readonly promise: Promise<void> } | undefined
+  const capturePresetSessionTarget = (): PresetSessionSyncTarget | undefined => {
+    const pending = state.pendingSession
+    if (pending !== undefined && pendingSend?.revision !== pending.revision) {
+      if (
+        pending.createdSessionId === undefined ||
+        state.sessions.some(
+          (session) => session.id === pending.createdSessionId && session.blank && session.status === 'idle',
+        )
+      )
+        return {
+          kind: 'pending',
+          revision: pending.revision,
+          ...(pending.createdSessionId === undefined ? {} : { createdSessionId: pending.createdSessionId }),
+          configuration: pending.configuration,
+        }
+    }
+    const sessionId = state.activeSessionId
+    const summary = state.sessions.find((session) => session.id === sessionId)
+    if (
+      sessionId !== undefined &&
+      state.activeSubagent === undefined &&
+      state.configuration !== undefined &&
+      summary?.blank === true &&
+      summary.status === 'idle'
+    )
+      return { kind: 'active', sessionId, configuration: state.configuration }
+    return undefined
+  }
+  const presetSessionTargetIsCurrent = (target: PresetSessionSyncTarget): boolean => {
+    if (target.kind === 'pending') {
+      const pending = state.pendingSession
+      return (
+        pending?.revision === target.revision &&
+        pending.createdSessionId === target.createdSessionId &&
+        pendingSend?.revision !== target.revision &&
+        pending.configuration.preset === target.configuration.preset &&
+        (target.createdSessionId === undefined ||
+          state.sessions.some(
+            (session) => session.id === target.createdSessionId && session.blank && session.status === 'idle',
+          ))
+      )
+    }
+    const summary = state.sessions.find((session) => session.id === target.sessionId)
+    return (
+      state.activeSessionId === target.sessionId &&
+      state.activeSubagent === undefined &&
+      state.configuration?.preset === target.configuration.preset &&
+      summary?.blank === true &&
+      summary.status === 'idle'
+    )
+  }
+  const synchronizeBlankSessionPreset = async (
+    target: PresetSessionSyncTarget,
+    preset: string,
+  ): Promise<void> => {
+    if (target.configuration.preset === preset || !presetSessionTargetIsCurrent(target)) return
+    const configuration = { ...target.configuration, preset }
+    if (target.kind === 'pending' && target.createdSessionId === undefined) {
+      setState((current) => {
+        const pending = current.pendingSession
+        if (
+          pending?.revision !== target.revision ||
+          pending.createdSessionId !== undefined ||
+          pending.configuration.preset !== target.configuration.preset ||
+          pendingSend?.revision === target.revision
+        )
+          return current
+        return { ...current, pendingSession: { ...pending, configuration } }
+      })
+      return
+    }
+    if (!presetSessionTargetIsCurrent(target)) return
+    const sessionId = target.kind === 'active' ? target.sessionId : target.createdSessionId
+    if (sessionId === undefined) return
+    const generation = ++configurationGeneration
+    await client.request<unknown>({
+      type: 'session.configure',
+      requestId: requestId(),
+      payload: { sessionId, configuration },
+    })
+    if (generation !== configurationGeneration || !presetSessionTargetIsCurrent(target)) return
+    if (target.kind === 'active')
+      setState((current) => {
+        const summary = current.sessions.find((session) => session.id === target.sessionId)
+        if (
+          current.activeSessionId !== target.sessionId ||
+          current.activeSubagent !== undefined ||
+          current.configuration?.preset !== target.configuration.preset ||
+          summary?.blank !== true ||
+          summary.status !== 'idle'
+        )
+          return current
+        return { ...current, configuration }
+      })
+    else
+      setState((current) => {
+        const pending = current.pendingSession
+        const summary = current.sessions.find((session) => session.id === target.createdSessionId)
+        if (
+          pending?.revision !== target.revision ||
+          pending.createdSessionId !== target.createdSessionId ||
+          pending.configuration.preset !== target.configuration.preset ||
+          pendingSend?.revision === target.revision ||
+          summary?.blank !== true ||
+          summary.status !== 'idle'
+        )
+          return current
+        return { ...current, pendingSession: { ...pending, configuration } }
+      })
+  }
   const refreshLiveGoals = async (): Promise<void> => {
     const sessionId = state.activeSessionId
     if (sessionId === undefined || !goalActivationAvailable) return
@@ -1308,7 +1429,6 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     return orderPendingReplayMessages(messages)
   }
   let commandDirectoryGeneration = 0
-  let configurationGeneration = 0
   const commandDirectoryCache = new Map<string, readonly DynamicCommand[]>()
   const commandDirectoryLoads = new Map<string, Promise<readonly DynamicCommand[] | undefined>>()
   const loadCommandDirectory = (
@@ -4468,16 +4588,21 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       return models
     },
     loadPresetRoster: async () => {
+      const target = capturePresetSessionTarget()
+      const generation = ++presetRosterGeneration
       const roster = parsePresetRoster(
         await client.request<unknown>({ type: 'preset.list', requestId: requestId() }),
       )
-      if (roster !== undefined)
-        setState((current) => {
-          const presets = arraysEqual(current.presets, roster.presets) ? current.presets : roster.presets
-          if (presets === current.presets && current.presetSelectionEnabled === roster.modeSelectionEnabled)
-            return current
-          return withPresetSelectionEnabled({ ...current, presets }, roster.modeSelectionEnabled)
-        })
+      if (roster === undefined || generation !== presetRosterGeneration) return roster
+      const hostDefaultPreset = roster.presets.find((preset) => preset.isDefault)?.id
+      setState((current) => {
+        const presets = arraysEqual(current.presets, roster.presets) ? current.presets : roster.presets
+        if (presets === current.presets && current.presetSelectionEnabled === roster.modeSelectionEnabled)
+          return current
+        return withPresetSelectionEnabled({ ...current, presets }, roster.modeSelectionEnabled)
+      })
+      if (target !== undefined && hostDefaultPreset !== undefined)
+        await synchronizeBlankSessionPreset(target, hostDefaultPreset)
       return roster
     },
     readPresetDocument: async (presetId) => {
@@ -10155,13 +10280,7 @@ function createDefaultConfiguration(
   state: Pick<AppState, 'presets' | 'models'>,
   preferences: ComposerPreferences,
 ): AgentConfiguration {
-  const defaultPreset =
-    state.presets.find((entry) => entry.isDefault)?.id ?? state.presets[0]?.id ?? 'standard'
-  const preset =
-    preferences.preset !== undefined &&
-    (state.presets.length === 0 || state.presets.some((entry) => entry.id === preferences.preset))
-      ? preferences.preset
-      : defaultPreset
+  const preset = state.presets.find((entry) => entry.isDefault)?.id ?? state.presets[0]?.id ?? 'standard'
   const model =
     preferences.model !== undefined &&
     (state.models.length === 0 ||
@@ -10183,7 +10302,6 @@ function createDefaultConfiguration(
 function readPersistedWebviewState(value: unknown): PersistedWebviewState {
   const root = object(value)
   const raw = object(root?.composerPreferences)
-  const preset = typeof raw?.preset === 'string' && raw.preset.trim() !== '' ? raw.preset : undefined
   const model = normalizedModelSelection(raw?.model)
   const openFileId =
     typeof raw?.openFileId === 'string' && raw.openFileId.trim() !== '' ? raw.openFileId : undefined
@@ -10192,7 +10310,6 @@ function readPersistedWebviewState(value: unknown): PersistedWebviewState {
   return {
     version: 1,
     composerPreferences: {
-      ...(preset === undefined ? {} : { preset }),
       ...(model === undefined ? {} : { model }),
       ...(openFileId === undefined ? {} : { openFileId }),
       ...(promptMode === undefined ? {} : { promptMode }),
@@ -10278,6 +10395,8 @@ function parsePresetRoster(value: unknown): AgentPresetRoster | undefined {
     // Absent means the host did not state its native-opener capability; a
     // stated value must still be a boolean.
     (roster.hasDocument !== undefined && typeof roster.hasDocument !== 'boolean') ||
+    (roster.canOpenPresetLocation !== undefined && typeof roster.canOpenPresetLocation !== 'boolean') ||
+    (roster.canRemoveUserPresets !== undefined && typeof roster.canRemoveUserPresets !== 'boolean') ||
     (roster.modeSelectionEnabled !== undefined && typeof roster.modeSelectionEnabled !== 'boolean') ||
     (roster.compositionReadable !== undefined && typeof roster.compositionReadable !== 'boolean') ||
     (roster.defaultSettingPath !== undefined && typeof roster.defaultSettingPath !== 'string')
@@ -10293,6 +10412,12 @@ function parsePresetRoster(value: unknown): AgentPresetRoster | undefined {
       : {}),
     authorable: roster.authorable,
     ...(typeof roster.hasDocument === 'boolean' ? { hasDocument: roster.hasDocument } : {}),
+    ...(typeof roster.canOpenPresetLocation === 'boolean'
+      ? { canOpenPresetLocation: roster.canOpenPresetLocation }
+      : {}),
+    ...(typeof roster.canRemoveUserPresets === 'boolean'
+      ? { canRemoveUserPresets: roster.canRemoveUserPresets }
+      : {}),
     ...(typeof roster.modeSelectionEnabled === 'boolean'
       ? { modeSelectionEnabled: roster.modeSelectionEnabled }
       : {}),
@@ -10324,7 +10449,7 @@ function isAgentPresetPluginGroup(value: unknown): value is AgentPresetPluginGro
     group !== undefined &&
     typeof group.id === 'string' &&
     group.id.length > 0 &&
-    (group.trust === 'system' || group.trust === 'user') &&
+    (group.trust === undefined || group.trust === 'system' || group.trust === 'user') &&
     typeof group.isDefault === 'boolean' &&
     Array.isArray(group.rows) &&
     (group.name === undefined || typeof group.name === 'string') &&

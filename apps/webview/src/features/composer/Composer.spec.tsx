@@ -4,6 +4,7 @@ import { useState, type ReactElement } from 'react'
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AgentConfiguration, DynamicCommand } from '@dsh-vscode/domain'
+import { I18nProvider, LOCALE_EXPLICIT_STORAGE_KEY, LOCALE_STORAGE_KEY, setActiveLocale } from '../../i18n.js'
 import { Composer } from './Composer.js'
 
 function baseProps(): Parameters<typeof Composer>[0] {
@@ -181,7 +182,17 @@ describe('Composer', () => {
         ]}
       />,
     )
-    expect(screen.getByRole('listbox', { name: 'Files and sessions' })).toBeDefined()
+    const input = screen.getByRole('textbox', { name: 'Prompt' })
+    const listbox = screen.getByRole('listbox', { name: 'Files and sessions' })
+    expect(input.getAttribute('role')).toBeNull()
+    expect(input.getAttribute('aria-expanded')).toBeNull()
+    expect(input.getAttribute('aria-haspopup')).toBe('listbox')
+    expect(input.getAttribute('aria-controls')).toBe(listbox.id)
+    expect(input.getAttribute('aria-autocomplete')).toBe('list')
+    const suggestionStatus = document.querySelector('.dsh-composer__suggestion-status')
+    expect(suggestionStatus?.textContent).toBe(
+      'File and session suggestions are open. Available candidates: 2. Use Up or Down Arrow to highlight, then press Enter to add; press Escape to close.',
+    )
     fireEvent.mouseDown(screen.getByRole('option', { name: /app\.ts/ }))
     expect(onDraftChange).toHaveBeenLastCalledWith('@src/app.ts')
     expect(onReferenceQueryChange).toHaveBeenLastCalledWith('src/app.ts', false)
@@ -543,13 +554,22 @@ describe('Composer', () => {
     expect(screen.getByRole('button', { name: 'Remove notes.txt' })).toBeDefined()
   })
 
-  it('moves the command menu highlight with the arrow keys and wraps at both ends', () => {
+  it('exposes command suggestions from the multiline textbox and moves the highlight with arrow keys', () => {
     render(<Composer {...baseProps()} draft="/p" commands={commandFixtures()} onCommand={vi.fn()} />)
     const textarea = screen.getByRole('textbox', { name: 'Prompt' })
-    // Official combobox wiring: the textarea owns the menu and the highlight
-    // rides aria-activedescendant instead of moving DOM focus.
-    expect(textarea.getAttribute('aria-controls')).toBe('dsh-command-menu')
-    expect(textarea.getAttribute('aria-expanded')).toBe('true')
+    const listbox = screen.getByRole('listbox', { name: 'Commands' })
+    // A native textarea remains a multiline textbox; the controlled listbox
+    // and live announcement expose suggestions without an invalid combobox state.
+    expect(textarea.getAttribute('role')).toBeNull()
+    expect(textarea.getAttribute('aria-expanded')).toBeNull()
+    expect(textarea.getAttribute('aria-haspopup')).toBe('listbox')
+    expect(textarea.getAttribute('aria-controls')).toBe(listbox.id)
+    expect(textarea.getAttribute('aria-autocomplete')).toBe('list')
+    const optionCount = listbox.querySelectorAll('[role="option"]').length
+    const suggestionStatus = document.querySelector('.dsh-composer__suggestion-status')
+    expect(suggestionStatus?.textContent).toBe(
+      `Command suggestions are open. Available options: ${optionCount}. Use Up or Down Arrow to highlight, then press Enter to choose; press Escape to close.`,
+    )
     fireEvent.keyDown(textarea, { key: 'ArrowDown' })
     expect(textarea.getAttribute('aria-activedescendant')).toBe('dsh-command-option-0')
     fireEvent.keyDown(textarea, { key: 'ArrowDown' })
@@ -565,6 +585,68 @@ describe('Composer', () => {
     const textarea = screen.getByRole('textbox', { name: 'Prompt' })
     fireEvent.keyDown(textarea, { key: 'ArrowDown', isComposing: true })
     expect(textarea.getAttribute('aria-activedescendant')).toBeNull()
+  })
+
+  it('announces an open command menu with no matching candidates', () => {
+    render(<Composer {...baseProps()} draft="/no-such-command" commands={commandFixtures()} />)
+
+    expect(screen.queryByRole('listbox', { name: 'Commands' })).toBeNull()
+    expect(document.querySelector('.dsh-composer__suggestion-status')?.textContent).toBe(
+      'Command suggestions are open, but there are no matching commands or options.',
+    )
+  })
+
+  it('announces when a reference search has no matching candidates', () => {
+    render(<Composer {...baseProps()} draft="@missing" references={[]} referenceLoading={false} />)
+
+    expect(screen.queryByRole('listbox', { name: 'Files and sessions' })).toBeNull()
+    expect(document.querySelector('.dsh-composer__suggestion-status')?.textContent).toBe(
+      'File and session suggestions are open, but there are no matching items.',
+    )
+  })
+
+  it('announces free-form command input when the command has no selectable options', () => {
+    render(<Composer {...baseProps()} draft="/goal my target" commands={commandFixtures()} />)
+
+    expect(screen.queryByRole('listbox')).toBeNull()
+    expect(document.querySelector('.dsh-composer__suggestion-status')?.textContent).toBe(
+      'Command input is open for /goal. Type an argument.',
+    )
+  })
+
+  it('announces the open command menu and candidate count in Chinese', () => {
+    const previousDocumentLanguage = document.documentElement.lang
+    const previousStoredLocale = window.localStorage.getItem(LOCALE_STORAGE_KEY)
+    const previousExplicitLocale = window.localStorage.getItem(LOCALE_EXPLICIT_STORAGE_KEY)
+    window.localStorage.setItem(LOCALE_STORAGE_KEY, 'zh-CN')
+    window.localStorage.setItem(LOCALE_EXPLICIT_STORAGE_KEY, 'true')
+    try {
+      const view = render(
+        <I18nProvider>
+          <Composer {...baseProps()} draft="/p" commands={commandFixtures()} />
+        </I18nProvider>,
+      )
+      const listbox = screen.getByRole('listbox', { name: '命令' })
+      const optionCount = listbox.querySelectorAll('[role="option"]').length
+      expect(document.querySelector('.dsh-composer__suggestion-status')?.textContent).toBe(
+        `命令候选列表已打开，共有 ${optionCount} 个选项。按向上或向下方向键高亮，然后按 Enter 选择；按 Escape 关闭。`,
+      )
+      view.rerender(
+        <I18nProvider>
+          <Composer {...baseProps()} draft="/no-such-command" commands={commandFixtures()} />
+        </I18nProvider>,
+      )
+      expect(document.querySelector('.dsh-composer__suggestion-status')?.textContent).toBe(
+        '命令候选列表已打开，但没有匹配的命令或选项。',
+      )
+    } finally {
+      if (previousStoredLocale === null) window.localStorage.removeItem(LOCALE_STORAGE_KEY)
+      else window.localStorage.setItem(LOCALE_STORAGE_KEY, previousStoredLocale)
+      if (previousExplicitLocale === null) window.localStorage.removeItem(LOCALE_EXPLICIT_STORAGE_KEY)
+      else window.localStorage.setItem(LOCALE_EXPLICIT_STORAGE_KEY, previousExplicitLocale)
+      document.documentElement.lang = previousDocumentLanguage
+      setActiveLocale(previousDocumentLanguage.toLowerCase().startsWith('zh') ? 'zh' : 'en')
+    }
   })
 
   it('ignores menu Enter arbitration for the legacy IME signal', () => {
@@ -595,6 +677,8 @@ describe('Composer', () => {
     fireEvent.keyDown(textarea, { key: 'Escape' })
     expect(screen.queryByRole('listbox', { name: 'Commands' })).toBeNull()
     expect(textarea.getAttribute('aria-expanded')).toBeNull()
+    expect(textarea.getAttribute('aria-controls')).toBeNull()
+    expect(textarea.getAttribute('aria-haspopup')).toBeNull()
     view.rerender(<Composer {...baseProps()} draft="/pl" commands={commandFixtures()} onCommand={vi.fn()} />)
     expect(screen.getByRole('listbox', { name: 'Commands' })).toBeDefined()
   })
@@ -809,9 +893,10 @@ describe('Composer model availability notice', () => {
 
     expect(textarea.disabled).toBe(false)
     expect(textarea.getAttribute('placeholder')).toBe('Message…')
-    expect(screen.getByRole('status').textContent).toBe(
+    const unavailableNotice = screen.getByText(
       'This model is not currently listed as available; DSH may ask you to sign in',
     )
+    expect(unavailableNotice.getAttribute('role')).toBe('status')
     expect(screen.getByRole('button', { name: 'Send message' }).hasAttribute('disabled')).toBe(false)
     // Choosing a served model remains available, but is not required to send a prompt to DSH.
     expect(screen.getByRole('button', { name: /^Model and reasoning/u }).hasAttribute('disabled')).toBe(false)
@@ -845,7 +930,9 @@ describe('Composer model availability notice', () => {
     const textarea = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })
     expect(textarea.disabled).toBe(false)
     expect(textarea.getAttribute('placeholder')).toBe('Message…')
-    expect(screen.queryByRole('status')).toBeNull()
+    const suggestionStatus = document.querySelector('.dsh-composer__suggestion-status')
+    expect(suggestionStatus).not.toBeNull()
+    expect(suggestionStatus?.textContent).toBe('')
   })
 
   it('states the host route the directory named while the session names none', () => {

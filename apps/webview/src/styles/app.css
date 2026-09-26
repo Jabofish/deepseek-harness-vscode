@@ -4453,6 +4453,26 @@ summary.dsh-timeline__card-header,
   font-size: var(--dsh-font-size-xs);
 }
 
+.dsh-plugin-inventory__preset-search-matches {
+  display: grid;
+  gap: var(--dsh-space-2);
+  min-width: 0;
+}
+
+.dsh-plugin-inventory__preset-search-note {
+  margin: 0;
+  color: var(--dsh-muted);
+}
+
+.dsh-plugin-inventory__preset-search-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--dsh-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
 .dsh-plugin-inventory__config-tag[data-enabled='conditional'] {
   border-color: color-mix(in srgb, var(--dsh-warning) 42%, var(--dsh-control-border));
   color: var(--dsh-warning);

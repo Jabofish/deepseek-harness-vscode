@@ -26,6 +26,8 @@ type PluginRow = PluginInventoryEntry | AgentPresetPluginRow
 const EMPTY_PRESETS: readonly AgentPresetPluginGroup[] = []
 const EMPTY_PLUGIN_ENTRIES: readonly PluginInventoryEntry[] = []
 const EMPTY_PRESET_ROWS: readonly AgentPresetPluginRow[] = []
+const EMPTY_INDEXED_PRESET_ROWS: readonly { readonly row: AgentPresetPluginRow; readonly index: number }[] =
+  []
 
 type ExpandedPlugin =
   | { readonly scope: 'global'; readonly entryId: string }
@@ -50,13 +52,27 @@ function moduleShortName(moduleName: string): string {
     .replace(/^dsh-(?:host-|client-)?/, '')
 }
 
-function presetName(preset: AgentPresetPluginGroup): string {
-  return preset.name?.trim() || preset.id
+function presetName(preset: AgentPresetPluginGroup, t: Translate): string {
+  if (preset.name !== undefined) return preset.name
+
+  switch (preset.id) {
+    case 'standard':
+      return t('presets.builtin.standard.name')
+    case 'ptc':
+      return t('presets.builtin.ptc.name')
+    case 'minimal':
+      return t('presets.builtin.minimal.name')
+    case 'cordis':
+      return t('presets.builtin.cordis.name')
+    default:
+      return preset.id
+  }
 }
 
 /** The host's default marker belongs to the same string in the menu and on the trigger. */
 function presetChoiceLabel(preset: AgentPresetPluginGroup, t: Translate): string {
-  return preset.isDefault ? `${presetName(preset)} (${t('plugins.defaultPreset')})` : presetName(preset)
+  const name = presetName(preset, t)
+  return preset.isDefault ? `${name} (${t('plugins.defaultPreset')})` : name
 }
 
 /** Keep a user's inspection choice when it survives a refresh; otherwise use the host default. */
@@ -88,16 +104,9 @@ function matchesGlobal(entry: PluginInventoryEntry, normalizedQuery: string, loc
   )
 }
 
-function matchesSession(
-  row: AgentPresetPluginRow,
-  preset: AgentPresetPluginGroup,
-  normalizedQuery: string,
-  locale: string,
-): boolean {
+function matchesSession(row: AgentPresetPluginRow, normalizedQuery: string, locale: string): boolean {
   return matchesValues(
     [
-      preset.id,
-      presetName(preset),
       row.entryId,
       row.moduleName,
       pluginLocalizedText(row.meta?.title, locale),
@@ -281,23 +290,32 @@ export function PluginInventory(props: PluginInventoryProps): ReactElement {
     presets.find((preset) => preset.id === selectedId) ??
     presets.find((preset) => preset.isDefault) ??
     presets[0]
+  const currentPresetId = selectedPreset?.id
   const globalEntries = snapshot?.entries ?? EMPTY_PLUGIN_ENTRIES
   const sessionRows = selectedPreset?.rows ?? EMPTY_PRESET_ROWS
   const normalizedQuery = query.trim().toLocaleLowerCase()
+  const searching = normalizedQuery.length > 0
   const filteredGlobal = useMemo(
     () => globalEntries.filter((entry) => matchesGlobal(entry, normalizedQuery, locale)),
     [globalEntries, locale, normalizedQuery],
   )
-  const filteredSession = useMemo(
+  const filteredPresets = useMemo(
     () =>
-      selectedPreset?.rows
-        .map((row, index) => ({ row, index }))
-        .filter(({ row }) => matchesSession(row, selectedPreset, normalizedQuery, locale)) ?? [],
-    [locale, normalizedQuery, selectedPreset],
+      presets.map((preset) => ({
+        preset,
+        rows: preset.rows
+          .map((row, index) => ({ row, index }))
+          .filter(({ row }) => matchesSession(row, normalizedQuery, locale)),
+      })),
+    [locale, normalizedQuery, presets],
   )
-  const resultCount = filteredGlobal.length + filteredSession.length
-  const candidateCount = globalEntries.length + sessionRows.length
-  const searching = normalizedQuery.length > 0
+  const filteredSession =
+    filteredPresets.find(({ preset }) => preset.id === currentPresetId)?.rows ?? EMPTY_INDEXED_PRESET_ROWS
+  const otherPresetMatches = searching
+    ? filteredPresets.filter(({ preset, rows }) => preset.id !== currentPresetId && rows.length > 0)
+    : []
+  const otherMatchCount = otherPresetMatches.reduce((total, { rows }) => total + rows.length, 0)
+  const resultCount = filteredGlobal.length + filteredSession.length + otherMatchCount
   // A query must not hide its own matches, so searching starts from both groups open and keeps
   // the user's per-group choice for after the query is cleared.
   const openGroupsInEffect = searching ? openGroupsWhileSearching : openGroups
@@ -332,7 +350,7 @@ export function PluginInventory(props: PluginInventoryProps): ReactElement {
       .map((row, index) => ({ row, index }))
       .find(({ row, index }) => sessionRowKey(selectedPreset.id, row, index) === expanded.rowKey)
     const row = indexedRow?.row
-    if (row === undefined || !matchesSession(row, selectedPreset, nextQuery, locale)) setExpanded(null)
+    if (row === undefined || !matchesSession(row, nextQuery, locale)) setExpanded(null)
   }
 
   const retry = (): void => {
@@ -459,6 +477,32 @@ export function PluginInventory(props: PluginInventoryProps): ReactElement {
                       })}
                     </ul>
                   ) : null}
+                  {otherMatchCount > 0 ? (
+                    <div className="dsh-plugin-inventory__preset-search-matches">
+                      <p className="dsh-plugin-inventory__preset-search-note" role="status">
+                        {t('plugins.inventory.otherPresetMatches', { count: otherMatchCount })}
+                      </p>
+                      <ul className="dsh-plugin-inventory__preset-search-links">
+                        {otherPresetMatches.map(({ preset, rows }) => (
+                          <li key={preset.id}>
+                            <button
+                              className="dsh-button dsh-button--secondary dsh-button--compact"
+                              type="button"
+                              data-agent-preset-id={preset.id}
+                              aria-label={t('plugins.inventory.viewPresetMatches', {
+                                name: presetName(preset, t),
+                              })}
+                              onClick={() => selectPreset(preset.id)}
+                            >
+                              {t('plugins.inventory.viewPresetMatches', {
+                                name: `${presetName(preset, t)} (${rows.length})`,
+                              })}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
             </section>
@@ -525,7 +569,7 @@ export function PluginInventory(props: PluginInventoryProps): ReactElement {
               </div>
             ) : null}
           </section>
-          {normalizedQuery.length > 0 && candidateCount > 0 && resultCount === 0 ? (
+          {searching && resultCount === 0 ? (
             <p className="dsh-settings__empty" role="status">
               {t('plugins.noMatch')}
             </p>

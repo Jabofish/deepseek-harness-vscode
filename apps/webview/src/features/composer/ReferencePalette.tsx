@@ -29,13 +29,13 @@ export function ReferencePalette(props: ReferencePaletteProps): ReactElement {
     return { files, sessions }
   }, [props.candidates])
   return (
-    <section className="dsh-command-palette dsh-reference-palette" id={REFERENCE_MENU_ID}>
+    <section className="dsh-command-palette dsh-reference-palette">
       {props.loading ? (
         <p role="status">{t('composer.referencesLoading')}</p>
       ) : props.candidates.length === 0 ? (
         <p role="status">{t('composer.noReferences')}</p>
       ) : (
-        <ul role="listbox" aria-label={t('composer.references')}>
+        <ul id={REFERENCE_MENU_ID} role="listbox" aria-label={t('composer.references')}>
           {(() => {
             let optionIndex = 0
             return [

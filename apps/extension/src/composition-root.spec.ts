@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { BackendEndpoint, BackendEvent, JobFollowFrame } from '@dsh-vscode/domain'
+import type { AgentConfiguration, BackendEndpoint, BackendEvent, JobFollowFrame } from '@dsh-vscode/domain'
 
 vi.mock('vscode', () => ({}))
 
@@ -7,6 +7,7 @@ import {
   createManagedEndpointLoginHandler,
   JobFollowRegistry,
   relayJobFollowFrames,
+  resolveSessionConfigurationForRoster,
   resolveJobFollowOffset,
 } from './composition-root.js'
 
@@ -293,5 +294,31 @@ describe('managed endpoint login cancellation', () => {
     expect(receivedSignal).toBe(controller.signal)
     expect(endpointCookies.has(endpoint.baseUrl)).toBe(false)
     expect(endpointLaunchUrls.has(endpoint.baseUrl)).toBe(false)
+  })
+})
+
+describe('session preset resolution', () => {
+  const requested: AgentConfiguration = {
+    preset: 'standard',
+    toolMode: 'native',
+    permissionPreset: 'workspace-write',
+    planMode: false,
+    model: { providerId: '', modelId: '' },
+  }
+
+  it('leaves an empty optional registry to the DSH host default', () => {
+    expect(resolveSessionConfigurationForRoster(requested, [])).toEqual({
+      ...requested,
+      preset: '',
+    })
+  })
+
+  it('keeps a requested preset only when it exists in the host roster', () => {
+    expect(
+      resolveSessionConfigurationForRoster({ ...requested, preset: 'custom-mode' }, [
+        { id: 'standard', trust: 'system', isDefault: true },
+        { id: 'custom-mode', trust: 'user', isDefault: false },
+      ]).preset,
+    ).toBe('custom-mode')
   })
 })

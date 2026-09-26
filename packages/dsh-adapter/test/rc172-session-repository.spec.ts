@@ -307,3 +307,30 @@ describe('Rc172SessionRepository.initializeDefaultModel', () => {
     await expect(active.repository.initializeDefaultModel()).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
   })
 })
+
+describe('Rc172SessionRepository session creation preset projection', () => {
+  it('omits the preset from session.create when no optional preset registry is available', async () => {
+    const active = repository()
+    const failure = new Error('stop after recording session creation')
+    active.request.mockRejectedValue(failure)
+
+    await expect(
+      active.repository.create({
+        workspaceId: 'workspace-1',
+        configuration: {
+          preset: '',
+          toolMode: 'native',
+          permissionPreset: 'workspace-write',
+          planMode: false,
+          model: { providerId: '', modelId: '' },
+        },
+      }),
+    ).rejects.toBe(failure)
+
+    expect(active.request).toHaveBeenCalledExactlyOnceWith(
+      'session.create',
+      { workspaceId: 'workspace-1' },
+      undefined,
+    )
+  })
+})

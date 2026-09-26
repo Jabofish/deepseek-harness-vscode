@@ -16,10 +16,9 @@ import { unwrapRpcResultValue } from '../rc6/rpc.js'
 const FIBER_PHASES: readonly string[] = ['pending', 'loading', 'active', 'failed', 'unloading']
 
 /**
- * Alpha.1's Host inventory drops the pre-alpha.1 trust field and adds
- * optional package metadata/management facts. The local projection keeps the
- * fields it can represent and classifies all registry definitions as
- * deployment-owned system entries; no user-owned mutation is inferred.
+ * Alpha.1's Host inventory omits ownership classification and adds optional
+ * package metadata/management facts. Keep the composition projection limited
+ * to the fields its Remote actually publishes.
  */
 export class Alpha171PluginRepository implements PluginRepository {
   public constructor(private readonly transport: DshTransport) {}
@@ -85,7 +84,6 @@ function toAgentPresetPluginGroup(value: unknown): AgentPresetPluginGroup {
     throw malformedInventory()
   return {
     id: record.id,
-    trust: 'system',
     isDefault: record.isDefault,
     ...(record.name === undefined ? {} : { name: record.name }),
     ...(record.broken === undefined ? {} : { broken: record.broken }),

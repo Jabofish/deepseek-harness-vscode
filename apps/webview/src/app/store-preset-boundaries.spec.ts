@@ -50,6 +50,34 @@ function responseFor(roster: unknown, request: WebviewRequest): unknown {
 }
 
 describe('Webview preset boundaries', () => {
+  it('preserves explicit preset location and removal capabilities from the Host', async () => {
+    const client = new PresetBoundaryClient((request) =>
+      responseFor(
+        {
+          presets: [preset],
+          authorable: false,
+          canOpenPresetLocation: false,
+          canRemoveUserPresets: false,
+          compositionReadable: true,
+        },
+        request,
+      ),
+    )
+    const store = createAppStore(client as unknown as ProtocolClient)
+
+    try {
+      const roster = await store.loadPresetRoster()
+
+      expect(roster).toMatchObject({
+        canOpenPresetLocation: false,
+        canRemoveUserPresets: false,
+        compositionReadable: true,
+      })
+    } finally {
+      store.dispose()
+    }
+  })
+
   it('clears the previous connection capability when the replacement roster omits it', async () => {
     let roster: unknown = {
       presets: [preset],
@@ -123,4 +151,21 @@ describe('Webview preset boundaries', () => {
       }
     },
   )
+
+  it.each([
+    { field: 'canOpenPresetLocation', value: 'no' },
+    { field: 'canRemoveUserPresets', value: 1 },
+  ] as const)('rejects a roster with a malformed optional $field capability', async ({ field, value }) => {
+    const client = new PresetBoundaryClient((request) =>
+      responseFor({ presets: [preset], authorable: false, [field]: value }, request),
+    )
+    const store = createAppStore(client as unknown as ProtocolClient)
+
+    try {
+      expect(await store.loadPresetRoster()).toBeUndefined()
+      expect(store.presets).toEqual([])
+    } finally {
+      store.dispose()
+    }
+  })
 })

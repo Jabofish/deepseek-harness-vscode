@@ -21,6 +21,8 @@ export class Alpha171PresetRepository implements PresetRepository {
     return {
       presets: record.presets.map(presetDescriptor),
       authorable: false,
+      canOpenPresetLocation: false,
+      canRemoveUserPresets: false,
       compositionReadable: false,
       defaultSettingPath: 'agent-preset-registry.selectedDefault',
       modeSelectionEnabled: record.modeSelectionEnabled,

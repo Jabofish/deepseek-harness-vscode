@@ -483,7 +483,9 @@ describe('SessionDrawer', () => {
     const onRemoveWorkspace = vi.fn().mockResolvedValue(undefined)
     renderDrawer({ onRemoveWorkspace })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Remove workspace Alpha' }))
+    const trigger = screen.getByRole('button', { name: 'Remove workspace Alpha' })
+    trigger.focus()
+    fireEvent.click(trigger)
     const dialog = screen.getByRole('alertdialog', { name: 'Remove workspace' })
     expect(dialog).toBeDefined()
     expect(dialog.parentElement?.parentElement).toBe(document.body)
@@ -491,6 +493,8 @@ describe('SessionDrawer', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Remove' }))
 
     await waitFor(() => expect(onRemoveWorkspace).toHaveBeenCalledWith('w1'))
+    await waitFor(() => expect(screen.queryByRole('alertdialog', { name: 'Remove workspace' })).toBeNull())
+    expect(document.activeElement).toBe(trigger)
   })
 
   it('dismisses the switcher on Escape and returns focus to its trigger', () => {
@@ -535,7 +539,9 @@ describe('SessionDrawer', () => {
     const onRename = vi.fn().mockResolvedValue(undefined)
     renderDrawer({ open: true, onOpenChange, onRename })
 
-    fireEvent.click(screen.getAllByTitle('Rename session')[0]!)
+    const trigger = screen.getAllByTitle('Rename session')[0]!
+    trigger.focus()
+    fireEvent.click(trigger)
     expect(screen.getByRole('dialog', { name: 'Rename session' })).toBeDefined()
 
     fireEvent.keyDown(document, { key: 'Escape' })
@@ -544,6 +550,7 @@ describe('SessionDrawer', () => {
     expect(screen.queryByRole('dialog', { name: 'Rename session' })).toBeNull()
     expect(onOpenChange).not.toHaveBeenCalled()
     expect(onRename).not.toHaveBeenCalled()
+    expect(document.activeElement).toBe(trigger)
   })
 
   it('cancels the workspace removal confirmation on Escape without removing anything', () => {
@@ -667,6 +674,56 @@ describe('SessionDrawer', () => {
 
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
 
+    expect(screen.queryByRole('alertdialog', { name: 'Remove workspace' })).toBeNull()
+    expect(document.activeElement).toBe(trigger)
+  })
+
+  it('cycles Tab in both directions inside the top rename dialog above the switcher', () => {
+    renderDrawer({ open: true })
+
+    const trigger = screen.getAllByTitle('Rename session')[0]!
+    trigger.focus()
+    fireEvent.click(trigger)
+    const dialog = screen.getByRole('dialog', { name: 'Rename session' })
+    const input = within(dialog).getByLabelText('Session name')
+    const cancel = within(dialog).getByRole('button', { name: 'Cancel' })
+    const save = within(dialog).getByRole('button', { name: 'Save' })
+
+    input.focus()
+    expect(fireEvent.keyDown(input, { key: 'Tab' })).toBe(false)
+    expect(document.activeElement).toBe(cancel)
+    expect(fireEvent.keyDown(cancel, { key: 'Tab' })).toBe(false)
+    expect(document.activeElement).toBe(save)
+    expect(fireEvent.keyDown(save, { key: 'Tab' })).toBe(false)
+    expect(document.activeElement).toBe(input)
+    expect(fireEvent.keyDown(input, { key: 'Tab', shiftKey: true })).toBe(false)
+    expect(document.activeElement).toBe(save)
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: 'Rename session' })).toBeNull()
+    expect(screen.getByRole('dialog', { name: 'Sessions' })).toBeDefined()
+    expect(document.activeElement).toBe(trigger)
+  })
+
+  it('cycles Tab and Shift+Tab inside the workspace confirmation and restores focus on cancel', () => {
+    renderDrawer()
+
+    const trigger = screen.getByRole('button', { name: 'Remove workspace Alpha' })
+    trigger.focus()
+    fireEvent.click(trigger)
+    const dialog = screen.getByRole('alertdialog', { name: 'Remove workspace' })
+    const cancel = within(dialog).getByRole('button', { name: 'Cancel' })
+    const remove = within(dialog).getByRole('button', { name: 'Remove' })
+
+    expect(document.activeElement).toBe(cancel)
+    expect(fireEvent.keyDown(cancel, { key: 'Tab' })).toBe(false)
+    expect(document.activeElement).toBe(remove)
+    expect(fireEvent.keyDown(remove, { key: 'Tab' })).toBe(false)
+    expect(document.activeElement).toBe(cancel)
+    expect(fireEvent.keyDown(cancel, { key: 'Tab', shiftKey: true })).toBe(false)
+    expect(document.activeElement).toBe(remove)
+
+    fireEvent.click(cancel)
     expect(screen.queryByRole('alertdialog', { name: 'Remove workspace' })).toBeNull()
     expect(document.activeElement).toBe(trigger)
   })

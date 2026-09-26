@@ -14,6 +14,7 @@ import {
   type CheckpointSummary,
   type DiagnosticsSnapshot,
   type AgentConfiguration,
+  type AgentPresetDescriptor,
   type BackendEvent,
   type ChangeSetFile,
   type BackendEndpoint,
@@ -376,6 +377,26 @@ export async function relayJobFollowFrames(input: {
       // Diagnostics and the generic notice are best effort after the failure event.
     }
   }
+}
+
+/** Resolve a new session's requested preset against the host's optional roster. */
+export function resolveSessionConfigurationForRoster(
+  requested: AgentConfiguration,
+  presets: readonly AgentPresetDescriptor[],
+): AgentConfiguration {
+  if (presets.length === 0) {
+    // The empty string is an internal sentinel; the session adapter omits it
+    // from the wire so DSH uses its own composition and default.
+    return { ...requested, preset: '' }
+  }
+
+  const usable = presets.filter((preset) => preset.broken === undefined)
+  const candidates = usable.length > 0 ? usable : presets
+  const selected =
+    candidates.find((preset) => preset.id === requested.preset) ??
+    candidates.find((preset) => preset.isDefault) ??
+    candidates[0]
+  return { ...requested, preset: selected?.id ?? '' }
 }
 
 export function createCompositionRoot(context: vscode.ExtensionContext): CompositionRoot {
@@ -804,18 +825,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     signal?: AbortSignal,
   ): Promise<AgentConfiguration> => {
     const { presets } = await backendService.requireBackend().presets.list(signal)
-    if (presets.length === 0)
-      // A valid rc.6 deployment may compose no preset roster.  In that case
-      // the omitted agentPreset tells DSH to use its host composition.
-      return { ...requested, preset: '' }
-
-    const usable = presets.filter((preset) => preset.broken === undefined)
-    const candidates = usable.length > 0 ? usable : presets
-    const selected =
-      candidates.find((preset) => preset.id === requested.preset) ??
-      candidates.find((preset) => preset.isDefault) ??
-      candidates[0]
-    return { ...requested, preset: selected?.id ?? '' }
+    return resolveSessionConfigurationForRoster(requested, presets)
   }
   let sequence = 0
   const post = (message: HostMessage | FeatureHostMessage): Thenable<boolean> => {

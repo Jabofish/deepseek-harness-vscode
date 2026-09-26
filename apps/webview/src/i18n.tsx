@@ -450,6 +450,17 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'composer.attach': 'Attach file',
     'composer.context': 'Editor context',
     'composer.commands': 'Commands',
+    'composer.commandSuggestionsOpen':
+      'Command suggestions are open. Available options: {count}. Use Up or Down Arrow to highlight, then press Enter to choose; press Escape to close.',
+    'composer.commandSuggestionsEmpty':
+      'Command suggestions are open, but there are no matching commands or options.',
+    'composer.commandSuggestionsFreeform': 'Command input is open for /{command}. Type an argument.',
+    'composer.referenceSuggestionsOpen':
+      'File and session suggestions are open. Available candidates: {count}. Use Up or Down Arrow to highlight, then press Enter to add; press Escape to close.',
+    'composer.referenceSuggestionsEmpty':
+      'File and session suggestions are open, but there are no matching items.',
+    'composer.referenceSuggestionsLoading':
+      'File and session suggestions are open. Searching for candidates.',
     'composer.searchCommands': 'Search commands',
     'composer.noCommands': 'No matching commands.',
     'composer.addSelectionContext': 'Add selected text to DSH context',
@@ -1081,6 +1092,8 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'plugins.noMatch': 'No matching plugins.',
     'plugins.inventory.matchCount': '{matches} of {total}',
     'plugins.inventory.totalCount': '{count}',
+    'plugins.inventory.otherPresetMatches': 'More matching plugins in other presets: {count}',
+    'plugins.inventory.viewPresetMatches': 'View matches in {name}',
     'plugins.enabled': 'Enabled',
     'plugins.disabled': 'Disabled',
     'plugins.configuration': 'Configuration',
@@ -1128,6 +1141,8 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'presets.idTaken': 'A preset with this id already exists.',
     'presets.intro':
       'A preset is copied from an existing one and edited in its own files. Making one the default changes sessions created later — running sessions keep their composition.',
+    'presets.introReadOnly':
+      'Presets are read-only here. When Creator mode is available, ask it to build a bundle that declares a preset and install it through DSH plugin management.',
     'presets.builtInGroup': 'Built-in presets',
     'presets.builtin.standard.name': 'Standard',
     'presets.builtin.standard.description':
@@ -1143,6 +1158,8 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
       'Customize DSH with plugins, features, interfaces, tools, and instructions.',
     'presets.customGroup': 'Custom presets',
     'presets.emptyCustom': 'Copy a built-in preset to create your own composition.',
+    'presets.emptyCustomCreator':
+      'No custom presets are loaded. Ask Creator mode to build and install a bundle that declares one; it will appear here after DSH loads it.',
     'presets.creatorDraft': 'Ask Agent to create a mode',
     'presets.creatorDraftTitle': 'Start a new task with the built-in Creator mode.',
     'presets.creatorDraftDisabled': 'Enable Developer Tools to start a Creator-mode task.',
@@ -2098,6 +2115,14 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'composer.attach': '添加附件',
     'composer.context': '编辑器上下文',
     'composer.commands': '命令',
+    'composer.commandSuggestionsOpen':
+      '命令候选列表已打开，共有 {count} 个选项。按向上或向下方向键高亮，然后按 Enter 选择；按 Escape 关闭。',
+    'composer.commandSuggestionsEmpty': '命令候选列表已打开，但没有匹配的命令或选项。',
+    'composer.commandSuggestionsFreeform': '/{command} 的命令输入已打开，请输入参数。',
+    'composer.referenceSuggestionsOpen':
+      '文件和会话候选列表已打开，共有 {count} 个候选项。按向上或向下方向键高亮，然后按 Enter 添加；按 Escape 关闭。',
+    'composer.referenceSuggestionsEmpty': '文件和会话候选列表已打开，但没有匹配项。',
+    'composer.referenceSuggestionsLoading': '文件和会话候选列表已打开，正在搜索候选项。',
     'composer.searchCommands': '搜索命令',
     'composer.noCommands': '没有匹配的命令。',
     'composer.addSelectionContext': '将选中内容加入 DSH 上下文',
@@ -2691,6 +2716,8 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'plugins.noMatch': '没有匹配的插件。',
     'plugins.inventory.matchCount': '匹配 {matches}/{total}',
     'plugins.inventory.totalCount': '{count} 个',
+    'plugins.inventory.otherPresetMatches': '其他预设中还有 {count} 个匹配项：',
+    'plugins.inventory.viewPresetMatches': '查看「{name}」中的匹配项',
     'plugins.enabled': '已启用',
     'plugins.disabled': '已禁用',
     'plugins.configuration': '配置',
@@ -2738,6 +2765,8 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     'presets.idTaken': '此预设 ID 已存在。',
     'presets.intro':
       '预设通过复制现有预设创建，并在其文件中编辑。设为默认只影响之后创建的会话；运行中的会话会保留当前组合。',
+    'presets.introReadOnly':
+      '此处的 preset 只读。若 DSH 提供 Creator 模式，可让它创建声明 preset 的 bundle，并通过 DSH 插件管理器安装。',
     'presets.builtInGroup': '内置预设',
     'presets.builtin.standard.name': '标准模式',
     'presets.builtin.standard.description':
@@ -2751,6 +2780,8 @@ const DICTIONARIES: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
       '通过对话定制 DSH：编写插件、添加功能或界面，也能组合工具和提示词创建模式。',
     'presets.customGroup': '自定义预设',
     'presets.emptyCustom': '复制一个内置预设以创建你自己的组合。',
+    'presets.emptyCustomCreator':
+      '当前没有已加载的自定义 preset。可让 Creator 模式创建并通过 DSH 插件管理器安装声明 preset 的 bundle；DSH 加载后会显示在这里。',
     'presets.creatorDraft': '让 Agent 帮我创建模式',
     'presets.creatorDraftTitle': '使用内置创造模式启动新任务。',
     'presets.creatorDraftDisabled': '请先在通用设置中启用开发者工具。',

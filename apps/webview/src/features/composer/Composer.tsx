@@ -40,6 +40,7 @@ import {
   commandMenuOptionId,
   commandMenuRows,
   firstCommandPaletteSelection,
+  parsePaletteQuery,
   type CommandArgumentOption,
   type CommandMenuRow,
   type CommandPaletteSelection,
@@ -355,6 +356,27 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
     referenceHighlight !== undefined && referenceHighlight < (props.references?.length ?? 0)
       ? referenceHighlight
       : undefined
+  const commandListboxOpen = menuOpen && menuRows.length > 0
+  const referenceListboxOpen =
+    referenceMenuOpen && props.referenceLoading !== true && (props.references?.length ?? 0) > 0
+  const parsedCommandQuery = commandQuery === undefined ? undefined : parsePaletteQuery(commandQuery)
+  const freeformCommand =
+    parsedCommandQuery?.argument === undefined
+      ? undefined
+      : commands.find((command) => command.name.toLocaleLowerCase() === parsedCommandQuery.name)
+  const suggestionAnnouncement = menuOpen
+    ? menuRows.length > 0
+      ? t('composer.commandSuggestionsOpen', { count: menuRows.length })
+      : freeformCommand !== undefined && commandArgumentOptions.length === 0
+        ? t('composer.commandSuggestionsFreeform', { command: freeformCommand.name })
+        : t('composer.commandSuggestionsEmpty')
+    : referenceMenuOpen
+      ? props.referenceLoading === true
+        ? t('composer.referenceSuggestionsLoading')
+        : (props.references?.length ?? 0) > 0
+          ? t('composer.referenceSuggestionsOpen', { count: props.references?.length ?? 0 })
+          : t('composer.referenceSuggestionsEmpty')
+      : ''
   const openFileCandidates = useMemo(
     () => orderOpenFileCandidates(props.openFileCandidates, props.preferredOpenFileId),
     [props.openFileCandidates, props.preferredOpenFileId],
@@ -895,22 +917,15 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
           aria-label={t('composer.prompt')}
           value={props.draft}
           disabled={props.disabled || inputBlocked}
-          {...(menuOpen
-            ? {
-                'aria-expanded': true,
-                'aria-controls': COMMAND_MENU_ID,
-                'aria-autocomplete': 'list',
-              }
-            : referenceMenuOpen
-              ? {
-                  'aria-expanded': true,
-                  'aria-controls': REFERENCE_MENU_ID,
-                  'aria-autocomplete': 'list',
-                }
+          {...(menuOpen || referenceMenuOpen ? { 'aria-autocomplete': 'list' } : {})}
+          {...(commandListboxOpen
+            ? { 'aria-haspopup': 'listbox', 'aria-controls': COMMAND_MENU_ID }
+            : referenceListboxOpen
+              ? { 'aria-haspopup': 'listbox', 'aria-controls': REFERENCE_MENU_ID }
               : {})}
-          {...(referenceMenuOpen && referenceHighlightValue !== undefined
+          {...(referenceListboxOpen && referenceHighlightValue !== undefined
             ? { 'aria-activedescendant': referenceMenuOptionId(referenceHighlightValue) }
-            : menuOpen && highlight !== undefined
+            : commandListboxOpen && highlight !== undefined
               ? { 'aria-activedescendant': commandMenuOptionId(highlight) }
               : {})}
           onChange={(event) => {
@@ -948,6 +963,14 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
           placeholder={t('composer.placeholder')}
           rows={1}
         />
+        <span
+          className="dsh-sr-only dsh-composer__suggestion-status"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+        >
+          {suggestionAnnouncement}
+        </span>
         {referenceToken === undefined || props.references === undefined || !referenceMenuOpen ? null : (
           <ReferencePalette
             candidates={props.references}

@@ -127,7 +127,8 @@ export interface AgentPresetPluginRow {
 /** One agent-preset identity and its flattened plugin composition. */
 export interface AgentPresetPluginGroup {
   readonly id: string
-  readonly trust: 'system' | 'user'
+  /** Present only on inventory versions whose Remote publishes preset ownership. */
+  readonly trust?: 'system' | 'user'
   readonly name?: string
   readonly isDefault: boolean
   readonly broken?: string
@@ -159,9 +160,11 @@ export interface AgentPresetDocument {
 
 /**
  * The full `agentPreset.list` answer exactly as the host composes it: the
- * roster plus the two deployment facts that gate its management surface —
- * `authorable` (whether a writable preset root is configured at all) and
- * `hasDocument` (whether the host can open a preset directory natively).
+ * roster plus deployment facts. `authorable` says whether a writable preset
+ * root is configured; `hasDocument` says whether the host can open a preset
+ * directory natively. Adapters also state whether location and removal
+ * operations are exposed; older projections may omit these facts and keep
+ * their existing behavior.
  * Newer registry-only hosts may also state whether the mode chooser is
  * enabled; older hosts omit this optional fact.
  *
@@ -173,6 +176,10 @@ export interface AgentPresetRoster {
   readonly presets: readonly AgentPresetDescriptor[]
   readonly authorable: boolean
   readonly hasDocument?: boolean
+  /** Whether the adapter exposes an action to open or reveal a user preset's location. */
+  readonly canOpenPresetLocation?: boolean
+  /** Whether the adapter exposes removal for user presets. */
+  readonly canRemoveUserPresets?: boolean
   readonly modeSelectionEnabled?: boolean
   readonly compositionReadable?: boolean
   readonly defaultSettingPath?: string

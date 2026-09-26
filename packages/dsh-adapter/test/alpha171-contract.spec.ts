@@ -623,7 +623,6 @@ describe('DSH 0.1.7-alpha.1 contract', () => {
       agentPresets: [
         {
           id: 'standard',
-          trust: 'system',
           name: 'Standard',
           isDefault: true,
           rows: [
@@ -640,6 +639,8 @@ describe('DSH 0.1.7-alpha.1 contract', () => {
     expect(presets).toEqual({
       presets: [{ id: 'standard', trust: 'system', name: 'Standard', isDefault: true }],
       authorable: false,
+      canOpenPresetLocation: false,
+      canRemoveUserPresets: false,
       compositionReadable: false,
       defaultSettingPath: 'agent-preset-registry.selectedDefault',
       modeSelectionEnabled: false,
