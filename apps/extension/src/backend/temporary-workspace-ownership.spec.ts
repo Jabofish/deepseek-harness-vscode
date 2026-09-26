@@ -722,7 +722,10 @@ describe('TemporaryWorkspaceOwnershipStore', () => {
     // the filesystem cannot immediately recycle its identity after deletion.
     mkdirSync(replacementDirectory)
     const replacementFile = path.join(directory, 'replacement-user-data.txt')
-    writeFileSync(path.join(replacementDirectory, path.basename(replacementFile)), 'preserve replacement data')
+    writeFileSync(
+      path.join(replacementDirectory, path.basename(replacementFile)),
+      'preserve replacement data',
+    )
     rmSync(directory, { recursive: true })
     const createWorkspace =
       vi.fn<(input: WorkspaceCreateInput, signal?: AbortSignal) => Promise<WorkspaceSummary>>()
@@ -801,7 +804,10 @@ describe('TemporaryWorkspaceOwnershipStore', () => {
     // is removed; some filesystems may immediately reuse a freed inode.
     mkdirSync(replacementDirectory)
     const replacementFile = path.join(directory, 'replacement-user-data.txt')
-    writeFileSync(path.join(replacementDirectory, path.basename(replacementFile)), 'preserve replacement data')
+    writeFileSync(
+      path.join(replacementDirectory, path.basename(replacementFile)),
+      'preserve replacement data',
+    )
     rmSync(directory, { recursive: true })
     const removeDirectory = vi.fn<(directoryPath: string) => Promise<void>>()
     const manager = filesystemManager(
