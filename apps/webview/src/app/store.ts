@@ -18,7 +18,7 @@ import type {
 } from '@dsh-vscode/domain'
 import { parseSlashCommand, resolvePromptMode } from '@dsh-vscode/domain'
 import type { TimelineNode, TimelineState } from '@dsh-vscode/timeline'
-import { reduceTimeline } from '@dsh-vscode/timeline'
+import { isRedundantTurnFailureNotice, reduceTimeline } from '@dsh-vscode/timeline'
 import type { FeatureRequest } from '@dsh-vscode/webview-protocol'
 import { diagnosticsSnapshotSchema } from '@dsh-vscode/webview-protocol'
 import { PluginInstallRecoveryController } from './plugin-install-recovery.js'
@@ -428,9 +428,14 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         previousIndex = existing
         continue
       }
-      const target = nodes ?? (nodes = [...timeline.nodes])
-      const index = Math.max(hostOnlyInsertIndex(target, entry.anchors), previousIndex + 1)
-      target.splice(index, 0, entry.node)
+      const target = nodes ?? timeline.nodes
+      // A notice retained for a session that was not open was reduced on its
+      // own, so it never saw the durable turn row that carries the same
+      // failure. The turn row is the one history replays; drop the twin.
+      if (isRedundantTurnFailureNotice(entry.node, target)) continue
+      const mutable = nodes ?? (nodes = [...timeline.nodes])
+      const index = Math.max(hostOnlyInsertIndex(mutable, entry.anchors), previousIndex + 1)
+      mutable.splice(index, 0, entry.node)
       previousIndex = index
     }
     return nodes === undefined

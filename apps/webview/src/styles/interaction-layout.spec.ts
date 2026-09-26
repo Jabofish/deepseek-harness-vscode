@@ -33,6 +33,17 @@ describe('Conversation interaction layout', () => {
     expect(fixedRule).toContain('flex: 0 0 auto;')
   })
 
+  it('renders the full question prompt instead of clamping the header title', () => {
+    // A clamped prompt silently dropped whole inlined options: measured at a
+    // 512px viewport the title needed 60px and only 40px was laid out, and
+    // `scrollHeight === clientHeight` so no DOM test could see it.
+    const titleRule = cssRule(appStyles, '.dsh-interaction__header h2')
+    expect(titleRule).not.toContain('-webkit-line-clamp')
+    expect(titleRule).not.toContain('overflow: hidden;')
+    expect(titleRule).toContain('font-size: var(--dsh-font-size-md);')
+    expect(titleRule).toContain('overflow-wrap: anywhere;')
+  })
+
   it('keeps nested picker menus outside the extras scrollport', () => {
     const extrasRule = cssRule(layoutStyles, '.dsh-composer__extras-panel')
     expect(extrasRule).toContain(

@@ -344,8 +344,13 @@ ul {
   gap: var(--dsh-space-3);
   overflow: hidden;
   --dsh-conversation-font-scale: 1;
-  --dsh-font-size-2xs: calc(0.625rem * var(--dsh-conversation-font-scale));
-  --dsh-font-size-xs: calc(0.75rem * var(--dsh-conversation-font-scale));
+  /* The host `ui-theme.fontSize` is documented upstream as "仅影响会话内容的字号", and the
+   * reference client keeps its smallest text at fixed px - only the content size and its
+   * one-step-below secondary follow the setting. So the caption steps grow with the scale but
+   * never shrink below their design baseline: an unbounded multiplier put 2xs at 8.6px on the
+   * 12px setting, which is unreadable and is a size the reference client never renders. */
+  --dsh-font-size-2xs: max(0.625rem, calc(0.625rem * var(--dsh-conversation-font-scale)));
+  --dsh-font-size-xs: max(0.75rem, calc(0.75rem * var(--dsh-conversation-font-scale)));
   --dsh-font-size-sm: calc(0.8125rem * var(--dsh-conversation-font-scale));
   --dsh-font-size-md: calc(0.875rem * var(--dsh-conversation-font-scale));
   --dsh-font-size-lg: calc(1rem * var(--dsh-conversation-font-scale));
@@ -1025,7 +1030,7 @@ ul {
 
 .dsh-trajectory-inspector__block summary {
   color: var(--dsh-muted);
-  font-size: var(--dsh-font-size-2xs);
+  font-size: var(--dsh-font-size-xs);
   cursor: pointer;
 }
 
@@ -1037,7 +1042,7 @@ ul {
   border-radius: var(--dsh-radius-sm);
   overflow: auto;
   font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
-  font-size: var(--dsh-font-size-2xs);
+  font-size: var(--dsh-tool-detail-font-size);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -1049,7 +1054,7 @@ ul {
   margin: 0;
   padding: var(--dsh-space-5) var(--dsh-space-3);
   color: var(--dsh-muted);
-  font-size: var(--dsh-font-size-2xs);
+  font-size: var(--dsh-font-size-xs);
   text-align: center;
 }
 
@@ -1743,7 +1748,7 @@ summary.dsh-timeline__card-header,
   padding: var(--dsh-space-1) var(--dsh-space-2);
   color: var(--dsh-muted);
   background: var(--dsh-surface-raised);
-  font-size: var(--dsh-font-size-2xs);
+  font-size: var(--dsh-font-size-xs);
 }
 
 .dsh-timeline__history-more-skeleton {
@@ -1864,8 +1869,7 @@ summary.dsh-timeline__card-header,
  * the title now wraps instead; the two-line clamp stops a pathological title from filling the
  * panel, and duplicates stay reachable through the existing `title` attributes. */
 .dsh-goal-bar__title,
-.dsh-goal-strip__title,
-.dsh-interaction__header h2 {
+.dsh-goal-strip__title {
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
@@ -1873,7 +1877,34 @@ summary.dsh-timeline__card-header,
   margin: 0;
   overflow: hidden;
   overflow-wrap: anywhere;
-  font-size: var(--dsh-font-size-lg);
+  font-size: var(--dsh-font-size-md);
+  white-space: normal;
+}
+
+/* The strip is a `<details>` whose summary labels the list below it, so its rows must not
+ * out-size that label; the goal bar has no header of its own and keeps the larger title. */
+.dsh-goal-strip__heading {
+  font-size: var(--dsh-font-size-md);
+  font-weight: 600;
+}
+
+.dsh-goal-strip__title {
+  font-size: var(--dsh-font-size-sm);
+}
+
+/* A pending question's prompt is not a label: it carries the options the model
+ * inlined as text, so clamping it to two lines hid whole choices. Measured at a
+ * 512px viewport a 67-character prompt needed 3 lines (60px) and only 2 (40px)
+ * were laid out, with `scrollHeight === clientHeight` so no DOM test could see
+ * it. The header is now the one part of the card that must never clip; the
+ * questions scroll in `.dsh-interaction__body` and the actions row stays pinned.
+ * It also drops to the body scale because it is read as prose, not a heading. */
+.dsh-interaction__header h2 {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--dsh-font-size-md);
+  line-height: 1.45;
   white-space: normal;
 }
 
@@ -2243,7 +2274,7 @@ summary.dsh-timeline__card-header,
   border: 0;
   color: var(--dsh-muted);
   background: transparent;
-  font-size: var(--dsh-font-size-2xs);
+  font-size: var(--dsh-font-size-xs);
   font-weight: 600;
   text-align: start;
   text-transform: uppercase;
@@ -2555,7 +2586,7 @@ summary.dsh-timeline__card-header,
 
 .dsh-open-file-picker__status {
   color: var(--dsh-muted);
-  font-size: var(--dsh-font-size-2xs);
+  font-size: var(--dsh-font-size-xs);
   white-space: nowrap;
 }
 
@@ -2760,7 +2791,7 @@ summary.dsh-timeline__card-header,
 .dsh-context-meter__breakdown dd {
   margin: 0;
   color: var(--dsh-muted);
-  font-size: var(--dsh-font-size-2xs);
+  font-size: var(--dsh-font-size-xs);
 }
 
 .dsh-context-meter__breakdown dd {
@@ -2792,11 +2823,6 @@ summary.dsh-timeline__card-header,
  * flexible child, so it takes the remaining width and reads from the icon. */
 .dsh-interaction__header > div {
   flex: 1 1 auto;
-}
-
-.dsh-interaction__header h2 {
-  margin: 0;
-  font-size: var(--dsh-font-size-lg);
 }
 
 .dsh-interaction__description,
@@ -2843,7 +2869,7 @@ summary.dsh-timeline__card-header,
   display: block;
   margin-top: var(--dsh-space-1);
   color: var(--dsh-muted);
-  font-size: var(--dsh-font-size-2xs);
+  font-size: var(--dsh-font-size-xs);
 }
 
 .dsh-question__textarea {
@@ -3364,7 +3390,7 @@ summary.dsh-timeline__card-header,
 
 .dsh-settings__facts dt {
   color: var(--dsh-muted);
-  font-size: var(--dsh-font-size-2xs);
+  font-size: var(--dsh-font-size-xs);
   font-weight: 600;
 }
 .dsh-settings__custom-provider-grid,

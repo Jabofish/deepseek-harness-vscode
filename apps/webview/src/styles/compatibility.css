@@ -21,7 +21,7 @@
   margin: 0;
   color: inherit;
   font-family: inherit;
-  font-size: var(--dsh-font-size-md);
+  font-size: var(--dsh-tool-detail-font-size);
   line-height: 1.55;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -1206,7 +1206,7 @@
 
 .dsh-presets__group h3 {
   margin: 0;
-  font-size: var(--dsh-font-size-xs);
+  font-size: var(--dsh-font-size-2xs);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--dsh-muted);
@@ -1396,7 +1396,7 @@
   gap: 3px;
   min-width: 0;
   color: var(--dsh-muted);
-  font-size: var(--dsh-font-size-2xs);
+  font-size: var(--dsh-font-size-xs);
 }
 
 .dsh-settings__editable-model input {

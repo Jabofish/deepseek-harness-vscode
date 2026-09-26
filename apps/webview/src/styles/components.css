@@ -1079,7 +1079,7 @@
 .dsh-tool-web-preview__snippet {
   margin-block-start: var(--dsh-space-1);
   color: var(--dsh-muted);
-  font-size: var(--dsh-font-size-2xs);
+  font-size: var(--dsh-tool-detail-font-size);
   line-height: 1.45;
   overflow-wrap: anywhere;
 }

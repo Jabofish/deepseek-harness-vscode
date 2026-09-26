@@ -1958,6 +1958,72 @@ describe('reduceTimeline', () => {
     ])
   })
 
+  it('replaces the error notice with the turn row that carries the same failure', () => {
+    const failure = {
+      code: 'CONTEXT_WINDOW_EXCEEDED',
+      message: 'Engine protocol predict request returned 400: exceed_context_size_error',
+    }
+    const noticed = reduceTimeline(initial, {
+      sequence: 1,
+      event: { type: 'notice', sessionId: 'session-1', level: 'error', text: failure.message },
+    })
+    const closed = reduceTimeline(noticed, {
+      sequence: 2,
+      event: { type: 'turn.ended', sessionId: 'session-1', turn: 4, reason: 'error', failure },
+    })
+
+    expect(noticed.nodes).toMatchObject([{ kind: 'notice', level: 'error' }])
+    expect(closed.nodes.map((node) => node.kind)).toEqual(['turn-terminal'])
+  })
+
+  it('refuses a late error notice that repeats the turn failure already on screen', () => {
+    const failure = {
+      code: 'CONTEXT_WINDOW_EXCEEDED',
+      message: 'Engine protocol predict request returned 400',
+    }
+    const closed = reduceTimeline(initial, {
+      sequence: 1,
+      event: { type: 'turn.ended', sessionId: 'session-1', turn: 4, reason: 'error', failure },
+    })
+    const withNotice = reduceTimeline(closed, {
+      sequence: 2,
+      event: {
+        type: 'notice',
+        sessionId: 'session-1',
+        level: 'error',
+        // The notice keeps the upstream text as sent while the failure text is
+        // whitespace-compacted, so the two only match once collapsed.
+        text: 'Engine  protocol\npredict request returned 400',
+      },
+    })
+
+    expect(withNotice.nodes.map((node) => node.kind)).toEqual(['turn-terminal'])
+  })
+
+  it('keeps an error notice that is not the closing turn failure', () => {
+    const closed = reduceTimeline(initial, {
+      sequence: 1,
+      event: {
+        type: 'turn.ended',
+        sessionId: 'session-1',
+        turn: 4,
+        reason: 'error',
+        failure: { message: 'The provider is unavailable.' },
+      },
+    })
+    const withNotice = reduceTimeline(closed, {
+      sequence: 2,
+      event: {
+        type: 'notice',
+        sessionId: 'session-1',
+        level: 'error',
+        text: 'The DSH command could not be applied. Details: invalid permission.',
+      },
+    })
+
+    expect(withNotice.nodes.map((node) => node.kind)).toEqual(['turn-terminal', 'notice'])
+  })
+
   it('projects structured command/run input before its completion notice', () => {
     const next = reduceTimeline(initial, {
       sequence: 1,

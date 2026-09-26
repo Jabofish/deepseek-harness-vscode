@@ -145,7 +145,7 @@
 }
 
 .dsh-optional-bundles__title-row strong {
-  font-size: var(--dsh-font-size-lg);
+  font-size: var(--dsh-font-size-md);
 }
 
 .dsh-optional-bundles__version {

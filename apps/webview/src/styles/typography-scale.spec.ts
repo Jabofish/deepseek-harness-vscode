@@ -11,6 +11,12 @@ const STEPS = new Map([
   ['lg', '1rem'],
 ])
 
+/**
+ * Steps the reference client keeps at a fixed size: the smallest text on screen is 10px there,
+ * so these floor at their baseline instead of tracking the conversation font setting downward.
+ */
+const FLOORED_STEPS = new Set(['2xs', 'xs'])
+
 /** Host-driven sizes that must not become tokens: the Webview root font and its scaled body copy. */
 const HOST_FONT_SIZES = new Set([
   'var(--vscode-font-size, 13px)',
@@ -67,14 +73,18 @@ describe('Webview typography scale', () => {
 
   it('re-derives every step inside the conversation font scale', () => {
     const scaled = new Map(
-      [...appStyles.matchAll(/--dsh-font-size-([a-z0-9]+):\s*calc\(([^;]+)\);/gu)].map((match) => [
+      [...appStyles.matchAll(/--dsh-font-size-([a-z0-9]+):\s*([^;]+);/gu)].map((match) => [
         match[1]!,
         match[2]!.trim(),
       ]),
     )
     expect([...scaled.keys()]).toEqual([...STEPS.keys()])
-    for (const [step, value] of STEPS)
-      expect(scaled.get(step)).toBe(`${value} * var(--dsh-conversation-font-scale)`)
+    for (const [step, value] of STEPS) {
+      const scaledValue = `calc(${value} * var(--dsh-conversation-font-scale))`
+      // The caption steps are pinned to their baseline: shrinking the setting tracks content
+      // size, so an unbounded multiplier put 2xs at 8.6px on the 12px setting.
+      expect(scaled.get(step)).toBe(FLOORED_STEPS.has(step) ? `max(${value}, ${scaledValue})` : scaledValue)
+    }
   })
 
   it('keeps every font-size on a scale token', () => {

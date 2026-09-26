@@ -1,4 +1,9 @@
-import { settledToolPresentation, type BackendEvent, type TokenUsage } from '@dsh-vscode/domain'
+import {
+  settledToolPresentation,
+  type BackendEvent,
+  type TokenUsage,
+  type TurnEndFailure,
+} from '@dsh-vscode/domain'
 
 import type {
   AssistantTiming,
@@ -922,7 +927,14 @@ export function reduceTimeline(
           text: event.commandInput,
         })
       const hideNotice = modeCommand && event.level === 'info'
-      if (!hideNotice && !(event.level === 'info' && / started\.$/u.test(event.text)))
+      // A failed turn also closes with the same text as its durable failure, and
+      // only that row is replayed from history, so the turn keeps the surface.
+      const claimedByTurnFailure = event.level === 'error' && hasTurnFailureWithText(nodes, event.text)
+      if (
+        !hideNotice &&
+        !claimedByTurnFailure &&
+        !(event.level === 'info' && / started\.$/u.test(event.text))
+      )
         upsert(nodes, {
           kind: 'notice',
           id: `notice:${input.sequence}`,
@@ -1089,7 +1101,7 @@ function closeTurn(
     }
   }
 
-  if (reason !== 'completed')
+  if (reason !== 'completed') {
     upsert(nodes, {
       kind: 'turn-terminal',
       id: `turn-terminal:${turn}`,
@@ -1098,6 +1110,8 @@ function closeTurn(
       reason,
       ...(failure === undefined ? {} : { failure }),
     })
+    if (reason === 'error' && failure !== undefined) dropNoticesMatchingFailure(nodes, failure)
+  }
 
   let closingIndex = -1
   for (let index = 0; index < nodes.length; index += 1) {
@@ -1323,6 +1337,43 @@ function upsert(nodes: TimelineNode[], node: TimelineNode): void {
   const index = findNodeIndexFromEnd(nodes, (existing) => existing.id === node.id)
   if (index < 0) nodes.push(node)
   else nodes[index] = node
+}
+
+/**
+ * One upstream failure reaches the timeline through two events: the host-only
+ * `agent/error` frame carries the message as an error notice, and the durable
+ * `turn/end` carries the same text as the turn's failure. Only one card may
+ * stay, and it is the turn row — the notice is not replayed from history, so
+ * dropping it keeps a re-opened session showing what the live session shows.
+ * The notice text is kept as sent while the failure text is whitespace-compacted
+ * and redacted, so equality is decided on the collapsed form.
+ */
+function failureTextKey(value: string): string {
+  return value.replace(/\s+/gu, ' ').trim()
+}
+
+function hasTurnFailureWithText(nodes: readonly TimelineNode[], text: string): boolean {
+  const key = failureTextKey(text)
+  if (key === '') return false
+  return nodes.some((node) => {
+    if (node.kind !== 'turn-terminal' || node.reason !== 'error' || node.failure === undefined) return false
+    return failureTextKey(node.failure.message) === key
+  })
+}
+
+/** True for a retained error notice whose own transcript already shows the turn row. */
+export function isRedundantTurnFailureNotice(node: TimelineNode, nodes: readonly TimelineNode[]): boolean {
+  return node.kind === 'notice' && node.level === 'error' && hasTurnFailureWithText(nodes, node.text)
+}
+
+function dropNoticesMatchingFailure(nodes: TimelineNode[], failure: TurnEndFailure): void {
+  const key = failureTextKey(failure.message)
+  if (key === '') return
+  for (let index = nodes.length - 1; index >= 0; index -= 1) {
+    const node = nodes[index]
+    if (node?.kind === 'notice' && node.level === 'error' && failureTextKey(node.text) === key)
+      nodes.splice(index, 1)
+  }
 }
 
 /**

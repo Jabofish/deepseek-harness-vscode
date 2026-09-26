@@ -1018,7 +1018,7 @@
 .dsh-composer__command-item > small,
 .dsh-composer__command-empty {
   color: var(--dsh-muted);
-  font-size: var(--dsh-font-size-2xs);
+  font-size: var(--dsh-font-size-xs);
 }
 
 .dsh-composer__command-empty {
@@ -1399,7 +1399,7 @@
   border-radius: var(--dsh-radius-sm);
   color: var(--dsh-text);
   background: var(--dsh-input-bg);
-  font-size: var(--dsh-font-size-2xs);
+  font-size: var(--dsh-font-size-xs);
 }
 
 .dsh-session-switcher__workspaces {

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.2.5
+
+- 继续完善 DSH `0.1.7-rc.2` 的 Adapter/Application 与 Webview 集成、连接生命周期和路由，并扩展隔离 harness 覆盖。
+- Continued DSH `0.1.7-rc.2` adapter/application and Webview integration, connection lifecycle and routing improvements, with broader isolated harness coverage.
+- 失败回合在实时事件和历史回放中只显示一条错误；提问卡完整展示选项，并在会话字体缩放时保持小字号可读。
+- Failed turns now show one error when live events and history repeat the same failure. Pending question cards retain all options, and small text stays legible as conversation font size changes.
 - 修复工作区外的 Windows 盘符或 UNC 绝对链接被误当作工作区相对路径；链接仍须通过真实路径归属校验。
 - Fixed Windows drive and UNC links outside the workspace being reinterpreted as relative paths; file links still require canonical workspace ownership.
 - 扩展激活时只注册命令和界面，不再提前连接或启动 DSH，也不在后台运行 npm 更新检查；首次打开 DeepSeek Harness 面板或显式连接时才连接，面板打开后仍会检查更新。
