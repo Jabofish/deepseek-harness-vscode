@@ -44,6 +44,7 @@ import {
 import { ModalWrapper } from '../../components/common/PopoverCard.js'
 import { SettingCard, SettingRow } from '../../components/common/SettingCard.js'
 import { SelectMenu } from '../../components/common/SelectMenu.js'
+import { useDismissibleLayer } from '../../components/common/useDismissibleLayer.js'
 import { Icon } from '../../ui/Icon.js'
 import { PluginInventory } from '../plugins/PluginInventory.js'
 import { OptionalBundleManager } from '../plugins/OptionalBundleManager.js'
@@ -142,7 +143,12 @@ export interface SettingsDrawerProps {
 
 type SettingsTab = 'general' | 'models' | 'presets' | 'plugins'
 type SettingsTabOrientation = 'horizontal' | 'vertical'
-type ConnectionChoice = 'auto' | 'custom'
+/**
+ * 'unchanged' is not a mode: it marks attach-only/new-isolated settings this
+ * page cannot represent. Nothing is pre-selected and Apply stays disabled, so
+ * applying can never silently rewrite those modes to 'auto'.
+ */
+type ConnectionChoice = 'auto' | 'custom' | 'unchanged'
 
 const SETTINGS_TABS: readonly SettingsTab[] = ['general', 'models', 'presets', 'plugins']
 const LOCALE_OPTIONS: readonly Locale[] = ['en', 'zh']
@@ -261,12 +267,14 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
   const [addingProviderId, setAddingProviderId] = useState<string | undefined>(undefined)
   const [addingCustomProvider, setAddingCustomProvider] = useState(false)
   const [removingProviderId, setRemovingProviderId] = useState<string | undefined>(undefined)
-  const [connectionChoice, setConnectionChoice] = useState<ConnectionChoice>('auto')
+  const [connectionChoice, setConnectionChoice] = useState<ConnectionChoice>('unchanged')
   const [connectionEndpoint, setConnectionEndpoint] = useState('')
   const [connectionBusy, setConnectionBusy] = useState(false)
   const [connectionError, setConnectionError] = useState<string | undefined>(undefined)
   const [connectionNotice, setConnectionNotice] = useState<string | undefined>(undefined)
   const closeRef = useRef<HTMLButtonElement>(null)
+  const sectionRef = useRef<HTMLElement | null>(null)
+  const removeDialogRef = useRef<HTMLDivElement | null>(null)
 
   const retryDshSettings = (): void => {
     void onLoadDshSettings()
@@ -333,7 +341,11 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
         if (cancelled) return
         setSettingsState({ value })
         if (value !== undefined) {
-          setConnectionChoice(value.connection.mode === 'custom' ? 'custom' : 'auto')
+          setConnectionChoice(
+            value.connection.mode === 'custom' || value.connection.mode === 'auto'
+              ? value.connection.mode
+              : 'unchanged',
+          )
           setConnectionEndpoint('')
           setConnectionError(undefined)
           setConnectionNotice(undefined)
@@ -343,6 +355,16 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
       cancelled = true
     }
   }, [open, onLoadSettings, settingsState])
+
+  // The drawer stays mounted while closed; dropping the cached answer makes
+  // the next open re-read extension settings, which can change elsewhere.
+  // Adjusting state during render (not in an effect) keeps the closed drawer
+  // from painting once with a stale cache.
+  const [wasOpen, setWasOpen] = useState(open)
+  if (wasOpen !== open) {
+    setWasOpen(open)
+    if (!open) setSettingsState(undefined)
+  }
 
   useEffect(() => {
     if (!open) {
@@ -470,7 +492,7 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
   }
 
   const applyConnection = (): void => {
-    if (connectionBusy) return
+    if (connectionBusy || connectionChoice === 'unchanged') return
     const endpoint = connectionEndpoint.trim()
     if (connectionChoice === 'custom' && endpoint === '') {
       setConnectionError(t('settings.connectionEndpointRequired'))
@@ -494,18 +516,24 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
       .finally(() => setConnectionBusy(false))
   }
 
-  useEffect(() => {
-    if (!open) return
-    const onKeyDown = (event: KeyboardEvent): void => {
-      // An open layer inside the drawer (provider dropdowns) consumes Escape
-      // first; the drawer must not close on top of it.
-      if (event.key !== 'Escape' || event.defaultPrevented) return
-      event.stopPropagation()
-      onOpenChange(false)
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [open, onOpenChange])
+  // The drawer is the modal focus trap: Tab stays inside it and everything
+  // behind it goes inert. Layers opened inside the drawer (provider dropdowns,
+  // the remove-provider confirmation) stack on top, so Escape and Tab reach
+  // the innermost surface first and the drawer closes only when it is on top.
+  useDismissibleLayer({
+    open,
+    refs: [sectionRef],
+    onDismiss: () => onOpenChange(false),
+    onEscape: () => onOpenChange(false),
+    trapFocus: true,
+  })
+  useDismissibleLayer({
+    open: removeProviderOpen,
+    refs: [removeDialogRef],
+    onDismiss: () => setRemovingProviderId(undefined),
+    onEscape: () => setRemovingProviderId(undefined),
+    trapFocus: true,
+  })
 
   if (!open) return <></>
 
@@ -822,7 +850,13 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
         if (event.target === event.currentTarget) props.onOpenChange(false)
       }}
     >
-      <section className="dsh-settings" role="dialog" aria-modal="true" aria-label={t('settings.title')}>
+      <section
+        ref={sectionRef}
+        className="dsh-settings"
+        role="dialog"
+        aria-modal="true"
+        aria-label={t('settings.title')}
+      >
         <header className="dsh-settings__header">
           <h2 id="settings-title">{t('settings.title')}</h2>
           <button
@@ -931,7 +965,9 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                     {t('settings.loading')}
                   </p>
                 ) : settingsState.value === undefined ? (
-                  <p className="dsh-settings__empty">{t('settings.unavailable')}</p>
+                  <p className="dsh-settings__empty" role="status">
+                    {t('settings.unavailable')}
+                  </p>
                 ) : (
                   (() => {
                     const settings = settingsState.value
@@ -1037,11 +1073,16 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                               />
                             </label>
                           ) : null}
+                          {connectionChoice === 'unchanged' ? (
+                            <p className="dsh-settings__connection-notice">
+                              {t('settings.connectionUnchangedHint')}
+                            </p>
+                          ) : null}
                           <div className="dsh-settings__connection-actions">
                             <button
                               className="dsh-button dsh-button--primary dsh-button--compact"
                               type="button"
-                              disabled={connectionBusy}
+                              disabled={connectionBusy || connectionChoice === 'unchanged'}
                               onClick={applyConnection}
                             >
                               {connectionBusy
@@ -1251,6 +1292,11 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                         {t('runtime.retry')}
                       </button>
                     </>
+                  ) : !hasPreferencesContent(dshState.snapshot) ? (
+                    // A schema that advertises none of these rows must not read as
+                    // a broken card: state what the host offers instead of an
+                    // empty titled box.
+                    <p className="dsh-settings__empty">{t('settings.preferencesEmpty')}</p>
                   ) : (
                     <>
                       {!dshState.snapshot.schema.writable ? (
@@ -1271,7 +1317,7 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                         </div>
                       ) : null}
                       <ul className="dsh-settings__rows">
-                        {GENERAL_SETTING_ROWS.map((row) => (
+                        {visibleGeneralRows(dshState.snapshot).map((row) => (
                           <GeneralSettingRow
                             key={row.path}
                             row={{
@@ -1711,6 +1757,7 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                 )}
                 {pendingProvider === undefined ? null : (
                   <div
+                    ref={removeDialogRef}
                     className="dsh-settings__provider-remove-dialog"
                     role="alertdialog"
                     aria-modal="true"
@@ -2214,6 +2261,33 @@ interface GeneralSettingRowProps {
 /** One official General row: renders only when the host schema advertises the
  * field, and only as a segmented enum picker (the upstream General section is
  * exclusively enum-valued rows). */
+type GeneralSettingRowDefinition = (typeof GENERAL_SETTING_ROWS)[number]
+
+/** Mirror of `GeneralSettingRow`'s own render guard: a row is visible when the
+ * host schema advertises its field as a non-empty enum, minus the read-only
+ * transcript rows the component suppresses. Keeping the predicate beside the
+ * component lets the section state when it has nothing to show at all. */
+function isGeneralRowVisible(snapshot: DshSettingsSnapshot, row: GeneralSettingRowDefinition): boolean {
+  const field = snapshot.schema.fields.find((entry) => entry.path === row.path)
+  if (field?.type !== 'enum' || (field.enumValues?.length ?? 0) === 0) return false
+  return !(
+    !snapshot.schema.writable &&
+    (row.path === DSH_UI_SETTING_PATHS.transcriptView || row.path === DSH_UI_SETTING_PATHS.performanceUsage)
+  )
+}
+
+function visibleGeneralRows(snapshot: DshSettingsSnapshot): readonly GeneralSettingRowDefinition[] {
+  return GENERAL_SETTING_ROWS.filter((row) => isGeneralRowVisible(snapshot, row))
+}
+
+/** Whether this card has any content beyond its title for this host schema. */
+function hasPreferencesContent(snapshot: DshSettingsSnapshot): boolean {
+  return (
+    GENERAL_SETTING_ROWS.some((row) => isGeneralRowVisible(snapshot, row)) ||
+    findDshSettingsField(snapshot, DSH_UI_SETTING_PATHS.codingTools)?.type === 'boolean'
+  )
+}
+
 function GeneralSettingRow(props: GeneralSettingRowProps): ReactElement | null {
   const { t } = useI18n()
   const field = props.fields.find((entry) => entry.path === props.row.path)

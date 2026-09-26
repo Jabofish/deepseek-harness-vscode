@@ -514,6 +514,114 @@ describe('SettingsDrawer', () => {
     expect((await screen.findByRole('alert')).textContent).toContain('Enter a local DSH endpoint first.')
   })
 
+  it('does not preselect a connection mode the page cannot represent and blocks Apply until one is chosen', async () => {
+    const onConfigureConnection = vi.fn().mockResolvedValue(undefined)
+    renderDrawer({
+      onConfigureConnection,
+      onLoadSettings: vi.fn().mockResolvedValue({
+        ...settingsFixture(),
+        connection: { mode: 'attach-only', customEndpointConfigured: false },
+      }),
+    })
+
+    await screen.findByRole('heading', { name: 'DSH connection' })
+    const automatic = screen.getByRole('radio', { name: /Automatic/ })
+    const custom = screen.getByRole('radio', { name: /Custom endpoint/ })
+    expect(automatic).toHaveProperty('checked', false)
+    expect(custom).toHaveProperty('checked', false)
+    expect(screen.getByText(/is set in VS Code settings and is not listed here/)).toBeDefined()
+
+    const apply = screen.getByRole('button', { name: 'Apply and reconnect' })
+    expect(apply).toHaveProperty('disabled', true)
+    fireEvent.click(apply)
+    expect(onConfigureConnection).not.toHaveBeenCalled()
+
+    fireEvent.click(automatic)
+    expect(screen.getByRole('button', { name: 'Apply and reconnect' })).toHaveProperty('disabled', false)
+    fireEvent.click(screen.getByRole('button', { name: 'Apply and reconnect' }))
+    await waitFor(() => expect(onConfigureConnection).toHaveBeenCalledWith('auto', undefined))
+  })
+
+  it('reloads extension settings each time the drawer reopens', async () => {
+    const updated: ExtensionSettingsSummary = {
+      ...settingsFixture(),
+      connection: { mode: 'custom', customEndpointConfigured: true },
+    }
+    const onLoadSettings = vi
+      .fn<() => Promise<ExtensionSettingsSummary>>()
+      .mockResolvedValueOnce(settingsFixture())
+      .mockResolvedValueOnce(updated)
+    const view = renderDrawer({ onLoadSettings })
+
+    await screen.findByRole('heading', { name: 'DSH connection' })
+    expect(screen.getByText('new-isolated')).toBeDefined()
+    expect(screen.getByRole('radio', { name: /Custom endpoint/ })).toHaveProperty('checked', false)
+
+    view.rerender(drawerElement({ open: false, onLoadSettings }))
+    view.rerender(drawerElement({ open: true, onLoadSettings }))
+
+    await screen.findByRole('heading', { name: 'DSH connection' })
+    await waitFor(() =>
+      expect(screen.getByRole('radio', { name: /Custom endpoint/ })).toHaveProperty('checked', true),
+    )
+  })
+
+  it('keeps keyboard focus and pointer reach inside the settings dialog while it is open', async () => {
+    const background = document.createElement('button')
+    background.type = 'button'
+    background.textContent = 'background target'
+    document.body.appendChild(background)
+    try {
+      renderDrawer()
+
+      const dialog = await screen.findByRole('dialog', { name: 'Settings' })
+      expect(background.hasAttribute('inert')).toBe(true)
+
+      const closeButton = screen.getByRole('button', { name: 'Close settings' })
+      expect(document.activeElement).toBe(closeButton)
+      fireEvent.keyDown(closeButton, { key: 'Tab' })
+      expect(document.activeElement).not.toBe(closeButton)
+      expect(dialog.contains(document.activeElement)).toBe(true)
+
+      fireEvent.keyDown(closeButton, { key: 'Tab', shiftKey: true })
+      expect(document.activeElement).toBe(closeButton)
+    } finally {
+      background.remove()
+    }
+  })
+
+  it('closes the remove-provider confirmation with Escape without closing the drawer', async () => {
+    const onOpenChange = vi.fn()
+    const minimax: ModelProvider = {
+      ...baseProvider,
+      id: 'minimax-cn',
+      name: 'minimax-cn',
+      settingsNs: 'llm-pi-ai',
+      settingsPath: ['providers', 'minimax-cn'],
+      fields: [],
+    }
+    const snapshot: DshSettingsSnapshot = {
+      ...dshSettingsFixture(),
+      values: { 'llm-pi-ai': { providers: { 'minimax-cn': { models: [{ id: 'MiniMax-M1' }] } } } },
+    }
+    renderDrawer({
+      providers: [minimax],
+      onLoadDshSettings: vi.fn().mockResolvedValue(snapshot),
+      onOpenChange,
+    })
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Models' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove' }))
+    const confirmation = await screen.findByRole('alertdialog', { name: 'Remove' })
+    expect(within(confirmation).getByRole('button', { name: 'Cancel' })).toBeDefined()
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    expect(screen.queryByRole('alertdialog', { name: 'Remove' })).toBeNull()
+    expect(screen.getByRole('dialog', { name: 'Settings' })).toBeDefined()
+    expect(onOpenChange).not.toHaveBeenCalled()
+  })
+
   it('shows the upstream DSH version picker and installs the selected exact version', async () => {
     const dshUpdate: DshUpdateSnapshot = {
       status: 'ready',
@@ -1589,7 +1697,7 @@ describe('SettingsDrawer', () => {
   it('closes on Escape', () => {
     const onOpenChange = vi.fn()
     renderDrawer({ onOpenChange })
-    fireEvent.keyDown(window, { key: 'Escape' })
+    fireEvent.keyDown(document, { key: 'Escape' })
     expect(onOpenChange).toHaveBeenCalledWith(false)
   })
 
