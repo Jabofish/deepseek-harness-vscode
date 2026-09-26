@@ -34,6 +34,15 @@ function routedTypes(body: string): ReadonlySet<string> {
   return new Set([...body.matchAll(/request\.type === '([^']+)'/gu)].map((match) => match[1] ?? ''))
 }
 
+/** A factory-local helper up to its next sibling declaration, so neighbours may move. */
+function declarationBody(startMarker: string): string {
+  const start = COMPOSITION_ROOT.indexOf(startMarker)
+  expect(start, `missing ${startMarker}`).toBeGreaterThanOrEqual(0)
+  const end = COMPOSITION_ROOT.indexOf('\n  const ', start + startMarker.length)
+  expect(end, `no declaration follows ${startMarker}`).toBeGreaterThan(start)
+  return COMPOSITION_ROOT.slice(start, end)
+}
+
 const handleFeatureRequestBody = handlerBody(
   'const handleFeatureRequest = ',
   'const handleRequest = async (request: WebviewRequest',
@@ -46,7 +55,7 @@ const sessionHistoryRequestBody = handlerBody(
   "if (request.type === 'session.history') {",
   "if (request.type === 'session.create') {",
 )
-const jobFollowStartBody = handlerBody('const startJobFollow = ', 'const requireCurrentWorkspaceId = ')
+const jobFollowStartBody = declarationBody('const startJobFollow = ')
 
 describe('feature route coverage', () => {
   it('dispatches every declared feature request', () => {

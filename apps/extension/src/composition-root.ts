@@ -1,12 +1,9 @@
 import * as vscode from 'vscode'
 import { createHash } from 'node:crypto'
-import { readFileSync, realpathSync } from 'node:fs'
 import { access, mkdir, mkdtemp, readFile, stat } from 'node:fs/promises'
-import { execFile, spawn } from 'node:child_process'
-import { homedir } from 'node:os'
+import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import path from 'node:path'
-import { registerWorkspaceFolders } from './backend/register-workspace-folders.js'
 import {
   JobFollowRegistry,
   relayJobFollowFrames,
@@ -21,7 +18,6 @@ import { openSkillDocument, publicSkills } from './backend/skill-documents.js'
 import {
   AppError,
   type CheckpointSummary,
-  type DiagnosticsSnapshot,
   type AgentConfiguration,
   type AgentPresetDescriptor,
   type BackendEvent,
@@ -32,19 +28,13 @@ import {
   type BackendState,
   type DshBackend,
   type DshRuntimeUpdateProgress,
-  type ExtensionSettings,
-  type ExtensionSettingsSummary,
   type PluginInstallProgressView,
   type EditorContextOwner,
-  type EditorContextAvailability,
   type EditorContextKind,
-  type QuestionAnswer,
-  type EditorContextItem,
   type SessionDetail,
   type SessionSummary,
   type TaskListScope,
   type TaskSummary,
-  type WorkspaceSummary,
 } from '@dsh-vscode/domain'
 import {
   AdvancedAgentUseCases,
@@ -69,13 +59,7 @@ import {
   WorkspaceUseCases,
   type ConnectionRequest,
 } from '@dsh-vscode/application'
-import {
-  VersionedBackendFactory,
-  VersionedBackendProbe,
-  redactMultilineText,
-  redactText,
-  type ExportFileSystem,
-} from '@dsh-vscode/dsh-adapter'
+import { VersionedBackendFactory, VersionedBackendProbe, redactMultilineText } from '@dsh-vscode/dsh-adapter'
 import {
   hostEnvelopeSchema,
   hostMessageSchema,
@@ -101,27 +85,19 @@ import { KnownInstanceDiscoveryProvider } from './backend/discovery/known-instan
 import { LinuxProcessDiscoveryProvider } from './backend/discovery/linux-process-provider.js'
 import { MacOsProcessDiscoveryProvider } from './backend/discovery/macos-process-provider.js'
 import { WindowsProcessDiscoveryProvider } from './backend/discovery/windows-process-provider.js'
-import { DshProcessSupervisor, type SpawnedChild } from './backend/process-supervisor.js'
+import { DshProcessSupervisor } from './backend/process-supervisor.js'
 import {
   isManagedTemporaryWorkspacePath,
   isManagedTemporaryWorkspacePathMissing,
 } from './backend/path-safety.js'
 import { DshRuntimeLocator, readStoredRuntimePath } from './backend/runtime-locator.js'
-import { isAbsoluteFilePath, resolveNpmExecutable, runtimePathEntries } from './backend/runtime-paths.js'
-import {
-  TemporaryWorkspaceManager,
-  type LegacyTemporaryWorkspaceReference,
-  type StoredTemporaryWorkspace,
-} from './backend/temporary-workspace.js'
-import {
-  isTemporaryWorkspaceOwnershipToken,
-  TemporaryWorkspaceOwnershipStore,
-} from './backend/temporary-workspace-ownership.js'
+import { resolveNpmExecutable } from './backend/runtime-paths.js'
+import { TemporaryWorkspaceManager } from './backend/temporary-workspace.js'
+import { TemporaryWorkspaceOwnershipStore } from './backend/temporary-workspace-ownership.js'
 import { resolveWindowsShim } from './backend/windows-shim.js'
 import { normalizeLoopbackUrl, VsCodeConfigurationSource } from './config/configuration-source.js'
 import { DSH_DOCUMENTATION_URL, DSH_PACKAGE, OUTPUT_CHANNEL_NAME } from './constants.js'
 import { WebviewMessageRouter } from './view/message-router.js'
-import { ownsCurrentWorkspaceSession } from './view/session-ownership.js'
 import { sessionWorkspaceFolderId } from './view/session-workspace-scope.js'
 import { DshWebviewViewProvider } from './view/dsh-webview-view-provider.js'
 import {
@@ -191,15 +167,50 @@ import {
   prepareAttachment,
   isAttachmentSupported,
   assertAttachmentSupported,
-  readAttachmentFile,
   validImageBytes,
 } from './attachments/attachment-codec.js'
+
+import {
+  platform,
+  endpointFromServerUrl,
+  runtimeEnvironment,
+  windowsShimOptions,
+  extensionRuntimePathEntries,
+  readTextFile,
+  spawnManagedChild,
+  readExtensionVersion,
+  pathExists,
+  isMissingFileError,
+} from './composition/runtime.js'
+import {
+  readStoredTemporaryWorkspace,
+  readLegacyTemporaryWorkspace,
+  sameWorkspacePath,
+} from './composition/workspace-state.js'
+import { requiresTrustedWorkspace } from './composition/workspace-guards.js'
+import {
+  type FeatureContextKind,
+  listOpenFileCandidates,
+  readOpenFileAttachment,
+  featureContextItem,
+  featureContextKinds,
+} from './composition/editor-files.js'
+import {
+  stateSubscriptionDisposable,
+  publicState,
+  publicDiagnosticsSnapshot,
+  publicList,
+  publicValue,
+  publicExtensionSettings,
+} from './composition/public-projection.js'
+import { createExportFileSystem } from './composition/export-file-system.js'
+import { questionResponse } from './composition/session-payload.js'
+import { createSessionScope } from './composition/session-scope.js'
 
 type AccountFeatureHostEvent =
   | Extract<FeatureHostEvent, { readonly name: 'account.lifecycle.updated' }>
   | Extract<FeatureHostEvent, { readonly name: 'account.session-expired' }>
   | Extract<FeatureHostEvent, { readonly name: 'account.lifecycle.error' }>
-type FeatureContextKind = 'selection' | 'open-document' | 'diagnostic' | 'symbol'
 
 const execFileAsync = promisify(execFile)
 const TEMPORARY_WORKSPACE_STATE_KEY = 'dsh.temporaryWorkspace'
@@ -537,72 +548,24 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     ownerViewId: DSH_CHAT_VIEW_OWNER_ID,
     contextStoreGeneration: 1,
   })
-  const listCurrentWorkspaces = async (signal?: AbortSignal): Promise<readonly WorkspaceSummary[]> => {
-    const folders = currentWorkspaceFolders()
-    const workspaces = await workspaceUseCases.list(signal)
-    if (folders.length === 0) {
-      return [await temporaryWorkspaceManager.resolve(workspaces, signal)]
-    }
-    return registerWorkspaceFolders(
-      folders.map((folder) => folder.uri.fsPath),
-      workspaces,
-      (input, requestSignal) => workspaceUseCases.create(input, requestSignal),
-      sameWorkspacePath,
-      vscode.workspace.isTrusted,
-      signal,
-    )
-  }
-  // Opening one session fans out into several advisory reads (queue, goals,
-  // jobs, feedback, subagents, commands, and model settings). They all need
-  // the same workspace ownership check, but each request used to repeat the
-  // full workspace/archive/session-history chain. Keep one validated detail
-  // per current backend generation and share in-flight reads across those
-  // requests. `session.open` can opt into a fresh read below.
-  const currentWorkspaceSessionDetails = new Map<
-    string,
-    { readonly generation: number; readonly detail: SessionDetail }
-  >()
-  const currentWorkspaceSessionLoads = new Map<string, Promise<SessionDetail>>()
-  let currentWorkspaceSessionGeneration = 0
-  const invalidateCurrentWorkspaceSessionDetails = (): void => {
-    currentWorkspaceSessionGeneration += 1
-    currentWorkspaceSessionDetails.clear()
-    currentWorkspaceSessionLoads.clear()
-  }
-  const listCurrentArchivedSessionIds = async (
-    workspaces: readonly WorkspaceSummary[],
-    signal?: AbortSignal,
-  ): Promise<readonly string[]> => {
-    if (workspaces.length === 0 && currentWorkspaceFolders().length === 0) return []
-    const backend = backendService.requireBackend()
-    // rc.6 defines this as a registry-global snapshot. Returning it directly
-    // avoids a second session.list race while a workspace attach/archive is
-    // being committed; the session list itself is still scoped below.
-    return backend.workspaces.listArchivedSessionIds(signal)
-  }
-  const ensureCurrentWorkspace = async (
-    requestedWorkspaceId: string | undefined,
-    signal?: AbortSignal,
-  ): Promise<WorkspaceSummary> => {
-    const current = await listCurrentWorkspaces(signal)
-    const requested = current.find((workspace) => workspace.id === requestedWorkspaceId)
-    if (requested !== undefined) return requested
-    const existing = current[0]
-    if (existing !== undefined) return existing
-
-    const folder = currentWorkspaceFolder()
-    if (folder !== undefined) {
-      return workspaceUseCases.create(
-        {
-          name: path.basename(path.normalize(folder.uri.fsPath)) || 'Workspace',
-          path: folder.uri.fsPath,
-        },
-        signal,
-      )
-    }
-
-    return temporaryWorkspaceManager.ensure(signal)
-  }
+  const {
+    listCurrentWorkspaces,
+    listCurrentArchivedSessionIds,
+    ensureCurrentWorkspace,
+    invalidateCurrentWorkspaceSessionDetails,
+    requireCurrentWorkspaceSession,
+    requireCurrentWorkspaceId,
+    requireOwnedQueuedInput,
+    requireOwnedGoal,
+    requireOwnedPermission,
+    requireOwnedQuestion,
+  } = createSessionScope({
+    backendService,
+    workspaceUseCases,
+    temporaryWorkspaceManager,
+    currentWorkspaceFolders,
+    currentWorkspaceFolder,
+  })
   const resolveSessionConfiguration = async (
     requested: AgentConfiguration,
     signal?: AbortSignal,
@@ -1176,114 +1139,6 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     }
     return reconnect(signal)
   }
-  /**
-   * A catalog-resolved child session has no workspace membership of its own —
-   * `session/list` drops a child without a cwd — so its ownership comes from
-   * the durable parent the subagent catalog published. Without this walk every
-   * child-scoped route the Webview legitimately opened from that catalog
-   * (subagent history/send/interrupt, goal/job/queue/feedback) would be
-   * refused as a foreign session.
-   */
-  const ownsSession = async (
-    sessionId: string,
-    detail: SessionDetail,
-    workspaces: readonly WorkspaceSummary[],
-    signal: AbortSignal,
-  ): Promise<boolean> => {
-    const subagents = backendService.requireBackend().subagents
-    try {
-      return await ownsCurrentWorkspaceSession({
-        sessionId,
-        detail,
-        belongs: (session) => sessionBelongsToWorkspaces(session, workspaces, currentWorkspaceFolders()),
-        parentOf: (childSessionId) => subagents.parentOf?.(childSessionId),
-        readSession: (parentId) => backendService.requireBackend().sessions.get(parentId, signal),
-      })
-    } catch (error) {
-      throw sessionOpenFailure('parent session ownership check', error)
-    }
-  }
-  /**
-   * `allowArchived` serves only the two recovery routes that must reach a
-   * session the active surface refuses — restoring one, or deleting one for
-   * good. Such a read stays out of the active-session cache so a recovered row
-   * can never be handed to an ordinary route from there.
-   */
-  const requireCurrentWorkspaceSession = async (
-    sessionId: string,
-    signal: AbortSignal,
-    options: { readonly fresh?: boolean; readonly allowArchived?: boolean } = {},
-  ): Promise<SessionDetail> => {
-    if (options.fresh !== true && options.allowArchived !== true) {
-      const cached = currentWorkspaceSessionDetails.get(sessionId)
-      if (cached?.generation === currentWorkspaceSessionGeneration) return cached.detail
-    }
-    const pending = currentWorkspaceSessionLoads.get(sessionId)
-    // An explicit session.open owns a fresh stream baseline. Do not let an
-    // older advisory ownership read bypass that re-baselining hook.
-    if (pending !== undefined && options.fresh !== true) return pending
-
-    const generation = currentWorkspaceSessionGeneration
-    const load = (async (): Promise<SessionDetail> => {
-      let workspaces: readonly WorkspaceSummary[]
-      try {
-        workspaces = await listCurrentWorkspaces(signal)
-      } catch (error) {
-        throw sessionOpenFailure('workspace discovery', error)
-      }
-
-      let archivedSessionIds: readonly string[]
-      try {
-        archivedSessionIds = await backendService.requireBackend().workspaces.listArchivedSessionIds(signal)
-      } catch (error) {
-        throw sessionOpenFailure('archive state lookup', error)
-      }
-      if (archivedSessionIds.includes(sessionId) && options.allowArchived !== true)
-        throw sessionOpenFailure(
-          'archive state lookup',
-          new AppError({
-            code: 'PERMISSION_DENIED',
-            message: 'The requested session is archived.',
-            retryable: false,
-          }),
-        )
-
-      let detail: SessionDetail
-      try {
-        const sessions = backendService.requireBackend().sessions
-        detail =
-          options.fresh === true && sessions.open !== undefined
-            ? await sessions.open(sessionId, signal)
-            : await sessions.get(sessionId, signal)
-      } catch (error) {
-        throw sessionOpenFailure('session summary and history read', error)
-      }
-      if (!(await ownsSession(sessionId, detail, workspaces, signal)))
-        throw sessionOpenFailure(
-          'current workspace ownership check',
-          new AppError({
-            code: 'PERMISSION_DENIED',
-            message: 'The requested session is not part of the current VS Code workspace.',
-            retryable: false,
-          }),
-        )
-      if (generation === currentWorkspaceSessionGeneration && options.allowArchived !== true)
-        currentWorkspaceSessionDetails.set(sessionId, { generation, detail })
-      return detail
-    })()
-    currentWorkspaceSessionLoads.set(sessionId, load)
-    void load.then(
-      () => {
-        if (currentWorkspaceSessionLoads.get(sessionId) === load)
-          currentWorkspaceSessionLoads.delete(sessionId)
-      },
-      () => {
-        if (currentWorkspaceSessionLoads.get(sessionId) === load)
-          currentWorkspaceSessionLoads.delete(sessionId)
-      },
-    )
-    return load
-  }
   const jobFollowKey = (sessionId: string, jobId: string): string => JSON.stringify([sessionId, jobId])
   const stopJobFollow = (sessionId: string, jobId: string, followId: string): boolean =>
     activeJobFollows.stop(jobFollowKey(sessionId, jobId), followId)
@@ -1337,59 +1192,6 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       },
     )
     return { started }
-  }
-  const requireCurrentWorkspaceId = async (workspaceId: string, signal: AbortSignal): Promise<void> => {
-    const workspaces = await listCurrentWorkspaces(signal)
-    if (workspaces.some((workspace) => workspace.id === workspaceId)) return
-    throw new AppError({
-      code: 'PERMISSION_DENIED',
-      message: 'The requested workspace is not part of the current VS Code workspace.',
-      retryable: false,
-    })
-  }
-  const requireOwnedQueuedInput = async (inputId: string, signal: AbortSignal): Promise<void> => {
-    const owner = backendService.requireBackend().sessions.sessionForQueuedInput?.(inputId)
-    if (owner === undefined) {
-      throw new AppError({
-        code: 'PERMISSION_DENIED',
-        message: 'The queued DSH input is not owned by the current workspace.',
-        retryable: false,
-      })
-    }
-    await requireCurrentWorkspaceSession(owner, signal)
-  }
-  const requireOwnedGoal = async (goalId: string, signal: AbortSignal): Promise<void> => {
-    const owner = backendService.requireBackend().goals.sessionForGoal?.(goalId)
-    if (owner === undefined) {
-      throw new AppError({
-        code: 'PERMISSION_DENIED',
-        message: 'The requested goal is not owned by the current workspace.',
-        retryable: false,
-      })
-    }
-    await requireCurrentWorkspaceSession(owner, signal)
-  }
-  const requireOwnedPermission = async (requestId: string, signal: AbortSignal): Promise<void> => {
-    const owner = backendService.requireBackend().interactions.sessionForPermission?.(requestId)
-    if (owner === undefined) {
-      throw new AppError({
-        code: 'PERMISSION_DENIED',
-        message: 'The requested permission is not owned by the current workspace.',
-        retryable: false,
-      })
-    }
-    await requireCurrentWorkspaceSession(owner, signal)
-  }
-  const requireOwnedQuestion = async (questionId: string, signal: AbortSignal): Promise<void> => {
-    const owner = backendService.requireBackend().interactions.sessionForQuestion?.(questionId)
-    if (owner === undefined) {
-      throw new AppError({
-        code: 'PERMISSION_DENIED',
-        message: 'The requested question is not owned by the current workspace.',
-        retryable: false,
-      })
-    }
-    await requireCurrentWorkspaceSession(owner, signal)
   }
   const featureContextOwner = (workspaceFolderIdValue?: string): EditorContextOwner => {
     if (
@@ -2640,578 +2442,6 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     },
   }
   return root
-}
-
-function platform(): 'windows' | 'linux' | 'macos' {
-  return process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'macos' : 'linux'
-}
-
-function endpointFromServerUrl(serverUrl: string | undefined): BackendEndpoint | undefined {
-  if (serverUrl === undefined) return undefined
-  try {
-    const parsed = new URL(serverUrl)
-    const host = parsed.hostname
-    const port = Number(parsed.port)
-    if (
-      parsed.protocol !== 'http:' ||
-      (host !== '127.0.0.1' && host !== 'localhost') ||
-      !Number.isInteger(port) ||
-      port < 1 ||
-      port > 65_535
-    )
-      return undefined
-    return { host, port, baseUrl: `http://${host}:${port}` }
-  } catch {
-    return undefined
-  }
-}
-
-function runtimeEnvironment(overrides?: NodeJS.ProcessEnv, executable?: string): NodeJS.ProcessEnv {
-  const environment = { ...process.env, ...(overrides ?? {}) }
-  const entries = extensionRuntimePathEntries(platform(), environment)
-  const executableDirectory = executable === undefined ? undefined : path.dirname(executable)
-  const prefix =
-    executableDirectory === undefined || executableDirectory === '.' ? undefined : executableDirectory
-  environment.PATH = [prefix, ...entries]
-    .filter((entry): entry is string => entry !== undefined)
-    .join(path.delimiter)
-  return environment
-}
-
-function windowsShimOptions(
-  os: 'windows' | 'linux' | 'macos',
-  environment: NodeJS.ProcessEnv,
-): {
-  readonly pathEntries: readonly string[]
-  readonly processExecutable: string
-} {
-  return {
-    pathEntries: extensionRuntimePathEntries(os, environment),
-    processExecutable: process.execPath,
-  }
-}
-
-function extensionRuntimePathEntries(
-  os: 'windows' | 'linux' | 'macos',
-  environment: NodeJS.ProcessEnv,
-): readonly string[] {
-  return runtimePathEntries(os, environment, os === 'windows' ? homedir() : undefined)
-}
-
-function readStoredTemporaryWorkspace(value: unknown): StoredTemporaryWorkspace | undefined {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
-  const record = value as Record<string, unknown>
-  const id = record.id
-  const workspacePath = record.path
-  const ownershipToken = record.ownershipToken
-  if (
-    typeof id !== 'string' ||
-    id.trim() === '' ||
-    typeof workspacePath !== 'string' ||
-    workspacePath.trim() === '' ||
-    !isAbsoluteFilePath(workspacePath) ||
-    !isTemporaryWorkspaceOwnershipToken(ownershipToken)
-  )
-    return undefined
-  return { id, path: workspacePath, ownershipToken }
-}
-
-function readLegacyTemporaryWorkspace(value: unknown): LegacyTemporaryWorkspaceReference | undefined {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
-  const record = value as Record<string, unknown>
-  if (Object.hasOwn(record, 'ownershipToken')) return undefined
-  const id = record.id
-  const workspacePath = record.path
-  if (
-    typeof id !== 'string' ||
-    id.trim() === '' ||
-    typeof workspacePath !== 'string' ||
-    workspacePath.trim() === '' ||
-    !isAbsoluteFilePath(workspacePath)
-  )
-    return undefined
-  return { id, path: workspacePath }
-}
-
-function sameWorkspacePath(left: string, right: string): boolean {
-  const normalize = (value: string): string => {
-    const resolved = path.normalize(path.resolve(value))
-    let canonical = resolved
-    try {
-      canonical = realpathSync.native(resolved)
-    } catch {
-      // A workspace can be published before a remote/virtual path is
-      // readable locally. The normalized spelling remains the safe fallback.
-    }
-    return process.platform === 'win32' ? canonical.toLowerCase() : canonical
-  }
-  return normalize(left) === normalize(right)
-}
-
-function createExportFileSystem(api: typeof vscode): ExportFileSystem {
-  const uri = (filePath: string): vscode.Uri => api.Uri.file(filePath)
-  return {
-    stat: async (filePath) => {
-      const info = await api.workspace.fs.stat(uri(filePath))
-      return { isDirectory: () => (info.type & api.FileType.Directory) !== 0 }
-    },
-    rename: async (source, destination, overwrite = false) => {
-      await api.workspace.fs.rename(uri(source), uri(destination), { overwrite })
-    },
-    unlink: async (filePath) => {
-      await api.workspace.fs.delete(uri(filePath), { recursive: false, useTrash: false })
-    },
-    writeFile: async (filePath, data) => {
-      await api.workspace.fs.writeFile(uri(filePath), data)
-    },
-  }
-}
-
-function sessionOpenFailure(stage: string, error: unknown): AppError {
-  const source = error instanceof AppError ? error : undefined
-  return new AppError({
-    code: source?.code ?? 'INTERNAL_ERROR',
-    message: `Opening the DSH session failed during ${stage}.`,
-    retryable: source?.retryable ?? true,
-    cause: error,
-    context: {
-      operation: 'session.open',
-      stage,
-      ...(source?.context?.rpcMethod === undefined ? {} : { rpcMethod: source.context.rpcMethod }),
-      ...(source?.context?.rpcCode === undefined ? {} : { rpcCode: source.context.rpcCode }),
-    },
-  })
-}
-
-function sessionBelongsToWorkspaces(
-  session: { readonly id: string; readonly workspaceId: string; readonly cwd?: string },
-  workspaces: readonly WorkspaceSummary[],
-  folders: readonly vscode.WorkspaceFolder[] = [],
-): boolean {
-  return (
-    workspaces.some(
-      (workspace) =>
-        session.workspaceId === workspace.id ||
-        workspace.sessionIds?.includes(session.id) === true ||
-        (workspace.path !== undefined &&
-          session.cwd !== undefined &&
-          sameWorkspacePath(workspace.path, session.cwd)),
-    ) ||
-    (session.cwd !== undefined &&
-      folders.some((folder) => sameWorkspacePath(session.cwd as string, folder.uri.fsPath)))
-  )
-}
-
-function readTextFile(filePath: string): string {
-  return readFileSync(filePath, 'utf8')
-}
-
-function spawnManagedChild(
-  executable: string,
-  args: readonly string[],
-  cwd?: string,
-  environment?: NodeJS.ProcessEnv,
-): SpawnedChild {
-  const childEnvironment = { ...process.env, ...(environment ?? {}) }
-  const resolved = resolveWindowsShim(
-    executable,
-    platform(),
-    readTextFile,
-    windowsShimOptions(platform(), childEnvironment),
-  )
-  const resolvedExecutable = resolved?.executable ?? executable
-  const executableDirectory = path.dirname(resolvedExecutable)
-  const prefix = executableDirectory === '.' ? undefined : executableDirectory
-  childEnvironment.PATH = [prefix, ...extensionRuntimePathEntries(platform(), childEnvironment)]
-    .filter((entry): entry is string => entry !== undefined)
-    .join(path.delimiter)
-  const child = spawn(
-    resolved?.executable ?? executable,
-    resolved ? [...resolved.prefixArgs, ...args] : [...args],
-    {
-      shell: false,
-      windowsHide: true,
-      ...(cwd === undefined ? {} : { cwd }),
-      env: childEnvironment,
-    },
-  )
-  const exited = new Promise<{ readonly code: number | null; readonly signal: string | null }>((resolve) => {
-    child.once('exit', (code, signal) => resolve({ code, signal }))
-    // A launch that never produced a process (missing executable, EACCES)
-    // reports `error` and never `exit`. Resolve the exit contract so callers
-    // stop waiting for a process that does not exist, and so the reason is not
-    // raised as an unhandled event in the Extension Host.
-    child.once('error', () => resolve({ code: -1, signal: null }))
-  })
-  return {
-    pid: child.pid ?? -1,
-    stdout: textStream(child.stdout),
-    stderr: textStream(child.stderr),
-    kill: (signal?: NodeJS.Signals) => {
-      child.kill(signal)
-    },
-    exited,
-  }
-}
-
-async function* textStream(stream: NodeJS.ReadableStream | null): AsyncIterable<string> {
-  if (stream === null) return
-  for await (const chunk of stream) yield Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk)
-}
-
-function stateSubscriptionDisposable(unsubscribe: () => void): vscode.Disposable {
-  return { dispose: unsubscribe }
-}
-
-function publicState(state: BackendState): unknown {
-  return {
-    kind: state.kind,
-    ...(state.kind === 'connected'
-      ? {
-          dshVersion: state.backend.capabilities.dshVersion,
-          sessionRestore: state.backend.capabilities.sessionRestore === true,
-          jobController: state.backend.capabilities.jobController === true,
-          accountLifecycleAvailable: state.backend.capabilities.features.has('account-lifecycle'),
-          ...(state.backend.capabilities.subagentImagePrompts === true ? { subagentImagePrompts: true } : {}),
-          ...(state.backend.backendInstanceId === undefined
-            ? {}
-            : { backendInstanceId: state.backend.backendInstanceId }),
-          ...(state.backend.connectionGeneration === undefined
-            ? {}
-            : { connectionGeneration: state.backend.connectionGeneration }),
-          ...(state.backend.capabilities.compatibilityWarning === undefined
-            ? {}
-            : { compatibilityWarning: state.backend.capabilities.compatibilityWarning }),
-        }
-      : {}),
-    ...(state.kind === 'failed'
-      ? { message: safeStateMessage(state.message), retryable: state.retryable }
-      : {}),
-    ...(state.kind === 'port-conflict'
-      ? { message: 'The configured DSH port is unavailable.', retryable: state.retryable, port: state.port }
-      : {}),
-    ...(state.kind === 'runtime-missing'
-      ? { searchedLocations: publicRuntimeLocations(state.searchedLocations) }
-      : {}),
-  }
-}
-
-function publicDiagnosticsSnapshot(
-  state: BackendState,
-  extensionVersion: string,
-  recentEvents: readonly string[],
-  connectionMode: ExtensionSettings['connection']['mode'],
-): DiagnosticsSnapshot {
-  const dshVersion = state.kind === 'connected' ? state.backend.capabilities.dshVersion : undefined
-  const endpointKind =
-    state.kind === 'connected'
-      ? state.backend.ownership
-      : connectionMode === 'custom'
-        ? 'configured'
-        : undefined
-  const canReconnect =
-    state.kind === 'connected' ||
-    state.kind === 'runtime-missing' ||
-    state.kind === 'port-conflict' ||
-    (state.kind === 'failed' && state.retryable)
-  return {
-    extensionVersion,
-    ...(dshVersion === undefined ? {} : { dshVersion }),
-    state: state.kind,
-    ...(endpointKind === undefined ? {} : { endpointKind }),
-    canReconnect,
-    recentEvents: recentEvents.slice(-32),
-  }
-}
-
-function publicRuntimeLocations(locations: readonly string[]): readonly string[] {
-  const seen = new Set<string>()
-  const result: string[] = []
-  for (const location of locations) {
-    const normalized = path.normalize(location)
-    const name = path.basename(normalized)
-    const parent = path.basename(path.dirname(normalized))
-    const label = parent === '' || parent === '.' ? name : `${parent}/${name}`
-    if (label === '' || seen.has(label)) continue
-    seen.add(label)
-    result.push(label)
-  }
-  return result
-}
-
-interface OpenFileCandidate {
-  readonly id: string
-  readonly uri: vscode.Uri
-  readonly name: string
-  readonly mimeType?: string
-  readonly active: boolean
-}
-
-function listOpenFileCandidates(): readonly OpenFileCandidate[] {
-  const activeEditor = vscode.window.activeTextEditor
-  const activeTabUri = currentTabUri(vscode.window.tabGroups.activeTabGroup.activeTab?.input)
-  const activeUri = activeEditor?.document.uri.toString() ?? activeTabUri?.toString()
-  const seen = new Set<string>()
-  const candidates: OpenFileCandidate[] = []
-  const add = (uri: vscode.Uri): void => {
-    if (!isOpenFileUri(uri)) return
-    const uriKey = uri.toString()
-    if (seen.has(uriKey)) return
-    seen.add(uriKey)
-    const document = openDocumentForUri(uri)
-    const name = fileNameForUri(uri, document)
-    const mimeType = attachmentMimeType(name, Buffer.alloc(0))
-    candidates.push({
-      id: openFileCandidateId(uri),
-      uri,
-      name,
-      ...(mimeType === undefined ? {} : { mimeType }),
-      active: uriKey === activeUri,
-    })
-  }
-
-  for (const group of vscode.window.tabGroups.all)
-    for (const tab of group.tabs) {
-      for (const uri of tabInputUris(tab.input)) add(uri)
-    }
-  if (activeEditor !== undefined) add(activeEditor.document.uri)
-
-  return candidates.sort((left, right) => Number(right.active) - Number(left.active))
-}
-
-async function readOpenFileAttachment(
-  candidate: OpenFileCandidate,
-): Promise<StoredAttachmentInput | undefined> {
-  const openDocument = openDocumentForUri(candidate.uri)
-  if (openDocument !== undefined)
-    return prepareAttachment(candidate.name, Buffer.from(openDocument.getText(), 'utf8'))
-  if (candidate.uri.scheme !== 'file') return undefined
-  return readAttachmentFile(candidate.name, candidate.uri.fsPath, { stat, readFile })
-}
-
-function openDocumentForUri(uri: vscode.Uri): vscode.TextDocument | undefined {
-  return vscode.workspace.textDocuments.find((document) => document.uri.toString() === uri.toString())
-}
-
-function isOpenFileUri(uri: vscode.Uri): boolean {
-  return uri.scheme === 'file' || uri.scheme === 'untitled'
-}
-
-function fileNameForUri(uri: vscode.Uri, document: vscode.TextDocument | undefined): string {
-  const source = document?.fileName || (uri.scheme === 'file' ? uri.fsPath : uri.path)
-  const name = path.basename(source)
-  return name === '' || name === '.' || name === path.sep
-    ? `Untitled-${document?.languageId || 'file'}`
-    : name
-}
-
-function openFileCandidateId(uri: vscode.Uri): string {
-  return `dsh-open-file-${createHash('sha256').update(uri.toString(), 'utf8').digest('hex').slice(0, 32)}`
-}
-
-function currentTabUri(input: vscode.Tab['input']): vscode.Uri | undefined {
-  return tabInputUris(input)[0]
-}
-
-function tabInputUris(input: vscode.Tab['input']): readonly vscode.Uri[] {
-  if (input instanceof vscode.TabInputText) return [input.uri]
-  if (input instanceof vscode.TabInputTextDiff) return [input.modified, input.original]
-  if (input instanceof vscode.TabInputCustom) return [input.uri]
-  if (input instanceof vscode.TabInputNotebook) return [input.uri]
-  if (input instanceof vscode.TabInputNotebookDiff) return [input.modified, input.original]
-  return []
-}
-
-function safeStateMessage(message: string): string {
-  const redacted = redactText(message, 320)
-  return redacted === '' ? 'The DSH connection operation failed.' : redacted
-}
-
-function publicList(value: readonly unknown[]): readonly unknown[] {
-  return value.map(publicValue)
-}
-
-/** Project the domain ref into the flattened, schema-checked safe DTO. */
-function featureContextItem(item: EditorContextItem): unknown {
-  const ref = item.ref
-  return {
-    contextRef: ref.contextRef,
-    kind: ref.kind === 'file' ? 'open-document' : ref.kind,
-    label: item.label,
-    workspaceFolderId: ref.workspaceFolderId,
-    relativePath: ref.relativePath,
-    ...(ref.range === undefined ? {} : { range: ref.range }),
-    sizeBytes: ref.sizeBytes,
-    ...(ref.documentVersion === undefined ? {} : { documentVersion: ref.documentVersion }),
-    stale: item.stale,
-    previewAvailable: item.previewAvailable,
-    expiresAt: ref.expiresAt,
-    scope: {
-      ownerId: ref.ownerId,
-      workspaceFolderId: ref.workspaceFolderId,
-      ownerViewId: ref.ownerViewId,
-      ...(ref.sessionId === undefined ? {} : { sessionId: ref.sessionId }),
-      ...(ref.backendInstanceId === undefined ? {} : { backendInstanceId: ref.backendInstanceId }),
-      ...(ref.connectionGeneration === undefined ? {} : { connectionGeneration: ref.connectionGeneration }),
-      expiresAt: ref.expiresAt,
-    },
-  }
-}
-
-function featureContextKinds(availability: EditorContextAvailability): FeatureContextKind[] {
-  return availability.availableKinds.map((kind) => (kind === 'file' ? 'open-document' : kind))
-}
-
-function publicValue(value: unknown): unknown {
-  return sanitizePublicValue(value)
-}
-
-function publicExtensionSettings(
-  settings: ExtensionSettings,
-  extensionVersion: string,
-): ExtensionSettingsSummary {
-  return {
-    extensionVersion,
-    connection: {
-      mode: settings.connection.mode,
-      customEndpointConfigured: settings.connection.serverUrl !== undefined,
-    },
-    runtime: {
-      customExecutableConfigured: settings.runtime.executablePath !== undefined,
-      autoStart: settings.runtime.autoStart,
-    },
-    security: { defaultPermissionPreset: settings.security.defaultPermissionPreset },
-    defaultAgent: settings.defaultAgent,
-  }
-}
-
-function readExtensionVersion(context: vscode.ExtensionContext): string {
-  const packageJson = context.extension.packageJSON as unknown as { readonly version?: unknown }
-  const version = packageJson.version
-  return typeof version === 'string' && version.trim() !== '' ? version : 'unknown'
-}
-
-/** Zod-inferred optional fields carry `| undefined`; the domain's
- * exactOptionalPropertyTypes contracts require it stripped before the
- * parsed payload reaches application use cases. */
-function questionResponse(
-  response:
-    | string
-    | readonly string[]
-    | readonly {
-        readonly id: string
-        readonly response: string | string[]
-        readonly custom?: string | undefined
-      }[],
-): string | readonly string[] | readonly QuestionAnswer[] {
-  if (typeof response === 'string') return response
-  const labels: string[] = []
-  const answers: QuestionAnswer[] = []
-  for (const entry of response) {
-    if (typeof entry === 'string') labels.push(entry)
-    else
-      answers.push({
-        id: entry.id,
-        response: entry.response,
-        ...(entry.custom === undefined ? {} : { custom: entry.custom }),
-      })
-  }
-  return answers.length > 0 ? answers : labels
-}
-
-function requiresTrustedWorkspace(type: WebviewRequest['type']): boolean {
-  switch (type) {
-    case 'workspace.rename':
-    case 'workspace.remove':
-    case 'workspace.move':
-    case 'session.move':
-    case 'session.create':
-    case 'session.rename':
-    case 'session.remove':
-    case 'session.fork':
-    case 'session.archive':
-    case 'session.open':
-    case 'session.history':
-    case 'session.sendPrompt':
-    case 'session.queue.list':
-    case 'session.queue.update':
-    case 'session.queue.remove':
-    case 'session.queue.steer':
-    case 'session.cancel':
-    case 'session.configure':
-    case 'attachment.pick':
-    case 'attachment.ingest':
-    case 'attachment.preview':
-    case 'attachment.open.list':
-    case 'attachment.open.attach':
-    case 'attachment.read':
-    case 'reference.list':
-    case 'feedback.list':
-    case 'feedback.toggle':
-    case 'feedback.note':
-    case 'feedback.remove':
-    case 'models.discover.custom':
-    case 'provider.secret.configure':
-    case 'provider.secret.remove':
-    case 'provider.custom.create':
-    case 'plugin.credential.configure':
-    case 'plugin.credential.remove':
-    case 'interaction.permission.respond':
-    case 'interaction.question.respond':
-    case 'interaction.question.cancel':
-    case 'settings.update':
-    case 'settings.unset':
-    case 'settings.mutate':
-    case 'settings.openDocument':
-    case 'settings.openKeyboardShortcuts':
-    case 'goal.list':
-    case 'goal.update':
-    case 'goal.clear':
-    case 'subagent.send':
-    case 'subagent.interrupt':
-    case 'subagent.list':
-    case 'subagent.history':
-    case 'skill.list':
-    case 'skill.openDocument':
-    case 'command.list':
-    case 'command.execute':
-    case 'job.list':
-    case 'job.kill':
-    case 'job.follow.start':
-    case 'job.follow.stop':
-    case 'preset.read':
-    case 'preset.copy':
-    case 'preset.openDocument':
-    case 'preset.remove':
-    case 'session.export':
-      return true
-    default:
-      return false
-  }
-}
-
-async function pathExists(filePath: string): Promise<boolean> {
-  try {
-    await vscode.workspace.fs.stat(vscode.Uri.file(filePath))
-    return true
-  } catch (error) {
-    if (isMissingFileError(error)) return false
-    throw new AppError({
-      code: 'EXPORT_FAILED',
-      message: 'The export destination could not be inspected.',
-      retryable: false,
-      cause: error,
-    })
-  }
-}
-
-function isMissingFileError(error: unknown): boolean {
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    'code' in error &&
-    (error.code === 'ENOENT' || error.code === 'FileNotFound')
-  )
 }
 
 export function createManagedEndpointLoginHandler(

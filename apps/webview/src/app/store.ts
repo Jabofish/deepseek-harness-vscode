@@ -4,33 +4,32 @@ import type {
   BackendEvent,
   DshUpdateSnapshot,
   DynamicCommand,
-  EditorContextItem,
   GoalView,
   JobView,
   MessageAttachment,
   PluginInstallProgressView,
   PromptAttachment,
-  PromptTemplateScope,
   QueuedInput,
   RunningInputMode,
   SessionHistoryEvent,
   SessionSequenceRange,
   SubagentCatalog,
   SubagentView,
-  TaskListScope,
 } from '@dsh-vscode/domain'
 import { parseSlashCommand, resolvePromptMode } from '@dsh-vscode/domain'
 import type { TimelineNode, TimelineState } from '@dsh-vscode/timeline'
 import { reduceTimeline } from '@dsh-vscode/timeline'
-import type { FeatureRequest, HostMessage } from '@dsh-vscode/webview-protocol'
+import type { FeatureRequest } from '@dsh-vscode/webview-protocol'
 import { diagnosticsSnapshotSchema } from '@dsh-vscode/webview-protocol'
 import { PluginInstallRecoveryController } from './plugin-install-recovery.js'
 import { createAccountActions } from './store/account-actions.js'
+import { createFeatureActions } from './store/feature-actions.js'
 import { createJobActions } from './store/job-actions.js'
 import { getVsCodeApi } from '../vscode-api.js'
 import { ProtocolClient } from './protocol-client.js'
 import type { ActiveSubagent, AppStore, LiveHistoryAppender, StateSetter } from './store/types.js'
 import { requestId } from './store/ids.js'
+import { createPendingOpenBuffer } from './store/pending-open.js'
 import {
   applyKnownCommand,
   hasDynamicCommand,
@@ -46,31 +45,10 @@ import {
   readCommandList,
   refreshSessionModelDirectory,
 } from './store/command-directory.js'
-import {
-  attachmentFromResult,
-  imageDataUri,
-  mergeEditorContext,
-  openFileCandidatesFromResult,
-  parseEditorContextAvailableKinds,
-  parseEditorContextItems,
-  promptTemplateVariables,
-} from './store/editor-context.js'
+import { attachmentFromResult, imageDataUri, openFileCandidatesFromResult } from './store/editor-context.js'
 import { parseHostDomainEvent, timelineSequenceOptions } from './store/event-parser.js'
 import { isGoalView, isJobView, isQueuedInput, nonEmptyString, parseGoalViews } from './store/event-values.js'
-import {
-  feedbackRecord,
-  isMessageFeedbackItem,
-  mergeTask,
-  parseFeatureChangeDetail,
-  parseFeatureChangesResult,
-  parseFeatureCheckpointPreviewResult,
-  parseFeatureCheckpointsResult,
-  parseFeatureOperationResult,
-  parseFeaturePromptTemplateInsertionResult,
-  parseFeaturePromptTemplateResult,
-  parseFeaturePromptTemplatesResult,
-  parseFeatureTasksResult,
-} from './store/feature-parsers.js'
+import { feedbackRecord, isMessageFeedbackItem } from './store/feature-parsers.js'
 import {
   historyCoversSequenceRange,
   historySequenceRanges,
@@ -84,10 +62,8 @@ import {
   historyPageCoverage,
   hydrateTimelineFromEntries,
   hydrateTimelineFromHistoryEvents,
-  isAdvisoryReplayMessage,
   mergeLiveTransientNodes,
   optionalSequence,
-  orderPendingReplayMessages,
   parseSessionHistoryPage,
   parseSessionHistoryWithTimeline,
 } from './store/history-replay.js'
@@ -184,15 +160,6 @@ interface SessionTurnWatcher {
   turn: number | undefined
   finish(): void
   dispose(): void
-}
-interface PendingSessionOpen {
-  readonly version: number
-  readonly sessionId: string
-  /** Lossless until the authoritative open/advisory replay has committed. */
-  readonly messages: HostMessage[]
-  readonly messageKeys: Set<string>
-  replayedMessages: number
-  ready: boolean
 }
 
 type PresetSessionSyncTarget =
@@ -298,8 +265,27 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         ...(refreshCatalog ? { pluginInventoryRevision: current.pluginInventoryRevision + 1 } : {}),
       })),
   })
+  // Path-scoped feature routes accept only the VS Code folder the Host
+  // resolved for the session; the DSH workspace id is a different namespace
+  // and a session row without this value means no folder is open at all.
+  const sessionWorkspaceFolderId = (sessionId: string): string | undefined => {
+    const session = state.sessions.find((candidate) => candidate.id === sessionId)
+    if (session?.workspaceFolderId !== undefined) return session.workspaceFolderId
+    const subagent = state.activeSubagent
+    if (subagent?.entry.id !== sessionId) return undefined
+    // A catalog-resolved child has no workspace row of its own; its paths
+    // belong to the parent session it was delegated from.
+    return state.sessions.find((candidate) => candidate.id === subagent.entry.parentSessionId)
+      ?.workspaceFolderId
+  }
   const accountActions = createAccountActions({ client, getState: () => state, setState })
   const jobActions = createJobActions({ client, getState: () => state, setState })
+  const featureActions = createFeatureActions({
+    client,
+    getState: () => state,
+    setState,
+    sessionWorkspaceFolderId,
+  })
   // Sequence holes reach the store as `session.gap` events. The timeline gate
   // drops anything at or below its cursor, so a healed hole can only become
   // visible through a rebuild from the history ledger, and anything history
@@ -766,112 +752,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   let startupRestorePending = true
   let startupRestoreArmed = false
   let startupRestorePromise: Promise<void> | undefined
-  let editorContextRefreshGeneration = 0
-  let changesRefreshGeneration = 0
-  let tasksRefreshGeneration = 0
-  let checkpointsRefreshGeneration = 0
-  let promptTemplatesRefreshGeneration = 0
-  const pendingOpens = new Map<number, PendingSessionOpen>()
-  const latestPendingOpen = new Map<string, PendingSessionOpen>()
-  const deferredOpenMessages = new Map<string, HostMessage[]>()
-  const deferredOpenMessageKeys = new Map<string, Set<string>>()
-  const sameHostEvent = (left: HostMessage, right: HostMessage): boolean => {
-    if (left.type !== 'event' || right.type !== 'event') return false
-    if (left.sequence !== right.sequence) return false
-    try {
-      // Host sequence is the transport ordering key, not the durable DSH
-      // identity. Keep two distinct events if a reconnect/replay ever reuses
-      // one host slot; otherwise a valid projection/tool record can vanish
-      // before the open barrier is released.
-      return JSON.stringify(left) === JSON.stringify(right)
-    } catch {
-      return false
-    }
-  }
-  const hostMessageIdentity = (message: HostMessage): string | undefined => {
-    if (message.type !== 'event') return undefined
-    try {
-      return JSON.stringify(message)
-    } catch {
-      return undefined
-    }
-  }
-  const hostMessageSequence = (message: HostMessage): number =>
-    message.type === 'event' ? message.sequence : Number.MAX_SAFE_INTEGER
-  const appendUniqueHostMessage = (
-    messages: HostMessage[],
-    messageKeys: Set<string>,
-    message: HostMessage,
-  ): void => {
-    const identity = hostMessageIdentity(message)
-    if (identity !== undefined) {
-      if (messageKeys.has(identity)) return
-      messageKeys.add(identity)
-    } else if (messages.some((candidate) => sameHostEvent(candidate, message))) return
-    messages.push(message)
-  }
-  const appendPendingMessage = (pending: PendingSessionOpen, message: HostMessage): void => {
-    appendUniqueHostMessage(pending.messages, pending.messageKeys, message)
-  }
-  const appendDeferredMessage = (sessionId: string, message: HostMessage): void => {
-    const messages = deferredOpenMessages.get(sessionId) ?? []
-    const messageKeys = deferredOpenMessageKeys.get(sessionId) ?? new Set<string>()
-    appendUniqueHostMessage(messages, messageKeys, message)
-    deferredOpenMessages.set(sessionId, messages)
-    deferredOpenMessageKeys.set(sessionId, messageKeys)
-  }
-  const createPendingOpen = (sessionId: string, version: number): PendingSessionOpen => {
-    const pending: PendingSessionOpen = {
-      version,
-      sessionId,
-      messages: [],
-      messageKeys: new Set(),
-      replayedMessages: 0,
-      ready: false,
-    }
-    const deferred = deferredOpenMessages.get(sessionId)
-    if (deferred !== undefined) {
-      for (const message of deferred) appendPendingMessage(pending, message)
-      deferredOpenMessages.delete(sessionId)
-      deferredOpenMessageKeys.delete(sessionId)
-    }
-    const previous = latestPendingOpen.get(sessionId)
-    if (previous !== undefined)
-      for (const message of previous.messages) appendPendingMessage(pending, message)
-    pending.messages.sort((left, right) => hostMessageSequence(left) - hostMessageSequence(right))
-    pendingOpens.set(version, pending)
-    latestPendingOpen.set(sessionId, pending)
-    return pending
-  }
-  const settlePendingOpen = (pending: PendingSessionOpen, completed: boolean): void => {
-    pendingOpens.delete(pending.version)
-    const latest = latestPendingOpen.get(pending.sessionId)
-    const ownsLatest = latest === pending
-    const keepMessages = !completed || !ownsLatest || pending.version !== openVersion
-    if (keepMessages) {
-      if (latest !== undefined && latest !== pending) {
-        for (const message of pending.messages) appendPendingMessage(latest, message)
-      } else {
-        for (const message of pending.messages) appendDeferredMessage(pending.sessionId, message)
-      }
-    }
-    if (ownsLatest) latestPendingOpen.delete(pending.sessionId)
-  }
-  const pendingMessagesAfterReplay = (pending: PendingSessionOpen): readonly HostMessage[] => {
-    const messages = pending.messages.slice(pending.replayedMessages)
-    pending.replayedMessages = pending.messages.length
-    return orderPendingReplayMessages(messages)
-  }
-  const pendingMessagesFrom = (pending: PendingSessionOpen, startIndex: number): readonly HostMessage[] => {
-    // Durable records are cursor-gated and control records are idempotent,
-    // but cursorless assistant frames deliberately bypass that gate. They
-    // were already reduced during first paint/live delivery; replaying them
-    // after an advisory snapshot would apply a stale prefix over a settled
-    // assistant because the matching durable completion is now <= the cursor.
-    const messages = pending.messages.slice(startIndex).filter(isAdvisoryReplayMessage)
-    pending.replayedMessages = pending.messages.length
-    return orderPendingReplayMessages(messages)
-  }
+  const pendingOpenBuffer = createPendingOpenBuffer(() => openVersion)
   let commandDirectoryGeneration = 0
   const commandDirectoryCache = new Map<string, readonly DynamicCommand[]>()
   const commandDirectoryLoads = new Map<string, Promise<readonly DynamicCommand[] | undefined>>()
@@ -961,217 +842,6 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         : { ...current, archivedSessions: sessions },
     )
   }
-  const refreshEditorContextState = async (workspaceFolderId?: string): Promise<void> => {
-    if (typeof client.featureRequest !== 'function') return
-    const generation = ++editorContextRefreshGeneration
-    setState((current) => ({ ...current, editorContextLoading: true }))
-    try {
-      const result = object(
-        await client.featureRequest({
-          type: 'editor.context.list',
-          requestId: requestId(),
-          payload: workspaceFolderId === undefined ? {} : { workspaceFolderId },
-        }),
-      )
-      const items = result?.kind === 'editor.context' ? parseEditorContextItems(result.items) : undefined
-      const availableKinds =
-        result?.kind === 'editor.context'
-          ? parseEditorContextAvailableKinds(result.availableKinds)
-          : undefined
-      if (
-        items !== undefined &&
-        availableKinds !== undefined &&
-        generation === editorContextRefreshGeneration
-      )
-        setState((current) => ({
-          ...current,
-          editorContext: items,
-          editorContextAvailableKinds: availableKinds,
-        }))
-    } finally {
-      if (generation === editorContextRefreshGeneration)
-        setState((current) => ({ ...current, editorContextLoading: false }))
-    }
-  }
-  const refreshChangesState = async (
-    sessionId: string | undefined = state.activeSessionId,
-  ): Promise<void> => {
-    if (typeof client.featureRequest !== 'function' || sessionId === undefined) return
-    // No folder is open for this session, so there is no workspace scope to
-    // read. Report it as nothing to show rather than as a failed refresh.
-    const workspaceFolderId = sessionWorkspaceFolderId(sessionId)
-    if (workspaceFolderId === undefined) {
-      setState((current) =>
-        current.activeSessionId === sessionId ? { ...current, changesRefreshFailed: false } : current,
-      )
-      return
-    }
-    const generation = ++changesRefreshGeneration
-    setState((current) => ({ ...current, changesLoading: true }))
-    try {
-      const result = await client.featureRequest({
-        type: 'changes.list',
-        requestId: requestId(),
-        payload: { sessionId, workspaceFolderId, limit: 200 },
-      })
-      const changes = parseFeatureChangesResult(result)
-      if (changes !== undefined)
-        setState((current) =>
-          generation === changesRefreshGeneration && current.activeSessionId === sessionId
-            ? {
-                ...current,
-                changes,
-                changesRefreshFailed: (result as { refreshFailed?: boolean }).refreshFailed === true,
-              }
-            : current,
-        )
-      else throw new Error('Invalid Changes response')
-    } catch {
-      setState((current) =>
-        generation === changesRefreshGeneration && current.activeSessionId === sessionId
-          ? { ...current, changesRefreshFailed: true }
-          : current,
-      )
-    } finally {
-      if (generation === changesRefreshGeneration)
-        setState((current) => ({ ...current, changesLoading: false }))
-    }
-  }
-  const refreshTasksState = async (
-    sessionId: string | undefined = state.activeSessionId,
-    includeCompleted = false,
-    scope: TaskListScope = 'current-session',
-  ): Promise<void> => {
-    const targetSessionId = scope === 'workspace' ? undefined : sessionId
-    const expectedActiveSessionId = state.activeSessionId
-    const workspaceFolderId = sessionId === undefined ? undefined : sessionWorkspaceFolderId(sessionId)
-    if (
-      typeof client.featureRequest !== 'function' ||
-      (scope === 'current-session' && targetSessionId === undefined) ||
-      // Both task views are rooted in the folder the Host resolved; with no
-      // folder open there is no scope to read, so nothing is requested.
-      workspaceFolderId === undefined
-    )
-      return
-    const generation = ++tasksRefreshGeneration
-    setState((current) => ({ ...current, tasksLoading: true }))
-    try {
-      const result = await client.featureRequest({
-        type: 'tasks.list',
-        requestId: requestId(),
-        payload: {
-          ...(targetSessionId === undefined ? {} : { sessionId: targetSessionId }),
-          workspaceFolderId,
-          scope,
-          includeCompleted,
-          limit: 200,
-        },
-      })
-      const snapshot = parseFeatureTasksResult(result)
-      if (snapshot !== undefined)
-        setState((current) =>
-          generation === tasksRefreshGeneration && current.activeSessionId === expectedActiveSessionId
-            ? {
-                ...current,
-                tasks: snapshot.items,
-                taskScope: snapshot.scope,
-                tasksComplete: snapshot.complete,
-                tasksOmittedSessions: snapshot.omittedSessions,
-              }
-            : current,
-        )
-    } finally {
-      if (generation === tasksRefreshGeneration) setState((current) => ({ ...current, tasksLoading: false }))
-    }
-  }
-  // Path-scoped feature routes accept only the VS Code folder the Host
-  // resolved for the session; the DSH workspace id is a different namespace
-  // and a session row without this value means no folder is open at all.
-  const sessionWorkspaceFolderId = (sessionId: string): string | undefined => {
-    const session = state.sessions.find((candidate) => candidate.id === sessionId)
-    if (session?.workspaceFolderId !== undefined) return session.workspaceFolderId
-    const subagent = state.activeSubagent
-    if (subagent?.entry.id !== sessionId) return undefined
-    // A catalog-resolved child has no workspace row of its own; its paths
-    // belong to the parent session it was delegated from.
-    return state.sessions.find((candidate) => candidate.id === subagent.entry.parentSessionId)
-      ?.workspaceFolderId
-  }
-  const refreshCheckpointsState = async (
-    sessionId: string | undefined = state.activeSessionId,
-  ): Promise<void> => {
-    if (typeof client.featureRequest !== 'function' || sessionId === undefined) return
-    const workspaceFolderId = sessionWorkspaceFolderId(sessionId)
-    if (workspaceFolderId === undefined) return
-    const generation = ++checkpointsRefreshGeneration
-    setState((current) => ({ ...current, checkpointsLoading: true }))
-    try {
-      const result = await client.featureRequest({
-        type: 'checkpoint.list',
-        requestId: requestId(),
-        payload: { sessionId, workspaceFolderId },
-      })
-      const checkpoints = parseFeatureCheckpointsResult(result)
-      if (checkpoints === undefined) throw new Error('Invalid checkpoint list')
-      if (checkpoints !== undefined)
-        setState((current) =>
-          generation === checkpointsRefreshGeneration && current.activeSessionId === sessionId
-            ? {
-                ...current,
-                checkpoints,
-                unavailableLists: (current.unavailableLists ?? []).filter((key) => key !== 'checkpoints'),
-              }
-            : current,
-        )
-    } catch {
-      if (generation === checkpointsRefreshGeneration && state.activeSessionId === sessionId)
-        setState((current) => ({
-          ...current,
-          unavailableLists: [...new Set([...(current.unavailableLists ?? []), 'checkpoints'])],
-        }))
-    } finally {
-      if (generation === checkpointsRefreshGeneration)
-        setState((current) => ({ ...current, checkpointsLoading: false }))
-    }
-  }
-  const refreshPromptTemplatesState = async (
-    sessionId: string | undefined = state.activeSessionId,
-    scope?: PromptTemplateScope,
-  ): Promise<void> => {
-    if (typeof client.featureRequest !== 'function' || sessionId === undefined) return
-    const workspaceFolderId = sessionWorkspaceFolderId(sessionId)
-    if (workspaceFolderId === undefined) return
-    const generation = ++promptTemplatesRefreshGeneration
-    setState((current) => ({ ...current, promptTemplatesLoading: true }))
-    try {
-      const result = await client.featureRequest({
-        type: 'prompt.template.list',
-        requestId: requestId(),
-        payload: { sessionId, workspaceFolderId, ...(scope === undefined ? {} : { scope }) },
-      })
-      const templates = parseFeaturePromptTemplatesResult(result)
-      if (templates === undefined) throw new Error('Invalid prompt template list')
-      if (templates !== undefined)
-        setState((current) =>
-          generation === promptTemplatesRefreshGeneration && current.activeSessionId === sessionId
-            ? {
-                ...current,
-                promptTemplates: templates,
-                unavailableLists: (current.unavailableLists ?? []).filter((key) => key !== 'templates'),
-              }
-            : current,
-        )
-    } catch {
-      if (generation === promptTemplatesRefreshGeneration && state.activeSessionId === sessionId)
-        setState((current) => ({
-          ...current,
-          unavailableLists: [...new Set([...(current.unavailableLists ?? []), 'templates'])],
-        }))
-    } finally {
-      if (generation === promptTemplatesRefreshGeneration)
-        setState((current) => ({ ...current, promptTemplatesLoading: false }))
-    }
-  }
   const applyBusyEnter = (values: Readonly<Record<string, unknown>>): void => {
     const conversation = object(values['ui-conversation'])
     const busyEnter = conversation?.busyEnter
@@ -1186,76 +856,6 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       if (snapshot !== undefined) applyBusyEnter(snapshot.values)
     } catch {
       // A host that cannot serve settings yet keeps the official 'queue' default.
-    }
-  }
-  const releaseEditorContextRefs = async (
-    refs: readonly string[],
-    items: readonly EditorContextItem[],
-  ): Promise<void> => {
-    if (typeof client.featureRequest !== 'function') return
-    const itemsByRef = new Map(items.map((item) => [item.ref.contextRef, item]))
-    const grouped = new Map<string, string[]>()
-    for (const contextRef of refs) {
-      const item = itemsByRef.get(contextRef)
-      if (item === undefined) continue
-      const group = grouped.get(item.ref.workspaceFolderId) ?? []
-      group.push(contextRef)
-      grouped.set(item.ref.workspaceFolderId, group)
-    }
-    await Promise.all(
-      [...grouped].map(([workspaceFolderId, contextRefs]) =>
-        client.featureRequest({
-          type: 'editor.context.release',
-          requestId: requestId(),
-          payload: { contextRefs, workspaceFolderId },
-        }),
-      ),
-    )
-  }
-  const discardEditorContextForSessionSwitch = async (nextSessionId: string): Promise<void> => {
-    if (state.activeSessionId === undefined || state.activeSessionId === nextSessionId) return
-    const refs = state.editorContext.map((item) => item.ref.contextRef)
-    if (refs.length === 0) return
-    const items = [...state.editorContext]
-    // Clear the Webview immediately so a slow release cannot leave context
-    // chips visually attached to the next session. The Host remains the
-    // authority and will reject any stale in-flight resolution by generation
-    // or owner/session binding.
-    setState((current) => ({
-      ...current,
-      editorContext: [],
-      editorContextAvailableKinds: [],
-      editorContextLoading: false,
-    }))
-    try {
-      await releaseEditorContextRefs(refs, items)
-    } catch {
-      // Expired or already-released handles are harmless during a view switch.
-    }
-  }
-  const discardEditorContextForWorkspaceChange = async (): Promise<void> => {
-    editorContextRefreshGeneration += 1
-    const refs = state.editorContext.map((item) => item.ref.contextRef)
-    if (refs.length === 0) {
-      setState((current) => ({
-        ...current,
-        editorContext: [],
-        editorContextAvailableKinds: [],
-        editorContextLoading: false,
-      }))
-      return
-    }
-    const items = [...state.editorContext]
-    setState((current) => ({
-      ...current,
-      editorContext: [],
-      editorContextAvailableKinds: [],
-      editorContextLoading: false,
-    }))
-    try {
-      await releaseEditorContextRefs(refs, items)
-    } catch {
-      // Workspace changes dispose the Host handles; stale releases are harmless.
     }
   }
   const executeCommandRequest = async (
@@ -1437,9 +1037,8 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     let deferredToOpen = false
     let pendingOpenReady = false
     if (messageSessionId !== undefined) {
-      const pending = latestPendingOpen.get(messageSessionId)
+      const pending = pendingOpenBuffer.capture(messageSessionId, message)
       if (pending !== undefined) {
-        appendPendingMessage(pending, message)
         deferredToOpen = true
         pendingOpenReady = pending.ready
         // History/configuration is the open barrier; advisory reads must not
@@ -1607,7 +1206,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       message.type === 'event' &&
       (message.name === 'workspace.changed' || message.name === 'workspace.removed')
     )
-      void discardEditorContextForWorkspaceChange()
+      void featureActions.discardEditorContextForWorkspaceChange()
     if (
       message.type === 'event' &&
       (message.name === 'workspace.changed' ||
@@ -1679,27 +1278,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
             pluginInstallRecovery.progress(progress)
             setState((current) => ({ ...current, pluginInstallProgress: progress }))
           }
-          if (message.name === 'editor.context.changed') void refreshEditorContextState()
-          if (message.name === 'editor.context.availability.changed') {
-            const availableKinds = parseEditorContextAvailableKinds(message.availableKinds)
-            if (availableKinds !== undefined)
-              setState((current) => ({ ...current, editorContextAvailableKinds: availableKinds }))
-          }
-          if (message.name === 'changes.invalidated' && message.sessionId === state.activeSessionId)
-            void refreshChangesState(message.sessionId)
-          if (message.name === 'changes.updated' && message.change.sessionId === state.activeSessionId)
-            void refreshChangesState(message.change.sessionId)
-          if (
-            message.name === 'tasks.updated' &&
-            (state.taskScope === 'workspace' || message.task.sessionId === state.activeSessionId)
-          )
-            void refreshTasksState(
-              state.taskScope === 'workspace' ? undefined : message.task.sessionId,
-              false,
-              state.taskScope,
-            )
-          if (message.name === 'checkpoint.updated' && message.checkpoint.sessionId === state.activeSessionId)
-            void refreshCheckpointsState(message.checkpoint.sessionId)
+          if (featureActions.applyFeatureEvent(message)) return
         })
       : () => undefined
   const requestSessionOpen = async (sessionId: string, version: number): Promise<unknown> => {
@@ -1815,12 +1394,8 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     const version = ++openVersion
     const modelDirectoryGeneration = ++sessionModelDirectoryGeneration
     feedbackReadySessions.delete(sessionId)
-    editorContextRefreshGeneration += 1
-    changesRefreshGeneration += 1
-    tasksRefreshGeneration += 1
-    checkpointsRefreshGeneration += 1
-    promptTemplatesRefreshGeneration += 1
-    const pending = createPendingOpen(sessionId, version)
+    featureActions.retireForSessionSwitch()
+    const pending = pendingOpenBuffer.create(sessionId, version)
     // Events delivered after this open began must be replayed after the
     // advisory snapshots, even when the critical history request has not
     // produced first paint yet.
@@ -1828,7 +1403,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     let completed = false
     let advisoryPending = false
     try {
-      await discardEditorContextForSessionSwitch(sessionId)
+      await featureActions.discardEditorContextForSessionSwitch(sessionId)
       let result: unknown
       try {
         result = await requestSessionOpen(sessionId, version)
@@ -1887,7 +1462,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         loadSubagentCatalog(sessionId),
       ])
       if (version !== openVersion) return
-      const initialMessages = pendingMessagesAfterReplay(pending)
+      const initialMessages = pendingOpenBuffer.messagesAfterReplay(pending)
       setState((current) =>
         replayHostMessages(
           {
@@ -2004,9 +1579,9 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
           // A gap event has already been applied live and may have triggered
           // an asynchronous history rebuild. Replaying it over the advisory
           // baseline would re-add a gap notice after the backfill removed it.
-          const pendingMessages = pendingMessagesFrom(pending, advisoryReplayStart).filter(
-            (message) => message.type !== 'event' || message.name !== 'session.gap',
-          )
+          const pendingMessages = pendingOpenBuffer
+            .messagesFrom(pending, advisoryReplayStart)
+            .filter((message) => message.type !== 'event' || message.name !== 'session.gap')
           setState((current) =>
             replayHostMessages(
               {
@@ -2032,20 +1607,17 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
               rememberHostOnlyNodes,
             ),
           )
-          void refreshChangesState(sessionId)
-          void refreshTasksState(sessionId)
-          void refreshCheckpointsState(sessionId)
-          void refreshPromptTemplatesState(sessionId)
-          void refreshEditorContextState(workspaceFolderId)
+          featureActions.refreshSessionScopedStates(sessionId)
+          featureActions.refreshEditorContextForOpen(workspaceFolderId)
         })
         .catch(() => undefined)
         .finally(() => {
           advisoryPending = false
-          settlePendingOpen(pending, version === openVersion)
+          pendingOpenBuffer.settle(pending, version === openVersion)
         })
       completed = true
     } finally {
-      if (!advisoryPending) settlePendingOpen(pending, completed)
+      if (!advisoryPending) pendingOpenBuffer.settle(pending, completed)
     }
   }
   const openSubagent = async (entry: SubagentView, parentAvailable: boolean): Promise<void> => {
@@ -2056,8 +1628,8 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     flushPendingHistory()
     const version = ++openVersion
     feedbackReadySessions.delete(entry.id)
-    promptTemplatesRefreshGeneration += 1
-    const pending = createPendingOpen(entry.id, version)
+    featureActions.retirePromptTemplatesForSubagentSwitch()
+    const pending = pendingOpenBuffer.create(entry.id, version)
     // The history and advisory reads overlap. Preserve every event delivered
     // after this open began for the final advisory replay.
     const advisoryReplayStart = pending.messages.length
@@ -2067,7 +1639,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       state.activeSubagent?.workspaceId ??
       ''
     try {
-      await discardEditorContextForSessionSwitch(entry.id)
+      await featureActions.discardEditorContextForSessionSwitch(entry.id)
       // The child→parent routing is connection state owned by the host
       // catalog: a child transcript can only be read after its parent catalog
       // was read on *this* connection, and a replacement process starts
@@ -2114,7 +1686,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         ),
         entry.id,
       )
-      const initialMessages = pendingMessagesAfterReplay(pending)
+      const initialMessages = pendingOpenBuffer.messagesAfterReplay(pending)
       setState((current) =>
         replayHostMessages(
           {
@@ -2190,7 +1762,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       )
         goalActivationAvailable = true
       if (version !== openVersion) return
-      const pendingMessages = pendingMessagesFrom(pending, advisoryReplayStart)
+      const pendingMessages = pendingOpenBuffer.messagesFrom(pending, advisoryReplayStart)
       setState((current) =>
         replayHostMessages(
           {
@@ -2214,13 +1786,10 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
           rememberHostOnlyNodes,
         ),
       )
-      void refreshChangesState(entry.id)
-      void refreshTasksState(entry.id)
-      void refreshCheckpointsState(entry.id)
-      void refreshPromptTemplatesState(entry.id)
+      featureActions.refreshSessionScopedStates(entry.id)
       completed = true
     } finally {
-      settlePendingOpen(pending, completed)
+      pendingOpenBuffer.settle(pending, completed)
     }
   }
   /**
@@ -2316,6 +1885,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   return {
     ...accountActions.methods,
     ...jobActions.methods,
+    ...featureActions.methods,
     get backend() {
       return state.backend
     },
@@ -2880,7 +2450,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       startupRestorePending = false
       jobActions.stopBeforeSessionOpen()
       flushPendingHistory()
-      await discardEditorContextForSessionSwitch('')
+      await featureActions.discardEditorContextForSessionSwitch('')
       if (revision !== pendingSessionRevision || navigationIntent !== openIntent) return
       setState((current) => ({
         ...current,
@@ -3437,348 +3007,6 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
         requestId: requestId(),
         payload: { uris: [...uris] },
       })
-    },
-    captureEditorContext: async (kind, workspaceFolderId) => {
-      if (typeof client.featureRequest !== 'function') throw new Error(translate('app.error.dshMode'))
-      const result = object(
-        await client.featureRequest<unknown>({
-          type: 'editor.context.capture',
-          requestId: requestId(),
-          payload:
-            workspaceFolderId === undefined
-              ? { kind: kind === 'file' ? 'open-document' : kind }
-              : { kind: kind === 'file' ? 'open-document' : kind, workspaceFolderId },
-        }),
-      )
-      const items = result?.kind === 'editor.context' ? parseEditorContextItems(result.items) : undefined
-      if (items === undefined) throw new Error(translate('app.error.dshMode'))
-      const availableKinds =
-        result?.kind === 'editor.context'
-          ? parseEditorContextAvailableKinds(result.availableKinds)
-          : undefined
-      setState((current) => ({
-        ...current,
-        editorContext: mergeEditorContext(current.editorContext, items),
-        ...(availableKinds === undefined ? {} : { editorContextAvailableKinds: availableKinds }),
-      }))
-    },
-    refreshEditorContext: refreshEditorContextState,
-    previewEditorContext: async (contextRef) => {
-      if (typeof client.featureRequest !== 'function') return undefined
-      const item = state.editorContext.find((candidate) => candidate.ref.contextRef === contextRef)
-      if (item === undefined) return undefined
-      const result = object(
-        await client.featureRequest<unknown>({
-          type: 'editor.context.preview',
-          requestId: requestId(),
-          payload: { contextRef, workspaceFolderId: item.ref.workspaceFolderId },
-        }),
-      )
-      if (result?.kind !== 'editor.preview' || typeof result.contextRef !== 'string') return undefined
-      if (typeof result.redactedPreviewText !== 'string') return undefined
-      return {
-        contextRef: result.contextRef,
-        text: result.redactedPreviewText,
-        truncated: result.truncated === true,
-        expiresAt: typeof result.expiresAt === 'number' ? result.expiresAt : 0,
-      }
-    },
-    releaseEditorContext: async (contextRefs) => {
-      if (contextRefs.length === 0 || typeof client.featureRequest !== 'function') return
-      const items = [...state.editorContext]
-      await releaseEditorContextRefs(contextRefs, items)
-      const released = new Set(contextRefs)
-      setState((current) => ({
-        ...current,
-        editorContext: current.editorContext.filter((item) => !released.has(item.ref.contextRef)),
-      }))
-    },
-    refreshChanges: refreshChangesState,
-    getChangeDetail: async (changeId) => {
-      if (typeof client.featureRequest !== 'function') return undefined
-      const result = await client.featureRequest<unknown>({
-        type: 'changes.detail',
-        requestId: requestId(),
-        payload: { changeId },
-      })
-      return parseFeatureChangeDetail(result)
-    },
-    markChangeReviewed: async (changeId, reviewState) => {
-      if (typeof client.featureRequest !== 'function') return undefined
-      const result = await client.featureRequest<unknown>({
-        type: 'changes.markReviewed',
-        requestId: requestId(),
-        payload: { changeId, reviewState: reviewState === 'unreviewed' ? 'viewed' : reviewState },
-      })
-      const changes = parseFeatureChangesResult(result)
-      const change = changes?.[0]
-      if (change !== undefined)
-        setState((current) => ({
-          ...current,
-          changes: current.changes.map((entry) => (entry.changeId === change.changeId ? change : entry)),
-        }))
-      return change
-    },
-    openChange: async (changeId) => {
-      if (typeof client.featureRequest !== 'function') return
-      const change = state.changes.find((entry) => entry.changeId === changeId)
-      if (change === undefined) return
-      const location =
-        change.locations.find(
-          (candidate) => candidate.path === change.relativePath && candidate.line !== undefined,
-        ) ?? change.locations.find((candidate) => candidate.path === change.relativePath)
-      await client.featureRequest<unknown>({
-        type: 'navigation.open',
-        requestId: requestId(),
-        payload: {
-          workspaceFolderId: change.workspaceFolderId,
-          relativePath: change.relativePath,
-          reveal: 'focus',
-          ...(location?.line === undefined
-            ? {}
-            : {
-                range: {
-                  start: { line: location.line, column: 0 },
-                  end: { line: location.line, column: 0 },
-                },
-              }),
-        },
-      })
-    },
-    refreshTasks: refreshTasksState,
-    getTask: async (taskId) => {
-      if (typeof client.featureRequest !== 'function') return undefined
-      const result = await client.featureRequest<unknown>({
-        type: 'tasks.open',
-        requestId: requestId(),
-        payload: { taskId },
-      })
-      return parseFeatureTasksResult(result)?.items[0]
-    },
-    stopTask: async (taskId, taskRevision) => {
-      if (typeof client.featureRequest !== 'function') return undefined
-      const result = await client.featureRequest<unknown>({
-        type: 'tasks.stop',
-        requestId: requestId(),
-        payload: { taskId, taskRevision },
-      })
-      const task = parseFeatureTasksResult(result)?.items[0]
-      if (task !== undefined)
-        setState((current) => ({
-          ...current,
-          tasks: mergeTask(current.tasks, task),
-        }))
-      return task
-    },
-    answerTask: async (taskId, interactionId, answer) => {
-      if (typeof client.featureRequest !== 'function') return undefined
-      const result = await client.featureRequest<unknown>({
-        type: 'tasks.answer',
-        requestId: requestId(),
-        payload: { taskId, interactionId, answer },
-      })
-      const task = parseFeatureTasksResult(result)?.items[0]
-      if (task !== undefined)
-        setState((current) => ({
-          ...current,
-          tasks: mergeTask(current.tasks, task),
-        }))
-      return task
-    },
-    refreshCheckpoints: refreshCheckpointsState,
-    createCheckpoint: async (label) => {
-      if (typeof client.featureRequest !== 'function') return undefined
-      const sessionId = state.activeSessionId
-      if (sessionId === undefined) return undefined
-      const workspaceFolderId = sessionWorkspaceFolderId(sessionId)
-      if (workspaceFolderId === undefined) return undefined
-      const normalizedLabel = label?.trim()
-      const result = await client.featureRequest<unknown>({
-        type: 'checkpoint.create',
-        requestId: requestId(),
-        payload: {
-          sessionId,
-          workspaceFolderId,
-          ...(normalizedLabel === undefined || normalizedLabel === '' ? {} : { label: normalizedLabel }),
-        },
-      })
-      const checkpoint = parseFeatureCheckpointsResult(result)?.[0]
-      if (checkpoint === undefined) throw new Error(translate('app.error.checkpoint'))
-      setState((current) =>
-        current.activeSessionId !== sessionId
-          ? current
-          : {
-              ...current,
-              checkpoints: [
-                checkpoint,
-                ...current.checkpoints.filter((entry) => entry.checkpointId !== checkpoint.checkpointId),
-              ],
-            },
-      )
-      return checkpoint
-    },
-    previewCheckpoint: async (checkpointId) => {
-      if (typeof client.featureRequest !== 'function') return undefined
-      const sessionId = state.activeSessionId
-      if (sessionId === undefined) return undefined
-      const workspaceFolderId = sessionWorkspaceFolderId(sessionId)
-      if (workspaceFolderId === undefined) return undefined
-      const result = await client.featureRequest<unknown>({
-        type: 'checkpoint.preview',
-        requestId: requestId(),
-        payload: { checkpointId, sessionId, workspaceFolderId },
-      })
-      return parseFeatureCheckpointPreviewResult(result)
-    },
-    deleteCheckpoint: async (checkpointId) => {
-      if (typeof client.featureRequest !== 'function') return
-      const sessionId = state.activeSessionId
-      if (sessionId === undefined) return
-      const workspaceFolderId = sessionWorkspaceFolderId(sessionId)
-      if (workspaceFolderId === undefined) return
-      const result = await client.featureRequest<unknown>({
-        type: 'checkpoint.delete',
-        requestId: requestId(),
-        payload: { checkpointId, sessionId, workspaceFolderId },
-      })
-      const deleted = parseFeatureCheckpointsResult(result)?.[0]
-      if (deleted === undefined) throw new Error(translate('app.error.checkpoint'))
-      setState((current) => ({
-        ...current,
-        checkpoints: current.checkpoints.filter((entry) => entry.checkpointId !== checkpointId),
-      }))
-    },
-    restoreCheckpoint: async (checkpointId, previewId, conflictPolicy) => {
-      if (typeof client.featureRequest !== 'function') return undefined
-      const sessionId = state.activeSessionId
-      if (sessionId === undefined) return undefined
-      const workspaceFolderId = sessionWorkspaceFolderId(sessionId)
-      if (workspaceFolderId === undefined) return undefined
-      const checkpoint = state.checkpoints.find((entry) => entry.checkpointId === checkpointId)
-      if (checkpoint?.expectedRevision === undefined) throw new Error(translate('app.error.checkpoint'))
-      const result = await client.featureRequest<unknown>({
-        type: 'checkpoint.restore',
-        requestId: requestId(),
-        payload: {
-          checkpointId,
-          sessionId,
-          workspaceFolderId,
-          expectedCurrentRevision: checkpoint.expectedRevision,
-          previewId,
-          conflictPolicy,
-        },
-      })
-      const operation = parseFeatureOperationResult(result)
-      if (operation === undefined) throw new Error(translate('app.error.checkpoint'))
-      await refreshCheckpointsState(sessionId)
-      return operation.state === 'completed' || operation.state === 'partial' ? operation.state : undefined
-    },
-    refreshPromptTemplates: refreshPromptTemplatesState,
-    readPromptTemplate: async (templateId) => {
-      if (typeof client.featureRequest !== 'function') return undefined
-      const sessionId = state.activeSessionId
-      if (sessionId === undefined) return undefined
-      const workspaceFolderId = sessionWorkspaceFolderId(sessionId)
-      if (workspaceFolderId === undefined) return undefined
-      const result = await client.featureRequest<unknown>({
-        type: 'prompt.template.read',
-        requestId: requestId(),
-        payload: { templateId, sessionId, workspaceFolderId },
-      })
-      return parseFeaturePromptTemplateResult(result)
-    },
-    insertPromptTemplate: async (templateId, variables) => {
-      if (typeof client.featureRequest !== 'function') return undefined
-      const sessionId = state.activeSessionId
-      if (sessionId === undefined) return undefined
-      const workspaceFolderId = sessionWorkspaceFolderId(sessionId)
-      if (workspaceFolderId === undefined) return undefined
-      const result = await client.featureRequest<unknown>({
-        type: 'prompt.template.insert',
-        requestId: requestId(),
-        payload: {
-          templateId,
-          sessionId,
-          workspaceFolderId,
-          ...(variables === undefined ? {} : { variables }),
-        },
-      })
-      return parseFeaturePromptTemplateInsertionResult(result)
-    },
-    createPromptTemplate: async (draft) => {
-      if (typeof client.featureRequest !== 'function') return undefined
-      const sessionId = state.activeSessionId
-      if (sessionId === undefined) return undefined
-      const workspaceFolderId = sessionWorkspaceFolderId(sessionId)
-      if (workspaceFolderId === undefined) return undefined
-      const result = await client.featureRequest<unknown>({
-        type: 'prompt.template.create',
-        requestId: requestId(),
-        payload: {
-          ...draft,
-          sessionId,
-          workspaceFolderId,
-          variables: promptTemplateVariables(draft.variables),
-        },
-      })
-      const template = parseFeaturePromptTemplatesResult(result)?.[0]
-      if (template === undefined) throw new Error(translate('app.error.promptTemplate'))
-      setState((current) => ({
-        ...current,
-        promptTemplates: [
-          template,
-          ...current.promptTemplates.filter((entry) => entry.templateId !== template.templateId),
-        ],
-      }))
-      return template
-    },
-    updatePromptTemplate: async (templateId, patch) => {
-      if (typeof client.featureRequest !== 'function') return undefined
-      const sessionId = state.activeSessionId
-      if (sessionId === undefined) return undefined
-      const workspaceFolderId = sessionWorkspaceFolderId(sessionId)
-      if (workspaceFolderId === undefined) return undefined
-      const result = await client.featureRequest<unknown>({
-        type: 'prompt.template.update',
-        requestId: requestId(),
-        payload: {
-          templateId,
-          sessionId,
-          workspaceFolderId,
-          ...(patch.title === undefined ? {} : { title: patch.title }),
-          ...(patch.description === undefined ? {} : { description: patch.description }),
-          ...(patch.templateText === undefined ? {} : { templateText: patch.templateText }),
-          ...(patch.variables === undefined ? {} : { variables: promptTemplateVariables(patch.variables) }),
-        },
-      })
-      const template = parseFeaturePromptTemplatesResult(result)?.[0]
-      if (template === undefined) throw new Error(translate('app.error.promptTemplate'))
-      setState((current) => ({
-        ...current,
-        promptTemplates: [
-          template,
-          ...current.promptTemplates.filter((entry) => entry.templateId !== template.templateId),
-        ],
-      }))
-      return template
-    },
-    deletePromptTemplate: async (templateId) => {
-      if (typeof client.featureRequest !== 'function') return
-      const sessionId = state.activeSessionId
-      if (sessionId === undefined) return
-      const workspaceFolderId = sessionWorkspaceFolderId(sessionId)
-      if (workspaceFolderId === undefined) return
-      const result = await client.featureRequest<unknown>({
-        type: 'prompt.template.delete',
-        requestId: requestId(),
-        payload: { templateId, sessionId, workspaceFolderId },
-      })
-      if (parseFeatureOperationResult(result) === undefined)
-        throw new Error(translate('app.error.promptTemplate'))
-      setState((current) => ({
-        ...current,
-        promptTemplates: current.promptTemplates.filter((entry) => entry.templateId !== templateId),
-      }))
     },
     setPromptMode: async (mode) => {
       const sessionId = state.activeSessionId

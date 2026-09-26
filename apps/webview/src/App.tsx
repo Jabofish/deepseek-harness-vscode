@@ -58,14 +58,10 @@ import { TrajectoryView } from './features/trajectory/TrajectoryView.js'
 import { AppHeader } from './features/shell/AppHeader.js'
 import { ConversationActionsMenu } from './features/shell/ConversationActionsMenu.js'
 import { ConversationEventToggle } from './features/shell/ConversationEventToggle.js'
-import {
-  createAppStore,
-  type AppStore,
-  type OpenFileCandidate,
-  type ReferenceCandidate,
-} from './app/store.js'
+import { createAppStore, type AppStore, type OpenFileCandidate } from './app/store.js'
 import { publicProtocolErrorMessage } from './app/protocol-client.js'
 import { useDshSettings } from './app/useDshSettings.js'
+import { useComposerAttachments } from './app/useComposerAttachments.js'
 import {
   welcomeWasDismissed,
   rememberWelcomeDismissal,
@@ -79,7 +75,7 @@ import {
   readTokenUsageProjection,
   readSessionStatsProjection,
 } from './app/session-metrics.js'
-import { readFileAsBase64, readImageAttachmentLimits, formatByteSize } from './app/attachment-reader.js'
+import { readImageAttachmentLimits } from './app/attachment-reader.js'
 import {
   readConversationFontSize,
   rememberConversationFontSize,
@@ -93,11 +89,6 @@ import { Icon } from './ui/Icon.js'
 import { useDismissibleLayer } from './components/common/useDismissibleLayer.js'
 import { hasVsCodeApi } from './vscode-api.js'
 import { PopupSelectRegistry } from './features/commands/popupSelectRegistry.js'
-import {
-  attachmentDraftKey,
-  browserFileOrigin,
-  type AttachmentDraftOrigin,
-} from './features/composer/attachmentDrafts.js'
 
 /** A pending approval with the command it asks to authorize, when resolvable. */
 interface PendingApproval {
@@ -106,7 +97,6 @@ interface PendingApproval {
 }
 
 const EMPTY_OPEN_FILE_CANDIDATES: readonly OpenFileCandidate[] = []
-const EMPTY_REFERENCE_CANDIDATES: readonly ReferenceCandidate[] = []
 const EMPTY_PERMISSION_REQUESTS: readonly PendingApproval[] = []
 const EMPTY_USER_QUESTIONS: readonly UserQuestion[] = []
 // VS Code Webviews can restore from a cached document while extension files
@@ -154,27 +144,6 @@ export function App(): ReactElement {
     if (state.accountLifecycleAvailable && state.drawer === 'settings' && state.accountLifecycle === null)
       void store.loadAccountLifecycle()
   }, [state.accountLifecycleAvailable, state.accountLifecycle, state.drawer, store])
-  const [draft, setDraft] = useState('')
-  const [attachments, setAttachments] = useState<PromptAttachment[]>([])
-  const [attachmentPreviews, setAttachmentPreviews] = useState<Record<string, string>>({})
-  const [attachmentPreviewFailures, setAttachmentPreviewFailures] = useState<readonly string[]>([])
-  const [openFileCandidates, setOpenFileCandidates] = useState<readonly OpenFileCandidate[]>([])
-  const [openFileCandidatesSessionId, setOpenFileCandidatesSessionId] = useState<string | undefined>()
-  const [openFilePickerOpen, setOpenFilePickerOpen] = useState(false)
-  const [openFilePickerSessionId, setOpenFilePickerSessionId] = useState<string | undefined>()
-  const [openFilePickerLoading, setOpenFilePickerLoading] = useState(false)
-  const [referenceCandidates, setReferenceCandidates] = useState<readonly ReferenceCandidate[]>([])
-  const [referenceLoading, setReferenceLoading] = useState(false)
-  const [referenceSessionId, setReferenceSessionId] = useState<string | undefined>()
-  const [referenceQuery, setReferenceQuery] = useState('')
-  const [referenceQuoted, setReferenceQuoted] = useState(false)
-  const [attachingOpenFileId, setAttachingOpenFileId] = useState<string | undefined>()
-  const [openFileAttachmentIds, setOpenFileAttachmentIds] = useState<Record<string, string>>({})
-  const attachmentDraftKeysRef = useRef<Map<string, string>>(new Map())
-  const attachingOpenFileRef = useRef<string | undefined>(undefined)
-  const referenceRequestRef = useRef(0)
-  const openFileRequestRef = useRef(0)
-  const attachmentGenerationRef = useRef(0)
   const [busyAction, setBusyAction] = useState<'install' | 'select' | undefined>()
   const [respondingInteractionId, setRespondingInteractionId] = useState<string | undefined>()
   const [branching, setBranching] = useState(false)
@@ -327,38 +296,6 @@ export function App(): ReactElement {
     onDismiss: () => setLocaleOpen(false),
   })
 
-  useEffect(() => {
-    const missing = attachments.filter(
-      (attachment) =>
-        attachment.mimeType?.startsWith('image/') === true &&
-        attachmentPreviews[attachment.uri] === undefined &&
-        !attachmentPreviewFailures.includes(attachment.uri),
-    )
-    if (missing.length === 0) return
-    let cancelled = false
-    const recordFailure = (uri: string): void => {
-      setAttachmentPreviewFailures((current) => (current.includes(uri) ? current : [...current, uri]))
-    }
-    for (const attachment of missing) {
-      void store
-        .previewAttachment(attachment.uri)
-        .then((dataUri) => {
-          if (cancelled) return
-          // `undefined` is the Host's flattened refusal (an expired or dead
-          // draft handle); recording it keeps the lightbox from claiming the
-          // image is merely still loading.
-          if (dataUri === undefined) recordFailure(attachment.uri)
-          else setAttachmentPreviews((current) => ({ ...current, [attachment.uri]: dataUri }))
-        })
-        .catch(() => {
-          if (!cancelled) recordFailure(attachment.uri)
-        })
-    }
-    return () => {
-      cancelled = true
-    }
-  }, [attachments, attachmentPreviewFailures, attachmentPreviews, store])
-
   const backend = state.backend
   const compatibilityWarning = state.dshCompatibilityWarning
   const runtimeUpdateVersion = state.dshUpdate?.latestVersion ?? 'unknown'
@@ -447,22 +384,12 @@ export function App(): ReactElement {
     codingToolsEnabled && dshEventVisibility.visible && dshEventVisibility.sessionId !== undefined
       ? dshEventVisibility.sessionId === activeSessionId
       : false
-  const visibleOpenFilePickerOpen =
-    openFilePickerOpen && openFilePickerSessionId !== undefined && openFilePickerSessionId === activeSessionId
   // The export form names no session of its own, so it belongs to the
   // conversation it was opened from: a switch would silently retarget it.
   const visibleExportSessionId =
     exportOpen && exportSessionId !== undefined && exportSessionId === activeSessionId
       ? exportSessionId
       : undefined
-  const visibleOpenFileCandidates = useMemo(
-    () => (openFileCandidatesSessionId === activeSessionId ? openFileCandidates : EMPTY_OPEN_FILE_CANDIDATES),
-    [activeSessionId, openFileCandidates, openFileCandidatesSessionId],
-  )
-  const visibleOpenFilePickerLoading =
-    openFilePickerLoading &&
-    openFilePickerSessionId !== undefined &&
-    openFilePickerSessionId === activeSessionId
   const setShowDshEvents = useStableCallback((visible: boolean): void => {
     if (!codingToolsEnabled || activeSessionId === undefined) return
     setDshEventVisibility({ sessionId: activeSessionId, visible })
@@ -532,62 +459,40 @@ export function App(): ReactElement {
   )
   const activeRunning =
     activeSubagent === undefined ? active?.status === 'running' : activeSubagent.activity === 'running'
-  const updateReferenceQuery = (query: string | undefined, quoted: boolean): void => {
-    const sessionId = active?.id
-    const request = ++referenceRequestRef.current
-    if (sessionId === undefined || query === undefined) {
-      setReferenceCandidates([])
-      setReferenceLoading(false)
-      setReferenceSessionId(undefined)
-      setReferenceQuery('')
-      setReferenceQuoted(false)
-      return
-    }
-    setReferenceSessionId(sessionId)
-    setReferenceQuery(query)
-    setReferenceQuoted(quoted)
-    setReferenceLoading(true)
-    void store
-      .listReferences(sessionId, query, quoted)
-      .then((candidates) => {
-        if (request === referenceRequestRef.current && store.getState().activeSessionId === sessionId)
-          setReferenceCandidates(candidates)
-      })
-      .catch(() => {
-        if (request === referenceRequestRef.current && store.getState().activeSessionId === sessionId)
-          setReferenceCandidates([])
-      })
-      .finally(() => {
-        if (request === referenceRequestRef.current && store.getState().activeSessionId === sessionId)
-          setReferenceLoading(false)
-      })
-  }
-  const localSubagentReferences = useMemo<readonly ReferenceCandidate[]>(() => {
-    if (referenceQuoted || activeSessionId === undefined) return EMPTY_REFERENCE_CANDIDATES
-    const needle = referenceQuery.trim().toLocaleLowerCase()
-    const candidates: ReferenceCandidate[] = []
-    for (const entry of state.subagents.entries) {
-      if (entry.kind !== 'child') continue
-      const label = entry.label?.trim() || t('subagents.unnamed')
-      if (!label.toLocaleLowerCase().includes(needle)) continue
-      candidates.push({
-        id: `subagent:${entry.id}`,
-        kind: 'session',
-        sessionId: entry.id,
-        label,
-        description: t('composer.referenceSubagent'),
-        mention: `@[${label}](dsh-session:${entry.id})`,
-      })
-    }
-    return candidates
-  }, [activeSessionId, referenceQuery, referenceQuoted, state.subagents.entries, t])
-  const visibleReferenceCandidates = useMemo(() => {
-    if (referenceSessionId !== activeSessionId) return EMPTY_REFERENCE_CANDIDATES
-    if (referenceCandidates.length === 0) return localSubagentReferences
-    if (localSubagentReferences.length === 0) return referenceCandidates
-    return [...referenceCandidates, ...localSubagentReferences]
-  }, [activeSessionId, localSubagentReferences, referenceCandidates, referenceSessionId])
-  const visibleReferenceLoading = referenceSessionId === active?.id && referenceLoading
+  const {
+    draft,
+    setDraft,
+    attachments,
+    attachmentPreviews,
+    attachmentPreviewFailures,
+    visibleOpenFileCandidates,
+    visibleOpenFilePickerOpen,
+    visibleOpenFilePickerLoading,
+    attachedOpenFileIds,
+    attachingOpenFileId,
+    visibleReferenceCandidates,
+    visibleReferenceLoading,
+    discardAttachmentDrafts,
+    removeAttachmentDrafts,
+    composerOnReferenceQueryChange,
+    composerOnPickAttachment,
+    composerOnIngestFiles,
+    composerOnToggleOpenFilePicker,
+    composerOnExtrasOpenChange,
+    composerOnSelectOpenFile,
+    composerOnRemoveAttachment,
+    composerOnSubmit,
+  } = useComposerAttachments({
+    store,
+    t,
+    setError,
+    active,
+    activeSessionId,
+    imageLimits,
+    hasPendingSession: state.pendingSession !== undefined,
+    subagentEntries: state.subagents.entries,
+    mountedRef,
+  })
   // DSH's host/session-status is the authoritative running bit. Timeline
   // nodes describe durable content, but a settled assistant step can remain
   // inside an open turn while tools or a later model step are still active.
@@ -598,196 +503,6 @@ export function App(): ReactElement {
       : activeSubagent !== undefined && activeSubagentState?.parentAvailable === false && !activeRunning
         ? 'parent'
         : undefined
-  const appendAttachment = (
-    attachment: PromptAttachment,
-    openFileId?: string,
-    generation = attachmentGenerationRef.current,
-    origin?: AttachmentDraftOrigin,
-  ): void => {
-    if (generation !== attachmentGenerationRef.current) {
-      void store.releaseAttachments([attachment.uri]).catch(() => undefined)
-      return
-    }
-    if (attachmentDraftKeysRef.current.has(attachment.uri)) return
-    const draftKey = attachmentDraftKey(attachment, origin)
-    const existingUri = [...attachmentDraftKeysRef.current.entries()].find(([, key]) => key === draftKey)?.[0]
-    if (existingUri !== undefined) {
-      if (existingUri !== attachment.uri)
-        void store
-          .releaseAttachments([attachment.uri])
-          .catch((reason: unknown) =>
-            setError(reason instanceof Error ? reason.message : t('app.error.releaseAttachment')),
-          )
-      return
-    }
-    attachmentDraftKeysRef.current.set(attachment.uri, draftKey)
-    setAttachments((current) =>
-      current.some((item) => item.uri === attachment.uri) ? current : [...current, attachment],
-    )
-    if (openFileId !== undefined)
-      setOpenFileAttachmentIds((current) => ({ ...current, [attachment.uri]: openFileId }))
-  }
-  const removeAttachmentDrafts = (uris: readonly string[], release: boolean): void => {
-    if (uris.length === 0) return
-    const removed = new Set(uris)
-    for (const uri of removed) attachmentDraftKeysRef.current.delete(uri)
-    setAttachments((current) => current.filter((attachment) => !removed.has(attachment.uri)))
-    setAttachmentPreviews((current) =>
-      Object.fromEntries(Object.entries(current).filter(([uri]) => !removed.has(uri))),
-    )
-    setAttachmentPreviewFailures((current) => current.filter((uri) => !removed.has(uri)))
-    setOpenFileAttachmentIds((current) =>
-      Object.fromEntries(Object.entries(current).filter(([uri]) => !removed.has(uri))),
-    )
-    if (release)
-      void store
-        .releaseAttachments(uris)
-        .catch((reason: unknown) =>
-          setError(reason instanceof Error ? reason.message : t('app.error.releaseAttachment')),
-        )
-  }
-  const discardAttachmentDrafts = useStableCallback((): void => {
-    attachmentGenerationRef.current += 1
-    removeAttachmentDrafts(
-      attachments.map((attachment) => attachment.uri),
-      true,
-    )
-    setOpenFilePickerOpen(false)
-  })
-  const ingestFiles = (files: readonly File[]): void => {
-    const imageFiles = files.filter((file) => file.type.startsWith('image/'))
-    if (imageLimits !== undefined && imageFiles.length > 0) {
-      const existingImages = attachments.filter((attachment) =>
-        attachment.mimeType?.startsWith('image/'),
-      ).length
-      if (existingImages + imageFiles.length > imageLimits.maxImagesPerMessage) {
-        setError(t('app.error.imageCount', { count: imageLimits.maxImagesPerMessage }))
-        return
-      }
-      const unsupported = imageFiles.find((file) => !imageLimits.mediaTypes.includes(file.type))
-      if (unsupported !== undefined) {
-        setError(t('app.error.imageType', { name: unsupported.name }))
-        return
-      }
-      const oversized = imageFiles.find((file) => file.size > imageLimits.maxImageBytes)
-      if (oversized !== undefined) {
-        setError(
-          t('app.error.imageTooLarge', {
-            name: oversized.name,
-            size: formatByteSize(imageLimits.maxImageBytes),
-          }),
-        )
-        return
-      }
-    }
-    const generation = attachmentGenerationRef.current
-    for (const file of files) {
-      const origin = browserFileOrigin(file)
-      void readFileAsBase64(file, t, imageLimits)
-        .then((payload) => store.ingestAttachment(payload))
-        .then((attachment) => {
-          if (attachment !== undefined) appendAttachment(attachment, undefined, generation, origin)
-        })
-        .catch((reason: unknown) =>
-          setError(reason instanceof Error ? reason.message : t('app.error.attachPasted')),
-        )
-    }
-  }
-  const submitPrompt = (mode: 'queue' | 'steer'): Promise<void> => {
-    if (active === undefined && state.pendingSession === undefined) return Promise.resolve()
-    const text = draft
-    const attachmentSnapshot = attachments
-    let submission: Promise<void>
-    try {
-      submission =
-        active === undefined
-          ? store.sendPendingPrompt(text, attachmentSnapshot, mode)
-          : store.sendPrompt(active.id, text, attachmentSnapshot, mode)
-    } catch (reason) {
-      submission = Promise.reject(reason instanceof Error ? reason : new Error(t('app.error.prompt')))
-    }
-    return submission
-      .then(() => {
-        if (!mountedRef.current) return
-        setDraft((current) => (current === text ? '' : current))
-        // The Extension Host consumes only the handles admitted by this send;
-        // keep any draft attachments the user added while it was in flight.
-        removeAttachmentDrafts(
-          attachmentSnapshot.map((attachment) => attachment.uri),
-          false,
-        )
-        setOpenFilePickerOpen(false)
-      })
-      .catch((reason: unknown) => {
-        if (mountedRef.current) setError(publicProtocolErrorMessage(reason) ?? t('app.error.prompt'))
-      })
-  }
-  /**
-   * Loads the open-file snapshot that both the composer menu row and the
-   * picker render. The row is only offered when the list names an attachable
-   * file, so it has to be requested while that menu is being built.
-   */
-  const loadOpenFileCandidates = (sessionId: string, awaitingPicker: boolean): void => {
-    const request = ++openFileRequestRef.current
-    if (awaitingPicker) setOpenFilePickerLoading(true)
-    void store
-      .listOpenFiles()
-      .then((candidates) => {
-        if (request !== openFileRequestRef.current) return
-        setOpenFileCandidatesSessionId(sessionId)
-        setOpenFileCandidates(candidates)
-      })
-      .catch((reason: unknown) => {
-        if (request !== openFileRequestRef.current) return
-        setOpenFileCandidatesSessionId(sessionId)
-        setOpenFileCandidates([])
-        if (awaitingPicker) setError(reason instanceof Error ? reason.message : t('app.error.listOpenFiles'))
-      })
-      .finally(() => {
-        // A newer request may have replaced this one; the flag describes the
-        // picker, so whichever request was waiting for it has to clear it.
-        if (awaitingPicker) setOpenFilePickerLoading(false)
-      })
-  }
-  const toggleOpenFilePicker = (): void => {
-    if (visibleOpenFilePickerOpen) {
-      setOpenFilePickerOpen(false)
-      return
-    }
-    if (activeSessionId === undefined) return
-    setOpenFilePickerSessionId(activeSessionId)
-    setOpenFilePickerOpen(true)
-    loadOpenFileCandidates(activeSessionId, true)
-  }
-  const selectOpenFile = (candidateId: string): void => {
-    if (
-      attachingOpenFileRef.current !== undefined ||
-      attachingOpenFileId !== undefined ||
-      Object.values(openFileAttachmentIds).some((id) => id === candidateId)
-    )
-      return
-    attachingOpenFileRef.current = candidateId
-    setAttachingOpenFileId(candidateId)
-    const generation = attachmentGenerationRef.current
-    void store
-      .attachOpenFile(candidateId)
-      .then((attachment) => {
-        if (attachment === undefined) {
-          setError(t('app.error.openFileGone'))
-          return
-        }
-        store.rememberOpenFile(candidateId)
-        appendAttachment(attachment, candidateId, generation, { kind: 'open-file', id: candidateId })
-        setOpenFilePickerOpen(false)
-      })
-      .catch((reason: unknown) =>
-        setError(reason instanceof Error ? reason.message : t('app.error.attachSelectedFile')),
-      )
-      .finally(() => {
-        attachingOpenFileRef.current = undefined
-        setAttachingOpenFileId(undefined)
-      })
-  }
   const branchSession = (atSeq: number): void => {
     if (active === undefined || activeSubagent !== undefined || branching) return
     setBranching(true)
@@ -1004,39 +719,6 @@ export function App(): ReactElement {
     if (query === undefined || state.commands.length > 0 || active === undefined) return
     void store.refreshCommands(active.id)
   })
-  const composerOnReferenceQueryChange = useStableCallback(
-    (query: string | undefined, quoted: boolean): void => updateReferenceQuery(query, quoted),
-  )
-  const composerOnPickAttachment = useStableCallback((): void => {
-    const generation = attachmentGenerationRef.current
-    void store
-      .pickAttachment()
-      .then((attachment) => {
-        if (attachment !== undefined) appendAttachment(attachment, undefined, generation)
-      })
-      .catch((reason: unknown) =>
-        setError(reason instanceof Error ? reason.message : t('app.error.attachmentSelection')),
-      )
-  })
-  const composerOnIngestFiles = useStableCallback((files: readonly File[]): void => ingestFiles(files))
-  const composerOnToggleOpenFilePicker = useStableCallback((): void => toggleOpenFilePicker())
-  const composerOnExtrasOpenChange = useStableCallback((open: boolean): void => {
-    if (!open) {
-      // The picker is rendered inside that menu; leaving it "open" would make
-      // the next menu opening start with a stale popover already expanded.
-      setOpenFilePickerOpen(false)
-      return
-    }
-    if (activeSessionId === undefined) return
-    loadOpenFileCandidates(activeSessionId, false)
-  })
-  const composerOnSelectOpenFile = useStableCallback((candidateId: string): void =>
-    selectOpenFile(candidateId),
-  )
-  const composerOnRemoveAttachment = useStableCallback((uri: string): void => {
-    removeAttachmentDrafts([uri], true)
-  })
-  const composerOnSubmit = useStableCallback((mode: RunningInputMode): Promise<void> => submitPrompt(mode))
   const composerOnCancel = useStableCallback((): void => {
     if (active === undefined) return
     void store
@@ -1209,7 +891,6 @@ export function App(): ReactElement {
   const acknowledgeAccountBonusFromSettings = useStableCallback((orderId: string): Promise<boolean> =>
     store.acknowledgeAccountBonus(orderId),
   )
-  const attachedOpenFileIds = useMemo(() => Object.values(openFileAttachmentIds), [openFileAttachmentIds])
   const closeConversationActions = useCallback((): void => {
     setLocaleOpen(false)
   }, [])
@@ -1411,6 +1092,7 @@ export function App(): ReactElement {
     localeOpen,
     applyLocale,
     setError,
+    setDraft,
     setShowDshEvents,
     toggleExport,
     visibleExportSessionId,
@@ -1807,58 +1489,6 @@ export function App(): ReactElement {
                       {conversationActionItems}
                     </ConversationActionsMenu>
                   </div>
-                  {pendingPermissions.length > 0 || pendingQuestions.length > 0 ? (
-                    <div className="dsh-conversation__interactions" aria-live="polite">
-                      {pendingPermissions.map(({ request, command }) => (
-                        <ApprovalCard
-                          key={request.id}
-                          request={request}
-                          disabled={respondingInteractionId !== undefined}
-                          {...(command === undefined ? {} : { command })}
-                          onRespond={(optionId) => {
-                            setRespondingInteractionId(request.id)
-                            void store
-                              .respondToPermission(request.id, optionId)
-                              .catch((reason: unknown) =>
-                                setError(
-                                  reason instanceof Error ? reason.message : t('app.error.answerApproval'),
-                                ),
-                              )
-                              .finally(() => setRespondingInteractionId(undefined))
-                          }}
-                        />
-                      ))}
-                      {pendingQuestions.map((question) => (
-                        <UserQuestionCard
-                          key={question.id}
-                          question={question}
-                          disabled={respondingInteractionId !== undefined}
-                          onRespond={(response) => {
-                            setRespondingInteractionId(question.id)
-                            void store
-                              .respondToQuestion(question.id, response)
-                              .catch((reason: unknown) =>
-                                setError(
-                                  reason instanceof Error ? reason.message : t('app.error.answerQuestion'),
-                                ),
-                              )
-                              .finally(() => setRespondingInteractionId(undefined))
-                          }}
-                          onCancel={() => {
-                            setRespondingInteractionId(question.id)
-                            void store
-                              .cancelQuestion(question.id)
-                              .catch((reason: unknown) =>
-                                setError(
-                                  reason instanceof Error ? reason.message : t('app.error.cancelQuestion'),
-                                ),
-                              )
-                              .finally(() => setRespondingInteractionId(undefined))
-                          }}
-                        />
-                      ))}
-                    </div>
-                  ) : null}
                   {visibleExportSessionId === undefined ? null : (
                     <DeferredExportDialog
                       sessionId={visibleExportSessionId}
@@ -1938,6 +1568,58 @@ export function App(): ReactElement {
                     onModeChange={queueOnModeChange}
                     onLoadImage={timelineOnLoadImage}
                   />
+                  {pendingPermissions.length > 0 || pendingQuestions.length > 0 ? (
+                    <div className="dsh-conversation__interactions" aria-live="polite">
+                      {pendingPermissions.map(({ request, command }) => (
+                        <ApprovalCard
+                          key={request.id}
+                          request={request}
+                          disabled={respondingInteractionId !== undefined}
+                          {...(command === undefined ? {} : { command })}
+                          onRespond={(optionId) => {
+                            setRespondingInteractionId(request.id)
+                            void store
+                              .respondToPermission(request.id, optionId)
+                              .catch((reason: unknown) =>
+                                setError(
+                                  reason instanceof Error ? reason.message : t('app.error.answerApproval'),
+                                ),
+                              )
+                              .finally(() => setRespondingInteractionId(undefined))
+                          }}
+                        />
+                      ))}
+                      {pendingQuestions.map((question) => (
+                        <UserQuestionCard
+                          key={question.id}
+                          question={question}
+                          disabled={respondingInteractionId !== undefined}
+                          onRespond={(response) => {
+                            setRespondingInteractionId(question.id)
+                            void store
+                              .respondToQuestion(question.id, response)
+                              .catch((reason: unknown) =>
+                                setError(
+                                  reason instanceof Error ? reason.message : t('app.error.answerQuestion'),
+                                ),
+                              )
+                              .finally(() => setRespondingInteractionId(undefined))
+                          }}
+                          onCancel={() => {
+                            setRespondingInteractionId(question.id)
+                            void store
+                              .cancelQuestion(question.id)
+                              .catch((reason: unknown) =>
+                                setError(
+                                  reason instanceof Error ? reason.message : t('app.error.cancelQuestion'),
+                                ),
+                              )
+                              .finally(() => setRespondingInteractionId(undefined))
+                          }}
+                        />
+                      ))}
+                    </div>
+                  ) : null}
                   <div className="dsh-compose-area">
                     <TodoList key={active?.id ?? 'todo-list'} todos={state.todos} />
                     {pendingPermissions.length === 0 && pendingQuestions.length === 0 ? (
