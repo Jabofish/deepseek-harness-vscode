@@ -2523,6 +2523,42 @@
   padding-top: 2px;
 }
 
+.dsh-settings__model-input-types {
+  grid-column: 1 / -1;
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  margin: 0;
+  padding: 6px;
+  border: 1px solid color-mix(in srgb, var(--dsh-control-border) 78%, transparent);
+  border-radius: var(--dsh-radius-sm);
+}
+
+.dsh-settings__model-input-types legend,
+.dsh-settings__model-input-inherited {
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-xs);
+}
+
+.dsh-settings__model-input-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+}
+
+.dsh-settings__model-input-options label {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: 5px;
+}
+
+.dsh-settings__model-input-options input[type='checkbox'] {
+  width: auto;
+  min-width: 0;
+  margin: 0;
+}
+
 .dsh-settings__visually-hidden {
   position: absolute;
   width: 1px;

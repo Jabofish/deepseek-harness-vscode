@@ -186,13 +186,37 @@
 }
 
 .dsh-plugin-manager__install label,
+.dsh-plugin-manager__search,
 .dsh-plugin-manager__registry {
   display: grid;
   gap: var(--dsh-space-1);
   min-width: 0;
 }
 
-.dsh-plugin-manager__install input {
+.dsh-plugin-manager__search {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  padding-block: var(--dsh-space-2);
+}
+
+.dsh-plugin-manager__search span,
+.dsh-plugin-manager__search input {
+  grid-column: 1 / -1;
+}
+
+.dsh-plugin-manager__search > :first-child {
+  grid-column: 1;
+  grid-row: 2;
+  color: var(--dsh-muted);
+}
+
+.dsh-plugin-manager__search input {
+  grid-column: 2;
+  grid-row: 2;
+}
+
+.dsh-plugin-manager__install input,
+.dsh-plugin-manager__search input {
   box-sizing: border-box;
   width: 100%;
   min-width: 0;

@@ -21,6 +21,7 @@
 
 .dsh-schedule-panel__heading,
 .dsh-schedule-panel__detail-heading,
+.dsh-schedule-panel__detail-heading-actions,
 .dsh-schedule-panel__heading-actions,
 .dsh-schedule-panel__actions,
 .dsh-schedule-panel__notice,
@@ -116,6 +117,48 @@
 .dsh-schedule-panel__detail-heading h2 {
   margin: 0;
   overflow-wrap: anywhere;
+}
+
+.dsh-schedule-panel__linked-session {
+  display: grid;
+  justify-items: start;
+  gap: var(--dsh-space-1);
+  min-width: 0;
+  margin-bottom: var(--dsh-space-1);
+}
+
+.dsh-schedule-panel__linked-session-button {
+  max-width: 100%;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.dsh-schedule-panel__detail-heading-actions {
+  flex: 0 0 auto;
+  justify-content: flex-end;
+}
+
+.dsh-schedule-panel__more-actions {
+  position: relative;
+}
+
+.dsh-schedule-panel__more-actions-menu {
+  position: absolute;
+  z-index: 2;
+  top: calc(100% + var(--dsh-space-1));
+  right: 0;
+  min-width: 10rem;
+  padding: var(--dsh-space-1);
+  border: var(--dsh-border);
+  border-radius: var(--dsh-radius-md);
+  background: var(--dsh-surface-raised);
+  box-shadow: var(--dsh-shadow);
+}
+
+.dsh-schedule-panel__more-actions-menu button {
+  width: 100%;
+  border: 0;
+  text-align: left;
 }
 
 .dsh-schedule-panel__heading p,
@@ -326,7 +369,16 @@
   overflow-wrap: anywhere;
 }
 
-.dsh-schedule-panel__editor > label,
+.dsh-schedule-panel__editor-fields {
+  display: grid;
+  gap: var(--dsh-space-3);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.dsh-schedule-panel__editor-fields > label,
 .dsh-schedule-panel__timing-fields > label {
   display: grid;
   gap: var(--dsh-space-1);
@@ -392,6 +444,10 @@
   background: var(--dsh-primary);
 }
 
+.dsh-schedule-panel__editor-save-bar p {
+  margin: 0;
+}
+
 .dsh-schedule-panel__danger {
   border-color: color-mix(in srgb, var(--dsh-danger) 60%, var(--dsh-border-color));
   color: var(--dsh-danger);
@@ -430,6 +486,30 @@
   padding: var(--dsh-space-2);
   border-bottom: var(--dsh-border);
   overflow-wrap: anywhere;
+}
+
+.dsh-schedule-panel__delivery-time {
+  display: flex;
+  align-items: center;
+  gap: var(--dsh-space-2);
+  font-weight: 600;
+}
+
+.dsh-schedule-panel__history-pruned {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--dsh-space-2);
+  color: var(--dsh-muted);
+}
+
+.dsh-schedule-panel__history-pruned > span {
+  flex: 1 1 auto;
+}
+
+.dsh-schedule-panel__history-pruned p {
+  flex-basis: 100%;
+  margin: 0;
 }
 
 .dsh-schedule-panel__deliveries p {

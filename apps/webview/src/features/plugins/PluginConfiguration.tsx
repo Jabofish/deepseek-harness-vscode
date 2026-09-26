@@ -1,4 +1,5 @@
 import { useId, useMemo, useState, type ReactElement } from 'react'
+import type { SettingsPathOperation } from '@dsh-vscode/domain'
 import type { DshSettingsSnapshot } from '../../app/store.js'
 import { ContentFlow } from '../../components/common/ContentFlow.js'
 import { SelectMenu, type SelectMenuOption } from '../../components/common/SelectMenu.js'
@@ -8,8 +9,11 @@ import { Icon } from '../../ui/Icon.js'
 export interface PluginConfigurationProps {
   readonly snapshot: DshSettingsSnapshot | undefined
   readonly onReload: () => Promise<DshSettingsSnapshot | undefined>
-  readonly onUpdateSetting: (path: string, value: unknown) => Promise<void>
-  readonly onUnsetSetting: (path: string) => Promise<void>
+  readonly onMutateSettings: (
+    namespace: string,
+    operations: readonly SettingsPathOperation[],
+    expectedRevision: number,
+  ) => Promise<void>
   /** The Extension Host opens the secret prompt; the Webview receives no key. */
   readonly onConfigureCredential?: ((ref: string) => Promise<boolean>) | undefined
   readonly onRemoveCredential?: ((ref: string) => Promise<void>) | undefined
@@ -103,21 +107,52 @@ export function PluginConfiguration(props: PluginConfigurationProps): ReactEleme
       )
       return
     }
+    const namespace = snapshot.schema.namespaces.find((entry) => entry.ns === plugin.namespace)
+    const prefix = `${plugin.namespace}.`
+    const operations = pending.flatMap(({ field, draft }): SettingsPathOperation[] => {
+      if (!field.path.startsWith(prefix)) return []
+      const path = field.path.slice(prefix.length).split('.')
+      if (path.length === 0 || path.some((part) => part.trim() === '')) return []
+      return [
+        draft.clear || (field.kind !== 'text' && field.kind !== 'enum' && draft.text.trim() === '')
+          ? { op: 'unset', path }
+          : { op: 'set', path, value: fieldValueFor(field.kind, draft.text) },
+      ]
+    })
+    if (namespace === undefined || operations.length !== pending.length) {
+      setError(t('plugins.config.saveFailed'))
+      return
+    }
     setSaving(plugin.namespace)
     setError(undefined)
     try {
-      for (const { field, draft } of pending) {
-        if (draft.clear || (field.kind !== 'text' && field.kind !== 'enum' && draft.text.trim() === '')) {
-          await props.onUnsetSetting(field.path)
-        } else {
-          await props.onUpdateSetting(field.path, fieldValueFor(field.kind, draft.text))
-        }
+      try {
+        await props.onMutateSettings(plugin.namespace, operations, namespace.revision)
+      } catch (reason: unknown) {
+        const latest = await props.onReload().catch(() => undefined)
+        const latestRevision = latest?.schema.namespaces.find(
+          (entry) => entry.ns === plugin.namespace,
+        )?.revision
+        if (
+          isSettingsConflict(reason) ||
+          latest === undefined ||
+          latestRevision !== namespace.revision ||
+          !isKnownRejectedSettingsWrite(reason)
+        )
+          setDrafts((current) => withoutNamespace(current, plugin.namespace))
+        setError(reason instanceof Error ? reason.message : t('plugins.config.saveFailed'))
+        return
       }
-      const next = await props.onReload()
-      if (next === undefined) throw new Error(t('plugins.config.saveFailed'))
       setDrafts((current) => withoutNamespace(current, plugin.namespace))
-    } catch (reason: unknown) {
-      setError(reason instanceof Error ? reason.message : t('plugins.config.saveFailed'))
+      // Once the Host acknowledged the batch, the profile is committed. If
+      // the follow-up read fails, keep the form from retrying the same
+      // mutation at its old revision; the parent surfaces the unavailable
+      // snapshot and can reload it explicitly.
+      try {
+        await props.onReload()
+      } catch (reason: unknown) {
+        setError(reason instanceof Error ? reason.message : t('plugins.config.saveFailed'))
+      }
     } finally {
       setSaving(undefined)
     }
@@ -415,6 +450,23 @@ export function PluginConfiguration(props: PluginConfigurationProps): ReactEleme
         </div>
       ) : null}
     </section>
+  )
+}
+
+function isSettingsConflict(reason: unknown): boolean {
+  return (
+    typeof reason === 'object' && reason !== null && 'code' in reason && reason.code === 'SETTINGS_CONFLICT'
+  )
+}
+
+function isKnownRejectedSettingsWrite(reason: unknown): boolean {
+  return (
+    typeof reason === 'object' &&
+    reason !== null &&
+    'code' in reason &&
+    (reason.code === 'INVALID_CONFIGURATION' ||
+      reason.code === 'PERMISSION_DENIED' ||
+      reason.code === 'CAPABILITY_UNAVAILABLE')
   )
 }
 

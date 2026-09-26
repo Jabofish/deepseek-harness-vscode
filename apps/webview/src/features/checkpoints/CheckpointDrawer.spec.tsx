@@ -25,6 +25,7 @@ function checkpoint(overrides: Partial<CheckpointSummary> = {}): CheckpointSumma
 
 function preview(summary: CheckpointSummary, conflict = false): CheckpointPreview {
   return {
+    previewId: 'dsh-preview-test-1',
     summary,
     files: [
       {
@@ -80,7 +81,9 @@ describe('CheckpointDrawer', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Restore files' }))
     // Nothing drifted from the checkpoint, so the safe policy stays on: a file
     // that changes between this preview and the restore must not be clobbered.
-    await waitFor(() => expect(props.onRestore).toHaveBeenCalledWith('dsh-checkpoint-1', 'abort'))
+    await waitFor(() =>
+      expect(props.onRestore).toHaveBeenCalledWith('dsh-checkpoint-1', 'dsh-preview-test-1', 'abort'),
+    )
   })
 
   it('restores a drifted file once the user confirms the preview that lists it', async () => {
@@ -97,12 +100,15 @@ describe('CheckpointDrawer', () => {
     expect(confirm).toHaveProperty('disabled', false)
 
     fireEvent.click(confirm)
-    await waitFor(() => expect(props.onRestore).toHaveBeenCalledWith('dsh-checkpoint-1', 'overwrite'))
+    await waitFor(() =>
+      expect(props.onRestore).toHaveBeenCalledWith('dsh-checkpoint-1', 'dsh-preview-test-1', 'overwrite'),
+    )
   })
 
   it('marks a file the checkpoint never stored as added since', async () => {
     const current = checkpoint()
     const later: CheckpointPreview = {
+      previewId: 'dsh-preview-test-later',
       summary: current,
       files: [
         {

@@ -34,7 +34,10 @@ function composerForm(): HTMLFormElement {
 }
 
 describe('Composer', () => {
-  afterEach(() => cleanup())
+  afterEach(() => {
+    cleanup()
+    vi.useRealTimers()
+  })
 
   it('starts compact and grows with long input until reaching its height cap', () => {
     render(<Composer {...baseProps()} />)
@@ -266,6 +269,66 @@ describe('Composer', () => {
     expect(onSubmit).toHaveBeenCalledWith('queue')
   })
 
+  it('keeps async submissions locked until settlement while leaving Stop available', async () => {
+    let rejectFirstSubmission: (reason: Error) => void = () => undefined
+    const firstSubmission = new Promise<void>((_resolve, reject) => {
+      rejectFirstSubmission = reject
+    })
+    let attempts = 0
+    const onSubmit = vi.fn(() => {
+      attempts += 1
+      return attempts === 1 ? firstSubmission : Promise.resolve()
+    })
+    const onCancel = vi.fn()
+    vi.useFakeTimers()
+    const view = render(<Composer {...baseProps()} draft="hello" onSubmit={onSubmit} onCancel={onCancel} />)
+    const textarea = screen.getByRole('textbox', { name: 'Prompt' })
+
+    fireEvent.keyDown(textarea, { key: 'Enter' })
+    expect(onSubmit).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('button', { name: 'Send message' }).hasAttribute('disabled')).toBe(true)
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500)
+    })
+    fireEvent.keyDown(textarea, { key: 'Enter' })
+    expect(onSubmit).toHaveBeenCalledTimes(1)
+
+    view.rerender(<Composer {...baseProps()} draft="hello" running onSubmit={onSubmit} onCancel={onCancel} />)
+    const stop = screen.getByRole('button', { name: 'Stop response' })
+    expect(stop.hasAttribute('disabled')).toBe(false)
+    fireEvent.click(stop)
+    expect(onCancel).toHaveBeenCalledOnce()
+
+    await act(async () => {
+      rejectFirstSubmission(new Error('request failed'))
+      await firstSubmission.catch(() => undefined)
+    })
+    view.rerender(<Composer {...baseProps()} draft="hello" onSubmit={onSubmit} onCancel={onCancel} />)
+    expect(screen.getByRole('button', { name: 'Send message' }).hasAttribute('disabled')).toBe(false)
+
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Prompt' }), { key: 'Enter' })
+    expect(onSubmit).toHaveBeenCalledTimes(2)
+  })
+
+  it('settles a rejected Host submission safely after Composer unmounts', async () => {
+    let rejectSubmission: (reason: Error) => void = () => undefined
+    const submission = new Promise<void>((_resolve, reject) => {
+      rejectSubmission = reject
+    })
+    const onSubmit = vi.fn(() => submission)
+    const view = render(<Composer {...baseProps()} draft="hello" onSubmit={onSubmit} />)
+
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Prompt' }), { key: 'Enter' })
+    expect(onSubmit).toHaveBeenCalledOnce()
+    view.unmount()
+
+    await act(async () => {
+      rejectSubmission(new Error('late host response'))
+      await submission.catch(() => undefined)
+    })
+  })
+
   it('keeps Shift+Enter as the native newline before any submit path', () => {
     const onSubmit = vi.fn()
     render(<Composer {...baseProps()} draft="hello" onSubmit={onSubmit} />)
@@ -315,8 +378,7 @@ describe('Composer', () => {
     expect(onSubmit).toHaveBeenCalledWith('steer')
   })
 
-  // Split from the accelerated-chord case: the composer debounces repeated
-  // sends within 250ms, so both chords must be exercised on fresh mounts.
+  // Split from the accelerated-chord case so both chords are exercised on fresh mounts.
   it('honors the busy-Enter preference for plain Enter while running', () => {
     const onSubmit = vi.fn()
     render(<Composer {...baseProps()} draft="follow-up" running busyEnter="steer" onSubmit={onSubmit} />)
@@ -374,6 +436,46 @@ describe('Composer', () => {
     })
     expect(onSteerQueue).toHaveBeenCalledTimes(1)
     expect(onSubmit).not.toHaveBeenCalled()
+  })
+
+  it('prevents duplicate async queue steering and unlocks after a rejected attempt', async () => {
+    let rejectSteering: ((reason: Error) => void) | undefined
+    const firstSteering = new Promise<void>((_resolve, reject) => {
+      rejectSteering = reject
+    })
+    const onSteerQueue = vi.fn().mockReturnValueOnce(firstSteering).mockResolvedValueOnce(undefined)
+    render(
+      <Composer
+        {...baseProps()}
+        draft=""
+        running
+        queue={[
+          {
+            id: 'q1',
+            sessionId: 's1',
+            text: 'queued follow-up',
+            attachments: [],
+            textOnly: true,
+            mode: 'queue',
+            createdAt: '2026-08-17T05:00:00.000Z',
+          },
+        ]}
+        onSteerQueue={onSteerQueue}
+      />,
+    )
+    const prompt = screen.getByRole('textbox', { name: 'Prompt' })
+
+    fireEvent.keyDown(prompt, { key: 'Enter', ctrlKey: true })
+    fireEvent.keyDown(prompt, { key: 'Enter', ctrlKey: true })
+    expect(onSteerQueue).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      rejectSteering?.(new Error('steering failed'))
+      await firstSteering.catch(() => undefined)
+    })
+
+    fireEvent.keyDown(prompt, { key: 'Enter', ctrlKey: true })
+    expect(onSteerQueue).toHaveBeenCalledTimes(2)
   })
 
   it('opens a lightbox for image attachments and closes it on Escape', () => {

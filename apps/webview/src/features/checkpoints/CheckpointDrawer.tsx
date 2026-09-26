@@ -18,6 +18,7 @@ export interface CheckpointDrawerProps {
   readonly onDelete: (checkpointId: string) => Promise<void>
   readonly onRestore: (
     checkpointId: string,
+    previewId: string,
     conflictPolicy: CheckpointConflictPolicy,
   ) => Promise<'completed' | 'partial' | undefined>
 }
@@ -170,7 +171,7 @@ export function CheckpointDrawer(props: CheckpointDrawerProps): ReactElement {
     setBusy(true)
     setError(undefined)
     void props
-      .onRestore(checkpointId, conflictPolicy)
+      .onRestore(checkpointId, preview.previewId, conflictPolicy)
       .then((result) => {
         if (result === undefined) throw new Error(t('checkpoints.error'))
         closeDialog()

@@ -9,7 +9,9 @@ import type {
   ModelDescriptor,
   ModelProvider,
 } from '@dsh-vscode/domain'
-import type { DshSettingsSnapshot } from '../../app/store.js'
+import type { WebviewRequest } from '@dsh-vscode/webview-protocol'
+import type { ProtocolClient } from '../../app/protocol-client.js'
+import { createAppStore, type DshSettingsSnapshot } from '../../app/store.js'
 import { I18nProvider } from '../../i18n.js'
 import { SettingsDrawer } from './SettingsDrawer.js'
 
@@ -115,7 +117,14 @@ function dshSettingsFixture(): DshSettingsSnapshot {
       namespaces: [
         { ns: 'permission', applies: 'live', revision: 1, userFields: ['defaultPreset'], secrets: [] },
         { ns: 'shell', applies: 'restart', revision: 2, userFields: ['timeoutMs'], secrets: [] },
+        { ns: 'ui-theme', applies: 'live', revision: 3, userFields: ['preference'], secrets: [] },
+        { ns: 'ui-chat', applies: 'live', revision: 4, userFields: [], secrets: [] },
+        { ns: 'ui-settings', applies: 'live', revision: 5, userFields: ['enabled'], secrets: [] },
+        { ns: 'agent-presets', applies: 'live', revision: 6, userFields: ['default'], secrets: [] },
         { ns: 'llm-pi-ai', applies: 'live', revision: 7, userFields: [], secrets: [] },
+        { ns: 'ui-conversation', applies: 'live', revision: 8, userFields: ['busyEnter'], secrets: [] },
+        { ns: 'locale', applies: 'live', revision: 9, userFields: [], secrets: [] },
+        { ns: 'agent-preset-registry', applies: 'live', revision: 10, userFields: [], secrets: [] },
       ],
     },
     values: {
@@ -195,6 +204,7 @@ function drawerElement(
       onOpenKeyboardShortcuts={vi.fn().mockResolvedValue(undefined)}
       onUpdateDshSetting={vi.fn().mockResolvedValue(undefined)}
       onUnsetDshSetting={vi.fn().mockResolvedValue(undefined)}
+      onMutateDshSettings={vi.fn().mockResolvedValue(undefined)}
       onCreateCustomProvider={vi.fn().mockResolvedValue({
         profileCommitted: true,
         credentialConfigured: false,
@@ -230,10 +240,92 @@ function renderDrawer(
   return render(drawerElement(overrides, localized))
 }
 
+function expectActiveTabControlsMountedPanel(): void {
+  const tabs = screen.getAllByRole('tab')
+  const selectedTabs = tabs.filter((tab) => tab.getAttribute('aria-selected') === 'true')
+  const controlledTabs = tabs.filter((tab) => tab.hasAttribute('aria-controls'))
+  expect(selectedTabs).toHaveLength(1)
+  expect(controlledTabs).toHaveLength(1)
+
+  const selectedTab = selectedTabs[0]
+  const controlledTab = controlledTabs[0]
+  if (selectedTab === undefined || controlledTab === undefined)
+    throw new Error('Settings should have exactly one selected tab and one tab with a panel control.')
+  expect(controlledTab).toBe(selectedTab)
+
+  const panelId = controlledTab.getAttribute('aria-controls')
+  if (panelId === null) throw new Error('The selected settings tab must control its panel.')
+  const panel = document.getElementById(panelId)
+  expect(panel?.getAttribute('role')).toBe('tabpanel')
+  expect(panel?.getAttribute('aria-labelledby')).toBe(selectedTab.id)
+  expect(document.querySelectorAll(`[id="${panelId}"]`)).toHaveLength(1)
+}
+
 describe('SettingsDrawer', () => {
   afterEach(() => {
     cleanup()
     window.localStorage.clear()
+    document.documentElement.lang = 'en'
+    vi.unstubAllGlobals()
+  })
+
+  it('keeps aria-controls attached only to the mounted panel after click and keyboard changes', () => {
+    renderDrawer()
+    expectActiveTabControlsMountedPanel()
+
+    const models = screen.getByRole('tab', { name: 'Models' })
+    fireEvent.click(models)
+    expectActiveTabControlsMountedPanel()
+    expect(models.getAttribute('aria-controls')).toBe('dsh-settings-panel-models')
+
+    const orientation = screen.getByRole('tablist').getAttribute('aria-orientation')
+    fireEvent.keyDown(models, { key: orientation === 'horizontal' ? 'ArrowRight' : 'ArrowDown' })
+    expectActiveTabControlsMountedPanel()
+    expect(screen.getByRole('tab', { name: 'Presets' }).getAttribute('aria-controls')).toBe(
+      'dsh-settings-panel-presets',
+    )
+  })
+
+  it('moves through vertical settings tabs with arrow keys, Home, and End', () => {
+    renderDrawer()
+
+    expect(screen.getByRole('tablist').getAttribute('aria-orientation')).toBe('vertical')
+    const general = screen.getByRole('tab', { name: 'General' })
+    fireEvent.keyDown(general, { key: 'ArrowDown' })
+    const models = screen.getByRole('tab', { name: 'Models' })
+    expect(document.activeElement).toBe(models)
+    expect(models.getAttribute('aria-selected')).toBe('true')
+
+    fireEvent.keyDown(models, { key: 'ArrowUp' })
+    expect(document.activeElement).toBe(general)
+    fireEvent.keyDown(general, { key: 'ArrowUp' })
+    const plugins = screen.getByRole('tab', { name: 'Plugins' })
+    expect(document.activeElement).toBe(plugins)
+
+    fireEvent.keyDown(plugins, { key: 'Home' })
+    expect(document.activeElement).toBe(general)
+    fireEvent.keyDown(general, { key: 'End' })
+    expect(document.activeElement).toBe(plugins)
+  })
+
+  it('uses horizontal arrow keys when the settings tabs wrap at a narrow width', () => {
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn().mockReturnValue({
+        matches: true,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      }),
+    )
+    renderDrawer()
+
+    expect(screen.getByRole('tablist').getAttribute('aria-orientation')).toBe('horizontal')
+    const general = screen.getByRole('tab', { name: 'General' })
+    fireEvent.keyDown(general, { key: 'ArrowRight' })
+    const models = screen.getByRole('tab', { name: 'Models' })
+    expect(document.activeElement).toBe(models)
+    fireEvent.keyDown(models, { key: 'ArrowLeft' })
+    expect(document.activeElement).toBe(general)
   })
 
   it('opens VS Code keyboard shortcuts from General settings', async () => {
@@ -372,7 +464,7 @@ describe('SettingsDrawer', () => {
     fireEvent.click(screen.getByRole('button', { name: 'light' }))
 
     expect(onThemeChange).toHaveBeenCalledWith('light')
-    await waitFor(() => expect(onUpdateDshSetting).toHaveBeenCalledWith('ui-theme.preference', 'light'))
+    await waitFor(() => expect(onUpdateDshSetting).toHaveBeenCalledWith('ui-theme.preference', 'light', 3))
   })
 
   it('keeps general settings sections in a predictable order', async () => {
@@ -560,7 +652,7 @@ describe('SettingsDrawer', () => {
   })
 
   it('renders the rc2 General preferences with their upstream defaults', async () => {
-    renderDrawer({ onLoadDshSettings: vi.fn().mockResolvedValue(rc2GeneralSettingsFixture({ values: {} })) })
+    renderDrawer({ onLoadDshSettings: vi.fn().mockResolvedValue(rc2GeneralSettingsFixture()) })
 
     const transcript = await screen.findByRole('group', { name: 'Workflow display' })
     const performance = screen.getByRole('group', { name: 'Performance and usage' })
@@ -570,16 +662,148 @@ describe('SettingsDrawer', () => {
     expect(screen.getByRole('spinbutton', { name: 'Conversation font size' })).toHaveProperty('value', '14')
   })
 
-  it('writes transcript, usage, coding-tools, and font-size choices through the Host settings channel', async () => {
-    const initial = rc2GeneralSettingsFixture()
-    const onLoadDshSettings = vi.fn().mockResolvedValue(initial)
+  it('gates preset selection on Developer Tools and saves the default through the RC2 store path', async () => {
+    let hostSnapshot = rc2GeneralSettingsFixture({ values: {} })
+    const onLoadDshSettings = vi.fn().mockImplementation(() => Promise.resolve(hostSnapshot))
+    const onUpdateDshSetting = vi.fn().mockImplementation((path: string, value: unknown) => {
+      if (path === 'ui-settings.enabled') {
+        hostSnapshot = {
+          ...hostSnapshot,
+          values: { ...hostSnapshot.values, 'ui-settings': { enabled: value } },
+        }
+      }
+      return Promise.resolve()
+    })
+    const onStartCreatorDraft = vi.fn().mockResolvedValue(undefined)
+    const presetRoster = {
+      authorable: false,
+      compositionReadable: true,
+      defaultSettingPath: 'agent-preset-registry.selectedDefault',
+      presets: [
+        { id: 'standard', trust: 'system', isDefault: true },
+        { id: 'ptc', trust: 'system', isDefault: false },
+        { id: 'cordis', trust: 'system', isDefault: false },
+      ],
+    } as const
+    const presetClient = {
+      request<T>(request: WebviewRequest): Promise<T> {
+        if (request.type !== 'preset.list')
+          return Promise.reject(new Error(`unexpected request ${request.type}`))
+        return Promise.resolve(presetRoster as unknown as T)
+      },
+      subscribe: () => () => undefined,
+      dispose: () => undefined,
+    } as unknown as ProtocolClient
+    const store = createAppStore(presetClient)
+
+    try {
+      renderDrawer({
+        onLoadDshSettings,
+        onUpdateDshSetting,
+        onLoadPresetRoster: () => store.loadPresetRoster(),
+        onStartCreatorDraft,
+      })
+
+      expect(await screen.findByRole('switch', { name: 'Developer Tools', checked: false })).toBeDefined()
+      fireEvent.click(screen.getByRole('tab', { name: 'Presets' }))
+
+      expect(await screen.findByRole('button', { name: 'In use: Standard' })).toBeDefined()
+      const mode = await screen.findByRole('button', { name: 'Set as default: PTC' })
+      const creator = await screen.findByRole('button', { name: 'Ask Agent to create a mode' })
+      expect(store.presets).toEqual(presetRoster.presets)
+      expect(mode).toHaveProperty('disabled', true)
+      expect(creator).toHaveProperty('disabled', true)
+      fireEvent.click(mode)
+      fireEvent.click(creator)
+      expect(onUpdateDshSetting).not.toHaveBeenCalled()
+      expect(onStartCreatorDraft).not.toHaveBeenCalled()
+
+      fireEvent.click(screen.getByRole('tab', { name: 'General' }))
+      fireEvent.click(screen.getByRole('switch', { name: 'Developer Tools', checked: false }))
+      await waitFor(() => expect(onUpdateDshSetting).toHaveBeenCalledWith('ui-settings.enabled', true, 5))
+      await waitFor(() =>
+        expect(screen.getByRole('switch', { name: 'Developer Tools', checked: true })).toBeDefined(),
+      )
+      await waitFor(() => expect(onLoadDshSettings).toHaveBeenCalledTimes(2))
+
+      fireEvent.click(screen.getByRole('tab', { name: 'Presets' }))
+      const enabledMode = await screen.findByRole('button', { name: 'Set as default: PTC' })
+      const enabledCreator = screen.getByRole('button', { name: 'Ask Agent to create a mode' })
+      expect(enabledMode).toHaveProperty('disabled', false)
+      expect(enabledCreator).toHaveProperty('disabled', false)
+      fireEvent.click(enabledMode)
+      fireEvent.click(enabledCreator)
+      await waitFor(() =>
+        expect(onUpdateDshSetting).toHaveBeenCalledWith('agent-preset-registry.selectedDefault', 'ptc', 10),
+      )
+      await waitFor(() => expect(onStartCreatorDraft).toHaveBeenCalledOnce())
+    } finally {
+      store.dispose()
+    }
+  })
+
+  it('reads legacy transcript values without offering or writing them back', async () => {
+    const base = rc2GeneralSettingsFixture({
+      values: {
+        ...dshSettingsFixture().values,
+        'ui-chat': { transcriptView: 'expanded' },
+      },
+    })
+    const snapshot: DshSettingsSnapshot = {
+      ...base,
+      schema: {
+        ...base.schema,
+        fields: base.schema.fields.map((field) =>
+          field.path === 'ui-chat.transcriptView'
+            ? { ...field, enumValues: [...(field.enumValues ?? []), 'normal', 'expanded'] }
+            : field,
+        ),
+      },
+    }
     const onUpdateDshSetting = vi.fn().mockResolvedValue(undefined)
+    renderDrawer({
+      onLoadDshSettings: vi.fn().mockResolvedValue(snapshot),
+      onUpdateDshSetting,
+    })
+
+    const transcript = await screen.findByRole('group', { name: 'Workflow display' })
+    expect(within(transcript).getAllByRole('button')).toHaveLength(4)
+    expect(within(transcript).getByRole('button', { name: 'Detailed', pressed: true })).toBeDefined()
+    expect(within(transcript).queryByRole('button', { name: 'expanded' })).toBeNull()
+    expect(within(transcript).queryByRole('button', { name: 'normal' })).toBeNull()
+    expect(onUpdateDshSetting).not.toHaveBeenCalled()
+  })
+
+  it('writes transcript, usage, coding-tools, and font-size choices through the Host settings channel', async () => {
+    let hostSnapshot = rc2GeneralSettingsFixture()
+    const onLoadDshSettings = vi.fn().mockImplementation(() => Promise.resolve(hostSnapshot))
+    const onUpdateDshSetting = vi.fn().mockImplementation((path: string, value: unknown) => {
+      if (path !== 'ui-chat.transcriptView' && path !== 'ui-chat.performanceUsage') return Promise.resolve()
+      const preference = path === 'ui-chat.transcriptView' ? 'transcriptView' : 'performanceUsage'
+      const currentUiChat = hostSnapshot.values['ui-chat']
+      hostSnapshot = {
+        ...hostSnapshot,
+        values: {
+          ...hostSnapshot.values,
+          'ui-chat': {
+            ...(currentUiChat !== null && typeof currentUiChat === 'object' ? currentUiChat : {}),
+            [preference]: value,
+          },
+        },
+      }
+      return Promise.resolve()
+    })
     renderDrawer({ onLoadDshSettings, onUpdateDshSetting })
 
     const transcript = await screen.findByRole('group', { name: 'Workflow display' })
     fireEvent.click(within(transcript).getByRole('button', { name: 'Compact' }))
-    await waitFor(() => expect(onUpdateDshSetting).toHaveBeenCalledWith('ui-chat.transcriptView', 'compact'))
+    await waitFor(() =>
+      expect(onUpdateDshSetting).toHaveBeenCalledWith('ui-chat.transcriptView', 'compact', 4),
+    )
     await waitFor(() => expect(onLoadDshSettings).toHaveBeenCalledTimes(2))
+    await waitFor(() =>
+      expect(within(transcript).getByRole('button', { name: 'Compact', pressed: true })).toBeDefined(),
+    )
 
     fireEvent.click(
       within(screen.getByRole('group', { name: 'Performance and usage' })).getByRole('button', {
@@ -587,14 +811,92 @@ describe('SettingsDrawer', () => {
       }),
     )
     await waitFor(() =>
-      expect(onUpdateDshSetting).toHaveBeenCalledWith('ui-chat.performanceUsage', 'compact'),
+      expect(onUpdateDshSetting).toHaveBeenCalledWith('ui-chat.performanceUsage', 'compact', 4),
+    )
+    await waitFor(() => expect(onLoadDshSettings).toHaveBeenCalledTimes(3))
+    await waitFor(() =>
+      expect(
+        within(screen.getByRole('group', { name: 'Performance and usage' })).getByRole('button', {
+          name: 'Compact',
+          pressed: true,
+        }),
+      ).toBeDefined(),
     )
     fireEvent.click(screen.getByRole('switch', { name: 'Developer Tools' }))
-    await waitFor(() => expect(onUpdateDshSetting).toHaveBeenCalledWith('ui-settings.enabled', false))
+    await waitFor(() => expect(onUpdateDshSetting).toHaveBeenCalledWith('ui-settings.enabled', false, 5))
     const fontSize = screen.getByRole<HTMLInputElement>('spinbutton', { name: 'Conversation font size' })
     fireEvent.change(fontSize, { target: { value: '16' } })
     fireEvent.blur(fontSize)
-    await waitFor(() => expect(onUpdateDshSetting).toHaveBeenCalledWith('ui-theme.fontSize', 16))
+    await waitFor(() => expect(onUpdateDshSetting).toHaveBeenCalledWith('ui-theme.fontSize', 16, 3))
+  })
+
+  it('keeps an accepted General preference visible when the follow-up read fails', async () => {
+    const initial = rc2GeneralSettingsFixture()
+    const refreshed: DshSettingsSnapshot = {
+      ...initial,
+      schema: {
+        ...initial.schema,
+        namespaces: initial.schema.namespaces.map((namespace) =>
+          namespace.ns === 'ui-chat' ? { ...namespace, revision: 5 } : namespace,
+        ),
+      },
+      values: { ...initial.values, 'ui-chat': { transcriptView: 'compact' } },
+    }
+    const onLoadDshSettings = vi
+      .fn()
+      .mockResolvedValueOnce(initial)
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(refreshed)
+      .mockResolvedValue(refreshed)
+    const onUpdateDshSetting = vi.fn().mockResolvedValue(undefined)
+    renderDrawer({ onLoadDshSettings, onUpdateDshSetting })
+
+    const transcript = await screen.findByRole('group', { name: 'Workflow display' })
+    fireEvent.click(within(transcript).getByRole('button', { name: 'Compact' }))
+    await waitFor(() =>
+      expect(onUpdateDshSetting).toHaveBeenCalledWith('ui-chat.transcriptView', 'compact', 4),
+    )
+    await waitFor(() => expect(onLoadDshSettings).toHaveBeenCalledTimes(2))
+    expect(within(transcript).getByRole('button', { name: 'Compact', pressed: true })).toBeDefined()
+    expect(within(transcript).getByRole<HTMLButtonElement>('button', { name: 'Detailed' }).disabled).toBe(
+      true,
+    )
+    expect(screen.getByText(/change was saved/i)).toBeDefined()
+    expect(screen.queryByRole('alert')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    await waitFor(() => expect(onLoadDshSettings).toHaveBeenCalledTimes(3))
+    expect(within(transcript).getByRole<HTMLButtonElement>('button', { name: 'Standard' }).disabled).toBe(
+      false,
+    )
+    fireEvent.click(within(transcript).getByRole('button', { name: 'Standard' }))
+    await waitFor(() =>
+      expect(onUpdateDshSetting).toHaveBeenCalledWith('ui-chat.transcriptView', 'standard', 5),
+    )
+  })
+
+  it('reloads Host-backed General preferences each time the drawer reopens', async () => {
+    const initial = rc2GeneralSettingsFixture()
+    const updated: DshSettingsSnapshot = {
+      ...initial,
+      values: { ...initial.values, 'ui-chat': { transcriptView: 'verbose' } },
+    }
+    const onLoadDshSettings = vi.fn().mockResolvedValueOnce(initial).mockResolvedValueOnce(updated)
+    const view = renderDrawer({ onLoadDshSettings })
+
+    const transcript = await screen.findByRole('group', { name: 'Workflow display' })
+    expect(within(transcript).getByRole('button', { name: 'Standard', pressed: true })).toBeDefined()
+
+    view.rerender(drawerElement({ open: false, onLoadDshSettings }))
+    view.rerender(drawerElement({ open: true, onLoadDshSettings }))
+
+    await waitFor(() => expect(onLoadDshSettings).toHaveBeenCalledTimes(2))
+    expect(
+      within(screen.getByRole('group', { name: 'Workflow display' })).getByRole('button', {
+        name: 'Verbose',
+        pressed: true,
+      }),
+    ).toBeDefined()
   })
 
   it('does not invent rc2 controls for an older schema and keeps the local font fallback', async () => {
@@ -648,7 +950,7 @@ describe('SettingsDrawer', () => {
     fireEvent.click(developerTools)
     await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('settings-conflict'))
     expect(screen.getByRole('switch', { name: 'Developer Tools', checked: true })).toBeDefined()
-    expect(onUpdateDshSetting).toHaveBeenCalledWith('ui-settings.enabled', false)
+    expect(onUpdateDshSetting).toHaveBeenCalledWith('ui-settings.enabled', false, 5)
   })
 
   it('writes a picked value through the settings update channel and reloads', async () => {
@@ -658,7 +960,7 @@ describe('SettingsDrawer', () => {
     renderDrawer({ onUpdateDshSetting, onLoadDshSettings })
     await waitFor(() => expect(screen.getByRole('group', { name: 'Appearance' })).toBeDefined())
     fireEvent.click(screen.getByRole('button', { name: 'dark' }))
-    await waitFor(() => expect(onUpdateDshSetting).toHaveBeenCalledWith('ui-theme.preference', 'dark'))
+    await waitFor(() => expect(onUpdateDshSetting).toHaveBeenCalledWith('ui-theme.preference', 'dark', 3))
     // A successful write reloads the authoritative snapshot.
     await waitFor(() => expect(onLoadDshSettings).toHaveBeenCalledTimes(2))
   })
@@ -686,7 +988,7 @@ describe('SettingsDrawer', () => {
     fireEvent.click(screen.getByRole('checkbox'))
     fireEvent.click(screen.getByRole('button', { name: 'Confirm full access' }))
     await waitFor(() =>
-      expect(onUpdateDshSetting).toHaveBeenCalledWith('permission.defaultPreset', 'danger-full-access'),
+      expect(onUpdateDshSetting).toHaveBeenCalledWith('permission.defaultPreset', 'danger-full-access', 1),
     )
   })
 
@@ -777,6 +1079,69 @@ describe('SettingsDrawer', () => {
     expect(screen.getAllByRole('button', { name: 'Edit' })).toHaveLength(2)
   })
 
+  it('shows DeepSeek Account only with a non-empty catalog and keeps it before the official DeepSeek row', async () => {
+    const accountProvider: ModelProvider = {
+      id: 'deepseek-account',
+      name: 'DeepSeek Account',
+      kind: 'remote',
+      configurable: true,
+      settingsNs: 'llm-deepseek-account',
+      settingsPath: [],
+      fields: [],
+    }
+    const officialProvider: ModelProvider = {
+      ...baseProvider,
+      id: 'deepseek-official',
+      name: 'DeepSeek',
+      settingsNs: 'llm-deepseek',
+      settingsPath: [],
+      fields: [],
+    }
+    const accountModel: ModelDescriptor = {
+      id: 'account-chat',
+      providerId: 'deepseek-account',
+      label: 'Account Chat',
+      inputModalities: ['text'],
+      supportsReasoning: false,
+    }
+    const officialModel: ModelDescriptor = {
+      id: 'deepseek-chat',
+      providerId: 'deepseek-official',
+      label: 'DeepSeek Chat',
+      supportsReasoning: false,
+    }
+    const snapshot: DshSettingsSnapshot = {
+      ...dshSettingsFixture(),
+      values: {
+        'llm-deepseek-account': { models: [{ id: 'account-chat' }] },
+        'llm-deepseek': { models: [{ id: 'deepseek-chat' }] },
+      },
+    }
+    const view = renderDrawer({
+      providers: [officialProvider, accountProvider],
+      models: [officialModel],
+      onLoadDshSettings: vi.fn().mockResolvedValue(snapshot),
+    })
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Models' }))
+    await waitFor(() => expect(screen.getByText('DeepSeek')).toBeDefined())
+    expect(screen.queryByText('DeepSeek Account')).toBeNull()
+
+    view.rerender(
+      drawerElement({
+        providers: [officialProvider, accountProvider],
+        models: [officialModel, accountModel],
+        onLoadDshSettings: vi.fn().mockResolvedValue(snapshot),
+      }),
+    )
+
+    await waitFor(() => expect(screen.getByText('DeepSeek Account')).toBeDefined())
+    const rows = [...view.container.querySelectorAll('.dsh-settings__providers > li')]
+    expect(rows).toHaveLength(2)
+    expect(rows[0]?.textContent).toContain('DeepSeek Account')
+    expect(rows[1]?.textContent).toContain('DeepSeek')
+  })
+
   it('restores separate catalog-provider and custom-provider add actions', async () => {
     const wholeSection: ModelProvider = {
       ...baseProvider,
@@ -814,10 +1179,10 @@ describe('SettingsDrawer', () => {
       ...dshSettingsFixture(),
       values: { ...dshSettingsFixture().values, 'llm-pi-ai': { providers: {} } },
     }
-    const onUpdateDshSetting = vi.fn().mockResolvedValue(undefined)
+    const onMutateDshSettings = vi.fn().mockResolvedValue(undefined)
     renderDrawer({
       providers: [baseProvider, wholeSection, dormant, secondDormant],
-      onUpdateDshSetting,
+      onMutateDshSettings,
       onLoadDshSettings: vi.fn().mockResolvedValue(snapshot),
     })
 
@@ -837,12 +1202,18 @@ describe('SettingsDrawer', () => {
     fireEvent.click(within(card).getByRole('option', { name: 'OpenAI' }))
     expect(screen.getByRole('button', { name: 'Provider: OpenAI' })).toBeDefined()
     fireEvent.click(within(card).getByRole('button', { name: 'Apply' }))
-    await waitFor(() => expect(onUpdateDshSetting).toHaveBeenCalledWith('llm-pi-ai.providers.openai', {}))
+    await waitFor(() =>
+      expect(onMutateDshSettings).toHaveBeenCalledWith(
+        'llm-pi-ai',
+        [{ op: 'set', path: ['providers', 'openai'], value: {} }],
+        7,
+      ),
+    )
 
     fireEvent.click(screen.getByRole('button', { name: 'Add provider' }))
     const reopenedCard = screen.getByRole('region', { name: 'Add provider' })
     fireEvent.click(within(reopenedCard).getByRole('button', { name: 'Cancel' }))
-    expect(onUpdateDshSetting).toHaveBeenCalledTimes(1)
+    expect(onMutateDshSettings).toHaveBeenCalledTimes(1)
   })
 
   it('does not render the provider directory before the settings join is ready', () => {
@@ -925,11 +1296,11 @@ describe('SettingsDrawer', () => {
     const onDiscoverModels = vi
       .fn()
       .mockResolvedValue([{ id: 'remote-chat', label: 'Remote Chat', contextWindow: 64_000 }])
-    const onUpdateDshSetting = vi.fn().mockResolvedValue(undefined)
+    const onMutateDshSettings = vi.fn().mockResolvedValue(undefined)
     renderDrawer({
       providers: [provider],
       onDiscoverModels,
-      onUpdateDshSetting,
+      onMutateDshSettings,
       onLoadDshSettings: vi.fn().mockResolvedValue(snapshot),
     })
     await waitFor(() => expect(screen.getByText('new-isolated')).toBeDefined())
@@ -952,10 +1323,20 @@ describe('SettingsDrawer', () => {
     ).toBe(true)
     fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
     await waitFor(() =>
-      expect(onUpdateDshSetting).toHaveBeenCalledWith('llm-pi-ai.providers.openai.models', [
-        { id: 'local-chat', name: 'Local Chat', inputModalities: ['text', 'image'] },
-        { id: 'remote-chat', name: 'Remote Chat', contextWindow: 64_000 },
-      ]),
+      expect(onMutateDshSettings).toHaveBeenCalledWith(
+        'llm-pi-ai',
+        [
+          {
+            op: 'set',
+            path: ['models'],
+            value: [
+              { id: 'local-chat', name: 'Local Chat', inputModalities: ['text', 'image'] },
+              { id: 'remote-chat', name: 'Remote Chat', contextWindow: 64_000 },
+            ],
+          },
+        ],
+        7,
+      ),
     )
   })
 
@@ -1340,6 +1721,28 @@ describe('SettingsDrawer', () => {
 
     view.rerender(drawerElement({ onLoadSettings: () => Promise.resolve(settingsFixture()) }))
     expect(document.activeElement).toBe(tab)
+  })
+
+  it('returns focus to the opener when the drawer closes', () => {
+    const opener = document.createElement('button')
+    opener.textContent = 'Open settings'
+    document.body.append(opener)
+    opener.focus()
+
+    const onOpenChange = vi.fn()
+    try {
+      const view = renderDrawer({ onOpenChange })
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Close settings' }))
+
+      fireEvent.click(screen.getByRole('button', { name: 'Close settings' }))
+      expect(onOpenChange).toHaveBeenCalledWith(false)
+
+      view.rerender(drawerElement({ open: false, onOpenChange }))
+      expect(screen.queryByRole('dialog', { name: 'Settings' })).toBeNull()
+      expect(document.activeElement).toBe(opener)
+    } finally {
+      opener.remove()
+    }
   })
 
   it('renders nothing when closed', () => {

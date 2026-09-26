@@ -65,13 +65,7 @@ export const StatsLine = memo(function StatsLine(props: StatsLineProps): ReactEl
     props.usage === undefined
       ? '0'
       : (cacheHitPercent(props.usage) ?? String(Math.round(props.cacheHit * 100)))
-  const tokenTotal =
-    props.usage === undefined
-      ? undefined
-      : props.usage.inputTokens +
-        props.usage.outputTokens +
-        (props.usage.cacheReadTokens ?? 0) +
-        (props.usage.cacheWriteTokens ?? 0)
+  const tokenTotal = props.usage?.totalTokens
   const durations: string[] = []
   if (stats.llmMs > 0) durations.push(`LLM ${formatDuration(stats.llmMs)}`)
   if (stats.toolMs > 0) durations.push(`${t('stats.tool')} ${formatDuration(stats.toolMs)}`)

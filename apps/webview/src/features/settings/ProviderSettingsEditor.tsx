@@ -1,5 +1,11 @@
 import { useState, type ReactElement } from 'react'
-import type { DiscoveredModel, ModelDiscoveryInput, ModelProvider } from '@dsh-vscode/domain'
+import type {
+  DiscoveredModel,
+  ModelDescriptor,
+  ModelDiscoveryInput,
+  ModelInputModality,
+  ModelProvider,
+} from '@dsh-vscode/domain'
 import type { DshSettingsSnapshot } from '../../app/store.js'
 import { useI18n, type Translate } from '../../i18n.js'
 import { SelectMenu } from '../../components/common/SelectMenu.js'
@@ -11,12 +17,13 @@ export type ProviderSettingChange =
 
 export interface ProviderSettingsEditorProps {
   readonly provider: ModelProvider
+  readonly catalogModels?: readonly ModelDescriptor[]
   readonly settings: DshSettingsSnapshot
   readonly writable: boolean
   readonly saving: boolean
   /** Materialize a dormant catalog provider even when no field changed yet. */
   readonly forceSave?: boolean
-  readonly onSave: (changes: readonly ProviderSettingChange[]) => Promise<void>
+  readonly onSave: (changes: readonly ProviderSettingChange[], expectedRevision: number) => Promise<void>
   readonly onDiscover: (input: Omit<ModelDiscoveryInput, 'apiKey'>) => Promise<readonly DiscoveredModel[]>
   readonly onClose: (changed: boolean) => void
 }
@@ -37,6 +44,8 @@ interface ProviderFieldRef {
 export function ProviderSettingsEditor(props: ProviderSettingsEditorProps): ReactElement {
   const { t } = useI18n()
   const settingsNs = props.provider.settingsNs?.trim() ?? ''
+  const displayedRevision = props.settings.schema.namespaces.find((entry) => entry.ns === settingsNs)?.revision
+  const [openedAtRevision] = useState(() => displayedRevision)
   const settingsPath = props.provider.settingsPath ?? []
   const prefix = settingsNs === '' ? [] : [settingsNs, ...settingsPath]
   const profile = settingValueAt(props.settings.values, prefix)
@@ -49,7 +58,13 @@ export function ProviderSettingsEditor(props: ProviderSettingsEditorProps): Reac
   const hasModelList =
     modelsSchema?.type === 'array' ||
     Array.isArray(settingValueAt(props.settings.values, [...prefix, 'models']))
-  const supported = settingsNs === 'llm-deepseek' || settingsNs === 'llm-pi-ai'
+  const isPiAi = settingsNs === 'llm-pi-ai'
+  const inputField = isPiAi ? 'input' : 'inputModalities'
+  const providerDefaultInput: readonly ModelInputModality[] = isPiAi
+    ? inputTypesAt(profile, 'defaultInput')
+    : ['text']
+  const supported =
+    settingsNs === 'llm-deepseek' || settingsNs === 'llm-deepseek-account' || settingsNs === 'llm-pi-ai'
   const initialBaseUrl = baseField?.value ?? stringAt(profile, 'baseURL') ?? ''
   const initialApi = apiField?.value ?? stringAt(profile, 'api') ?? ''
   const initialModels = hasModelList
@@ -79,12 +94,8 @@ export function ProviderSettingsEditor(props: ProviderSettingsEditorProps): Reac
   const save = async (): Promise<void> => {
     if (disabled) return
     setError(undefined)
-    const normalizedModels = models.map((model) => ({
-      ...model,
-      id: model.id.trim(),
-      ...(model.name === undefined || model.name.trim() === '' ? {} : { name: model.name.trim() }),
-    }))
-    const modelFailure = validateModels(normalizedModels)
+    const normalizedModels = models.map((model) => normalizeSettingsModel(model, inputField))
+    const modelFailure = validateModels(normalizedModels, inputField)
     if (modelFailure !== undefined) {
       setError(modelFailureMessage(modelFailure, t))
       return
@@ -99,8 +110,12 @@ export function ProviderSettingsEditor(props: ProviderSettingsEditorProps): Reac
       props.onClose(false)
       return
     }
+    if (openedAtRevision === undefined) {
+      setError(t('settings.updateFailed'))
+      return
+    }
     try {
-      await props.onSave(changes)
+      await props.onSave(changes, openedAtRevision)
       props.onClose(true)
     } catch (reason: unknown) {
       setError(reason instanceof Error ? reason.message : t('settings.updateFailed'))
@@ -111,7 +126,9 @@ export function ProviderSettingsEditor(props: ProviderSettingsEditorProps): Reac
     <div className="dsh-settings__provider-editor">
       <header className="dsh-settings__provider-editor-head">
         <div>
-          <strong>{props.provider.name}</strong>
+          <strong>
+            {settingsNs === 'llm-deepseek-account' ? t('settings.deepseekAccount') : props.provider.name}
+          </strong>
           {props.provider.id === props.provider.name ? null : <code>{props.provider.id}</code>}
         </div>
         <span className="dsh-settings__provider-editor-scope">{settingsNs}</span>
@@ -168,6 +185,9 @@ export function ProviderSettingsEditor(props: ProviderSettingsEditorProps): Reac
               <summary>{t('settings.customized')}</summary>
               <ModelListEditor
                 models={models}
+                inputField={inputField}
+                {...(props.catalogModels === undefined ? {} : { catalogModels: props.catalogModels })}
+                providerDefaultInput={providerDefaultInput}
                 writable={props.writable}
                 saving={props.saving}
                 showSave={false}
@@ -212,6 +232,7 @@ type ModelFailure =
   | { readonly kind: 'id' }
   | { readonly kind: 'duplicate' }
   | { readonly kind: 'capacity'; readonly field: CapacityField }
+  | { readonly kind: 'input' }
 
 /**
  * The model list editor keeps unparsable capacity text in a per-row display
@@ -219,13 +240,24 @@ type ModelFailure =
  * `NaN`. Rejecting it here keeps the value from crossing the transport, where
  * JSON serialization would turn it into `null` and store a corrupt capacity.
  */
-function validateModels(models: readonly EditableModel[]): ModelFailure | undefined {
+function validateModels(
+  models: readonly EditableModel[],
+  inputField: 'input' | 'inputModalities',
+): ModelFailure | undefined {
   const ids = new Set<string>()
   for (const model of models) {
     const id = model.id.trim()
     if (id === '') return { kind: 'id' }
     if (ids.has(id)) return { kind: 'duplicate' }
     ids.add(id)
+    const input = model[inputField]
+    if (
+      input !== undefined &&
+      (!Array.isArray(input) ||
+        (input.length === 0 && inputField === 'inputModalities') ||
+        input.some((value) => value !== 'text' && value !== 'image'))
+    )
+      return { kind: 'input' }
     for (const field of ['contextWindow', 'maxTokens'] as const) {
       const value = model[field]
       if (value !== undefined && (!Number.isSafeInteger(value) || value <= 0))
@@ -238,7 +270,36 @@ function validateModels(models: readonly EditableModel[]): ModelFailure | undefi
 function modelFailureMessage(failure: ModelFailure, t: Translate): string {
   if (failure.kind === 'id') return t('settings.modelIdRequired')
   if (failure.kind === 'duplicate') return t('settings.modelIdDuplicate')
+  if (failure.kind === 'input') return t('settings.modelInputRequired')
   return t('settings.invalidCapacity', { field: t(`settings.${failure.field}`) })
+}
+
+function inputTypesAt(value: unknown, key: string): readonly ModelInputModality[] {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return ['text']
+  const next = (value as Record<string, unknown>)[key]
+  return Array.isArray(next) && next.length > 0 && next.every(isInputModality) ? [...new Set(next)] : ['text']
+}
+
+function isInputModality(value: unknown): value is ModelInputModality {
+  return value === 'text' || value === 'image'
+}
+
+function normalizeSettingsModel(
+  model: EditableModel,
+  inputField: 'input' | 'inputModalities',
+): EditableModel {
+  const { name, ...rest } = model
+  const normalized: Record<string, unknown> = {
+    ...rest,
+    id: model.id.trim(),
+    ...(name === undefined || name.trim() === '' ? {} : { name: name.trim() }),
+  }
+  const input = normalized[inputField]
+  if (inputField === 'inputModalities' && Array.isArray(input) && !input.includes('image')) {
+    delete normalized.imagePixelBudget
+    delete normalized.imageMaxBytes
+  }
+  return normalized as EditableModel
 }
 
 function addOptionalChange(

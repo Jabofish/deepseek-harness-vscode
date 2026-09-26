@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useRef, type RefObject } from 'react'
-import { useVirtualizer, type VirtualItem } from '@tanstack/react-virtual'
+import { defaultRangeExtractor, useVirtualizer, type Range, type VirtualItem } from '@tanstack/react-virtual'
 
 /**
  * Keep the small-session DOM simple while bounding the expensive render tree
@@ -21,6 +21,8 @@ export interface VirtualizedCollectionOptions<T> {
   readonly estimateSize?: (index: number) => number
   readonly overscan?: number
   readonly getItemKey?: (item: T, index: number) => string | number
+  /** Keep the currently focused row mounted while it is outside the viewport. */
+  readonly getPinnedItemIndex?: () => number | undefined
   /** Apply a measured-height anchor delta through the shared scroll owner. */
   readonly onScrollAdjustment?: (delta: number) => void
 }
@@ -61,6 +63,8 @@ export function useVirtualizedCollection<T>(
   itemsRef.current = items
   const getItemKeyOptionRef = useRef(getItemKeyOption)
   getItemKeyOptionRef.current = getItemKeyOption
+  const getPinnedItemIndexRef = useRef(options.getPinnedItemIndex)
+  getPinnedItemIndexRef.current = options.getPinnedItemIndex
   const getItemKey = useCallback((index: number): string | number => {
     const item = itemsRef.current[index]
     return item === undefined ? index : (getItemKeyOptionRef.current?.(item, index) ?? index)
@@ -83,6 +87,18 @@ export function useVirtualizedCollection<T>(
   // internal lifecycle write cannot reset a reader who is already at the
   // bottom (or intentionally reading elsewhere) to zero.
   const initialOffset = useCallback(() => scrollRef.current?.scrollTop ?? 0, [scrollRef])
+  const rangeExtractor = useCallback((range: Range): number[] => {
+    const indexes = defaultRangeExtractor(range)
+    const pinnedIndex = getPinnedItemIndexRef.current?.()
+    if (
+      pinnedIndex === undefined ||
+      pinnedIndex < 0 ||
+      pinnedIndex >= range.count ||
+      indexes.includes(pinnedIndex)
+    )
+      return indexes
+    return [...indexes, pinnedIndex].sort((left, right) => left - right)
+  }, [])
   // eslint-disable-next-line react-hooks/incompatible-library
   const virtualizer = useVirtualizer<HTMLDivElement, HTMLDivElement>({
     count,
@@ -92,6 +108,7 @@ export function useVirtualizedCollection<T>(
     getItemKey,
     initialOffset,
     overscan,
+    rangeExtractor,
     scrollToFn,
   })
   const virtualItems = virtualizer.getVirtualItems()

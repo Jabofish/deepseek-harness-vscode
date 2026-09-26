@@ -1,4 +1,4 @@
-import { memo, useEffect, useId, useState, type ReactElement } from 'react'
+import { memo, useId, useState, type ReactElement } from 'react'
 import type { MessageImageReference, QueuedInput, RunningInputMode } from '@dsh-vscode/domain'
 import { useI18n } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
@@ -24,9 +24,7 @@ export const QueuePanel = memo(function QueuePanel(props: QueuePanelProps): Reac
   // item or a real multi-item backlog is the user-facing queue state.
   const visible = multiple || (props.running && props.items.length > 0)
 
-  useEffect(() => {
-    if (props.items.length <= 1 && !collapsed) setCollapsed(true)
-  }, [collapsed, props.items.length])
+  if (props.items.length <= 1 && !collapsed) setCollapsed(true)
 
   if (!visible) return null
 
@@ -74,18 +72,7 @@ export const QueuePanel = memo(function QueuePanel(props: QueuePanelProps): Reac
                       ))}
                     </span>
                   )}
-                  <input
-                    aria-label={t('queue.edit', { id: item.id })}
-                    defaultValue={item.text}
-                    // The only queue edit the host accepts replaces the whole
-                    // content with text, so a row that carries an image or a
-                    // file stays read-only rather than losing what it holds.
-                    readOnly={!item.textOnly}
-                    title={item.textOnly ? undefined : t('queue.editWithAttachments')}
-                    onBlur={(event) => {
-                      if (event.target.value !== item.text) props.onEdit(item.id, event.target.value)
-                    }}
-                  />
+                  <QueueItemEditor item={item} onEdit={props.onEdit} />
                 </div>
                 <div className="dsh-queue__item-actions">
                   <SelectMenu
@@ -113,10 +100,10 @@ export const QueuePanel = memo(function QueuePanel(props: QueuePanelProps): Reac
                           ]
                         : [{ value: 'steer', label: t('queue.mode.steer') }]
                     }
-                    disabled={item.mode !== 'queue'}
+                    disabled={item.mode !== 'queue' || !props.running}
                     placement="below"
                     onChange={(mode) => {
-                      if (mode === 'steer') props.onModeChange(item.id, mode)
+                      if (mode === 'steer' && props.running) props.onModeChange(item.id, mode)
                     }}
                   />
                   <button
@@ -135,3 +122,35 @@ export const QueuePanel = memo(function QueuePanel(props: QueuePanelProps): Reac
     </section>
   )
 })
+
+function QueueItemEditor(props: {
+  readonly item: QueuedInput
+  readonly onEdit: QueuePanelProps['onEdit']
+}): ReactElement {
+  const { t } = useI18n()
+  const [value, setValue] = useState(props.item.text)
+  const [previousText, setPreviousText] = useState(props.item.text)
+  if (previousText !== props.item.text) {
+    // Queue projections are authoritative. Refresh a mounted editor whenever
+    // DSH reports a newer value so an old uncontrolled default cannot be
+    // submitted later and overwrite that update.
+    setPreviousText(props.item.text)
+    setValue(props.item.text)
+  }
+
+  return (
+    <input
+      aria-label={t('queue.edit', { id: props.item.id })}
+      value={value}
+      onChange={(event) => setValue(event.target.value)}
+      // The only queue edit the host accepts replaces the whole content with
+      // text, so a row that carries an image or a file stays read-only rather
+      // than losing what it holds.
+      readOnly={!props.item.textOnly}
+      title={props.item.textOnly ? undefined : t('queue.editWithAttachments')}
+      onBlur={() => {
+        if (value !== props.item.text) props.onEdit(props.item.id, value)
+      }}
+    />
+  )
+}

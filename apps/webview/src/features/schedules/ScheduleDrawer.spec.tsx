@@ -26,6 +26,9 @@ function Harness(): ReactElement {
         featureRequest={featureRequest}
         subscribeFeature={() => () => undefined}
         onStartScheduleSession={() => Promise.resolve('session-new')}
+        getLinkedSession={() => ({ status: 'missing' })}
+        onOpenLinkedSession={() => undefined}
+        connectionEpoch={0}
       />
     </I18nProvider>
   )
@@ -100,6 +103,9 @@ describe('ScheduleDrawer', () => {
           featureRequest={featureRequestForTest}
           subscribeFeature={() => () => undefined}
           onStartScheduleSession={() => Promise.resolve('session-new')}
+          getLinkedSession={() => ({ status: 'missing' })}
+          onOpenLinkedSession={() => undefined}
+          connectionEpoch={0}
         />
       </I18nProvider>,
     )
@@ -164,6 +170,9 @@ describe('ScheduleDrawer', () => {
             featureRequest={featureRequestForTest}
             subscribeFeature={subscribeFeature}
             onStartScheduleSession={startSchedule}
+            getLinkedSession={() => ({ status: 'missing' })}
+            onOpenLinkedSession={() => undefined}
+            connectionEpoch={0}
           />
         </I18nProvider>
       )

@@ -78,8 +78,7 @@ function renderConfiguration(
     <PluginConfiguration
       snapshot={snapshot()}
       onReload={vi.fn().mockResolvedValue(snapshot())}
-      onUpdateSetting={vi.fn().mockResolvedValue(undefined)}
-      onUnsetSetting={vi.fn().mockResolvedValue(undefined)}
+      onMutateSettings={vi.fn().mockResolvedValue(undefined)}
       onConfigureCredential={vi.fn().mockResolvedValue(true)}
       onRemoveCredential={vi.fn().mockResolvedValue(undefined)}
       {...overrides}
@@ -101,8 +100,7 @@ describe('PluginConfiguration', () => {
       <PluginConfiguration
         snapshot={snapshot()}
         onReload={vi.fn().mockResolvedValue(snapshot())}
-        onUpdateSetting={vi.fn().mockResolvedValue(undefined)}
-        onUnsetSetting={vi.fn().mockResolvedValue(undefined)}
+        onMutateSettings={vi.fn().mockResolvedValue(undefined)}
       />,
     )
     const toggle = screen.getByRole('button', { name: /Plugin configuration/u })
@@ -114,9 +112,9 @@ describe('PluginConfiguration', () => {
   })
 
   it('lists every namespace the host describes and saves staged settings', async () => {
-    const onUpdateSetting = vi.fn().mockResolvedValue(undefined)
+    const onMutateSettings = vi.fn().mockResolvedValue(undefined)
     const onReload = vi.fn().mockResolvedValue(snapshot())
-    renderConfiguration({ onUpdateSetting, onReload })
+    renderConfiguration({ onMutateSettings, onReload })
 
     expect(screen.getByText('shell')).toBeDefined()
     expect(screen.getByText('agent-loop')).toBeDefined()
@@ -127,8 +125,70 @@ describe('PluginConfiguration', () => {
     fireEvent.change(timeout, { target: { value: '90000' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 
-    await waitFor(() => expect(onUpdateSetting).toHaveBeenCalledWith('shell.timeoutMs', 90000))
+    await waitFor(() =>
+      expect(onMutateSettings).toHaveBeenCalledWith(
+        'shell',
+        [{ op: 'set', path: ['timeoutMs'], value: 90_000 }],
+        1,
+      ),
+    )
     expect(onReload).toHaveBeenCalled()
+  })
+
+  it('keeps a recoverable draft when a batch is rejected for a non-conflict reason', async () => {
+    const onMutateSettings = vi
+      .fn()
+      .mockRejectedValue(Object.assign(new Error('settings-rejected'), { code: 'INVALID_CONFIGURATION' }))
+    renderConfiguration({ onMutateSettings, onReload: vi.fn().mockResolvedValue(snapshot()) })
+
+    fireEvent.click(screen.getByRole('button', { name: /shell/u }))
+    const timeout = screen.getByLabelText(/timeoutMs/u)
+    fireEvent.change(timeout, { target: { value: '90000' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('settings-rejected'))
+    expect(screen.getByLabelText<HTMLInputElement>(/timeoutMs/u).value).toBe('90000')
+    expect(screen.getByRole('button', { name: 'Save' }).getAttribute('disabled')).toBeNull()
+  })
+
+  it('drops a batch draft after an unknown result when refresh observes a new revision', async () => {
+    const initial = snapshot()
+    const latest: DshSettingsSnapshot = {
+      ...initial,
+      schema: {
+        ...initial.schema,
+        namespaces: initial.schema.namespaces.map((namespace) =>
+          namespace.ns === 'shell' ? { ...namespace, revision: 2 } : namespace,
+        ),
+      },
+    }
+    const onMutateSettings = vi.fn().mockRejectedValue(new Error('request timed out'))
+    renderConfiguration({ snapshot: initial, onMutateSettings, onReload: vi.fn().mockResolvedValue(latest) })
+
+    fireEvent.click(screen.getByRole('button', { name: /shell/u }))
+    fireEvent.change(screen.getByLabelText(/timeoutMs/u), { target: { value: '90000' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('request timed out'))
+    expect(screen.getByLabelText<HTMLInputElement>(/timeoutMs/u).value).toBe('120000')
+    expect(screen.getByRole('button', { name: 'Save' }).hasAttribute('disabled')).toBe(true)
+    expect(onMutateSettings).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not retry an acknowledged batch when its follow-up snapshot is unavailable', async () => {
+    const onMutateSettings = vi.fn().mockResolvedValue(undefined)
+    const onReload = vi.fn().mockResolvedValue(undefined)
+    renderConfiguration({ onMutateSettings, onReload })
+
+    fireEvent.click(screen.getByRole('button', { name: /shell/u }))
+    fireEvent.change(screen.getByLabelText(/timeoutMs/u), { target: { value: '90000' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(onMutateSettings).toHaveBeenCalledTimes(1))
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Save' }).hasAttribute('disabled')).toBe(true),
+    )
+    expect(onReload).toHaveBeenCalledTimes(1)
   })
 
   it('keeps the secret in the host flow under the reference the namespace states', async () => {
@@ -139,8 +199,7 @@ describe('PluginConfiguration', () => {
         <PluginConfiguration
           snapshot={snapshot()}
           onReload={vi.fn().mockResolvedValue(snapshot())}
-          onUpdateSetting={vi.fn().mockResolvedValue(undefined)}
-          onUnsetSetting={vi.fn().mockResolvedValue(undefined)}
+          onMutateSettings={vi.fn().mockResolvedValue(undefined)}
           onConfigureCredential={onConfigureCredential}
           onRemoveCredential={vi.fn().mockResolvedValue(undefined)}
         />
@@ -170,9 +229,9 @@ describe('PluginConfiguration', () => {
 
   it('renders a choice control for described enum and boolean fields', async () => {
     const base = snapshot()
-    const onUpdateSetting = vi.fn().mockResolvedValue(undefined)
+    const onMutateSettings = vi.fn().mockResolvedValue(undefined)
     renderConfiguration({
-      onUpdateSetting,
+      onMutateSettings,
       onReload: vi.fn().mockResolvedValue(base),
       snapshot: {
         ...base,
@@ -210,7 +269,13 @@ describe('PluginConfiguration', () => {
     fireEvent.click(screen.getByRole('option', { name: 'strict' }))
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 
-    await waitFor(() => expect(onUpdateSetting).toHaveBeenCalledWith('shell.sandboxMode', 'strict'))
+    await waitFor(() =>
+      expect(onMutateSettings).toHaveBeenCalledWith(
+        'shell',
+        [{ op: 'set', path: ['sandboxMode'], value: 'strict' }],
+        1,
+      ),
+    )
     expect(
       screen.getByLabelText(/stream/u).querySelector('.dsh-select-menu__trigger-text')?.textContent,
     ).toBe('true')
@@ -247,26 +312,35 @@ describe('structured plugin settings', () => {
   }
   it('round-trips objects and arrays as structured values', async () => {
     const value = structuredSnapshot()
-    const onUpdateSetting = vi.fn().mockResolvedValue(undefined)
-    renderConfiguration({ snapshot: value, onUpdateSetting, onReload: vi.fn().mockResolvedValue(value) })
+    const onMutateSettings = vi.fn().mockResolvedValue(undefined)
+    renderConfiguration({ snapshot: value, onMutateSettings, onReload: vi.fn().mockResolvedValue(value) })
     fireEvent.click(screen.getByRole('button', { name: /shell/u }))
     expect(screen.getByLabelText<HTMLTextAreaElement>(/^Options/u).value).toContain('"enabled": true')
     fireEvent.change(screen.getByLabelText(/^Options/u), { target: { value: '{"enabled":false}' } })
     fireEvent.change(screen.getByLabelText(/^Arguments/u), { target: { value: '["second", 2]' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
-    await waitFor(() => expect(onUpdateSetting).toHaveBeenCalledWith('shell.arguments', ['second', 2]))
-    expect(onUpdateSetting).toHaveBeenCalledWith('shell.options', { enabled: false })
+    await waitFor(() =>
+      expect(onMutateSettings).toHaveBeenCalledWith(
+        'shell',
+        [
+          { op: 'set', path: ['options'], value: { enabled: false } },
+          { op: 'set', path: ['arguments'], value: ['second', 2] },
+        ],
+        1,
+      ),
+    )
+    expect(onMutateSettings).toHaveBeenCalledTimes(1)
   })
   it.each(['{broken', '[]', 'null', '42', '{"limit":1e400}', '{"nested":[-1e400]}'])(
     'blocks an invalid object draft: %s',
     (text) => {
-      const onUpdateSetting = vi.fn()
-      renderConfiguration({ snapshot: structuredSnapshot(), onUpdateSetting })
+      const onMutateSettings = vi.fn()
+      renderConfiguration({ snapshot: structuredSnapshot(), onMutateSettings })
       fireEvent.click(screen.getByRole('button', { name: /shell/u }))
       fireEvent.change(screen.getByLabelText(/^Options/u), { target: { value: text } })
       expect(screen.getByLabelText(/^Options/u).getAttribute('aria-invalid')).toBe('true')
       expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Save' }).disabled).toBe(true)
-      expect(onUpdateSetting).not.toHaveBeenCalled()
+      expect(onMutateSettings).not.toHaveBeenCalled()
     },
   )
   it('does not offer a JSON editor for containers with redacted credentials', () => {
@@ -300,8 +374,7 @@ describe('plugin string settings preserve authored values', () => {
     'stores the exact string %j instead of resetting or trimming it',
     async (text) => {
       const base = snapshot()
-      const onUpdateSetting = vi.fn().mockResolvedValue(undefined)
-      const onUnsetSetting = vi.fn().mockResolvedValue(undefined)
+      const onMutateSettings = vi.fn().mockResolvedValue(undefined)
       renderConfiguration({
         snapshot: {
           ...base,
@@ -319,14 +392,18 @@ describe('plugin string settings preserve authored values', () => {
           },
           values: { shell: { label: 'old' } },
         },
-        onUpdateSetting,
-        onUnsetSetting,
+        onMutateSettings,
       })
       fireEvent.click(screen.getByRole('button', { name: /shell/u }))
       fireEvent.change(screen.getByLabelText(/^Label/u), { target: { value: text } })
       fireEvent.click(screen.getByRole('button', { name: 'Save' }))
-      await waitFor(() => expect(onUpdateSetting).toHaveBeenCalledWith('shell.label', text))
-      expect(onUnsetSetting).not.toHaveBeenCalled()
+      await waitFor(() =>
+        expect(onMutateSettings).toHaveBeenCalledWith(
+          'shell',
+          [{ op: 'set', path: ['label'], value: text }],
+          1,
+        ),
+      )
     },
   )
 })
@@ -335,8 +412,7 @@ describe('literal enum settings', () => {
   afterEach(() => cleanup())
   it.each(['', '  exact  '])('saves the declared enum value %j unchanged', async (value) => {
     const base = snapshot()
-    const onUpdateSetting = vi.fn().mockResolvedValue(undefined)
-    const onUnsetSetting = vi.fn().mockResolvedValue(undefined)
+    const onMutateSettings = vi.fn().mockResolvedValue(undefined)
     renderConfiguration({
       snapshot: {
         ...base,
@@ -355,8 +431,7 @@ describe('literal enum settings', () => {
         },
         values: { shell: { mode: 'initial' } },
       },
-      onUpdateSetting,
-      onUnsetSetting,
+      onMutateSettings,
     })
     fireEvent.click(screen.getByRole('button', { name: /shell/u }))
     fireEvent.click(screen.getByLabelText(/^Mode/u))
@@ -368,7 +443,8 @@ describe('literal enum settings', () => {
     if (option === undefined) throw new Error(`The declared enum value has no choice: ${value}`)
     fireEvent.click(option)
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
-    await waitFor(() => expect(onUpdateSetting).toHaveBeenCalledWith('shell.mode', value))
-    expect(onUnsetSetting).not.toHaveBeenCalled()
+    await waitFor(() =>
+      expect(onMutateSettings).toHaveBeenCalledWith('shell', [{ op: 'set', path: ['mode'], value }], 1),
+    )
   })
 })

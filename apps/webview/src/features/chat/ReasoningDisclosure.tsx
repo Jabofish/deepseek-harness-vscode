@@ -7,6 +7,8 @@ export interface ReasoningDisclosureProps {
   readonly id: string
   readonly markdown: string
   readonly streaming: boolean
+  /** Compact transcript mode hides settled previews while keeping details inspectable. */
+  readonly hideSettledPreview?: boolean
   readonly expanded: boolean
   readonly onExpandedChange: (expanded: boolean) => void
   readonly translate: Translate
@@ -26,6 +28,7 @@ export const ReasoningDisclosure = memo(function ReasoningDisclosure(
   const preview = latestReasoningLines(content)
   const contentId = `${props.id}:content`
   const showPreview = props.expanded || (props.streaming && preview !== '')
+  const showCollapsedPreview = preview !== '' && (!props.hideSettledPreview || props.streaming)
   const toggle = (): void => props.onExpandedChange(!props.expanded)
 
   return (
@@ -52,7 +55,7 @@ export const ReasoningDisclosure = memo(function ReasoningDisclosure(
         </span>
         <span className="dsh-timeline__reasoning-heading">
           <strong>{props.translate('timeline.thinking')}</strong>
-          {!props.expanded && preview !== '' ? (
+          {!props.expanded && showCollapsedPreview ? (
             <ContentFlow as="span" variant="truncate" className="dsh-timeline__reasoning-summary">
               {preview.replace(/\s+/gu, ' ')}
             </ContentFlow>

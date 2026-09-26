@@ -481,3 +481,82 @@ it('requires explicit acknowledgement before selecting experimental Auto permiss
   expect(onCommand).toHaveBeenCalledExactlyOnceWith('/permission auto')
   cleanup()
 })
+
+describe('permission catalog lifecycle', () => {
+  afterEach(() => cleanup())
+
+  it('keeps a withdrawn current Auto permission visible but prevents selecting it again', () => {
+    const onCommand = vi.fn()
+    const seat = {
+      configuration: { ...configuration({ providerId: '', modelId: '' }), permissionPreset: 'auto' },
+      models: [],
+      presets: [],
+      disabled: false,
+      presetMutable: true,
+      onChange: vi.fn(),
+      onCommand,
+    } as const
+    const { rerender } = render(
+      <I18nProvider>
+        <SessionControls {...seat} permissionPresets={['workspace-write', 'auto']} />
+      </I18nProvider>,
+    )
+
+    // Auto is removed by the upstream integration while it is this Session's
+    // durable current value. The label is retained, but the roster is authoritative.
+    rerender(
+      <I18nProvider>
+        <SessionControls {...seat} permissionPresets={['workspace-write']} />
+      </I18nProvider>,
+    )
+    expect(screen.getByRole('button', { name: 'Access: Auto · EXP' })).toBeDefined()
+    fireEvent.click(screen.getByRole('button', { name: 'Access: Auto · EXP' }))
+    const withdrawnAuto = screen.getByRole<HTMLButtonElement>('option', { name: 'Auto · EXP' })
+    expect(withdrawnAuto.disabled).toBe(true)
+    fireEvent.click(withdrawnAuto)
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+    expect(onCommand).not.toHaveBeenCalled()
+    cleanup()
+  })
+
+  it('cancels Auto risk acknowledgement when the catalog withdraws and restores Auto', () => {
+    const onCommand = vi.fn()
+    const seat = {
+      configuration: configuration({ providerId: '', modelId: '' }),
+      models: [],
+      presets: [],
+      disabled: false,
+      presetMutable: true,
+      onChange: vi.fn(),
+      onCommand,
+    } as const
+    const { rerender } = render(
+      <I18nProvider>
+        <SessionControls {...seat} permissionPresets={['workspace-write', 'auto']} />
+      </I18nProvider>,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Access: Workspace Write' }))
+    fireEvent.click(screen.getByRole('option', { name: 'Auto · EXP' }))
+    fireEvent.click(screen.getByRole('checkbox'))
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Enable Auto' }).disabled).toBe(false)
+
+    rerender(
+      <I18nProvider>
+        <SessionControls {...seat} permissionPresets={['workspace-write']} />
+      </I18nProvider>,
+    )
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+    rerender(
+      <I18nProvider>
+        <SessionControls {...seat} permissionPresets={['workspace-write', 'auto']} />
+      </I18nProvider>,
+    )
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Access: Workspace Write' }))
+    fireEvent.click(screen.getByRole('option', { name: 'Auto · EXP' }))
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Enable Auto' }).disabled).toBe(true)
+    expect(onCommand).not.toHaveBeenCalled()
+    cleanup()
+  })
+})

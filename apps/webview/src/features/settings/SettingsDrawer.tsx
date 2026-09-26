@@ -15,6 +15,7 @@ import type {
   ModelProvider,
   PluginInstallProgressView,
   PluginInventorySnapshot,
+  SettingsPathOperation,
 } from '@dsh-vscode/domain'
 import type { FeatureRequest } from '@dsh-vscode/webview-protocol'
 import type {
@@ -84,8 +85,13 @@ export interface SettingsDrawerProps {
   readonly onLoadDshSettings: () => Promise<DshSettingsSnapshot | undefined>
   readonly onOpenDshSettingsDocument: () => Promise<void>
   readonly onOpenKeyboardShortcuts: () => Promise<void>
-  readonly onUpdateDshSetting: (path: string, value: unknown) => Promise<void>
-  readonly onUnsetDshSetting: (path: string) => Promise<void>
+  readonly onUpdateDshSetting: (path: string, value: unknown, expectedRevision: number) => Promise<void>
+  readonly onUnsetDshSetting: (path: string, expectedRevision: number) => Promise<void>
+  readonly onMutateDshSettings: (
+    namespace: string,
+    operations: readonly SettingsPathOperation[],
+    expectedRevision: number,
+  ) => Promise<void>
   readonly onCreateCustomProvider: (draft: CustomProviderDraft) => Promise<CustomProviderCreateResult>
   readonly onDiscoverModels: (
     input: Omit<ModelDiscoveryInput, 'apiKey'>,
@@ -135,10 +141,19 @@ export interface SettingsDrawerProps {
 }
 
 type SettingsTab = 'general' | 'models' | 'presets' | 'plugins'
+type SettingsTabOrientation = 'horizontal' | 'vertical'
 type ConnectionChoice = 'auto' | 'custom'
 
 const SETTINGS_TABS: readonly SettingsTab[] = ['general', 'models', 'presets', 'plugins']
 const LOCALE_OPTIONS: readonly Locale[] = ['en', 'zh']
+
+function settingsTabOrientation(): SettingsTabOrientation {
+  return typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(max-width: 52rem)').matches
+    ? 'horizontal'
+    : 'vertical'
+}
 
 interface LoadedSettings {
   readonly value: ExtensionSettingsSummary | undefined
@@ -202,6 +217,7 @@ function isRiskValue(value: string): boolean {
 export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
   const { t } = useI18n()
   const { onLoadAccountDetails, onAcknowledgeAccountBonus, onOpenAccountPage } = props
+  const [tabOrientation, setTabOrientation] = useState<SettingsTabOrientation>(settingsTabOrientation)
   const refreshAccountDetails = useCallback((): void => {
     void onLoadAccountDetails?.()
   }, [onLoadAccountDetails])
@@ -227,6 +243,8 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
   const [tab, setTab] = useState<SettingsTab>('general')
   const [settingsState, setSettingsState] = useState<LoadedSettings | undefined>(undefined)
   const [dshState, setDshState] = useState<DshSettingsState>({ status: 'loading' })
+  const [dshSettingsSnapshotFresh, setDshSettingsSnapshotFresh] = useState(false)
+  const dshSettingsOpenedRef = useRef(false)
   const dshUiPreferences = dshState.status === 'ready' ? readDshUiPreferences(dshState.snapshot) : undefined
   const [savingPath, setSavingPath] = useState<string | undefined>(undefined)
   const [saveError, setSaveError] = useState<string | undefined>(undefined)
@@ -249,6 +267,35 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
   const [connectionError, setConnectionError] = useState<string | undefined>(undefined)
   const [connectionNotice, setConnectionNotice] = useState<string | undefined>(undefined)
   const closeRef = useRef<HTMLButtonElement>(null)
+
+  const retryDshSettings = (): void => {
+    void onLoadDshSettings()
+      .then((snapshot) => {
+        if (snapshot === undefined) {
+          if (dshState.status !== 'ready') setDshState({ status: 'unavailable' })
+          setDshSettingsSnapshotFresh(false)
+          return
+        }
+        setDshState({ status: 'ready', snapshot })
+        setDshSettingsSnapshotFresh(true)
+        setSaveError(undefined)
+      })
+      .catch(() => {
+        if (dshState.status !== 'ready') setDshState({ status: 'unavailable' })
+        setDshSettingsSnapshotFresh(false)
+      })
+  }
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return
+    const query = window.matchMedia('(max-width: 52rem)')
+    const updateOrientation = (event: MediaQueryListEvent): void => {
+      setTabOrientation(event.matches ? 'horizontal' : 'vertical')
+    }
+    query.addEventListener('change', updateOrientation)
+    return () => query.removeEventListener('change', updateOrientation)
+  }, [])
+
   /** The provider row's control takes the keyboard back from its confirmation. */
   const removeProviderTriggerRef = useRef<HTMLElement | null>(null)
   const removeProviderWasOpen = useRef(false)
@@ -270,7 +317,11 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
     // the load effect would pull the keyboard back to the close button while
     // the user is already working in a field.
     if (!open) return
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null
     closeRef.current?.focus()
+    return () => {
+      if (previouslyFocused?.isConnected) previouslyFocused.focus()
+    }
   }, [open])
 
   useEffect(() => {
@@ -294,7 +345,14 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
   }, [open, onLoadSettings, settingsState])
 
   useEffect(() => {
-    if (!open || dshState.status !== 'loading') return
+    if (!open) {
+      dshSettingsOpenedRef.current = false
+      return
+    }
+    const opened = !dshSettingsOpenedRef.current
+    dshSettingsOpenedRef.current = true
+    if (!opened && dshState.status !== 'loading') return
+    const hadSnapshot = dshState.status === 'ready'
     let cancelled = false
     void onLoadDshSettings()
       .catch(() => undefined)
@@ -306,7 +364,13 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
             const preferences = readDshUiPreferences(snapshot)
             if (preferences.theme !== undefined) onThemeChange(preferences.theme)
           }
-          setDshState(snapshot === undefined ? { status: 'unavailable' } : { status: 'ready', snapshot })
+          if (snapshot !== undefined) {
+            setDshState({ status: 'ready', snapshot })
+            setDshSettingsSnapshotFresh(true)
+          } else if (!hadSnapshot) {
+            setDshState({ status: 'unavailable' })
+            setDshSettingsSnapshotFresh(false)
+          } else setDshSettingsSnapshotFresh(false)
         }
       })
     return () => {
@@ -326,7 +390,17 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
 
   const saveSetting = (path: string, value: unknown): void => {
     if (savingPath !== undefined) return
-    if (dshState.status !== 'ready' || !isValidGeneralSettingChange(dshState.snapshot, path, value)) return
+    if (
+      dshState.status !== 'ready' ||
+      !dshSettingsSnapshotFresh ||
+      !isValidGeneralSettingChange(dshState.snapshot, path, value)
+    )
+      return
+    const expectedRevision = settingsNamespaceRevision(dshState.snapshot, namespaceInPath(path))
+    if (expectedRevision === undefined) {
+      setSaveError(t('settings.updateFailed'))
+      return
+    }
     const themeValue = path === 'ui-theme.preference' && isThemePreference(value) ? value : undefined
     const previousTheme = props.theme
     setSaveError(undefined)
@@ -334,27 +408,65 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
     setRiskAcknowledged(false)
     setSavingPath(path)
     if (themeValue !== undefined) props.onThemeChange(themeValue)
-    void onUpdateDshSetting(path, value)
-      .catch((reason: unknown) => {
+    void (async () => {
+      let accepted = false
+      try {
+        await onUpdateDshSetting(path, value, expectedRevision)
+        accepted = true
+      } catch (reason: unknown) {
         if (themeValue !== undefined) props.onThemeChange(previousTheme)
         setSaveError(reason instanceof Error ? reason.message : t('settings.updateFailed'))
-        return undefined
-      })
-      .then(() =>
-        // Reload either way: a revision conflict must surface the host's
-        // authoritative value instead of the stale local pick.
-        onLoadDshSettings()
-          .catch(() => undefined)
-          .then((snapshot) => {
-            if (snapshot !== undefined) {
-              setDshState({ status: 'ready', snapshot })
-              const preferences = readDshUiPreferences(snapshot)
-              if (themeValue !== undefined && preferences.theme !== undefined)
-                onThemeChange(preferences.theme)
-            }
-          }),
-      )
-      .finally(() => setSavingPath(undefined))
+      }
+
+      // A conflict or transport failure must reload authoritative state. A
+      // successful write is already committed, so keep its selected value
+      // visible if this read fails, while disabling every CAS write until a
+      // fresh namespace revision is available.
+      const snapshot = await onLoadDshSettings().catch(() => undefined)
+      if (snapshot !== undefined) {
+        setDshState({ status: 'ready', snapshot })
+        setDshSettingsSnapshotFresh(true)
+        const preferences = readDshUiPreferences(snapshot)
+        if (themeValue !== undefined && preferences.theme !== undefined) onThemeChange(preferences.theme)
+      } else if (accepted) {
+        setDshState((current) =>
+          current.status === 'ready'
+            ? { status: 'ready', snapshot: withSettingValue(current.snapshot, path, value) }
+            : current,
+        )
+        setDshSettingsSnapshotFresh(false)
+      } else {
+        setDshState({ status: 'unavailable' })
+        setDshSettingsSnapshotFresh(false)
+      }
+    })().finally(() => setSavingPath(undefined))
+  }
+
+  const updateDisplayedSetting = async (path: string, value: unknown): Promise<void> => {
+    if (dshState.status !== 'ready' || !dshSettingsSnapshotFresh) throw new Error(t('settings.updateFailed'))
+    const expectedRevision = settingsNamespaceRevision(dshState.snapshot, namespaceInPath(path))
+    if (expectedRevision === undefined) throw new Error(t('settings.updateFailed'))
+    try {
+      await props.onUpdateDshSetting(path, value, expectedRevision)
+    } catch (reason: unknown) {
+      const snapshot = await onLoadDshSettings().catch(() => undefined)
+      if (snapshot === undefined) {
+        setDshState({ status: 'unavailable' })
+        setDshSettingsSnapshotFresh(false)
+      } else {
+        setDshState({ status: 'ready', snapshot })
+        setDshSettingsSnapshotFresh(true)
+      }
+      throw reason
+    }
+    const snapshot = await onLoadDshSettings().catch(() => undefined)
+    if (snapshot === undefined) {
+      setDshState({ status: 'unavailable' })
+      setDshSettingsSnapshotFresh(false)
+      return
+    }
+    setDshState({ status: 'ready', snapshot })
+    setDshSettingsSnapshotFresh(true)
   }
 
   const applyConnection = (): void => {
@@ -494,35 +606,74 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
   const saveProviderChanges = async (
     provider: ModelProvider,
     changes: readonly ProviderSettingChange[],
+    expectedRevision: number,
     ensureProvider = false,
   ): Promise<void> => {
-    if (busyField !== undefined) throw new Error(t('settings.updateFailed'))
+    if (busyField !== undefined || !dshSettingsSnapshotFresh) throw new Error(t('settings.updateFailed'))
+    const namespace = provider.settingsNs?.trim()
+    if (namespace === undefined || namespace === '') throw new Error(t('settings.updateFailed'))
+    const operations =
+      changes.length === 0 && ensureProvider
+        ? (() => {
+            const relativePath = provider.settingsPath ?? []
+            return relativePath.length === 0 || relativePath.some((part) => part.trim() === '')
+              ? undefined
+              : [{ op: 'set' as const, path: relativePath, value: {} }]
+          })()
+        : providerSettingOperations(provider, changes)
+    if (operations === undefined || (operations.length === 0 && ensureProvider))
+      throw new Error(t('settings.updateFailed'))
+    if (operations.length === 0) return
     setSaveError(undefined)
     setBusyField(`provider:${provider.id}`)
     try {
-      if (changes.length === 0 && ensureProvider) {
-        const path = providerSettingsPath(provider)
-        if (path === undefined) throw new Error(t('settings.updateFailed'))
-        await onUpdateDshSetting(path, {})
-      } else {
-        for (const change of changes) {
-          if (change.kind === 'set') await onUpdateDshSetting(change.path, change.value)
-          else await props.onUnsetDshSetting(change.path)
+      try {
+        await props.onMutateDshSettings(namespace, operations, expectedRevision)
+      } catch (reason: unknown) {
+        const snapshot = await onLoadDshSettings().catch(() => undefined)
+        setDshState(snapshot === undefined ? { status: 'unavailable' } : { status: 'ready', snapshot })
+        setDshSettingsSnapshotFresh(snapshot !== undefined)
+        const latestRevision =
+          snapshot === undefined ? undefined : settingsNamespaceRevision(snapshot, namespace)
+        if (
+          isSettingsConflict(reason) ||
+          snapshot === undefined ||
+          latestRevision !== expectedRevision ||
+          !isKnownRejectedSettingsWrite(reason)
+        ) {
+          setEditingProviderId(undefined)
+          if (ensureProvider) setAddingProviderId(undefined)
         }
+        setSaveError(reason instanceof Error ? reason.message : t('settings.updateFailed'))
+        throw reason
       }
-      const snapshot = await onLoadDshSettings()
-      if (snapshot !== undefined) setDshState({ status: 'ready', snapshot })
-      await props.onRefreshCatalog()
-    } catch (reason: unknown) {
-      setSaveError(reason instanceof Error ? reason.message : t('settings.updateFailed'))
-      throw reason
+      const snapshot = await onLoadDshSettings().catch(() => undefined)
+      if (snapshot === undefined) {
+        setDshState({ status: 'unavailable' })
+        setDshSettingsSnapshotFresh(false)
+        setEditingProviderId(undefined)
+        if (ensureProvider) setAddingProviderId(undefined)
+        return
+      }
+      setDshState({ status: 'ready', snapshot })
+      setDshSettingsSnapshotFresh(true)
+      try {
+        await props.onRefreshCatalog()
+      } catch (reason: unknown) {
+        // The profile mutation has committed. Keep the editor closed so a
+        // catalog refresh failure cannot invite a duplicate write at its old
+        // revision.
+        setEditingProviderId(undefined)
+        if (ensureProvider) setAddingProviderId(undefined)
+        setSaveError(reason instanceof Error ? reason.message : t('settings.updateFailed'))
+      }
     } finally {
       setBusyField(undefined)
     }
   }
 
   const saveCustomProvider = async (draft: CustomProviderDraft): Promise<CustomProviderCreateResult> => {
-    if (busyField !== undefined) throw new Error(t('settings.updateFailed'))
+    if (busyField !== undefined || !dshSettingsSnapshotFresh) throw new Error(t('settings.updateFailed'))
     setSaveError(undefined)
     const path = [draft.settingsNamespace, ...draft.collectionPath, draft.providerId].join('.')
     setBusyField(`provider:${path}`)
@@ -534,7 +685,15 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
       // the user to repeat a profile write with a stale revision.
       try {
         const snapshot = await onLoadDshSettings()
-        if (snapshot !== undefined) setDshState({ status: 'ready', snapshot })
+        if (snapshot !== undefined) {
+          setDshState({ status: 'ready', snapshot })
+          setDshSettingsSnapshotFresh(true)
+        } else {
+          setDshState({ status: 'unavailable' })
+          setDshSettingsSnapshotFresh(false)
+          setAddingCustomProvider(false)
+          return result
+        }
         await props.onRefreshCatalog()
       } catch (reason: unknown) {
         setSaveError(reason instanceof Error ? reason.message : t('settings.updateFailed'))
@@ -556,7 +715,13 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
       const configured = await props.onConfigureSecret(providerId, field)
       if (configured) {
         const snapshot = await onLoadDshSettings()
-        if (snapshot !== undefined) setDshState({ status: 'ready', snapshot })
+        if (snapshot !== undefined) {
+          setDshState({ status: 'ready', snapshot })
+          setDshSettingsSnapshotFresh(true)
+        } else {
+          setDshState({ status: 'unavailable' })
+          setDshSettingsSnapshotFresh(false)
+        }
         await props.onRefreshCatalog()
       }
       return configured
@@ -569,22 +734,52 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
   }
 
   const removeProvider = async (provider: ModelProvider): Promise<void> => {
-    if (busyField !== undefined || provider.settingsNs === undefined || provider.settingsPath === undefined)
+    if (
+      busyField !== undefined ||
+      !dshSettingsSnapshotFresh ||
+      provider.settingsNs === undefined ||
+      provider.settingsPath === undefined
+    )
       return
     setSaveError(undefined)
     setBusyField(`remove-provider:${provider.id}`)
     try {
+      const expectedRevision =
+        dshState.status === 'ready' && dshSettingsSnapshotFresh && provider.settingsNs !== undefined
+          ? settingsNamespaceRevision(dshState.snapshot, provider.settingsNs)
+          : undefined
+      if (expectedRevision === undefined) throw new Error(t('settings.updateFailed'))
+      // Commit the CAS protected profile removal before cleaning its secrets.
+      // A conflict must not delete credentials while leaving the profile in
+      // place. Credential cleanup remains Host-owned and never exposes a key.
+      await props.onUnsetDshSetting(
+        [provider.settingsNs, ...provider.settingsPath].join('.'),
+        expectedRevision,
+      )
+      setRemovingProviderId(undefined)
+      setEditingProviderId(undefined)
       for (const field of provider.fields) {
         if (!field.secret || field.value === undefined || field.writable === false) continue
         await props.onRemoveSecret(provider.id, field.key)
       }
-      await props.onUnsetDshSetting([provider.settingsNs, ...provider.settingsPath].join('.'))
-      setRemovingProviderId(undefined)
-      setEditingProviderId(undefined)
       const snapshot = await onLoadDshSettings()
-      if (snapshot !== undefined) setDshState({ status: 'ready', snapshot })
-      await props.onRefreshCatalog()
+      if (snapshot === undefined) {
+        setDshState({ status: 'unavailable' })
+        setDshSettingsSnapshotFresh(false)
+        return
+      }
+      setDshState({ status: 'ready', snapshot })
+      setDshSettingsSnapshotFresh(true)
+      try {
+        await props.onRefreshCatalog()
+      } catch (reason: unknown) {
+        setSaveError(reason instanceof Error ? reason.message : t('settings.updateFailed'))
+      }
     } catch (reason: unknown) {
+      const snapshot = await onLoadDshSettings().catch(() => undefined)
+      setDshState(snapshot === undefined ? { status: 'unavailable' } : { status: 'ready', snapshot })
+      setDshSettingsSnapshotFresh(snapshot !== undefined)
+      if (isSettingsConflict(reason)) setRemovingProviderId(undefined)
       setSaveError(reason instanceof Error ? reason.message : t('settings.updateFailed'))
     } finally {
       setBusyField(undefined)
@@ -608,6 +803,12 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
       : dshState.status === 'unavailable'
         ? props.providers
         : []
+  const orderedProviderRows = providerRows
+    .filter(
+      (provider) =>
+        provider.id !== 'deepseek-account' || (modelsByProvider.get(provider.id)?.length ?? 0) > 0,
+    )
+    .sort((left, right) => providerRowOrder(left) - providerRowOrder(right))
   const pendingProvider =
     removingProviderId === undefined
       ? undefined
@@ -636,7 +837,12 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
           </button>
         </header>
         <div className="dsh-settings__layout">
-          <nav className="dsh-settings__tabs" role="tablist" aria-label={t('settings.sections')}>
+          <nav
+            className="dsh-settings__tabs"
+            role="tablist"
+            aria-label={t('settings.sections')}
+            aria-orientation={tabOrientation}
+          >
             {SETTINGS_TABS.map((entry) => (
               <button
                 key={entry}
@@ -645,9 +851,31 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                 type="button"
                 role="tab"
                 aria-selected={tab === entry}
-                aria-controls={`dsh-settings-panel-${entry}`}
+                aria-controls={tab === entry ? `dsh-settings-panel-${entry}` : undefined}
                 tabIndex={tab === entry ? 0 : -1}
                 onClick={() => setTab(entry)}
+                onKeyDown={(event) => {
+                  const index = SETTINGS_TABS.indexOf(entry)
+                  let next: SettingsTab | undefined
+                  if (event.key === 'Home') next = SETTINGS_TABS[0]
+                  else if (event.key === 'End') next = SETTINGS_TABS[SETTINGS_TABS.length - 1]
+                  else if (
+                    (tabOrientation === 'horizontal' && event.key === 'ArrowRight') ||
+                    (tabOrientation === 'vertical' && event.key === 'ArrowDown')
+                  )
+                    next = SETTINGS_TABS[(index + 1) % SETTINGS_TABS.length]
+                  else if (
+                    (tabOrientation === 'horizontal' && event.key === 'ArrowLeft') ||
+                    (tabOrientation === 'vertical' && event.key === 'ArrowUp')
+                  )
+                    next = SETTINGS_TABS[(index + SETTINGS_TABS.length - 1) % SETTINGS_TABS.length]
+                  else return
+
+                  event.preventDefault()
+                  if (next === undefined) return
+                  setTab(next)
+                  document.getElementById(`dsh-settings-tab-${next}`)?.focus()
+                }}
               >
                 {t(`settings.${entry}`)}
               </button>
@@ -1018,7 +1246,7 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                       <button
                         className="dsh-button dsh-button--secondary dsh-button--compact"
                         type="button"
-                        onClick={() => setDshState({ status: 'loading' })}
+                        onClick={retryDshSettings}
                       >
                         {t('runtime.retry')}
                       </button>
@@ -1029,6 +1257,18 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                         <p className="dsh-settings__empty" role="status">
                           {t('settings.readOnly')}
                         </p>
+                      ) : null}
+                      {!dshSettingsSnapshotFresh ? (
+                        <div className="dsh-settings__empty" role="status">
+                          <p>{t('settings.revisionRefreshRequired')}</p>
+                          <button
+                            className="dsh-button dsh-button--secondary dsh-button--compact"
+                            type="button"
+                            onClick={retryDshSettings}
+                          >
+                            {t('runtime.retry')}
+                          </button>
+                        </div>
                       ) : null}
                       <ul className="dsh-settings__rows">
                         {GENERAL_SETTING_ROWS.map((row) => (
@@ -1045,7 +1285,11 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                             writable={dshState.snapshot.schema.writable}
                             selectedValue={row.path === 'ui-theme.preference' ? props.theme : undefined}
                             saving={savingPath === row.path}
-                            disabled={!dshState.snapshot.schema.writable || savingPath !== undefined}
+                            disabled={
+                              !dshState.snapshot.schema.writable ||
+                              savingPath !== undefined ||
+                              !dshSettingsSnapshotFresh
+                            }
                             riskPending={riskPending?.path === row.path ? riskPending : undefined}
                             riskAcknowledged={riskAcknowledged}
                             onPick={(value) => {
@@ -1072,6 +1316,7 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                         dshState.snapshot,
                         dshUiPreferences?.codingToolsEnabled,
                         savingPath,
+                        dshSettingsSnapshotFresh,
                         (value) => saveSetting(DSH_UI_SETTING_PATHS.codingTools, value),
                         t,
                       )}
@@ -1098,6 +1343,7 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                         dshUiPreferences?.fontSize,
                         props.conversationFontSize,
                         savingPath,
+                        dshSettingsSnapshotFresh,
                         saveError,
                         (value) => saveSetting(DSH_UI_SETTING_PATHS.fontSize, value),
                         props.onConversationFontSizeChange,
@@ -1158,8 +1404,10 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                 <div className="dsh-settings__toolbar">
                   <span className="dsh-settings__summary">
                     {t(
-                      providerRows.length === 1 ? 'settings.providerCount' : 'settings.providerCountPlural',
-                      { count: providerRows.length },
+                      orderedProviderRows.length === 1
+                        ? 'settings.providerCount'
+                        : 'settings.providerCountPlural',
+                      { count: orderedProviderRows.length },
                     )}{' '}
                     ·{' '}
                     {t(props.models.length === 1 ? 'settings.modelCount' : 'settings.modelCountPlural', {
@@ -1196,15 +1444,20 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                   <p className="dsh-settings__empty" role="status">
                     {t('settings.loadingDsh')}
                   </p>
-                ) : providerRows.length === 0 ? (
+                ) : orderedProviderRows.length === 0 ? (
                   <p className="dsh-settings__empty">{t('settings.noProviders')}</p>
                 ) : (
                   <ul className="dsh-settings__providers">
-                    {providerRows.map((provider) => {
+                    {orderedProviderRows.map((provider) => {
                       const providerModels = modelsByProvider.get(provider.id) ?? []
+                      const providerName =
+                        provider.settingsNs === 'llm-deepseek-account'
+                          ? t('settings.deepseekAccount')
+                          : provider.name
                       const secretFields = provider.fields.filter((field) => field.secret)
                       const editable =
                         dshState.status === 'ready' &&
+                        dshSettingsSnapshotFresh &&
                         provider.settingsNs !== undefined &&
                         provider.settingsNs.trim() !== ''
                       const isEditing = editingProviderId === provider.id
@@ -1212,7 +1465,7 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                         <li className="dsh-settings__provider" key={provider.id}>
                           <div className="dsh-settings__provider-head">
                             <div className="dsh-settings__provider-identity">
-                              <strong title={provider.id}>{provider.name}</strong>
+                              <strong title={provider.id}>{providerName}</strong>
                               {provider.id === provider.name ? null : <code>{provider.id}</code>}
                               <span className="dsh-settings__provider-kind">{provider.kind}</span>
                               {provider.active === true ? (
@@ -1229,7 +1482,9 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                                 <button
                                   className="dsh-button dsh-button--secondary dsh-button--compact"
                                   type="button"
-                                  disabled={busyField !== undefined && !isEditing}
+                                  disabled={
+                                    !dshSettingsSnapshotFresh || (busyField !== undefined && !isEditing)
+                                  }
                                   onClick={() => {
                                     setSaveError(undefined)
                                     setAddingCustomProvider(false)
@@ -1244,7 +1499,7 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                                 <button
                                   className="dsh-button dsh-button--secondary dsh-button--compact dsh-settings__provider-remove"
                                   type="button"
-                                  disabled={busyField !== undefined}
+                                  disabled={busyField !== undefined || !dshSettingsSnapshotFresh}
                                   onClick={(event) => {
                                     removeProviderTriggerRef.current = event.currentTarget
                                     setSaveError(undefined)
@@ -1321,10 +1576,13 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                           {isEditing && dshState.status === 'ready' && provider.settingsNs !== undefined ? (
                             <ProviderSettingsEditor
                               provider={provider}
+                              catalogModels={providerModels}
                               settings={dshState.snapshot}
                               writable={dshState.snapshot.schema.writable}
                               saving={busyField === `provider:${provider.id}`}
-                              onSave={(changes) => saveProviderChanges(provider, changes)}
+                              onSave={(changes, expectedRevision) =>
+                                saveProviderChanges(provider, changes, expectedRevision)
+                              }
                               onDiscover={props.onDiscoverModels}
                               onClose={(changed) => {
                                 setEditingProviderId(undefined)
@@ -1346,6 +1604,7 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                         disabled={
                           busyField !== undefined ||
                           dshState.status !== 'ready' ||
+                          !dshSettingsSnapshotFresh ||
                           !dshState.snapshot.schema.writable ||
                           addableProviders.length === 0
                         }
@@ -1369,6 +1628,7 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                         disabled={
                           busyField !== undefined ||
                           dshState.status !== 'ready' ||
+                          !dshSettingsSnapshotFresh ||
                           !dshState.snapshot.schema.writable ||
                           !canAddCustomProvider
                         }
@@ -1421,7 +1681,9 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                           writable={dshState.snapshot.schema.writable}
                           saving={busyField === `provider:${addingProvider.id}`}
                           forceSave={(addingProvider.settingsPath?.length ?? 0) > 0}
-                          onSave={(changes) => saveProviderChanges(addingProvider, changes, true)}
+                          onSave={(changes, expectedRevision) =>
+                            saveProviderChanges(addingProvider, changes, expectedRevision, true)
+                          }
                           onDiscover={props.onDiscoverModels}
                           onClose={(changed) => {
                             setAddingProviderId(undefined)
@@ -1490,14 +1752,15 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
               >
                 <PresetManager
                   codingToolsEnabled={
-                    dshState.status !== 'ready'
-                      ? false
-                      : findDshSettingsField(dshState.snapshot, DSH_UI_SETTING_PATHS.codingTools)?.type ===
-                          'boolean'
-                        ? (dshUiPreferences?.codingToolsEnabled ?? true)
-                        : undefined
+                    dshState.status === 'ready' &&
+                    dshSettingsSnapshotFresh &&
+                    dshUiPreferences?.codingToolsEnabled === true
                   }
-                  defaultWritable={dshState.status === 'ready' && dshState.snapshot.schema.writable}
+                  defaultWritable={
+                    dshState.status === 'ready' &&
+                    dshSettingsSnapshotFresh &&
+                    dshState.snapshot.schema.writable
+                  }
                   onLoadRoster={() => props.onLoadPresetRoster()}
                   onReadDocument={(presetId) => props.onReadPresetDocument(presetId)}
                   onCopy={(from, presetId, name) => props.onCopyPreset(from, presetId, name)}
@@ -1507,7 +1770,7 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                     ? {}
                     : { onStartCreatorDraft: props.onStartCreatorDraft })}
                   onMakeDefault={(presetId, settingsPath) =>
-                    props.onUpdateDshSetting(settingsPath ?? 'agent-presets.default', presetId)
+                    updateDisplayedSetting(settingsPath ?? 'agent-presets.default', presetId)
                   }
                 />
               </div>
@@ -1520,14 +1783,27 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                 aria-label={t('settings.pluginsAria')}
               >
                 <PluginConfiguration
-                  snapshot={dshState.status === 'ready' ? dshState.snapshot : undefined}
+                  snapshot={
+                    dshState.status === 'ready' && dshSettingsSnapshotFresh ? dshState.snapshot : undefined
+                  }
                   onReload={async () => {
-                    const snapshot = await props.onLoadDshSettings()
-                    if (snapshot !== undefined) setDshState({ status: 'ready', snapshot })
-                    return snapshot
+                    try {
+                      const snapshot = await props.onLoadDshSettings()
+                      if (snapshot !== undefined) {
+                        setDshState({ status: 'ready', snapshot })
+                        setDshSettingsSnapshotFresh(true)
+                      } else {
+                        setDshState({ status: 'unavailable' })
+                        setDshSettingsSnapshotFresh(false)
+                      }
+                      return snapshot
+                    } catch (reason: unknown) {
+                      setDshState({ status: 'unavailable' })
+                      setDshSettingsSnapshotFresh(false)
+                      throw reason
+                    }
                   }}
-                  onUpdateSetting={props.onUpdateDshSetting}
-                  onUnsetSetting={props.onUnsetDshSetting}
+                  onMutateSettings={props.onMutateDshSettings}
                   onConfigureCredential={props.onConfigurePluginCredential}
                   onRemoveCredential={props.onRemovePluginCredential}
                 />
@@ -1692,6 +1968,12 @@ function isConfiguredProvider(provider: ModelProvider, settings: DshSettingsSnap
   )
 }
 
+function providerRowOrder(provider: ModelProvider): number {
+  if (provider.id === 'deepseek-account') return 0
+  if (provider.id === 'deepseek-official' || provider.settingsNs === 'llm-deepseek') return 1
+  return 2
+}
+
 function isAddableProvider(provider: ModelProvider, settings: DshSettingsSnapshot): boolean {
   if (provider.configurable === false || isConfiguredProvider(provider, settings)) return false
   const namespace = provider.settingsNs?.trim()
@@ -1708,18 +1990,55 @@ function isAddableProvider(provider: ModelProvider, settings: DshSettingsSnapsho
   )
 }
 
-function providerSettingsPath(provider: ModelProvider): string | undefined {
+function namespaceInPath(path: string): string {
+  return path.split('.', 1)[0] ?? ''
+}
+
+function settingsNamespaceRevision(snapshot: DshSettingsSnapshot, namespace: string): number | undefined {
+  return snapshot.schema.namespaces.find((entry) => entry.ns === namespace)?.revision
+}
+
+function providerSettingOperations(
+  provider: ModelProvider,
+  changes: readonly ProviderSettingChange[],
+): readonly SettingsPathOperation[] | undefined {
   const namespace = provider.settingsNs?.trim()
-  const settingsPath = provider.settingsPath
-  if (
-    namespace === undefined ||
-    namespace === '' ||
-    settingsPath === undefined ||
-    settingsPath.length === 0 ||
-    settingsPath.some((part) => part.trim() === '')
+  if (namespace === undefined || namespace === '') return undefined
+  const prefix = [namespace, ...(provider.settingsPath ?? [])]
+  const operations: SettingsPathOperation[] = []
+  for (const change of changes) {
+    const path = change.path.split('.')
+    if (
+      path.length <= prefix.length ||
+      !prefix.every((segment, index) => path[index] === segment) ||
+      path.some((segment) => segment.trim() === '')
+    )
+      return undefined
+    const relativePath = path.slice(prefix.length)
+    operations.push(
+      change.kind === 'set'
+        ? { op: 'set', path: relativePath, value: change.value }
+        : { op: 'unset', path: relativePath },
+    )
+  }
+  return operations
+}
+
+function isSettingsConflict(reason: unknown): boolean {
+  return (
+    typeof reason === 'object' && reason !== null && 'code' in reason && reason.code === 'SETTINGS_CONFLICT'
   )
-    return undefined
-  return [namespace, ...settingsPath].join('.')
+}
+
+function isKnownRejectedSettingsWrite(reason: unknown): boolean {
+  return (
+    typeof reason === 'object' &&
+    reason !== null &&
+    'code' in reason &&
+    (reason.code === 'INVALID_CONFIGURATION' ||
+      reason.code === 'PERMISSION_DENIED' ||
+      reason.code === 'CAPABILITY_UNAVAILABLE')
+  )
 }
 
 function isValidGeneralSettingChange(snapshot: DshSettingsSnapshot, path: string, value: unknown): boolean {
@@ -1738,6 +2057,7 @@ function renderCodingToolsSetting(
   snapshot: DshSettingsSnapshot,
   value: boolean | undefined,
   savingPath: string | undefined,
+  snapshotFresh: boolean,
   onChange: (value: boolean) => void,
   t: Translate,
 ): ReactElement | null {
@@ -1745,7 +2065,7 @@ function renderCodingToolsSetting(
   if (field?.type !== 'boolean' || !snapshot.schema.writable) return null
   const label = t('settings.codingTools.label')
   const saving = savingPath === DSH_UI_SETTING_PATHS.codingTools
-  const enabled = value ?? true
+  const enabled = value === true
   return (
     <SettingRow
       title={label}
@@ -1771,7 +2091,7 @@ function renderCodingToolsSetting(
           role="switch"
           aria-label={label}
           aria-checked={enabled}
-          disabled={!snapshot.schema.writable || savingPath !== undefined}
+          disabled={!snapshot.schema.writable || savingPath !== undefined || !snapshotFresh}
           onClick={() => onChange(!enabled)}
         >
           <span aria-hidden="true" />
@@ -1786,6 +2106,7 @@ function renderFontSizeControl(
   hostFontSize: number | undefined,
   localFontSize: ConversationFontSize,
   savingPath: string | undefined,
+  snapshotFresh: boolean,
   error: string | undefined,
   onHostChange: (value: number) => void,
   onLocalChange: (value: ConversationFontSize) => void,
@@ -1800,7 +2121,7 @@ function renderFontSizeControl(
       <FontSizeSettingControl
         key={`${hostFontSize ?? DEFAULT_CONVERSATION_FONT_SIZE_PX}:${error ?? ''}:${savingPath === DSH_UI_SETTING_PATHS.fontSize ? 'saving' : 'idle'}`}
         value={hostFontSize ?? DEFAULT_CONVERSATION_FONT_SIZE_PX}
-        disabled={!dshState.snapshot.schema.writable || savingPath !== undefined}
+        disabled={!dshState.snapshot.schema.writable || savingPath !== undefined || !snapshotFresh}
         saving={savingPath === DSH_UI_SETTING_PATHS.fontSize}
         error={error}
         onCommit={onHostChange}
@@ -2077,6 +2398,24 @@ function settingValueAt(values: Readonly<Record<string, unknown>>, path: string)
     cursor = record[part]
   }
   return cursor
+}
+
+function withSettingValue(snapshot: DshSettingsSnapshot, path: string, value: unknown): DshSettingsSnapshot {
+  const segments = path.split('.')
+  if (segments.length === 0 || segments.some((segment) => segment.trim() === '')) return snapshot
+  const update = (current: unknown, index: number): Record<string, unknown> => {
+    const record =
+      typeof current === 'object' && current !== null && !Array.isArray(current)
+        ? (current as Record<string, unknown>)
+        : {}
+    const key = segments[index]
+    if (key === undefined) return record
+    return {
+      ...record,
+      [key]: index === segments.length - 1 ? value : update(record[key], index + 1),
+    }
+  }
+  return { ...snapshot, values: update(snapshot.values, 0) }
 }
 
 function isLocale(value: unknown): value is Locale {

@@ -1093,6 +1093,40 @@ ul {
   align-items: flex-end;
 }
 
+.dsh-timeline__turn-usage {
+  max-width: 100%;
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-2xs);
+}
+
+.dsh-timeline__turn-usage > summary {
+  width: fit-content;
+  cursor: pointer;
+}
+
+.dsh-timeline__turn-usage > summary:focus-visible {
+  outline: 2px solid var(--dsh-focus-ring);
+  outline-offset: 2px;
+}
+
+.dsh-timeline__turn-usage dl {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--dsh-space-1) var(--dsh-space-3);
+  margin: var(--dsh-space-1) 0 0;
+}
+
+.dsh-timeline__turn-usage dl > div {
+  display: flex;
+  gap: var(--dsh-space-1);
+}
+
+.dsh-timeline__turn-usage dd {
+  margin: 0;
+  color: var(--dsh-text);
+  font-variant-numeric: tabular-nums;
+}
+
 .dsh-timeline__card,
 .dsh-timeline__event-group,
 .dsh-timeline__notice,

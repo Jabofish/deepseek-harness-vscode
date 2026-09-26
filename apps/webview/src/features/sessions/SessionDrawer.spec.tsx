@@ -2,7 +2,7 @@
 
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { SessionSummary, WorkspaceSummary } from '@dsh-vscode/domain'
+import type { SessionPage, SessionSummary, WorkspaceSummary } from '@dsh-vscode/domain'
 import { SessionDrawer } from './SessionDrawer.js'
 
 const workspaces: readonly WorkspaceSummary[] = [
@@ -44,7 +44,7 @@ const sessions: readonly SessionSummary[] = [
 function renderDrawer(
   overrides: Partial<Parameters<typeof SessionDrawer>[0]> = {},
 ): ReturnType<typeof render> {
-  const onSearch = vi.fn().mockResolvedValue([])
+  const onSearch = vi.fn().mockResolvedValue({ items: [] })
   const props = {
     sessions,
     workspaces,
@@ -168,6 +168,69 @@ describe('SessionDrawer', () => {
     expect(screen.getByText('Fix login bug', { exact: true })).toBeDefined()
   })
 
+  it('uses title-only search for archived conversations', async () => {
+    const onSearch = vi.fn().mockRejectedValue(new Error('content search is unavailable'))
+    renderDrawer({
+      archivedSessions: [
+        session({ id: 'old-chat', title: 'Archived chat', workspaceId: 'w1' }),
+        session({ id: 'old-report', title: 'Older report', workspaceId: 'w1' }),
+      ],
+      onSearch,
+    })
+
+    chooseArchiveFilter('archived')
+    fireEvent.change(screen.getByLabelText('Search sessions by title or content'), {
+      target: { value: 'report' },
+    })
+
+    expect(await screen.findByRole('button', { name: 'Restore session Older report' })).toBeDefined()
+    expect(screen.queryByRole('button', { name: 'Restore session Archived chat' })).toBeNull()
+    await new Promise((resolve) => window.setTimeout(resolve, 300))
+    expect(onSearch).not.toHaveBeenCalled()
+    expect(screen.queryByText('Content search is unavailable')).toBeNull()
+
+    fireEvent.change(screen.getByLabelText('Search sessions by title or content'), {
+      target: { value: 'missing' },
+    })
+    expect(await screen.findByText('No archived sessions.')).toBeDefined()
+    expect(onSearch).not.toHaveBeenCalled()
+  })
+
+  it('ignores in-flight content results while closed and searches again when reopened', async () => {
+    let resolveFirst!: (page: SessionPage) => void
+    let resolveSecond!: (page: SessionPage) => void
+    const firstSearch = new Promise<SessionPage>((resolve) => {
+      resolveFirst = resolve
+    })
+    const secondSearch = new Promise<SessionPage>((resolve) => {
+      resolveSecond = resolve
+    })
+    const onSearch = vi
+      .fn<(query: string) => Promise<SessionPage>>()
+      .mockReturnValueOnce(firstSearch)
+      .mockReturnValueOnce(secondSearch)
+    renderDrawer({ open: undefined, showTrigger: true, onSearch })
+
+    const trigger = screen.getByRole('button', { name: 'Switch session: Fix login bug' })
+    fireEvent.click(trigger)
+    fireEvent.change(screen.getByLabelText('Search sessions by title or content'), {
+      target: { value: 'note' },
+    })
+    await waitFor(() => expect(onSearch).toHaveBeenCalledExactlyOnceWith('note'))
+
+    fireEvent.click(trigger)
+    expect(screen.queryByLabelText('Search sessions by title or content')).toBeNull()
+    resolveFirst({ items: [sessions[2]!] })
+    await Promise.resolve()
+
+    fireEvent.click(trigger)
+    await waitFor(() => expect(onSearch).toHaveBeenCalledTimes(2))
+    expect(screen.queryByTitle('Other workspace note')).toBeNull()
+
+    resolveSecond({ items: [session({ id: 'fresh', title: 'Fresh note', workspaceId: 'w2' })] })
+    expect(await screen.findByTitle('Fresh note')).toBeDefined()
+  })
+
   it('prioritizes approval, plan review and answers over running indicators', () => {
     renderDrawer({
       sessions: sessions.map((entry) => ({ ...entry, workspaceId: 'w1', status: 'running' })),
@@ -201,7 +264,7 @@ describe('SessionDrawer', () => {
   })
 
   it('debounces host content search and surfaces other-workspace matches', async () => {
-    const onSearch = vi.fn().mockResolvedValue([sessions[2]])
+    const onSearch = vi.fn().mockResolvedValue({ items: [sessions[2]] })
     renderDrawer({ onSearch })
     fireEvent.change(screen.getByLabelText('Search sessions by title or content'), {
       target: { value: 'note' },
@@ -212,8 +275,58 @@ describe('SessionDrawer', () => {
     expect(screen.getByText('Content matches')).toBeDefined()
   })
 
+  it('surfaces host content matches when sessions are grouped by workspace', async () => {
+    const onSearch = vi.fn().mockResolvedValue({ items: [sessions[2]] })
+    renderDrawer({ onSearch })
+
+    fireEvent.click(screen.getByTitle('Show sessions grouped by workspace'))
+    fireEvent.change(screen.getByLabelText('Search sessions by title or content'), {
+      target: { value: 'phrase from conversation' },
+    })
+
+    await waitFor(() => expect(onSearch).toHaveBeenCalledWith('phrase from conversation'))
+    expect(await screen.findByTitle('Other workspace note')).toBeDefined()
+    expect(screen.getByText('Content matches')).toBeDefined()
+  })
+
+  it('surfaces the active session when only its content matches the query', async () => {
+    const onSearch = vi.fn().mockResolvedValue({ items: [sessions[0]] })
+    renderDrawer({ onSearch })
+    fireEvent.change(screen.getByLabelText('Search sessions by title or content'), {
+      target: { value: 'a word from its conversation' },
+    })
+
+    await waitFor(() => expect(onSearch).toHaveBeenCalledWith('a word from its conversation'))
+    expect(await screen.findByTitle('Fix login bug')).toBeDefined()
+    expect(screen.getByText('Content matches')).toBeDefined()
+  })
+
+  it('explains when the host search returned only its first 20 matches', async () => {
+    const onSearch = vi.fn().mockResolvedValue({ items: [sessions[2]], searchHasMore: true })
+    renderDrawer({ onSearch })
+    fireEvent.change(screen.getByLabelText('Search sessions by title or content'), {
+      target: { value: 'note' },
+    })
+
+    await waitFor(() => expect(onSearch).toHaveBeenCalledWith('note'))
+    expect(await screen.findByText(/Only the first 20 are shown/u)).toBeDefined()
+    expect(screen.getByTitle('Other workspace note')).toBeDefined()
+  })
+
+  it('does not show the bounded-search notice when the host reports a complete result window', async () => {
+    const onSearch = vi.fn().mockResolvedValue({ items: [sessions[2]], searchHasMore: false })
+    renderDrawer({ onSearch })
+    fireEvent.change(screen.getByLabelText('Search sessions by title or content'), {
+      target: { value: 'note' },
+    })
+
+    await waitFor(() => expect(onSearch).toHaveBeenCalledWith('note'))
+    await waitFor(() => expect(screen.getByTitle('Other workspace note')).toBeDefined())
+    expect(screen.queryByText(/Only the first 20 are shown/u)).toBeNull()
+  })
+
   it('keeps a pasted search query inside the session.search wire contract', async () => {
-    const onSearch = vi.fn().mockResolvedValue([])
+    const onSearch = vi.fn().mockResolvedValue({ items: [] })
     renderDrawer({ onSearch })
     const input = screen.getByLabelText('Search sessions by title or content')
 
@@ -346,7 +459,7 @@ describe('SessionDrawer', () => {
 
   it('scopes a rename conflict warning to the renamed session workspace', async () => {
     const peer = session({ id: 's4', title: 'Beta notes', workspaceId: 'w2' })
-    const onSearch = vi.fn().mockResolvedValue([sessions[2]!])
+    const onSearch = vi.fn().mockResolvedValue({ items: [sessions[2]!] })
     renderDrawer({ sessions: [...sessions, peer], onSearch })
 
     fireEvent.change(screen.getByLabelText('Search sessions by title or content'), {

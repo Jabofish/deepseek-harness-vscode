@@ -20,7 +20,15 @@ const bundle = {
   installed: true,
   optional: true,
   removable: true,
-  rows: [{ rowId: 'review', moduleName: '@dsh-community/review-layer/review', entryId: 'review:entry' }],
+  rows: [
+    { rowId: 'review', moduleName: '@dsh-community/review-layer/review', entryId: 'review:entry' },
+    {
+      rowId: 'help',
+      moduleName: '@dsh-community/review-layer/help',
+      entryId: 'help:entry',
+      meta: { title: { en: 'Help plugin' }, description: { en: 'Creates release notes.' } },
+    },
+  ],
   overrides: [],
 } as const
 
@@ -40,16 +48,36 @@ const standalonePlugin = {
   fiberPhase: null,
 } as const
 
+const helpPlugin = {
+  entryId: 'help:entry',
+  moduleName: '@dsh-community/review-layer/help',
+  meta: { title: { en: 'Help plugin' }, description: { en: 'Creates release notes.' } },
+  enabled: false,
+  fiberPhase: null,
+} as const
+
 const snapshot = {
   available: true,
   bundles: [bundle],
-  plugins: [plugin, standalonePlugin],
+  plugins: [plugin, helpPlugin, standalonePlugin],
 } as const
 
 const registries = {
   registry: 'https://registry.example.test/',
   fallbackRegistries: ['https://mirror.example.test/'],
   resolved: 'https://registry.example.test/',
+} as const
+
+const autoReviewName = '@deepseek-ai/dsh-experimental-auto-review'
+const autoReviewBundle = {
+  name: autoReviewName,
+  version: '0.1.7-rc.2',
+  enabled: false,
+  installed: false,
+  optional: true,
+  removable: false,
+  rows: [{ rowId: 'auto-review', moduleName: autoReviewName }],
+  overrides: [],
 } as const
 
 interface MountedManager {
@@ -170,6 +198,133 @@ describe('OptionalBundleManager', () => {
     expect(requests.map((request) => request.type)).toEqual(['plugin.bundles.list', 'plugin.registries.list'])
   })
 
+  it('filters the dynamic catalog case-insensitively by bundle name and metadata without dropping rows', async () => {
+    mountManager()
+    await screen.findByRole('heading', { name: 'DSH Plugin Manager' })
+    const search = screen.getByRole('searchbox', { name: 'Search plugins' })
+
+    fireEvent.change(search, { target: { value: '@DSH-COMMUNITY/REVIEW-LAYER' } })
+    fireEvent.click(await screen.findByRole('button', { name: /^Review layer/u }))
+    expect(screen.getByText('Review plugin')).toBeTruthy()
+    expect(screen.getByText('Help plugin')).toBeTruthy()
+    expect(screen.queryByText('Standalone plugin')).toBeNull()
+
+    fireEvent.change(search, { target: { value: 'proposed CHANGE' } })
+    expect(screen.getByText('Review layer')).toBeTruthy()
+    expect(screen.getByText('Review plugin')).toBeTruthy()
+    expect(screen.getByText('Help plugin')).toBeTruthy()
+  })
+
+  it('keeps only child entries matching an id or description and expands their bundle context', async () => {
+    mountManager()
+    await screen.findByRole('heading', { name: 'DSH Plugin Manager' })
+    const search = screen.getByRole('searchbox', { name: 'Search plugins' })
+
+    fireEvent.change(search, { target: { value: 'HELP:ENTRY' } })
+    const reviewBundle = await screen.findByRole('button', { name: /^Review layer/u })
+    expect(reviewBundle.getAttribute('aria-expanded')).toBe('true')
+    expect(screen.getByText('Help plugin')).toBeTruthy()
+    expect(screen.queryByText('Review plugin')).toBeNull()
+
+    fireEvent.change(search, { target: { value: 'RELEASE NOTES' } })
+    expect(screen.getByText('Help plugin')).toBeTruthy()
+    expect(screen.queryByText('Review plugin')).toBeNull()
+  })
+
+  it('filters standalone entries, reports no matches, and restores the full catalog when cleared', async () => {
+    const { requests } = mountManager()
+    await screen.findByRole('heading', { name: 'DSH Plugin Manager' })
+    const search = screen.getByRole('searchbox', { name: 'Search plugins' })
+
+    fireEvent.change(search, { target: { value: 'STANDALONE:ENTRY' } })
+    expect(await screen.findByText('Standalone plugin')).toBeTruthy()
+    expect(screen.queryByText('Review layer')).toBeNull()
+
+    fireEvent.change(search, { target: { value: 'does-not-match-any-dynamic-entry' } })
+    expect(await screen.findByText('No matching plugins.')).toBeTruthy()
+    expect(screen.queryByText('Standalone plugin')).toBeNull()
+
+    fireEvent.change(search, { target: { value: '' } })
+    expect(await screen.findByText('Review layer')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /^Other plugin entries/u }))
+    expect(screen.getByText('Standalone plugin')).toBeTruthy()
+    expect(requests.map((request) => request.type)).toEqual(['plugin.bundles.list', 'plugin.registries.list'])
+  })
+
+  it('keeps selection and install state while filtering without another DSH request', async () => {
+    let selected = false
+    let finishInstall: ((value: unknown) => void) | undefined
+    const { requests } = mountManager((request) => {
+      if (request.type === 'plugin.bundles.list')
+        return { kind: 'plugin.bundles', ...snapshot, bundles: [{ ...bundle, enabled: selected }] }
+      if (request.type === 'plugin.bundle.setEnabled') {
+        selected = request.payload.enabled
+        return {
+          kind: 'plugin.bundle.changed',
+          result: {
+            name: bundle.name,
+            changed: true,
+            application: 'applied',
+            enabled: selected,
+            stage: 'enable',
+          },
+        }
+      }
+      if (request.type === 'plugin.bundle.install')
+        return new Promise((resolve) => {
+          finishInstall = resolve
+        })
+      return defaultResponse(request)
+    })
+    await screen.findByRole('heading', { name: 'DSH Plugin Manager' })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Enable Review layer' }))
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Disable Review layer' }).getAttribute('aria-pressed')).toBe(
+        'true',
+      ),
+    )
+    const search = screen.getByRole('searchbox', { name: 'Search plugins' })
+    const requestsBeforeFiltering = requests.length
+    fireEvent.change(search, { target: { value: 'hide every bundle' } })
+    expect(await screen.findByText('No matching plugins.')).toBeTruthy()
+    fireEvent.change(search, { target: { value: '' } })
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Disable Review layer' }).getAttribute('aria-pressed')).toBe(
+        'true',
+      ),
+    )
+    expect(requests).toHaveLength(requestsBeforeFiltering)
+
+    fireEvent.change(screen.getByLabelText('Package name or supported package source'), {
+      target: { value: '@dsh-community/new-plugin' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Check package' }))
+    await screen.findByText('Package: @dsh-community/new-plugin · 2.0.0')
+    fireEvent.click(screen.getByRole('button', { name: 'Install' }))
+    await screen.findByText('Installing through DSH…')
+    const requestsBeforeInstallFilter = requests.length
+
+    fireEvent.change(search, { target: { value: 'hide every bundle' } })
+    expect(await screen.findByText('No matching plugins.')).toBeTruthy()
+    expect(screen.getByText('Installing through DSH…')).toBeTruthy()
+    fireEvent.change(search, { target: { value: '' } })
+    expect(await screen.findByText('Review layer')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Disable Review layer' }).getAttribute('aria-pressed')).toBe(
+      'true',
+    )
+    expect(screen.getByText('Installing through DSH…')).toBeTruthy()
+    expect(requests).toHaveLength(requestsBeforeInstallFilter)
+
+    act(() => {
+      finishInstall?.({
+        kind: 'plugin.bundle.changed',
+        result: { name: 'new-plugin', changed: true, application: 'applied', stage: 'install' },
+      })
+    })
+    expect(await screen.findByText('The plugin bundle was installed.')).toBeTruthy()
+  })
+
   it('rereads both live catalogs after the shared Plugin Manager revision changes', async () => {
     const requests: FeatureRequest[] = []
     const featureRequest: OptionalBundleManagerProps['featureRequest'] = <T,>(request: FeatureRequest) => {
@@ -201,7 +356,7 @@ describe('OptionalBundleManager', () => {
       target: { value: '@dsh-community/new-plugin' },
     })
     fireEvent.click(screen.getByLabelText('Package registry'))
-    fireEvent.click(screen.getByRole('option', { name: 'https://mirror.example.test/' }))
+    fireEvent.click(screen.getByRole('option', { name: 'mirror.example.test' }))
     fireEvent.click(screen.getByRole('button', { name: 'Check package' }))
     expect(await screen.findByText('Package: @dsh-community/new-plugin · 2.0.0')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Install' }).getAttribute('disabled')).toBeNull()
@@ -211,6 +366,211 @@ describe('OptionalBundleManager', () => {
         payload: { spec: '@dsh-community/new-plugin', registry: 'https://mirror.example.test/' },
       }),
     ])
+  })
+
+  it('names known registries, deduplicates normalized URLs, and keeps pnpm own settings distinct', async () => {
+    mountManager((request) => {
+      if (request.type === 'plugin.registries.list')
+        return {
+          kind: 'plugin.registries',
+          available: true,
+          registries: {
+            registry: 'https://REGISTRY.NPMJS.ORG',
+            fallbackRegistries: [
+              'https://registry.npmjs.org/',
+              'https://registry.npmmirror.com',
+              'https://registry.npmmirror.com/',
+              'https://npm.corp.example.test/repository/team',
+            ],
+            resolved: 'https://registry.npmjs.org/',
+          },
+        }
+      return defaultResponse(request)
+    })
+    await screen.findByRole('heading', { name: 'DSH Plugin Manager' })
+    fireEvent.click(screen.getByLabelText('Package registry'))
+
+    const options = screen.getAllByRole('option')
+    expect(options.map((option) => option.textContent)).toEqual([
+      'Official npm registry (registry.npmjs.org)',
+      'Mainland China mirror (registry.npmmirror.com)',
+      'npm.corp.example.test',
+      'Use DSH package manager settings (Official npm registry (registry.npmjs.org))',
+      'Use another registry…',
+    ])
+    expect(options).toHaveLength(5)
+    expect(options.some((option) => option.textContent?.includes('/repository/team'))).toBe(false)
+  })
+
+  it('offers a clean, focused spec field after a GitHub host network failure without changing the registry', async () => {
+    const spec = 'git+https://github.com/deepseek-ai/dsh-experimental-auto-review.git'
+    const { requests } = mountManager((request) => {
+      if (request.type === 'plugin.bundle.install')
+        return {
+          kind: 'plugin.bundle.changed',
+          result: {
+            name: spec,
+            changed: false,
+            application: 'failed',
+            failureKind: 'network',
+            failedAt: 'spec-host',
+            stage: 'install',
+          },
+        }
+      return defaultResponse(request)
+    })
+    await screen.findByRole('heading', { name: 'DSH Plugin Manager' })
+    const specInput = screen.getByLabelText<HTMLInputElement>('Package name or supported package source')
+    fireEvent.change(specInput, { target: { value: spec } })
+    fireEvent.click(screen.getByLabelText('Package registry'))
+    fireEvent.click(screen.getByRole('option', { name: 'mirror.example.test' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Check package' }))
+    await screen.findByText('Package: @dsh-community/new-plugin · 2.0.0')
+    fireEvent.click(screen.getByRole('button', { name: 'Install' }))
+    await screen.findByRole('button', { name: 'Try another way' })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Try another way' }))
+    await waitFor(() => expect(specInput.value).toBe(''))
+    expect(document.activeElement).toBe(specInput)
+    expect(
+      screen.getByRole('button', {
+        name: 'Package registry: mirror.example.test',
+      }),
+    ).toBeTruthy()
+    expect(screen.queryByText('The package source or registry could not be reached.')).toBeNull()
+    expect(requests.filter((request) => request.type === 'plugin.bundle.install')).toHaveLength(1)
+  })
+
+  it('does not offer the GitHub recovery action for a registry-attributed failure', async () => {
+    const spec = 'github:deepseek-ai/dsh-experimental-auto-review'
+    mountManager((request) => {
+      if (request.type === 'plugin.bundle.install')
+        return {
+          kind: 'plugin.bundle.changed',
+          result: {
+            name: spec,
+            changed: false,
+            application: 'failed',
+            failureKind: 'network',
+            failedAt: 'registry',
+            stage: 'install',
+          },
+        }
+      return defaultResponse(request)
+    })
+    await screen.findByRole('heading', { name: 'DSH Plugin Manager' })
+    fireEvent.change(screen.getByLabelText('Package name or supported package source'), {
+      target: { value: spec },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Check package' }))
+    await screen.findByText('Package: @dsh-community/new-plugin · 2.0.0')
+    fireEvent.click(screen.getByRole('button', { name: 'Install' }))
+    expect(await screen.findByText('The package source or registry could not be reached.')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Try another way' })).toBeNull()
+  })
+
+  it('retires a settled GitHub recovery action when the package source changes', async () => {
+    const spec = 'git+https://github.com/deepseek-ai/dsh-experimental-auto-review.git'
+    mountManager((request) => {
+      if (request.type === 'plugin.bundle.install')
+        return {
+          kind: 'plugin.bundle.changed',
+          result: {
+            name: spec,
+            changed: false,
+            application: 'failed',
+            failureKind: 'network',
+            failedAt: 'spec-host',
+            stage: 'install',
+          },
+        }
+      return defaultResponse(request)
+    })
+    await screen.findByRole('heading', { name: 'DSH Plugin Manager' })
+    const specInput = screen.getByLabelText<HTMLInputElement>('Package name or supported package source')
+    fireEvent.change(specInput, { target: { value: spec } })
+    fireEvent.click(screen.getByRole('button', { name: 'Check package' }))
+    await screen.findByText('Package: @dsh-community/new-plugin · 2.0.0')
+    fireEvent.click(screen.getByRole('button', { name: 'Install' }))
+    await screen.findByRole('button', { name: 'Try another way' })
+
+    fireEvent.change(specInput, { target: { value: '@dsh-community/new-install-source' } })
+    expect(specInput.value).toBe('@dsh-community/new-install-source')
+    expect(screen.queryByRole('button', { name: 'Try another way' })).toBeNull()
+    expect(screen.queryByText('The package source or registry could not be reached.')).toBeNull()
+  })
+
+  it('does not offer the GitHub recovery action for another source host', async () => {
+    const spec = 'git+https://gitlab.com/deepseek-ai/dsh-experimental-auto-review.git'
+    mountManager((request) => {
+      if (request.type === 'plugin.bundle.install')
+        return {
+          kind: 'plugin.bundle.changed',
+          result: {
+            name: spec,
+            changed: false,
+            application: 'failed',
+            failureKind: 'network',
+            failedAt: 'spec-host',
+            stage: 'install',
+          },
+        }
+      return defaultResponse(request)
+    })
+    await screen.findByRole('heading', { name: 'DSH Plugin Manager' })
+    fireEvent.change(screen.getByLabelText('Package name or supported package source'), {
+      target: { value: spec },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Check package' }))
+    await screen.findByText('Package: @dsh-community/new-plugin · 2.0.0')
+    fireEvent.click(screen.getByRole('button', { name: 'Install' }))
+    expect(await screen.findByText('The package source or registry could not be reached.')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Try another way' })).toBeNull()
+  })
+
+  it('enables the live RC2 Auto Review bundle through the generic bundle action', async () => {
+    let enabled = false
+    const { requests } = mountManager((request) => {
+      if (request.type === 'plugin.bundles.list')
+        return {
+          kind: 'plugin.bundles',
+          available: true,
+          bundles: [{ ...autoReviewBundle, enabled }],
+          plugins: [],
+        }
+      if (request.type === 'plugin.bundle.setEnabled') {
+        enabled = request.payload.enabled
+        return {
+          kind: 'plugin.bundle.changed',
+          result: {
+            name: request.payload.name,
+            changed: true,
+            application: 'applied',
+            enabled,
+            stage: 'enable',
+          },
+        }
+      }
+      return defaultResponse(request)
+    })
+    await screen.findByRole('heading', { name: 'DSH Plugin Manager' })
+    fireEvent.click(screen.getByRole('button', { name: `Enable ${autoReviewName}` }))
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: `Disable ${autoReviewName}` }).getAttribute('aria-pressed'),
+      ).toBe('true'),
+    )
+    expect(
+      requests.find(
+        (request) => request.type === 'plugin.bundle.setEnabled' && request.payload.name === autoReviewName,
+      ),
+    ).toEqual(
+      expect.objectContaining({
+        type: 'plugin.bundle.setEnabled',
+        payload: { name: autoReviewName, enabled: true },
+      }),
+    )
   })
 
   it('routes a confirmed install request and displays its safe outcome', async () => {
@@ -263,6 +623,43 @@ describe('OptionalBundleManager', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Check install status' }))
     expect(onRecoverInstall).toHaveBeenCalledOnce()
     expect(requests.filter((request) => request.type === 'plugin.bundle.install')).toHaveLength(0)
+  })
+
+  it('allows checking the same install after recovery fails during applying', async () => {
+    const requests: FeatureRequest[] = []
+    const featureRequest: OptionalBundleManagerProps['featureRequest'] = <T,>(request: FeatureRequest) => {
+      requests.push(request)
+      return Promise.resolve(defaultResponse(request) as T)
+    }
+    const installOperation: PluginInstallRecoveryState = {
+      requestId: 'applying-install-request-id',
+      phase: 'applying',
+      cancelRequested: false,
+      waiting: false,
+      cancellation: 'too-late',
+    }
+    const onRecoverInstall = vi.fn().mockResolvedValue(undefined)
+    const props = {
+      featureRequest,
+      installOperation,
+      onRecoverInstall,
+    } satisfies OptionalBundleManagerProps
+
+    const view = render(<OptionalBundleManager {...props} />)
+    await screen.findByRole('heading', { name: 'DSH Plugin Manager' })
+    const recover = screen.getByRole('button', { name: 'Check install status' })
+    expect(recover.getAttribute('disabled')).toBeNull()
+    fireEvent.click(recover)
+    expect(onRecoverInstall).toHaveBeenCalledOnce()
+    expect(requests.filter((request) => request.type === 'plugin.bundle.install')).toHaveLength(0)
+
+    view.rerender(
+      <OptionalBundleManager {...props} installOperation={{ ...installOperation, waiting: true }} />,
+    )
+    expect(
+      screen.getByRole('button', { name: 'Checking the install status…' }).getAttribute('disabled'),
+    ).not.toBeNull()
+    view.unmount()
   })
 
   it.each(['too-late', 'cancelled'] as const)(

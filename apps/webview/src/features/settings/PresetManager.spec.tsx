@@ -42,6 +42,7 @@ function renderManager(
 ): ReturnType<typeof render> {
   return render(
     <PresetManager
+      codingToolsEnabled={true}
       onLoadRoster={vi.fn().mockResolvedValue(rosterFixture())}
       onReadDocument={vi.fn().mockResolvedValue(undefined)}
       onCopy={vi.fn().mockResolvedValue(undefined)}
@@ -532,6 +533,21 @@ describe('registry-only preset policy', () => {
     const button = await screen.findByRole('button', { name: 'Ask Agent to create a mode' })
     expect(button.hasAttribute('disabled')).toBe(true)
     fireEvent.click(button)
+    expect(onStartCreatorDraft).not.toHaveBeenCalled()
+  })
+
+  it('keeps preset selection and Creator closed while Developer Tools are unresolved', async () => {
+    const onMakeDefault = vi.fn().mockResolvedValue(undefined)
+    const onStartCreatorDraft = vi.fn()
+    renderManager({ onMakeDefault, onStartCreatorDraft, codingToolsEnabled: undefined })
+
+    const mode = await screen.findByRole('button', { name: 'Set as default: Cordis' })
+    const creator = screen.getByRole('button', { name: 'Ask Agent to create a mode' })
+    expect(mode).toHaveProperty('disabled', true)
+    expect(creator).toHaveProperty('disabled', true)
+    fireEvent.click(mode)
+    fireEvent.click(creator)
+    expect(onMakeDefault).not.toHaveBeenCalled()
     expect(onStartCreatorDraft).not.toHaveBeenCalled()
   })
 })

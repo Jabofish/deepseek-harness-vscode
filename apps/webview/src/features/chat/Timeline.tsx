@@ -7,10 +7,16 @@ import {
   useMemo,
   useRef,
   useState,
+  type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent,
   type ReactElement,
 } from 'react'
-import { isInjectedUserMessage, type AssistantTiming, type TimelineNode } from '@dsh-vscode/timeline'
+import {
+  isInjectedUserMessage,
+  type AssistantTiming,
+  type TimelineNode,
+  type TurnTokenUsage,
+} from '@dsh-vscode/timeline'
 import type {
   FeedbackCategory,
   MessageFeedbackItem,
@@ -90,6 +96,7 @@ interface AssistantTurnNode {
   readonly id: string
   readonly modelLabel?: string
   readonly usage?: TokenUsage
+  readonly turnUsage?: TurnTokenUsage | undefined
   readonly images?: readonly MessageImageReference[]
   readonly timing?: AssistantTiming
   readonly reasoning?: {
@@ -171,10 +178,56 @@ function useStableOptionalCallback<Args extends unknown[], Result>(
   }, [])
 }
 
+function handleTimelineScrollKeyDown(event: ReactKeyboardEvent<HTMLDivElement>): void {
+  const timeline = event.currentTarget
+  if (event.defaultPrevented || event.target !== timeline || event.altKey || event.ctrlKey || event.metaKey)
+    return
+
+  const maxScrollTop = Math.max(0, timeline.scrollHeight - timeline.clientHeight)
+  const pageSize = Math.max(1, timeline.clientHeight)
+  const parsedLineHeight = Number.parseFloat(window.getComputedStyle(timeline).lineHeight)
+  const lineSize = Number.isFinite(parsedLineHeight) && parsedLineHeight > 0 ? parsedLineHeight : 40
+  const currentScrollTop = timeline.scrollTop
+  let nextScrollTop: number
+
+  switch (event.key) {
+    case 'ArrowDown':
+      nextScrollTop = currentScrollTop + lineSize
+      break
+    case 'ArrowUp':
+      nextScrollTop = currentScrollTop - lineSize
+      break
+    case 'PageDown':
+      nextScrollTop = currentScrollTop + pageSize
+      break
+    case 'PageUp':
+      nextScrollTop = currentScrollTop - pageSize
+      break
+    case ' ':
+      nextScrollTop = currentScrollTop + (event.shiftKey ? -pageSize : pageSize)
+      break
+    case 'Home':
+      nextScrollTop = 0
+      break
+    case 'End':
+      nextScrollTop = maxScrollTop
+      break
+    default:
+      return
+  }
+
+  event.preventDefault()
+  timeline.scrollTop = Math.min(maxScrollTop, Math.max(0, nextScrollTop))
+}
+
 export const Timeline = memo(function Timeline(props: TimelineProps): ReactElement {
   const { t } = useI18n()
   const prependAnchorRef = useRef<ScrollAnchor | undefined>(undefined)
-  const olderHistoryRequestRef = useRef(false)
+  const olderHistoryRequestRef = useRef<{ readonly sessionId: string } | undefined>(undefined)
+  useLayoutEffect(() => {
+    prependAnchorRef.current = undefined
+    olderHistoryRequestRef.current = undefined
+  }, [props.sessionId])
   const [expandedDetails, setExpandedDetails] = useState<ReadonlySet<string>>(new Set())
   const showDshEvents = props.showDshEvents ?? false
   const transcriptView = props.transcriptView ?? 'standard'
@@ -308,11 +361,27 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
     sessionId: props.sessionId,
     observeContentSize: !virtualizeTimeline,
   })
+  const getFocusedTimelineIndex = useCallback((): number | undefined => {
+    const timeline = scrollRef.current
+    if (timeline === null) return undefined
+    const activeElement = timeline.ownerDocument.activeElement
+    if (activeElement === null || !timeline.contains(activeElement)) return undefined
+    const row = activeElement.closest<HTMLElement>('.dsh-timeline__row[data-index][data-node-id]')
+    if (row === null) return undefined
+    const nodeId = row.dataset.nodeId
+    if (nodeId === undefined) return undefined
+    const currentIndex = Number(row.dataset.index)
+    if (!Number.isInteger(currentIndex)) return undefined
+    if (displayNodes[currentIndex]?.id === nodeId) return currentIndex
+    const shiftedIndex = displayNodes.findIndex((node) => node.id === nodeId)
+    return shiftedIndex >= 0 ? shiftedIndex : undefined
+  }, [displayNodes, scrollRef])
   const virtualized = useVirtualizedCollection({
     items: displayNodes,
     scrollRef,
     enabled: virtualizeTimeline,
     getItemKey: timelineNodeKey,
+    getPinnedItemIndex: getFocusedTimelineIndex,
     onScrollAdjustment: applyScrollAdjustment,
   })
   const virtualizedReady = virtualized.enabled && virtualized.ready
@@ -329,21 +398,22 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
       hasMoreHistory !== true ||
       loadingOlderHistory === true ||
       onLoadOlderHistory === undefined ||
-      olderHistoryRequestRef.current
+      olderHistoryRequestRef.current?.sessionId === props.sessionId
     )
       return
     prependAnchorRef.current = captureScrollAnchor()
     if (prependAnchorRef.current === undefined) return
-    olderHistoryRequestRef.current = true
+    const request = { sessionId: props.sessionId }
+    olderHistoryRequestRef.current = request
     const result = onLoadOlderHistory()
     if (result === undefined) {
-      olderHistoryRequestRef.current = false
+      if (olderHistoryRequestRef.current === request) olderHistoryRequestRef.current = undefined
       return
     }
     void result.finally(() => {
-      olderHistoryRequestRef.current = false
+      if (olderHistoryRequestRef.current === request) olderHistoryRequestRef.current = undefined
     })
-  }, [captureScrollAnchor, hasMoreHistory, loadingOlderHistory, onLoadOlderHistory])
+  }, [captureScrollAnchor, hasMoreHistory, loadingOlderHistory, onLoadOlderHistory, props.sessionId])
   const handleScroll = useCallback((): void => {
     const element = scrollRef.current
     if (element !== null && element.scrollTop <= 24 && isUserScrollActive()) loadOlderHistory()
@@ -436,7 +506,10 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
         data-transcript-view={transcriptView}
         data-performance-usage={performanceUsage}
         data-coding-tools-enabled={codingToolsEnabled}
+        role="region"
         aria-label={t('timeline.aria')}
+        tabIndex={0}
+        onKeyDown={handleTimelineScrollKeyDown}
         onScroll={handleScroll}
       >
         {props.hasMoreHistory && props.onLoadOlderHistory !== undefined ? (
@@ -485,6 +558,7 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
                       key={item.key}
                       ref={virtualized.measureElement}
                       data-index={item.index}
+                      data-node-id={node.id}
                       className={`dsh-timeline__row${node.id === enteredId ? ' dsh-timeline__row--enter' : ''}`}
                       style={{ transform: `translateY(${item.start}px)` }}
                     >
@@ -492,9 +566,11 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
                     </div>
                   )
                 })
-              : displayNodes.map((node) => (
+              : displayNodes.map((node, index) => (
                   <div
                     key={node.id}
+                    data-index={index}
+                    data-node-id={node.id}
                     className={`dsh-timeline__row${node.id === enteredId ? ' dsh-timeline__row--enter' : ''}`}
                   >
                     <TimelineRow node={node} context={nodeRenderContext} />
@@ -1397,6 +1473,8 @@ function renderAssistantTurn(
   const producedFiles = producedFilePaths(node.tools)
   const metricsLabel =
     performanceUsage === 'detailed' ? assistantMetricsLabel(node.timing, node.usage, t) : undefined
+  const turnUsage =
+    performanceUsage === 'detailed' && node.turnCompleted === true ? node.turnUsage : undefined
   const detailLabel =
     transcriptView === 'detailed' && node.turn !== undefined && node.step !== undefined
       ? t('timeline.stepMetadata', { turn: node.turn, step: node.step })
@@ -1428,6 +1506,7 @@ function renderAssistantTurn(
         )}
         {renderProducedFiles(producedFiles, onOpenLink, onShowInFolder, t)}
       </article>
+      {turnUsage === undefined ? null : <TurnUsageDisclosure usage={turnUsage} translate={t} />}
       {node.markdown.trim() === '' || actionsUnavailable ? null : (
         <MessageActions
           text={node.markdown}
@@ -1474,6 +1553,8 @@ function renderAssistantMessage(
   const actionsUnavailable = running || inProgress || (node.turn !== undefined && node.turnCompleted !== true)
   const metricsLabel =
     performanceUsage === 'detailed' ? assistantMetricsLabel(node.timing, node.usage, t) : undefined
+  const turnUsage =
+    performanceUsage === 'detailed' && node.turnCompleted === true ? node.turnUsage : undefined
   const detailLabel =
     transcriptView === 'detailed' && node.turn !== undefined && node.step !== undefined
       ? t('timeline.stepMetadata', { turn: node.turn, step: node.step })
@@ -1493,11 +1574,12 @@ function renderAssistantMessage(
             </span>
           )}
         </header>
-        {node.reasoning === undefined || transcriptView === 'compact' ? null : (
+        {node.reasoning === undefined ? null : (
           <ReasoningDisclosure
             id={`reasoning:${node.id}`}
             markdown={node.reasoning.markdown}
             streaming={node.reasoning.streaming}
+            hideSettledPreview={transcriptView === 'compact'}
             expanded={expanded.has(`reasoning:${node.id}`)}
             onExpandedChange={reasoningExpandedChange(setExpanded, `reasoning:${node.id}`)}
             translate={t}
@@ -1512,6 +1594,7 @@ function renderAssistantMessage(
           <MarkdownContent markdown={node.markdown} streaming={node.streaming} onOpenLink={onOpenLink} />
         )}
       </article>
+      {turnUsage === undefined ? null : <TurnUsageDisclosure usage={turnUsage} translate={t} />}
       {node.markdown.trim() === '' || actionsUnavailable ? null : (
         <MessageActions
           text={node.markdown}
@@ -1555,13 +1638,13 @@ function renderAssistantBlocks(
     const block = blocks[index]
     if (block === undefined) continue
     if (block.kind === 'reasoning') {
-      if (transcriptView === 'compact') continue
       rendered.push(
         <Fragment key={`reasoning:${block.id}:${index}`}>
           <ReasoningDisclosure
             id={`reasoning:${node.id}:${block.id}`}
             markdown={block.markdown}
             streaming={block.streaming}
+            hideSettledPreview={transcriptView === 'compact'}
             expanded={expanded.has(`reasoning:${node.id}:${block.id}`)}
             onExpandedChange={reasoningExpandedChange(setExpanded, `reasoning:${node.id}:${block.id}`)}
             translate={t}
@@ -1741,6 +1824,54 @@ function renderProducedFiles(
       )}
     </div>
   )
+}
+
+function TurnUsageDisclosure(props: {
+  readonly usage: TurnTokenUsage
+  readonly translate: Translate
+}): ReactElement {
+  const { usage, translate } = props
+  return (
+    <details className="dsh-timeline__turn-usage" aria-label={translate('timeline.tokenUsage')}>
+      <summary>{translate('timeline.tokenUsage')}</summary>
+      <dl>
+        <div>
+          <dt>{translate('timeline.uncachedInputTokens')}</dt>
+          <dd>{formatExactTokens(usage.inputTokens)}</dd>
+        </div>
+        <div>
+          <dt>{translate('stats.output')}</dt>
+          <dd>{formatExactTokens(usage.outputTokens)}</dd>
+        </div>
+        {usage.cacheReadTokens === undefined ? null : (
+          <div>
+            <dt>{translate('stats.cacheRead')}</dt>
+            <dd>{formatExactTokens(usage.cacheReadTokens)}</dd>
+          </div>
+        )}
+        {usage.cacheWriteTokens === undefined ? null : (
+          <div>
+            <dt>{translate('stats.cacheWrite')}</dt>
+            <dd>{formatExactTokens(usage.cacheWriteTokens)}</dd>
+          </div>
+        )}
+        {usage.reasoningTokens === undefined ? null : (
+          <div>
+            <dt>{translate('stats.reasoning')}</dt>
+            <dd>{formatExactTokens(usage.reasoningTokens)}</dd>
+          </div>
+        )}
+        <div>
+          <dt>{translate('timeline.totalTokens')}</dt>
+          <dd>{formatExactTokens(usage.totalTokens)}</dd>
+        </div>
+      </dl>
+    </details>
+  )
+}
+
+function formatExactTokens(value: number): string {
+  return value.toLocaleString()
 }
 
 function producedFilePaths(tools: readonly ToolTimelineNode[]): readonly string[] {
@@ -2195,6 +2326,7 @@ interface PendingAssistantWork {
   modelLabel?: string
   timing?: AssistantTiming
   usage?: TokenUsage
+  turnUsage?: TurnTokenUsage | undefined
   images?: readonly MessageImageReference[]
   reasoning?: Pick<ReasoningBlock, 'markdown' | 'streaming'> | undefined
   readonly tools: ToolTimelineNode[]
@@ -2223,6 +2355,7 @@ function collapseAssistantTurns(
       ...(pending.modelLabel === undefined ? {} : { modelLabel: pending.modelLabel }),
       ...(pending.timing === undefined ? {} : { timing: pending.timing }),
       ...(pending.usage === undefined ? {} : { usage: pending.usage }),
+      ...(pending.turnUsage === undefined ? {} : { turnUsage: pending.turnUsage }),
       ...(pending.images === undefined ? {} : { images: pending.images }),
       ...(pending.reasoning === undefined ? {} : { reasoning: pending.reasoning }),
       tools: pending.tools,
@@ -2270,6 +2403,7 @@ function collapseAssistantTurns(
             ...(previous.modelLabel === undefined ? {} : { modelLabel: previous.modelLabel }),
             ...(previous.timing === undefined ? {} : { timing: previous.timing }),
             ...(previous.usage === undefined ? {} : { usage: previous.usage }),
+            ...(previous.turnUsage === undefined ? {} : { turnUsage: previous.turnUsage }),
             ...(previous.images === undefined ? {} : { images: previous.images }),
             ...(previous.reasoning === undefined ? {} : { reasoning: previous.reasoning }),
             tools: [...previous.tools],
@@ -2299,6 +2433,7 @@ function collapseAssistantTurns(
         if (node.turn !== undefined) pending.turn = node.turn
         if (node.step !== undefined) pending.step = node.step
         if (node.turnCompleted !== undefined) pending.turnCompleted = node.turnCompleted
+        pending.turnUsage = node.turnUsage
         if (node.interrupted !== undefined) pending.interrupted = node.interrupted
         pending.reasoning = appendReasoning(pending.reasoning, node.reasoning)
         if (node.reasoning !== undefined) appendReasoningContent(pending.blocks, node.id, node.reasoning)
@@ -2381,6 +2516,7 @@ function pendingFromAssistantMessage(
     ...(node.modelLabel === undefined ? {} : { modelLabel: node.modelLabel }),
     ...(node.timing === undefined ? {} : { timing: node.timing }),
     ...(node.usage === undefined ? {} : { usage: node.usage }),
+    ...(node.turnUsage === undefined ? {} : { turnUsage: node.turnUsage }),
     ...(node.images === undefined ? {} : { images: node.images }),
     ...(node.reasoning === undefined ? {} : { reasoning: node.reasoning }),
     tools: [],
@@ -2401,6 +2537,7 @@ function pendingFromAssistantTurn(node: AssistantTurnNode): PendingAssistantWork
     ...(node.modelLabel === undefined ? {} : { modelLabel: node.modelLabel }),
     ...(node.timing === undefined ? {} : { timing: node.timing }),
     ...(node.usage === undefined ? {} : { usage: node.usage }),
+    ...(node.turnUsage === undefined ? {} : { turnUsage: node.turnUsage }),
     ...(node.images === undefined ? {} : { images: node.images }),
     ...(node.reasoning === undefined ? {} : { reasoning: node.reasoning }),
     tools: [...node.tools],
@@ -2481,6 +2618,7 @@ function toAssistantTurn(pending: PendingAssistantWork, id: string): AssistantTu
     ...(pending.modelLabel === undefined ? {} : { modelLabel: pending.modelLabel }),
     ...(pending.timing === undefined ? {} : { timing: pending.timing }),
     ...(pending.usage === undefined ? {} : { usage: pending.usage }),
+    ...(pending.turnUsage === undefined ? {} : { turnUsage: pending.turnUsage }),
     ...(pending.images === undefined ? {} : { images: pending.images }),
     ...(pending.reasoning === undefined ? {} : { reasoning: pending.reasoning }),
     tools: pending.tools,

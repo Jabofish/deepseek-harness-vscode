@@ -46,6 +46,21 @@ describe('StatsLine', () => {
     expect(screen.getByText('cache 25%')).toBeDefined()
   })
 
+  it('uses the exact reported total and hides it when the total is unavailable', () => {
+    const { rerender } = render(
+      <StatsLine
+        nodes={nodes}
+        usage={{ inputTokens: 100, outputTokens: 10, totalTokens: 125 }}
+        cacheHit={0}
+      />,
+    )
+
+    expect(screen.getByText('Σ 125 tokens').getAttribute('title')).toBe('Total billed and cache tokens')
+
+    rerender(<StatsLine nodes={nodes} usage={{ inputTokens: 100, outputTokens: 10 }} cacheHit={0} />)
+    expect(screen.queryByText(/Σ/u)).toBeNull()
+  })
+
   it('keeps compact performance usage to output speed and cache hit', () => {
     render(
       <StatsLine

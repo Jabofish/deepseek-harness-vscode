@@ -205,8 +205,12 @@ export function CustomProviderCard(props: CustomProviderCardProps): ReactElement
           {t('settings.invalidCapacity', { field: t(`settings.${modelFailure.field}`) })}
         </p>
       ) : null}
+      {modelFailure?.kind === 'input' ? (
+        <p className="dsh-settings__error">{t('settings.modelInputRequired')}</p>
+      ) : null}
       <ModelListEditor
         models={models}
+        inputField="input"
         writable={props.writable && !committed}
         saving={props.saving || busy}
         showSave={false}
@@ -239,6 +243,7 @@ type ModelFailure =
   | { readonly kind: 'id' }
   | { readonly kind: 'duplicate' }
   | { readonly kind: 'capacity'; readonly field: 'contextWindow' | 'maxTokens' }
+  | { readonly kind: 'input' }
   | undefined
 
 function validateModels(models: readonly EditableModel[]): ModelFailure {
@@ -248,6 +253,12 @@ function validateModels(models: readonly EditableModel[]): ModelFailure {
     if (id === '' || id.length > 256) return { kind: 'id' }
     if (ids.has(id)) return { kind: 'duplicate' }
     ids.add(id)
+    const input = model.input
+    if (
+      input !== undefined &&
+      (!Array.isArray(input) || input.some((value) => value !== 'text' && value !== 'image'))
+    )
+      return { kind: 'input' }
     for (const field of ['contextWindow', 'maxTokens'] as const) {
       const value = model[field]
       if (value !== undefined && (!Number.isSafeInteger(value) || value <= 0))

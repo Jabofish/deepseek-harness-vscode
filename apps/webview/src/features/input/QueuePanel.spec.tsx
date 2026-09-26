@@ -24,8 +24,8 @@ function renderQueue(
   running = false,
   onModeChange: (id: string, mode: QueuedInput['mode']) => void = vi.fn(),
   onEdit: (id: string, text: string) => void = vi.fn(),
-): void {
-  render(
+): ReturnType<typeof render> {
+  return render(
     <I18nProvider>
       <QueuePanel
         items={items}
@@ -97,9 +97,32 @@ describe('QueuePanel', () => {
 
     const editor = screen.getByRole('textbox', { name: 'Edit queued prompt q1' })
     expect(editor.hasAttribute('readonly')).toBe(false)
-    fireEvent.blur(editor, { target: { value: 'second' } })
+    fireEvent.change(editor, { target: { value: 'second' } })
+    fireEvent.blur(editor)
 
     expect(onEdit).toHaveBeenCalledWith('q1', 'second')
+  })
+
+  it('refreshes an untouched editor when a newer queue projection changes the prompt', () => {
+    const onEdit = vi.fn()
+    const view = renderQueue([queuedInput('q1', 'first')], true, vi.fn(), onEdit)
+    const editor = screen.getByRole('textbox', { name: 'Edit queued prompt q1' })
+
+    view.rerender(
+      <I18nProvider>
+        <QueuePanel
+          items={[queuedInput('q1', 'changed elsewhere')]}
+          running
+          onEdit={onEdit}
+          onRemove={vi.fn()}
+          onModeChange={vi.fn()}
+        />
+      </I18nProvider>,
+    )
+
+    expect(screen.getByDisplayValue('changed elsewhere')).toBe(editor)
+    fireEvent.blur(editor)
+    expect(onEdit).not.toHaveBeenCalled()
   })
 
   it('promotes a queued prompt to steer', () => {
@@ -110,6 +133,14 @@ describe('QueuePanel', () => {
     fireEvent.click(screen.getByRole('option', { name: 'Steer' }))
 
     expect(onModeChange).toHaveBeenCalledWith('q1', 'steer')
+  })
+
+  it('does not offer Steer when the session is idle', () => {
+    renderQueue([queuedInput('q1', 'first'), queuedInput('q2', 'second')])
+    fireEvent.click(screen.getByRole('button', { name: /Queued prompts/u }))
+
+    const trigger = screen.getByRole('button', { name: /Mode for queued prompt q1/u })
+    expect(trigger.hasAttribute('disabled')).toBe(true)
   })
 
   it('does not offer a delivery mode the Host cannot apply to a steering prompt', () => {

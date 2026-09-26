@@ -257,6 +257,11 @@
   overflow-anchor: none;
 }
 
+.dsh-timeline:focus-visible {
+  outline: 1px solid var(--dsh-focus-ring);
+  outline-offset: -1px;
+}
+
 /* A selected trajectory record is an inspector layer, not a second layout
  * column. It floats above the ledger and ends at the composer boundary, so
  * the ledger keeps all remaining vertical space. Its own scroll owner keeps

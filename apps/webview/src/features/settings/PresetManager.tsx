@@ -145,7 +145,9 @@ export function PresetManager(props: PresetManagerProps): ReactElement | null {
   const [pendingDelete, setPendingDelete] = useState<string | undefined>(undefined)
   const [deleting, setDeleting] = useState(false)
   const defaultWritable = props.defaultWritable !== false
-  const codingToolsEnabled = props.codingToolsEnabled !== false
+  // Unknown is not an accepted Host value. The settings adapter supplies true
+  // only after the connected Host has resolved the Developer Tools preference.
+  const codingToolsEnabled = props.codingToolsEnabled === true
   const modeSelectionEnabled = codingToolsEnabled && roster.modeSelectionEnabled !== false
   const canSetDefault = defaultWritable && modeSelectionEnabled
   const [defaultingId, setDefaultingId] = useState<string | undefined>(undefined)

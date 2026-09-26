@@ -9,7 +9,13 @@ import {
   type ReactElement,
 } from 'react'
 import { createPortal } from 'react-dom'
-import type { PermissionRequest, UserQuestion, SessionSummary, WorkspaceSummary } from '@dsh-vscode/domain'
+import type {
+  PermissionRequest,
+  UserQuestion,
+  SessionPage,
+  SessionSummary,
+  WorkspaceSummary,
+} from '@dsh-vscode/domain'
 import { PopoverCard } from '../../components/common/PopoverCard.js'
 import { SelectMenu } from '../../components/common/SelectMenu.js'
 import { useDismissibleLayer } from '../../components/common/useDismissibleLayer.js'
@@ -44,7 +50,7 @@ export interface SessionDrawerProps {
   readonly onRemoveWorkspace: (workspaceId: string) => Promise<void>
   readonly onMoveWorkspace: (workspaceId: string, beforeWorkspaceId?: string) => Promise<void>
   readonly onMoveSession: (workspaceId: string, sessionId: string, beforeSessionId?: string) => Promise<void>
-  readonly onSearch: (query: string) => Promise<readonly SessionSummary[]>
+  readonly onSearch: (query: string) => Promise<SessionPage>
 }
 
 type SessionSorting = 'manual' | 'updated'
@@ -114,7 +120,8 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
   const [contentSearch, setContentSearch] = useState<{
     readonly query: string
     readonly matches: readonly SessionSummary[]
-  }>({ query: '', matches: [] })
+    readonly searchHasMore: boolean
+  }>({ query: '', matches: [], searchHasMore: false })
   const [contentSearchUnavailable, setContentSearchUnavailable] = useState(false)
   const [sorting, setSorting] = useState<SessionSorting>('manual')
   const [workspaceDisplay, setWorkspaceDisplay] = useState<WorkspaceDisplay>('current')
@@ -176,6 +183,7 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
   const selectedWorkspaceKey = selectedWorkspace?.id
   const trimmedSearchQuery = searchQuery.trim()
   const contentMatches = contentSearch.query === trimmedSearchQuery ? contentSearch.matches : []
+  const contentSearchHasMore = contentSearch.query === trimmedSearchQuery && contentSearch.searchHasMore
   const query = trimmedSearchQuery.toLowerCase()
   const closeRenameDialog = useCallback((): void => {
     if (mutationBusy) return
@@ -299,6 +307,27 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
         }))
       : []
   const locallyVisibleIds = new Set(currentWorkspaceSessions.map((session) => session.id))
+  const groupedVisibleIds = new Set(
+    groupedWorkspaceSessions.flatMap(({ sessions }) => sessions.map(({ id }) => id)),
+  )
+  const contentSearchResults =
+    archiveFilter !== 'archived' && workspaceDisplay === 'grouped'
+      ? sortSessions(
+          contentMatches.filter(
+            (session) =>
+              !groupedVisibleIds.has(session.id) && session.origin !== 'subagent' && !session.blank,
+          ),
+          sorting,
+        )
+      : archiveFilter !== 'archived' && workspaceDisplay === 'current'
+        ? sortSessions(
+            contentMatches.filter(
+              (session) =>
+                !locallyVisibleIds.has(session.id) && session.origin !== 'subagent' && !session.blank,
+            ),
+            sorting,
+          )
+        : []
   const archivedSessionsToShow =
     archiveFilter === 'archived' && workspaceDisplay === 'current' && selectedWorkspace !== undefined
       ? props.archivedSessions.filter(
@@ -307,17 +336,27 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
             selectedWorkspace.sessionIds?.includes(session.id) === true,
         )
       : props.archivedSessions
+  const filteredArchivedSessions = archivedSessionsToShow.filter(
+    (session) => query === '' || displaySessionTitle(session.title, t).toLowerCase().includes(query),
+  )
 
   useEffect(() => {
     const sequence = searchSequence.current + 1
     searchSequence.current = sequence
     setContentSearchUnavailable(false)
-    if (trimmedSearchQuery === '') return
+    if (!open || trimmedSearchQuery === '' || archiveFilter === 'archived') {
+      setContentSearch({ query: trimmedSearchQuery, matches: [], searchHasMore: false })
+      return
+    }
     const timer = window.setTimeout(() => {
       void onSearch(trimmedSearchQuery)
-        .then((matches) => {
+        .then((page) => {
           if (searchSequence.current !== sequence) return
-          setContentSearch({ query: trimmedSearchQuery, matches: matches.slice(0, SEARCH_RESULT_LIMIT) })
+          setContentSearch({
+            query: trimmedSearchQuery,
+            matches: page.items.slice(0, SEARCH_RESULT_LIMIT),
+            searchHasMore: page.searchHasMore === true,
+          })
           setContentSearchUnavailable(false)
         })
         .catch(() => {
@@ -325,26 +364,12 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
           // A refused content search leaves the name filter as the only result
           // source; reporting the empty list as "no matches" would claim the
           // host searched and found nothing.
-          setContentSearch({ query: trimmedSearchQuery, matches: [] })
+          setContentSearch({ query: trimmedSearchQuery, matches: [], searchHasMore: false })
           setContentSearchUnavailable(true)
         })
     }, SEARCH_DEBOUNCE_MS)
     return () => window.clearTimeout(timer)
-  }, [onSearch, trimmedSearchQuery])
-
-  const otherWorkspaceMatches =
-    archiveFilter !== 'archived' && workspaceDisplay === 'current'
-      ? sortSessions(
-          contentMatches.filter(
-            (session) =>
-              !locallyVisibleIds.has(session.id) &&
-              session.origin !== 'subagent' &&
-              !session.blank &&
-              session.id !== props.activeSessionId,
-          ),
-          sorting,
-        )
-      : []
+  }, [archiveFilter, onSearch, open, trimmedSearchQuery])
 
   const openSession = (session: SessionSummary): void => {
     setSelectedWorkspaceId(session.workspaceId)
@@ -668,6 +693,24 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
     )
   }
 
+  const renderContentSearchResults = (): ReactElement | null => {
+    if (contentSearchResults.length === 0) return null
+    return (
+      <>
+        <p className="dsh-session-switcher__group-label">{t('sessions.contentMatches')}</p>
+        <ul className="dsh-session-switcher__list" aria-label={t('sessions.otherMatches')}>
+          {contentSearchResults.map((session) => {
+            const workspace = visibleWorkspaces.find((candidate) => candidate.id === session.workspaceId)
+            return renderSessionRow(
+              session,
+              workspace === undefined ? undefined : displayWorkspaceName(workspace.name),
+            )
+          })}
+        </ul>
+      </>
+    )
+  }
+
   const renameConflict =
     renameTarget === undefined
       ? false
@@ -847,9 +890,14 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
               onChange={chooseArchiveFilter}
             />
           </div>
-          {contentSearchUnavailable ? (
+          {archiveFilter !== 'archived' && contentSearchUnavailable ? (
             <p className="dsh-session-switcher__warning" role="status">
               {t('sessions.searchUnavailable')}
+            </p>
+          ) : null}
+          {archiveFilter !== 'archived' && contentSearchHasMore ? (
+            <p className="dsh-session-switcher__warning" role="status">
+              {t('sessions.searchMore')}
             </p>
           ) : null}
           {archiveError === undefined ? null : (
@@ -871,33 +919,38 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
             {archiveFilter === 'archived' ? null : selectedWorkspace === undefined && query === '' ? (
               <p className="dsh-session-switcher__empty">{t('sessions.temporary')}</p>
             ) : workspaceDisplay === 'grouped' ? (
-              <div className="dsh-session-switcher__groups">
-                {groupedWorkspaceSessions.map(({ workspace, sessions: groupSessions }) => (
-                  <section
-                    className="dsh-session-switcher__group"
-                    key={workspace.id}
-                    aria-labelledby={`workspace-${workspace.id}`}
-                  >
-                    <header className="dsh-session-switcher__group-header">
-                      <strong id={`workspace-${workspace.id}`}>{displayWorkspaceName(workspace.name)}</strong>
-                      <span>{workspaceSessions(workspace).length}</span>
-                    </header>
-                    {groupSessions.length === 0 ? (
-                      <p className="dsh-session-switcher__empty">
-                        {query === '' ? t('sessions.empty') : t('sessions.noMatch')}
-                      </p>
-                    ) : (
-                      <ul
-                        className="dsh-session-switcher__list"
-                        aria-label={displayWorkspaceName(workspace.name)}
-                      >
-                        {groupSessions.map((session) => renderSessionRow(session, undefined, workspace.id))}
-                      </ul>
-                    )}
-                  </section>
-                ))}
-              </div>
-            ) : currentWorkspaceSessions.length === 0 && otherWorkspaceMatches.length === 0 ? (
+              <>
+                <div className="dsh-session-switcher__groups">
+                  {groupedWorkspaceSessions.map(({ workspace, sessions: groupSessions }) => (
+                    <section
+                      className="dsh-session-switcher__group"
+                      key={workspace.id}
+                      aria-labelledby={`workspace-${workspace.id}`}
+                    >
+                      <header className="dsh-session-switcher__group-header">
+                        <strong id={`workspace-${workspace.id}`}>
+                          {displayWorkspaceName(workspace.name)}
+                        </strong>
+                        <span>{workspaceSessions(workspace).length}</span>
+                      </header>
+                      {groupSessions.length === 0 ? (
+                        <p className="dsh-session-switcher__empty">
+                          {query === '' ? t('sessions.empty') : t('sessions.noMatch')}
+                        </p>
+                      ) : (
+                        <ul
+                          className="dsh-session-switcher__list"
+                          aria-label={displayWorkspaceName(workspace.name)}
+                        >
+                          {groupSessions.map((session) => renderSessionRow(session, undefined, workspace.id))}
+                        </ul>
+                      )}
+                    </section>
+                  ))}
+                </div>
+                {renderContentSearchResults()}
+              </>
+            ) : currentWorkspaceSessions.length === 0 && contentSearchResults.length === 0 ? (
               <p className="dsh-session-switcher__empty">
                 {query === '' ? t('sessions.empty') : t('sessions.noMatch')}
               </p>
@@ -908,22 +961,7 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
                     renderSessionRow(session, undefined, selectedWorkspace?.id),
                   )}
                 </ul>
-                {otherWorkspaceMatches.length === 0 ? null : (
-                  <>
-                    <p className="dsh-session-switcher__group-label">{t('sessions.contentMatches')}</p>
-                    <ul className="dsh-session-switcher__list" aria-label={t('sessions.otherMatches')}>
-                      {otherWorkspaceMatches.map((session) => {
-                        const workspace = visibleWorkspaces.find(
-                          (candidate) => candidate.id === session.workspaceId,
-                        )
-                        return renderSessionRow(
-                          session,
-                          workspace === undefined ? undefined : displayWorkspaceName(workspace.name),
-                        )
-                      })}
-                    </ul>
-                  </>
-                )}
+                {renderContentSearchResults()}
               </>
             )}
             {archiveFilter === 'hide' ? null : (
@@ -955,11 +993,11 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
                     )}
                     {archivedLoading ? (
                       <p className="dsh-session-switcher__empty">{t('sessions.archivedLoading')}</p>
-                    ) : archivedSessionsToShow.length === 0 ? (
+                    ) : filteredArchivedSessions.length === 0 ? (
                       <p className="dsh-session-switcher__empty">{t('sessions.archivedEmpty')}</p>
                     ) : (
                       <ul className="dsh-session-switcher__list" aria-label={t('sessions.archived')}>
-                        {archivedSessionsToShow.map((session) => {
+                        {filteredArchivedSessions.map((session) => {
                           const title = displaySessionTitle(session.title, t)
                           const workspace = props.workspaces.find(
                             (candidate) => candidate.id === session.workspaceId,

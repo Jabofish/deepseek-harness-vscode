@@ -116,7 +116,8 @@ describe('Timeline', () => {
 
     view.rerender(<Timeline sessionId="session-1" nodes={nodes} streaming={false} transcriptView="compact" />)
     expect(document.querySelector('.dsh-timeline')?.getAttribute('data-transcript-view')).toBe('compact')
-    expect(document.querySelector('.dsh-timeline__reasoning-preview')).toBeNull()
+    expect(document.querySelector('.dsh-timeline__reasoning-preview')).not.toBeNull()
+    expect(document.querySelector('.dsh-timeline__reasoning-summary')).toBeNull()
 
     view.rerender(
       <Timeline sessionId="session-1" nodes={nodes} streaming={false} transcriptView="detailed" />,
@@ -125,6 +126,95 @@ describe('Timeline', () => {
 
     view.rerender(<Timeline sessionId="session-1" nodes={nodes} streaming={false} transcriptView="verbose" />)
     expect(document.querySelectorAll('.dsh-timeline__card--assistant')).toHaveLength(3)
+  })
+
+  it('keeps completed reasoning manually inspectable in compact mode without a preview', () => {
+    const { container } = render(
+      <Timeline
+        sessionId="session-1"
+        nodes={[
+          {
+            kind: 'reasoning',
+            id: 'reasoning-compact',
+            markdown: 'A completed step that can be opened on demand.',
+            streaming: false,
+          },
+          {
+            kind: 'assistant-message',
+            id: 'assistant-compact',
+            markdown: 'The answer is ready.',
+            streaming: false,
+            turn: 1,
+            step: 2,
+            turnCompleted: true,
+          },
+        ]}
+        streaming={false}
+        transcriptView="compact"
+      />,
+    )
+
+    const toggle = screen.getByRole('button', { name: 'Show reasoning' })
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(container.querySelector('.dsh-timeline__reasoning-summary')).toBeNull()
+    expect(container.querySelector('.dsh-timeline__reasoning-preview-content')?.textContent).toBe('')
+
+    fireEvent.click(toggle)
+    expect(screen.getByRole('button', { name: 'Hide reasoning' }).getAttribute('aria-expanded')).toBe('true')
+    expect(container.querySelector('.dsh-timeline__reasoning-preview-content')?.textContent).toBe(
+      'A completed step that can be opened on demand.',
+    )
+  })
+
+  it('shows exact completed Turn usage only in detailed mode', () => {
+    const nodes: readonly TimelineNode[] = [
+      {
+        kind: 'assistant-message',
+        id: 'assistant-usage',
+        markdown: 'A completed answer.',
+        streaming: false,
+        turn: 3,
+        turnCompleted: true,
+        turnUsage: {
+          inputTokens: 10,
+          outputTokens: 9,
+          totalTokens: 25,
+          cacheReadTokens: 4,
+          cacheWriteTokens: 2,
+          reasoningTokens: 3,
+        },
+      },
+    ]
+    const view = render(
+      <Timeline sessionId="session-1" nodes={nodes} streaming={false} performanceUsage="detailed" />,
+    )
+
+    fireEvent.click(screen.getByText('Token usage'))
+    expect(screen.getByText('Uncached input tokens')).toBeDefined()
+    expect(screen.getByText('10')).toBeDefined()
+    expect(screen.getByText('9')).toBeDefined()
+    expect(screen.getByText('25')).toBeDefined()
+    expect(screen.getByText('4')).toBeDefined()
+    expect(screen.getByText('2')).toBeDefined()
+    expect(screen.getByText('3')).toBeDefined()
+
+    view.rerender(
+      <Timeline sessionId="session-1" nodes={nodes} streaming={false} performanceUsage="compact" />,
+    )
+    expect(screen.queryByText('Token usage')).toBeNull()
+
+    const completedNode = nodes[0]
+    if (completedNode === undefined || completedNode.kind !== 'assistant-message')
+      throw new Error('The usage fixture needs an assistant message')
+    view.rerender(
+      <Timeline
+        sessionId="session-1"
+        nodes={[{ ...completedNode, turnCompleted: false }]}
+        streaming={false}
+        performanceUsage="detailed"
+      />,
+    )
+    expect(screen.queryByText('Token usage')).toBeNull()
   })
 
   it('projects hidden session-reference context onto the preceding user turn', () => {
@@ -273,6 +363,188 @@ describe('Timeline', () => {
     expect(container.querySelectorAll('.dsh-timeline__row').length).toBeGreaterThan(0)
   })
 
+  it('keeps keyboard focus on a row action when scrolling it outside the virtual window', () => {
+    const offsetHeightDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetHeight')
+    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+      configurable: true,
+      get(this: HTMLElement): number {
+        if (this.classList.contains('dsh-timeline')) return 200
+        if (this.classList.contains('dsh-timeline__row')) return 96
+        return 0
+      },
+    })
+    const nodes: readonly TimelineNode[] = Array.from({ length: 48 }, (_, index) => ({
+      kind: 'assistant-message' as const,
+      id: `assistant-${index}`,
+      markdown: `Answer ${index}`,
+      streaming: false,
+    }))
+    const view = render(<Timeline sessionId="session-1" nodes={nodes} streaming={false} />)
+    try {
+      const { container } = view
+      const timeline = container.querySelector<HTMLDivElement>('.dsh-timeline')!
+      Object.defineProperty(timeline, 'clientHeight', { configurable: true, value: 200 })
+      Object.defineProperty(timeline, 'offsetWidth', { configurable: true, value: 500 })
+      Object.defineProperty(timeline, 'scrollHeight', { configurable: true, value: 4_800 })
+
+      expect(
+        container
+          .querySelector('.dsh-timeline__canvas')
+          ?.classList.contains('dsh-timeline__canvas--virtualized-ready'),
+      ).toBe(true)
+      const firstVisibleRow = container.querySelector<HTMLElement>('.dsh-timeline__row[data-index="0"]')
+      expect(firstVisibleRow).not.toBeNull()
+      const copyButton = within(firstVisibleRow!).getByRole('button', { name: 'Copy' })
+      copyButton.focus()
+      expect(document.activeElement).toBe(copyButton)
+
+      fireEvent.wheel(timeline, { deltaY: -120 })
+      view.rerender(
+        <Timeline
+          sessionId="session-1"
+          nodes={[{ kind: 'user-message', id: 'older-user', markdown: 'Earlier message' }, ...nodes]}
+          streaming={false}
+        />,
+      )
+      expect(document.activeElement).toBe(copyButton)
+      expect(copyButton.closest<HTMLElement>('.dsh-timeline__row')?.dataset.nodeId).toBe('assistant-0')
+
+      fireEvent.wheel(timeline, { deltaY: 120 })
+      timeline.scrollTop = 2_400
+      fireEvent.scroll(timeline)
+
+      expect(container.querySelector('.dsh-timeline__row[data-index="24"]')).not.toBeNull()
+      expect(
+        container.querySelector('.dsh-timeline__row[data-node-id="assistant-0"][data-index="1"]'),
+      ).not.toBeNull()
+      expect(document.activeElement).toBe(copyButton)
+      expect(copyButton.isConnected).toBe(true)
+    } finally {
+      view.unmount()
+      if (offsetHeightDescriptor === undefined) Reflect.deleteProperty(HTMLElement.prototype, 'offsetHeight')
+      else Object.defineProperty(HTMLElement.prototype, 'offsetHeight', offsetHeightDescriptor)
+    }
+  })
+
+  it('exposes a keyboard-scrollable named region and preserves row-control key behavior', () => {
+    const offsetHeightDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetHeight')
+    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+      configurable: true,
+      get(this: HTMLElement): number {
+        if (this.classList.contains('dsh-timeline')) return 200
+        if (this.classList.contains('dsh-timeline__row')) return 96
+        return 0
+      },
+    })
+    const nodes: readonly TimelineNode[] = Array.from({ length: 48 }, (_, index) => ({
+      kind: 'assistant-message' as const,
+      id: `assistant-${index}`,
+      markdown: `Answer ${index}`,
+      streaming: false,
+    }))
+    const view = render(<Timeline sessionId="session-1" nodes={nodes} streaming={false} />)
+    try {
+      const { container } = view
+      const timeline = screen.getByRole('region', { name: 'Conversation timeline' })
+      Object.defineProperty(timeline, 'clientHeight', { configurable: true, value: 200 })
+      Object.defineProperty(timeline, 'offsetWidth', { configurable: true, value: 500 })
+      Object.defineProperty(timeline, 'scrollHeight', { configurable: true, value: 4_800 })
+      let scrollTop = 300
+      const scrollRequests: number[] = []
+      Object.defineProperty(timeline, 'scrollTop', {
+        configurable: true,
+        get: () => scrollTop,
+        set: (next: number) => {
+          scrollTop = next
+          scrollRequests.push(next)
+        },
+      })
+      timeline.style.lineHeight = '20px'
+
+      expect(timeline.tabIndex).toBe(0)
+      expect(
+        container
+          .querySelector('.dsh-timeline__canvas')
+          ?.classList.contains('dsh-timeline__canvas--virtualized-ready'),
+      ).toBe(true)
+      const initialIndexes = Array.from(
+        container.querySelectorAll<HTMLElement>('.dsh-timeline__row'),
+        (row) => row.dataset.index,
+      )
+      timeline.focus()
+      expect(document.activeElement).toBe(timeline)
+
+      const scrollWithKey = (key: string, modifiers: KeyboardEventInit = {}): KeyboardEvent => {
+        const event = new KeyboardEvent('keydown', {
+          key,
+          bubbles: true,
+          cancelable: true,
+          ...modifiers,
+        })
+        fireEvent(timeline, event)
+        fireEvent.scroll(timeline)
+        expect(document.activeElement).toBe(timeline)
+        return event
+      }
+
+      expect(scrollWithKey('ArrowDown').defaultPrevented).toBe(true)
+      expect(scrollTop).toBe(320)
+      expect(scrollWithKey('ArrowUp').defaultPrevented).toBe(true)
+      expect(scrollTop).toBe(300)
+
+      expect(scrollWithKey('PageDown').defaultPrevented).toBe(true)
+      expect(scrollTop).toBe(500)
+      expect(timeline.dataset.scrollFollow).toBe('free')
+      const pageDownIndexes = Array.from(
+        container.querySelectorAll<HTMLElement>('.dsh-timeline__row'),
+        (row) => row.dataset.index,
+      )
+      expect(pageDownIndexes).not.toEqual(initialIndexes)
+      expect(scrollWithKey('PageUp').defaultPrevented).toBe(true)
+      expect(scrollTop).toBe(300)
+
+      expect(scrollWithKey(' ').defaultPrevented).toBe(true)
+      expect(scrollTop).toBe(500)
+      expect(scrollWithKey(' ', { shiftKey: true }).defaultPrevented).toBe(true)
+      expect(scrollTop).toBe(300)
+
+      expect(scrollWithKey('Home').defaultPrevented).toBe(true)
+      expect(scrollTop).toBe(0)
+      expect(scrollWithKey('ArrowUp').defaultPrevented).toBe(true)
+      expect(scrollTop).toBe(0)
+      expect(scrollWithKey('End').defaultPrevented).toBe(true)
+      expect(scrollTop).toBe(4_600)
+      expect(scrollWithKey(' ', { shiftKey: true }).defaultPrevented).toBe(true)
+      expect(scrollTop).toBe(4_400)
+      expect(scrollRequests).toContain(4_600)
+
+      expect(scrollWithKey('Home', { ctrlKey: true }).defaultPrevented).toBe(false)
+      expect(scrollTop).toBe(4_400)
+
+      expect(scrollWithKey('Home').defaultPrevented).toBe(true)
+      const firstRow = container.querySelector<HTMLElement>('.dsh-timeline__row[data-index="0"]')
+      expect(firstRow).not.toBeNull()
+      const copyButton = within(firstRow!).getByRole('button', { name: 'Copy' })
+      copyButton.focus()
+      const beforeControlKey = scrollTop
+      for (const key of ['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', ' ', 'Home', 'End']) {
+        const controlKey = new KeyboardEvent('keydown', {
+          key,
+          bubbles: true,
+          cancelable: true,
+        })
+        fireEvent(copyButton, controlKey)
+        expect(controlKey.defaultPrevented).toBe(false)
+        expect(scrollTop).toBe(beforeControlKey)
+        expect(document.activeElement).toBe(copyButton)
+      }
+    } finally {
+      view.unmount()
+      if (offsetHeightDescriptor === undefined) Reflect.deleteProperty(HTMLElement.prototype, 'offsetHeight')
+      else Object.defineProperty(HTMLElement.prototype, 'offsetHeight', offsetHeightDescriptor)
+    }
+  })
+
   it('does not reset the reader position when virtualization is enabled after a short history', () => {
     vi.useFakeTimers()
     const initialNodes: readonly TimelineNode[] = [{ kind: 'user-message', id: 'user-0', markdown: 'first' }]
@@ -362,6 +634,61 @@ describe('Timeline', () => {
     fireEvent.click(button)
 
     expect(loadOlder).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps older-history requests scoped to the session when an earlier request settles late', async () => {
+    let finishFirst!: () => void
+    let finishSecond!: () => void
+    const loadFirst = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishFirst = resolve
+        }),
+    )
+    const loadSecond = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishSecond = resolve
+        }),
+    )
+    const view = render(
+      <Timeline
+        sessionId="session-first"
+        nodes={[{ kind: 'user-message', id: 'first', markdown: 'first' }]}
+        streaming={false}
+        hasMoreHistory
+        onLoadOlderHistory={loadFirst}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Load earlier' }))
+    expect(loadFirst).toHaveBeenCalledOnce()
+
+    view.rerender(
+      <Timeline
+        sessionId="session-second"
+        nodes={[{ kind: 'user-message', id: 'second', markdown: 'second' }]}
+        streaming={false}
+        hasMoreHistory
+        onLoadOlderHistory={loadSecond}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Load earlier' }))
+    expect(loadSecond).toHaveBeenCalledOnce()
+
+    await act(async () => {
+      finishFirst()
+      await Promise.resolve()
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Load earlier' }))
+    expect(loadSecond).toHaveBeenCalledOnce()
+
+    await act(async () => {
+      finishSecond()
+      await Promise.resolve()
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Load earlier' }))
+    expect(loadSecond).toHaveBeenCalledTimes(2)
   })
 
   it('keeps memoized row actions wired to the latest parent callback', () => {

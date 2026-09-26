@@ -10,7 +10,7 @@ import {
   type PromptMode,
   isPromptMode,
 } from '@dsh-vscode/domain'
-import { memo, useCallback, useMemo, useRef, useState, type ReactElement } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import { SelectMenu, type SelectMenuOption } from '../../components/common/SelectMenu.js'
 import { useDismissibleLayer } from '../../components/common/useDismissibleLayer.js'
 import { Icon, type IconName } from '../../ui/Icon.js'
@@ -66,7 +66,11 @@ export const SessionControls = memo(function SessionControls(props: SessionContr
   const showPrimary = props.surface !== 'secondary'
   const showSecondary = props.surface !== 'primary'
   const selectorsRef = useRef<HTMLDivElement>(null)
-  const riskContext = `${props.configuration.permissionPreset}:${props.disabled ? 'disabled' : 'enabled'}`
+  const riskContext = JSON.stringify([
+    props.configuration.permissionPreset,
+    props.disabled,
+    props.permissionPresets,
+  ])
   const [riskState, setRiskState] = useState<{
     readonly context: string
     readonly pending?: string
@@ -76,6 +80,12 @@ export const SessionControls = memo(function SessionControls(props: SessionContr
     riskState.context === riskContext ? riskState : { context: riskContext, acknowledged: false as const }
   const riskPending = activeRiskState.pending
   const riskAcknowledged = activeRiskState.acknowledged
+  useEffect(() => {
+    // A catalog invalidation withdraws any uncommitted high-risk choice. If
+    // the same preset is later registered again, a previous acknowledgement
+    // must not become active for the new catalog lifetime.
+    setRiskState({ context: riskContext, acknowledged: false })
+  }, [riskContext])
   const riskRef = useRef<HTMLDivElement>(null)
   const availablePresets = useMemo(
     () => props.presets.filter((preset) => preset.broken === undefined),
@@ -145,8 +155,11 @@ export const SessionControls = memo(function SessionControls(props: SessionContr
       availablePermissionPresets.map((preset) => ({
         value: preset,
         label: formatPermissionLabel(preset, t),
+        ...(preset === permissionPreset && !props.permissionPresets.includes(preset)
+          ? { disabled: true }
+          : {}),
       })),
-    [availablePermissionPresets, t],
+    [availablePermissionPresets, permissionPreset, props.permissionPresets, t],
   )
   const handlePresetChange = useCallback(
     (preset: string): void => {

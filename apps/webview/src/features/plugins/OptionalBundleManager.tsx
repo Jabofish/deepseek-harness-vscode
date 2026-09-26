@@ -11,7 +11,7 @@ import {
 } from '@dsh-vscode/domain'
 import type { FeatureRequest } from '@dsh-vscode/webview-protocol'
 import type { PluginInstallInput, PluginInstallRecoveryState } from '../../app/plugin-install-recovery.js'
-import { useEffect, useMemo, useState, type ReactElement } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import { SelectMenu, type SelectMenuOption } from '../../components/common/SelectMenu.js'
 import { useI18n, type Translate } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
@@ -43,7 +43,14 @@ type CatalogLoadState = {
   readonly status: 'ready' | 'failed'
 }
 
+interface FilteredBundle {
+  readonly bundle: PluginManagerBundle
+  readonly rows: PluginManagerBundle['rows']
+  readonly expandForSearch: boolean
+}
+
 const EMPTY_BUNDLES: readonly PluginManagerBundle[] = []
+const EMPTY_PLUGINS: readonly ManagedPluginEntry[] = []
 const EMPTY_OPEN_BUNDLES: ReadonlySet<string> = new Set()
 const STANDALONE_BODY_ID = 'dsh-plugin-standalone-plugins'
 const SECTION_BODY_ID = 'dsh-plugin-manager-body'
@@ -124,18 +131,59 @@ function localized(
   return pluginLocalizedText(value, locale)
 }
 
+function localizedSearchValues(value: PluginManagerBundle['title']): readonly string[] {
+  if (value === undefined) return []
+  return typeof value === 'string' ? [value] : Object.values(value)
+}
+
+function matchesSearch(query: string, locale: string, values: readonly (string | undefined)[]): boolean {
+  return (
+    query === '' ||
+    values.some((value) => value !== undefined && value.toLocaleLowerCase(locale).includes(query))
+  )
+}
+
+function pluginSearchValues(plugin: ManagedPluginEntry): readonly string[] {
+  return [
+    plugin.entryId,
+    plugin.moduleName,
+    ...localizedSearchValues(plugin.meta?.title),
+    ...localizedSearchValues(plugin.meta?.description),
+  ]
+}
+
 /** Registry picker sentinels: the host's configured default, and a user-supplied URL. */
 const CONFIGURED_REGISTRY = '__configured__'
 const CUSTOM_REGISTRY = '__custom__'
 
 function registryOptions(catalog: PluginRegistryCatalog | null): readonly PluginRegistry[] {
   if (catalog === null) return [null]
-  const values: PluginRegistry[] = [catalog.registry, ...catalog.fallbackRegistries]
-  const resolved = catalog.resolved
-  return values.filter((value, index) => {
-    const key = value ?? resolved ?? ''
-    return values.findIndex((candidate) => (candidate ?? resolved ?? '') === key) === index
+  const values: PluginRegistry[] = [catalog.registry, ...catalog.fallbackRegistries, null]
+  const seenUrls = new Set<string>()
+  let hasPnpmRegistry = false
+  return values.filter((value) => {
+    if (value === null) {
+      if (hasPnpmRegistry) return false
+      hasPnpmRegistry = true
+      return true
+    }
+    const key = normalizedRegistryKey(value)
+    if (seenUrls.has(key)) return false
+    seenUrls.add(key)
+    return true
   })
+}
+
+/** Match the pinned DSH registry comparison: canonical URL and a trailing path slash. */
+function normalizedRegistryKey(value: string): string {
+  try {
+    const url = new URL(value)
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return value
+    if (!url.pathname.endsWith('/')) url.pathname += '/'
+    return url.href
+  } catch {
+    return value
+  }
 }
 
 function registryValue(registry: PluginRegistry): string {
@@ -151,6 +199,7 @@ function registryChoices(
   registries: readonly PluginRegistry[],
   view: RegistryView,
   t: Translate,
+  locale: string,
 ): readonly SelectMenuOption[] {
   return [
     ...registries.map((registry) => ({
@@ -158,12 +207,69 @@ function registryChoices(
       label:
         registry === null
           ? t('plugins.manager.registry.configured', {
-              name: view.catalog?.resolved ?? t('plugins.manager.registry.current'),
+              name:
+                view.catalog?.resolved === null || view.catalog === null
+                  ? t('plugins.manager.registry.current')
+                  : registrySourceLabel(view.catalog.resolved, locale),
             })
-          : registry,
+          : registrySourceLabel(registry, locale),
     })),
     { value: CUSTOM_REGISTRY, label: t('plugins.manager.registry.custom') },
   ]
+}
+
+/** Give well-known sources their own names and keep private registry paths out of the picker. */
+function registrySourceLabel(value: string, locale: string): string {
+  let host: string
+  try {
+    host = new URL(value).host
+  } catch {
+    return locale === 'zh' ? '其他注册源' : 'Other registry'
+  }
+  const normalizedHost = host.toLowerCase()
+  const name =
+    normalizedHost === 'registry.npmjs.org'
+      ? locale === 'zh'
+        ? 'npm 官方源'
+        : 'Official npm registry'
+      : normalizedHost === 'registry.npmmirror.com'
+        ? locale === 'zh'
+          ? '中国大陆镜像源'
+          : 'Mainland China mirror'
+        : undefined
+  if (name === undefined) return host
+  return locale === 'zh' ? `${name}（${host}）` : `${name} (${host})`
+}
+
+function isGithubSpec(spec: string): boolean {
+  if (/^(?:github|gist):/iu.test(spec)) return true
+  let host: string | undefined
+  const scp = /^git@([^:]+):/iu.exec(spec)
+  if (scp !== null) host = scp[1]
+  else if (/^git(?:\+[a-z]+)?:\/\//iu.test(spec)) {
+    try {
+      host = new URL(spec.replace(/^git\+/iu, '')).hostname
+    } catch {
+      return false
+    }
+  } else if (/^https?:\/\//iu.test(spec)) {
+    try {
+      host = new URL(spec).hostname
+    } catch {
+      return false
+    }
+  }
+  const normalizedHost = host?.toLowerCase()
+  return normalizedHost === 'github.com' || normalizedHost?.endsWith('.github.com') === true
+}
+
+function canRecoverGithubInstall(result: PluginBundleChangeResult): boolean {
+  return (
+    result.application === 'failed' &&
+    result.failedAt === 'spec-host' &&
+    (result.failureKind === 'network' || result.failureKind === 'timeout') &&
+    isGithubSpec(result.name)
+  )
 }
 
 function isValidRegistry(value: string): boolean {
@@ -221,9 +327,16 @@ export function OptionalBundleManager(props: OptionalBundleManagerProps): ReactE
   const [standaloneOpen, setStandaloneOpen] = useState(false)
   const [busyKey, setBusyKey] = useState<string>()
   const [notice, setNotice] = useState<Notice>()
+  const [searchText, setSearchText] = useState('')
   const [spec, setSpec] = useState('')
+  const specInputRef = useRef<HTMLInputElement>(null)
+  const [dismissedRecoveryRequestId, setDismissedRecoveryRequestId] = useState<string>()
   const [inspection, setInspection] = useState<PluginSpecInspection>()
   const [checking, setChecking] = useState(false)
+  const [collapsedSearchBundles, setCollapsedSearchBundles] = useState<{
+    readonly query: string
+    readonly names: ReadonlySet<string>
+  }>({ query: '', names: EMPTY_OPEN_BUNDLES })
   const installOperation = props.installOperation
   const installBusy = installOperation !== undefined && installOperation.phase !== 'settled'
   const pendingBuilds = installOperation?.result?.pendingBuilds ?? []
@@ -283,7 +396,46 @@ export function OptionalBundleManager(props: OptionalBundleManagerProps): ReactE
   }, [props.revision, refreshToken])
 
   const bundles = useMemo(() => catalog?.bundles ?? EMPTY_BUNDLES, [catalog])
-  const plugins = catalog?.plugins ?? []
+  const plugins = catalog?.plugins ?? EMPTY_PLUGINS
+  const normalizedSearch = searchText.trim().toLocaleLowerCase(locale)
+  const searching = normalizedSearch.length > 0
+  const pluginsByEntryId = useMemo(
+    () => new Map(plugins.map((plugin) => [plugin.entryId, plugin] as const)),
+    [plugins],
+  )
+  const filteredBundles = useMemo<readonly FilteredBundle[]>(
+    () =>
+      bundles.flatMap((bundle) => {
+        const bundleMatches = matchesSearch(normalizedSearch, locale, [
+          bundle.name,
+          bundle.version,
+          ...localizedSearchValues(bundle.title),
+          ...localizedSearchValues(bundle.description),
+        ])
+        if (!searching) return [{ bundle, rows: bundle.rows, expandForSearch: false }]
+
+        const matchingRows = bundle.rows.filter((row) => {
+          const plugin = row.entryId === undefined ? undefined : pluginsByEntryId.get(row.entryId)
+          return matchesSearch(normalizedSearch, locale, [
+            row.rowId,
+            row.moduleName,
+            row.entryId,
+            ...localizedSearchValues(row.meta?.title),
+            ...localizedSearchValues(row.meta?.description),
+            ...(plugin === undefined ? [] : pluginSearchValues(plugin)),
+          ])
+        })
+        if (!bundleMatches && matchingRows.length === 0) return []
+        return [
+          {
+            bundle,
+            rows: bundleMatches ? bundle.rows : matchingRows,
+            expandForSearch: !bundleMatches && matchingRows.length > 0,
+          },
+        ]
+      }),
+    [bundles, locale, normalizedSearch, pluginsByEntryId, searching],
+  )
   const linkedEntryIds = useMemo(
     () =>
       new Set(
@@ -293,9 +445,19 @@ export function OptionalBundleManager(props: OptionalBundleManagerProps): ReactE
       ),
     [bundles],
   )
-  const standalonePlugins = plugins.filter((plugin) => !linkedEntryIds.has(plugin.entryId))
+  const standalonePlugins = useMemo(
+    () => plugins.filter((plugin) => !linkedEntryIds.has(plugin.entryId)),
+    [linkedEntryIds, plugins],
+  )
+  const filteredStandalonePlugins = useMemo(
+    () =>
+      standalonePlugins.filter((plugin) =>
+        matchesSearch(normalizedSearch, locale, pluginSearchValues(plugin)),
+      ),
+    [locale, normalizedSearch, standalonePlugins],
+  )
   const availableRegistries = registryOptions(registryView.catalog)
-  const registryMenuOptions = registryChoices(availableRegistries, registryView, t)
+  const registryMenuOptions = registryChoices(availableRegistries, registryView, t, locale)
   const registryMenuLabel =
     registryMenuOptions.find((option) => option.value === registryView.selected)?.label ??
     t('plugins.manager.registry.label')
@@ -321,6 +483,16 @@ export function OptionalBundleManager(props: OptionalBundleManagerProps): ReactE
       if (next.has(name)) next.delete(name)
       else next.add(name)
       return next
+    })
+  }
+
+  const toggleSearchExpandedBundle = (name: string): void => {
+    setCollapsedSearchBundles((current) => {
+      const names = current.query === normalizedSearch ? current.names : EMPTY_OPEN_BUNDLES
+      const next = new Set(names)
+      if (next.has(name)) next.delete(name)
+      else next.add(name)
+      return { query: normalizedSearch, names: next }
     })
   }
 
@@ -356,6 +528,7 @@ export function OptionalBundleManager(props: OptionalBundleManagerProps): ReactE
     if (value === '' || (selectedRegistry === undefined && registryView.selected === CUSTOM_REGISTRY)) return
     setNotice(undefined)
     setInspection(undefined)
+    setDismissedRecoveryRequestId(undefined)
     await props.onStartInstall({
       spec: value,
       ...(selectedRegistry === undefined ? {} : { registry: selectedRegistry }),
@@ -446,6 +619,20 @@ export function OptionalBundleManager(props: OptionalBundleManagerProps): ReactE
       : t('plugins.bundles.result.enabled')
   }
 
+  const recoverGithubInstall = (): void => {
+    if (
+      installOperation === undefined ||
+      installOperation.result === undefined ||
+      !canRecoverGithubInstall(installOperation.result)
+    )
+      return
+    setDismissedRecoveryRequestId(installOperation.requestId)
+    setSpec('')
+    setInspection(undefined)
+    setNotice(undefined)
+    specInputRef.current?.focus()
+  }
+
   const renderPluginRow = (
     entryId: string | undefined,
     rowId: string,
@@ -481,12 +668,15 @@ export function OptionalBundleManager(props: OptionalBundleManagerProps): ReactE
     )
   }
 
-  const renderBundle = (bundle: PluginManagerBundle): ReactElement => {
+  const renderBundle = (filtered: FilteredBundle): ReactElement => {
+    const { bundle, rows, expandForSearch } = filtered
     const title = localized(bundle.title, locale) ?? bundle.name
     const description = localized(bundle.description, locale)
     const blocked = bundle.readOnlyReason !== undefined || (!bundle.enabled && bundle.errorCode !== undefined)
     const actionDisabled = blocked || busyKey !== undefined || installBusy
-    const open = openBundles.has(bundle.name)
+    const collapsedForSearch =
+      collapsedSearchBundles.query === normalizedSearch && collapsedSearchBundles.names.has(bundle.name)
+    const open = expandForSearch ? !collapsedForSearch : openBundles.has(bundle.name)
     const bodyId = `dsh-bundle-body-${encodeURIComponent(bundle.name)}`
     return (
       <li className="dsh-optional-bundles__item" key={bundle.name} data-open={open ? 'true' : undefined}>
@@ -496,7 +686,9 @@ export function OptionalBundleManager(props: OptionalBundleManagerProps): ReactE
             type="button"
             aria-expanded={open}
             aria-controls={open ? bodyId : undefined}
-            onClick={() => toggleBundle(bundle.name)}
+            onClick={() =>
+              expandForSearch ? toggleSearchExpandedBundle(bundle.name) : toggleBundle(bundle.name)
+            }
           >
             <Icon name={open ? 'chevron-down' : 'chevron-right'} />
             <span className="dsh-optional-bundles__title-row">
@@ -512,9 +704,9 @@ export function OptionalBundleManager(props: OptionalBundleManagerProps): ReactE
               {bundle.optional ? (
                 <span className="dsh-optional-bundles__state">{t('plugins.manager.bundle.optional')}</span>
               ) : null}
-              {bundle.rows.length === 0 ? null : (
+              {rows.length === 0 ? null : (
                 <span className="dsh-optional-bundles__entry-count">
-                  {t('plugins.manager.entryCount', { count: bundle.rows.length })}
+                  {t('plugins.manager.entryCount', { count: rows.length })}
                 </span>
               )}
             </span>
@@ -586,12 +778,12 @@ export function OptionalBundleManager(props: OptionalBundleManagerProps): ReactE
             <p className="dsh-optional-bundles__muted">
               {t(bundle.installed ? 'plugins.bundles.profileDependency' : 'plugins.bundles.dshProvided')}
             </p>
-            {bundle.rows.length === 0 ? null : (
+            {rows.length === 0 ? null : (
               <ul
                 className="dsh-optional-bundles__plugins"
                 aria-label={t('plugins.manager.bundle.plugins', { name: title })}
               >
-                {bundle.rows.map((row) => renderPluginRow(row.entryId, row.rowId, row.moduleName, row.meta))}
+                {rows.map((row) => renderPluginRow(row.entryId, row.rowId, row.moduleName, row.meta))}
               </ul>
             )}
           </div>
@@ -676,6 +868,7 @@ export function OptionalBundleManager(props: OptionalBundleManagerProps): ReactE
                 <label>
                   <span>{t('plugins.manager.install.spec')}</span>
                   <input
+                    ref={specInputRef}
                     type="text"
                     autoComplete="off"
                     maxLength={4_096}
@@ -685,6 +878,7 @@ export function OptionalBundleManager(props: OptionalBundleManagerProps): ReactE
                     onChange={(event) => {
                       setSpec(event.currentTarget.value)
                       setInspection(undefined)
+                      setDismissedRecoveryRequestId(installOperation?.requestId)
                     }}
                   />
                 </label>
@@ -704,6 +898,7 @@ export function OptionalBundleManager(props: OptionalBundleManagerProps): ReactE
                       onChange={(selected) => {
                         setRegistryView((previous) => ({ ...previous, selected }))
                         setInspection(undefined)
+                        setDismissedRecoveryRequestId(installOperation?.requestId)
                       }}
                     />
                   </label>
@@ -820,7 +1015,7 @@ export function OptionalBundleManager(props: OptionalBundleManagerProps): ReactE
                     {t('plugins.manager.install.recovering')}
                   </p>
                 ) : null}
-                {installOperation?.phase === 'unknown' ? (
+                {installOperation?.phase === 'unknown' || installOperation?.phase === 'applying' ? (
                   <button
                     className="dsh-button dsh-button--secondary dsh-button--compact"
                     type="button"
@@ -832,13 +1027,24 @@ export function OptionalBundleManager(props: OptionalBundleManagerProps): ReactE
                       : t('plugins.manager.install.recover')}
                   </button>
                 ) : null}
-                {installOperation?.phase === 'settled' && installOperation.result !== undefined ? (
-                  <p
+                {installOperation?.phase === 'settled' &&
+                installOperation.result !== undefined &&
+                dismissedRecoveryRequestId !== installOperation.requestId ? (
+                  <div
                     className={`dsh-optional-bundles__notice${installOperation.result.application === 'failed' ? ' dsh-optional-bundles__notice--error' : ''}`}
                     role={installOperation.result.application === 'failed' ? 'alert' : 'status'}
                   >
-                    {resultText(installOperation.result)}
-                  </p>
+                    <span>{resultText(installOperation.result)}</span>
+                    {canRecoverGithubInstall(installOperation.result) ? (
+                      <button
+                        className="dsh-button dsh-button--secondary dsh-button--compact"
+                        type="button"
+                        onClick={recoverGithubInstall}
+                      >
+                        {locale === 'zh' ? '试试其他方式' : 'Try another way'}
+                      </button>
+                    ) : null}
+                  </div>
                 ) : installOperation?.cancellation === 'cancelled' ? (
                   <p className="dsh-optional-bundles__notice" role="status">
                     {t('plugins.bundles.result.cancelled')}
@@ -872,37 +1078,58 @@ export function OptionalBundleManager(props: OptionalBundleManagerProps): ReactE
                 </p>
               ) : null}
 
-              {bundles.length === 0 ? (
-                <p className="dsh-optional-bundles__muted">{t('plugins.bundles.empty')}</p>
-              ) : (
-                <ul className="dsh-optional-bundles__list" aria-label={t('plugins.bundles.listAria')}>
-                  {bundles.map(renderBundle)}
-                </ul>
-              )}
+              <label className="dsh-plugin-manager__search">
+                <Icon name="search" />
+                <span>{t('plugins.search')}</span>
+                <input
+                  type="search"
+                  value={searchText}
+                  aria-label={t('plugins.search')}
+                  onChange={(event) => setSearchText(event.currentTarget.value)}
+                />
+              </label>
 
-              {standalonePlugins.length > 0 ? (
+              {searching && filteredBundles.length === 0 && filteredStandalonePlugins.length === 0 ? (
+                <p className="dsh-optional-bundles__muted" role="status">
+                  {t('plugins.noMatch')}
+                </p>
+              ) : null}
+
+              {!searching && bundles.length === 0 ? (
+                <p className="dsh-optional-bundles__muted">{t('plugins.bundles.empty')}</p>
+              ) : filteredBundles.length > 0 ? (
+                <ul className="dsh-optional-bundles__list" aria-label={t('plugins.bundles.listAria')}>
+                  {filteredBundles.map(renderBundle)}
+                </ul>
+              ) : null}
+
+              {filteredStandalonePlugins.length > 0 ? (
                 <section
                   className="dsh-plugin-manager__standalone"
                   aria-labelledby="dsh-plugin-standalone-title"
                 >
                   <h3 id="dsh-plugin-standalone-title">
-                    <button
-                      className="dsh-plugin-manager__standalone-toggle"
-                      type="button"
-                      aria-expanded={standaloneOpen}
-                      aria-controls={standaloneOpen ? STANDALONE_BODY_ID : undefined}
-                      onClick={() => setStandaloneOpen((current) => !current)}
-                    >
-                      <Icon name={standaloneOpen ? 'chevron-down' : 'chevron-right'} />
+                    {searching ? (
                       <span>{t('plugins.manager.plugin.standalone')}</span>
-                      <span className="dsh-optional-bundles__entry-count">
-                        {t('plugins.manager.entryCount', { count: standalonePlugins.length })}
-                      </span>
-                    </button>
+                    ) : (
+                      <button
+                        className="dsh-plugin-manager__standalone-toggle"
+                        type="button"
+                        aria-expanded={standaloneOpen}
+                        aria-controls={standaloneOpen ? STANDALONE_BODY_ID : undefined}
+                        onClick={() => setStandaloneOpen((current) => !current)}
+                      >
+                        <Icon name={standaloneOpen ? 'chevron-down' : 'chevron-right'} />
+                        <span>{t('plugins.manager.plugin.standalone')}</span>
+                      </button>
+                    )}
+                    <span className="dsh-optional-bundles__entry-count">
+                      {t('plugins.manager.entryCount', { count: filteredStandalonePlugins.length })}
+                    </span>
                   </h3>
-                  {standaloneOpen ? (
+                  {searching || standaloneOpen ? (
                     <ul className="dsh-optional-bundles__plugins" id={STANDALONE_BODY_ID}>
-                      {standalonePlugins.map((plugin) =>
+                      {filteredStandalonePlugins.map((plugin) =>
                         renderPluginRow(plugin.entryId, plugin.entryId, plugin.moduleName, plugin.meta),
                       )}
                     </ul>

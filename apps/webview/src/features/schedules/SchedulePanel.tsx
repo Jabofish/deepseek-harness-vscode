@@ -24,6 +24,7 @@ import type { FeatureHostEvent, FeatureRequest } from '@dsh-vscode/webview-proto
 
 import { SelectMenu, type SelectMenuOption } from '../../components/common/SelectMenu.js'
 import { useI18n, type Translate } from '../../i18n.js'
+import type { ScheduleSessionLink } from './session-link.js'
 import './schedule-panel.css'
 
 export interface SchedulePanelProps {
@@ -31,6 +32,9 @@ export interface SchedulePanelProps {
   readonly subscribeFeature: (listener: (message: FeatureHostEvent) => void) => () => void
   /** Creates a Session, sends the first prompt, then resolves at that Session turn's terminal event. */
   readonly onStartScheduleSession: (prompt: string) => Promise<string>
+  readonly getLinkedSession: (sessionId: string) => ScheduleSessionLink
+  readonly onOpenLinkedSession: (sessionId: string) => void
+  readonly connectionEpoch: number
 }
 
 type CatalogPayload = { readonly kind: 'schedule.catalog'; readonly items: readonly ScheduleCatalogEntry[] }
@@ -42,6 +46,21 @@ type DetailTab = 'rule' | 'history'
 type TimingChoice = 'keep' | 'at' | 'every' | 'daily' | 'weekly' | 'cron'
 type CreateTiming = 'after' | 'at' | 'every' | 'daily' | 'weekly' | 'cron'
 type StatusFilter = 'all' | 'active' | 'inactive'
+
+function linkedSessionMessageKey(
+  link: Exclude<ScheduleSessionLink, { readonly status: 'available' }>,
+): string {
+  switch (link.status) {
+    case 'loading':
+      return 'schedules.linkedSession.loading'
+    case 'error':
+      return 'schedules.linkedSession.error'
+    case 'archived':
+      return 'schedules.linkedSession.archived'
+    case 'missing':
+      return 'schedules.linkedSession.missing'
+  }
+}
 
 const CREATE_TIMINGS: readonly CreateTiming[] = ['after', 'at', 'every', 'daily', 'weekly', 'cron']
 const EDIT_TIMINGS: readonly TimingChoice[] = ['keep', 'at', 'every', 'daily', 'weekly', 'cron']
@@ -348,7 +367,7 @@ function createValidation(draft: CreateDraft): string | undefined {
   }
   if (draft.timing === 'every') {
     const seconds = Number(draft.seconds)
-    if (!Number.isSafeInteger(seconds) || seconds < 300) return 'schedules.create.validation.every'
+    if (!Number.isSafeInteger(seconds) || seconds < 60) return 'schedules.create.validation.every'
   }
   if (draft.timing === 'at') {
     if (!validTimeZone(draft.timeZone)) return 'schedules.create.validation.timeZone'
@@ -454,28 +473,74 @@ function canonicalClockTime(value: string): string | undefined {
   return `${String(parts.hour).padStart(2, '0')}:${String(parts.minute).padStart(2, '0')}:${String(parts.second).padStart(2, '0')}.${String(parts.millisecond).padStart(3, '0')}`
 }
 
-function timeParts(instant: string): { readonly date: string; readonly time: string } {
+function systemTimeZone(): string {
+  try {
+    const value = Intl.DateTimeFormat().resolvedOptions().timeZone
+    return value === '' ? 'UTC' : (canonicalTimeZone(value) ?? 'UTC')
+  } catch {
+    return 'UTC'
+  }
+}
+
+function timeParts(instant: string, timeZone: string): { readonly date: string; readonly time: string } {
   const value = new Date(instant)
   if (Number.isNaN(value.getTime())) return { date: '', time: '' }
+  const displayZone = validTimeZone(timeZone) ? timeZone : 'UTC'
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat('en-US', {
+      timeZone: displayZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hourCycle: 'h23',
+    })
+      .formatToParts(value)
+      .map((part) => [part.type, part.value]),
+  )
   return {
-    date: value.toISOString().slice(0, 10),
-    time: value.toISOString().slice(11, 23),
+    date: `${parts.year}-${parts.month}-${parts.day}`,
+    time: `${parts.hour}:${parts.minute}:${parts.second}.${String(value.getUTCMilliseconds()).padStart(3, '0')}`,
   }
 }
 
 function initialDraft(record: ScheduleCatalogEntry): EditDraft {
-  const parts = timeParts(record.scheduledAt)
+  const timeZone = 'timeZone' in record ? record.timeZone : systemTimeZone()
+  const parts = timeParts(record.scheduledAt, timeZone)
+  const dateParts = parts.date.split('-').map(Number)
+  const dateWeekday =
+    dateParts.length === 3 && dateParts.every(Number.isFinite)
+      ? new Date(Date.UTC(dateParts[0] ?? 2000, (dateParts[1] ?? 1) - 1, dateParts[2] ?? 1)).getUTCDay()
+      : 1
+  const weekday = dateWeekday === 0 ? 7 : dateWeekday
+  const occurrence = parseWallClock('2000-01-01', parts.time)
   return {
     title: record.title,
     prompt: record.prompt,
     timing: 'keep',
     date: parts.date,
-    time: 'time' in record ? record.time : parts.time,
-    timeZone: 'timeZone' in record ? record.timeZone : 'UTC',
-    seconds: 'everySeconds' in record ? String(record.everySeconds) : '300',
-    weekdays: record.kind === 'weekly' ? [...record.weekdays] : [1],
-    expression: record.kind === 'cron' ? record.expression : '0 9 * * 1',
+    time: parts.time,
+    timeZone,
+    seconds: 'everySeconds' in record ? String(record.everySeconds) : '60',
+    weekdays: [weekday],
+    expression: occurrence === undefined ? '0 9 * * *' : `${occurrence.minute} ${occurrence.hour} * * *`,
   }
+}
+
+function sameEditDraft(left: EditDraft, right: EditDraft): boolean {
+  return (
+    left.title === right.title &&
+    left.prompt === right.prompt &&
+    left.timing === right.timing &&
+    left.date === right.date &&
+    left.time === right.time &&
+    left.timeZone === right.timeZone &&
+    left.seconds === right.seconds &&
+    left.expression === right.expression &&
+    [...left.weekdays].sort((a, b) => a - b).join(',') === [...right.weekdays].sort((a, b) => a - b).join(',')
+  )
 }
 
 function expectedFeatureRecord(record: ScheduleRecord): ScheduleUpdateFeaturePayload['expected'] {
@@ -549,6 +614,16 @@ function isScheduleCreateIndeterminate(value: unknown): boolean {
   return (value as { readonly scheduleCreateIndeterminate?: unknown }).scheduleCreateIndeterminate === true
 }
 
+/**
+ * A DSH composition that never mounted the Schedule service answers every
+ * `schedule/*` request with `CAPABILITY_UNAVAILABLE`. No retry can change that
+ * answer, so the panel names the cause instead of reporting a load failure.
+ */
+function isCapabilityUnavailable(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false
+  return (error as { readonly code?: unknown }).code === 'CAPABILITY_UNAVAILABLE'
+}
+
 function updateResultError(result: ScheduleUpdateResult): string | undefined {
   if ('message' in result) return `schedules.error.${result.code}`
   if ('record' in result) return undefined
@@ -588,15 +663,33 @@ function formatRule(record: ScheduleRecord, t: ReturnType<typeof useI18n>['t']):
   }
 }
 
+function formatDeliveryOccurrence(
+  instant: string,
+  record: ScheduleRecord,
+  locale: ReturnType<typeof useI18n>['locale'],
+): string {
+  const timeZone =
+    record.kind === 'daily' || record.kind === 'weekly' || record.kind === 'cron'
+      ? record.timeZone
+      : undefined
+  return new Intl.DateTimeFormat(locale === 'zh' ? 'zh-CN' : 'en-US', {
+    month: 'long',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    ...(timeZone === undefined ? {} : { timeZone }),
+  }).format(new Date(instant))
+}
+
 /** Cross-session view and management for the Host Schedule catalog. */
 export function SchedulePanel(props: SchedulePanelProps): ReactElement {
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
   const subscribeFeature = props.subscribeFeature
   const labelId = useId()
   const featureRequestRef = useRef(props.featureRequest)
 
   const [records, setRecords] = useState<readonly ScheduleCatalogEntry[]>([])
-  const [catalogStatus, setCatalogStatus] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [catalogStatus, setCatalogStatus] = useState<'loading' | 'ready' | 'error' | 'unavailable'>('loading')
   const [catalogSettled, setCatalogSettled] = useState(false)
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
@@ -605,9 +698,11 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
   const [draft, setDraft] = useState<EditDraft>()
   const [editing, setEditing] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [moreActionsOpen, setMoreActionsOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [operationError, setOperationError] = useState<string>()
   const [operationNotice, setOperationNotice] = useState<string>()
+  const [showRetentionDetails, setShowRetentionDetails] = useState(false)
   const [sessionStarting, setSessionStarting] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
   const [createDraft, setCreateDraft] = useState<CreateDraft>(initialCreateDraft)
@@ -615,6 +710,11 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
   const [createError, setCreateError] = useState<string>()
   const [confirmedCreate, setConfirmedCreate] = useState<ScheduleCatalogEntry>()
   const [history, setHistory] = useState<HistoryView>(EMPTY_HISTORY)
+  const draftRef = useRef(draft)
+  const editingRef = useRef(editing)
+  const editBaselineRef = useRef<{ readonly key: string; readonly draft: EditDraft } | undefined>(undefined)
+  draftRef.current = draft
+  editingRef.current = editing
   const pendingRequestIds = useRef(new Set<string>())
   const catalogGeneration = useRef(0)
   const historyGeneration = useRef(0)
@@ -626,12 +726,20 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
   const tabButtonsRef = useRef<Record<DetailTab, HTMLButtonElement | null>>({ rule: null, history: null })
   const rowTriggerRef = useRef<HTMLButtonElement | null>(null)
   const listHeadingRef = useRef<HTMLHeadingElement>(null)
+  const observedConnectionEpoch = useRef(props.connectionEpoch)
   const mounted = useRef(false)
   const previousSelectedKey = useRef(selectedKey)
   const pendingCreate = useRef<PendingCreate | undefined>(undefined)
   const checkingCreateCatalog = useRef(false)
 
   const setActiveTab = (nextTab: DetailTab): void => {
+    if (tabRef.current === 'history' && nextTab !== 'history') {
+      historyGeneration.current += 1
+      if (currentHistoryRequest.current !== undefined) {
+        cancelRequest(currentHistoryRequest.current)
+        currentHistoryRequest.current = undefined
+      }
+    }
     tabRef.current = nextTab
     setTab(nextTab)
   }
@@ -666,11 +774,17 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
           const refreshedSelection = payload.items.find(
             (record) => scheduleKey(record) === selectedKeyRef.current,
           )
-          if (refreshedSelection === undefined) {
-            selectedKeyRef.current = undefined
-            selectedRecordRef.current = undefined
-            setSelectedKey(undefined)
-          } else selectedRecordRef.current = refreshedSelection
+          if (refreshedSelection !== undefined) {
+            selectedRecordRef.current = refreshedSelection
+            const key = scheduleKey(refreshedSelection)
+            const baseline = editBaselineRef.current
+            const currentDraft = draftRef.current
+            if (editingRef.current && currentDraft !== undefined && baseline?.key === key) {
+              const nextBaseline = initialDraft(refreshedSelection)
+              if (sameEditDraft(currentDraft, baseline.draft)) setDraft(nextBaseline)
+              editBaselineRef.current = { key, draft: nextBaseline }
+            }
+          }
         }
         setRecords(payload.items)
         const pending = pendingCreate.current
@@ -694,10 +808,13 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
         setCatalogSettled(true)
         setCatalogStatus('ready')
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         if (!mounted.current || generation !== catalogGeneration.current) return
         checkingCreateCatalog.current = false
-        setCatalogStatus('error')
+        // A composition without the Schedule service answers every
+        // `schedule/*` endpoint with 404. Retrying cannot help until that DSH
+        // mounts the service, so it is a settled state, not a transient error.
+        setCatalogStatus(isCapabilityUnavailable(error) ? 'unavailable' : 'error')
       })
       .finally(() => {
         if (currentCatalogRequest.current === requestId) currentCatalogRequest.current = undefined
@@ -706,6 +823,7 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
 
   const loadHistory = (record: ScheduleCatalogEntry, before?: string, reset = false): void => {
     const generation = reset ? ++historyGeneration.current : historyGeneration.current
+    if (reset) setShowRetentionDetails(false)
     if (currentHistoryRequest.current !== undefined) cancelRequest(currentHistoryRequest.current)
     const requestId = newRequestId()
     currentHistoryRequest.current = requestId
@@ -803,6 +921,14 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
   }, [subscribeFeature])
 
   useEffect(() => {
+    if (observedConnectionEpoch.current === props.connectionEpoch) return
+    observedConnectionEpoch.current = props.connectionEpoch
+    reloadRef.current()
+    const selected = selectedRecordRef.current
+    if (tabRef.current === 'history' && selected !== undefined) reloadHistoryRef.current(selected)
+  }, [props.connectionEpoch])
+
+  useEffect(() => {
     if (previousSelectedKey.current !== undefined && selectedKey === undefined) {
       const target = rowTriggerRef.current
       if (target !== null && target.isConnected) target.focus()
@@ -823,13 +949,32 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
     })
   }, [records, search, statusFilter, t])
 
-  const selected = records.find((record) => scheduleKey(record) === selectedKey)
+  const selectedFromCatalog = records.find((record) => scheduleKey(record) === selectedKey)
+  const selected =
+    selectedFromCatalog ??
+    (selectedKey !== undefined &&
+    selectedRecordRef.current !== undefined &&
+    scheduleKey(selectedRecordRef.current) === selectedKey
+      ? selectedRecordRef.current
+      : undefined)
+  const selectedInCatalog = selectedFromCatalog !== undefined
+  const draftDirty =
+    selected !== undefined &&
+    draft !== undefined &&
+    editBaselineRef.current?.key === scheduleKey(selected) &&
+    !sameEditDraft(draft, editBaselineRef.current.draft)
+  const selectedLinkedSession =
+    selected === undefined ? undefined : props.getLinkedSession(selected.sessionId)
 
   const resetSelectedDetails = (): void => {
     setActiveTab('rule')
     setDraft(undefined)
+    draftRef.current = undefined
+    editBaselineRef.current = undefined
     setEditing(false)
+    editingRef.current = false
     setConfirmDelete(false)
+    setMoreActionsOpen(false)
     setOperationError(undefined)
     setOperationNotice(undefined)
     setHistory(EMPTY_HISTORY)
@@ -933,16 +1078,42 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
   }
 
   const beginEdit = (): void => {
-    if (selected === undefined || selected.status !== 'active') return
+    if (
+      selected === undefined ||
+      selected.status !== 'active' ||
+      !selectedInCatalog ||
+      catalogStatus !== 'ready'
+    )
+      return
     setOperationError(undefined)
     setOperationNotice(undefined)
-    setDraft(initialDraft(selected))
+    const initial = initialDraft(selected)
+    draftRef.current = initial
+    editBaselineRef.current = { key: scheduleKey(selected), draft: initial }
+    setDraft(initial)
     setEditing(true)
+    editingRef.current = true
   }
 
   const submitEdit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault()
-    if (selected === undefined || draft === undefined || busy || selected.status !== 'active') return
+    if (
+      selected === undefined ||
+      draft === undefined ||
+      busy ||
+      selected.status !== 'active' ||
+      !selectedInCatalog ||
+      catalogStatus !== 'ready'
+    )
+      return
+    const operationKey = scheduleKey(selected)
+    if (draft.timing === 'every') {
+      const seconds = Number(draft.seconds)
+      if (!Number.isSafeInteger(seconds) || seconds < 60) {
+        setOperationError('schedules.update.validation.every')
+        return
+      }
+    }
     const change = timingChange(draft)
     const update: ScheduleUpdateFeaturePayload = {
       sessionId: selected.sessionId,
@@ -962,18 +1133,23 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
         if (payload.kind !== 'schedule.updated') throw new Error('malformed-update')
         const errorKey = updateResultError(payload.result)
         if (errorKey !== undefined) {
-          setOperationError(errorKey)
-          setEditing(false)
+          if (selectedKeyRef.current === operationKey) setOperationError(errorKey)
           refreshCatalog()
           return
         }
-        setOperationNotice('schedules.update.success')
-        setEditing(false)
-        setDraft(undefined)
+        if (selectedKeyRef.current === operationKey) {
+          setOperationNotice('schedules.update.success')
+          setEditing(false)
+          setDraft(undefined)
+          editingRef.current = false
+          draftRef.current = undefined
+          editBaselineRef.current = undefined
+        }
         refreshCatalog()
       })
       .catch(() => {
-        if (mounted.current) setOperationError('schedules.update.failed')
+        if (mounted.current && selectedKeyRef.current === operationKey)
+          setOperationError('schedules.update.failed')
       })
       .finally(() => {
         if (mounted.current) setBusy(false)
@@ -981,7 +1157,8 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
   }
 
   const deleteSelected = (): void => {
-    if (selected === undefined || busy) return
+    if (selected === undefined || busy || !selectedInCatalog || catalogStatus !== 'ready') return
+    const operationKey = scheduleKey(selected)
     setBusy(true)
     setOperationError(undefined)
     const requestId = newRequestId()
@@ -995,18 +1172,23 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
         if (payload.kind !== 'schedule.deleted') throw new Error('malformed-delete')
         const errorKey = deleteResultError(payload.result)
         if (errorKey !== undefined) {
-          setOperationError(errorKey)
-          setConfirmDelete(false)
+          if (selectedKeyRef.current === operationKey) {
+            setOperationError(errorKey)
+            setConfirmDelete(false)
+          }
           refreshCatalog()
           return
         }
-        setConfirmDelete(false)
         refreshCatalog()
-        rowTriggerRef.current = null
-        closeDetails()
+        if (selectedKeyRef.current === operationKey) {
+          setConfirmDelete(false)
+          rowTriggerRef.current = null
+          closeDetails()
+        }
       })
       .catch(() => {
-        if (mounted.current) setOperationError('schedules.delete.failed')
+        if (mounted.current && selectedKeyRef.current === operationKey)
+          setOperationError('schedules.delete.failed')
       })
       .finally(() => {
         if (mounted.current) setBusy(false)
@@ -1020,6 +1202,7 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
   }
 
   const onTabKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
+    if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
     const currentIndex = tabRef.current === 'rule' ? 0 : 1
     let nextTab: DetailTab | undefined
     switch (event.key) {
@@ -1046,6 +1229,10 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
     if (event.key !== 'Escape' || event.defaultPrevented || selectedKey === undefined || busy) return
     event.preventDefault()
     event.stopPropagation()
+    if (moreActionsOpen) {
+      setMoreActionsOpen(false)
+      return
+    }
     if (confirmDelete) {
       setConfirmDelete(false)
       return
@@ -1071,7 +1258,11 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
               className="dsh-schedule-panel__new"
               aria-busy={sessionStarting}
               disabled={
-                sessionStarting || createOpen || createStatus === 'pending' || createStatus === 'unconfirmed'
+                sessionStarting ||
+                createOpen ||
+                createStatus === 'pending' ||
+                createStatus === 'unconfirmed' ||
+                catalogStatus === 'unavailable'
               }
               onClick={startScheduleSession}
             >
@@ -1169,7 +1360,12 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
                 value={createDraft.timing}
                 options={timingChoices(CREATE_TIMINGS, t)}
                 onChange={(value) => {
-                  setCreateDraft({ ...createDraft, timing: value as CreateTiming })
+                  const timing = value as CreateTiming
+                  setCreateDraft({
+                    ...createDraft,
+                    timing,
+                    ...(timing === 'every' && createDraft.timing !== 'every' ? { seconds: '60' } : {}),
+                  })
                   setCreateError(undefined)
                 }}
               />
@@ -1180,7 +1376,7 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
                   <span>{t('schedules.field.seconds')}</span>
                   <input
                     type="number"
-                    min={createDraft.timing === 'every' ? '300' : '1'}
+                    min={createDraft.timing === 'every' ? '60' : '1'}
                     step="1"
                     required
                     value={createDraft.seconds}
@@ -1376,13 +1572,26 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
           </div>
         </div>
 
-        <p className="dsh-schedule-panel__count" role="status" aria-live="polite">
-          {t('schedules.count', { visible: visibleRecords.length, total: records.length })}
-        </p>
+        {/* Before the first settled read the panel holds no catalog at all, so a
+         * count would report `0 of 0` as if it had verified an empty list. */}
+        {catalogSettled ? (
+          <p className="dsh-schedule-panel__count" role="status" aria-live="polite">
+            {t('schedules.count', { visible: visibleRecords.length, total: records.length })}
+          </p>
+        ) : null}
 
         {catalogStatus === 'error' ? (
           <div className="dsh-schedule-panel__notice" role={catalogSettled ? 'status' : 'alert'}>
             <span>{catalogSettled ? t('schedules.stale') : t('schedules.loadFailed')}</span>
+            <button type="button" onClick={refreshCatalog}>
+              {t('schedules.retry')}
+            </button>
+          </div>
+        ) : null}
+        {catalogStatus === 'unavailable' ? (
+          <div className="dsh-schedule-panel__notice" role="status">
+            <span>{t('schedules.unavailable')}</span>
+            <p className="dsh-schedule-panel__muted">{t('schedules.unavailableHint')}</p>
             <button type="button" onClick={refreshCatalog}>
               {t('schedules.retry')}
             </button>
@@ -1452,19 +1661,79 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
         >
           <div className="dsh-schedule-panel__detail-heading">
             <div>
-              <p className="dsh-schedule-panel__eyebrow">
-                {t('schedules.session', { id: selected.sessionId })}
-              </p>
+              <div className="dsh-schedule-panel__linked-session">
+                <button
+                  type="button"
+                  className="dsh-schedule-panel__linked-session-button"
+                  disabled={selectedLinkedSession?.status !== 'available'}
+                  aria-describedby={
+                    selectedLinkedSession !== undefined && selectedLinkedSession.status !== 'available'
+                      ? `${labelId}-linked-session-state`
+                      : undefined
+                  }
+                  onClick={() => {
+                    if (props.getLinkedSession(selected.sessionId).status === 'available')
+                      props.onOpenLinkedSession(selected.sessionId)
+                  }}
+                >
+                  {t('schedules.linkedSession.label', {
+                    title:
+                      selectedLinkedSession?.status === 'available'
+                        ? selectedLinkedSession.title
+                        : selected.sessionId,
+                  })}
+                </button>
+                {selectedLinkedSession !== undefined && selectedLinkedSession.status !== 'available' ? (
+                  <p className="dsh-schedule-panel__eyebrow" id={`${labelId}-linked-session-state`}>
+                    {t(linkedSessionMessageKey(selectedLinkedSession))}
+                  </p>
+                ) : null}
+              </div>
               <h2>{selected.title}</h2>
             </div>
-            <button
-              type="button"
-              className="dsh-schedule-panel__icon-button"
-              aria-label={t('schedules.closeDetail')}
-              onClick={closeDetails}
-            >
-              ×
-            </button>
+            <div className="dsh-schedule-panel__detail-heading-actions">
+              <div className="dsh-schedule-panel__more-actions">
+                <button
+                  type="button"
+                  className="dsh-schedule-panel__icon-button"
+                  aria-label={t('schedules.moreActions')}
+                  aria-haspopup="menu"
+                  aria-expanded={moreActionsOpen}
+                  aria-controls={moreActionsOpen ? `${labelId}-more-actions` : undefined}
+                  onClick={() => setMoreActionsOpen((open) => !open)}
+                >
+                  ⋯
+                </button>
+                {moreActionsOpen ? (
+                  <div
+                    id={`${labelId}-more-actions`}
+                    className="dsh-schedule-panel__more-actions-menu"
+                    role="menu"
+                    aria-label={t('schedules.moreActions')}
+                  >
+                    <button
+                      type="button"
+                      role="menuitem"
+                      disabled={busy || catalogStatus === 'loading' || !selectedInCatalog}
+                      onClick={() => {
+                        setMoreActionsOpen(false)
+                        setConfirmDelete(true)
+                      }}
+                    >
+                      {t('schedules.delete')}
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+              <button
+                type="button"
+                className="dsh-schedule-panel__icon-button"
+                aria-label={t('schedules.closeDetail')}
+                onClick={closeDetails}
+              >
+                ×
+              </button>
+            </div>
           </div>
           <div
             className="dsh-schedule-panel__tabs"
@@ -1513,6 +1782,35 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
               {t(operationNotice)}
             </p>
           ) : null}
+          {catalogSettled && !selectedInCatalog ? (
+            <p className="dsh-schedule-panel__muted" role="status">
+              {t('schedules.detail.missingFromCatalog')}
+            </p>
+          ) : null}
+
+          {confirmDelete ? (
+            <div
+              className="dsh-schedule-panel__confirm"
+              role="alertdialog"
+              aria-label={t('schedules.delete.confirmTitle')}
+              aria-describedby={`${labelId}-delete-copy`}
+            >
+              <p id={`${labelId}-delete-copy`}>{t('schedules.delete.confirm', { title: selected.title })}</p>
+              <div className="dsh-schedule-panel__actions">
+                <button
+                  type="button"
+                  className="dsh-schedule-panel__danger"
+                  disabled={busy || catalogStatus === 'loading' || !selectedInCatalog}
+                  onClick={deleteSelected}
+                >
+                  {busy ? t('schedules.working') : t('schedules.delete.confirmAction')}
+                </button>
+                <button type="button" disabled={busy} onClick={() => setConfirmDelete(false)}>
+                  {t('schedules.cancel')}
+                </button>
+              </div>
+            </div>
+          ) : null}
 
           <div
             id={`${labelId}-panel-rule`}
@@ -1523,172 +1821,188 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
           >
             {editing && draft !== undefined ? (
               <form className="dsh-schedule-panel__editor" onSubmit={submitEdit}>
-                <label>
-                  <span>{t('schedules.field.title')}</span>
-                  <input
-                    value={draft.title}
-                    maxLength={120}
-                    required
-                    onChange={(event) => setDraft({ ...draft, title: event.target.value })}
-                  />
-                </label>
-                <label>
-                  <span>{t('schedules.field.prompt')}</span>
-                  <textarea
-                    value={draft.prompt}
-                    required
-                    rows={5}
-                    onChange={(event) => setDraft({ ...draft, prompt: event.target.value })}
-                  />
-                </label>
-                <label>
-                  <span>{t('schedules.field.timing')}</span>
-                  <SelectMenu
-                    className="dsh-schedule-panel__timing-picker"
-                    icon="clock"
-                    density="regular"
-                    label={timingLabel(draft.timing, t)}
-                    ariaLabel={t('schedules.field.timing')}
-                    title={t('schedules.field.timing')}
-                    value={draft.timing}
-                    options={timingChoices(EDIT_TIMINGS, t)}
-                    onChange={(value) => setDraft({ ...draft, timing: value as TimingChoice })}
-                  />
-                </label>
-                {draft.timing === 'at' ? (
-                  <div className="dsh-schedule-panel__timing-fields">
-                    <label>
-                      <span>{t('schedules.field.date')}</span>
-                      <input
-                        type="date"
-                        required
-                        value={draft.date}
-                        onChange={(event) => setDraft({ ...draft, date: event.target.value })}
-                      />
-                    </label>
-                    <label>
-                      <span>{t('schedules.field.time')}</span>
-                      <input
-                        type="time"
-                        step="0.001"
-                        required
-                        value={draft.time}
-                        onChange={(event) => setDraft({ ...draft, time: event.target.value })}
-                      />
-                    </label>
-                    <label>
-                      <span>{t('schedules.field.timeZone')}</span>
-                      <input
-                        required
-                        value={draft.timeZone}
-                        onChange={(event) => setDraft({ ...draft, timeZone: event.target.value })}
-                      />
-                    </label>
-                  </div>
-                ) : null}
-                {draft.timing === 'every' ? (
+                <fieldset
+                  className="dsh-schedule-panel__editor-fields"
+                  disabled={
+                    busy || catalogStatus === 'loading' || !selectedInCatalog || selected.status !== 'active'
+                  }
+                >
                   <label>
-                    <span>{t('schedules.field.seconds')}</span>
+                    <span>{t('schedules.field.title')}</span>
                     <input
-                      type="number"
-                      min="300"
-                      step="1"
+                      value={draft.title}
+                      maxLength={120}
                       required
-                      value={draft.seconds}
-                      onChange={(event) => setDraft({ ...draft, seconds: event.target.value })}
+                      onChange={(event) => setDraft({ ...draft, title: event.target.value })}
                     />
                   </label>
-                ) : null}
-                {draft.timing === 'daily' || draft.timing === 'weekly' ? (
-                  <div className="dsh-schedule-panel__timing-fields">
+                  <label>
+                    <span>{t('schedules.field.prompt')}</span>
+                    <textarea
+                      value={draft.prompt}
+                      required
+                      rows={5}
+                      onChange={(event) => setDraft({ ...draft, prompt: event.target.value })}
+                    />
+                  </label>
+                  <label>
+                    <span>{t('schedules.field.timing')}</span>
+                    <SelectMenu
+                      className="dsh-schedule-panel__timing-picker"
+                      icon="clock"
+                      density="regular"
+                      label={timingLabel(draft.timing, t)}
+                      ariaLabel={t('schedules.field.timing')}
+                      title={t('schedules.field.timing')}
+                      value={draft.timing}
+                      options={timingChoices(EDIT_TIMINGS, t)}
+                      onChange={(value) => setDraft({ ...draft, timing: value as TimingChoice })}
+                    />
+                  </label>
+                  {draft.timing === 'at' ? (
+                    <div className="dsh-schedule-panel__timing-fields">
+                      <label>
+                        <span>{t('schedules.field.date')}</span>
+                        <input
+                          type="date"
+                          required
+                          value={draft.date}
+                          onChange={(event) => setDraft({ ...draft, date: event.target.value })}
+                        />
+                      </label>
+                      <label>
+                        <span>{t('schedules.field.time')}</span>
+                        <input
+                          type="time"
+                          step="0.001"
+                          required
+                          value={draft.time}
+                          onChange={(event) => setDraft({ ...draft, time: event.target.value })}
+                        />
+                      </label>
+                      <label>
+                        <span>{t('schedules.field.timeZone')}</span>
+                        <input
+                          required
+                          value={draft.timeZone}
+                          onChange={(event) => setDraft({ ...draft, timeZone: event.target.value })}
+                        />
+                      </label>
+                    </div>
+                  ) : null}
+                  {draft.timing === 'every' ? (
                     <label>
-                      <span>{t('schedules.field.time')}</span>
+                      <span>{t('schedules.field.seconds')}</span>
                       <input
-                        type="time"
-                        step="0.001"
+                        type="number"
+                        min="60"
+                        step="1"
                         required
-                        value={draft.time}
-                        onChange={(event) => setDraft({ ...draft, time: event.target.value })}
+                        value={draft.seconds}
+                        onChange={(event) => setDraft({ ...draft, seconds: event.target.value })}
                       />
                     </label>
-                    <label>
-                      <span>{t('schedules.field.timeZone')}</span>
-                      <input
-                        required
-                        value={draft.timeZone}
-                        onChange={(event) => setDraft({ ...draft, timeZone: event.target.value })}
-                      />
-                    </label>
-                    {draft.timing === 'weekly' ? (
-                      <fieldset className="dsh-schedule-panel__weekdays">
-                        <legend>{t('schedules.field.weekdays')}</legend>
-                        {([1, 2, 3, 4, 5, 6, 7] as const).map((day) => (
-                          <label key={day}>
-                            <input
-                              type="checkbox"
-                              checked={draft.weekdays.includes(day)}
-                              onChange={(event) =>
-                                setDraft({
-                                  ...draft,
-                                  weekdays: event.target.checked
-                                    ? [...draft.weekdays, day]
-                                    : draft.weekdays.filter((value) => value !== day),
-                                })
-                              }
-                            />
-                            <span>{t(`schedules.weekday.${day}`)}</span>
-                          </label>
-                        ))}
-                      </fieldset>
-                    ) : null}
+                  ) : null}
+                  {draft.timing === 'daily' || draft.timing === 'weekly' ? (
+                    <div className="dsh-schedule-panel__timing-fields">
+                      <label>
+                        <span>{t('schedules.field.time')}</span>
+                        <input
+                          type="time"
+                          step="0.001"
+                          required
+                          value={draft.time}
+                          onChange={(event) => setDraft({ ...draft, time: event.target.value })}
+                        />
+                      </label>
+                      <label>
+                        <span>{t('schedules.field.timeZone')}</span>
+                        <input
+                          required
+                          value={draft.timeZone}
+                          onChange={(event) => setDraft({ ...draft, timeZone: event.target.value })}
+                        />
+                      </label>
+                      {draft.timing === 'weekly' ? (
+                        <fieldset className="dsh-schedule-panel__weekdays">
+                          <legend>{t('schedules.field.weekdays')}</legend>
+                          {([1, 2, 3, 4, 5, 6, 7] as const).map((day) => (
+                            <label key={day}>
+                              <input
+                                type="checkbox"
+                                checked={draft.weekdays.includes(day)}
+                                onChange={(event) =>
+                                  setDraft({
+                                    ...draft,
+                                    weekdays: event.target.checked
+                                      ? [...draft.weekdays, day]
+                                      : draft.weekdays.filter((value) => value !== day),
+                                  })
+                                }
+                              />
+                              <span>{t(`schedules.weekday.${day}`)}</span>
+                            </label>
+                          ))}
+                        </fieldset>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {draft.timing === 'cron' ? (
+                    <div className="dsh-schedule-panel__timing-fields">
+                      <label>
+                        <span>{t('schedules.field.expression')}</span>
+                        <input
+                          required
+                          value={draft.expression}
+                          onChange={(event) => setDraft({ ...draft, expression: event.target.value })}
+                        />
+                      </label>
+                      <label>
+                        <span>{t('schedules.field.timeZone')}</span>
+                        <input
+                          required
+                          value={draft.timeZone}
+                          onChange={(event) => setDraft({ ...draft, timeZone: event.target.value })}
+                        />
+                      </label>
+                    </div>
+                  ) : null}
+                </fieldset>
+                {draftDirty ? (
+                  <div className="dsh-schedule-panel__actions dsh-schedule-panel__editor-save-bar">
+                    <p role="status">{t('schedules.update.unsaved')}</p>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => {
+                        setEditing(false)
+                        editingRef.current = false
+                        setDraft(undefined)
+                        draftRef.current = undefined
+                        editBaselineRef.current = undefined
+                        setOperationError(undefined)
+                      }}
+                    >
+                      {t('schedules.cancel')}
+                    </button>
+                    <button
+                      type="submit"
+                      className="dsh-schedule-panel__primary"
+                      disabled={
+                        busy ||
+                        catalogStatus !== 'ready' ||
+                        !selectedInCatalog ||
+                        selected.status !== 'active' ||
+                        draft.title.trim() === '' ||
+                        draft.title.trim().length > 120 ||
+                        draft.prompt.trim() === '' ||
+                        (draft.timing === 'weekly' && draft.weekdays.length === 0)
+                      }
+                    >
+                      {busy ? t('schedules.update.saving') : t('schedules.save')}
+                    </button>
                   </div>
                 ) : null}
-                {draft.timing === 'cron' ? (
-                  <div className="dsh-schedule-panel__timing-fields">
-                    <label>
-                      <span>{t('schedules.field.expression')}</span>
-                      <input
-                        required
-                        value={draft.expression}
-                        onChange={(event) => setDraft({ ...draft, expression: event.target.value })}
-                      />
-                    </label>
-                    <label>
-                      <span>{t('schedules.field.timeZone')}</span>
-                      <input
-                        required
-                        value={draft.timeZone}
-                        onChange={(event) => setDraft({ ...draft, timeZone: event.target.value })}
-                      />
-                    </label>
-                  </div>
-                ) : null}
-                <div className="dsh-schedule-panel__actions">
-                  <button
-                    type="submit"
-                    className="dsh-schedule-panel__primary"
-                    disabled={
-                      busy ||
-                      draft.title.trim() === '' ||
-                      draft.title.trim().length > 120 ||
-                      draft.prompt.trim() === '' ||
-                      (draft.timing === 'weekly' && draft.weekdays.length === 0)
-                    }
-                  >
-                    {busy ? t('schedules.working') : t('schedules.save')}
-                  </button>
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => {
-                      setEditing(false)
-                      setDraft(undefined)
-                      setOperationError(undefined)
-                    }}
-                  >
-                    {t('schedules.cancel')}
-                  </button>
-                </div>
               </form>
             ) : (
               <div className="dsh-schedule-panel__rule">
@@ -1717,8 +2031,8 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
                     <div>
                       <dt>{t('schedules.field.lastDelivery')}</dt>
                       <dd>
-                        <time dateTime={selected.lastDelivery.deliveredAt}>
-                          {new Date(selected.lastDelivery.deliveredAt).toLocaleString()}
+                        <time dateTime={selected.lastDelivery.scheduledAt}>
+                          {formatDeliveryOccurrence(selected.lastDelivery.scheduledAt, selected, locale)}
                         </time>
                       </dd>
                     </div>
@@ -1731,45 +2045,17 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
                   <button
                     type="button"
                     className="dsh-schedule-panel__primary"
-                    disabled={busy || selected.status !== 'active'}
+                    disabled={
+                      busy ||
+                      catalogStatus === 'loading' ||
+                      !selectedInCatalog ||
+                      selected.status !== 'active'
+                    }
                     onClick={beginEdit}
                   >
                     {t('schedules.edit')}
                   </button>
-                  <button
-                    type="button"
-                    className="dsh-schedule-panel__danger"
-                    disabled={busy}
-                    onClick={() => setConfirmDelete(true)}
-                  >
-                    {t('schedules.delete')}
-                  </button>
                 </div>
-                {confirmDelete ? (
-                  <div
-                    className="dsh-schedule-panel__confirm"
-                    role="alertdialog"
-                    aria-label={t('schedules.delete.confirmTitle')}
-                    aria-describedby={`${labelId}-delete-copy`}
-                  >
-                    <p id={`${labelId}-delete-copy`}>
-                      {t('schedules.delete.confirm', { title: selected.title })}
-                    </p>
-                    <div className="dsh-schedule-panel__actions">
-                      <button
-                        type="button"
-                        className="dsh-schedule-panel__danger"
-                        disabled={busy}
-                        onClick={deleteSelected}
-                      >
-                        {busy ? t('schedules.working') : t('schedules.delete.confirmAction')}
-                      </button>
-                      <button type="button" disabled={busy} onClick={() => setConfirmDelete(false)}>
-                        {t('schedules.cancel')}
-                      </button>
-                    </div>
-                  </div>
-                ) : null}
               </div>
             )}
           </div>
@@ -1796,34 +2082,28 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
                   )}
                 </span>
                 <button type="button" onClick={() => loadHistory(selected, undefined, true)}>
-                  {t('schedules.retry')}
+                  {t(
+                    history.error === 'delivery_cursor_not_found'
+                      ? 'schedules.history.refresh'
+                      : 'schedules.retry',
+                  )}
                 </button>
               </div>
             ) : null}
             {history.status === 'ready' && history.records.length === 0 ? (
               <p>{t('schedules.history.empty')}</p>
             ) : null}
-            {history.status === 'ready' && history.retention !== undefined ? (
-              <p className="dsh-schedule-panel__muted">
-                {t('schedules.history.retention', history.retention)}
-              </p>
-            ) : null}
             {history.earlierRecordsUnavailable ? (
               <p className="dsh-schedule-panel__muted">{t('schedules.history.unavailable')}</p>
-            ) : null}
-            {history.earlierRecordsPruned ? (
-              <p className="dsh-schedule-panel__muted">{t('schedules.history.pruned')}</p>
             ) : null}
             <ol className="dsh-schedule-panel__deliveries">
               {history.records.map((delivery) => (
                 <li key={delivery.messageId}>
-                  <time dateTime={delivery.deliveredAt}>
-                    {new Date(delivery.deliveredAt).toLocaleString()}
-                  </time>
-                  <span>
-                    {t('schedules.history.scheduledFor', {
-                      time: new Date(delivery.scheduledAt).toLocaleString(),
-                    })}
+                  <span className="dsh-schedule-panel__delivery-time">
+                    <span aria-hidden="true">◷</span>
+                    <time dateTime={delivery.scheduledAt}>
+                      {formatDeliveryOccurrence(delivery.scheduledAt, selected, locale)}
+                    </time>
                   </span>
                   {delivery.prompt === undefined ? null : <p>{delivery.prompt}</p>}
                 </li>
@@ -1837,6 +2117,34 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
               >
                 {t('schedules.history.loadOlder')}
               </button>
+            ) : null}
+            {history.status === 'ready' &&
+            history.records.length > 0 &&
+            history.nextBefore === undefined &&
+            history.earlierRecordsPruned ? (
+              <div className="dsh-schedule-panel__history-pruned" role="status">
+                <span>{t('schedules.history.pruned')}</span>
+                {history.retention === undefined ? null : (
+                  <>
+                    <button
+                      type="button"
+                      aria-label={t(
+                        showRetentionDetails
+                          ? 'schedules.history.retention.hide'
+                          : 'schedules.history.retention.show',
+                      )}
+                      aria-expanded={showRetentionDetails}
+                      aria-controls={`${labelId}-history-retention`}
+                      onClick={() => setShowRetentionDetails((visible) => !visible)}
+                    >
+                      ⓘ
+                    </button>
+                    <p id={`${labelId}-history-retention`} hidden={!showRetentionDetails}>
+                      {t('schedules.history.retention', history.retention)}
+                    </p>
+                  </>
+                )}
+              </div>
             ) : null}
           </section>
         </aside>

@@ -1,8 +1,13 @@
 import { useRef, useState, type ReactElement } from 'react'
-import type { DiscoveredModel, ModelDiscoveryInput } from '@dsh-vscode/domain'
+import type {
+  DiscoveredModel,
+  ModelDescriptor,
+  ModelDiscoveryInput,
+  ModelInputModality,
+} from '@dsh-vscode/domain'
 import { useDismissibleLayer } from '../../components/common/useDismissibleLayer.js'
 import { Icon } from '../../ui/Icon.js'
-import { useI18n } from '../../i18n.js'
+import { useI18n, type Translate } from '../../i18n.js'
 
 /** A model draft keeps fields the host may add even when this UI does not edit them. */
 export interface EditableModel {
@@ -10,6 +15,8 @@ export interface EditableModel {
   readonly name?: string
   readonly contextWindow?: number
   readonly maxTokens?: number
+  readonly input?: readonly ModelInputModality[]
+  readonly inputModalities?: readonly ModelInputModality[]
   readonly [key: string]: unknown
 }
 
@@ -18,11 +25,16 @@ type ModelPatch = {
   readonly name?: string | undefined
   readonly contextWindow?: number | undefined
   readonly maxTokens?: number | undefined
+  readonly [key: string]: unknown
 }
 type CapacityField = 'contextWindow' | 'maxTokens'
+type InputField = 'input' | 'inputModalities'
 
 export interface ModelListEditorProps {
   readonly models: readonly EditableModel[]
+  readonly inputField?: InputField
+  readonly catalogModels?: readonly ModelDescriptor[]
+  readonly providerDefaultInput?: readonly ModelInputModality[]
   readonly writable: boolean
   readonly saving: boolean
   readonly showSave?: boolean
@@ -36,6 +48,7 @@ const CAPACITY_PATTERN = /^(\d+(?:\.\d+)?)([km])?$/iu
 
 export function ModelListEditor(props: ModelListEditorProps): ReactElement {
   const { t } = useI18n()
+  const inputField = props.inputField ?? 'inputModalities'
   const [draft, setDraft] = useState<EditableModel[]>(() => props.models.map(copyModel))
   const [expanded, setExpanded] = useState<ReadonlySet<number>>(new Set())
   const [editingCapacity, setEditingCapacity] = useState<ReadonlyMap<string, string>>(new Map())
@@ -117,6 +130,7 @@ export function ModelListEditor(props: ModelListEditorProps): ReactElement {
         ...(model.label === model.id ? {} : { name: model.label }),
         ...(model.contextWindow === undefined ? {} : { contextWindow: model.contextWindow }),
         ...(model.maxTokens === undefined ? {} : { maxTokens: model.maxTokens }),
+        ...(model.inputModalities === undefined ? {} : { [inputField]: [...model.inputModalities] }),
       }))
     setSaved(false)
     replaceDraft([...draft, ...additions])
@@ -125,18 +139,20 @@ export function ModelListEditor(props: ModelListEditorProps): ReactElement {
 
   const save = async (): Promise<void> => {
     setError(undefined)
-    const failure = validateDraft(draft, editingCapacity)
+    const failure = validateDraft(draft, editingCapacity, inputField)
     if (failure !== undefined) {
       setError(
         failure.kind === 'id'
           ? t('settings.modelIdRequired')
-          : t('settings.invalidCapacity', { field: t(`settings.${failure.field}`) }),
+          : failure.kind === 'capacity'
+            ? t('settings.invalidCapacity', { field: t(`settings.${failure.field}`) })
+            : t('settings.modelInputRequired'),
       )
       return
     }
     setSaved(false)
     try {
-      await props.onSave(draft.map(normalizeModel))
+      await props.onSave(draft.map((model) => normalizeModel(model, inputField)))
       setEditingCapacity(new Map())
       setSaved(true)
     } catch (reason: unknown) {
@@ -175,6 +191,9 @@ export function ModelListEditor(props: ModelListEditorProps): ReactElement {
       <ul className="dsh-settings__editable-models">
         {draft.map((model, index) => {
           const open = expanded.has(index)
+          const explicitInput = explicitInputTypes(model, inputField)
+          const inheritedInput = inheritedInputTypes(model, props)
+          const selectedInput = explicitInput ?? inheritedInput
           return (
             <li key={`${index}:${model.id}`} className="dsh-settings__editable-model">
               <div className="dsh-settings__editable-model-row">
@@ -245,6 +264,59 @@ export function ModelListEditor(props: ModelListEditorProps): ReactElement {
                       update(index, { maxTokens: parseCapacity(value) })
                     }}
                   />
+                  <fieldset className="dsh-settings__model-input-types">
+                    <legend>{t('settings.inputTypes')}</legend>
+                    {explicitInput === undefined ? (
+                      <span className="dsh-settings__model-input-inherited">
+                        {t('settings.inputTypesInherited', { types: inputTypeNames(inheritedInput, t) })}
+                      </span>
+                    ) : (
+                      <button
+                        className="dsh-button dsh-button--secondary dsh-button--compact"
+                        type="button"
+                        disabled={!props.writable || props.saving}
+                        onClick={() => {
+                          const patch: Record<string, unknown> = { [inputField]: undefined }
+                          if (inputField === 'inputModalities' && !inheritedInput.includes('image')) {
+                            patch.imagePixelBudget = undefined
+                            patch.imageMaxBytes = undefined
+                          }
+                          update(index, patch)
+                        }}
+                      >
+                        {t('settings.useInheritedInputTypes')}
+                      </button>
+                    )}
+                    <div className="dsh-settings__model-input-options">
+                      {(['text', 'image'] as const).map((modality) => (
+                        <label key={modality}>
+                          <input
+                            type="checkbox"
+                            checked={selectedInput.includes(modality)}
+                            disabled={!props.writable || props.saving}
+                            onChange={(event) => {
+                              const next = new Set(selectedInput)
+                              if (event.currentTarget.checked) next.add(modality)
+                              else next.delete(modality)
+                              if (next.size === 0) {
+                                setError(t('settings.modelInputRequired'))
+                                return
+                              }
+                              const values = (['text', 'image'] as const).filter((value) => next.has(value))
+                              const patch: Record<string, unknown> = { [inputField]: values }
+                              if (inputField === 'inputModalities' && !next.has('image')) {
+                                patch.imagePixelBudget = undefined
+                                patch.imageMaxBytes = undefined
+                              }
+                              setError(undefined)
+                              update(index, patch)
+                            }}
+                          />
+                          {t(modality === 'text' ? 'settings.inputText' : 'settings.inputImage')}
+                        </label>
+                      ))}
+                    </div>
+                  </fieldset>
                 </div>
               ) : null}
             </li>
@@ -394,12 +466,25 @@ function formatCapacity(value: number | undefined): string {
 function validateDraft(
   models: readonly EditableModel[],
   buffers: ReadonlyMap<string, string>,
-): { readonly kind: 'id' } | { readonly kind: 'capacity'; readonly field: CapacityField } | undefined {
+  inputField: InputField,
+):
+  | { readonly kind: 'id' }
+  | { readonly kind: 'capacity'; readonly field: CapacityField }
+  | { readonly kind: 'input' }
+  | undefined {
   const ids = new Set<string>()
   for (const [index, model] of models.entries()) {
     const id = model.id.trim()
     if (id === '' || ids.has(id)) return { kind: 'id' }
     ids.add(id)
+    const input = model[inputField]
+    if (
+      input !== undefined &&
+      (!Array.isArray(input) ||
+        (input.length === 0 && inputField === 'inputModalities') ||
+        input.some((value) => !isInputModality(value)))
+    )
+      return { kind: 'input' }
     for (const field of ['contextWindow', 'maxTokens'] as const) {
       const buffer = buffers.get(bufferKey(index, field))
       if (buffer !== undefined && buffer.trim() !== '' && Number.isNaN(parseCapacity(buffer))) {
@@ -413,13 +498,53 @@ function validateDraft(
   return undefined
 }
 
-function normalizeModel(model: EditableModel): EditableModel {
+function normalizeModel(model: EditableModel, inputField: InputField): EditableModel {
   const { name, ...rest } = model
-  return {
+  const normalized: Record<string, unknown> = {
     ...rest,
     id: model.id.trim(),
     ...(name === undefined || name.trim() === '' ? {} : { name: name.trim() }),
   }
+  const input = normalized[inputField]
+  if (inputField === 'inputModalities' && Array.isArray(input) && !input.includes('image')) {
+    delete normalized.imagePixelBudget
+    delete normalized.imageMaxBytes
+  }
+  return normalized as EditableModel
+}
+
+function explicitInputTypes(
+  model: EditableModel,
+  inputField: InputField,
+): readonly ModelInputModality[] | undefined {
+  const input = model[inputField]
+  if (input === undefined || (inputField === 'input' && Array.isArray(input) && input.length === 0))
+    return undefined
+  if (!Array.isArray(input) || !input.every(isInputModality)) return []
+  return [...new Set(input)] as ModelInputModality[]
+}
+
+function inheritedInputTypes(
+  model: EditableModel,
+  props: Pick<ModelListEditorProps, 'catalogModels' | 'providerDefaultInput'>,
+): readonly ModelInputModality[] {
+  const installed = props.catalogModels?.find((candidate) => candidate.id === model.id)?.inputModalities
+  return validInputTypes(installed) ?? validInputTypes(props.providerDefaultInput) ?? ['text']
+}
+
+function validInputTypes(value: unknown): readonly ModelInputModality[] | undefined {
+  if (!Array.isArray(value) || value.length === 0 || !value.every(isInputModality)) return undefined
+  return [...new Set(value)] as ModelInputModality[]
+}
+
+function isInputModality(value: unknown): value is ModelInputModality {
+  return value === 'text' || value === 'image'
+}
+
+function inputTypeNames(modalities: readonly ModelInputModality[], t: Translate): string {
+  return modalities
+    .map((modality) => t(modality === 'text' ? 'settings.inputText' : 'settings.inputImage'))
+    .join(', ')
 }
 
 function copyModel(model: EditableModel): EditableModel {

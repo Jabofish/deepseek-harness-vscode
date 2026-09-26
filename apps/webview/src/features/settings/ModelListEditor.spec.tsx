@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { ModelDescriptor } from '@dsh-vscode/domain'
 
 import { ModelListEditor } from './ModelListEditor.js'
 
@@ -87,5 +88,117 @@ describe('ModelListEditor state notifications', () => {
 
     expect(screen.queryByRole('dialog', { name: 'Available models' })).toBeNull()
     expect(document.activeElement).toBe(trigger)
+  })
+
+  it('persists explicit input types and removes DeepSeek image budgets when Image is disabled', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined)
+    render(
+      <ModelListEditor
+        models={[
+          {
+            id: 'vision-model',
+            inputModalities: ['text', 'image'],
+            imagePixelBudget: 1_000_000,
+            imageMaxBytes: 8_000_000,
+          },
+        ]}
+        writable
+        saving={false}
+        discoveryInput={{ settingsNamespace: 'llm-deepseek', providerId: 'deepseek' }}
+        onSave={onSave}
+        onDiscover={vi.fn().mockResolvedValue([])}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Advanced model settings' }))
+    expect(screen.getByRole<HTMLInputElement>('checkbox', { name: 'Image' }).checked).toBe(true)
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Image' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save model list' }))
+
+    await waitFor(() =>
+      expect(onSave).toHaveBeenCalledWith([{ id: 'vision-model', inputModalities: ['text'] }]),
+    )
+  })
+
+  it('restores inherited catalog inputs instead of persisting the effective value', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined)
+    const catalogModels: readonly ModelDescriptor[] = [
+      {
+        id: 'vision-model',
+        providerId: 'deepseek',
+        label: 'Vision model',
+        inputModalities: ['text', 'image'],
+        supportsReasoning: false,
+      },
+    ]
+    render(
+      <ModelListEditor
+        models={[{ id: 'vision-model', inputModalities: ['text'] }]}
+        catalogModels={catalogModels}
+        providerDefaultInput={['text']}
+        writable
+        saving={false}
+        discoveryInput={{ settingsNamespace: 'llm-deepseek', providerId: 'deepseek' }}
+        onSave={onSave}
+        onDiscover={vi.fn().mockResolvedValue([])}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Advanced model settings' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Use inherited' }))
+
+    expect(screen.getByRole<HTMLInputElement>('checkbox', { name: 'Image' }).checked).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: 'Save model list' }))
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith([{ id: 'vision-model' }]))
+  })
+
+  it('does not let the user clear the last explicitly selected input type', () => {
+    const onSave = vi.fn().mockResolvedValue(undefined)
+    render(
+      <ModelListEditor
+        models={[{ id: 'text-model', inputModalities: ['text'] }]}
+        writable
+        saving={false}
+        discoveryInput={{ settingsNamespace: 'llm-deepseek', providerId: 'deepseek' }}
+        onSave={onSave}
+        onDiscover={vi.fn().mockResolvedValue([])}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Advanced model settings' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Text' }))
+
+    expect(screen.getByRole<HTMLInputElement>('checkbox', { name: 'Text' }).checked).toBe(true)
+    expect(screen.getByRole('alert').textContent).toBe('Select at least one input type.')
+    expect(onSave).not.toHaveBeenCalled()
+  })
+
+  it('copies disclosed discovery modalities into the provider-specific setting field', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined)
+    const onDiscover = vi
+      .fn()
+      .mockResolvedValue([{ id: 'vision-model', label: 'Vision model', inputModalities: ['text', 'image'] }])
+    render(
+      <ModelListEditor
+        models={[]}
+        inputField="input"
+        writable
+        saving={false}
+        discoveryInput={{ settingsNamespace: 'llm-pi-ai', providerId: 'openai' }}
+        onSave={onSave}
+        onDiscover={onDiscover}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Get available models' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Available models' })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Add selected' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save model list' }))
+
+    await waitFor(() =>
+      expect(onSave).toHaveBeenCalledWith([
+        { id: 'vision-model', name: 'Vision model', input: ['text', 'image'] },
+      ]),
+    )
   })
 })

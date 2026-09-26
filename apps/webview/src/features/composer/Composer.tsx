@@ -150,10 +150,10 @@ export interface ComposerProps {
   readonly onCaptureEditorContext?: (kind: EditorContextKind) => Promise<void> | void
   readonly onRemoveEditorContext?: (contextRef: string) => Promise<void> | void
   readonly onPreviewEditorContext?: (contextRef: string) => Promise<EditorContextPreview | undefined>
-  readonly onSubmit: (mode: RunningInputMode) => void
+  readonly onSubmit: (mode: RunningInputMode) => void | Promise<void>
   readonly onCancel: () => void
   /** Steer every still-queued pending input into the running turn. */
-  readonly onSteerQueue: () => void
+  readonly onSteerQueue: () => void | Promise<void>
   /** Pending inbox rows, used to gate the empty-draft accelerated Enter. */
   readonly queue: readonly QueuedInput[]
   /** Plain-Enter behavior while the agent is busy; the accelerated chord uses its opposite. */
@@ -174,10 +174,18 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
   })
   const attachmentRailRef = useRef<HTMLUListElement>(null)
   const submitting = useRef(false)
+  const steeringQueue = useRef(false)
+  const mounted = useRef(true)
   const dragDepth = useRef(0)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [dragging, setDragging] = useState(false)
   const [dropState, setDropState] = useState<'ready' | 'blocked' | undefined>(undefined)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
   const [attachmentRailScrollable, setAttachmentRailScrollable] = useState(false)
   const [previewUri, setPreviewUri] = useState<string | undefined>(undefined)
   /**
@@ -409,11 +417,44 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
       return
     submitting.current = true
     setIsSubmitting(true)
-    props.onSubmit(mode)
-    window.setTimeout(() => {
+    const resetSubmitting = (): void => {
       submitting.current = false
-      setIsSubmitting(false)
-    }, 250)
+      if (mounted.current) setIsSubmitting(false)
+    }
+    try {
+      const submission = props.onSubmit(mode)
+      if (submission === undefined) {
+        // Preserve a short debounce for synchronous integrations while async
+        // Host requests hold the latch until they actually settle.
+        window.setTimeout(resetSubmitting, 250)
+      } else {
+        void submission.then(resetSubmitting, resetSubmitting)
+      }
+    } catch (reason) {
+      resetSubmitting()
+      throw reason
+    }
+  }
+  const steerQueuedInputs = (): void => {
+    if (steeringQueue.current) return
+    steeringQueue.current = true
+    const resetSteeringQueue = (): void => {
+      steeringQueue.current = false
+    }
+    try {
+      const steering = props.onSteerQueue()
+      if (steering === undefined) {
+        // Keep synchronous integrations from repeating the same gesture in
+        // adjacent key events; the Host-backed path holds this latch until its
+        // request settles.
+        window.setTimeout(resetSteeringQueue, 250)
+      } else {
+        void steering.then(resetSteeringQueue, resetSteeringQueue)
+      }
+    } catch (reason) {
+      resetSteeringQueue()
+      throw reason
+    }
   }
   const ingestFiles = (files: readonly File[] | FileList | undefined): void => {
     if (props.attachmentsDisabled === true) return
@@ -631,7 +672,7 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
     // queue). Steering needs the same window as the per-row button: a running
     // ordinary session with at least one queued row.
     if (accelerated && empty && props.running && props.queue.some((item) => item.mode === 'queue')) {
-      props.onSteerQueue()
+      steerQueuedInputs()
       return
     }
     submit(resolveSubmitMode(props.running, accelerated, props.busyEnter ?? 'queue'))
@@ -1005,7 +1046,7 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
           disabled={
             props.disabled ||
             (!props.running && inputBlocked) ||
-            isSubmitting ||
+            (!props.running && isSubmitting) ||
             (!props.running && props.draft.trim() === '' && props.attachments.length === 0)
           }
         >

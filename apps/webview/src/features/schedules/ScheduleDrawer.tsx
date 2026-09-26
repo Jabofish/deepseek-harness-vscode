@@ -5,6 +5,7 @@ import { useI18n } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
 import { useDismissibleLayer } from '../../components/common/useDismissibleLayer.js'
 import { SchedulePanel } from './SchedulePanel.js'
+import type { ScheduleSessionLink } from './session-link.js'
 import './schedule-drawer.css'
 
 export interface ScheduleDrawerProps {
@@ -13,6 +14,9 @@ export interface ScheduleDrawerProps {
   readonly featureRequest: <T>(request: FeatureRequest) => Promise<T>
   readonly subscribeFeature: (listener: (message: FeatureHostEvent) => void) => () => void
   readonly onStartScheduleSession: (prompt: string) => Promise<string>
+  readonly getLinkedSession: (sessionId: string) => ScheduleSessionLink
+  readonly onOpenLinkedSession: (sessionId: string) => void
+  readonly connectionEpoch: number
 }
 
 export function ScheduleDrawer(props: ScheduleDrawerProps): ReactElement | null {
@@ -87,6 +91,9 @@ export function ScheduleDrawer(props: ScheduleDrawerProps): ReactElement | null 
             featureRequest={props.featureRequest}
             subscribeFeature={props.subscribeFeature}
             onStartScheduleSession={props.onStartScheduleSession}
+            getLinkedSession={props.getLinkedSession}
+            onOpenLinkedSession={props.onOpenLinkedSession}
+            connectionEpoch={props.connectionEpoch}
           />
         </div>
       </div>
