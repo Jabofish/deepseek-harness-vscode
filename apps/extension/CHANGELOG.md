@@ -1,7 +1,19 @@
 # Change Log
 
-## Unreleased
+## 0.2.6
 
+- 工具结果以 `<path>/<type>/<content>` 纯文本信封返回时，现在解码为结果正文加带标签的文件路径字段，不再把内部标记原样打印；`file_path`、`pattern`、`offset`、`limit` 参数获得专属标签。
+- Plain-text tool result envelopes (`<path>/<type>/<content>`) now decode into the response body plus a labeled file path field instead of printing internal markup; `file_path`, `pattern`, `offset`, and `limit` arguments get dedicated labels.
+- 工具调用组折叠时，组内任一调用失败（含 Auto Review 拒绝）会在折叠摘要上显示红色圆点，无需展开即可发现。
+- A collapsed tool call batch now shows a red failure dot when any call inside failed (including Auto Review denials), visible without expanding.
+- 审批卡的放行动作改用主按钮样式，拒绝退为次要样式，两个选项不再等权重呈现。
+- The safe action on approval cards now uses the primary button treatment while deny is secondary, so the options no longer read as equal choices.
+- 待审批或提问卡片占用输入位时，原位显示虚线占位说明输入暂不可用；流式期间打字只重绘输入框本身，长会话不再被每个按键拖慢；流式状态条在宽屏下与对话同宽。
+- While a pending approval or question owns the composer slot, a dashed placeholder explains that typing is paused. Typing during streaming re-renders only the composer, so long conversations stay responsive; the streaming status tail matches the conversation width on wide screens.
+- 设置页在「仅附加/新建隔离」等本页无法表达的连接方式下不再预选 auto，Apply 保持禁用，保存不会把这些模式悄悄改写回 auto。
+- Settings no longer preselect auto for connection modes the page cannot represent (attach-only / new-isolated): Apply stays disabled until a mode is chosen, so applying never silently rewrites those modes to auto.
+- Webview 文案外置到 locales 字典，新增 `pnpm i18n` 编辑器与键对齐门禁；共享 test-support 包退役为 adapter 内共享 fixture harness，版本门独立成规格；CI 拆分为并行的 lint、format+typecheck、测试与构建任务，PR 只运行受影响的测试。
+- Webview copy moves into locale dictionaries with a `pnpm i18n` editor and a key-parity gate; the shared test-support package retires into an adapter-local fixture harness with a dedicated version-gate spec; CI splits into parallel lint, format+typecheck, test, and build jobs, with pull requests running only affected tests.
 - 修复 macOS 上清理受管临时工作区时误判目录仍存在的问题，同时保留隔离目录置换和外部链接数据保护。
 - Fixed managed temporary workspace cleanup being reported as incomplete on macOS while preserving quarantine replacement and linked external data protections.
 
