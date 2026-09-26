@@ -6,33 +6,24 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
-  type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactElement,
 } from 'react'
 import type {
   AgentConfiguration,
-  AgentPresetDescriptor,
-  ContextPressure,
   EditorContextKind,
   EditorContextPreview,
   FeedbackCategory,
   GoalView,
-  ImageAttachmentLimits,
   MessageFeedbackRating,
   MessageImageReference,
-  ModelDescriptor,
   PermissionRequest,
   PromptAttachment,
   PromptMode,
   SessionSummary,
-  SessionStatsProjection,
-  TokenUsage,
   UserQuestion,
   RunningInputMode,
-  WorkspaceSummary,
 } from '@dsh-vscode/domain'
-import { isImageMediaType } from '@dsh-vscode/domain'
 import { cacheHitRate } from '@dsh-vscode/timeline'
 import { EmptyState } from '@dsh-vscode/ui'
 import { Composer } from './features/composer/Composer.js'
@@ -55,12 +46,14 @@ import { QueuePanel } from './features/input/QueuePanel.js'
 import { RuntimeConnectionView } from './features/runtime/RuntimeConnectionView.js'
 import { RuntimeMissingView } from './features/runtime/RuntimeMissingView.js'
 import { SessionDrawer } from './features/sessions/SessionDrawer.js'
+import { EmptySessionPosture } from './features/sessions/EmptySessionPosture.js'
 import { SessionLineage } from './features/subagents/SessionLineage.js'
 import { SubagentDrawer } from './features/subagents/SubagentDrawer.js'
 import { DiagnosticsDrawer } from './features/diagnostics/DiagnosticsDrawer.js'
 import { SettingsDrawer } from './features/settings/SettingsDrawer.js'
 import { ScheduleDrawer } from './features/schedules/ScheduleDrawer.js'
 import { resolveScheduleSessionLink } from './features/schedules/session-link.js'
+import { isDefinitePromptRejection } from './features/schedules/prompt-rejection.js'
 import { TrajectoryView } from './features/trajectory/TrajectoryView.js'
 import { AppHeader } from './features/shell/AppHeader.js'
 import { ConversationActionsMenu } from './features/shell/ConversationActionsMenu.js'
@@ -68,31 +61,38 @@ import { ConversationEventToggle } from './features/shell/ConversationEventToggl
 import {
   createAppStore,
   type AppStore,
-  type DshSettingsSnapshot,
   type OpenFileCandidate,
   type ReferenceCandidate,
 } from './app/store.js'
 import { publicProtocolErrorMessage } from './app/protocol-client.js'
+import { useDshSettings } from './app/useDshSettings.js'
+import {
+  welcomeWasDismissed,
+  rememberWelcomeDismissal,
+  dismissedRuntimeUpdateVersionFromStorage,
+  rememberRuntimeUpdateDismissal,
+} from './app/dismissed-notices.js'
+import { resolveAssistantModelLabel } from './app/model-label.js'
+import { useStableCallback } from './app/useStableCallback.js'
+import {
+  readContextPressure,
+  readTokenUsageProjection,
+  readSessionStatsProjection,
+} from './app/session-metrics.js'
+import { readFileAsBase64, readImageAttachmentLimits, formatByteSize } from './app/attachment-reader.js'
 import {
   readConversationFontSize,
   rememberConversationFontSize,
   readThemePreference,
   rememberThemePreference,
-  DSH_UI_SETTING_PATHS,
-  dshUiPreferences,
-  findDshSettingsField,
-  readDshSettingValue,
-  withDshSettingValue,
   type ConversationFontSize,
   type ThemePreference,
 } from './app/ui-preferences.js'
-import { useI18n, type Locale, type Translate } from './i18n.js'
+import { useI18n } from './i18n.js'
 import { Icon } from './ui/Icon.js'
-import { SelectMenu } from './components/common/SelectMenu.js'
 import { useDismissibleLayer } from './components/common/useDismissibleLayer.js'
 import { hasVsCodeApi } from './vscode-api.js'
 import { PopupSelectRegistry } from './features/commands/popupSelectRegistry.js'
-import { presetDisplayName } from './features/settings/preset-display.js'
 import {
   attachmentDraftKey,
   browserFileOrigin,
@@ -105,34 +105,10 @@ interface PendingApproval {
   readonly command?: string
 }
 
-const WELCOME_DISMISSED_KEY = 'dsh-welcome-dismissed'
-const RUNTIME_UPDATE_DISMISSED_KEY = 'dsh-runtime-update-dismissed-version'
-
-const DEFAULT_ATTACHMENT_BYTES = 8 * 1024 * 1024
-const MAX_IMAGE_ATTACHMENT_BYTES = 20 * 1024 * 1024
-const MAX_PROMPT_IMAGE_BYTES = 200 * 1024 * 1024
 const EMPTY_OPEN_FILE_CANDIDATES: readonly OpenFileCandidate[] = []
 const EMPTY_REFERENCE_CANDIDATES: readonly ReferenceCandidate[] = []
 const EMPTY_PERMISSION_REQUESTS: readonly PendingApproval[] = []
 const EMPTY_USER_QUESTIONS: readonly UserQuestion[] = []
-const DSH_LOCALE_SETTING_PATH = 'locale.preference'
-interface AcknowledgedDshSettingWrite {
-  readonly path: string
-  readonly value: unknown
-  readonly expectedRevision: number
-}
-
-/** Keep host-backed child actions stable while still reading current App state. */
-function useStableCallback<Args extends unknown[], Result>(
-  callback: (...args: Args) => Result,
-): (...args: Args) => Result {
-  const callbackRef = useRef(callback)
-  useLayoutEffect(() => {
-    callbackRef.current = callback
-  }, [callback])
-  return useCallback((...args: Args): Result => callbackRef.current(...args), [])
-}
-
 // VS Code Webviews can restore from a cached document while extension files
 // are being replaced during an update. Root-level dynamic imports then point
 // at hashed chunks from the previous build and reject inside React.lazy,
@@ -232,368 +208,32 @@ export function App(): ReactElement {
     readConversationFontSize(),
   )
   const [themePreference, setThemePreferenceState] = useState<ThemePreference>(() => readThemePreference())
-  const [dshSettingsSnapshot, setDshSettingsSnapshot] = useState<DshSettingsSnapshot | undefined>()
-  const [dshSettingsSnapshotVersion, setDshSettingsSnapshotVersion] = useState<string | undefined>()
-  const [dshSettingsSnapshotConnectionEpoch, setDshSettingsSnapshotConnectionEpoch] = useState<
-    number | undefined
-  >()
-  const dshSettingsSnapshotRef = useRef<DshSettingsSnapshot | undefined>(undefined)
-  const dshSettingsSnapshotVersionRef = useRef<string | undefined>(undefined)
-  const dshSettingsReadSequenceRef = useRef(0)
-  const dshSettingsAcceptedReadSequenceRef = useRef(0)
-  const dshSettingsWriteSequenceRef = useRef(0)
-  const dshSettingsWritesPendingRef = useRef(0)
-  const dshSettingsSnapshotMustRefreshRef = useRef(false)
-  const dshSettingsCommittedValuePendingRefreshRef = useRef(false)
-  const dshSettingsVersionEpochRef = useRef(0)
-  const dshSettingsTrackedConnectedRef = useRef(false)
-  const dshSettingsTrackedVersionRef = useRef<string | undefined>(undefined)
-  const dshSettingsTrackedConnectionEpochRef = useRef<number | undefined>(undefined)
-  const [dshSettingsReadState, setDshSettingsReadState] = useState<'loading' | 'unavailable' | 'ready'>(
-    'loading',
-  )
   const localeControlRef = useRef<HTMLSpanElement>(null)
-  const adoptExplicitLocaleFromDsh = useCallback(
-    (value: Locale): void => adoptLocaleFromHost(value, true),
-    [adoptLocaleFromHost],
-  )
-
-  const adoptDshSettingsSnapshot = useCallback(
-    (snapshot: DshSettingsSnapshot): void => {
-      const connectionEpoch = state.connectionEpoch ?? 0
-      dshSettingsCommittedValuePendingRefreshRef.current = false
-      dshSettingsSnapshotRef.current = snapshot
-      dshSettingsSnapshotVersionRef.current = state.connectedDshVersion
-      setDshSettingsSnapshot(snapshot)
-      setDshSettingsSnapshotVersion(state.connectedDshVersion)
-      setDshSettingsSnapshotConnectionEpoch(connectionEpoch)
-      setDshSettingsReadState('ready')
-      const preferences = dshUiPreferences(snapshot)
-      const localeField = findDshSettingsField(snapshot, DSH_LOCALE_SETTING_PATH)
-      const hostLocale = readDshSettingValue(snapshot.values, DSH_LOCALE_SETTING_PATH)
-      adoptLocaleFromHost(hostLocale, localeField?.type === 'string' && typeof hostLocale === 'string')
-      const hostTheme = preferences.theme
-      if (hostTheme !== undefined) {
-        setThemePreferenceState(hostTheme)
-        rememberThemePreference(hostTheme)
-      }
-      if (preferences.codingToolsEnabled === false) setConversationView('chat')
-    },
-    [adoptLocaleFromHost, state.connectedDshVersion, state.connectionEpoch],
-  )
-
-  const readDshSettingsForUi = useStableCallback(async (): Promise<DshSettingsSnapshot | undefined> => {
-    const readSequence = ++dshSettingsReadSequenceRef.current
-    const writeSequence = dshSettingsWriteSequenceRef.current
-    const versionEpoch = dshSettingsVersionEpochRef.current
-    const startedDuringWrite = dshSettingsWritesPendingRef.current > 0
-    const requestedVersion = state.connectedDshVersion
-    const requestedConnectionEpoch = state.connectionEpoch ?? 0
-    let snapshot: DshSettingsSnapshot | undefined
-    try {
-      snapshot = await store.readDshSettings()
-    } catch (reason: unknown) {
-      if (dshSettingsSnapshotMustRefreshRef.current && !dshSettingsCommittedValuePendingRefreshRef.current) {
-        dshSettingsSnapshotRef.current = undefined
-        dshSettingsSnapshotVersionRef.current = undefined
-        setDshSettingsSnapshot(undefined)
-        setDshSettingsSnapshotVersion(undefined)
-        setDshSettingsSnapshotConnectionEpoch(undefined)
-        setDshSettingsReadState('unavailable')
-      }
-      throw reason
-    }
-    const currentState = store.getState()
-    if (
-      currentState.backend.kind !== 'connected' ||
-      currentState.connectedDshVersion !== requestedVersion ||
-      (currentState.connectionEpoch ?? 0) !== requestedConnectionEpoch ||
-      dshSettingsTrackedConnectionEpochRef.current !== requestedConnectionEpoch ||
-      dshSettingsVersionEpochRef.current !== versionEpoch ||
-      readSequence < dshSettingsAcceptedReadSequenceRef.current ||
-      writeSequence !== dshSettingsWriteSequenceRef.current ||
-      startedDuringWrite ||
-      dshSettingsWritesPendingRef.current > 0
-    )
-      return undefined
-    dshSettingsAcceptedReadSequenceRef.current = readSequence
-    if (snapshot !== undefined) {
-      dshSettingsSnapshotMustRefreshRef.current = false
-      adoptDshSettingsSnapshot(snapshot)
-    } else if (
-      dshSettingsSnapshotMustRefreshRef.current &&
-      !dshSettingsCommittedValuePendingRefreshRef.current
-    ) {
-      dshSettingsSnapshotRef.current = undefined
-      dshSettingsSnapshotVersionRef.current = undefined
-      setDshSettingsSnapshot(undefined)
-      setDshSettingsSnapshotVersion(undefined)
-      setDshSettingsSnapshotConnectionEpoch(undefined)
-      setDshSettingsReadState('unavailable')
-    } else if (dshSettingsSnapshotRef.current === undefined) setDshSettingsReadState('unavailable')
-    return snapshot
-  })
-
-  const recordAcknowledgedDshSettingWrite = useStableCallback(
-    (
-      write: AcknowledgedDshSettingWrite,
-      snapshotAtStart: DshSettingsSnapshot | undefined,
-      versionAtStart: string | undefined,
-      connectionEpochAtStart: number,
-      versionEpochAtStart: number,
-    ): void => {
-      const currentState = store.getState()
-      const namespace = write.path.split('.', 1)[0]
-      if (
-        snapshotAtStart === undefined ||
-        dshSettingsSnapshotRef.current !== snapshotAtStart ||
-        namespace === undefined ||
-        currentState.backend.kind !== 'connected' ||
-        currentState.connectedDshVersion !== versionAtStart ||
-        (currentState.connectionEpoch ?? 0) !== connectionEpochAtStart ||
-        dshSettingsTrackedConnectionEpochRef.current !== connectionEpochAtStart ||
-        dshSettingsVersionEpochRef.current !== versionEpochAtStart ||
-        snapshotAtStart.schema.namespaces.find((entry) => entry.ns === namespace)?.revision !==
-          write.expectedRevision
-      )
-        return
-      const accepted = withDshSettingValue(snapshotAtStart, write.path, write.value)
-      if (accepted === undefined) return
-      dshSettingsCommittedValuePendingRefreshRef.current = true
-      dshSettingsSnapshotRef.current = accepted
-      dshSettingsSnapshotVersionRef.current = versionAtStart
-      setDshSettingsSnapshot(accepted)
-      setDshSettingsSnapshotVersion(versionAtStart)
-      setDshSettingsSnapshotConnectionEpoch(connectionEpochAtStart)
-      setDshSettingsReadState('ready')
-    },
-  )
-
-  const writeDshSettingsForUi = useStableCallback(
-    async (write: () => Promise<void>, acknowledgedWrite?: AcknowledgedDshSettingWrite): Promise<void> => {
-      const versionAtStart = state.connectedDshVersion
-      const connectionEpochAtStart = state.connectionEpoch ?? 0
-      const versionEpochAtStart = dshSettingsVersionEpochRef.current
-      const snapshotAtStart = dshSettingsSnapshotRef.current
-      dshSettingsWriteSequenceRef.current += 1
-      dshSettingsWritesPendingRef.current += 1
-      dshSettingsSnapshotMustRefreshRef.current = true
-      let writeFailure: unknown
-      try {
-        await write()
-      } catch (reason: unknown) {
-        writeFailure = reason
-      } finally {
-        const currentState = store.getState()
-        if (
-          currentState.backend.kind === 'connected' &&
-          currentState.connectedDshVersion === versionAtStart &&
-          (currentState.connectionEpoch ?? 0) === connectionEpochAtStart &&
-          dshSettingsTrackedConnectionEpochRef.current === connectionEpochAtStart &&
-          dshSettingsVersionEpochRef.current === versionEpochAtStart
-        ) {
-          dshSettingsWritesPendingRef.current = Math.max(0, dshSettingsWritesPendingRef.current - 1)
-        }
-      }
-      const currentState = store.getState()
-      const sameConnection =
-        currentState.backend.kind === 'connected' &&
-        currentState.connectedDshVersion === versionAtStart &&
-        (currentState.connectionEpoch ?? 0) === connectionEpochAtStart &&
-        dshSettingsTrackedConnectionEpochRef.current === connectionEpochAtStart &&
-        dshSettingsVersionEpochRef.current === versionEpochAtStart
-      if (!sameConnection) {
-        if (writeFailure !== undefined)
-          throw writeFailure instanceof Error ? writeFailure : new Error(t('settings.updateFailed'))
-        return
-      }
-      if (writeFailure === undefined && acknowledgedWrite !== undefined)
-        recordAcknowledgedDshSettingWrite(
-          acknowledgedWrite,
-          snapshotAtStart,
-          versionAtStart,
-          connectionEpochAtStart,
-          versionEpochAtStart,
-        )
-      const refreshed = await readDshSettingsForUi().catch(() => undefined)
-      if (refreshed === undefined && !dshSettingsCommittedValuePendingRefreshRef.current) {
-        dshSettingsSnapshotRef.current = undefined
-        dshSettingsSnapshotVersionRef.current = undefined
-        setDshSettingsSnapshot(undefined)
-        setDshSettingsSnapshotVersion(undefined)
-        setDshSettingsSnapshotConnectionEpoch(undefined)
-        setDshSettingsReadState('unavailable')
-      }
-      if (writeFailure !== undefined)
-        throw writeFailure instanceof Error ? writeFailure : new Error(t('settings.updateFailed'))
-    },
-  )
-
-  const trackDshSettingsWriteForUi = useStableCallback(
-    async (write: () => Promise<void>, acknowledgedWrite?: AcknowledgedDshSettingWrite): Promise<void> => {
-      const versionAtStart = state.connectedDshVersion
-      const connectionEpochAtStart = state.connectionEpoch ?? 0
-      const versionEpochAtStart = dshSettingsVersionEpochRef.current
-      const snapshotAtStart = dshSettingsSnapshotRef.current
-      dshSettingsWriteSequenceRef.current += 1
-      dshSettingsWritesPendingRef.current += 1
-      dshSettingsSnapshotMustRefreshRef.current = true
-      try {
-        await write()
-        if (acknowledgedWrite !== undefined)
-          recordAcknowledgedDshSettingWrite(
-            acknowledgedWrite,
-            snapshotAtStart,
-            versionAtStart,
-            connectionEpochAtStart,
-            versionEpochAtStart,
-          )
-      } finally {
-        const currentState = store.getState()
-        if (
-          currentState.backend.kind === 'connected' &&
-          currentState.connectedDshVersion === versionAtStart &&
-          (currentState.connectionEpoch ?? 0) === connectionEpochAtStart &&
-          dshSettingsTrackedConnectionEpochRef.current === connectionEpochAtStart &&
-          dshSettingsVersionEpochRef.current === versionEpochAtStart
-        ) {
-          dshSettingsWritesPendingRef.current = Math.max(0, dshSettingsWritesPendingRef.current - 1)
-        }
-      }
-    },
-  )
-
-  const updateDshSettingForUi = useStableCallback(
-    async (path: string, value: unknown, expectedRevision: number): Promise<void> =>
-      writeDshSettingsForUi(() => store.updateDshSetting(path, value, expectedRevision), {
-        path,
-        value,
-        expectedRevision,
-      }),
-  )
-  const updateDshSettingFromDrawer = useStableCallback(
-    async (path: string, value: unknown, expectedRevision: number): Promise<void> =>
-      trackDshSettingsWriteForUi(() => store.updateDshSetting(path, value, expectedRevision), {
-        path,
-        value,
-        expectedRevision,
-      }),
-  )
-  const unsetDshSettingFromDrawer = useStableCallback(
-    async (path: string, expectedRevision: number): Promise<void> =>
-      trackDshSettingsWriteForUi(() => store.unsetDshSetting(path, expectedRevision)),
-  )
-  const mutateDshSettingsFromDrawer = useStableCallback(
-    async (
-      namespace: string,
-      operations: Parameters<typeof store.mutateDshSettings>[1],
-      expectedRevision: number,
-    ): Promise<void> =>
-      trackDshSettingsWriteForUi(() => store.mutateDshSettings(namespace, operations, expectedRevision)),
-  )
-
-  useLayoutEffect(() => {
-    const connected = state.backend.kind === 'connected'
-    const wasConnected = dshSettingsTrackedConnectedRef.current
-    dshSettingsTrackedConnectedRef.current = connected
-    if (!connected) {
-      if (wasConnected) {
-        // Invalidate every outstanding settings read before it can adopt data
-        // from the disconnected Host into the local/editor fallback state.
-        dshSettingsVersionEpochRef.current += 1
-        dshSettingsWritesPendingRef.current = 0
-        dshSettingsSnapshotMustRefreshRef.current = false
-        dshSettingsCommittedValuePendingRefreshRef.current = false
-        adoptLocaleFromHost(undefined, false)
-      }
-      return
-    }
-    const previousVersion = dshSettingsTrackedVersionRef.current
-    const previousConnectionEpoch = dshSettingsTrackedConnectionEpochRef.current
-    const currentConnectionEpoch = state.connectionEpoch ?? 0
-    dshSettingsTrackedVersionRef.current = state.connectedDshVersion
-    dshSettingsTrackedConnectionEpochRef.current = currentConnectionEpoch
-    if (!wasConnected) {
-      // Treat reconnection as a fresh Host generation even if its version tag
-      // matches the previous process.
-      dshSettingsVersionEpochRef.current += 1
-    } else if (previousConnectionEpoch !== currentConnectionEpoch) {
-      // A connected snapshot with a new backend identity is a new Host even
-      // when its reported DSH version is unchanged.
-      dshSettingsVersionEpochRef.current += 1
-    } else if (previousVersion !== state.connectedDshVersion) {
-      dshSettingsVersionEpochRef.current += 1
-    } else {
-      return
-    }
-    dshSettingsWritesPendingRef.current = 0
-    dshSettingsSnapshotMustRefreshRef.current = false
-    dshSettingsCommittedValuePendingRefreshRef.current = false
-    adoptLocaleFromHost(undefined, false)
-    dshSettingsSnapshotRef.current = undefined
-    dshSettingsSnapshotVersionRef.current = undefined
-    setDshSettingsSnapshot(undefined)
-    setDshSettingsSnapshotVersion(undefined)
-    setDshSettingsReadState('loading')
-  }, [adoptLocaleFromHost, state.backend.kind, state.connectedDshVersion, state.connectionEpoch])
-
-  useEffect(() => {
-    if (state.backend.kind !== 'connected') return
-    if (dshSettingsSnapshotRef.current === undefined) setDshSettingsReadState('loading')
-    let cancelled = false
-    void readDshSettingsForUi().catch(() => {
-      if (!cancelled && dshSettingsSnapshotRef.current === undefined) setDshSettingsReadState('unavailable')
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [
-    adoptLocaleFromHost,
+  const {
+    adoptExplicitLocaleFromDsh,
     readDshSettingsForUi,
-    state.backend.kind,
-    state.connectedDshVersion,
-    state.connectionEpoch,
-  ])
-
-  const settingsSnapshotMatchesConnection =
-    (state.connectedDshVersion === undefined || dshSettingsSnapshotVersion === state.connectedDshVersion) &&
-    dshSettingsSnapshotConnectionEpoch === (state.connectionEpoch ?? 0)
-  const currentDshSettingsReady =
-    dshSettingsReadState === 'ready' && settingsSnapshotMatchesConnection && dshSettingsSnapshot !== undefined
-  const readyDshSettings = currentDshSettingsReady ? dshSettingsSnapshot : undefined
-  const readyDshUiPreferences =
-    readyDshSettings === undefined ? undefined : dshUiPreferences(readyDshSettings)
-  const settingsDrawerVersionKey = `${state.connectedDshVersion ?? dshSettingsSnapshotVersion ?? 'unknown-dsh-version'}:${state.connectionEpoch ?? 0}`
-  const codingToolsField =
-    readyDshSettings === undefined
-      ? undefined
-      : findDshSettingsField(readyDshSettings, DSH_UI_SETTING_PATHS.codingTools)
-  const codingToolsFieldSupported = codingToolsField?.type === 'boolean'
-  const codingToolsEnabled = !currentDshSettingsReady
-    ? false
-    : codingToolsFieldSupported
-      ? (readyDshUiPreferences?.codingToolsEnabled ?? false)
-      : codingToolsField === undefined
-        ? true
-        : false
-  const newSessionPresetSelectionEnabled = !currentDshSettingsReady
-    ? false
-    : codingToolsFieldSupported
-      ? codingToolsEnabled
-      : codingToolsField === undefined
-        ? state.presetSelectionEnabled
-        : false
-  const transcriptView = readyDshUiPreferences?.transcriptView ?? 'standard'
-  const performanceUsage = readyDshUiPreferences?.performanceUsage ?? 'detailed'
-  const hostConversationFontSizePx = readyDshUiPreferences?.fontSize
-  const conversationFontStyle =
-    hostConversationFontSizePx === undefined
-      ? undefined
-      : ({
-          fontSize: `${hostConversationFontSizePx}px`,
-          '--dsh-conversation-font-scale': String(hostConversationFontSizePx / 14),
-        } as CSSProperties)
-
+    updateDshSettingFromDrawer,
+    unsetDshSettingFromDrawer,
+    mutateDshSettingsFromDrawer,
+    applyLocale,
+    readyDshUiPreferences,
+    settingsDrawerVersionKey,
+    codingToolsEnabled,
+    newSessionPresetSelectionEnabled,
+    transcriptView,
+    performanceUsage,
+    hostConversationFontSizePx,
+    conversationFontStyle,
+  } = useDshSettings({
+    store,
+    state,
+    adoptLocaleFromHost,
+    setLocale,
+    setThemePreferenceState,
+    setConversationView,
+    setError,
+    t,
+  })
   const onConversationTabKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLButtonElement>): void => {
       const current = event.currentTarget.dataset.conversationView
@@ -626,31 +266,6 @@ export function App(): ReactElement {
     setThemePreferenceState(next)
     rememberThemePreference(next)
   }, [])
-
-  const applyLocale = useCallback(
-    (next: Locale): void => {
-      setLocale(next)
-      if (state.backend.kind !== 'connected') return
-      if (dshSettingsSnapshotMustRefreshRef.current) {
-        setError(t('settings.revisionRefreshRequired'))
-        return
-      }
-      const settingsNamespace = DSH_LOCALE_SETTING_PATH.split('.')[0]
-      const expectedRevision = dshSettingsSnapshotRef.current?.schema.namespaces.find(
-        (entry) => entry.ns === settingsNamespace,
-      )?.revision
-      if (expectedRevision === undefined) {
-        setError(t('settings.updateFailed'))
-        return
-      }
-      void updateDshSettingForUi(DSH_LOCALE_SETTING_PATH, next, expectedRevision).catch((reason: unknown) => {
-        // The extension UI remains usable even when an older/read-only DSH
-        // cannot persist its matching response-language preference.
-        setError(reason instanceof Error ? reason.message : t('settings.updateFailed'))
-      })
-    },
-    [setError, setLocale, state.backend.kind, t, updateDshSettingForUi],
-  )
 
   useLayoutEffect(() => {
     document.documentElement.dataset.dshTheme = themePreference
@@ -2446,414 +2061,5 @@ export function App(): ReactElement {
         </section>
       </main>
     </AppErrorBoundary>
-  )
-}
-
-const DEFINITE_SCHEDULE_PROMPT_REJECTION_CODES = new Set([
-  'AUTH_REQUIRED',
-  'BACKEND_BUSY',
-  'BACKEND_UNREACHABLE',
-  'CAPABILITY_UNAVAILABLE',
-  'CONTEXT_EXPIRED',
-  'CONTEXT_LIMIT',
-  'CONTEXT_STALE',
-  'FEATURE_DISABLED',
-  'INVALID_CONFIGURATION',
-  'NO_RUNNING_INSTANCE',
-  'PATH_NOT_ALLOWED',
-  'PERMISSION_DENIED',
-])
-
-function isDefinitePromptRejection(reason: unknown): boolean {
-  if (typeof reason !== 'object' || reason === null) return false
-  const details = reason as { readonly code?: unknown; readonly retryable?: unknown }
-  return (
-    typeof details.code === 'string' &&
-    details.retryable === false &&
-    DEFINITE_SCHEDULE_PROMPT_REJECTION_CODES.has(details.code)
-  )
-}
-
-function EmptySessionPosture(props: {
-  readonly workspaces: readonly WorkspaceSummary[]
-  readonly presets: readonly AgentPresetDescriptor[]
-  readonly presetSelectionEnabled?: boolean
-  readonly empty: boolean
-  readonly onCreate: (workspaceId: string, presetId?: string) => void
-}): ReactElement {
-  const { locale, t } = useI18n()
-  const hostDefaultPresetId = props.presets.find((preset) => preset.isDefault)?.id
-  const missingHostDefaultPreset =
-    props.presetSelectionEnabled === false && props.presets.length > 0 && hostDefaultPresetId === undefined
-  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState(props.workspaces[0]?.id ?? '')
-  const [selectedPresetId, setSelectedPresetId] = useState<string | undefined>(undefined)
-  const selected =
-    props.workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? props.workspaces[0]
-  const availablePresets = props.presets.filter((preset) => preset.broken === undefined)
-  const stagedPreset =
-    availablePresets.find((preset) => preset.id === selectedPresetId) ??
-    availablePresets.find((preset) => preset.isDefault) ??
-    availablePresets[0]
-  const stagedPresetId = stagedPreset?.id ?? ''
-  const oneShotPresetId =
-    props.presetSelectionEnabled !== false &&
-    availablePresets.some((preset) => preset.id === selectedPresetId)
-      ? selectedPresetId
-      : undefined
-
-  if (props.workspaces.length === 0)
-    return <EmptyState title={t('app.workspaceLoading')} description={t('app.workspaceLoadingDescription')} />
-
-  return (
-    <section className="dsh-empty-session" aria-live="polite">
-      <div className="dsh-empty-session__icon" aria-hidden="true">
-        <Icon name="session" />
-      </div>
-      <span className="dsh-app__eyebrow">{t('app.noActiveSession')}</span>
-      <h2>{props.empty ? t('app.createSession') : t('app.chooseSession')}</h2>
-      <p>{t('app.workspacePickerHint')}</p>
-      <div className="dsh-empty-session__picker">
-        <span>{t('app.workspacePicker')}</span>
-        <SelectMenu
-          icon="folder"
-          density="regular"
-          displayLabel
-          menuMode="flow"
-          label={selected?.name ?? t('app.workspacePicker')}
-          ariaLabel={t('app.workspacePicker')}
-          title={t('app.workspacePicker')}
-          value={selected?.id ?? ''}
-          options={props.workspaces.map((workspace) => ({
-            value: workspace.id,
-            label: workspace.name,
-          }))}
-          onChange={setSelectedWorkspaceId}
-        />
-      </div>
-      {availablePresets.length === 0 || props.presetSelectionEnabled === false ? null : (
-        <div className="dsh-empty-session__preset">
-          <span>{t('app.presetPicker')}</span>
-          <SelectMenu
-            icon="sparkles"
-            density="regular"
-            displayLabel
-            menuMode="flow"
-            label={stagedPreset === undefined ? t('app.presetPicker') : presetDisplayName(stagedPreset, t)}
-            ariaLabel={t('app.presetPicker')}
-            title={t('app.presetPicker')}
-            value={stagedPresetId}
-            options={availablePresets.map((preset) => ({
-              value: preset.id,
-              label: presetDisplayName(preset, t),
-            }))}
-            onChange={setSelectedPresetId}
-          />
-          <span className="dsh-sr-only">{t('app.presetStaged')}</span>
-        </div>
-      )}
-      {missingHostDefaultPreset ? (
-        <p role="status">
-          {t('presets.modeSelectionHidden')}.{' '}
-          {locale === 'zh'
-            ? 'DSH 未报告默认预设；创建会话可能沿用过期选择。请先在 DSH 中配置默认预设。'
-            : 'DSH did not report a default preset, so creating a session could reuse an outdated selection. Configure a default preset in DSH first.'}
-        </p>
-      ) : null}
-      <button
-        className="dsh-button dsh-button--primary"
-        type="button"
-        disabled={selected === undefined || missingHostDefaultPreset}
-        onClick={() => {
-          if (selected !== undefined && !missingHostDefaultPreset) {
-            const presetId = props.presetSelectionEnabled === false ? undefined : oneShotPresetId
-            props.onCreate(selected.id, presetId)
-          }
-        }}
-      >
-        {t('app.newSessionInWorkspace')}
-      </button>
-    </section>
-  )
-}
-
-function readContextPressure(value: unknown, breakdownValue?: unknown): ContextPressure | undefined {
-  const record = object(value)
-  const pressureValid =
-    record === undefined ||
-    ((!Object.prototype.hasOwnProperty.call(record, 'pressureTokens') ||
-      nonNegativeTokenCount(record.pressureTokens) !== undefined) &&
-      (!Object.prototype.hasOwnProperty.call(record, 'projectedTokens') ||
-        nonNegativeTokenCount(record.projectedTokens) !== undefined) &&
-      (!Object.prototype.hasOwnProperty.call(record, 'contextWindow') ||
-        positiveTokenCount(record.contextWindow) !== undefined))
-  const pressureTokens = pressureValid ? nonNegativeTokenCount(record?.pressureTokens) : undefined
-  const projectedTokens = pressureValid ? nonNegativeTokenCount(record?.projectedTokens) : undefined
-  const contextWindow = pressureValid ? positiveTokenCount(record?.contextWindow) : undefined
-  // DSH publishes these as two independent projections. Keep accepting the
-  // nested shape used by early fixtures so rc.6/rc.7 deployments remain safe.
-  const breakdown = readContextBreakdown(breakdownValue) ?? readContextBreakdown(record?.contextBreakdown)
-  if (
-    pressureTokens === undefined &&
-    projectedTokens === undefined &&
-    contextWindow === undefined &&
-    breakdown === undefined
-  )
-    return undefined
-  return {
-    ...(pressureTokens === undefined ? {} : { pressureTokens }),
-    ...(projectedTokens === undefined ? {} : { projectedTokens }),
-    ...(contextWindow === undefined ? {} : { contextWindow }),
-    ...(breakdown === undefined ? {} : { breakdown }),
-  }
-}
-
-function readContextBreakdown(value: unknown): ContextPressure['breakdown'] | undefined {
-  const record = object(value)
-  if (record === undefined) return undefined
-  const systemTokens = nonNegativeTokenCount(record.systemTokens)
-  const toolsTokens = nonNegativeTokenCount(record.toolsTokens)
-  const messageTokens = nonNegativeTokenCount(record.messageTokens)
-  if (systemTokens === undefined || toolsTokens === undefined || messageTokens === undefined) return undefined
-  return { systemTokens, toolsTokens, messageTokens }
-}
-
-function readTokenUsageProjection(value: unknown): TokenUsage | undefined {
-  const record = object(value)
-  if (record === undefined) return undefined
-  const inputTokens = nonNegativeTokenCount(record.uncachedInputTokens ?? record.inputTokens)
-  const outputTokens = nonNegativeTokenCount(record.outputTokens)
-  const hasDeclaredTotal = Object.hasOwn(record, 'totalTokens')
-  const declaredTotal = exactNonNegativeTokenCount(record.totalTokens)
-  const cacheReadTokens = nonNegativeTokenCount(record.cacheReadTokens)
-  const cacheWriteTokens = nonNegativeTokenCount(record.cacheWriteTokens)
-  if (
-    inputTokens === undefined ||
-    outputTokens === undefined ||
-    (hasDeclaredTotal && declaredTotal === undefined) ||
-    (record.cacheReadTokens !== undefined && cacheReadTokens === undefined) ||
-    (record.cacheWriteTokens !== undefined && cacheWriteTokens === undefined)
-  )
-    return undefined
-  const totalTokens =
-    declaredTotal ??
-    (cacheReadTokens === undefined || cacheWriteTokens === undefined
-      ? undefined
-      : exactNonNegativeTokenSum([
-          exactNonNegativeTokenCount(record.uncachedInputTokens ?? record.inputTokens),
-          exactNonNegativeTokenCount(record.outputTokens),
-          exactNonNegativeTokenCount(record.cacheReadTokens),
-          exactNonNegativeTokenCount(record.cacheWriteTokens),
-        ]))
-  return {
-    inputTokens,
-    outputTokens,
-    ...(totalTokens === undefined ? {} : { totalTokens }),
-    ...(cacheReadTokens === undefined ? {} : { cacheReadTokens }),
-    ...(cacheWriteTokens === undefined ? {} : { cacheWriteTokens }),
-  }
-}
-
-function readSessionStatsProjection(value: unknown): SessionStatsProjection | undefined {
-  const record = object(value)
-  if (record === undefined) return undefined
-  const turns = nonNegativeTokenCount(record.turns)
-  const steps = nonNegativeTokenCount(record.steps)
-  const ttftSteps = nonNegativeTokenCount(record.ttftSteps)
-  const llmMs = nonNegativeMetric(record.llmMs)
-  const toolMs = nonNegativeMetric(record.toolMs)
-  const ttftMs = nonNegativeMetric(record.ttftMs)
-  const decodeMs = nonNegativeMetric(record.decodeMs)
-  const decodeTokens = nonNegativeMetric(record.decodeTokens)
-  if (
-    turns === undefined ||
-    steps === undefined ||
-    ttftSteps === undefined ||
-    llmMs === undefined ||
-    toolMs === undefined ||
-    ttftMs === undefined ||
-    decodeMs === undefined ||
-    decodeTokens === undefined
-  )
-    return undefined
-  return { turns, steps, llmMs, toolMs, ttftMs, ttftSteps, decodeMs, decodeTokens }
-}
-
-function object(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined
-}
-
-function readFileAsBase64(
-  file: File,
-  t: Translate,
-  imageLimits?: ImageAttachmentLimits,
-): Promise<{ name: string; mimeType?: string; dataBase64: string }> {
-  if (file.size === 0) return Promise.reject(new Error(t('app.error.fileEmpty', { name: file.name })))
-  const isImage = file.type.startsWith('image/')
-  const imageLimit = isImage
-    ? Math.min(MAX_IMAGE_ATTACHMENT_BYTES, imageLimits?.maxImageBytes ?? DEFAULT_ATTACHMENT_BYTES)
-    : DEFAULT_ATTACHMENT_BYTES
-  if (file.size > imageLimit)
-    return Promise.reject(
-      new Error(
-        isImage && imageLimits !== undefined
-          ? t('app.error.imageTooLarge', { name: file.name, size: formatByteSize(imageLimit) })
-          : t('app.error.fileTooLarge', { name: file.name }),
-      ),
-    )
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onerror = () => reject(new Error(t('app.error.readFile', { name: file.name })))
-    reader.onload = () => {
-      const result = typeof reader.result === 'string' ? reader.result : ''
-      const match = /^data:([^;,]+);base64,(.*)$/s.exec(result)
-      const dataBase64 = match?.[2]
-      if (match === null || dataBase64 === undefined || dataBase64 === '') {
-        reject(new Error(t('app.error.readFile', { name: file.name })))
-        return
-      }
-      const mimeType = file.type === '' ? (match[1] ?? 'application/octet-stream') : file.type
-      resolve({ name: file.name, mimeType, dataBase64 })
-    }
-    reader.readAsDataURL(file)
-  })
-}
-
-function readImageAttachmentLimits(value: unknown): ImageAttachmentLimits | undefined {
-  const record = object(value)
-  if (record === undefined) return undefined
-  const maxImageBytes = positiveInteger(record.maxImageBytes)
-  const maxImagesPerMessage = positiveInteger(record.maxImagesPerMessage)
-  const maxMessageImageBytes = positiveInteger(record.maxMessageImageBytes)
-  const maxImagePixels = positiveInteger(record.maxImagePixels)
-  const maxImageDimension = positiveInteger(record.maxImageDimension)
-  const hasMaxImageDimension = Object.prototype.hasOwnProperty.call(record, 'maxImageDimension')
-  if (
-    maxImageBytes === undefined ||
-    maxImagesPerMessage === undefined ||
-    maxMessageImageBytes === undefined ||
-    maxImagePixels === undefined ||
-    (hasMaxImageDimension && maxImageDimension === undefined) ||
-    !Array.isArray(record.mediaTypes) ||
-    record.mediaTypes.length === 0 ||
-    !record.mediaTypes.every(
-      (entry) => typeof entry === 'string' && isImageMediaType(entry.trim().toLowerCase()),
-    )
-  )
-    return undefined
-  const mediaTypes = record.mediaTypes.filter(
-    (entry): entry is ImageAttachmentLimits['mediaTypes'][number] =>
-      typeof entry === 'string' && isSupportedImageMediaType(entry.trim().toLowerCase()),
-  )
-  return {
-    // Keep future hosts from advertising a limit beyond the opaque attachment
-    // store and prompt boundary implemented by this extension.
-    maxImageBytes: Math.min(maxImageBytes, MAX_IMAGE_ATTACHMENT_BYTES),
-    maxImagesPerMessage: Math.min(maxImagesPerMessage, 20),
-    maxMessageImageBytes: Math.min(maxMessageImageBytes, MAX_PROMPT_IMAGE_BYTES),
-    maxImagePixels,
-    ...(maxImageDimension === undefined ? {} : { maxImageDimension }),
-    mediaTypes,
-  }
-}
-
-function positiveInteger(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined
-}
-
-function isSupportedImageMediaType(value: unknown): value is ImageAttachmentLimits['mediaTypes'][number] {
-  return value === 'image/png' || value === 'image/jpeg' || value === 'image/webp' || value === 'image/gif'
-}
-
-function formatByteSize(value: number): string {
-  if (value >= 1024 * 1024)
-    return `${(value / (1024 * 1024)).toFixed(value % (1024 * 1024) === 0 ? 0 : 1)} MiB`
-  if (value >= 1024) return `${Math.round(value / 1024)} KiB`
-  return `${value} B`
-}
-
-function nonNegativeTokenCount(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.floor(value) : undefined
-}
-
-function exactNonNegativeTokenCount(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined
-}
-
-function exactNonNegativeTokenSum(values: readonly (number | undefined)[]): number | undefined {
-  let total = 0
-  for (const value of values) {
-    if (value === undefined) return undefined
-    total += value
-    if (!Number.isSafeInteger(total)) return undefined
-  }
-  return total
-}
-
-function nonNegativeMetric(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined
-}
-
-function positiveTokenCount(value: unknown): number | undefined {
-  const count = nonNegativeTokenCount(value)
-  return count === undefined || count === 0 ? undefined : count
-}
-
-function welcomeWasDismissed(): boolean {
-  if (typeof window === 'undefined') return false
-  try {
-    return window.localStorage.getItem(WELCOME_DISMISSED_KEY) === '1'
-  } catch {
-    return false
-  }
-}
-
-function rememberWelcomeDismissal(): void {
-  if (typeof window === 'undefined') return
-  try {
-    window.localStorage.setItem(WELCOME_DISMISSED_KEY, '1')
-  } catch {
-    // A restricted Webview storage area should not prevent starting a session.
-  }
-}
-
-function dismissedRuntimeUpdateVersionFromStorage(): string | undefined {
-  if (typeof window === 'undefined') return undefined
-  try {
-    const value = window.localStorage.getItem(RUNTIME_UPDATE_DISMISSED_KEY)?.trim()
-    return value === '' ? undefined : value
-  } catch {
-    return undefined
-  }
-}
-
-function rememberRuntimeUpdateDismissal(version: string): void {
-  if (typeof window === 'undefined') return
-  try {
-    window.localStorage.setItem(RUNTIME_UPDATE_DISMISSED_KEY, version)
-  } catch {
-    // A restricted Webview storage area should not prevent using the update notice.
-  }
-}
-
-function resolveAssistantModelLabel(
-  session: SessionSummary | undefined,
-  configuration: AgentConfiguration | undefined,
-  models: readonly ModelDescriptor[],
-  t: Translate,
-): string {
-  const selected =
-    configuration === undefined
-      ? undefined
-      : models.find(
-          (model) =>
-            model.providerId === configuration.model.providerId && model.id === configuration.model.modelId,
-        )
-  return (
-    selected?.label.trim() ||
-    session?.modelLabel?.trim() ||
-    configuration?.model.modelId.trim() ||
-    t('timeline.assistant')
   )
 }
