@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- 修复 macOS 上清理受管临时工作区时误判目录仍存在的问题，同时保留隔离目录置换和外部链接数据保护。
+- Fixed managed temporary workspace cleanup being reported as incomplete on macOS while preserving quarantine replacement and linked external data protections.
+
 ## 0.2.5
 
 - 继续完善 DSH `0.1.7-rc.2` 的 Adapter/Application 与 Webview 集成、连接生命周期和路由，并扩展隔离 harness 覆盖。

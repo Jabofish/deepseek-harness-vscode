@@ -220,6 +220,7 @@ class QuarantineJunctionReplacementStore extends TemporaryWorkspaceOwnershipStor
 
 class QuarantineParentReplacementBeforeDeleteStore extends TemporaryWorkspaceOwnershipStore {
   public quarantineJunctionPath: string | undefined
+  public replacementBlockedByOpenWitness = false
   private quarantinedWorkspaceIdentityCalls = 0
   private replaced = false
 
@@ -244,7 +245,23 @@ class QuarantineParentReplacementBeforeDeleteStore extends TemporaryWorkspaceOwn
       this.quarantinedWorkspaceIdentityCalls += 1
       if (this.quarantinedWorkspaceIdentityCalls === 2) {
         this.replaced = true
-        renameSync(quarantineDirectory, this.movedQuarantineDirectory)
+        try {
+          renameSync(quarantineDirectory, this.movedQuarantineDirectory)
+        } catch (error) {
+          if (
+            process.platform === 'win32' &&
+            typeof error === 'object' &&
+            error !== null &&
+            'code' in error &&
+            error.code === 'EPERM'
+          ) {
+            // Windows will not rename a directory while its witness file is
+            // open, so the race is rejected before a junction can be installed.
+            this.replacementBlockedByOpenWitness = true
+            return undefined
+          }
+          throw error
+        }
         symlinkSync(
           this.externalDirectory,
           quarantineDirectory,
@@ -1076,6 +1093,15 @@ describe('TemporaryWorkspaceOwnershipStore', () => {
       (error: unknown) => error,
     )
 
+    if (racingStore.replacementBlockedByOpenWitness) {
+      expect(racingStore.quarantineJunctionPath).toBeUndefined()
+      expect(removalError).toBeInstanceOf(Error)
+      expect(readFileSync(path.join(directory, 'original.txt'), 'utf8')).toBe('preserve workspace data')
+      expect(readFileSync(externalFile, 'utf8')).toBe('preserve external data')
+      expect(existsSync(markerPath)).toBe(true)
+      return
+    }
+
     expect(racingStore.quarantineJunctionPath).toBeDefined()
     expect(existsSync(externalFile)).toBe(true)
     expect(readFileSync(externalFile, 'utf8')).toBe('preserve external data')
@@ -1109,6 +1135,7 @@ describe('TemporaryWorkspaceOwnershipStore', () => {
 
     expect(existsSync(directory)).toBe(false)
     expect(readFileSync(externalFile, 'utf8')).toBe('preserve external data')
+    expect(readdirSync(root).filter((entry) => entry.startsWith('workspace-cleanup-'))).toEqual([])
   })
 
   it('preserves a replacement workspace after failed registration cleanup', async () => {

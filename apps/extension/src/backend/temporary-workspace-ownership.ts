@@ -373,24 +373,38 @@ export class TemporaryWorkspaceOwnershipStore {
     }
     const quarantineIdentity = quarantineIdentityResult
     const quarantinedPath = path.join(quarantineDirectory, 'workspace')
+    const quarantineWitnessPath = path.join(quarantineDirectory, '.workspace-cleanup-witness')
     let quarantinedIdentity: DirectoryIdentity | undefined
     let quarantineHandle: Awaited<ReturnType<typeof open>> | undefined
+    let quarantineWitnessHandle: Awaited<ReturnType<typeof open>> | undefined
+    let quarantineWitnessIdentity: DirectoryIdentity | undefined
 
     try {
-      // Keep the isolated container open through deletion. Removing the whole
-      // direct child as the leaf prevents a junction substituted at that leaf
-      // from redirecting recursive removal into its target. The handle also
-      // lets us detect when the path was replaced and the original container
-      // still exists elsewhere instead of treating removal of the replacement
-      // junction as successful workspace deletion.
+      // Pin the fresh container while checking its identity so a junction
+      // replacement between creation and these checks cannot redirect later
+      // operations.
       quarantineHandle = await open(quarantineDirectory, 'r')
       if (
         !sameIdentity(identityFromStat(await quarantineHandle.stat({ bigint: true })), quarantineIdentity)
       ) {
         throw new Error('The temporary workspace cleanup location could not be verified.')
       }
+      await quarantineHandle.close()
+      quarantineHandle = undefined
 
       if (!isManagedTemporaryWorkspacePath(this.rootPath, quarantineDirectory)) {
+        throw new Error('The temporary workspace cleanup location could not be verified.')
+      }
+
+      // A regular-file handle gives us a portable link-count witness after
+      // recursive deletion. Directory link counts for an open, removed
+      // directory differ between filesystems.
+      quarantineWitnessHandle = await open(quarantineWitnessPath, 'wx', 0o600)
+      quarantineWitnessIdentity = identityFromFileStat(await quarantineWitnessHandle.stat({ bigint: true }))
+      if (
+        quarantineWitnessIdentity === undefined ||
+        !sameIdentity(await this.regularFileIdentity(quarantineWitnessPath), quarantineWitnessIdentity)
+      ) {
         throw new Error('The temporary workspace cleanup location could not be verified.')
       }
 
@@ -454,6 +468,7 @@ export class TemporaryWorkspaceOwnershipStore {
       if (
         !isManagedTemporaryWorkspacePath(this.rootPath, quarantineDirectory) ||
         !sameIdentity(await this.directoryIdentity(quarantineDirectory), quarantineIdentity) ||
+        !sameIdentity(await this.regularFileIdentity(quarantineWitnessPath), quarantineWitnessIdentity) ||
         !sameIdentity(await this.directoryIdentity(quarantinedPath), directoryIdentity)
       ) {
         throw new Error('The temporary workspace changed while isolated for safe removal.')
@@ -461,11 +476,11 @@ export class TemporaryWorkspaceOwnershipStore {
 
       // Delete the quarantine container itself as the recursive-removal leaf.
       // If that leaf was replaced with a junction after the checks above, Node
-      // removes the junction rather than traversing it; the still-linked
-      // directory handle below makes that substitution fail closed.
+      // removes the junction rather than traversing it; the still-linked file
+      // witness below makes that substitution fail closed.
       await rm(quarantineDirectory, { recursive: true })
-      const removedContainer = await quarantineHandle.stat({ bigint: true })
-      if (removedContainer.nlink !== 0n) {
+      const removedWitness = await quarantineWitnessHandle.stat({ bigint: true })
+      if (removedWitness.nlink !== 0n) {
         throw new Error('The temporary workspace cleanup container changed during removal.')
       }
       quarantinedIdentity = undefined
@@ -482,10 +497,17 @@ export class TemporaryWorkspaceOwnershipStore {
       throw error
     } finally {
       await quarantineHandle?.close().catch(() => undefined)
+      await quarantineWitnessHandle?.close().catch(() => undefined)
       if (
         isManagedTemporaryWorkspacePath(this.rootPath, quarantineDirectory) &&
         sameIdentity(await this.directoryIdentity(quarantineDirectory), quarantineIdentity)
       ) {
+        if (
+          quarantineWitnessIdentity !== undefined &&
+          sameIdentity(await this.regularFileIdentity(quarantineWitnessPath), quarantineWitnessIdentity)
+        ) {
+          await unlink(quarantineWitnessPath).catch(() => undefined)
+        }
         await rmdir(quarantineDirectory).catch(() => undefined)
       }
     }
@@ -516,6 +538,14 @@ export class TemporaryWorkspaceOwnershipStore {
   protected async directoryIdentity(directoryPath: string): Promise<DirectoryIdentity | undefined> {
     try {
       return identityFromStat(await lstat(directoryPath, { bigint: true }))
+    } catch {
+      return undefined
+    }
+  }
+
+  private async regularFileIdentity(filePath: string): Promise<DirectoryIdentity | undefined> {
+    try {
+      return identityFromFileStat(await lstat(filePath, { bigint: true }))
     } catch {
       return undefined
     }
