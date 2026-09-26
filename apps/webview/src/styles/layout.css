@@ -344,27 +344,27 @@
   padding-top: 0;
 }
 
-/* Pending approvals and questions are blocking overlays. They stay anchored
- * below the topbar while the timeline keeps its full height; long batches
- * scroll inside this surface instead of extending the conversation. */
+/* Pending approvals and questions take the composer's slot: the input is hidden
+ * while the agent waits, so the card docks at the bottom of the conversation
+ * instead of floating under the topbar. Each card owns its own scrollport, so a
+ * long batch scrolls its questions while the actions row stays reachable. */
 .dsh-conversation__interactions {
-  position: absolute;
-  inset-block-start: calc(2.25rem + var(--dsh-space-2));
-  inset-inline: 0;
-  z-index: 25;
-  display: grid;
+  display: flex;
+  flex: 0 1 auto;
+  flex-direction: column;
   min-width: 0;
+  min-height: 0;
   width: 100%;
-  max-height: min(70vh, 42rem);
+  max-height: min(70vh, 42rem, calc(100% - 12rem));
   gap: var(--dsh-space-2);
-  padding-block-end: var(--dsh-space-2);
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-gutter: stable;
+  overflow: hidden;
 }
 
 .dsh-conversation__interactions > .dsh-interaction {
+  display: flex;
+  flex: 0 1 auto;
+  flex-direction: column;
+  min-height: 0;
   width: min(100%, 56rem);
   margin-inline: auto;
   box-shadow: var(--dsh-shadow);

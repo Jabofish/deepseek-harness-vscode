@@ -219,6 +219,22 @@ describe('UserQuestionCard', () => {
     expect(onRespond).toHaveBeenCalledWith([{ id: 'q1', response: [], custom: 'Something else' }])
   })
 
+  it('keeps the actions row outside the scrolling question body', () => {
+    const { container } = render(
+      <UserQuestionCard question={batchQuestion()} disabled={false} onRespond={vi.fn()} onCancel={vi.fn()} />,
+    )
+
+    const card = container.querySelector('.dsh-interaction')
+    const body = container.querySelector('.dsh-interaction__body')
+    const actions = container.querySelector('.dsh-interaction__actions')
+    expect(card).not.toBeNull()
+    expect(body?.parentElement).toBe(card)
+    expect(actions?.parentElement).toBe(card)
+    expect(body?.contains(actions ?? null)).toBe(false)
+    expect(body?.querySelectorAll('.dsh-question__item')).toHaveLength(2)
+    expect(actions?.querySelectorAll('.dsh-button')).toHaveLength(2)
+  })
+
   it('narrows only a valid single plan review and exposes Chat about it cancellation', () => {
     const onCancel = vi.fn()
     const question = batchQuestion()
@@ -234,6 +250,10 @@ describe('UserQuestionCard', () => {
     )
     expect(screen.getByText('PLAN REVIEW')).toBeDefined()
     expect(screen.queryByRole('button', { name: 'Skip this question' })).toBeNull()
+    // The generic Submit can never be enabled for a review, so the decision row
+    // is the only footer.
+    expect(screen.queryByRole('button', { name: 'Submit' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Approve' })).toBeDefined()
     fireEvent.click(screen.getByRole('button', { name: 'Chat about it' }))
     expect(onCancel).toHaveBeenCalledOnce()
   })

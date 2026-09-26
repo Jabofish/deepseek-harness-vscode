@@ -48,125 +48,119 @@ export function UserQuestionCard(props: UserQuestionCardProps): ReactElement {
           <h2 id={`question-${props.question.id}`}>{items[0]?.prompt ?? ''}</h2>
         </div>
       </header>
-      {items.map((item, index) => (
-        <div className="dsh-question__item" key={item.id}>
-          {items.length > 1 || item.header === undefined ? null : (
-            <ContentFlow as="p" className="dsh-question__header">
-              {item.header}
-            </ContentFlow>
-          )}
-          {items.length > 1 ? (
-            <h3 className="dsh-question__item-title">
-              {item.header === undefined ? item.prompt : item.header}
-            </h3>
-          ) : null}
-          {items.length > 1 ? (
-            <ContentFlow as="p" className="dsh-question__prompt">
-              {item.prompt}
-            </ContentFlow>
-          ) : null}
-          {item.detail === undefined ? null : (
-            <ContentFlow as="p" className="dsh-question__detail">
-              {item.detail}
-            </ContentFlow>
-          )}
-          {item.choices === undefined || item.choices.length === 0 ? null : (
-            <div className="dsh-question__choices" role="group" aria-label={item.prompt}>
-              {item.choices.map((choice) => {
-                const checked = drafts[index]?.selected.includes(choice.id) === true
-                return (
-                  <label
-                    className={`dsh-question__choice${
-                      planReview && isApproveChoice(item, choice) ? ' dsh-question__choice--approve' : ''
-                    }`}
-                    key={choice.id}
-                  >
-                    <input
-                      type={item.multiSelect === true ? 'checkbox' : 'radio'}
-                      name={`${props.question.id}:${item.id}`}
-                      disabled={props.disabled}
-                      checked={checked}
-                      onChange={() => {
-                        setDrafts((current) =>
-                          current.map((draft, position) =>
-                            position === index
-                              ? {
-                                  selected:
-                                    item.multiSelect === true
-                                      ? toggle(draft.selected, choice.id)
-                                      : [choice.id],
-                                  custom: item.multiSelect === true ? draft.custom : '',
-                                  skipped: false,
-                                }
-                              : draft,
-                          ),
-                        )
-                      }}
-                    />
-                    <span>
-                      <ContentFlow as="span" className="dsh-question__choice-label">
-                        {planReview && isApproveChoice(item, choice) && item.multiSelect !== true
-                          ? t('question.approveHint', { label: choice.label })
-                          : choice.label}
-                      </ContentFlow>
-                      {choice.description === undefined ? null : (
-                        <ContentFlow as="span" className="dsh-question__choice-description">
-                          {choice.description}
+      <div className="dsh-interaction__body">
+        {items.map((item, index) => (
+          <div className="dsh-question__item" key={item.id}>
+            {items.length > 1 || item.header === undefined ? null : (
+              <ContentFlow as="p" className="dsh-question__header">
+                {item.header}
+              </ContentFlow>
+            )}
+            {items.length > 1 ? (
+              <h3 className="dsh-question__item-title">
+                {item.header === undefined ? item.prompt : item.header}
+              </h3>
+            ) : null}
+            {items.length > 1 ? (
+              <ContentFlow as="p" className="dsh-question__prompt">
+                {item.prompt}
+              </ContentFlow>
+            ) : null}
+            {item.detail === undefined ? null : (
+              <ContentFlow as="p" className="dsh-question__detail">
+                {item.detail}
+              </ContentFlow>
+            )}
+            {item.choices === undefined || item.choices.length === 0 ? null : (
+              <div className="dsh-question__choices" role="group" aria-label={item.prompt}>
+                {item.choices.map((choice) => {
+                  const checked = drafts[index]?.selected.includes(choice.id) === true
+                  return (
+                    <label
+                      className={`dsh-question__choice${
+                        planReview && isApproveChoice(item, choice) ? ' dsh-question__choice--approve' : ''
+                      }`}
+                      key={choice.id}
+                    >
+                      <input
+                        type={item.multiSelect === true ? 'checkbox' : 'radio'}
+                        name={`${props.question.id}:${item.id}`}
+                        disabled={props.disabled}
+                        checked={checked}
+                        onChange={() => {
+                          setDrafts((current) =>
+                            current.map((draft, position) =>
+                              position === index
+                                ? {
+                                    selected:
+                                      item.multiSelect === true
+                                        ? toggle(draft.selected, choice.id)
+                                        : [choice.id],
+                                    custom: item.multiSelect === true ? draft.custom : '',
+                                    skipped: false,
+                                  }
+                                : draft,
+                            ),
+                          )
+                        }}
+                      />
+                      <span>
+                        <ContentFlow as="span" className="dsh-question__choice-label">
+                          {planReview && isApproveChoice(item, choice) && item.multiSelect !== true
+                            ? t('question.approveHint', { label: choice.label })
+                            : choice.label}
                         </ContentFlow>
-                      )}
-                    </span>
-                  </label>
-                )
-              })}
-            </div>
-          )}
-          {!planReview ? (
-            <QuestionAnswerField
-              value={drafts[index]?.custom ?? ''}
-              disabled={props.disabled}
-              ariaLabel={t('question.answer', { prompt: item.prompt })}
-              placeholder={t('question.custom')}
-              onChange={(value) => {
-                setDrafts((current) =>
-                  current.map((draft, position) =>
-                    position === index
-                      ? {
-                          selected: item.multiSelect === true ? draft.selected : [],
-                          custom: value,
-                          skipped: false,
-                        }
-                      : draft,
-                  ),
-                )
-              }}
-            />
-          ) : null}
-          {!planReview ? (
-            <button
-              className="dsh-button dsh-button--secondary dsh-button--compact"
-              type="button"
-              disabled={props.disabled}
-              onClick={() =>
-                setDrafts((current) =>
-                  current.map((draft, position) =>
-                    position === index ? { selected: [], custom: '', skipped: true } : draft,
-                  ),
-                )
-              }
-            >
-              {t(drafts[index]?.skipped === true ? 'question.skipped' : 'question.skip')}
-            </button>
-          ) : null}
-        </div>
-      ))}
-      <button
-        className="dsh-button dsh-button--primary"
-        type="button"
-        disabled={props.disabled || !complete || planReview}
-        onClick={() => props.onRespond(encodeAnswers(items, drafts))}
-      >
-        {t('question.submit')}
-      </button>
+                        {choice.description === undefined ? null : (
+                          <ContentFlow as="span" className="dsh-question__choice-description">
+                            {choice.description}
+                          </ContentFlow>
+                        )}
+                      </span>
+                    </label>
+                  )
+                })}
+              </div>
+            )}
+            {!planReview ? (
+              <QuestionAnswerField
+                value={drafts[index]?.custom ?? ''}
+                disabled={props.disabled}
+                ariaLabel={t('question.answer', { prompt: item.prompt })}
+                placeholder={t('question.custom')}
+                onChange={(value) => {
+                  setDrafts((current) =>
+                    current.map((draft, position) =>
+                      position === index
+                        ? {
+                            selected: item.multiSelect === true ? draft.selected : [],
+                            custom: value,
+                            skipped: false,
+                          }
+                        : draft,
+                    ),
+                  )
+                }}
+              />
+            ) : null}
+            {!planReview ? (
+              <button
+                className="dsh-button dsh-button--secondary dsh-button--compact"
+                type="button"
+                disabled={props.disabled}
+                onClick={() =>
+                  setDrafts((current) =>
+                    current.map((draft, position) =>
+                      position === index ? { selected: [], custom: '', skipped: true } : draft,
+                    ),
+                  )
+                }
+              >
+                {t(drafts[index]?.skipped === true ? 'question.skipped' : 'question.skip')}
+              </button>
+            ) : null}
+          </div>
+        ))}
+      </div>
       {planReview ? (
         <PlanDecisionRow
           item={items[0]!}
@@ -175,14 +169,24 @@ export function UserQuestionCard(props: UserQuestionCardProps): ReactElement {
           onRespond={(choice) => props.onRespond([{ id: items[0]!.id, response: [choice.id] }])}
         />
       ) : (
-        <button
-          className="dsh-button dsh-button--secondary"
-          type="button"
-          disabled={props.disabled}
-          onClick={props.onCancel}
-        >
-          {t('question.cancel')}
-        </button>
+        <div className="dsh-interaction__actions">
+          <button
+            className="dsh-button dsh-button--secondary"
+            type="button"
+            disabled={props.disabled}
+            onClick={props.onCancel}
+          >
+            {t('question.cancel')}
+          </button>
+          <button
+            className="dsh-button dsh-button--primary"
+            type="button"
+            disabled={props.disabled || !complete}
+            onClick={() => props.onRespond(encodeAnswers(items, drafts))}
+          >
+            {t('question.submit')}
+          </button>
+        </div>
       )}
     </section>
   )
@@ -246,7 +250,11 @@ function PlanDecisionRow(props: {
   const approve = props.item.choices?.find((choice) => isApproveChoice(props.item, choice))
   const refuse = props.item.choices?.find((choice) => !isApproveChoice(props.item, choice))
   return (
-    <div className="dsh-question__decision-row" role="group" aria-label={t('question.planDecision')}>
+    <div
+      className="dsh-question__decision-row dsh-interaction__actions"
+      role="group"
+      aria-label={t('question.planDecision')}
+    >
       <button
         className="dsh-button dsh-button--secondary"
         type="button"

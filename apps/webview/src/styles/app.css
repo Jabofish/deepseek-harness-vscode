@@ -1768,6 +1768,25 @@ summary.dsh-timeline__card-header,
   padding: var(--dsh-space-3);
 }
 
+/* A pending card is a three-part column: the header and the actions row keep
+ * their height and only the question body scrolls, so a long batch can never
+ * push Submit/Cancel below the fold. */
+.dsh-interaction__header,
+.dsh-interaction__actions {
+  flex: 0 0 auto;
+}
+
+.dsh-interaction__body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  gap: var(--dsh-space-3);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
 /* The queue is a dock above the composer, not a full-size content card. A
  * single running item and the multi-item header should stay within one
  * compact control row; the backlog itself is bounded and collapsible. */
@@ -2767,6 +2786,14 @@ summary.dsh-timeline__card-header,
   min-width: 0;
 }
 
+/* The header inherits `justify-content: space-between` from the shared
+ * bar/queue rule, which flung the eyebrow and title to the far edge of a wide
+ * card and left a gap between them and their icon. The text block is the only
+ * flexible child, so it takes the remaining width and reads from the icon. */
+.dsh-interaction__header > div {
+  flex: 1 1 auto;
+}
+
 .dsh-interaction__header h2 {
   margin: 0;
   font-size: var(--dsh-font-size-lg);
@@ -2776,6 +2803,13 @@ summary.dsh-timeline__card-header,
 .dsh-question__prompt,
 .dsh-question__detail {
   margin: var(--dsh-space-3) 0;
+}
+
+/* Each question is a single-column grid, which stretches the skip control into
+ * a full-width bar next to the auto-width actions row. Keep it the size of its
+ * label so the per-question and card-level actions read the same way. */
+.dsh-question__item .dsh-button {
+  justify-self: start;
 }
 
 .dsh-question__choices {
