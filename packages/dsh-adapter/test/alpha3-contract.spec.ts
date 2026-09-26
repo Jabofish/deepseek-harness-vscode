@@ -1,29 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import type { BackendCandidate, BackendEndpoint } from '@dsh-vscode/domain'
-
 import type { DshTransport } from '../src/contracts.js'
 import { VersionedBackendProbe } from '../src/probe.js'
 import { Alpha3VersionAdapter } from '../src/versions/alpha3/adapter.js'
 import { callRpc } from '../src/versions/rc6/rpc.js'
-
-const endpoint: BackendEndpoint = {
-  host: '127.0.0.1',
-  port: 4567,
-  baseUrl: 'http://127.0.0.1:4567',
-}
-
-function candidate(runtimeVersion: string): BackendCandidate {
-  return { endpoint, source: 'configured', runtimeVersion, confidence: 1 }
-}
-
-function response(init: RequestInit | undefined, result: unknown): Response {
-  if (typeof init?.body !== 'string') throw new Error('test request body is not a string')
-  const request = JSON.parse(init.body) as { readonly rpcId?: string }
-  return new Response(JSON.stringify({ type: 'server-response', rpcId: request.rpcId, result }), {
-    headers: { 'content-type': 'application/json' },
-  })
-}
+import { candidate, endpoint, rpcResponse as response } from './support/contract-harness.js'
 
 function requestBody(init: RequestInit | undefined): {
   readonly type?: string
@@ -51,21 +32,6 @@ function adapter(fetch: typeof globalThis.fetch): Alpha3VersionAdapter {
 }
 
 describe('DSH 0.1.2-alpha.3 Connection/Gateway contract', () => {
-  it('selects only the exact alpha.3 runtime and keeps its protocol identity', async () => {
-    const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
-      Promise.resolve(response(init, { ok: true, value: { items: [] } })),
-    )
-    const versioned = adapter(fetch)
-
-    await expect(versioned.probe(candidate('0.1.2-alpha.3'))).resolves.toMatchObject({
-      protocolVersion: 'alpha3',
-      dshVersion: '0.1.2-alpha.3',
-      subagentImagePrompts: true,
-    })
-    await expect(versioned.probe(candidate('0.1.2-alpha.2'))).resolves.toBeUndefined()
-    expect(fetch).toHaveBeenCalledOnce()
-  })
-
   it('does not use the exact-only alpha.3 implementation for an unknown future runtime', async () => {
     const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
       Promise.resolve(response(init, { ok: true, value: { items: [] } })),

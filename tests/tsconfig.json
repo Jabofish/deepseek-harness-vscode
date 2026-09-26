@@ -11,8 +11,7 @@
       "@dsh-vscode/application": ["packages/application/src/index.ts"],
       "@dsh-vscode/dsh-adapter": ["packages/dsh-adapter/src/index.ts"],
       "@dsh-vscode/webview-protocol": ["packages/webview-protocol/src/index.ts"],
-      "@dsh-vscode/timeline": ["packages/timeline/src/index.ts"],
-      "@dsh-vscode/test-support": ["packages/test-support/src/index.ts"]
+      "@dsh-vscode/timeline": ["packages/timeline/src/index.ts"]
     }
   },
   "include": [
@@ -22,7 +21,6 @@
     "../packages/dsh-adapter/src/**/*.ts",
     "../packages/webview-protocol/src/**/*.ts",
     "../packages/timeline/src/**/*.ts",
-    "../packages/test-support/src/**/*.ts",
     "../apps/extension/src/backend/path-safety.ts",
     "../apps/extension/src/backend/skill-documents.ts",
     "../apps/extension/src/backend/process-supervisor.ts",

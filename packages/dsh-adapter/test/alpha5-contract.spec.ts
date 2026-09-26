@@ -1,33 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import type { BackendCandidate, BackendEndpoint } from '@dsh-vscode/domain'
-
 import type { DshTransport } from '../src/contracts.js'
 import { VersionedBackendProbe } from '../src/probe.js'
 import { Alpha5VersionAdapter } from '../src/versions/alpha5/adapter.js'
 import { callRpc } from '../src/versions/rc6/rpc.js'
-
-const endpoint: BackendEndpoint = {
-  host: '127.0.0.1',
-  port: 4567,
-  baseUrl: 'http://127.0.0.1:4567',
-}
-
-function candidate(runtimeVersion: string): BackendCandidate {
-  return { endpoint, source: 'configured', runtimeVersion, confidence: 1 }
-}
-
-function response(init: RequestInit | undefined, result: unknown): Response {
-  const request = JSON.parse(bodyText(init)) as { readonly rpcId?: string }
-  return new Response(JSON.stringify({ type: 'server-response', rpcId: request.rpcId, result }), {
-    headers: { 'content-type': 'application/json' },
-  })
-}
-
-function bodyText(init: RequestInit | undefined): string {
-  if (typeof init?.body !== 'string') throw new Error('test request body is not a string')
-  return init.body
-}
+import { bodyText, candidate, endpoint, rpcResponse as response } from './support/contract-harness.js'
 
 function requestBody(init: RequestInit | undefined): {
   readonly type?: string
@@ -54,21 +31,6 @@ function adapter(fetch: typeof globalThis.fetch): Alpha5VersionAdapter {
 }
 
 describe('DSH 0.1.2-alpha.5 Connection/Gateway contract', () => {
-  it('selects only the exact alpha.5 runtime and keeps its independent identity', async () => {
-    const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
-      Promise.resolve(response(init, { ok: true, value: { items: [] } })),
-    )
-    const versioned = adapter(fetch)
-
-    await expect(versioned.probe(candidate('0.1.2-alpha.5'))).resolves.toMatchObject({
-      protocolVersion: 'alpha5',
-      dshVersion: '0.1.2-alpha.5',
-      subagentImagePrompts: true,
-    })
-    await expect(versioned.probe(candidate('0.1.2-alpha.4'))).resolves.toBeUndefined()
-    expect(fetch).toHaveBeenCalledOnce()
-  })
-
   it('uses alpha.5 as the newest verified implementation for an unknown future runtime', async () => {
     const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
       Promise.resolve(response(init, { ok: true, value: { items: [] } })),

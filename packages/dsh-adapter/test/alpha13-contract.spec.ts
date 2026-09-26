@@ -1,7 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import type { BackendCandidate, BackendEndpoint } from '@dsh-vscode/domain'
-
 import type { DshTransport } from '../src/contracts.js'
 import { VersionedBackendProbe } from '../src/probe.js'
 import { Rc6CommandRepository } from '../src/repositories/command-repository.js'
@@ -10,6 +8,7 @@ import { AlphaLoopbackApiClient, type AlphaWebSocket } from '../src/versions/alp
 import { Alpha5VersionAdapter } from '../src/versions/alpha5/adapter.js'
 import { Alpha13AssistantStreamProjector } from '../src/versions/alpha13/session-wire.js'
 import { Alpha13VersionAdapter } from '../src/versions/alpha13/adapter.js'
+import { candidate, endpoint, wrappedResponse as response } from './support/contract-harness.js'
 
 class FakeWebSocket implements AlphaWebSocket {
   public static readonly instances: FakeWebSocket[] = []
@@ -55,25 +54,6 @@ class FakeWebSocket implements AlphaWebSocket {
   private emit(type: string, event: unknown): void {
     for (const listener of this.listeners.get(type) ?? []) listener(event)
   }
-}
-
-const endpoint: BackendEndpoint = {
-  host: '127.0.0.1',
-  port: 4567,
-  baseUrl: 'http://127.0.0.1:4567',
-}
-
-function candidate(runtimeVersion: string): BackendCandidate {
-  return { endpoint, source: 'configured', runtimeVersion, confidence: 1 }
-}
-
-function response(init: RequestInit | undefined, value: unknown): Response {
-  if (typeof init?.body !== 'string') throw new Error('test request body is not a string')
-  const request = JSON.parse(init.body) as { readonly rpcId?: string }
-  return new Response(
-    JSON.stringify({ type: 'server-response', rpcId: request.rpcId, result: { ok: true, value } }),
-    { headers: { 'content-type': 'application/json' } },
-  )
 }
 
 function transport(fetch: typeof globalThis.fetch): AlphaLoopbackApiClient {

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import type { BackendCandidate, BackendEndpoint, BackendEvent } from '@dsh-vscode/domain'
+import type { BackendEvent } from '@dsh-vscode/domain'
 
 import type { DshTransport } from '../src/contracts.js'
 import { Rc6SessionRepository } from '../src/repositories/session-repository.js'
@@ -8,25 +8,7 @@ import { DshStreamController } from '../src/stream-controller.js'
 import { rc6Mapper } from '../src/versions/rc6/mapper.js'
 import { Alpha161VersionAdapter, type Alpha161AdapterOptions } from '../src/versions/alpha161/adapter.js'
 import { validAlpha151SessionEvent } from '../src/versions/alpha151/session-wire.js'
-
-const endpoint: BackendEndpoint = {
-  host: '127.0.0.1',
-  port: 4567,
-  baseUrl: 'http://127.0.0.1:4567',
-}
-
-function candidate(runtimeVersion: string): BackendCandidate {
-  return { endpoint, source: 'configured', runtimeVersion, confidence: 1 }
-}
-
-function response(init: RequestInit | undefined, value: unknown): Response {
-  if (typeof init?.body !== 'string') throw new Error('test request body is not a string')
-  const request = JSON.parse(init.body) as { readonly rpcId?: string }
-  return new Response(
-    JSON.stringify({ type: 'server-response', rpcId: request.rpcId, result: { ok: true, value } }),
-    { headers: { 'content-type': 'application/json' } },
-  )
-}
+import { candidate, wrappedResponse as response } from './support/contract-harness.js'
 
 function options(fetch: typeof globalThis.fetch): Alpha161AdapterOptions {
   return {

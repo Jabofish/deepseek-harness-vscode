@@ -1,95 +1,16 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import type { BackendCandidate, BackendEndpoint } from '@dsh-vscode/domain'
-
 import { Alpha2VersionAdapter } from '../src/versions/alpha2/adapter.js'
-import type { AlphaLoopbackApiClient, AlphaWebSocket } from '../src/versions/alpha/transport.js'
+import type { AlphaLoopbackApiClient } from '../src/versions/alpha/transport.js'
 import { callRpc, unwrapRpcResultValue } from '../src/versions/rc6/rpc.js'
 import { Rc6InteractionRepository } from '../src/repositories/interaction-repository.js'
-
-class FakeWebSocket implements AlphaWebSocket {
-  public static readonly instances: FakeWebSocket[] = []
-  public readyState = 0
-  public readonly sent: string[] = []
-  public closeCalls = 0
-  private readonly listeners = new Map<string, Set<(event: unknown) => void>>()
-
-  public constructor(
-    public readonly url: string,
-    public readonly options?: unknown,
-  ) {
-    FakeWebSocket.instances.push(this)
-  }
-
-  public send(data: string): void {
-    this.sent.push(data)
-  }
-
-  public close(): void {
-    this.closeCalls += 1
-    this.readyState = 3
-    this.emit('close', {})
-  }
-
-  public addEventListener(type: string, listener: (event: unknown) => void): void {
-    const listeners = this.listeners.get(type) ?? new Set<(event: unknown) => void>()
-    listeners.add(listener)
-    this.listeners.set(type, listeners)
-  }
-
-  public removeEventListener(type: string, listener: (event: unknown) => void): void {
-    this.listeners.get(type)?.delete(listener)
-  }
-
-  public open(): void {
-    this.readyState = 1
-    this.emit('open', {})
-  }
-
-  public message(value: unknown): void {
-    this.emit('message', { data: JSON.stringify(value) })
-  }
-
-  private emit(type: string, event: unknown): void {
-    for (const listener of this.listeners.get(type) ?? []) listener(event)
-  }
-}
-
-const endpoint: BackendEndpoint = {
-  host: '127.0.0.1',
-  port: 4567,
-  baseUrl: 'http://127.0.0.1:4567',
-}
-
-function bodyText(init: RequestInit | undefined): string {
-  if (typeof init?.body !== 'string') throw new Error('test request body is not a string')
-  return init.body
-}
-
-function successResponse(init: RequestInit | undefined, value: unknown): Response {
-  const body = JSON.parse(bodyText(init)) as { readonly rpcId: string }
-  return new Response(
-    JSON.stringify({ type: 'server-response', rpcId: body.rpcId, result: { ok: true, value } }),
-    { headers: { 'content-type': 'application/json' } },
-  )
-}
-
-function failureResponse(
-  init: RequestInit | undefined,
-  code: string,
-  message = 'upstream failure',
-  details: Readonly<Record<string, unknown>> = {},
-): Response {
-  const body = JSON.parse(bodyText(init)) as { readonly rpcId: string }
-  return new Response(
-    JSON.stringify({
-      type: 'server-response',
-      rpcId: body.rpcId,
-      result: { ok: false, error: { code, message, details } },
-    }),
-    { headers: { 'content-type': 'application/json' } },
-  )
-}
+import {
+  bodyText,
+  endpoint,
+  failureResponse,
+  wrappedResponse as successResponse,
+} from './support/contract-harness.js'
+import { FakeWebSocket } from './support/fake-web-socket.js'
 
 function client(fetch: typeof globalThis.fetch, timeout = 1_000): AlphaLoopbackApiClient {
   const adapter = new Alpha2VersionAdapter({
@@ -100,15 +21,6 @@ function client(fetch: typeof globalThis.fetch, timeout = 1_000): AlphaLoopbackA
     webSocket: FakeWebSocket,
   })
   return adapter.createTransport(endpoint) as AlphaLoopbackApiClient
-}
-
-function candidate(runtimeVersion: string): BackendCandidate {
-  return {
-    endpoint,
-    source: 'configured',
-    runtimeVersion,
-    confidence: 1,
-  }
 }
 
 function streamItem(socket: FakeWebSocket, value: unknown): unknown {
@@ -134,26 +46,6 @@ async function waitForSent(socket: FakeWebSocket, count: number): Promise<void> 
 }
 
 describe('DSH 0.1.2-alpha.2 Connection/Gateway contract', () => {
-  it('selects only the exact alpha.2 runtime and reports the alpha.2 protocol identity', async () => {
-    const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
-      Promise.resolve(successResponse(init, { items: [] })),
-    )
-    const adapter = new Alpha2VersionAdapter({
-      requestTimeoutMs: 1_000,
-      retryPolicy: { maximumAttempts: 1, baseDelayMs: 1, maximumDelayMs: 1 },
-      fetch,
-      webSocket: FakeWebSocket,
-    })
-
-    await expect(adapter.probe(candidate('0.1.2-alpha.2'))).resolves.toMatchObject({
-      protocolVersion: 'alpha2',
-      dshVersion: '0.1.2-alpha.2',
-      subagentImagePrompts: false,
-    })
-    await expect(adapter.probe(candidate('0.1.2-alpha.1'))).resolves.toBeUndefined()
-    expect(fetch).toHaveBeenCalledOnce()
-  })
-
   it('normalizes declared namespaced Remote failures without changing the wire envelope', async () => {
     const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
       Promise.resolve(

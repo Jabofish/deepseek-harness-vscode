@@ -6,7 +6,6 @@
     { "path": "packages/application" },
     { "path": "packages/domain" },
     { "path": "packages/dsh-adapter" },
-    { "path": "packages/test-support" },
     { "path": "packages/timeline" },
     { "path": "packages/ui" },
     { "path": "packages/webview-protocol" },
