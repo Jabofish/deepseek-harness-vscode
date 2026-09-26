@@ -6,6 +6,7 @@ import {
 } from '../../repositories/session-repository.js'
 import type { Rc6WorkspaceRepository } from '../../repositories/workspace-repository.js'
 import { unwrapOptionalRpcResultValue } from '../rc6/rpc.js'
+import { Rc172PresetRepository } from './preset-repository.js'
 
 const INITIALIZE_DEFAULT_MODEL = 'session/initializeDefaultModel'
 
@@ -17,7 +18,11 @@ export class Rc172SessionRepository extends Rc6SessionRepository {
     samePath: ((left: string, right: string) => boolean) | undefined,
     options: Rc6SessionRepositoryOptions,
   ) {
-    super(remoteTransport, workspaces, samePath, options)
+    const presets = new Rc172PresetRepository(remoteTransport)
+    super(remoteTransport, workspaces, samePath, {
+      ...options,
+      selectAgentPreset: (sessionId, presetId, signal) => presets.select(sessionId, presetId, signal),
+    })
   }
 
   public async initializeDefaultModel(signal?: AbortSignal): Promise<void> {

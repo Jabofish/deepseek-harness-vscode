@@ -7,6 +7,22 @@ import {
 } from './schemas.js'
 import { featureHostEventSchema, featureRequestSchema, featureResponseSchema } from './feature-schemas.js'
 
+describe('generic Webview host response values', () => {
+  it('carries bounded session-search completeness metadata in the generic host result', () => {
+    expect(
+      hostEnvelopeSchema.safeParse({
+        protocolVersion: 1,
+        message: {
+          type: 'response',
+          requestId: 'session-search-1',
+          ok: true,
+          payload: { items: [], searchHasMore: true },
+        },
+      }).success,
+    ).toBe(true)
+  })
+})
+
 describe('custom provider Webview protocol', () => {
   it('accepts the fixed keyboard-shortcuts host action without a dynamic command payload', () => {
     expect(
@@ -41,6 +57,43 @@ describe('custom provider Webview protocol', () => {
     })
 
     expect(result.success).toBe(true)
+  })
+
+  it('validates modality metadata while preserving open provider model metadata', () => {
+    const create = (model: Record<string, unknown>): ReturnType<typeof webviewRequestSchema.safeParse> =>
+      webviewRequestSchema.safeParse({
+        type: 'provider.custom.create',
+        requestId: 'request-1',
+        payload: {
+          settingsNamespace: 'llm-pi-ai',
+          collectionPath: ['providers'],
+          providerId: 'gateway',
+          api: 'openai-completions',
+          baseUrl: 'http://127.0.0.1:9000/v1',
+          models: [model],
+          expectedRevision: 7,
+        },
+      })
+
+    const valid = create({
+      id: 'gateway-chat',
+      input: ['text', 'image'],
+      inputModalities: ['text', 'image'],
+      providerFeatures: { cachedPrompts: true },
+    })
+    expect(valid.success).toBe(true)
+    if (valid.success)
+      expect(valid.data).toMatchObject({
+        payload: {
+          models: [{ input: ['text', 'image'], inputModalities: ['text', 'image'] }],
+        },
+      })
+    expect(create({ id: 'gateway-chat', input: [] }).success).toBe(true)
+    expect(create({ id: 'gateway-chat', inputModalities: ['audio'] }).success).toBe(false)
+    expect(create({ id: 'gateway-chat', inputModalities: 'image' }).success).toBe(false)
+    expect(create({ id: 'gateway-chat', inputModalities: [] }).success).toBe(false)
+    expect(create({ id: 'gateway-chat', input: ['audio'] }).success).toBe(false)
+    expect(create({ id: 'gateway-chat', input: 'image' }).success).toBe(false)
   })
 
   it('rejects API keys in create and custom-discovery payloads', () => {
@@ -561,6 +614,67 @@ describe('goal Webview protocol', () => {
         }).success,
       ).toBe(false)
     }
+  })
+})
+
+describe('settings write protocol', () => {
+  const revision = 7
+
+  it('requires the namespace revision shown with each single-field write', () => {
+    expect(
+      webviewRequestSchema.safeParse({
+        type: 'settings.update',
+        requestId: 'settings-update-valid',
+        payload: { path: 'shell.timeoutMs', value: 20_000, expectedRevision: revision },
+      }).success,
+    ).toBe(true)
+    expect(
+      webviewRequestSchema.safeParse({
+        type: 'settings.update',
+        requestId: 'settings-update-stale-shape',
+        payload: { path: 'shell.timeoutMs', value: 20_000 },
+      }).success,
+    ).toBe(false)
+    expect(
+      webviewRequestSchema.safeParse({
+        type: 'settings.unset',
+        requestId: 'settings-unset-invalid',
+        payload: { path: 'shell.timeoutMs', expectedRevision: Number.MAX_SAFE_INTEGER + 1 },
+      }).success,
+    ).toBe(false)
+  })
+
+  it('limits one atomic batch to one namespace revision and strict relative operations', () => {
+    const valid = {
+      type: 'settings.mutate',
+      requestId: 'settings-mutate-valid',
+      payload: {
+        namespace: 'llm-deepseek',
+        expectedRevision: revision,
+        operations: [
+          { op: 'set', path: ['baseURL'], value: 'https://example.invalid' },
+          { op: 'unset', path: ['models', '0', 'contextWindow'] },
+        ],
+      },
+    }
+    expect(webviewRequestSchema.safeParse(valid).success).toBe(true)
+    expect(
+      webviewRequestSchema.safeParse({
+        ...valid,
+        requestId: 'settings-mutate-mixed',
+        payload: {
+          ...valid.payload,
+          operations: [{ op: 'set', namespace: 'shell', path: ['timeoutMs'], value: 20_000 }],
+        },
+      }).success,
+    ).toBe(false)
+    expect(
+      webviewRequestSchema.safeParse({
+        ...valid,
+        requestId: 'settings-mutate-empty',
+        payload: { ...valid.payload, operations: [] },
+      }).success,
+    ).toBe(false)
   })
 })
 

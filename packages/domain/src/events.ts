@@ -303,6 +303,8 @@ type BackendEventPayload =
       readonly sessionId: string
       readonly turn: number
       readonly step: number
+      /** Last structured usage sample embedded in this attempt's durable stream. */
+      readonly usage?: TokenUsage
       /** Epoch milliseconds from the durable DSH event. */
       readonly time?: number
     }

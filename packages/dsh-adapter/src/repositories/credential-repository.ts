@@ -8,6 +8,7 @@ import {
 import type { DshTransport } from '../contracts.js'
 import { callRpc } from '../versions/rc6/rpc.js'
 import { schemasteryNodeAtPath } from '../versions/rc6/schemastery.js'
+import { callCredentialRpc } from './shared/credential-rpc.js'
 import { recordOrUndefined, validProviderView, validSettingsNamespace } from './shared/guards.js'
 
 /** Reference names the pinned credentials domain accepts (`credentials.*`). */
@@ -38,7 +39,12 @@ export class Rc6CredentialRepository implements CredentialRepository {
       if (!validSettingsNamespace(receipt)) throw malformedCredentialSchema()
     }
     assertEmptyReceipt(
-      await callRpc<unknown>(this.transport, 'credentials.set', { ref: resolved.ref, value }, signal),
+      await callCredentialRpc<unknown>(
+        this.transport,
+        'credentials.set',
+        { ref: resolved.ref, value },
+        signal,
+      ),
       'credentials.set',
     )
   }
@@ -46,14 +52,14 @@ export class Rc6CredentialRepository implements CredentialRepository {
   public async removeSecret(providerId: string, field: string, signal?: AbortSignal): Promise<void> {
     const { ref } = await this.resolveReference(providerId, field, false, signal)
     assertEmptyReceipt(
-      await callRpc<unknown>(this.transport, 'credentials.unset', { ref }, signal),
+      await callCredentialRpc<unknown>(this.transport, 'credentials.unset', { ref }, signal),
       'credentials.unset',
     )
   }
 
   public async describeReference(ref: string, signal?: AbortSignal): Promise<CredentialReferenceState> {
     assertReference(ref)
-    const described = await callRpc<{ credentials: unknown }>(
+    const described = await callCredentialRpc<{ credentials: unknown }>(
       this.transport,
       'credentials.describe',
       { refs: [ref] },
@@ -64,9 +70,11 @@ export class Rc6CredentialRepository implements CredentialRepository {
     const credentials = (described as { credentials?: unknown }).credentials
     if (typeof credentials !== 'object' || credentials === null || Array.isArray(credentials))
       throw malformedCredentialDescribe()
-    // An unlisted ref is simply unconfigured — absence is a fact, not an error.
+    // Both the pinned RC2 Remote and the older Host contract describe every
+    // requested valid ref. A missing entry is a malformed response, not a
+    // signal that a writable credential is missing.
+    if (!Object.prototype.hasOwnProperty.call(credentials, ref)) throw malformedCredentialDescribe()
     const rawView = (credentials as Record<string, unknown>)[ref]
-    if (rawView === undefined) return { ref, configured: false, writable: false }
     const view = asRecord(rawView)
     if (
       typeof view.configured !== 'boolean' ||
@@ -81,7 +89,7 @@ export class Rc6CredentialRepository implements CredentialRepository {
     if (value.length === 0) throw new Error('Credential value cannot be empty')
     assertReference(ref)
     assertEmptyReceipt(
-      await callRpc<unknown>(this.transport, 'credentials.set', { ref, value }, signal),
+      await callCredentialRpc<unknown>(this.transport, 'credentials.set', { ref, value }, signal),
       'credentials.set',
     )
   }
@@ -89,7 +97,7 @@ export class Rc6CredentialRepository implements CredentialRepository {
   public async unsetReference(ref: string, signal?: AbortSignal): Promise<void> {
     assertReference(ref)
     assertEmptyReceipt(
-      await callRpc<unknown>(this.transport, 'credentials.unset', { ref }, signal),
+      await callCredentialRpc<unknown>(this.transport, 'credentials.unset', { ref }, signal),
       'credentials.unset',
     )
   }

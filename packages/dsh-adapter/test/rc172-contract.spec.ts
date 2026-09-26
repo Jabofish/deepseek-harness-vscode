@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import type { BackendCandidate, BackendEndpoint } from '@dsh-vscode/domain'
+import { AppError, type BackendCandidate, type BackendEndpoint } from '@dsh-vscode/domain'
 
 import { VersionedBackendFactory } from '../src/backend-factory.js'
 import type { DshTransport } from '../src/contracts.js'
+import { Rc6WorkspaceRepository } from '../src/repositories/workspace-repository.js'
+import { unwrapRpcResultValue } from '../src/versions/rc6/rpc.js'
 import { Alpha171PluginRepository } from '../src/versions/alpha171/plugin-repository.js'
 import { Rc171VersionAdapter } from '../src/versions/rc171/adapter.js'
 import { Rc172PresetRepository } from '../src/versions/rc172/preset-repository.js'
@@ -148,4 +150,99 @@ describe('DSH 0.1.7-rc.2 exact adapter contract', () => {
     expect(olderBackend.sessions.initializeDefaultModel).toBeUndefined()
     await olderBackend.close()
   })
+
+  it.each([
+    {
+      dshCode: 'session/provider-models-unavailable',
+      expectedCode: 'CAPABILITY_UNAVAILABLE',
+      expectedMessage: 'The DSH account provider has no available models.',
+    },
+    {
+      dshCode: 'session/provider-credentials-unavailable',
+      expectedCode: 'CAPABILITY_UNAVAILABLE',
+      expectedMessage: 'The DSH host cannot inspect provider credentials for default model setup.',
+    },
+  ])(
+    'maps the RC2 default-model initializer error $dshCode',
+    async ({ dshCode, expectedCode, expectedMessage }) => {
+      const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+        if (typeof init?.body !== 'string')
+          return Promise.reject<Response>(new Error('the adapter did not send the expected request body'))
+        const request = JSON.parse(init.body) as { readonly rpcId: string }
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              type: 'server-response',
+              rpcId: request.rpcId,
+              result: {
+                ok: false,
+                error: {
+                  code: dshCode,
+                  message: 'The requested account model setup is unavailable.',
+                  details: {},
+                },
+              },
+            }),
+            { headers: { 'content-type': 'application/json' } },
+          ),
+        )
+      })
+      const transport = new Rc172VersionAdapter({ ...adapterOptions, fetch }).createTransport(endpoint)
+      const sessions = new Rc172SessionRepository(
+        transport,
+        new Rc6WorkspaceRepository(transport),
+        undefined,
+        {},
+      )
+
+      try {
+        let caught: unknown
+        try {
+          await sessions.initializeDefaultModel()
+        } catch (error) {
+          caught = error
+        }
+        expect(caught).toBeInstanceOf(AppError)
+        expect((caught as AppError).code).toBe(expectedCode)
+        expect((caught as Error).message).toContain(expectedMessage)
+        expect((caught as Error).message).not.toContain(dshCode)
+      } finally {
+        await transport.close()
+      }
+    },
+  )
+
+  it.each(['session/provider-models-unavailable', 'session/provider-credentials-unavailable'])(
+    'keeps RC2-only error %s unknown to the RC1 adapter',
+    async (dshCode) => {
+      const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+        if (typeof init?.body !== 'string')
+          return Promise.reject<Response>(new Error('the adapter did not send the expected request body'))
+        const request = JSON.parse(init.body) as { readonly rpcId: string }
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              type: 'server-response',
+              rpcId: request.rpcId,
+              result: {
+                ok: false,
+                error: { code: dshCode, message: 'unrecognized later-version error', details: {} },
+              },
+            }),
+            { headers: { 'content-type': 'application/json' } },
+          ),
+        )
+      })
+      const transport = new Rc171VersionAdapter({ ...adapterOptions, fetch }).createTransport(endpoint)
+
+      try {
+        const result = await transport.remoteRequest('workspace/list', {})
+        expect(() => unwrapRpcResultValue(result, 'workspace/list')).toThrowError(
+          expect.objectContaining({ code: 'PROTOCOL_ERROR' }),
+        )
+      } finally {
+        await transport.close()
+      }
+    },
+  )
 })

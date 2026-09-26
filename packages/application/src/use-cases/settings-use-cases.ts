@@ -9,30 +9,30 @@ export class SettingsUseCases {
   public read(
     signal?: AbortSignal,
   ): Promise<{ readonly schema: DshSettingsSchema; readonly values: Readonly<Record<string, unknown>> }> {
-    const backend = this.backendService.requireBackend()
-    return Promise.all([backend.settings.schema(signal), backend.settings.read(signal)]).then(
-      ([schema, values]) => ({ schema, values }),
-    )
+    return this.backendService.requireBackend().settings.readSnapshot(signal)
   }
 
-  public update(path: string, value: unknown, signal?: AbortSignal): Promise<void> {
+  public update(path: string, value: unknown, expectedRevision: number, signal?: AbortSignal): Promise<void> {
     if (path.trim() === '') throw new Error('Settings path is required')
-    return this.backendService.requireBackend().settings.update(path, value, signal)
+    requireRevision(expectedRevision)
+    return this.backendService.requireBackend().settings.update(path, value, expectedRevision, signal)
   }
 
-  public unset(path: string, signal?: AbortSignal): Promise<void> {
+  public unset(path: string, expectedRevision: number, signal?: AbortSignal): Promise<void> {
     if (path.trim() === '') throw new Error('Settings path is required')
-    return this.backendService.requireBackend().settings.unset(path, signal)
+    requireRevision(expectedRevision)
+    return this.backendService.requireBackend().settings.unset(path, expectedRevision, signal)
   }
 
   public mutate(
     namespace: string,
     operations: readonly SettingsPathOperation[],
-    expectedRevision?: number,
+    expectedRevision: number,
     signal?: AbortSignal,
   ): Promise<void> {
     if (namespace.trim() === '') throw new Error('Settings namespace is required')
     if (operations.length === 0) throw new Error('At least one settings operation is required')
+    requireRevision(expectedRevision)
     return this.backendService
       .requireBackend()
       .settings.mutate(namespace, operations, expectedRevision, signal)
@@ -51,4 +51,13 @@ export class SettingsUseCases {
     // Keep the call on the repository object: adapter methods use `this.transport`.
     return repository.openDocument(signal)
   }
+}
+
+function requireRevision(value: number): void {
+  if (Number.isSafeInteger(value) && value >= 0) return
+  throw new AppError({
+    code: 'INVALID_CONFIGURATION',
+    message: 'The settings revision is invalid.',
+    retryable: false,
+  })
 }

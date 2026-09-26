@@ -5,6 +5,7 @@ import type {
   BackendCandidate,
   BackendEndpoint,
   BackendState,
+  ConnectedBackend,
   DshBackend,
   ManagedProcessHandle,
 } from '@dsh-vscode/domain'
@@ -34,7 +35,7 @@ function fakeRuntime() {
   }
 }
 
-function backend(connection = fakeConnectedBackend()): DshBackend {
+function backend(connection: ConnectedBackend = fakeConnectedBackend()): DshBackend {
   return {
     connection,
     sessions: {},
@@ -105,6 +106,56 @@ describe('DshConnectionCoordinator', () => {
     const result = await new DshConnectionCoordinator(deps).connect({ mode: 'auto', autoStart: true })
     expect(result.state.backend.ownership).toBe('external')
     expect(runtimeLocator.locate).not.toHaveBeenCalled()
+    expect(deps.processSupervisor.start).not.toHaveBeenCalled()
+  })
+
+  it('publishes a terminal state when authoritative discovery times out', async () => {
+    const failure = new AppError({
+      code: 'BACKEND_UNREACHABLE',
+      message: 'DSH discovery timed out.',
+      retryable: true,
+      context: { timedOut: true },
+    })
+    const deps = dependencies({
+      discovery: {
+        discover: vi.fn(async () => {
+          throw failure
+        }),
+      },
+    })
+    const coordinator = new DshConnectionCoordinator(deps)
+    const states: BackendState[] = []
+    coordinator.subscribe((state) => states.push(state))
+
+    await expect(coordinator.connect({ mode: 'auto', autoStart: true })).rejects.toBe(failure)
+
+    expect(states.at(-1)).toMatchObject({ kind: 'failed', message: failure.message, retryable: true })
+    expect(deps.processSupervisor.start).not.toHaveBeenCalled()
+  })
+
+  it('publishes a terminal state when backend attachment times out', async () => {
+    const failure = new AppError({
+      code: 'BACKEND_UNREACHABLE',
+      message: 'DSH transport attachment timed out.',
+      retryable: true,
+      context: { timedOut: true },
+    })
+    const deps = dependencies({
+      discovery: { discover: vi.fn(async () => [fakeCandidate(4109)]) },
+      probe: { probe: vi.fn(async () => fakeConnectedBackend(4109)) },
+      backendFactory: {
+        connect: vi.fn(async () => {
+          throw failure
+        }),
+      },
+    })
+    const coordinator = new DshConnectionCoordinator(deps)
+    const states: BackendState[] = []
+    coordinator.subscribe((state) => states.push(state))
+
+    await expect(coordinator.connect({ mode: 'auto', autoStart: false })).rejects.toBe(failure)
+
+    expect(states.at(-1)).toMatchObject({ kind: 'failed', message: failure.message, retryable: true })
     expect(deps.processSupervisor.start).not.toHaveBeenCalled()
   })
 
@@ -746,6 +797,27 @@ describe('DshConnectionCoordinator', () => {
     expect(deps.discovery.discover).toHaveBeenCalledTimes(1)
   })
 
+  it('does not disconnect the current backend for an already-cancelled replacement', async () => {
+    const close = vi.fn(async () => undefined)
+    const deps = dependencies({
+      discovery: { discover: vi.fn(async () => [fakeCandidate(4112)]) },
+      probe: { probe: vi.fn(async () => fakeConnectedBackend(4112)) },
+      backendFactory: { connect: vi.fn(async (connection) => ({ ...backend(connection), close })) },
+    })
+    const coordinator = new DshConnectionCoordinator(deps)
+    const current = await coordinator.connect({ mode: 'auto', autoStart: false })
+    const controller = new AbortController()
+    controller.abort()
+
+    await expect(
+      coordinator.connect({ mode: 'new-isolated', autoStart: true }, controller.signal),
+    ).rejects.toMatchObject({ code: 'REQUEST_CANCELLED' })
+
+    expect(coordinator.getState()).toMatchObject({ kind: 'connected', backend: current.state.backend })
+    expect(close).not.toHaveBeenCalled()
+    expect(deps.processSupervisor.start).not.toHaveBeenCalled()
+  })
+
   it('falls through unhealthy candidates without starting early', async () => {
     const first = fakeCandidate(4101)
     const second = fakeCandidate(4102)
@@ -887,6 +959,90 @@ describe('DshConnectionCoordinator', () => {
     expect(process.stop).toHaveBeenCalledTimes(1)
   })
 
+  it('retains and retries a managed process handle when stopping fails', async () => {
+    const stop = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('temporary stop failure'))
+      .mockResolvedValue(undefined)
+    const process = { ...managedProcess(4300), stop }
+    const close = vi.fn(async () => undefined)
+    const deps = dependencies({
+      processSupervisor: { start: vi.fn(async () => process) },
+      probe: { probe: vi.fn(async () => fakeConnectedBackend(4300)) },
+      backendFactory: {
+        connect: vi.fn(async (connection) => ({ ...backend(connection), close })),
+      },
+    })
+    const coordinator = new DshConnectionCoordinator(deps)
+    await coordinator.connect({ mode: 'new-isolated', autoStart: true })
+
+    await expect(coordinator.disconnect()).rejects.toThrow('temporary stop failure')
+    expect(coordinator.getState()).toMatchObject({ kind: 'failed', retryable: true })
+    await coordinator.disconnect()
+
+    expect(close).toHaveBeenCalledTimes(1)
+    expect(stop).toHaveBeenCalledTimes(2)
+    expect(coordinator.getState()).toEqual({ kind: 'idle' })
+  })
+
+  it('retains and retries a backend handle when closing fails', async () => {
+    const process = managedProcess(4300)
+    const stop = vi.fn(async () => undefined)
+    const close = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('temporary close failure'))
+      .mockResolvedValue(undefined)
+    const deps = dependencies({
+      processSupervisor: { start: vi.fn(async () => ({ ...process, stop })) },
+      probe: { probe: vi.fn(async () => fakeConnectedBackend(4300)) },
+      backendFactory: {
+        connect: vi.fn(async (connection) => ({ ...backend(connection), close })),
+      },
+    })
+    const coordinator = new DshConnectionCoordinator(deps)
+    await coordinator.connect({ mode: 'new-isolated', autoStart: true })
+
+    await expect(coordinator.disconnect()).rejects.toThrow('temporary close failure')
+    expect(coordinator.getState()).toMatchObject({ kind: 'failed', retryable: true })
+    await coordinator.disconnect()
+
+    expect(close).toHaveBeenCalledTimes(2)
+    expect(stop).toHaveBeenCalledTimes(1)
+    expect(coordinator.getState()).toEqual({ kind: 'idle' })
+  })
+
+  it('preserves both close and stop failures and retries both retained handles', async () => {
+    const closeError = new Error('temporary close failure')
+    const stopError = new Error('temporary stop failure')
+    const process = managedProcess(4300)
+    const stop = vi.fn().mockRejectedValueOnce(stopError).mockResolvedValue(undefined)
+    const close = vi.fn().mockRejectedValueOnce(closeError).mockResolvedValue(undefined)
+    const deps = dependencies({
+      processSupervisor: { start: vi.fn(async () => ({ ...process, stop })) },
+      probe: { probe: vi.fn(async () => fakeConnectedBackend(4300)) },
+      backendFactory: {
+        connect: vi.fn(async (connection) => ({ ...backend(connection), close })),
+      },
+    })
+    const coordinator = new DshConnectionCoordinator(deps)
+    await coordinator.connect({ mode: 'new-isolated', autoStart: true })
+
+    const failure = await coordinator.disconnect().then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+
+    expect(failure).toBeInstanceOf(AggregateError)
+    expect((failure as AggregateError).errors).toEqual([closeError, stopError])
+    expect(coordinator.getState()).toMatchObject({ kind: 'failed', retryable: true })
+
+    await coordinator.disconnect()
+
+    expect(close).toHaveBeenCalledTimes(2)
+    expect(stop).toHaveBeenCalledTimes(2)
+    expect(coordinator.getState()).toEqual({ kind: 'idle' })
+  })
+
   it('cancels discovery and does not start a process', async () => {
     const controller = new AbortController()
     const deps = dependencies({
@@ -902,5 +1058,178 @@ describe('DshConnectionCoordinator', () => {
     controller.abort()
     await expect(operation).rejects.toMatchObject({ code: 'REQUEST_CANCELLED' })
     expect(deps.processSupervisor.start).not.toHaveBeenCalled()
+  })
+
+  it('settles to idle when discovery resolves after cancellation', async () => {
+    let release: ((candidates: readonly BackendCandidate[]) => void) | undefined
+    const controller = new AbortController()
+    const deps = dependencies({
+      discovery: {
+        discover: vi.fn(
+          () =>
+            new Promise<readonly BackendCandidate[]>((resolve) => {
+              release = resolve
+            }),
+        ),
+      },
+    })
+    const coordinator = new DshConnectionCoordinator(deps)
+    const operation = coordinator.connect({ mode: 'auto', autoStart: false }, controller.signal)
+
+    expect(coordinator.getState()).toMatchObject({ kind: 'discovering' })
+    controller.abort()
+    release?.([])
+
+    await expect(operation).rejects.toMatchObject({ code: 'REQUEST_CANCELLED' })
+    expect(coordinator.getState()).toEqual({ kind: 'idle' })
+    expect(deps.processSupervisor.start).not.toHaveBeenCalled()
+  })
+
+  it('retains a managed process when failed connection cleanup needs retry', async () => {
+    const stop = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('temporary stop failure'))
+      .mockResolvedValue(undefined)
+    const process = { ...managedProcess(4330), stop }
+    const deps = dependencies({
+      processSupervisor: { start: vi.fn(async () => process) },
+      probe: {
+        probe: vi.fn(async () => {
+          throw new AppError({
+            code: 'BACKEND_UNREACHABLE',
+            message: 'The DSH readiness probe timed out.',
+            retryable: true,
+          })
+        }),
+      },
+    })
+    const coordinator = new DshConnectionCoordinator(deps)
+
+    await expect(coordinator.connect({ mode: 'auto', autoStart: true })).rejects.toMatchObject({
+      code: 'PROCESS_FAILED',
+      retryable: true,
+    })
+    expect(coordinator.getState()).toMatchObject({ kind: 'failed', retryable: true })
+
+    await coordinator.disconnect()
+
+    expect(stop).toHaveBeenCalledTimes(2)
+    expect(coordinator.getState()).toEqual({ kind: 'idle' })
+  })
+
+  it('retains a stale backend handle when cancellation cleanup fails', async () => {
+    let releaseFactory: (() => void) | undefined
+    let factoryStarted: (() => void) | undefined
+    const started = new Promise<void>((resolve) => {
+      factoryStarted = resolve
+    })
+    const close = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('temporary close failure'))
+      .mockResolvedValue(undefined)
+    let attachmentCount = 0
+    const deps = dependencies({
+      discovery: { discover: vi.fn(async () => [fakeCandidate(4333)]) },
+      probe: { probe: vi.fn(async () => fakeConnectedBackend(4333)) },
+      backendFactory: {
+        connect: vi.fn((connection: ConnectedBackend) => {
+          attachmentCount += 1
+          if (attachmentCount > 1) return Promise.resolve(backend(connection))
+          return new Promise<DshBackend>((resolve) => {
+            releaseFactory = () => resolve({ ...backend(connection), close })
+            factoryStarted?.()
+          })
+        }),
+      },
+    })
+    const coordinator = new DshConnectionCoordinator(deps)
+    const controller = new AbortController()
+    const operation = coordinator.connect({ mode: 'auto', autoStart: false }, controller.signal)
+    await started
+    controller.abort()
+    releaseFactory?.()
+
+    await expect(operation).rejects.toMatchObject({ code: 'PROCESS_FAILED', retryable: true })
+    expect(coordinator.getState()).toMatchObject({ kind: 'failed', retryable: true })
+
+    const retried = await coordinator.connect({ mode: 'auto', autoStart: false })
+
+    expect(close).toHaveBeenCalledTimes(2)
+    expect(retried.state.kind).toBe('connected')
+    await coordinator.disconnect()
+    expect(coordinator.getState()).toEqual({ kind: 'idle' })
+  })
+
+  it('does not start a replacement after a concurrent disconnect supersedes it', async () => {
+    let releaseClose: (() => void) | undefined
+    let closeStarted: (() => void) | undefined
+    const started = new Promise<void>((resolve) => {
+      closeStarted = resolve
+    })
+    const close = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseClose = resolve
+          closeStarted?.()
+        }),
+    )
+    const deps = dependencies({
+      discovery: { discover: vi.fn(async () => [fakeCandidate(4331)]) },
+      probe: { probe: vi.fn(async () => fakeConnectedBackend(4331)) },
+      backendFactory: { connect: vi.fn(async (connection) => ({ ...backend(connection), close })) },
+    })
+    const coordinator = new DshConnectionCoordinator(deps)
+    await coordinator.connect({ mode: 'auto', autoStart: false })
+
+    const replacement = coordinator.connect({ mode: 'new-isolated', autoStart: true })
+    await started
+    const disconnect = coordinator.disconnect()
+    releaseClose?.()
+
+    await disconnect
+    await expect(replacement).rejects.toMatchObject({ code: 'REQUEST_CANCELLED' })
+    expect(deps.processSupervisor.start).not.toHaveBeenCalled()
+    expect(coordinator.getState()).toEqual({ kind: 'idle' })
+  })
+
+  it('coalesces replacement requests waiting on the same teardown', async () => {
+    let releaseClose: (() => void) | undefined
+    let closeStarted: (() => void) | undefined
+    const started = new Promise<void>((resolve) => {
+      closeStarted = resolve
+    })
+    const close = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseClose = resolve
+          closeStarted?.()
+        }),
+    )
+    const process = managedProcess(4332)
+    const deps = dependencies({
+      discovery: { discover: vi.fn(async () => [fakeCandidate(4331)]) },
+      probe: {
+        probe: vi.fn(async (candidate: BackendCandidate) => fakeConnectedBackend(candidate.endpoint.port)),
+      },
+      backendFactory: {
+        connect: vi.fn(async (connection: ConnectedBackend) =>
+          connection.endpoint.port === 4331 ? { ...backend(connection), close } : backend(connection),
+        ),
+      },
+      processSupervisor: { start: vi.fn(async () => process) },
+    })
+    const coordinator = new DshConnectionCoordinator(deps)
+    await coordinator.connect({ mode: 'auto', autoStart: false })
+
+    const request = { mode: 'new-isolated' as const, autoStart: true }
+    const first = coordinator.connect(request)
+    await started
+    const second = coordinator.connect(request)
+    releaseClose?.()
+
+    const [firstResult, secondResult] = await Promise.all([first, second])
+
+    expect(firstResult.backend).toBe(secondResult.backend)
+    expect(deps.processSupervisor.start).toHaveBeenCalledTimes(1)
   })
 })

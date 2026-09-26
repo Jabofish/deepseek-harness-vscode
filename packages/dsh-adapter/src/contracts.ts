@@ -140,6 +140,8 @@ export interface DshTransport {
     args: Readonly<Record<string, unknown>>,
     signal?: AbortSignal,
   ): Promise<TResponse>
+  /** Wait for an Adapter-owned event subscription handshake when reads depend on notifications. */
+  waitForEventStreamReady?(signal?: AbortSignal): Promise<void>
   openEventStream(signal?: AbortSignal): AsyncIterable<unknown>
   openMuxStream?(signal: AbortSignal): AsyncIterable<unknown>
   openHostStream?(signal: AbortSignal): AsyncIterable<unknown>

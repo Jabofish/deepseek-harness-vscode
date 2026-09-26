@@ -221,16 +221,22 @@ export interface SubagentRepository {
 export interface SettingsRepository {
   schema(signal?: AbortSignal): Promise<DshSettingsSchema>
   read(signal?: AbortSignal): Promise<Readonly<Record<string, unknown>>>
+  /** Return schema and redacted values from the same settings.describe answer. */
+  readSnapshot(signal?: AbortSignal): Promise<{
+    readonly schema: DshSettingsSchema
+    readonly values: Readonly<Record<string, unknown>>
+  }>
   /** Ask the host to open its configured local settings document. */
   readonly openDocument?: (this: SettingsRepository, signal?: AbortSignal) => Promise<void>
-  update(path: string, value: unknown, signal?: AbortSignal): Promise<void>
+  /** Compare against the namespace revision displayed with the edited value. */
+  update(path: string, value: unknown, expectedRevision: number, signal?: AbortSignal): Promise<void>
   /** Remove one field's user override (`settings.mutate` op `unset`); the composition base resurfaces. */
-  unset(path: string, signal?: AbortSignal): Promise<void>
+  unset(path: string, expectedRevision: number, signal?: AbortSignal): Promise<void>
   /** Apply one atomic ordered operation batch against a namespace. */
   mutate(
     namespace: string,
     operations: readonly SettingsPathOperation[],
-    expectedRevision?: number,
+    expectedRevision: number,
     signal?: AbortSignal,
   ): Promise<void>
   replace(value: Readonly<Record<string, unknown>>, signal?: AbortSignal): Promise<void>

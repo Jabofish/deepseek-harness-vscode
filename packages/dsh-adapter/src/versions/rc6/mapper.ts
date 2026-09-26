@@ -6,6 +6,7 @@ import type {
   MessageAttachment,
   MessageImageReference,
   ModelDescriptor,
+  ModelInputModality,
   ModelProvider,
   PermissionRequest,
   PresentedFileView,
@@ -336,6 +337,8 @@ export const rc6Mapper = {
             })
             .filter((level) => level.id !== '')
     const defaultEffort = stringOr(reasoning?.defaultEffort, '')
+    const inputModalities =
+      record.inputModalities === undefined ? undefined : modelInputModalities(record.inputModalities)
     return {
       id: string(record.id, 'model id'),
       providerId: stringOr(record.providerId ?? record.provider, ''),
@@ -343,6 +346,7 @@ export const rc6Mapper = {
       ...(record.contextWindow === undefined && context?.contextWindow === undefined
         ? {}
         : { contextWindow: number(record.contextWindow ?? context?.contextWindow, 0) }),
+      ...(inputModalities === undefined ? {} : { inputModalities }),
       supportsReasoning: reasoning !== undefined,
       ...(efforts.length === 0 ? {} : { reasoningLevels: efforts }),
       ...(defaultEffort === '' ? {} : { defaultReasoningLevel: defaultEffort }),
@@ -541,7 +545,13 @@ export const rc6Mapper = {
         const reasoning = reasoningText(message) || stringOr(data.reasoning, '')
         const modelLabel = assistantModelLabel(message, data)
         const images = messageImages(message)
-        const usage = tokenUsage(data.usage ?? message.usage ?? envelope.usage)
+        // A final message-level sample supersedes earlier stream samples. Fall
+        // back to the embedded stream only when the settlement omitted it.
+        const hasDeclaredUsage =
+          data.usage !== undefined || message.usage !== undefined || envelope.usage !== undefined
+        const usage = hasDeclaredUsage
+          ? tokenUsage(data.usage ?? message.usage ?? envelope.usage)
+          : assistantStreamUsage(data.stream)
         const turn = eventIndex(data.turn)
         const step = eventIndex(data.step)
         const time = eventTimestamp(envelope.time ?? data.time)
@@ -564,11 +574,12 @@ export const rc6Mapper = {
       }
       case 'assistant/attempt': {
         // The upstream Client treats an attempt settlement as a non-visible
-        // terminal boundary. Preserve that boundary in the domain without
-        // projecting its compact stream or fabricating assistant text.
+        // terminal boundary. Preserve its final structured usage sample
+        // without projecting the compact stream or fabricating assistant text.
         const turn = eventIndex(data.turn)
         const step = eventIndex(data.step)
         const time = eventTimestamp(envelope.time ?? data.time)
+        const usage = assistantStreamUsage(data.stream)
         if (turn === undefined || step === undefined)
           return {
             type: 'unknown',
@@ -581,6 +592,7 @@ export const rc6Mapper = {
           sessionId,
           turn,
           step,
+          ...(usage === undefined ? {} : { usage }),
           ...(time === undefined ? {} : { time }),
         }
       }
@@ -1434,7 +1446,7 @@ function assertCanonicalTokenUsage(value: unknown, label: string): void {
     tokenCount(usage.outputTokens) === undefined
   )
     throw new Error(`Malformed ${label}`)
-  for (const key of ['cacheReadTokens', 'cacheWriteTokens', 'reasoningTokens'] as const) {
+  for (const key of ['totalTokens', 'cacheReadTokens', 'cacheWriteTokens', 'reasoningTokens'] as const) {
     if (usage[key] !== undefined && tokenCount(usage[key]) === undefined)
       throw new Error(`Malformed ${label}`)
   }
@@ -2605,22 +2617,50 @@ function assistantModelLabel(
   )
 }
 
+function modelInputModalities(value: unknown): ModelInputModality[] {
+  return array(value).map((modality) => {
+    if (modality !== 'text' && modality !== 'image') throw new Error('Malformed model input modalities')
+    return modality
+  })
+}
+
 function tokenUsage(value: unknown): TokenUsage | undefined {
   const record = objectOrUndefined(value)
   if (record === undefined) return undefined
   const inputTokens = tokenCount(record.inputTokens ?? record.uncachedInputTokens)
   const outputTokens = tokenCount(record.outputTokens)
   if (inputTokens === undefined || outputTokens === undefined) return undefined
+  const totalTokens = record.totalTokens === undefined ? undefined : tokenCount(record.totalTokens)
   const cacheReadTokens = tokenCount(record.cacheReadTokens)
   const cacheWriteTokens = tokenCount(record.cacheWriteTokens)
   const reasoningTokens = tokenCount(record.reasoningTokens)
+  if (
+    (record.totalTokens !== undefined && totalTokens === undefined) ||
+    (record.cacheReadTokens !== undefined && cacheReadTokens === undefined) ||
+    (record.cacheWriteTokens !== undefined && cacheWriteTokens === undefined) ||
+    (record.reasoningTokens !== undefined && reasoningTokens === undefined)
+  )
+    return undefined
   return {
     inputTokens,
     outputTokens,
+    ...(totalTokens === undefined ? {} : { totalTokens }),
     ...(cacheReadTokens === undefined ? {} : { cacheReadTokens }),
     ...(cacheWriteTokens === undefined ? {} : { cacheWriteTokens }),
     ...(reasoningTokens === undefined ? {} : { reasoningTokens }),
   }
+}
+
+/** Read the final usage sample without expanding compact text and tool records. */
+function assistantStreamUsage(value: unknown): TokenUsage | undefined {
+  if (!Array.isArray(value)) return undefined
+  for (let index = value.length - 1; index >= 0; index -= 1) {
+    const record = objectOrUndefined(value[index])
+    if (record?.type !== 'chunk') continue
+    const chunk = objectOrUndefined(record.chunk)
+    if (chunk?.type === 'usage') return tokenUsage(chunk.usage)
+  }
+  return undefined
 }
 
 function tokenCount(value: unknown): number | undefined {

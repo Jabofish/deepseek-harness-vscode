@@ -820,6 +820,138 @@ describe('Rc6SessionRepository prompt delivery modes', () => {
     ])
   })
 
+  it('serializes mutations for one queue item in the order the user requested them', async () => {
+    const calls: { method: string; params: unknown }[] = []
+    let resolveFirst: (() => void) | undefined
+    let notifyFirstStarted: (() => void) | undefined
+    const firstStarted = new Promise<void>((resolve) => {
+      notifyFirstStarted = resolve
+    })
+    let requestCount = 0
+    const transport: DshTransport = {
+      request: <TResponse>(method: string, params: unknown) => {
+        calls.push({ method, params })
+        if (requestCount++ === 0)
+          return new Promise<TResponse>((resolve) => {
+            resolveFirst = () => resolve({ result: { ok: true, value: { accepted: true } } } as TResponse)
+            notifyFirstStarted?.()
+          })
+        return Promise.resolve({ result: { ok: true, value: { accepted: true } } } as TResponse)
+      },
+      remoteRequest: <TResponse>() => Promise.resolve({ result: { ok: true, value: [] } } as TResponse),
+      openEventStream: async function* () {
+        /* fixture stream */
+      },
+      close: () => Promise.resolve(),
+    }
+    const repository = new Rc6SessionRepository(transport)
+    repository.remember({
+      type: 'queue.updated',
+      sessionId: 'session-1',
+      items: [
+        {
+          id: 'queued-1',
+          sessionId: 'session-1',
+          text: 'original',
+          attachments: [],
+          textOnly: true,
+          mode: 'queue',
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    })
+
+    const edit = repository.updateQueuedInput('queued-1', 'edited')
+    await firstStarted
+    const remove = repository.removeQueuedInput('queued-1')
+
+    expect(calls.map((call) => (call.params as { action: { kind: string } }).action.kind)).toEqual(['edit'])
+
+    resolveFirst?.()
+    await Promise.all([edit, remove])
+    expect(calls.map((call) => (call.params as { action: { kind: string } }).action.kind)).toEqual([
+      'edit',
+      'remove',
+    ])
+  })
+
+  it('does not dispatch a queue mutation cancelled while waiting for the prior action', async () => {
+    const calls: { method: string; params: unknown }[] = []
+    let resolveFirst: (() => void) | undefined
+    let notifyFirstStarted: (() => void) | undefined
+    const firstStarted = new Promise<void>((resolve) => {
+      notifyFirstStarted = resolve
+    })
+    const transport: DshTransport = {
+      request: <TResponse>(method: string, params: unknown) => {
+        calls.push({ method, params })
+        return new Promise<TResponse>((resolve) => {
+          resolveFirst = () => resolve({ result: { ok: true, value: { accepted: true } } } as TResponse)
+          notifyFirstStarted?.()
+        })
+      },
+      remoteRequest: <TResponse>() => Promise.resolve({ result: { ok: true, value: [] } } as TResponse),
+      openEventStream: async function* () {
+        /* fixture stream */
+      },
+      close: () => Promise.resolve(),
+    }
+    const repository = new Rc6SessionRepository(transport)
+    repository.remember({
+      type: 'queue.updated',
+      sessionId: 'session-1',
+      items: [
+        {
+          id: 'queued-1',
+          sessionId: 'session-1',
+          text: 'original',
+          attachments: [],
+          textOnly: true,
+          mode: 'queue',
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    })
+    const edit = repository.updateQueuedInput('queued-1', 'edited')
+    await firstStarted
+    const controller = new AbortController()
+    const remove = repository.removeQueuedInput('queued-1', controller.signal)
+
+    controller.abort()
+    await expect(remove).rejects.toMatchObject({ code: 'REQUEST_CANCELLED' })
+    resolveFirst?.()
+    await edit
+
+    expect(calls.map((call) => (call.params as { action: { kind: string } }).action.kind)).toEqual(['edit'])
+  })
+
+  it('routes active-turn cancellation through the pinned RPC and retains pending queue state', async () => {
+    const calls: { method: string; params: unknown }[] = []
+    const repository = new Rc6SessionRepository(recordingTransport(calls))
+    repository.remember({
+      type: 'queue.updated',
+      sessionId: 'session-1',
+      items: [
+        {
+          id: 'queued-1',
+          sessionId: 'session-1',
+          text: 'keep after stop',
+          attachments: [],
+          textOnly: true,
+          mode: 'queue',
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    })
+
+    await repository.cancel('session-1')
+
+    expect(calls).toEqual([{ method: 'session.cancel', params: { sessionId: 'session-1' } }])
+    await expect(repository.listQueue('session-1')).resolves.toMatchObject([
+      { id: 'queued-1', text: 'keep after stop' },
+    ])
+  })
+
   it('rejects decoder-tolerated non-canonical prompt Base64', async () => {
     const repository = new Rc6SessionRepository(recordingTransport([]))
 
@@ -1647,6 +1779,7 @@ describe('Rc6SessionRepository history windows', () => {
     const page = await new Rc6SessionRepository(transport).list({ search: 'wide query' })
 
     expect(page.items.map((item) => item.id)).toEqual(['session-a'])
+    expect(page.searchHasMore).toBe(true)
   })
 })
 
@@ -1892,10 +2025,9 @@ it.each([undefined, { plan: { active: true, pending: false }, permissions: { cur
       planMode: false,
       model: { providerId: '', modelId: '' },
     })
-    expect(executeSessionConfigCommand.mock.calls.map((call) => call[1])).toEqual([
-      '/permission workspace-write',
-      '/plan off',
-    ])
+    expect(executeSessionConfigCommand.mock.calls.map((call) => call[1])).toEqual(
+      values === undefined ? ['/plan off'] : ['/permission workspace-write', '/plan off'],
+    )
   },
 )
 

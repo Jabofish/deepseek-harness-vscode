@@ -143,6 +143,8 @@ export interface SessionListQuery {
 export interface SessionPage {
   readonly items: readonly SessionSummary[]
   readonly nextCursor?: string
+  /** True when a bounded content search omitted further matches. */
+  readonly searchHasMore?: boolean
 }
 
 export interface PromptInput {

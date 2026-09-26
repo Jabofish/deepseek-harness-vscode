@@ -149,9 +149,12 @@ function mapRpcError(code: string): AppErrorCode {
     case 'writer-held':
       return 'BACKEND_BUSY'
     case 'settings-conflict':
-      return 'BACKEND_BUSY'
+      return 'SETTINGS_CONFLICT'
     case 'credential-rejected':
       return 'PERMISSION_DENIED'
+    case 'host-provider-services-unavailable':
+    case 'account-provider-models-unavailable':
+      return 'CAPABILITY_UNAVAILABLE'
     case 'session-not-found':
       return 'BACKEND_UNREACHABLE'
     case 'subagent-parent-unavailable':
@@ -213,6 +216,9 @@ function safeRpcMessage(
     'settings-rejected': 'The DSH settings change was rejected.',
     'settings-not-exposed': 'This DSH settings namespace is not exposed by the host.',
     'model-discovery-failed': 'The DSH model catalog could not be loaded.',
+    'host-provider-services-unavailable':
+      'The DSH host cannot inspect provider credentials for default model setup.',
+    'account-provider-models-unavailable': 'The DSH account provider has no available models.',
     'fork-unavailable': 'The DSH session cannot be forked in this host.',
     'directory-picker-unavailable': 'The DSH host cannot open a directory picker.',
     'queue-item-not-found': 'The queued DSH prompt is no longer available.',

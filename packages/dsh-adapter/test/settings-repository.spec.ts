@@ -7,6 +7,17 @@ interface Call {
   readonly params: unknown
 }
 
+interface RevisionDescribeFixture {
+  readonly writable: boolean
+  readonly hasDocument: boolean
+  readonly namespaces: readonly {
+    readonly ns: string
+    readonly revision: number
+    readonly value: Readonly<Record<string, unknown>>
+    readonly [key: string]: unknown
+  }[]
+}
+
 function transportFor(responses: Readonly<Record<string, unknown>>, calls: Call[] = []): DshTransport {
   return {
     request: <TResponse>(method: string, params: unknown) => {
@@ -189,6 +200,42 @@ describe('Rc6SettingsRepository schema namespaces', () => {
   })
 })
 
+describe('Rc6SettingsRepository snapshots', () => {
+  it('pairs schema revision and redacted values from one settings.describe response', async () => {
+    const calls: Call[] = []
+    let readCount = 0
+    const shellNamespace = DESCRIBE_FIXTURE.namespaces[0]
+    if (shellNamespace === undefined) throw new Error('fixture namespace missing')
+    const baseTransport = transportFor({ 'settings.describe': DESCRIBE_FIXTURE }, calls)
+    const transport: DshTransport = {
+      ...baseTransport,
+      request: <TResponse>(method: string, params: unknown) => {
+        calls.push({ method, params })
+        if (method !== 'settings.describe') return Promise.reject(new Error(`unexpected RPC ${method}`))
+        readCount += 1
+        const revision = readCount === 1 ? 4 : 5
+        const timeoutMs = readCount === 1 ? 12_000 : 18_000
+        return Promise.resolve({
+          result: {
+            ok: true,
+            value: {
+              ...DESCRIBE_FIXTURE,
+              namespaces: [{ ...shellNamespace, revision, value: { timeoutMs }, user: { timeoutMs } }],
+            },
+          },
+        } as TResponse)
+      },
+    }
+    const repository = new Rc6SettingsRepository(transport)
+
+    const snapshot = await repository.readSnapshot()
+
+    expect(calls).toHaveLength(1)
+    expect(snapshot.schema.namespaces[0]?.revision).toBe(4)
+    expect(snapshot.values.shell).toEqual({ timeoutMs: 12_000 })
+  })
+})
+
 describe('Rc6SettingsRepository replace', () => {
   it('rejects a non-object namespace section before issuing settings.replace', async () => {
     const calls: Call[] = []
@@ -223,7 +270,7 @@ describe('Rc6SettingsRepository unset', () => {
     )
     await repository.schema()
 
-    await repository.unset('shell.timeoutMs')
+    await repository.unset('shell.timeoutMs', 4)
 
     const mutate = calls.find((call) => call.method === 'settings.mutate')
     expect(mutate?.params).toEqual({
@@ -236,7 +283,7 @@ describe('Rc6SettingsRepository unset', () => {
   it('refuses a path without a field segment', async () => {
     const repository = new Rc6SettingsRepository(transportFor({ 'settings.describe': DESCRIBE_FIXTURE }))
 
-    await expect(repository.unset('shell')).rejects.toThrow(/namespace\.field/)
+    await expect(repository.unset('shell', 4)).rejects.toThrow(/namespace\.field/)
   })
 
   it('does not issue a mutation when settings.describe reports read-only', async () => {
@@ -251,7 +298,7 @@ describe('Rc6SettingsRepository unset', () => {
       ),
     )
 
-    await expect(repository.update('shell.timeoutMs', 30_000)).rejects.toMatchObject({
+    await expect(repository.update('shell.timeoutMs', 30_000, 4)).rejects.toMatchObject({
       code: 'PERMISSION_DENIED',
     })
     expect(calls.map((call) => call.method)).toEqual(['settings.describe'])
@@ -294,7 +341,11 @@ describe('Rc6SettingsRepository mutate', () => {
     )
 
     await expect(
-      repository.mutate('web-search-deepseek', [{ op: 'set', path: ['apiKeyEnv'], value: '[configured]' }]),
+      repository.mutate(
+        'web-search-deepseek',
+        [{ op: 'set', path: ['apiKeyEnv'], value: '[configured]' }],
+        4,
+      ),
     ).rejects.toThrow(/credential surface/i)
     expect(calls.map((call) => call.method)).toEqual(['settings.describe'])
   })
@@ -320,6 +371,71 @@ describe('Rc6SettingsRepository document action', () => {
 })
 
 describe('Rc6SettingsRepository revision conflicts', () => {
+  it('does not let a fresh Host cache revision authorize a write from an older Webview snapshot', async () => {
+    const calls: Call[] = []
+    const shellNamespace = DESCRIBE_FIXTURE.namespaces[0]
+    if (shellNamespace === undefined) throw new Error('fixture namespace missing')
+    let revision = 4
+    let timeoutMs = 12_000
+    const describeValue = (): RevisionDescribeFixture => ({
+      writable: true,
+      hasDocument: true,
+      namespaces: [
+        {
+          ...shellNamespace,
+          revision,
+          value: { timeoutMs, maxOutputBytes: 200_000 },
+          user: { timeoutMs },
+        },
+      ],
+    })
+    const transport: DshTransport = {
+      request: <TResponse>(method: string, params: unknown) => {
+        calls.push({ method, params })
+        if (method === 'settings.describe')
+          return Promise.resolve({ result: { ok: true, value: describeValue() } } as TResponse)
+        if (method === 'settings.mutate') {
+          const request = params as {
+            readonly expectedRevision: number
+            readonly ops: readonly { readonly value?: unknown }[]
+          }
+          if (request.expectedRevision !== revision)
+            return Promise.resolve({
+              result: { ok: false, error: { code: 'settings-conflict', message: 'conflict' } },
+            } as TResponse)
+          timeoutMs = Number(request.ops[0]?.value)
+          revision += 1
+          return Promise.resolve({ result: { ok: true, value: describeValue().namespaces[0] } } as TResponse)
+        }
+        return Promise.reject(new Error(`unexpected RPC ${method}`))
+      },
+      remoteRequest: <TResponse>() =>
+        Promise.reject<TResponse>(new Error('the Remote carrier is not part of this contract')),
+      openEventStream: async function* () {
+        /* fixture stream */
+      },
+      close: () => Promise.resolve(),
+    }
+    const repository = new Rc6SettingsRepository(transport)
+    const displayedSchema = await repository.schema()
+    const displayedValues = await repository.read()
+    const displayedRevision = displayedSchema.namespaces[0]?.revision
+    expect(displayedRevision).toBe(4)
+    expect((displayedValues.shell as { timeoutMs: number }).timeoutMs).toBe(12_000)
+
+    // Another DSH surface changes the setting while this Webview keeps its old form open.
+    revision = 5
+    timeoutMs = 18_000
+    // An unrelated Host settings read refreshes the shared adapter cache to revision 5.
+    await repository.schema()
+
+    await expect(repository.update('shell.timeoutMs', 12_000, displayedRevision ?? -1)).rejects.toMatchObject(
+      { code: 'SETTINGS_CONFLICT' },
+    )
+    expect(timeoutMs).toBe(18_000)
+    expect((calls.at(-1)?.params as { expectedRevision: number }).expectedRevision).toBe(4)
+  })
+
   it('re-describes after a rejected mutate so the invited retry uses a fresh revision', async () => {
     const calls: Call[] = []
     let mutateCalls = 0
@@ -358,14 +474,15 @@ describe('Rc6SettingsRepository revision conflicts', () => {
     const repository = new Rc6SettingsRepository(transport)
 
     // The host bumped the revision externally; the first compare-and-swap
-    // loses with the retryable settings-conflict classification.
-    await expect(repository.update('shell.timeoutMs', 15_000)).rejects.toMatchObject({
-      code: 'BACKEND_BUSY',
+    // loses with the dedicated settings conflict classification.
+    await expect(repository.update('shell.timeoutMs', 15_000, 1)).rejects.toMatchObject({
+      code: 'SETTINGS_CONFLICT',
     })
 
-    // The retryable flag invites an immediate retry; resending the cached
-    // descriptor's revision would deterministically lose again.
-    await repository.update('shell.timeoutMs', 15_000)
+    // An adapter retry must use a revision from a new user-visible snapshot,
+    // never silently adopt the latest cache revision for the old form.
+    await repository.schema()
+    await repository.update('shell.timeoutMs', 15_000, 2)
 
     const mutates = calls.filter((call) => call.method === 'settings.mutate')
     expect(mutates).toHaveLength(2)
@@ -393,7 +510,9 @@ describe('structured settings credential boundary', () => {
       )
       for (const path of ['shell.options', 'shell.options.token', 'shell.options.token.child']) {
         const result =
-          operation === 'update' ? repository.update(path, { token: 'replacement' }) : repository.unset(path)
+          operation === 'update'
+            ? repository.update(path, { token: 'replacement' }, 4)
+            : repository.unset(path, 4)
         await expect(result).rejects.toMatchObject({ code: 'PERMISSION_DENIED' })
       }
       expect(calls.filter((call) => call.method !== 'settings.describe')).toEqual([])
@@ -410,7 +529,7 @@ describe('structured settings credential boundary', () => {
         calls,
       ),
     )
-    await repository.update('shell.options', { args: ['one', 'two'], enabled: false })
+    await repository.update('shell.options', { args: ['one', 'two'], enabled: false }, 4)
     expect(calls.at(-1)).toEqual({
       method: 'settings.mutate',
       params: {

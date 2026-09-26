@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { LoopbackApiClient } from '../src/loopback-api-client.js'
+import { Rc6CredentialRepository } from '../src/repositories/credential-repository.js'
 
 class FakeWebSocket {
   public static readonly instances: FakeWebSocket[] = []
@@ -74,6 +75,66 @@ function serverFrame(payload: unknown): string {
 }
 
 describe('LoopbackApiClient rc.6 event transport', () => {
+  it('keeps RC6 Host credential missing-state and empty-write receipts compatible', async () => {
+    const paths: string[] = []
+    const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = JSON.parse(await new Response(init?.body ?? null).text()) as { readonly rpcId: string }
+      const url =
+        typeof input === 'string' ? new URL(input) : input instanceof URL ? input : new URL(input.url)
+      paths.push(url.pathname)
+      const path = paths.at(-1)
+      const value =
+        path === '/api/credentials.describe'
+          ? { credentials: { API_KEY: { configured: false, writable: true } } }
+          : {}
+      return new Response(
+        JSON.stringify({
+          type: 'server-response',
+          rpcId: request.rpcId,
+          result: { ok: true, value },
+        }),
+        { headers: { 'content-type': 'application/json' } },
+      )
+    })
+    const client = createClient(fetch)
+    const credentials = new Rc6CredentialRepository(client)
+
+    try {
+      await expect(credentials.describeReference('API_KEY')).resolves.toEqual({
+        ref: 'API_KEY',
+        configured: false,
+        writable: true,
+      })
+      await expect(credentials.setReference('API_KEY', 'host-only-secret')).resolves.toBeUndefined()
+      await expect(credentials.unsetReference('API_KEY')).resolves.toBeUndefined()
+      expect(paths).toEqual(['/api/credentials.describe', '/api/credentials.set', '/api/credentials.unset'])
+    } finally {
+      await client.close()
+    }
+  })
+
+  it('rejects an omitted requested credential row through the RC6 Host carrier', async () => {
+    const fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const request = JSON.parse(await new Response(init?.body ?? null).text()) as { readonly rpcId: string }
+      return new Response(
+        JSON.stringify({
+          type: 'server-response',
+          rpcId: request.rpcId,
+          result: { ok: true, value: { credentials: {} } },
+        }),
+        { headers: { 'content-type': 'application/json' } },
+      )
+    })
+    const client = createClient(fetch)
+    const credentials = new Rc6CredentialRepository(client)
+
+    try {
+      await expect(credentials.describeReference('API_KEY')).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
+    } finally {
+      await client.close()
+    }
+  })
+
   it('maps transient HTTP failures with method/status diagnostics and retries them', async () => {
     const fetch = vi.fn(() => Promise.resolve(new Response('', { status: 503 })))
     const client = createClient(fetch, 1_000, 3)

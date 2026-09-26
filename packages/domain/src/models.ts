@@ -76,11 +76,16 @@ export interface ModelReasoningLevel {
   readonly label: string
 }
 
+/** Input capabilities advertised by a provider's model catalog. */
+export type ModelInputModality = 'text' | 'image'
+
 export interface ModelDescriptor {
   readonly id: string
   readonly providerId: string
   readonly label: string
   readonly contextWindow?: number
+  /** Omitted when the provider does not disclose the installed model's inputs. */
+  readonly inputModalities?: readonly ModelInputModality[]
   readonly supportsReasoning: boolean
   readonly reasoningLevels?: readonly ModelReasoningLevel[]
   /**
@@ -122,6 +127,8 @@ export interface DiscoveredModel {
   readonly label: string
   readonly contextWindow?: number
   readonly maxTokens?: number
+  /** Copied from the discovery answer only when the provider disclosed it. */
+  readonly inputModalities?: readonly ModelInputModality[]
 }
 
 export interface ModelSelection {
@@ -135,6 +142,8 @@ export interface TokenUsage {
   /** Input tokens not served from the provider cache. */
   readonly inputTokens: number
   readonly outputTokens: number
+  /** Exact total prompt and output tokens when the provider reports it. */
+  readonly totalTokens?: number
   readonly cacheReadTokens?: number
   readonly cacheWriteTokens?: number
   readonly reasoningTokens?: number

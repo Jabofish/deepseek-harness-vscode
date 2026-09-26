@@ -123,6 +123,12 @@ const boundedUnknown = z.unknown().superRefine((value, context) => {
   const failure = budgetFailure(value)
   if (failure !== undefined) context.addIssue({ code: 'custom', message: failure })
 })
+const settingsRevision = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER)
+const settingsOperationPath = z.array(z.string().trim().min(1).max(256)).min(1).max(64)
+const settingsOperationSchema = z.discriminatedUnion('op', [
+  z.object({ op: z.literal('set'), path: settingsOperationPath, value: boundedUnknown }).strict(),
+  z.object({ op: z.literal('unset'), path: settingsOperationPath }).strict(),
+])
 const sensitiveCustomProviderModelKeys = new Set(
   [
     'apiKey',
@@ -145,6 +151,23 @@ const customProviderModelSchema = z
   .superRefine((value, context) => {
     if (containsSensitiveCustomProviderModelKey(value))
       context.addIssue({ code: 'custom', message: 'Provider model metadata must not contain credentials.' })
+    for (const [field, allowEmpty] of [
+      ['input', true],
+      ['inputModalities', false],
+    ] as const) {
+      const modalities = value[field]
+      if (
+        modalities !== undefined &&
+        (!Array.isArray(modalities) ||
+          (!allowEmpty && modalities.length === 0) ||
+          !modalities.every((modality) => modality === 'text' || modality === 'image'))
+      )
+        context.addIssue({
+          code: 'custom',
+          path: [field],
+          message: `Provider model ${field} is invalid.`,
+        })
+    }
   })
 
 function normalizeCustomProviderModelKey(key: string): string {
@@ -594,14 +617,33 @@ export const webviewRequestSchema = z.discriminatedUnion('type', [
     .object({
       type: z.literal('settings.update'),
       ...requestBase,
-      payload: z.object({ path: z.string().min(1).max(512), value: boundedUnknown }).strict(),
+      payload: z
+        .object({
+          path: z.string().min(1).max(512),
+          value: boundedUnknown,
+          expectedRevision: settingsRevision,
+        })
+        .strict(),
     })
     .strict(),
   z
     .object({
       type: z.literal('settings.unset'),
       ...requestBase,
-      payload: z.object({ path: z.string().min(1).max(512) }).strict(),
+      payload: z.object({ path: z.string().min(1).max(512), expectedRevision: settingsRevision }).strict(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('settings.mutate'),
+      ...requestBase,
+      payload: z
+        .object({
+          namespace: z.string().trim().min(1).max(256),
+          expectedRevision: settingsRevision,
+          operations: z.array(settingsOperationSchema).min(1).max(128),
+        })
+        .strict(),
     })
     .strict(),
   z.object({ type: z.literal('goal.list'), ...requestBase, payload: z.object(session).strict() }).strict(),

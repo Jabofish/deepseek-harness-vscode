@@ -63,6 +63,8 @@ export type TimelineNode =
       readonly step?: number
       /** Set only after the durable turn/end boundary closes this turn. */
       readonly turnCompleted?: boolean
+      /** Exact aggregate, present only when the loaded Turn has complete usage. */
+      readonly turnUsage?: TurnTokenUsage | undefined
       readonly modelLabel?: string
       readonly usage?: TokenUsage
       readonly images?: readonly MessageImageReference[]
@@ -150,10 +152,29 @@ export interface TimelineState {
   /** In-flight DSH command names used to classify command/done events. */
   readonly commandModes?: Readonly<Record<string, 'plan' | 'permission'>>
   readonly tokenUsage?: TokenUsage
+  /** Open-turn attempt usage evidence; incomplete loaded windows remain hidden. */
+  readonly turnUsageTracking?: Readonly<Record<string, TurnUsageTracking>>
   /** In-flight step boundaries waiting for their assistant message. */
   readonly stepTimings?: Readonly<Record<string, AssistantTiming>>
   /** Durable turn currently open; message.completed only closes a step. */
   readonly activeTurn?: number
   /** Prevent late durable projections from reopening a closed turn. */
   readonly closedTurns?: readonly number[]
+}
+
+/** Exact aggregate for a completed Turn with complete structured attempt evidence. */
+export interface TurnTokenUsage extends TokenUsage {
+  readonly totalTokens: number
+}
+
+/** Evidence needed before a completed Turn may expose an aggregate usage row. */
+export interface TurnUsageTracking {
+  readonly turnStarted: boolean
+  readonly invalid: boolean
+  readonly attempts: readonly TokenUsage[]
+  readonly active?: {
+    readonly step: number
+    readonly state: 'open' | 'attempt-settled' | 'retry-scheduled' | 'message-settled'
+    readonly retry?: { readonly id: string; readonly attempt: number }
+  }
 }

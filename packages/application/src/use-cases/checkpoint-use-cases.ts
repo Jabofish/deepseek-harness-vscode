@@ -40,9 +40,10 @@ export class CheckpointUseCases {
   public restore(
     checkpointId: string,
     expectedRevision: number,
+    previewId: string,
     conflictPolicy: CheckpointConflictPolicy,
     signal?: AbortSignal,
   ): Promise<CheckpointRestoreOutcome> {
-    return this.repository.restore(checkpointId, expectedRevision, conflictPolicy, signal)
+    return this.repository.restore(checkpointId, expectedRevision, previewId, conflictPolicy, signal)
   }
 }

@@ -128,7 +128,7 @@ function scheduleRecord(value: unknown): ScheduleRecord {
       if (!isPositiveSafeInteger(record.afterSeconds)) throw malformed('record')
       return { ...common, kind: 'after', afterSeconds: record.afterSeconds }
     case 'every':
-      if (!isPositiveSafeInteger(record.everySeconds)) throw malformed('record')
+      if (!isSafeScheduleInterval(record.everySeconds)) throw malformed('record')
       return { ...common, kind: 'every', everySeconds: record.everySeconds }
     case 'daily':
       if (!isNonEmptyString(record.time) || !isNonEmptyString(record.timeZone)) throw malformed('record')
@@ -206,18 +206,19 @@ function updateResult(value: unknown, requestedId: string): ScheduleUpdateResult
   const record = requiredRecord(value, 'update result')
   if (isScheduleToolFailure(record)) return scheduleFailure(record)
   if (record.id !== requestedId) throw malformed('update result')
-  if (typeof record.updated === 'boolean') {
-    const updatedRecord = scheduleRecord(record.record)
-    if (updatedRecord.id !== requestedId) throw malformed('update result')
-    return { id: requestedId, updated: record.updated, record: updatedRecord }
-  }
   if (
     record.updated === false &&
+    record.record === undefined &&
     (record.code === 'schedule_not_found' ||
       record.code === 'schedule_ended' ||
       record.code === 'schedule_conflict')
   )
     return { id: requestedId, updated: false, code: record.code }
+  if (typeof record.updated === 'boolean') {
+    const updatedRecord = scheduleRecord(record.record)
+    if (updatedRecord.id !== requestedId) throw malformed('update result')
+    return { id: requestedId, updated: record.updated, record: updatedRecord }
+  }
   return scheduleFailure(record)
 }
 
@@ -293,6 +294,7 @@ function toRemoteTimingChange(change: ScheduleTimingChange): Record<string, unkn
     case 'at':
       return { kind: 'at', at: toRemoteAtValue(change.at) }
     case 'every':
+      if (!isSafeScheduleInterval(change.seconds)) throw malformed('update request')
       return { kind: 'every', every_seconds: change.seconds }
     case 'daily':
       return {
@@ -334,12 +336,6 @@ function validateUpdateRequest(request: ScheduleUpdateRequest): void {
   requireIdentifier(request.sessionId, 'Session')
   requireIdentifier(request.id, 'Schedule')
   if (request.expected.id !== request.id) throw malformed('update request')
-  if (request.title === undefined && request.prompt === undefined && request.change === undefined)
-    throw new AppError({
-      code: 'INVALID_CONFIGURATION',
-      message: 'A Schedule update must change its title, prompt, or timing.',
-      retryable: false,
-    })
   // Run the same projection validation used on a response before it crosses the RPC boundary.
   toRemoteRecord(scheduleRecord(request.expected))
   if (request.title !== undefined && typeof request.title !== 'string') throw malformed('update request')
@@ -367,6 +363,10 @@ function isNonEmptyString(value: unknown): value is string {
 
 function isPositiveSafeInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value > 0
+}
+
+function isSafeScheduleInterval(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 60
 }
 
 function isIsoTimestamp(value: unknown): value is string {

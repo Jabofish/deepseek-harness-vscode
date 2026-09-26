@@ -167,13 +167,52 @@ describe('cache hit display', () => {
       cacheReadTokens: 2,
       cacheWriteTokens: 3,
       reasoningTokens: 0,
+      totalTokens: 6,
     })
-    expect(addTokenUsage(usage(1, 2, 3), usage(4, 5, 6))).toEqual({
+    const first = addTokenUsage(undefined, usage(1, 2, 3))
+    expect(addTokenUsage(first, usage(4, 5, 6))).toEqual({
       inputTokens: 5,
       outputTokens: 0,
       cacheReadTokens: 7,
       cacheWriteTokens: 9,
       reasoningTokens: 0,
+      totalTokens: 21,
     })
+  })
+
+  it('preserves exact totals that exceed currently reported usage buckets', () => {
+    const first: TokenUsage = { inputTokens: 100, outputTokens: 10, totalTokens: 125 }
+    const second: TokenUsage = { inputTokens: 40, outputTokens: 15, totalTokens: 60 }
+
+    expect(addTokenUsage(undefined, first)).toMatchObject(first)
+    expect(addTokenUsage(first, second)).toEqual({
+      inputTokens: 140,
+      outputTokens: 25,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      reasoningTokens: 0,
+      totalTokens: 185,
+    })
+  })
+
+  it('derives a legacy total only when both optional cache buckets are present', () => {
+    const completeLegacy: TokenUsage = {
+      inputTokens: 100,
+      outputTokens: 10,
+      cacheReadTokens: 5,
+      cacheWriteTokens: 2,
+    }
+    const incompleteLegacy: TokenUsage = { inputTokens: 100, outputTokens: 10, cacheReadTokens: 5 }
+
+    expect(addTokenUsage(undefined, completeLegacy).totalTokens).toBe(117)
+    expect(addTokenUsage(undefined, incompleteLegacy)).not.toHaveProperty('totalTokens')
+  })
+
+  it('omits an aggregate exact total when any included sample lacks one', () => {
+    const withExactTotal: TokenUsage = { inputTokens: 100, outputTokens: 10, totalTokens: 125 }
+    const withoutExactTotal: TokenUsage = { inputTokens: 40, outputTokens: 15 }
+
+    expect(addTokenUsage(withExactTotal, withoutExactTotal)).not.toHaveProperty('totalTokens')
+    expect(addTokenUsage(withoutExactTotal, withExactTotal)).not.toHaveProperty('totalTokens')
   })
 })

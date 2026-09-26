@@ -1295,6 +1295,10 @@ function recoveredTurn(sessionId: string, sequence: number): BackendEvent {
   return { type: 'turn.started', sessionId, turn: 1, sequence } as unknown as BackendEvent
 }
 
+function eventForSession(event: BackendEvent, sessionId: string): boolean {
+  return 'sessionId' in event && event.sessionId === sessionId
+}
+
 function recoveredMessage(
   sessionId: string,
   sequence: number,
@@ -1380,6 +1384,141 @@ describe('DshStreamController ordered gap recovery', () => {
     stream.push(liveTurnFrame('s1', 11))
     await waitFor(() => received.some((event) => event.sequence === 11))
     expect(received.filter((event) => event.sequence === 9)).toHaveLength(1)
+  })
+
+  it('keeps simultaneous history gaps and delivery cursors isolated per session', async () => {
+    const stream = new ControlledStream()
+    const recoveryStarted: Array<[string, number, number]> = []
+    const releases = new Map<string, () => void>()
+    const recoveryBarriers = new Map<string, Promise<void>>()
+    for (const sessionId of ['s1', 's2'])
+      recoveryBarriers.set(
+        sessionId,
+        new Promise<void>((resolve) => releases.set(sessionId, resolve)),
+      )
+    const controller = new DshStreamController(
+      streamTransport([]),
+      undefined,
+      async (sessionId, fromSequence, toSequence) => {
+        recoveryStarted.push([sessionId, fromSequence, toSequence])
+        await recoveryBarriers.get(sessionId)
+        return [recoveredTurn(sessionId, fromSequence)]
+      },
+      { streamSource: stream.source, closeTransport: false },
+    )
+    controllers.push(controller)
+    const received: BackendEvent[] = []
+    controller.subscribe((event) => received.push(event))
+
+    stream.push(subscribeFrame('s1', 0))
+    stream.push(subscribeFrame('s2', 10))
+    await waitFor(() => received.filter((event) => event.type === 'session.subscribed').length === 2)
+    stream.push(liveTurnFrame('s1', 2))
+    stream.push(liveTurnFrame('s2', 12))
+
+    await waitFor(() => recoveryStarted.length === 2)
+    expect(recoveryStarted).toEqual([
+      ['s1', 1, 1],
+      ['s2', 11, 11],
+    ])
+
+    releases.get('s2')?.()
+    await waitFor(() => received.some((event) => eventForSession(event, 's2') && event.sequence === 12))
+    expect(
+      received
+        .filter((event) => eventForSession(event, 's2') && event.sequence !== undefined)
+        .map((event) => event.sequence),
+    ).toEqual([11, 12])
+    expect(received.some((event) => eventForSession(event, 's1') && event.sequence !== undefined)).toBe(false)
+
+    releases.get('s1')?.()
+    await waitFor(() => received.some((event) => eventForSession(event, 's1') && event.sequence === 2))
+    expect(
+      received
+        .filter((event) => eventForSession(event, 's1') && event.sequence !== undefined)
+        .map((event) => event.sequence),
+    ).toEqual([1, 2])
+    expect(received.some((event) => event.type === 'session.gap')).toBe(false)
+  })
+
+  it('does not let a late old-session recovery block another session after reconnect', async () => {
+    const firstStream = new ControlledStream()
+    const secondStream = new ControlledStream()
+    let releaseOldRecovery = (): void => undefined
+    const oldRecoveryBarrier = new Promise<void>((resolve) => {
+      releaseOldRecovery = resolve
+    })
+    const recoveryCalls: Array<[string, number, number]> = []
+    const controller = new DshStreamController(
+      controlledGenerationTransport([firstStream, secondStream]),
+      undefined,
+      async (sessionId, fromSequence, toSequence) => {
+        recoveryCalls.push([sessionId, fromSequence, toSequence])
+        if (sessionId === 's1' && recoveryCalls.filter(([id]) => id === 's1').length === 1) {
+          // Deliberately ignore the abort signal to model a late history result.
+          await oldRecoveryBarrier
+          return [recoveredTurn('s1', 1)]
+        }
+        return [recoveredTurn(sessionId, fromSequence)]
+      },
+      { closeTransport: false },
+    )
+    controllers.push(controller)
+    const received: BackendEvent[] = []
+    controller.subscribe((event) => received.push(event))
+
+    firstStream.push(subscribeFrame('s1', 0))
+    firstStream.push(subscribeFrame('s2', 0))
+    await waitFor(() => received.filter((event) => event.type === 'session.subscribed').length === 2)
+    firstStream.push(liveTurnFrame('s1', 2))
+    await waitFor(() => recoveryCalls.some(([sessionId]) => sessionId === 's1'))
+    firstStream.push({
+      payload: {
+        type: 'session/event',
+        sessionId: 's1',
+        event: {
+          type: 'assistant/message',
+          time: 1,
+          data: { turn: 1, step: 1, message: { id: 'bad-sequence' }, stream: [] },
+        },
+      },
+    })
+    await waitFor(() => received.some((event) => event.type === 'connection.lost'))
+
+    try {
+      await waitForAtMost(() => secondStream.signal !== undefined, 2_000)
+      secondStream.push(subscribeFrame('s1', 2))
+      secondStream.push(subscribeFrame('s2', 0))
+      await waitFor(() => received.filter((event) => event.type === 'session.subscribed').length === 4)
+      secondStream.push(liveTurnFrame('s2', 2))
+
+      await waitForAtMost(
+        () => received.some((event) => eventForSession(event, 's2') && event.sequence === 2),
+        2_000,
+      )
+      expect(
+        received
+          .filter((event) => eventForSession(event, 's2') && event.sequence !== undefined)
+          .map((event) => event.sequence),
+      ).toEqual([1, 2])
+      expect(recoveryCalls).toContainEqual(['s2', 1, 1])
+      expect(received.some((event) => eventForSession(event, 's1') && event.sequence === 1)).toBe(false)
+
+      releaseOldRecovery()
+      await waitFor(() => recoveryCalls.filter(([sessionId]) => sessionId === 's1').length === 2)
+      await waitForAtMost(
+        () => received.some((event) => eventForSession(event, 's1') && event.sequence === 2),
+        2_000,
+      )
+      expect(
+        received
+          .filter((event) => eventForSession(event, 's1') && event.sequence !== undefined)
+          .map((event) => event.sequence),
+      ).toEqual([1, 2])
+      expect(received.some((event) => event.type === 'session.gap')).toBe(false)
+    } finally {
+      releaseOldRecovery()
+    }
   })
 
   it('keeps a complex interleaved multi-tool stream complete and ordered during recovery', async () => {
@@ -1845,6 +1984,90 @@ describe('DshStreamController ordered gap recovery', () => {
     // The live event still reached consumers despite the failed replay.
     expect(received.some((event) => event.sequence === 10)).toBe(true)
   })
+
+  it.each([
+    { label: 'missing', seq: undefined },
+    { label: 'negative', seq: -1 },
+    { label: 'negative zero', seq: -0 },
+    { label: 'unsafe integer', seq: Number.MAX_SAFE_INTEGER + 1 },
+    { label: 'string', seq: '1' },
+  ])(
+    'rejects a durable session event with $label seq and heals its position from history after reconnect',
+    async ({ seq }) => {
+      const firstStream = new ControlledStream()
+      const secondStream = new ControlledStream()
+      const recoveryRanges: Array<[number, number]> = []
+      const recovered: BackendEvent = {
+        type: 'message.completed',
+        sessionId: 's1',
+        messageId: 'assistant-gap-fill',
+        markdown: 'Recovered answer',
+        turn: 1,
+        step: 1,
+        sequence: 1,
+      }
+      const controller = new DshStreamController(
+        controlledGenerationTransport([firstStream, secondStream]),
+        undefined,
+        (_sessionId, fromSequence, toSequence) => {
+          recoveryRanges.push([fromSequence, toSequence])
+          return Promise.resolve([recovered])
+        },
+        { closeTransport: false },
+      )
+      controllers.push(controller)
+      const received: BackendEvent[] = []
+      controller.subscribe((event) => received.push(event))
+
+      firstStream.push(subscribeFrame('s1', 0))
+      await waitFor(() => received.some((event) => event.type === 'session.subscribed'))
+      firstStream.push({
+        payload: {
+          type: 'session/event',
+          sessionId: 's1',
+          event: {
+            type: 'assistant/message',
+            ...(seq === undefined ? {} : { seq }),
+            time: 1,
+            data: {
+              turn: 1,
+              step: 1,
+              message: {
+                id: 'assistant-gap-fill',
+                role: 'assistant',
+                source: { kind: 'model', provider: 'provider-a', model: 'model-a' },
+                content: [{ type: 'text', text: 'Recovered answer' }],
+              },
+              stream: [],
+            },
+          },
+        },
+      })
+
+      await waitFor(() => received.some((event) => event.type === 'connection.lost'))
+      expect(received.some((event) => event.type === 'message.completed')).toBe(false)
+      expect(received.find((event) => event.type === 'connection.lost')).toMatchObject({
+        reason: 'DSH event stream disconnected: Malformed DSH session event sequence.',
+      })
+
+      await waitForAtMost(() => secondStream.signal !== undefined, 2_000)
+      secondStream.push(subscribeFrame('s1', 0))
+      await waitFor(() => received.filter((event) => event.type === 'session.subscribed').length === 2)
+      secondStream.push(canonicalFrame('s1', 2, 'turn/end', { turn: 1, reason: { kind: 'completed' } }))
+
+      await waitForAtMost(() => received.some((event) => event.sequence === 2), 2_000)
+      expect(recoveryRanges).toEqual([[1, 1]])
+      expect(
+        received.filter((event) => event.type === 'message.completed').map((event) => event.sequence),
+      ).toEqual([1])
+      expect(
+        received
+          .map((event) => event.sequence)
+          .filter((sequence): sequence is number => sequence !== undefined),
+      ).toEqual([1, 2])
+      expect(received.some((event) => event.type === 'session.gap')).toBe(false)
+    },
+  )
 
   it('announces the uncovered remainder after a partial history replay', async () => {
     const stream = new ControlledStream()

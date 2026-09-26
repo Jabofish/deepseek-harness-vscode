@@ -161,4 +161,15 @@ describe('DSH 0.1.7-rc.2 Agent Preset Remote contract', () => {
       context: { rpcCode: 'agent-preset-not-found' },
     })
   })
+
+  it('rejects a successful selection Remote with a mismatched preset receipt', async () => {
+    const { transport } = recordingTransport([{ ok: true, value: 'other-preset' }])
+
+    await expect(
+      new Rc172PresetRepository(transport).select('session-1', 'custom-mode'),
+    ).rejects.toMatchObject({
+      code: 'PROTOCOL_ERROR',
+      message: 'DSH returned a malformed rc172 preset selection receipt.',
+    })
+  })
 })

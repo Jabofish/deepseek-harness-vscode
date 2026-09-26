@@ -454,6 +454,85 @@ describe('DeepSeek Harness 0.1.0-rc.6 contract', () => {
     })
   })
 
+  it('uses the final embedded usage sample and lets a message-level sample replace it', () => {
+    const stream = [
+      {
+        type: 'chunk',
+        time: 1,
+        chunk: { type: 'usage', usage: { inputTokens: 3, outputTokens: 1, totalTokens: 4 } },
+      },
+      {
+        type: 'chunk',
+        time: 2,
+        chunk: {
+          type: 'usage',
+          usage: { inputTokens: 7, outputTokens: 2, totalTokens: 11, cacheReadTokens: 2 },
+        },
+      },
+    ]
+
+    expect(
+      rc6Mapper.event('assistant/attempt', {
+        sessionId: 's1',
+        data: { turn: 1, step: 1, stream },
+      }),
+    ).toMatchObject({
+      type: 'assistant.attempt',
+      usage: { inputTokens: 7, outputTokens: 2, totalTokens: 11, cacheReadTokens: 2 },
+    })
+
+    const completedMessage = {
+      id: 'assistant-1',
+      content: [{ type: 'text', text: 'Answer' }],
+      source: { provider: 'provider-a', model: 'model-a' },
+    }
+    expect(
+      rc6Mapper.event('assistant/message', {
+        sessionId: 's1',
+        data: {
+          turn: 1,
+          step: 1,
+          message: completedMessage,
+          stream,
+          usage: { inputTokens: 9, outputTokens: 4, totalTokens: 14 },
+        },
+      }),
+    ).toMatchObject({
+      type: 'message.completed',
+      usage: { inputTokens: 9, outputTokens: 4, totalTokens: 14 },
+    })
+    expect(
+      rc6Mapper.event('assistant/message', {
+        sessionId: 's1',
+        data: { turn: 1, step: 1, message: completedMessage, stream },
+      }),
+    ).toMatchObject({
+      type: 'message.completed',
+      usage: { inputTokens: 7, outputTokens: 2, totalTokens: 11, cacheReadTokens: 2 },
+    })
+  })
+
+  it('does not fall back to older stream usage when a declared message sample is malformed', () => {
+    const event = rc6Mapper.event('assistant/message', {
+      sessionId: 's1',
+      data: {
+        turn: 1,
+        step: 1,
+        message: { id: 'assistant-1', content: [{ type: 'text', text: 'Answer' }] },
+        stream: [
+          {
+            type: 'chunk',
+            time: 1,
+            chunk: { type: 'usage', usage: { inputTokens: 3, outputTokens: 1, totalTokens: 4 } },
+          },
+        ],
+        usage: { inputTokens: 'bad', outputTokens: 1 },
+      },
+    })
+    expect(event).toMatchObject({ type: 'message.completed' })
+    if (event.type === 'message.completed') expect(event.usage).toBeUndefined()
+  })
+
   it('keeps a provider failure message longer than 320 characters', () => {
     // `turn/end`'s error reason carries the provider adapter's own `LlmError`
     // message (e.g. the provider's `error.message` from an HTTP error body)

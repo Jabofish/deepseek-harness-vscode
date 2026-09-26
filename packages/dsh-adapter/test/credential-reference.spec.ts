@@ -1,3 +1,4 @@
+import { AppError } from '@dsh-vscode/domain'
 import { describe, expect, it } from 'vitest'
 import type { DshTransport } from '../src/contracts.js'
 import { Rc6CredentialRepository } from '../src/repositories/credential-repository.js'
@@ -13,6 +14,7 @@ function transportFor(responses: Readonly<Record<string, unknown>>, calls: Call[
       calls.push({ method, params })
       const response = responses[method]
       if (response === undefined) return Promise.reject(new Error(`unexpected RPC ${method}`))
+      if (response instanceof Error) return Promise.reject(response)
       return Promise.resolve({ result: { ok: true, value: response } } as TResponse)
     },
     remoteRequest: <TResponse>() =>
@@ -61,12 +63,28 @@ describe('Rc6CredentialRepository explicit references', () => {
     expect(state).toEqual({ ref: 'DEEPSEEK_API_KEY', configured: true, writable: true })
   })
 
-  it('reports an unknown reference as unconfigured but still described', async () => {
-    const repository = new Rc6CredentialRepository(transportFor({ 'credentials.describe': DESCRIBE_FIXTURE }))
+  it('reports a requested but missing reference as unconfigured and writable', async () => {
+    const repository = new Rc6CredentialRepository(
+      transportFor({
+        'credentials.describe': {
+          credentials: { SOME_OTHER_REF: { configured: false, writable: true } },
+        },
+      }),
+    )
 
     const state = await repository.describeReference('SOME_OTHER_REF')
 
-    expect(state).toEqual({ ref: 'SOME_OTHER_REF', configured: false, writable: false })
+    expect(state).toEqual({ ref: 'SOME_OTHER_REF', configured: false, writable: true })
+  })
+
+  it('rejects a describe response that omits a requested reference', async () => {
+    const repository = new Rc6CredentialRepository(
+      transportFor({ 'credentials.describe': { credentials: {} } }),
+    )
+
+    await expect(repository.describeReference('SOME_OTHER_REF')).rejects.toMatchObject({
+      code: 'PROTOCOL_ERROR',
+    })
   })
 
   it('writes and erases through credentials.set / credentials.unset by reference', async () => {
@@ -123,6 +141,88 @@ describe('Rc6CredentialRepository explicit references', () => {
     await expect(repository.describeReference('DEEPSEEK_API_KEY')).rejects.toMatchObject({
       code: 'PROTOCOL_ERROR',
     })
+  })
+
+  it.each([
+    [
+      'credentials.describe',
+      (repository: Rc6CredentialRepository) => repository.describeReference('API_KEY'),
+    ],
+    [
+      'credentials.set',
+      (repository: Rc6CredentialRepository) => repository.setReference('API_KEY', 'secret-value'),
+    ],
+    ['credentials.unset', (repository: Rc6CredentialRepository) => repository.unsetReference('API_KEY')],
+  ])('strips untrusted rejection details from %s failures', async (method, operation) => {
+    const password = 'password-value-from-provider'
+    const rejection = new AppError({
+      code: 'PERMISSION_DENIED',
+      message: `provider rejected password=${password}`,
+      retryable: false,
+      cause: new Error(`credential storage failed: ${password}`),
+      context: { diagnostic: password },
+    })
+    const repository = new Rc6CredentialRepository(transportFor({ [method]: rejection }))
+
+    let failure: unknown
+    try {
+      await operation(repository)
+    } catch (error) {
+      failure = error
+    }
+
+    expect(failure).toBeInstanceOf(AppError)
+    const safeError = failure as AppError
+    expect(safeError).toMatchObject({ code: 'PERMISSION_DENIED', retryable: false })
+    expect(safeError.message).not.toContain(password)
+    expect(safeError.message).not.toContain('password')
+    expect(safeError.context).toBeUndefined()
+    expect((safeError as AppError & { readonly cause?: unknown }).cause).toBeUndefined()
+    const serializedErrorResponse = JSON.stringify({
+      code: safeError.code,
+      message: safeError.message,
+      retryable: safeError.retryable,
+      context: safeError.context,
+      cause: (safeError as AppError & { readonly cause?: unknown }).cause,
+    })
+    expect(serializedErrorResponse).not.toContain(password)
+    expect(serializedErrorResponse).not.toContain('password')
+  })
+
+  it('reduces an unexpected credential transport failure to a safe internal error', async () => {
+    const password = 'password-value-from-transport'
+    const repository = new Rc6CredentialRepository(
+      transportFor({ 'credentials.set': new Error(`transport rejected ${password}`) }),
+    )
+
+    let failure: unknown
+    try {
+      await repository.setReference('API_KEY', 'secret-value')
+    } catch (error) {
+      failure = error
+    }
+
+    expect(failure).toBeInstanceOf(AppError)
+    const safeError = failure as AppError
+    expect(safeError).toMatchObject({ code: 'INTERNAL_ERROR', retryable: true })
+    expect(safeError.message).not.toContain(password)
+    expect(safeError.context).toBeUndefined()
+    expect((safeError as AppError & { readonly cause?: unknown }).cause).toBeUndefined()
+  })
+
+  it('keeps an aborted credential request classified as cancelled', async () => {
+    const controller = new AbortController()
+    controller.abort()
+    const repository = new Rc6CredentialRepository(
+      transportFor({ 'credentials.set': new Error('transport stopped after cancellation') }),
+    )
+
+    await expect(repository.setReference('API_KEY', 'secret-value', controller.signal)).rejects.toMatchObject(
+      {
+        code: 'REQUEST_CANCELLED',
+        retryable: false,
+      },
+    )
   })
 })
 
@@ -243,7 +343,9 @@ describe('Rc6CredentialRepository provider fields', () => {
               },
             ],
           },
-          'credentials.describe': { credentials: {} },
+          'credentials.describe': {
+            credentials: { GATEWAY_API_KEY: { configured: false, writable: true } },
+          },
           'credentials.set': {},
         },
         calls,

@@ -573,6 +573,7 @@ export const checkpointFilePreviewSchema = z
 
 export const checkpointPreviewSchema = z
   .object({
+    previewId: id,
     summary: checkpointSummarySchema,
     files: z.array(checkpointFilePreviewSchema).max(100),
     conflictCount: z.number().int().nonnegative().max(100),
@@ -743,6 +744,7 @@ export const featureRequestSchema = z.discriminatedUnion('type', [
           sessionId: id,
           workspaceFolderId: id,
           expectedCurrentRevision: generation,
+          previewId: id,
           conflictPolicy: z.enum(['abort', 'overwrite']),
         })
         .strict(),
@@ -1290,6 +1292,7 @@ export const protocolAppErrorCodeSchema = z.enum([
   'PROTOCOL_ERROR',
   'REQUEST_CANCELLED',
   'INVALID_CONFIGURATION',
+  'SETTINGS_CONFLICT',
   'FEATURE_DISABLED',
   'CONTEXT_LIMIT',
   'CONTEXT_EXPIRED',

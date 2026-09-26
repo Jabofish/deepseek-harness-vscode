@@ -32,55 +32,69 @@ interface SettingsDescription {
   readonly namespaces: readonly Namespace[]
 }
 
+function settingsSchema(value: SettingsDescription): DshSettingsSchema {
+  return {
+    version: 'rc6-settings-v2',
+    writable: value.writable,
+    hasDocument: value.hasDocument,
+    fields: value.namespaces.flatMap((namespace) => {
+      // The secret view is authoritative for its paths; the same field in
+      // the JSON schema would only duplicate the row.
+      const secretPaths = new Set(namespace.secrets.map((secret) => secret.path.join('.')))
+      const prefixLength = namespace.ns.length + 1
+      return [
+        ...namespace.secrets.map((secret) => ({
+          path: `${namespace.ns}.${secret.path.join('.')}`,
+          label: secret.path.at(-1) ?? namespace.ns,
+          type: 'secret' as const,
+          required: false,
+          restartRequired: namespace.applies === 'restart',
+        })),
+        ...schemaFields(namespace.ns, namespace.schema, namespace.applies === 'restart').filter(
+          (field) => !secretPaths.has(field.path.slice(prefixLength)),
+        ),
+      ]
+    }),
+    namespaces: value.namespaces.map((namespace) => ({
+      ns: namespace.ns,
+      applies: namespace.applies,
+      revision: namespace.revision,
+      userFields: userFieldPaths(namespace),
+      secrets: namespace.secrets.map((secret) => ({
+        field: secret.path.join('.'),
+        set: secret.set,
+      })),
+    })),
+  }
+}
+
+function settingsValues(value: SettingsDescription): Readonly<Record<string, unknown>> {
+  return Object.fromEntries(
+    value.namespaces.map((namespace) => [namespace.ns, redactNamespace(namespace.value, namespace.secrets)]),
+  )
+}
+
 export class Rc6SettingsRepository implements SettingsRepository {
   private description: SettingsDescription | undefined
   public constructor(private readonly transport: DshTransport) {}
 
   public async schema(signal?: AbortSignal): Promise<DshSettingsSchema> {
+    return settingsSchema(await this.describe(signal))
+  }
+
+  public async readSnapshot(signal?: AbortSignal): Promise<{
+    readonly schema: DshSettingsSchema
+    readonly values: Readonly<Record<string, unknown>>
+  }> {
     const value = await this.describe(signal)
     return {
-      version: 'rc6-settings-v2',
-      writable: value.writable,
-      hasDocument: value.hasDocument,
-      fields: value.namespaces.flatMap((namespace) => {
-        // The secret view is authoritative for its paths; the same field in
-        // the JSON schema would only duplicate the row.
-        const secretPaths = new Set(namespace.secrets.map((secret) => secret.path.join('.')))
-        const prefixLength = namespace.ns.length + 1
-        return [
-          ...namespace.secrets.map((secret) => ({
-            path: `${namespace.ns}.${secret.path.join('.')}`,
-            label: secret.path.at(-1) ?? namespace.ns,
-            type: 'secret' as const,
-            required: false,
-            restartRequired: namespace.applies === 'restart',
-          })),
-          ...schemaFields(namespace.ns, namespace.schema, namespace.applies === 'restart').filter(
-            (field) => !secretPaths.has(field.path.slice(prefixLength)),
-          ),
-        ]
-      }),
-      namespaces: value.namespaces.map((namespace) => ({
-        ns: namespace.ns,
-        applies: namespace.applies,
-        revision: namespace.revision,
-        userFields: userFieldPaths(namespace),
-        secrets: namespace.secrets.map((secret) => ({
-          field: secret.path.join('.'),
-          set: secret.set,
-        })),
-      })),
+      schema: settingsSchema(value),
+      values: settingsValues(value),
     }
   }
 
   public async read(signal?: AbortSignal): Promise<Readonly<Record<string, unknown>>> {
-    const value = await this.describe(signal)
-    return Object.fromEntries(
-      value.namespaces.map((namespace) => [
-        namespace.ns,
-        redactNamespace(namespace.value, namespace.secrets),
-      ]),
-    )
+    return settingsValues(await this.describe(signal))
   }
 
   public async openDocument(signal?: AbortSignal): Promise<void> {
@@ -90,27 +104,32 @@ export class Rc6SettingsRepository implements SettingsRepository {
     if (value === undefined || value.opened !== true) throw malformedSettingsDocumentResponse()
   }
 
-  public async update(path: string, value: unknown, signal?: AbortSignal): Promise<void> {
+  public async update(
+    path: string,
+    value: unknown,
+    expectedRevision: number,
+    signal?: AbortSignal,
+  ): Promise<void> {
     const [namespace, ...parts] = path.split('.')
     if (namespace === undefined || namespace === '' || parts.length === 0)
       throw new Error('Settings path must be namespace.field')
     const descriptor = await this.namespace(namespace, signal)
     requireNonSecretPath(descriptor, parts)
-    await this.mutate(namespace, [{ op: 'set', path: parts, value }], descriptor.revision, signal)
+    await this.mutate(namespace, [{ op: 'set', path: parts, value }], expectedRevision, signal)
   }
 
-  public async unset(path: string, signal?: AbortSignal): Promise<void> {
+  public async unset(path: string, expectedRevision: number, signal?: AbortSignal): Promise<void> {
     const [namespace, ...parts] = path.split('.')
     if (namespace === undefined || namespace === '' || parts.length === 0)
       throw new Error('Settings path must be namespace.field')
     requireNonSecretPath(await this.namespace(namespace, signal), parts)
-    await this.mutate(namespace, [{ op: 'unset', path: parts }], undefined, signal)
+    await this.mutate(namespace, [{ op: 'unset', path: parts }], expectedRevision, signal)
   }
 
   public async mutate(
     namespace: string,
     operations: readonly SettingsPathOperation[],
-    expectedRevision?: number,
+    expectedRevision: number,
     signal?: AbortSignal,
   ): Promise<void> {
     if (namespace.trim() === '') throw new Error('Settings namespace is required')
@@ -122,7 +141,7 @@ export class Rc6SettingsRepository implements SettingsRepository {
         throw new Error('Settings operation paths must contain non-empty segments')
       if (operation.op !== 'set' && operation.op !== 'unset') throw new Error('Unknown settings operation')
     }
-    if (expectedRevision !== undefined && (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0))
+    if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0)
       throw new AppError({
         code: 'INVALID_CONFIGURATION',
         message: 'The settings revision is invalid.',
@@ -130,14 +149,7 @@ export class Rc6SettingsRepository implements SettingsRepository {
       })
     const descriptor = await this.namespace(namespace, signal)
     this.requireWritable()
-    for (const operation of operations) {
-      if (
-        operation.op === 'set' &&
-        operation.value === '[configured]' &&
-        descriptor.secrets.some((secret) => secret.path.join('.') === operation.path.join('.'))
-      )
-        throw new Error('Configured secrets must be changed through the credential surface.')
-    }
+    for (const operation of operations) requireNonSecretPath(descriptor, operation.path)
     let response: Namespace
     try {
       response = normalizeNamespace(
@@ -147,7 +159,7 @@ export class Rc6SettingsRepository implements SettingsRepository {
           {
             ns: namespace,
             ops: operations,
-            expectedRevision: expectedRevision ?? descriptor.revision,
+            expectedRevision,
           },
           signal,
         ),

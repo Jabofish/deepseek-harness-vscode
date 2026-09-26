@@ -115,6 +115,53 @@ describe('ProviderSettingsUseCases', () => {
     expect(setReference).not.toHaveBeenCalled()
   })
 
+  it('preserves valid modality declarations and unrelated provider model metadata', async () => {
+    const mutate = vi.fn<SettingsMutate>().mockResolvedValue(undefined)
+    const setReference = vi.fn<SetReference>().mockResolvedValue(undefined)
+    const models = [
+      {
+        id: 'gateway-chat',
+        input: ['text', 'image'],
+        inputModalities: ['text', 'image'],
+        providerFeatures: { cachedPrompts: true },
+      },
+    ]
+
+    await expect(
+      providerUseCasesFor({ mutate }, { setReference }).createCustomProvider({ ...draft, models }, undefined),
+    ).resolves.toEqual({ profileCommitted: true, credentialConfigured: false })
+
+    const operation = mutate.mock.calls[0]?.[1]?.[0]
+    expect(operation?.op).toBe('set')
+    if (operation?.op === 'set')
+      expect(operation.value).toEqual({
+        displayName: 'Gateway',
+        api: 'openai-completions',
+        baseURL: 'http://127.0.0.1:9000/v1',
+        models,
+      })
+  })
+
+  it('preserves an empty pi-ai input list as the inherited-input sentinel', async () => {
+    const mutate = vi.fn<SettingsMutate>().mockResolvedValue(undefined)
+    const setReference = vi.fn<SetReference>().mockResolvedValue(undefined)
+    const models = [{ id: 'gateway-chat', input: [] }]
+
+    await expect(
+      providerUseCasesFor({ mutate }, { setReference }).createCustomProvider({ ...draft, models }, undefined),
+    ).resolves.toEqual({ profileCommitted: true, credentialConfigured: false })
+
+    const operation = mutate.mock.calls[0]?.[1]?.[0]
+    expect(operation?.op).toBe('set')
+    if (operation?.op === 'set')
+      expect(operation.value).toEqual({
+        displayName: 'Gateway',
+        api: 'openai-completions',
+        baseURL: 'http://127.0.0.1:9000/v1',
+        models,
+      })
+  })
+
   it('reports a credential-only failure without retrying the committed profile', async () => {
     const mutate = vi.fn<SettingsMutate>().mockResolvedValue(undefined)
     const setReference = vi.fn<SetReference>().mockRejectedValue(new Error('credential store unavailable'))
@@ -157,6 +204,11 @@ describe('ProviderSettingsUseCases', () => {
     const malformedModels: readonly CustomProviderDraft['models'][] = [
       [{ id: 'x'.repeat(257) }],
       [{ id: 'gateway-chat', contextWindow: Number.MAX_SAFE_INTEGER + 1 }],
+      [{ id: 'gateway-chat', input: 'image' }],
+      [{ id: 'gateway-chat', input: ['audio'] }],
+      [{ id: 'gateway-chat', inputModalities: 'image' }],
+      [{ id: 'gateway-chat', inputModalities: ['audio'] }],
+      [{ id: 'gateway-chat', inputModalities: [] }],
       [{ id: 'gateway-chat', metadata: { apiKey: 'must-stay-in-host' } }],
     ]
 

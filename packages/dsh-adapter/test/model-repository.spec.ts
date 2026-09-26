@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { AppError } from '@dsh-vscode/domain'
 
 import type { DshTransport } from '../src/contracts.js'
 import { Rc6ModelRepository } from '../src/repositories/model-repository.js'
@@ -14,6 +15,7 @@ function transportFor(responses: Readonly<Record<string, unknown>>, calls: Call[
       calls.push({ method, params })
       const response = responses[method]
       if (response === undefined) return Promise.reject(new Error(`unexpected RPC ${method}`))
+      if (response instanceof Error) return Promise.reject(response)
       return Promise.resolve({ result: { ok: true, value: response } } as TResponse)
     },
     remoteRequest: <TResponse>() => Promise.reject<TResponse>(new Error('unexpected Remote call')),
@@ -162,7 +164,9 @@ describe('Rc6ModelRepository provider configuration', () => {
             },
           ],
         },
-        'credentials.describe': { credentials: {} },
+        'credentials.describe': {
+          credentials: { GATEWAY_API_KEY: { configured: false, writable: true } },
+        },
       }),
     )
 
@@ -255,7 +259,56 @@ describe('Rc6ModelRepository provider configuration', () => {
     })
   })
 
-  it('rejects malformed credential state instead of presenting a writable secret button', async () => {
+  it.each([
+    ['malformed', { OPENAI_API_KEY: { configured: 'yes', writable: true } }],
+    ['omitted', {}],
+  ])(
+    'rejects %s credential state instead of presenting a writable secret button',
+    async (_kind, credentials) => {
+      const repository = new Rc6ModelRepository(
+        transportFor({
+          'llm.providers': {
+            providers: [
+              {
+                provider: 'openai',
+                displayName: 'OpenAI',
+                settingsNs: 'llm-pi-ai',
+                settingsPath: ['providers', 'openai'],
+                active: true,
+              },
+            ],
+          },
+          'settings.describe': {
+            writable: true,
+            hasDocument: true,
+            namespaces: [
+              {
+                ns: 'llm-pi-ai',
+                schema: PROVIDER_SCHEMA,
+                value: { providers: { openai: { apiKeyEnv: 'OPENAI_API_KEY' } } },
+                applies: 'live',
+                secrets: [],
+                revision: 0,
+              },
+            ],
+          },
+          'credentials.describe': { credentials },
+        }),
+      )
+
+      await expect(repository.listProviders()).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
+    },
+  )
+
+  it('strips credential provider details before a provider catalog error can escape', async () => {
+    const password = 'password-value-from-provider'
+    const rejection = new AppError({
+      code: 'PERMISSION_DENIED',
+      message: `credential provider refused password=${password}`,
+      retryable: false,
+      cause: new Error(`provider detail ${password}`),
+      context: { diagnostic: password },
+    })
     const repository = new Rc6ModelRepository(
       transportFor({
         'llm.providers': {
@@ -283,13 +336,33 @@ describe('Rc6ModelRepository provider configuration', () => {
             },
           ],
         },
-        'credentials.describe': {
-          credentials: { OPENAI_API_KEY: { configured: 'yes', writable: true } },
-        },
+        'credentials.describe': rejection,
       }),
     )
 
-    await expect(repository.listProviders()).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
+    let failure: unknown
+    try {
+      await repository.listProviders()
+    } catch (error) {
+      failure = error
+    }
+
+    expect(failure).toBeInstanceOf(AppError)
+    const safeError = failure as AppError
+    expect(safeError).toMatchObject({ code: 'PERMISSION_DENIED', retryable: false })
+    expect(safeError.message).not.toContain(password)
+    expect(safeError.message).not.toContain('password')
+    expect(safeError.context).toBeUndefined()
+    expect((safeError as AppError & { readonly cause?: unknown }).cause).toBeUndefined()
+    expect(
+      JSON.stringify({
+        code: safeError.code,
+        message: safeError.message,
+        retryable: safeError.retryable,
+        context: safeError.context,
+        cause: (safeError as AppError & { readonly cause?: unknown }).cause,
+      }),
+    ).not.toContain(password)
   })
 
   it('discovers models through the pinned llm route without requiring a Webview secret', async () => {
@@ -299,7 +372,13 @@ describe('Rc6ModelRepository provider configuration', () => {
         {
           'llm.discoverModels': {
             models: [
-              { id: 'gateway-chat', name: 'Gateway Chat', contextWindow: 128_000, maxTokens: 8_000 },
+              {
+                id: 'gateway-chat',
+                name: 'Gateway Chat',
+                contextWindow: 128_000,
+                maxTokens: 8_000,
+                inputModalities: ['text', 'image'],
+              },
               { id: 'gateway-reasoner' },
             ],
           },
@@ -316,7 +395,13 @@ describe('Rc6ModelRepository provider configuration', () => {
         api: 'openai-completions',
       }),
     ).resolves.toEqual([
-      { id: 'gateway-chat', label: 'Gateway Chat', contextWindow: 128_000, maxTokens: 8_000 },
+      {
+        id: 'gateway-chat',
+        label: 'Gateway Chat',
+        contextWindow: 128_000,
+        maxTokens: 8_000,
+        inputModalities: ['text', 'image'],
+      },
       { id: 'gateway-reasoner', label: 'gateway-reasoner' },
     ])
     expect(calls).toEqual([
@@ -485,5 +570,59 @@ describe('Rc6ModelRepository session model catalog', () => {
         },
       ],
     })
+  })
+})
+
+describe('Rc6ModelRepository model input capabilities', () => {
+  it('preserves installed model input modalities while mapping the provider catalog', async () => {
+    const repository = new Rc6ModelRepository(
+      transportFor({
+        'llm.models': {
+          groups: [
+            {
+              id: 'deepseek-account',
+              name: 'DeepSeek Account',
+              models: [
+                {
+                  id: 'deepseek-v4',
+                  name: 'DeepSeek V4',
+                  inputModalities: ['text', 'image'],
+                },
+              ],
+            },
+          ],
+          failures: [],
+        },
+      }),
+    )
+
+    await expect(repository.listModels()).resolves.toEqual([
+      {
+        id: 'deepseek-v4',
+        providerId: 'deepseek-account',
+        label: 'DeepSeek V4',
+        inputModalities: ['text', 'image'],
+        supportsReasoning: false,
+      },
+    ])
+  })
+
+  it('rejects unsupported model input modality values instead of hiding the declaration', async () => {
+    const repository = new Rc6ModelRepository(
+      transportFor({
+        'llm.models': {
+          groups: [
+            {
+              id: 'gateway',
+              name: 'Gateway',
+              models: [{ id: 'model-a', name: 'Model A', inputModalities: ['video'] }],
+            },
+          ],
+          failures: [],
+        },
+      }),
+    )
+
+    await expect(repository.listModels()).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
   })
 })

@@ -63,6 +63,8 @@ export interface AlphaLoopbackApiClientOptions {
   readonly autoReviewDenialContract?: boolean
   /** Session Controller wire profile; old alpha uses v0, alpha13 uses v2, and alpha151+ uses v3. */
   readonly sessionWireVersion?: AlphaSessionWireVersion
+  /** The exact Host profile requires its registered durable model-selection projection. */
+  readonly requireModelSelectionProjection?: boolean
   /** Version-specific queue projection for Session/follow opening snapshots. */
   readonly normalizeSessionQueueProjection?: (sessionId: string, projection: unknown) => unknown
   /** Session Controller control profile; alpha.2 replaces queue snapshots with Inbox projections. */
@@ -300,6 +302,38 @@ export class AlphaLoopbackApiClient implements DshTransport {
     return { accepted: true }
   }
 
+  /**
+   * Wait until `$events` has accepted this client's Remote Event subscription.
+   * The permission catalog is not replayed, so its first read must follow the
+   * listener registration represented by the `ready` item.
+   */
+  public async waitForEventStreamReady(signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted === true) throw cancelled(signal.reason)
+    if (this.isClosed) throw closedError()
+    if (this.eventClientId !== undefined) return
+
+    let waiter!: { readonly resolve: () => void; readonly reject: (error: unknown) => void }
+    const ready = new Promise<void>((resolve, reject) => {
+      waiter = { resolve, reject }
+    })
+    this.eventReadyWaiters.add(waiter)
+    const timeoutSignal = AbortSignal.timeout(this.options.requestTimeoutMs)
+    const waitingSignal = combineSignals(signal, this.closed.signal, timeoutSignal)
+    try {
+      await awaitWithSignal(ready, waitingSignal)
+    } catch (error) {
+      // Caller cancellation takes precedence over a stream or timeout failure,
+      // matching the other Alpha transport operations.
+      if (signalIsAborted(signal)) throw cancelled(signal?.reason)
+      if (signalIsAborted(this.closed.signal)) throw closedError()
+      if (signalIsAborted(timeoutSignal)) throw normalizeTransportError('$events ready', timeoutSignal.reason)
+      throw error
+    } finally {
+      // A cancelled read must not retain a waiter until a future generation.
+      if (this.eventReadyWaiters.delete(waiter)) waiter.reject(cancelled(waitingSignal.reason))
+    }
+  }
+
   public async close(): Promise<void> {
     if (this.isClosed) return Promise.resolve()
     this.isClosed = true
@@ -312,6 +346,10 @@ export class AlphaLoopbackApiClient implements DshTransport {
     string,
     { readonly clientId: string; readonly kind: 'approval' | 'question'; readonly sessionId: string }
   >()
+  private readonly eventReadyWaiters = new Set<{
+    readonly resolve: () => void
+    readonly reject: (error: unknown) => void
+  }>()
   private eventClientId: string | undefined
   private eventStreamGeneration = 0
 
@@ -826,7 +864,13 @@ export class AlphaLoopbackApiClient implements DshTransport {
   ): Promise<AlphaCatalogSelection> {
     const snapshot = await this.followSnapshot({ address: this.sessionAddress(sessionId) }, signal)
     const projections = recordOrUndefined(snapshot.projections)
-    const selected = projectedModelSelection(recordOrUndefined(projections?.values))
+    const projectionValues = recordOrUndefined(projections?.values)
+    if (
+      this.options.requireModelSelectionProjection === true &&
+      !validAlphaModelSelectionProjection(projectionValues?.modelSelection)
+    )
+      throw malformedResponse('session modelSelection projection')
+    const selected = projectedModelSelection(projectionValues)
     if (selected.providerId === '' || selected.modelId === '') return fallback
     return {
       provider: selected.providerId,
@@ -930,6 +974,10 @@ export class AlphaLoopbackApiClient implements DshTransport {
           if (!validAlphaEventReady(frame)) throw malformedResponse('$events ready')
           this.eventClientId = frame.clientId
           ready = true
+          if (this.eventStreamGeneration === generation) {
+            for (const waiter of this.eventReadyWaiters) waiter.resolve()
+            this.eventReadyWaiters.clear()
+          }
           continue
         }
         if (frame?.type === 'ready') throw malformedResponse('$events ready')
@@ -998,6 +1046,12 @@ export class AlphaLoopbackApiClient implements DshTransport {
         throw malformedResponse('$events frame')
       }
       if (!ready) throw malformedResponse('$events ready')
+    } catch (error) {
+      if (!ready && this.eventStreamGeneration === generation) {
+        for (const waiter of this.eventReadyWaiters) waiter.reject(error)
+        this.eventReadyWaiters.clear()
+      }
+      throw error
     } finally {
       if (this.eventStreamGeneration === generation) {
         this.eventClientId = undefined
@@ -2134,6 +2188,28 @@ type AlphaCatalogSelection = {
   readonly reasoningEffort?: string
 }
 
+function validAlphaModelSelectionProjection(value: unknown): boolean {
+  const projection = recordOrUndefined(value)
+  if (
+    projection === undefined ||
+    !Object.hasOwn(projection, 'lastUsed') ||
+    !Object.hasOwn(projection, 'next')
+  )
+    return false
+  return validAlphaCatalogSelection(projection.lastUsed) && validAlphaCatalogSelection(projection.next)
+}
+
+function validAlphaCatalogSelection(value: unknown): boolean {
+  if (value === null) return true
+  const selection = recordOrUndefined(value)
+  return (
+    selection !== undefined &&
+    isNonEmptyString(selection.provider) &&
+    isNonEmptyString(selection.model) &&
+    (selection.reasoningEffort === undefined || isNonEmptyString(selection.reasoningEffort))
+  )
+}
+
 function validAlphaModelCatalog(value: unknown): value is AlphaModelCatalog {
   const record = recordOrUndefined(value)
   const selected = recordOrUndefined(record?.default)
@@ -2645,6 +2721,35 @@ function combineSignals(...signals: (AbortSignal | undefined | number)[]): Abort
   const timeout = signals.find((value): value is number => typeof value === 'number')
   if (timeout !== undefined) sources.push(AbortSignal.timeout(timeout))
   return sources.length === 1 ? (sources[0] as AbortSignal) : AbortSignal.any(sources)
+}
+
+function awaitWithSignal<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(signal.reason)
+  return new Promise<T>((resolve, reject) => {
+    let settled = false
+    const cleanup = (): void => signal.removeEventListener('abort', onAbort)
+    const onAbort = (): void => {
+      if (settled) return
+      settled = true
+      cleanup()
+      reject(signal.reason)
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+    void promise.then(
+      (value) => {
+        if (settled) return
+        settled = true
+        cleanup()
+        resolve(value)
+      },
+      (error: unknown) => {
+        if (settled) return
+        settled = true
+        cleanup()
+        reject(error)
+      },
+    )
+  })
 }
 
 async function delay(ms: number, signal?: AbortSignal): Promise<void> {

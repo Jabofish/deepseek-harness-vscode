@@ -1,11 +1,19 @@
-import { settledToolPresentation, type BackendEvent } from '@dsh-vscode/domain'
+import { settledToolPresentation, type BackendEvent, type TokenUsage } from '@dsh-vscode/domain'
 
-import type { AssistantTiming, ModelRetryNode, TimelineNode, TimelineState } from './nodes.js'
+import type {
+  AssistantTiming,
+  ModelRetryNode,
+  TimelineNode,
+  TimelineState,
+  TurnTokenUsage,
+  TurnUsageTracking,
+} from './nodes.js'
 import { addTokenUsage } from './usage.js'
 
 const EMPTY_STEP_TIMINGS: Readonly<Record<string, AssistantTiming>> = Object.freeze({})
 const EMPTY_COMMAND_MODES: Readonly<Record<string, 'plan' | 'permission'>> = Object.freeze({})
 const EMPTY_CLOSED_TURNS: ReadonlySet<number> = new Set()
+const EMPTY_TURN_USAGE_TRACKING: Readonly<Record<string, TurnUsageTracking>> = Object.freeze({})
 
 type TransientDeltaEvent = Extract<BackendEvent, { readonly type: 'message.delta' | 'reasoning.delta' }>
 type LiveTimelineNode = Extract<TimelineNode, { readonly kind: 'assistant-message' | 'reasoning' }>
@@ -89,6 +97,7 @@ export function reduceTimeline(
   const nodes = nodesMayChange ? (options.mutableNodes?.() ?? [...state.nodes]) : []
   let stepTimings: Record<string, AssistantTiming> | undefined
   let commandModes: Record<string, 'plan' | 'permission'> | undefined
+  let turnUsageTracking: Record<string, TurnUsageTracking> | undefined
   let activeTurn = state.activeTurn
   let closedTurns: Set<number> | undefined
   let eventCount = state.eventCount
@@ -111,6 +120,112 @@ export function reduceTimeline(
     if (closedTurns === undefined) closedTurns = new Set(state.closedTurns ?? EMPTY_CLOSED_TURNS)
     return closedTurns
   }
+  const readTurnUsageTracking = (): Readonly<Record<string, TurnUsageTracking>> =>
+    turnUsageTracking ?? state.turnUsageTracking ?? EMPTY_TURN_USAGE_TRACKING
+  const readTurnUsage = (turn: number): TurnUsageTracking | undefined => readTurnUsageTracking()[String(turn)]
+  const writeTurnUsage = (turn: number, tracking: TurnUsageTracking | undefined): void => {
+    if (turnUsageTracking === undefined) turnUsageTracking = { ...readTurnUsageTracking() }
+    const key = String(turn)
+    if (tracking === undefined) delete turnUsageTracking[key]
+    else turnUsageTracking[key] = tracking
+  }
+  const trackTurnStart = (turn: number, duplicate: boolean): void => {
+    const previous = readTurnUsage(turn)
+    writeTurnUsage(turn, {
+      turnStarted: true,
+      invalid: duplicate || previous !== undefined,
+      attempts: previous?.attempts ?? [],
+      ...(previous?.active === undefined ? {} : { active: previous.active }),
+    })
+  }
+  const trackStepStart = (turn: number, step: number): void => {
+    const tracking = readTurnUsage(turn) ?? { turnStarted: false, invalid: false, attempts: [] }
+    writeTurnUsage(turn, {
+      ...tracking,
+      invalid: tracking.invalid || tracking.active !== undefined,
+      active: { step, state: 'open' },
+    })
+  }
+  const settleUsageAttempt = (
+    turn: number,
+    step: number | undefined,
+    usage: TokenUsage | undefined,
+    settlement: 'attempt-settled' | 'message-settled',
+  ): void => {
+    const tracking = readTurnUsage(turn)
+    if (tracking === undefined) return
+    const active = tracking.active
+    if (step === undefined || active === undefined || active.step !== step || active.state !== 'open') {
+      writeTurnUsage(turn, { ...tracking, invalid: true })
+      return
+    }
+    writeTurnUsage(turn, {
+      ...tracking,
+      invalid: tracking.invalid || usage === undefined,
+      attempts: usage === undefined ? tracking.attempts : [...tracking.attempts, usage],
+      active: { step, state: settlement },
+    })
+  }
+  const scheduleUsageRetry = (turn: number, step: number, id: string, attempt: number): void => {
+    const tracking = readTurnUsage(turn)
+    if (tracking === undefined) return
+    const active = tracking.active
+    if (active === undefined || active.step !== step || active.state !== 'attempt-settled') {
+      writeTurnUsage(turn, { ...tracking, invalid: true })
+      return
+    }
+    writeTurnUsage(turn, {
+      ...tracking,
+      active: { step, state: 'retry-scheduled', retry: { id, attempt } },
+    })
+  }
+  const startUsageRetry = (turn: number, step: number, id: string, attempt: number): void => {
+    const tracking = readTurnUsage(turn)
+    if (tracking === undefined) return
+    const active = tracking.active
+    if (
+      active === undefined ||
+      active.step !== step ||
+      active.state !== 'retry-scheduled' ||
+      active.retry?.id !== id ||
+      active.retry.attempt !== attempt
+    ) {
+      writeTurnUsage(turn, { ...tracking, invalid: true })
+      return
+    }
+    writeTurnUsage(turn, { ...tracking, active: { step, state: 'open' } })
+  }
+  const closeUsageStep = (turn: number, step: number): void => {
+    const tracking = readTurnUsage(turn)
+    if (tracking === undefined) return
+    const { active, ...rest } = tracking
+    if (
+      active === undefined ||
+      active.step !== step ||
+      (active.state !== 'attempt-settled' &&
+        active.state !== 'retry-scheduled' &&
+        active.state !== 'message-settled')
+    ) {
+      writeTurnUsage(turn, { ...tracking, invalid: true })
+      return
+    }
+    writeTurnUsage(turn, rest)
+  }
+  const noteStepActivity = (turn: number, step: number | undefined): void => {
+    const tracking = readTurnUsage(turn)
+    if (tracking === undefined) return
+    if (step === undefined) {
+      writeTurnUsage(turn, { ...tracking, invalid: true })
+      return
+    }
+    const active = tracking.active
+    if (active?.step !== step || active.state !== 'open') writeTurnUsage(turn, { ...tracking, invalid: true })
+  }
+  const invalidateTurnUsage = (turn: number | undefined): void => {
+    if (turn === undefined) return
+    const tracking = readTurnUsage(turn)
+    if (tracking !== undefined) writeTurnUsage(turn, { ...tracking, invalid: true })
+  }
   const commitTiming = (key: string | undefined, timing: AssistantTiming | undefined): void => {
     if (key === undefined || timing === undefined || timing === readStepTimings()[key]) return
     ensureStepTimings()[key] = timing
@@ -128,11 +243,24 @@ export function reduceTimeline(
   }
   switch (event.type) {
     case 'turn.started':
-      if (hasClosedTurn(event.turn)) ensureClosedTurns().delete(event.turn)
+      {
+        const wasClosed = hasClosedTurn(event.turn)
+        if (wasClosed) ensureClosedTurns().delete(event.turn)
+        invalidateTurnTail(nodes, event.turn)
+        trackTurnStart(event.turn, wasClosed)
+      }
       activeTurn = event.turn
       break
     case 'turn.ended':
-      closeTurn(nodes, event.turn, event.reason, event.failure, input.sequence)
+      closeTurn(
+        nodes,
+        event.turn,
+        event.reason,
+        event.failure,
+        input.sequence,
+        event.reason === 'completed' ? completeTurnUsage(readTurnUsage(event.turn)) : undefined,
+      )
+      writeTurnUsage(event.turn, undefined)
       if (activeTurn === event.turn) activeTurn = undefined
       if (!hasClosedTurn(event.turn)) ensureClosedTurns().add(event.turn)
       deleteStepTimingsForTurn(event.turn)
@@ -184,6 +312,8 @@ export function reduceTimeline(
       break
     case 'step.started': {
       openTurn(event.turn)
+      if (hasClosedTurn(event.turn)) invalidateTurnTail(nodes, event.turn)
+      trackStepStart(event.turn, event.step)
       const key = timingKey(event.turn, event.step)
       if (key !== undefined && event.time !== undefined) {
         const previous = readStepTimings()[key]
@@ -197,6 +327,8 @@ export function reduceTimeline(
     }
     case 'message.delta': {
       if (event.turn !== undefined) openTurn(event.turn)
+      if (event.turn === undefined) invalidateTurnUsage(activeTurn)
+      else noteStepActivity(event.turn, event.step)
       const turnClosed = event.turn !== undefined && hasClosedTurn(event.turn)
       if (turnClosed && event.turn !== undefined) {
         invalidateTurnTail(nodes, event.turn)
@@ -286,6 +418,8 @@ export function reduceTimeline(
     }
     case 'reasoning.delta': {
       if (event.turn !== undefined) openTurn(event.turn)
+      if (event.turn === undefined) invalidateTurnUsage(activeTurn)
+      else noteStepActivity(event.turn, event.step)
       const turnClosed = event.turn !== undefined && hasClosedTurn(event.turn)
       if (turnClosed && event.turn !== undefined) {
         invalidateTurnTail(nodes, event.turn)
@@ -377,6 +511,8 @@ export function reduceTimeline(
     }
     case 'message.completed': {
       if (event.turn !== undefined) openTurn(event.turn)
+      if (event.turn === undefined) invalidateTurnUsage(activeTurn)
+      else settleUsageAttempt(event.turn, event.step, event.usage, 'message-settled')
       const turnClosed = event.turn !== undefined && hasClosedTurn(event.turn)
       if (turnClosed && event.turn !== undefined) {
         invalidateTurnTail(nodes, event.turn)
@@ -541,6 +677,8 @@ export function reduceTimeline(
       // attempt id in the durable journal, so the newest open node at the
       // shared turn/step coordinate is the local equivalent of that match.
       openTurn(event.turn)
+      if (hasClosedTurn(event.turn)) invalidateTurnTail(nodes, event.turn)
+      settleUsageAttempt(event.turn, event.step, event.usage, 'attempt-settled')
       const index = findNodeIndexFromEnd(
         nodes,
         (node) =>
@@ -558,6 +696,8 @@ export function reduceTimeline(
     }
     case 'step.ended':
       openTurn(event.turn)
+      if (hasClosedTurn(event.turn)) invalidateTurnTail(nodes, event.turn)
+      closeUsageStep(event.turn, event.step)
       for (let index = 0; index < nodes.length; index += 1) {
         const node = nodes[index]
         if (
@@ -643,6 +783,9 @@ export function reduceTimeline(
     case 'model.retry': {
       openTurn(event.retry.turn)
       if (hasClosedTurn(event.retry.turn)) invalidateTurnTail(nodes, event.retry.turn)
+      if (event.retry.state === 'scheduled')
+        scheduleUsageRetry(event.retry.turn, event.retry.step, event.retry.id, event.retry.attempt)
+      else startUsageRetry(event.retry.turn, event.retry.step, event.retry.id, event.retry.attempt)
       const id = `retry:${event.retry.id}`
       const existingIndex = findNodeIndexFromEnd(nodes, (node) => node.kind === 'retry' && node.id === id)
       const existing = existingIndex < 0 ? undefined : nodes[existingIndex]
@@ -803,6 +946,7 @@ export function reduceTimeline(
       : state.tokenUsage
   const nextCommandModes = commandModes ?? state.commandModes
   const nextStepTimings = stepTimings ?? state.stepTimings
+  const nextTurnUsageTracking = turnUsageTracking ?? state.turnUsageTracking
   const nextClosedTurns = closedTurns === undefined ? state.closedTurns : [...closedTurns]
   const nextEventCount = eventCount
   const nextNodeChangeBase = nodesMayChange ? state.nodes : state.nodeChangeBase
@@ -824,6 +968,9 @@ export function reduceTimeline(
     ...(nextStepTimings === undefined || Object.keys(nextStepTimings).length === 0
       ? {}
       : { stepTimings: nextStepTimings }),
+    ...(nextTurnUsageTracking === undefined || Object.keys(nextTurnUsageTracking).length === 0
+      ? {}
+      : { turnUsageTracking: nextTurnUsageTracking }),
     ...(tokenUsage === undefined ? {} : { tokenUsage }),
     ...(activeTurn === undefined ? {} : { activeTurn }),
     ...(nextClosedTurns === undefined || nextClosedTurns.length === 0
@@ -863,8 +1010,6 @@ function eventMayChangeTimelineNodes(event: BackendEvent, state: TimelineState):
     case 'session.activity':
     case 'session.title':
     case 'session.configuration':
-    case 'turn.started':
-    case 'step.started':
     case 'session.added':
     case 'session.removed':
     case 'permission.requested':
@@ -883,6 +1028,9 @@ function eventMayChangeTimelineNodes(event: BackendEvent, state: TimelineState):
     case 'archived.sessions.changed':
     case 'remote.event':
       return false
+    case 'turn.started':
+    case 'step.started':
+      return state.closedTurns?.includes(event.turn) === true
     case 'message.delta':
     case 'reasoning.delta':
       return (
@@ -914,6 +1062,7 @@ function closeTurn(
   reason: Extract<BackendEvent, { readonly type: 'turn.ended' }>['reason'],
   failure: Extract<BackendEvent, { readonly type: 'turn.ended' }>['failure'],
   sequence: number,
+  turnUsage: TurnTokenUsage | undefined,
 ): void {
   for (let index = 0; index < nodes.length; index += 1) {
     const node = nodes[index]
@@ -985,6 +1134,7 @@ function closeTurn(
     nodes[index] = {
       ...node,
       turnCompleted: index === closingIndex && !blockedByTerminalReason && !blockedByLaterTranscript,
+      turnUsage: index === closingIndex && reason === 'completed' ? turnUsage : undefined,
     }
   }
 }
@@ -1007,8 +1157,102 @@ function invalidateTurnTail(nodes: TimelineNode[], turn: number): void {
   for (let index = 0; index < nodes.length; index += 1) {
     const node = nodes[index]
     if (node?.kind === 'assistant-message' && node.turn === turn)
-      nodes[index] = { ...node, turnCompleted: false }
+      nodes[index] = { ...node, turnCompleted: false, turnUsage: undefined }
   }
+}
+
+function completeTurnUsage(tracking: TurnUsageTracking | undefined): TurnTokenUsage | undefined {
+  if (
+    tracking === undefined ||
+    !tracking.turnStarted ||
+    tracking.invalid ||
+    tracking.active !== undefined ||
+    tracking.attempts.length === 0
+  )
+    return undefined
+  const attempts = tracking.attempts.map(normalizeUsageAttempt)
+  if (attempts.some((attempt) => attempt === undefined)) return undefined
+  const completeAttempts = attempts as readonly NormalizedUsageAttempt[]
+  const inputTokens = safeTokenSum(completeAttempts.map((item) => item.inputTokens))
+  const outputTokens = safeTokenSum(completeAttempts.map((item) => item.outputTokens))
+  const totalTokens = safeTokenSum(completeAttempts.map((item) => item.totalTokens))
+  if (inputTokens === undefined || outputTokens === undefined || totalTokens === undefined) return undefined
+  const cacheReadTokens = safeOptionalTokenSum(completeAttempts.map((item) => item.cacheReadTokens))
+  const cacheWriteTokens = safeOptionalTokenSum(completeAttempts.map((item) => item.cacheWriteTokens))
+  const reasoningTokens = safeOptionalTokenSum(completeAttempts.map((item) => item.reasoningTokens))
+  return {
+    inputTokens,
+    outputTokens,
+    totalTokens,
+    ...(cacheReadTokens === undefined ? {} : { cacheReadTokens }),
+    ...(cacheWriteTokens === undefined ? {} : { cacheWriteTokens }),
+    ...(reasoningTokens === undefined ? {} : { reasoningTokens }),
+  }
+}
+
+interface NormalizedUsageAttempt {
+  readonly inputTokens: number
+  readonly outputTokens: number
+  readonly totalTokens: number
+  readonly cacheReadTokens?: number
+  readonly cacheWriteTokens?: number
+  readonly reasoningTokens?: number
+}
+
+function normalizeUsageAttempt(usage: TokenUsage): NormalizedUsageAttempt | undefined {
+  const { inputTokens, outputTokens, totalTokens, cacheReadTokens, cacheWriteTokens, reasoningTokens } = usage
+  if (!isTokenCount(inputTokens) || !isTokenCount(outputTokens)) return undefined
+  if (cacheReadTokens !== undefined && !isTokenCount(cacheReadTokens)) return undefined
+  if (cacheWriteTokens !== undefined && !isTokenCount(cacheWriteTokens)) return undefined
+  if (reasoningTokens !== undefined && (!isTokenCount(reasoningTokens) || reasoningTokens > outputTokens))
+    return undefined
+  const knownPrompt = safeTokenSum([
+    inputTokens,
+    ...(cacheReadTokens === undefined ? [] : [cacheReadTokens]),
+    ...(cacheWriteTokens === undefined ? [] : [cacheWriteTokens]),
+  ])
+  if (knownPrompt === undefined) return undefined
+  let exactTotal: number
+  if (totalTokens !== undefined) {
+    if (!isTokenCount(totalTokens)) return undefined
+    const exactPrompt = totalTokens - outputTokens
+    if (!isTokenCount(exactPrompt) || exactPrompt < knownPrompt) return undefined
+    if (cacheReadTokens !== undefined && cacheWriteTokens !== undefined && exactPrompt !== knownPrompt)
+      return undefined
+    exactTotal = totalTokens
+  } else {
+    if (cacheReadTokens === undefined || cacheWriteTokens === undefined) return undefined
+    const derivedTotal = safeTokenSum([knownPrompt, outputTokens])
+    if (derivedTotal === undefined) return undefined
+    exactTotal = derivedTotal
+  }
+  return {
+    inputTokens,
+    outputTokens,
+    totalTokens: exactTotal,
+    ...(cacheReadTokens === undefined ? {} : { cacheReadTokens }),
+    ...(cacheWriteTokens === undefined ? {} : { cacheWriteTokens }),
+    ...(reasoningTokens === undefined ? {} : { reasoningTokens }),
+  }
+}
+
+function isTokenCount(value: number): boolean {
+  return Number.isSafeInteger(value) && value >= 0
+}
+
+function safeTokenSum(values: readonly number[]): number | undefined {
+  let total = 0
+  for (const value of values) {
+    if (!Number.isSafeInteger(value) || value < 0) return undefined
+    total += value
+    if (!Number.isSafeInteger(total)) return undefined
+  }
+  return total
+}
+
+function safeOptionalTokenSum(values: readonly (number | undefined)[]): number | undefined {
+  if (values.some((value) => value === undefined)) return undefined
+  return safeTokenSum(values as readonly number[])
 }
 
 function timingForEvent(

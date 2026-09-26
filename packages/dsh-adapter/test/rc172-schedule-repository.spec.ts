@@ -53,7 +53,7 @@ const every = {
   ...at,
   id: 'schedule-every',
   kind: 'every',
-  everySeconds: 900,
+  everySeconds: 60,
 } as const satisfies ScheduleRecord
 const daily = {
   ...at,
@@ -107,7 +107,7 @@ describe('DSH 0.1.7-rc.2 Schedule Remote contract', () => {
     await expect(new Rc172ScheduleRepository(transport).catalog(signal)).resolves.toMatchObject([
       { id: 'schedule-at', kind: 'at', sessionId: 'session-1', status: 'active' },
       { id: 'schedule-after', kind: 'after', afterSeconds: 120 },
-      { id: 'schedule-every', kind: 'every', everySeconds: 900 },
+      { id: 'schedule-every', kind: 'every', everySeconds: 60 },
       { id: 'schedule-daily', kind: 'daily', timeZone: 'UTC' },
       { id: 'schedule-weekly', kind: 'weekly', weekdays: [1, 3, 5], status: 'inactive' },
       { id: 'schedule-cron', kind: 'cron', lastDelivery: { messageId: 'message-1' } },
@@ -121,6 +121,45 @@ describe('DSH 0.1.7-rc.2 Schedule Remote contract', () => {
 
     await expect(new Rc172ScheduleRepository(transport).list('session-7', signal)).resolves.toEqual([every])
     expect(calls).toEqual([{ endpoint: 'schedule/list', args: { sessionId: 'session-7' }, signal }])
+  })
+
+  it('enforces the RC2 one-minute minimum when reading and writing recurring rules', async () => {
+    const invalidCatalog = recordingTransport([{ ok: true, value: [{ ...every, everySeconds: 59 }] }])
+    await expect(new Rc172ScheduleRepository(invalidCatalog.transport).catalog()).rejects.toMatchObject({
+      code: 'PROTOCOL_ERROR',
+    })
+
+    const invalidChange = recordingTransport([])
+    await expect(
+      new Rc172ScheduleRepository(invalidChange.transport).update({
+        sessionId: 'session-1',
+        id: every.id,
+        expected: every,
+        change: { kind: 'every', seconds: 59 },
+      }),
+    ).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
+    expect(invalidChange.calls).toEqual([])
+
+    const invalidExpected = recordingTransport([])
+    await expect(
+      new Rc172ScheduleRepository(invalidExpected.transport).update({
+        sessionId: 'session-1',
+        id: every.id,
+        expected: { ...every, everySeconds: 59 },
+      }),
+    ).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
+    expect(invalidExpected.calls).toEqual([])
+
+    const invalidReceipt = recordingTransport([
+      { ok: true, value: { id: every.id, updated: true, record: { ...every, everySeconds: 59 } } },
+    ])
+    await expect(
+      new Rc172ScheduleRepository(invalidReceipt.transport).update({
+        sessionId: 'session-1',
+        id: every.id,
+        expected: every,
+      }),
+    ).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
   })
 
   it('loads bounded history pages with exclusive cursors and preserves retention facts', async () => {
@@ -210,6 +249,30 @@ describe('DSH 0.1.7-rc.2 Schedule Remote contract', () => {
     ])
   })
 
+  it('forwards a compare-only update and maps the unchanged current record', async () => {
+    const request = {
+      sessionId: 'session-3',
+      id: weekly.id,
+      expected: weekly,
+    }
+    const { transport, calls } = recordingTransport([
+      { ok: true, value: { id: weekly.id, updated: false, record: weekly } },
+    ])
+
+    await expect(new Rc172ScheduleRepository(transport).update(request)).resolves.toEqual({
+      id: weekly.id,
+      updated: false,
+      record: weekly,
+    })
+    expect(calls).toEqual([
+      {
+        endpoint: 'schedule/update',
+        args: { sessionId: 'session-3', id: weekly.id, expected: weekly },
+        signal: undefined,
+      },
+    ])
+  })
+
   it('translates local-time input and every-seconds selectors without inventing create', async () => {
     const atTransport = recordingTransport([
       { ok: true, value: { id: 'schedule-at', updated: true, record: at } },
@@ -232,10 +295,10 @@ describe('DSH 0.1.7-rc.2 Schedule Remote contract', () => {
       sessionId: 'session-2',
       id: 'schedule-every',
       expected: every,
-      change: { kind: 'every', seconds: 1_800 },
+      change: { kind: 'every', seconds: 60 },
     })
     expect(everyTransport.calls[0]?.args).toMatchObject({
-      change: { kind: 'every', every_seconds: 1_800 },
+      change: { kind: 'every', every_seconds: 60 },
     })
     expect([...atTransport.calls, ...everyTransport.calls].map(({ endpoint }) => endpoint)).not.toContain(
       'schedule/create',
@@ -290,22 +353,39 @@ describe('DSH 0.1.7-rc.2 Schedule Remote contract', () => {
   it('preserves non-mutating misses and validates remote result ownership', async () => {
     const { transport } = recordingTransport([
       { ok: true, value: { id: 'schedule-1', updated: false, record: { ...at, id: 'schedule-1' } } },
+      { ok: true, value: { id: 'schedule-1', updated: false, code: 'schedule_not_found' } },
+      { ok: true, value: { id: 'schedule-1', updated: false, code: 'schedule_ended' } },
+      { ok: true, value: { id: 'schedule-1', updated: false, code: 'schedule_conflict' } },
       { ok: true, value: { id: 'schedule-other', deleted: true } },
       { ok: true, value: { id: 'schedule-1', code: 'delivery_cursor_not_found' } },
     ])
     const repository = new Rc172ScheduleRepository(transport)
+    const request = {
+      sessionId: 'session-1',
+      id: 'schedule-1',
+      expected: { ...at, id: 'schedule-1' },
+      title: 'x',
+    }
 
-    await expect(
-      repository.update({
-        sessionId: 'session-1',
-        id: 'schedule-1',
-        expected: { ...at, id: 'schedule-1' },
-        title: 'x',
-      }),
-    ).resolves.toEqual({
+    await expect(repository.update(request)).resolves.toEqual({
       id: 'schedule-1',
       updated: false,
       record: { ...at, id: 'schedule-1' },
+    })
+    await expect(repository.update(request)).resolves.toEqual({
+      id: 'schedule-1',
+      updated: false,
+      code: 'schedule_not_found',
+    })
+    await expect(repository.update(request)).resolves.toEqual({
+      id: 'schedule-1',
+      updated: false,
+      code: 'schedule_ended',
+    })
+    await expect(repository.update(request)).resolves.toEqual({
+      id: 'schedule-1',
+      updated: false,
+      code: 'schedule_conflict',
     })
     await expect(repository.delete('session-1', 'schedule-1')).rejects.toMatchObject({
       code: 'PROTOCOL_ERROR',

@@ -8,6 +8,7 @@ export async function readPermissionCatalog(
   transport: DshTransport,
   signal?: AbortSignal,
 ): Promise<readonly string[]> {
+  await transport.waitForEventStreamReady?.(signal)
   const value = recordOrUndefined(
     unwrapRpcResultValue<unknown>(
       await transport.remoteRequest('permissionPresets/catalog', {}, signal),

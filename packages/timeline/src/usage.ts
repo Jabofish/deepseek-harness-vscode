@@ -2,12 +2,20 @@ import type { TokenUsage } from '@dsh-vscode/domain'
 
 /** Add one completed step's accounting to the session aggregate. */
 export function addTokenUsage(previous: TokenUsage | undefined, next: TokenUsage): TokenUsage {
+  const nextTotal = exactUsageTotal(next)
+  const totalTokens =
+    previous === undefined
+      ? nextTotal
+      : previous.totalTokens === undefined || nextTotal === undefined
+        ? undefined
+        : exactTokenSum(previous.totalTokens, nextTotal)
   return {
     inputTokens: safeCount(previous?.inputTokens) + safeCount(next.inputTokens),
     outputTokens: safeCount(previous?.outputTokens) + safeCount(next.outputTokens),
     cacheReadTokens: safeCount(previous?.cacheReadTokens) + safeCount(next.cacheReadTokens),
     cacheWriteTokens: safeCount(previous?.cacheWriteTokens) + safeCount(next.cacheWriteTokens),
     reasoningTokens: safeCount(previous?.reasoningTokens) + safeCount(next.reasoningTokens),
+    ...(totalTokens === undefined ? {} : { totalTokens }),
   }
 }
 
@@ -86,4 +94,30 @@ function roundedIntegerPercent(cacheReadTokens: number, denominator: number): nu
 
 function safeCount(value: number | undefined): number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0
+}
+
+function exactTokenCount(value: number | undefined): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined
+}
+
+function exactUsageTotal(usage: TokenUsage): number | undefined {
+  if (usage.totalTokens !== undefined) return exactTokenCount(usage.totalTokens)
+  if (usage.cacheReadTokens === undefined || usage.cacheWriteTokens === undefined) return undefined
+  const counts = [
+    exactTokenCount(usage.inputTokens),
+    exactTokenCount(usage.outputTokens),
+    exactTokenCount(usage.cacheReadTokens),
+    exactTokenCount(usage.cacheWriteTokens),
+  ]
+  if (counts.some((value) => value === undefined)) return undefined
+  return counts.reduce<number | undefined>(
+    (total, value) => (total === undefined || value === undefined ? undefined : exactTokenSum(total, value)),
+    0,
+  )
+}
+
+function exactTokenSum(left: number, right: number): number | undefined {
+  if (!Number.isSafeInteger(left) || left < 0 || !Number.isSafeInteger(right) || right < 0) return undefined
+  const sum = left + right
+  return Number.isSafeInteger(sum) ? sum : undefined
 }

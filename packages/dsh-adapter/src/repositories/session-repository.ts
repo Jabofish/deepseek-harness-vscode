@@ -57,6 +57,8 @@ export class Rc6SessionRepository implements SessionRepository {
   private readonly sessionSummaries = new Map<string, SessionSummary>()
   private readonly queueOwners = new Map<string, string>()
   private readonly queues = new Map<string, readonly QueuedInput[]>()
+  /** Preserve the user's order when multiple mutations target one Inbox row. */
+  private readonly queueMutationTails = new Map<string, Promise<void>>()
   /** Monotonic Inbox projection cuts shared by control and follow streams. */
   private readonly queueProjectionSequences = new Map<string, number>()
   private readonly queueWaiters = new Map<string, Set<(items: readonly QueuedInput[]) => void>>()
@@ -87,6 +89,7 @@ export class Rc6SessionRepository implements SessionRepository {
     this.queueBaseline = options.queueBaseline ?? 'subscription'
     this.includesClientTimeZone = options.includeClientTimeZone ?? true
     this.executeSessionConfigurationCommand = options.executeSessionConfigCommand
+    this.selectAgentPreset = options.selectAgentPreset
     this.readPermissionPresets = options.readPermissionPresets
     this.supportsFileUploads = options.supportsFileUploads === true
     this.supportsSessionRestore = options.supportsSessionRestore === true
@@ -107,6 +110,8 @@ export class Rc6SessionRepository implements SessionRepository {
   private readonly includesClientTimeZone: boolean
   private readonly executeSessionConfigurationCommand:
     ((sessionId: string, command: string, signal?: AbortSignal) => Promise<void>) | undefined
+  private readonly selectAgentPreset:
+    ((sessionId: string, presetId: string, signal?: AbortSignal) => Promise<void>) | undefined
 
   public remember(event: BackendEvent): void {
     if (event.type !== 'queue.updated') {
@@ -205,6 +210,7 @@ export class Rc6SessionRepository implements SessionRepository {
       items = items.filter((item) => item.workspaceId === query.workspaceId)
     if (query?.archived !== undefined && archivedSessionIds !== undefined)
       items = items.filter((item) => archivedSessionIds.has(item.id) === query.archived)
+    let searchHasMore: boolean | undefined
     if (query?.search !== undefined && query.search.trim() !== '') {
       const search = await callRpc<unknown>(this.transport, 'session.search', { query: query.search }, signal)
       const searchRecord = recordOrUndefined(search)
@@ -225,24 +231,28 @@ export class Rc6SessionRepository implements SessionRepository {
         typeof searchRecord.hasMore !== 'boolean'
       )
         throw malformedSessionResponse('session search')
-      // `hasMore` asks the client to refine the query; the returned items
-      // stay valid, and the official runtime surfaces them instead of
-      // failing the search. Keep the same behavior here rather than turning
-      // every broad query into a CAPABILITY_UNAVAILABLE error.
+      // The search contract caps this result and reports whether additional
+      // authorized matches exist. Keep the partial result and carry that fact
+      // to the UI so it can ask the user to refine the query.
       const allowed = new Set(
         searchRecord.items.map(
           (item) => (recordOrUndefined(item) as { readonly sessionId: string }).sessionId,
         ),
       )
       items = items.filter((item) => allowed.has(item.id))
+      searchHasMore = searchRecord.hasMore
     }
-    if (query?.limit !== undefined) items = items.slice(0, query.limit)
+    if (query?.limit !== undefined) {
+      if (searchHasMore !== undefined && items.length > query.limit) searchHasMore = true
+      items = items.slice(0, query.limit)
+    }
     for (const item of items) this.sessionSummaries.set(item.id, item)
     return {
       items,
       ...(typeof list.nextCursor === 'string' && list.nextCursor.length > 0
         ? { nextCursor: list.nextCursor }
         : {}),
+      ...(searchHasMore === undefined ? {} : { searchHasMore }),
     }
   }
 
@@ -786,53 +796,81 @@ export class Rc6SessionRepository implements SessionRepository {
         retryable: false,
       })
     const sessionId = this.ownerOf(inputId)
-    const queued = this.queues.get(sessionId)?.find((item) => item.id === inputId)
-    // The wire's only edit is a text-only replacement of the whole content, so
-    // a row carrying an image or a file would lose it. The panel offers no
-    // edit for those rows; this guard also covers a stale row that still
-    // reached the verb.
-    if (queued?.textOnly === false)
-      throw new AppError({
-        code: 'CAPABILITY_UNAVAILABLE',
-        message: 'Editing a queued DSH prompt that carries attachments would drop them.',
-        retryable: false,
-      })
-    const receipt = await callRpc<unknown>(
-      this.transport,
-      'session.updateQueue',
-      {
-        sessionId,
-        itemId: inputId,
-        action: { kind: 'edit', content: [{ type: 'text', text }] },
-      },
-      signal,
-    )
-    assertAccepted(receipt, 'queue update')
-  }
-
-  public async removeQueuedInput(inputId: string, signal?: AbortSignal): Promise<void> {
-    const receipt = await callRpc<unknown>(
-      this.transport,
-      'session.updateQueue',
-      { sessionId: this.ownerOf(inputId), itemId: inputId, action: { kind: 'remove' } },
-      signal,
-    )
-    assertAccepted(receipt, 'queue removal')
-    this.queueOwners.delete(inputId)
-  }
-
-  public async convertQueuedInputToSteer(inputId: string, signal?: AbortSignal): Promise<void> {
-    try {
+    return this.serializeQueueMutation(inputId, signal, async () => {
+      const queued = this.queues.get(sessionId)?.find((item) => item.id === inputId)
+      // The wire's only edit is a text-only replacement of the whole content,
+      // so a row carrying an image or a file would lose it. Check the latest
+      // cached snapshot after prior mutations on this row have settled.
+      if (queued?.textOnly === false)
+        throw new AppError({
+          code: 'CAPABILITY_UNAVAILABLE',
+          message: 'Editing a queued DSH prompt that carries attachments would drop them.',
+          retryable: false,
+        })
       const receipt = await callRpc<unknown>(
         this.transport,
         'session.updateQueue',
-        { sessionId: this.ownerOf(inputId), itemId: inputId, action: { kind: 'steer' } },
+        {
+          sessionId,
+          itemId: inputId,
+          action: { kind: 'edit', content: [{ type: 'text', text }] },
+        },
         signal,
       )
-      assertAccepted(receipt, 'queue steering')
-    } catch (error) {
-      if (!isSettledSteer(error)) throw error
-    }
+      assertAccepted(receipt, 'queue update')
+    })
+  }
+
+  public async removeQueuedInput(inputId: string, signal?: AbortSignal): Promise<void> {
+    const sessionId = this.ownerOf(inputId)
+    return this.serializeQueueMutation(inputId, signal, async () => {
+      const receipt = await callRpc<unknown>(
+        this.transport,
+        'session.updateQueue',
+        { sessionId, itemId: inputId, action: { kind: 'remove' } },
+        signal,
+      )
+      assertAccepted(receipt, 'queue removal')
+      this.queueOwners.delete(inputId)
+    })
+  }
+
+  public async convertQueuedInputToSteer(inputId: string, signal?: AbortSignal): Promise<void> {
+    const sessionId = this.ownerOf(inputId)
+    return this.serializeQueueMutation(inputId, signal, async () => {
+      try {
+        const receipt = await callRpc<unknown>(
+          this.transport,
+          'session.updateQueue',
+          { sessionId, itemId: inputId, action: { kind: 'steer' } },
+          signal,
+        )
+        assertAccepted(receipt, 'queue steering')
+      } catch (error) {
+        if (!isSettledSteer(error)) throw error
+      }
+    })
+  }
+
+  private serializeQueueMutation(
+    inputId: string,
+    signal: AbortSignal | undefined,
+    mutate: () => Promise<void>,
+  ): Promise<void> {
+    const preceding = this.queueMutationTails.get(inputId) ?? Promise.resolve()
+    const operation = preceding.then(async () => {
+      if (signal?.aborted === true) throw cancelledQueueMutation()
+      await mutate()
+    })
+    const tail = operation.then(
+      () => undefined,
+      () => undefined,
+    )
+    this.queueMutationTails.set(inputId, tail)
+    void tail.then(() => {
+      if (this.queueMutationTails.get(inputId) === tail) this.queueMutationTails.delete(inputId)
+    })
+    return rejectQueueMutationOnAbort(operation, signal)
   }
 
   public async cancel(sessionId: string, signal?: AbortSignal): Promise<void> {
@@ -862,12 +900,26 @@ export class Rc6SessionRepository implements SessionRepository {
         retryable: false,
       })
     const current = await this.get(sessionId, signal)
+    const currentPermissionValue = current.configuration.permissionPreset.trim()
     const currentPermission =
-      current.configuration.permissionPresetKnown === false
-        ? undefined
-        : current.configuration.permissionPreset.trim()
+      current.configuration.permissionPresetKnown === false ? undefined : currentPermissionValue
+    // `configuration.permissionPreset` is a display fallback when the host has
+    // no observed current value. If a full configuration update carries that
+    // unchanged fallback, do not turn an unrelated model/preset edit into a
+    // permission command that writes an unobserved value back to DSH.
+    const permissionBaseline =
+      current.configuration.permissionPresetKnown === false && this.readPermissionPresets !== undefined
+        ? currentPermissionValue
+        : currentPermission
+    const permissionChanged = requestedPermission !== permissionBaseline
     if (
-      requestedPermission !== currentPermission &&
+      permissionChanged &&
+      this.readPermissionPresets !== undefined &&
+      current.permissionPresets === undefined
+    )
+      throw unavailable('changing a permission preset without an authoritative DSH catalog')
+    if (
+      permissionChanged &&
       current.permissionPresets !== undefined &&
       !current.permissionPresets.includes(requestedPermission)
     )
@@ -879,7 +931,9 @@ export class Rc6SessionRepository implements SessionRepository {
 
     const requestedPreset = configuration.preset.trim()
     const currentPreset = current.configuration.preset.trim()
-    if (requestedPreset !== '' && requestedPreset !== currentPreset && current.status !== 'idle')
+    const presetSelectionUnavailable =
+      current.status !== 'idle' || (this.selectAgentPreset !== undefined && !current.blank)
+    if (requestedPreset !== '' && requestedPreset !== currentPreset && presetSelectionUnavailable)
       throw unavailable('changing the agent preset of an existing session')
 
     const selectModel = async (
@@ -916,6 +970,10 @@ export class Rc6SessionRepository implements SessionRepository {
       rollback.unshift(reverse)
     }
     const selectPreset = async (preset: string, operationSignal?: AbortSignal): Promise<void> => {
+      if (this.selectAgentPreset !== undefined) {
+        await this.selectAgentPreset(sessionId, preset, operationSignal)
+        return
+      }
       const value = await callRpc<unknown>(
         this.transport,
         'agentPreset.select',
@@ -949,7 +1007,7 @@ export class Rc6SessionRepository implements SessionRepository {
           () => selectPreset(requestedPreset, signal),
           () => (currentPreset === '' ? Promise.resolve() : selectPreset(currentPreset)),
         )
-      if (requestedPermission !== currentPermission)
+      if (permissionChanged)
         await apply(
           () => command(`/permission ${requestedPermission}`, signal),
           () =>
@@ -1183,6 +1241,8 @@ export interface Rc6SessionRepositoryOptions {
     command: string,
     signal?: AbortSignal,
   ) => Promise<void>
+  /** Exact version adapters may select a Session preset through their Remote contract. */
+  readonly selectAgentPreset?: (sessionId: string, presetId: string, signal?: AbortSignal) => Promise<void>
   /** Version adapters may attach a logical per-session event stream lazily. */
   readonly onSessionAccess?: (sessionId: string) => void
   /** Version adapters may re-baseline a process-local stream on session.open. */
@@ -1772,6 +1832,37 @@ function isSettledSteer(error: unknown): boolean {
   if (!(error instanceof AppError)) return false
   const code = error.context?.rpcCode
   return code === 'queue-item-not-found' || code === 'steer-unavailable'
+}
+
+function cancelledQueueMutation(): AppError {
+  return new AppError({
+    code: 'REQUEST_CANCELLED',
+    message: 'The queue operation was cancelled.',
+    retryable: false,
+  })
+}
+
+function rejectQueueMutationOnAbort<T>(operation: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (signal === undefined) return operation
+  if (signal.aborted) return Promise.reject(cancelledQueueMutation())
+  return new Promise<T>((resolve, reject) => {
+    const cleanup = (): void => signal.removeEventListener('abort', onAbort)
+    const onAbort = (): void => {
+      cleanup()
+      reject(cancelledQueueMutation())
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+    void operation.then(
+      (value) => {
+        cleanup()
+        resolve(value)
+      },
+      (error: unknown) => {
+        cleanup()
+        reject(error instanceof Error ? error : new Error(String(error)))
+      },
+    )
+  })
 }
 
 function assertPromptContent(text: string, attachments: readonly PromptAttachment[]): void {

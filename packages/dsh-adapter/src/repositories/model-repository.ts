@@ -3,6 +3,7 @@ import {
   AppError,
   type DiscoveredModel,
   type ModelDescriptor,
+  type ModelInputModality,
   type ModelProvider,
   type ModelRepository,
   type ModelDiscoveryInput,
@@ -18,6 +19,7 @@ import {
   schemasteryUnionMembers,
   type SerializedSchemaNode,
 } from '../versions/rc6/schemastery.js'
+import { callCredentialRpc } from './shared/credential-rpc.js'
 import {
   nonEmptyString,
   recordOrUndefined,
@@ -179,6 +181,9 @@ export class Rc6ModelRepository implements ModelRepository {
         label: record.name === undefined ? (record.id as string) : (record.name as string),
         ...(record.contextWindow === undefined ? {} : { contextWindow: record.contextWindow as number }),
         ...(record.maxTokens === undefined ? {} : { maxTokens: record.maxTokens as number }),
+        ...(record.inputModalities === undefined
+          ? {}
+          : { inputModalities: record.inputModalities as readonly ModelInputModality[] }),
       }
     })
   }
@@ -231,7 +236,15 @@ function validModelCatalogModel(value: unknown): boolean {
     nonEmptyString(record.id) &&
     nonEmptyString(record.name) &&
     (record.description === undefined || typeof record.description === 'string') &&
+    validInputModalities(record.inputModalities) &&
     (reasoning === undefined || validModelReasoning(reasoning))
+  )
+}
+
+function validInputModalities(value: unknown): boolean {
+  return (
+    value === undefined ||
+    (Array.isArray(value) && value.every((modality) => modality === 'text' || modality === 'image'))
   )
 }
 
@@ -268,6 +281,7 @@ function validDiscoveredModel(value: unknown): boolean {
     record !== undefined &&
     nonEmptyString(record.id) &&
     (record.name === undefined || nonEmptyString(record.name)) &&
+    validInputModalities(record.inputModalities) &&
     (record.contextWindow === undefined ||
       (Number.isSafeInteger(record.contextWindow) && (record.contextWindow as number) > 0)) &&
     (record.maxTokens === undefined ||
@@ -348,7 +362,7 @@ async function describeCredentialReferences(
   const states = new Map<string, { readonly configured: boolean; readonly writable: boolean }>()
   for (let offset = 0; offset < refs.length; offset += 64) {
     const batch = refs.slice(offset, offset + 64)
-    const described = await callRpc<{ credentials: unknown }>(
+    const described = await callCredentialRpc<{ credentials: unknown }>(
       transport,
       'credentials.describe',
       { refs: batch },
@@ -358,13 +372,11 @@ async function describeCredentialReferences(
     if (credentials === undefined) throw malformedModels('credential state')
     for (const ref of batch) {
       const view = asOptionalRecord(credentials[ref])
-      // `credentials.describe` may omit a never-written reference. This is the
-      // expected state for a newly materialized custom provider; it must not
-      // make the whole provider catalog malformed.
-      if (view === undefined) {
-        states.set(ref, { configured: false, writable: false })
-        continue
-      }
+      // Both the pinned RC2 Remote and the older Host contract return one
+      // state row for every requested valid reference. The explicit
+      // configured=false row represents a missing credential; omission is a
+      // malformed response.
+      if (view === undefined) throw malformedModels('credential state')
       if (
         typeof view.configured !== 'boolean' ||
         typeof view.writable !== 'boolean' ||

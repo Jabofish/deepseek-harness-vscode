@@ -761,6 +761,7 @@ function normalizeEnvelope(value: unknown): BackendEvent | undefined {
       return normalizeAssistantInterruptionFrame(frame)
     case 'session/event': {
       const event = record(frame.event)
+      if (!isDurableSequence(event?.seq)) throw new Error('Malformed DSH session event sequence.')
       return typeof event?.type !== 'string'
         ? withSequence(
             {
@@ -942,6 +943,10 @@ function withSequence(event: BackendEvent, value: unknown): BackendEvent {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
     ? { ...event, sequence: value }
     : event
+}
+
+function isDurableSequence(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 && !Object.is(value, -0)
 }
 
 function eventSessionId(event: BackendEvent): string | undefined {

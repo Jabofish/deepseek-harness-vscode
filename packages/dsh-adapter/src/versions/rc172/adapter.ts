@@ -1,5 +1,6 @@
 import type { VersionAdapterIdentity } from '../../adapter-base.js'
 import type {
+  BackendEndpoint,
   AccountLifecycleRepository,
   PluginBundleRepository,
   PresetRepository,
@@ -10,7 +11,8 @@ import type { Rc6WorkspaceRepository } from '../../repositories/workspace-reposi
 import { Rc172SessionRepository } from './session-repository.js'
 
 import { Rc171VersionAdapter, type Rc171AdapterOptions } from '../rc171/adapter.js'
-import type { AlphaLoopbackApiClient } from '../alpha/transport.js'
+import type { AlphaLoopbackApiClient, AlphaLoopbackApiClientOptions } from '../alpha/transport.js'
+import { normalizeRc172ErrorCode } from './error-vocabulary.js'
 import { Rc172PresetRepository } from './preset-repository.js'
 import { Rc172ScheduleRepository } from './schedule-repository.js'
 import { Rc172PluginBundleRepository } from './plugin-manager-repository.js'
@@ -41,6 +43,16 @@ export class Rc172VersionAdapter extends Rc171VersionAdapter {
 
   public constructor(options: Rc172AdapterOptions) {
     super(options)
+  }
+
+  protected override createTransportOptions(endpoint: BackendEndpoint): AlphaLoopbackApiClientOptions {
+    return {
+      ...super.createTransportOptions(endpoint),
+      normalizeErrorCode: normalizeRc172ErrorCode,
+      // RC2's Session Controller always registers modelSelection; only an
+      // explicit null/null projection means the deployment default is active.
+      requireModelSelectionProjection: true,
+    }
   }
 
   protected override createPresetRepository(transport: AlphaLoopbackApiClient): PresetRepository {

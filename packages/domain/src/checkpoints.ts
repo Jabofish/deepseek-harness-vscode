@@ -54,6 +54,8 @@ export interface CheckpointFilePreview {
 }
 
 export interface CheckpointPreview {
+  /** Host-issued token binding restore confirmation to the bytes shown here. */
+  readonly previewId: string
   readonly summary: CheckpointSummary
   readonly files: readonly CheckpointFilePreview[]
   readonly conflictCount: number
@@ -85,8 +87,8 @@ export interface CheckpointListQuery {
  * A checkpoint is a content snapshot: the bytes the files held when it was
  * created. A file that changed since then is exactly the file a restore would
  * put back, so it cannot be skipped without making the restore a no-op.
- * `overwrite` is the caller confirming the user saw the changed files;
- * `abort` refuses instead, for a caller that has shown no preview.
+ * `overwrite` accepts drift captured by the Host-issued preview;
+ * `abort` refuses if a file differs from the checkpoint, even when previewed.
  */
 export type CheckpointConflictPolicy = 'abort' | 'overwrite'
 
@@ -102,10 +104,11 @@ export interface CheckpointRepository {
   get(checkpointId: string, signal?: AbortSignal): Promise<CheckpointSummary>
   preview(checkpointId: string, signal?: AbortSignal): Promise<CheckpointPreview>
   delete(checkpointId: string, signal?: AbortSignal): Promise<void>
-  /** Write every listed file back to the snapshot; `abort` refuses when one changed. */
+  /** Restore only against a still-current Host preview; `overwrite` accepts its captured drift. */
   restore(
     checkpointId: string,
     expectedRevision: number,
+    previewId: string,
     conflictPolicy: CheckpointConflictPolicy,
     signal?: AbortSignal,
   ): Promise<CheckpointRestoreOutcome>

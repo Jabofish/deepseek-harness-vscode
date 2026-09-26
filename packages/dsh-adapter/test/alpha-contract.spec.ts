@@ -1,10 +1,14 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import type { BackendEndpoint, BackendEvent } from '@dsh-vscode/domain'
+import { AppError, type BackendEndpoint, type BackendEvent } from '@dsh-vscode/domain'
 
+import type { DshTransport } from '../src/contracts.js'
 import type { AlphaEventSource } from '../src/versions/alpha/events.js'
 import { AlphaLoopbackApiClient, type AlphaWebSocket } from '../src/versions/alpha/transport.js'
 import { Alpha1VersionAdapter } from '../src/versions/alpha/adapter.js'
+import { Alpha171VersionAdapter } from '../src/versions/alpha171/adapter.js'
+import { Rc171VersionAdapter } from '../src/versions/rc171/adapter.js'
+import { Rc172VersionAdapter } from '../src/versions/rc172/adapter.js'
 import { callRpc } from '../src/versions/rc6/rpc.js'
 import { Rc6CredentialRepository } from '../src/repositories/credential-repository.js'
 import { Rc6SessionRepository } from '../src/repositories/session-repository.js'
@@ -81,6 +85,29 @@ function client(
     sessionHistoryTurnWindow,
     ...(subagentAddresses === undefined ? {} : { subagentAddresses }),
   })
+}
+
+function rc172Client(fetch: typeof globalThis.fetch): DshTransport {
+  return new Rc172VersionAdapter({
+    requestTimeoutMs: 1_000,
+    retryPolicy: { maximumAttempts: 1, baseDelayMs: 1, maximumDelayMs: 1 },
+    fetch,
+    authCookie: () => 'dsh_session=test-cookie',
+    webSocket: FakeWebSocket,
+  }).createTransport(endpoint)
+}
+
+function alpha171Client(fetch: typeof globalThis.fetch, rc171: boolean): DshTransport {
+  const options = {
+    requestTimeoutMs: 1_000,
+    retryPolicy: { maximumAttempts: 1, baseDelayMs: 1, maximumDelayMs: 1 },
+    fetch,
+    authCookie: () => 'dsh_session=test-cookie',
+    webSocket: FakeWebSocket,
+  }
+  return (rc171 ? new Rc171VersionAdapter(options) : new Alpha171VersionAdapter(options)).createTransport(
+    endpoint,
+  )
 }
 
 function response(init: RequestInit | undefined, value: unknown): Response {
@@ -796,6 +823,158 @@ describe('DSH 0.1.2-alpha.1 Connection/Gateway contract', () => {
     await transport.close()
   })
 
+  it.each([
+    ['a missing modelSelection projection', {}],
+    ['a missing required next field', { modelSelection: { lastUsed: null } }],
+    [
+      'a malformed modelSelection value',
+      { modelSelection: { lastUsed: null, next: { provider: 'p', model: 'm', reasoningEffort: '' } } },
+    ],
+  ])('RC2 rejects %s instead of falling back to its deployment default', async (_label, values) => {
+    FakeWebSocket.instances.length = 0
+    const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
+      Promise.resolve(
+        response(init, {
+          default: { provider: 'default-provider', model: 'default-model' },
+          routableProviders: ['default-provider'],
+          groups: [],
+          failures: [],
+        }),
+      ),
+    )
+    const transport = rc172Client(fetch)
+    const models = transport.request('session.models', { sessionId: 's1' })
+    const socket = await waitForSocket()
+    socket.open()
+    await answerFollow(socket, 1, {
+      type: 'snapshot',
+      header: { version: 4, id: 's1', createdAt: 1, isSeeded: true, delegationDepth: 0 },
+      cursor: 0,
+      records: [],
+      hasMore: true,
+      projections: { asOfSeq: 0, values },
+      assistantStream: { revision: 0 },
+    })
+
+    try {
+      await expect(models).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
+    } finally {
+      await transport.close()
+    }
+  })
+
+  it('keeps the explicit RC2 no-selection state on the deployment default', async () => {
+    FakeWebSocket.instances.length = 0
+    const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
+      Promise.resolve(
+        response(init, {
+          default: { provider: 'default-provider', model: 'default-model', reasoningEffort: 'high' },
+          routableProviders: ['default-provider'],
+          groups: [],
+          failures: [],
+        }),
+      ),
+    )
+    const transport = rc172Client(fetch)
+    const models = transport.request('session.models', { sessionId: 's1' })
+    const socket = await waitForSocket()
+    socket.open()
+    await answerFollow(socket, 1, {
+      type: 'snapshot',
+      header: { version: 4, id: 's1', createdAt: 1, isSeeded: true, delegationDepth: 0 },
+      cursor: 0,
+      records: [],
+      hasMore: true,
+      projections: {
+        asOfSeq: 0,
+        values: { modelSelection: { lastUsed: null, next: null } },
+      },
+      assistantStream: { revision: 0 },
+    })
+
+    try {
+      await expect(models).resolves.toMatchObject({
+        result: {
+          ok: true,
+          value: {
+            current: { provider: 'default-provider', model: 'default-model', reasoningEffort: 'high' },
+            routable: true,
+          },
+        },
+      })
+    } finally {
+      await transport.close()
+    }
+  })
+
+  it('keeps RC2 model catalog projection reads cancellable', async () => {
+    FakeWebSocket.instances.length = 0
+    const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
+      Promise.resolve(
+        response(init, {
+          default: { provider: 'p', model: 'm' },
+          routableProviders: ['p'],
+          groups: [],
+          failures: [],
+        }),
+      ),
+    )
+    const transport = rc172Client(fetch)
+    const controller = new AbortController()
+    const models = transport.request('session.models', { sessionId: 's1' }, controller.signal)
+    const socket = await waitForSocket()
+    socket.open()
+    await waitForSent(socket, 1)
+    controller.abort()
+
+    try {
+      await expect(models).rejects.toMatchObject({ code: 'REQUEST_CANCELLED' })
+    } finally {
+      await transport.close()
+    }
+  })
+
+  it.each([
+    ['Alpha171', false],
+    ['RC1', true],
+  ])('does not apply the RC2 projection requirement to %s', async (_label, rc171) => {
+    FakeWebSocket.instances.length = 0
+    const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
+      Promise.resolve(
+        response(init, {
+          default: { provider: 'default-provider', model: 'default-model' },
+          routableProviders: ['default-provider'],
+          groups: [],
+          failures: [],
+        }),
+      ),
+    )
+    const transport = alpha171Client(fetch, rc171)
+    const models = transport.request('session.models', { sessionId: 's1' })
+    const socket = await waitForSocket()
+    socket.open()
+    await answerFollow(socket, 1, {
+      type: 'snapshot',
+      header: { version: 4, id: 's1', createdAt: 1, isSeeded: true, delegationDepth: 0 },
+      cursor: 0,
+      records: [],
+      hasMore: true,
+      projections: { asOfSeq: 0, values: {} },
+      assistantStream: { revision: 0 },
+    })
+
+    try {
+      await expect(models).resolves.toMatchObject({
+        result: {
+          ok: true,
+          value: { current: { provider: 'default-provider', model: 'default-model' }, routable: true },
+        },
+      })
+    } finally {
+      await transport.close()
+    }
+  })
+
   it('addresses a catalog-resolved child session by its durable subagent descriptor', async () => {
     // The host refuses a session-kind address whose Session header is
     // subagent-origin (`session/agent-busy`, "use subagent delivery for this
@@ -1079,19 +1258,21 @@ describe('DSH 0.1.2-alpha.1 Connection/Gateway contract', () => {
       Promise.resolve(
         response(init, {
           DEEPSEEK_API_KEY: { configured: true, writable: true },
+          OPENAI_API_KEY: { configured: false, writable: true },
         }),
       ),
     )
     const transport = client(fetch)
 
     await expect(
-      transport.request('credentials.describe', { refs: ['DEEPSEEK_API_KEY'] }),
+      transport.request('credentials.describe', { refs: ['DEEPSEEK_API_KEY', 'OPENAI_API_KEY'] }),
     ).resolves.toMatchObject({
       result: {
         ok: true,
         value: {
           credentials: {
             DEEPSEEK_API_KEY: { configured: true, writable: true },
+            OPENAI_API_KEY: { configured: false, writable: true },
           },
         },
       },
@@ -1099,7 +1280,7 @@ describe('DSH 0.1.2-alpha.1 Connection/Gateway contract', () => {
     const body = JSON.parse(bodyText(fetch.mock.calls[0]?.[1])) as {
       readonly payload: { readonly args: { readonly refs: string[] } }
     }
-    expect(body.payload.args).toEqual({ refs: ['DEEPSEEK_API_KEY'] })
+    expect(body.payload.args).toEqual({ refs: ['DEEPSEEK_API_KEY', 'OPENAI_API_KEY'] })
     await transport.close()
   })
 
@@ -1145,7 +1326,7 @@ describe('DSH 0.1.2-alpha.1 Connection/Gateway contract', () => {
               ok: false,
               error: {
                 code: 'credential-rejected',
-                message: 'the reference is shadowed by a read-only layer',
+                message: 'provider rejection unexpectedly echoed password=sk-test-value',
                 details: { ref: 'DEEPSEEK_API_KEY' },
               },
             },
@@ -1157,9 +1338,28 @@ describe('DSH 0.1.2-alpha.1 Connection/Gateway contract', () => {
     const transport = client(fetch)
     const credentials = new Rc6CredentialRepository(transport)
 
-    await expect(credentials.setReference('DEEPSEEK_API_KEY', 'sk-test-value')).rejects.toMatchObject({
-      code: 'PERMISSION_DENIED',
+    let failure: unknown
+    try {
+      await credentials.setReference('DEEPSEEK_API_KEY', 'sk-test-value')
+    } catch (error) {
+      failure = error
+    }
+    expect(failure).toBeInstanceOf(AppError)
+    const safeError = failure as AppError
+    expect(safeError).toMatchObject({ code: 'PERMISSION_DENIED', retryable: false })
+    expect(safeError.message).not.toContain('sk-test-value')
+    expect(safeError.message).not.toContain('password')
+    expect(safeError.context).toBeUndefined()
+    expect((safeError as AppError & { readonly cause?: unknown }).cause).toBeUndefined()
+    const serializedErrorResponse = JSON.stringify({
+      code: safeError.code,
+      message: safeError.message,
+      retryable: safeError.retryable,
+      context: safeError.context,
+      cause: (safeError as AppError & { readonly cause?: unknown }).cause,
     })
+    expect(serializedErrorResponse).not.toContain('sk-test-value')
+    expect(serializedErrorResponse).not.toContain('password')
     await transport.close()
   })
 

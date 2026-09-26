@@ -37,10 +37,12 @@ export class DshConnectionCoordinator {
   private inFlight: Promise<ConnectionResult> | undefined
   private inFlightRequest: ConnectionRequest | undefined
   private backend: DshBackend | undefined
+  private readonly orphanedBackends = new Set<DshBackend>()
   private managedProcess: ManagedProcessHandle | undefined
   private operationAbort: AbortController | undefined
   private disconnectOperation: Promise<void> | undefined
   private generation = 0
+  private disconnectIntent = 0
 
   public constructor(private readonly dependencies: ConnectionCoordinatorDependencies) {}
 
@@ -55,7 +57,13 @@ export class DshConnectionCoordinator {
   }
 
   public async connect(request: ConnectionRequest, signal?: AbortSignal): Promise<ConnectionResult> {
-    if (this.disconnectOperation !== undefined) await waitForSignal(this.disconnectOperation, signal)
+    this.throwIfAborted(signal)
+    const disconnectIntent = this.disconnectIntent
+    if (this.disconnectOperation !== undefined) {
+      await waitForSignal(this.disconnectOperation, signal)
+      if (this.disconnectIntent !== disconnectIntent) throw cancelled(signal?.reason)
+    }
+    this.throwIfAborted(signal)
     if (this.inFlight !== undefined) {
       if (!sameRequest(this.inFlightRequest, request))
         throw new AppError({
@@ -65,13 +73,37 @@ export class DshConnectionCoordinator {
         })
       return waitForSignal(this.inFlight, signal)
     }
+    if (
+      this.orphanedBackends.size > 0 ||
+      (this.state.kind === 'failed' && (this.backend !== undefined || this.managedProcess !== undefined))
+    ) {
+      await this.disconnectForReplacement()
+      this.throwIfAborted(signal)
+      if (this.disconnectIntent !== disconnectIntent) throw cancelled(signal?.reason)
+    }
     if (this.backend !== undefined && shouldDisconnectForRequest(this.backend.connection.endpoint, request))
-      await this.disconnect()
+      await this.disconnectForReplacement()
+    this.throwIfAborted(signal)
+    if (this.disconnectIntent !== disconnectIntent) throw cancelled(signal?.reason)
     const generation = ++this.generation
     const operationAbort = new AbortController()
     this.operationAbort = operationAbort
     const operationSignal = combineSignals(signal, operationAbort.signal)
-    const operation = this.connectOnce(request, operationSignal, generation)
+    const operation = this.connectOnce(request, operationSignal, generation).catch((error: unknown) => {
+      if (
+        generation === this.generation &&
+        isCancellation(error, operationSignal) &&
+        this.managedProcess === undefined &&
+        this.orphanedBackends.size === 0
+      ) {
+        const state: BackendState =
+          this.backend === undefined
+            ? { kind: 'idle' }
+            : { kind: 'connected', backend: this.backend.connection }
+        this.publish(state)
+      }
+      throw error
+    })
     this.inFlight = operation
     this.inFlightRequest = request
     void operation.then(
@@ -93,8 +125,24 @@ export class DshConnectionCoordinator {
     return operation
   }
 
-  public async disconnect(): Promise<void> {
+  public disconnect(): Promise<void> {
+    this.disconnectIntent += 1
+    if (this.disconnectOperation !== undefined) {
+      // A second explicit disconnect also cancels connect requests that are
+      // waiting for an internal replacement teardown to finish.
+      this.generation += 1
+      this.operationAbort?.abort()
+      return this.disconnectOperation
+    }
+    return this.beginDisconnect()
+  }
+
+  private disconnectForReplacement(): Promise<void> {
     if (this.disconnectOperation !== undefined) return this.disconnectOperation
+    return this.beginDisconnect()
+  }
+
+  private beginDisconnect(): Promise<void> {
     const operation = this.disconnectOnce()
     this.disconnectOperation = operation
     void operation.then(
@@ -117,35 +165,54 @@ export class DshConnectionCoordinator {
     await this.inFlight?.catch(() => undefined)
 
     const backend = this.backend
+    const backends = new Set(this.orphanedBackends)
+    if (backend !== undefined) backends.add(backend)
     const managed = this.managedProcess
-    this.backend = undefined
-    this.managedProcess = undefined
-    this.publish({ kind: 'stopping', ownership: managed === undefined ? 'external' : 'managed' })
-    let closeError: unknown
+    this.publish({
+      kind: 'stopping',
+      ownership:
+        managed === undefined
+          ? (backend?.connection.ownership ?? [...backends][0]?.connection.ownership ?? 'external')
+          : 'managed',
+    })
+    const closeErrors: unknown[] = []
     let stopError: unknown
-    try {
-      await backend?.close()
-    } catch (error) {
-      closeError = error
+    let stopFailed = false
+    for (const pendingBackend of backends) {
+      try {
+        await pendingBackend.close()
+        this.orphanedBackends.delete(pendingBackend)
+        if (this.backend === pendingBackend) this.backend = undefined
+      } catch (error) {
+        closeErrors.push(error)
+      }
     }
     if (managed !== undefined) {
       try {
         await managed.stop()
+        if (this.managedProcess === managed) this.managedProcess = undefined
       } catch (error) {
+        stopFailed = true
         stopError = error
       }
     }
-    if (closeError !== undefined || stopError !== undefined) {
+    if (closeErrors.length > 0 || stopFailed) {
       this.publish({
         kind: 'failed',
         message: 'The DSH connection could not be closed cleanly.',
         retryable: true,
       })
-      throw closeError ?? stopError
+      const failures = [...closeErrors, ...(stopFailed ? [stopError] : [])]
+      if (failures.length === 1) throw failures[0]
+      throw new AggregateError(
+        failures,
+        'The DSH connection and managed process could not be closed cleanly.',
+        {
+          cause: failures[0],
+        },
+      )
     }
-    if (closeError === undefined && stopError === undefined) {
-      this.publish({ kind: 'idle' })
-    }
+    this.publish({ kind: 'idle' })
   }
 
   private async connectOnce(
@@ -185,7 +252,7 @@ export class DshConnectionCoordinator {
         discovered = await this.dependencies.discovery.discover(signal)
         this.throwIfAborted(signal)
       } catch (error) {
-        if (isAbort(error, signal)) throw cancelled(error)
+        if (isCancellation(error, signal)) throw cancelled(error)
         // Discovery is only an optional source of exact identity evidence for
         // this same endpoint; failure never redirects or blocks a custom probe.
       }
@@ -238,9 +305,10 @@ export class DshConnectionCoordinator {
       this.publish({ kind: 'connecting', candidate })
       try {
         const verified = await this.dependencies.probe.probe(candidate, signal)
+        this.throwIfAborted(signal)
         if (verified !== undefined) return this.attach(verified, undefined, signal, generation)
       } catch (error) {
-        if (isAbort(error, signal)) throw cancelled(error)
+        if (isCancellation(error, signal)) throw cancelled(error)
         // The user explicitly selected this endpoint, so a definitive
         // DSH-incompatible classification from the probe chain must reach the
         // caller instead of degrading into a generic unreachable error.
@@ -265,8 +333,9 @@ export class DshConnectionCoordinator {
         let fastCandidates: readonly BackendCandidate[] = []
         try {
           fastCandidates = await this.dependencies.discovery.discoverFast(signal)
+          this.throwIfAborted(signal)
         } catch (error) {
-          if (isAbort(error, signal)) throw cancelled(error)
+          if (isCancellation(error, signal)) throw cancelled(error)
           // Fast discovery is an optimization. A stale registry or another
           // optional source must not prevent the authoritative full pass.
         }
@@ -283,14 +352,38 @@ export class DshConnectionCoordinator {
         if (fastResult !== undefined) return fastResult
       }
 
-      const candidates = await this.dependencies.discovery.discover(signal)
+      let candidates: readonly BackendCandidate[]
+      try {
+        candidates = await this.dependencies.discovery.discover(signal)
+        this.throwIfAborted(signal)
+      } catch (error) {
+        if (isCancellation(error, signal)) throw cancelled(error)
+        this.publish({
+          kind: 'failed',
+          message: error instanceof AppError ? error.message : 'The DSH instance discovery failed.',
+          retryable: error instanceof AppError ? error.retryable : true,
+        })
+        throw error
+      }
       const result = await this.tryDiscoveredCandidates(candidates, signal, generation, attemptedEndpoints)
       if (result !== undefined) return result
       // Close the small race where another DSH appears while the first pass
       // is finishing. Only an empty first pass gets one bounded last chance;
       // failed candidates have already been fully probed.
       if (candidates.length === 0 && request.autoStart) {
-        const lastChance = await this.dependencies.discovery.discover(signal)
+        let lastChance: readonly BackendCandidate[]
+        try {
+          lastChance = await this.dependencies.discovery.discover(signal)
+          this.throwIfAborted(signal)
+        } catch (error) {
+          if (isCancellation(error, signal)) throw cancelled(error)
+          this.publish({
+            kind: 'failed',
+            message: error instanceof AppError ? error.message : 'The DSH instance discovery failed.',
+            retryable: error instanceof AppError ? error.retryable : true,
+          })
+          throw error
+        }
         const lastChanceResult = await this.tryDiscoveredCandidates(
           lastChance,
           signal,
@@ -316,7 +409,9 @@ export class DshConnectionCoordinator {
     let runtimeLookup: RuntimeLookupResult
     try {
       runtimeLookup = await this.dependencies.runtimeLocator.locate(signal)
+      this.throwIfAborted(signal)
     } catch (error) {
+      if (isCancellation(error, signal)) throw cancelled(error)
       // A locate failure — a probe timeout, a selected executable that cannot
       // run — must reach a terminal state too. Without this the last published
       // snapshot stayed on 'locating-runtime' while the operation had already
@@ -359,16 +454,24 @@ export class DshConnectionCoordinator {
     try {
       process = await this.dependencies.processSupervisor.start(runtime, signal)
     } catch (error) {
+      if (isCancellation(error, signal)) throw cancelled(error)
       if (error instanceof AppError && error.code === 'PORT_CONFLICT') {
         const port = Number(error.context?.port ?? 0)
         this.publish({ kind: 'port-conflict', port, message: error.message, retryable: error.retryable })
       } else if (error instanceof AppError) {
         this.publish({ kind: 'failed', message: error.message, retryable: error.retryable })
+      } else {
+        this.publish({
+          kind: 'failed',
+          message: 'The managed DSH process could not be started.',
+          retryable: true,
+        })
       }
       throw error
     }
     this.managedProcess = process
     try {
+      this.throwIfAborted(signal)
       const candidate: BackendCandidate = {
         endpoint: process.endpoint,
         source: 'known',
@@ -383,17 +486,23 @@ export class DshConnectionCoordinator {
       let verified: ConnectedBackend | undefined
       try {
         verified = await this.dependencies.probe.probe(candidate, signal)
+        this.throwIfAborted(signal)
       } catch (error) {
+        if (isCancellation(error, signal)) throw cancelled(error)
         // Every terminal connect failure publishes a failed state before
         // throwing; without this the last snapshot would stay on 'starting'
         // while the operation already rejected.
-        if (error instanceof AppError)
-          this.publish({ kind: 'failed', message: error.message, retryable: error.retryable })
+        this.publish({
+          kind: 'failed',
+          message:
+            error instanceof AppError
+              ? error.message
+              : 'The managed DSH process did not accept a connection.',
+          retryable: error instanceof AppError ? error.retryable : true,
+        })
         throw error
       }
       if (verified === undefined) {
-        await stopManagedProcess(process)
-        this.managedProcess = undefined
         const error = new AppError({
           code: 'BACKEND_UNREACHABLE',
           message: 'The managed DSH process did not become ready.',
@@ -405,8 +514,19 @@ export class DshConnectionCoordinator {
       return this.attach({ ...verified, ownership: 'managed', pid: process.pid }, process, signal, generation)
     } catch (error) {
       if (this.managedProcess === process && this.backend === undefined) {
-        await stopManagedProcess(process).catch(() => undefined)
-        this.managedProcess = undefined
+        try {
+          await stopManagedProcess(process)
+          if (this.managedProcess === process) this.managedProcess = undefined
+        } catch (cleanupError) {
+          const failure = new AppError({
+            code: 'PROCESS_FAILED',
+            message: 'The managed DSH process could not be stopped after a failed connection.',
+            retryable: true,
+            cause: new AggregateError([error, cleanupError]),
+          })
+          this.publish({ kind: 'failed', message: failure.message, retryable: failure.retryable })
+          throw failure
+        }
       }
       throw error
     }
@@ -425,9 +545,10 @@ export class DshConnectionCoordinator {
       attemptedEndpoints.add(key)
       try {
         const verified = await this.dependencies.probe.probe(candidate, signal)
+        this.throwIfAborted(signal)
         if (verified !== undefined) return this.attach(verified, undefined, signal, generation)
       } catch (error) {
-        if (isAbort(error, signal)) throw cancelled(error)
+        if (isCancellation(error, signal)) throw cancelled(error)
         // A bad candidate must not prevent a later, higher-confidence candidate
         // from being tried. The probe owns the detailed redacted diagnostics.
       }
@@ -466,10 +587,37 @@ export class DshConnectionCoordinator {
       backendInstanceId: connected.backendInstanceId ?? `backend-${generation}`,
       connectionGeneration: generation,
     }
-    const backend = await this.dependencies.backendFactory.connect(identifiedConnection, signal)
+    let backend: DshBackend
+    try {
+      backend = await this.dependencies.backendFactory.connect(identifiedConnection, signal)
+    } catch (error) {
+      if (generation === this.generation && !isCancellation(error, signal))
+        this.publish({
+          kind: 'failed',
+          message: error instanceof AppError ? error.message : 'The DSH connection could not be established.',
+          retryable: error instanceof AppError ? error.retryable : true,
+        })
+      throw error
+    }
     if (generation !== this.generation || signal?.aborted === true) {
-      await backend.close().catch(() => undefined)
-      if (managed !== undefined) await managed.stop().catch(() => undefined)
+      const cleanupFailures: unknown[] = []
+      try {
+        await backend.close()
+      } catch (error) {
+        this.orphanedBackends.add(backend)
+        cleanupFailures.push(error)
+      }
+      if (cleanupFailures.length > 0) {
+        const failure = new AppError({
+          code: 'PROCESS_FAILED',
+          message: 'A stale DSH connection could not be fully closed.',
+          retryable: true,
+          cause: new AggregateError(cleanupFailures),
+        })
+        if (generation === this.generation)
+          this.publish({ kind: 'failed', message: failure.message, retryable: failure.retryable })
+        throw failure
+      }
       throw cancelled(signal?.reason)
     }
     this.backend = backend
@@ -590,6 +738,10 @@ function waitForSignal<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T>
 
 function isAbort(error: unknown, signal: AbortSignal | undefined): boolean {
   return signal?.aborted === true || (error instanceof DOMException && error.name === 'AbortError')
+}
+
+function isCancellation(error: unknown, signal: AbortSignal | undefined): boolean {
+  return isAbort(error, signal) || (error instanceof AppError && error.code === 'REQUEST_CANCELLED')
 }
 
 function cancelled(cause: unknown): AppError {

@@ -154,6 +154,19 @@ function validateDraft(input: CustomProviderDraft): CustomProviderDraft {
       if (value !== undefined && (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0))
         throw invalidDraft(`Provider model ${field} is invalid.`)
     }
+    for (const [field, allowEmpty] of [
+      ['input', true],
+      ['inputModalities', false],
+    ] as const) {
+      const modalities = record[field]
+      if (
+        modalities !== undefined &&
+        (!Array.isArray(modalities) ||
+          (!allowEmpty && modalities.length === 0) ||
+          !modalities.every((modality) => modality === 'text' || modality === 'image'))
+      )
+        throw invalidDraft(`Provider model ${field} is invalid.`)
+    }
     ids.add(normalizedId)
     const stringName = typeof name === 'string' ? name : undefined
     const normalized: Record<string, unknown> = { ...record, id: normalizedId }
