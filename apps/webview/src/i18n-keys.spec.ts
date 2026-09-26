@@ -351,24 +351,10 @@ function suppliedNames(args: string): readonly string[] | undefined {
   return names
 }
 
-/** One `en: {` / `zh: {` dictionary literal mapped from key to its raw value text. */
-function dictionaryEntries(source: string, locale: string): ReadonlyMap<string, string> {
-  const start = source.indexOf(`\n  ${locale}: {`)
-  if (start < 0) throw new Error(`dictionary ${locale} not found`)
-  const lines = source.slice(source.indexOf('{', start) + 1).split('\n')
-  const entries = new Map<string, string>()
-  let key: string | undefined
-  for (const line of lines) {
-    if (/^ {2}\},?$/u.test(line)) break
-    const opened = /^ {4}'([^']+)':(.*)$/u.exec(line)
-    if (opened !== null && opened[1] !== undefined) {
-      key = opened[1]
-      entries.set(key, opened[2] ?? '')
-      continue
-    }
-    if (key !== undefined) entries.set(key, `${entries.get(key) ?? ''} ${line.trim()}`)
-  }
-  return entries
+/** One locale's dictionary, read from the JSON the module imports. */
+function dictionaryEntries(locale: string): ReadonlyMap<string, string> {
+  const raw = readFileSync(fileURLToPath(new URL(`./locales/${locale}.json`, import.meta.url)), 'utf8')
+  return new Map(Object.entries(JSON.parse(raw) as Record<string, string>))
 }
 
 function placeholders(value: string): readonly string[] {
@@ -382,9 +368,8 @@ describe('webview translation keys', () => {
     // The provider is `zh[key] ?? en[key] ?? key`: a key missing from `zh` is not
     // an exception, it is an English string rendered into a Chinese interface,
     // and a placeholder named differently between the two leaves literal braces.
-    const source = readFileSync(fileURLToPath(new URL('./i18n.tsx', import.meta.url)), 'utf8')
-    const english = dictionaryEntries(source, 'en')
-    const chinese = dictionaryEntries(source, 'zh')
+    const english = dictionaryEntries('en')
+    const chinese = dictionaryEntries('zh')
 
     expect(english.size).toBeGreaterThan(1_000)
     expect([...english.keys()].filter((key) => !chinese.has(key))).toEqual([])
