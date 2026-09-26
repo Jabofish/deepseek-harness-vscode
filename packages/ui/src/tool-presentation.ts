@@ -112,6 +112,10 @@ const FIELD_LABELS: Readonly<Record<string, readonly [key: string, english: stri
   command: ['presentation.field.command', 'Command'],
   code: ['presentation.field.code', 'Code'],
   path: ['presentation.field.file', 'File'],
+  file_path: ['presentation.field.filePath', 'File path'],
+  pattern: ['presentation.field.pattern', 'Pattern'],
+  offset: ['presentation.field.offset', 'Offset'],
+  limit: ['presentation.field.limit', 'Limit'],
   url: ['presentation.field.url', 'URL'],
   target: ['presentation.field.target', 'Target'],
   to: ['presentation.field.target', 'Target'],
@@ -314,6 +318,11 @@ function decode(value: string | undefined): unknown {
   let current: unknown = value.trim()
   for (let depth = 0; depth < 3 && typeof current === 'string'; depth += 1) {
     const candidate = current.trim()
+    const envelope = parseToolResultEnvelope(candidate)
+    if (envelope !== undefined) {
+      current = envelope
+      continue
+    }
     if (!looksLikeJson(candidate)) break
     try {
       current = JSON.parse(candidate) as unknown
@@ -324,6 +333,21 @@ function decode(value: string | undefined): unknown {
     }
   }
   return current
+}
+
+/**
+ * DSH's plain-text tool result envelope (`<path>…</path><type>…</type>
+ * <content>…</content>`). Left as raw text it prints internal markup as the
+ * result; decoded, the content becomes the response and the path a labeled
+ * field. The shape is matched strictly so ordinary prose containing angle
+ * brackets never decodes.
+ */
+function parseToolResultEnvelope(value: string): Record<string, string> | undefined {
+  if (!value.startsWith('<path>')) return undefined
+  const match =
+    /^<path>([\s\S]*?)<\/path>\s*(?:<type>[\s\S]*?<\/type>\s*)?<content>([\s\S]*)<\/content>$/u.exec(value)
+  if (match === null) return undefined
+  return { path: match[1] ?? '', content: match[2] ?? '' }
 }
 
 function looksLikeJson(value: string): boolean {
