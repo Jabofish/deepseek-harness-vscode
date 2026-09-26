@@ -1,4 +1,4 @@
-import type { ReactElement } from 'react'
+import { memo, type ReactElement } from 'react'
 import type { PermissionRequest } from '@dsh-vscode/domain'
 import { Icon } from '../../ui/Icon.js'
 import { useI18n } from '../../i18n.js'
@@ -12,7 +12,9 @@ export interface ApprovalCardProps {
   readonly onRespond: (optionId: string) => void
 }
 
-export function ApprovalCard(props: ApprovalCardProps): ReactElement {
+// A pending card docks in the composer slot for as long as the conversation
+// streams behind it; memo keeps those frames from re-rendering the card.
+export const ApprovalCard = memo(function ApprovalCard(props: ApprovalCardProps): ReactElement {
   const { locale, t } = useI18n()
   const description =
     props.request.displayReason?.[locale] ?? props.request.displayReason?.en ?? props.request.description
@@ -43,7 +45,9 @@ export function ApprovalCard(props: ApprovalCardProps): ReactElement {
       <div className="dsh-interaction__actions">
         {props.request.options.map((option) => (
           <button
-            className="dsh-button dsh-button--secondary"
+            // The safe action carries the primary treatment; a deny must not
+            // read as an equally weighted sibling of an approval.
+            className={`dsh-button ${option.kind === 'deny' ? 'dsh-button--secondary' : 'dsh-button--primary'}`}
             key={option.id}
             type="button"
             disabled={props.disabled}
@@ -55,4 +59,4 @@ export function ApprovalCard(props: ApprovalCardProps): ReactElement {
       </div>
     </section>
   )
-}
+})

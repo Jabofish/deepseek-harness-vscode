@@ -1,4 +1,4 @@
-import { useState, type ReactElement } from 'react'
+import { memo, useState, type ReactElement } from 'react'
 import type { QuestionAnswer, QuestionChoice, UserQuestion, UserQuestionItem } from '@dsh-vscode/domain'
 import { useI18n } from '../../i18n.js'
 import { ContentFlow } from '../../components/common/ContentFlow.js'
@@ -22,7 +22,9 @@ interface ItemDraft {
  * item renders its header/detail/options (with per-option descriptions) and
  * a free-text slot; a plan-review intent promotes the approving option.
  */
-export function UserQuestionCard(props: UserQuestionCardProps): ReactElement {
+// A pending card docks in the composer slot for as long as the conversation
+// streams behind it; memo keeps those frames from re-rendering the card.
+export const UserQuestionCard = memo(function UserQuestionCard(props: UserQuestionCardProps): ReactElement {
   const { t } = useI18n()
   const items = questionItems(props.question)
   const planReview = isPlanReview(items)
@@ -190,7 +192,7 @@ export function UserQuestionCard(props: UserQuestionCardProps): ReactElement {
       )}
     </section>
   )
-}
+})
 
 interface QuestionAnswerFieldProps {
   readonly value: string

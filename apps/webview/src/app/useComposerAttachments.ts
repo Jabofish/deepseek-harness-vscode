@@ -36,11 +36,16 @@ export interface ComposerAttachmentDependencies {
   readonly hasPendingSession: boolean
   readonly subagentEntries: SubagentCatalog['entries']
   readonly mountedRef: { readonly current: boolean }
+  /**
+   * The shared composer draft lives in the draft provider above App, so typing
+   * re-renders only the composer binding. The hook never reads the draft at
+   * render time; submit reads it once at event time through `readDraft`.
+   */
+  readonly setDraft: Dispatch<SetStateAction<string>>
+  readonly readDraft: () => string
 }
 
 export interface ComposerAttachments {
-  readonly draft: string
-  readonly setDraft: Dispatch<SetStateAction<string>>
   readonly attachments: readonly PromptAttachment[]
   readonly attachmentPreviews: Readonly<Record<string, string>>
   readonly attachmentPreviewFailures: readonly string[]
@@ -67,7 +72,7 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
   const { store, t, setError, active, activeSessionId, imageLimits, hasPendingSession, subagentEntries } =
     deps
   const mountedRef = deps.mountedRef
-  const [draft, setDraft] = useState('')
+  const setDraft = deps.setDraft
   const [attachments, setAttachments] = useState<PromptAttachment[]>([])
   const [attachmentPreviews, setAttachmentPreviews] = useState<Record<string, string>>({})
   const [attachmentPreviewFailures, setAttachmentPreviewFailures] = useState<readonly string[]>([])
@@ -84,9 +89,14 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
   const [attachingOpenFileId, setAttachingOpenFileId] = useState<string | undefined>()
   const [openFileAttachmentIds, setOpenFileAttachmentIds] = useState<Record<string, string>>({})
   const attachmentDraftKeysRef = useRef<Map<string, string>>(new Map())
+  /** Decoded bytes of pasted image drafts still tracked in the composer, by uri. */
+  const imageBytesByUriRef = useRef<Map<string, number>>(new Map())
+  /** Image count/bytes of pastes whose read or ingest has not settled yet. */
+  const pendingImageStatsRef = useRef<{ count: number; bytes: number }>({ count: 0, bytes: 0 })
   const attachingOpenFileRef = useRef<string | undefined>(undefined)
   const referenceRequestRef = useRef(0)
   const openFileRequestRef = useRef(0)
+  const openFilePickerRequestRef = useRef(0)
   const attachmentGenerationRef = useRef(0)
 
   useEffect(() => {
@@ -220,7 +230,10 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
   const removeAttachmentDrafts = (uris: readonly string[], release: boolean): void => {
     if (uris.length === 0) return
     const removed = new Set(uris)
-    for (const uri of removed) attachmentDraftKeysRef.current.delete(uri)
+    for (const uri of removed) {
+      attachmentDraftKeysRef.current.delete(uri)
+      imageBytesByUriRef.current.delete(uri)
+    }
     setAttachments((current) => current.filter((attachment) => !removed.has(attachment.uri)))
     setAttachmentPreviews((current) =>
       Object.fromEntries(Object.entries(current).filter(([uri]) => !removed.has(uri))),
@@ -250,8 +263,20 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
       const existingImages = attachments.filter((attachment) =>
         attachment.mimeType?.startsWith('image/'),
       ).length
-      if (existingImages + imageFiles.length > imageLimits.maxImagesPerMessage) {
+      const existingImageBytes = [...imageBytesByUriRef.current.values()].reduce(
+        (sum, bytes) => sum + bytes,
+        0,
+      )
+      const pendingImages = pendingImageStatsRef.current
+      // Checks run before any read starts, so a batch can never push the
+      // composer past what DSH will admit for the message.
+      if (existingImages + pendingImages.count + imageFiles.length > imageLimits.maxImagesPerMessage) {
         setError(t('app.error.imageCount', { count: imageLimits.maxImagesPerMessage }))
+        return
+      }
+      const batchImageBytes = imageFiles.reduce((sum, file) => sum + file.size, 0)
+      if (existingImageBytes + pendingImages.bytes + batchImageBytes > imageLimits.maxMessageImageBytes) {
+        setError(t('app.error.imageTotalSize', { size: formatByteSize(imageLimits.maxMessageImageBytes) }))
         return
       }
       const unsupported = imageFiles.find((file) => !imageLimits.mediaTypes.includes(file.type))
@@ -273,19 +298,39 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
     const generation = attachmentGenerationRef.current
     for (const file of files) {
       const origin = browserFileOrigin(file)
+      const isImage = file.type.startsWith('image/')
+      if (isImage) {
+        pendingImageStatsRef.current.count += 1
+        pendingImageStatsRef.current.bytes += file.size
+      }
       void readFileAsBase64(file, t, imageLimits)
         .then((payload) => store.ingestAttachment(payload))
         .then((attachment) => {
-          if (attachment !== undefined) appendAttachment(attachment, undefined, generation, origin)
+          if (attachment === undefined) return
+          appendAttachment(attachment, undefined, generation, origin)
+          // Only a draft actually tracked by appendAttachment contributes bytes:
+          // duplicates resolve to the earlier uri and released handles never do.
+          if (
+            isImage &&
+            attachmentDraftKeysRef.current.has(attachment.uri) &&
+            !imageBytesByUriRef.current.has(attachment.uri)
+          )
+            imageBytesByUriRef.current.set(attachment.uri, file.size)
         })
         .catch((reason: unknown) =>
           setError(reason instanceof Error ? reason.message : t('app.error.attachPasted')),
         )
+        .finally(() => {
+          if (isImage) {
+            pendingImageStatsRef.current.count -= 1
+            pendingImageStatsRef.current.bytes -= file.size
+          }
+        })
     }
   }
   const submitPrompt = (mode: 'queue' | 'steer'): Promise<void> => {
     if (active === undefined && !hasPendingSession) return Promise.resolve()
-    const text = draft
+    const text = deps.readDraft()
     const attachmentSnapshot = attachments
     let submission: Promise<void>
     try {
@@ -319,7 +364,10 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
    */
   const loadOpenFileCandidates = (sessionId: string, awaitingPicker: boolean): void => {
     const request = ++openFileRequestRef.current
-    if (awaitingPicker) setOpenFilePickerLoading(true)
+    if (awaitingPicker) {
+      openFilePickerRequestRef.current = request
+      setOpenFilePickerLoading(true)
+    }
     void store
       .listOpenFiles()
       .then((candidates) => {
@@ -334,9 +382,11 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
         if (awaitingPicker) setError(reason instanceof Error ? reason.message : t('app.error.listOpenFiles'))
       })
       .finally(() => {
-        // A newer request may have replaced this one; the flag describes the
-        // picker, so whichever request was waiting for it has to clear it.
-        if (awaitingPicker) setOpenFilePickerLoading(false)
+        // Only the newest picker-awaiting request may clear the flag: a fast
+        // close and reopen leaves the older request settling last, and clearing
+        // unconditionally would end the newer request's loading state. Requests
+        // that do not await the picker never touch the flag.
+        if (awaitingPicker && request === openFilePickerRequestRef.current) setOpenFilePickerLoading(false)
       })
   }
   const toggleOpenFilePicker = (): void => {
@@ -413,8 +463,6 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
   const composerOnSubmit = useStableCallback((mode: 'queue' | 'steer'): Promise<void> => submitPrompt(mode))
 
   return {
-    draft,
-    setDraft,
     attachments,
     attachmentPreviews,
     attachmentPreviewFailures,

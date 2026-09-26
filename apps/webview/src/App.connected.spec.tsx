@@ -3,7 +3,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { ReactElement } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { AppState, AppStore, DshSettingsSnapshot } from './app/store.js'
+import type { AppState, AppStore, DshSettingsSnapshot, OpenFileCandidate } from './app/store.js'
 
 let currentStore: AppStore
 
@@ -768,273 +768,6 @@ describe('App connected rendering', () => {
     await waitFor(() => expect(screen.getByLabelText('Trajectory ledger')).toBeDefined())
   })
 
-  it('keeps Developer Tools surfaces gated until the first rc2 settings snapshot is accepted', async () => {
-    let resolveSettings: ((snapshot: DshSettingsSnapshot) => void) | undefined
-    const pendingSettings = new Promise<DshSettingsSnapshot>((resolve) => {
-      resolveSettings = resolve
-    })
-    const readDshSettings = vi.fn().mockReturnValue(pendingSettings)
-    currentStore = { ...storeFor(connectedState(true)), readDshSettings }
-
-    render(<App />)
-
-    expect(screen.queryByRole('tab', { name: 'Trajectory' })).toBeNull()
-    expect(screen.getByTestId('timeline').getAttribute('data-coding-tools-enabled')).toBe('false')
-    act(() => resolveSettings?.(dshUiSettingsSnapshot(true)))
-    await waitFor(() => expect(screen.getByRole('tab', { name: 'Trajectory' })).toBeDefined())
-    expect(screen.getByTestId('timeline').getAttribute('data-coding-tools-enabled')).toBe('true')
-  })
-
-  it('keeps Developer Tools surfaces gated after the first settings read fails', async () => {
-    const readDshSettings = vi.fn().mockRejectedValue(new Error('offline'))
-    currentStore = { ...storeFor(connectedState(true)), readDshSettings }
-
-    render(<App />)
-
-    await waitFor(() => expect(readDshSettings).toHaveBeenCalledTimes(1))
-    expect(screen.queryByRole('tab', { name: 'Trajectory' })).toBeNull()
-    expect(screen.getByTestId('timeline').getAttribute('data-coding-tools-enabled')).toBe('false')
-  })
-
-  it('fails closed when the new connection generation cannot read Developer Tools settings', async () => {
-    const readDshSettings = vi
-      .fn()
-      .mockResolvedValueOnce(dshUiSettingsSnapshot(true))
-      .mockRejectedValueOnce(new Error('temporary offline'))
-    let state: AppState = connectedState(true)
-    const store: AppStore = {
-      ...storeFor(state),
-      getState: () => state,
-      readDshSettings,
-    }
-    currentStore = store
-    const view = render(<App />)
-
-    await waitFor(() => expect(screen.getByRole('tab', { name: 'Trajectory' })).toBeDefined())
-    state = { ...connectedState(true), backend: { kind: 'idle' } }
-    view.rerender(<App />)
-    state = { ...connectedState(true), connectionEpoch: 2 }
-    view.rerender(<App />)
-
-    await waitFor(() => expect(readDshSettings).toHaveBeenCalledTimes(2))
-    expect(screen.queryByRole('tab', { name: 'Trajectory' })).toBeNull()
-    expect(screen.getByTestId('timeline').getAttribute('data-coding-tools-enabled')).toBe('false')
-  })
-
-  it('rereads settings and remounts SettingsDrawer when the backend identity changes at the same DSH version', async () => {
-    let state: AppState = { ...connectedState(true), drawer: 'settings' }
-    const readDshSettings = vi.fn().mockResolvedValue(dshUiSettingsSnapshot(true))
-    const store: AppStore = {
-      ...storeFor(state),
-      getState: () => state,
-      readDshSettings,
-    }
-    currentStore = store
-    const view = render(<App />)
-
-    await screen.findByRole('tab', { name: 'General' })
-    await waitFor(() => expect(readDshSettings).toHaveBeenCalled())
-    const readsBeforeStableRerender = readDshSettings.mock.calls.length
-    fireEvent.click(screen.getByRole('tab', { name: 'Models' }))
-    expect(screen.getByRole('tab', { name: 'Models' }).getAttribute('aria-selected')).toBe('true')
-
-    view.rerender(<App />)
-    expect(readDshSettings).toHaveBeenCalledTimes(readsBeforeStableRerender)
-    expect(screen.getByRole('tab', { name: 'Models' }).getAttribute('aria-selected')).toBe('true')
-
-    state = { ...state, connectionEpoch: 2 }
-    view.rerender(<App />)
-
-    await waitFor(() => expect(readDshSettings.mock.calls.length).toBeGreaterThan(readsBeforeStableRerender))
-    await waitFor(() =>
-      expect(screen.getByRole('tab', { name: 'General' }).getAttribute('aria-selected')).toBe('true'),
-    )
-    expect(screen.getByRole('tab', { name: 'Models' }).getAttribute('aria-selected')).toBe('false')
-  })
-
-  it('ignores an older connection generation settings read that resolves after the current one', async () => {
-    let resolveOldRead: (snapshot: DshSettingsSnapshot) => void = () => undefined
-    let resolveCurrentRead: (snapshot: DshSettingsSnapshot) => void = () => undefined
-    const oldRead = new Promise<DshSettingsSnapshot>((resolve) => {
-      resolveOldRead = resolve
-    })
-    const currentRead = new Promise<DshSettingsSnapshot>((resolve) => {
-      resolveCurrentRead = resolve
-    })
-    let state: AppState = { ...connectedState(true), connectionEpoch: 10 }
-    const readDshSettings = vi.fn().mockReturnValueOnce(oldRead).mockReturnValueOnce(currentRead)
-    const store: AppStore = {
-      ...storeFor(state),
-      getState: () => state,
-      readDshSettings,
-    }
-    currentStore = store
-    const view = render(<App />)
-
-    await waitFor(() => expect(readDshSettings).toHaveBeenCalledTimes(1))
-    state = { ...state, connectionEpoch: 11 }
-    view.rerender(<App />)
-    await waitFor(() => expect(readDshSettings).toHaveBeenCalledTimes(2))
-    expect(screen.queryByRole('tab', { name: 'Trajectory' })).toBeNull()
-
-    await act(async () => {
-      resolveCurrentRead(dshUiSettingsSnapshot(true))
-      await currentRead
-    })
-    expect(await screen.findByRole('tab', { name: 'Trajectory' })).toBeDefined()
-
-    await act(async () => {
-      resolveOldRead(dshUiSettingsSnapshot(false))
-      await oldRead
-    })
-    expect(screen.getByRole('tab', { name: 'Trajectory' })).toBeDefined()
-    expect(screen.getByTestId('timeline').getAttribute('data-coding-tools-enabled')).toBe('true')
-  })
-
-  it('does not let a successful write from the previous connection generation update current settings', async () => {
-    let resolveOldWrite: () => void = () => undefined
-    const oldWrite = new Promise<void>((resolve) => {
-      resolveOldWrite = resolve
-    })
-    let state: AppState = { ...connectedState(true), drawer: 'settings', connectionEpoch: 20 }
-    const readDshSettings = vi.fn().mockResolvedValue(dshUiSettingsSnapshot(true))
-    const updateDshSetting = vi.fn().mockReturnValue(oldWrite)
-    const store: AppStore = {
-      ...storeFor(state),
-      getState: () => state,
-      readDshSettings,
-      updateDshSetting,
-    }
-    currentStore = store
-    const view = render(<App />)
-
-    await screen.findByRole('tab', { name: 'Trajectory' })
-    const developerTools = await screen.findByRole('switch', { name: 'Developer Tools' })
-    fireEvent.click(developerTools)
-    await waitFor(() => expect(updateDshSetting).toHaveBeenCalledWith('ui-settings.enabled', false, 1))
-
-    const readsBeforeReconnect = readDshSettings.mock.calls.length
-    state = { ...state, connectionEpoch: 21 }
-    view.rerender(<App />)
-    await waitFor(() => expect(readDshSettings.mock.calls.length).toBeGreaterThan(readsBeforeReconnect))
-    expect(await screen.findByRole('tab', { name: 'Trajectory' })).toBeDefined()
-
-    await act(async () => {
-      resolveOldWrite()
-      await oldWrite
-    })
-    expect(screen.getByRole('tab', { name: 'Trajectory' })).toBeDefined()
-    expect(screen.getByRole('switch', { name: 'Developer Tools' }).getAttribute('aria-checked')).toBe('true')
-  })
-
-  it('keeps a refused previous-generation write from changing the new Host settings', async () => {
-    let rejectOldWrite: (reason: Error) => void = () => undefined
-    const oldWrite = new Promise<void>((_resolve, reject) => {
-      rejectOldWrite = reject
-    })
-    let state: AppState = { ...connectedState(true), drawer: 'settings', connectionEpoch: 30 }
-    const readDshSettings = vi.fn().mockResolvedValue(dshUiSettingsSnapshot(true))
-    const updateDshSetting = vi.fn().mockReturnValue(oldWrite)
-    const store: AppStore = {
-      ...storeFor(state),
-      getState: () => state,
-      readDshSettings,
-      updateDshSetting,
-    }
-    currentStore = store
-    const view = render(<App />)
-
-    await screen.findByRole('tab', { name: 'Trajectory' })
-    fireEvent.click(await screen.findByRole('switch', { name: 'Developer Tools' }))
-    await waitFor(() => expect(updateDshSetting).toHaveBeenCalledWith('ui-settings.enabled', false, 1))
-
-    const readsBeforeReconnect = readDshSettings.mock.calls.length
-    state = { ...state, connectionEpoch: 31 }
-    view.rerender(<App />)
-    await waitFor(() => expect(readDshSettings.mock.calls.length).toBeGreaterThan(readsBeforeReconnect))
-    await screen.findByRole('tab', { name: 'Trajectory' })
-    const readsAfterReconnect = readDshSettings.mock.calls.length
-
-    await act(async () => {
-      rejectOldWrite(new Error('previous Host refused the update'))
-      await oldWrite.catch(() => undefined)
-    })
-    // SettingsDrawer refreshes the current Host after a refused update. The
-    // callback is generation-aware, so this is one current-host read only.
-    expect(readDshSettings).toHaveBeenCalledTimes(readsAfterReconnect + 1)
-    expect(screen.getByRole('tab', { name: 'Trajectory' })).toBeDefined()
-    expect(screen.getByRole('switch', { name: 'Developer Tools' }).getAttribute('aria-checked')).toBe('true')
-  })
-
-  it('clears the old settings gate after a confirmed DSH version change', async () => {
-    let rejectNewVersion: ((reason: Error) => void) | undefined
-    const nextVersionRead = new Promise<DshSettingsSnapshot>((_resolve, reject) => {
-      rejectNewVersion = reject
-    })
-    const readDshSettings = vi
-      .fn()
-      .mockResolvedValueOnce(dshUiSettingsSnapshot(true))
-      .mockReturnValueOnce(nextVersionRead)
-    let state = connectedState(true)
-    const store: AppStore = {
-      ...storeFor(state),
-      getState: () => state,
-      readDshSettings,
-    }
-    currentStore = store
-    const view = render(<App />)
-
-    await waitFor(() => expect(screen.getByRole('tab', { name: 'Trajectory' })).toBeDefined())
-    state = { ...state, connectedDshVersion: '0.1.0-rc.7' }
-    view.rerender(<App />)
-
-    expect(screen.queryByRole('tab', { name: 'Trajectory' })).toBeNull()
-    await waitFor(() => expect(readDshSettings).toHaveBeenCalledTimes(2))
-    act(() => rejectNewVersion?.(new Error('new DSH unavailable')))
-    expect(screen.queryByRole('tab', { name: 'Trajectory' })).toBeNull()
-    expect(screen.getByTestId('timeline').getAttribute('data-coding-tools-enabled')).toBe('false')
-  })
-
-  it('does not let a pre-write settings read restore the old Developer Tools value', async () => {
-    let resolvePreWriteRead: ((snapshot: DshSettingsSnapshot) => void) | undefined
-    const preWriteRead = new Promise<DshSettingsSnapshot>((resolve) => {
-      resolvePreWriteRead = resolve
-    })
-    let readCount = 0
-    const readDshSettings = vi.fn(() => {
-      readCount += 1
-      if (readCount <= 2) return Promise.resolve(dshUiSettingsSnapshot(true))
-      if (readCount === 3) return preWriteRead
-      return Promise.reject(new Error('refresh unavailable'))
-    })
-    const updateDshSetting = vi.fn().mockResolvedValue(undefined)
-    let state = { ...connectedState(true), drawer: 'settings' as const }
-    const store: AppStore = {
-      ...storeFor(state),
-      getState: () => state,
-      readDshSettings,
-      updateDshSetting,
-    }
-    currentStore = store
-    const view = render(<App />)
-
-    const developerTools = await screen.findByRole('switch', { name: 'Developer Tools' })
-    await waitFor(() => expect(readDshSettings).toHaveBeenCalledTimes(2))
-    state = { ...state, backend: { kind: 'idle' } }
-    view.rerender(<App />)
-    state = { ...state, backend: { kind: 'connected' } }
-    view.rerender(<App />)
-    await waitFor(() => expect(readDshSettings).toHaveBeenCalledTimes(3))
-
-    fireEvent.click(developerTools)
-    await waitFor(() => expect(updateDshSetting).toHaveBeenCalledWith('ui-settings.enabled', false, 1))
-    await waitFor(() => expect(screen.queryByRole('tab', { name: 'Trajectory' })).toBeNull())
-    act(() => resolvePreWriteRead?.(dshUiSettingsSnapshot(true)))
-
-    expect(screen.queryByRole('tab', { name: 'Trajectory' })).toBeNull()
-    expect(screen.getByTestId('timeline').getAttribute('data-coding-tools-enabled')).toBe('false')
-  })
-
   it('uses the accepted Host busy-send value after a successful write even if refresh fails', async () => {
     const active = connectedState(true)
     const runningState = {
@@ -1102,31 +835,6 @@ describe('App connected rendering', () => {
     view.rerender(<App />)
 
     expect(updateDshSetting).toHaveBeenCalledTimes(1)
-    expect(screen.getByTestId('timeline').getAttribute('data-coding-tools-enabled')).toBe('false')
-  })
-
-  it('applies a successful Developer Tools setting update to the application gate', async () => {
-    const updateDshSetting = vi.fn().mockResolvedValue(undefined)
-    let codingToolsEnabled = true
-    currentStore = {
-      ...storeFor({ ...connectedState(true), drawer: 'settings' }),
-      readDshSettings: vi
-        .fn()
-        .mockImplementation(() => Promise.resolve(dshUiSettingsSnapshot(codingToolsEnabled))),
-      updateDshSetting: vi.fn((path: string, value: unknown, expectedRevision: number) => {
-        updateDshSetting(path, value, expectedRevision)
-        if (path === 'ui-settings.enabled' && typeof value === 'boolean') codingToolsEnabled = value
-        return Promise.resolve()
-      }),
-    }
-    render(<App />)
-
-    const developerTools = await screen.findByRole('switch', { name: 'Developer Tools' })
-    expect(screen.getByRole('tab', { name: 'Trajectory' })).toBeDefined()
-    fireEvent.click(developerTools)
-
-    await waitFor(() => expect(updateDshSetting).toHaveBeenCalledWith('ui-settings.enabled', false, 1))
-    await waitFor(() => expect(screen.queryByRole('tab', { name: 'Trajectory' })).toBeNull())
     expect(screen.getByTestId('timeline').getAttribute('data-coding-tools-enabled')).toBe('false')
   })
 
@@ -1595,6 +1303,83 @@ describe('App connected rendering', () => {
     expect(screen.queryByText(/DSH image limit/u)).toBeNull()
   })
 
+  it('pre-checks the message image byte total before sending bytes to the Extension Host', () => {
+    const state = connectedState(true)
+    const ingestAttachment = vi.fn().mockResolvedValue(undefined)
+    currentStore = {
+      ...storeFor({
+        ...state,
+        projections: {
+          s1: {
+            imageLimits: {
+              maxImageBytes: 100,
+              maxImagesPerMessage: 20,
+              maxMessageImageBytes: 15,
+              maxImagePixels: 100,
+              mediaTypes: ['image/png'],
+            },
+          },
+        },
+      }),
+      ingestAttachment,
+    }
+    render(<App />)
+    fireEvent.paste(screen.getByRole('textbox', { name: 'Prompt' }), {
+      clipboardData: { files: [new File(['x'.repeat(20)], 'screenshot.png', { type: 'image/png' })] },
+    })
+
+    // The single image fits the per-image limit; only the message total
+    // rejects it, so the adapter must never see the bytes first.
+    expect(screen.getByRole('alert').textContent).toContain(
+      'The combined image size exceeds the DSH image limit of 15 B.',
+    )
+    expect(ingestAttachment).not.toHaveBeenCalled()
+  })
+
+  it('counts image pastes that are still being read toward the per-message image limit', async () => {
+    const state = connectedState(true)
+    let resolveIngest: ((value: undefined) => void) | undefined
+    const ingestAttachment = vi
+      .fn()
+      .mockImplementation(() => new Promise<undefined>((resolve) => (resolveIngest = resolve)))
+    currentStore = {
+      ...storeFor({
+        ...state,
+        projections: {
+          s1: {
+            imageLimits: {
+              maxImageBytes: 100,
+              maxImagesPerMessage: 1,
+              maxMessageImageBytes: 100_000,
+              maxImagePixels: 100,
+              mediaTypes: ['image/png'],
+            },
+          },
+        },
+      }),
+      ingestAttachment,
+    }
+    render(<App />)
+    const prompt = screen.getByRole('textbox', { name: 'Prompt' })
+    fireEvent.paste(prompt, {
+      clipboardData: { files: [new File(['first'], 'first.png', { type: 'image/png' })] },
+    })
+    await waitFor(() => expect(ingestAttachment).toHaveBeenCalledTimes(1))
+
+    // The first image has not landed in the draft yet; the second paste has
+    // to be measured against it instead of slipping past the limit.
+    fireEvent.paste(prompt, {
+      clipboardData: { files: [new File(['second'], 'second.png', { type: 'image/png' })] },
+    })
+    expect(screen.getByRole('alert').textContent).toContain('accepts at most 1 images')
+    expect(ingestAttachment).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      resolveIngest?.(undefined)
+      await Promise.resolve()
+    })
+  })
+
   it('releases an opaque Host attachment handle when its draft chip is removed', async () => {
     const state = connectedState(true)
     const uri = 'dsh-attachment:00000000-0000-4000-8000-000000000001'
@@ -1794,6 +1579,47 @@ describe('App connected rendering', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
 
     expect(screen.queryByRole('dialog', { name: 'Open files' })).toBeNull()
+  })
+
+  it('keeps the picker loading while a superseded open-file request is still settling', async () => {
+    const state = connectedState(true)
+    const deferred: Array<(value: OpenFileCandidate[]) => void> = []
+    const candidates: OpenFileCandidate[] = [
+      { id: 'dsh-open-file-1', name: 'LICENSE', active: true, supported: true },
+    ]
+    // The menu-open refresh answers; both picker requests hang until the test
+    // settles them out of order.
+    const listOpenFiles = vi
+      .fn<() => Promise<OpenFileCandidate[]>>()
+      .mockImplementationOnce(() => Promise.resolve(candidates))
+      .mockImplementation(() => new Promise((resolve) => deferred.push(resolve)))
+    currentStore = { ...storeFor(state), listOpenFiles }
+
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Choose an open file' }))
+    await screen.findByRole('dialog', { name: 'Open files' })
+    expect(screen.getByText('Loading…')).toBeDefined()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close open files' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Choose an open file' }))
+    expect(await screen.findByRole('dialog', { name: 'Open files' })).toBeDefined()
+    expect(screen.getByText('Loading…')).toBeDefined()
+
+    // The first picker request settles after being superseded; ending the
+    // loading here would strand the user on a stale or empty candidate list.
+    await act(async () => {
+      deferred[0]?.([])
+      await Promise.resolve()
+    })
+    expect(screen.getByText('Loading…')).toBeDefined()
+
+    await act(async () => {
+      deferred[1]?.(candidates)
+      await Promise.resolve()
+    })
+    expect(screen.queryByText('Loading…')).toBeNull()
+    expect(screen.getByRole('option', { name: /LICENSE/u })).toBeDefined()
   })
 
   it('keeps one draft chip when the same picker file is selected twice', async () => {

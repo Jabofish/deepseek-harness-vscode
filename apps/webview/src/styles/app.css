@@ -1538,9 +1538,14 @@ summary.dsh-timeline__card-header,
 }
 
 .dsh-timeline__streaming-status {
-  display: inline-flex;
+  /* The canvas owns the centered conversation rail; the tail status sits
+   * outside it in `.dsh-timeline__content`, so it constrains itself to the
+   * same width instead of pinning to the panel edge on wide screens. */
+  display: flex;
   align-items: center;
   gap: var(--dsh-space-2);
+  width: min(100%, var(--dsh-timeline-content-max-width));
+  margin-inline: auto;
   color: var(--dsh-info);
 }
 
@@ -1605,7 +1610,7 @@ summary.dsh-timeline__card-header,
 
 .dsh-timeline__tool-group > .dsh-timeline__tool-group-summary {
   display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  grid-template-columns: auto auto minmax(0, 1fr) auto auto;
   align-items: center;
   width: 100%;
   min-width: 0;
@@ -1639,6 +1644,16 @@ summary.dsh-timeline__card-header,
   color: var(--dsh-muted);
   font-size: var(--dsh-font-size-xs);
   text-align: center;
+}
+
+/* The summary text names the latest call only, so a failure elsewhere in the
+ * batch would be invisible while collapsed. The dot carries the row-level
+ * failed verdict for the whole group. */
+.dsh-timeline__tool-group-failure {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--dsh-danger);
 }
 
 .dsh-timeline__tool-group > .dsh-timeline__tool-group-summary:hover,
@@ -2361,6 +2376,28 @@ summary.dsh-timeline__card-header,
   min-width: 0;
   gap: var(--dsh-space-3);
   padding-top: var(--dsh-space-2);
+}
+
+/* While a pending approval or question owns the composer slot, the input is
+ * replaced by this quiet placeholder: the reader learns why typing is off and
+ * that it returns, instead of finding the composer silently gone. */
+.dsh-compose-hint {
+  display: flex;
+  align-items: center;
+  gap: var(--dsh-space-2);
+  min-height: var(--dsh-control-height);
+  padding: var(--dsh-space-2) var(--dsh-space-3);
+  border: 1px dashed var(--dsh-border-color);
+  border-radius: var(--dsh-radius-md);
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-sm);
+}
+
+.dsh-compose-hint .dsh-icon {
+  flex: 0 0 auto;
+  width: var(--dsh-icon-size-sm);
+  height: var(--dsh-icon-size-sm);
+  color: var(--dsh-warning);
 }
 
 .dsh-composer {
@@ -3832,6 +3869,15 @@ summary.dsh-timeline__card-header,
 .dsh-todo-list__item {
   overflow-wrap: break-word;
   word-break: normal;
+}
+
+/* The strip is a one-line dock: the fixed short label must never spend its flex
+ * room on a per-character vertical stack at sidebar widths. The live task text
+ * and the progress counter are the shrinking parts. */
+.dsh-todo-list__heading,
+.dsh-goal-strip__heading {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .dsh-todo-list__items {

@@ -344,6 +344,17 @@
   padding-top: 0;
 }
 
+/* Wide panels center the conversation column; every surface that shares the
+ * composer's tail (queue, to-do dock, the composer itself, its stats line) must
+ * follow the same rail, or the bottom of the panel reads full-width while the
+ * messages above are centered. */
+.dsh-compose-area > *,
+.dsh-conversation > .dsh-goal-bar,
+.dsh-conversation > .dsh-goal-strip {
+  width: min(100%, var(--dsh-timeline-content-max-width));
+  margin-inline: auto;
+}
+
 /* Pending approvals and questions take the composer's slot: the input is hidden
  * while the agent waits, so the card docks at the bottom of the conversation
  * instead of floating under the topbar. Each card owns its own scrollport, so a

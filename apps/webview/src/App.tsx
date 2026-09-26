@@ -20,14 +20,15 @@ import type {
   PermissionRequest,
   PromptAttachment,
   PromptMode,
+  QuestionAnswer,
   SessionSummary,
   UserQuestion,
   RunningInputMode,
 } from '@dsh-vscode/domain'
 import { cacheHitRate } from '@dsh-vscode/timeline'
 import { EmptyState } from '@dsh-vscode/ui'
-import { Composer } from './features/composer/Composer.js'
 import { ExportDialog } from './features/export/ExportDialog.js'
+
 import { AppErrorBoundary } from './features/errors/AppErrorBoundary.js'
 import { Timeline } from './features/chat/Timeline.js'
 import { StatsLine } from './features/chat/StatsLine.js'
@@ -59,6 +60,8 @@ import { AppHeader } from './features/shell/AppHeader.js'
 import { ConversationActionsMenu } from './features/shell/ConversationActionsMenu.js'
 import { ConversationEventToggle } from './features/shell/ConversationEventToggle.js'
 import { createAppStore, type AppStore, type OpenFileCandidate } from './app/store.js'
+import { readDraft, resetDraft, setDraft } from './app/draft-store.js'
+import { ConnectedComposer } from './features/composer/ConnectedComposer.js'
 import { publicProtocolErrorMessage } from './app/protocol-client.js'
 import { useDshSettings } from './app/useDshSettings.js'
 import { useComposerAttachments } from './app/useComposerAttachments.js'
@@ -99,6 +102,15 @@ interface PendingApproval {
 const EMPTY_OPEN_FILE_CANDIDATES: readonly OpenFileCandidate[] = []
 const EMPTY_PERMISSION_REQUESTS: readonly PendingApproval[] = []
 const EMPTY_USER_QUESTIONS: readonly UserQuestion[] = []
+// Per-pending-object handler caches for the memoized interaction cards. They
+// live at module scope (never a ref read during render) so the same pending
+// object keeps one stable callback identity across streaming frames.
+const approvalRespondHandlers = new WeakMap<PermissionRequest, (optionId: string) => void>()
+const questionRespondHandlers = new WeakMap<
+  UserQuestion,
+  (response: string | readonly string[] | readonly QuestionAnswer[]) => void
+>()
+const questionCancelHandlers = new WeakMap<UserQuestion, () => void>()
 // VS Code Webviews can restore from a cached document while extension files
 // are being replaced during an update. Root-level dynamic imports then point
 // at hashed chunks from the previous build and reject inside React.lazy,
@@ -136,6 +148,9 @@ export function App(): ReactElement {
   )
   useEffect(() => {
     mountedRef.current = true
+    // A remount (error-boundary recovery, test render) must not inherit the
+    // previous mount's composer text.
+    resetDraft()
     return () => {
       mountedRef.current = false
     }
@@ -431,6 +446,74 @@ export function App(): ReactElement {
         : state.questions.filter((question) => question.sessionId === activeSessionId),
     [activeSessionId, state.questions],
   )
+  // The pending cards are memoized against streaming frames, so their handlers
+  // must not be inline closures: they are dispatched through stable per-id
+  // callbacks and cached per pending object, keeping the card props identical
+  // from frame to frame.
+  const respondToPermissionById = useStableCallback((requestId: string, optionId: string): void => {
+    setRespondingInteractionId(requestId)
+    void store
+      .respondToPermission(requestId, optionId)
+      .catch((reason: unknown) =>
+        setError(reason instanceof Error ? reason.message : t('app.error.answerApproval')),
+      )
+      .finally(() => setRespondingInteractionId(undefined))
+  })
+  const respondToQuestionById = useStableCallback(
+    (questionId: string, response: string | readonly string[] | readonly QuestionAnswer[]): void => {
+      setRespondingInteractionId(questionId)
+      void store
+        .respondToQuestion(questionId, response)
+        .catch((reason: unknown) =>
+          setError(reason instanceof Error ? reason.message : t('app.error.answerQuestion')),
+        )
+        .finally(() => setRespondingInteractionId(undefined))
+    },
+  )
+  const cancelQuestionById = useStableCallback((questionId: string): void => {
+    setRespondingInteractionId(questionId)
+    void store
+      .cancelQuestion(questionId)
+      .catch((reason: unknown) =>
+        setError(reason instanceof Error ? reason.message : t('app.error.cancelQuestion')),
+      )
+      .finally(() => setRespondingInteractionId(undefined))
+  })
+  const approvalRespondFor = useCallback(
+    (request: PermissionRequest): ((optionId: string) => void) => {
+      let handler = approvalRespondHandlers.get(request)
+      if (handler === undefined) {
+        handler = (optionId: string) => respondToPermissionById(request.id, optionId)
+        approvalRespondHandlers.set(request, handler)
+      }
+      return handler
+    },
+    [respondToPermissionById],
+  )
+  const questionRespondFor = useCallback(
+    (
+      question: UserQuestion,
+    ): ((response: string | readonly string[] | readonly QuestionAnswer[]) => void) => {
+      let handler = questionRespondHandlers.get(question)
+      if (handler === undefined) {
+        handler = (response) => respondToQuestionById(question.id, response)
+        questionRespondHandlers.set(question, handler)
+      }
+      return handler
+    },
+    [respondToQuestionById],
+  )
+  const questionCancelFor = useCallback(
+    (question: UserQuestion): (() => void) => {
+      let handler = questionCancelHandlers.get(question)
+      if (handler === undefined) {
+        handler = () => cancelQuestionById(question.id)
+        questionCancelHandlers.set(question, handler)
+      }
+      return handler
+    },
+    [cancelQuestionById],
+  )
   const assistantLabel = useMemo(
     () => resolveAssistantModelLabel(active, state.configuration, sessionModels, t),
     [active, sessionModels, state.configuration, t],
@@ -459,9 +542,10 @@ export function App(): ReactElement {
   )
   const activeRunning =
     activeSubagent === undefined ? active?.status === 'running' : activeSubagent.activity === 'running'
+  // The draft lives in the module-level draft store, not in App state: the
+  // module functions are stable, so typing re-renders only the composer
+  // binding, never App.
   const {
-    draft,
-    setDraft,
     attachments,
     attachmentPreviews,
     attachmentPreviewFailures,
@@ -492,6 +576,8 @@ export function App(): ReactElement {
     hasPendingSession: state.pendingSession !== undefined,
     subagentEntries: state.subagents.entries,
     mountedRef,
+    setDraft,
+    readDraft,
   })
   // DSH's host/session-status is the authoritative running bit. Timeline
   // nodes describe durable content, but a settled assistant step can remain
@@ -1092,7 +1178,6 @@ export function App(): ReactElement {
     localeOpen,
     applyLocale,
     setError,
-    setDraft,
     setShowDshEvents,
     toggleExport,
     visibleExportSessionId,
@@ -1352,11 +1437,10 @@ export function App(): ReactElement {
                     <EmptyState title={t('app.createSession')} description={t('app.workspacePickerHint')} />
                   </div>
                   <div className="dsh-compose-area">
-                    <Composer
+                    <ConnectedComposer
                       key={state.pendingSession.revision}
                       disabled={backend.kind !== 'connected'}
                       running={false}
-                      draft={draft}
                       attachments={attachments}
                       configuration={state.pendingSession.configuration}
                       models={state.models}
@@ -1366,7 +1450,6 @@ export function App(): ReactElement {
                         ? {}
                         : { presetSelectionEnabled: newSessionPresetSelectionEnabled })}
                       onConfigurationChange={(configuration) => store.configurePendingSession(configuration)}
-                      onDraftChange={setDraft}
                       onPickAttachment={composerOnPickAttachment}
                       onIngestFiles={composerOnIngestFiles}
                       openFileCandidates={EMPTY_OPEN_FILE_CANDIDATES}
@@ -1576,17 +1659,7 @@ export function App(): ReactElement {
                           request={request}
                           disabled={respondingInteractionId !== undefined}
                           {...(command === undefined ? {} : { command })}
-                          onRespond={(optionId) => {
-                            setRespondingInteractionId(request.id)
-                            void store
-                              .respondToPermission(request.id, optionId)
-                              .catch((reason: unknown) =>
-                                setError(
-                                  reason instanceof Error ? reason.message : t('app.error.answerApproval'),
-                                ),
-                              )
-                              .finally(() => setRespondingInteractionId(undefined))
-                          }}
+                          onRespond={approvalRespondFor(request)}
                         />
                       ))}
                       {pendingQuestions.map((question) => (
@@ -1594,28 +1667,8 @@ export function App(): ReactElement {
                           key={question.id}
                           question={question}
                           disabled={respondingInteractionId !== undefined}
-                          onRespond={(response) => {
-                            setRespondingInteractionId(question.id)
-                            void store
-                              .respondToQuestion(question.id, response)
-                              .catch((reason: unknown) =>
-                                setError(
-                                  reason instanceof Error ? reason.message : t('app.error.answerQuestion'),
-                                ),
-                              )
-                              .finally(() => setRespondingInteractionId(undefined))
-                          }}
-                          onCancel={() => {
-                            setRespondingInteractionId(question.id)
-                            void store
-                              .cancelQuestion(question.id)
-                              .catch((reason: unknown) =>
-                                setError(
-                                  reason instanceof Error ? reason.message : t('app.error.cancelQuestion'),
-                                ),
-                              )
-                              .finally(() => setRespondingInteractionId(undefined))
-                          }}
+                          onRespond={questionRespondFor(question)}
+                          onCancel={questionCancelFor(question)}
                         />
                       ))}
                     </div>
@@ -1625,7 +1678,7 @@ export function App(): ReactElement {
                     {pendingPermissions.length === 0 && pendingQuestions.length === 0 ? (
                       subagentReadOnlyReason === undefined || activeRunning ? (
                         <>
-                          <Composer
+                          <ConnectedComposer
                             disabled={backend.kind !== 'connected'}
                             inputDisabled={
                               subagentReadOnlyReason !== undefined ||
@@ -1633,7 +1686,6 @@ export function App(): ReactElement {
                             }
                             attachmentsDisabled={activeSubagent !== undefined && !state.subagentImagePrompts}
                             running={activeRunning}
-                            draft={draft}
                             attachments={attachments}
                             {...(activeSubagent === undefined
                               ? {
@@ -1698,7 +1750,6 @@ export function App(): ReactElement {
                             onPopupSelect={composerOnPopupSelect}
                             onCommandQueryChange={composerOnCommandQueryChange}
                             onReferenceQueryChange={composerOnReferenceQueryChange}
-                            onDraftChange={setDraft}
                             onPickAttachment={composerOnPickAttachment}
                             onIngestFiles={composerOnIngestFiles}
                             attachmentPreviews={attachmentPreviews}
@@ -1734,7 +1785,16 @@ export function App(): ReactElement {
                           </span>
                         </div>
                       )
-                    ) : null}
+                    ) : (
+                      // The interaction cards take the composer's slot while they
+                      // wait. Queueing a message is still legitimate DSH input, so
+                      // the input surface states why it is unavailable instead of
+                      // silently disappearing.
+                      <div className="dsh-compose-hint" role="status">
+                        <Icon name="alert" />
+                        <span>{t('composer.pendingHint')}</span>
+                      </div>
+                    )}
                   </div>
                 </section>
               )}

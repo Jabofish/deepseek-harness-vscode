@@ -268,7 +268,11 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
     () => timelineFactsProjector(props.nodes, props.nodeChangeStart, props.nodeChangeBase),
     [timelineFactsProjector, props.nodeChangeBase, props.nodeChangeStart, props.nodes],
   )
-  const userTextFacts = useMemo(() => collectUserTextFacts(props.nodes), [props.nodes])
+  const userTextFactsProjector = useMemo(() => createUserTextFactsProjector(), [])
+  // Identity-stable across streaming frames: the facts only change when a
+  // user-authored row actually does, so the render context below (and with it
+  // every memoized TimelineRow) survives tool/assistant deltas untouched.
+  const userTextFacts = userTextFactsProjector(props.nodes)
   const virtualizationProjector = useMemo(() => createVirtualizationProjector(), [])
 
   const usingTool = timelineFacts.hasActiveTool
@@ -2319,6 +2323,41 @@ function collectUserTextFacts(nodes: readonly TimelineNode[]): ReadonlyMap<strin
     if (uniqueLabels.length > 0) facts.set(node.id, { sessionReferenceLabels: uniqueLabels })
   }
   return facts
+}
+
+/**
+ * Streaming appends to the same nodes array identity every frame, and the
+ * facts of user-authored rows rarely change with it. Returning the previous
+ * map while the computed facts are equal keeps the render context identity
+ * (and every memoized row that receives it) stable across those frames.
+ */
+function createUserTextFactsProjector(): (
+  nodes: readonly TimelineNode[],
+) => ReadonlyMap<string, UserTextFacts> {
+  let previous: ReadonlyMap<string, UserTextFacts> = new Map()
+  return (nodes) => {
+    const next = collectUserTextFacts(nodes)
+    if (sameUserTextFacts(previous, next)) return previous
+    previous = next
+    return next
+  }
+}
+
+function sameUserTextFacts(
+  left: ReadonlyMap<string, UserTextFacts>,
+  right: ReadonlyMap<string, UserTextFacts>,
+): boolean {
+  if (left.size !== right.size) return false
+  for (const [id, facts] of right) {
+    const known = left.get(id)
+    if (known === undefined) return false
+    if (
+      known.sessionReferenceLabels.length !== facts.sessionReferenceLabels.length ||
+      known.sessionReferenceLabels.some((label, index) => label !== facts.sessionReferenceLabels[index])
+    )
+      return false
+  }
+  return true
 }
 
 interface PendingAssistantWork {

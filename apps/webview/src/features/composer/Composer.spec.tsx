@@ -34,10 +34,63 @@ function composerForm(): HTMLFormElement {
   return screen.getByRole('textbox', { name: 'Prompt' }).closest('form') as HTMLFormElement
 }
 
+/** A controlled composer whose draft actually round-trips through the parent. */
+function DraftHarness(): ReactElement {
+  const [draft, setDraft] = useState('')
+  const base = baseProps()
+  return <Composer {...base} draft={draft} onDraftChange={setDraft} />
+}
+
+function typePrompt(value: string): HTMLTextAreaElement {
+  const textarea = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })
+  fireEvent.change(textarea, { target: { value } })
+  return textarea
+}
+
 describe('Composer', () => {
   afterEach(() => {
     cleanup()
     vi.useRealTimers()
+  })
+
+  it('undoes and redoes draft edits with Ctrl+Z and Ctrl+Y', () => {
+    render(<DraftHarness />)
+    const textarea = typePrompt('a')
+    typePrompt('ab')
+
+    fireEvent.keyDown(textarea, { key: 'z', ctrlKey: true })
+    expect(textarea.value).toBe('a')
+    fireEvent.keyDown(textarea, { key: 'y', ctrlKey: true })
+    expect(textarea.value).toBe('ab')
+    fireEvent.keyDown(textarea, { key: 'z', ctrlKey: true })
+    expect(textarea.value).toBe('a')
+  })
+
+  it('records an edit made after an undo so it can be undone again', () => {
+    render(<DraftHarness />)
+    const textarea = typePrompt('a')
+    typePrompt('ab')
+
+    fireEvent.keyDown(textarea, { key: 'z', ctrlKey: true })
+    expect(textarea.value).toBe('a')
+
+    // The edit that follows an undo is a real history entry, not the leftover
+    // skip marker of the restore: it must be undoable in its own right.
+    typePrompt('ac')
+    fireEvent.keyDown(textarea, { key: 'z', ctrlKey: true })
+    expect(textarea.value).toBe('a')
+  })
+
+  it('drops the redo branch when a new edit follows an undo', () => {
+    render(<DraftHarness />)
+    const textarea = typePrompt('a')
+    typePrompt('ab')
+
+    fireEvent.keyDown(textarea, { key: 'z', ctrlKey: true })
+    typePrompt('ac')
+
+    fireEvent.keyDown(textarea, { key: 'y', ctrlKey: true })
+    expect(textarea.value).toBe('ac')
   })
 
   it('starts compact and grows with long input until reaching its height cap', () => {

@@ -68,6 +68,9 @@ const ToolCallRows = memo(function ToolCallRows(props: ToolCallCollectionProps):
 
   const latest = props.tools[props.tools.length - 1]
   if (latest === undefined) return null
+  // The collapsed summary is the only surface a reader sees before expanding;
+  // a failed call inside the batch must stay visible there, not only on rows.
+  const hasFailure = roots.some(treeHasFailure)
 
   return (
     <details className="dsh-timeline__tool-group dsh-timeline__tool-collection">
@@ -89,6 +92,7 @@ const ToolCallRows = memo(function ToolCallRows(props: ToolCallCollectionProps):
         >
           {toolSummary(latest.tool, props.translate)}
         </ContentFlow>
+        {hasFailure ? <span className="dsh-timeline__tool-group-failure" aria-hidden="true" /> : null}
         <span className="dsh-timeline__tool-group-disclosure" aria-hidden="true">
           <Icon name="chevron-down" />
         </span>
@@ -113,6 +117,12 @@ function renderToolCard(tree: ToolCallTreeNode, props: ToolCallCollectionProps):
       {...(props.onLoadImage === undefined ? {} : { onLoadImage: props.onLoadImage })}
     />
   )
+}
+
+/** The row-level failed verdict, including Auto Review denials, for a subtree. */
+function treeHasFailure(tree: ToolCallTreeNode): boolean {
+  const status = terminalPresentationFailed(tree.node.tool.presentation) ? 'failed' : tree.node.tool.status
+  return status === 'failed' || tree.children.some(treeHasFailure)
 }
 
 interface ToolCardViewProps {

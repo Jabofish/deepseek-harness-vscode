@@ -234,7 +234,14 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
 
   useEffect(() => {
     const history = draftHistoryRef.current
-    if (history.last === props.draft) return
+    if (history.last === props.draft) {
+      // A programmatic restore syncs `last` to the restored value before the
+      // change lands, so the effect sees an unchanged draft here. Its skip
+      // marker still has to be consumed: leaving it set would swallow the
+      // next real edit and keep a stale redo branch alive behind it.
+      history.skip = false
+      return
+    }
     history.last = props.draft
     if (history.skip) {
       history.skip = false
