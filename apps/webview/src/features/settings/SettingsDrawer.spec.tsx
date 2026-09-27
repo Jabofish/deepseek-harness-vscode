@@ -566,6 +566,35 @@ describe('SettingsDrawer', () => {
     )
   })
 
+  it('ignores an extension settings read from a closed drawer', async () => {
+    const updated: ExtensionSettingsSummary = {
+      ...settingsFixture(),
+      connection: { mode: 'custom', customEndpointConfigured: true },
+    }
+    let resolveOld: ((value: ExtensionSettingsSummary) => void) | undefined
+    const onLoadSettings = vi
+      .fn<() => Promise<ExtensionSettingsSummary>>()
+      .mockImplementationOnce(
+        () =>
+          new Promise<ExtensionSettingsSummary>((resolve) => {
+            resolveOld = resolve
+          }),
+      )
+      .mockResolvedValueOnce(updated)
+    const view = renderDrawer({ onLoadSettings })
+    view.rerender(drawerElement({ open: false, onLoadSettings }))
+    await act(async () => {
+      resolveOld?.(settingsFixture())
+      await Promise.resolve()
+    })
+    view.rerender(drawerElement({ open: true, onLoadSettings }))
+
+    await waitFor(() => expect(onLoadSettings).toHaveBeenCalledTimes(2))
+    await waitFor(() =>
+      expect(screen.getByRole('radio', { name: /Custom endpoint/ })).toHaveProperty('checked', true),
+    )
+  })
+
   it('keeps keyboard focus and pointer reach inside the settings dialog while it is open', async () => {
     const background = document.createElement('button')
     background.type = 'button'

@@ -291,7 +291,8 @@ export function SubagentDrawer(props: SubagentCatalogProps): ReactElement | null
   // to the first row. Diagnostic rows never take focus.
   const firstSelectableId = rows.find((row) => row.entry.kind !== 'diagnostic')?.entry.id
   const tabStopId =
-    activeRowId !== undefined && rows.some((row) => row.entry.id === activeRowId)
+    activeRowId !== undefined &&
+    rows.some((row) => row.entry.kind !== 'diagnostic' && row.entry.id === activeRowId)
       ? activeRowId
       : firstSelectableId
   if (props.catalog.entries.length === 0) return null

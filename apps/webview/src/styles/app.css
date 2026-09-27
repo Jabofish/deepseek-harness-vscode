@@ -1935,6 +1935,13 @@ summary.dsh-timeline__card-header,
   color: var(--dsh-error-text);
 }
 
+.dsh-goal-bar__confirmation {
+  display: block;
+  margin-top: var(--dsh-space-2);
+  color: var(--dsh-error-text);
+  overflow-wrap: anywhere;
+}
+
 .dsh-goal-bar__phase,
 .dsh-goal-strip__count,
 .dsh-queue__count {

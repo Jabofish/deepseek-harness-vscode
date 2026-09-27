@@ -139,6 +139,7 @@ function QueueItemEditor(props: {
   const [previousText, setPreviousText] = useState(props.item.text)
   /** The text this row last sent to the Host; Enter and blur share its guard. */
   const [committedText, setCommittedText] = useState(props.item.text)
+  const commitGenerationRef = useRef(0)
   if (previousText !== props.item.text) {
     // Queue projections are authoritative. Refresh a mounted editor whenever
     // DSH reports a newer value so an old uncontrolled default cannot be
@@ -152,21 +153,34 @@ function QueueItemEditor(props: {
    * projection when the rejection lands. */
   const authoritativeTextRef = useRef(props.item.text)
   useLayoutEffect(() => {
-    authoritativeTextRef.current = props.item.text
+    if (authoritativeTextRef.current !== props.item.text) {
+      authoritativeTextRef.current = props.item.text
+      commitGenerationRef.current += 1
+    }
   })
 
   const commitIfChanged = (): void => {
     if (value === committedText) return
+    const submittedText = value
+    const generation = ++commitGenerationRef.current
     setCommittedText(value)
-    const accepted = props.onEdit(props.item.id, value)
+    let accepted: void | Promise<void>
+    try {
+      accepted = props.onEdit(props.item.id, submittedText)
+    } catch {
+      accepted = Promise.reject(new Error('Queue edit failed'))
+    }
     if (isThenable(accepted)) {
       // The optimistic commit stands only until the Host answers. A rejection
       // means DSH kept the previous prompt: restore it so the row does not
       // read as saved, and retyping (or Escape plus retyping) can retry.
       void accepted.catch(() => {
+        if (commitGenerationRef.current !== generation) return
         const authoritative = authoritativeTextRef.current
         setPreviousText(authoritative)
-        setValue(authoritative)
+        // A newer draft typed while the request was in flight still belongs
+        // to the user; only replace the exact text the Host rejected.
+        setValue((current) => (current === submittedText ? authoritative : current))
         setCommittedText(authoritative)
       })
     }

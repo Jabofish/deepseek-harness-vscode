@@ -726,7 +726,10 @@ describe('SchedulePanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'More task actions' }))
     const menu = screen.getByRole('group', { name: 'More task actions' })
     fireEvent.click(within(menu).getByRole('button', { name: 'Delete' }))
-    expect(screen.getByRole('alertdialog', { name: 'Confirm reminder deletion' })).toBeDefined()
+    const confirmation = screen.getByRole('alertdialog', { name: 'Confirm reminder deletion' })
+    // The user may review either detail tab while deciding; this alertdialog
+    // takes initial focus but must not claim the rest of the detail is inert.
+    expect(confirmation.hasAttribute('aria-modal')).toBe(false)
 
     fireEvent.click(screen.getByRole('tab', { name: 'Delivery history' }))
     expect(screen.getByRole('alertdialog', { name: 'Confirm reminder deletion' })).toBeDefined()
@@ -739,6 +742,26 @@ describe('SchedulePanel', () => {
       payload: { sessionId: 'session-original', id: 'schedule-one' },
     })
     await waitFor(() => expect(screen.queryByRole('complementary', { name: 'Schedule details' })).toBeNull())
+  })
+
+  it('returns focus to the mounted actions trigger after cancelling deletion', async () => {
+    mountPanel({ items: [active] })
+    fireEvent.click(await screen.findByRole('button', { name: /Water the plants/u }))
+    const trigger = screen.getByRole('button', { name: 'More task actions' })
+    fireEvent.click(trigger)
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    expect(document.activeElement).toBe(
+      screen.getByRole('alertdialog', { name: 'Confirm reminder deletion' }),
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('alertdialog', { name: 'Confirm reminder deletion' })).toBeNull()
+    expect(document.activeElement).toBe(trigger)
+
+    fireEvent.click(trigger)
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(document.activeElement).toBe(trigger)
   })
 
   it('edits a timing rule against its original Session and sends a fresh compare-and-swap snapshot', async () => {

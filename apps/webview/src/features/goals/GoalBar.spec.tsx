@@ -33,6 +33,21 @@ describe('GoalBar', () => {
     expect(screen.getByRole('button', { name: 'Clear goal' })).toBeDefined()
   })
 
+  it('requires a fresh clear confirmation when the active goal changes', () => {
+    const onClear = vi.fn(() => Promise.resolve())
+    const { rerender } = render(<GoalBar goals={[goal]} onClear={onClear} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Clear goal' }))
+    expect(screen.getByRole('status').textContent).toBe('Press again to clear this goal')
+
+    const nextGoal = { ...goal, id: 'g2', title: 'Ship the next release' }
+    rerender(<GoalBar goals={[nextGoal]} onClear={onClear} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Clear goal' }))
+    expect(onClear).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Press again to clear this goal' }))
+    expect(onClear).toHaveBeenCalledOnce()
+    expect(onClear).toHaveBeenCalledWith('g2')
+  })
+
   it('edits the objective and maps pause/resume to host goal status values', async () => {
     const onUpdate = vi.fn(() => Promise.resolve())
     const { rerender } = render(<GoalBar goals={[goal]} onUpdate={onUpdate} />)

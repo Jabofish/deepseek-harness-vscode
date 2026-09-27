@@ -39,8 +39,8 @@
 - The attachment and message-image lightboxes plus the preset manager's copy/composition/delete confirmations now genuinely trap keyboard focus with an inert background and share one Escape layer; the schedule delete confirmation takes focus when it opens (previously focus fell to the document root), returns it to the trigger on close, and its one-item "⋯" popover uses honest button semantics instead of an unimplemented menu pattern.
 - 轨迹详情面板打开时接管键盘焦点、Escape 可关闭并回到触发行；用量数值的单位随界面语言显示（中文为 "token"）；运行时状态条与连接进度页只播报状态标题变化，打开详情面板或各连接阶段切换不再让屏幕阅读器整段重读；会话面板工作区列表与消息图片组获得正确的分组语义。
 - The trajectory inspector takes focus when it opens, closes on Escape, and returns the keyboard to its row; token usage follows the interface language ("token" in Chinese); the runtime status chip and connection progress page announce only their headline changes instead of re-reading the whole panel, and the session workspace list and message image groups carry proper group semantics.
-- 目标条的阻塞原因现在直接显示在状态旁（此前只能悬停查看）；"清除目标"改为两步确认——第一次点击进入确认态并明确提示，再次点击才执行，Escape 或移开焦点自动复位。
-- The goal bar shows the block reason inline next to the status (it was hover-only), and "Clear goal" now confirms in two steps: the first press enters a labeled confirming state, the second commits, and Escape or moving focus resets it.
+- 目标条的阻塞原因现在直接显示在状态旁（此前只能悬停查看）；"清除目标"改为两步确认——第一次点击显示确认提示，再次点击才执行，Escape、移开焦点或切换目标会复位确认态。
+- The goal bar shows the block reason inline next to the status (it was hover-only), and "Clear goal" now confirms in two steps: the first press displays a confirmation prompt, the second commits, and Escape, moving focus, or switching goals resets it.
 
 ## 0.2.6
 

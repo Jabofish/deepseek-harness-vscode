@@ -235,4 +235,54 @@ describe('QueuePanel', () => {
     expect(onEdit).toHaveBeenCalledTimes(2)
     expect(onEdit).toHaveBeenLastCalledWith('q1', 'retry')
   })
+
+  it('keeps a newer draft when an earlier queue edit is rejected', async () => {
+    let rejectFirst: ((reason: unknown) => void) | undefined
+    const onEdit = vi.fn(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectFirst = reject
+        }),
+    )
+    renderQueue([queuedInput('q1', 'first')], true, vi.fn(), onEdit)
+
+    const editor = screen.getByRole('textbox', { name: 'Edit queued prompt 1' })
+    fireEvent.change(editor, { target: { value: 'submitted' } })
+    fireEvent.keyDown(editor, { key: 'Enter' })
+    fireEvent.change(editor, { target: { value: 'new draft' } })
+    await act(async () => {
+      rejectFirst?.(new Error('edit rejected'))
+      await Promise.resolve()
+    })
+
+    expect(screen.getByDisplayValue('new draft')).toBe(editor)
+    fireEvent.blur(editor)
+    expect(onEdit).toHaveBeenCalledTimes(2)
+    expect(onEdit).toHaveBeenLastCalledWith('q1', 'new draft')
+  })
+
+  it('ignores an older rejection after a later queue edit was submitted', async () => {
+    const rejectEdits: Array<(reason: unknown) => void> = []
+    const onEdit = vi.fn(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectEdits.push(reject)
+        }),
+    )
+    renderQueue([queuedInput('q1', 'first')], true, vi.fn(), onEdit)
+
+    const editor = screen.getByRole('textbox', { name: 'Edit queued prompt 1' })
+    fireEvent.change(editor, { target: { value: 'first edit' } })
+    fireEvent.keyDown(editor, { key: 'Enter' })
+    fireEvent.change(editor, { target: { value: 'second edit' } })
+    fireEvent.keyDown(editor, { key: 'Enter' })
+    await act(async () => {
+      rejectEdits[0]?.(new Error('older edit rejected'))
+      await Promise.resolve()
+    })
+
+    expect(screen.getByDisplayValue('second edit')).toBe(editor)
+    fireEvent.blur(editor)
+    expect(onEdit).toHaveBeenCalledTimes(2)
+  })
 })

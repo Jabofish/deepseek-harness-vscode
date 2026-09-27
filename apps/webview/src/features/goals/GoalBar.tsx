@@ -1,4 +1,4 @@
-import { memo, useRef, useState, type ReactElement } from 'react'
+import { memo, useEffect, useRef, useState, type ReactElement } from 'react'
 import type { GoalView } from '@dsh-vscode/domain'
 import { useI18n } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
@@ -21,9 +21,12 @@ export const GoalBar = memo(function GoalBar(props: GoalBarProps): ReactElement 
   const [draft, setDraft] = useState('')
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string | undefined>()
-  const [confirmingClear, setConfirmingClear] = useState(false)
+  const [confirmingClearGoalId, setConfirmingClearGoalId] = useState<string | undefined>()
   const pendingRef = useRef(false)
   const goalId = goal?.id
+  const confirmingClear = confirmingClearGoalId === goalId
+
+  useEffect(() => setConfirmingClearGoalId(undefined), [goalId])
 
   if (goal === undefined) return null
 
@@ -181,18 +184,18 @@ export const GoalBar = memo(function GoalBar(props: GoalBarProps): ReactElement 
               aria-label={confirmingClear ? t('goals.clearConfirm') : t('goals.clear')}
               title={confirmingClear ? t('goals.clearConfirm') : t('goals.clear')}
               disabled={pending}
-              onBlur={() => setConfirmingClear(false)}
+              onBlur={() => setConfirmingClearGoalId(undefined)}
               onKeyDown={(event) => {
-                if (event.key === 'Escape') setConfirmingClear(false)
+                if (event.key === 'Escape') setConfirmingClearGoalId(undefined)
               }}
               // Clearing discards the host-side goal, which only a `/goal`
               // command can recreate: the first press asks, the second commits.
               onClick={() => {
                 if (!confirmingClear) {
-                  setConfirmingClear(true)
+                  setConfirmingClearGoalId(goal.id)
                   return
                 }
-                setConfirmingClear(false)
+                setConfirmingClearGoalId(undefined)
                 void run(() => props.onClear!(goal.id))
               }}
             >
@@ -201,6 +204,11 @@ export const GoalBar = memo(function GoalBar(props: GoalBarProps): ReactElement 
           )}
         </div>
       </div>
+      {confirmingClear ? (
+        <span className="dsh-goal-bar__confirmation" role="status">
+          {t('goals.clearConfirm')}
+        </span>
+      ) : null}
       {error === undefined ? null : (
         <span className="dsh-goal-bar__error" role="alert">
           {error}

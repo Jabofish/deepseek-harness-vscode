@@ -107,6 +107,36 @@ describe('SubagentDrawer tree', () => {
     expect(coder.getAttribute('tabindex')).toBe('-1')
   })
 
+  it('moves the tab stop to a selectable row when the focused child becomes diagnostic', () => {
+    const onLoadChildren = vi.fn().mockResolvedValue(catalog([]))
+    const onOpenChild = vi.fn()
+    const { rerender } = render(
+      <SubagentDrawer
+        parentSessionId="root"
+        catalog={catalog([child({ id: 'c1', label: 'Researcher' }), child({ id: 'c2', label: 'Coder' })])}
+        onLoadChildren={onLoadChildren}
+        onOpenChild={onOpenChild}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Subagents: 2' }))
+    screen.getByRole('treeitem', { name: 'Coder · One-shot · Inactive' }).focus()
+
+    rerender(
+      <SubagentDrawer
+        parentSessionId="root"
+        catalog={catalog([
+          child({ id: 'c1', label: 'Researcher' }),
+          { kind: 'diagnostic', id: 'c2', reason: 'unavailable', parentSessionId: 'root' },
+        ])}
+        onLoadChildren={onLoadChildren}
+        onOpenChild={onOpenChild}
+      />,
+    )
+    expect(
+      screen.getByRole('treeitem', { name: 'Researcher · One-shot · Inactive' }).getAttribute('tabindex'),
+    ).toBe('0')
+  })
+
   it('shows the official token and elapsed-time metrics from the session projection', async () => {
     const summary: SessionSummary = {
       id: 'c1',

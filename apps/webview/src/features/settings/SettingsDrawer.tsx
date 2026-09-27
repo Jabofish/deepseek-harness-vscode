@@ -349,11 +349,12 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
 
   useEffect(() => {
     if (!open || settingsState !== undefined) return
+    const epoch = openEpochRef.current
     let cancelled = false
     void onLoadSettings()
       .catch(() => undefined)
       .then((value) => {
-        if (cancelled) return
+        if (cancelled || openEpochRef.current !== epoch) return
         setSettingsState({ value })
         if (value !== undefined) {
           setConnectionChoice(
@@ -398,11 +399,12 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
     dshSettingsOpenedRef.current = true
     if (!opened && dshState.status !== 'loading') return
     const hadSnapshot = dshState.status === 'ready'
+    const epoch = openEpochRef.current
     let cancelled = false
     void onLoadDshSettings()
       .catch(() => undefined)
       .then((snapshot) => {
-        if (!cancelled) {
+        if (!cancelled && openEpochRef.current === epoch) {
           if (snapshot !== undefined) {
             const hostLocale = settingValueAt(snapshot.values, 'locale.preference')
             if (isLocale(hostLocale)) onLocaleFromDsh(hostLocale)
@@ -865,6 +867,7 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
     } catch (reason: unknown) {
       if (openEpochRef.current === epoch) {
         const snapshot = await onLoadDshSettings().catch(() => undefined)
+        if (openEpochRef.current !== epoch) return
         setDshState(snapshot === undefined ? { status: 'unavailable' } : { status: 'ready', snapshot })
         setDshSettingsSnapshotFresh(snapshot !== undefined)
         if (isSettingsConflict(reason)) setRemovingProviderId(undefined)

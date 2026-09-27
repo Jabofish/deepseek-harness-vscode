@@ -714,7 +714,6 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
     if (confirmDelete && !confirmWasOpen.current) confirmDeleteRef.current?.focus()
     if (confirmWasOpen.current && !confirmDelete) {
       const target = moreActionsTriggerRef.current
-      moreActionsTriggerRef.current = null
       if (target !== null && target.isConnected) target.focus()
     }
     confirmWasOpen.current = confirmDelete
@@ -1741,8 +1740,7 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
                     <button
                       type="button"
                       disabled={busy || catalogStatus === 'loading' || !selectedInCatalog}
-                      onClick={(event) => {
-                        moreActionsTriggerRef.current = event.currentTarget
+                      onClick={() => {
                         setMoreActionsOpen(false)
                         setConfirmDelete(true)
                       }}
@@ -1821,7 +1819,6 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
               tabIndex={-1}
               className="dsh-schedule-panel__confirm"
               role="alertdialog"
-              aria-modal="true"
               aria-label={t('schedules.delete.confirmTitle')}
               aria-describedby={`${labelId}-delete-copy`}
             >
