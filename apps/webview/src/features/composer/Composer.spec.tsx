@@ -554,7 +554,7 @@ describe('Composer', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Preview shot.png' }))
     const dialog = screen.getByRole('dialog', { name: 'Preview shot.png' })
     expect(dialog.querySelector('img')?.getAttribute('src')).toBe(dataUri)
-    fireEvent.keyDown(window, { key: 'Escape' })
+    fireEvent.keyDown(document, { key: 'Escape' })
     expect(screen.queryByRole('dialog', { name: 'Preview shot.png' })).toBeNull()
   })
 
@@ -570,7 +570,7 @@ describe('Composer', () => {
     fireEvent.click(thumbnail)
     const dialog = screen.getByRole('dialog', { name: 'Preview shot.png' })
     expect(document.activeElement).toBe(within(dialog).getByRole('button', { name: 'Close preview' }))
-    fireEvent.keyDown(window, { key: 'Escape' })
+    fireEvent.keyDown(document, { key: 'Escape' })
     expect(screen.queryByRole('dialog', { name: 'Preview shot.png' })).toBeNull()
     expect(document.activeElement).toBe(thumbnail)
   })

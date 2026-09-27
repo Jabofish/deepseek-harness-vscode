@@ -40,7 +40,7 @@ describe('MessageImages', () => {
     fireEvent.click(thumbnail)
     const dialog = screen.getByRole('dialog')
     expect(dialog.querySelector('img')?.getAttribute('src')).toBe('data:image/png;base64,iVBORw0KGgo=')
-    fireEvent.keyDown(window, { key: 'Escape' })
+    fireEvent.keyDown(document, { key: 'Escape' })
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 
@@ -68,7 +68,7 @@ describe('MessageImages', () => {
     const thumbnail = await screen.findByRole('button', { name: 'timeline.openImage' })
     fireEvent.click(thumbnail)
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'timeline.closeImage' }))
-    fireEvent.keyDown(window, { key: 'Escape' })
+    fireEvent.keyDown(document, { key: 'Escape' })
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(document.activeElement).toBe(thumbnail)
   })
@@ -200,32 +200,33 @@ describe('MessageImages', () => {
       useDismissibleLayer({ open: true, refs: [ref], onDismiss: () => undefined, onEscape })
       return <div ref={ref} />
     }
-    render(
+    const images: readonly MessageImageReference[] = [
+      {
+        attachmentId: 'fixture:escape',
+        mediaType: 'image/png',
+        bytes: 247,
+        width: 160,
+        height: 90,
+        name: 'escape.png',
+      },
+    ]
+    const { rerender } = render(
       <I18nProvider>
-        <Consumer />
-        <MessageImages
-          images={[
-            {
-              attachmentId: 'fixture:escape',
-              mediaType: 'image/png',
-              bytes: 247,
-              width: 160,
-              height: 90,
-              name: 'escape.png',
-            },
-          ]}
-          loadImage={loadImage}
-          translate={(key) => key}
-        />
+        <MessageImages images={images} loadImage={loadImage} translate={(key) => key} />
       </I18nProvider>,
     )
 
     fireEvent.click(await screen.findByRole('button', { name: 'timeline.openImage' }))
     expect(screen.getByRole('dialog')).toBeDefined()
 
-    // The key targets a node inside the document, so it reaches the layer's
-    // document listener before the lightbox's window listener -- the order a
-    // real key press takes.
+    // A surface stacked on top of the lightbox registers after it, so the
+    // shared layer stack hands Escape to the innermost surface only.
+    rerender(
+      <I18nProvider>
+        <MessageImages images={images} loadImage={loadImage} translate={(key) => key} />
+        <Consumer />
+      </I18nProvider>,
+    )
     fireEvent.keyDown(document.body, { key: 'Escape' })
 
     expect(onEscape).toHaveBeenCalledTimes(1)

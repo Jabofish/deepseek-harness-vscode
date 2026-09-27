@@ -705,6 +705,20 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
   const [editState, setEditState] = useState<EditState>({ editing: false })
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [moreActionsOpen, setMoreActionsOpen] = useState(false)
+  /** The delete confirmation is a destructive alertdialog: it takes the
+   * keyboard on open and hands it back to the control that asked for it. */
+  const confirmDeleteRef = useRef<HTMLDivElement>(null)
+  const moreActionsTriggerRef = useRef<HTMLButtonElement>(null)
+  const confirmWasOpen = useRef(false)
+  useEffect(() => {
+    if (confirmDelete && !confirmWasOpen.current) confirmDeleteRef.current?.focus()
+    if (confirmWasOpen.current && !confirmDelete) {
+      const target = moreActionsTriggerRef.current
+      moreActionsTriggerRef.current = null
+      if (target !== null && target.isConnected) target.focus()
+    }
+    confirmWasOpen.current = confirmDelete
+  }, [confirmDelete])
   const [busy, setBusy] = useState(false)
   const [operationError, setOperationError] = useState<string>()
   const [operationNotice, setOperationNotice] = useState<string>()
@@ -1243,6 +1257,7 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
     event.stopPropagation()
     if (moreActionsOpen) {
       setMoreActionsOpen(false)
+      moreActionsTriggerRef.current?.focus()
       return
     }
     if (confirmDelete) {
@@ -1706,10 +1721,10 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
             <div className="dsh-schedule-panel__detail-heading-actions">
               <div className="dsh-schedule-panel__more-actions">
                 <button
+                  ref={moreActionsTriggerRef}
                   type="button"
                   className="dsh-schedule-panel__icon-button"
                   aria-label={t('schedules.moreActions')}
-                  aria-haspopup="menu"
                   aria-expanded={moreActionsOpen}
                   aria-controls={moreActionsOpen ? `${labelId}-more-actions` : undefined}
                   onClick={() => setMoreActionsOpen((open) => !open)}
@@ -1720,14 +1735,14 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
                   <div
                     id={`${labelId}-more-actions`}
                     className="dsh-schedule-panel__more-actions-menu"
-                    role="menu"
+                    role="group"
                     aria-label={t('schedules.moreActions')}
                   >
                     <button
                       type="button"
-                      role="menuitem"
                       disabled={busy || catalogStatus === 'loading' || !selectedInCatalog}
-                      onClick={() => {
+                      onClick={(event) => {
+                        moreActionsTriggerRef.current = event.currentTarget
                         setMoreActionsOpen(false)
                         setConfirmDelete(true)
                       }}
@@ -1802,8 +1817,11 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
 
           {confirmDelete ? (
             <div
+              ref={confirmDeleteRef}
+              tabIndex={-1}
               className="dsh-schedule-panel__confirm"
               role="alertdialog"
+              aria-modal="true"
               aria-label={t('schedules.delete.confirmTitle')}
               aria-describedby={`${labelId}-delete-copy`}
             >

@@ -1923,6 +1923,18 @@ summary.dsh-timeline__card-header,
   white-space: normal;
 }
 
+.dsh-goal-bar__blocked {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dsh-error-text);
+}
+
+.dsh-goal-bar__clear--confirming {
+  color: var(--dsh-error-text);
+}
+
 .dsh-goal-bar__phase,
 .dsh-goal-strip__count,
 .dsh-queue__count {

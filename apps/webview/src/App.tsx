@@ -668,13 +668,14 @@ export function App(): ReactElement {
       store.updateGoal(goalId, update),
   )
   const goalOnClear = useStableCallback((goalId: string) => store.clearGoal(goalId))
-  const queueOnEdit = useStableCallback((inputId: string, text: string): void => {
-    void store
-      .updateQueue(inputId, text)
-      .catch((reason: unknown) =>
-        setError(reason instanceof Error ? reason.message : t('app.error.editQueue')),
-      )
-  })
+  const queueOnEdit = useStableCallback((inputId: string, text: string): Promise<void> =>
+    // The queue editor waits for this acceptance before treating its draft as
+    // committed, so the rejection must propagate after the banner is set.
+    store.updateQueue(inputId, text).catch((reason: unknown) => {
+      setError(reason instanceof Error ? reason.message : t('app.error.editQueue'))
+      throw reason
+    }),
+  )
   const queueOnRemove = useStableCallback((inputId: string): void => {
     void store
       .removeQueue(inputId)

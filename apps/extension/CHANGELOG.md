@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- 队列编辑在 Host 拒绝时不再假报已保存：输入框恢复为 DSH 保留的原提示词，可重新编辑并再次提交，Escape 与失焦也不会把被拒文本当作已提交。
+- Queue edits no longer read as saved when the Host rejects them: the row restores the prompt DSH kept, retyping can retry the request, and Escape or blur never treat rejected text as committed.
+- 设置抽屉关闭后完成的读取或保存不再把过期快照重新标记为最新：关闭前发起的迟到结果被忽略，重新打开时先展示加载状态并禁止写入，直到重新读取完成，避免对外部已修改的设置用过期修订提交。
+- Reads or saves that finish after the settings drawer closed can no longer re-arm a stale snapshot as fresh: late results from the closed session are ignored, reopening shows a loading state and blocks writes until the fresh read lands, so externally changed settings are never saved against a stale revision.
+- 子代理树的单一 Tab 停靠点现在跟随方向键移动的焦点：Tab 与 Shift+Tab 从当前行进出树，而不是先弹回第一行。
+- The subagent tree's single tab stop now follows the arrow-driven focus: Tab and Shift+Tab enter and leave the tree at the row the user is on instead of snapping back to the first row.
+- 侧栏缩窄时被钳制的锚定弹层在侧栏加宽后恢复样式表目标宽度：定位钩子按自然宽度重新测量，不再把上次的窄宽度写回。
+- Anchored popovers clamped by a narrow sidebar regain their stylesheet width once the sidebar widens: the positioning hook re-measures the natural width instead of writing the previous clamped width back.
+
 - 检查点、提示模板、消息反馈与工具链接错误等模态确认框现在真正圈住键盘焦点：Tab 在框内循环，背景内容标记为 inert，屏幕阅读器不再宣称模态却让焦点走出对话框；确认框补齐了可访问名称，上下文用量详情打开时焦点进入面板、关闭后回到触发按钮。
 - Modal confirmations (checkpoints, prompt templates, message feedback, tool-link errors) now genuinely trap keyboard focus: Tab cycles inside the dialog, the background goes inert, and screen readers no longer announce a modal that lets focus wander. The confirmations gained accessible names, and the context-usage details move focus into the panel on open and back to its trigger on close.
 - 模板编辑等弹层内的对话框打开时，误点弹层外部不再丢失正在编辑的内容。
@@ -25,6 +34,13 @@
 - Editor-context chips show human-readable byte sizes (for example 1.5 KiB) consistent with attachment limits; the experimental Auto permission option carries a localized label in Chinese; the empty-session posture announces once to screen readers instead of on every picker change, and its missing-default-preset notice moves into the locale dictionaries.
 - 会话统计行不再是 live region：流式期间数字持续变化不再让屏幕阅读器反复朗读整行，仍可按分组浏览。
 - The session statistics line is no longer a live region: streaming updates no longer re-read the whole line to screen readers, while the group stays browsable.
+
+- 附件图片灯箱、消息图片灯箱与预设管理的复制/组合/删除确认框现在真正圈住键盘焦点并将背景置为 inert，Escape 统一经共享层关闭；日程删除确认框打开时接管键盘焦点（此前焦点掉到文档开头），关闭后回到触发按钮，⋯菜单项同步改用普通按钮语义并保持可达。
+- The attachment and message-image lightboxes plus the preset manager's copy/composition/delete confirmations now genuinely trap keyboard focus with an inert background and share one Escape layer; the schedule delete confirmation takes focus when it opens (previously focus fell to the document root), returns it to the trigger on close, and its one-item "⋯" popover uses honest button semantics instead of an unimplemented menu pattern.
+- 轨迹详情面板打开时接管键盘焦点、Escape 可关闭并回到触发行；用量数值的单位随界面语言显示（中文为 "token"）；运行时状态条与连接进度页只播报状态标题变化，打开详情面板或各连接阶段切换不再让屏幕阅读器整段重读；会话面板工作区列表与消息图片组获得正确的分组语义。
+- The trajectory inspector takes focus when it opens, closes on Escape, and returns the keyboard to its row; token usage follows the interface language ("token" in Chinese); the runtime status chip and connection progress page announce only their headline changes instead of re-reading the whole panel, and the session workspace list and message image groups carry proper group semantics.
+- 目标条的阻塞原因现在直接显示在状态旁（此前只能悬停查看）；"清除目标"改为两步确认——第一次点击进入确认态并明确提示，再次点击才执行，Escape 或移开焦点自动复位。
+- The goal bar shows the block reason inline next to the status (it was hover-only), and "Clear goal" now confirms in two steps: the first press enters a labeled confirming state, the second commits, and Escape or moving focus resets it.
 
 ## 0.2.6
 

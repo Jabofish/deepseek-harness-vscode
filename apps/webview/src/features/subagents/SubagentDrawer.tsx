@@ -168,6 +168,8 @@ export function SubagentDrawer(props: SubagentCatalogProps): ReactElement | null
   const [loadErrors, setLoadErrors] = useState<ReadonlySet<string>>(() => new Set())
   const [menuPosition, setMenuPosition] = useState<FloatingMenuPosition | undefined>()
   const [now, setNow] = useState(() => Date.now())
+  /** The row the user last moved focus to; owns the tree's single tab stop. */
+  const [activeRowId, setActiveRowId] = useState<string | undefined>(undefined)
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const children = useMemo(() => childEntries(props.catalog), [props.catalog])
@@ -284,8 +286,14 @@ export function SubagentDrawer(props: SubagentCatalogProps): ReactElement | null
     [catalogs, expanded, props.catalog],
   )
   // Roving tabindex: the tree is one tab stop, and the arrow keys that already
-  // roam here move focus between rows. Diagnostic rows never take focus.
+  // roam here move focus between rows. The stop follows that focus — Tab and
+  // Shift+Tab must leave the tree from the row the user is on, not snap back
+  // to the first row. Diagnostic rows never take focus.
   const firstSelectableId = rows.find((row) => row.entry.kind !== 'diagnostic')?.entry.id
+  const tabStopId =
+    activeRowId !== undefined && rows.some((row) => row.entry.id === activeRowId)
+      ? activeRowId
+      : firstSelectableId
   if (props.catalog.entries.length === 0) return null
 
   const count = loadedAggregate.total
@@ -387,12 +395,13 @@ export function SubagentDrawer(props: SubagentCatalogProps): ReactElement | null
               <div
                 key={entry.id}
                 role="treeitem"
-                tabIndex={entry.id === firstSelectableId ? 0 : -1}
+                tabIndex={entry.id === tabStopId ? 0 : -1}
                 aria-level={level}
                 aria-expanded={branch ? isExpanded : undefined}
                 aria-label={label}
                 aria-busy={loading || undefined}
                 className="dsh-subagent-tree__row"
+                onFocus={() => setActiveRowId(entry.id)}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter' || event.key === ' ') {
                     event.preventDefault()

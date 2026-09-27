@@ -3,6 +3,7 @@ import { memo, useEffect, useRef, useState, type CSSProperties, type ReactElemen
 import type { MessageImageReference } from '@dsh-vscode/domain'
 import { Icon } from '../../ui/Icon.js'
 import type { Translate } from '../../i18n.js'
+import { useDismissibleLayer } from '../../components/common/useDismissibleLayer.js'
 
 interface LoadedImage {
   readonly image: MessageImageReference
@@ -34,6 +35,7 @@ export const MessageImages = memo(function MessageImages(props: MessageImagesPro
   const requested = useRef(new Set<string>())
   const attempts = useRef(new Map<string, number>())
   const closeRef = useRef<HTMLButtonElement>(null)
+  const lightboxDialogRef = useRef<HTMLElement>(null)
   /**
    * The lightbox is `aria-modal`, so the keyboard belongs inside while it is up
    * and returns to the thumbnail that opened it. The opener is captured at the
@@ -94,16 +96,16 @@ export const MessageImages = memo(function MessageImages(props: MessageImagesPro
   useEffect(() => {
     if (lightbox === undefined) return
     closeRef.current?.focus()
-    const onKeyDown = (event: KeyboardEvent): void => {
-      // A layer that is already open consumes Escape first; acting regardless
-      // would collapse both surfaces with one key press.
-      if (event.key !== 'Escape' || event.defaultPrevented) return
-      event.preventDefault()
-      setLightbox(undefined)
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
   }, [lightbox])
+
+  // The lightbox is `aria-modal`: Tab cycles inside it, the rest of the page
+  // goes inert, and Escape dismisses it through the shared layer.
+  useDismissibleLayer({
+    open: lightbox !== undefined,
+    refs: [lightboxDialogRef],
+    trapFocus: true,
+    onDismiss: () => setLightbox(undefined),
+  })
 
   useEffect(() => {
     if (lightboxWasOpen.current && lightbox === undefined) {
@@ -126,6 +128,7 @@ export const MessageImages = memo(function MessageImages(props: MessageImagesPro
   return (
     <>
       <div
+        role="group"
         className={`dsh-message-images${single ? ' dsh-message-images--single' : ' dsh-message-images--grid'}`}
         aria-label={props.translate('timeline.attachedImages')}
       >
@@ -197,6 +200,7 @@ export const MessageImages = memo(function MessageImages(props: MessageImagesPro
               }}
             >
               <section
+                ref={lightboxDialogRef}
                 className="dsh-message-image-lightbox__dialog"
                 role="dialog"
                 aria-modal="true"

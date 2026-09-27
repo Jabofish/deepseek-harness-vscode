@@ -38,9 +38,50 @@ describe('useViewportMenuPosition', () => {
       expect(menu.style.width).toBe(`${MENU_WIDTH}px`)
     }
   })
+
+  it('re-measures the stylesheet width after a narrow viewport clamped the menu', async () => {
+    const naturalWidth = { current: MENU_WIDTH }
+    render(<FlexibleMenuHarness naturalWidth={naturalWidth} />)
+    const menu = screen.getByRole('menu')
+    await waitFor(() => expect(menu.style.width).toBe(`${MENU_WIDTH}px`))
+
+    const originalWidth = window.innerWidth
+    const setViewportWidth = (width: number): void => {
+      Object.defineProperty(window, 'innerWidth', { value: width, configurable: true })
+      window.dispatchEvent(new Event('resize'))
+    }
+    try {
+      // The sidebar narrows: the menu is clamped to the viewport and its
+      // inline width pins that clamped value.
+      setViewportWidth(220)
+      await waitFor(() => expect(menu.style.width).toBe('204px'))
+
+      // The sidebar widens again: the clamp must lift, so the measurement
+      // cannot come from the previously written inline width.
+      setViewportWidth(originalWidth)
+      await waitFor(() => expect(menu.style.width).toBe(`${MENU_WIDTH}px`))
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { value: originalWidth, configurable: true })
+    }
+  })
 })
 
 function MenuHarness({ open = true }: { open?: boolean }): ReactElement {
+  return <FlexibleMenuHarness open={open} naturalWidth={{ current: MENU_WIDTH }} />
+}
+
+/**
+ * Like MenuHarness, but offsetWidth follows the element like a real layout
+ * box does: the inline width this hook writes back constrains it, and it
+ * otherwise reports the given natural (stylesheet) width.
+ */
+function FlexibleMenuHarness({
+  open = true,
+  naturalWidth,
+}: {
+  open?: boolean
+  naturalWidth: { current: number }
+}): ReactElement {
   const anchorRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const position = useViewportMenuPosition({
@@ -68,7 +109,13 @@ function MenuHarness({ open = true }: { open?: boolean }): ReactElement {
         ref={(node) => {
           menuRef.current = node
           if (node === null) return
-          Object.defineProperty(node, 'offsetWidth', { value: MENU_WIDTH, configurable: true })
+          Object.defineProperty(node, 'offsetWidth', {
+            get: () => {
+              const inline = Number.parseFloat(node.style.width)
+              return Number.isFinite(inline) ? inline : naturalWidth.current
+            },
+            configurable: true,
+          })
           Object.defineProperty(node, 'offsetHeight', { value: MENU_HEIGHT, configurable: true })
           node.getBoundingClientRect = () =>
             rect(0, 0, MENU_WIDTH * ANIMATION_SCALE, MENU_HEIGHT * ANIMATION_SCALE)

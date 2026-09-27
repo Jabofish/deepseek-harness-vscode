@@ -77,6 +77,21 @@ describe('TrajectoryView', () => {
     expect(screen.getByText('6 records')).toBeDefined()
   })
 
+  it('takes the keyboard into the inspector and returns it via Escape to the row', () => {
+    renderView()
+
+    const row = screen.getByRole('button', { name: /#2/u })
+    fireEvent.click(row)
+    const inspector = screen.getByRole('region', { name: /Record #2/u })
+    expect(document.activeElement).toBe(inspector)
+
+    // Escape dismisses the details and the keyboard goes back to the row that
+    // opened them.
+    fireEvent.keyDown(inspector, { key: 'Escape' })
+    expect(screen.queryByRole('region', { name: /Record #2/u })).toBeNull()
+    expect(document.activeElement).toBe(row)
+  })
+
   it('numbers records continuously and marks tool durations', () => {
     renderView()
     expect(screen.getAllByText('#1')).toHaveLength(1)

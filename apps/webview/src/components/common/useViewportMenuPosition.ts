@@ -53,7 +53,17 @@ export function useViewportMenuPosition({
       // it into the inline width — every reopen would then shrink the menu
       // again on top of the previous open. offsetWidth/offsetHeight are
       // layout sizes and ignore transforms entirely.
+      // Measure with the previously written inline width cleared: this hook
+      // feeds its measurement back as that width, so once a narrow viewport
+      // clamped the menu, offsetWidth would keep reporting the clamped value
+      // and the menu could never grow back to its stylesheet width when the
+      // viewport widened again.
+      menu.style.width = ''
       const width = Math.min(Math.max(menu.offsetWidth, 1), availableWidth)
+      // Applied here, not only through React state, so a re-measure that
+      // produces the current style (a scroll with unchanged geometry) still
+      // leaves the correct inline width on the element.
+      menu.style.width = `${width}px`
       const height = Math.min(Math.max(menu.offsetHeight, 1), availableHeight)
       const direction = getComputedStyle(anchor).direction
       const alignedLeft =

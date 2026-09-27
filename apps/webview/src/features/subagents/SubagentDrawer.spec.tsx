@@ -77,6 +77,36 @@ describe('SubagentDrawer tree', () => {
     expect(items.map((item) => item.getAttribute('tabindex'))).toEqual(['0', null, '-1'])
   })
 
+  it('moves the single tab stop with the arrow-driven focus', () => {
+    render(
+      <SubagentDrawer
+        parentSessionId="root"
+        catalog={catalog(ROOT)}
+        onLoadChildren={vi.fn().mockResolvedValue(catalog([]))}
+        onOpenChild={vi.fn()}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Subagents: 2, 1 running' }))
+
+    const researcher = screen.getByRole('treeitem', { name: 'Researcher · Continuable · Running' })
+    const coder = screen.getByRole('treeitem', { name: 'Coder · One-shot · Inactive' })
+    researcher.focus()
+    expect(document.activeElement).toBe(researcher)
+
+    // The roving tab stop follows the arrows: with the focused row holding the
+    // only tabindex=0, Shift+Tab leaves the tree from it instead of snapping
+    // back to the first row, and Tab re-enters at the same row.
+    fireEvent.keyDown(researcher, { key: 'ArrowDown' })
+    expect(document.activeElement).toBe(coder)
+    expect(coder.getAttribute('tabindex')).toBe('0')
+    expect(researcher.getAttribute('tabindex')).toBe('-1')
+
+    fireEvent.keyDown(coder, { key: 'ArrowUp' })
+    expect(document.activeElement).toBe(researcher)
+    expect(researcher.getAttribute('tabindex')).toBe('0')
+    expect(coder.getAttribute('tabindex')).toBe('-1')
+  })
+
   it('shows the official token and elapsed-time metrics from the session projection', async () => {
     const summary: SessionSummary = {
       id: 'c1',

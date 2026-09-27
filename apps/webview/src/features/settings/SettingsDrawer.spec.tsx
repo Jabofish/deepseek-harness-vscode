@@ -1902,4 +1902,57 @@ describe('SettingsDrawer', () => {
     expect(screen.getByRole('button', { name: 'Read Only', pressed: true })).toBeDefined()
     expect(screen.queryByRole('button', { name: 'Workspace Write', pressed: true })).toBeNull()
   })
+
+  it('ignores a snapshot read that lands after the drawer closed and re-reads on reopen', async () => {
+    const initial = dshSettingsFixture()
+    const externallyChanged: DshSettingsSnapshot = {
+      ...initial,
+      values: { ...initial.values, permission: { defaultPreset: 'read-only' } },
+    }
+    let resolveFollowUpRead: ((snapshot: DshSettingsSnapshot) => void) | undefined
+    let resolveReopenRead: ((snapshot: DshSettingsSnapshot) => void) | undefined
+    const onLoadDshSettings = vi
+      .fn()
+      .mockResolvedValueOnce(initial) // the open that started the save
+      .mockImplementationOnce(
+        () =>
+          new Promise<DshSettingsSnapshot>((resolve) => {
+            resolveFollowUpRead = resolve
+          }),
+      ) // the save's follow-up read, still pending at close
+      .mockImplementationOnce(
+        () =>
+          new Promise<DshSettingsSnapshot>((resolve) => {
+            resolveReopenRead = resolve
+          }),
+      )
+    const onUpdateDshSetting = vi.fn().mockResolvedValue(undefined)
+    const view = renderDrawer({ onLoadDshSettings, onUpdateDshSetting })
+    await waitFor(() => expect(screen.getByRole('group', { name: 'Appearance' })).toBeDefined())
+    fireEvent.click(screen.getByRole('button', { name: 'dark' }))
+    await waitFor(() => expect(onLoadDshSettings).toHaveBeenCalledTimes(2))
+
+    // Close with the save's follow-up read in flight, then let it finish: it
+    // belongs to a session that already ended, so it must not mark the stale
+    // snapshot as ready and fresh again.
+    view.rerender(drawerElement({ open: false, onLoadDshSettings, onUpdateDshSetting }))
+    await act(async () => {
+      resolveFollowUpRead?.(initial)
+      await Promise.resolve()
+    })
+
+    // Reopening must show the loading state and offer nothing to write until
+    // the fresh read (which now sees an externally changed value) lands.
+    view.rerender(drawerElement({ open: true, onLoadDshSettings, onUpdateDshSetting }))
+    expect(screen.getByText('Loading DSH settings…')).toBeDefined()
+    expect(screen.queryByRole('group', { name: 'Permission' })).toBeNull()
+
+    await act(async () => {
+      resolveReopenRead?.(externallyChanged)
+      await Promise.resolve()
+    })
+    expect(await screen.findByRole('group', { name: 'Permission' })).toBeDefined()
+    expect(screen.getByRole('button', { name: 'Read Only', pressed: true })).toBeDefined()
+    expect(onUpdateDshSetting).toHaveBeenCalledTimes(1)
+  })
 })

@@ -915,7 +915,11 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
           )}
           <div className="dsh-session-switcher__results">
             {visibleWorkspaces.length === 0 ? null : (
-              <div className="dsh-session-switcher__workspaces" aria-label={t('sessions.workspaces')}>
+              <div
+                role="group"
+                className="dsh-session-switcher__workspaces"
+                aria-label={t('sessions.workspaces')}
+              >
                 {visibleWorkspaces.map(renderWorkspaceCard)}
               </div>
             )}

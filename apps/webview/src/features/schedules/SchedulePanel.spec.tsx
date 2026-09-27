@@ -724,8 +724,8 @@ describe('SchedulePanel', () => {
     const panel = mountPanel({ items: [active] })
     fireEvent.click(await screen.findByRole('button', { name: /Water the plants/u }))
     fireEvent.click(screen.getByRole('button', { name: 'More task actions' }))
-    const menu = screen.getByRole('menu', { name: 'More task actions' })
-    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Delete' }))
+    const menu = screen.getByRole('group', { name: 'More task actions' })
+    fireEvent.click(within(menu).getByRole('button', { name: 'Delete' }))
     expect(screen.getByRole('alertdialog', { name: 'Confirm reminder deletion' })).toBeDefined()
 
     fireEvent.click(screen.getByRole('tab', { name: 'Delivery history' }))
@@ -859,7 +859,7 @@ describe('SchedulePanel', () => {
     expect(screen.getByRole('heading', { name: 'Water the plants' })).toBeDefined()
     expect(screen.queryByRole('button', { name: /Water the plants/u })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'More task actions' }))
-    const deleteAction = screen.getByRole<HTMLButtonElement>('menuitem', { name: 'Delete' })
+    const deleteAction = screen.getByRole<HTMLButtonElement>('button', { name: 'Delete' })
     expect(deleteAction.disabled).toBe(true)
     fireEvent.click(deleteAction)
     expect(panel.requests.some((request) => request.type === 'schedule.delete')).toBe(false)
@@ -960,7 +960,7 @@ describe('SchedulePanel', () => {
     })
     fireEvent.click(await screen.findByRole('button', { name: /Water the plants/u }))
     fireEvent.click(screen.getByRole('button', { name: 'More task actions' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
     fireEvent.click(screen.getByRole('button', { name: 'Delete reminder' }))
     await waitFor(() =>
       expect(panel.requests.some((request) => request.type === 'schedule.delete')).toBe(true),
@@ -1274,7 +1274,7 @@ describe('SchedulePanel', () => {
     })
     fireEvent.click(await screen.findByRole('button', { name: /Water the plants/u }))
     fireEvent.click(screen.getByRole('button', { name: 'More task actions' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
     const dialog = screen.getByRole('alertdialog', { name: 'Confirm reminder deletion' })
     fireEvent.click(within(dialog).getByRole('button', { name: 'Delete reminder' }))
 
@@ -1290,7 +1290,7 @@ describe('SchedulePanel', () => {
     expect(screen.getByText('This reminder has ended. Its delivery history remains available.')).toBeDefined()
     expect(screen.getByRole('button', { name: 'Edit' }).hasAttribute('disabled')).toBe(true)
     fireEvent.click(screen.getByRole('button', { name: 'More task actions' }))
-    const deleteButton = screen.getByRole('menuitem', { name: 'Delete' })
+    const deleteButton = screen.getByRole('button', { name: 'Delete' })
     expect(deleteButton.hasAttribute('disabled')).toBe(false)
 
     fireEvent.click(deleteButton)

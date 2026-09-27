@@ -33,7 +33,12 @@ export const TrajectoryView = memo(function TrajectoryView(props: TrajectoryView
   const previousSessionRef = useRef(props.sessionId)
   const [query, setQuery] = useState('')
   const [selectedId, setSelectedId] = useState<string | undefined>(undefined)
-  const selectRecord = useCallback((recordId: string): void => setSelectedId(recordId), [])
+  /** The row button that opened the inspector; it takes the keyboard back. */
+  const selectedRowRef = useRef<HTMLButtonElement | null>(null)
+  const selectRecord = useCallback((recordId: string, opener?: HTMLButtonElement): void => {
+    if (opener !== undefined) selectedRowRef.current = opener
+    setSelectedId(recordId)
+  }, [])
   const trajectoryProjectorState = useMemo(
     () => ({ sessionId: props.sessionId, project: createTrajectoryProjector() }),
     [props.sessionId],
@@ -168,7 +173,17 @@ export const TrajectoryView = memo(function TrajectoryView(props: TrajectoryView
       </div>
       {showJumpToLatest ? <ScrollToLatestButton label={t('timeline.jump')} onClick={scrollToLatest} /> : null}
       {selected === undefined ? null : (
-        <TrajectoryInspector record={selected} onClose={() => setSelectedId(undefined)} t={t} />
+        <TrajectoryInspector
+          record={selected}
+          onClose={() => {
+            setSelectedId(undefined)
+            // The keyboard returns to the row that asked for the details.
+            const target = selectedRowRef.current
+            selectedRowRef.current = null
+            if (target !== null && target.isConnected) target.focus()
+          }}
+          t={t}
+        />
       )}
     </div>
   )
@@ -177,7 +192,7 @@ export const TrajectoryView = memo(function TrajectoryView(props: TrajectoryView
 const TrajectoryRow = memo(function TrajectoryRow(props: {
   readonly record: TrajectoryRecord
   readonly selected: boolean
-  readonly onSelect: (recordId: string) => void
+  readonly onSelect: (recordId: string, opener?: HTMLButtonElement) => void
   readonly t: Translate
 }): ReactElement {
   const { record, t } = props
@@ -188,7 +203,7 @@ const TrajectoryRow = memo(function TrajectoryRow(props: {
         type="button"
         aria-pressed={props.selected}
         title={record.text}
-        onClick={() => props.onSelect(record.id)}
+        onClick={(event) => props.onSelect(record.id, event.currentTarget)}
       >
         <span
           className={`dsh-trajectory__marker dsh-trajectory__marker--${record.kind}`}
@@ -216,11 +231,25 @@ function TrajectoryInspector(props: {
 }): ReactElement {
   const { record, t } = props
   const usage = record.usage
+  // The inspector takes the keyboard when it opens so the selection is
+  // announced, Escape dismisses it from anywhere inside, and the parent
+  // returns the keyboard to the row on close.
+  const asideRef = useRef<HTMLElement>(null)
+  useEffect(() => {
+    asideRef.current?.focus()
+  }, [])
   return (
     <aside
+      ref={asideRef}
+      tabIndex={-1}
       className="dsh-trajectory-inspector"
       role="region"
       aria-label={t('trajectory.inspectorAria', { index: record.index })}
+      onKeyDown={(event) => {
+        if (event.key !== 'Escape' || event.defaultPrevented) return
+        event.preventDefault()
+        props.onClose()
+      }}
     >
       <header className="dsh-trajectory-inspector__header">
         <h4>
@@ -249,25 +278,25 @@ function TrajectoryInspector(props: {
         {usage === undefined ? null : (
           <>
             <dt>{t('trajectory.input')}</dt>
-            <dd>{usage.inputTokens.toLocaleString()} tk</dd>
+            <dd>{t('trajectory.tokensValue', { count: usage.inputTokens.toLocaleString() })}</dd>
             {usage.cacheReadTokens === undefined ? null : (
               <>
                 <dt>{t('trajectory.cacheRead')}</dt>
-                <dd>{usage.cacheReadTokens.toLocaleString()} tk</dd>
+                <dd>{t('trajectory.tokensValue', { count: usage.cacheReadTokens.toLocaleString() })}</dd>
               </>
             )}
             {usage.cacheWriteTokens === undefined ? null : (
               <>
                 <dt>{t('trajectory.cacheWrite')}</dt>
-                <dd>{usage.cacheWriteTokens.toLocaleString()} tk</dd>
+                <dd>{t('trajectory.tokensValue', { count: usage.cacheWriteTokens.toLocaleString() })}</dd>
               </>
             )}
             <dt>{t('trajectory.output')}</dt>
-            <dd>{usage.outputTokens.toLocaleString()} tk</dd>
+            <dd>{t('trajectory.tokensValue', { count: usage.outputTokens.toLocaleString() })}</dd>
             {usage.reasoningTokens === undefined ? null : (
               <>
                 <dt>{t('trajectory.reasoning')}</dt>
-                <dd>{usage.reasoningTokens.toLocaleString()} tk</dd>
+                <dd>{t('trajectory.tokensValue', { count: usage.reasoningTokens.toLocaleString() })}</dd>
               </>
             )}
           </>

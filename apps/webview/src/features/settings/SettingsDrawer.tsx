@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactElement } from 'react'
 import type {
   AgentPresetDocument,
   AgentPresetLocation,
@@ -60,6 +60,7 @@ import { PresetManager } from './PresetManager.js'
 import { CustomProviderCard, type CustomProviderTemplate } from './CustomProviderCard.js'
 import { ProviderSettingsEditor, type ProviderSettingChange } from './ProviderSettingsEditor.js'
 import { useI18n, type Locale, type Translate } from '../../i18n.js'
+import { useStableCallback } from '../../app/useStableCallback.js'
 
 export interface SettingsDrawerProps {
   readonly open: boolean
@@ -251,6 +252,17 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
   const [dshState, setDshState] = useState<DshSettingsState>({ status: 'loading' })
   const [dshSettingsSnapshotFresh, setDshSettingsSnapshotFresh] = useState(false)
   const dshSettingsOpenedRef = useRef(false)
+  /**
+   * Incremented on every close. Async flows started while the drawer was open
+   * capture the generation and discard results that land under a newer one, so
+   * a late read or save cannot re-arm the freshness gate behind a closed (or
+   * already reopened) drawer. The layout effect advances it synchronously at
+   * the close commit, so a continuation can never settle in between.
+   */
+  const openEpochRef = useRef(0)
+  useLayoutEffect(() => {
+    if (!open) openEpochRef.current += 1
+  }, [open])
   const dshUiPreferences = dshState.status === 'ready' ? readDshUiPreferences(dshState.snapshot) : undefined
   const [savingPath, setSavingPath] = useState<string | undefined>(undefined)
   const [saveError, setSaveError] = useState<string | undefined>(undefined)
@@ -276,9 +288,11 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
   const sectionRef = useRef<HTMLElement | null>(null)
   const removeDialogRef = useRef<HTMLDivElement | null>(null)
 
-  const retryDshSettings = (): void => {
+  const retryDshSettings = useStableCallback((): void => {
+    const epoch = openEpochRef.current
     void onLoadDshSettings()
       .then((snapshot) => {
+        if (openEpochRef.current !== epoch) return
         if (snapshot === undefined) {
           if (dshState.status !== 'ready') setDshState({ status: 'unavailable' })
           setDshSettingsSnapshotFresh(false)
@@ -289,10 +303,11 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
         setSaveError(undefined)
       })
       .catch(() => {
+        if (openEpochRef.current !== epoch) return
         if (dshState.status !== 'ready') setDshState({ status: 'unavailable' })
         setDshSettingsSnapshotFresh(false)
       })
-  }
+  })
 
   useEffect(() => {
     if (typeof window.matchMedia !== 'function') return
@@ -418,7 +433,7 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
     void onCheckDshUpdates(false).catch(() => undefined)
   }, [open, dshUpdate, onCheckDshUpdates])
 
-  const saveSetting = (path: string, value: unknown): void => {
+  const saveSetting = useStableCallback((path: string, value: unknown): void => {
     if (savingPath !== undefined) return
     if (
       dshState.status !== 'ready' ||
@@ -438,21 +453,25 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
     setRiskAcknowledged(false)
     setSavingPath(path)
     if (themeValue !== undefined) props.onThemeChange(themeValue)
+    const epoch = openEpochRef.current
     void (async () => {
       let accepted = false
       try {
         await onUpdateDshSetting(path, value, expectedRevision)
         accepted = true
       } catch (reason: unknown) {
+        if (openEpochRef.current !== epoch) return
         if (themeValue !== undefined) props.onThemeChange(previousTheme)
         setSaveError(reason instanceof Error ? reason.message : t('settings.updateFailed'))
       }
+      if (openEpochRef.current !== epoch) return
 
       // A conflict or transport failure must reload authoritative state. A
       // successful write is already committed, so keep its selected value
       // visible if this read fails, while disabling every CAS write until a
       // fresh namespace revision is available.
       const snapshot = await onLoadDshSettings().catch(() => undefined)
+      if (openEpochRef.current !== epoch) return
       if (snapshot !== undefined) {
         setDshState({ status: 'ready', snapshot })
         setDshSettingsSnapshotFresh(true)
@@ -470,26 +489,30 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
         setDshSettingsSnapshotFresh(false)
       }
     })().finally(() => setSavingPath(undefined))
-  }
+  })
 
-  const updateDisplayedSetting = async (path: string, value: unknown): Promise<void> => {
+  const updateDisplayedSetting = useStableCallback(async (path: string, value: unknown): Promise<void> => {
     if (dshState.status !== 'ready' || !dshSettingsSnapshotFresh) throw new Error(t('settings.updateFailed'))
     const expectedRevision = settingsNamespaceRevision(dshState.snapshot, namespaceInPath(path))
     if (expectedRevision === undefined) throw new Error(t('settings.updateFailed'))
+    const epoch = openEpochRef.current
     try {
       await props.onUpdateDshSetting(path, value, expectedRevision)
     } catch (reason: unknown) {
       const snapshot = await onLoadDshSettings().catch(() => undefined)
-      if (snapshot === undefined) {
-        setDshState({ status: 'unavailable' })
-        setDshSettingsSnapshotFresh(false)
-      } else {
-        setDshState({ status: 'ready', snapshot })
-        setDshSettingsSnapshotFresh(true)
+      if (openEpochRef.current === epoch) {
+        if (snapshot === undefined) {
+          setDshState({ status: 'unavailable' })
+          setDshSettingsSnapshotFresh(false)
+        } else {
+          setDshState({ status: 'ready', snapshot })
+          setDshSettingsSnapshotFresh(true)
+        }
       }
       throw reason
     }
     const snapshot = await onLoadDshSettings().catch(() => undefined)
+    if (openEpochRef.current !== epoch) return
     if (snapshot === undefined) {
       setDshState({ status: 'unavailable' })
       setDshSettingsSnapshotFresh(false)
@@ -497,9 +520,9 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
     }
     setDshState({ status: 'ready', snapshot })
     setDshSettingsSnapshotFresh(true)
-  }
+  })
 
-  const applyConnection = (): void => {
+  const applyConnection = useStableCallback((): void => {
     if (connectionBusy || connectionChoice === 'unchanged') return
     const endpoint = connectionEndpoint.trim()
     if (connectionChoice === 'custom' && endpoint === '') {
@@ -510,19 +533,22 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
     setConnectionBusy(true)
     setConnectionError(undefined)
     setConnectionNotice(undefined)
+    const epoch = openEpochRef.current
     void props
       .onConfigureConnection(connectionChoice, connectionChoice === 'custom' ? endpoint : undefined)
       .then(async () => {
         const value = await onLoadSettings().catch(() => undefined)
+        if (openEpochRef.current !== epoch) return
         if (value !== undefined) setSettingsState({ value })
         setConnectionEndpoint('')
         setConnectionNotice(t('settings.connectionApplied'))
       })
       .catch((reason: unknown) => {
+        if (openEpochRef.current !== epoch) return
         setConnectionError(reason instanceof Error ? reason.message : t('settings.connectionApplyFailed'))
       })
       .finally(() => setConnectionBusy(false))
-  }
+  })
 
   // The drawer is the modal focus trap: Tab stays inside it and everything
   // behind it goes inert. Layers opened inside the drawer (provider dropdowns,
@@ -542,8 +568,6 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
     onEscape: () => setRemovingProviderId(undefined),
     trapFocus: true,
   })
-
-  if (!open) return <></>
 
   const availableDshVersions = dshUpdate?.availableVersions ?? []
   const effectiveSelectedDshVersion =
@@ -639,137 +663,159 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
       .finally(() => setDshUpdateBusy(undefined))
   }
 
-  const saveProviderChanges = async (
-    provider: ModelProvider,
-    changes: readonly ProviderSettingChange[],
-    expectedRevision: number,
-    ensureProvider = false,
-  ): Promise<void> => {
-    if (busyField !== undefined || !dshSettingsSnapshotFresh) throw new Error(t('settings.updateFailed'))
-    const namespace = provider.settingsNs?.trim()
-    if (namespace === undefined || namespace === '') throw new Error(t('settings.updateFailed'))
-    const operations =
-      changes.length === 0 && ensureProvider
-        ? (() => {
-            const relativePath = provider.settingsPath ?? []
-            return relativePath.length === 0 || relativePath.some((part) => part.trim() === '')
-              ? undefined
-              : [{ op: 'set' as const, path: relativePath, value: {} }]
-          })()
-        : providerSettingOperations(provider, changes)
-    if (operations === undefined || (operations.length === 0 && ensureProvider))
-      throw new Error(t('settings.updateFailed'))
-    if (operations.length === 0) return
-    setSaveError(undefined)
-    setBusyField(`provider:${provider.id}`)
-    try {
+  const saveProviderChanges = useStableCallback(
+    async (
+      provider: ModelProvider,
+      changes: readonly ProviderSettingChange[],
+      expectedRevision: number,
+      ensureProvider = false,
+    ): Promise<void> => {
+      if (busyField !== undefined || !dshSettingsSnapshotFresh) throw new Error(t('settings.updateFailed'))
+      const namespace = provider.settingsNs?.trim()
+      if (namespace === undefined || namespace === '') throw new Error(t('settings.updateFailed'))
+      const operations =
+        changes.length === 0 && ensureProvider
+          ? (() => {
+              const relativePath = provider.settingsPath ?? []
+              return relativePath.length === 0 || relativePath.some((part) => part.trim() === '')
+                ? undefined
+                : [{ op: 'set' as const, path: relativePath, value: {} }]
+            })()
+          : providerSettingOperations(provider, changes)
+      if (operations === undefined || (operations.length === 0 && ensureProvider))
+        throw new Error(t('settings.updateFailed'))
+      if (operations.length === 0) return
+      setSaveError(undefined)
+      setBusyField(`provider:${provider.id}`)
+      const epoch = openEpochRef.current
       try {
-        await props.onMutateDshSettings(namespace, operations, expectedRevision)
-      } catch (reason: unknown) {
+        try {
+          await props.onMutateDshSettings(namespace, operations, expectedRevision)
+        } catch (reason: unknown) {
+          const snapshot = await onLoadDshSettings().catch(() => undefined)
+          if (openEpochRef.current === epoch) {
+            setDshState(snapshot === undefined ? { status: 'unavailable' } : { status: 'ready', snapshot })
+            setDshSettingsSnapshotFresh(snapshot !== undefined)
+            const latestRevision =
+              snapshot === undefined ? undefined : settingsNamespaceRevision(snapshot, namespace)
+            if (
+              isSettingsConflict(reason) ||
+              snapshot === undefined ||
+              latestRevision !== expectedRevision ||
+              !isKnownRejectedSettingsWrite(reason)
+            ) {
+              setEditingProviderId(undefined)
+              if (ensureProvider) setAddingProviderId(undefined)
+            }
+            setSaveError(reason instanceof Error ? reason.message : t('settings.updateFailed'))
+          }
+          throw reason
+        }
         const snapshot = await onLoadDshSettings().catch(() => undefined)
-        setDshState(snapshot === undefined ? { status: 'unavailable' } : { status: 'ready', snapshot })
-        setDshSettingsSnapshotFresh(snapshot !== undefined)
-        const latestRevision =
-          snapshot === undefined ? undefined : settingsNamespaceRevision(snapshot, namespace)
-        if (
-          isSettingsConflict(reason) ||
-          snapshot === undefined ||
-          latestRevision !== expectedRevision ||
-          !isKnownRejectedSettingsWrite(reason)
-        ) {
+        if (openEpochRef.current !== epoch) return
+        if (snapshot === undefined) {
+          setDshState({ status: 'unavailable' })
+          setDshSettingsSnapshotFresh(false)
           setEditingProviderId(undefined)
           if (ensureProvider) setAddingProviderId(undefined)
+          return
         }
-        setSaveError(reason instanceof Error ? reason.message : t('settings.updateFailed'))
+        setDshState({ status: 'ready', snapshot })
+        setDshSettingsSnapshotFresh(true)
+        try {
+          await props.onRefreshCatalog()
+        } catch (reason: unknown) {
+          if (openEpochRef.current !== epoch) return
+          // The profile mutation has committed. Keep the editor closed so a
+          // catalog refresh failure cannot invite a duplicate write at its old
+          // revision.
+          setEditingProviderId(undefined)
+          if (ensureProvider) setAddingProviderId(undefined)
+          setSaveError(reason instanceof Error ? reason.message : t('settings.updateFailed'))
+        }
+      } finally {
+        setBusyField(undefined)
+      }
+    },
+  )
+
+  const saveCustomProvider = useStableCallback(
+    async (draft: CustomProviderDraft): Promise<CustomProviderCreateResult> => {
+      if (busyField !== undefined || !dshSettingsSnapshotFresh) throw new Error(t('settings.updateFailed'))
+      setSaveError(undefined)
+      const path = [draft.settingsNamespace, ...draft.collectionPath, draft.providerId].join('.')
+      setBusyField(`provider:${path}`)
+      const epoch = openEpochRef.current
+      try {
+        const result = await props.onCreateCustomProvider(draft)
+        if (openEpochRef.current !== epoch) return result
+        // The Host operation is CAS-protected and may already have committed the
+        // profile when a follow-up refresh fails. Keep the committed result so
+        // the card can enter its credential-only retry state instead of asking
+        // the user to repeat a profile write with a stale revision.
+        try {
+          const snapshot = await onLoadDshSettings()
+          if (openEpochRef.current !== epoch) return result
+          if (snapshot !== undefined) {
+            setDshState({ status: 'ready', snapshot })
+            setDshSettingsSnapshotFresh(true)
+          } else {
+            setDshState({ status: 'unavailable' })
+            setDshSettingsSnapshotFresh(false)
+            setAddingCustomProvider(false)
+            return result
+          }
+          await props.onRefreshCatalog()
+        } catch (reason: unknown) {
+          if (openEpochRef.current !== epoch) return result
+          setSaveError(reason instanceof Error ? reason.message : t('settings.updateFailed'))
+        }
+        return result
+      } catch (reason: unknown) {
+        if (openEpochRef.current === epoch) {
+          setSaveError(reason instanceof Error ? reason.message : t('settings.updateFailed'))
+        }
         throw reason
+      } finally {
+        setBusyField(undefined)
       }
-      const snapshot = await onLoadDshSettings().catch(() => undefined)
-      if (snapshot === undefined) {
-        setDshState({ status: 'unavailable' })
-        setDshSettingsSnapshotFresh(false)
-        setEditingProviderId(undefined)
-        if (ensureProvider) setAddingProviderId(undefined)
-        return
-      }
-      setDshState({ status: 'ready', snapshot })
-      setDshSettingsSnapshotFresh(true)
+    },
+  )
+
+  const configureCustomProviderSecret = useStableCallback(
+    async (providerId: string, field: string): Promise<boolean> => {
+      if (busyField !== undefined) throw new Error(t('settings.updateFailed'))
+      setSaveError(undefined)
+      setBusyField(`provider:${providerId}:credential`)
+      const epoch = openEpochRef.current
       try {
-        await props.onRefreshCatalog()
-      } catch (reason: unknown) {
-        // The profile mutation has committed. Keep the editor closed so a
-        // catalog refresh failure cannot invite a duplicate write at its old
-        // revision.
-        setEditingProviderId(undefined)
-        if (ensureProvider) setAddingProviderId(undefined)
-        setSaveError(reason instanceof Error ? reason.message : t('settings.updateFailed'))
-      }
-    } finally {
-      setBusyField(undefined)
-    }
-  }
-
-  const saveCustomProvider = async (draft: CustomProviderDraft): Promise<CustomProviderCreateResult> => {
-    if (busyField !== undefined || !dshSettingsSnapshotFresh) throw new Error(t('settings.updateFailed'))
-    setSaveError(undefined)
-    const path = [draft.settingsNamespace, ...draft.collectionPath, draft.providerId].join('.')
-    setBusyField(`provider:${path}`)
-    try {
-      const result = await props.onCreateCustomProvider(draft)
-      // The Host operation is CAS-protected and may already have committed the
-      // profile when a follow-up refresh fails. Keep the committed result so
-      // the card can enter its credential-only retry state instead of asking
-      // the user to repeat a profile write with a stale revision.
-      try {
-        const snapshot = await onLoadDshSettings()
-        if (snapshot !== undefined) {
-          setDshState({ status: 'ready', snapshot })
-          setDshSettingsSnapshotFresh(true)
-        } else {
-          setDshState({ status: 'unavailable' })
-          setDshSettingsSnapshotFresh(false)
-          setAddingCustomProvider(false)
-          return result
+        const configured = await props.onConfigureSecret(providerId, field)
+        if (configured) {
+          const snapshot = await onLoadDshSettings()
+          if (openEpochRef.current === epoch) {
+            if (snapshot !== undefined) {
+              setDshState({ status: 'ready', snapshot })
+              setDshSettingsSnapshotFresh(true)
+            } else {
+              setDshState({ status: 'unavailable' })
+              setDshSettingsSnapshotFresh(false)
+            }
+          }
+          await props.onRefreshCatalog()
         }
-        await props.onRefreshCatalog()
+        return configured
       } catch (reason: unknown) {
-        setSaveError(reason instanceof Error ? reason.message : t('settings.updateFailed'))
-      }
-      return result
-    } catch (reason: unknown) {
-      setSaveError(reason instanceof Error ? reason.message : t('settings.updateFailed'))
-      throw reason
-    } finally {
-      setBusyField(undefined)
-    }
-  }
-
-  const configureCustomProviderSecret = async (providerId: string, field: string): Promise<boolean> => {
-    if (busyField !== undefined) throw new Error(t('settings.updateFailed'))
-    setSaveError(undefined)
-    setBusyField(`provider:${providerId}:credential`)
-    try {
-      const configured = await props.onConfigureSecret(providerId, field)
-      if (configured) {
-        const snapshot = await onLoadDshSettings()
-        if (snapshot !== undefined) {
-          setDshState({ status: 'ready', snapshot })
-          setDshSettingsSnapshotFresh(true)
-        } else {
-          setDshState({ status: 'unavailable' })
-          setDshSettingsSnapshotFresh(false)
+        if (openEpochRef.current === epoch) {
+          setSaveError(reason instanceof Error ? reason.message : t('settings.updateFailed'))
         }
-        await props.onRefreshCatalog()
+        throw reason
+      } finally {
+        setBusyField(undefined)
       }
-      return configured
-    } catch (reason: unknown) {
-      setSaveError(reason instanceof Error ? reason.message : t('settings.updateFailed'))
-      throw reason
-    } finally {
-      setBusyField(undefined)
-    }
-  }
+    },
+  )
 
-  const removeProvider = async (provider: ModelProvider): Promise<void> => {
+  const removeProvider = useStableCallback(async (provider: ModelProvider): Promise<void> => {
     if (
       busyField !== undefined ||
       !dshSettingsSnapshotFresh ||
@@ -779,6 +825,7 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
       return
     setSaveError(undefined)
     setBusyField(`remove-provider:${provider.id}`)
+    const epoch = openEpochRef.current
     try {
       const expectedRevision =
         dshState.status === 'ready' && dshSettingsSnapshotFresh && provider.settingsNs !== undefined
@@ -792,13 +839,16 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
         [provider.settingsNs, ...provider.settingsPath].join('.'),
         expectedRevision,
       )
-      setRemovingProviderId(undefined)
-      setEditingProviderId(undefined)
+      if (openEpochRef.current === epoch) {
+        setRemovingProviderId(undefined)
+        setEditingProviderId(undefined)
+      }
       for (const field of provider.fields) {
         if (!field.secret || field.value === undefined || field.writable === false) continue
         await props.onRemoveSecret(provider.id, field.key)
       }
       const snapshot = await onLoadDshSettings()
+      if (openEpochRef.current !== epoch) return
       if (snapshot === undefined) {
         setDshState({ status: 'unavailable' })
         setDshSettingsSnapshotFresh(false)
@@ -809,18 +859,23 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
       try {
         await props.onRefreshCatalog()
       } catch (reason: unknown) {
+        if (openEpochRef.current !== epoch) return
         setSaveError(reason instanceof Error ? reason.message : t('settings.updateFailed'))
       }
     } catch (reason: unknown) {
-      const snapshot = await onLoadDshSettings().catch(() => undefined)
-      setDshState(snapshot === undefined ? { status: 'unavailable' } : { status: 'ready', snapshot })
-      setDshSettingsSnapshotFresh(snapshot !== undefined)
-      if (isSettingsConflict(reason)) setRemovingProviderId(undefined)
-      setSaveError(reason instanceof Error ? reason.message : t('settings.updateFailed'))
+      if (openEpochRef.current === epoch) {
+        const snapshot = await onLoadDshSettings().catch(() => undefined)
+        setDshState(snapshot === undefined ? { status: 'unavailable' } : { status: 'ready', snapshot })
+        setDshSettingsSnapshotFresh(snapshot !== undefined)
+        if (isSettingsConflict(reason)) setRemovingProviderId(undefined)
+        setSaveError(reason instanceof Error ? reason.message : t('settings.updateFailed'))
+      }
     } finally {
       setBusyField(undefined)
     }
-  }
+  })
+
+  if (!open) return <></>
 
   const customProviderTemplate: CustomProviderTemplate | undefined =
     dshState.status === 'ready' ? deriveCustomProviderTemplate(props.providers, dshState.snapshot) : undefined
@@ -1843,8 +1898,10 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                     dshState.status === 'ready' && dshSettingsSnapshotFresh ? dshState.snapshot : undefined
                   }
                   onReload={async () => {
+                    const epoch = openEpochRef.current
                     try {
                       const snapshot = await props.onLoadDshSettings()
+                      if (openEpochRef.current !== epoch) return snapshot
                       if (snapshot !== undefined) {
                         setDshState({ status: 'ready', snapshot })
                         setDshSettingsSnapshotFresh(true)
@@ -1854,8 +1911,10 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                       }
                       return snapshot
                     } catch (reason: unknown) {
-                      setDshState({ status: 'unavailable' })
-                      setDshSettingsSnapshotFresh(false)
+                      if (openEpochRef.current === epoch) {
+                        setDshState({ status: 'unavailable' })
+                        setDshSettingsSnapshotFresh(false)
+                      }
                       throw reason
                     }
                   }}

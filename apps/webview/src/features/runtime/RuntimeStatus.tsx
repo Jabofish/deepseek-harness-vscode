@@ -61,13 +61,12 @@ export function RuntimeStatus({
   const details = runtimeDetails(state, connectedDshVersion, t)
 
   return (
-    <div
-      ref={rootRef}
-      className={`dsh-runtime-status dsh-runtime-status--${state.kind}`}
-      role="status"
-      aria-live="polite"
-      aria-label={label}
-    >
+    <div ref={rootRef} className={`dsh-runtime-status dsh-runtime-status--${state.kind}`}>
+      {/* Announces state transitions only: the details popover is outside the
+      live region, so opening it is not re-read from top to bottom. */}
+      <span className="dsh-sr-only" role="status">
+        {label}
+      </span>
       <button
         ref={triggerRef}
         className="dsh-runtime-status__trigger"

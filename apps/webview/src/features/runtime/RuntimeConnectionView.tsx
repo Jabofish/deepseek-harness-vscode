@@ -66,9 +66,13 @@ export function RuntimeConnectionView(props: RuntimeConnectionViewProps): ReactE
     <section
       className={`dsh-runtime-connection${failure ? ' dsh-runtime-connection--failure' : ''}`}
       aria-labelledby="runtime-connection-title"
-      aria-live="polite"
       aria-busy={loading}
     >
+      {/* Announces the headline on state transitions only; the progressbar and
+      hint text stay browsable instead of being re-read at every stage. */}
+      <span className="dsh-sr-only" role="status">
+        {copy.title}
+      </span>
       <div className="dsh-runtime-connection__header">
         <span
           className={`dsh-runtime-connection__signal dsh-runtime-connection__signal--${tone}`}

@@ -21,6 +21,7 @@ export const GoalBar = memo(function GoalBar(props: GoalBarProps): ReactElement 
   const [draft, setDraft] = useState('')
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string | undefined>()
+  const [confirmingClear, setConfirmingClear] = useState(false)
   const pendingRef = useRef(false)
   const goalId = goal?.id
 
@@ -127,6 +128,11 @@ export const GoalBar = memo(function GoalBar(props: GoalBarProps): ReactElement 
         <span className="dsh-goal-bar__title" title={goal.title}>
           {goal.title}
         </span>
+        {blockedReason === undefined ? null : (
+          <span className="dsh-goal-bar__blocked" title={blockedReason}>
+            {blockedReason}
+          </span>
+        )}
         <div className="dsh-goal-bar__actions">
           {canPause ? (
             <button
@@ -170,14 +176,27 @@ export const GoalBar = memo(function GoalBar(props: GoalBarProps): ReactElement 
           )}
           {props.onClear === undefined ? null : (
             <button
-              className="dsh-icon-button"
+              className={`dsh-icon-button${confirmingClear ? ' dsh-goal-bar__clear--confirming' : ''}`}
               type="button"
-              aria-label={t('goals.clear')}
-              title={t('goals.clear')}
+              aria-label={confirmingClear ? t('goals.clearConfirm') : t('goals.clear')}
+              title={confirmingClear ? t('goals.clearConfirm') : t('goals.clear')}
               disabled={pending}
-              onClick={() => void run(() => props.onClear!(goal.id))}
+              onBlur={() => setConfirmingClear(false)}
+              onKeyDown={(event) => {
+                if (event.key === 'Escape') setConfirmingClear(false)
+              }}
+              // Clearing discards the host-side goal, which only a `/goal`
+              // command can recreate: the first press asks, the second commits.
+              onClick={() => {
+                if (!confirmingClear) {
+                  setConfirmingClear(true)
+                  return
+                }
+                setConfirmingClear(false)
+                void run(() => props.onClear!(goal.id))
+              }}
             >
-              <Icon name="trash" />
+              <Icon name={confirmingClear ? 'alert' : 'trash'} />
             </button>
           )}
         </div>

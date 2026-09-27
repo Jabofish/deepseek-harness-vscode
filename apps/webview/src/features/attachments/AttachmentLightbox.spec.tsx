@@ -32,16 +32,16 @@ describe('AttachmentLightbox', () => {
     expect(screen.queryByRole('alert')).toBeNull()
   })
 
-  it('closes on Escape', () => {
+  it('closes on Escape through the shared document layer', () => {
     const onClose = vi.fn()
     render(<AttachmentLightbox name="photo.png" src={undefined} onClose={onClose} />)
 
-    fireEvent.keyDown(window, { key: 'Escape' })
+    fireEvent.keyDown(document, { key: 'Escape' })
 
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
-  it('leaves Escape to a layer that already consumed it', () => {
+  it('leaves Escape to a layer stacked on top of it', () => {
     const onClose = vi.fn()
     const onEscape = vi.fn()
     function Consumer(): ReactElement {
@@ -49,16 +49,18 @@ describe('AttachmentLightbox', () => {
       useDismissibleLayer({ open: true, refs: [ref], onDismiss: () => undefined, onEscape })
       return <div ref={ref} />
     }
-    render(
-      <>
-        <Consumer />
-        <AttachmentLightbox name="photo.png" src="data:image/png;base64,AAAA" onClose={onClose} />
-      </>,
+    const { rerender } = render(
+      <AttachmentLightbox name="photo.png" src="data:image/png;base64,AAAA" onClose={onClose} />,
     )
 
-    // The key targets a node inside the document, so it reaches the layer's
-    // document listener before the lightbox's window listener -- the order a
-    // real key press takes.
+    // A surface opened after the lightbox registers later in the shared layer
+    // stack, so Escape belongs to the innermost surface only.
+    rerender(
+      <>
+        <AttachmentLightbox name="photo.png" src="data:image/png;base64,AAAA" onClose={onClose} />
+        <Consumer />
+      </>,
+    )
     fireEvent.keyDown(document.body, { key: 'Escape' })
 
     expect(onEscape).toHaveBeenCalledTimes(1)

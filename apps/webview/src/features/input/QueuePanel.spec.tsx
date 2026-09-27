@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { QueuedInput } from '@dsh-vscode/domain'
 
@@ -23,7 +23,7 @@ function renderQueue(
   items: readonly QueuedInput[],
   running = false,
   onModeChange: (id: string, mode: QueuedInput['mode']) => void = vi.fn(),
-  onEdit: (id: string, text: string) => void = vi.fn(),
+  onEdit: (id: string, text: string) => void | Promise<void> = vi.fn(),
 ): ReturnType<typeof render> {
   return render(
     <I18nProvider>
@@ -203,5 +203,36 @@ describe('QueuePanel', () => {
     expect(screen.getByDisplayValue('first')).toBe(editor)
     fireEvent.blur(editor)
     expect(onEdit).not.toHaveBeenCalled()
+  })
+
+  it('restores the queued prompt when the Host rejects an edit and lets the user retry', async () => {
+    let rejectEdit: ((reason: unknown) => void) | undefined
+    const onEdit = vi.fn(
+      (_id: string, _text: string) =>
+        new Promise<void>((_resolve, reject) => {
+          rejectEdit = reject
+        }),
+    )
+    renderQueue([queuedInput('q1', 'first')], true, vi.fn(), onEdit)
+
+    const editor = screen.getByRole('textbox', { name: 'Edit queued prompt 1' })
+    fireEvent.change(editor, { target: { value: 'second' } })
+    fireEvent.blur(editor)
+    expect(onEdit).toHaveBeenCalledWith('q1', 'second')
+
+    // DSH kept the previous prompt: the row must not read as saved.
+    await act(async () => {
+      rejectEdit?.(new Error('edit rejected'))
+      await Promise.resolve()
+    })
+    expect(screen.getByDisplayValue('first')).toBe(editor)
+    fireEvent.blur(editor)
+    expect(onEdit).toHaveBeenCalledTimes(1)
+
+    // Retyping from the restored text reaches the Host again.
+    fireEvent.change(editor, { target: { value: 'retry' } })
+    fireEvent.blur(editor)
+    expect(onEdit).toHaveBeenCalledTimes(2)
+    expect(onEdit).toHaveBeenLastCalledWith('q1', 'retry')
   })
 })

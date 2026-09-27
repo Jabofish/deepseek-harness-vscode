@@ -190,7 +190,14 @@ export function PresetManager(props: PresetManagerProps): ReactElement | null {
     }
     setView(undefined)
   }
-  useDismissibleLayer({ open: overlayOpen, refs: [overlayRef], onDismiss: closeOverlay })
+  // The overlays are `aria-modal`: while one is up, Tab must cycle inside it
+  // and the settings surface behind it has to go inert.
+  useDismissibleLayer({
+    open: overlayOpen,
+    refs: [overlayRef],
+    onDismiss: closeOverlay,
+    trapFocus: true,
+  })
 
   /**
    * The modals are `aria-modal`, so the keyboard belongs inside while one is

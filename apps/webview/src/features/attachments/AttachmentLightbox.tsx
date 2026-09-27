@@ -1,6 +1,7 @@
 import { useEffect, useRef, type ReactElement } from 'react'
 import { Icon } from '../../ui/Icon.js'
 import { useI18n } from '../../i18n.js'
+import { useDismissibleLayer } from '../../components/common/useDismissibleLayer.js'
 
 export interface AttachmentLightboxProps {
   readonly name: string
@@ -14,21 +15,18 @@ export interface AttachmentLightboxProps {
 export function AttachmentLightbox(props: AttachmentLightboxProps): ReactElement {
   const { t } = useI18n()
   const closeRef = useRef<HTMLButtonElement>(null)
+  const dialogRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     closeRef.current?.focus()
   }, [])
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent): void => {
-      // A layer that is already open consumes Escape first; a surface that acts
-      // regardless would collapse both with one key press. `preventDefault` is
-      // how the layer hook marks the key as consumed.
-      if (event.key !== 'Escape' || event.defaultPrevented) return
-      event.preventDefault()
-      props.onClose()
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [props])
+  // `aria-modal` is a promise: Tab cycles inside the lightbox, the rest of the
+  // page goes inert, and Escape dismisses it through the shared layer.
+  useDismissibleLayer({
+    open: true,
+    refs: [dialogRef],
+    trapFocus: true,
+    onDismiss: props.onClose,
+  })
   return (
     <div
       className="dsh-lightbox__backdrop"
@@ -38,6 +36,7 @@ export function AttachmentLightbox(props: AttachmentLightboxProps): ReactElement
       }}
     >
       <div
+        ref={dialogRef}
         className="dsh-lightbox"
         role="dialog"
         aria-modal="true"

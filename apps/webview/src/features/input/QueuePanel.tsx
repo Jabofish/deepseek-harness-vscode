@@ -1,4 +1,4 @@
-import { memo, useId, useState, type ReactElement } from 'react'
+import { useLayoutEffect, memo, useId, useRef, useState, type ReactElement } from 'react'
 import type { MessageImageReference, QueuedInput, RunningInputMode } from '@dsh-vscode/domain'
 import { useI18n } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
@@ -8,7 +8,9 @@ import { MessageImages } from '../chat/MessageImages.js'
 export interface QueuePanelProps {
   readonly items: readonly QueuedInput[]
   readonly running: boolean
-  readonly onEdit: (id: string, text: string) => void
+  /** Returning a promise reports the Host's acceptance; a rejection must not
+   * leave the row showing text DSH never accepted. */
+  readonly onEdit: (id: string, text: string) => void | Promise<void>
   readonly onRemove: (id: string) => void
   readonly onModeChange: (id: string, mode: RunningInputMode) => void
   readonly onLoadImage?: (image: MessageImageReference) => Promise<string | undefined>
@@ -123,6 +125,10 @@ export const QueuePanel = memo(function QueuePanel(props: QueuePanelProps): Reac
   )
 })
 
+function isThenable(value: void | Promise<void>): value is Promise<void> {
+  return typeof value === 'object' && value !== null && typeof value.then === 'function'
+}
+
 function QueueItemEditor(props: {
   readonly item: QueuedInput
   readonly position: number
@@ -141,11 +147,28 @@ function QueueItemEditor(props: {
     setValue(props.item.text)
     setCommittedText(props.item.text)
   }
+  /** Latest projected text, read by the rejection handler after awaits. The
+   * mirror updates in a layout effect so it never trails a committed
+   * projection when the rejection lands. */
+  const authoritativeTextRef = useRef(props.item.text)
+  useLayoutEffect(() => {
+    authoritativeTextRef.current = props.item.text
+  })
 
   const commitIfChanged = (): void => {
-    if (value !== committedText) {
-      setCommittedText(value)
-      props.onEdit(props.item.id, value)
+    if (value === committedText) return
+    setCommittedText(value)
+    const accepted = props.onEdit(props.item.id, value)
+    if (isThenable(accepted)) {
+      // The optimistic commit stands only until the Host answers. A rejection
+      // means DSH kept the previous prompt: restore it so the row does not
+      // read as saved, and retyping (or Escape plus retyping) can retry.
+      void accepted.catch(() => {
+        const authoritative = authoritativeTextRef.current
+        setPreviousText(authoritative)
+        setValue(authoritative)
+        setCommittedText(authoritative)
+      })
     }
   }
 
