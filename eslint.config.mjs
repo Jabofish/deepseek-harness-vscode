@@ -32,9 +32,10 @@ export default tseslint.config(
             'scripts/patch-js-debug-ipv6-probe.cjs',
             'scripts/check-docs.mjs',
             'scripts/i18n.mjs',
+            'scripts/release-notes.mjs',
           ],
           // The build/config scripts above are intentionally outside every
-          // tsconfig; nine files exceed the default match limit.
+          // tsconfig; ten files exceed the default match limit.
           maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: 12,
         },
         tsconfigRootDir: import.meta.dirname,

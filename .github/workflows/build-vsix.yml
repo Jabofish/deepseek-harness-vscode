@@ -42,6 +42,10 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
 
+      - name: Validate release notes
+        if: github.event_name == 'push'
+        run: node scripts/release-notes.mjs "${GITHUB_REF_NAME}" > /dev/null
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -171,12 +175,23 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
       - name: Download platform VSIX files
         uses: actions/download-artifact@v4
         with:
           pattern: vsix-*
           path: artifacts
           merge-multiple: true
+
+      - name: Prepare release notes
+        run: node scripts/release-notes.mjs "${GITHUB_REF_NAME}" > artifacts/release-notes.md
 
       - name: Publish GitHub Release assets
         env:
@@ -190,5 +205,5 @@ jobs:
             gh release create "${GITHUB_REF_NAME}" artifacts/*.vsix \
               --repo "${GITHUB_REPOSITORY}" \
               --title "DeepSeek Harness VS Code ${GITHUB_REF_NAME}" \
-              --generate-notes
+              --notes-file artifacts/release-notes.md
           fi
