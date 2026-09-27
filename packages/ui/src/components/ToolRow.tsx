@@ -209,8 +209,15 @@ export function ToolRow(props: ToolRowProps): ReactElement {
     props.translate,
   )
   const summary = model.errorSummary ?? model.summary
-  const expand = label(props.translate, 'toolrow.expand', 'Expand')
-  const collapse = label(props.translate, 'toolrow.collapse', 'Collapse')
+  // The accessible name is a formatted sentence per locale, never an
+  // English "details" fragment glued onto a localized verb.
+  const detailsAria = expanded
+    ? label(props.translate, 'toolrow.collapseDetailsAria', `Collapse ${model.title} details`, {
+        title: model.title,
+      })
+    : label(props.translate, 'toolrow.expandDetailsAria', `Expand ${model.title} details`, {
+        title: model.title,
+      })
   const targets =
     props.onOpenLink === undefined
       ? []
@@ -239,8 +246,8 @@ export function ToolRow(props: ToolRowProps): ReactElement {
         type="button"
         className="dsh-tool-row__summary"
         aria-expanded={expanded && hasDetails}
-        aria-label={`${expanded ? collapse : expand} ${model.title} details`}
-        title={`${expanded ? collapse : expand} ${model.title} details`}
+        aria-label={detailsAria}
+        title={detailsAria}
         onClick={onToggle}
         disabled={!hasDetails}
       >
@@ -256,9 +263,7 @@ export function ToolRow(props: ToolRowProps): ReactElement {
         >
           {summary}
         </span>
-        <span className="dsh-tool-row__status" aria-label={status}>
-          {status}
-        </span>
+        <span className="dsh-tool-row__status">{status}</span>
         {hasDetails ? (
           <span
             className={`dsh-tool-row__chevron${expanded ? ' dsh-tool-row__chevron--expanded' : ''}`}

@@ -2,6 +2,7 @@ import { useRef, useState, type ReactElement } from 'react'
 import type { EditorContextItem, EditorContextPreview } from '@dsh-vscode/domain'
 
 import { useDismissibleLayer } from '../../components/common/useDismissibleLayer.js'
+import { formatByteSize } from '../../app/attachment-reader.js'
 import { useI18n } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
 
@@ -81,7 +82,7 @@ export function EditorContextChips(props: EditorContextChipsProps): ReactElement
               >
                 <Icon name={item.stale ? 'alert' : editorContextIcon(item.ref.kind)} />
                 <span>{label}</span>
-                <small>{t('composer.contextBytes', { size: item.ref.sizeBytes })}</small>
+                <small>{t('composer.contextBytes', { size: formatByteSize(item.ref.sizeBytes) })}</small>
               </button>
               <button
                 className="dsh-icon-button dsh-composer__context-remove"

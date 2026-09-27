@@ -2740,6 +2740,23 @@ summary.dsh-timeline__card-header,
   transform-origin: 50% 50%;
 }
 
+/* The estimate exceeds the window: saturate the ring and tint the stated
+occupancy so the overflow is visible without opening the details. */
+.dsh-context-meter[data-overflow='true'] .dsh-context-meter__value {
+  stroke: var(--dsh-error-text);
+  opacity: 1;
+}
+
+.dsh-context-meter[data-overflow='true'] .dsh-context-meter__label {
+  color: var(--dsh-error-text);
+}
+
+.dsh-context-meter__overflow {
+  margin: 0;
+  color: var(--dsh-error-text);
+  font-size: var(--dsh-font-size-xs);
+}
+
 .dsh-context-meter__trigger {
   display: inline-flex;
   align-items: center;

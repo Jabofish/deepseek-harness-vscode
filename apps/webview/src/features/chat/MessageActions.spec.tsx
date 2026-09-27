@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MessageActions } from './MessageActions.js'
 
@@ -144,5 +144,24 @@ describe('MessageActions feedback controls', () => {
 
     expect(screen.getByRole('button', { name: 'Good response' }).getAttribute('aria-pressed')).toBe('false')
     expect(screen.getByRole('button', { name: 'Remove rating' }).getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('cycles Tab inside the feedback dialog and dismisses it with Escape', () => {
+    const onFeedbackSubmit = vi.fn().mockResolvedValue(undefined)
+    render(<MessageActions text="answer" onFeedbackSubmit={onFeedbackSubmit} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Good response' }))
+    const dialog = screen.getByRole('dialog', { name: 'Submit feedback' })
+    expect(document.activeElement).toBe(within(dialog).getByRole('textbox', { name: 'Feedback details' }))
+
+    fireEvent.keyDown(document, { key: 'Tab' })
+    expect(document.activeElement).toBe(within(dialog).getByRole('button', { name: 'Cancel' }))
+    fireEvent.keyDown(document, { key: 'Tab' })
+    expect(document.activeElement).toBe(within(dialog).getByRole('button', { name: 'Submit' }))
+    fireEvent.keyDown(document, { key: 'Tab' })
+    expect(document.activeElement).toBe(within(dialog).getAllByRole('button')[0])
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: 'Submit feedback' })).toBeNull()
   })
 })

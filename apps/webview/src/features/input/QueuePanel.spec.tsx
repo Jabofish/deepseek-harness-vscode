@@ -51,7 +51,7 @@ describe('QueuePanel', () => {
     renderQueue([queuedInput('q1', 'first')], true)
 
     expect(screen.getByRole('region', { name: 'Queued prompts' })).toBeTruthy()
-    expect(screen.getByRole('textbox', { name: 'Edit queued prompt q1' })).toBeTruthy()
+    expect(screen.getByRole('textbox', { name: 'Edit queued prompt 1' })).toBeTruthy()
     expect(screen.queryByRole('button', { name: /Queued prompts/u })).toBeNull()
   })
 
@@ -72,12 +72,10 @@ describe('QueuePanel', () => {
     renderQueue([item], true)
 
     expect(screen.getByLabelText('Attached images')).toBeTruthy()
-    expect(screen.getByRole('textbox', { name: 'Edit queued prompt q-image' }).hasAttribute('readonly')).toBe(
-      true,
+    expect(screen.getByRole('textbox', { name: 'Edit queued prompt 1' }).hasAttribute('readonly')).toBe(true)
+    expect(screen.getByRole('textbox', { name: 'Edit queued prompt 1' }).getAttribute('title')).toContain(
+      'cannot be edited',
     )
-    expect(
-      screen.getByRole('textbox', { name: 'Edit queued prompt q-image' }).getAttribute('title'),
-    ).toContain('cannot be edited')
   })
 
   it('shows queued files and keeps their row out of the text-only edit path', () => {
@@ -86,7 +84,7 @@ describe('QueuePanel', () => {
     // A text-only replacement would drop the file, so the row reports what it
     // carries and refuses retyping instead of silently losing it.
     expect(screen.getByText('spec.md')).toBeTruthy()
-    const editor = screen.getByRole('textbox', { name: 'Edit queued prompt q-file' })
+    const editor = screen.getByRole('textbox', { name: 'Edit queued prompt 1' })
     expect(editor.hasAttribute('readonly')).toBe(true)
     expect(editor.getAttribute('title')).toContain('cannot be edited')
   })
@@ -95,7 +93,7 @@ describe('QueuePanel', () => {
     const onEdit = vi.fn()
     renderQueue([queuedInput('q1', 'first')], true, vi.fn(), onEdit)
 
-    const editor = screen.getByRole('textbox', { name: 'Edit queued prompt q1' })
+    const editor = screen.getByRole('textbox', { name: 'Edit queued prompt 1' })
     expect(editor.hasAttribute('readonly')).toBe(false)
     fireEvent.change(editor, { target: { value: 'second' } })
     fireEvent.blur(editor)
@@ -106,7 +104,7 @@ describe('QueuePanel', () => {
   it('refreshes an untouched editor when a newer queue projection changes the prompt', () => {
     const onEdit = vi.fn()
     const view = renderQueue([queuedInput('q1', 'first')], true, vi.fn(), onEdit)
-    const editor = screen.getByRole('textbox', { name: 'Edit queued prompt q1' })
+    const editor = screen.getByRole('textbox', { name: 'Edit queued prompt 1' })
 
     view.rerender(
       <I18nProvider>
@@ -129,7 +127,7 @@ describe('QueuePanel', () => {
     const onModeChange = vi.fn()
     renderQueue([queuedInput('q1', 'first')], true, onModeChange)
 
-    fireEvent.click(screen.getByRole('button', { name: /Mode for queued prompt q1/u }))
+    fireEvent.click(screen.getByRole('button', { name: /Mode for queued prompt 1/u }))
     fireEvent.click(screen.getByRole('option', { name: 'Steer' }))
 
     expect(onModeChange).toHaveBeenCalledWith('q1', 'steer')
@@ -139,7 +137,7 @@ describe('QueuePanel', () => {
     renderQueue([queuedInput('q1', 'first'), queuedInput('q2', 'second')])
     fireEvent.click(screen.getByRole('button', { name: /Queued prompts/u }))
 
-    const trigger = screen.getByRole('button', { name: /Mode for queued prompt q1/u })
+    const trigger = screen.getByRole('button', { name: /Mode for queued prompt 1/u })
     expect(trigger.hasAttribute('disabled')).toBe(true)
   })
 
@@ -150,7 +148,7 @@ describe('QueuePanel', () => {
     // The pinned Host only accepts `action: { kind: 'steer' }`; no request
     // moves a steering prompt back into the queue, so the mode is reported
     // instead of offered as a choice that silently does nothing.
-    const trigger = screen.getByRole('button', { name: /Mode for queued prompt q-steer/u })
+    const trigger = screen.getByRole('button', { name: /Mode for queued prompt 1/u })
     expect(trigger.textContent).toContain('Steer')
     expect(trigger.hasAttribute('disabled')).toBe(true)
     expect(onModeChange).not.toHaveBeenCalled()
@@ -161,12 +159,49 @@ describe('QueuePanel', () => {
 
     const toggle = screen.getByRole('button', { name: /Queued prompts/u })
     expect(toggle.getAttribute('aria-expanded')).toBe('false')
-    expect(screen.queryByRole('textbox', { name: 'Edit queued prompt q1' })).toBeNull()
+    expect(screen.queryByRole('textbox', { name: 'Edit queued prompt 1' })).toBeNull()
 
     fireEvent.click(toggle)
 
     expect(toggle.getAttribute('aria-expanded')).toBe('true')
-    expect(screen.getByRole('textbox', { name: 'Edit queued prompt q1' })).toBeTruthy()
-    expect(screen.getByRole('textbox', { name: 'Edit queued prompt q2' })).toBeTruthy()
+    expect(screen.getByRole('textbox', { name: 'Edit queued prompt 1' })).toBeTruthy()
+    expect(screen.getByRole('textbox', { name: 'Edit queued prompt 2' })).toBeTruthy()
+  })
+  it('commits an edited queued prompt on Enter and does not resend it on blur', () => {
+    const onEdit = vi.fn()
+    renderQueue([queuedInput('q1', 'first')], true, vi.fn(), onEdit)
+
+    const editor = screen.getByRole('textbox', { name: 'Edit queued prompt 1' })
+    fireEvent.change(editor, { target: { value: 'second' } })
+    fireEvent.keyDown(editor, { key: 'Enter' })
+
+    expect(onEdit).toHaveBeenCalledTimes(1)
+    expect(onEdit).toHaveBeenCalledWith('q1', 'second')
+    fireEvent.blur(editor)
+    expect(onEdit).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps an Enter that confirms an IME composition from committing the row', () => {
+    const onEdit = vi.fn()
+    renderQueue([queuedInput('q1', 'first')], true, vi.fn(), onEdit)
+
+    const editor = screen.getByRole('textbox', { name: 'Edit queued prompt 1' })
+    fireEvent.change(editor, { target: { value: '第二' } })
+    fireEvent.keyDown(editor, { key: 'Enter', isComposing: true })
+
+    expect(onEdit).not.toHaveBeenCalled()
+  })
+
+  it('reverts an uncommitted edit on Escape and never sends it on blur', () => {
+    const onEdit = vi.fn()
+    renderQueue([queuedInput('q1', 'first')], true, vi.fn(), onEdit)
+
+    const editor = screen.getByRole('textbox', { name: 'Edit queued prompt 1' })
+    fireEvent.change(editor, { target: { value: 'draft' } })
+    fireEvent.keyDown(editor, { key: 'Escape' })
+
+    expect(screen.getByDisplayValue('first')).toBe(editor)
+    fireEvent.blur(editor)
+    expect(onEdit).not.toHaveBeenCalled()
   })
 })

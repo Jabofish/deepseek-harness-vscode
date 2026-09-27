@@ -115,7 +115,7 @@ export function DiagnosticsDrawer(props: DiagnosticsDrawerProps): ReactElement {
             <ContentFlow as="p" className="dsh-diagnostics-popover__status" role="status">
               {t('diagnostics.loading')}
             </ContentFlow>
-          ) : error ? (
+          ) : error && snapshot === undefined ? (
             <div className="dsh-diagnostics-popover__failure">
               <ContentFlow as="p" role="alert">
                 {t('diagnostics.unavailable')}
@@ -129,13 +129,22 @@ export function DiagnosticsDrawer(props: DiagnosticsDrawerProps): ReactElement {
               </button>
             </div>
           ) : snapshot === undefined ? null : (
-            <DiagnosticsPanel
-              snapshot={snapshot}
-              busy={busy}
-              onRefresh={load}
-              {...(snapshot.canReconnect ? { onReconnect: () => run(props.onReconnect) } : {})}
-              onShowOutput={() => run(props.onShowOutput)}
-            />
+            <>
+              {/* A failed action must not discard the snapshot that is still
+              on screen: it stays readable, and the failure is stated inline. */}
+              {error ? (
+                <ContentFlow as="p" className="dsh-diagnostics-popover__status" role="alert">
+                  {t('diagnostics.actionFailed')}
+                </ContentFlow>
+              ) : null}
+              <DiagnosticsPanel
+                snapshot={snapshot}
+                busy={busy}
+                onRefresh={load}
+                {...(snapshot.canReconnect ? { onReconnect: () => run(props.onReconnect) } : {})}
+                onShowOutput={() => run(props.onShowOutput)}
+              />
+            </>
           )}
         </PopoverCard>
       ) : null}

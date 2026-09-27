@@ -3,6 +3,7 @@ import { useEffect, useId, useCallback, useRef, useState, type FormEvent, type R
 import type { FeedbackCategory, MessageFeedbackItem, MessageFeedbackRating } from '@dsh-vscode/domain'
 import { useI18n, type Translate } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
+import { useDismissibleLayer } from '../../components/common/useDismissibleLayer.js'
 import { CopyButton } from './CopyButton.js'
 
 const FEEDBACK_CATEGORIES = [
@@ -55,6 +56,7 @@ export function MessageActions(props: MessageActionsProps): ReactElement {
   const [feedbackRecorded, setFeedbackRecorded] = useState(false)
   const feedbackTriggerRef = useRef<HTMLButtonElement | null>(null)
   const feedbackDetailRef = useRef<HTMLTextAreaElement | null>(null)
+  const feedbackDialogRef = useRef<HTMLFormElement | null>(null)
   const aliveRef = useRef(true)
   const dialogTitleId = useId()
   const dialogDetailId = useId()
@@ -66,6 +68,21 @@ export function MessageActions(props: MessageActionsProps): ReactElement {
     setDialogError(undefined)
     feedbackTriggerRef.current?.focus()
   }, [dialogSaving])
+
+  // The feedback dialog is a portaled `aria-modal` surface: Tab has to cycle
+  // inside it, the rest of the page has to go inert, and Escape and outside
+  // presses dismiss it (except while a submission is in flight).
+  useDismissibleLayer({
+    open: dialogRating !== undefined,
+    refs: [feedbackDialogRef],
+    onDismiss: closeDialog,
+    trapFocus: true,
+  })
+
+  useEffect(() => {
+    if (dialogRating === undefined) return
+    feedbackDetailRef.current?.focus()
+  }, [dialogRating])
 
   useEffect(
     () => () => {
@@ -79,21 +96,6 @@ export function MessageActions(props: MessageActionsProps): ReactElement {
     const timeout = window.setTimeout(() => setFeedbackRecorded(false), 4_000)
     return () => window.clearTimeout(timeout)
   }, [feedbackRecorded])
-
-  useEffect(() => {
-    if (dialogRating === undefined) return
-    feedbackDetailRef.current?.focus()
-    const onKeyDown = (event: KeyboardEvent): void => {
-      // The dialog is the innermost surface; outer owners listen on the same
-      // document/window keys, so it has to mark the key as consumed or they
-      // collapse alongside it.
-      if (event.key !== 'Escape' || event.defaultPrevented || dialogSaving) return
-      event.preventDefault()
-      closeDialog()
-    }
-    document.addEventListener('keydown', onKeyDown)
-    return () => document.removeEventListener('keydown', onKeyDown)
-  }, [closeDialog, dialogRating, dialogSaving])
 
   const openDialog = (
     rating: MessageFeedbackRating,
@@ -269,6 +271,7 @@ export function MessageActions(props: MessageActionsProps): ReactElement {
               }}
             >
               <form
+                ref={feedbackDialogRef}
                 className="dsh-session-dialog dsh-feedback-dialog"
                 role="dialog"
                 aria-modal="true"

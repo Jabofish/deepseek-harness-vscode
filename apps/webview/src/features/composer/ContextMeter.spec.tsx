@@ -34,6 +34,27 @@ describe('ContextMeter', () => {
     expect(document.querySelectorAll('.dsh-context-meter__segment')).toHaveLength(3)
   })
 
+  it('warns when the estimate exceeds the window instead of clamping to a silent 100%', () => {
+    render(
+      <I18nProvider>
+        <ContextMeter tokens={1_040_000} maximum={1_000_000} />
+      </I18nProvider>,
+    )
+
+    // The ring saturates, but the trigger states the overflow and the meter
+    // carries the overflow state for the failure tint.
+    expect(
+      screen.getByRole('button', {
+        name: 'Context ~1.0m / 1.0m tokens, estimated above the window',
+      }),
+    ).toBeDefined()
+    expect(document.querySelector('.dsh-context-meter')?.getAttribute('data-overflow')).toBe('true')
+
+    fireEvent.click(screen.getByRole('button'))
+    expect(screen.getByText('Estimated above the context window.')).toBeDefined()
+    expect(screen.getByText('104%')).toBeDefined()
+  })
+
   it('closes on Escape and outside pointer input', () => {
     render(
       <I18nProvider>
@@ -55,5 +76,21 @@ describe('ContextMeter', () => {
     fireEvent.click(screen.getByRole('button'))
     fireEvent.pointerDown(document.body)
     expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('moves the keyboard into the details on open and back to the trigger on close', () => {
+    render(
+      <I18nProvider>
+        <ContextMeter tokens={5_000} maximum={100_000} />
+      </I18nProvider>,
+    )
+
+    const trigger = screen.getByRole('button')
+    fireEvent.click(trigger)
+    expect(document.activeElement).toBe(screen.getByRole('dialog', { name: 'Context details' }))
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(document.activeElement).toBe(trigger)
   })
 })

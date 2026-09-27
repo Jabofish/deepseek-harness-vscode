@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type KeyboardEvent, type ReactElement } fr
 import type { ChangeDetail, ChangeReviewState, ChangeSetFile } from '@dsh-vscode/domain'
 
 import { useI18n } from '../../i18n.js'
+import { useViewportMenuPosition } from '../../components/common/useViewportMenuPosition.js'
 import { Icon } from '../../ui/Icon.js'
 
 export interface ChangesDrawerProps {
@@ -31,6 +32,19 @@ export function ChangesDrawer(props: ChangesDrawerProps): ReactElement | null {
   const detailRequestGeneration = useRef(0)
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
+  // Anchored to the trigger, not the viewport top: the narrow-sidebar topbar
+  // may wrap to several lines under the 52rem rule.
+  const menuRef = useRef<HTMLDivElement>(null)
+  const menuPosition = useViewportMenuPosition({
+    open,
+    anchorRef: triggerRef,
+    menuRef,
+    placement: 'below',
+    align: 'end',
+  })
+  /** The row control that opened the detail takes the keyboard back from it. */
+  const detailTriggerRef = useRef<HTMLElement | null>(null)
+  const detailWasOpen = useRef(false)
 
   useEffect(() => {
     if (!open) return
@@ -40,6 +54,15 @@ export function ChangesDrawer(props: ChangesDrawerProps): ReactElement | null {
     document.addEventListener('pointerdown', closeOutside)
     return () => document.removeEventListener('pointerdown', closeOutside)
   }, [open])
+
+  useEffect(() => {
+    if (detailWasOpen.current && detail === undefined) {
+      const target = detailTriggerRef.current
+      detailTriggerRef.current = null
+      if (target !== null && target.isConnected) target.focus()
+    }
+    detailWasOpen.current = detail !== undefined
+  }, [detail])
 
   const refresh = (): void => {
     if (refreshing) return
@@ -81,12 +104,23 @@ export function ChangesDrawer(props: ChangesDrawerProps): ReactElement | null {
       .catch(() => setReviewError(true))
       .finally(() => setReviewing(undefined))
   }
+  const closeDetail = (): void => {
+    // The generation bump keeps a late in-flight detail response from
+    // repopulating a preview the user has already dismissed.
+    detailRequestGeneration.current += 1
+    setDetail(undefined)
+  }
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
     if (event.key !== 'Escape' || !open) return
     event.preventDefault()
-    detailRequestGeneration.current += 1
+    // The diff detail is the inner layer: the first Escape returns to the
+    // list with its scroll position intact, and only the next one dismisses
+    // the popover itself.
+    if (detail !== undefined) {
+      closeDetail()
+      return
+    }
     setOpen(false)
-    setDetail(undefined)
     triggerRef.current?.focus()
   }
 
@@ -115,7 +149,13 @@ export function ChangesDrawer(props: ChangesDrawerProps): ReactElement | null {
         </div>
       ) : null}
       {open ? (
-        <div className="dsh-changes-popover__menu" role="dialog" aria-label={t('changes.list.aria')}>
+        <div
+          ref={menuRef}
+          className="dsh-changes-popover__menu"
+          style={menuPosition}
+          role="dialog"
+          aria-label={t('changes.list.aria')}
+        >
           <div className="dsh-changes-popover__header">
             <strong>{t('changes.title')}</strong>
             <button
@@ -171,7 +211,10 @@ export function ChangesDrawer(props: ChangesDrawerProps): ReactElement | null {
                   className="dsh-icon-button"
                   aria-label={t('changes.detail', { path: change.relativePath })}
                   title={t('changes.detail', { path: change.relativePath })}
-                  onClick={() => openDetail(change.changeId)}
+                  onClick={(event) => {
+                    detailTriggerRef.current = event.currentTarget
+                    openDetail(change.changeId)
+                  }}
                 >
                   <Icon name="search" />
                 </button>
@@ -191,7 +234,7 @@ export function ChangesDrawer(props: ChangesDrawerProps): ReactElement | null {
                   className="dsh-icon-button"
                   type="button"
                   aria-label={t('changes.closeDetail')}
-                  onClick={() => setDetail(undefined)}
+                  onClick={closeDetail}
                 >
                   <Icon name="close" />
                 </button>

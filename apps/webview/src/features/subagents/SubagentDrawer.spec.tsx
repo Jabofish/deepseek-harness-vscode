@@ -55,6 +55,28 @@ describe('SubagentDrawer tree', () => {
     expect(container.querySelector('.dsh-subagent-tree__trigger-count')?.textContent).toBe('1')
   })
 
+  it('keeps the tree at a single tab stop and leaves diagnostic rows out of it', () => {
+    const { container } = render(
+      <SubagentDrawer
+        parentSessionId="root"
+        catalog={catalog([
+          child({ id: 'c1', label: 'Researcher', activity: 'running', mode: 'continuable' }),
+          { kind: 'diagnostic', id: 'lost-1', reason: 'unavailable', parentSessionId: 'root' },
+          child({ id: 'c2', label: 'Coder' }),
+        ])}
+        onLoadChildren={vi.fn()}
+        onOpenChild={vi.fn()}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: /Subagents: 2/u }))
+
+    const items = Array.from(container.querySelectorAll<HTMLElement>('[role="treeitem"]'))
+    // Arrow keys roam the rows, so Tab must enter and leave the tree without
+    // stepping through every row.
+    // The diagnostic row has no tabindex at all: it is not a focus target.
+    expect(items.map((item) => item.getAttribute('tabindex'))).toEqual(['0', null, '-1'])
+  })
+
   it('shows the official token and elapsed-time metrics from the session projection', async () => {
     const summary: SessionSummary = {
       id: 'c1',

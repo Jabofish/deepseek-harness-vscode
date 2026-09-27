@@ -1,5 +1,31 @@
 # Change Log
 
+## Unreleased
+
+- 检查点、提示模板、消息反馈与工具链接错误等模态确认框现在真正圈住键盘焦点：Tab 在框内循环，背景内容标记为 inert，屏幕阅读器不再宣称模态却让焦点走出对话框；确认框补齐了可访问名称，上下文用量详情打开时焦点进入面板、关闭后回到触发按钮。
+- Modal confirmations (checkpoints, prompt templates, message feedback, tool-link errors) now genuinely trap keyboard focus: Tab cycles inside the dialog, the background goes inert, and screen readers no longer announce a modal that lets focus wander. The confirmations gained accessible names, and the context-usage details move focus into the panel on open and back to its trigger on close.
+- 模板编辑等弹层内的对话框打开时，误点弹层外部不再丢失正在编辑的内容。
+- An accidental outside press no longer discards an in-progress dialog such as the prompt-template editor.
+- 设置抽屉重新打开时总是重新读取 DSH 设置：关闭期间在外部修改过的设置立即显示最新值，重读完成前展示加载状态且不可写入，避免用过期修订提交后被冲突回滚。
+- Reopening the settings drawer always re-reads DSH settings: values changed externally while it was closed show immediately, and the drawer shows a loading state and blocks writes until the re-read completes, avoiding saves against a stale revision that bounce with a conflict.
+
+- 设置页与任务面板的分段控件（权限预设、主题、语言、字号、任务范围等）当前选中项不再渲染为禁用：屏幕阅读器正确播报"已选中"而不是"变灰不可用"，键盘 Tab 也能落在当前值上；重复点击当前值不会触发写入。
+- Segmented controls in settings and the task panel (permission preset, theme, language, font size, task scope, and more) no longer render the selected option as disabled: screen readers announce "selected" instead of dimmed, keyboard focus can land on the current value, and re-clicking it never writes.
+
+- 上下文用量预估超过模型窗口时不再静默钳制成 100%：圆环转为错误色、占用率显示真实数值（如 104%），屏幕阅读器播报"预计超出窗口"，详情面板说明超出情况。
+- When the context estimate exceeds the model window it no longer clamps silently to 100%: the ring turns to the error color, the stated percentage shows the real number (for example 104%), screen readers announce the overflow, and the details panel explains it.
+- 复制按钮在剪贴板写入被拒时明确显示"复制失败"（图标与提示变化并播报给屏幕阅读器），复制成功也同样播报；不再是静默无反应。
+- The copy button now reports a refused clipboard write ("Copy failed", with icon and tooltip changes and a screen-reader announcement) and announces successful copies, instead of staying silent either way.
+
+- 更改审阅弹层中的 diff 详情成为独立内层：第一次 Escape 只关闭详情并回到列表（焦点回到打开它的行按钮），再按一次才关闭弹层；在响应返回前关闭详情时，迟到的结果不会把预览重新弹出来。
+- The diff detail in the change-review popover is now its own layer: the first Escape closes only the detail and returns focus to the row button that opened it, and a second Escape dismisses the popover; a late detail response can no longer repopulate a preview the user dismissed.
+- 会话工具区的弹层（对话操作面板与任务、检查点、提示模板、队列作业、更改审阅菜单）改为锚定各自触发按钮定位，不再假设顶栏固定为一行：窄侧栏顶栏换行后弹层仍然贴合触发器，不脱离、不遮挡控件。
+- Popovers in the conversation tools area (the actions panel and the task, checkpoint, prompt-template, job, and change menus) now anchor to their own trigger buttons instead of assuming a fixed one-line topbar, so they stay attached when the narrow-sidebar topbar wraps.
+- 编辑器上下文芯片的字节数改为可读单位（如 1.5 KiB），与附件大小提示口径一致；权限选择器中的实验性 Auto 选项在中文界面显示本地化标签；空会话引导页对屏幕阅读器只播报一次，切换下拉不再重复朗读，其缺失默认预设说明并入双语文案字典。
+- Editor-context chips show human-readable byte sizes (for example 1.5 KiB) consistent with attachment limits; the experimental Auto permission option carries a localized label in Chinese; the empty-session posture announces once to screen readers instead of on every picker change, and its missing-default-preset notice moves into the locale dictionaries.
+- 会话统计行不再是 live region：流式期间数字持续变化不再让屏幕阅读器反复朗读整行，仍可按分组浏览。
+- The session statistics line is no longer a live region: streaming updates no longer re-read the whole line to screen readers, while the group stays browsable.
+
 ## 0.2.6
 
 - 工具结果以 `<path>/<type>/<content>` 纯文本信封返回时，现在解码为结果正文加带标签的文件路径字段，不再把内部标记原样打印；`file_path`、`pattern`、`offset`、`limit` 参数获得专属标签。

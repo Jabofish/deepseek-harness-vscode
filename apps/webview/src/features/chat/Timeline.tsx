@@ -41,6 +41,7 @@ import {
   useTailEntrance,
   type ScrollAnchor,
 } from '../../components/common/index.js'
+import { useDismissibleLayer } from '../../components/common/useDismissibleLayer.js'
 import { Icon } from '../../ui/Icon.js'
 import { useI18n, type Translate } from '../../i18n.js'
 import type { PerformanceUsageMode, TranscriptViewMode } from '../../app/ui-preferences.js'
@@ -637,6 +638,15 @@ function ToolLinkErrorDialog({
   useLayoutEffect(() => {
     onCloseRef.current = onClose
   }, [onClose])
+  // The dialog is `aria-modal`: Tab cycles inside it, the rest of the page
+  // goes inert, and Escape and outside presses dismiss it through the shared
+  // layer so outer owners never collapse alongside it.
+  useDismissibleLayer({
+    open: true,
+    refs: [dialogRef],
+    onDismiss: () => onCloseRef.current(),
+    trapFocus: true,
+  })
 
   useLayoutEffect(() => {
     // The modal owns the keyboard while it is up, but only takes it back when
@@ -649,20 +659,6 @@ function ToolLinkErrorDialog({
     if (dialog !== null && active !== null && dialog.contains(active)) return
     closeRef.current?.focus()
   }, [busy])
-
-  useLayoutEffect(() => {
-    const onKeyDown = (event: KeyboardEvent): void => {
-      // The dialog is aria-modal: the keyboard dismisses it, and the refocus
-      // effect above returns the keyboard to the control that asked for the
-      // open. A key an inner surface already consumed is not ours. Registered
-      // at layout time so the modal answers the key from its first paint.
-      if (event.key !== 'Escape' || event.defaultPrevented) return
-      event.preventDefault()
-      onCloseRef.current()
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [])
 
   return (
     <div

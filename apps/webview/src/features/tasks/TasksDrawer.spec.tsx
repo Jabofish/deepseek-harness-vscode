@@ -107,6 +107,20 @@ describe('TasksDrawer failures', () => {
     await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('task-state-stale'))
   })
 
+  it('keeps the pressed scope enabled and ignores a re-pick of it', () => {
+    const onScopeChange = vi.fn().mockResolvedValue(undefined)
+    renderDrawer({ scope: 'current-session', onScopeChange })
+    openDrawer()
+
+    // The pressed segment reads as "selected" rather than dimmed, stays in the
+    // tab order, and re-clicking it must not send the scope again.
+    const current = screen.getByRole('button', { name: 'Current session' })
+    expect(current.getAttribute('aria-pressed')).toBe('true')
+    expect(current.hasAttribute('disabled')).toBe(false)
+    fireEvent.click(current)
+    expect(onScopeChange).not.toHaveBeenCalled()
+  })
+
   it('clears the failure report once the same action succeeds', async () => {
     const onStop = vi.fn().mockRejectedValueOnce(new Error('task-state-stale')).mockResolvedValue(undefined)
     renderDrawer({ tasks: [runningTask], onStop })

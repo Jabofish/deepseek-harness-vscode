@@ -363,7 +363,15 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
   const [wasOpen, setWasOpen] = useState(open)
   if (wasOpen !== open) {
     setWasOpen(open)
-    if (!open) setSettingsState(undefined)
+    if (!open) {
+      setSettingsState(undefined)
+      // DSH settings can change outside this drawer while it is closed.
+      // Reopening must re-read them instead of displaying — and saving
+      // against — the stale snapshot; the freshness gate below blocks writes
+      // until the re-read lands.
+      setDshState({ status: 'loading' })
+      setDshSettingsSnapshotFresh(false)
+    }
   }
 
   useEffect(() => {
@@ -1266,8 +1274,9 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                             }`}
                             type="button"
                             aria-pressed={option === props.locale}
-                            disabled={option === props.locale}
-                            onClick={() => props.onLocaleChange(option)}
+                            onClick={() => {
+                              if (option !== props.locale) props.onLocaleChange(option)
+                            }}
                           >
                             {option === 'zh' ? t('locale.chinese') : t('locale.english')}
                           </button>
@@ -2186,8 +2195,9 @@ function renderFontSizeControl(
           }`}
           type="button"
           aria-pressed={size === localFontSize}
-          disabled={size === localFontSize}
-          onClick={() => onLocalChange(size)}
+          onClick={() => {
+            if (size !== localFontSize) onLocalChange(size)
+          }}
         >
           {t(`settings.value.${size}`)}
         </button>
@@ -2348,8 +2358,12 @@ function GeneralSettingRow(props: GeneralSettingRowProps): ReactElement | null {
               }`}
               type="button"
               aria-pressed={option === currentLabel}
-              disabled={props.disabled || option === currentLabel}
-              onClick={() => props.onPick(option)}
+              disabled={props.disabled}
+              // The pressed segment already names the stored value: keep it in
+              // the tab order and readable as "selected", with a no-op click.
+              onClick={() => {
+                if (option !== currentLabel) props.onPick(option)
+              }}
             >
               {formatSettingValue(option, t)}
             </button>

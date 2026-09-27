@@ -19,9 +19,11 @@ import {
 } from '@dsh-vscode/domain'
 
 import { useI18n } from '../../i18n.js'
+import { useViewportMenuPosition } from '../../components/common/useViewportMenuPosition.js'
 import { MarkdownContent } from '../chat/MarkdownContent.js'
 import { Icon } from '../../ui/Icon.js'
 import { SelectMenu } from '../../components/common/SelectMenu.js'
+import { useDismissibleLayer } from '../../components/common/useDismissibleLayer.js'
 
 export interface PromptTemplatesDrawerProps {
   readonly onOpenLink?: (href: string) => void | Promise<void>
@@ -79,10 +81,21 @@ export function PromptTemplatesDrawer(props: PromptTemplatesDrawerProps): ReactE
   const [notice, setNotice] = useState<string | undefined>()
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+  const menuPosition = useViewportMenuPosition({
+    open,
+    anchorRef: triggerRef,
+    menuRef,
+    placement: 'below',
+    align: 'end',
+  })
+
   const readGeneration = useRef(0)
   /** The control that opened a confirmation takes the keyboard back. */
   const dialogTriggerRef = useRef<HTMLElement | null>(null)
   const dialogWasOpen = useRef(false)
+  /** Whichever dialog surface is up; the focus trap and inert background hang off it. */
+  const dialogSurfaceRef = useRef<HTMLElement | null>(null)
 
   const dialogOpen = dialog !== undefined || pendingInsertion !== undefined
   useEffect(() => {
@@ -106,13 +119,13 @@ export function PromptTemplatesDrawer(props: PromptTemplatesDrawerProps): ReactE
   }, [props.templates, query])
 
   useEffect(() => {
-    if (!open) return
+    if (!open || dialogOpen) return
     const closeOutside = (event: PointerEvent): void => {
       if (event.target instanceof Node && !rootRef.current?.contains(event.target)) setOpen(false)
     }
     document.addEventListener('pointerdown', closeOutside)
     return () => document.removeEventListener('pointerdown', closeOutside)
-  }, [open])
+  }, [dialogOpen, open])
 
   const closeEditor = (): void => {
     if (busy) return
@@ -120,6 +133,25 @@ export function PromptTemplatesDrawer(props: PromptTemplatesDrawerProps): ReactE
     setForm(EMPTY_FORM)
     setError(undefined)
   }
+
+  // Escape inside a dialog discards only that dialog, never the whole popover.
+  const dismissDialog = (): void => {
+    if (busy) return
+    readGeneration.current += 1
+    if (dialog !== undefined) closeEditor()
+    else if (pendingInsertion !== undefined) setPendingInsertion(undefined)
+  }
+
+  // The dialogs are `aria-modal`: while one is up, Tab has to cycle inside it
+  // and the surrounding content has to go inert. Outside presses stay
+  // non-dismissive so an accidental click cannot discard an in-progress form.
+  useDismissibleLayer({
+    open: dialogOpen,
+    refs: [dialogSurfaceRef],
+    onDismiss: () => undefined,
+    onEscape: dismissDialog,
+    trapFocus: true,
+  })
 
   const readTemplate = (templateId: string): void => {
     const generation = ++readGeneration.current
@@ -281,6 +313,8 @@ export function PromptTemplatesDrawer(props: PromptTemplatesDrawerProps): ReactE
       </button>
       {open ? (
         <div
+          ref={menuRef}
+          style={menuPosition}
           className="dsh-prompt-templates-popover__menu"
           role="dialog"
           aria-label={t('promptTemplates.list.aria')}
@@ -430,7 +464,13 @@ export function PromptTemplatesDrawer(props: PromptTemplatesDrawerProps): ReactE
             </section>
           ) : null}
           {pendingInsertion !== undefined ? (
-            <section className="dsh-prompt-templates-popover__dialog" role="alertdialog" aria-modal="true">
+            <section
+              ref={dialogSurfaceRef}
+              className="dsh-prompt-templates-popover__dialog"
+              role="alertdialog"
+              aria-modal="true"
+              aria-label={t('promptTemplates.missingTitle')}
+            >
               <strong>{t('promptTemplates.missingTitle')}</strong>
               <p>{t('promptTemplates.missingDescription')}</p>
               {pendingInsertion.unresolvedVariables.map((variable, index) => (
@@ -470,7 +510,12 @@ export function PromptTemplatesDrawer(props: PromptTemplatesDrawerProps): ReactE
           ) : null}
           {dialog?.kind === 'editor' ? (
             <form
+              ref={(element) => {
+                dialogSurfaceRef.current = element
+              }}
               className="dsh-prompt-templates-popover__dialog"
+              role="dialog"
+              aria-modal="true"
               aria-label={
                 dialog.templateId === undefined
                   ? t('promptTemplates.createTitle')
@@ -577,7 +622,13 @@ export function PromptTemplatesDrawer(props: PromptTemplatesDrawerProps): ReactE
             </form>
           ) : null}
           {dialog?.kind === 'delete' ? (
-            <section className="dsh-prompt-templates-popover__dialog" role="alertdialog" aria-modal="true">
+            <section
+              ref={dialogSurfaceRef}
+              className="dsh-prompt-templates-popover__dialog"
+              role="alertdialog"
+              aria-modal="true"
+              aria-label={t('promptTemplates.deleteTitle')}
+            >
               <strong>{t('promptTemplates.deleteTitle')}</strong>
               <p>{t('promptTemplates.deleteWarning', { title: dialog.template.title })}</p>
               <div className="dsh-prompt-templates-popover__dialog-actions">

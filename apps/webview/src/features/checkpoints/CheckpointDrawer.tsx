@@ -7,7 +7,9 @@ import type {
 } from '@dsh-vscode/domain'
 
 import { useI18n, type Translate } from '../../i18n.js'
+import { useViewportMenuPosition } from '../../components/common/useViewportMenuPosition.js'
 import { Icon } from '../../ui/Icon.js'
+import { useDismissibleLayer } from '../../components/common/useDismissibleLayer.js'
 
 export interface CheckpointDrawerProps {
   readonly checkpoints: readonly CheckpointSummary[]
@@ -62,9 +64,20 @@ export function CheckpointDrawer(props: CheckpointDrawerProps): ReactElement {
   const [notice, setNotice] = useState<string | undefined>()
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+  const menuPosition = useViewportMenuPosition({
+    open,
+    anchorRef: triggerRef,
+    menuRef,
+    placement: 'below',
+    align: 'end',
+  })
+
   /** The row control that opened the confirmation takes the keyboard back. */
   const dialogTriggerRef = useRef<HTMLElement | null>(null)
   const dialogWasOpen = useRef(false)
+  /** Whichever confirmation surface is up; the focus trap and inert background hang off it. */
+  const dialogSurfaceRef = useRef<HTMLElement | null>(null)
 
   const dialogOpen = dialog !== undefined
   useEffect(() => {
@@ -97,6 +110,17 @@ export function CheckpointDrawer(props: CheckpointDrawerProps): ReactElement {
     setLabel('')
     setError(undefined)
   }
+
+  // The confirmations are `aria-modal`: while one is up, Tab has to cycle
+  // inside it and the surrounding content has to go inert. Outside presses
+  // stay non-dismissive, matching the pointer guard above.
+  useDismissibleLayer({
+    open: dialogOpen,
+    refs: [dialogSurfaceRef],
+    onDismiss: () => undefined,
+    onEscape: closeDialog,
+    trapFocus: true,
+  })
 
   const refresh = (): void => {
     if (busy || props.loading) return
@@ -212,7 +236,13 @@ export function CheckpointDrawer(props: CheckpointDrawerProps): ReactElement {
         <Icon name="chevron-down" />
       </button>
       {open ? (
-        <div className="dsh-checkpoints-popover__menu" role="dialog" aria-label={t('checkpoints.list.aria')}>
+        <div
+          ref={menuRef}
+          style={menuPosition}
+          className="dsh-checkpoints-popover__menu"
+          role="dialog"
+          aria-label={t('checkpoints.list.aria')}
+        >
           <div className="dsh-checkpoints-popover__header">
             <strong>{t('checkpoints.title')}</strong>
             <div className="dsh-checkpoints-popover__header-actions">
@@ -322,7 +352,12 @@ export function CheckpointDrawer(props: CheckpointDrawerProps): ReactElement {
           ) : null}
           {dialog?.kind === 'create' ? (
             <form
+              ref={(element) => {
+                dialogSurfaceRef.current = element
+              }}
               className="dsh-checkpoints-popover__dialog"
+              role="dialog"
+              aria-modal="true"
               aria-label={t('checkpoints.createTitle')}
               onSubmit={create}
             >
@@ -354,7 +389,13 @@ export function CheckpointDrawer(props: CheckpointDrawerProps): ReactElement {
             </form>
           ) : null}
           {dialog?.kind === 'restore' ? (
-            <section className="dsh-checkpoints-popover__dialog" role="alertdialog" aria-modal="true">
+            <section
+              ref={dialogSurfaceRef}
+              className="dsh-checkpoints-popover__dialog"
+              role="alertdialog"
+              aria-modal="true"
+              aria-label={t('checkpoints.restoreTitle')}
+            >
               <strong>{t('checkpoints.restoreTitle')}</strong>
               <p>{t('checkpoints.restoreWarning')}</p>
               {preview === undefined ? null : (
@@ -396,7 +437,13 @@ export function CheckpointDrawer(props: CheckpointDrawerProps): ReactElement {
             </section>
           ) : null}
           {dialog?.kind === 'delete' ? (
-            <section className="dsh-checkpoints-popover__dialog" role="alertdialog" aria-modal="true">
+            <section
+              ref={dialogSurfaceRef}
+              className="dsh-checkpoints-popover__dialog"
+              role="alertdialog"
+              aria-modal="true"
+              aria-label={t('checkpoints.deleteTitle')}
+            >
               <strong>{t('checkpoints.deleteTitle')}</strong>
               <p>{t('checkpoints.deleteWarning')}</p>
               <div className="dsh-checkpoints-popover__dialog-actions">

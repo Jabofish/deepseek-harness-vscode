@@ -1655,7 +1655,7 @@ describe('Timeline', () => {
 
     // The modal is `aria-modal`, so the keyboard has to come back to the link
     // the user was on — the timeline can recycle that row while it is up.
-    fireEvent.keyDown(window, { key: 'Escape' })
+    fireEvent.keyDown(document, { key: 'Escape' })
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(document.activeElement).toBe(trigger)
   })
@@ -1706,7 +1706,7 @@ describe('Timeline', () => {
 
     // The retry remounts the dialog; the row control that started the open is
     // still the element the keyboard belongs to once the refusal is dismissed.
-    fireEvent.keyDown(window, { key: 'Escape' })
+    fireEvent.keyDown(document, { key: 'Escape' })
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(document.activeElement).toBe(trigger)
   })
@@ -1863,7 +1863,7 @@ describe('Timeline', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
 
     expect(screen.queryByRole('dialog')).toBeNull()
-    fireEvent.keyDown(window, { key: 'Escape' })
+    fireEvent.keyDown(document, { key: 'Escape' })
     expect(screen.queryByRole('dialog')).toBeNull()
 
     await act(async () => {
@@ -1872,7 +1872,7 @@ describe('Timeline', () => {
     })
     expect(screen.getByText('second refusal')).toBeDefined()
 
-    fireEvent.keyDown(window, { key: 'Escape' })
+    fireEvent.keyDown(document, { key: 'Escape' })
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 

@@ -1,5 +1,5 @@
 import { createPortal } from 'react-dom'
-import { useRef, useState, type ReactElement } from 'react'
+import { useLayoutEffect, useRef, useState, type ReactElement } from 'react'
 import type { ContextBreakdown } from '@dsh-vscode/domain'
 import { useI18n } from '../../i18n.js'
 import { useDismissibleLayer } from '../../components/common/useDismissibleLayer.js'
@@ -27,8 +27,12 @@ export function ContextMeter(props: ContextMeterProps): ReactElement {
   const detailsRef = useRef<HTMLDivElement>(null)
   const current = Math.max(0, Math.floor(props.tokens))
   const maximum = positive(props.maximum)
+  // The estimate can name more tokens than the window holds. The ring
+  // saturates at a full circle, but the stated percentage stays real so
+  // "over the window" reads as a number, never as a silent 100%.
+  const overflowing = maximum !== undefined && current > maximum
   const ratio = maximum === undefined ? 0 : Math.min(1, current / maximum)
-  const percent = maximum === undefined ? undefined : Math.round(ratio * 100)
+  const percent = maximum === undefined ? undefined : Math.round((current / maximum) * 100)
   const segments = contextSegments(props.breakdown)
   const circumference = 2 * Math.PI * 8
   const fullLabel = contextLabel(current, maximum)
@@ -48,13 +52,25 @@ export function ContextMeter(props: ContextMeterProps): ReactElement {
     onDismiss: () => setOpen(false),
   })
 
+  // The details are a `dialog` with no controls inside, so the keyboard and
+  // screen-reader cursor moves into it while it is up and returns to the
+  // trigger when it closes; without this, opening it announces nothing.
+  const detailsWasOpen = useRef(false)
+  useLayoutEffect(() => {
+    if (open && !detailsWasOpen.current) detailsRef.current?.focus()
+    if (detailsWasOpen.current && !open) triggerRef.current?.focus()
+    detailsWasOpen.current = open
+  }, [open])
+
   return (
-    <span ref={rootRef} className="dsh-context-meter">
+    <span ref={rootRef} className="dsh-context-meter" {...(overflowing ? { 'data-overflow': 'true' } : {})}>
       <button
         ref={triggerRef}
         type="button"
         className="dsh-context-meter__trigger"
-        aria-label={t('controls.contextAria', { value: fullLabel })}
+        aria-label={t(overflowing ? 'controls.contextOverflowAria' : 'controls.contextAria', {
+          value: fullLabel,
+        })}
         aria-expanded={open}
         title={t('controls.contextDetails')}
         onClick={() => {
@@ -87,7 +103,13 @@ export function ContextMeter(props: ContextMeterProps): ReactElement {
               style={detailsPosition}
               role="dialog"
               aria-label={t('controls.contextDetails')}
+              tabIndex={-1}
             >
+              {overflowing ? (
+                <p className="dsh-context-meter__overflow" role="status">
+                  {t('controls.contextOverflowDetail')}
+                </p>
+              ) : null}
               {segments.length === 0 ? (
                 <>
                   <strong>{t('controls.contextDetails')}</strong>

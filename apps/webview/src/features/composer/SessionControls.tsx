@@ -493,7 +493,7 @@ export function permissionOptions(current: string, projected: readonly string[])
 }
 
 export function formatPermissionLabel(id: string, t: Translate = (key) => key): string {
-  if (id === 'auto') return 'Auto · EXP'
+  if (id === 'auto') return t('controls.autoPermission')
   const translationKey = permissionTranslationKey(id)
   if (translationKey !== undefined) return t(translationKey)
   return formatPresetLabel(id, undefined, t)

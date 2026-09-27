@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactElement } from 'react'
 import type { TaskListScope, TaskSummary } from '@dsh-vscode/domain'
 import { useI18n } from '../../i18n.js'
+import { useViewportMenuPosition } from '../../components/common/useViewportMenuPosition.js'
 import { Icon } from '../../ui/Icon.js'
 
 export interface TasksDrawerProps {
@@ -37,6 +38,15 @@ export function TasksDrawer(props: TasksDrawerProps): ReactElement | null {
   const [failure, setFailure] = useState<string | undefined>(undefined)
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+  const menuPosition = useViewportMenuPosition({
+    open,
+    anchorRef: triggerRef,
+    menuRef,
+    placement: 'below',
+    align: 'end',
+  })
+
   const answeringRowRef = useRef<HTMLLIElement>(null)
 
   /** Dismissing the center also drops the inline draft, so reopening is clean. */
@@ -146,6 +156,8 @@ export function TasksDrawer(props: TasksDrawerProps): ReactElement | null {
       </button>
       {open ? (
         <div
+          ref={menuRef}
+          style={menuPosition}
           className="dsh-tasks-popover__menu"
           role="dialog"
           aria-label={t(scope === 'workspace' ? 'tasks.workspaceList.aria' : 'tasks.list.aria')}
@@ -167,7 +179,9 @@ export function TasksDrawer(props: TasksDrawerProps): ReactElement | null {
               type="button"
               className="dsh-tasks-popover__scope-button"
               aria-pressed={scope === 'current-session'}
-              disabled={props.onScopeChange === undefined || scope === 'current-session'}
+              // The pressed scope stays tabbable and reads as "selected";
+              // changeScope ignores a re-pick of the current scope.
+              disabled={props.onScopeChange === undefined}
               onClick={() => changeScope('current-session')}
             >
               {t('tasks.scope.current')}
@@ -176,7 +190,7 @@ export function TasksDrawer(props: TasksDrawerProps): ReactElement | null {
               type="button"
               className="dsh-tasks-popover__scope-button"
               aria-pressed={scope === 'workspace'}
-              disabled={props.onScopeChange === undefined || scope === 'workspace'}
+              disabled={props.onScopeChange === undefined}
               onClick={() => changeScope('workspace')}
             >
               {t('tasks.scope.workspace')}

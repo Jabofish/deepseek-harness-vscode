@@ -54,4 +54,27 @@ describe('DiagnosticsDrawer', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Refresh diagnostics' }))
     await waitFor(() => expect(onRead).toHaveBeenCalledTimes(2))
   })
+
+  it('keeps the readable snapshot on screen when an action fails', async () => {
+    const onRead = vi.fn().mockResolvedValue(snapshot)
+    const onReconnect = vi.fn().mockRejectedValue(new Error('host refused'))
+    render(
+      <I18nProvider>
+        <DiagnosticsDrawer
+          onRead={onRead}
+          onReconnect={onReconnect}
+          onShowOutput={vi.fn().mockResolvedValue(undefined)}
+        />
+      </I18nProvider>,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Diagnostics' }))
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Diagnostics' })).toBeDefined())
+    fireEvent.click(screen.getByRole('button', { name: 'Reconnect' }))
+
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('That action failed'))
+    // The refusal must not replace the snapshot the user was just reading.
+    expect(screen.getByRole('heading', { name: 'Diagnostics' })).toBeDefined()
+    expect(screen.queryByText('The diagnostics snapshot is unavailable.')).toBeNull()
+  })
 })

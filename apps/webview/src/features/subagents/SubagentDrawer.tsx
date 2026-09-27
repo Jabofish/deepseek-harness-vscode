@@ -283,6 +283,9 @@ export function SubagentDrawer(props: SubagentCatalogProps): ReactElement | null
     () => flatten(props.catalog, catalogs, expanded, 1),
     [catalogs, expanded, props.catalog],
   )
+  // Roving tabindex: the tree is one tab stop, and the arrow keys that already
+  // roam here move focus between rows. Diagnostic rows never take focus.
+  const firstSelectableId = rows.find((row) => row.entry.kind !== 'diagnostic')?.entry.id
   if (props.catalog.entries.length === 0) return null
 
   const count = loadedAggregate.total
@@ -384,7 +387,7 @@ export function SubagentDrawer(props: SubagentCatalogProps): ReactElement | null
               <div
                 key={entry.id}
                 role="treeitem"
-                tabIndex={0}
+                tabIndex={entry.id === firstSelectableId ? 0 : -1}
                 aria-level={level}
                 aria-expanded={branch ? isExpanded : undefined}
                 aria-label={label}

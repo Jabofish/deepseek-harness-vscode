@@ -1073,6 +1073,25 @@ describe('SettingsDrawer', () => {
     await waitFor(() => expect(onLoadDshSettings).toHaveBeenCalledTimes(2))
   })
 
+  it('keeps the pressed segment enabled and ignores a re-pick of the stored value', async () => {
+    const fixture = dshSettingsFixture()
+    const onUpdateDshSetting = vi.fn().mockResolvedValue(undefined)
+    renderDrawer({
+      onLoadDshSettings: vi.fn().mockResolvedValue(fixture),
+      onUpdateDshSetting,
+    })
+    await waitFor(() => expect(screen.getByRole('group', { name: 'Appearance' })).toBeDefined())
+
+    // The pressed segment names the stored value: it must stay tabbable and
+    // announce "selected" instead of reading as dimmed, and re-picking it
+    // must not write anything.
+    const theme = screen.getByRole<HTMLButtonElement>('button', { name: 'system' })
+    expect(theme.getAttribute('aria-pressed')).toBe('true')
+    expect(theme.disabled).toBe(false)
+    fireEvent.click(theme)
+    expect(onUpdateDshSetting).not.toHaveBeenCalled()
+  })
+
   it('requires an explicit confirmation before saving full access', async () => {
     const onUpdateDshSetting = vi.fn().mockResolvedValue(undefined)
     renderDrawer({ onUpdateDshSetting })
@@ -1856,5 +1875,31 @@ describe('SettingsDrawer', () => {
   it('renders nothing when closed', () => {
     renderDrawer({ open: false })
     expect(screen.queryByRole('dialog', { name: 'Settings' })).toBeNull()
+  })
+
+  it('re-reads DSH settings on every open instead of showing the stale snapshot', async () => {
+    const first = dshSettingsFixture()
+    const second: DshSettingsSnapshot = {
+      ...first,
+      values: { ...first.values, permission: { defaultPreset: 'read-only' } },
+    }
+    const onLoadDshSettings = vi.fn().mockResolvedValueOnce(first).mockResolvedValueOnce(second)
+    const view = render(drawerElement({ onLoadDshSettings }))
+    await waitFor(() => expect(screen.getByRole('group', { name: 'Permission' })).toBeDefined())
+    expect(screen.getByRole('button', { name: 'Workspace Write', pressed: true })).toBeDefined()
+
+    view.rerender(drawerElement({ open: false, onLoadDshSettings }))
+    view.rerender(drawerElement({ open: true, onLoadDshSettings }))
+
+    // The settings changed elsewhere while the drawer was closed: until the
+    // re-read lands, the reopened drawer shows its loading state rather than
+    // the stale snapshot, and no row control can be touched in between.
+    expect(screen.getByText('Loading DSH settings…')).toBeDefined()
+    expect(screen.queryByRole('group', { name: 'Permission' })).toBeNull()
+
+    await waitFor(() => expect(screen.getByRole('group', { name: 'Permission' })).toBeDefined())
+    expect(onLoadDshSettings).toHaveBeenCalledTimes(2)
+    expect(screen.getByRole('button', { name: 'Read Only', pressed: true })).toBeDefined()
+    expect(screen.queryByRole('button', { name: 'Workspace Write', pressed: true })).toBeNull()
   })
 })

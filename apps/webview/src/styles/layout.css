@@ -1760,10 +1760,9 @@
 }
 
 .dsh-conversation__actions-panel {
+  /* Geometry comes from useViewportMenuPosition, anchored to the trigger:
+  the topbar may wrap to several lines at narrow widths. */
   position: fixed;
-  inset-block-start: calc(var(--dsh-space-3) + var(--dsh-control-height) + var(--dsh-space-1));
-  inset-inline-end: max(var(--dsh-space-2), env(safe-area-inset-right));
-  inset-inline-start: auto;
   z-index: 55;
   box-sizing: border-box;
   width: min(28rem, calc(100vw - var(--dsh-space-4)));
@@ -1994,10 +1993,9 @@
 .dsh-checkpoints-popover__menu,
 .dsh-prompt-templates-popover__menu,
 .dsh-jobs-popover__menu {
+  /* Geometry comes from useViewportMenuPosition, anchored to the trigger:
+  the topbar may wrap to several lines at narrow widths. */
   position: fixed;
-  inset-block-start: calc(var(--dsh-space-3) + var(--dsh-control-height) + var(--dsh-space-2));
-  inset-inline-end: max(var(--dsh-space-2), env(safe-area-inset-right));
-  inset-inline-start: auto;
   z-index: 60;
   box-sizing: border-box;
   width: min(34rem, calc(100vw - var(--dsh-space-4)));

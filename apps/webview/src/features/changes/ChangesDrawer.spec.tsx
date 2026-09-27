@@ -122,6 +122,45 @@ describe('ChangesDrawer', () => {
     await waitFor(() => expect(document.querySelector('pre')?.textContent).toBe('SECOND'))
   })
 
+  it('lets the first Escape dismiss only the diff detail and the next one the popover', async () => {
+    renderDrawer()
+
+    const trigger = screen.getByRole('button', { name: '1 changes' })
+    fireEvent.click(trigger)
+    const detailOpener = screen.getByRole('button', { name: 'Review src/main.ts' })
+    detailOpener.focus()
+    fireEvent.click(detailOpener)
+    await waitFor(() => expect(screen.getByRole('region', { name: 'Change detail' })).toBeDefined())
+
+    fireEvent.keyDown(document.querySelector('.dsh-changes-popover')!, { key: 'Escape' })
+
+    // The list with its state must survive the detail dismissal, and the row
+    // control that opened the preview takes the keyboard back.
+    expect(screen.queryByRole('region', { name: 'Change detail' })).toBeNull()
+    expect(screen.getByRole('dialog', { name: 'Structured changes' })).toBeDefined()
+    expect(document.activeElement).toBe(detailOpener)
+
+    fireEvent.keyDown(document.querySelector('.dsh-changes-popover')!, { key: 'Escape' })
+
+    expect(screen.queryByRole('dialog', { name: 'Structured changes' })).toBeNull()
+    expect(document.activeElement).toBe(trigger)
+  })
+
+  it('keeps a late detail response from repopulating a dismissed preview', async () => {
+    const pending = deferred<ChangeDetail>()
+    const onDetail = vi.fn().mockReturnValue(pending.promise)
+    renderDrawer({ onDetail })
+
+    fireEvent.click(screen.getByRole('button', { name: '1 changes' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Review src/main.ts' }))
+    fireEvent.keyDown(document.querySelector('.dsh-changes-popover')!, { key: 'Escape' })
+    expect(screen.queryByRole('region', { name: 'Change detail' })).toBeNull()
+
+    pending.resolve({ ...change, redactedDiff: 'LATE', diffTruncated: false })
+    await waitFor(() => expect(onDetail).toHaveBeenCalledOnce())
+    expect(screen.queryByRole('region', { name: 'Change detail' })).toBeNull()
+  })
+
   it('offers explicit accept, reject, and attention review decisions in the detail view', async () => {
     const accepted = deferred<ChangeSetFile>()
     const rejected = deferred<ChangeSetFile>()

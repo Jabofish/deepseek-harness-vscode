@@ -13,7 +13,7 @@ export function EmptySessionPosture(props: {
   readonly empty: boolean
   readonly onCreate: (workspaceId: string, presetId?: string) => void
 }): ReactElement {
-  const { locale, t } = useI18n()
+  const { t } = useI18n()
   const hostDefaultPresetId = props.presets.find((preset) => preset.isDefault)?.id
   const missingHostDefaultPreset =
     props.presetSelectionEnabled === false && props.presets.length > 0 && hostDefaultPresetId === undefined
@@ -37,7 +37,12 @@ export function EmptySessionPosture(props: {
     return <EmptyState title={t('app.workspaceLoading')} description={t('app.workspaceLoadingDescription')} />
 
   return (
-    <section className="dsh-empty-session" aria-live="polite">
+    <section className="dsh-empty-session">
+      {/* Announced once when the empty posture appears; a live region around
+      the whole section would repeat every picker change to screen readers. */}
+      <span className="dsh-sr-only" role="status">
+        {t('app.noActiveSession')}
+      </span>
       <div className="dsh-empty-session__icon" aria-hidden="true">
         <Icon name="session" />
       </div>
@@ -83,14 +88,7 @@ export function EmptySessionPosture(props: {
           <span className="dsh-sr-only">{t('app.presetStaged')}</span>
         </div>
       )}
-      {missingHostDefaultPreset ? (
-        <p role="status">
-          {t('presets.modeSelectionHidden')}.{' '}
-          {locale === 'zh'
-            ? 'DSH 未报告默认预设；创建会话可能沿用过期选择。请先在 DSH 中配置默认预设。'
-            : 'DSH did not report a default preset, so creating a session could reuse an outdated selection. Configure a default preset in DSH first.'}
-        </p>
-      ) : null}
+      {missingHostDefaultPreset ? <p role="status">{t('app.presetDefaultMissing')}</p> : null}
       <button
         className="dsh-button dsh-button--primary"
         type="button"

@@ -80,10 +80,12 @@ export const StatsLine = memo(function StatsLine(props: StatsLineProps): ReactEl
         : undefined
     if (outputSpeed === undefined && props.usage === undefined)
       return <div className="dsh-stats-line" aria-hidden="true" data-performance-usage="compact" />
+    // A named group, not a live region: every streaming frame changes the
+    // numbers, and a status role would re-read the whole line each time.
     return (
       <div
         className="dsh-stats-line"
-        role="status"
+        role="group"
         aria-label={t('stats.aria')}
         data-performance-usage="compact"
       >
@@ -98,7 +100,7 @@ export const StatsLine = memo(function StatsLine(props: StatsLineProps): ReactEl
   return (
     <div
       className="dsh-stats-line"
-      role="status"
+      role="group"
       aria-label={t('stats.aria')}
       data-performance-usage="detailed"
     >

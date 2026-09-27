@@ -26,20 +26,27 @@ export function ToolCard(props: ToolCardProps): ReactElement {
   const targets = props.onOpenLink === undefined ? [] : toolLocationTargets(props.tool.locations)
   const hasDetails =
     request.length > 0 || response.length > 0 || targets.length > 0 || props.tool.error !== undefined
-  const expand = props.translate === undefined ? 'Expand' : props.translate('toolcard.expand')
-  const collapse = props.translate === undefined ? 'Collapse' : props.translate('toolcard.collapse')
   const expandTitle =
     props.translate === undefined ? 'Expand tool details' : props.translate('toolcard.expandTitle')
   const collapseTitle =
     props.translate === undefined ? 'Collapse tool details' : props.translate('toolcard.collapseTitle')
   const errorLabel = props.translate === undefined ? 'Error' : props.translate('toolcard.error')
+  const detailsAria = (action: 'expand' | 'collapse'): string => {
+    const title = presentation.title
+    if (props.translate === undefined)
+      return `${action === 'expand' ? 'Expand' : 'Collapse'} ${title} details`
+    return props.translate(
+      action === 'expand' ? 'toolcard.expandDetailsAria' : 'toolcard.collapseDetailsAria',
+      { title },
+    )
+  }
   return (
     <article className={`dsh-tool-card dsh-tool-card--${props.tool.status}`}>
       <button
         type="button"
         className="dsh-tool-card__summary"
         aria-expanded={props.expanded}
-        aria-label={`${props.expanded ? collapse : expand} ${presentation.title} details`}
+        aria-label={detailsAria(props.expanded ? 'collapse' : 'expand')}
         title={props.expanded ? collapseTitle : expandTitle}
         onClick={props.onToggle}
         disabled={!hasDetails}
@@ -94,7 +101,10 @@ export function ToolCard(props: ToolCardProps): ReactElement {
             </section>
           ))}
           {targets.length === 0 ? null : (
-            <div className="dsh-tool-card__targets" aria-label="Open">
+            <div
+              className="dsh-tool-card__targets"
+              aria-label={props.translate === undefined ? 'Open' : props.translate('toolcard.openTargets')}
+            >
               {targets.map((target) => (
                 <button
                   key={`${target.href}:${target.label}`}

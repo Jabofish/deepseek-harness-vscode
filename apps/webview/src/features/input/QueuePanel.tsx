@@ -72,7 +72,7 @@ export const QueuePanel = memo(function QueuePanel(props: QueuePanelProps): Reac
                       ))}
                     </span>
                   )}
-                  <QueueItemEditor item={item} onEdit={props.onEdit} />
+                  <QueueItemEditor item={item} position={index + 1} onEdit={props.onEdit} />
                 </div>
                 <div className="dsh-queue__item-actions">
                   <SelectMenu
@@ -81,11 +81,11 @@ export const QueuePanel = memo(function QueuePanel(props: QueuePanelProps): Reac
                     density="compact"
                     displayLabel
                     label={item.mode === 'queue' ? t('queue.mode.queue') : t('queue.mode.steer')}
-                    ariaLabel={t('queue.mode', { id: item.id })}
+                    ariaLabel={t('queue.mode', { position: index + 1 })}
                     title={
                       item.mode === 'queue'
-                        ? t('queue.mode', { id: item.id })
-                        : t('queue.mode.fixed', { id: item.id })
+                        ? t('queue.mode', { position: index + 1 })
+                        : t('queue.mode.fixed', { position: index + 1 })
                     }
                     value={item.mode}
                     // The pinned Host only turns a queued prompt into a steer
@@ -109,7 +109,7 @@ export const QueuePanel = memo(function QueuePanel(props: QueuePanelProps): Reac
                   <button
                     className="dsh-icon-button"
                     type="button"
-                    aria-label={t('queue.remove', { id: item.id })}
+                    aria-label={t('queue.remove', { position: index + 1 })}
                     onClick={() => props.onRemove(item.id)}
                   >
                     <Icon name="close" />
@@ -125,22 +125,33 @@ export const QueuePanel = memo(function QueuePanel(props: QueuePanelProps): Reac
 
 function QueueItemEditor(props: {
   readonly item: QueuedInput
+  readonly position: number
   readonly onEdit: QueuePanelProps['onEdit']
 }): ReactElement {
   const { t } = useI18n()
   const [value, setValue] = useState(props.item.text)
   const [previousText, setPreviousText] = useState(props.item.text)
+  /** The text this row last sent to the Host; Enter and blur share its guard. */
+  const [committedText, setCommittedText] = useState(props.item.text)
   if (previousText !== props.item.text) {
     // Queue projections are authoritative. Refresh a mounted editor whenever
     // DSH reports a newer value so an old uncontrolled default cannot be
     // submitted later and overwrite that update.
     setPreviousText(props.item.text)
     setValue(props.item.text)
+    setCommittedText(props.item.text)
+  }
+
+  const commitIfChanged = (): void => {
+    if (value !== committedText) {
+      setCommittedText(value)
+      props.onEdit(props.item.id, value)
+    }
   }
 
   return (
     <input
-      aria-label={t('queue.edit', { id: props.item.id })}
+      aria-label={t('queue.edit', { position: props.position })}
       value={value}
       onChange={(event) => setValue(event.target.value)}
       // The only queue edit the host accepts replaces the whole content with
@@ -148,8 +159,19 @@ function QueueItemEditor(props: {
       // than losing what it holds.
       readOnly={!props.item.textOnly}
       title={props.item.textOnly ? undefined : t('queue.editWithAttachments')}
-      onBlur={() => {
-        if (value !== props.item.text) props.onEdit(props.item.id, value)
+      onBlur={commitIfChanged}
+      onKeyDown={(event) => {
+        // An IME composition's Enter confirms the candidate, never the row.
+        if (event.nativeEvent.isComposing || event.keyCode === 229) return
+        if (event.key === 'Enter') {
+          event.preventDefault()
+          commitIfChanged()
+        } else if (event.key === 'Escape') {
+          // Escape discards the uncommitted draft; the blur that may follow
+          // then sees the committed text and never re-sends it.
+          event.preventDefault()
+          setValue(committedText)
+        }
       }}
     />
   )

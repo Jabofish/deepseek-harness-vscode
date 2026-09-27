@@ -231,4 +231,29 @@ describe('CheckpointDrawer', () => {
 
     expect(screen.queryByRole('dialog', { name: 'Session checkpoints' })).toBeNull()
   })
+
+  it('cycles Tab inside the delete confirmation and marks the background inert', () => {
+    renderDrawer()
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Before refactor' }))
+    const dialog = screen.getByRole('alertdialog', { name: 'Delete checkpoint?' })
+    const cancel = within(dialog).getByRole('button', { name: 'Cancel' })
+    const confirm = within(dialog).getByRole('button', { name: 'Delete checkpoint' })
+    expect(document.activeElement).toBe(cancel)
+
+    // The row list is the sibling content the dialog claims to hide from
+    // assistive tech: it must actually be inert while the confirmation is up.
+    const rows = document.querySelector('.dsh-checkpoints-popover__rows')
+    expect(rows?.hasAttribute('inert')).toBe(true)
+
+    fireEvent.keyDown(document, { key: 'Tab' })
+    expect(document.activeElement).toBe(confirm)
+    fireEvent.keyDown(document, { key: 'Tab' })
+    expect(document.activeElement).toBe(cancel)
+    fireEvent.keyDown(document, { key: 'Tab', shiftKey: true })
+    expect(document.activeElement).toBe(confirm)
+
+    fireEvent.click(cancel)
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+    expect(rows?.hasAttribute('inert')).toBe(false)
+  })
 })

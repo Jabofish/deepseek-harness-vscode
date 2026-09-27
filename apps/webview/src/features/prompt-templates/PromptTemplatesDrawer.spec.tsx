@@ -161,4 +161,35 @@ describe('PromptTemplatesDrawer', () => {
     expect(screen.queryByRole('alertdialog')).toBeNull()
     expect(document.activeElement).toBe(insert)
   })
+
+  it('keeps an in-progress editor when the pointer goes down outside the popover', () => {
+    renderDrawer()
+    fireEvent.click(screen.getByRole('button', { name: 'Create' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Title' }), {
+      target: { value: 'Draft title' },
+    })
+
+    fireEvent.pointerDown(document.body)
+
+    // An accidental press elsewhere must not discard the draft the dialog
+    // claims to own while it is `aria-modal`.
+    expect(screen.getByRole('textbox', { name: 'Title' })).toHaveProperty('value', 'Draft title')
+    expect(screen.getByRole('dialog', { name: 'Prompt template library' })).toBeDefined()
+  })
+
+  it('cycles Tab inside the delete confirmation and names it for assistive tech', () => {
+    renderDrawer()
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Review current change' }))
+    const dialog = screen.getByRole('alertdialog', { name: 'Delete prompt template?' })
+    const cancel = within(dialog).getByRole('button', { name: 'Cancel' })
+    const confirm = within(dialog).getByRole('button', { name: 'Delete template' })
+    expect(document.activeElement).toBe(cancel)
+
+    fireEvent.keyDown(document, { key: 'Tab' })
+    expect(document.activeElement).toBe(confirm)
+    fireEvent.keyDown(document, { key: 'Tab' })
+    expect(document.activeElement).toBe(cancel)
+    fireEvent.keyDown(document, { key: 'Tab', shiftKey: true })
+    expect(document.activeElement).toBe(confirm)
+  })
 })

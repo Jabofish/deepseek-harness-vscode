@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactElement } from 'react'
 import type { JobView } from '@dsh-vscode/domain'
 import { useI18n } from '../../i18n.js'
+import { useViewportMenuPosition } from '../../components/common/useViewportMenuPosition.js'
 import { Icon } from '../../ui/Icon.js'
 import type { JobFollowState } from '../../app/store.js'
 
@@ -71,6 +72,14 @@ export function JobsDrawer(props: JobsPopoverProps): ReactElement | null {
   const [actionFailed, setActionFailed] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
+  const menuRef = useRef<HTMLUListElement>(null)
+  const menuPosition = useViewportMenuPosition({
+    open,
+    anchorRef: triggerRef,
+    menuRef,
+    placement: 'below',
+    align: 'end',
+  })
 
   const rows = useMemo(
     () =>
@@ -162,7 +171,12 @@ export function JobsDrawer(props: JobsPopoverProps): ReactElement | null {
         <Icon name="chevron-down" />
       </button>
       {open ? (
-        <ul className="dsh-jobs-popover__menu" aria-label={t('jobs.list.aria')}>
+        <ul
+          ref={menuRef}
+          style={menuPosition}
+          className="dsh-jobs-popover__menu"
+          aria-label={t('jobs.list.aria')}
+        >
           {rows.map((job) => {
             const live = isLive(job)
             const isFollowing = following?.jobId === job.id && following.error === undefined && live
