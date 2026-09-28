@@ -17,6 +17,8 @@ Available operations depend on the connected DSH runtime. Unsupported capabiliti
 2. If DSH is missing, use the guided installer or copy its exact install command. You can also select an existing executable.
 3. Choose or create a workspace, start a session, and send a task.
 
+The Chat view is registered in VS Code's Secondary Side Bar by default (on the right in the default workbench layout). VS Code may keep a previously saved view location after an upgrade.
+
 The extension discovers compatible local instances before starting one. Connection modes let you attach only, start an isolated extension-owned instance, or probe one configured loopback endpoint. It never stops an external DSH. Runtime updates install a verified exact version and do not restart external processes.
 
 ## Privacy and help

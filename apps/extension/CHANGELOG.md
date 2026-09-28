@@ -1,5 +1,12 @@
 # Change Log
 
+## 0.2.9
+
+- Chat 视图现在默认注册在 VS Code 右侧辅助侧边栏；升级时保留原容器与视图 ID，VS Code 中用户已保存的布局选择仍可能生效。
+- The Chat view now registers in VS Code's Secondary Side Bar by default. Its container and view IDs stay the same; VS Code may retain a user's saved layout on upgrade.
+- “DSH: Move View to Secondary Side Bar” 现在打开 VS Code 的移动视图选择器；不再只是切换右侧栏的显示状态。若该命令不可用，则提示从视图标题的右键菜单手动移动。
+- “DSH: Move View to Secondary Side Bar” now opens VS Code's view-move picker instead of merely toggling the secondary sidebar. If unavailable, it explains the view-title context menu route.
+
 ## 0.2.8
 
 - 正式适配 DSH `0.2.0-rc.1` 并将引导安装默认版本更新至这一精确 npm 包；替换临时 master 预适配入口，保持精确版本探测、Session V4、Schedule 可选能力降级和受管启动契约。真实 Schedule 创建与历史、外部附加和完整 Webview 交互仍待现场验收。

@@ -27,6 +27,8 @@
 2. 如果缺少 DSH，使用引导安装、选择现有可执行文件，或复制视图显示的精确安装命令。安装器会先检查所需的 Node.js 版本。
 3. 选择或创建工作区，开始会话并发送任务。
 
+DeepSeek Harness 的 Chat 视图默认注册在辅助侧边栏（VS Code 默认布局中位于编辑器右侧）。如果你以前移动过视图，VS Code 可能保留已有布局；可在命令面板运行 **DSH: Move View to Secondary Side Bar**，选择 Chat 视图和 **New Secondary Side Bar Entry**，或右键视图标题使用 **Move View**。
+
 扩展会先查找本机兼容的 DSH。只有所选连接模式允许且发现流程结束后，才会启动实例；扩展绝不会停止不是自己创建的 DSH 进程。
 
 | 连接模式       | 行为                                                       |

@@ -27,6 +27,8 @@ Install [DeepSeek Harness Companion for VS Code](https://marketplace.visualstudi
 2. If DSH is missing, use the guided installer, select an existing executable, or copy the exact install command shown in the view. The installer checks its required Node.js version before running.
 3. Choose or create a workspace, start a session, and send a task.
 
+The DeepSeek Harness Chat view appears in VS Code's Secondary Side Bar by default (on the right in the default workbench layout). If you previously moved it, VS Code may keep your saved layout. Run **DSH: Move View to Secondary Side Bar** from the Command Palette to choose the Chat view and **New Secondary Side Bar Entry**, or right-click the view title and use **Move View**.
+
 The extension first looks for a compatible local DSH. It starts one only when the selected connection mode permits it and discovery has finished. It never stops a DSH process it did not create.
 
 | Connection mode | Behavior                                                                             |
