@@ -6,6 +6,15 @@ import { AppError, type BackendEndpoint } from '@dsh-vscode/domain'
 
 import type { DshTransport, RetryPolicy } from '../../contracts.js'
 import { cancelled, httpFailure, normalizeTransportError } from '../../transport-errors.js'
+import {
+  assertLoopback,
+  closedConnectionError as closedError,
+  combineSignals,
+  isAlphaIdempotentMethod,
+  releaseUnreadBody,
+  signalIsAborted,
+  withTransportRetry,
+} from '../../transport-internal.js'
 import { unwrapRpcResultValue } from '../rc6/rpc.js'
 import { projectedModelSelection } from '../../projection/agent.js'
 import type { SubagentAddressRegistry } from '../../repositories/shared/subagent-addresses.js'
@@ -1341,48 +1350,16 @@ export class AlphaLoopbackApiClient implements DshTransport {
     for await (const item of this.remoteMux.open(endpoint, args, requestSignal)) yield item
   }
 
-  private async withRetry<T>(method: string, operation: () => Promise<T>, signal?: AbortSignal): Promise<T> {
-    let last: AppError | undefined
-    const retrySignal = combineSignals(signal, this.closed.signal)
-    for (let attempt = 0; attempt < Math.max(1, this.options.retryPolicy.maximumAttempts); attempt += 1) {
-      if (signal?.aborted === true) throw cancelled(signal.reason)
-      if (this.isConnectionClosed()) throw closedError()
-      try {
-        return await operation()
-      } catch (error) {
-        const normalized = normalizeTransportError(method, error, signal)
-        last = normalized
-        if (signalIsAborted(signal)) throw normalized
-        if (this.isConnectionClosed()) throw closedError()
-        if (
-          !normalized.retryable ||
-          !isAlphaIdempotentMethod(method) ||
-          attempt + 1 >= this.options.retryPolicy.maximumAttempts
-        )
-          throw normalized
-        try {
-          await delay(
-            Math.min(
-              this.options.retryPolicy.maximumDelayMs,
-              this.options.retryPolicy.baseDelayMs * 2 ** attempt,
-            ),
-            retrySignal,
-          )
-        } catch (error) {
-          if (signalIsAborted(signal)) throw cancelled(signal?.reason)
-          if (this.isConnectionClosed()) throw closedError()
-          throw error
-        }
-      }
-    }
-    throw (
-      last ??
-      new AppError({
-        code: 'BACKEND_UNREACHABLE',
-        message: `The DSH request ${method} failed.`,
-        retryable: true,
-      })
-    )
+  private withRetry<T>(method: string, operation: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+    return withTransportRetry({
+      method,
+      operation,
+      signal,
+      retrySignal: combineSignals(signal, this.closed.signal),
+      retryPolicy: this.options.retryPolicy,
+      isIdempotent: isAlphaIdempotentMethod,
+      isClosed: () => this.isConnectionClosed(),
+    })
   }
 
   private isConnectionClosed(): boolean {
@@ -1756,55 +1733,6 @@ class AlphaRemoteMux {
       )
     })
   }
-}
-
-const ALPHA_IDEMPOTENT_METHODS = new Set([
-  'session.list',
-  'session.search',
-  'session.history',
-  'session.models',
-  'subagent.list',
-  'subagent.history',
-  'host.listDirectory',
-  'workspace.list',
-  'skill.list',
-  'agentPreset.list',
-  'agentPreset.read',
-  'settings.describe',
-  'credentials.describe',
-  'llm.providers',
-  'llm.models',
-  'commands/list',
-  'fileReferences/list',
-  'sessionReferenceResolver/candidates',
-  'messageFeedback/list',
-  'pluginInventory/list',
-  'agentPresets/list',
-  'agentPresets/read',
-  'settings/describe',
-  'settings/canOpenAgentPresetDirectory',
-  'credentials/describe',
-  'llm/listProviders',
-  'llm/listConfigurableProviders',
-  'session/list',
-  'session/search',
-  'session.attachment',
-  'session/modelCatalog',
-  'session/page',
-  'session/follow',
-  'workspace/follow',
-  'directoryPicker/list',
-  'subagents/list',
-  'subagents/catalog',
-  // DSH 0.1.7-rc.2 Schedule Remote reads are safe to retry. Keep the two
-  // mutating schedule endpoints out of this allowlist.
-  'schedule/catalog',
-  'schedule/list',
-  'schedule/history',
-])
-
-function isAlphaIdempotentMethod(method: string): boolean {
-  return ALPHA_IDEMPOTENT_METHODS.has(method)
 }
 
 function mapEmit(event: unknown, args: readonly unknown[]): readonly unknown[] {
@@ -2665,51 +2593,11 @@ function assertRemoteEndpoint(endpoint: string): void {
     })
 }
 
-function assertLoopback(endpoint: BackendEndpoint): void {
-  if (
-    (endpoint.host !== '127.0.0.1' && endpoint.host !== 'localhost') ||
-    !Number.isInteger(endpoint.port) ||
-    endpoint.port < 1 ||
-    endpoint.port > 65_535 ||
-    endpoint.baseUrl !== `http://${endpoint.host}:${endpoint.port}`
-  )
-    throw new AppError({
-      code: 'INVALID_ENDPOINT',
-      message: 'DSH connections must use a validated loopback endpoint.',
-      retryable: false,
-    })
-}
-
-function closedError(): AppError {
-  return new AppError({
-    code: 'BACKEND_UNREACHABLE',
-    message: 'The DSH connection is closed.',
-    retryable: false,
-  })
-}
-
-function signalIsAborted(signal: AbortSignal | undefined): boolean {
-  return signal?.aborted === true
-}
-
 function rejectionError(reason: unknown): Error {
   // AbortSignal and WebSocket failure paths can carry arbitrary reasons. Keep
   // existing Error instances (including AppError classifications) intact, and
   // retain non-Error values as causes while satisfying Promise's Error contract.
   return reason instanceof Error ? reason : new Error('The alpha DSH stream failed.', { cause: reason })
-}
-
-/**
- * Callers never read a non-2xx body, and an unconsumed fetch body pins its
- * socket instead of returning it to the pool. Release it explicitly so
- * retry loops and export failures cannot accumulate stalled connections.
- */
-async function releaseUnreadBody(response: Response): Promise<void> {
-  try {
-    await response.body?.cancel()
-  } catch {
-    /* releasing the connection is best effort */
-  }
 }
 
 function malformedResponse(method: string, cause?: unknown): AppError {
@@ -2719,15 +2607,6 @@ function malformedResponse(method: string, cause?: unknown): AppError {
     retryable: false,
     ...(cause === undefined ? {} : { cause }),
   })
-}
-
-function combineSignals(...signals: (AbortSignal | undefined | number)[]): AbortSignal {
-  const sources = signals.filter(
-    (value): value is AbortSignal => typeof value !== 'number' && value !== undefined,
-  )
-  const timeout = signals.find((value): value is number => typeof value === 'number')
-  if (timeout !== undefined) sources.push(AbortSignal.timeout(timeout))
-  return sources.length === 1 ? (sources[0] as AbortSignal) : AbortSignal.any(sources)
 }
 
 function awaitWithSignal<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
@@ -2756,22 +2635,6 @@ function awaitWithSignal<T>(promise: Promise<T>, signal: AbortSignal): Promise<T
         reject(rejectionError(error))
       },
     )
-  })
-}
-
-async function delay(ms: number, signal?: AbortSignal): Promise<void> {
-  if (signal?.aborted === true) throw cancelled(signal.reason)
-  await new Promise<void>((resolve, reject) => {
-    const onAbort = (): void => {
-      clearTimeout(timer)
-      signal?.removeEventListener('abort', onAbort)
-      reject(cancelled(signal?.reason))
-    }
-    const timer = setTimeout(() => {
-      signal?.removeEventListener('abort', onAbort)
-      resolve()
-    }, ms)
-    signal?.addEventListener('abort', onAbort, { once: true })
   })
 }
 

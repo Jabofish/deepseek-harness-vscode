@@ -12,20 +12,15 @@ import {
 import { AppError, type BackendEndpoint } from '@dsh-vscode/domain'
 
 import type { DshTransport, RetryPolicy } from './contracts.js'
-import { cancelled as cancelledError, httpFailure, normalizeTransportError } from './transport-errors.js'
-
-/**
- * Callers never read a non-2xx body, and an unconsumed fetch body pins its
- * socket instead of returning it to the pool. Release it explicitly so
- * discovery sweeps and retry loops cannot accumulate stalled connections.
- */
-async function releaseUnreadBody(response: Response): Promise<void> {
-  try {
-    await response.body?.cancel()
-  } catch {
-    /* releasing the connection is best effort */
-  }
-}
+import { cancelled, httpFailure, normalizeTransportError } from './transport-errors.js'
+import {
+  assertLoopback,
+  closedConnectionError,
+  IDEMPOTENT_METHODS,
+  mergeSignals,
+  releaseUnreadBody,
+  withTransportRetry,
+} from './transport-internal.js'
 
 export interface LoopbackApiClientOptions {
   readonly endpoint: BackendEndpoint
@@ -140,11 +135,11 @@ export class LoopbackApiClient extends AbstractApiClient implements DshTransport
           retryable: false,
         }),
       )
-    return this.withRetry(
+    return this.withRetry<TResponse>(
       endpoint,
       () => this.dispatchRemote<TResponse>(endpoint, args, signal),
       signal,
-    ) as Promise<TResponse>
+    )
   }
 
   public openEventStream(signal?: AbortSignal): AsyncIterable<unknown> {
@@ -603,60 +598,21 @@ export class LoopbackApiClient extends AbstractApiClient implements DshTransport
     }
   }
 
-  private async withRetry(
-    method: string,
-    operation: () => Promise<unknown>,
-    signal?: AbortSignal,
-  ): Promise<unknown> {
-    const attempts = IDEMPOTENT_METHODS.has(method)
-      ? Math.max(1, this.options.retryPolicy.maximumAttempts)
-      : 1
-    const retrySignal = mergeSignals(signal, this.closed.signal)
-    let lastError: unknown
-    for (let attempt = 0; attempt < attempts; attempt += 1) {
-      if (signal?.aborted === true) throw cancelled(signal.reason)
-      if (this.isConnectionClosed()) throw closedConnectionError()
-      try {
-        return await operation()
-      } catch (error) {
-        const normalized = normalizeTransportError(method, error, signal)
-        lastError = normalized
-        if (signalIsAborted(signal)) throw normalized
-        if (this.isConnectionClosed()) throw closedConnectionError()
-        if (!normalized.retryable || attempt + 1 >= attempts) throw normalized
-        try {
-          await delay(
-            Math.min(
-              this.options.retryPolicy.maximumDelayMs,
-              this.options.retryPolicy.baseDelayMs * 2 ** attempt,
-            ),
-            retrySignal,
-          )
-        } catch (error) {
-          if (signalIsAborted(signal)) throw cancelled(signal?.reason)
-          if (this.isConnectionClosed()) throw closedConnectionError()
-          throw error
-        }
-      }
-    }
-    throw lastError
+  private withRetry<T>(method: string, operation: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+    return withTransportRetry({
+      method,
+      operation,
+      signal,
+      retrySignal: mergeSignals(signal, this.closed.signal),
+      retryPolicy: this.options.retryPolicy,
+      isIdempotent: (candidate) => IDEMPOTENT_METHODS.has(candidate),
+      isClosed: () => this.isConnectionClosed(),
+    })
   }
 
   private isConnectionClosed(): boolean {
     return this.isClosed
   }
-}
-
-function closedConnectionError(): AppError {
-  return new AppError({
-    code: 'BACKEND_UNREACHABLE',
-    message: 'The DSH connection is closed.',
-    retryable: false,
-  })
-}
-
-function signalIsAborted(signal: AbortSignal | undefined): boolean {
-  return signal?.aborted === true
 }
 
 type WebSocketItem =
@@ -696,28 +652,6 @@ class WebSocketQueue {
     this.head = 0
   }
 }
-
-const IDEMPOTENT_METHODS = new Set([
-  'host.describe',
-  'command.list',
-  'session.list',
-  'session.search',
-  'session.history',
-  'session.attachment',
-  'session.models',
-  'workspace.list',
-  'skill.list',
-  'agentPreset.list',
-  'llm.providers',
-  'llm.models',
-  'settings.describe',
-  'credentials.describe',
-  'subagent.list',
-  'subagent.history',
-  'schedule/catalog',
-  'schedule/list',
-  'schedule/history',
-])
 
 const MUX_FRAME_TYPES = frameTypes(muxFrameSchema)
 const HOST_FRAME_TYPES = frameTypes(hostFrameSchema)
@@ -870,46 +804,6 @@ function parseRawServerResponse(value: unknown): RawServerResponse {
   }
 }
 
-function assertLoopback(endpoint: BackendEndpoint): void {
-  if (
-    (endpoint.host !== '127.0.0.1' && endpoint.host !== 'localhost') ||
-    !Number.isInteger(endpoint.port) ||
-    endpoint.port < 1 ||
-    endpoint.port > 65_535 ||
-    endpoint.baseUrl !== `http://${endpoint.host}:${endpoint.port}`
-  ) {
-    throw new AppError({
-      code: 'INVALID_ENDPOINT',
-      message: 'DSH connections must use a validated loopback endpoint.',
-      retryable: false,
-    })
-  }
-}
-
-function mergeSignals(first: AbortSignal | null | undefined, second: AbortSignal): AbortSignal {
-  return first === undefined || first === null ? second : AbortSignal.any([first, second])
-}
-
-async function delay(ms: number, signal?: AbortSignal): Promise<void> {
-  if (signal?.aborted === true) throw cancelled(signal.reason)
-  await new Promise<void>((resolve, reject) => {
-    let settled = false
-    const cleanup = (): void => {
-      clearTimeout(timer)
-      signal?.removeEventListener('abort', onAbort)
-    }
-    const finish = (callback: () => void): void => {
-      if (settled) return
-      settled = true
-      cleanup()
-      callback()
-    }
-    const onAbort = (): void => finish(() => reject(cancelled(signal?.reason)))
-    const timer = setTimeout(() => finish(resolve), ms)
-    signal?.addEventListener('abort', onAbort, { once: true })
-  })
-}
-
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, signal?: AbortSignal): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     let settled = false
@@ -948,8 +842,4 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, signal?: A
       (error) => finish(undefined, error),
     )
   })
-}
-
-function cancelled(cause: unknown): AppError {
-  return cancelledError(cause)
 }
