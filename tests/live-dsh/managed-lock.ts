@@ -220,7 +220,18 @@ async function acquireGate(options: AcquireGateOptions): Promise<GateLease> {
         throw writeError
       }
 
-      let closed = false
+      try {
+        // The path itself is the gate. Keep no open handle while another
+        // process reads its owner: Windows may deny those reads while the
+        // creating handle is still open.
+        await handle.close()
+      } catch (closeError) {
+        throw new Error(
+          `The managed DSH lock gate could not be closed safely; preserve ${options.gatePath} and inspect it manually.`,
+          { cause: closeError },
+        )
+      }
+
       let released = false
       let releasePromise: Promise<void> | undefined
       return {
@@ -229,10 +240,6 @@ async function acquireGate(options: AcquireGateOptions): Promise<GateLease> {
           if (released) return Promise.resolve()
           if (releasePromise !== undefined) return releasePromise
           const attempt = (async () => {
-            if (!closed) {
-              await handle.close()
-              closed = true
-            }
             let current: string
             try {
               current = await options.readGateOwner(options.gatePath)
@@ -262,6 +269,15 @@ async function acquireGate(options: AcquireGateOptions): Promise<GateLease> {
       current = await options.readGateOwner(options.gatePath)
     } catch (error) {
       if (isMissingFileError(error)) continue
+      if (isGateTemporarilyUnreadableError(error)) {
+        if (options.now() >= options.deadline)
+          throw new Error(
+            `Timed out waiting for the managed DSH lock gate at ${options.gatePath}; its owner is incomplete or unreadable. The gate was preserved for manual recovery.`,
+            { cause: error },
+          )
+        await options.sleep(options.pollIntervalMs)
+        continue
+      }
       throw new Error(
         `Could not inspect the managed DSH lock gate at ${options.gatePath}; it was preserved for manual recovery.`,
         { cause: error },
@@ -491,6 +507,12 @@ function isMissingFileError(error: unknown): boolean {
   return typeof error === 'object' && error !== null && 'code' in error
     ? (error as { readonly code?: unknown }).code === 'ENOENT'
     : false
+}
+
+function isGateTemporarilyUnreadableError(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null || !('code' in error)) return false
+  const code = (error as { readonly code?: unknown }).code
+  return code === 'EPERM' || code === 'EACCES' || code === 'EBUSY'
 }
 
 function ownerPidFromText(text: string | undefined): number | undefined {

@@ -173,6 +173,44 @@ describe('acquireManagedRuntimeLock', () => {
     }
   })
 
+  it('retries transient access failures while another process owns the gate', async () => {
+    const target = lockPath('gate-read-retry')
+    const gatePath = `${target}.gate`
+    const otherOwner = `dsh-live-lock-gate-v1\n00000000-0000-4000-8000-000000000003\n${process.pid}\n`
+    const transientErrors = ['EPERM', 'EACCES'] as const
+    let readAttempts = 0
+    let waitAttempts = 0
+    writeFileSync(gatePath, otherOwner)
+
+    try {
+      const release = await acquireManagedRuntimeLock({
+        lockPath: target,
+        timeoutMs: 1_000,
+        pollIntervalMs: 1,
+        readGateOwner: async (path) => {
+          const code = transientErrors[readAttempts]
+          readAttempts += 1
+          if (code !== undefined) throw Object.assign(new Error('temporary sharing violation'), { code })
+          return readFile(path, 'utf8')
+        },
+        sleep: async () => {
+          waitAttempts += 1
+          if (waitAttempts === transientErrors.length) await rm(gatePath, { force: true })
+        },
+      })
+
+      expect(readAttempts).toBe(transientErrors.length + 1)
+      expect(waitAttempts).toBe(transientErrors.length)
+      expect(await readFile(target, 'utf8')).toMatch(/^dsh-live-lock-v2\n/u)
+      await release()
+      await expect(readFile(target, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(readFile(`${target}.gate`, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally {
+      await rm(target, { force: true })
+      await rm(gatePath, { force: true })
+    }
+  })
+
   it('deduplicates a concurrent close failure and retries without reclosing a closed handle', async () => {
     const target = lockPath('close-retry')
     const closeFailure = new Error('lock handle close failed once')

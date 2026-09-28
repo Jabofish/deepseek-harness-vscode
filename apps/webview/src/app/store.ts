@@ -1,17 +1,12 @@
 import { translate } from '../i18n.js'
 import type {
   AgentConfiguration,
-  MessageAttachment,
-  PluginInstallProgressView,
-  PromptAttachment,
-  RunningInputMode,
   SessionHistoryEvent,
   SubagentCatalog,
   SubagentView,
 } from '@dsh-vscode/domain'
 import { parseSlashCommand, resolvePromptMode } from '@dsh-vscode/domain'
 import type { FeatureRequest } from '@dsh-vscode/webview-protocol'
-import { diagnosticsSnapshotSchema } from '@dsh-vscode/webview-protocol'
 import { PluginInstallRecoveryController } from './plugin-install-recovery.js'
 import { createAccountActions } from './store/account-actions.js'
 import { createSettingsActions, type PresetSessionSyncTarget } from './store/settings-actions.js'
@@ -20,14 +15,12 @@ import { defineStateView, type StoreWithoutStateView } from './store/state-view.
 import { createJobActions } from './store/job-actions.js'
 import { getVsCodeApi } from '../vscode-api.js'
 import { ProtocolClient } from './protocol-client.js'
-import type { ActiveSubagent, AppStore, LiveHistoryAppender, StateSetter } from './store/types.js'
+import type { AppStore, LiveHistoryAppender, StateSetter } from './store/types.js'
 import { requestId } from './store/ids.js'
 import { createPendingOpenBuffer } from './store/pending-open.js'
-import { applyKnownCommand, hasDynamicCommand, promptModeAfterCommand } from './store/agent-config.js'
+import { hasDynamicCommand } from './store/agent-config.js'
 import {
   createCommandDirectoryCache,
-  isCommandDirectoryRefresh,
-  isModelCatalogRefresh,
   readCommandList,
   refreshSessionModelDirectory,
 } from './store/command-directory.js'
@@ -39,34 +32,22 @@ import { createInteractionActions } from './store/interaction-actions.js'
 import { createSessionCatalogActions } from './store/session-catalog-actions.js'
 import { createSessionOpenController } from './store/session-open-controller.js'
 import { createTurnWatchers } from './store/turn-watchers.js'
-import { parseHostDomainEvent, timelineSequenceOptions } from './store/event-parser.js'
+import { subscribeHostEvents } from './store/host-event-subscription.js'
+import { createPromptActions } from './store/prompt-actions.js'
+import { createHistoryActions } from './store/history-actions.js'
+import { createSessionCreationActions } from './store/session-creation-actions.js'
+import { createAppLifecycleActions } from './store/app-lifecycle-actions.js'
 import { parseGoalViews } from './store/event-values.js'
-import { mergeHistory, newestHistorySequence, oldestHistorySequence } from './store/history-ledger.js'
-import {
-  historyPageCoverage,
-  hydrateTimelineFromHistoryEvents,
-  mergeLiveTransientNodes,
-  parseSessionHistoryPage,
-} from './store/history-replay.js'
-import { applyHostMessage, backendEventSessionId, latestTodos } from './store/host-message-reducers.js'
-import { parseDshSettingsSnapshot, refreshProvidersAndModels } from './store/host-settings.js'
+import { mergeHistory } from './store/history-ledger.js'
+import { parseDshSettingsSnapshot } from './store/host-settings.js'
 import { createInitialState } from './store/initial-state.js'
-import { sameGoalList, sameSessionSummaryList, strictListValues, stringList } from './store/list-equality.js'
-import {
-  createDefaultConfiguration,
-  isAgentConfiguration,
-  normalizedModelSelection,
-} from './store/model-catalog.js'
+import { sameGoalList, sameSessionSummaryList, strictListValues } from './store/list-equality.js'
+import { normalizedModelSelection } from './store/model-catalog.js'
 import { parsePluginInventory } from './store/plugin-parsers.js'
 import { isSessionSummary, readPersistedWebviewState } from './store/session-guards.js'
 import type { ProjectionSequenceIndex } from './store/session-projection.js'
-import { clearedActiveSession, setSessionProjection } from './store/session-projection.js'
-import {
-  findReusableBlankSession,
-  refreshSessions,
-  selectStartupSessionId,
-} from './store/session-registry.js'
-import { isSubagentView, parseSubagentCatalog, parseSubagentHistory } from './store/subagent.js'
+import { refreshSessions, selectStartupSessionId } from './store/session-registry.js'
+import { isSubagentView, parseSubagentCatalog } from './store/subagent.js'
 import { object } from './store/unknown-record.js'
 
 export type {
@@ -94,9 +75,6 @@ const OPEN_RETRY_BASE_DELAY_MS = 300
 
 const isRetryableOpenFailure = (reason: unknown): boolean =>
   reason instanceof Error && (reason as { retryable?: unknown }).retryable === true
-
-const DSH_RC11_VERSION = '0.1.1-rc.1'
-const DSH_RC12_VERSION = '0.1.1-rc.2'
 
 export function createAppStore(client = new ProtocolClient(getVsCodeApi())): AppStore {
   const vscodeApi = getVsCodeApi()
@@ -234,7 +212,6 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   let refreshVersion = 0
   let goalActivationAvailable = false
   let goalReadGeneration = 0
-  let permissionCatalogGeneration = 0
   let openVersion = 0
   let sessionModelDirectoryGeneration = 0
   let configurationGeneration = 0
@@ -481,420 +458,15 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       // A host that cannot serve settings yet keeps the official 'queue' default.
     }
   }
-  const executeCommandRequest = async (
-    sessionId: string,
-    command: string,
-    attachments: readonly PromptAttachment[] = [],
-  ): Promise<'executed' | 'unknown'> => {
-    const result = object(
-      await client.request<unknown>({
-        type: 'command.execute',
-        requestId: requestId(),
-        payload: { sessionId, command, attachments: [...attachments] },
-      }),
-    )
-    if (result?.kind === 'error')
-      throw new Error(typeof result.text === 'string' ? result.text : translate('app.error.dshMode'))
-    // A line outside DSH's command directory is not a command. The official
-    // client lets it fall to the default sink, where the host injects a
-    // user-invocable skill (the `/skill-name args` gesture) and any other line
-    // reaches the model as ordinary text.
-    if (result?.kind === 'unknown') return 'unknown'
-    if (result !== undefined && result?.kind !== 'success') throw new Error(translate('app.error.dshMode'))
-    setState((current) => {
-      if (current.activeSessionId !== sessionId || current.configuration === undefined) return current
-      const nextConfiguration = applyKnownCommand(current.configuration, command)
-      const nextPromptMode = promptModeAfterCommand(current.promptMode, command)
-      return {
-        ...current,
-        configuration: nextConfiguration,
-        ...(nextPromptMode === undefined ? {} : { promptMode: nextPromptMode }),
-      }
-    })
-    const nextPromptMode = promptModeAfterCommand(state.promptMode, command)
-    if (nextPromptMode !== undefined) {
-      composerPreferences = { ...composerPreferences, promptMode: nextPromptMode }
+  const { executeCommandRequest, sendUserTurn } = createPromptActions({
+    client,
+    getState: () => state,
+    rememberPromptMode: (promptMode) => {
+      composerPreferences = { ...composerPreferences, promptMode }
       persistWebviewState()
-    }
-    return 'executed'
-  }
-  /** Admit one ordinary turn (or subagent message) addressed to this session. */
-  const sendUserTurn = async (
-    sessionId: string,
-    text: string,
-    attachments: readonly PromptAttachment[],
-    mode: RunningInputMode,
-    subagent: ActiveSubagent | undefined,
-  ): Promise<void> => {
-    const rpcRequestId = requestId()
-    const optimisticId = `optimistic:user:${rpcRequestId}`
-    const contextRefs = state.editorContext.map((item) => item.ref.contextRef)
-    const contextWorkspaceIds = new Set(
-      state.editorContext
-        .filter((item) => contextRefs.includes(item.ref.contextRef))
-        .map((item) => item.ref.workspaceFolderId),
-    )
-    const contextWorkspaceFolderId = contextWorkspaceIds.size === 1 ? [...contextWorkspaceIds][0] : undefined
-    // A queued prompt is not a conversation turn yet.  DSH publishes the
-    // durable `message.user` event only when the queue admits it; rendering
-    // a local preview here makes the same text appear both in the timeline
-    // and in the queue dock.  Subagent sends bypass the session queue, and
-    // steer is already admitted to the running turn, so those retain the
-    // optimistic preview.
-    const showOptimisticPreview = subagent !== undefined || mode === 'steer'
-    if (subagent !== undefined) {
-      if (subagent.entry.mode === 'one-shot') throw new Error(translate('app.error.subagentReadOnly'))
-      if (!subagent.parentAvailable) throw new Error(translate('app.error.subagentParentUnavailable'))
-      if (attachments.length > 0 && state.subagentImagePrompts !== true)
-        throw new Error(translate('app.error.subagentAttachments'))
-      if (text.trim() === '') throw new Error(translate('app.error.subagentMessageRequired'))
-    }
-    const messageAttachments: readonly MessageAttachment[] = attachments.map((attachment) => ({
-      name: attachment.name,
-      ...(attachment.mimeType === undefined ? {} : { mimeType: attachment.mimeType }),
-    }))
-    if (showOptimisticPreview && (text !== '' || messageAttachments.length > 0))
-      setState((current) => {
-        if (current.activeSessionId !== sessionId) return current
-        return {
-          ...current,
-          timeline: {
-            ...current.timeline,
-            nodeChangeBase: current.timeline.nodes,
-            nodeChangeStart: current.timeline.nodes.length,
-            nodes: [
-              ...current.timeline.nodes,
-              {
-                kind: 'user-message',
-                id: optimisticId,
-                markdown: text,
-                ...(messageAttachments.length === 0 ? {} : { attachments: messageAttachments }),
-              },
-            ],
-          },
-        }
-      })
-    try {
-      if (subagent === undefined)
-        await client.request<unknown>({
-          type: 'session.sendPrompt',
-          requestId: rpcRequestId,
-          payload: {
-            sessionId,
-            text,
-            attachments: [...attachments],
-            ...(contextRefs.length === 0 ? {} : { contextRefs }),
-            ...(contextWorkspaceFolderId === undefined ? {} : { contextWorkspaceFolderId }),
-            mode,
-          },
-        })
-      else
-        await client.request<unknown>({
-          type: 'subagent.send',
-          requestId: rpcRequestId,
-          payload: {
-            sessionId,
-            message: text,
-            mode,
-            ...(attachments.length === 0 ? {} : { attachments: [...attachments] }),
-          },
-        })
-      // The Extension Host released exactly the handles this snapshot named.
-      // A chip captured while the request was in flight is a different handle
-      // that is still live on the host, so only the admitted refs drop out —
-      // mirroring how in-flight attachment drafts are kept.
-      if (subagent === undefined && contextRefs.length > 0) {
-        const admitted = new Set(contextRefs)
-        setState((current) => ({
-          ...current,
-          editorContext: current.editorContext.filter((item) => !admitted.has(item.ref.contextRef)),
-        }))
-      }
-    } catch (reason) {
-      if (showOptimisticPreview)
-        setState((current) => ({
-          ...current,
-          timeline: {
-            ...current.timeline,
-            nodeChangeBase: current.timeline.nodes,
-            nodeChangeStart: 0,
-            nodes: current.timeline.nodes.filter((node) => node.id !== optimisticId),
-          },
-        }))
-      throw reason
-    }
-  }
-  const unsubscribe = client.subscribe((message) => {
-    if (
-      message.type === 'event' &&
-      (message.name === 'connection.lost' ||
-        (message.name === 'connection.snapshot' && object(message.payload)?.kind !== 'connected'))
-    )
-      // Retire reads from the connection that is going away. The replacement
-      // session open starts a fresh generation when it can read its own catalog.
-      sessionModelDirectoryGeneration += 1
-    if (
-      message.type === 'event' &&
-      (message.name === 'connection.snapshot' || message.name === 'connection.lost')
-    ) {
-      const snapshot = message.name === 'connection.snapshot' ? object(message.payload) : undefined
-      const identity =
-        snapshot?.kind === 'connected' &&
-        typeof snapshot.backendInstanceId === 'string' &&
-        typeof snapshot.connectionGeneration === 'number'
-          ? `${snapshot.backendInstanceId}:${snapshot.connectionGeneration}`
-          : undefined
-      accountActions.applyConnectionIdentity(identity)
-    }
-    const parsedEvent = parseHostDomainEvent(message)
-    if (parsedEvent?.type === 'turn.started' || parsedEvent?.type === 'turn.ended')
-      turnWatchers.notify(parsedEvent)
-    const messageSessionId =
-      parsedEvent === undefined || parsedEvent === null ? undefined : backendEventSessionId(parsedEvent)
-    const previousLastSequence = state.timeline.lastSequence
-    let deferredToOpen = false
-    let pendingOpenReady = false
-    if (messageSessionId !== undefined) {
-      const pending = pendingOpenBuffer.capture(messageSessionId, message)
-      if (pending !== undefined) {
-        deferredToOpen = true
-        pendingOpenReady = pending.ready
-        // History/configuration is the open barrier; advisory reads must not
-        // keep live model/tool events hidden after the first conversation
-        // paint. Retain the message in the queue so the final advisory
-        // snapshot can replay it after its potentially stale list response.
-        if (pending.ready && pending.version === openVersion && state.activeSessionId === pending.sessionId)
-          applyHostMessage(
-            message,
-            state,
-            setState,
-            appendLiveHistory,
-            parsedEvent,
-            scheduleGapBackfill,
-            projectionSequences,
-            rememberHostOnlyNodes,
-          )
-      }
-    }
-    // A session can be reopened while it is still active. Applying its live
-    // event immediately and replaying it over the freshly hydrated history
-    // would duplicate deltas, queue rows, and interaction requests. Defer
-    // only events addressed to an in-flight open; global connection/workspace
-    // events continue to update the shell while the read is in progress.
-    if (!deferredToOpen)
-      applyHostMessage(
-        message,
-        state,
-        setState,
-        appendLiveHistory,
-        parsedEvent,
-        scheduleGapBackfill,
-        projectionSequences,
-        rememberHostOnlyNodes,
-        reopenActiveView,
-      )
-    // Content frames that history recovery redelivers below the timeline
-    // cursor are absorbed into the ledger but ignored by the reduce gate.
-    // Republish the ledger once so the healed range becomes visible.
-    if (
-      parsedEvent !== undefined &&
-      parsedEvent !== null &&
-      (!deferredToOpen || pendingOpenReady) &&
-      state.activeSessionId !== undefined &&
-      messageSessionId === state.activeSessionId &&
-      parsedEvent.sequence !== undefined &&
-      timelineSequenceOptions(parsedEvent).advanceSequence !== false &&
-      parsedEvent.sequence <= previousLastSequence
-    )
-      scheduleLedgerRebuild(state.activeSessionId)
-    // The switcher only caches its rows, so a session whose title changed
-    // while the drawer was closed (a missed live frame, a reconnect gap, or a
-    // title generated before this client attached) would keep showing the
-    // stale value. Re-fetch the authoritative list whenever the drawer opens,
-    // mirroring the subagent drawer's open-reads-fresh behavior.
-    if (
-      !deferredToOpen &&
-      message.type === 'event' &&
-      message.name === 'ui.sessions.toggle' &&
-      state.drawer === 'sessions'
-    )
-      void refresh()
-    if (
-      message.type === 'event' &&
-      message.name === 'connection.snapshot' &&
-      object(message.payload)?.kind === 'connected'
-    )
-      setState((current) => ({
-        ...current,
-        pluginInventoryRevision: current.pluginInventoryRevision + 1,
-        pluginInstallProgress: undefined,
-      }))
-    if (
-      message.type === 'event' &&
-      message.name === 'remote.event' &&
-      object(message.payload)?.name === 'goal/activation-changed'
-    )
-      goalActivationAvailable = true
-    if (
-      message.type === 'event' &&
-      (message.name === 'connection.lost' ||
-        (message.name === 'connection.snapshot' && object(message.payload)?.kind !== 'connected'))
-    ) {
-      goalActivationAvailable = false
-      goalReadGeneration += 1
-      setState((current) => ({ ...current, pluginInstallProgress: undefined }))
-    }
-    if (
-      message.type === 'event' &&
-      ((message.name === 'remote.event' && object(message.payload)?.name === 'goal/activation-changed') ||
-        message.name === 'goal.updated' ||
-        message.name === 'session.status' ||
-        message.name === 'session.subscribed' ||
-        (message.name === 'connection.snapshot' && object(message.payload)?.kind === 'connected'))
-    )
-      void refreshLiveGoals()
-    if (
-      message.type === 'event' &&
-      message.name === 'remote.event' &&
-      object(message.payload)?.name === 'permission-presets/catalog-changed'
-    ) {
-      const sessionId = state.activeSessionId
-      const version = openVersion
-      const generation = ++permissionCatalogGeneration
-      // Clear the stale allowlist immediately; a failed read must not keep Auto
-      // selectable after its live integration has been removed.
-      setState((current) => ({ ...current, permissionPresets: [] }))
-      if (sessionId !== undefined)
-        void client
-          .request<unknown>({
-            type: 'session.open',
-            requestId: requestId(),
-            payload: { sessionId },
-          })
-          .then((value) => {
-            if (
-              disposed ||
-              version !== openVersion ||
-              generation !== permissionCatalogGeneration ||
-              state.activeSessionId !== sessionId
-            )
-              return
-            const permissionPresets = stringList(object(value)?.permissionPresets)
-            if (permissionPresets !== undefined) setState((current) => ({ ...current, permissionPresets }))
-          })
-          .catch(() => {
-            /* Preserve the fail-closed roster; reopening retries the read. */
-          })
-    }
-    if (
-      message.type === 'event' &&
-      message.name === 'remote.event' &&
-      isCommandDirectoryRefresh(message.payload)
-    )
-      void refreshCommands(undefined, true)
-    if (
-      message.type === 'event' &&
-      message.name === 'remote.event' &&
-      isModelCatalogRefresh(message.payload)
-    ) {
-      void refreshProvidersAndModels(client, setState)
-      // The same host events invalidate the session-scoped directory. Without
-      // this re-read a failure row the picker is showing would outlive its
-      // cause, for example after the user repairs the credential it names.
-      const refreshSessionId = state.activeSessionId
-      if (refreshSessionId !== undefined) void refreshSessionModelDirectoryForSession(refreshSessionId)
-    }
-    if (
-      message.type === 'event' &&
-      message.name === 'connection.snapshot' &&
-      object(message.payload)?.kind === 'connected'
-    ) {
-      commandDirectory.invalidate()
-      void refreshCommands(undefined, true)
-    }
-    if (message.type === 'event' && message.name === 'connection.lost') {
-      commandDirectory.invalidate()
-      invalidateFeedback()
-    }
-    if (
-      message.type === 'event' &&
-      (message.name === 'workspace.changed' || message.name === 'workspace.removed')
-    )
-      void featureActions.discardEditorContextForWorkspaceChange()
-    if (
-      message.type === 'event' &&
-      (message.name === 'workspace.changed' ||
-        message.name === 'workspace.removed' ||
-        message.name === 'workspace.order.changed' ||
-        message.name === 'archived.sessions.changed' ||
-        message.name === 'session.added' ||
-        message.name === 'session.removed')
-    )
-      void refresh()
-    if (message.type === 'event' && message.name === 'session.created') {
-      const created = object(message.payload)
-      const createdId = typeof created?.id === 'string' ? created.id : undefined
-      if (createdId !== undefined) {
-        // This is an explicit creation path. It owns the startup choice and
-        // must not race the fallback selected from a concurrent refresh.
-        startupRestorePending = false
-        void refresh()
-          .then(() => callbacks.openCreatedSession?.(createdId))
-          .catch(() => undefined)
-      }
-    }
-    if (message.type === 'event' && message.name === 'session.added') {
-      const added = object(message.payload)
-      const parentSessionId =
-        added?.origin === 'subagent' && typeof added.parentSessionId === 'string'
-          ? added.parentSessionId
-          : undefined
-      if (parentSessionId !== undefined && parentSessionId === state.activeSessionId)
-        void loadSubagentCatalog(parentSessionId).then((catalog) => {
-          if (catalog !== undefined)
-            setState((current) =>
-              current.activeSessionId === parentSessionId ? { ...current, subagents: catalog } : current,
-            )
-        })
-    }
-    if (
-      message.type === 'event' &&
-      (message.name === 'session.subscribed' || message.name === 'subagent.catalog.updated')
-    ) {
-      const subscribed = object(message.payload)
-      const sessionId = typeof subscribed?.sessionId === 'string' ? subscribed.sessionId : undefined
-      if (sessionId !== undefined && sessionId === state.activeSessionId)
-        void loadSubagentCatalog(sessionId).then((catalog) => {
-          if (catalog !== undefined)
-            setState((current) =>
-              current.activeSessionId === sessionId ? { ...current, subagents: catalog } : current,
-            )
-        })
-    }
+    },
+    setState,
   })
-  const unsubscribeFeature =
-    typeof client.subscribeFeature === 'function'
-      ? client.subscribeFeature((message) => {
-          if (accountActions.applyFeatureEvent(message)) return
-          if (message.name === 'plugin.manager.changed')
-            setState((current) => ({
-              ...current,
-              pluginInventoryRevision: current.pluginInventoryRevision + 1,
-              pluginInstallProgress: undefined,
-            }))
-          if (message.name === 'plugin.install.progress') {
-            const progress: PluginInstallProgressView = {
-              requestId: message.requestId,
-              phase: message.phase,
-              ...(message.attemptIndex === undefined ? {} : { attemptIndex: message.attemptIndex }),
-              ...(message.attemptTotal === undefined ? {} : { attemptTotal: message.attemptTotal }),
-            }
-            pluginInstallRecovery.progress(progress)
-            setState((current) => ({ ...current, pluginInstallProgress: progress }))
-          }
-          if (featureActions.applyFeatureEvent(message)) return
-        })
-      : () => undefined
   const requestSessionOpen = async (sessionId: string, version: number): Promise<unknown> => {
     for (let attempt = 1; ; attempt += 1) {
       try {
@@ -1022,6 +594,46 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     void refresh()
   }
   callbacks.openCreatedSession = open
+  const unsubscribeHostEvents = subscribeHostEvents({
+    accountActions,
+    appendLiveHistory,
+    callbacks,
+    client,
+    commandDirectory,
+    featureActions,
+    getState: () => state,
+    invalidateFeedback,
+    lifecycle: {
+      advanceSessionModelDirectoryGeneration: () => {
+        sessionModelDirectoryGeneration += 1
+      },
+      clearStartupRestorePending: () => {
+        startupRestorePending = false
+      },
+      getOpenVersion: () => openVersion,
+      incrementGoalReadGeneration: () => {
+        goalReadGeneration += 1
+      },
+      isDisposed: () => disposed,
+      setGoalActivationAvailable: (available) => {
+        goalActivationAvailable = available
+      },
+    },
+    loadSubagentCatalog,
+    pendingOpenBuffer,
+    pluginInstallRecovery,
+    projectionSequences,
+    refresh,
+    refreshCommands,
+    refreshLiveGoals,
+    refreshSessionModelDirectoryForSession,
+    reopenActiveView,
+    scheduleGapBackfill,
+    scheduleLedgerRebuild,
+    rememberHostOnlyNodes,
+    setState,
+    turnWatchers,
+  })
   const attemptStartupRestore = (): Promise<void> => {
     if (!startupRestorePending || state.activeSessionId !== undefined) return Promise.resolve()
     if (startupRestorePromise !== undefined) return startupRestorePromise
@@ -1043,6 +655,17 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     return restore
   }
   const { checkDshUpdates, installDshVersion } = createDshUpdateActions({ client, setState })
+  const lifecycleActions = createAppLifecycleActions({
+    applyBusyEnterPreference,
+    attemptStartupRestore,
+    checkDshUpdates,
+    client,
+    invalidateFeedback,
+    markStartupRestoreArmed: () => {
+      startupRestoreArmed = true
+    },
+    refresh,
+  })
   const settingsActions = createSettingsActions({
     client,
     setState,
@@ -1065,6 +688,44 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     currentOpenIntent: () => openIntent,
     isOpenIntentCurrent: (intent) => intent === openIntent,
   })
+  const { loadOlderHistory } = createHistoryActions({
+    client,
+    flushPendingHistory,
+    getOpenVersion: () => openVersion,
+    getState: () => state,
+    projectionSequences,
+    rememberCoveredRanges,
+    restoreGapNotices,
+    restoreHostOnlyNodes,
+    setState,
+  })
+  const sessionCreationActions = createSessionCreationActions({
+    client,
+    clearStartupRestorePending: () => {
+      startupRestorePending = false
+    },
+    discardEditorContextForSessionSwitch: (sessionId) =>
+      featureActions.discardEditorContextForSessionSwitch(sessionId),
+    flushPendingHistory,
+    getComposerPreferences: () => composerPreferences,
+    getOpenIntent: () => openIntent,
+    getPendingSend: () => pendingSend,
+    getPendingSessionRevision: () => pendingSessionRevision,
+    getState: () => state,
+    nextOpenIntent: () => ++openIntent,
+    nextOpenVersion: () => ++openVersion,
+    nextPendingSessionRevision: () => ++pendingSessionRevision,
+    openSession: open,
+    persistWebviewState: () => persistWebviewState(),
+    rememberComposerConfiguration,
+    refresh,
+    sendUserTurn,
+    setPendingSend: (pending) => {
+      pendingSend = pending
+    },
+    setState,
+    stopJobsBeforeSessionOpen: () => jobActions.stopBeforeSessionOpen(),
+  })
   const store: StoreWithoutStateView = {
     ...accountActions.methods,
     ...jobActions.methods,
@@ -1073,6 +734,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     ...feedbackActions,
     ...interactionActions,
     ...sessionCatalogActions,
+    ...sessionCreationActions,
     get sessionRestore() {
       return state.sessionRestore === true
     },
@@ -1088,45 +750,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       return () => listeners.delete(listener)
     },
     watchSessionTurnEnd: (sessionId) => turnWatchers.watch(sessionId),
-    initialize: async () => {
-      // The update check is independent of DSH connectivity. Start it before
-      // app.ready so a missing runtime does not suppress the startup notice;
-      // the result is intentionally not on the critical connection path.
-      void checkDshUpdates(false).catch(() => undefined)
-      await client.request<unknown>({ type: 'app.ready', requestId: requestId() })
-      // Official ui-conversation row: the host-side busy-Enter preference is
-      // the composer's plain-Enter policy while a turn is running. It is
-      // independent of the session/catalog snapshot. Start it alongside the
-      // critical refresh, but keep the official default ('queue') on the
-      // first-paint path when the settings read is slow or unavailable.
-      startupRestoreArmed = true
-      const refreshPromise = refresh()
-      void applyBusyEnterPreference()
-      await refreshPromise
-      await attemptStartupRestore()
-    },
-    reconnect: async () => {
-      invalidateFeedback()
-      await client.request<unknown>({ type: 'connection.retry', requestId: requestId() })
-      await refresh()
-    },
-    readDiagnostics: async () => {
-      const parsed = diagnosticsSnapshotSchema.safeParse(
-        await client.request<unknown>({ type: 'diagnostics.snapshot', requestId: requestId() }),
-      )
-      if (!parsed.success) return undefined
-      return {
-        extensionVersion: parsed.data.extensionVersion,
-        ...(parsed.data.dshVersion === undefined ? {} : { dshVersion: parsed.data.dshVersion }),
-        state: parsed.data.state,
-        ...(parsed.data.endpointKind === undefined ? {} : { endpointKind: parsed.data.endpointKind }),
-        canReconnect: parsed.data.canReconnect,
-        recentEvents: parsed.data.recentEvents,
-      }
-    },
-    showDiagnostics: async () => {
-      await client.request<unknown>({ type: 'diagnostics.show', requestId: requestId() })
-    },
+    ...lifecycleActions,
     refreshSessions: refresh,
     refreshCommands: (sessionId) => refreshCommands(sessionId),
     refreshSessionModels: async (sessionId) => {
@@ -1135,89 +759,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       await refreshSessionModelDirectoryForSession(target)
     },
     openSession: open,
-    loadOlderHistory: async () => {
-      flushPendingHistory()
-      const sessionId = state.activeSessionId
-      const beforeSeq = state.historyBeforeSequence
-      // A child transcript pages through `subagent.history`: its records live in
-      // the parent's subagent log, so `session.history` would answer for the
-      // wrong log.
-      const childTranscript = state.activeSubagent !== undefined
-      if (sessionId === undefined || !state.historyHasMore || beforeSeq === undefined || state.historyLoading)
-        return
-      const version = openVersion
-      setState((current) =>
-        current.activeSessionId === sessionId ? { ...current, historyLoading: true } : current,
-      )
-      try {
-        const result = await client.request<unknown>(
-          childTranscript
-            ? {
-                type: 'subagent.history',
-                requestId: requestId(),
-                payload: { sessionId, beforeSeq, maxMessages: 200 },
-              }
-            : {
-                type: 'session.history',
-                requestId: requestId(),
-                payload: { sessionId, beforeSeq, maxMessages: 200, pagePurpose: 'transcript' },
-              },
-        )
-        const page = childTranscript ? parseSubagentHistory(result) : parseSessionHistoryPage(result)
-        // Remember the raw window before the merge gate: a page that cannot be
-        // merged (another open superseded this one, a discontinuous cursor) still
-        // proves which sequences upstream has, which is what clears a warning.
-        rememberCoveredRanges(sessionId, historyPageCoverage(page))
-        // A live stream can publish while the paging request is in flight.
-        // Flush the coalesced history ledger before taking the functional
-        // update so the page is merged with the newest state, not the state
-        // that existed when the request started.
-        flushPendingHistory()
-        let discontinuous = false
-        setState((next) => {
-          if (version !== openVersion || next.activeSessionId !== sessionId) return next
-          const currentBase = next.historyBeforeSequence ?? oldestHistorySequence(next.history)
-          const pageNewest = newestHistorySequence(page.events)
-          if (pageNewest !== undefined && currentBase !== undefined && pageNewest >= currentBase) {
-            discontinuous = true
-            return { ...next, historyLoading: false }
-          }
-          const history = mergeHistory(next.history, page.events)
-          const timeline = mergeLiveTransientNodes(
-            restoreHostOnlyNodes(
-              restoreGapNotices(hydrateTimelineFromHistoryEvents(sessionId, history), sessionId, history),
-              sessionId,
-            ),
-            next.timeline,
-            history,
-          )
-          const nextBefore = page.beforeSequence ?? oldestHistorySequence(page.events)
-          const hasMore =
-            page.hasMore &&
-            nextBefore !== undefined &&
-            (currentBase === undefined || nextBefore < currentBase)
-          return {
-            ...next,
-            timeline,
-            history,
-            historyHasMore: hasMore,
-            historyBeforeSequence: nextBefore,
-            historyLoading: false,
-            projections:
-              page.projection === undefined
-                ? next.projections
-                : setSessionProjection(next.projections, sessionId, page.projection, projectionSequences),
-            todos: latestTodos(timeline),
-          }
-        })
-        if (discontinuous) throw new Error(translate('app.error.historyDiscontinuous'))
-      } finally {
-        if (version === openVersion && state.activeSessionId === sessionId && state.historyLoading)
-          setState((current) =>
-            current.activeSessionId === sessionId ? { ...current, historyLoading: false } : current,
-          )
-      }
-    },
+    loadOlderHistory,
     openSubagent,
     configureSession: async (sessionId, configuration) => {
       const generation = ++configurationGeneration
@@ -1244,141 +786,6 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       // gesture it spells.
       await sendUserTurn(sessionId, command, attachments, 'queue', undefined)
       return true
-    },
-    stageSession: async (workspaceId, presetId) => {
-      const workspace =
-        (workspaceId === undefined
-          ? undefined
-          : state.workspaces.find((entry) => entry.id === workspaceId)) ?? state.workspaces[0]
-      if (workspace === undefined) throw new Error(translate('app.workspaceLoadingDescription'))
-      const defaultConfiguration = createDefaultConfiguration(state, composerPreferences)
-      const configuration =
-        presetId === undefined ? defaultConfiguration : { ...defaultConfiguration, preset: presetId }
-      const revision = ++pendingSessionRevision
-      const navigationIntent = ++openIntent
-      ++openVersion
-      startupRestorePending = false
-      jobActions.stopBeforeSessionOpen()
-      flushPendingHistory()
-      await featureActions.discardEditorContextForSessionSwitch('')
-      if (revision !== pendingSessionRevision || navigationIntent !== openIntent) return
-      setState((current) => ({
-        ...current,
-        ...clearedActiveSession(current, current.activeSessionId ?? ''),
-        pendingSession: { revision, workspaceId: workspace.id, configuration },
-        editorContext: [],
-        editorContextAvailableKinds: [],
-        editorContextLoading: false,
-        drawer: undefined,
-      }))
-      persistWebviewState()
-    },
-    configurePendingSession: (configuration) => {
-      if (!isAgentConfiguration(configuration)) throw new Error(translate('app.error.sessionSettings'))
-      setState((current) =>
-        current.pendingSession === undefined
-          ? current
-          : {
-              ...current,
-              pendingSession: { ...current.pendingSession, configuration },
-            },
-      )
-      rememberComposerConfiguration(configuration)
-    },
-    sendPendingPrompt: (text, attachments, mode) => {
-      const pending = state.pendingSession
-      if (pending === undefined) return Promise.reject(new Error(translate('app.error.createSession')))
-      if (pendingSend?.revision === pending.revision) return pendingSend.promise
-      if (text.trim() === '' && attachments.length === 0)
-        return Promise.reject(new Error(translate('app.error.prompt')))
-      if (parseSlashCommand(text) !== undefined)
-        return Promise.reject(new Error(translate('app.error.commandBeforeFirstMessage')))
-      const send = (async () => {
-        let sessionId = pending.createdSessionId
-        if (sessionId === undefined) {
-          const workspace = state.workspaces.find((entry) => entry.id === pending.workspaceId)
-          const reusableBlank =
-            workspace === undefined
-              ? undefined
-              : findReusableBlankSession(state.sessions, state.archivedSessionIds, workspace)
-          if (state.connectedDshVersion === DSH_RC12_VERSION && reusableBlank !== undefined) {
-            sessionId = reusableBlank.id
-          } else {
-            const rc11ReusableBlank =
-              state.connectedDshVersion === DSH_RC11_VERSION ? reusableBlank : undefined
-            const result = object(
-              await client.request<unknown>({
-                type: 'session.create',
-                requestId: requestId(),
-                payload: {
-                  workspaceId: pending.workspaceId,
-                  ...(rc11ReusableBlank === undefined
-                    ? {}
-                    : { sessionId: rc11ReusableBlank.id, reuseWorkspaceBlank: true as const }),
-                  configuration: pending.configuration,
-                },
-              }),
-            )
-            if (typeof result?.id !== 'string' || result.id.trim() === '')
-              throw new Error(translate('app.error.createSession'))
-            sessionId = result.id
-          }
-          if (sessionId === undefined) throw new Error(translate('app.error.createSession'))
-          const createdSessionId = sessionId
-          setState((current) =>
-            current.pendingSession?.revision === pending.revision
-              ? {
-                  ...current,
-                  pendingSession: { ...current.pendingSession, createdSessionId },
-                }
-              : current,
-          )
-        }
-        if (state.pendingSession?.revision !== pending.revision) return
-        await refresh()
-        if (state.pendingSession?.revision !== pending.revision) return
-        await open(sessionId)
-        if (state.activeSessionId !== sessionId) return
-        await sendUserTurn(sessionId, text, attachments, mode, undefined)
-      })()
-      const promise = send.finally(() => {
-        if (pendingSend?.revision === pending.revision) pendingSend = undefined
-      })
-      pendingSend = { revision: pending.revision, promise }
-      return promise
-    },
-    createSession: async (workspaceId, presetId) => {
-      const navigationIntent = ++openIntent
-      const workspace =
-        (workspaceId === undefined
-          ? undefined
-          : state.workspaces.find((entry) => entry.id === workspaceId)) ?? state.workspaces[0]
-      const defaultConfiguration = createDefaultConfiguration(state, composerPreferences)
-      const configuration =
-        presetId === undefined ? defaultConfiguration : { ...defaultConfiguration, preset: presetId }
-      const reusableBlank =
-        presetId === undefined && workspace !== undefined
-          ? findReusableBlankSession(state.sessions, state.archivedSessionIds, workspace)
-          : undefined
-      if (state.connectedDshVersion === DSH_RC12_VERSION && reusableBlank !== undefined) {
-        await open(reusableBlank.id)
-        return
-      }
-      const rc11ReusableBlank = state.connectedDshVersion === DSH_RC11_VERSION ? reusableBlank : undefined
-      const result = await client.request<unknown>({
-        type: 'session.create',
-        requestId: requestId(),
-        payload: {
-          ...(workspace === undefined ? {} : { workspaceId: workspace.id }),
-          ...(rc11ReusableBlank === undefined
-            ? {}
-            : { sessionId: rc11ReusableBlank.id, reuseWorkspaceBlank: true as const }),
-          configuration,
-        },
-      })
-      const created = object(result)
-      await refresh()
-      if (navigationIntent === openIntent && typeof created?.id === 'string') await open(created.id)
     },
     sendPrompt: async (sessionId, text, attachments, mode) => {
       const subagent =
@@ -1584,8 +991,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       pendingHistory = []
       pendingHistorySessionId = undefined
       invalidateFeedback()
-      unsubscribe()
-      unsubscribeFeature()
+      unsubscribeHostEvents()
       client.dispose()
       listeners.clear()
     },
