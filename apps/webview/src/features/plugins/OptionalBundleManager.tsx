@@ -1,20 +1,39 @@
 import {
-  pluginLocalizedText,
   type ManagedPluginEntry,
   type PluginBundleChangeResult,
   type PluginManagerBundle,
   type PluginManagerSnapshot,
   type PluginInstallProgressView,
-  type PluginRegistry,
-  type PluginRegistryCatalog,
   type PluginSpecInspection,
 } from '@dsh-vscode/domain'
 import type { FeatureRequest } from '@dsh-vscode/webview-protocol'
 import type { PluginInstallInput, PluginInstallRecoveryState } from '../../app/plugin-install-recovery.js'
 import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
-import { SelectMenu, type SelectMenuOption } from '../../components/common/SelectMenu.js'
-import { useI18n, type Translate } from '../../i18n.js'
+import { SelectMenu } from '../../components/common/SelectMenu.js'
+import { useI18n } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
+import {
+  canRecoverGithubInstall,
+  catalogOf,
+  failureKey,
+  inspectionOf,
+  localized,
+  localizedSearchValues,
+  matchesSearch,
+  newRequestId,
+  pluginSearchValues,
+  pluginTitle,
+  registryChoices,
+  registryFromValue,
+  registryOptions,
+  registryValue,
+  resultOf,
+  registriesOf,
+  isValidRegistry,
+  CONFIGURED_REGISTRY,
+  CUSTOM_REGISTRY,
+  type RegistryView,
+} from './optional-bundle-model.js'
 import './optional-bundle-manager.css'
 
 export interface OptionalBundleManagerProps {
@@ -25,12 +44,6 @@ export interface OptionalBundleManagerProps {
   readonly onCancelInstall?: () => Promise<void>
   readonly onRecoverInstall?: () => Promise<void>
   readonly featureRequest: <T>(request: FeatureRequest) => Promise<T>
-}
-
-interface RegistryView {
-  readonly catalog: PluginRegistryCatalog | null
-  readonly selected: string
-  readonly custom: string
 }
 
 type Notice =
@@ -54,262 +67,6 @@ const EMPTY_PLUGINS: readonly ManagedPluginEntry[] = []
 const EMPTY_OPEN_BUNDLES: ReadonlySet<string> = new Set()
 const STANDALONE_BODY_ID = 'dsh-plugin-standalone-plugins'
 const SECTION_BODY_ID = 'dsh-plugin-manager-body'
-
-let requestOrdinal = 0
-
-function newRequestId(): string {
-  requestOrdinal += 1
-  return `plugin-manager-${Date.now().toString(36)}-${requestOrdinal.toString(36)}`
-}
-
-function object(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined
-}
-
-function resultOf(value: unknown): PluginBundleChangeResult | undefined {
-  const payload = object(value)
-  const result = object(payload?.result)
-  if (
-    payload?.kind !== 'plugin.bundle.changed' ||
-    typeof result?.name !== 'string' ||
-    typeof result.changed !== 'boolean' ||
-    !['applied', 'restart-required', 'overridden', 'failed', 'cancelled'].includes(String(result.application))
-  )
-    return undefined
-  return result as unknown as PluginBundleChangeResult
-}
-
-function catalogOf(value: unknown): PluginManagerSnapshot | undefined {
-  const payload = object(value)
-  if (
-    payload?.kind !== 'plugin.bundles' ||
-    typeof payload.available !== 'boolean' ||
-    !Array.isArray(payload.bundles) ||
-    !Array.isArray(payload.plugins)
-  )
-    return undefined
-  return payload as unknown as PluginManagerSnapshot
-}
-
-function registriesOf(value: unknown): PluginRegistryCatalog | null {
-  const payload = object(value)
-  if (payload?.kind !== 'plugin.registries' || payload.available !== true) return null
-  const registries = object(payload.registries)
-  if (
-    registries === undefined ||
-    !(registries.registry === null || typeof registries.registry === 'string') ||
-    !Array.isArray(registries.fallbackRegistries) ||
-    !registries.fallbackRegistries.every((entry) => typeof entry === 'string') ||
-    !(registries.resolved === null || typeof registries.resolved === 'string')
-  )
-    return null
-  return registries as unknown as PluginRegistryCatalog
-}
-
-function inspectionOf(value: unknown): PluginSpecInspection | undefined {
-  const payload = object(value)
-  const inspection = object(payload?.inspection)
-  if (payload?.kind !== 'plugin.inspection' || inspection === undefined) return undefined
-  if (inspection.status === 'refused' && typeof inspection.problem === 'string')
-    return inspection as unknown as PluginSpecInspection
-  if (
-    inspection.status === 'accepted' &&
-    typeof inspection.kind === 'string' &&
-    (inspection.bundle === null || typeof inspection.bundle === 'boolean') &&
-    (inspection.registry === null || typeof inspection.registry === 'string')
-  )
-    return inspection as unknown as PluginSpecInspection
-  return undefined
-}
-
-function localized(
-  value: PluginManagerBundle['title'],
-  locale: string,
-): ReturnType<typeof pluginLocalizedText> {
-  return pluginLocalizedText(value, locale)
-}
-
-function localizedSearchValues(value: PluginManagerBundle['title']): readonly string[] {
-  if (value === undefined) return []
-  return typeof value === 'string' ? [value] : Object.values(value)
-}
-
-function matchesSearch(query: string, locale: string, values: readonly (string | undefined)[]): boolean {
-  return (
-    query === '' ||
-    values.some((value) => value !== undefined && value.toLocaleLowerCase(locale).includes(query))
-  )
-}
-
-function pluginSearchValues(plugin: ManagedPluginEntry): readonly string[] {
-  return [
-    plugin.entryId,
-    plugin.moduleName,
-    ...localizedSearchValues(plugin.meta?.title),
-    ...localizedSearchValues(plugin.meta?.description),
-  ]
-}
-
-/** Registry picker sentinels: the host's configured default, and a user-supplied URL. */
-const CONFIGURED_REGISTRY = '__configured__'
-const CUSTOM_REGISTRY = '__custom__'
-
-function registryOptions(catalog: PluginRegistryCatalog | null): readonly PluginRegistry[] {
-  if (catalog === null) return [null]
-  const values: PluginRegistry[] = [catalog.registry, ...catalog.fallbackRegistries, null]
-  const seenUrls = new Set<string>()
-  let hasPnpmRegistry = false
-  return values.filter((value) => {
-    if (value === null) {
-      if (hasPnpmRegistry) return false
-      hasPnpmRegistry = true
-      return true
-    }
-    const key = normalizedRegistryKey(value)
-    if (seenUrls.has(key)) return false
-    seenUrls.add(key)
-    return true
-  })
-}
-
-/** Match the pinned DSH registry comparison: canonical URL and a trailing path slash. */
-function normalizedRegistryKey(value: string): string {
-  try {
-    const url = new URL(value)
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') return value
-    if (!url.pathname.endsWith('/')) url.pathname += '/'
-    return url.href
-  } catch {
-    return value
-  }
-}
-
-function registryValue(registry: PluginRegistry): string {
-  return registry === null ? CONFIGURED_REGISTRY : registry
-}
-
-function registryFromValue(value: string): PluginRegistry | undefined {
-  return value === CONFIGURED_REGISTRY ? null : value === CUSTOM_REGISTRY ? undefined : value
-}
-
-/** The registry menu and its trigger must agree on one label per value. */
-function registryChoices(
-  registries: readonly PluginRegistry[],
-  view: RegistryView,
-  t: Translate,
-  locale: string,
-): readonly SelectMenuOption[] {
-  return [
-    ...registries.map((registry) => ({
-      value: registryValue(registry),
-      label:
-        registry === null
-          ? t('plugins.manager.registry.configured', {
-              name:
-                view.catalog?.resolved === null || view.catalog === null
-                  ? t('plugins.manager.registry.current')
-                  : registrySourceLabel(view.catalog.resolved, locale),
-            })
-          : registrySourceLabel(registry, locale),
-    })),
-    { value: CUSTOM_REGISTRY, label: t('plugins.manager.registry.custom') },
-  ]
-}
-
-/** Give well-known sources their own names and keep private registry paths out of the picker. */
-function registrySourceLabel(value: string, locale: string): string {
-  let host: string
-  try {
-    host = new URL(value).host
-  } catch {
-    return locale === 'zh' ? '其他注册源' : 'Other registry'
-  }
-  const normalizedHost = host.toLowerCase()
-  const name =
-    normalizedHost === 'registry.npmjs.org'
-      ? locale === 'zh'
-        ? 'npm 官方源'
-        : 'Official npm registry'
-      : normalizedHost === 'registry.npmmirror.com'
-        ? locale === 'zh'
-          ? '中国大陆镜像源'
-          : 'Mainland China mirror'
-        : undefined
-  if (name === undefined) return host
-  return locale === 'zh' ? `${name}（${host}）` : `${name} (${host})`
-}
-
-function isGithubSpec(spec: string): boolean {
-  if (/^(?:github|gist):/iu.test(spec)) return true
-  let host: string | undefined
-  const scp = /^git@([^:]+):/iu.exec(spec)
-  if (scp !== null) host = scp[1]
-  else if (/^git(?:\+[a-z]+)?:\/\//iu.test(spec)) {
-    try {
-      host = new URL(spec.replace(/^git\+/iu, '')).hostname
-    } catch {
-      return false
-    }
-  } else if (/^https?:\/\//iu.test(spec)) {
-    try {
-      host = new URL(spec).hostname
-    } catch {
-      return false
-    }
-  }
-  const normalizedHost = host?.toLowerCase()
-  return normalizedHost === 'github.com' || normalizedHost?.endsWith('.github.com') === true
-}
-
-function canRecoverGithubInstall(result: PluginBundleChangeResult): boolean {
-  return (
-    result.application === 'failed' &&
-    result.failedAt === 'spec-host' &&
-    (result.failureKind === 'network' || result.failureKind === 'timeout') &&
-    isGithubSpec(result.name)
-  )
-}
-
-function isValidRegistry(value: string): boolean {
-  try {
-    const url = new URL(value)
-    return (
-      (url.protocol === 'http:' || url.protocol === 'https:') &&
-      url.username === '' &&
-      url.password === '' &&
-      url.search === '' &&
-      url.hash === ''
-    )
-  } catch {
-    return false
-  }
-}
-
-function failureKey(result: PluginBundleChangeResult): string {
-  if (result.errorCode === 'incompatible-version') return 'plugins.manager.failure.incompatible'
-  if (result.errorCode === 'management-required' || result.errorCode === 'unaddressable')
-    return 'plugins.manager.failure.protected'
-  if (
-    result.errorCode === 'not-removable' ||
-    result.errorCode === 'bundle-in-use' ||
-    result.errorCode === 'stop-profile'
-  )
-    return 'plugins.manager.failure.inUse'
-  if (result.errorCode === 'stale-approval') return 'plugins.manager.failure.staleApproval'
-  if (result.failureKind === 'network' || result.failedAt === 'registry' || result.failedAt === 'spec-host')
-    return 'plugins.manager.failure.network'
-  if (result.failureKind === 'permission') return 'plugins.manager.failure.permission'
-  if (result.failureKind === 'build-blocked') return 'plugins.manager.failure.buildBlocked'
-  if (result.failureKind === 'disk-full') return 'plugins.manager.failure.diskFull'
-  if (result.failureKind === 'timeout') return 'plugins.manager.failure.timeout'
-  return 'plugins.manager.failure.generic'
-}
-
-function pluginTitle(plugin: ManagedPluginEntry, locale: string): string {
-  return localized(plugin.meta?.title, locale) ?? plugin.moduleName
-}
 
 /** RC2 profile Plugin Manager backed only by the live Plugin Manager Remotes. */
 export function OptionalBundleManager(props: OptionalBundleManagerProps): ReactElement {
