@@ -7,9 +7,22 @@ import { featureRequestSchema, webviewRequestSchema } from '@dsh-vscode/webview-
  * dispatching branch is worse than a missing one: the envelope parses, the
  * request travels, and the only possible answer is an error the client cannot
  * act on. A stale entry was already found once (`changes.restore.prepare` had
- * no branch anywhere), so coverage is pinned against the composition root.
+ * no branch anywhere), so coverage is pinned against the composition modules
+ * that own the dispatchers (`composition/feature-request-handler.ts` and
+ * `composition/request-handler.ts`).
  */
-const COMPOSITION_ROOT = readFileSync(new URL('../composition-root.ts', import.meta.url), 'utf8')
+const FEATURE_HANDLER_SOURCE = readFileSync(
+  new URL('../composition/feature-request-handler.ts', import.meta.url),
+  'utf8',
+)
+const REQUEST_HANDLER_SOURCE = readFileSync(
+  new URL('../composition/request-handler.ts', import.meta.url),
+  'utf8',
+)
+const JOB_FOLLOW_HOST_SOURCE = readFileSync(
+  new URL('../composition/job-follow-host.ts', import.meta.url),
+  'utf8',
+)
 
 /** The router answers `feature.request.cancel` itself, before the feature handler. */
 const ROUTER_INTERCEPTED = new Set(['feature.request.cancel'])
@@ -22,40 +35,32 @@ function declaredTypes(schema: unknown): readonly string[] {
   )
 }
 
-function handlerBody(startMarker: string, endMarker: string): string {
-  const start = COMPOSITION_ROOT.indexOf(startMarker)
+/** From a declaration to an optional end marker; without one, to end of file. */
+function handlerBody(source: string, startMarker: string, endMarker?: string): string {
+  const start = source.indexOf(startMarker)
   expect(start, `missing ${startMarker}`).toBeGreaterThanOrEqual(0)
-  const end = COMPOSITION_ROOT.indexOf(endMarker, start)
+  if (endMarker === undefined) return source.slice(start)
+  const end = source.indexOf(endMarker, start)
   expect(end, `missing ${endMarker} after ${startMarker}`).toBeGreaterThan(start)
-  return COMPOSITION_ROOT.slice(start, end)
+  return source.slice(start, end)
 }
 
 function routedTypes(body: string): ReadonlySet<string> {
   return new Set([...body.matchAll(/request\.type === '([^']+)'/gu)].map((match) => match[1] ?? ''))
 }
 
-/** A factory-local helper up to its next sibling declaration, so neighbours may move. */
-function declarationBody(startMarker: string): string {
-  const start = COMPOSITION_ROOT.indexOf(startMarker)
-  expect(start, `missing ${startMarker}`).toBeGreaterThanOrEqual(0)
-  const end = COMPOSITION_ROOT.indexOf('\n  const ', start + startMarker.length)
-  expect(end, `no declaration follows ${startMarker}`).toBeGreaterThan(start)
-  return COMPOSITION_ROOT.slice(start, end)
-}
-
-const handleFeatureRequestBody = handlerBody(
-  'const handleFeatureRequest = ',
-  'const handleRequest = async (request: WebviewRequest',
-)
+const handleFeatureRequestBody = handlerBody(FEATURE_HANDLER_SOURCE, 'const handleFeatureRequest = ')
 const handleRequestBody = handlerBody(
+  REQUEST_HANDLER_SOURCE,
   'const handleRequest = async (request: WebviewRequest',
   'const router = new WebviewMessageRouter({',
 )
 const sessionHistoryRequestBody = handlerBody(
+  REQUEST_HANDLER_SOURCE,
   "if (request.type === 'session.history') {",
   "if (request.type === 'session.create') {",
 )
-const jobFollowStartBody = declarationBody('const startJobFollow = ')
+const jobFollowStartBody = handlerBody(JOB_FOLLOW_HOST_SOURCE, 'const startJobFollow = ')
 
 describe('feature route coverage', () => {
   it('dispatches every declared feature request', () => {
