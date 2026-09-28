@@ -5,6 +5,10 @@ import {
   normalizeAlpha171Event,
 } from '../src/versions/alpha171/session-wire.js'
 import { rc6Mapper } from '../src/versions/rc6/mapper.js'
+import {
+  interruptedNotStartedToolResult,
+  interruptedStartedToolResult,
+} from './master21638-recovery-fixtures.js'
 
 // Native V4 fixture from the pinned upstream developer.spec.ts, c36a83ff.
 const header = { version: 4, id: 's1', createdAt: 1, isSeeded: false, delegationDepth: 0 }
@@ -125,6 +129,32 @@ describe('native alpha171 Session V4 admission', () => {
         status: 'failed',
         autoReviewDenial: { reason: 'manual confirmation required' },
       },
+    })
+  })
+  it.each([
+    {
+      code: 'TOOL_OUTCOME_UNKNOWN',
+      callId: 'call-started',
+      event: interruptedStartedToolResult,
+      sourceEventSeqs: [3],
+    },
+    {
+      code: 'TOOL_NOT_STARTED',
+      callId: 'call-pending',
+      event: interruptedNotStartedToolResult,
+      sourceEventSeqs: undefined,
+    },
+  ])('admits and projects the master $code recovery result', ({ code, callId, event, sourceEventSeqs }) => {
+    expect(validAlpha171SessionEvent(event)).toBe(true)
+    const normalized = normalizeAlpha171Event(event)
+    expect(normalized.data).toMatchObject({
+      error: { code },
+      message: { toolCallId: callId, isError: true },
+    })
+    expect(normalized.sourceEventSeqs).toEqual(sourceEventSeqs)
+    expect(rc6Mapper.event('tool/result', { sessionId: 's1', data: normalized.data })).toMatchObject({
+      type: 'tool.updated',
+      tool: { id: callId, turn: 3, step: 2, status: 'failed' },
     })
   })
   it.each([2, 3, 5])('rejects non-V4 header version %s', (version) => {

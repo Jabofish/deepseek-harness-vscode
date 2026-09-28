@@ -1,10 +1,10 @@
-import { mkdtemp, rm, stat } from 'node:fs/promises'
+import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
 
-import { startManagedProcessWithCleanup, stopManagedProcessWithRetry } from './harness.js'
+import { spawnManagedChild, startManagedProcessWithCleanup, stopManagedProcessWithRetry } from './harness.js'
 import { acquireManagedRuntimeScope } from './runtime-scope.js'
 
 describe('stopManagedProcessWithRetry', () => {
@@ -99,6 +99,24 @@ describe('managed startup cleanup', () => {
       await expect(stat(home)).rejects.toMatchObject({ code: 'ENOENT' })
     } finally {
       await rm(home, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('managed live child execution', () => {
+  it('runs a source-built JavaScript entry through Node and forwards arguments without a shell', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'dsh-live-js-runtime-'))
+    const entry = path.join(directory, 'runtime.mjs')
+    await writeFile(entry, 'process.stdout.write(process.argv.slice(2).join("\\n"))\n', 'utf8')
+
+    try {
+      const child = spawnManagedChild(entry, ['web', '--port', '43127'], directory)
+      let stdout = ''
+      for await (const chunk of child.stdout) stdout += chunk
+      await expect(child.exited).resolves.toMatchObject({ code: 0, signal: null })
+      expect(stdout).toBe('web\n--port\n43127')
+    } finally {
+      await rm(directory, { recursive: true, force: true })
     }
   })
 })

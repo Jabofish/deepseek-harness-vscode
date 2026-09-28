@@ -78,11 +78,13 @@ const versionsBlock = code.match(/export const SUPPORTED_DSH_VERSIONS = \[([\s\S
 if (versionsBlock === undefined || versionTable === undefined)
   errors.push('cannot read supported versions or the contract version table')
 else {
-  const supported = [...versionsBlock.matchAll(/^\s*'(\d+\.\d+\.\d+-(?:rc|alpha)\.\d+)'/gmu)].map(
-    (match) => match[1],
-  )
+  const supported = [
+    ...versionsBlock.matchAll(/^\s*'(\d+\.\d+\.\d+-(?:(?:rc|alpha)\.\d+|master\.[0-9a-f]{40}))'/gmu),
+  ].map((match) => match[1])
   const documented = new Set(
-    [...versionTable.matchAll(/`(\d+\.\d+\.\d+-(?:rc|alpha)\.\d+)`/gu)].map((match) => match[1]),
+    [...versionTable.matchAll(/`(\d+\.\d+\.\d+-(?:(?:rc|alpha)\.\d+|master\.[0-9a-f]{40}))`/gu)].map(
+      (match) => match[1],
+    ),
   )
   for (const version of supported) {
     if (!documented.has(version)) errors.push(`docs/dsh-contract.md: missing ${version}`)

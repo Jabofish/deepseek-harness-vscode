@@ -849,7 +849,21 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
         // A composition without the Schedule service answers every
         // `schedule/*` endpoint with 404. Retrying cannot help until that DSH
         // mounts the service, so it is a settled state, not a transient error.
-        setCatalogStatus(isCapabilityUnavailable(error) ? 'unavailable' : 'error')
+        const unavailable = isCapabilityUnavailable(error)
+        setCatalogStatus(unavailable ? 'unavailable' : 'error')
+        if (unavailable) {
+          // A bundle change can remove the service after we loaded its catalog.
+          // Do not leave records or delivery history visible as if they were
+          // still authoritative. Keep the selected key and edit draft so a
+          // later re-enable can rehydrate the same record without discarding
+          // user input.
+          setRecords([])
+          rememberSelectedRecord(undefined)
+          historyGeneration.current += 1
+          if (currentHistoryRequest.current !== undefined) cancelRequest(currentHistoryRequest.current)
+          currentHistoryRequest.current = undefined
+          setHistory(EMPTY_HISTORY)
+        }
       })
       .finally(() => {
         if (currentCatalogRequest.current === requestId) currentCatalogRequest.current = undefined
@@ -940,7 +954,11 @@ export function SchedulePanel(props: SchedulePanelProps): ReactElement {
     const pendingRequests = pendingRequestIds.current
     void Promise.resolve().then(() => reloadRef.current())
     const dispose = subscribeFeature((message) => {
-      if (message.type !== 'feature.event' || message.name !== 'schedule.invalidated') return
+      if (
+        message.type !== 'feature.event' ||
+        (message.name !== 'schedule.invalidated' && message.name !== 'plugin.manager.changed')
+      )
+        return
       reloadRef.current()
       const selected = selectedRecordRef.current
       if (tabRef.current === 'history' && selected !== undefined) reloadHistoryRef.current(selected)

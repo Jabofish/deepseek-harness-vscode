@@ -4,6 +4,10 @@ import { AlphaLoopbackApiClient, type AlphaWebSocket } from '../src/versions/alp
 import type { BackendEndpoint } from '@dsh-vscode/domain'
 import { validAlpha171SessionEvent } from '../src/versions/alpha171/session-wire.js'
 import { rc6Mapper } from '../src/versions/rc6/mapper.js'
+import {
+  interruptedNotStartedToolResult,
+  interruptedStartedToolResult,
+} from './master21638-recovery-fixtures.js'
 
 class FakeWebSocket implements AlphaWebSocket {
   public static readonly instances: FakeWebSocket[] = []
@@ -75,6 +79,22 @@ const toolResult = {
   },
 } satisfies Record<string, unknown>
 
+const historyReplayCases = [
+  { label: 'successful', event: toolResult, expectedCallId: 'call-1', expectedStatus: 'completed' },
+  {
+    label: 'TOOL_OUTCOME_UNKNOWN',
+    event: interruptedStartedToolResult,
+    expectedCallId: 'call-started',
+    expectedStatus: 'failed',
+  },
+  {
+    label: 'TOOL_NOT_STARTED',
+    event: interruptedNotStartedToolResult,
+    expectedCallId: 'call-pending',
+    expectedStatus: 'failed',
+  },
+] as const
+
 function recordEvent(event: Record<string, unknown>): Record<string, unknown> {
   return { type: 'event', event }
 }
@@ -125,86 +145,92 @@ function rpcResponse(rpcId: string, value: unknown): Response {
 }
 
 describe('alpha171 V4 history replay', () => {
-  it('maps one native tool/result consistently from live events, the opening history, and a page', async () => {
-    FakeWebSocket.instances.length = 0
-    expect(validAlpha171SessionEvent(toolResult)).toBe(true)
+  it.each(historyReplayCases)(
+    'maps a $label tool/result consistently from live events, opening history, and a page',
+    async ({ event: wireEvent, expectedCallId, expectedStatus }) => {
+      FakeWebSocket.instances.length = 0
+      expect(validAlpha171SessionEvent(wireEvent)).toBe(true)
 
-    let pageRequest: Record<string, unknown> | undefined
-    const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
-      if (typeof init?.body !== 'string') throw new Error('the page request body is missing')
-      const body = JSON.parse(init.body) as Record<string, unknown>
-      pageRequest = body
-      if (typeof body.rpcId !== 'string') throw new Error('the page request id is missing')
-      return Promise.resolve(
-        rpcResponse(body.rpcId, {
-          records: [recordEvent(toolResult)],
-          hasMore: false,
-        }),
-      )
-    })
-    const transport = new AlphaLoopbackApiClient({
-      endpoint,
-      requestTimeoutMs: 1_000,
-      retryPolicy: { maximumAttempts: 1, baseDelayMs: 1, maximumDelayMs: 1 },
-      fetch,
-      authCookie: () => 'dsh_session=test-cookie',
-      webSocket: FakeWebSocket,
-      sessionWireVersion: 'v4',
-    })
-    const sessions = new Rc6SessionRepository(transport)
-    const liveController = new AbortController()
-    const liveIterator = transport.openSessionStream('s1', liveController.signal)[Symbol.asyncIterator]()
-
-    try {
-      const liveBaselinePromise = liveIterator.next()
-      const socket = await waitForSocket()
-      socket.open()
-      const liveOpening = await waitForOpen(socket, 'session/follow', 0)
-      sendItem(socket, liveOpening.streamId, snapshot([], 3))
-      await expect(liveBaselinePromise).resolves.toMatchObject({
-        done: false,
-        value: { type: 'session/subscribed', sessionId: 's1', lastSeq: 3 },
+      let pageRequest: Record<string, unknown> | undefined
+      const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+        if (typeof init?.body !== 'string') throw new Error('the page request body is missing')
+        const body = JSON.parse(init.body) as Record<string, unknown>
+        pageRequest = body
+        if (typeof body.rpcId !== 'string') throw new Error('the page request id is missing')
+        return Promise.resolve(
+          rpcResponse(body.rpcId, {
+            records: [recordEvent(wireEvent)],
+            hasMore: false,
+          }),
+        )
       })
-
-      const liveEventPromise = liveIterator.next()
-      sendItem(socket, liveOpening.streamId, { type: 'event', event: toolResult })
-      const liveFrame = (await liveEventPromise).value as Record<string, unknown>
-      expect(liveFrame.type).toBe('session/event')
-      const liveEvent = liveFrame.event as Record<string, unknown>
-      const liveMapped = { ...rc6Mapper.event('tool/result', liveEvent), sequence: toolResult.seq }
-      expect(liveMapped.type).not.toBe('unknown')
-
-      const openingHistoryPromise = sessions.history('s1')
-      const openingHistoryStream = await waitForOpen(socket, 'session/follow', 1)
-      sendItem(socket, openingHistoryStream.streamId, snapshot([recordEvent(toolResult)], 4))
-      const openingHistory = await openingHistoryPromise
-      expect(openingHistory.hasMore).toBe(true)
-      expect(openingHistory.events[0]?.event).toEqual(liveMapped)
-
-      const pageHistoryPromise = sessions.history('s1', 5)
-      const pageHistoryStream = await waitForOpen(socket, 'session/follow', 2)
-      sendItem(socket, pageHistoryStream.streamId, snapshot([], 4))
-      const pageHistory = await pageHistoryPromise
-      expect(pageHistory.hasMore).toBe(false)
-      expect(pageHistory.events[0]?.sequence).toBe(4)
-      expect(pageHistory.events[0]?.event).toEqual(liveMapped)
-
-      const requestPayload = pageRequest?.payload as { readonly args?: unknown } | undefined
-      expect(pageRequest?.method).toBe('session/page')
-      expect(requestPayload?.args).toEqual({
-        request: {
-          address: { kind: 'session', sessionId: 's1' },
-          throughSeq: 4,
-          beforeSeq: 5,
-          maxMessages: 50,
-        },
+      const transport = new AlphaLoopbackApiClient({
+        endpoint,
+        requestTimeoutMs: 1_000,
+        retryPolicy: { maximumAttempts: 1, baseDelayMs: 1, maximumDelayMs: 1 },
+        fetch,
+        authCookie: () => 'dsh_session=test-cookie',
+        webSocket: FakeWebSocket,
+        sessionWireVersion: 'v4',
       })
-    } finally {
-      liveController.abort()
-      await liveIterator.return?.()
-      await transport.close()
-    }
-  })
+      const sessions = new Rc6SessionRepository(transport)
+      const liveController = new AbortController()
+      const liveIterator = transport.openSessionStream('s1', liveController.signal)[Symbol.asyncIterator]()
+
+      try {
+        const liveBaselinePromise = liveIterator.next()
+        const socket = await waitForSocket()
+        socket.open()
+        const liveOpening = await waitForOpen(socket, 'session/follow', 0)
+        sendItem(socket, liveOpening.streamId, snapshot([], 3))
+        await expect(liveBaselinePromise).resolves.toMatchObject({
+          done: false,
+          value: { type: 'session/subscribed', sessionId: 's1', lastSeq: 3 },
+        })
+
+        const liveEventPromise = liveIterator.next()
+        sendItem(socket, liveOpening.streamId, { type: 'event', event: wireEvent })
+        const liveFrame = (await liveEventPromise).value as Record<string, unknown>
+        expect(liveFrame.type).toBe('session/event')
+        const liveEvent = liveFrame.event as Record<string, unknown>
+        const liveMapped = { ...rc6Mapper.event('tool/result', liveEvent), sequence: wireEvent.seq }
+        expect(liveMapped).toMatchObject({
+          type: 'tool.updated',
+          tool: { id: expectedCallId, status: expectedStatus },
+        })
+
+        const openingHistoryPromise = sessions.history('s1')
+        const openingHistoryStream = await waitForOpen(socket, 'session/follow', 1)
+        sendItem(socket, openingHistoryStream.streamId, snapshot([recordEvent(wireEvent)], wireEvent.seq))
+        const openingHistory = await openingHistoryPromise
+        expect(openingHistory.hasMore).toBe(true)
+        expect(openingHistory.events[0]?.event).toEqual(liveMapped)
+
+        const pageHistoryPromise = sessions.history('s1', wireEvent.seq + 1)
+        const pageHistoryStream = await waitForOpen(socket, 'session/follow', 2)
+        sendItem(socket, pageHistoryStream.streamId, snapshot([], wireEvent.seq))
+        const pageHistory = await pageHistoryPromise
+        expect(pageHistory.hasMore).toBe(false)
+        expect(pageHistory.events[0]?.sequence).toBe(wireEvent.seq)
+        expect(pageHistory.events[0]?.event).toEqual(liveMapped)
+
+        const requestPayload = pageRequest?.payload as { readonly args?: unknown } | undefined
+        expect(pageRequest?.method).toBe('session/page')
+        expect(requestPayload?.args).toEqual({
+          request: {
+            address: { kind: 'session', sessionId: 's1' },
+            throughSeq: wireEvent.seq,
+            beforeSeq: wireEvent.seq + 1,
+            maxMessages: 50,
+          },
+        })
+      } finally {
+        liveController.abort()
+        await liveIterator.return?.()
+        await transport.close()
+      }
+    },
+  )
 })
 
 async function waitForSocket(): Promise<FakeWebSocket> {

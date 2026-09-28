@@ -335,6 +335,80 @@ describe('SchedulePanel', () => {
     expect(screen.getAllByText('Water the plants').length).toBeGreaterThan(0)
   })
 
+  it('refreshes catalog availability when the Plugin Manager changes optional bundles', async () => {
+    let scheduleEnabled = false
+    const panel = mountPanel({
+      resolve: (request) => {
+        if (request.type !== 'schedule.catalog') return undefined
+        if (!scheduleEnabled) {
+          return Promise.reject(
+            Object.assign(new Error('Schedule is not mounted.'), { code: 'CAPABILITY_UNAVAILABLE' }),
+          )
+        }
+        return { kind: 'schedule.catalog', items: [active] }
+      },
+    })
+
+    await waitFor(() =>
+      expect(panel.requests.filter((request) => request.type === 'schedule.catalog')).toHaveLength(1),
+    )
+    expect(document.querySelector('.dsh-schedule-panel__notice')).not.toBeNull()
+
+    scheduleEnabled = true
+    act(() =>
+      panel.emit({
+        type: 'feature.event',
+        name: 'plugin.manager.changed',
+        identity: { backendInstanceId: 'backend-one', connectionGeneration: 1, stream: 'local', localSeq: 1 },
+      }),
+    )
+
+    await waitFor(() =>
+      expect(panel.requests.filter((request) => request.type === 'schedule.catalog')).toHaveLength(2),
+    )
+    await screen.findByRole('button', { name: /Water the plants/u })
+
+    scheduleEnabled = false
+    act(() =>
+      panel.emit({
+        type: 'feature.event',
+        name: 'plugin.manager.changed',
+        identity: { backendInstanceId: 'backend-one', connectionGeneration: 1, stream: 'local', localSeq: 2 },
+      }),
+    )
+
+    await waitFor(() =>
+      expect(panel.requests.filter((request) => request.type === 'schedule.catalog')).toHaveLength(3),
+    )
+    expect(await screen.findByText('This DSH does not provide the schedule service.')).toBeDefined()
+    expect(screen.queryByRole('button', { name: /Water the plants/u })).toBeNull()
+    panel.view.unmount()
+  })
+
+  it('refreshes selected delivery history after a Plugin Manager change', async () => {
+    const panel = mountPanel()
+    await screen.findByRole('button', { name: /Water the plants/u })
+    fireEvent.click(screen.getByRole('button', { name: /Water the plants/u }))
+    fireEvent.click(screen.getByRole('tab', { name: 'Delivery history' }))
+    await waitFor(() =>
+      expect(panel.requests.filter((request) => request.type === 'schedule.history')).toHaveLength(1),
+    )
+
+    act(() =>
+      panel.emit({
+        type: 'feature.event',
+        name: 'plugin.manager.changed',
+        identity: { backendInstanceId: 'backend-one', connectionGeneration: 1, stream: 'local', localSeq: 2 },
+      }),
+    )
+
+    await waitFor(() => {
+      expect(panel.requests.filter((request) => request.type === 'schedule.catalog')).toHaveLength(2)
+      expect(panel.requests.filter((request) => request.type === 'schedule.history')).toHaveLength(2)
+    })
+    panel.view.unmount()
+  })
+
   it('cancels reconnect catalog and history reads when the panel unmounts', async () => {
     let catalogReads = 0
     const releaseReads: (() => void)[] = []

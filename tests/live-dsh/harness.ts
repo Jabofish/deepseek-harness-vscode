@@ -25,6 +25,7 @@ import { Alpha171VersionAdapter } from '../../packages/dsh-adapter/src/versions/
 import { Alpha172VersionAdapter } from '../../packages/dsh-adapter/src/versions/alpha172/adapter.js'
 import { Rc171VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc171/adapter.js'
 import { Rc172VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc172/adapter.js'
+import { Master21638VersionAdapter } from '../../packages/dsh-adapter/src/versions/master21638/adapter.js'
 import { acquireManagedRuntimeScope, type ManagedRuntimeScope } from './runtime-scope.js'
 import { resolveLiveRuntime } from './runtime.js'
 
@@ -173,6 +174,7 @@ export async function startManagedRuntime(options?: {
     steps.push(`managed start pid=${started.pid} endpoint=${started.endpoint.baseUrl}`)
 
     const adapters = [
+      new Master21638VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
       new Rc172VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
       new Rc171VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
       new Alpha172VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
@@ -302,12 +304,18 @@ export function spawnManagedChild(
   environment?: NodeJS.ProcessEnv,
 ): SpawnedChild {
   const childEnvironment = { ...process.env, ...(environment ?? {}) }
-  const resolved = resolveWindowsShim(
+  const shim = resolveWindowsShim(
     executable,
     process.platform === 'win32' ? 'windows' : 'linux',
     (filePath) => readFileSync(filePath, 'utf8'),
     { nodeExecutable: process.execPath },
   )
+  // A source-built DSH checkout exposes its CLI as a JavaScript entry rather
+  // than an executable shim. Launch that entry with the test runner's Node
+  // directly; keep shell=false and preserve the exact CLI argument vector.
+  const javascriptEntry = /\.(?:c|m)?js$/iu.test(executable)
+  const resolved =
+    shim ?? (javascriptEntry ? { executable: process.execPath, prefixArgs: [executable] } : undefined)
   const child: ChildProcess = spawnChild(
     resolved?.executable ?? executable,
     resolved === undefined ? [...args] : [...resolved.prefixArgs, ...args],

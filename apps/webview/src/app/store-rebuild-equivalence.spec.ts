@@ -327,6 +327,75 @@ describe('ledger rebuild equivalence', () => {
     store.dispose()
   })
 
+  it('keeps a recovered failed tool result before its error terminal across a ledger rebuild', async () => {
+    const emit = (
+      name: string,
+      payload: Readonly<Record<string, unknown>>,
+      sequence: number,
+    ): HostMessage => ({ type: 'event', name, sequence, payload })
+    const runningTool = {
+      id: 'call-interrupted',
+      turn: 1,
+      step: 1,
+      name: 'shell',
+      category: 'exec',
+      title: 'Pwsh',
+      status: 'running',
+      startedAt: '2026-09-02T00:00:00.000Z',
+      metadata: {},
+    }
+    const failedTool = {
+      ...runningTool,
+      status: 'failed',
+      completedAt: '2026-09-02T00:00:00.001Z',
+      error: 'The tool result is unknown; verify side effects before retrying.',
+    }
+    const fixture: readonly HostMessage[] = [
+      emit(
+        'message.user',
+        {
+          sessionId: SESSION_ID,
+          messageId: 'user-recovery',
+          markdown: 'Run the safe inspection.',
+          source: 'user',
+          sequence: 1,
+        },
+        1,
+      ),
+      emit('turn.started', { sessionId: SESSION_ID, turn: 1, sequence: 2 }, 2),
+      emit('step.started', { sessionId: SESSION_ID, turn: 1, step: 1, sequence: 3 }, 3),
+      emit('tool.updated', { sessionId: SESSION_ID, tool: runningTool, sequence: 4 }, 4),
+      emit('tool.updated', { sessionId: SESSION_ID, tool: failedTool, sequence: 5 }, 5),
+      emit('step.ended', { sessionId: SESSION_ID, turn: 1, step: 1, sequence: 6 }, 6),
+      emit('turn.ended', { sessionId: SESSION_ID, turn: 1, reason: 'error', sequence: 7 }, 7),
+    ]
+
+    const reference = await replay(fixture)
+    const expected = reference.store.timeline.nodes.map(signature)
+    const { store, client } = await replay(fixture)
+    client.emit({
+      type: 'event',
+      name: 'message.user',
+      sequence: 10_000,
+      payload: {
+        sessionId: SESSION_ID,
+        messageId: 'user-recovery',
+        markdown: 'Run the safe inspection.',
+        source: 'user',
+        sequence: 1,
+      },
+    })
+    await new Promise((resolve) => window.setTimeout(resolve, 80))
+
+    expect(expected.some((line) => line.startsWith('tool:call-interrupted:failed:shell:'))).toBe(true)
+    expect(expected.indexOf('turn-terminal:turn-terminal:1')).toBeGreaterThan(
+      expected.findIndex((line) => line.startsWith('tool:call-interrupted:failed:shell:')),
+    )
+    expect(store.timeline.nodes.map(signature)).toEqual(expected)
+    reference.store.dispose()
+    store.dispose()
+  })
+
   it('keeps the rebuild stable when the same below-cursor row arrives twice', async () => {
     const fixture = buildFixture()
     const reference = await replay(fixture)
