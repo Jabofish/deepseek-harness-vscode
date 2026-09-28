@@ -43,6 +43,8 @@ import {
 } from './store/command-directory.js'
 import { createDshUpdateActions } from './store/dsh-update.js'
 import { createGapHealing } from './store/gap-heal.js'
+import { createFeedbackCache } from './store/feedback-cache.js'
+import { createTurnWatchers } from './store/turn-watchers.js'
 import { attachmentFromResult, imageDataUri, openFileCandidatesFromResult } from './store/editor-context.js'
 import { parseHostDomainEvent, timelineSequenceOptions } from './store/event-parser.js'
 import { isGoalView, isJobView, isQueuedInput, nonEmptyString, parseGoalViews } from './store/event-values.js'
@@ -100,12 +102,10 @@ import {
   setSessionProjection,
   upsertOpenedSession,
 } from './store/session-projection.js'
-import type { FeedbackListResult } from './store/session-registry.js'
 import {
   findReusableBlankSession,
   isFeedbackCapabilityUnavailable,
   refreshSessions,
-  safeFeedbackList,
   safeList,
   selectStartupSessionId,
 } from './store/session-registry.js'
@@ -143,13 +143,6 @@ const OPEN_RETRY_BASE_DELAY_MS = 300
 const isRetryableOpenFailure = (reason: unknown): boolean =>
   reason instanceof Error && (reason as { retryable?: unknown }).retryable === true
 
-interface SessionTurnWatcher {
-  readonly sessionId: string
-  turn: number | undefined
-  finish(): void
-  dispose(): void
-}
-
 type PresetSessionSyncTarget =
   | {
       readonly kind: 'active'
@@ -181,22 +174,10 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     connectionIdentity: undefined,
   }
   const listeners = new Set<() => void>()
-  const sessionTurnWatchers = new Set<SessionTurnWatcher>()
+  const turnWatchers = createTurnWatchers({ isDisposed: () => disposed })
   let notifyTimer: number | undefined
   let pendingHistorySessionId: string | undefined
   let pendingHistory: SessionHistoryEvent[] = []
-  // Feedback is an advisory first-paint read, but a mutation must never race
-  // that read with an empty CAS cache. Share the in-flight request and remember
-  // successful seeds so a cold row can wait for the same authoritative catalog
-  // without issuing a second list call.
-  const feedbackLoads = new Map<string, Promise<FeedbackListResult>>()
-  const feedbackReadySessions = new Set<string>()
-  let feedbackGeneration = 0
-  const invalidateFeedback = (): void => {
-    feedbackGeneration += 1
-    feedbackLoads.clear()
-    feedbackReadySessions.clear()
-  }
   const notify = (): void => {
     for (const listener of listeners) listener()
   }
@@ -243,6 +224,8 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     // only the React subscriber notification is coalesced to one frame.
     scheduleNotify()
   }
+  const feedbackCache = createFeedbackCache({ client, setState, getState: () => state })
+  const invalidateFeedback = feedbackCache.invalidate
   const pluginInstallRecovery = new PluginInstallRecoveryController({
     featureRequest: <T>(request: FeatureRequest): Promise<T> => client.featureRequest<T>(request),
     requestId,
@@ -725,13 +708,8 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       accountActions.applyConnectionIdentity(identity)
     }
     const parsedEvent = parseHostDomainEvent(message)
-    if (parsedEvent?.type === 'turn.started' || parsedEvent?.type === 'turn.ended') {
-      for (const watcher of sessionTurnWatchers) {
-        if (watcher.sessionId !== parsedEvent.sessionId) continue
-        if (parsedEvent.type === 'turn.started') watcher.turn = parsedEvent.turn
-        else if (watcher.turn === parsedEvent.turn) watcher.finish()
-      }
-    }
+    if (parsedEvent?.type === 'turn.started' || parsedEvent?.type === 'turn.ended')
+      turnWatchers.notify(parsedEvent)
     const messageSessionId =
       parsedEvent === undefined || parsedEvent === null ? undefined : backendEventSessionId(parsedEvent)
     const previousLastSequence = state.timeline.lastSequence
@@ -995,38 +973,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       }
     }
   }
-  const requestFeedbackSnapshot = (sessionId: string, force = false): Promise<FeedbackListResult> => {
-    if (force) feedbackReadySessions.delete(sessionId)
-    if (!force && feedbackReadySessions.has(sessionId) && state.activeSessionId === sessionId) {
-      return Promise.resolve({
-        items: Object.values(state.feedback),
-        unavailable: state.feedbackUnavailable === true,
-      })
-    }
-    const existing = feedbackLoads.get(sessionId)
-    if (existing !== undefined) return existing
-    const generation = feedbackGeneration
-    const pending = safeFeedbackList(client, sessionId).then((result) => {
-      if (generation === feedbackGeneration && (result.items !== undefined || result.unavailable === true))
-        feedbackReadySessions.add(sessionId)
-      return result
-    })
-    feedbackLoads.set(sessionId, pending)
-    void pending.finally(() => {
-      if (feedbackLoads.get(sessionId) === pending) feedbackLoads.delete(sessionId)
-    })
-    return pending
-  }
-  const applyFeedbackSnapshot = (sessionId: string, result: FeedbackListResult): void => {
-    setState((current) => {
-      if (current.activeSessionId !== sessionId) return current
-      return {
-        ...current,
-        ...(result.items === undefined ? {} : { feedback: feedbackRecord(result.items) }),
-        ...(result.unavailable === undefined ? {} : { feedbackUnavailable: result.unavailable }),
-      }
-    })
-  }
+  const { requestFeedbackSnapshot, applyFeedbackSnapshot } = feedbackCache
   /**
    * A subagent child is a view onto its parent's catalog, never a root session:
    * its follow-up prompt, Stop, lineage header, and one-shot read-only guard all
@@ -1090,7 +1037,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     flushPendingHistory()
     const version = ++openVersion
     const modelDirectoryGeneration = ++sessionModelDirectoryGeneration
-    feedbackReadySessions.delete(sessionId)
+    feedbackCache.forget(sessionId)
     featureActions.retireForSessionSwitch()
     const pending = pendingOpenBuffer.create(sessionId, version)
     // Events delivered after this open began must be replayed after the
@@ -1324,7 +1271,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     jobActions.stopBeforeSessionOpen()
     flushPendingHistory()
     const version = ++openVersion
-    feedbackReadySessions.delete(entry.id)
+    feedbackCache.forget(entry.id)
     featureActions.retirePromptTemplatesForSubagentSwitch()
     const pending = pendingOpenBuffer.create(entry.id, version)
     // The history and advisory reads overlap. Preserve every event delivered
@@ -1568,35 +1515,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       listeners.add(listener)
       return () => listeners.delete(listener)
     },
-    watchSessionTurnEnd: (sessionId) => {
-      let resolveCompletion!: () => void
-      let rejectCompletion!: (reason: Error) => void
-      let settled = false
-      const completion = new Promise<void>((resolve, reject) => {
-        resolveCompletion = resolve
-        rejectCompletion = reject
-      })
-      // The App may still be awaiting sendPrompt when disposal rejects this watcher.
-      void completion.catch(() => undefined)
-      const finish = (): void => {
-        if (settled) return
-        settled = true
-        sessionTurnWatchers.delete(watcher)
-        resolveCompletion()
-      }
-      const disposeWatcher = (): void => {
-        if (settled) return
-        settled = true
-        sessionTurnWatchers.delete(watcher)
-        const error = new Error('AppStore disposed before the Session turn ended.')
-        error.name = 'SessionTurnWatchDisposedError'
-        rejectCompletion(error)
-      }
-      const watcher: SessionTurnWatcher = { sessionId, turn: undefined, finish, dispose: disposeWatcher }
-      if (disposed) disposeWatcher()
-      else sessionTurnWatchers.add(watcher)
-      return { completion, dispose: disposeWatcher }
-    },
+    watchSessionTurnEnd: (sessionId) => turnWatchers.watch(sessionId),
     initialize: async () => {
       // The update check is independent of DSH connectivity. Start it before
       // app.ready so a missing runtime does not suppress the startup notice;
@@ -2200,7 +2119,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       applyFeedbackSnapshot(sessionId, await requestFeedbackSnapshot(sessionId, true))
     },
     ensureFeedback: async (sessionId, messageId) => {
-      const alreadyReady = feedbackReadySessions.has(sessionId) && state.activeSessionId === sessionId
+      const alreadyReady = feedbackCache.isReady(sessionId) && state.activeSessionId === sessionId
       const result = await requestFeedbackSnapshot(sessionId)
       if (!alreadyReady) applyFeedbackSnapshot(sessionId, result)
       return state.activeSessionId === sessionId ? state.feedback[messageId] : undefined
@@ -2771,7 +2690,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       // disposed store. Gap backfills also read `disposed`: they outlive a
       // superseded open on purpose so their announced range is not lost.
       disposed = true
-      for (const watcher of [...sessionTurnWatchers]) watcher.dispose()
+      turnWatchers.disposeAll()
       pluginInstallRecovery.dispose()
       openVersion += 1
       sessionModelDirectoryGeneration += 1
