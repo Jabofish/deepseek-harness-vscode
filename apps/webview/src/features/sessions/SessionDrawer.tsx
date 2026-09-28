@@ -22,6 +22,22 @@ import { useDismissibleLayer } from '../../components/common/useDismissibleLayer
 import { Icon } from '../../ui/Icon.js'
 import { displaySessionTitle } from './session-title.js'
 import { useI18n } from '../../i18n.js'
+import {
+  ARCHIVE_FILTERS,
+  DEFAULT_WORKSPACE_NAME,
+  ORDER_DRAG_MIME,
+  SEARCH_QUERY_MAX_CODE_UNITS,
+  readOrderDrag,
+  sanitizeSearchQuery,
+  sessionStatusIcon,
+  sessionStatusTone,
+  sortSessions,
+  type ArchiveFilter,
+  type RenameTarget,
+  type SessionSorting,
+  type WorkspaceDisplay,
+} from './session-drawer-model.js'
+import { useSessionContentSearch } from './useSessionContentSearch.js'
 
 export interface SessionDrawerProps {
   readonly permissions?: readonly PermissionRequest[]
@@ -53,62 +69,6 @@ export interface SessionDrawerProps {
   readonly onSearch: (query: string) => Promise<SessionPage>
 }
 
-type SessionSorting = 'manual' | 'updated'
-type WorkspaceDisplay = 'current' | 'grouped'
-type ArchiveFilter = 'hide' | 'all' | 'archived'
-const ARCHIVE_FILTERS: readonly ArchiveFilter[] = ['hide', 'all', 'archived']
-const DEFAULT_WORKSPACE_NAME = 'default-workspace'
-type RenameTarget =
-  | { readonly kind: 'session'; readonly id: string; readonly title: string; readonly workspaceId: string }
-  | { readonly kind: 'workspace'; readonly id: string; readonly title: string }
-
-const SEARCH_DEBOUNCE_MS = 250
-const SEARCH_RESULT_LIMIT = 20
-/** `session.search` wire bound, measured in JavaScript UTF-16 code units. */
-const SEARCH_QUERY_MAX_CODE_UNITS = 500
-const ORDER_DRAG_MIME = 'application/x-dsh-order'
-
-type OrderDrag =
-  | { readonly kind: 'workspace'; readonly itemId: string }
-  | { readonly kind: 'session'; readonly workspaceId: string; readonly itemId: string }
-
-/**
- * Keep the controlled input and the request inside the `session.search` wire
- * contract: the host refuses a query carrying a NUL or one over the code-unit
- * bound, and a query the field never let through cannot be sent in error.
- */
-function sanitizeSearchQuery(value: string): string {
-  const withoutNul = value.replaceAll('\u0000', '')
-  if (withoutNul.length <= SEARCH_QUERY_MAX_CODE_UNITS) return withoutNul
-  let end = SEARCH_QUERY_MAX_CODE_UNITS
-  const last = withoutNul.charCodeAt(end - 1)
-  const next = withoutNul.charCodeAt(end)
-  // Never cut a surrogate pair in half: half a pair is not a character.
-  if (last >= 0xd800 && last <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) end -= 1
-  return withoutNul.slice(0, end)
-}
-
-function readOrderDrag(dataTransfer: DataTransfer): OrderDrag | undefined {
-  try {
-    const value: unknown = JSON.parse(dataTransfer.getData(ORDER_DRAG_MIME))
-    if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
-    const record = value as Record<string, unknown>
-    if (record.kind === 'workspace' && typeof record.itemId === 'string' && record.itemId !== '')
-      return { kind: 'workspace', itemId: record.itemId }
-    if (
-      record.kind === 'session' &&
-      typeof record.workspaceId === 'string' &&
-      record.workspaceId !== '' &&
-      typeof record.itemId === 'string' &&
-      record.itemId !== ''
-    )
-      return { kind: 'session', workspaceId: record.workspaceId, itemId: record.itemId }
-  } catch {
-    return undefined
-  }
-  return undefined
-}
-
 export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerProps): ReactElement {
   const { t } = useI18n()
   const displayWorkspaceName = (name: string): string =>
@@ -117,12 +77,6 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
   const [internalOpen, setInternalOpen] = useState(false)
   const [removingSessionId, setRemovingSessionId] = useState<string>()
   const [searchQuery, setSearchQuery] = useState('')
-  const [contentSearch, setContentSearch] = useState<{
-    readonly query: string
-    readonly matches: readonly SessionSummary[]
-    readonly searchHasMore: boolean
-  }>({ query: '', matches: [], searchHasMore: false })
-  const [contentSearchUnavailable, setContentSearchUnavailable] = useState(false)
   const [sorting, setSorting] = useState<SessionSorting>('manual')
   const [workspaceDisplay, setWorkspaceDisplay] = useState<WorkspaceDisplay>('current')
   const [archiveFilter, setArchiveFilter] = useState<ArchiveFilter>('hide')
@@ -141,7 +95,6 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
   const [deleteTarget, setDeleteTarget] = useState<SessionSummary>()
   const [deleteError, setDeleteError] = useState<string>()
   const [mutationBusy, setMutationBusy] = useState(false)
-  const searchSequence = useRef(0)
   const renameInputRef = useRef<HTMLInputElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
@@ -182,6 +135,12 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
     visibleWorkspaces[0]
   const selectedWorkspaceKey = selectedWorkspace?.id
   const trimmedSearchQuery = searchQuery.trim()
+  const { contentSearch, unavailable: contentSearchUnavailable } = useSessionContentSearch({
+    open,
+    query: trimmedSearchQuery,
+    archiveFilter,
+    onSearch,
+  })
   const contentMatches = contentSearch.query === trimmedSearchQuery ? contentSearch.matches : []
   const contentSearchHasMore = contentSearch.query === trimmedSearchQuery && contentSearch.searchHasMore
   const query = trimmedSearchQuery.toLowerCase()
@@ -341,37 +300,6 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
   const filteredArchivedSessions = archivedSessionsToShow.filter(
     (session) => query === '' || displaySessionTitle(session.title, t).toLowerCase().includes(query),
   )
-
-  useEffect(() => {
-    const sequence = searchSequence.current + 1
-    searchSequence.current = sequence
-    setContentSearchUnavailable(false)
-    if (!open || trimmedSearchQuery === '' || archiveFilter === 'archived') {
-      setContentSearch({ query: trimmedSearchQuery, matches: [], searchHasMore: false })
-      return
-    }
-    const timer = window.setTimeout(() => {
-      void onSearch(trimmedSearchQuery)
-        .then((page) => {
-          if (searchSequence.current !== sequence) return
-          setContentSearch({
-            query: trimmedSearchQuery,
-            matches: page.items.slice(0, SEARCH_RESULT_LIMIT),
-            searchHasMore: page.searchHasMore === true,
-          })
-          setContentSearchUnavailable(false)
-        })
-        .catch(() => {
-          if (searchSequence.current !== sequence) return
-          // A refused content search leaves the name filter as the only result
-          // source; reporting the empty list as "no matches" would claim the
-          // host searched and found nothing.
-          setContentSearch({ query: trimmedSearchQuery, matches: [], searchHasMore: false })
-          setContentSearchUnavailable(true)
-        })
-    }, SEARCH_DEBOUNCE_MS)
-    return () => window.clearTimeout(timer)
-  }, [archiveFilter, onSearch, open, trimmedSearchQuery])
 
   const openSession = (session: SessionSummary): void => {
     setSelectedWorkspaceId(session.workspaceId)
@@ -1229,67 +1157,3 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
     </section>
   )
 })
-
-function sortSessions(
-  sessions: readonly SessionSummary[],
-  sorting: SessionSorting,
-  manualOrder?: readonly string[],
-  activeSessionId?: string,
-): readonly SessionSummary[] {
-  if (sorting === 'manual') {
-    const position = new Map((manualOrder ?? []).map((id, index) => [id, index]))
-    const sorted = [...sessions].sort(
-      (left, right) =>
-        (position.get(left.id) ?? Number.MAX_SAFE_INTEGER) -
-        (position.get(right.id) ?? Number.MAX_SAFE_INTEGER),
-    )
-    return pinCurrentBlank(sorted, activeSessionId)
-  }
-  return [...sessions].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-}
-
-/**
- * The official workspace runtime promotes the current blank New Session row
- * to the head of the workspace order. Keep that visual invariant even when a
- * stale session-order projection still places another row first.
- */
-function pinCurrentBlank(
-  sessions: readonly SessionSummary[],
-  activeSessionId: string | undefined,
-): readonly SessionSummary[] {
-  if (activeSessionId === undefined) return sessions
-  const index = sessions.findIndex((session) => session.id === activeSessionId && session.blank)
-  if (index <= 0) return sessions
-  const active = sessions[index]
-  if (active === undefined) return sessions
-  return [active, ...sessions.slice(0, index), ...sessions.slice(index + 1)]
-}
-
-function sessionStatusIcon(status: SessionSummary['status']): 'alert' | 'check' | 'clock' | 'play' {
-  switch (status) {
-    case 'running':
-      return 'play'
-    case 'completed':
-      return 'check'
-    case 'failed':
-    case 'awaiting-input':
-      return 'alert'
-    case 'idle':
-      return 'clock'
-  }
-}
-
-function sessionStatusTone(status: SessionSummary['status']): 'blue' | 'green' | 'amber' | 'red' | 'muted' {
-  switch (status) {
-    case 'running':
-      return 'blue'
-    case 'awaiting-input':
-      return 'amber'
-    case 'completed':
-      return 'green'
-    case 'failed':
-      return 'red'
-    case 'idle':
-      return 'muted'
-  }
-}
