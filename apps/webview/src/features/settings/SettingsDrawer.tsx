@@ -1,29 +1,19 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactElement } from 'react'
-import type {
-  CustomProviderCreateResult,
-  CustomProviderDraft,
-  ExtensionSettingsSummary,
-  ModelDescriptor,
-  ModelProvider,
-} from '@dsh-vscode/domain'
+import type { ExtensionSettingsSummary, ModelDescriptor } from '@dsh-vscode/domain'
 import { dshUiPreferences as readDshUiPreferences, isThemePreference } from '../../app/ui-preferences.js'
 import { ModalWrapper } from '../../components/common/PopoverCard.js'
 import { useDismissibleLayer } from '../../components/common/useDismissibleLayer.js'
 import { Icon } from '../../ui/Icon.js'
 import type { CustomProviderTemplate } from './CustomProviderCard.js'
-import type { ProviderSettingChange } from './ProviderSettingsEditor.js'
 import { useI18n } from '../../i18n.js'
 import { useStableCallback } from '../../app/useStableCallback.js'
 import {
   deriveCustomProviderTemplate,
   isAddableProvider,
   isConfiguredProvider,
-  isKnownRejectedSettingsWrite,
-  isSettingsConflict,
   isValidGeneralSettingChange,
   namespaceInPath,
   providerRowOrder,
-  providerSettingOperations,
   settingsNamespaceRevision,
 } from './provider-helpers.js'
 import type { DshSettingsState, RiskPending } from './general-controls.js'
@@ -33,27 +23,17 @@ import { ModelsSettingsTab } from './ModelsSettingsTab.js'
 import { GeneralSettingsTab } from './GeneralSettingsTab.js'
 import { PluginsSettingsTab, PresetsSettingsTab } from './OtherSettingsTabs.js'
 import type { SettingsDrawerProps } from './settings-drawer-props.js'
+import { useProviderSettingsFlows } from './provider-settings-flows.js'
+import { SettingsTabs } from './settings-tabs.js'
 
 export type { SettingsDrawerProps } from './settings-drawer-props.js'
 
-type SettingsTab = 'general' | 'models' | 'presets' | 'plugins'
-type SettingsTabOrientation = 'horizontal' | 'vertical'
 /**
  * 'unchanged' is not a mode: it marks attach-only/new-isolated settings this
  * page cannot represent. Nothing is pre-selected and Apply stays disabled, so
  * applying can never silently rewrite those modes to 'auto'.
  */
 type ConnectionChoice = 'auto' | 'custom' | 'unchanged'
-
-const SETTINGS_TABS: readonly SettingsTab[] = ['general', 'models', 'presets', 'plugins']
-
-function settingsTabOrientation(): SettingsTabOrientation {
-  return typeof window !== 'undefined' &&
-    typeof window.matchMedia === 'function' &&
-    window.matchMedia('(max-width: 52rem)').matches
-    ? 'horizontal'
-    : 'vertical'
-}
 
 interface LoadedSettings {
   readonly value: ExtensionSettingsSummary | undefined
@@ -62,7 +42,6 @@ interface LoadedSettings {
 export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
   const { t } = useI18n()
   const { onLoadAccountDetails, onAcknowledgeAccountBonus, onOpenAccountPage } = props
-  const [tabOrientation, setTabOrientation] = useState<SettingsTabOrientation>(settingsTabOrientation)
   const refreshAccountDetails = useCallback((): void => {
     void onLoadAccountDetails?.()
   }, [onLoadAccountDetails])
@@ -84,7 +63,6 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
     onUpdateDshSetting,
     onOpenChange,
   } = props
-  const [tab, setTab] = useState<SettingsTab>('general')
   const [settingsState, setSettingsState] = useState<LoadedSettings | undefined>(undefined)
   const [dshState, setDshState] = useState<DshSettingsState>({ status: 'loading' })
   const [dshSettingsSnapshotFresh, setDshSettingsSnapshotFresh] = useState(false)
@@ -145,16 +123,6 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
         setDshSettingsSnapshotFresh(false)
       })
   })
-
-  useEffect(() => {
-    if (typeof window.matchMedia !== 'function') return
-    const query = window.matchMedia('(max-width: 52rem)')
-    const updateOrientation = (event: MediaQueryListEvent): void => {
-      setTabOrientation(event.matches ? 'horizontal' : 'vertical')
-    }
-    query.addEventListener('change', updateOrientation)
-    return () => query.removeEventListener('change', updateOrientation)
-  }, [])
 
   /** The provider row's control takes the keyboard back from its confirmation. */
   const removeProviderTriggerRef = useRef<HTMLElement | null>(null)
@@ -428,18 +396,36 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
     }
   }
 
-  const runSecretAction = (key: string, action: () => Promise<void>): void => {
-    if (busyField !== undefined) return
-    setSaveError(undefined)
-    setBusyField(key)
-    void action()
-      .then(() => props.onRefreshCatalog())
-      .catch((reason: unknown) =>
-        setSaveError(reason instanceof Error ? reason.message : t('settings.updateFailed')),
-      )
-      .finally(() => setBusyField(undefined))
-  }
-
+  // Provider writes share the epoch guard and the CAS revision dance; the
+  // flows live together in one hook so the drawer keeps only the view state.
+  const {
+    runSecretAction,
+    saveProviderChanges,
+    saveCustomProvider,
+    configureCustomProviderSecret,
+    removeProvider,
+  } = useProviderSettingsFlows({
+    t,
+    openEpochRef,
+    dshState,
+    dshSettingsSnapshotFresh,
+    busyField,
+    onLoadDshSettings,
+    onRefreshCatalog: props.onRefreshCatalog,
+    onMutateDshSettings: props.onMutateDshSettings,
+    onCreateCustomProvider: props.onCreateCustomProvider,
+    onConfigureSecret: props.onConfigureSecret,
+    onUnsetDshSetting: props.onUnsetDshSetting,
+    onRemoveSecret: props.onRemoveSecret,
+    setSaveError,
+    setBusyField,
+    setDshState,
+    setDshSettingsSnapshotFresh,
+    setEditingProviderId,
+    setAddingProviderId,
+    setAddingCustomProvider,
+    setRemovingProviderId,
+  })
   const openSettingsDocument = (): void => {
     if (busyField !== undefined) return
     setDocumentError(undefined)
@@ -501,219 +487,6 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
       )
       .finally(() => setDshUpdateBusy(undefined))
   }
-
-  const saveProviderChanges = useStableCallback(
-    async (
-      provider: ModelProvider,
-      changes: readonly ProviderSettingChange[],
-      expectedRevision: number,
-      ensureProvider = false,
-    ): Promise<void> => {
-      if (busyField !== undefined || !dshSettingsSnapshotFresh) throw new Error(t('settings.updateFailed'))
-      const namespace = provider.settingsNs?.trim()
-      if (namespace === undefined || namespace === '') throw new Error(t('settings.updateFailed'))
-      const operations =
-        changes.length === 0 && ensureProvider
-          ? (() => {
-              const relativePath = provider.settingsPath ?? []
-              return relativePath.length === 0 || relativePath.some((part) => part.trim() === '')
-                ? undefined
-                : [{ op: 'set' as const, path: relativePath, value: {} }]
-            })()
-          : providerSettingOperations(provider, changes)
-      if (operations === undefined || (operations.length === 0 && ensureProvider))
-        throw new Error(t('settings.updateFailed'))
-      if (operations.length === 0) return
-      setSaveError(undefined)
-      setBusyField(`provider:${provider.id}`)
-      const epoch = openEpochRef.current
-      try {
-        try {
-          await props.onMutateDshSettings(namespace, operations, expectedRevision)
-        } catch (reason: unknown) {
-          const snapshot = await onLoadDshSettings().catch(() => undefined)
-          if (openEpochRef.current === epoch) {
-            setDshState(snapshot === undefined ? { status: 'unavailable' } : { status: 'ready', snapshot })
-            setDshSettingsSnapshotFresh(snapshot !== undefined)
-            const latestRevision =
-              snapshot === undefined ? undefined : settingsNamespaceRevision(snapshot, namespace)
-            if (
-              isSettingsConflict(reason) ||
-              snapshot === undefined ||
-              latestRevision !== expectedRevision ||
-              !isKnownRejectedSettingsWrite(reason)
-            ) {
-              setEditingProviderId(undefined)
-              if (ensureProvider) setAddingProviderId(undefined)
-            }
-            setSaveError(reason instanceof Error ? reason.message : t('settings.updateFailed'))
-          }
-          throw reason
-        }
-        const snapshot = await onLoadDshSettings().catch(() => undefined)
-        if (openEpochRef.current !== epoch) return
-        if (snapshot === undefined) {
-          setDshState({ status: 'unavailable' })
-          setDshSettingsSnapshotFresh(false)
-          setEditingProviderId(undefined)
-          if (ensureProvider) setAddingProviderId(undefined)
-          return
-        }
-        setDshState({ status: 'ready', snapshot })
-        setDshSettingsSnapshotFresh(true)
-        try {
-          await props.onRefreshCatalog()
-        } catch (reason: unknown) {
-          if (openEpochRef.current !== epoch) return
-          // The profile mutation has committed. Keep the editor closed so a
-          // catalog refresh failure cannot invite a duplicate write at its old
-          // revision.
-          setEditingProviderId(undefined)
-          if (ensureProvider) setAddingProviderId(undefined)
-          setSaveError(reason instanceof Error ? reason.message : t('settings.updateFailed'))
-        }
-      } finally {
-        setBusyField(undefined)
-      }
-    },
-  )
-
-  const saveCustomProvider = useStableCallback(
-    async (draft: CustomProviderDraft): Promise<CustomProviderCreateResult> => {
-      if (busyField !== undefined || !dshSettingsSnapshotFresh) throw new Error(t('settings.updateFailed'))
-      setSaveError(undefined)
-      const path = [draft.settingsNamespace, ...draft.collectionPath, draft.providerId].join('.')
-      setBusyField(`provider:${path}`)
-      const epoch = openEpochRef.current
-      try {
-        const result = await props.onCreateCustomProvider(draft)
-        if (openEpochRef.current !== epoch) return result
-        // The Host operation is CAS-protected and may already have committed the
-        // profile when a follow-up refresh fails. Keep the committed result so
-        // the card can enter its credential-only retry state instead of asking
-        // the user to repeat a profile write with a stale revision.
-        try {
-          const snapshot = await onLoadDshSettings()
-          if (openEpochRef.current !== epoch) return result
-          if (snapshot !== undefined) {
-            setDshState({ status: 'ready', snapshot })
-            setDshSettingsSnapshotFresh(true)
-          } else {
-            setDshState({ status: 'unavailable' })
-            setDshSettingsSnapshotFresh(false)
-            setAddingCustomProvider(false)
-            return result
-          }
-          await props.onRefreshCatalog()
-        } catch (reason: unknown) {
-          if (openEpochRef.current !== epoch) return result
-          setSaveError(reason instanceof Error ? reason.message : t('settings.updateFailed'))
-        }
-        return result
-      } catch (reason: unknown) {
-        if (openEpochRef.current === epoch) {
-          setSaveError(reason instanceof Error ? reason.message : t('settings.updateFailed'))
-        }
-        throw reason
-      } finally {
-        setBusyField(undefined)
-      }
-    },
-  )
-
-  const configureCustomProviderSecret = useStableCallback(
-    async (providerId: string, field: string): Promise<boolean> => {
-      if (busyField !== undefined) throw new Error(t('settings.updateFailed'))
-      setSaveError(undefined)
-      setBusyField(`provider:${providerId}:credential`)
-      const epoch = openEpochRef.current
-      try {
-        const configured = await props.onConfigureSecret(providerId, field)
-        if (configured) {
-          const snapshot = await onLoadDshSettings()
-          if (openEpochRef.current === epoch) {
-            if (snapshot !== undefined) {
-              setDshState({ status: 'ready', snapshot })
-              setDshSettingsSnapshotFresh(true)
-            } else {
-              setDshState({ status: 'unavailable' })
-              setDshSettingsSnapshotFresh(false)
-            }
-          }
-          await props.onRefreshCatalog()
-        }
-        return configured
-      } catch (reason: unknown) {
-        if (openEpochRef.current === epoch) {
-          setSaveError(reason instanceof Error ? reason.message : t('settings.updateFailed'))
-        }
-        throw reason
-      } finally {
-        setBusyField(undefined)
-      }
-    },
-  )
-
-  const removeProvider = useStableCallback(async (provider: ModelProvider): Promise<void> => {
-    if (
-      busyField !== undefined ||
-      !dshSettingsSnapshotFresh ||
-      provider.settingsNs === undefined ||
-      provider.settingsPath === undefined
-    )
-      return
-    setSaveError(undefined)
-    setBusyField(`remove-provider:${provider.id}`)
-    const epoch = openEpochRef.current
-    try {
-      const expectedRevision =
-        dshState.status === 'ready' && dshSettingsSnapshotFresh && provider.settingsNs !== undefined
-          ? settingsNamespaceRevision(dshState.snapshot, provider.settingsNs)
-          : undefined
-      if (expectedRevision === undefined) throw new Error(t('settings.updateFailed'))
-      // Commit the CAS protected profile removal before cleaning its secrets.
-      // A conflict must not delete credentials while leaving the profile in
-      // place. Credential cleanup remains Host-owned and never exposes a key.
-      await props.onUnsetDshSetting(
-        [provider.settingsNs, ...provider.settingsPath].join('.'),
-        expectedRevision,
-      )
-      if (openEpochRef.current === epoch) {
-        setRemovingProviderId(undefined)
-        setEditingProviderId(undefined)
-      }
-      for (const field of provider.fields) {
-        if (!field.secret || field.value === undefined || field.writable === false) continue
-        await props.onRemoveSecret(provider.id, field.key)
-      }
-      const snapshot = await onLoadDshSettings()
-      if (openEpochRef.current !== epoch) return
-      if (snapshot === undefined) {
-        setDshState({ status: 'unavailable' })
-        setDshSettingsSnapshotFresh(false)
-        return
-      }
-      setDshState({ status: 'ready', snapshot })
-      setDshSettingsSnapshotFresh(true)
-      try {
-        await props.onRefreshCatalog()
-      } catch (reason: unknown) {
-        if (openEpochRef.current !== epoch) return
-        setSaveError(reason instanceof Error ? reason.message : t('settings.updateFailed'))
-      }
-    } catch (reason: unknown) {
-      if (openEpochRef.current === epoch) {
-        const snapshot = await onLoadDshSettings().catch(() => undefined)
-        if (openEpochRef.current !== epoch) return
-        setDshState(snapshot === undefined ? { status: 'unavailable' } : { status: 'ready', snapshot })
-        setDshSettingsSnapshotFresh(snapshot !== undefined)
-        if (isSettingsConflict(reason)) setRemovingProviderId(undefined)
-        setSaveError(reason instanceof Error ? reason.message : t('settings.updateFailed'))
-      }
-    } finally {
-      setBusyField(undefined)
-    }
-  })
 
   if (!open) return <></>
 
@@ -846,57 +619,11 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
             <Icon name="close" />
           </button>
         </header>
-        <div className="dsh-settings__layout">
-          <nav
-            className="dsh-settings__tabs"
-            role="tablist"
-            aria-label={t('settings.sections')}
-            aria-orientation={tabOrientation}
-          >
-            {SETTINGS_TABS.map((entry) => (
-              <button
-                key={entry}
-                id={`dsh-settings-tab-${entry}`}
-                className={`dsh-settings__tab${tab === entry ? ' dsh-settings__tab--active' : ''}`}
-                type="button"
-                role="tab"
-                aria-selected={tab === entry}
-                aria-controls={tab === entry ? `dsh-settings-panel-${entry}` : undefined}
-                tabIndex={tab === entry ? 0 : -1}
-                onClick={() => setTab(entry)}
-                onKeyDown={(event) => {
-                  const index = SETTINGS_TABS.indexOf(entry)
-                  let next: SettingsTab | undefined
-                  if (event.key === 'Home') next = SETTINGS_TABS[0]
-                  else if (event.key === 'End') next = SETTINGS_TABS[SETTINGS_TABS.length - 1]
-                  else if (
-                    (tabOrientation === 'horizontal' && event.key === 'ArrowRight') ||
-                    (tabOrientation === 'vertical' && event.key === 'ArrowDown')
-                  )
-                    next = SETTINGS_TABS[(index + 1) % SETTINGS_TABS.length]
-                  else if (
-                    (tabOrientation === 'horizontal' && event.key === 'ArrowLeft') ||
-                    (tabOrientation === 'vertical' && event.key === 'ArrowUp')
-                  )
-                    next = SETTINGS_TABS[(index + SETTINGS_TABS.length - 1) % SETTINGS_TABS.length]
-                  else return
-
-                  event.preventDefault()
-                  if (next === undefined) return
-                  setTab(next)
-                  document.getElementById(`dsh-settings-tab-${next}`)?.focus()
-                }}
-              >
-                {t(`settings.${entry}`)}
-              </button>
-            ))}
-          </nav>
-          <div className="dsh-settings__content">
-            {tab === 'general' ? (
-              <GeneralSettingsTab {...generalView} />
-            ) : tab === 'models' ? (
-              <ModelsSettingsTab {...modelsView} />
-            ) : tab === 'presets' ? (
+        <SettingsTabs
+          panels={{
+            general: <GeneralSettingsTab {...generalView} />,
+            models: <ModelsSettingsTab {...modelsView} />,
+            presets: (
               <PresetsSettingsTab
                 props={props}
                 t={t}
@@ -905,7 +632,8 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                 codingToolsEnabled={dshUiPreferences?.codingToolsEnabled === true}
                 updateDisplayedSetting={updateDisplayedSetting}
               />
-            ) : (
+            ),
+            plugins: (
               <PluginsSettingsTab
                 props={props}
                 t={t}
@@ -915,9 +643,9 @@ export function SettingsDrawer(props: SettingsDrawerProps): ReactElement {
                 setDshState={setDshState}
                 setDshSettingsSnapshotFresh={setDshSettingsSnapshotFresh}
               />
-            )}
-          </div>
-        </div>
+            ),
+          }}
+        />
       </section>
     </ModalWrapper>
   )

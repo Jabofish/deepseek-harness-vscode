@@ -1,11 +1,10 @@
-import { translate } from '../i18n.js'
 import type {
   AgentConfiguration,
+  PromptMode,
   SessionHistoryEvent,
   SubagentCatalog,
   SubagentView,
 } from '@dsh-vscode/domain'
-import { parseSlashCommand, resolvePromptMode } from '@dsh-vscode/domain'
 import type { FeatureRequest } from '@dsh-vscode/webview-protocol'
 import { PluginInstallRecoveryController } from './plugin-install-recovery.js'
 import { createAccountActions } from './store/account-actions.js'
@@ -18,7 +17,8 @@ import { ProtocolClient } from './protocol-client.js'
 import type { AppStore, LiveHistoryAppender, StateSetter } from './store/types.js'
 import { requestId } from './store/ids.js'
 import { createPendingOpenBuffer } from './store/pending-open.js'
-import { hasDynamicCommand } from './store/agent-config.js'
+import { createGoalQueueActions } from './store/goal-queue-actions.js'
+import { createSessionActions } from './store/session-actions.js'
 import {
   createCommandDirectoryCache,
   readCommandList,
@@ -458,13 +458,18 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       // A host that cannot serve settings yet keeps the official 'queue' default.
     }
   }
+  const rememberPromptMode = (promptMode: PromptMode): void => {
+    composerPreferences = { ...composerPreferences, promptMode }
+    persistWebviewState()
+  }
+  const rememberOpenFilePreference = (openFileId: string): void => {
+    composerPreferences = { ...composerPreferences, openFileId }
+    persistWebviewState()
+  }
   const { executeCommandRequest, sendUserTurn } = createPromptActions({
     client,
     getState: () => state,
-    rememberPromptMode: (promptMode) => {
-      composerPreferences = { ...composerPreferences, promptMode }
-      persistWebviewState()
-    },
+    rememberPromptMode,
     setState,
   })
   const requestSessionOpen = async (sessionId: string, version: number): Promise<unknown> => {
@@ -726,6 +731,27 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     setState,
     stopJobsBeforeSessionOpen: () => jobActions.stopBeforeSessionOpen(),
   })
+  const sessionActions = createSessionActions({
+    client,
+    getState: () => state,
+    setState,
+    executeCommandRequest,
+    sendUserTurn,
+    refreshCommands: (sessionId) => refreshCommands(sessionId),
+    refreshSessionModelDirectoryForSession,
+    rememberComposerConfiguration,
+    rememberPromptMode,
+    rememberOpenFileId: rememberOpenFilePreference,
+    nextConfigurationGeneration: () => ++configurationGeneration,
+    isConfigurationGenerationCurrent: (generation) => generation === configurationGeneration,
+  })
+  const goalQueueActions = createGoalQueueActions({
+    client,
+    getState: () => state,
+    setState,
+    refreshGoals: refreshLiveGoals,
+  })
+
   const store: StoreWithoutStateView = {
     ...accountActions.methods,
     ...jobActions.methods,
@@ -761,167 +787,8 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     openSession: open,
     loadOlderHistory,
     openSubagent,
-    configureSession: async (sessionId, configuration) => {
-      const generation = ++configurationGeneration
-      const previousProvider = state.configuration?.model.providerId
-      await client.request<unknown>({
-        type: 'session.configure',
-        requestId: requestId(),
-        payload: { sessionId, configuration },
-      })
-      if (generation !== configurationGeneration) return
-      rememberComposerConfiguration(configuration)
-      setState((current) => (current.activeSessionId === sessionId ? { ...current, configuration } : current))
-      // Only the provider decides whether an adapter serves the selection, so
-      // only its change can move `routable`. Re-read after the write: a stale
-      // `false` would keep the composer inert for a selection the host now
-      // serves, and a stale `true` would unlock one it no longer does.
-      if (previousProvider === configuration.model.providerId) return
-      await refreshSessionModelDirectoryForSession(sessionId)
-    },
-    executeCommand: async (sessionId, command, attachments = []) => {
-      if ((await executeCommandRequest(sessionId, command, attachments)) === 'executed') return true
-      // The palette hands the picked line to the command surface; a skill row
-      // has no command behind it, so the same line is submitted as the prompt
-      // gesture it spells.
-      await sendUserTurn(sessionId, command, attachments, 'queue', undefined)
-      return true
-    },
-    sendPrompt: async (sessionId, text, attachments, mode) => {
-      const subagent =
-        state.activeSessionId === sessionId && state.activeSubagent?.entry.id === sessionId
-          ? state.activeSubagent
-          : undefined
-      if (subagent === undefined && parseSlashCommand(text) !== undefined) {
-        // Slash commands are control-plane operations.  Sending them through
-        // session.prompt turns /plan, /permission, /compact, and every plugin
-        // command into a visible model request.  The official WebUI routes
-        // the complete line through commands.execute instead, and that route
-        // accepts the composer's image attachments.  Editor-context chips are
-        // not part of the command payload; they stay attached to the composer
-        // for the next message, exactly as they do on the Composer's own
-        // command path.  A line DSH answers as unknown is not a command at all
-        // and is submitted below as the prompt gesture it spells.
-        if ((await executeCommandRequest(sessionId, text, attachments)) === 'executed') return
-      }
-      await sendUserTurn(sessionId, text, attachments, mode, subagent)
-    },
-    cancelSession: async (sessionId) => {
-      const subagent =
-        state.activeSessionId === sessionId && state.activeSubagent?.entry.id === sessionId
-          ? state.activeSubagent
-          : undefined
-      if (subagent?.entry.mode === 'one-shot') throw new Error(translate('app.error.subagentInterrupt'))
-      await client.request<unknown>(
-        subagent === undefined
-          ? { type: 'session.cancel', requestId: requestId(), payload: { sessionId } }
-          : { type: 'subagent.interrupt', requestId: requestId(), payload: { sessionId } },
-      )
-    },
-    updateGoal: async (goalId, update) => {
-      if (update.title === undefined && update.status === undefined && update.maxGoalRounds === undefined)
-        return
-      await client.request<unknown>({
-        type: 'goal.update',
-        requestId: requestId(),
-        payload: { goalId, ...update },
-      })
-      setState((current) => ({
-        ...current,
-        goals: current.goals.map((goal) => (goal.id === goalId ? { ...goal, ...update } : goal)),
-      }))
-      await refreshLiveGoals()
-    },
-    clearGoal: async (goalId) => {
-      await client.request<unknown>({
-        type: 'goal.clear',
-        requestId: requestId(),
-        payload: { goalId },
-      })
-      setState((current) => ({
-        ...current,
-        goals: current.goals.filter((goal) => goal.id !== goalId),
-      }))
-    },
-    updateQueue: (inputId, text) =>
-      client
-        .request<unknown>({
-          type: 'session.queue.update',
-          requestId: requestId(),
-          payload: { inputId, text },
-        })
-        .then(() => undefined),
-    removeQueue: (inputId) =>
-      client
-        .request<unknown>({
-          type: 'session.queue.remove',
-          requestId: requestId(),
-          payload: { inputId },
-        })
-        .then(() => undefined),
-    steerQueue: (inputId) =>
-      client
-        .request<unknown>({
-          type: 'session.queue.steer',
-          requestId: requestId(),
-          payload: { inputId },
-        })
-        .then(() => undefined),
-    steerAllQueued: async () => {
-      // Mirrors the official empty-draft accelerated Enter: every still-queued
-      // pending input is steered FIFO into the running turn. Steer is
-      // best-effort (a closed delivery window turns the item back into the
-      // next waking Queue item), so failures of one row must not abort the rest.
-      const targets = state.queue.filter((item) => item.mode === 'queue')
-      let firstFailure: unknown
-      let failed = false
-      for (const item of targets) {
-        try {
-          await client.request<unknown>({
-            type: 'session.queue.steer',
-            requestId: requestId(),
-            payload: { inputId: item.id },
-          })
-        } catch (reason: unknown) {
-          // Try every row, then report one failure to the App's public-error
-          // boundary instead of silently losing a rejected steer request.
-          if (!failed) firstFailure = reason
-          failed = true
-        }
-      }
-      if (failed) throw firstFailure
-    },
-    setPromptMode: async (mode) => {
-      const sessionId = state.activeSessionId
-      const configuration = state.configuration
-      if (sessionId === undefined || configuration === undefined) return false
-      // The command directory is advisory for session visibility, but it is
-      // authoritative for exposing the semantic Plan toggle. If the user
-      // reaches this action before the background directory read completes,
-      // join that in-flight read instead of treating a temporary empty list
-      // as an unsupported upstream capability.
-      if (mode === 'plan' && !hasDynamicCommand(state.commands, 'plan')) await refreshCommands(sessionId)
-      const resolution = resolvePromptMode(mode, {
-        planCommandAvailable: hasDynamicCommand(state.commands, 'plan'),
-      })
-      if (!resolution.supported) throw new Error(resolution.reason ?? translate('app.error.promptMode'))
-      if (resolution.planEnabled !== configuration.planMode)
-        await executeCommandRequest(sessionId, resolution.planEnabled ? '/plan' : '/plan off')
-      if (state.activeSessionId !== sessionId) return false
-      setState((current) =>
-        current.activeSessionId === sessionId ? { ...current, promptMode: mode } : current,
-      )
-      composerPreferences = { ...composerPreferences, promptMode: mode }
-      persistWebviewState()
-      return true
-    },
-    rememberOpenFile: (candidateId) => {
-      const normalized = candidateId.trim()
-      if (normalized === '') return
-      composerPreferences = { ...composerPreferences, openFileId: normalized }
-      setState((current) => ({ ...current, preferredOpenFileId: normalized }))
-      persistWebviewState()
-    },
+    ...sessionActions,
+    ...goalQueueActions,
     runtimeAction: (action) =>
       client
         .request<unknown>({ type: 'runtime.action', requestId: requestId(), payload: { action } })

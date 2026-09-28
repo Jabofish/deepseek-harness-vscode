@@ -15,16 +15,13 @@ import {
   withTransportRetry,
 } from '../../transport-internal.js'
 import { unwrapRpcResultValue } from '../rc6/rpc.js'
-import { projectedModelSelection } from '../../projection/agent.js'
 import { Alpha13AssistantStreamProjector, type Alpha13ProjectorOutput } from '../alpha13/session-wire.js'
-import { validAlpha151ProjectionBaseline } from '../alpha151/session-wire.js'
 import { normalizeAlpha162ControlFrame } from '../alpha162/session-control.js'
 import { normalizeAlpha171ControlFrame } from '../alpha171/session-control.js'
-import { validAlpha171ProjectionBaseline } from '../alpha171/session-wire.js'
+import { createAlphaLegacyRpc, type AlphaLegacyRpc } from './alpha-legacy-rpc.js'
 import {
   AlphaRemoteMux,
   asRecord,
-  type AlphaErrorCodeNormalizer,
   type AlphaLoopbackApiClientOptions,
   isJsonLike,
   isNonEmptyString,
@@ -44,21 +41,28 @@ import {
   validAlphaEventEmit,
   validAlphaEventReady,
   validAlphaEventWaterfall,
-  validAlphaProjectionBaseline,
   validAlphaWireEventFrame,
   validAlphaWireSnapshot,
 } from './session-wire.js'
 import {
-  type AlphaCatalogSelection,
   credentialDescribe,
   goalReceipt,
   modelCatalog,
   presetCopyReceipt,
   presetDocument,
-  presetRoster,
-  validAlphaModelCatalog,
-  validAlphaModelSelectionProjection,
 } from './model-catalog.js'
+import {
+  type AlphaResponse,
+  type LegacyResponse,
+  assertRemoteEndpoint,
+  awaitWithSignal,
+  mapEmit,
+  normalizeAlphaResult,
+  stringValue,
+  validAlphaResult,
+  withoutKey,
+  withoutKeys,
+} from './transport-support.js'
 
 export type {
   AlphaErrorCodeNormalizer,
@@ -70,19 +74,6 @@ export type {
   AlphaWebSocketConstructor,
   AlphaWorkspaceWireVersion,
 } from './remote-mux.js'
-
-type AlphaSuccess = { readonly ok: true; readonly value?: unknown }
-type AlphaFailure = {
-  readonly ok: false
-  readonly error: {
-    readonly code: string
-    readonly message: string
-    readonly details: Record<string, unknown>
-  }
-}
-type AlphaResult = AlphaSuccess | AlphaFailure
-type AlphaResponse = { readonly rpcId: string; readonly result: AlphaResult }
-type LegacyResponse = { readonly rpcId: string; readonly result: AlphaResult }
 
 /**
  * Shared transport for the 0.1.2 alpha Connection/Gateway protocol.
@@ -96,6 +87,7 @@ export class AlphaLoopbackApiClient implements DshTransport {
   private readonly cordisBoundary = new CordisClientBoundary()
   private readonly closed = new AbortController()
   private readonly remoteMux: AlphaRemoteMux
+  private readonly legacyRpc: AlphaLegacyRpc
   private isClosed = false
 
   public readonly sessionHistoryTurnWindow: boolean
@@ -104,6 +96,14 @@ export class AlphaLoopbackApiClient implements DshTransport {
     assertLoopback(options.endpoint)
     this.sessionHistoryTurnWindow = options.sessionHistoryTurnWindow === true
     this.remoteMux = new AlphaRemoteMux(options)
+    this.legacyRpc = createAlphaLegacyRpc({
+      options: this.options,
+      post: (endpoint, payload, signal) => this.post(endpoint, payload, signal),
+      unary: (endpoint, payload, signal) => this.unary(endpoint, payload, signal),
+      openRemoteStream: (endpoint, args, signal) => this.openRemoteStream(endpoint, args, signal),
+      sessionAddress: (sessionId) => this.sessionAddress(sessionId),
+      isClosed: () => this.isClosed,
+    })
   }
 
   public request<TResponse>(method: string, params: unknown, signal?: AbortSignal): Promise<TResponse> {
@@ -344,35 +344,39 @@ export class AlphaLoopbackApiClient implements DshTransport {
     const value = asRecord(params)
     switch (method) {
       case 'session.list':
-        return this.legacy('session/list', { _request: value }, signal, alphaSessionList)
+        return this.legacyRpc.legacy('session/list', { _request: value }, signal, alphaSessionList)
       case 'session.search':
-        return this.legacy('session/search', { request: value }, signal)
+        return this.legacyRpc.legacy('session/search', { request: value }, signal)
       case 'session.create':
-        return this.legacy('session/create', { request: withoutKey(value, 'reuseWorkspaceBlank') }, signal)
+        return this.legacyRpc.legacy(
+          'session/create',
+          { request: withoutKey(value, 'reuseWorkspaceBlank') },
+          signal,
+        )
       case 'session.selectModel':
-        return this.legacy('session/selectModel', { request: value }, signal)
+        return this.legacyRpc.legacy('session/selectModel', { request: value }, signal)
       case 'session.rename':
-        return this.legacy('session/rename', { request: value }, signal)
+        return this.legacyRpc.legacy('session/rename', { request: value }, signal)
       case 'session.fork':
-        return this.legacy('session/fork', { request: value }, signal)
+        return this.legacyRpc.legacy('session/fork', { request: value }, signal)
       case 'session.prompt':
-        return this.prompt(value, signal)
+        return this.legacyRpc.prompt(value, signal)
       case 'session.attachment':
-        return this.legacy('session/attachment', { request: value }, signal)
+        return this.legacyRpc.legacy('session/attachment', { request: value }, signal)
       case 'session.updateQueue':
-        return this.legacy('session/updateQueue', { request: value }, signal)
+        return this.legacyRpc.legacy('session/updateQueue', { request: value }, signal)
       case 'session.cancel':
-        return this.legacy('session/cancel', { request: value }, signal)
+        return this.legacyRpc.legacy('session/cancel', { request: value }, signal)
       case 'session.history':
-        return this.history(value, signal)
+        return this.legacyRpc.history(value, signal)
       case 'session.models':
-        return this.sessionModels(value, signal)
+        return this.legacyRpc.sessionModels(value, signal)
       case 'subagent.list':
-        return this.legacy('subagents/list', { parentSessionId: value.parentSessionId }, signal)
+        return this.legacyRpc.legacy('subagents/list', { parentSessionId: value.parentSessionId }, signal)
       case 'subagent.history':
-        return this.subagentHistory(value, signal)
+        return this.legacyRpc.subagentHistory(value, signal)
       case 'subagent.prompt':
-        return this.legacy(
+        return this.legacyRpc.legacy(
           'subagents/prompt',
           {
             request: {
@@ -383,22 +387,22 @@ export class AlphaLoopbackApiClient implements DshTransport {
           signal,
         )
       case 'subagent.interrupt':
-        return this.legacy('subagents/interruptByParent', value, signal)
+        return this.legacyRpc.legacy('subagents/interruptByParent', value, signal)
       case 'host.pickDirectory':
-        return this.legacy('directoryPicker/pick', {}, signal, (result) => ({ path: result }))
+        return this.legacyRpc.legacy('directoryPicker/pick', {}, signal, (result) => ({ path: result }))
       case 'host.listDirectory':
-        return this.legacy('directoryPicker/list', { path: value.path }, signal)
+        return this.legacyRpc.legacy('directoryPicker/list', { path: value.path }, signal)
       case 'host.createDirectory':
-        return this.legacy(
+        return this.legacyRpc.legacy(
           'directoryPicker/createDirectory',
           { path: value.path, name: value.name },
           signal,
           (result) => ({ path: result }),
         )
       case 'host.openPath':
-        return this.legacy('session/openWorkspacePath', { request: { path: value.path } }, signal)
+        return this.legacyRpc.legacy('session/openWorkspacePath', { request: { path: value.path } }, signal)
       case 'workspace.list':
-        return this.workspaceList(signal)
+        return this.legacyRpc.workspaceList(signal)
       case 'workspace.create':
       case 'workspace.rename':
       case 'workspace.delete':
@@ -408,22 +412,31 @@ export class AlphaLoopbackApiClient implements DshTransport {
       case 'workspace.unarchiveSession':
         // Archive and restore differ only in direction: both take `{sessionId}`
         // and answer the complete archive set this registry now holds.
-        return this.legacy(`workspace/${method.slice('workspace.'.length)}`, { request: value }, signal)
+        return this.legacyRpc.legacy(
+          `workspace/${method.slice('workspace.'.length)}`,
+          { request: value },
+          signal,
+        )
       case 'skill.list':
-        return this.legacy('skills/list', { request: { sessionId: value.sessionId } }, signal)
+        return this.legacyRpc.legacy('skills/list', { request: { sessionId: value.sessionId } }, signal)
       case 'agentPreset.list':
-        return this.presetList(signal)
+        return this.legacyRpc.presetList(signal)
       case 'agentPreset.select':
-        return this.legacy(
+        return this.legacyRpc.legacy(
           'agentPresets/select',
           { agentId: value.sessionId, agentPreset: value.agentPreset },
           signal,
           (result) => ({ agentPreset: result }),
         )
       case 'agentPreset.read':
-        return this.legacy('agentPresets/read', { agentPreset: value.agentPreset }, signal, presetDocument)
+        return this.legacyRpc.legacy(
+          'agentPresets/read',
+          { agentPreset: value.agentPreset },
+          signal,
+          presetDocument,
+        )
       case 'agentPreset.copy':
-        return this.legacy(
+        return this.legacyRpc.legacy(
           'agentPresets/copy',
           {
             from: value.from,
@@ -434,11 +447,20 @@ export class AlphaLoopbackApiClient implements DshTransport {
           (result) => presetCopyReceipt(result, value.agentPreset),
         )
       case 'agentPreset.openDocument':
-        return this.legacy('settings/openAgentPresetDirectory', { agentPreset: value.agentPreset }, signal)
+        return this.legacyRpc.legacy(
+          'settings/openAgentPresetDirectory',
+          { agentPreset: value.agentPreset },
+          signal,
+        )
       case 'agentPreset.remove':
-        return this.legacy('agentPresets/deletePreset', { id: value.agentPreset }, signal, () => ({}))
+        return this.legacyRpc.legacy(
+          'agentPresets/deletePreset',
+          { id: value.agentPreset },
+          signal,
+          () => ({}),
+        )
       case 'goal.create':
-        return this.legacy(
+        return this.legacyRpc.legacy(
           'goals/create',
           {
             agentId: value.sessionId,
@@ -451,7 +473,7 @@ export class AlphaLoopbackApiClient implements DshTransport {
           goalReceipt,
         )
       case 'goal.edit':
-        return this.legacy(
+        return this.legacyRpc.legacy(
           'goals/edit',
           {
             agentId: value.sessionId,
@@ -467,51 +489,56 @@ export class AlphaLoopbackApiClient implements DshTransport {
       case 'goal.pause':
       case 'goal.resume':
       case 'goal.complete':
-        return this.legacy(
+        return this.legacyRpc.legacy(
           `goals/${method.slice('goal.'.length)}`,
           { agentId: value.sessionId, ref: value.ref },
           signal,
           goalReceipt,
         )
       case 'goal.clear':
-        return this.legacy('goals/clear', { agentId: value.sessionId, ref: value.ref }, signal, (receipt) => {
-          const tombstone = recordOrUndefined(receipt)
-          const previous = recordOrUndefined(value.ref)
-          if (
-            previous === undefined ||
-            tombstone?.id !== previous.id ||
-            typeof previous.revision !== 'number' ||
-            !Number.isSafeInteger(tombstone?.revision) ||
-            tombstone?.revision !== previous.revision + 1
-          )
-            throw malformedResponse('goals/clear tombstone')
-          return { cleared: true }
-        })
+        return this.legacyRpc.legacy(
+          'goals/clear',
+          { agentId: value.sessionId, ref: value.ref },
+          signal,
+          (receipt) => {
+            const tombstone = recordOrUndefined(receipt)
+            const previous = recordOrUndefined(value.ref)
+            if (
+              previous === undefined ||
+              tombstone?.id !== previous.id ||
+              typeof previous.revision !== 'number' ||
+              !Number.isSafeInteger(tombstone?.revision) ||
+              tombstone?.revision !== previous.revision + 1
+            )
+              throw malformedResponse('goals/clear tombstone')
+            return { cleared: true }
+          },
+        )
       case 'settings.describe':
-        return this.legacy('settings/describe', {}, signal)
+        return this.legacyRpc.legacy('settings/describe', {}, signal)
       case 'settings.openDocument':
-        return this.legacy('settings/openSettingsDocument', {}, signal)
+        return this.legacyRpc.legacy('settings/openSettingsDocument', {}, signal)
       case 'settings.update':
-        return this.legacy('settings/update', value, signal)
+        return this.legacyRpc.legacy('settings/update', value, signal)
       case 'settings.replace':
-        return this.legacy('settings/replace', value, signal)
+        return this.legacyRpc.legacy('settings/replace', value, signal)
       case 'settings.mutate':
-        return this.legacy('settings/mutate', value, signal)
+        return this.legacyRpc.legacy('settings/mutate', value, signal)
       case 'credentials.describe':
-        return this.legacy('credentials/describe', value, signal, credentialDescribe)
+        return this.legacyRpc.legacy('credentials/describe', value, signal, credentialDescribe)
       case 'credentials.set':
       case 'credentials.unset':
         // Both alpha credentials writes declare `RemoteResult<void>`, so a
         // committed write answers an `ok` envelope without any `value` member.
         // The shared repository contract reads a credential receipt as an empty
         // object, and only this version knows the receipt rides no value.
-        return this.legacy(method.replace('.', '/'), value, signal, () => ({}))
+        return this.legacyRpc.legacy(method.replace('.', '/'), value, signal, () => ({}))
       case 'llm.providers':
-        return this.providers(signal)
+        return this.legacyRpc.providers(signal)
       case 'llm.models':
-        return this.legacy('session/modelCatalog', {}, signal, modelCatalog)
+        return this.legacyRpc.legacy('session/modelCatalog', {}, signal, modelCatalog)
       case 'llm.discoverModels':
-        return this.legacy(
+        return this.legacyRpc.legacy(
           'llm/discoverModels',
           { settingsNs: value.settingsNs, request: withoutKeys(value, ['settingsNs']) },
           signal,
@@ -524,118 +551,6 @@ export class AlphaLoopbackApiClient implements DshTransport {
           retryable: false,
         })
     }
-  }
-
-  private async legacy(
-    endpoint: string,
-    args: Readonly<Record<string, unknown>>,
-    signal?: AbortSignal,
-    transform?: (value: unknown) => unknown,
-  ): Promise<LegacyResponse> {
-    const response = await this.post(endpoint, { args }, signal)
-    if (!response.result.ok || transform === undefined) return response
-    try {
-      return { ...response, result: { ok: true, value: transform(response.result.value) } }
-    } catch (cause) {
-      throw new AppError({
-        code: 'PROTOCOL_ERROR',
-        message: `The alpha DSH response for ${endpoint} could not be projected.`,
-        retryable: false,
-        cause,
-      })
-    }
-  }
-
-  private async presetList(signal?: AbortSignal): Promise<LegacyResponse> {
-    if (this.options.presetWireVersion === 'registry-v2')
-      return this.legacy('agentPresets/list', {}, signal, presetRoster)
-    // Alpha keeps the roster and native-opener capability on separate Remote
-    // methods. Joining them here prevents `authorable` (a write capability)
-    // from being mistaken for the unrelated ability to open a directory.
-    const rosterPromise = this.legacy('agentPresets/list', {}, signal, presetRoster)
-    const openerPromise = this.legacy('settings/canOpenAgentPresetDirectory', {}, signal).catch(
-      (error: unknown) => {
-        // The roster is still useful when an optional native opener is not
-        // composed or temporarily unavailable. Preserve cancellation and a
-        // client close so an in-flight request cannot resolve after teardown.
-        if (
-          this.isClosed ||
-          signal?.aborted === true ||
-          (error instanceof AppError && error.code === 'REQUEST_CANCELLED')
-        )
-          throw error
-        return undefined
-      },
-    )
-    const [roster, opener] = await Promise.all([rosterPromise, openerPromise])
-    if (!roster.result.ok) return roster
-    const value = recordOrUndefined(roster.result.value)
-    if (value === undefined) throw malformedResponse('agentPresets/list')
-    // An opener probe that did not answer states nothing: return the roster
-    // without the capability instead of claiming the host cannot open a
-    // directory, so the surface can word the action as unknown rather than
-    // offering a native open the deployment may not have.
-    if (opener === undefined || !opener.result.ok)
-      return { ...roster, result: { ok: true, value: { ...value } } }
-    if (typeof opener.result.value !== 'boolean')
-      throw malformedResponse('settings/canOpenAgentPresetDirectory')
-    return {
-      ...roster,
-      result: { ok: true, value: { ...value, hasDocument: opener.result.value } },
-    }
-  }
-
-  /**
-   * Alpha publishes the prompt's request id in the queue projection. The
-   * legacy repository uses the transport response id for that correlation,
-   * so expose the same logical id while keeping the physical Connection
-   * envelope id private to `post`.
-   */
-  private async prompt(value: Record<string, unknown>, signal?: AbortSignal): Promise<LegacyResponse> {
-    const requestId = isNonEmptyString(value.requestId) ? value.requestId : randomUUID()
-    const content: unknown[] = []
-    for (const part of Array.isArray(value.content) ? value.content : []) {
-      const file = recordOrUndefined(part)
-      if (file?.type !== 'file-upload') {
-        content.push(part)
-        continue
-      }
-      if (this.options.fileUploads !== true)
-        throw new AppError({
-          code: 'CAPABILITY_UNAVAILABLE',
-          message: 'This DSH version does not support binary file uploads.',
-          retryable: false,
-        })
-      const receipt = recordOrUndefined(
-        await this.unary(
-          'fileUploads/upload',
-          {
-            agentId: stringValue(value.sessionId, 'file upload sessionId'),
-            request: {
-              data: stringValue(file.data, 'file upload data'),
-              name: stringValue(file.name, 'file upload name'),
-            },
-          },
-          signal,
-        ),
-      )
-      const storedFile = recordOrUndefined(receipt?.file)
-      if (
-        !isNonEmptyString(receipt?.receiptId) ||
-        !isNonEmptyString(storedFile?.attachmentId) ||
-        typeof storedFile?.name !== 'string' ||
-        !Number.isSafeInteger(storedFile.bytes) ||
-        (storedFile.bytes as number) < 0
-      )
-        throw malformedResponse('fileUploads/upload')
-      content.push({ type: 'file', receiptId: receipt.receiptId })
-    }
-    const response = await this.legacy(
-      'session/prompt',
-      { request: { ...value, content, requestId } },
-      signal,
-    )
-    return { ...response, rpcId: requestId }
   }
 
   private async post(endpoint: string, payload: unknown, signal?: AbortSignal): Promise<AlphaResponse> {
@@ -683,254 +598,6 @@ export class AlphaLoopbackApiClient implements DshTransport {
     return { rpcId, result }
   }
 
-  private async history(value: Record<string, unknown>, signal?: AbortSignal): Promise<LegacyResponse> {
-    const sessionId = stringValue(value.sessionId, 'session.history sessionId')
-    const address = this.sessionAddress(sessionId)
-    const historyWindow = this.historyWindowOptions(value)
-    const snapshot = await this.followSnapshot({ address, ...historyWindow }, signal)
-    if (value.beforeSeq !== undefined) {
-      const page = await this.unary(
-        'session/page',
-        {
-          request: {
-            address,
-            throughSeq: snapshot.cursor,
-            beforeSeq: value.beforeSeq,
-            ...historyWindow,
-          },
-        },
-        signal,
-      )
-      return this.historyResponse(page, sessionId)
-    }
-    return this.historyResponse(
-      { records: snapshot.records, hasMore: snapshot.hasMore, projections: snapshot.projections },
-      sessionId,
-    )
-  }
-
-  private async subagentHistory(
-    value: Record<string, unknown>,
-    signal?: AbortSignal,
-  ): Promise<LegacyResponse> {
-    const sessionId = stringValue(value.childSessionId, 'subagent.history childSessionId')
-    const address = {
-      kind: 'subagent',
-      parentSessionId: stringValue(value.parentSessionId, 'subagent.history parentSessionId'),
-      childSessionId: sessionId,
-      mode: value.mode === 'one-shot' ? 'one-shot' : 'continuable',
-    }
-    const historyWindow = this.historyWindowOptions(value)
-    const snapshot = await this.followSnapshot({ address, ...historyWindow }, signal)
-    const page =
-      value.beforeSeq === undefined
-        ? { records: snapshot.records, hasMore: snapshot.hasMore, projections: snapshot.projections }
-        : await this.unary(
-            'session/page',
-            {
-              request: {
-                address,
-                throughSeq: snapshot.cursor,
-                beforeSeq: value.beforeSeq,
-                ...historyWindow,
-              },
-            },
-            signal,
-          )
-    return this.historyResponse(page, sessionId)
-  }
-
-  private historyWindowOptions(value: Record<string, unknown>): Record<string, unknown> {
-    const requested = recordOrUndefined(value.turnWindow)
-    if (
-      this.options.sessionHistoryTurnWindow === true &&
-      requested !== undefined &&
-      Number.isSafeInteger(requested.minMessages) &&
-      (requested.minMessages as number) > 0 &&
-      (requested.minMessages as number) <= 500 &&
-      Number.isSafeInteger(requested.minTurns) &&
-      (requested.minTurns as number) > 0
-    ) {
-      return {
-        maxMessages: 500,
-        turnWindow: {
-          minMessages: requested.minMessages,
-          minTurns: requested.minTurns,
-        },
-      }
-    }
-    return value.maxMessages === undefined ? {} : { maxMessages: value.maxMessages }
-  }
-
-  private async followSnapshot(
-    request: Record<string, unknown>,
-    signal?: AbortSignal,
-  ): Promise<Record<string, unknown>> {
-    for await (const item of this.openRemoteStream('session/follow', { request }, signal)) {
-      const frame = recordOrUndefined(item)
-      if (!validAlphaWireSnapshot(frame, this.options.sessionWireVersion ?? 'v0'))
-        throw malformedResponse('session/follow snapshot')
-      return frame
-    }
-    throw malformedResponse('session/follow snapshot')
-  }
-
-  private historyResponse(value: unknown, sessionId: string): LegacyResponse {
-    const record = recordOrUndefined(value)
-    const wireVersion = this.options.sessionWireVersion ?? 'v0'
-    if (
-      record === undefined ||
-      !Array.isArray(record.records) ||
-      typeof record.hasMore !== 'boolean' ||
-      (record.projections !== undefined &&
-        (wireVersion === 'v4'
-          ? !validAlpha171ProjectionBaseline(record.projections)
-          : wireVersion === 'v3'
-            ? !validAlpha151ProjectionBaseline(record.projections)
-            : !validAlphaProjectionBaseline(record.projections)))
-    )
-      throw malformedResponse('session history')
-    const events = expandHistoryRecords(
-      record.records,
-      sessionId,
-      wireVersion,
-      this.options.autoReviewDenialContract === true,
-    )
-    return {
-      rpcId: randomUUID(),
-      result: {
-        ok: true,
-        value: {
-          events: events.map((event) => ({ event })),
-          hasMore: record.hasMore,
-          ...(record.projections === undefined ? {} : { projections: record.projections }),
-        },
-      },
-    }
-  }
-
-  private async sessionModels(value: Record<string, unknown>, signal?: AbortSignal): Promise<LegacyResponse> {
-    const sessionId = stringValue(value.sessionId, 'session.models sessionId')
-    const response = await this.post('session/modelCatalog', { args: {} }, signal)
-    if (!response.result.ok) return response
-    const catalog = response.result.value
-    if (!validAlphaModelCatalog(catalog)) throw malformedResponse('session/modelCatalog')
-    // The catalog names the deployment default and every routable provider; it
-    // deliberately does not name which of them *this* session uses, because a
-    // request's route is durable session state. Read that projection instead of
-    // answering about the default: a surface that blocks input on `routable`
-    // would otherwise block a session whose own model the host serves, and let
-    // through one whose adapter is gone.
-    const current = await this.sessionModelSelection(sessionId, catalog.default, signal)
-    return {
-      ...response,
-      result: {
-        ok: true,
-        value: {
-          current,
-          routable: catalog.routableProviders.includes(current.provider),
-          groups: catalog.groups,
-          failures: catalog.failures,
-        },
-      },
-    }
-  }
-
-  /**
-   * The route this session's next request will take. A session that selected a
-   * model (or already sent one) states it in the durable `modelSelection`
-   * projection, which the open/history path reads from the same baseline; a
-   * session that never did falls back to the deployment default the catalog
-   * answered. The projection read is not optional: answering the default under
-   * the name of the session's selection is exactly the misstatement above.
-   */
-  private async sessionModelSelection(
-    sessionId: string,
-    fallback: AlphaCatalogSelection,
-    signal?: AbortSignal,
-  ): Promise<AlphaCatalogSelection> {
-    const snapshot = await this.followSnapshot({ address: this.sessionAddress(sessionId) }, signal)
-    const projections = recordOrUndefined(snapshot.projections)
-    const projectionValues = recordOrUndefined(projections?.values)
-    if (
-      this.options.requireModelSelectionProjection === true &&
-      !validAlphaModelSelectionProjection(projectionValues?.modelSelection)
-    )
-      throw malformedResponse('session modelSelection projection')
-    const selected = projectedModelSelection(projectionValues)
-    if (selected.providerId === '' || selected.modelId === '') return fallback
-    return {
-      provider: selected.providerId,
-      model: selected.modelId,
-      ...(selected.reasoningLevel === undefined ? {} : { reasoningEffort: selected.reasoningLevel }),
-    }
-  }
-
-  private async providers(signal?: AbortSignal): Promise<LegacyResponse> {
-    const [providers, configurable] = await Promise.all([
-      this.post('llm/listProviders', { args: {} }, signal),
-      this.post('llm/listConfigurableProviders', { args: {} }, signal),
-    ])
-    if (!providers.result.ok) return providers
-    if (!configurable.result.ok) return configurable
-    const listed = alphaProviderInfoList(providers.result.value)
-    const configs = alphaConfigurableProviderList(configurable.result.value)
-    const byProvider = new Map<string, AlphaConfigurableProvider>()
-    for (const entry of configs) {
-      const row = entry
-      if (isNonEmptyString(row.provider)) byProvider.set(row.provider, row)
-    }
-    const mapped = new Map<string, Record<string, unknown>>()
-    for (const entry of listed) {
-      const row = entry
-      const config = byProvider.get(row.id)
-      mapped.set(row.id, {
-        provider: row.id,
-        displayName: row.name,
-        // A live route without a configurable-directory entry has no settings
-        // address. Preserve the upstream join contract's empty marker rather
-        // than inventing a namespace from the route id; the Webview uses this
-        // distinction to avoid hiding a real registered provider.
-        settingsNs: config === undefined ? '' : config.settingsNs,
-        settingsPath: config?.settingsPath ?? [],
-        active: true,
-        ...(typeof config?.declared === 'boolean' ? { declared: config.declared } : {}),
-      })
-    }
-    for (const entry of configs) {
-      const row = entry
-      if (mapped.has(row.provider)) continue
-      mapped.set(row.provider, {
-        provider: row.provider,
-        displayName: row.displayName,
-        settingsNs: row.settingsNs,
-        settingsPath: row.settingsPath,
-        active: false,
-        ...(typeof row.declared === 'boolean' ? { declared: row.declared } : {}),
-      })
-    }
-    return {
-      rpcId: providers.rpcId,
-      result: { ok: true, value: { providers: [...mapped.values()] } },
-    }
-  }
-
-  private async workspaceList(signal?: AbortSignal): Promise<LegacyResponse> {
-    const first = await this.firstStreamItem('workspace/follow', {}, signal)
-    const value = recordOrUndefined(first)
-    if (value?.type !== 'baseline') throw malformedResponse('workspace/follow baseline')
-    const baseline = recordOrUndefined(value.value)
-    if (
-      baseline === undefined ||
-      !Array.isArray(baseline.items) ||
-      !baseline.items.every(isPlainRecord) ||
-      !isNonEmptyStringArray(baseline.archivedSessionIds) ||
-      (this.options.workspaceWireVersion === 'pinned-v2' && !isNonEmptyStringArray(baseline.pinnedSessionIds))
-    )
-      throw malformedResponse('workspace/follow baseline value')
-    return { rpcId: randomUUID(), result: { ok: true, value: baseline } }
-  }
-
   private async unary(
     endpoint: string,
     payload: Record<string, unknown>,
@@ -938,15 +605,6 @@ export class AlphaLoopbackApiClient implements DshTransport {
   ): Promise<unknown> {
     const response = await this.post(endpoint, { args: payload }, signal)
     return unwrapRpcResultValue(response.result, endpoint)
-  }
-
-  private async firstStreamItem(
-    endpoint: string,
-    args: Record<string, unknown>,
-    signal?: AbortSignal,
-  ): Promise<unknown> {
-    for await (const item of this.openRemoteStream(endpoint, args, signal)) return item
-    throw malformedResponse(`${endpoint} stream`)
   }
 
   private async *readEvents(signal?: AbortSignal): AsyncGenerator<unknown> {
@@ -1141,7 +799,7 @@ export class AlphaLoopbackApiClient implements DshTransport {
     const wireVersion = this.options.sessionWireVersion ?? 'v0'
     const v2 = wireVersion === 'v2'
     const assistantStream = v2 || wireVersion === 'v3' || wireVersion === 'v4'
-    const historyWindow = this.historyWindowOptions({
+    const historyWindow = this.legacyRpc.historyWindowOptions({
       maxMessages: 50,
       ...(this.options.sessionHistoryTurnWindow === true
         ? { turnWindow: { minMessages: 50, minTurns: 2 } }
@@ -1343,202 +1001,4 @@ export class AlphaLoopbackApiClient implements DshTransport {
   private isConnectionClosed(): boolean {
     return this.isClosed
   }
-}
-
-function mapEmit(event: unknown, args: readonly unknown[]): readonly unknown[] {
-  switch (event) {
-    case 'api-session/added': {
-      const summary = recordOrUndefined(args[0])
-      if (
-        args.length !== 1 ||
-        summary === undefined ||
-        !isNonEmptyString(summary.sessionId) ||
-        typeof summary.blank !== 'boolean' ||
-        (summary.parentSessionId !== undefined && !isNonEmptyString(summary.parentSessionId)) ||
-        (summary.origin !== undefined && summary.origin !== 'subagent') ||
-        (summary.agentAvailable !== undefined && typeof summary.agentAvailable !== 'boolean') ||
-        (summary.cwd !== undefined && typeof summary.cwd !== 'string') ||
-        (summary.agentPreset !== undefined && typeof summary.agentPreset !== 'string')
-      )
-        throw malformedResponse('$events api-session/added')
-      return [
-        {
-          type: 'host/session-added',
-          sessionId: summary.sessionId,
-          blank: summary.blank,
-          ...(summary.agentAvailable === undefined ? {} : { agentAvailable: summary.agentAvailable }),
-          ...(summary.parentSessionId === undefined ? {} : { parentSessionId: summary.parentSessionId }),
-          ...(summary.origin === undefined ? {} : { origin: summary.origin }),
-          ...(summary.cwd === undefined ? {} : { cwd: summary.cwd }),
-          ...(summary.agentPreset === undefined ? {} : { agentPreset: summary.agentPreset }),
-        },
-      ]
-    }
-    case 'api-session/removed':
-      if (args.length !== 1 || !isNonEmptyString(args[0]))
-        throw malformedResponse('$events api-session/removed')
-      return [{ type: 'host/session-removed', sessionId: args[0] }]
-    case 'api-session/status':
-      if (args.length !== 2 || !isNonEmptyString(args[0]) || typeof args[1] !== 'boolean')
-        throw malformedResponse('$events api-session/status')
-      return [{ type: 'host/session-status', sessionId: args[0], running: args[1] }]
-    case 'api-session/activity':
-      if (
-        args.length !== 2 ||
-        !isNonEmptyString(args[0]) ||
-        !Number.isSafeInteger(args[1]) ||
-        (args[1] as number) < 0
-      )
-        throw malformedResponse('$events api-session/activity')
-      return [{ type: 'host/session-activity', sessionId: args[0], updatedAt: args[1] }]
-    case 'api-session/error':
-      if (args.length !== 2 || !isNonEmptyString(args[0]) || typeof args[1] !== 'string')
-        throw malformedResponse('$events api-session/error')
-      return [{ type: 'host/agent-error', sessionId: args[0], message: args[1] }]
-    case 'agent-preset/selected':
-      if (args.length !== 2 || !isNonEmptyString(args[0]) || !isNonEmptyString(args[1]))
-        throw malformedResponse('$events agent-preset/selected')
-      return [
-        {
-          type: 'session/event',
-          sessionId: args[0],
-          event: { type: 'agent-preset/selected', data: { agentPreset: args[1] } },
-        },
-      ]
-    default:
-      return [{ type: 'host/remote-event', event, args }]
-  }
-}
-
-type AlphaProviderInfo = Record<string, unknown> & { readonly id: string; readonly name: string }
-
-type AlphaConfigurableProvider = Record<string, unknown> & {
-  readonly provider: string
-  readonly displayName: string
-  readonly settingsNs: string
-  readonly settingsPath: readonly string[]
-  readonly declared?: boolean
-}
-
-function validAlphaProviderInfo(value: unknown): value is AlphaProviderInfo {
-  const row = recordOrUndefined(value)
-  return row !== undefined && isNonEmptyString(row.id) && isNonEmptyString(row.name)
-}
-
-function validAlphaConfigurableProvider(value: unknown): value is AlphaConfigurableProvider {
-  const row = recordOrUndefined(value)
-  return (
-    row !== undefined &&
-    isNonEmptyString(row.provider) &&
-    isNonEmptyString(row.displayName) &&
-    isNonEmptyString(row.settingsNs) &&
-    isNonEmptyStringArray(row.settingsPath) &&
-    (row.declared === undefined || typeof row.declared === 'boolean')
-  )
-}
-
-function alphaProviderInfoList(value: unknown): readonly AlphaProviderInfo[] {
-  if (!Array.isArray(value) || !value.every(validAlphaProviderInfo))
-    throw malformedResponse('llm/listProviders')
-  return value
-}
-
-function alphaConfigurableProviderList(value: unknown): readonly AlphaConfigurableProvider[] {
-  if (!Array.isArray(value) || !value.every(validAlphaConfigurableProvider))
-    throw malformedResponse('llm/listConfigurableProviders')
-  return value
-}
-
-function validAlphaResult(value: unknown): value is AlphaResult {
-  const record = recordOrUndefined(value)
-  if (record?.ok === true) return true
-  const error = recordOrUndefined(record?.error)
-  return (
-    record?.ok === false &&
-    error !== undefined &&
-    typeof error.code === 'string' &&
-    typeof error.message === 'string' &&
-    isPlainRecord(error.details)
-  )
-}
-
-function normalizeAlphaResult(
-  result: AlphaResult,
-  normalizeErrorCode?: AlphaErrorCodeNormalizer,
-): AlphaResult {
-  if (result.ok || normalizeErrorCode === undefined) return result
-  return {
-    ...result,
-    error: {
-      ...result.error,
-      code: normalizeErrorCode(result.error.code, result.error.details),
-    },
-  }
-}
-
-function withoutKey(value: Record<string, unknown>, key: string): Record<string, unknown> {
-  return Object.fromEntries(Object.entries(value).filter(([name]) => name !== key))
-}
-
-function withoutKeys(value: Record<string, unknown>, keys: readonly string[]): Record<string, unknown> {
-  const excluded = new Set(keys)
-  return Object.fromEntries(Object.entries(value).filter(([name]) => !excluded.has(name)))
-}
-
-function stringValue(value: unknown, label: string): string {
-  if (typeof value !== 'string' || value.trim() === '')
-    throw new AppError({ code: 'INVALID_CONFIGURATION', message: `${label} is required.`, retryable: false })
-  return value
-}
-
-function assertRemoteEndpoint(endpoint: string): void {
-  const segments = endpoint.split('/')
-  if (
-    segments.length === 0 ||
-    segments.some(
-      (segment) =>
-        segment === '' || segment === '.' || segment === '..' || !/^[A-Za-z0-9_$.-]+$/u.test(segment),
-    )
-  )
-    throw new AppError({
-      code: 'INVALID_CONFIGURATION',
-      message: 'The alpha DSH Remote endpoint is invalid.',
-      retryable: false,
-    })
-}
-
-function rejectionError(reason: unknown): Error {
-  // AbortSignal and WebSocket failure paths can carry arbitrary reasons. Keep
-  // existing Error instances (including AppError classifications) intact, and
-  // retain non-Error values as causes while satisfying Promise's Error contract.
-  return reason instanceof Error ? reason : new Error('The alpha DSH stream failed.', { cause: reason })
-}
-
-function awaitWithSignal<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
-  if (signal.aborted) return Promise.reject(rejectionError(signal.reason))
-  return new Promise<T>((resolve, reject) => {
-    let settled = false
-    const cleanup = (): void => signal.removeEventListener('abort', onAbort)
-    const onAbort = (): void => {
-      if (settled) return
-      settled = true
-      cleanup()
-      reject(rejectionError(signal.reason))
-    }
-    signal.addEventListener('abort', onAbort, { once: true })
-    void promise.then(
-      (value) => {
-        if (settled) return
-        settled = true
-        cleanup()
-        resolve(value)
-      },
-      (error: unknown) => {
-        if (settled) return
-        settled = true
-        cleanup()
-        reject(rejectionError(error))
-      },
-    )
-  })
 }

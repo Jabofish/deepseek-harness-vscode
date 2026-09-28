@@ -276,3 +276,14 @@ export function failureKey(result: PluginBundleChangeResult): string {
 export function pluginTitle(plugin: ManagedPluginEntry, locale: string): string {
   return localized(plugin.meta?.title, locale) ?? plugin.moduleName
 }
+
+export function resultText(t: Translate, result: PluginBundleChangeResult): string {
+  if (result.application === 'failed') return t(failureKey(result))
+  if (result.application === 'restart-required') return t('plugins.bundles.result.restart')
+  if (result.application === 'overridden') return t('plugins.bundles.result.overridden')
+  if (result.application === 'cancelled') return t('plugins.bundles.result.cancelled')
+  if (!result.changed) return t('plugins.bundles.result.unchanged')
+  if (result.stage === 'install') return t('plugins.manager.install.done')
+  if (result.stage === 'remove') return t('plugins.manager.remove.done')
+  return result.enabled === false ? t('plugins.bundles.result.disabled') : t('plugins.bundles.result.enabled')
+}

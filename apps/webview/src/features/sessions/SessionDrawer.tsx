@@ -21,19 +21,20 @@ import { SelectMenu } from '../../components/common/SelectMenu.js'
 import { useDismissibleLayer } from '../../components/common/useDismissibleLayer.js'
 import { Icon } from '../../ui/Icon.js'
 import { displaySessionTitle } from './session-title.js'
+import { DeleteSessionDialog, RemoveWorkspaceDialog, RenameDialog } from './session-drawer-dialogs.js'
+import { SessionRow, WorkspaceCard } from './session-list-rows.js'
 import { useI18n } from '../../i18n.js'
 import {
   ARCHIVE_FILTERS,
-  DEFAULT_WORKSPACE_NAME,
-  ORDER_DRAG_MIME,
   SEARCH_QUERY_MAX_CODE_UNITS,
-  readOrderDrag,
+  projectSessionLists,
+  renameConflictFor,
   sanitizeSearchQuery,
-  sessionStatusIcon,
-  sessionStatusTone,
-  sortSessions,
+  workspaceDisplayName,
+  workspaceSessionsFor,
   type ArchiveFilter,
   type RenameTarget,
+  type SessionListProjectionInput,
   type SessionSorting,
   type WorkspaceDisplay,
 } from './session-drawer-model.js'
@@ -71,8 +72,7 @@ export interface SessionDrawerProps {
 
 export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerProps): ReactElement {
   const { t } = useI18n()
-  const displayWorkspaceName = (name: string): string =>
-    name === DEFAULT_WORKSPACE_NAME ? t('sessions.defaultWorkspace') : name
+  const displayWorkspaceName = (name: string): string => workspaceDisplayName(name, t)
   const { onLoadArchived, onSearch } = props
   const [internalOpen, setInternalOpen] = useState(false)
   const [removingSessionId, setRemovingSessionId] = useState<string>()
@@ -239,67 +239,30 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
     dialogWasOpen.current = dialogOpen
   }, [dialogOpen])
 
-  const workspaceSessions = (workspace: WorkspaceSummary): readonly SessionSummary[] =>
-    props.sessions.filter(
-      (session) =>
-        session.origin !== 'subagent' &&
-        (session.workspaceId === workspace.id || workspace.sessionIds?.includes(session.id) === true) &&
-        (!session.blank || session.id === props.activeSessionId),
-    )
-
-  const filterSessions = (workspace: WorkspaceSummary): readonly SessionSummary[] => {
-    const sessions = workspaceSessions(workspace)
-    const filtered =
-      query === ''
-        ? sessions
-        : sessions.filter((session) => displaySessionTitle(session.title, t).toLowerCase().includes(query))
-    return sortSessions(filtered, sorting, workspace.sessionIds, props.activeSessionId)
+  const listProjectionInput: SessionListProjectionInput = {
+    sessions: props.sessions,
+    archivedSessions: props.archivedSessions,
+    visibleWorkspaces,
+    activeSessionId: props.activeSessionId,
+    selectedWorkspace,
+    contentMatches,
+    query,
+    sorting,
+    archiveFilter,
+    workspaceDisplay,
+    t,
   }
 
-  const currentWorkspaceSessions =
-    archiveFilter !== 'archived' && workspaceDisplay === 'current' && selectedWorkspace !== undefined
-      ? filterSessions(selectedWorkspace)
-      : []
-  const groupedWorkspaceSessions =
-    archiveFilter !== 'archived' && workspaceDisplay === 'grouped'
-      ? visibleWorkspaces.map((workspace) => ({
-          workspace,
-          sessions: filterSessions(workspace),
-        }))
-      : []
-  const locallyVisibleIds = new Set(currentWorkspaceSessions.map((session) => session.id))
-  const groupedVisibleIds = new Set(
-    groupedWorkspaceSessions.flatMap(({ sessions }) => sessions.map(({ id }) => id)),
-  )
-  const contentSearchResults =
-    archiveFilter !== 'archived' && workspaceDisplay === 'grouped'
-      ? sortSessions(
-          contentMatches.filter(
-            (session) =>
-              !groupedVisibleIds.has(session.id) && session.origin !== 'subagent' && !session.blank,
-          ),
-          sorting,
-        )
-      : archiveFilter !== 'archived' && workspaceDisplay === 'current'
-        ? sortSessions(
-            contentMatches.filter(
-              (session) =>
-                !locallyVisibleIds.has(session.id) && session.origin !== 'subagent' && !session.blank,
-            ),
-            sorting,
-          )
-        : []
-  const archivedSessionsToShow =
-    archiveFilter === 'archived' && workspaceDisplay === 'current' && selectedWorkspace !== undefined
-      ? props.archivedSessions.filter(
-          (session) =>
-            session.workspaceId === selectedWorkspace.id ||
-            selectedWorkspace.sessionIds?.includes(session.id) === true,
-        )
-      : props.archivedSessions
-  const filteredArchivedSessions = archivedSessionsToShow.filter(
-    (session) => query === '' || displaySessionTitle(session.title, t).toLowerCase().includes(query),
-  )
+  const workspaceSessions = (workspace: WorkspaceSummary): readonly SessionSummary[] =>
+    workspaceSessionsFor(listProjectionInput, workspace)
+
+  const {
+    current: currentWorkspaceSessions,
+    grouped: groupedWorkspaceSessions,
+    contentMatches: contentSearchResults,
+    archivedInScope: archivedSessionsToShow,
+    archived: filteredArchivedSessions,
+  } = projectSessionLists(listProjectionInput)
 
   const openSession = (session: SessionSummary): void => {
     setSelectedWorkspaceId(session.workspaceId)
@@ -421,207 +384,64 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
     session: SessionSummary,
     workspaceName?: string,
     reorderWorkspaceId?: string,
-  ): ReactElement => {
-    const title = displaySessionTitle(session.title, t)
-    const waiting = props.permissions?.some((request) => request.sessionId === session.id)
-      ? 'approval'
-      : props.questions?.some(
-            (question) => question.sessionId === session.id && question.intent?.kind === 'plan-review',
-          )
-        ? 'plan-review'
-        : props.questions?.some((question) => question.sessionId === session.id)
-          ? 'answer'
-          : undefined
-    const statusLabel = t(
-      waiting === undefined ? `sessions.status.${session.status}` : `sessions.waiting.${waiting}`,
-    )
-    const canReorder = sorting === 'manual' && reorderWorkspaceId !== undefined
-    return (
-      <li
-        key={session.id}
-        aria-busy={removingSessionId === session.id}
-        draggable={canReorder}
-        title={canReorder ? t('sessions.dragSession') : undefined}
-        onDragStart={(event) => {
-          if (!canReorder) return
-          event.dataTransfer.effectAllowed = 'move'
-          event.dataTransfer.setData(
-            ORDER_DRAG_MIME,
-            JSON.stringify({ kind: 'session', workspaceId: reorderWorkspaceId, itemId: session.id }),
-          )
-        }}
-        onDragOver={(event) => {
-          if (!canReorder) return
-          event.preventDefault()
-          event.dataTransfer.dropEffect = 'move'
-        }}
-        onDrop={(event) => {
-          if (!canReorder) return
-          const drag = readOrderDrag(event.dataTransfer)
-          if (
-            drag?.kind !== 'session' ||
-            drag.workspaceId !== reorderWorkspaceId ||
-            drag.itemId === session.id
-          )
-            return
-          event.preventDefault()
-          moveSession(reorderWorkspaceId, drag.itemId, session.id)
-        }}
-      >
-        <button
-          className={`dsh-session-item__button${session.id === props.activeSessionId ? ' dsh-session-item__button--active' : ''}`}
-          type="button"
-          aria-current={session.id === props.activeSessionId ? 'page' : undefined}
-          disabled={removingSessionId !== undefined || mutationBusy}
-          onClick={() => openSession(session)}
-        >
-          <span
-            className={`dsh-session-item__icon dsh-session-item__icon--${session.status}`}
-            role="img"
-            aria-label={statusLabel}
-            title={statusLabel}
-          >
-            <Icon name={waiting === undefined ? sessionStatusIcon(session.status) : 'alert'} />
-          </span>
-          <span className="dsh-session-item__copy">
-            <strong title={title}>{title}</strong>
-            {workspaceName === undefined ? null : (
-              <span className="dsh-session-item__workspace" title={workspaceName}>
-                {workspaceName}
-              </span>
-            )}
-          </span>
-          <span
-            className={`dsh-status-pill dsh-session-item__status dsh-session-item__status--${waiting === undefined ? sessionStatusTone(session.status) : 'amber'}`}
-            title={statusLabel}
-          >
-            <span className="dsh-session-item__status-dot" aria-hidden="true" />
-            <span className="dsh-session-item__status-label">{statusLabel}</span>
-          </span>
-        </button>
-        <div className="dsh-session-item__actions">
-          <button
-            className="dsh-icon-button dsh-session-item__rename"
-            type="button"
-            aria-label={t('sessions.rename', { title })}
-            title={t('sessions.renameTitle')}
-            disabled={removingSessionId !== undefined || mutationBusy}
-            onClick={(event) => {
-              dialogTriggerRef.current = event.currentTarget
-              startRename({
-                kind: 'session',
-                id: session.id,
-                title: session.title,
-                workspaceId: session.workspaceId,
-              })
-            }}
-          >
-            <Icon name="edit" />
-          </button>
-          {session.blank ? null : (
-            <button
-              className="dsh-icon-button dsh-session-item__remove"
-              type="button"
-              aria-label={t('sessions.archive', { title })}
-              title={t('sessions.archiveTitle')}
-              disabled={removingSessionId !== undefined || mutationBusy}
-              onClick={() => archiveSession(session)}
-            >
-              <Icon name="box" />
-            </button>
-          )}
-        </div>
-      </li>
-    )
-  }
+  ): ReactElement => (
+    <SessionRow
+      key={session.id}
+      session={session}
+      active={session.id === props.activeSessionId}
+      {...(workspaceName === undefined ? {} : { workspaceName })}
+      {...(reorderWorkspaceId === undefined ? {} : { reorderWorkspaceId })}
+      {...(props.permissions === undefined ? {} : { permissions: props.permissions })}
+      {...(props.questions === undefined ? {} : { questions: props.questions })}
+      removing={removingSessionId === session.id}
+      disabled={removingSessionId !== undefined || mutationBusy}
+      sorting={sorting}
+      onOpen={openSession}
+      onArchive={archiveSession}
+      onRename={(target, trigger) => {
+        dialogTriggerRef.current = trigger
+        startRename({
+          kind: 'session',
+          id: target.id,
+          title: target.title,
+          workspaceId: target.workspaceId,
+        })
+      }}
+      onMove={moveSession}
+    />
+  )
 
-  const renderWorkspaceCard = (workspace: WorkspaceSummary): ReactElement => {
-    const selected = workspace.id === selectedWorkspaceKey
-    const displayName = displayWorkspaceName(workspace.name)
-    return (
-      <div
-        className={`dsh-session-switcher__workspace${selected ? ' dsh-session-switcher__workspace--active' : ''}`}
-        key={workspace.id}
-        draggable={sorting === 'manual'}
-        title={sorting === 'manual' ? t('sessions.dragWorkspace') : undefined}
-        onDragStart={(event) => {
-          if (sorting !== 'manual') return
-          event.dataTransfer.effectAllowed = 'move'
-          event.dataTransfer.setData(
-            ORDER_DRAG_MIME,
-            JSON.stringify({ kind: 'workspace', itemId: workspace.id }),
-          )
-        }}
-        onDragOver={(event) => {
-          if (sorting !== 'manual') return
-          event.preventDefault()
-          event.dataTransfer.dropEffect = 'move'
-        }}
-        onDrop={(event) => {
-          if (sorting !== 'manual') return
-          const drag = readOrderDrag(event.dataTransfer)
-          if (drag?.kind !== 'workspace' || drag.itemId === workspace.id) return
-          event.preventDefault()
-          moveWorkspace(drag.itemId, workspace.id)
-        }}
-      >
-        <button
-          className="dsh-session-switcher__workspace-button"
-          type="button"
-          aria-pressed={selected}
-          onClick={() => {
-            setSelectedWorkspaceId(workspace.id)
-            setWorkspaceDisplay('current')
-          }}
-        >
-          <span className="dsh-session-switcher__workspace-icon" aria-hidden="true">
-            <Icon name="folder" />
-          </span>
-          <span className="dsh-session-switcher__workspace-name" title={displayName}>
-            {displayName}
-          </span>
-          <small className="dsh-session-switcher__workspace-count">
-            {archiveFilter === 'archived'
-              ? props.archivedSessions.filter(
-                  (session) =>
-                    session.workspaceId === workspace.id ||
-                    workspace.sessionIds?.includes(session.id) === true,
-                ).length
-              : workspaceSessions(workspace).length}
-          </small>
-        </button>
-        <div className="dsh-session-switcher__workspace-actions">
-          <button
-            className="dsh-icon-button"
-            type="button"
-            aria-label={t('sessions.renameWorkspace', { name: displayName })}
-            title={t('sessions.renameWorkspaceTitle')}
-            disabled={mutationBusy}
-            onClick={(event) => {
-              dialogTriggerRef.current = event.currentTarget
-              startRename({ kind: 'workspace', id: workspace.id, title: workspace.name })
-            }}
-          >
-            <Icon name="edit" />
-          </button>
-          <button
-            className="dsh-icon-button dsh-session-switcher__workspace-remove"
-            type="button"
-            aria-label={t('sessions.removeWorkspace', { name: displayName })}
-            title={t('sessions.removeWorkspaceTitle')}
-            disabled={mutationBusy}
-            onClick={(event) => {
-              dialogTriggerRef.current = event.currentTarget
-              setRemoveError(undefined)
-              setRemoveWorkspace(workspace)
-            }}
-          >
-            <Icon name="trash" />
-          </button>
-        </div>
-      </div>
-    )
-  }
+  const renderWorkspaceCard = (workspace: WorkspaceSummary): ReactElement => (
+    <WorkspaceCard
+      key={workspace.id}
+      workspace={workspace}
+      selected={workspace.id === selectedWorkspaceKey}
+      sorting={sorting}
+      sessionCount={
+        archiveFilter === 'archived'
+          ? props.archivedSessions.filter(
+              (session) =>
+                session.workspaceId === workspace.id || workspace.sessionIds?.includes(session.id) === true,
+            ).length
+          : workspaceSessions(workspace).length
+      }
+      busy={mutationBusy}
+      onSelect={(target) => {
+        setSelectedWorkspaceId(target.id)
+        setWorkspaceDisplay('current')
+      }}
+      onRename={(target, trigger) => {
+        dialogTriggerRef.current = trigger
+        startRename({ kind: 'workspace', id: target.id, title: target.name })
+      }}
+      onRemove={(target, trigger) => {
+        dialogTriggerRef.current = trigger
+        setRemoveError(undefined)
+        setRemoveWorkspace(target)
+      }}
+      onMove={moveWorkspace}
+    />
+  )
 
   const renderContentSearchResults = (): ReactElement | null => {
     if (contentSearchResults.length === 0) return null
@@ -641,29 +461,13 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
     )
   }
 
-  const renameConflict =
-    renameTarget === undefined
-      ? false
-      : renameTarget.kind === 'session'
-        ? props.sessions.some(
-            (session) =>
-              session.id !== renameTarget.id &&
-              // A row from the "content matches" list belongs to another
-              // workspace; the warning names "this workspace", so it has to
-              // compare inside the renamed session's own workspace.
-              session.workspaceId === renameTarget.workspaceId &&
-              session.title.trim().toLocaleLowerCase() === renameDraft.trim().toLocaleLowerCase() &&
-              renameDraft.trim() !== '',
-          )
-        : renameTarget.kind === 'workspace' &&
-            renameDraft.trim() === displayWorkspaceName(renameTarget.title.trim())
-          ? false
-          : props.workspaces.some(
-              (workspace) =>
-                workspace.id !== renameTarget.id &&
-                workspace.name.trim().toLocaleLowerCase() === renameDraft.trim().toLocaleLowerCase() &&
-                renameDraft.trim() !== '',
-            )
+  const renameConflict = renameConflictFor({
+    target: renameTarget,
+    draft: renameDraft,
+    sessions: props.sessions,
+    workspaces: props.workspaces,
+    t,
+  })
 
   return (
     <section
@@ -1002,156 +806,48 @@ export const SessionDrawer = memo(function SessionDrawer(props: SessionDrawerPro
       {renameTarget === undefined || typeof document === 'undefined'
         ? null
         : createPortal(
-            <div className="dsh-session-dialog__backdrop" role="presentation">
-              <form
-                ref={renameDialogRef}
-                className="dsh-session-dialog"
-                role="dialog"
-                aria-modal="true"
-                aria-labelledby={renameDialogId}
-                tabIndex={-1}
-                onSubmit={submitRename}
-              >
-                <h2 id={renameDialogId} className="dsh-session-dialog__title">
-                  {renameTarget.kind === 'session'
-                    ? t('sessions.renameTitle')
-                    : t('sessions.renameWorkspaceTitle')}
-                </h2>
-                <label className="dsh-session-dialog__label" htmlFor={`${renameDialogId}-input`}>
-                  {renameTarget.kind === 'session' ? t('sessions.sessionName') : t('sessions.workspaceName')}
-                </label>
-                <input
-                  ref={renameInputRef}
-                  id={`${renameDialogId}-input`}
-                  className="dsh-session-dialog__input"
-                  value={renameDraft}
-                  maxLength={renameTarget.kind === 'session' ? 512 : 256}
-                  onChange={(event) => setRenameDraft(event.target.value)}
-                />
-                {renameConflict ? (
-                  <p className="dsh-session-dialog__warning" role="status">
-                    {renameTarget.kind === 'session'
-                      ? t('sessions.renameConflict')
-                      : t('sessions.workspaceRenameConflict')}
-                  </p>
-                ) : null}
-                {renameError === undefined ? null : (
-                  <p className="dsh-session-dialog__error" role="alert">
-                    {renameError}
-                  </p>
-                )}
-                <div className="dsh-session-dialog__actions">
-                  <button
-                    className="dsh-button dsh-button--secondary"
-                    type="button"
-                    disabled={mutationBusy}
-                    onClick={closeRenameDialog}
-                  >
-                    {t('common.cancel')}
-                  </button>
-                  <button className="dsh-button dsh-button--primary" type="submit" disabled={mutationBusy}>
-                    {mutationBusy ? t('common.saving') : t('common.save')}
-                  </button>
-                </div>
-              </form>
-            </div>,
+            <RenameDialog
+              target={renameTarget}
+              draft={renameDraft}
+              conflict={renameConflict}
+              error={renameError}
+              busy={mutationBusy}
+              dialogId={renameDialogId}
+              dialogRef={renameDialogRef}
+              inputRef={renameInputRef}
+              onDraftChange={setRenameDraft}
+              onCancel={closeRenameDialog}
+              onSubmit={submitRename}
+            />,
             document.body,
           )}
       {removeWorkspace === undefined || typeof document === 'undefined'
         ? null
         : createPortal(
-            <div className="dsh-session-dialog__backdrop" role="presentation">
-              <div
-                ref={removeDialogRef}
-                className="dsh-session-dialog"
-                role="alertdialog"
-                aria-modal="true"
-                aria-labelledby={`${panelId}-remove-title`}
-                tabIndex={-1}
-              >
-                <h2 id={`${panelId}-remove-title`} className="dsh-session-dialog__title">
-                  {t('sessions.removeWorkspaceTitle')}
-                </h2>
-                <p className="dsh-session-dialog__description">
-                  {t('sessions.removeWorkspaceConfirm', {
-                    name: displayWorkspaceName(removeWorkspace.name),
-                    count: removeWorkspace.sessionCount,
-                  })}
-                </p>
-                {removeError === undefined ? null : (
-                  <p className="dsh-session-dialog__error" role="alert">
-                    {removeError}
-                  </p>
-                )}
-                <div className="dsh-session-dialog__actions">
-                  <button
-                    className="dsh-button dsh-button--secondary"
-                    type="button"
-                    disabled={mutationBusy}
-                    autoFocus
-                    onClick={closeRemoveDialog}
-                  >
-                    {t('common.cancel')}
-                  </button>
-                  <button
-                    className="dsh-button dsh-button--danger"
-                    type="button"
-                    disabled={mutationBusy}
-                    onClick={confirmRemoveWorkspace}
-                  >
-                    {mutationBusy ? t('common.removing') : t('common.remove')}
-                  </button>
-                </div>
-              </div>
-            </div>,
+            <RemoveWorkspaceDialog
+              name={displayWorkspaceName(removeWorkspace.name)}
+              sessionCount={removeWorkspace.sessionCount}
+              error={removeError}
+              busy={mutationBusy}
+              titleId={`${panelId}-remove-title`}
+              dialogRef={removeDialogRef}
+              onCancel={closeRemoveDialog}
+              onConfirm={confirmRemoveWorkspace}
+            />,
             document.body,
           )}
       {deleteTarget === undefined || typeof document === 'undefined'
         ? null
         : createPortal(
-            <div className="dsh-session-dialog__backdrop" role="presentation">
-              <div
-                ref={deleteDialogRef}
-                className="dsh-session-dialog"
-                role="alertdialog"
-                aria-modal="true"
-                aria-labelledby={`${panelId}-delete-title`}
-                tabIndex={-1}
-              >
-                <h2 id={`${panelId}-delete-title`} className="dsh-session-dialog__title">
-                  {t('sessions.deleteTitle')}
-                </h2>
-                <p className="dsh-session-dialog__description">
-                  {t('sessions.deleteConfirm', {
-                    title: displaySessionTitle(deleteTarget.title, t),
-                  })}
-                </p>
-                {deleteError === undefined ? null : (
-                  <p className="dsh-session-dialog__error" role="alert">
-                    {deleteError}
-                  </p>
-                )}
-                <div className="dsh-session-dialog__actions">
-                  <button
-                    className="dsh-button dsh-button--secondary"
-                    type="button"
-                    disabled={mutationBusy}
-                    autoFocus
-                    onClick={closeDeleteDialog}
-                  >
-                    {t('common.cancel')}
-                  </button>
-                  <button
-                    className="dsh-button dsh-button--danger"
-                    type="button"
-                    disabled={mutationBusy}
-                    onClick={confirmDeleteSession}
-                  >
-                    {mutationBusy ? t('common.removing') : t('common.delete')}
-                  </button>
-                </div>
-              </div>
-            </div>,
+            <DeleteSessionDialog
+              title={displaySessionTitle(deleteTarget.title, t)}
+              error={deleteError}
+              busy={mutationBusy}
+              titleId={`${panelId}-delete-title`}
+              dialogRef={deleteDialogRef}
+              onCancel={closeDeleteDialog}
+              onConfirm={confirmDeleteSession}
+            />,
             document.body,
           )}
     </section>

@@ -1,6 +1,5 @@
 import {
   type ManagedPluginEntry,
-  type PluginBundleChangeResult,
   type PluginManagerBundle,
   type PluginManagerSnapshot,
   type PluginInstallProgressView,
@@ -15,25 +14,24 @@ import { Icon } from '../../ui/Icon.js'
 import {
   canRecoverGithubInstall,
   catalogOf,
-  failureKey,
   inspectionOf,
-  localized,
   localizedSearchValues,
   matchesSearch,
   newRequestId,
   pluginSearchValues,
-  pluginTitle,
   registryChoices,
   registryFromValue,
   registryOptions,
   registryValue,
   resultOf,
+  resultText,
   registriesOf,
   isValidRegistry,
   CONFIGURED_REGISTRY,
   CUSTOM_REGISTRY,
   type RegistryView,
 } from './optional-bundle-model.js'
+import { BundleCard, PluginRow, type Notice } from './optional-bundle-cards.js'
 import './optional-bundle-manager.css'
 
 export interface OptionalBundleManagerProps {
@@ -45,10 +43,6 @@ export interface OptionalBundleManagerProps {
   readonly onRecoverInstall?: () => Promise<void>
   readonly featureRequest: <T>(request: FeatureRequest) => Promise<T>
 }
-
-type Notice =
-  | { readonly kind: 'result'; readonly result: PluginBundleChangeResult }
-  | { readonly kind: 'message'; readonly key: string }
 
 type CatalogLoadState = {
   readonly revision: number | undefined
@@ -363,19 +357,6 @@ export function OptionalBundleManager(props: OptionalBundleManagerProps): ReactE
     })
   }
 
-  const resultText = (result: PluginBundleChangeResult): string => {
-    if (result.application === 'failed') return t(failureKey(result))
-    if (result.application === 'restart-required') return t('plugins.bundles.result.restart')
-    if (result.application === 'overridden') return t('plugins.bundles.result.overridden')
-    if (result.application === 'cancelled') return t('plugins.bundles.result.cancelled')
-    if (!result.changed) return t('plugins.bundles.result.unchanged')
-    if (result.stage === 'install') return t('plugins.manager.install.done')
-    if (result.stage === 'remove') return t('plugins.manager.remove.done')
-    return result.enabled === false
-      ? t('plugins.bundles.result.disabled')
-      : t('plugins.bundles.result.enabled')
-  }
-
   const recoverGithubInstall = (): void => {
     if (
       installOperation === undefined ||
@@ -388,165 +369,6 @@ export function OptionalBundleManager(props: OptionalBundleManagerProps): ReactE
     setInspection(undefined)
     setNotice(undefined)
     specInputRef.current?.focus()
-  }
-
-  const renderPluginRow = (
-    entryId: string | undefined,
-    rowId: string,
-    moduleName: string,
-    meta?: ManagedPluginEntry['meta'],
-  ): ReactElement => {
-    const plugin =
-      entryId === undefined ? undefined : plugins.find((candidate) => candidate.entryId === entryId)
-    const title =
-      plugin === undefined ? (localized(meta?.title, locale) ?? moduleName) : pluginTitle(plugin, locale)
-    const disabled =
-      plugin === undefined || plugin.readOnlyReason !== undefined || busyKey !== undefined || installBusy
-    return (
-      <li className="dsh-optional-bundles__plugin" key={`${rowId}:${entryId ?? moduleName}`}>
-        <span>{title}</span>
-        {plugin === undefined ? (
-          <span className="dsh-optional-bundles__muted">{t('plugins.manager.plugin.notActive')}</span>
-        ) : (
-          <button
-            className="dsh-button dsh-button--secondary dsh-button--compact"
-            type="button"
-            aria-pressed={plugin.enabled}
-            aria-label={t(plugin.enabled ? 'plugins.bundles.disableNamed' : 'plugins.bundles.enableNamed', {
-              name: title,
-            })}
-            disabled={disabled}
-            onClick={() => setPlugin(plugin, !plugin.enabled)}
-          >
-            {t(plugin.enabled ? 'plugins.bundles.disable' : 'plugins.bundles.enable')}
-          </button>
-        )}
-      </li>
-    )
-  }
-
-  const renderBundle = (filtered: FilteredBundle): ReactElement => {
-    const { bundle, rows, expandForSearch } = filtered
-    const title = localized(bundle.title, locale) ?? bundle.name
-    const description = localized(bundle.description, locale)
-    const blocked = bundle.readOnlyReason !== undefined || (!bundle.enabled && bundle.errorCode !== undefined)
-    const actionDisabled = blocked || busyKey !== undefined || installBusy
-    const collapsedForSearch =
-      collapsedSearchBundles.query === normalizedSearch && collapsedSearchBundles.names.has(bundle.name)
-    const open = expandForSearch ? !collapsedForSearch : openBundles.has(bundle.name)
-    const bodyId = `dsh-bundle-body-${encodeURIComponent(bundle.name)}`
-    return (
-      <li className="dsh-optional-bundles__item" key={bundle.name} data-open={open ? 'true' : undefined}>
-        <div className="dsh-optional-bundles__head">
-          <button
-            className="dsh-optional-bundles__toggle"
-            type="button"
-            aria-expanded={open}
-            aria-controls={open ? bodyId : undefined}
-            onClick={() =>
-              expandForSearch ? toggleSearchExpandedBundle(bundle.name) : toggleBundle(bundle.name)
-            }
-          >
-            <Icon name={open ? 'chevron-down' : 'chevron-right'} />
-            <span className="dsh-optional-bundles__title-row">
-              <strong>{title}</strong>
-              {bundle.version === undefined ? null : (
-                <span className="dsh-optional-bundles__version">{bundle.version}</span>
-              )}
-              <span
-                className={`dsh-optional-bundles__state${bundle.enabled ? ' dsh-optional-bundles__state--enabled' : ''}`}
-              >
-                {bundle.enabled ? t('plugins.bundles.selected') : t('plugins.bundles.notSelected')}
-              </span>
-              {bundle.optional ? (
-                <span className="dsh-optional-bundles__state">{t('plugins.manager.bundle.optional')}</span>
-              ) : null}
-              {rows.length === 0 ? null : (
-                <span className="dsh-optional-bundles__entry-count">
-                  {t('plugins.manager.entryCount', { count: rows.length })}
-                </span>
-              )}
-            </span>
-          </button>
-          <div className="dsh-optional-bundles__actions">
-            <button
-              className="dsh-button dsh-button--secondary dsh-button--compact"
-              type="button"
-              aria-pressed={bundle.enabled}
-              aria-label={t(bundle.enabled ? 'plugins.bundles.disableNamed' : 'plugins.bundles.enableNamed', {
-                name: title,
-              })}
-              disabled={actionDisabled}
-              onClick={() => setBundle(bundle, !bundle.enabled)}
-            >
-              {t(bundle.enabled ? 'plugins.bundles.disable' : 'plugins.bundles.enable')}
-            </button>
-            {bundle.removable ? (
-              <button
-                className="dsh-button dsh-button--secondary dsh-button--compact"
-                type="button"
-                aria-label={t('plugins.manager.remove.named', { name: title })}
-                disabled={busyKey !== undefined || installBusy}
-                onClick={() => removeBundle(bundle)}
-              >
-                {t('plugins.manager.remove')}
-              </button>
-            ) : null}
-          </div>
-        </div>
-        {bundle.errorCode === undefined ? null : (
-          <p className="dsh-optional-bundles__warning" role="status">
-            {t(
-              failureKey({
-                name: bundle.name,
-                changed: false,
-                application: 'failed',
-                errorCode: bundle.errorCode,
-              }),
-            )}
-          </p>
-        )}
-        {bundle.readOnlyReason === undefined ? null : (
-          <p className="dsh-optional-bundles__warning" role="status">
-            {t(
-              bundle.readOnlyReason === 'management-required'
-                ? 'plugins.bundles.readOnly.management'
-                : 'plugins.bundles.readOnly.unaddressable',
-            )}
-          </p>
-        )}
-        {busyKey === bundle.name ? (
-          <p className="dsh-optional-bundles__muted" role="status">
-            {t('plugins.bundles.working')}
-          </p>
-        ) : null}
-        {notice?.kind === 'result' &&
-        (notice.result.name === bundle.name || notice.result.bundle === bundle.name) ? (
-          <p
-            className={`dsh-optional-bundles__notice${notice.result.application === 'failed' ? ' dsh-optional-bundles__notice--error' : ''}`}
-            role={notice.result.application === 'failed' ? 'alert' : 'status'}
-          >
-            {resultText(notice.result)}
-          </p>
-        ) : null}
-        {open ? (
-          <div className="dsh-optional-bundles__body" id={bodyId}>
-            {description === undefined ? null : <p>{description}</p>}
-            <p className="dsh-optional-bundles__muted">
-              {t(bundle.installed ? 'plugins.bundles.profileDependency' : 'plugins.bundles.dshProvided')}
-            </p>
-            {rows.length === 0 ? null : (
-              <ul
-                className="dsh-optional-bundles__plugins"
-                aria-label={t('plugins.manager.bundle.plugins', { name: title })}
-              >
-                {rows.map((row) => renderPluginRow(row.entryId, row.rowId, row.moduleName, row.meta))}
-              </ul>
-            )}
-          </div>
-        ) : null}
-      </li>
-    )
   }
 
   const installEnabled =
@@ -791,7 +613,7 @@ export function OptionalBundleManager(props: OptionalBundleManagerProps): ReactE
                     className={`dsh-optional-bundles__notice${installOperation.result.application === 'failed' ? ' dsh-optional-bundles__notice--error' : ''}`}
                     role={installOperation.result.application === 'failed' ? 'alert' : 'status'}
                   >
-                    <span>{resultText(installOperation.result)}</span>
+                    <span>{resultText(t, installOperation.result)}</span>
                     {canRecoverGithubInstall(installOperation.result) ? (
                       <button
                         className="dsh-button dsh-button--secondary dsh-button--compact"
@@ -831,7 +653,7 @@ export function OptionalBundleManager(props: OptionalBundleManagerProps): ReactE
                   className={`dsh-optional-bundles__notice${notice.result.application === 'failed' ? ' dsh-optional-bundles__notice--error' : ''}`}
                   role={notice.result.application === 'failed' ? 'alert' : 'status'}
                 >
-                  {resultText(notice.result)}
+                  {resultText(t, notice.result)}
                 </p>
               ) : null}
 
@@ -856,7 +678,32 @@ export function OptionalBundleManager(props: OptionalBundleManagerProps): ReactE
                 <p className="dsh-optional-bundles__muted">{t('plugins.bundles.empty')}</p>
               ) : filteredBundles.length > 0 ? (
                 <ul className="dsh-optional-bundles__list" aria-label={t('plugins.bundles.listAria')}>
-                  {filteredBundles.map(renderBundle)}
+                  {filteredBundles.map((filtered) => {
+                    const { bundle, rows, expandForSearch } = filtered
+                    const collapsed =
+                      collapsedSearchBundles.query === normalizedSearch &&
+                      collapsedSearchBundles.names.has(bundle.name)
+                    return (
+                      <BundleCard
+                        key={bundle.name}
+                        bundle={bundle}
+                        rows={rows}
+                        open={expandForSearch ? !collapsed : openBundles.has(bundle.name)}
+                        notice={notice}
+                        plugins={plugins}
+                        busyKey={busyKey}
+                        installBusy={installBusy}
+                        onSetPlugin={setPlugin}
+                        onToggle={() =>
+                          expandForSearch
+                            ? toggleSearchExpandedBundle(bundle.name)
+                            : toggleBundle(bundle.name)
+                        }
+                        onSetBundle={setBundle}
+                        onRemoveBundle={removeBundle}
+                      />
+                    )
+                  })}
                 </ul>
               ) : null}
 
@@ -886,9 +733,18 @@ export function OptionalBundleManager(props: OptionalBundleManagerProps): ReactE
                   </h3>
                   {searching || standaloneOpen ? (
                     <ul className="dsh-optional-bundles__plugins" id={STANDALONE_BODY_ID}>
-                      {filteredStandalonePlugins.map((plugin) =>
-                        renderPluginRow(plugin.entryId, plugin.entryId, plugin.moduleName, plugin.meta),
-                      )}
+                      {filteredStandalonePlugins.map((plugin) => (
+                        <PluginRow
+                          key={`${plugin.entryId}:${plugin.entryId}`}
+                          entryId={plugin.entryId}
+                          moduleName={plugin.moduleName}
+                          meta={plugin.meta}
+                          plugins={plugins}
+                          busyKey={busyKey}
+                          installBusy={installBusy}
+                          onSetPlugin={setPlugin}
+                        />
+                      ))}
                     </ul>
                   ) : null}
                 </section>
