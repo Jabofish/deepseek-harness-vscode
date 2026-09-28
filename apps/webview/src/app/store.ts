@@ -24,6 +24,7 @@ import { diagnosticsSnapshotSchema } from '@dsh-vscode/webview-protocol'
 import { PluginInstallRecoveryController } from './plugin-install-recovery.js'
 import { createAccountActions } from './store/account-actions.js'
 import { createFeatureActions } from './store/feature-actions.js'
+import { defineStateView, type StoreWithoutStateView } from './store/state-view.js'
 import { createJobActions } from './store/job-actions.js'
 import { getVsCodeApi } from '../vscode-api.js'
 import { ProtocolClient } from './protocol-client.js'
@@ -1887,243 +1888,18 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     if (snapshot !== undefined) setState((current) => ({ ...current, dshUpdate: snapshot }))
     return snapshot
   }
-  return {
+  const store: StoreWithoutStateView = {
     ...accountActions.methods,
     ...jobActions.methods,
     ...featureActions.methods,
-    get backend() {
-      return state.backend
-    },
-    get connectedDshVersion() {
-      return state.connectedDshVersion
-    },
     get sessionRestore() {
       return state.sessionRestore === true
-    },
-    get subagentImagePrompts() {
-      return state.subagentImagePrompts
-    },
-    get dshCompatibilityWarning() {
-      return state.dshCompatibilityWarning
-    },
-    get dshUpdate() {
-      return state.dshUpdate
-    },
-    get dshUpdateProgress() {
-      return state.dshUpdateProgress
-    },
-    get sessions() {
-      return state.sessions
-    },
-    get archivedSessionIds() {
-      return state.archivedSessionIds
-    },
-    get archivedSessions() {
-      return state.archivedSessions
-    },
-    get workspaces() {
-      return state.workspaces
-    },
-    get activeSessionId() {
-      return state.activeSessionId
-    },
-    get pendingSession() {
-      return state.pendingSession
-    },
-    get preferredOpenFileId() {
-      return state.preferredOpenFileId
-    },
-    get timeline() {
-      return state.timeline
-    },
-    get history() {
-      return state.history
-    },
-    get historyHasMore() {
-      return state.historyHasMore
-    },
-    get historyBeforeSequence() {
-      return state.historyBeforeSequence
-    },
-    get historyLoading() {
-      return state.historyLoading
-    },
-    get projections() {
-      return state.projections
-    },
-    get configuration() {
-      return state.configuration
-    },
-    get providers() {
-      return state.providers
-    },
-    get models() {
-      return state.models
-    },
-    get sessionModels() {
-      return state.sessionModels
-    },
-    get sessionModelFailures() {
-      return state.sessionModelFailures
-    },
-    get sessionModelCurrent() {
-      return state.sessionModelCurrent
-    },
-    get sessionModelRoutable() {
-      return state.sessionModelRoutable
-    },
-    get sessionModelDirectoryLoading() {
-      return state.sessionModelDirectoryLoading
-    },
-    get sessionModelDirectoryError() {
-      return state.sessionModelDirectoryError
-    },
-    get presets() {
-      return state.presets
-    },
-    get presetSelectionEnabled() {
-      return state.presetSelectionEnabled
-    },
-    get permissionPresets() {
-      return state.permissionPresets
-    },
-    get commands() {
-      return state.commands
-    },
-    get pluginInventoryRevision() {
-      return state.pluginInventoryRevision
-    },
-    get pluginInstallProgress() {
-      return state.pluginInstallProgress
-    },
-    get pluginInstallOperation() {
-      return state.pluginInstallOperation
-    },
-    get accountLifecycleAvailable() {
-      return state.accountLifecycleAvailable
-    },
-    get accountLifecycle() {
-      return state.accountLifecycle
-    },
-    get accountLifecycleLoading() {
-      return state.accountLifecycleLoading
-    },
-    get accountLifecycleBusy() {
-      return state.accountLifecycleBusy
-    },
-    get accountLifecycleImpact() {
-      return state.accountLifecycleImpact
-    },
-    get accountSessionExpired() {
-      return state.accountSessionExpired
-    },
-    get accountLifecycleError() {
-      return state.accountLifecycleError
-    },
-    get accountLifecycleRequestFailed() {
-      return state.accountLifecycleRequestFailed
-    },
-    get accountProfileDetails() {
-      return state.accountProfileDetails
-    },
-    get accountProfileLoading() {
-      return state.accountProfileLoading
-    },
-    get accountProfileRequestFailed() {
-      return state.accountProfileRequestFailed
-    },
-    get goals() {
-      return state.goals
-    },
-    get todos() {
-      return state.todos
-    },
-    get jobs() {
-      return state.jobs
-    },
-    get jobControllerAvailable() {
-      return state.jobControllerAvailable
-    },
-    get jobFollow() {
-      return state.jobFollow
-    },
-    get feedback() {
-      return state.feedback
     },
     get feedbackUnavailable() {
       return state.feedbackUnavailable ?? false
     },
-    get subagents() {
-      return state.subagents
-    },
-    get activeSubagent() {
-      return state.activeSubagent
-    },
-    get queue() {
-      return state.queue
-    },
-    get editorContext() {
-      return state.editorContext
-    },
-    get editorContextAvailableKinds() {
-      return state.editorContextAvailableKinds
-    },
-    get editorContextLoading() {
-      return state.editorContextLoading
-    },
-    get changes() {
-      return state.changes
-    },
-    get changesRefreshFailed() {
-      return state.changesRefreshFailed
-    },
-    get changesLoading() {
-      return state.changesLoading
-    },
-    get tasks() {
-      return state.tasks
-    },
-    get tasksLoading() {
-      return state.tasksLoading
-    },
-    get taskScope() {
-      return state.taskScope
-    },
-    get tasksComplete() {
-      return state.tasksComplete
-    },
-    get tasksOmittedSessions() {
-      return state.tasksOmittedSessions
-    },
-    get checkpoints() {
-      return state.checkpoints
-    },
     get unavailableLists() {
       return state.unavailableLists ?? []
-    },
-    get checkpointsLoading() {
-      return state.checkpointsLoading
-    },
-    get promptTemplates() {
-      return state.promptTemplates
-    },
-    get promptTemplatesLoading() {
-      return state.promptTemplatesLoading
-    },
-    get promptMode() {
-      return state.promptMode
-    },
-    get permissions() {
-      return state.permissions
-    },
-    get questions() {
-      return state.questions
-    },
-    get busyEnter() {
-      return state.busyEnter
-    },
-    get drawer() {
-      return state.drawer
     },
     getState: () => state,
     subscribe: (listener) => {
@@ -3355,4 +3131,5 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       listeners.clear()
     },
   }
+  return defineStateView(store, () => state)
 }
