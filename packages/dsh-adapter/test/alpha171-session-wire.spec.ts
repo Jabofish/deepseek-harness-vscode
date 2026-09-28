@@ -5,10 +5,7 @@ import {
   normalizeAlpha171Event,
 } from '../src/versions/alpha171/session-wire.js'
 import { rc6Mapper } from '../src/versions/rc6/mapper.js'
-import {
-  interruptedNotStartedToolResult,
-  interruptedStartedToolResult,
-} from './master21638-recovery-fixtures.js'
+import { interruptedNotStartedToolResult, interruptedStartedToolResult } from './rc201-recovery-fixtures.js'
 
 // Native V4 fixture from the pinned upstream developer.spec.ts, c36a83ff.
 const header = { version: 4, id: 's1', createdAt: 1, isSeeded: false, delegationDepth: 0 }

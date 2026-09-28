@@ -23,10 +23,22 @@ export async function run(): Promise<void> {
   // would fail extension activation with an invalid-settings error instead of
   // launching the runtime the environment variable asked for.
   const requestedRuntime = process.env.DSH_VSCODE_E2E_RUNTIME?.trim()
-  const runtimeExecutable =
+  let runtimeExecutable =
     requestedRuntime === undefined || requestedRuntime === ''
       ? undefined
       : resolveLiveRuntime(requestedRuntime)
+  if (
+    managed &&
+    process.platform === 'win32' &&
+    runtimeExecutable !== undefined &&
+    /\.js$/iu.test(runtimeExecutable)
+  ) {
+    // The production launcher accepts a Windows npm shim. Give a source-built
+    // CLI the same shape inside this test-owned temporary directory.
+    const shim = path.join(root, 'dsh-source.cmd')
+    await writeFile(shim, `@echo off\r\nnode "${runtimeExecutable}" %*\r\n`, 'utf8')
+    runtimeExecutable = shim
+  }
   const executablePathSetting = invalidSettings ? INVALID_EXECUTABLE_PATH : runtimeExecutable
   const fixtureSockets = new Set<Duplex>()
   const observations: FixtureObservations = {

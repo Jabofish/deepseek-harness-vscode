@@ -9,13 +9,14 @@ import type { ScheduleRepository } from '../../packages/domain/src/schedules.js'
 import { LIVE_TIMEOUT_MS, startManagedRuntime, type ManagedLiveRuntime } from './harness.js'
 
 /**
- * Live evidence for the optional Schedule bundle on the commit-bound master
- * snapshot. The test discovers it from the live Plugin Manager catalog, checks
+ * Live evidence for the optional Schedule bundle on dsh-v0.2.0-rc.1
+ * (4878cdabd87d4041bdaff61d04c966883b9fd07a). It discovers the bundle
+ * from the live Plugin Manager catalog, checks
  * the disabled Remote response, toggles it through the pinned Remote, and
  * restarts only the harness-owned process if DSH reports `restart-required`.
  *
  *   $env:DSH_LIVE_SMOKE = '1'
- *   $env:DSH_LIVE_RUNTIME_VERSION = '0.1.7-master.21638c56315ae6a2b552d6091945d3144c9af32e'
+ *   $env:DSH_LIVE_RUNTIME_VERSION = '0.2.0-rc.1'
  *   pnpm exec vitest run tests/live-dsh/schedule-optional-bundle.spec.ts
  *
  * Both launches use a throwaway `$DSH_HOME`, so the user's own profile is never
@@ -34,8 +35,8 @@ describe.skipIf(process.env.DSH_LIVE_SMOKE !== '1')('live DSH optional Schedule 
         runtime = await startManagedRuntime({ dshHome: home })
         const schedules = runtime.backend.schedules
         const bundles = runtime.backend.pluginBundles
-        expect(schedules, 'the exact master adapter must expose the Schedule Remote').toBeDefined()
-        expect(bundles, 'the exact master adapter must expose the Plugin Manager Remote').toBeDefined()
+        expect(schedules, 'the exact RC adapter must expose the Schedule Remote').toBeDefined()
+        expect(bundles, 'the exact RC adapter must expose the Plugin Manager Remote').toBeDefined()
         if (schedules === undefined || bundles === undefined) return
 
         const catalog = await bundles.listBundles()

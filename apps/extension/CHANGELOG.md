@@ -1,5 +1,10 @@
 # Change Log
 
+## 0.2.8
+
+- 正式适配 DSH `0.2.0-rc.1` 并将引导安装默认版本更新至这一精确 npm 包；替换临时 master 预适配入口，保持精确版本探测、Session V4、Schedule 可选能力降级和受管启动契约。真实 Schedule 创建与历史、外部附加和完整 Webview 交互仍待现场验收。
+- Added exact DSH `0.2.0-rc.1` support and made that published package the guided install default. This replaces the temporary master adapter while retaining Session V4, optional Schedule capability handling, and managed launch behavior. Live Schedule creation/history, external attach, and full Webview interaction remain pending acceptance.
+
 ## 0.2.7
 
 - 设置抽屉重新打开时读取最新配置，忽略关闭后的迟到响应；读取完成前禁止写入，避免提交过期修订。

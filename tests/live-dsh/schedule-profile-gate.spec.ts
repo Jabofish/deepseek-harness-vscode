@@ -9,16 +9,15 @@ import type { ScheduleRepository } from '../../packages/domain/src/schedules.js'
 import { LIVE_TIMEOUT_MS, startManagedRuntime, type ManagedLiveRuntime } from './harness.js'
 
 /**
- * Live evidence for the Schedule remote gate. The published
- * `@deepseek-ai/dsh-web-app` composition disables the `schedule` and
- * `ui-schedule` entries, so a managed `web` profile that is started without a
- * patch answers every `schedule/*` request with HTTP 404 and the adapter reports
+ * Live evidence for the Schedule remote gate. A managed `web` profile without
+ * an enabled Schedule bundle answers `schedule/*` with HTTP 404 and reports
  * `CAPABILITY_UNAVAILABLE`; the panel must name that cause instead of claiming a
- * load failure. The second launch re-enables the entries through the
- * home-level patch file and must answer the same request for real.
+ * load failure. The second launch probes a home-level patch. RC201 has moved
+ * Schedule into an optional bundle, so a patch naming absent rows cannot
+ * enable it; schedule-optional-bundle.spec.ts covers the supported toggle.
  *
  *   $env:DSH_LIVE_SMOKE = '1'
- *   $env:DSH_LIVE_RUNTIME_VERSION = '0.1.7-rc.2'   # needs a runtime whose adapter carries the Schedule remote
+ *   $env:DSH_LIVE_RUNTIME_VERSION = '0.2.0-rc.1'   # exact adapter with the optional Schedule bundle
  *   npx vitest run tests/live-dsh/schedule-profile-gate.spec.ts
  *
  * Both launches use a throwaway `$DSH_HOME`, so the user's own profile is never
@@ -26,7 +25,7 @@ import { LIVE_TIMEOUT_MS, startManagedRuntime, type ManagedLiveRuntime } from '.
  */
 describe.skipIf(process.env.DSH_LIVE_SMOKE !== '1')('live DSH schedule profile gate', () => {
   it(
-    'reports the shipped composition as unavailable and answers once the profile enables it',
+    'keeps Schedule unavailable until the version-specific bundle is enabled',
     async () => {
       const home = await mkdtemp(path.join(os.tmpdir(), 'dsh-live-schedule-home-'))
       const evidence: string[] = []
@@ -67,6 +66,10 @@ describe.skipIf(process.env.DSH_LIVE_SMOKE !== '1')('live DSH schedule profile g
         const patched = runtime.backend.schedules
         expect(patched, 'the patched profile must expose the Schedule remote').toBeDefined()
         if (patched === undefined) return
+        if (runtime.snapshot.version === '0.2.0-rc.1') {
+          evidence.push(`legacy home patch: ${await describeCatalog(patched)}`)
+          return
+        }
         const items = await patched.catalog()
         evidence.push(`patched profile: catalog answered ${items.length} item(s)`)
         // A throwaway home holds no reminder, so a real answer is an empty list

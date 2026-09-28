@@ -29,7 +29,7 @@ import {
   Rc153VersionAdapter,
   Rc171VersionAdapter,
   Rc172VersionAdapter,
-  Master21638VersionAdapter,
+  Rc201VersionAdapter,
 } from '@dsh-vscode/dsh-adapter'
 import type { createAdapterOptions } from './adapter-options.js'
 
@@ -49,7 +49,7 @@ export function createVersionAdapters(
   const rc153Adapter = new Rc153VersionAdapter(adapterOptions)
   const rc171Adapter = new Rc171VersionAdapter(adapterOptions)
   const rc172Adapter = new Rc172VersionAdapter(adapterOptions)
-  const master21638Adapter = new Master21638VersionAdapter(adapterOptions)
+  const rc201Adapter = new Rc201VersionAdapter(adapterOptions)
   const alpha13Adapter = new Alpha13VersionAdapter(adapterOptions)
   const rc13Adapter = new Rc13VersionAdapter(adapterOptions)
   const alpha3Adapter = new Alpha3VersionAdapter(adapterOptions)
@@ -67,7 +67,7 @@ export function createVersionAdapters(
   const legacyRc2Adapter = new LegacyRc2VersionAdapter(adapterOptions)
   const legacyRc1Adapter = new LegacyRc1VersionAdapter(adapterOptions)
   const adapters = [
-    master21638Adapter,
+    rc201Adapter,
     rc172Adapter,
     rc171Adapter,
     alpha172Adapter,

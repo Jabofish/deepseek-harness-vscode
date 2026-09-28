@@ -1,6 +1,7 @@
 /**
  * Sanitized Session V4 shapes from `ToolCallRecovery.results()` at upstream
- * commit 21638c56315ae6a2b552d6091945d3144c9af32e. The call IDs and sequence
+ * commit 21638c56315ae6a2b552d6091945d3144c9af32e, unchanged at released
+ * tag dsh-v0.2.0-rc.1 (4878cdabd87d4041bdaff61d04c966883b9fd07a). The call IDs and sequence
  * numbers are fixture-local; field names, error codes, message-ID pattern,
  * `isError`, source linkage, and outcome text follow the upstream producer.
  */

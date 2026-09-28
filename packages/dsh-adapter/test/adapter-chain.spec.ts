@@ -18,7 +18,7 @@ import {
   LegacyRc1VersionAdapter,
   LegacyRc2VersionAdapter,
   LegacyRc5VersionAdapter,
-  Master21638VersionAdapter,
+  Rc201VersionAdapter,
   Rc02VersionAdapter,
   Rc03VersionAdapter,
   Rc6VersionAdapter,
@@ -73,7 +73,7 @@ describe('version adapter family chains', () => {
       new Alpha172VersionAdapter(options),
       new Rc171VersionAdapter(options),
       new Rc172VersionAdapter(options),
-      new Master21638VersionAdapter(options),
+      new Rc201VersionAdapter(options),
     ]
 
     expect(adapters.map((adapter) => adapter.supportedVersion)).toEqual([...SUPPORTED_DSH_VERSIONS])
@@ -278,7 +278,7 @@ describe('version adapter family chains', () => {
     const rc153 = new Rc153VersionAdapter(options)
     const rc171 = new Rc171VersionAdapter(options)
     const rc172 = new Rc172VersionAdapter(options)
-    const master21638 = new Master21638VersionAdapter(options)
+    const rc201 = new Rc201VersionAdapter(options)
 
     expect(rc153).toBeInstanceOf(Rc152VersionAdapter)
     expect(rc153).toMatchObject({
@@ -296,12 +296,12 @@ describe('version adapter family chains', () => {
       compatibilityPriority: 240,
       fallback: false,
     })
-    expect(master21638).toBeInstanceOf(Rc172VersionAdapter)
-    expect(master21638).toMatchObject({
-      id: 'dsh-0.1.7-master.21638c56315ae6a2b552d6091945d3144c9af32e',
-      supportedVersion: '0.1.7-master.21638c56315ae6a2b552d6091945d3144c9af32e',
-      protocolVersion: 'rc172',
-      compatibilityPriority: 241,
+    expect(rc201).toBeInstanceOf(Rc172VersionAdapter)
+    expect(rc201).toMatchObject({
+      id: 'dsh-0.2.0-rc.1',
+      supportedVersion: '0.2.0-rc.1',
+      protocolVersion: 'rc201',
+      compatibilityPriority: 250,
       fallback: false,
     })
     expect(rc171).toBeInstanceOf(Alpha171VersionAdapter)

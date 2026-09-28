@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { AppError, type ScheduleRecord, type ScheduleRepository } from '@dsh-vscode/domain'
 
 import type { DshTransport } from '../src/contracts.js'
-import { Master21638ScheduleRepository } from '../src/versions/master21638/schedule-repository.js'
+import { Rc201ScheduleRepository } from '../src/versions/rc201/schedule-repository.js'
 import { normalizeRc172ErrorCode } from '../src/versions/rc172/error-vocabulary.js'
 import { unwrapRpcResultValue } from '../src/versions/rc6/rpc.js'
 
@@ -76,12 +76,10 @@ function remoteFailureTransport(sourceCode: string, signalFailure?: AppError): D
   }
 }
 
-describe('DSH master temporary Schedule Remote capability mapping', () => {
+describe('DSH 0.2.0-rc.1 Schedule Remote capability mapping', () => {
   for (const operation of operations) {
     it(`maps ${operation.method} withdrawn by the optional bundle to capability unavailable`, async () => {
-      const repository = new Master21638ScheduleRepository(
-        remoteFailureTransport('gateway/definition-unavailable'),
-      )
+      const repository = new Rc201ScheduleRepository(remoteFailureTransport('gateway/definition-unavailable'))
 
       await expect(operation.invoke(repository)).rejects.toMatchObject({
         code: 'CAPABILITY_UNAVAILABLE',
@@ -97,7 +95,7 @@ describe('DSH master temporary Schedule Remote capability mapping', () => {
   }
 
   it('keeps other Gateway failures and cancellation errors unchanged', async () => {
-    const gatewayFailure = new Master21638ScheduleRepository(remoteFailureTransport('gateway/internal'))
+    const gatewayFailure = new Rc201ScheduleRepository(remoteFailureTransport('gateway/internal'))
     await expect(gatewayFailure.catalog()).rejects.toMatchObject({
       code: 'INTERNAL_ERROR',
       context: { rpcMethod: 'schedule/catalog', rpcCode: 'internal' },
@@ -108,7 +106,7 @@ describe('DSH master temporary Schedule Remote capability mapping', () => {
       message: 'The request was cancelled.',
       retryable: false,
     })
-    const cancellation = new Master21638ScheduleRepository(
+    const cancellation = new Rc201ScheduleRepository(
       remoteFailureTransport('gateway/definition-unavailable', cancelled),
     )
     const controller = new AbortController()

@@ -11,9 +11,13 @@ describe.skipIf(process.env.DSH_LIVE_SMOKE !== '1')('live permission catalog', (
     async () => {
       const home = await mkdtemp(path.join(os.tmpdir(), 'dsh-permission-home-'))
       let runtime: ManagedLiveRuntime | undefined
+      let disposeEvents: (() => void) | undefined
       try {
         runtime = await startManagedRuntime({ dshHome: home, removeDshHomeOnStop: true })
         const { backend } = runtime
+        // The process catalog is not replayed. Register $events before the
+        // first read, as the Extension Host does on a connected View.
+        disposeEvents = backend.events.subscribe(() => undefined)
         const workspace = await backend.workspaces.create({
           name: 'Permission test',
           path: runtime.snapshot.workspace,
@@ -34,10 +38,9 @@ describe.skipIf(process.env.DSH_LIVE_SMOKE !== '1')('live permission catalog', (
           await backend.commands.execute(session.id, `/permission ${preset}`)
           expect((await backend.sessions.get(session.id)).configuration.permissionPreset).toBe(preset)
         }
-        console.log(
-          `[permission-catalog] ${runtime.snapshot.version}: catalog and three permission switches passed`,
-        )
+        console.log(`[permission-catalog] ${runtime.snapshot.version}: catalog and ordinary switches passed`)
       } finally {
+        disposeEvents?.()
         await runtime?.stop()
       }
     },

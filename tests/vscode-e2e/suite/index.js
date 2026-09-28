@@ -56,7 +56,8 @@ export async function run() {
     console.log('[dsh-vscode-e2e] opening the DSH view connected to the fixture')
   }
 
-  await vscode.commands.executeCommand('dsh.connect')
+  const connection = await vscode.commands.executeCommand('dsh.connect')
+  assert.deepEqual(connection, { connected: true }, 'the Extension Host must finish the real connection')
   console.log('[dsh-vscode-e2e] dsh.connect completed')
 
   if (mode !== 'attach-only') {

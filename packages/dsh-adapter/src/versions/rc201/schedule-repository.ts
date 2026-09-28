@@ -16,12 +16,12 @@ type ScheduleRemoteMethod =
   'schedule/catalog' | 'schedule/list' | 'schedule/history' | 'schedule/update' | 'schedule/delete'
 
 /**
- * Master keeps the rc.2 Schedule wire, but its optional bundle can withdraw a
+ * RC201 keeps the rc.2 Schedule wire, but its optional bundle can withdraw a
  * previously registered Gateway definition. rc.2's normalizer intentionally
  * maps that Gateway error to `unknown-command`; at the Schedule boundary this
  * exact error means the optional capability is currently absent.
  */
-export class Master21638ScheduleRepository extends Rc172ScheduleRepository {
+export class Rc201ScheduleRepository extends Rc172ScheduleRepository {
   public constructor(transport: DshTransport) {
     super(transport)
   }

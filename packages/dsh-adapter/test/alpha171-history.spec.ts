@@ -4,10 +4,7 @@ import { AlphaLoopbackApiClient, type AlphaWebSocket } from '../src/versions/alp
 import type { BackendEndpoint } from '@dsh-vscode/domain'
 import { validAlpha171SessionEvent } from '../src/versions/alpha171/session-wire.js'
 import { rc6Mapper } from '../src/versions/rc6/mapper.js'
-import {
-  interruptedNotStartedToolResult,
-  interruptedStartedToolResult,
-} from './master21638-recovery-fixtures.js'
+import { interruptedNotStartedToolResult, interruptedStartedToolResult } from './rc201-recovery-fixtures.js'
 
 class FakeWebSocket implements AlphaWebSocket {
   public static readonly instances: FakeWebSocket[] = []
