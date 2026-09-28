@@ -1,5 +1,4 @@
 import { AbstractApiClient } from '@deepseek-ai/dsh-host-apiproxy/client'
-import { serverRequestSchema } from '@deepseek-ai/dsh-host-apiproxy/api'
 import { hostFrameSchema, muxFrameSchema } from '@deepseek-ai/dsh-host-apiproxy/api/events.schema'
 import type { RequestPayload, ResponseValue, RpcMethodMap } from '@deepseek-ai/dsh-host-apiproxy/api/rpc-map'
 import {
@@ -12,7 +11,20 @@ import {
 import { AppError, type BackendEndpoint } from '@dsh-vscode/domain'
 
 import type { DshTransport, RetryPolicy } from './contracts.js'
-import { cancelled, httpFailure, normalizeTransportError } from './transport-errors.js'
+import {
+  HOST_FRAME_TYPES,
+  type LoopbackFrameChannel,
+  type LoopbackFrameParser,
+  MUX_FRAME_TYPES,
+  readLoopbackWebSocket,
+} from './loopback-ws-stream.js'
+import {
+  normalizeLegacyRpcResponse,
+  parseRawServerResponse,
+  type RawClientRequest,
+  type RawServerResponse,
+} from './loopback-rpc-envelope.js'
+import { httpFailure, normalizeTransportError } from './transport-errors.js'
 import {
   assertLoopback,
   closedConnectionError,
@@ -22,6 +34,8 @@ import {
   withTransportRetry,
 } from './transport-internal.js'
 
+export type { LoopbackFrameChannel, LoopbackFrameParser }
+
 export interface LoopbackApiClientOptions {
   readonly endpoint: BackendEndpoint
   readonly requestTimeoutMs: number
@@ -30,41 +44,6 @@ export interface LoopbackApiClientOptions {
   readonly webSocket?: typeof globalThis.WebSocket
   /** Optional exact-version frame contract for an older Host API family. */
   readonly frameParser?: LoopbackFrameParser
-}
-
-export type LoopbackFrameChannel = 'mux' | 'host'
-
-/**
- * Version adapters can replace only the payload parser while retaining the
- * common WebSocket carrier. The parser must validate a complete frame and
- * return the value that the stream controller will receive.
- */
-export interface LoopbackFrameParser {
-  parse(value: unknown, channel: LoopbackFrameChannel): unknown
-}
-
-type RawClientRequest = {
-  readonly type: 'client-request'
-  readonly rpcId: string
-  readonly method: string
-  readonly payload: unknown
-}
-
-type RawRpcResult =
-  | { readonly ok: true; readonly value?: unknown }
-  | {
-      readonly ok: false
-      readonly error: {
-        readonly code: string
-        readonly message: string
-        readonly details: Record<string, unknown>
-      }
-    }
-
-type RawServerResponse = {
-  readonly type: 'server-response'
-  readonly rpcId: string
-  readonly result: RawRpcResult
 }
 
 /** The network boundary. HTTP RPCs and DSH WebSocket event downlinks stay in the Extension Host. */
@@ -434,168 +413,17 @@ export class LoopbackApiClient extends AbstractApiClient implements DshTransport
     knownFrameTypes: ReadonlySet<string>,
     channel: LoopbackFrameChannel,
   ): AsyncIterable<unknown> {
-    return this.readWebSocket(path, signal, frameSchema, knownFrameTypes, channel)
-  }
-
-  /**
-   * DSH exposes event paths as read-only WebSocket downlinks. A normal fetch
-   * is intentionally rejected by DSH with HTTP 426, so keep the upgrade and
-   * frame decoding here instead of leaking a transport detail upward.
-   */
-  private async *readWebSocket(
-    path: string,
-    signal: AbortSignal,
-    frameSchema: { parse(value: unknown): unknown },
-    knownFrameTypes: ReadonlySet<string>,
-    channel: LoopbackFrameChannel,
-  ): AsyncIterable<unknown> {
-    if (signal.aborted) return
-    const WebSocketConstructor = this.options.webSocket ?? globalThis.WebSocket
-    if (typeof WebSocketConstructor !== 'function')
-      throw new AppError({
-        code: 'BACKEND_UNREACHABLE',
-        message: 'The Extension Host does not provide WebSocket transport.',
-        retryable: true,
-      })
-
-    const target = new URL(path, this.options.endpoint.baseUrl)
-    target.protocol = target.protocol === 'https:' ? 'wss:' : 'ws:'
-    const socket = new WebSocketConstructor(target.toString())
-    const inbox = new WebSocketQueue(256)
-    let wake: (() => void) | undefined
-    let resolveOpen: (() => void) | undefined
-    let rejectOpen: ((error: unknown) => void) | undefined
-    let openSettled = false
-    const opened = new Promise<void>((resolve, reject) => {
-      resolveOpen = resolve
-      rejectOpen = reject
+    return readLoopbackWebSocket({
+      path,
+      signal,
+      frameSchema,
+      knownFrameTypes,
+      channel,
+      baseUrl: this.options.endpoint.baseUrl,
+      webSocket: this.options.webSocket,
+      frameParser: this.options.frameParser,
+      onEnvelope: (message) => this.onEnvelope(message),
     })
-    const enqueue = (item: WebSocketItem): void => {
-      if (!inbox.push(item)) {
-        inbox.clear()
-        inbox.push({
-          kind: 'error',
-          error: new AppError({
-            code: 'PROTOCOL_ERROR',
-            message: 'The DSH event stream exceeded its receive queue limit.',
-            retryable: true,
-          }),
-        })
-        try {
-          socket.close()
-        } catch {
-          /* close is best effort after overflow */
-        }
-      }
-      wake?.()
-      wake = undefined
-    }
-    const handleOpen = (): void => {
-      if (openSettled) return
-      openSettled = true
-      resolveOpen?.()
-    }
-    const handleMessage = (event: MessageEvent): void => {
-      if (typeof event.data !== 'string' || event.data.length > 8 * 1024 * 1024) {
-        const error = new AppError({
-          code: 'PROTOCOL_ERROR',
-          message: 'The DSH event stream returned an invalid frame.',
-          retryable: true,
-        })
-        if (!openSettled) {
-          openSettled = true
-          rejectOpen?.(error)
-        } else enqueue({ kind: 'error', error })
-        return
-      }
-      try {
-        const full = serverRequestSchema.parse(JSON.parse(event.data))
-        const frame =
-          this.options.frameParser?.parse(full.payload, channel) ??
-          parseFramePayload(frameSchema, full.payload, knownFrameTypes)
-        this.onEnvelope(full)
-        enqueue({ kind: 'frame', value: { rpcId: full.rpcId, payload: frame } })
-      } catch {
-        const error = new AppError({
-          code: 'PROTOCOL_ERROR',
-          message: 'The DSH event stream returned a malformed frame.',
-          retryable: true,
-        })
-        if (!openSettled) {
-          openSettled = true
-          rejectOpen?.(error)
-        } else enqueue({ kind: 'error', error })
-      }
-    }
-    const handleError = (): void => {
-      const error = new AppError({
-        code: 'BACKEND_UNREACHABLE',
-        message: 'The DSH event stream transport failed.',
-        retryable: true,
-      })
-      if (!openSettled) {
-        openSettled = true
-        rejectOpen?.(error)
-      } else if (!signal.aborted) enqueue({ kind: 'error', error })
-    }
-    const handleClose = (): void => {
-      if (!openSettled) {
-        openSettled = true
-        rejectOpen?.(
-          new AppError({
-            code: 'BACKEND_UNREACHABLE',
-            message: 'The DSH event stream closed before it became ready.',
-            retryable: true,
-          }),
-        )
-      } else enqueue({ kind: 'end' })
-    }
-    const handleAbort = (): void => {
-      try {
-        if (socket.readyState === 0 || socket.readyState === 1) socket.close()
-      } finally {
-        enqueue({ kind: 'end' })
-      }
-    }
-
-    socket.addEventListener('open', handleOpen)
-    socket.addEventListener('message', handleMessage)
-    socket.addEventListener('error', handleError)
-    socket.addEventListener('close', handleClose, { once: true })
-    signal.addEventListener('abort', handleAbort, { once: true })
-    if (socket.readyState === 1) handleOpen()
-    if (signal.aborted) handleAbort()
-    try {
-      try {
-        await withTimeout(opened, 5_000, signal)
-      } catch (error) {
-        if (signal.aborted) return
-        throw error
-      }
-      while (true) {
-        while (inbox.length > 0) {
-          const item = inbox.shift()
-          if (item.kind === 'end') return
-          if (item.kind === 'error') throw item.error
-          if (signal.aborted) return
-          yield item.value
-        }
-        await new Promise<void>((resolve) => {
-          wake = resolve
-        })
-      }
-    } finally {
-      signal.removeEventListener('abort', handleAbort)
-      socket.removeEventListener('open', handleOpen)
-      socket.removeEventListener('message', handleMessage)
-      socket.removeEventListener('error', handleError)
-      socket.removeEventListener('close', handleClose)
-      try {
-        if (socket.readyState === 0 || socket.readyState === 1) socket.close()
-      } catch {
-        /* disposal is best effort after an aborted or failed handshake */
-      }
-    }
   }
 
   private withRetry<T>(method: string, operation: () => Promise<T>, signal?: AbortSignal): Promise<T> {
@@ -613,233 +441,4 @@ export class LoopbackApiClient extends AbstractApiClient implements DshTransport
   private isConnectionClosed(): boolean {
     return this.isClosed
   }
-}
-
-type WebSocketItem =
-  | { readonly kind: 'frame'; readonly value: unknown }
-  | { readonly kind: 'end' }
-  | { readonly kind: 'error'; readonly error: Error }
-
-class WebSocketQueue {
-  private readonly values: (WebSocketItem | undefined)[] = []
-  private head = 0
-
-  public constructor(private readonly capacity: number) {}
-
-  public get length(): number {
-    return this.values.length - this.head
-  }
-
-  public push(value: WebSocketItem): boolean {
-    if (this.length >= this.capacity) return false
-    this.values.push(value)
-    return true
-  }
-
-  public shift(): WebSocketItem {
-    const value = this.values[this.head]
-    this.values[this.head] = undefined
-    this.head += 1
-    if (this.head > 32 && this.head * 2 > this.values.length) {
-      this.values.splice(0, this.head)
-      this.head = 0
-    }
-    return value as WebSocketItem
-  }
-
-  public clear(): void {
-    this.values.length = 0
-    this.head = 0
-  }
-}
-
-const MUX_FRAME_TYPES = frameTypes(muxFrameSchema)
-const HOST_FRAME_TYPES = frameTypes(hostFrameSchema)
-
-/**
- * The pinned package exports these schemas through a broad ZodType cast, but
- * the concrete Zod discriminated union retains its public `options` array at
- * runtime. Derive the allowlist from that source rather than copying tags.
- */
-function frameTypes(schema: { parse(value: unknown): unknown }): ReadonlySet<string> {
-  const options = (schema as unknown as { readonly options?: unknown }).options
-  if (!Array.isArray(options)) throw new Error('Pinned DSH frame schema has no discriminated options.')
-  return new Set(
-    options.flatMap((entry) => {
-      const option = record(entry)
-      const shape = record(option?.shape)
-      const type = record(shape?.type)
-      const value = type?.value
-      return typeof value === 'string' ? [value] : []
-    }),
-  )
-}
-
-/**
- * rc.6/rc.7 still emit the settings-not-exposed error branch that later
- * removed from its generated envelope schema. Keep the current upstream
- * typed client for every success/value schema, but widen this one legacy
- * error at the transport seam so an older host is not rejected before the
- * adapter's own error mapper sees it.
- */
-async function normalizeLegacyRpcResponse(response: Response, pathname: string): Promise<Response> {
-  // The legacy settings error is a 2xx envelope, while non-2xx responses are
-  // the only other responses worth probing for a structured error. Avoid
-  // cloning large successful exports and ordinary RPC values.
-  if (response.ok && !isSettingsRpcPath(pathname)) return response
-  if (!response.headers.get('content-type')?.toLocaleLowerCase().includes('json')) return response
-  let value: unknown
-  try {
-    value = await response.clone().json()
-  } catch {
-    return response
-  }
-  if (!isLegacySettingsErrorEnvelope(value)) return response
-  const envelope = value as Record<string, unknown>
-  const result = envelope.result as Record<string, unknown>
-  const error = result.error as Record<string, unknown>
-  const normalized = {
-    ...envelope,
-    result: {
-      ...result,
-      error: { ...error, code: 'settings-rejected' },
-    },
-  }
-  const headers = new Headers(response.headers)
-  headers.delete('content-length')
-  headers.set('content-type', 'application/json')
-  return new Response(JSON.stringify(normalized), {
-    status: response.status,
-    statusText: response.statusText,
-    headers,
-  })
-}
-
-function isSettingsRpcPath(pathname: string): boolean {
-  return pathname.startsWith('/api/settings.')
-}
-
-function isLegacySettingsErrorEnvelope(value: unknown): boolean {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
-  const envelope = value as Record<string, unknown>
-  const result = envelope.result
-  if (typeof result !== 'object' || result === null || Array.isArray(result)) return false
-  const resultRecord = result as Record<string, unknown>
-  const error = resultRecord.error
-  if (resultRecord.ok !== false || typeof error !== 'object' || error === null || Array.isArray(error))
-    return false
-  const errorRecord = error as Record<string, unknown>
-  const details = errorRecord.details
-  return (
-    errorRecord.code === 'settings-not-exposed' &&
-    typeof details === 'object' &&
-    details !== null &&
-    !Array.isArray(details) &&
-    typeof (details as Record<string, unknown>).ns === 'string'
-  )
-}
-
-/**
- * Keep the pinned schema strict for known frames, but leave a future frame
- * type available to the adapter's safe `unknown` projection. A malformed
- * known frame still fails closed and triggers the normal stream recovery.
- */
-function parseFramePayload(
-  schema: { parse(value: unknown): unknown },
-  value: unknown,
-  knownFrameTypes: ReadonlySet<string>,
-): unknown {
-  try {
-    return schema.parse(value)
-  } catch (error) {
-    const frame = record(value)
-    if (frame !== undefined && typeof frame.type === 'string' && !knownFrameTypes.has(frame.type))
-      return value
-    throw error
-  }
-}
-
-function record(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined
-}
-
-function parseRawServerResponse(value: unknown): RawServerResponse {
-  const envelope = record(value)
-  const result = record(envelope?.result)
-  if (
-    envelope?.type !== 'server-response' ||
-    typeof envelope.rpcId !== 'string' ||
-    result === undefined ||
-    typeof result.ok !== 'boolean'
-  )
-    throw new Error('Malformed server-response envelope')
-
-  if (result.ok) {
-    return {
-      type: 'server-response',
-      rpcId: envelope.rpcId,
-      result: Object.hasOwn(result, 'value') ? { ok: true, value: result.value } : { ok: true },
-    }
-  }
-
-  const error = record(result.error)
-  if (
-    error === undefined ||
-    typeof error.code !== 'string' ||
-    typeof error.message !== 'string' ||
-    !Object.hasOwn(error, 'details')
-  )
-    throw new Error('Malformed server-response error')
-  const details = record(error.details)
-  if (details === undefined) throw new Error('Malformed server-response error details')
-  return {
-    type: 'server-response',
-    rpcId: envelope.rpcId,
-    result: {
-      ok: false,
-      error: { code: error.code, message: error.message, details },
-    },
-  }
-}
-
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, signal?: AbortSignal): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    let settled = false
-    const timer = setTimeout(
-      () =>
-        finish(
-          undefined,
-          new AppError({
-            code: 'BACKEND_UNREACHABLE',
-            message: 'The DSH event stream did not become ready.',
-            retryable: true,
-          }),
-        ),
-      timeoutMs,
-    )
-    const onAbort = (): void => finish(undefined, cancelled(signal?.reason))
-    const cleanup = (): void => {
-      clearTimeout(timer)
-      signal?.removeEventListener('abort', onAbort)
-    }
-    const finish = (value: T | undefined, error?: unknown): void => {
-      if (settled) return
-      settled = true
-      cleanup()
-      if (error === undefined) resolve(value as T)
-      else
-        reject(error instanceof Error ? error : new Error('The DSH transport returned an unspecified error.'))
-    }
-    if (signal?.aborted === true) {
-      onAbort()
-      return
-    }
-    signal?.addEventListener('abort', onAbort, { once: true })
-    promise.then(
-      (value) => finish(value),
-      (error) => finish(undefined, error),
-    )
-  })
 }
