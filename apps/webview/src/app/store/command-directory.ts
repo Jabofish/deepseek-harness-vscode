@@ -288,3 +288,56 @@ export function isSkillDescriptor(value: unknown): value is SkillDescriptor {
     typeof item.enabled === 'boolean'
   )
 }
+
+export interface CommandDirectoryCache {
+  load(sessionId: string, force?: boolean): Promise<readonly DynamicCommand[] | undefined>
+  /** Cached entry without triggering a load, for read-only fallbacks. */
+  peek(sessionId: string): readonly DynamicCommand[] | undefined
+  /** Drop every cached and in-flight entry; pending loads resolve to undefined. */
+  invalidate(): void
+}
+
+/**
+ * Command directories are per-session reads that outlive single requests:
+ * snapshots and reconnects invalidate the whole set while an open path may
+ * only need one entry. Generation-stamp the loads so a refresh issued before
+ * an invalidation cannot repopulate stale commands afterwards.
+ */
+export function createCommandDirectoryCache(
+  fetch: (sessionId: string) => Promise<readonly DynamicCommand[] | undefined>,
+): CommandDirectoryCache {
+  let generation = 0
+  const cache = new Map<string, readonly DynamicCommand[]>()
+  const loads = new Map<string, Promise<readonly DynamicCommand[] | undefined>>()
+  return {
+    peek(sessionId) {
+      return cache.get(sessionId)
+    },
+    invalidate(): void {
+      generation += 1
+      cache.clear()
+      loads.clear()
+    },
+    load(sessionId, force = false) {
+      if (force) cache.delete(sessionId)
+      else {
+        const cached = cache.get(sessionId)
+        if (cached !== undefined) return Promise.resolve(cached)
+      }
+      const pending = loads.get(sessionId)
+      if (pending !== undefined) return pending
+      const stamped = generation
+      const load = fetch(sessionId)
+        .then((commands) => {
+          if (commands === undefined || stamped !== generation) return undefined
+          cache.set(sessionId, commands)
+          return commands
+        })
+        .finally(() => {
+          if (loads.get(sessionId) === load) loads.delete(sessionId)
+        })
+      loads.set(sessionId, load)
+      return load
+    },
+  }
+}

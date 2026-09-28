@@ -2,8 +2,6 @@ import { translate } from '../i18n.js'
 import type {
   AgentConfiguration,
   BackendEvent,
-  DshUpdateSnapshot,
-  DynamicCommand,
   GoalView,
   JobView,
   MessageAttachment,
@@ -39,6 +37,7 @@ import {
   promptModeForConfiguration,
 } from './store/agent-config.js'
 import {
+  createCommandDirectoryCache,
   isCommandDirectoryRefresh,
   isModelCatalogRefresh,
   loadSessionModelDirectory,
@@ -46,6 +45,7 @@ import {
   readCommandList,
   refreshSessionModelDirectory,
 } from './store/command-directory.js'
+import { createDshUpdateActions } from './store/dsh-update.js'
 import { attachmentFromResult, imageDataUri, openFileCandidatesFromResult } from './store/editor-context.js'
 import { parseHostDomainEvent, timelineSequenceOptions } from './store/event-parser.js'
 import { isGoalView, isJobView, isQueuedInput, nonEmptyString, parseGoalViews } from './store/event-values.js'
@@ -78,7 +78,6 @@ import {
 } from './store/host-message-reducers.js'
 import {
   parseDshSettingsSnapshot,
-  parseDshUpdateSnapshot,
   parseExtensionSettings,
   refreshProvidersAndModels,
 } from './store/host-settings.js'
@@ -759,33 +758,11 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   let startupRestoreArmed = false
   let startupRestorePromise: Promise<void> | undefined
   const pendingOpenBuffer = createPendingOpenBuffer(() => openVersion)
-  let commandDirectoryGeneration = 0
-  const commandDirectoryCache = new Map<string, readonly DynamicCommand[]>()
-  const commandDirectoryLoads = new Map<string, Promise<readonly DynamicCommand[] | undefined>>()
+  const commandDirectory = createCommandDirectoryCache((sessionId) => readCommandList(client, sessionId))
   const loadCommandDirectory = (
     sessionId: string,
-    force = false,
-  ): Promise<readonly DynamicCommand[] | undefined> => {
-    if (force) commandDirectoryCache.delete(sessionId)
-    else {
-      const cached = commandDirectoryCache.get(sessionId)
-      if (cached !== undefined) return Promise.resolve(cached)
-    }
-    const pending = commandDirectoryLoads.get(sessionId)
-    if (pending !== undefined) return pending
-    const generation = commandDirectoryGeneration
-    const load = readCommandList(client, sessionId)
-      .then((commands) => {
-        if (commands === undefined || generation !== commandDirectoryGeneration) return undefined
-        commandDirectoryCache.set(sessionId, commands)
-        return commands
-      })
-      .finally(() => {
-        if (commandDirectoryLoads.get(sessionId) === load) commandDirectoryLoads.delete(sessionId)
-      })
-    commandDirectoryLoads.set(sessionId, load)
-    return load
-  }
+    force?: boolean,
+  ): ReturnType<typeof commandDirectory.load> => commandDirectory.load(sessionId, force)
   const refreshCommands = async (
     sessionId: string | undefined = state.activeSessionId,
     force = false,
@@ -1197,15 +1174,11 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       message.name === 'connection.snapshot' &&
       object(message.payload)?.kind === 'connected'
     ) {
-      commandDirectoryGeneration += 1
-      commandDirectoryCache.clear()
-      commandDirectoryLoads.clear()
+      commandDirectory.invalidate()
       void refreshCommands(undefined, true)
     }
     if (message.type === 'event' && message.name === 'connection.lost') {
-      commandDirectoryGeneration += 1
-      commandDirectoryCache.clear()
-      commandDirectoryLoads.clear()
+      commandDirectory.invalidate()
       invalidateFeedback()
     }
     if (
@@ -1534,7 +1507,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
               current.promptMode,
               isAgentConfiguration(detail?.configuration) ? detail.configuration.planMode : false,
             ),
-            commands: commandDirectoryCache.get(sessionId) ?? [],
+            commands: commandDirectory.peek(sessionId) ?? [],
           },
           initialMessages,
           scheduleGapBackfill,
@@ -1858,36 +1831,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     startupRestorePromise = restore
     return restore
   }
-  const checkDshUpdates = async (force = false): Promise<DshUpdateSnapshot | undefined> => {
-    setState((current) => ({
-      ...current,
-      dshUpdateProgress: { phase: 'checking' },
-    }))
-    const snapshot = parseDshUpdateSnapshot(
-      await client.request<unknown>({
-        type: 'runtime.update.check',
-        requestId: requestId(),
-        payload: { force },
-      }),
-    )
-    if (snapshot !== undefined) setState((current) => ({ ...current, dshUpdate: snapshot }))
-    return snapshot
-  }
-  const installDshVersion = async (version: string): Promise<DshUpdateSnapshot | undefined> => {
-    setState((current) => ({
-      ...current,
-      dshUpdateProgress: { phase: 'checking', version },
-    }))
-    const snapshot = parseDshUpdateSnapshot(
-      await client.request<unknown>({
-        type: 'runtime.update.install',
-        requestId: requestId(),
-        payload: { version },
-      }),
-    )
-    if (snapshot !== undefined) setState((current) => ({ ...current, dshUpdate: snapshot }))
-    return snapshot
-  }
+  const { checkDshUpdates, installDshVersion } = createDshUpdateActions({ client, setState })
   const store: StoreWithoutStateView = {
     ...accountActions.methods,
     ...jobActions.methods,
