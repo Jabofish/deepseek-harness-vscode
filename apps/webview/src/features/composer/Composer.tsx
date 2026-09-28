@@ -45,11 +45,7 @@ import {
   type CommandPaletteSelection,
 } from '../commands/CommandPalette.js'
 import { commandDispatchKind, type PopupSelectRegistry } from '../commands/popupSelectRegistry.js'
-import {
-  permissionOptions,
-  SessionControls,
-  type SessionControlsProps,
-} from './SessionControls.js'
+import { permissionOptions, SessionControls, type SessionControlsProps } from './SessionControls.js'
 import {
   commandInputOptions,
   embeddedReferenceRange,

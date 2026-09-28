@@ -11,7 +11,10 @@ import { domainEvent, parseHostDomainEvent, timelineSequenceOptions } from './ev
 describe('domainEvent', () => {
   it('preserves a non-object payload as an unknown row instead of dropping it', () => {
     expect(domainEvent('session.status', 'nope')).toMatchObject({ type: 'unknown', name: 'session.status' })
-    expect(domainEvent('session.status', undefined)).toMatchObject({ type: 'unknown', name: 'session.status' })
+    expect(domainEvent('session.status', undefined)).toMatchObject({
+      type: 'unknown',
+      name: 'session.status',
+    })
   })
 
   it('falls back to unknown without consuming the sequence when the sequence is not finite-safe', () => {
@@ -230,7 +233,9 @@ describe('domainEvent', () => {
       type: 'unknown',
       name: 'turn.started',
     })
-    expect(domainEvent('tool.updated', { sessionId: 's1', tool: { id: '  ', name: 'bash', status: 'completed' } })).toMatchObject({
+    expect(
+      domainEvent('tool.updated', { sessionId: 's1', tool: { id: '  ', name: 'bash', status: 'completed' } }),
+    ).toMatchObject({
       type: 'unknown',
       name: 'tool.updated',
     })
@@ -258,12 +263,19 @@ describe('parseHostDomainEvent', () => {
   })
 
   it('returns undefined (not null) for host-internal events the store handles elsewhere', () => {
-    for (const name of ['runtime.update.progress', 'ui.sessions.toggle', 'ui.settings.toggle', 'connection.snapshot'])
-      expect(parseHostDomainEvent({ type: 'event', name, payload: {} })).toBeUndefined()
+    for (const name of [
+      'runtime.update.progress',
+      'ui.sessions.toggle',
+      'ui.settings.toggle',
+      'connection.snapshot',
+    ])
+      expect(parseHostDomainEvent({ type: 'event', sequence: 1, name, payload: {} })).toBeUndefined()
   })
 
   it('maps an uninterpretable event frame to a preserved unknown row', () => {
-    expect(parseHostDomainEvent({ type: 'event', name: 'totally.unheard', payload: {} })).toMatchObject({
+    expect(
+      parseHostDomainEvent({ type: 'event', sequence: 1, name: 'totally.unheard', payload: {} }),
+    ).toMatchObject({
       type: 'unknown',
       name: 'totally.unheard',
     })
@@ -271,7 +283,12 @@ describe('parseHostDomainEvent', () => {
 
   it('returns the parsed event for durable frames', () => {
     expect(
-      parseHostDomainEvent({ type: 'event', name: 'session.status', payload: { sessionId: 's1', status: 'idle' } }),
+      parseHostDomainEvent({
+        type: 'event',
+        sequence: 1,
+        name: 'session.status',
+        payload: { sessionId: 's1', status: 'idle' },
+      }),
     ).toMatchObject({ type: 'session.status', status: 'idle' })
   })
 })
@@ -295,7 +312,11 @@ describe('timelineSequenceOptions', () => {
       { sequence: 3, sessionId: 's1', jobs: [] },
     ]) {
       const event = domainEvent(
-        payload.jobs !== undefined ? 'jobs.updated' : payload.status !== undefined ? 'session.status' : 'session.removed',
+        payload.jobs !== undefined
+          ? 'jobs.updated'
+          : payload.status !== undefined
+            ? 'session.status'
+            : 'session.removed',
         payload,
       )
       expect(event).toBeDefined()

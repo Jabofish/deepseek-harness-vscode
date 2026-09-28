@@ -246,14 +246,18 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     disposeAccountLifecycleHost,
     detachSessionAdapters,
   })
-  const { featureContextOwner, currentFeatureSessionBinding, contextOwnerForSession, featureWorkspaceFolderId } =
-    createFeatureContext({
-      backendService,
-      featureOwner,
-      currentWorkspaceFolders,
-      workspaceFolderIdForSession,
-      currentWorkspaceFolderId,
-    })
+  const {
+    featureContextOwner,
+    currentFeatureSessionBinding,
+    contextOwnerForSession,
+    featureWorkspaceFolderId,
+  } = createFeatureContext({
+    backendService,
+    featureOwner,
+    currentWorkspaceFolders,
+    workspaceFolderIdForSession,
+    currentWorkspaceFolderId,
+  })
   const { handleFeatureRequest } = createFeatureRequestHandler({
     getAccountLifecycleHost,
     backendService,

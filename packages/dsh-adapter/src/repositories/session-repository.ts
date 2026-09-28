@@ -1,6 +1,5 @@
 import {
   AppError,
-  isImageMediaType,
   type AgentConfiguration,
   type BackendEvent,
   type ImageAttachmentLimits,
@@ -10,10 +9,8 @@ import {
   type RunningInputMode,
   type SessionCreateInput,
   type SessionDetail,
-  type SessionHistoryEvent,
   type SessionHistoryPage,
   type SessionHistoryQueryOptions,
-  type SessionSequenceRange,
   type SessionListQuery,
   type SessionPage,
   type SessionRepository,
@@ -21,23 +18,44 @@ import {
 } from '@dsh-vscode/domain'
 
 import type { DshTransport } from '../contracts.js'
-import { executeSessionConfigCommand, type CommandAttachmentWire } from './command-repository.js'
-import { callRpc, type RpcResponseLike, unavailable, unwrapRpcResult } from '../versions/rc6/rpc.js'
-import { clientTimeZoneField } from '../client-time-zone.js'
-import type { StreamRecovery } from '../stream-controller.js'
+import type { CommandAttachmentWire } from './command-repository.js'
+import { callRpc, unavailable } from '../versions/rc6/rpc.js'
 import { rc6Mapper } from '../versions/rc6/mapper.js'
-import { permissionPresetIds, projectedModelSelection } from '../projection/agent.js'
+import { permissionPresetIds } from '../projection/agent.js'
 import type { Rc6WorkspaceRepository } from './workspace-repository.js'
-import { recordOrUndefined, validProjectionBlock, walkHistoryPages } from './shared/guards.js'
+import { recordOrUndefined } from './shared/guards.js'
 import {
   decodeBase64Payload,
-  encodePromptContent,
   isSupportedImageMimeType,
   matchesImageSignature,
   parseBase64DataUri,
   safeAttachmentName,
   type PromptContentLimits,
 } from '../attachment-codec.js'
+import type { Rc6SessionRepositoryOptions } from './session/options.js'
+import { setSessionConfiguration } from './session/set-configuration.js'
+import { SessionPromptQueue } from './session/prompt-queue.js'
+import { samePath } from './session/path.js'
+import {
+  compactHistoryEvents,
+  fallbackSessionSummary,
+  historyCwd,
+  sequenceRanges,
+} from './session/history.js'
+import { asRecord, configurationFromRawHistory, firstString } from './session/configuration.js'
+import { parseImageAttachmentLimits } from './session/image-limits.js'
+import {
+  acceptedRenameTitle,
+  assertModelSelection,
+  isNonEmptyStringArray,
+  malformedSessionResponse,
+  requiredRecord,
+  requiredSessionId,
+  validAttachmentReference,
+  validHistoryResponse,
+  validSessionSummaryResponse,
+} from './session/responses.js'
+import { assertAccepted } from './session/queue-helpers.js'
 
 /** The official web client pages session.history at 50 messages per read. */
 const HISTORY_PAGE_MESSAGES = 50
@@ -55,20 +73,7 @@ export class Rc6SessionRepository implements SessionRepository {
    * The history page remains the authoritative payload; keeping this local
    * hint avoids issuing a second session.list just to recover title/status. */
   private readonly sessionSummaries = new Map<string, SessionSummary>()
-  private readonly queueOwners = new Map<string, string>()
-  private readonly queues = new Map<string, readonly QueuedInput[]>()
-  /** Preserve the user's order when multiple mutations target one Inbox row. */
-  private readonly queueMutationTails = new Map<string, Promise<void>>()
-  /** Monotonic Inbox projection cuts shared by control and follow streams. */
-  private readonly queueProjectionSequences = new Map<string, number>()
-  private readonly queueWaiters = new Map<string, Set<(items: readonly QueuedInput[]) => void>>()
-  /**
-   * Reads that arrived before the subscription published the queue baseline.
-   * The mux delivers `session/subscribed` asynchronously, so a `session.open`
-   * response can win the race against the baseline it depends on.
-   */
-  private readonly queueBaselineWaiters = new Map<string, Set<() => void>>()
-  private readonly pendingQueueIdentities = new Map<string, Promise<QueuedInput | undefined>>()
+  private readonly promptQueue: SessionPromptQueue
   private readonly imageLimitsBySession = new Map<string, ImageAttachmentLimits>()
   public constructor(
     private readonly transport: DshTransport,
@@ -93,6 +98,13 @@ export class Rc6SessionRepository implements SessionRepository {
     this.readPermissionPresets = options.readPermissionPresets
     this.supportsFileUploads = options.supportsFileUploads === true
     this.supportsSessionRestore = options.supportsSessionRestore === true
+    this.promptQueue = new SessionPromptQueue(
+      this.transport,
+      this.queueBaseline,
+      this.includesClientTimeZone,
+      this.onSessionAccess,
+      (sessionId) => this.promptContentLimits(sessionId),
+    )
   }
 
   private readonly readPermissionPresets: ((signal?: AbortSignal) => Promise<readonly string[]>) | undefined
@@ -114,53 +126,16 @@ export class Rc6SessionRepository implements SessionRepository {
     ((sessionId: string, presetId: string, signal?: AbortSignal) => Promise<void>) | undefined
 
   public remember(event: BackendEvent): void {
-    if (event.type !== 'queue.updated') {
-      if (event.type === 'session.subscribed') {
-        if (this.queueBaseline === 'subscription') {
-          this.clearQueueState(event.sessionId)
-          this.queues.set(event.sessionId, [])
-          this.notifyQueueBaseline(event.sessionId)
-        }
-        this.rememberProjectionValues(event.sessionId, event.projection?.values, true)
-      } else if (event.type === 'session.removed') {
-        this.clearQueueState(event.sessionId)
-        this.imageLimitsBySession.delete(event.sessionId)
-        this.sessionSummaries.delete(event.sessionId)
-      } else if (event.type === 'session.projection' && event.key === 'imageLimits') {
-        this.rememberImageLimitsValue(event.sessionId, event.value)
-      }
-      return
+    this.promptQueue.remember(event)
+    if (event.type === 'session.subscribed') {
+      this.rememberProjectionValues(event.sessionId, event.projection?.values, true)
+    } else if (event.type === 'session.removed') {
+      this.imageLimitsBySession.delete(event.sessionId)
+      this.sessionSummaries.delete(event.sessionId)
+    } else if (event.type === 'session.projection' && event.key === 'imageLimits') {
+      this.rememberImageLimitsValue(event.sessionId, event.value)
     }
-    // The alpha171+ queue is derived from versioned control/follow
-    // projections. Accepting an unversioned legacy frame in the same profile
-    // would bypass the cross-stream watermark. Older queue profiles keep their
-    // historical unsequenced behavior because they use another baseline mode.
-    if (this.queueBaseline === 'control-follow' && event.asOfSequence === undefined) return
-    if (event.asOfSequence !== undefined) {
-      if (
-        !Number.isSafeInteger(event.asOfSequence) ||
-        event.asOfSequence < 0 ||
-        Object.is(event.asOfSequence, -0)
-      )
-        return
-      const previousSequence = this.queueProjectionSequences.get(event.sessionId)
-      // A cut is a complete queue snapshot. Equal cuts are idempotent only;
-      // conflicting equal snapshots and older cross-stream frames are stale.
-      if (previousSequence !== undefined && event.asOfSequence <= previousSequence) return
-      this.queueProjectionSequences.set(event.sessionId, event.asOfSequence)
-    }
-    this.queues.set(event.sessionId, event.items)
-    this.notifyQueueBaseline(event.sessionId)
-    const previous = new Set(
-      [...this.queueOwners.entries()]
-        .filter(([, sessionId]) => sessionId === event.sessionId)
-        .map(([inputId]) => inputId),
-    )
-    for (const itemId of previous) this.queueOwners.delete(itemId)
-    for (const item of event.items) this.queueOwners.set(item.id, event.sessionId)
-    for (const waiter of this.queueWaiters.get(event.sessionId) ?? []) waiter(event.items)
   }
-
   public async list(query?: SessionListQuery, signal?: AbortSignal): Promise<SessionPage> {
     if (query?.cursor !== undefined && query.cursor.trim() !== '')
       throw unavailable('session list pagination')
@@ -603,276 +578,41 @@ export class Rc6SessionRepository implements SessionRepository {
       throw malformedSessionResponse('session archive receipt')
   }
 
-  public async sendPrompt(
+  public sendPrompt(
     input: PromptInput,
     mode: RunningInputMode = 'queue',
     signal?: AbortSignal,
   ): Promise<void> {
-    assertPromptContent(input.text, input.attachments)
-    const limits = this.promptContentLimits(input.sessionId)
-    const receipt = await callRpc<unknown>(
-      this.transport,
-      'session.prompt',
-      {
-        sessionId: input.sessionId,
-        mode,
-        content: encodePromptContent(input.text, input.attachments, limits),
-        ...(this.includesClientTimeZone ? clientTimeZoneField() : {}),
-      },
-      signal,
-    )
-    assertAccepted(receipt, 'session prompt')
+    return this.promptQueue.sendPrompt(input, mode, signal)
   }
 
-  public async enqueuePrompt(
+  public enqueuePrompt(
     input: PromptInput,
     mode: RunningInputMode,
     signal?: AbortSignal,
   ): Promise<QueuedInput> {
-    assertPromptContent(input.text, input.attachments)
-    const limits = this.promptContentLimits(input.sessionId)
-    const promptKey = queuedPromptKey(input, mode)
-    const pending = this.pendingQueueIdentities.get(promptKey)
-    if (pending !== undefined) {
-      const queued = await this.awaitQueueIdentity(pending, signal, QUEUE_IDENTITY_GRACE_MS)
-      if (queued !== undefined) {
-        this.queueOwners.set(queued.id, input.sessionId)
-        return queued
-      }
-      if (this.pendingQueueIdentities.get(promptKey) === pending)
-        this.pendingQueueIdentities.delete(promptKey)
-    }
-    const beforeIds = new Set(
-      (this.queues.get(input.sessionId) ?? []).filter((item) => item.mode === mode).map((item) => item.id),
-    )
-    // Register the shared identity promise before the network round trip: a
-    // concurrent identical enqueue issued while this request is in flight
-    // must wait for this attempt's outcome instead of sending a second
-    // session.prompt to the host.
-    let resolveIdentity!: (value: QueuedInput | undefined) => void
-    const identityPromise = new Promise<QueuedInput | undefined>((resolve) => {
-      resolveIdentity = resolve
-    })
-    this.pendingQueueIdentities.set(promptKey, identityPromise)
-    void identityPromise.then(
-      (resolved) => {
-        if (this.pendingQueueIdentities.get(promptKey) === identityPromise)
-          this.pendingQueueIdentities.delete(promptKey)
-        if (resolved !== undefined) this.queueOwners.set(resolved.id, input.sessionId)
-      },
-      () => {
-        if (this.pendingQueueIdentities.get(promptKey) === identityPromise)
-          this.pendingQueueIdentities.delete(promptKey)
-      },
-    )
-    let response: RpcResponseLike<unknown>
-    try {
-      response = await this.transport.request<RpcResponseLike<unknown>>(
-        'session.prompt',
-        {
-          sessionId: input.sessionId,
-          mode,
-          content: encodePromptContent(input.text, input.attachments, limits),
-          ...(this.includesClientTimeZone ? clientTimeZoneField() : {}),
-        },
-        signal,
-      )
-      const receipt = unwrapRpcResult(response, 'session.prompt')
-      assertAccepted(receipt, 'session prompt')
-    } catch (error) {
-      // Settle the shared promise so concurrent waiters retry on their own
-      // instead of hanging for the whole grace window after a failed attempt.
-      resolveIdentity(undefined)
-      throw error
-    }
-    const queued = findNewQueuedInput(
-      this.queues.get(input.sessionId),
-      beforeIds,
-      input,
-      mode,
-      response.rpcId,
-    )
-    if (queued !== undefined) {
-      resolveIdentity(queued)
-      this.queueOwners.set(queued.id, input.sessionId)
-      return queued
-    }
-    void this.waitForQueuedIdentity(input, mode, beforeIds, response.rpcId, QUEUE_IDENTITY_GRACE_MS).then(
-      (value) => resolveIdentity(value),
-    )
-    const waited = await this.awaitQueueIdentity(identityPromise, signal, QUEUE_IDENTITY_TIMEOUT_MS)
-    if (waited !== undefined) {
-      this.queueOwners.set(waited.id, input.sessionId)
-      return waited
-    }
-    // The prompt was accepted, so a missing identity within the wait window
-    // is a slow host rather than a broken protocol; classify it like every
-    // other transport timeout instead of signalling protocol drift.
-    throw new AppError({
-      code: 'BACKEND_UNREACHABLE',
-      message: 'DSH accepted the prompt but did not publish its queue identity in time.',
-      retryable: true,
-      context: { method: 'session.prompt', timedOut: true },
-    })
+    return this.promptQueue.enqueuePrompt(input, mode, signal)
   }
 
-  public async listQueue(sessionId: string, signal?: AbortSignal): Promise<readonly QueuedInput[]> {
-    if (!this.queues.has(sessionId)) {
-      // The control stream is the queue owner: a Session it never named has
-      // nothing pending, so the read is an empty list rather than an unknown.
-      if (this.queueBaseline === 'control') return []
-      if (this.queueBaseline === 'control-follow') {
-        if (signal?.aborted === true)
-          throw new AppError({
-            code: 'REQUEST_CANCELLED',
-            message: 'The queue snapshot request was cancelled.',
-            retryable: false,
-          })
-        // A fork may inherit Inbox state without producing a live control
-        // projection frame. Open its durable follow stream and wait for the
-        // version adapter's queue snapshot derived from session.subscribed.
-        this.onSessionAccess?.(sessionId)
-      }
-      // A session that was just opened has no queue entry until its baseline
-      // lands. Wait instead of reporting an empty queue while the host is still
-      // delivering that session's authoritative snapshot.
-      await this.waitForQueueBaseline(sessionId, signal)
-      if (signal?.aborted === true)
-        throw new AppError({
-          code: 'REQUEST_CANCELLED',
-          message: 'The queue snapshot request was cancelled.',
-          retryable: false,
-        })
-      if (!this.queues.has(sessionId)) throw unavailable('queue snapshot')
-    }
-    const items = this.queues.get(sessionId) ?? []
-    for (const item of items) this.queueOwners.set(item.id, sessionId)
-    return items
-  }
-
-  private notifyQueueBaseline(sessionId: string): void {
-    const waiters = this.queueBaselineWaiters.get(sessionId)
-    if (waiters === undefined) return
-    this.queueBaselineWaiters.delete(sessionId)
-    for (const waiter of waiters) waiter()
-  }
-
-  private async waitForQueueBaseline(sessionId: string, signal?: AbortSignal): Promise<void> {
-    const deadline = Date.now() + QUEUE_BASELINE_TIMEOUT_MS
-    while (!this.queues.has(sessionId) && !(signal?.aborted ?? false)) {
-      const remaining = deadline - Date.now()
-      if (remaining <= 0) return
-      await new Promise<void>((resolve) => {
-        let settled = false
-        const finish = (): void => {
-          if (settled) return
-          settled = true
-          clearTimeout(timer)
-          signal?.removeEventListener('abort', finish)
-          const waiters = this.queueBaselineWaiters.get(sessionId)
-          waiters?.delete(onBaseline)
-          if (waiters !== undefined && waiters.size === 0) this.queueBaselineWaiters.delete(sessionId)
-          resolve()
-        }
-        const onBaseline = (): void => finish()
-        const waiters = this.queueBaselineWaiters.get(sessionId) ?? new Set<() => void>()
-        waiters.add(onBaseline)
-        this.queueBaselineWaiters.set(sessionId, waiters)
-        const timer = setTimeout(finish, remaining)
-        signal?.addEventListener('abort', finish, { once: true })
-      })
-    }
+  public listQueue(sessionId: string, signal?: AbortSignal): Promise<readonly QueuedInput[]> {
+    return this.promptQueue.listQueue(sessionId, signal)
   }
 
   public sessionForQueuedInput(inputId: string): string | undefined {
-    return this.queueOwners.get(inputId)
+    return this.promptQueue.sessionForQueuedInput(inputId)
   }
 
-  public async updateQueuedInput(inputId: string, text: string, signal?: AbortSignal): Promise<void> {
-    if (text.trim() === '')
-      throw new AppError({
-        code: 'INVALID_CONFIGURATION',
-        message: 'Queue edit content must include non-whitespace text.',
-        retryable: false,
-      })
-    const sessionId = this.ownerOf(inputId)
-    return this.serializeQueueMutation(inputId, signal, async () => {
-      const queued = this.queues.get(sessionId)?.find((item) => item.id === inputId)
-      // The wire's only edit is a text-only replacement of the whole content,
-      // so a row carrying an image or a file would lose it. Check the latest
-      // cached snapshot after prior mutations on this row have settled.
-      if (queued?.textOnly === false)
-        throw new AppError({
-          code: 'CAPABILITY_UNAVAILABLE',
-          message: 'Editing a queued DSH prompt that carries attachments would drop them.',
-          retryable: false,
-        })
-      const receipt = await callRpc<unknown>(
-        this.transport,
-        'session.updateQueue',
-        {
-          sessionId,
-          itemId: inputId,
-          action: { kind: 'edit', content: [{ type: 'text', text }] },
-        },
-        signal,
-      )
-      assertAccepted(receipt, 'queue update')
-    })
+  public updateQueuedInput(inputId: string, text: string, signal?: AbortSignal): Promise<void> {
+    return this.promptQueue.updateQueuedInput(inputId, text, signal)
   }
 
-  public async removeQueuedInput(inputId: string, signal?: AbortSignal): Promise<void> {
-    const sessionId = this.ownerOf(inputId)
-    return this.serializeQueueMutation(inputId, signal, async () => {
-      const receipt = await callRpc<unknown>(
-        this.transport,
-        'session.updateQueue',
-        { sessionId, itemId: inputId, action: { kind: 'remove' } },
-        signal,
-      )
-      assertAccepted(receipt, 'queue removal')
-      this.queueOwners.delete(inputId)
-    })
+  public removeQueuedInput(inputId: string, signal?: AbortSignal): Promise<void> {
+    return this.promptQueue.removeQueuedInput(inputId, signal)
   }
 
-  public async convertQueuedInputToSteer(inputId: string, signal?: AbortSignal): Promise<void> {
-    const sessionId = this.ownerOf(inputId)
-    return this.serializeQueueMutation(inputId, signal, async () => {
-      try {
-        const receipt = await callRpc<unknown>(
-          this.transport,
-          'session.updateQueue',
-          { sessionId, itemId: inputId, action: { kind: 'steer' } },
-          signal,
-        )
-        assertAccepted(receipt, 'queue steering')
-      } catch (error) {
-        if (!isSettledSteer(error)) throw error
-      }
-    })
+  public convertQueuedInputToSteer(inputId: string, signal?: AbortSignal): Promise<void> {
+    return this.promptQueue.convertQueuedInputToSteer(inputId, signal)
   }
-
-  private serializeQueueMutation(
-    inputId: string,
-    signal: AbortSignal | undefined,
-    mutate: () => Promise<void>,
-  ): Promise<void> {
-    const preceding = this.queueMutationTails.get(inputId) ?? Promise.resolve()
-    const operation = preceding.then(async () => {
-      if (signal?.aborted === true) throw cancelledQueueMutation()
-      await mutate()
-    })
-    const tail = operation.then(
-      () => undefined,
-      () => undefined,
-    )
-    this.queueMutationTails.set(inputId, tail)
-    void tail.then(() => {
-      if (this.queueMutationTails.get(inputId) === tail) this.queueMutationTails.delete(inputId)
-    })
-    return rejectQueueMutationOnAbort(operation, signal)
-  }
-
   public async cancel(sessionId: string, signal?: AbortSignal): Promise<void> {
     const receipt = await callRpc<unknown>(this.transport, 'session.cancel', { sessionId }, signal)
     assertAccepted(receipt, 'session cancellation')
@@ -883,186 +623,19 @@ export class Rc6SessionRepository implements SessionRepository {
     configuration: AgentConfiguration,
     signal?: AbortSignal,
   ): Promise<void> {
-    if (configuration.toolMode !== 'native') throw unavailable('per-session tool mode')
-    const hasProvider = configuration.model.providerId.trim() !== ''
-    const hasModel = configuration.model.modelId.trim() !== ''
-    if (hasProvider !== hasModel)
-      throw new AppError({
-        code: 'INVALID_CONFIGURATION',
-        message: 'The session model selection is incomplete.',
-        retryable: false,
-      })
-    const requestedPermission = configuration.permissionPreset.trim()
-    if (!isPermissionPresetId(requestedPermission))
-      throw new AppError({
-        code: 'INVALID_CONFIGURATION',
-        message: 'The session permission preset is invalid.',
-        retryable: false,
-      })
-    const current = await this.get(sessionId, signal)
-    const currentPermissionValue = current.configuration.permissionPreset.trim()
-    const currentPermission =
-      current.configuration.permissionPresetKnown === false ? undefined : currentPermissionValue
-    // `configuration.permissionPreset` is a display fallback when the host has
-    // no observed current value. If a full configuration update carries that
-    // unchanged fallback, do not turn an unrelated model/preset edit into a
-    // permission command that writes an unobserved value back to DSH.
-    const permissionBaseline =
-      current.configuration.permissionPresetKnown === false && this.readPermissionPresets !== undefined
-        ? currentPermissionValue
-        : currentPermission
-    const permissionChanged = requestedPermission !== permissionBaseline
-    if (
-      permissionChanged &&
-      this.readPermissionPresets !== undefined &&
-      current.permissionPresets === undefined
-    )
-      throw unavailable('changing a permission preset without an authoritative DSH catalog')
-    if (
-      permissionChanged &&
-      current.permissionPresets !== undefined &&
-      !current.permissionPresets.includes(requestedPermission)
-    )
-      throw new AppError({
-        code: 'INVALID_CONFIGURATION',
-        message: 'The requested session permission preset is not advertised by DSH.',
-        retryable: false,
-      })
-
-    const requestedPreset = configuration.preset.trim()
-    const currentPreset = current.configuration.preset.trim()
-    const presetSelectionUnavailable =
-      current.status !== 'idle' || (this.selectAgentPreset !== undefined && !current.blank)
-    if (requestedPreset !== '' && requestedPreset !== currentPreset && presetSelectionUnavailable)
-      throw unavailable('changing the agent preset of an existing session')
-
-    const selectModel = async (
-      model: {
-        readonly providerId: string
-        readonly modelId: string
-        readonly reasoningLevel?: string
+    return setSessionConfiguration(
+      {
+        transport: this.transport,
+        commandAttachmentWire: this.commandAttachmentWire,
+        readPermissionPresets: this.readPermissionPresets,
+        selectAgentPreset: this.selectAgentPreset,
+        executeSessionConfigurationCommand: this.executeSessionConfigurationCommand,
+        get: (id, operationSignal) => this.get(id, operationSignal),
       },
-      operationSignal?: AbortSignal,
-    ): Promise<void> => {
-      assertModelSelection(
-        await callRpc<unknown>(
-          this.transport,
-          'session.selectModel',
-          {
-            sessionId,
-            provider: model.providerId,
-            model: model.modelId,
-            ...(model.reasoningLevel === undefined ? {} : { reasoningEffort: model.reasoningLevel }),
-          },
-          operationSignal,
-        ),
-      )
-    }
-    const previousModel = current.configuration.model
-    const modelChanged =
-      hasModel &&
-      (previousModel.providerId !== configuration.model.providerId ||
-        previousModel.modelId !== configuration.model.modelId ||
-        previousModel.reasoningLevel !== configuration.model.reasoningLevel)
-    const rollback: Array<() => Promise<void>> = []
-    const apply = async (forward: () => Promise<void>, reverse: () => Promise<void>): Promise<void> => {
-      await forward()
-      rollback.unshift(reverse)
-    }
-    const selectPreset = async (preset: string, operationSignal?: AbortSignal): Promise<void> => {
-      if (this.selectAgentPreset !== undefined) {
-        await this.selectAgentPreset(sessionId, preset, operationSignal)
-        return
-      }
-      const value = await callRpc<unknown>(
-        this.transport,
-        'agentPreset.select',
-        { sessionId, agentPreset: preset },
-        operationSignal,
-      )
-      const presetRecord = requiredRecord(value, 'agent preset selection')
-      if (typeof presetRecord.agentPreset !== 'string' || presetRecord.agentPreset.trim() === '')
-        throw malformedSessionResponse('agent preset selection')
-    }
-    const command = async (value: string, operationSignal?: AbortSignal): Promise<void> => {
-      if (this.executeSessionConfigurationCommand !== undefined) {
-        await this.executeSessionConfigurationCommand(sessionId, value, operationSignal)
-        return
-      }
-      await executeSessionConfigCommand(
-        this.transport,
-        sessionId,
-        value,
-        this.commandAttachmentWire,
-        operationSignal,
-      )
-    }
-
-    try {
-      // DSH exposes independent mutation RPCs rather than a transaction. Apply
-      // the cheap host-validated settings first and keep explicit compensating
-      // actions so a later failure does not leave a mixed configuration.
-      if (requestedPreset !== '' && requestedPreset !== currentPreset)
-        await apply(
-          () => selectPreset(requestedPreset, signal),
-          () => (currentPreset === '' ? Promise.resolve() : selectPreset(currentPreset)),
-        )
-      if (permissionChanged)
-        await apply(
-          () => command(`/permission ${requestedPermission}`, signal),
-          () =>
-            currentPermission !== undefined && isPermissionPresetId(currentPermission)
-              ? command(`/permission ${currentPermission}`)
-              : Promise.reject(unavailable('restoring an unknown permission setting')),
-        )
-      if (
-        current.configuration.planModeKnown === false ||
-        configuration.planMode !== current.configuration.planMode
-      )
-        await apply(
-          () => command(configuration.planMode ? '/plan' : '/plan off', signal),
-          () =>
-            current.configuration.planModeKnown === false
-              ? Promise.reject(unavailable('restoring an unknown plan setting'))
-              : command(current.configuration.planMode ? '/plan' : '/plan off'),
-        )
-      if (modelChanged)
-        await apply(
-          () => selectModel(configuration.model, signal),
-          () =>
-            previousModel.providerId.trim() !== '' && previousModel.modelId.trim() !== ''
-              ? selectModel(previousModel)
-              : Promise.resolve(),
-        )
-    } catch (error) {
-      const rollbackErrors: unknown[] = []
-      for (const undo of rollback) {
-        try {
-          await undo()
-        } catch (rollbackError) {
-          rollbackErrors.push(rollbackError)
-        }
-      }
-      if (rollbackErrors.length > 0)
-        throw new AppError({
-          code: 'INTERNAL_ERROR',
-          message: 'DSH configuration failed and could not be fully restored.',
-          retryable: true,
-          cause: new AggregateError([error, ...rollbackErrors]),
-        })
-      throw error
-    }
-  }
-
-  private ownerOf(inputId: string): string {
-    const sessionId = this.queueOwners.get(inputId)
-    if (sessionId === undefined)
-      throw new AppError({
-        code: 'STALE_INTERACTION',
-        message: 'The queued DSH input is no longer available.',
-        retryable: true,
-      })
-    return sessionId
+      sessionId,
+      configuration,
+      signal,
+    )
   }
 
   private promptContentLimits(sessionId: string): PromptContentLimits {
@@ -1102,780 +675,7 @@ export class Rc6SessionRepository implements SessionRepository {
     // make prompt admission fall back to the less restrictive local defaults.
     if (limits !== undefined) this.imageLimitsBySession.set(sessionId, limits)
   }
-
-  private clearQueueState(sessionId: string): void {
-    this.queues.delete(sessionId)
-    this.queueProjectionSequences.delete(sessionId)
-    for (const [inputId, owner] of this.queueOwners) if (owner === sessionId) this.queueOwners.delete(inputId)
-    const prefix = `${sessionId}\u0000`
-    for (const key of this.pendingQueueIdentities.keys())
-      if (key.startsWith(prefix)) this.pendingQueueIdentities.delete(key)
-  }
-
-  private waitForQueuedIdentity(
-    input: PromptInput,
-    mode: RunningInputMode,
-    beforeIds: ReadonlySet<string>,
-    rpcId: string | undefined,
-    timeoutMs: number,
-  ): Promise<QueuedInput | undefined> {
-    return new Promise((resolve) => {
-      let settled = false
-      const finish = (value: QueuedInput | undefined): void => {
-        if (settled) return
-        settled = true
-        clearTimeout(timer)
-        const waiters = this.queueWaiters.get(input.sessionId)
-        if (waiters !== undefined) {
-          waiters.delete(onQueue)
-          if (waiters.size === 0) this.queueWaiters.delete(input.sessionId)
-        }
-        resolve(value)
-      }
-      const onQueue = (items: readonly QueuedInput[]): void => {
-        const candidate = findNewQueuedInput(items, beforeIds, input, mode, rpcId)
-        if (candidate !== undefined) finish(candidate)
-      }
-      const waiters =
-        this.queueWaiters.get(input.sessionId) ?? new Set<(items: readonly QueuedInput[]) => void>()
-      waiters.add(onQueue)
-      this.queueWaiters.set(input.sessionId, waiters)
-      const timer = setTimeout(() => finish(undefined), timeoutMs)
-    })
-  }
-
-  private awaitQueueIdentity(
-    promise: Promise<QueuedInput | undefined>,
-    signal: AbortSignal | undefined,
-    timeoutMs: number,
-  ): Promise<QueuedInput | undefined> {
-    return new Promise((resolve, reject) => {
-      let settled = false
-      const finish = (value: QueuedInput | undefined, error?: Error): void => {
-        if (settled) return
-        settled = true
-        clearTimeout(timer)
-        signal?.removeEventListener('abort', onAbort)
-        if (error === undefined) resolve(value)
-        else reject(error)
-      }
-      const onAbort = (): void =>
-        finish(
-          undefined,
-          new AppError({
-            code: 'REQUEST_CANCELLED',
-            message: 'The DSH request was cancelled.',
-            retryable: false,
-          }),
-        )
-      const timer = setTimeout(() => finish(undefined), timeoutMs)
-      if (signal?.aborted === true) onAbort()
-      else signal?.addEventListener('abort', onAbort, { once: true })
-      promise.then(
-        (value) => finish(value),
-        (error: unknown) =>
-          finish(undefined, error instanceof Error ? error : new Error('Queue identity failed.')),
-      )
-    })
-  }
 }
 
-/**
- * Build the stream gap-recovery callback the version adapters share. The
- * pinned hosts page `session.history` at 50 events, so a reconnect gap wider
- * than the newest page must walk backward through history pages from the gap
- * end until a page reaches the gap start. The stream controller announces any
- * remainder (history evicted or truncated host-side) as an explicit
- * `session.gap`, so consumers never mistake an incomplete replay for a
- * contiguous stream — but a page-bounded read would turn every wide
- * reconnect into one of those gaps even though the events are readable.
- */
-interface HistoryRecoverySource extends Pick<SessionRepository, 'history'> {
-  readonly historyForRecovery?: (
-    sessionId: string,
-    beforeSequence?: number,
-    signal?: AbortSignal,
-  ) => Promise<SessionHistoryPage>
-}
-
-export function historyGapRecovery(sessions: HistoryRecoverySource): StreamRecovery {
-  const history = sessions.historyForRecovery ?? sessions.history
-  return async (sessionId, fromSequence, toSequence, signal) => {
-    const pages = await walkHistoryPages(
-      (beforeSequence) => history.call(sessions, sessionId, beforeSequence, signal),
-      {
-        initialBeforeSequence: toSequence + 1,
-        stopWhen: (page) => {
-          const sequences = page.events
-            .map((entry) => entry.sequence)
-            .filter((value) => Number.isSafeInteger(value) && value >= 0)
-          const oldest = sequences.length === 0 ? undefined : Math.min(...sequences)
-          return oldest !== undefined && oldest <= fromSequence
-        },
-      },
-    )
-    return pages
-      .flatMap((page) => page.events)
-      .filter((entry) => entry.sequence >= fromSequence && entry.sequence <= toSequence)
-      .map((entry) => entry.event)
-  }
-}
-
-export interface Rc6SessionRepositoryOptions {
-  readonly supportsFileUploads?: boolean
-  readonly supportsSessionRestore?: boolean
-  readonly readPermissionPresets?: ((signal?: AbortSignal) => Promise<readonly string[]>) | undefined
-  /** rc.2 accepts an idempotency/preallocated sessionId without rc.1's reuse flag. */
-  readonly preallocatedSessionId?: boolean
-  readonly reuseWorkspaceBlank?: boolean
-  /** rc.2 raises the DSH image envelope to 20 MiB per image / 200 MiB per message. */
-  readonly maxPromptAttachmentBytes?: number
-  readonly maxPromptAttachmentTotalBytes?: number
-  /** The commands/execute attachment parameter audited for this host version. */
-  readonly commandAttachmentWire?: CommandAttachmentWire
-  /** rc.1 predates the browser-local time-zone field on prompt requests. */
-  readonly includeClientTimeZone?: boolean
-  /** Legacy rc.1/rc.2 execute session configuration through command.*. */
-  readonly executeSessionConfigCommand?: (
-    sessionId: string,
-    command: string,
-    signal?: AbortSignal,
-  ) => Promise<void>
-  /** Exact version adapters may select a Session preset through their Remote contract. */
-  readonly selectAgentPreset?: (sessionId: string, presetId: string, signal?: AbortSignal) => Promise<void>
-  /** Version adapters may attach a logical per-session event stream lazily. */
-  readonly onSessionAccess?: (sessionId: string) => void
-  /** Version adapters may re-baseline a process-local stream on session.open. */
-  readonly onSessionOpen?: (sessionId: string) => void | Promise<void>
-  /** Alpha's list projection derives a display title from cwd when no title exists. */
-  readonly deriveTitleFromCwd?: boolean
-  /**
-   * Where a Session's queue baseline comes from.
-   *
-   * `subscription` (rc.6-family mux): the session stream re-baselines the queue
-   * on every subscription, so a subscription seeds the empty queue and a read
-   * that arrives first is a timing state to wait out.
-   *
-   * `control` (alpha/rc line): the host-wide control stream owns the queue. Its
-   * baseline lists every Session the host knows, and the host broadcasts a queue
-   * frame only when a Session's pending input changes — a Session created after
-   * the baseline commits none until its first enqueue. The reference client
-   * replaces a Session's queue from that baseline with `?? []`, so an entry that
-   * is absent from both is the empty queue, never an unreadable one. A
-   * subscription must also not wipe that state.
-   *
-   * `control-follow` (alpha171+): the host-wide baseline remains useful for
-   * existing sessions, but a fork child can inherit Inbox state without a
-   * control event. For an unknown queue, open its durable follow stream and
-   * wait for the adapter to publish the queue derived from its opening
-   * projection; a missing Inbox value is an authoritative empty queue.
-   */
-  readonly queueBaseline?: 'subscription' | 'control' | 'control-follow'
-}
-
-function samePath(
-  left: string | undefined,
-  right: string | undefined,
-  comparator?: (left: string, right: string) => boolean,
-): boolean {
-  if (left === undefined || right === undefined || left.trim() === '' || right.trim() === '') return false
-  if (comparator !== undefined) return comparator(left, right)
-  return normalizePath(left) === normalizePath(right)
-}
-
-/**
- * Tests and non-VS Code consumers still get useful matching without making
- * the adapter call a platform filesystem. The Extension Host injects the
- * canonical realpath comparator for production workspace matching.
- */
-function normalizePath(value: string): string {
-  const segments: string[] = []
-  for (const segment of value.trim().replaceAll('\\', '/').split('/')) {
-    if (segment === '' || segment === '.') continue
-    if (segment === '..') segments.pop()
-    else segments.push(segment)
-  }
-  return segments.join('/').toLocaleLowerCase()
-}
-
-/**
- * DSH persists every streaming assistant chunk as a history event. Those
- * chunks are useful on the wire while a turn is running, but forwarding them
- * individually makes history rendering look like many separate replies. Only
- * collapse adjacent deltas of the same message: a tool/lifecycle row is a hard
- * ordering boundary, so deltas on opposite sides must remain separate. A
- * completed message already carries the authoritative assembled text, so its
- * duplicate deltas are not needed by the timeline.
- */
-function compactHistoryEvents(events: readonly SessionHistoryEvent[]): readonly SessionHistoryEvent[] {
-  const completedMessages = new Set<string>()
-  for (const entry of events) {
-    const event = entry.event
-    if (event.type === 'message.completed' && (event.markdown !== undefined || event.reasoning !== undefined))
-      completedMessages.add(event.messageId)
-  }
-
-  const compacted: SessionHistoryEvent[] = []
-  let previousDeltaKey: string | undefined
-  let previousDeltaIndex = -1
-  for (const entry of events) {
-    const event = entry.event
-    // block/tool/usage/finish chunks are stream bookkeeping. Visible tool
-    // calls/results and the completed assistant message are mapped separately;
-    // retaining every bookkeeping row would recreate the protocol overflow.
-    if (event.type === 'unknown' && event.name.startsWith('assistant/chunk')) {
-      previousDeltaKey = undefined
-      previousDeltaIndex = -1
-      continue
-    }
-    if (event.type !== 'message.delta' && event.type !== 'reasoning.delta') {
-      compacted.push(entry)
-      previousDeltaKey = undefined
-      previousDeltaIndex = -1
-      continue
-    }
-    if (completedMessages.has(event.messageId)) {
-      previousDeltaKey = undefined
-      previousDeltaIndex = -1
-      continue
-    }
-
-    const key = `${event.type}:${event.messageId}`
-    if (key !== previousDeltaKey) {
-      previousDeltaKey = key
-      previousDeltaIndex = compacted.length
-      compacted.push(entry)
-      continue
-    }
-    const existing = compacted[previousDeltaIndex]
-    if (existing === undefined) continue
-    if (existing.event.type === 'message.delta' && event.type === 'message.delta') {
-      const sequence = Math.max(existing.sequence, entry.sequence)
-      const coveredSequences = mergeCoveredSequences(existing, entry)
-      compacted[previousDeltaIndex] = {
-        ...existing,
-        // Keep the newest durable sequence on the compacted row. The Webview
-        // uses it as its replay watermark; retaining the first sequence would
-        // let a live delta already covered by history be appended twice.
-        sequence,
-        event: { ...existing.event, delta: `${existing.event.delta}${event.delta}`, sequence },
-        ...(coveredSequences.length > 1 ? { coveredSequences } : {}),
-      }
-    } else if (existing.event.type === 'reasoning.delta' && event.type === 'reasoning.delta') {
-      const sequence = Math.max(existing.sequence, entry.sequence)
-      const coveredSequences = mergeCoveredSequences(existing, entry)
-      compacted[previousDeltaIndex] = {
-        ...existing,
-        sequence,
-        event: { ...existing.event, delta: `${existing.event.delta}${event.delta}`, sequence },
-        ...(coveredSequences.length > 1 ? { coveredSequences } : {}),
-      }
-    }
-  }
-  // Keep the public page ordered even if a future mapper supplies a
-  // non-monotonic sequence; the index tie-breaker preserves source order.
-  return compacted
-    .map((entry, index) => ({ entry, index }))
-    .sort((left, right) => left.entry.sequence - right.entry.sequence || left.index - right.index)
-    .map(({ entry }) => entry)
-}
-
-function mergeCoveredSequences(left: SessionHistoryEvent, right: SessionHistoryEvent): readonly number[] {
-  return [
-    ...new Set([
-      ...(left.coveredSequences ?? [left.sequence]),
-      ...(right.coveredSequences ?? [right.sequence]),
-    ]),
-  ].sort((first, second) => first - second)
-}
-
-function sequenceRanges(sequences: readonly number[]): readonly SessionSequenceRange[] {
-  const ordered = [...new Set(sequences)].sort((first, second) => first - second)
-  const ranges: SessionSequenceRange[] = []
-  for (const sequence of ordered) {
-    const previous = ranges[ranges.length - 1]
-    if (previous !== undefined && sequence === previous.to + 1) {
-      ranges[ranges.length - 1] = { ...previous, to: sequence }
-    } else {
-      ranges.push({ from: sequence, to: sequence })
-    }
-  }
-  return ranges
-}
-
-function fallbackSessionSummary(
-  sessionId: string,
-  history: readonly SessionHistoryEvent[],
-  rawHistory: readonly unknown[],
-  workspaceId: string | undefined,
-  projectionBlock: SessionDetail['projection'] | undefined,
-  deriveTitleFromCwd: boolean,
-): SessionSummary {
-  const first = history[0]?.time
-  const last = history[history.length - 1]?.time
-  const hasHumanMessage = history.some(
-    (entry) => entry.event.type === 'message.user' && entry.event.source !== 'command',
-  )
-  const statusEvent = [...history].reverse().find((entry) => entry.event.type === 'session.status')?.event
-  const projection = history
-    .slice()
-    .reverse()
-    .find((entry) => entry.event.type === 'session.projection' && entry.event.key === 'title')?.event
-  const projectionTitleFromEvent =
-    projection?.type === 'session.projection' && typeof projection.value === 'string'
-      ? projection.value.trim() || undefined
-      : undefined
-  const projectionTitle = firstString(projectionBlock?.values.title, projectionTitleFromEvent)
-  const cwd = historyCwd(rawHistory)
-  const derivedTitle =
-    deriveTitleFromCwd && hasHumanMessage ? (workspaceTitleFromPath(cwd) ?? sessionId) : 'New Session'
-  return {
-    id: sessionId,
-    workspaceId: workspaceId ?? '',
-    ...(cwd === undefined ? {} : { cwd }),
-    title: projectionTitle ?? derivedTitle,
-    blank: !hasHumanMessage,
-    status:
-      statusEvent?.type === 'session.status'
-        ? statusEvent.status === 'running'
-          ? 'running'
-          : statusEvent.status === 'awaiting-input'
-            ? 'awaiting-input'
-            : statusEvent.status === 'failed'
-              ? 'failed'
-              : statusEvent.status === 'completed'
-                ? 'completed'
-                : 'idle'
-        : // A history without a durable status row is either a New Session the
-          // host still calls blank, or a finished turn. `completed` is terminal
-          // for every downstream consumer (the task center drops such rows),
-          // and it contradicts the host's own list row for the same Session.
-          !hasHumanMessage
-          ? 'idle'
-          : 'completed',
-    createdAt: first ?? new Date().toISOString(),
-    updatedAt: last ?? first ?? new Date().toISOString(),
-  }
-}
-
-function workspaceTitleFromPath(value: string | undefined): string | undefined {
-  if (value === undefined || value.trim() === '') return undefined
-  const segments = value
-    .trim()
-    .replace(/[\\/]+$/u, '')
-    .split(/[\\/]/u)
-    .filter(Boolean)
-  return segments.at(-1)
-}
-
-function historyCwd(history: readonly unknown[]): string | undefined {
-  for (const entry of history) {
-    const wrapper = asRecord(entry)
-    const event = asRecord(wrapper.event ?? wrapper)
-    const data = asRecord(event.data)
-    const header = asRecord(data.header)
-    const session = asRecord(data.session)
-    const meta = asRecord(data.meta)
-    const cwd = firstString(data.cwd, data.workingDirectory, header.cwd, session.cwd, meta.cwd)
-    if (cwd !== undefined) return cwd
-  }
-  return undefined
-}
-
-function defaultConfiguration(): AgentConfiguration {
-  return {
-    preset: 'standard',
-    toolMode: 'native',
-    permissionPreset: 'workspace-write',
-    planMode: false,
-    model: { providerId: '', modelId: '' },
-  }
-}
-
-function configurationFromRawHistory(
-  history: readonly unknown[],
-  agentPreset?: string,
-  projectionValues?: Readonly<Record<string, unknown>>,
-): AgentConfiguration {
-  let model = projectedModelSelection(projectionValues)
-  let permissionPreset = 'workspace-write'
-  let permissionPresetKnown = false
-  let planModeKnown = false
-  let planMode = false
-  let sandboxMode: string | undefined
-  let approvalPolicy: string | undefined
-  for (const entry of history) {
-    const historyEntry = asRecord(entry)
-    const event = asRecord(historyEntry.event ?? historyEntry)
-    const data = asRecord(event.data)
-    if (event.type === 'permission/preset') {
-      const preset = firstString(data.preset, data.value, data.name, asRecord(data.permission).preset)
-      if (preset !== undefined) {
-        permissionPreset = preset
-        permissionPresetKnown = true
-      }
-      continue
-    }
-    if (event.type === 'plan/mode') {
-      const active = booleanValue(data.active ?? data.enabled ?? data.on ?? data.value)
-      if (active !== undefined) {
-        planMode = active
-        planModeKnown = true
-      } else if (data.mode === 'plan' || data.mode === 'on' || data.mode === 'active') {
-        planMode = true
-        planModeKnown = true
-      } else if (data.mode === 'off' || data.mode === 'normal' || data.mode === 'inactive') {
-        planMode = false
-        planModeKnown = true
-      }
-      continue
-    }
-    if (event.type === 'sandbox/mode') {
-      const mode = firstString(data.mode, data.value, data.name)
-      if (mode !== undefined) sandboxMode = mode
-      continue
-    }
-    if (event.type === 'approval/policy') {
-      const policy = firstString(data.policy, data.value, data.name)
-      if (policy !== undefined) approvalPolicy = policy
-      continue
-    }
-    if (event.type === 'model/selection') {
-      const provider = firstString(data.provider, data.providerId)
-      const modelId = firstString(data.model, data.modelId)
-      const reasoningLevel = firstString(data.reasoningEffort, data.reasoningLevel)
-      model = {
-        providerId: provider ?? model.providerId,
-        modelId: modelId ?? model.modelId,
-        reasoningLevel: reasoningLevel ?? model.reasoningLevel,
-      }
-      continue
-    }
-    if (event.type === 'request/context') {
-      const provider = firstString(data.provider, data.providerId)
-      const modelId = firstString(data.model, data.modelId)
-      const reasoningLevel = firstString(data.reasoningEffort, data.reasoningLevel)
-      model = {
-        providerId: provider ?? model.providerId,
-        modelId: modelId ?? model.modelId,
-        reasoningLevel: reasoningLevel ?? model.reasoningLevel,
-      }
-      continue
-    }
-    if (event.type !== 'request/header') continue
-    const header = asRecord(data.header)
-    const config = asRecord(header.config)
-    const providerId = typeof config.provider === 'string' ? config.provider : model.providerId
-    const modelId = typeof config.model === 'string' ? config.model : model.modelId
-    const reasoningLevel =
-      typeof config.reasoningEffort === 'string' ? config.reasoningEffort : model.reasoningLevel
-    model = { providerId, modelId, reasoningLevel }
-  }
-  const projectedPermission = firstString(asRecord(projectionValues?.permissions).currentValue)
-  const projectedPlan = asRecord(projectionValues?.plan).active
-  if (projectedPermission !== undefined) {
-    permissionPreset = projectedPermission
-    permissionPresetKnown = true
-  }
-  if (typeof projectedPlan === 'boolean') {
-    planMode = projectedPlan
-    planModeKnown = true
-  }
-  return {
-    ...defaultConfiguration(),
-    permissionPresetKnown,
-    planModeKnown,
-    ...(agentPreset === undefined ? {} : { preset: agentPreset }),
-    permissionPreset: firstString(asRecord(projectionValues?.permissions).currentValue) ?? permissionPreset,
-    planMode,
-    ...(sandboxMode === undefined ? {} : { sandboxMode }),
-    ...(approvalPolicy === undefined ? {} : { approvalPolicy }),
-    model: {
-      providerId: model.providerId,
-      modelId: model.modelId,
-      ...(model.reasoningLevel === undefined ? {} : { reasoningLevel: model.reasoningLevel }),
-    },
-  }
-}
-
-function parseImageAttachmentLimits(value: unknown): ImageAttachmentLimits | undefined {
-  const record = recordOrUndefined(value)
-  if (record === undefined) return undefined
-  const maxImageBytes = positiveSafeInteger(record.maxImageBytes)
-  const maxImagesPerMessage = positiveSafeInteger(record.maxImagesPerMessage)
-  const maxMessageImageBytes = positiveSafeInteger(record.maxMessageImageBytes)
-  const maxImagePixels = positiveSafeInteger(record.maxImagePixels)
-  const maxImageDimension =
-    record.maxImageDimension === undefined ? undefined : positiveSafeInteger(record.maxImageDimension)
-  const mediaTypes = Array.isArray(record.mediaTypes)
-    ? [
-        ...new Set(
-          record.mediaTypes.map((entry) => (typeof entry === 'string' ? entry.trim().toLowerCase() : '')),
-        ),
-      ]
-    : []
-  if (
-    maxImageBytes === undefined ||
-    maxImagesPerMessage === undefined ||
-    maxMessageImageBytes === undefined ||
-    maxImagePixels === undefined ||
-    mediaTypes.length === 0 ||
-    mediaTypes.some((mediaType) => !isImageMediaType(mediaType)) ||
-    (record.maxImageDimension !== undefined && maxImageDimension === undefined)
-  )
-    return undefined
-  return {
-    maxImageBytes,
-    maxImagesPerMessage,
-    maxMessageImageBytes,
-    maxImagePixels,
-    ...(maxImageDimension === undefined ? {} : { maxImageDimension }),
-    // A Host type this client cannot encode (image/avif) narrows what may be
-    // sent instead of discarding the byte and count limits beside it.
-    mediaTypes: mediaTypes.filter(isSupportedImageMimeType),
-  }
-}
-
-function firstString(...values: readonly unknown[]): string | undefined {
-  return values.find((value): value is string => typeof value === 'string' && value.trim() !== '')
-}
-
-function booleanValue(value: unknown): boolean | undefined {
-  return typeof value === 'boolean' ? value : undefined
-}
-
-function positiveSafeInteger(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {}
-}
-
-function malformedSessionResponse(method: string): AppError {
-  return new AppError({
-    code: 'PROTOCOL_ERROR',
-    message: `DSH returned a malformed ${method} response.`,
-    retryable: false,
-  })
-}
-
-function requiredRecord(value: unknown, method: string): Record<string, unknown> {
-  const record = recordOrUndefined(value)
-  if (record !== undefined) return record
-  throw malformedSessionResponse(method)
-}
-
-function requiredSessionId(value: Record<string, unknown>, method: string): string {
-  if (typeof value.sessionId === 'string' && value.sessionId.trim() !== '') return value.sessionId
-  throw malformedSessionResponse(`${method} receipt`)
-}
-
-/** Validated rename receipt: the title the host stored, not the requested text. */
-function acceptedRenameTitle(value: unknown): string {
-  const record = recordOrUndefined(value)
-  if (
-    record !== undefined &&
-    typeof record.title === 'string' &&
-    record.title.trim() !== '' &&
-    Number.isSafeInteger(record.seq) &&
-    (record.seq as number) >= 0
-  )
-    return record.title
-  throw malformedSessionResponse('session rename receipt')
-}
-
-function assertModelSelection(value: unknown): void {
-  const selected = recordOrUndefined(recordOrUndefined(value)?.selected)
-  if (
-    selected !== undefined &&
-    typeof selected.provider === 'string' &&
-    selected.provider.trim() !== '' &&
-    typeof selected.model === 'string' &&
-    selected.model.trim() !== '' &&
-    (selected.reasoningEffort === undefined || isNonEmptyString(selected.reasoningEffort))
-  )
-    return
-  throw malformedSessionResponse('session model selection receipt')
-}
-
-function validSessionSummaryResponse(value: unknown): boolean {
-  const record = recordOrUndefined(value)
-  return (
-    record !== undefined &&
-    typeof record.sessionId === 'string' &&
-    record.sessionId.trim() !== '' &&
-    typeof record.updatedAt === 'number' &&
-    Number.isFinite(record.updatedAt) &&
-    record.updatedAt >= 0 &&
-    typeof record.running === 'boolean' &&
-    typeof record.blank === 'boolean' &&
-    (record.workspaceId === undefined || typeof record.workspaceId === 'string') &&
-    (record.parentSessionId === undefined ||
-      (typeof record.parentSessionId === 'string' && record.parentSessionId.trim() !== '')) &&
-    (record.origin === undefined || record.origin === 'subagent') &&
-    (record.agentAvailable === undefined || typeof record.agentAvailable === 'boolean') &&
-    (record.cwd === undefined || typeof record.cwd === 'string') &&
-    (record.agentPreset === undefined || typeof record.agentPreset === 'string') &&
-    (record.projections === undefined || validProjectionBlock(record.projections))
-  )
-}
-
-function isNonEmptyStringArray(value: unknown): value is readonly string[] {
-  return Array.isArray(value) && value.every((entry): entry is string => isNonEmptyString(entry))
-}
-
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === 'string' && value.trim() !== ''
-}
-
-function validHistoryResponse(
-  value: unknown,
-): value is { readonly events: unknown[]; readonly hasMore: boolean } {
-  const record = recordOrUndefined(value)
-  return (
-    record !== undefined &&
-    Array.isArray(record.events) &&
-    record.events.every(validHistoryEntry) &&
-    typeof record.hasMore === 'boolean' &&
-    (record.projections === undefined || validProjectionBlock(record.projections))
-  )
-}
-
-function validHistoryEntry(value: unknown): boolean {
-  const entry = recordOrUndefined(value)
-  const event = recordOrUndefined(entry?.event)
-  return (
-    entry !== undefined &&
-    event !== undefined &&
-    typeof event.type === 'string' &&
-    event.type.trim() !== '' &&
-    Number.isSafeInteger(event.seq) &&
-    (event.seq as number) >= 0 &&
-    typeof event.time === 'number' &&
-    Number.isFinite(event.time) &&
-    (entry.view === undefined || recordOrUndefined(entry.view) !== undefined)
-  )
-}
-
-function validAttachmentReference(value: Record<string, unknown>, requestedId: string): boolean {
-  return (
-    typeof value.attachmentId === 'string' &&
-    value.attachmentId === requestedId &&
-    typeof value.mediaType === 'string' &&
-    isSupportedImageMimeType(value.mediaType) &&
-    Number.isSafeInteger(value.bytes) &&
-    (value.bytes as number) > 0 &&
-    Number.isSafeInteger(value.width) &&
-    (value.width as number) > 0 &&
-    Number.isSafeInteger(value.height) &&
-    (value.height as number) > 0 &&
-    (value.name === undefined || typeof value.name === 'string')
-  )
-}
-
-function findNewQueuedInput(
-  items: readonly QueuedInput[] | undefined,
-  beforeIds: ReadonlySet<string>,
-  input: PromptInput,
-  mode: RunningInputMode,
-  rpcId?: string,
-): QueuedInput | undefined {
-  const candidates = [...(items ?? [])]
-    .reverse()
-    .filter((item) => !beforeIds.has(item.id) && item.mode === mode)
-  if (rpcId !== undefined) {
-    const correlated = candidates.find((item) => item.rpcId === rpcId)
-    if (correlated !== undefined) return correlated
-  }
-  return (
-    candidates.find((item) => item.text === input.text) ??
-    (input.attachments.length > 0 ? candidates[0] : undefined)
-  )
-}
-
-const QUEUE_IDENTITY_TIMEOUT_MS = 2_000
-const QUEUE_IDENTITY_GRACE_MS = 30_000
-/** Bound for waiting on the subscription's queue baseline before a read fails. */
-const QUEUE_BASELINE_TIMEOUT_MS = 2_000
-
-function queuedPromptKey(input: PromptInput, mode: RunningInputMode): string {
-  const value = `${mode}\u0000${input.text}\u0000${input.attachments
-    .map((attachment) => `${attachment.name}\u0000${attachment.mimeType ?? ''}\u0000${attachment.uri}`)
-    .join('\u0001')}`
-  let hash = 2_166_136_261
-  for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index)
-    hash = Math.imul(hash, 16_777_619)
-  }
-  return `${input.sessionId}\u0000${mode}\u0000${hash >>> 0}`
-}
-
-function assertAccepted(value: unknown, method: string): void {
-  if (asRecord(value).accepted === true) return
-  throw malformedSessionResponse(`${method} receipt`)
-}
-
-/**
- * Whether a failed Steer already reached its goal.
- *
- * Steering is convergent: an item the agent has claimed
- * (`queue-item-not-found`) and a turn that stopped accepting steering
- * (`steer-unavailable`) both mean the row is no longer pending, which is the
- * state the caller asked for. The official client treats exactly these two as
- * success, and a user gesture that races the host — clicking Steer as the turn
- * ends, or steering a stale row a second time — must not report a failure.
- */
-function isSettledSteer(error: unknown): boolean {
-  if (!(error instanceof AppError)) return false
-  const code = error.context?.rpcCode
-  return code === 'queue-item-not-found' || code === 'steer-unavailable'
-}
-
-function cancelledQueueMutation(): AppError {
-  return new AppError({
-    code: 'REQUEST_CANCELLED',
-    message: 'The queue operation was cancelled.',
-    retryable: false,
-  })
-}
-
-function rejectQueueMutationOnAbort<T>(operation: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
-  if (signal === undefined) return operation
-  if (signal.aborted) return Promise.reject(cancelledQueueMutation())
-  return new Promise<T>((resolve, reject) => {
-    const cleanup = (): void => signal.removeEventListener('abort', onAbort)
-    const onAbort = (): void => {
-      cleanup()
-      reject(cancelledQueueMutation())
-    }
-    signal.addEventListener('abort', onAbort, { once: true })
-    void operation.then(
-      (value) => {
-        cleanup()
-        resolve(value)
-      },
-      (error: unknown) => {
-        cleanup()
-        reject(error instanceof Error ? error : new Error(String(error)))
-      },
-    )
-  })
-}
-
-function assertPromptContent(text: string, attachments: readonly PromptAttachment[]): void {
-  if (text.trim() !== '' || attachments.length > 0) return
-  throw new AppError({
-    code: 'INVALID_CONFIGURATION',
-    message: 'Prompt content must include non-whitespace text or an attachment.',
-    retryable: false,
-  })
-}
-
-function isPermissionPresetId(value: string): boolean {
-  // rc.6 exposes this as a one-token slash command. Reject control/whitespace
-  // and separators before any other setting is mutated.
-  return /^[A-Za-z0-9][A-Za-z0-9._:-]*$/u.test(value)
-}
+export { historyGapRecovery } from './session/history-recovery.js'
+export type { Rc6SessionRepositoryOptions } from './session/options.js'

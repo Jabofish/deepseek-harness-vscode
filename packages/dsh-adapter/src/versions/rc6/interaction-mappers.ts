@@ -66,7 +66,9 @@ function permissionPresetLabel(value: string): string {
   }
 }
 
-export function approvalOutcome(value: unknown): value is 'allowed-once' | 'rejected' | 'cancelled' | 'unavailable' {
+export function approvalOutcome(
+  value: unknown,
+): value is 'allowed-once' | 'rejected' | 'cancelled' | 'unavailable' {
   return value === 'allowed-once' || value === 'rejected' || value === 'cancelled' || value === 'unavailable'
 }
 

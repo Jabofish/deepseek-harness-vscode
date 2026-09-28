@@ -16,7 +16,11 @@ import {
   PromptTemplateUseCases,
   TaskUseCases,
 } from '@dsh-vscode/application'
-import { WorkspacePathGuard, workspaceFolderId, type ResolvedWorkspacePath } from '../editor/workspace-path-guard.js'
+import {
+  WorkspacePathGuard,
+  workspaceFolderId,
+  type ResolvedWorkspacePath,
+} from '../editor/workspace-path-guard.js'
 import { ChangeSetTracker } from '../changes/change-set-tracker.js'
 import { featureChangeSummary } from '../changes/change-feature-handler.js'
 import { CheckpointStore } from '../checkpoints/checkpoint-store.js'

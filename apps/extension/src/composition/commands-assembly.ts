@@ -1,5 +1,10 @@
 import * as vscode from 'vscode'
-import { AppError, type BackendState, type EditorContextKind, type EditorContextOwner } from '@dsh-vscode/domain'
+import {
+  AppError,
+  type BackendState,
+  type EditorContextKind,
+  type EditorContextOwner,
+} from '@dsh-vscode/domain'
 import type { BackendService, DshConnectionCoordinator, EditorContextUseCases } from '@dsh-vscode/application'
 import { registerCommands } from '../commands/register-commands.js'
 import { runCleanupSequence } from '../backend/cleanup-sequence.js'
@@ -168,8 +173,7 @@ export function createCommandsAssembly(deps: CommandsAssemblyDependencies): Comm
           const target =
             endpointLaunchUrls.get(state.backend.endpoint.baseUrl) ?? state.backend.endpoint.baseUrl
           const opened = await vscode.env.openExternal(vscode.Uri.parse(target))
-          if (!opened)
-            void vscode.window.showWarningMessage('Unable to open the DSH Web UI in your browser.')
+          if (!opened) void vscode.window.showWarningMessage('Unable to open the DSH Web UI in your browser.')
         },
         'dsh.installRuntime': () => runtimeInstaller.install(),
         'dsh.selectExecutable': () => runtimeInstaller.selectExecutable(),

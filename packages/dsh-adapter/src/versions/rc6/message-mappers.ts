@@ -153,7 +153,9 @@ export function userMessageContent(value: Record<string, unknown> | undefined): 
  * The durable source also carries capture statistics and session ids; those
  * stay on the Host side and never cross into the Webview projection.
  */
-export function structuredSessionReferenceLabels(source: Record<string, unknown> | undefined): readonly string[] {
+export function structuredSessionReferenceLabels(
+  source: Record<string, unknown> | undefined,
+): readonly string[] {
   if (source?.kind !== 'session-reference') return []
   if (!Array.isArray(source.references) || source.references.length > 32)
     throw new Error('Malformed session-reference references')

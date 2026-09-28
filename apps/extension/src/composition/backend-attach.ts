@@ -1,10 +1,5 @@
 import * as vscode from 'vscode'
-import type {
-  AccountLifecycleSnapshot,
-  BackendEvent,
-  DshBackend,
-  SignOutImpact,
-} from '@dsh-vscode/domain'
+import type { AccountLifecycleSnapshot, BackendEvent, DshBackend, SignOutImpact } from '@dsh-vscode/domain'
 import { AccountLifecycleUseCases, type BackendService, type SessionUseCases } from '@dsh-vscode/application'
 import { AccountLifecycleHost } from '../account/account-lifecycle-host.js'
 import { projectPluginInstallProgress } from '../plugins/plugin-manager-event-projection.js'

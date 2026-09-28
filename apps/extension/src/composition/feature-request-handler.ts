@@ -1,5 +1,10 @@
 import * as vscode from 'vscode'
-import { AppError, type CheckpointSummary, type EditorContextOwner, type SessionDetail } from '@dsh-vscode/domain'
+import {
+  AppError,
+  type CheckpointSummary,
+  type EditorContextOwner,
+  type SessionDetail,
+} from '@dsh-vscode/domain'
 import type {
   BackendService,
   ChangeUseCases,
@@ -72,9 +77,7 @@ export interface FeatureRequestHandler {
 
 /** Dispatch every staged feature route (account, plugins, schedules, editor
  * context, navigation, checkpoints, tasks, prompt templates, changes). */
-export function createFeatureRequestHandler(
-  deps: FeatureRequestHandlerDependencies,
-): FeatureRequestHandler {
+export function createFeatureRequestHandler(deps: FeatureRequestHandlerDependencies): FeatureRequestHandler {
   const {
     getAccountLifecycleHost,
     backendService,

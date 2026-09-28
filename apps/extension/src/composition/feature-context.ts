@@ -1,5 +1,10 @@
 import type * as vscode from 'vscode'
-import { AppError, type EditorContextOwner, type SessionDetail, type SessionSummary } from '@dsh-vscode/domain'
+import {
+  AppError,
+  type EditorContextOwner,
+  type SessionDetail,
+  type SessionSummary,
+} from '@dsh-vscode/domain'
 import type { BackendService } from '@dsh-vscode/application'
 import { workspaceFolderId } from '../editor/workspace-path-guard.js'
 
@@ -13,9 +18,7 @@ export interface FeatureContextDependencies {
 
 export interface FeatureContext {
   readonly featureContextOwner: (workspaceFolderIdValue?: string) => EditorContextOwner
-  readonly currentFeatureSessionBinding: (
-    sessionId: string,
-  ) => {
+  readonly currentFeatureSessionBinding: (sessionId: string) => {
     readonly sessionId: string
     readonly backendInstanceId: string
     readonly connectionGeneration: number
@@ -138,5 +141,10 @@ export function createFeatureContext(deps: FeatureContextDependencies): FeatureC
       })
     return resolved
   }
-  return { featureContextOwner, currentFeatureSessionBinding, contextOwnerForSession, featureWorkspaceFolderId }
+  return {
+    featureContextOwner,
+    currentFeatureSessionBinding,
+    contextOwnerForSession,
+    featureWorkspaceFolderId,
+  }
 }

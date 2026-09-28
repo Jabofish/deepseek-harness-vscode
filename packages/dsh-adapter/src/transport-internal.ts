@@ -110,10 +110,7 @@ export async function withTransportRetry<T>(options: {
         throw normalized
       try {
         await delay(
-          Math.min(
-            options.retryPolicy.maximumDelayMs,
-            options.retryPolicy.baseDelayMs * 2 ** attempt,
-          ),
+          Math.min(options.retryPolicy.maximumDelayMs, options.retryPolicy.baseDelayMs * 2 ** attempt),
           options.retrySignal,
         )
       } catch (error) {

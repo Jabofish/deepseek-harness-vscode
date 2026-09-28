@@ -1,9 +1,4 @@
-import type {
-  BackendEvent,
-  CompactionView,
-  SessionDetail,
-  SessionHistoryEvent,
-} from '@dsh-vscode/domain'
+import type { BackendEvent, CompactionView, SessionDetail, SessionHistoryEvent } from '@dsh-vscode/domain'
 
 import { safePayload } from '../../redaction.js'
 import {

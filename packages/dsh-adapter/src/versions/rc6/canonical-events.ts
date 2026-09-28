@@ -192,7 +192,10 @@ function assertCanonicalMessage(value: unknown, name: string): void {
  * compatibility, while a known image/tool block must not be accepted and
  * then silently disappear in the presentation mapper.
  */
-export function assertCanonicalContentBlocks(value: unknown, label: string): asserts value is readonly unknown[] {
+export function assertCanonicalContentBlocks(
+  value: unknown,
+  label: string,
+): asserts value is readonly unknown[] {
   if (!Array.isArray(value)) throw new Error(`Malformed ${label}`)
   for (const entry of value) {
     const block = objectOrUndefined(entry)

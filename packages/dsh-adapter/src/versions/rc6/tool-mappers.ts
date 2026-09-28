@@ -1,10 +1,7 @@
 import type { PresentedFileView, SubagentCatalogEntryFact, ToolCallView } from '@dsh-vscode/domain'
 
 import { safePayload } from '../../redaction.js'
-import {
-  recordOrUndefined as objectOrUndefined,
-  zeroBasedLine,
-} from '../../repositories/shared/guards.js'
+import { recordOrUndefined as objectOrUndefined, zeroBasedLine } from '../../repositories/shared/guards.js'
 import {
   presentationDiffLocations,
   projectToolCallIntent,

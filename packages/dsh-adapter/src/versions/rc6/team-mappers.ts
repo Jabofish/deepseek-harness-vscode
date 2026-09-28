@@ -1,8 +1,4 @@
-import type {
-  BackendEvent,
-  SessionConfigurationPatch,
-  TeamActivityView,
-} from '@dsh-vscode/domain'
+import type { BackendEvent, SessionConfigurationPatch, TeamActivityView } from '@dsh-vscode/domain'
 
 import { contentText } from './message-mappers.js'
 import { bounded, firstString, stringOr } from './value-guards.js'

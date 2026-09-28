@@ -1,12 +1,9 @@
 import { translate } from '../i18n.js'
 import type {
   AgentConfiguration,
-  GoalView,
-  JobView,
   MessageAttachment,
   PluginInstallProgressView,
   PromptAttachment,
-  QueuedInput,
   RunningInputMode,
   SessionHistoryEvent,
   SubagentCatalog,
@@ -17,6 +14,7 @@ import type { FeatureRequest } from '@dsh-vscode/webview-protocol'
 import { diagnosticsSnapshotSchema } from '@dsh-vscode/webview-protocol'
 import { PluginInstallRecoveryController } from './plugin-install-recovery.js'
 import { createAccountActions } from './store/account-actions.js'
+import { createSettingsActions, type PresetSessionSyncTarget } from './store/settings-actions.js'
 import { createFeatureActions } from './store/feature-actions.js'
 import { defineStateView, type StoreWithoutStateView } from './store/state-view.js'
 import { createJobActions } from './store/job-actions.js'
@@ -25,96 +23,50 @@ import { ProtocolClient } from './protocol-client.js'
 import type { ActiveSubagent, AppStore, LiveHistoryAppender, StateSetter } from './store/types.js'
 import { requestId } from './store/ids.js'
 import { createPendingOpenBuffer } from './store/pending-open.js'
-import {
-  applyKnownCommand,
-  hasDynamicCommand,
-  parsePresetRoster,
-  promptModeAfterCommand,
-  promptModeForConfiguration,
-} from './store/agent-config.js'
+import { applyKnownCommand, hasDynamicCommand, promptModeAfterCommand } from './store/agent-config.js'
 import {
   createCommandDirectoryCache,
   isCommandDirectoryRefresh,
   isModelCatalogRefresh,
-  loadSessionModelDirectory,
-  mergeSessionModelDirectory,
   readCommandList,
   refreshSessionModelDirectory,
 } from './store/command-directory.js'
 import { createDshUpdateActions } from './store/dsh-update.js'
 import { createGapHealing } from './store/gap-heal.js'
 import { createFeedbackCache } from './store/feedback-cache.js'
+import { createFeedbackActions } from './store/feedback-actions.js'
+import { createInteractionActions } from './store/interaction-actions.js'
+import { createSessionCatalogActions } from './store/session-catalog-actions.js'
+import { createSessionOpenController } from './store/session-open-controller.js'
 import { createTurnWatchers } from './store/turn-watchers.js'
-import { attachmentFromResult, imageDataUri, openFileCandidatesFromResult } from './store/editor-context.js'
 import { parseHostDomainEvent, timelineSequenceOptions } from './store/event-parser.js'
-import { isGoalView, isJobView, isQueuedInput, nonEmptyString, parseGoalViews } from './store/event-values.js'
-import { feedbackRecord, isMessageFeedbackItem } from './store/feature-parsers.js'
+import { parseGoalViews } from './store/event-values.js'
 import { mergeHistory, newestHistorySequence, oldestHistorySequence } from './store/history-ledger.js'
 import {
   historyPageCoverage,
-  hydrateTimelineFromEntries,
   hydrateTimelineFromHistoryEvents,
   mergeLiveTransientNodes,
-  optionalSequence,
   parseSessionHistoryPage,
-  parseSessionHistoryWithTimeline,
 } from './store/history-replay.js'
-import {
-  applyHostMessage,
-  backendEventSessionId,
-  latestTodos,
-  replayHostMessages,
-  withPresetSelectionEnabled,
-} from './store/host-message-reducers.js'
-import {
-  parseDshSettingsSnapshot,
-  parseExtensionSettings,
-  refreshProvidersAndModels,
-} from './store/host-settings.js'
-import { EMPTY_SUBAGENT_CATALOG, createInitialState } from './store/initial-state.js'
-import {
-  arraysEqual,
-  deduplicateSessionSummaries,
-  sameGoalList,
-  sameSessionSummaryList,
-  strictListValues,
-  stringList,
-  uniqueStrings,
-} from './store/list-equality.js'
+import { applyHostMessage, backendEventSessionId, latestTodos } from './store/host-message-reducers.js'
+import { parseDshSettingsSnapshot, refreshProvidersAndModels } from './store/host-settings.js'
+import { createInitialState } from './store/initial-state.js'
+import { sameGoalList, sameSessionSummaryList, strictListValues, stringList } from './store/list-equality.js'
 import {
   createDefaultConfiguration,
   isAgentConfiguration,
   normalizedModelSelection,
-  parseCustomProviderCreateResult,
-  parseDiscoveredModels,
 } from './store/model-catalog.js'
 import { parsePluginInventory } from './store/plugin-parsers.js'
-import { referenceCandidates } from './store/references.js'
-import {
-  isSessionOpenDetail,
-  isSessionSummary,
-  questionResponsePayload,
-  readPersistedWebviewState,
-} from './store/session-guards.js'
+import { isSessionSummary, readPersistedWebviewState } from './store/session-guards.js'
 import type { ProjectionSequenceIndex } from './store/session-projection.js'
-import {
-  clearedActiveSession,
-  setSessionProjection,
-  upsertOpenedSession,
-} from './store/session-projection.js'
+import { clearedActiveSession, setSessionProjection } from './store/session-projection.js'
 import {
   findReusableBlankSession,
-  isFeedbackCapabilityUnavailable,
   refreshSessions,
-  safeList,
   selectStartupSessionId,
 } from './store/session-registry.js'
-import {
-  isSubagentView,
-  nextForkTitle,
-  parseSubagentCatalog,
-  parseSubagentHistory,
-} from './store/subagent.js'
+import { isSubagentView, parseSubagentCatalog, parseSubagentHistory } from './store/subagent.js'
 import { object } from './store/unknown-record.js'
 
 export type {
@@ -142,19 +94,6 @@ const OPEN_RETRY_BASE_DELAY_MS = 300
 
 const isRetryableOpenFailure = (reason: unknown): boolean =>
   reason instanceof Error && (reason as { retryable?: unknown }).retryable === true
-
-type PresetSessionSyncTarget =
-  | {
-      readonly kind: 'active'
-      readonly sessionId: string
-      readonly configuration: AgentConfiguration
-    }
-  | {
-      readonly kind: 'pending'
-      readonly revision: number
-      readonly createdSessionId?: string
-      readonly configuration: AgentConfiguration
-    }
 
 const DSH_RC11_VERSION = '0.1.1-rc.1'
 const DSH_RC12_VERSION = '0.1.1-rc.2'
@@ -973,7 +912,6 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       }
     }
   }
-  const { requestFeedbackSnapshot, applyFeedbackSnapshot } = feedbackCache
   /**
    * A subagent child is a view onto its parent's catalog, never a root session:
    * its follow-up prompt, Stop, lineage header, and one-shot read-only guard all
@@ -1011,431 +949,39 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     }
     return { kind: 'session', sessionId: target }
   }
-  const open = async (
-    requestedSessionId: string,
-    options: { readonly startup?: boolean } = {},
-  ): Promise<void> => {
-    let sessionId = requestedSessionId
-    // Claims the intent slot before any await. A root open stays fully
-    // synchronous up to its buffer registration, or an event delivered while
-    // the open is in flight lands outside the replay barrier; only a subagent
-    // child pays the catalog read, and that read can be superseded.
-    const intent = ++openIntent
-    if (
-      state.sessions.some((session) => session.id === requestedSessionId && session.origin === 'subagent')
-    ) {
-      const resolution = await resolveSubagentOpen(requestedSessionId)
-      if (intent !== openIntent) return
-      if (resolution.kind === 'subagent') {
-        await openSubagent(resolution.entry, resolution.parentAvailable)
-        return
-      }
-      sessionId = resolution.sessionId
-    }
-    jobActions.stopBeforeSessionOpen()
-    if (options.startup !== true) startupRestorePending = false
-    flushPendingHistory()
-    const version = ++openVersion
-    const modelDirectoryGeneration = ++sessionModelDirectoryGeneration
-    feedbackCache.forget(sessionId)
-    featureActions.retireForSessionSwitch()
-    const pending = pendingOpenBuffer.create(sessionId, version)
-    // Events delivered after this open began must be replayed after the
-    // advisory snapshots, even when the critical history request has not
-    // produced first paint yet.
-    const advisoryReplayStart = pending.messages.length
-    let completed = false
-    let advisoryPending = false
-    try {
-      await featureActions.discardEditorContextForSessionSwitch(sessionId)
-      let result: unknown
-      try {
-        result = await requestSessionOpen(sessionId, version)
-      } catch (reason) {
-        // A newer open() owns the panel; a stale failure is irrelevant noise.
-        if (version !== openVersion) return
-        throw reason
-      }
-      const detail = object(result)
-      if (!isSessionOpenDetail(detail, sessionId)) throw new Error(translate('app.error.openSession'))
-      const rawHistory = detail.history
-      const parsedHistory = parseSessionHistoryWithTimeline(rawHistory)
-      const history = parsedHistory.history
-      // Host-only rows (command notices, agent errors, unhealed gap warnings)
-      // are not part of the ledger this hydration reads, so a re-open has to
-      // put back the ones the session already announced.
-      const timeline = restoreHostOnlyNodes(
-        restoreGapNotices(hydrateTimelineFromEntries(sessionId, parsedHistory.timeline), sessionId, history),
-        sessionId,
-      )
-      const permissionPresets = stringList(detail?.permissionPresets)
-      // The Host resolves which VS Code folder guards this session's paths and
-      // states it on the open detail; a row from an earlier list is the
-      // fallback. Without it the folder-scoped surfaces are not attempted.
-      const openedWorkspaceFolderId = detail?.workspaceFolderId
-      const workspaceFolderId = nonEmptyString(openedWorkspaceFolderId)
-        ? openedWorkspaceFolderId
-        : sessionWorkspaceFolderId(sessionId)
-      // History and configuration are the critical first-paint payload. Start
-      // the advisory reads immediately, but publish the conversation before
-      // they finish so a slow queue/catalog endpoint cannot blank the panel.
-      // The command and session-model directories are also advisory for the
-      // first paint: the composer can use the global model fallback and the
-      // command picker is opened explicitly. Keep their requests concurrent,
-      // but do not make their latency part of the session-open completion.
-      const commandDirectoryData = loadCommandDirectory(sessionId)
-      const sessionModelDirectoryData = loadSessionModelDirectory(client, sessionId)
-      const goalBaselineGeneration = goalReadGeneration
-      const secondaryData = Promise.all([
-        safeList<QueuedInput>(
-          client,
-          { type: 'session.queue.list', requestId: requestId(), payload: { sessionId } },
-          isQueuedInput,
-        ),
-        safeList<GoalView>(
-          client,
-          { type: 'goal.list', requestId: requestId(), payload: { sessionId } },
-          isGoalView,
-        ),
-        safeList<JobView>(
-          client,
-          { type: 'job.list', requestId: requestId(), payload: { sessionId } },
-          isJobView,
-        ),
-        requestFeedbackSnapshot(sessionId),
-        loadSubagentCatalog(sessionId),
-      ])
-      if (version !== openVersion) return
-      const initialMessages = pendingOpenBuffer.messagesAfterReplay(pending)
-      setState((current) =>
-        replayHostMessages(
-          {
-            ...current,
-            activeSessionId: sessionId,
-            pendingSession: undefined,
-            timeline,
-            history,
-            historyHasMore: detail?.historyHasMore === true,
-            historyBeforeSequence:
-              optionalSequence(detail?.historyBeforeSequence) ??
-              (detail?.historyHasMore === true ? oldestHistorySequence(history) : undefined),
-            historyLoading: false,
-            projections: setSessionProjection(
-              current.projections,
-              sessionId,
-              detail?.projection,
-              projectionSequences,
-            ),
-            sessions: upsertOpenedSession(current.sessions, detail, sessionId),
-            configuration: isAgentConfiguration(detail?.configuration)
-              ? detail.configuration
-              : {
-                  ...createDefaultConfiguration(current, composerPreferences),
-                  planModeKnown: false,
-                  permissionPresetKnown: false,
-                },
-            sessionModels: [],
-            sessionModelFailures: [],
-            sessionModelCurrent: undefined,
-            sessionModelRoutable: undefined,
-            // The directory read starts below, before the first paint, so it is
-            // in flight from the moment the session is on screen.
-            sessionModelDirectoryLoading: true,
-            sessionModelDirectoryError: undefined,
-            permissionPresets: permissionPresets ?? [],
-            queue: [],
-            goals: [],
-            todos: latestTodos(timeline),
-            jobs: [],
-            jobFollow: undefined,
-            feedback: {},
-            feedbackUnavailable: false,
-            subagents: EMPTY_SUBAGENT_CATALOG,
-            activeSubagent: undefined,
-            changes: [],
-            changesRefreshFailed: false,
-            changesLoading: false,
-            // A refresh superseded by this open can no longer clear its own
-            // loading flag, so the reset has to release it.
-            editorContextLoading: false,
-            tasks: [],
-            tasksLoading: false,
-            taskScope: 'current-session',
-            tasksComplete: true,
-            tasksOmittedSessions: 0,
-            checkpoints: [],
-            unavailableLists: [],
-            checkpointsLoading: false,
-            promptTemplates: [],
-            promptTemplatesLoading: false,
-            promptMode: promptModeForConfiguration(
-              current.promptMode,
-              isAgentConfiguration(detail?.configuration) ? detail.configuration.planMode : false,
-            ),
-            commands: commandDirectory.peek(sessionId) ?? [],
-          },
-          initialMessages,
-          scheduleGapBackfill,
-          projectionSequences,
-          rememberHostOnlyNodes,
-        ),
-      )
-      pending.ready = true
-      // Keep the open barrier registered until the advisory snapshots merge.
-      // Events arriving after first paint must be replayed over those
-      // snapshots; otherwise a stale queue/job response can overwrite a live
-      // update that arrived while the reads were in flight.
-      advisoryPending = true
-      persistWebviewState({ activeSessionId: sessionId })
-
-      void commandDirectoryData
-        .then((commands) => {
-          if (version !== openVersion || commands === undefined) return
-          setState((current) =>
-            current.activeSessionId === sessionId && current.commands !== commands
-              ? { ...current, commands }
-              : current,
-          )
-        })
-        .catch(() => undefined)
-      void sessionModelDirectoryData.then((read) => {
-        if (version !== openVersion || modelDirectoryGeneration !== sessionModelDirectoryGeneration) return
-        setState((current) =>
-          version === openVersion && modelDirectoryGeneration === sessionModelDirectoryGeneration
-            ? mergeSessionModelDirectory(current, sessionId, read)
-            : current,
-        )
-      })
-
-      // Queue/goal/job/feedback/subagent data is advisory. It must not keep
-      // the session-open promise (and therefore startup/manual navigation)
-      // hostage to any one slow endpoint. The first paint above is complete;
-      // merge these surfaces when they arrive and replay any events that were
-      // delivered during this short hydration window.
-      void secondaryData
-        .then(([queue, goals, jobs, feedback, subagents]) => {
-          if (version !== openVersion) return
-          if (
-            goalBaselineGeneration === goalReadGeneration &&
-            goals?.some((goal) => goal.activation !== undefined)
-          )
-            goalActivationAvailable = true
-          // A gap event has already been applied live and may have triggered
-          // an asynchronous history rebuild. Replaying it over the advisory
-          // baseline would re-add a gap notice after the backfill removed it.
-          const pendingMessages = pendingOpenBuffer
-            .messagesFrom(pending, advisoryReplayStart)
-            .filter((message) => message.type !== 'event' || message.name !== 'session.gap')
-          setState((current) =>
-            replayHostMessages(
-              {
-                ...current,
-                unavailableLists: [
-                  ...(current.unavailableLists ?? []).filter(
-                    (key) => !['queue', 'goals', 'jobs'].includes(key),
-                  ),
-                  ...(queue === undefined ? ['queue'] : []),
-                  ...(goals === undefined ? ['goals'] : []),
-                  ...(jobs === undefined ? ['jobs'] : []),
-                ],
-                ...(queue === undefined ? {} : { queue }),
-                ...(goals === undefined || goalBaselineGeneration !== goalReadGeneration ? {} : { goals }),
-                ...(jobs === undefined ? {} : { jobs }),
-                ...(feedback.items === undefined ? {} : { feedback: feedbackRecord(feedback.items) }),
-                ...(feedback.unavailable === undefined ? {} : { feedbackUnavailable: feedback.unavailable }),
-                ...(subagents === undefined ? {} : { subagents }),
-              },
-              pendingMessages,
-              scheduleGapBackfill,
-              projectionSequences,
-              rememberHostOnlyNodes,
-            ),
-          )
-          featureActions.refreshSessionScopedStates(sessionId)
-          featureActions.refreshEditorContextForOpen(workspaceFolderId)
-        })
-        .catch(() => undefined)
-        .finally(() => {
-          advisoryPending = false
-          pendingOpenBuffer.settle(pending, version === openVersion)
-        })
-      completed = true
-    } finally {
-      if (!advisoryPending) pendingOpenBuffer.settle(pending, completed)
-    }
-  }
-  const openSubagent = async (entry: SubagentView, parentAvailable: boolean): Promise<void> => {
-    // A direct child open (drawer, task row) also supersedes an in-flight
-    // by-id resolution inside `open`.
-    openIntent += 1
-    jobActions.stopBeforeSessionOpen()
-    flushPendingHistory()
-    const version = ++openVersion
-    feedbackCache.forget(entry.id)
-    featureActions.retirePromptTemplatesForSubagentSwitch()
-    const pending = pendingOpenBuffer.create(entry.id, version)
-    // The history and advisory reads overlap. Preserve every event delivered
-    // after this open began for the final advisory replay.
-    const advisoryReplayStart = pending.messages.length
-    let completed = false
-    const workspaceId =
-      state.sessions.find((session) => session.id === state.activeSessionId)?.workspaceId ??
-      state.activeSubagent?.workspaceId ??
-      ''
-    try {
-      await featureActions.discardEditorContextForSessionSwitch(entry.id)
-      // The child→parent routing is connection state owned by the host
-      // catalog: a child transcript can only be read after its parent catalog
-      // was read on *this* connection, and a replacement process starts
-      // without one. Read it first instead of beside the history request; the
-      // caller still owns `parentAvailable`, which it read from that catalog.
-      await loadSubagentCatalog(entry.parentSessionId)
-      const historyData = client
-        .request<unknown>({
-          type: 'subagent.history',
-          requestId: requestId(),
-          payload: { sessionId: entry.id },
-        })
-        .then(parseSubagentHistory)
-      const goalBaselineGeneration = goalReadGeneration
-      const secondaryData = Promise.all([
-        safeList<QueuedInput>(
-          client,
-          { type: 'session.queue.list', requestId: requestId(), payload: { sessionId: entry.id } },
-          isQueuedInput,
-        ),
-        safeList<GoalView>(
-          client,
-          { type: 'goal.list', requestId: requestId(), payload: { sessionId: entry.id } },
-          isGoalView,
-        ),
-        safeList<JobView>(
-          client,
-          { type: 'job.list', requestId: requestId(), payload: { sessionId: entry.id } },
-          isJobView,
-        ),
-        requestFeedbackSnapshot(entry.id),
-        loadSubagentCatalog(entry.id),
-      ])
-      const history = await historyData
-      if (version !== openVersion) return
-      // A child transcript is rebuilt from `subagent.history` on every entry,
-      // and DSH never replays host-only rows or an unhealed hole, so both
-      // restores have to run exactly as they do for a parent open.
-      const timeline = restoreHostOnlyNodes(
-        restoreGapNotices(
-          hydrateTimelineFromHistoryEvents(entry.id, history.events),
-          entry.id,
-          history.events,
-        ),
-        entry.id,
-      )
-      const initialMessages = pendingOpenBuffer.messagesAfterReplay(pending)
-      setState((current) =>
-        replayHostMessages(
-          {
-            ...current,
-            activeSessionId: entry.id,
-            pendingSession: undefined,
-            activeSubagent: { entry, parentAvailable, workspaceId },
-            timeline,
-            history: history.events,
-            // A child transcript is paged exactly like a parent one: without the
-            // host cursor (or a deriveable one) the transcript would stop at the
-            // newest page with no way to reach the records before it.
-            historyHasMore: history.hasMore,
-            historyBeforeSequence:
-              history.beforeSequence ?? (history.hasMore ? oldestHistorySequence(history.events) : undefined),
-            historyLoading: false,
-            projections: setSessionProjection(
-              current.projections,
-              entry.id,
-              history.projection,
-              projectionSequences,
-            ),
-            configuration: undefined,
-            sessionModels: [],
-            sessionModelFailures: [],
-            sessionModelCurrent: undefined,
-            sessionModelRoutable: undefined,
-            // An addressed subagent has no session directory of its own — the
-            // host binds this selection to the owning Agent — so there is no
-            // read to track and nothing to state a failure about.
-            sessionModelDirectoryLoading: false,
-            sessionModelDirectoryError: undefined,
-            permissionPresets: [],
-            queue: [],
-            goals: [],
-            todos: latestTodos(timeline),
-            jobs: [],
-            jobFollow: undefined,
-            feedback: {},
-            feedbackUnavailable: false,
-            subagents: EMPTY_SUBAGENT_CATALOG,
-            commands: [],
-            changes: [],
-            changesRefreshFailed: false,
-            changesLoading: false,
-            editorContextLoading: false,
-            tasks: [],
-            tasksLoading: false,
-            taskScope: 'current-session',
-            tasksComplete: true,
-            tasksOmittedSessions: 0,
-            checkpoints: [],
-            unavailableLists: [],
-            checkpointsLoading: false,
-            promptTemplates: [],
-            promptTemplatesLoading: false,
-            promptMode: 'ask',
-          },
-          initialMessages,
-          scheduleGapBackfill,
-          projectionSequences,
-          rememberHostOnlyNodes,
-        ),
-      )
-      pending.ready = true
-      persistWebviewState({ activeSessionId: entry.id })
-
-      const [queue, goals, jobs, feedback, subagents] = await secondaryData
-      if (
-        version === openVersion &&
-        goalBaselineGeneration === goalReadGeneration &&
-        goals?.some((goal) => goal.activation !== undefined)
-      )
-        goalActivationAvailable = true
-      if (version !== openVersion) return
-      const pendingMessages = pendingOpenBuffer.messagesFrom(pending, advisoryReplayStart)
-      setState((current) =>
-        replayHostMessages(
-          {
-            ...current,
-            unavailableLists: [
-              ...(current.unavailableLists ?? []).filter((key) => !['queue', 'goals', 'jobs'].includes(key)),
-              ...(queue === undefined ? ['queue'] : []),
-              ...(goals === undefined ? ['goals'] : []),
-              ...(jobs === undefined ? ['jobs'] : []),
-            ],
-            ...(queue === undefined ? {} : { queue }),
-            ...(goals === undefined || goalBaselineGeneration !== goalReadGeneration ? {} : { goals }),
-            ...(jobs === undefined ? {} : { jobs }),
-            ...(feedback.items === undefined ? {} : { feedback: feedbackRecord(feedback.items) }),
-            ...(feedback.unavailable === undefined ? {} : { feedbackUnavailable: feedback.unavailable }),
-            ...(subagents === undefined ? {} : { subagents }),
-          },
-          pendingMessages,
-          scheduleGapBackfill,
-          projectionSequences,
-          rememberHostOnlyNodes,
-        ),
-      )
-      featureActions.refreshSessionScopedStates(entry.id)
-      completed = true
-    } finally {
-      pendingOpenBuffer.settle(pending, completed)
-    }
-  }
+  const { open, openSubagent } = createSessionOpenController({
+    client,
+    getState: () => state,
+    setState,
+    getComposerPreferences: () => composerPreferences,
+    projectionSequences,
+    pendingOpenBuffer,
+    featureActions,
+    jobActions,
+    gapHealing,
+    feedbackCache,
+    commandDirectory,
+    requestSessionOpen,
+    resolveSubagentOpen,
+    loadCommandDirectory,
+    loadSubagentCatalog,
+    sessionWorkspaceFolderId,
+    persistWebviewState,
+    flushPendingHistory,
+    nextOpenIntent: () => ++openIntent,
+    getOpenIntent: () => openIntent,
+    nextOpenVersion: () => ++openVersion,
+    getOpenVersion: () => openVersion,
+    nextSessionModelDirectoryGeneration: () => ++sessionModelDirectoryGeneration,
+    getSessionModelDirectoryGeneration: () => sessionModelDirectoryGeneration,
+    getGoalReadGeneration: () => goalReadGeneration,
+    setGoalActivationAvailable: () => {
+      goalActivationAvailable = true
+    },
+    clearStartupRestorePending: () => {
+      startupRestorePending = false
+    },
+  })
   /**
    * A replacement DSH process starts with no follow subscriptions of its own.
    * Whatever the user is looking at has to be re-baselined against the new
@@ -1497,10 +1043,36 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     return restore
   }
   const { checkDshUpdates, installDshVersion } = createDshUpdateActions({ client, setState })
+  const settingsActions = createSettingsActions({
+    client,
+    setState,
+    applyBusyEnter,
+    capturePresetSessionTarget,
+    nextPresetRosterGeneration: () => ++presetRosterGeneration,
+    isPresetRosterCurrent: (generation) => generation === presetRosterGeneration,
+    synchronizeBlankSessionPreset,
+  })
+  const feedbackActions = createFeedbackActions({ client, setState, getState: () => state, feedbackCache })
+  const interactionActions = createInteractionActions(client, setState)
+  const sessionCatalogActions = createSessionCatalogActions({
+    client,
+    getState: () => state,
+    setState,
+    refresh,
+    open,
+    loadArchivedSessions,
+    nextOpenIntent: () => ++openIntent,
+    currentOpenIntent: () => openIntent,
+    isOpenIntentCurrent: (intent) => intent === openIntent,
+  })
   const store: StoreWithoutStateView = {
     ...accountActions.methods,
     ...jobActions.methods,
     ...featureActions.methods,
+    ...settingsActions,
+    ...feedbackActions,
+    ...interactionActions,
+    ...sessionCatalogActions,
     get sessionRestore() {
       return state.sessionRestore === true
     },
@@ -1556,28 +1128,6 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       await client.request<unknown>({ type: 'diagnostics.show', requestId: requestId() })
     },
     refreshSessions: refresh,
-    searchSessions: async (query) => {
-      const trimmed = query.trim()
-      if (trimmed === '') return { items: [] }
-      const result = await client.request<unknown>({
-        type: 'session.list',
-        requestId: requestId(),
-        payload: { search: trimmed, archived: false },
-      })
-      const items = strictListValues(result, isSessionSummary)
-      const record = object(result)
-      if (items === undefined) throw new Error('Malformed session search response.')
-      if (
-        record !== undefined &&
-        Object.hasOwn(record, 'searchHasMore') &&
-        typeof record.searchHasMore !== 'boolean'
-      )
-        throw new Error('Malformed session search response.')
-      return {
-        items: deduplicateSessionSummaries(items),
-        ...(typeof record?.searchHasMore === 'boolean' ? { searchHasMore: record.searchHasMore } : {}),
-      }
-    },
     refreshCommands: (sessionId) => refreshCommands(sessionId),
     refreshSessionModels: async (sessionId) => {
       const target = sessionId ?? state.activeSessionId
@@ -1669,108 +1219,6 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       }
     },
     openSubagent,
-    renameSession: async (sessionId, title) => {
-      const result = object(
-        await client.request<unknown>({
-          type: 'session.rename',
-          requestId: requestId(),
-          payload: { sessionId, title },
-        }),
-      )
-      // The host answers with the title it stored after its own normalization
-      // (control characters stripped, whitespace collapsed, truncated to its
-      // byte budget). Adopting that value keeps the row from showing a title
-      // the session log does not hold until the next refresh.
-      const accepted =
-        typeof result?.title === 'string' && result.title.trim() !== '' ? result.title : title.trim()
-      setState((current) => ({
-        ...current,
-        sessions: current.sessions.map((session) =>
-          session.id === sessionId ? { ...session, title: accepted } : session,
-        ),
-      }))
-    },
-    addWorkspaceFolder: async () => {
-      await client.request<unknown>({ type: 'workspace.addFolder', requestId: requestId() })
-    },
-    renameWorkspace: async (workspaceId, name) => {
-      await client.request<unknown>({
-        type: 'workspace.rename',
-        requestId: requestId(),
-        payload: { workspaceId, name },
-      })
-      await refresh()
-    },
-    removeWorkspace: async (workspaceId) => {
-      await client.request<unknown>({
-        type: 'workspace.remove',
-        requestId: requestId(),
-        payload: { workspaceId },
-      })
-      await refresh()
-    },
-    moveWorkspace: async (workspaceId, beforeWorkspaceId) => {
-      await client.request<unknown>({
-        type: 'workspace.move',
-        requestId: requestId(),
-        payload: {
-          workspaceId,
-          ...(beforeWorkspaceId === undefined ? {} : { beforeWorkspaceId }),
-        },
-      })
-      await refresh()
-    },
-    moveSession: async (workspaceId, sessionId, beforeSessionId) => {
-      await client.request<unknown>({
-        type: 'session.move',
-        requestId: requestId(),
-        payload: {
-          workspaceId,
-          sessionId,
-          ...(beforeSessionId === undefined ? {} : { beforeSessionId }),
-        },
-      })
-      await refresh()
-    },
-    forkSession: async (sessionId, atSeq) => {
-      const navigationIntent = ++openIntent
-      const source = state.sessions.find((session) => session.id === sessionId)
-      const result = object(
-        await client.request<unknown>({
-          type: 'session.fork',
-          requestId: requestId(),
-          payload: {
-            sessionId,
-            ...(atSeq === undefined ? {} : { atSeq }),
-          },
-        }),
-      )
-      const childId =
-        typeof result?.id === 'string'
-          ? result.id
-          : typeof result?.sessionId === 'string'
-            ? result.sessionId
-            : undefined
-      if (childId === undefined || childId.trim() === '') throw new Error(translate('app.error.forkSession'))
-      if (source !== undefined) {
-        const childTitle = nextForkTitle(source.title, state.sessions, source.workspaceId)
-        try {
-          await client.request<unknown>({
-            type: 'session.rename',
-            requestId: requestId(),
-            payload: { sessionId: childId, title: childTitle },
-          })
-        } catch (reason: unknown) {
-          // The fork is already durable. Open it before surfacing a rename
-          // failure so a failed cosmetic follow-up never strands the child.
-          if (navigationIntent === openIntent) await open(childId)
-          else await refresh()
-          throw reason
-        }
-      }
-      if (navigationIntent === openIntent) await open(childId)
-      else await refresh()
-    },
     configureSession: async (sessionId, configuration) => {
       const generation = ++configurationGeneration
       const previousProvider = state.configuration?.model.providerId
@@ -1932,85 +1380,6 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       await refresh()
       if (navigationIntent === openIntent && typeof created?.id === 'string') await open(created.id)
     },
-    openSkillDocument: async (sessionId, skillId) => {
-      await client.request<unknown>({
-        type: 'skill.openDocument',
-        requestId: requestId(),
-        payload: { sessionId, skillId },
-      })
-    },
-    removeSession: async (sessionId) => {
-      const wasActive = state.activeSessionId === sessionId
-      const navigationIntent = openIntent
-      await client.request<unknown>({
-        type: 'session.archive',
-        requestId: requestId(),
-        payload: { sessionId, archived: true },
-      })
-      // Archive is a registry operation, not a destructive delete. Remove it
-      // from the visible switcher immediately; the follow-up list refresh is
-      // deliberately kept as a reconciliation step for other sessions.
-      setState((current) => ({
-        ...current,
-        archivedSessionIds: uniqueStrings([...current.archivedSessionIds, sessionId]),
-        sessions: current.sessions.filter((session) => session.id !== sessionId),
-        archivedSessions: current.archivedSessions.filter((session) => session.id !== sessionId),
-        ...(current.activeSessionId === sessionId ? clearedActiveSession(current, sessionId) : {}),
-      }))
-      await refresh()
-      // Some rc.6 hosts publish the archive event after the list response.
-      // Keep the just-archived session hidden even during that propagation
-      // window; the next refresh will still be authoritative for everything
-      // else.
-      setState((current) => ({
-        ...current,
-        sessions: current.sessions.filter((session) => session.id !== sessionId),
-      }))
-      if (wasActive && navigationIntent === openIntent && state.activeSessionId === undefined) {
-        const replacement = state.sessions[0]
-        if (replacement !== undefined) await open(replacement.id)
-      }
-    },
-    loadArchivedSessions: async () => {
-      await loadArchivedSessions()
-    },
-    restoreSession: async (sessionId) => {
-      await client.request<unknown>({
-        type: 'session.archive',
-        requestId: requestId(),
-        payload: { sessionId, archived: false },
-      })
-      // The row belongs to the active surface again; drop the local archive
-      // knowledge before the refresh so a concurrent list cannot keep it
-      // hidden behind a stale archive set.
-      setState((current) => ({
-        ...current,
-        archivedSessionIds: current.archivedSessionIds.filter((id) => id !== sessionId),
-        archivedSessions: current.archivedSessions.filter((session) => session.id !== sessionId),
-      }))
-      await refresh()
-    },
-    deleteSession: async (sessionId) => {
-      const wasActive = state.activeSessionId === sessionId
-      const navigationIntent = openIntent
-      await client.request<unknown>({
-        type: 'session.remove',
-        requestId: requestId(),
-        payload: { sessionId },
-      })
-      setState((current) => ({
-        ...current,
-        sessions: current.sessions.filter((session) => session.id !== sessionId),
-        archivedSessionIds: current.archivedSessionIds.filter((id) => id !== sessionId),
-        archivedSessions: current.archivedSessions.filter((session) => session.id !== sessionId),
-        ...(current.activeSessionId === sessionId ? clearedActiveSession(current, sessionId) : {}),
-      }))
-      await refresh()
-      if (wasActive && navigationIntent === openIntent && state.activeSessionId === undefined) {
-        const replacement = state.sessions[0]
-        if (replacement !== undefined) await open(replacement.id)
-      }
-    },
     sendPrompt: async (sessionId, text, attachments, mode) => {
       const subagent =
         state.activeSessionId === sessionId && state.activeSubagent?.entry.id === sessionId
@@ -2115,261 +1484,6 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       }
       if (failed) throw firstFailure
     },
-    loadFeedback: async (sessionId) => {
-      applyFeedbackSnapshot(sessionId, await requestFeedbackSnapshot(sessionId, true))
-    },
-    ensureFeedback: async (sessionId, messageId) => {
-      const alreadyReady = feedbackCache.isReady(sessionId) && state.activeSessionId === sessionId
-      const result = await requestFeedbackSnapshot(sessionId)
-      if (!alreadyReady) applyFeedbackSnapshot(sessionId, result)
-      return state.activeSessionId === sessionId ? state.feedback[messageId] : undefined
-    },
-    toggleFeedback: async (sessionId, messageId, rating) => {
-      try {
-        const current = state.feedback[messageId]
-        if (current?.rating === rating) {
-          await client.request<unknown>({
-            type: 'feedback.remove',
-            requestId: requestId(),
-            payload: { sessionId, messageId },
-          })
-          setState((next) => {
-            if (next.activeSessionId !== sessionId) return next
-            const feedback = { ...next.feedback }
-            delete feedback[messageId]
-            return { ...next, feedback }
-          })
-          return
-        }
-        const item = object(
-          await client.request<unknown>({
-            type: 'feedback.toggle',
-            requestId: requestId(),
-            payload: {
-              sessionId,
-              messageId,
-              rating,
-              ...(current?.note === undefined ? {} : { note: current.note }),
-              ...(current?.category === undefined ? {} : { category: current.category }),
-            },
-          }),
-        )
-        if (!isMessageFeedbackItem(item)) throw new Error(translate('app.error.feedback'))
-        setState((next) =>
-          next.activeSessionId === sessionId
-            ? { ...next, feedback: { ...next.feedback, [item.messageId]: item } }
-            : next,
-        )
-      } catch (error) {
-        if (!isFeedbackCapabilityUnavailable(error)) throw error
-        setState((next) =>
-          next.activeSessionId === sessionId ? { ...next, feedbackUnavailable: true } : next,
-        )
-      }
-    },
-    submitFeedback: async (sessionId, messageId, rating, note, category) => {
-      try {
-        const item = object(
-          await client.request<unknown>({
-            type: 'feedback.toggle',
-            requestId: requestId(),
-            payload: {
-              sessionId,
-              messageId,
-              rating,
-              ...(note === undefined ? {} : { note }),
-              ...(category === undefined ? {} : { category }),
-            },
-          }),
-        )
-        if (!isMessageFeedbackItem(item)) throw new Error(translate('app.error.feedback'))
-        setState((next) =>
-          next.activeSessionId === sessionId
-            ? { ...next, feedback: { ...next.feedback, [item.messageId]: item } }
-            : next,
-        )
-      } catch (error) {
-        if (!isFeedbackCapabilityUnavailable(error)) throw error
-        setState((next) =>
-          next.activeSessionId === sessionId ? { ...next, feedbackUnavailable: true } : next,
-        )
-        // A dialog submission must remain pending in the UI when the optional
-        // sidecar is absent; resolving here would make MessageActions show a
-        // false success acknowledgement.
-        throw error
-      }
-    },
-    setFeedbackNote: async (sessionId, messageId, note) => {
-      try {
-        const current = state.feedback[messageId]
-        if (current === undefined) return
-        const item = object(
-          await client.request<unknown>({
-            type: 'feedback.note',
-            requestId: requestId(),
-            payload: {
-              sessionId,
-              messageId,
-              rating: current.rating,
-              ...(note === undefined ? {} : { note }),
-              ...(current.category === undefined ? {} : { category: current.category }),
-            },
-          }),
-        )
-        if (!isMessageFeedbackItem(item)) throw new Error(translate('app.error.feedback'))
-        setState((next) =>
-          next.activeSessionId === sessionId
-            ? { ...next, feedback: { ...next.feedback, [item.messageId]: item } }
-            : next,
-        )
-      } catch (error) {
-        if (!isFeedbackCapabilityUnavailable(error)) throw error
-        setState((next) =>
-          next.activeSessionId === sessionId ? { ...next, feedbackUnavailable: true } : next,
-        )
-      }
-    },
-    removeFeedback: async (sessionId, messageId) => {
-      try {
-        await client.request<unknown>({
-          type: 'feedback.remove',
-          requestId: requestId(),
-          payload: { sessionId, messageId },
-        })
-        setState((next) => {
-          if (next.activeSessionId !== sessionId) return next
-          const feedback = { ...next.feedback }
-          delete feedback[messageId]
-          return { ...next, feedback }
-        })
-      } catch (error) {
-        if (!isFeedbackCapabilityUnavailable(error)) throw error
-        setState((next) =>
-          next.activeSessionId === sessionId ? { ...next, feedbackUnavailable: true } : next,
-        )
-      }
-    },
-    listReferences: async (sessionId, query, quoted) => {
-      const result = await client.request<unknown>({
-        type: 'reference.list',
-        requestId: requestId(),
-        payload: { sessionId, query, quoted },
-      })
-      return referenceCandidates(result)
-    },
-    respondToPermission: (interactionId, optionId) =>
-      client
-        .request<unknown>({
-          type: 'interaction.permission.respond',
-          requestId: requestId(),
-          payload: { interactionId, optionId },
-        })
-        .then(() =>
-          setState((current) => ({
-            ...current,
-            permissions: current.permissions.filter((item) => item.id !== interactionId),
-          })),
-        ),
-    respondToQuestion: (questionId, response) =>
-      client
-        .request<unknown>({
-          type: 'interaction.question.respond',
-          requestId: requestId(),
-          payload: {
-            questionId,
-            response: questionResponsePayload(response),
-          },
-        })
-        .then(() =>
-          setState((current) => ({
-            ...current,
-            questions: current.questions.filter((item) => item.id !== questionId),
-          })),
-        ),
-    cancelQuestion: (questionId) =>
-      client
-        .request<unknown>({
-          type: 'interaction.question.cancel',
-          requestId: requestId(),
-          payload: { questionId },
-        })
-        .then(() =>
-          setState((current) => ({
-            ...current,
-            questions: current.questions.filter(
-              (item) => item.id !== questionId && !item.items?.some((entry) => entry.id === questionId),
-            ),
-          })),
-        ),
-    pickAttachment: async () => {
-      return attachmentFromResult(
-        await client.request<unknown>({ type: 'attachment.pick', requestId: requestId() }),
-      )
-    },
-    ingestAttachment: async (input) => {
-      return attachmentFromResult(
-        await client.request<unknown>({
-          type: 'attachment.ingest',
-          requestId: requestId(),
-          payload: {
-            name: input.name,
-            ...(input.mimeType === undefined ? {} : { mimeType: input.mimeType }),
-            dataBase64: input.dataBase64,
-          },
-        }),
-      )
-    },
-    previewAttachment: async (uri) => {
-      const result = object(
-        await client.request<unknown>({
-          type: 'attachment.preview',
-          requestId: requestId(),
-          payload: { uri },
-        }),
-      )
-      if (result?.cancelled === true || typeof result?.dataUri !== 'string') return undefined
-      return result.dataUri
-    },
-    readSessionAttachment: async (sessionId, image) => {
-      const result = object(
-        await client.request<unknown>({
-          type: 'attachment.read',
-          requestId: requestId(),
-          payload: { sessionId, attachmentId: image.attachmentId },
-        }),
-      )
-      if (result?.cancelled === true) return undefined
-      const direct = imageDataUri(result?.dataUri)
-      if (direct !== undefined) return direct
-      const handle = object(result?.attachment)?.uri
-      if (typeof handle !== 'string' || handle.trim() === '') return undefined
-      try {
-        const preview = object(
-          await client.request<unknown>({
-            type: 'attachment.preview',
-            requestId: requestId(),
-            payload: { uri: handle },
-          }),
-        )
-        return imageDataUri(preview?.dataUri)
-      } finally {
-        await client
-          .request<unknown>({
-            type: 'attachment.release',
-            requestId: requestId(),
-            payload: { uris: [handle] },
-          })
-          .catch(() => undefined)
-      }
-    },
-    releaseAttachments: async (uris) => {
-      if (uris.length === 0) return
-      await client.request<unknown>({
-        type: 'attachment.release',
-        requestId: requestId(),
-        payload: { uris: [...uris] },
-      })
-    },
     setPromptMode: async (mode) => {
       const sessionId = state.activeSessionId
       const configuration = state.configuration
@@ -2394,48 +1508,12 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       persistWebviewState()
       return true
     },
-    listOpenFiles: async () => {
-      return openFileCandidatesFromResult(
-        await client.request<unknown>({ type: 'attachment.open.list', requestId: requestId() }),
-      )
-    },
-    attachOpenFile: async (candidateId) => {
-      return attachmentFromResult(
-        await client.request<unknown>({
-          type: 'attachment.open.attach',
-          requestId: requestId(),
-          payload: { candidateId },
-        }),
-      )
-    },
     rememberOpenFile: (candidateId) => {
       const normalized = candidateId.trim()
       if (normalized === '') return
       composerPreferences = { ...composerPreferences, openFileId: normalized }
       setState((current) => ({ ...current, preferredOpenFileId: normalized }))
       persistWebviewState()
-    },
-    openLink: async (href) => {
-      const result = object(
-        await client.request<unknown>({
-          type: 'view.openLink',
-          requestId: requestId(),
-          payload: { href },
-        }),
-      )
-      if (result?.opened === true) return
-      throw new Error(typeof result?.message === 'string' ? result.message : translate('app.error.openLink'))
-    },
-    showInFolder: async (href) => {
-      const result = object(
-        await client.request<unknown>({
-          type: 'view.showInFolder',
-          requestId: requestId(),
-          payload: { href },
-        }),
-      )
-      if (result?.opened === true) return
-      throw new Error(typeof result?.message === 'string' ? result.message : translate('app.error.openLink'))
     },
     runtimeAction: (action) =>
       client
@@ -2450,199 +1528,6 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     },
     checkDshUpdates,
     installDshVersion,
-    readSettings: async () => {
-      return parseExtensionSettings(
-        await client.request<unknown>({ type: 'extensionSettings.read', requestId: requestId() }),
-      )
-    },
-    readDshSettings: async () => {
-      const snapshot = parseDshSettingsSnapshot(
-        await client.request<unknown>({ type: 'settings.read', requestId: requestId() }),
-      )
-      if (snapshot !== undefined) applyBusyEnter(snapshot.values)
-      return snapshot
-    },
-    openDshSettingsDocument: async () => {
-      await client.request<unknown>({ type: 'settings.openDocument', requestId: requestId() })
-    },
-    openKeyboardShortcuts: async () => {
-      await client.request<unknown>({ type: 'settings.openKeyboardShortcuts', requestId: requestId() })
-    },
-    updateDshSetting: async (path, value, expectedRevision) => {
-      await client.request<unknown>({
-        type: 'settings.update',
-        requestId: requestId(),
-        payload: { path, value, expectedRevision },
-      })
-    },
-    unsetDshSetting: async (path, expectedRevision) => {
-      await client.request<unknown>({
-        type: 'settings.unset',
-        requestId: requestId(),
-        payload: { path, expectedRevision },
-      })
-    },
-    mutateDshSettings: async (namespace, operations, expectedRevision) => {
-      await client.request<unknown>({
-        type: 'settings.mutate',
-        requestId: requestId(),
-        payload: {
-          namespace,
-          operations: operations.map((operation) =>
-            operation.op === 'set'
-              ? { op: 'set', path: [...operation.path], value: operation.value }
-              : { op: 'unset', path: [...operation.path] },
-          ),
-          expectedRevision,
-        },
-      })
-    },
-    createCustomProvider: async (draft) => {
-      const result = parseCustomProviderCreateResult(
-        await client.request<unknown>({
-          type: 'provider.custom.create',
-          requestId: requestId(),
-          payload: {
-            ...draft,
-            collectionPath: [...draft.collectionPath],
-            models: draft.models.map((model) => ({ ...model })),
-          },
-        }),
-      )
-      if (result === undefined) throw new Error(translate('settings.providerCreateMalformed'))
-      return result
-    },
-    configureProviderSecret: async (providerId, field) => {
-      const result = object(
-        await client.request<unknown>({
-          type: 'provider.secret.configure',
-          requestId: requestId(),
-          payload: { providerId, field },
-        }),
-      )
-      return result?.configured === true
-    },
-    removeProviderSecret: async (providerId, field) => {
-      await client.request<unknown>({
-        type: 'provider.secret.remove',
-        requestId: requestId(),
-        payload: { providerId, field },
-      })
-    },
-    configurePluginCredential: async (ref) => {
-      const result = object(
-        await client.request<unknown>({
-          type: 'plugin.credential.configure',
-          requestId: requestId(),
-          payload: { ref },
-        }),
-      )
-      return result?.configured === true
-    },
-    removePluginCredential: async (ref) => {
-      await client.request<unknown>({
-        type: 'plugin.credential.remove',
-        requestId: requestId(),
-        payload: { ref },
-      })
-    },
-    refreshModelCatalog: async () => {
-      await refreshProvidersAndModels(client, setState)
-    },
-    discoverModels: async (input) => {
-      const value = await client.request<unknown>({
-        type: 'models.discover',
-        requestId: requestId(),
-        payload: input,
-      })
-      const models = parseDiscoveredModels(value)
-      if (models === undefined) throw new Error(translate('settings.discoveryMalformed'))
-      return models
-    },
-    discoverCustomProviderModels: async (input) => {
-      const value = await client.request<unknown>({
-        type: 'models.discover.custom',
-        requestId: requestId(),
-        payload: input,
-      })
-      const models = parseDiscoveredModels(value)
-      if (models === undefined) throw new Error(translate('settings.discoveryMalformed'))
-      return models
-    },
-    loadPresetRoster: async () => {
-      const target = capturePresetSessionTarget()
-      const generation = ++presetRosterGeneration
-      const roster = parsePresetRoster(
-        await client.request<unknown>({ type: 'preset.list', requestId: requestId() }),
-      )
-      if (roster === undefined || generation !== presetRosterGeneration) return roster
-      const hostDefaultPreset = roster.presets.find((preset) => preset.isDefault)?.id
-      setState((current) => {
-        const presets = arraysEqual(current.presets, roster.presets) ? current.presets : roster.presets
-        if (presets === current.presets && current.presetSelectionEnabled === roster.modeSelectionEnabled)
-          return current
-        return withPresetSelectionEnabled({ ...current, presets }, roster.modeSelectionEnabled)
-      })
-      if (target !== undefined && hostDefaultPreset !== undefined)
-        await synchronizeBlankSessionPreset(target, hostDefaultPreset)
-      return roster
-    },
-    readPresetDocument: async (presetId) => {
-      const result = object(
-        await client.request<unknown>({
-          type: 'preset.read',
-          requestId: requestId(),
-          payload: { presetId },
-        }),
-      )
-      if (result === undefined) return undefined
-      if (
-        typeof result.id !== 'string' ||
-        (result.trust !== 'system' && result.trust !== 'user') ||
-        typeof result.content !== 'string'
-      )
-        return undefined
-      return {
-        id: result.id,
-        trust: result.trust,
-        content: result.content,
-        ...(typeof result.name === 'string' ? { name: result.name } : {}),
-        ...(typeof result.description === 'string' ? { description: result.description } : {}),
-      }
-    },
-    copyPreset: async (from, presetId, name) => {
-      // The extension route resolves with the created preset id as a bare string.
-      const created = await client.request<unknown>({
-        type: 'preset.copy',
-        requestId: requestId(),
-        payload: {
-          from,
-          presetId,
-          ...(name === undefined || name.trim() === '' ? {} : { name: name.trim() }),
-        },
-      })
-      return typeof created === 'string' && created !== '' ? created : undefined
-    },
-    removePreset: async (presetId) => {
-      await client.request<unknown>({
-        type: 'preset.remove',
-        requestId: requestId(),
-        payload: { presetId },
-      })
-    },
-    openPresetDocument: async (presetId) => {
-      const result = object(
-        await client.request<unknown>({
-          type: 'preset.openDocument',
-          requestId: requestId(),
-          payload: { presetId },
-        }),
-      )
-      if (result === undefined) return undefined
-      if (result.opened === true) return { opened: true }
-      if (typeof result.path === 'string') return { opened: false, path: result.path }
-      return { opened: false }
-    },
     loadPluginInventory: async () =>
       parsePluginInventory(
         await client.request<unknown>({ type: 'plugin.inventory', requestId: requestId() }),
