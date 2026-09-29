@@ -688,6 +688,38 @@
   background: var(--dsh-surface-raised);
 }
 
+.dsh-unified-composer .dsh-composer__attachment {
+  min-width: 0;
+  padding: 0;
+  gap: 0;
+}
+
+.dsh-unified-composer .dsh-composer__attachment-content {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: var(--dsh-space-1);
+  padding: var(--dsh-space-1) var(--dsh-space-2);
+}
+
+.dsh-unified-composer .dsh-composer__attachment-thumb,
+.dsh-unified-composer .dsh-composer__attachment-preview {
+  flex: 0 0 auto;
+  width: 1rem;
+  height: 1rem;
+  border-radius: var(--dsh-radius-sm);
+  color: inherit;
+  background: transparent;
+}
+
+.dsh-unified-composer .dsh-composer__attachment-remove {
+  width: var(--dsh-control-height);
+  min-width: var(--dsh-control-height);
+  height: var(--dsh-control-height);
+  min-height: var(--dsh-control-height);
+  padding: var(--dsh-space-1);
+}
+
 .dsh-unified-composer .dsh-composer__context-preview {
   display: inline-flex;
   align-items: center;

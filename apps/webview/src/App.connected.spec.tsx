@@ -1484,7 +1484,7 @@ describe('App connected rendering', () => {
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Choose an open file' }))
     fireEvent.click(await screen.findByRole('option', { name: /LICENSE/u }))
 
-    await waitFor(() => expect(attachOpenFile).toHaveBeenCalledWith('dsh-open-file-1'))
+    await waitFor(() => expect(attachOpenFile).toHaveBeenCalledWith('dsh-open-file-1', expect.any(Function)))
     expect(await screen.findByRole('button', { name: 'Remove LICENSE' })).toBeDefined()
   })
 

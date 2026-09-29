@@ -48,6 +48,9 @@ export function parseEditorContextItem(value: unknown): EditorContextItem | unde
     typeof item.label !== 'string' ||
     typeof item.workspaceFolderId !== 'string' ||
     typeof item.relativePath !== 'string' ||
+    (item.sourceCandidateId !== undefined &&
+      (typeof item.sourceCandidateId !== 'string' ||
+        !/^dsh-open-file-[a-f0-9]{32}$/u.test(item.sourceCandidateId))) ||
     !isCanonicalWorkspaceRelativePath(item.relativePath) ||
     !['selection', 'open-document', 'diagnostic', 'symbol'].includes(item.kind) ||
     typeof item.sizeBytes !== 'number' ||
@@ -82,6 +85,7 @@ export function parseEditorContextItem(value: unknown): EditorContextItem | unde
       ownerViewId: scope.ownerViewId,
       contextStoreGeneration: 1,
       relativePath: item.relativePath,
+      ...(typeof item.sourceCandidateId === 'string' ? { sourceCandidateId: item.sourceCandidateId } : {}),
       ...(range === undefined ? {} : { range }),
       sizeBytes: item.sizeBytes,
       capturedAt: item.expiresAt,
@@ -123,9 +127,24 @@ export function mergeEditorContext(
   current: readonly EditorContextItem[],
   next: readonly EditorContextItem[],
 ): readonly EditorContextItem[] {
-  const byRef = new Map(current.map((item) => [item.ref.contextRef, item]))
-  for (const item of next) byRef.set(item.ref.contextRef, item)
-  return [...byRef.values()].sort((left, right) => right.ref.capturedAt - left.ref.capturedAt)
+  const byIdentity = new Map<string, EditorContextItem>()
+  for (const item of [...current, ...next].sort(
+    (left, right) => left.ref.capturedAt - right.ref.capturedAt,
+  )) {
+    const key =
+      item.ref.kind === 'file'
+        ? [
+            'file',
+            item.ref.ownerId,
+            item.ref.ownerViewId,
+            item.ref.contextStoreGeneration,
+            item.ref.workspaceFolderId,
+            item.ref.relativePath,
+          ].join('\u0000')
+        : item.ref.contextRef
+    byIdentity.set(key, item)
+  }
+  return [...byIdentity.values()].sort((left, right) => right.ref.capturedAt - left.ref.capturedAt)
 }
 
 export function attachmentFromResult(resultValue: unknown): PromptAttachment | undefined {

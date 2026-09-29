@@ -855,34 +855,36 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
               const isImage = attachment.mimeType?.startsWith('image/') === true
               const preview = previews[attachment.uri]
               return (
-                <li className="dsh-composer__attachment" key={attachment.uri}>
-                  {isImage ? (
-                    <button
-                      className="dsh-composer__attachment-thumb"
-                      type="button"
-                      aria-label={t('composer.preview', { name: attachment.name })}
-                      title={t('composer.preview', { name: attachment.name })}
-                      onClick={(event) => {
-                        previewTriggerRef.current = event.currentTarget
-                        setPreviewUri(attachment.uri)
-                      }}
-                    >
-                      {preview === undefined ? (
-                        <Icon name="image" />
-                      ) : (
-                        <img src={preview} alt="" aria-hidden="true" />
-                      )}
-                    </button>
-                  ) : (
-                    <span className="dsh-composer__attachment-preview" aria-hidden="true">
-                      <Icon name="file" />
+                <li className="dsh-composer__attachment dsh-composer__context-chip" key={attachment.uri}>
+                  <span className="dsh-composer__attachment-content">
+                    {isImage ? (
+                      <button
+                        className="dsh-composer__attachment-thumb"
+                        type="button"
+                        aria-label={t('composer.preview', { name: attachment.name })}
+                        title={t('composer.preview', { name: attachment.name })}
+                        onClick={(event) => {
+                          previewTriggerRef.current = event.currentTarget
+                          setPreviewUri(attachment.uri)
+                        }}
+                      >
+                        {preview === undefined ? (
+                          <Icon name="image" />
+                        ) : (
+                          <img src={preview} alt="" aria-hidden="true" />
+                        )}
+                      </button>
+                    ) : (
+                      <span className="dsh-composer__attachment-preview" aria-hidden="true">
+                        <Icon name="file" />
+                      </span>
+                    )}
+                    <span className="dsh-composer__attachment-name" title={attachment.name}>
+                      file: {attachment.name}
                     </span>
-                  )}
-                  <span className="dsh-composer__attachment-name" title={attachment.name}>
-                    {attachment.name}
                   </span>
                   <button
-                    className="dsh-icon-button dsh-composer__attachment-remove"
+                    className="dsh-icon-button dsh-composer__context-remove dsh-composer__attachment-remove"
                     type="button"
                     aria-label={t('composer.remove', { name: attachment.name })}
                     onClick={() => {

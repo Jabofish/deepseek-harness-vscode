@@ -427,6 +427,7 @@ const useAppControllerImpl = () => {
     imageLimits,
     hasPendingSession: state.pendingSession !== undefined,
     subagentEntries: state.subagents.entries,
+    editorContext: state.editorContext,
     mountedRef,
     setDraft,
     readDraft,

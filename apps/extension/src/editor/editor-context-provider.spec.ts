@@ -153,6 +153,27 @@ function deferred<T>(): { readonly promise: Promise<T>; readonly resolve: (value
 }
 
 describe('EditorContextProvider', () => {
+  it('keeps one live file context when the active file is added repeatedly', async () => {
+    const harness = createHarness([])
+    const first = await harness.provider.capture({ kind: 'file' }, harness.owner)
+    const repeated = await harness.provider.capture({ kind: 'file' }, harness.owner)
+    const fromOpenFiles = await harness.provider.captureOpenFile(harness.document.uri)
+
+    expect(repeated.ref.contextRef).toBe(first.ref.contextRef)
+    expect(fromOpenFiles?.ref.contextRef).toBe(first.ref.contextRef)
+    expect(first.ref.sourceCandidateId).toMatch(/^dsh-open-file-[a-f0-9]{32}$/u)
+    expect((await harness.provider.list(harness.owner)).map((item) => item.ref.contextRef)).toEqual([
+      first.ref.contextRef,
+    ])
+
+    harness.setDocument(source.replace('Hello', 'Hi'), 2)
+    const refreshed = await harness.provider.capture({ kind: 'file' }, harness.owner)
+    expect(refreshed.ref.contextRef).not.toBe(first.ref.contextRef)
+    expect((await harness.provider.list(harness.owner)).map((item) => item.ref.contextRef)).toEqual([
+      refreshed.ref.contextRef,
+    ])
+  })
+
   it('captures the innermost nested document symbol and keeps it host-side', async () => {
     const harness = createHarness([
       {

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- 修复同一编辑器文件反复添加到上下文时出现重复芯片；「添加已打开文件」对符合条件的工作区文本文件共用编辑器上下文。其他附件也统一显示为 `file: …` 胶囊样式，文件内容变化后重新添加会更新上下文。
+- Repeatedly adding an editor file now keeps one context chip. Eligible open workspace text files use that same context path; other attachments share its compact `file: …` chip style. Re-adding a changed file refreshes its context.
 - 打开长对话的首帧不再随会话长度增长：虚拟列表首次提交时还没有测量视口，此前这一帧会渲染全部行；现在它只渲染末尾的有界行数并保留相对完整会话的索引，10,000 节点会话的首次提交工作量与其后的每一帧一致。
 - Opening a long conversation no longer renders every row in its first frame: before the virtual list has a measured viewport, that frame keeps a bounded window at the tail with indexes into the full conversation, so a 10,000-node session commits as cheaply as any later frame.
 

@@ -130,8 +130,47 @@ describe('Composer', () => {
     expect(screen.getByRole('menuitem', { name: 'Attach file' })).toBeDefined()
     expect(screen.getByRole('menuitem', { name: 'Choose an open file' })).toBeDefined()
     expect(screen.getByRole('button', { name: `Remove ${name}` })).toBeDefined()
-    expect(screen.getByText(name).getAttribute('title')).toBe(name)
+    expect(screen.getByText(`file: ${name}`).getAttribute('title')).toBe(name)
+    expect(screen.getByText(`file: ${name}`).closest('li')?.className).toContain('dsh-composer__context-chip')
     expect(screen.getByRole('textbox', { name: 'Prompt' }).className).toContain('dsh-composer__textarea')
+  })
+
+  it('uses the same pill style for attachment and editor file context', () => {
+    render(
+      <Composer
+        {...baseProps()}
+        attachments={[{ uri: 'dsh-attachment:photo', name: 'photo.png', mimeType: 'image/png' }]}
+        editorContext={[
+          {
+            ref: {
+              contextRef: 'dsh-context:file',
+              workspaceFolderId: 'workspace-1',
+              ownerId: 'owner',
+              ownerViewId: 'view',
+              contextStoreGeneration: 1,
+              kind: 'file',
+              relativePath: 'hello.txt',
+              sizeBytes: 142,
+              capturedAt: 1,
+              contentHash: 'a'.repeat(64),
+              expiresAt: 2,
+            },
+            label: 'file: hello.txt',
+            stale: false,
+            previewAvailable: true,
+          },
+        ]}
+        onRemoveEditorContext={vi.fn()}
+        onPreviewEditorContext={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('file: photo.png').closest('li')?.className).toContain(
+      'dsh-composer__context-chip',
+    )
+    expect(
+      screen.getByRole('button', { name: 'Preview file: hello.txt' }).closest('span')?.className,
+    ).toContain('dsh-composer__context-chip')
   })
 
   it('reports the extras menu open state so the host can refresh or close its picker', () => {

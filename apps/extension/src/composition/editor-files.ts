@@ -1,10 +1,10 @@
 import * as vscode from 'vscode'
-import { createHash } from 'node:crypto'
 import { stat, readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { type EditorContextAvailability, type EditorContextItem } from '@dsh-vscode/domain'
 import { type StoredAttachmentInput } from '../attachments/attachment-store.js'
 import { attachmentMimeType, prepareAttachment, readAttachmentFile } from '../attachments/attachment-codec.js'
+import { openFileCandidateId } from '../editor/open-file-id.js'
 
 export type FeatureContextKind = 'selection' | 'open-document' | 'diagnostic' | 'symbol'
 export interface OpenFileCandidate {
@@ -73,10 +73,6 @@ function fileNameForUri(uri: vscode.Uri, document: vscode.TextDocument | undefin
     : name
 }
 
-function openFileCandidateId(uri: vscode.Uri): string {
-  return `dsh-open-file-${createHash('sha256').update(uri.toString(), 'utf8').digest('hex').slice(0, 32)}`
-}
-
 function currentTabUri(input: vscode.Tab['input']): vscode.Uri | undefined {
   return tabInputUris(input)[0]
 }
@@ -98,6 +94,7 @@ export function featureContextItem(item: EditorContextItem): unknown {
     label: item.label,
     workspaceFolderId: ref.workspaceFolderId,
     relativePath: ref.relativePath,
+    ...(ref.sourceCandidateId === undefined ? {} : { sourceCandidateId: ref.sourceCandidateId }),
     ...(ref.range === undefined ? {} : { range: ref.range }),
     sizeBytes: ref.sizeBytes,
     ...(ref.documentVersion === undefined ? {} : { documentVersion: ref.documentVersion }),

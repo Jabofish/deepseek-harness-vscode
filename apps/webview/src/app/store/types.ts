@@ -398,7 +398,10 @@ export interface AppActions {
   deletePromptTemplate(templateId: string): Promise<void>
   setPromptMode(mode: PromptMode): Promise<boolean>
   listOpenFiles(): Promise<readonly OpenFileCandidate[]>
-  attachOpenFile(candidateId: string): Promise<PromptAttachment | undefined>
+  attachOpenFile(
+    candidateId: string,
+    isCurrent: () => boolean,
+  ): Promise<PromptAttachment | { readonly kind: 'context'; readonly contextRef: string } | undefined>
   rememberOpenFile(candidateId: string): void
   openLink(href: string): Promise<void>
   showInFolder(href: string): Promise<void>

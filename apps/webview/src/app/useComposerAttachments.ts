@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import type {
   ImageAttachmentLimits,
+  EditorContextItem,
   PromptAttachment,
   SessionSummary,
   SubagentCatalog,
@@ -35,6 +36,7 @@ export interface ComposerAttachmentDependencies {
   readonly imageLimits: ImageAttachmentLimits | undefined
   readonly hasPendingSession: boolean
   readonly subagentEntries: SubagentCatalog['entries']
+  readonly editorContext: readonly EditorContextItem[]
   readonly mountedRef: { readonly current: boolean }
   /**
    * The shared composer draft lives in the draft provider above App, so typing
@@ -66,6 +68,12 @@ export interface ComposerAttachments {
   readonly composerOnSelectOpenFile: (candidateId: string) => void
   readonly composerOnRemoveAttachment: (uri: string) => void
   readonly composerOnSubmit: (mode: 'queue' | 'steer') => Promise<void>
+}
+
+function contextOpenFileIds(items: readonly EditorContextItem[]): string[] {
+  return items.flatMap((item) =>
+    item.ref.kind === 'file' && item.ref.sourceCandidateId !== undefined ? [item.ref.sourceCandidateId] : [],
+  )
 }
 
 export function useComposerAttachments(deps: ComposerAttachmentDependencies): ComposerAttachments {
@@ -141,7 +149,12 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
     openFilePickerLoading &&
     openFilePickerSessionId !== undefined &&
     openFilePickerSessionId === activeSessionId
-  const attachedOpenFileIds = useMemo(() => Object.values(openFileAttachmentIds), [openFileAttachmentIds])
+  const attachedOpenFileIds = useMemo(
+    // Domain editor context refs are data handles, not React refs.
+    // eslint-disable-next-line react-hooks/refs
+    () => [...Object.values(openFileAttachmentIds), ...contextOpenFileIds(deps.editorContext)],
+    [deps.editorContext, openFileAttachmentIds],
+  )
   const updateReferenceQuery = (query: string | undefined, quoted: boolean): void => {
     const sessionId = active?.id
     const request = ++referenceRequestRef.current
@@ -403,21 +416,26 @@ export function useComposerAttachments(deps: ComposerAttachmentDependencies): Co
     if (
       attachingOpenFileRef.current !== undefined ||
       attachingOpenFileId !== undefined ||
-      Object.values(openFileAttachmentIds).some((id) => id === candidateId)
+      attachedOpenFileIds.includes(candidateId)
     )
       return
     attachingOpenFileRef.current = candidateId
     setAttachingOpenFileId(candidateId)
     const generation = attachmentGenerationRef.current
     void store
-      .attachOpenFile(candidateId)
+      .attachOpenFile(candidateId, () => generation === attachmentGenerationRef.current)
       .then((attachment) => {
         if (attachment === undefined) {
-          setError(t('app.error.openFileGone'))
+          if (generation === attachmentGenerationRef.current) setError(t('app.error.openFileGone'))
+          return
+        }
+        if (generation !== attachmentGenerationRef.current) {
+          if (!('kind' in attachment)) void store.releaseAttachments([attachment.uri]).catch(() => undefined)
           return
         }
         store.rememberOpenFile(candidateId)
-        appendAttachment(attachment, candidateId, generation, { kind: 'open-file', id: candidateId })
+        if (!('kind' in attachment))
+          appendAttachment(attachment, candidateId, generation, { kind: 'open-file', id: candidateId })
         setOpenFilePickerOpen(false)
       })
       .catch((reason: unknown) =>

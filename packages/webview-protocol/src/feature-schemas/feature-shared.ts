@@ -110,6 +110,10 @@ export const editorContextItemSchema = z
     label: safeLabel,
     workspaceFolderId: id,
     relativePath: featureRelativePathSchema,
+    sourceCandidateId: z
+      .string()
+      .regex(/^dsh-open-file-[a-f0-9]{32}$/u)
+      .optional(),
     range: featureRangeSchema.optional(),
     sizeBytes: z.number().int().nonnegative().max(MAX_CONTEXT_ITEM_BYTES),
     documentVersion: generation.optional(),

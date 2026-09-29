@@ -56,7 +56,7 @@ import {
   publicValue,
 } from './public-projection.js'
 import { questionResponse } from './session-payload.js'
-import { listOpenFileCandidates, readOpenFileAttachment } from './editor-files.js'
+import { featureContextItem, listOpenFileCandidates, readOpenFileAttachment } from './editor-files.js'
 import { pathExists } from './runtime.js'
 import { sameWorkspacePath } from './workspace-state.js'
 import { resolveLinkTarget } from '../navigation/link-target.js'
@@ -642,6 +642,20 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
         return { cancelled: true }
       const attachment = await readOpenFileAttachment(candidate)
       if (attachment === undefined) return { cancelled: true }
+      if (
+        candidate.uri.scheme === 'file' &&
+        attachment.mimeType !== undefined &&
+        attachment.mimeType !== 'application/octet-stream' &&
+        !isImageMimeType(attachment.mimeType)
+      ) {
+        const context = await editorContextProvider
+          .captureOpenFile(candidate.uri, signal)
+          .catch((error: unknown) => {
+            if (error instanceof AppError && error.code === 'CONTEXT_LIMIT') return undefined
+            throw error
+          })
+        if (context !== undefined) return { kind: 'editor.context', items: [featureContextItem(context)] }
+      }
       return {
         cancelled: false,
         attachment: rememberSupportedAttachment(attachment),

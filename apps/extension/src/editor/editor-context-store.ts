@@ -26,6 +26,7 @@ export interface StoredEditorContextInput {
   readonly contextStoreGeneration: number
   readonly kind: EditorContextRef['kind']
   readonly relativePath: string
+  readonly sourceCandidateId?: string
   readonly range?: EditorContextRange
   readonly label: string
   readonly bytes: Uint8Array
@@ -56,6 +57,7 @@ interface PendingContextBinding {
 export class EditorContextStore {
   private readonly entries = new Map<string, StoredEditorContext>()
   private readonly pendingBindings = new Map<string, PendingContextBinding>()
+  private lastCapturedAt = 0
 
   public constructor(
     private readonly now: () => number = () => Date.now(),
@@ -78,14 +80,43 @@ export class EditorContextStore {
       throw invalidContext('The editor context range is invalid.')
     if (input.bytes.byteLength > this.limits.maxItemBytes)
       throw contextLimit('The selected editor context is too large.')
-    if (this.entries.size >= this.limits.maxItems)
+    const contentHash = hashBytes(input.bytes)
+    // An unsent whole-file capture is the same draft item even when the user
+    // invokes the action again. Bound or resolving refs may already belong to
+    // an in-flight prompt, so a later capture must get its own handle.
+    const replaceable =
+      input.kind === 'file'
+        ? [...this.entries.values()]
+            .reverse()
+            .find(
+              (entry) =>
+                entry.ref.kind === 'file' &&
+                entry.ref.workspaceFolderId === input.workspaceFolderId &&
+                entry.ref.ownerId === input.ownerId &&
+                entry.ref.ownerViewId === input.ownerViewId &&
+                entry.ref.contextStoreGeneration === input.contextStoreGeneration &&
+                entry.ref.relativePath === input.relativePath &&
+                entry.ref.sessionId === undefined &&
+                !this.pendingBindings.has(entry.ref.contextRef),
+            )
+        : undefined
+    if (
+      replaceable !== undefined &&
+      replaceable.ref.contentHash === contentHash &&
+      replaceable.ref.documentVersion === input.documentVersion
+    )
+      return this.toItem(replaceable, false)
+    if (this.entries.size - (replaceable === undefined ? 0 : 1) >= this.limits.maxItems)
       throw contextLimit('Too many editor context items are already attached.')
     const existing = [...this.entries.values()].map((entry) => entry.ref)
-    const nextSize = existing.reduce((total, entry) => total + entry.sizeBytes, 0) + input.bytes.byteLength
+    const nextSize =
+      existing.reduce((total, entry) => total + entry.sizeBytes, 0) -
+      (replaceable?.ref.sizeBytes ?? 0) +
+      input.bytes.byteLength
     if (nextSize > this.limits.maxTotalBytes) throw contextLimit('The combined editor context is too large.')
 
+    const capturedAt = Math.max(now, this.lastCapturedAt + 1)
     const contextRef = `dsh-context:${this.makeId()}`
-    const contentHash = hashBytes(input.bytes)
     const ref: EditorContextRef = {
       contextRef,
       workspaceFolderId: input.workspaceFolderId,
@@ -94,12 +125,13 @@ export class EditorContextStore {
       contextStoreGeneration: input.contextStoreGeneration,
       kind: input.kind,
       relativePath: input.relativePath,
+      ...(input.sourceCandidateId === undefined ? {} : { sourceCandidateId: input.sourceCandidateId }),
       ...(input.range === undefined ? {} : { range: input.range }),
       sizeBytes: input.bytes.byteLength,
-      capturedAt: now,
+      capturedAt,
       ...(input.documentVersion === undefined ? {} : { documentVersion: input.documentVersion }),
       contentHash,
-      expiresAt: now + this.limits.ttlMs,
+      expiresAt: capturedAt + this.limits.ttlMs,
     }
     const entry: StoredEditorContext = {
       ref,
@@ -108,7 +140,9 @@ export class EditorContextStore {
       capturedBytes: new Uint8Array(input.bytes),
       ...(input.readCurrent === undefined ? {} : { readCurrent: input.readCurrent }),
     }
+    if (replaceable !== undefined) this.entries.delete(replaceable.ref.contextRef)
     this.entries.set(contextRef, entry)
+    this.lastCapturedAt = capturedAt
     return this.toItem(entry, false)
   }
 

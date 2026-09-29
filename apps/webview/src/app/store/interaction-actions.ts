@@ -1,7 +1,13 @@
 import { translate } from '../../i18n.js'
 import type { ProtocolClient } from '../protocol-client.js'
 import { requestId } from './ids.js'
-import { attachmentFromResult, imageDataUri, openFileCandidatesFromResult } from './editor-context.js'
+import {
+  attachmentFromResult,
+  imageDataUri,
+  mergeEditorContext,
+  openFileCandidatesFromResult,
+  parseEditorContextItems,
+} from './editor-context.js'
 import { referenceCandidates } from './references.js'
 import { questionResponsePayload } from './session-guards.js'
 import { object } from './unknown-record.js'
@@ -155,14 +161,39 @@ export function createInteractionActions(
         await client.request<unknown>({ type: 'attachment.open.list', requestId: requestId() }),
       )
     },
-    attachOpenFile: async (candidateId) => {
-      return attachmentFromResult(
+    attachOpenFile: async (candidateId, isCurrent) => {
+      const result = object(
         await client.request<unknown>({
           type: 'attachment.open.attach',
           requestId: requestId(),
           payload: { candidateId },
         }),
       )
+      if (result?.kind === 'editor.context') {
+        const items = parseEditorContextItems(result.items)
+        const item = items?.[0]
+        if (items?.length !== 1 || item === undefined)
+          throw new Error(translate('app.error.attachSelectedFile'))
+        if (!isCurrent()) {
+          await client
+            .featureRequest?.({
+              type: 'editor.context.release',
+              requestId: requestId(),
+              payload: {
+                contextRefs: [item.ref.contextRef],
+                workspaceFolderId: item.ref.workspaceFolderId,
+              },
+            })
+            .catch(() => undefined)
+          return undefined
+        }
+        setState((current) => ({
+          ...current,
+          editorContext: mergeEditorContext(current.editorContext, items),
+        }))
+        return { kind: 'context', contextRef: item.ref.contextRef }
+      }
+      return attachmentFromResult(result)
     },
     openLink: async (href) => {
       const result = object(

@@ -111,7 +111,7 @@ export function createFeatureActions(host: FeatureActionHost): FeatureActions {
       )
         setState((current) => ({
           ...current,
-          editorContext: items,
+          editorContext: mergeEditorContext([], items),
           editorContextAvailableKinds: availableKinds,
         }))
     } finally {

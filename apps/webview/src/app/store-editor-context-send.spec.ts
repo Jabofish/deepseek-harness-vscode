@@ -57,6 +57,7 @@ function contextItem(contextRef: string, capturedAt: number): Record<string, unk
 class HostClient {
   public holdSend = false
   public failSend = false
+  public openFileAsContext = false
   public readonly sentContextRefs: (readonly string[])[] = []
   public readonly executedCommands: string[] = []
   private captured = 1
@@ -66,6 +67,15 @@ class HostClient {
   private readonly featureListeners = new Set<(message: FeatureHostEvent) => void>()
 
   public request<T>(request: WebviewRequest): Promise<T> {
+    if (request.type === 'attachment.open.attach' && this.openFileAsContext) {
+      const item = {
+        ...contextItem(`context-${this.captured}`, this.captured),
+        sourceCandidateId: request.payload.candidateId,
+      }
+      this.captured += 1
+      this.items.push(item)
+      return Promise.resolve({ kind: 'editor.context', items: [item] } as T)
+    }
     if (request.type === 'session.sendPrompt') {
       this.sentContextRefs.push(request.payload.contextRefs ?? [])
       if (this.failSend) return Promise.reject(new Error('admission rejected'))
@@ -160,6 +170,40 @@ function refs(store: ReturnType<typeof createAppStore>): readonly string[] {
 }
 
 describe('AppStore editor-context admission', () => {
+  it('uses the same file context when an open-file candidate is selected', async () => {
+    const { client, store } = open()
+    client.openFileAsContext = true
+    await store.openSession(SESSION_ID)
+    await settle()
+    await store.captureEditorContext('file')
+
+    const selected = await store.attachOpenFile('dsh-open-file-0123456789abcdef0123456789abcdef', () => true)
+    expect(selected).toEqual({ kind: 'context', contextRef: 'context-2' })
+    expect(refs(store)).toEqual(['context-2'])
+    expect(store.editorContext[0]?.ref.sourceCandidateId).toBe(
+      'dsh-open-file-0123456789abcdef0123456789abcdef',
+    )
+
+    await store.sendPrompt(SESSION_ID, 'inspect file', [], 'queue')
+    expect(client.sentContextRefs).toEqual([['context-2']])
+    store.dispose()
+  })
+
+  it('shows and submits one file when repeated Host captures return distinct refs', async () => {
+    const { client, store } = open()
+    await store.openSession(SESSION_ID)
+    await settle()
+    await store.captureEditorContext('file')
+    await store.captureEditorContext('file')
+
+    expect(refs(store)).toEqual(['context-2'])
+    await store.refreshEditorContext()
+    expect(refs(store)).toEqual(['context-2'])
+    await store.sendPrompt(SESSION_ID, 'inspect file', [], 'queue')
+    expect(client.sentContextRefs).toEqual([['context-2']])
+    store.dispose()
+  })
+
   it('keeps a chip captured while the send is still in flight', async () => {
     const { client, store } = open()
     await store.openSession(SESSION_ID)
@@ -173,7 +217,7 @@ describe('AppStore editor-context admission', () => {
     // The session status only turns `running` once DSH reports it, so the rail
     // stays interactive for the whole round trip.
     await store.captureEditorContext('file')
-    expect(refs(store)).toEqual(['context-2', 'context-1'])
+    expect(refs(store)).toEqual(['context-2'])
 
     client.admitSend()
     await sending
@@ -191,7 +235,7 @@ describe('AppStore editor-context admission', () => {
     await settle()
     await store.captureEditorContext('file')
     await store.captureEditorContext('file')
-    expect(refs(store)).toEqual(['context-2', 'context-1'])
+    expect(refs(store)).toEqual(['context-2'])
 
     // The host releases the handles only after DSH admits the prompt, so a
     // rejected send leaves them live for the retry.
@@ -199,7 +243,7 @@ describe('AppStore editor-context admission', () => {
     await expect(store.sendPrompt(SESSION_ID, 'rejected prompt', [], 'queue')).rejects.toThrow(
       'admission rejected',
     )
-    expect(refs(store)).toEqual(['context-2', 'context-1'])
+    expect(refs(store)).toEqual(['context-2'])
     store.dispose()
   })
 

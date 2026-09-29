@@ -49,6 +49,8 @@ export interface EditorContextRef {
   readonly connectionGeneration?: number
   readonly kind: EditorContextKind
   readonly relativePath: string
+  /** Opaque open-tab identity; never a URI or filesystem path. */
+  readonly sourceCandidateId?: string
   readonly range?: EditorContextRange
   readonly sizeBytes: number
   readonly capturedAt: number

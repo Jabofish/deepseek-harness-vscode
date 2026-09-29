@@ -17,6 +17,7 @@ import {
 import type { EditorContextPort } from '@dsh-vscode/application'
 
 import { EditorContextStore, type CurrentEditorContextContent } from './editor-context-store.js'
+import { openFileCandidateId } from './open-file-id.js'
 import { workspaceFolderId, WorkspacePathGuard } from './workspace-path-guard.js'
 
 export const DSH_CHAT_VIEW_OWNER_ID = 'dsh.chatView'
@@ -211,6 +212,49 @@ export class EditorContextProvider implements EditorContextPort, vscode.Disposab
     return this.store.size
   }
 
+  /** Capture an already validated open tab through the same file-context store as the active editor. */
+  public async captureOpenFile(
+    uri: vscode.Uri,
+    signal?: AbortSignal,
+    lifecycleGeneration = this.lifecycleGeneration,
+  ): Promise<EditorContextItem | undefined> {
+    if (uri.scheme !== 'file') return undefined
+    const folder = this.workspace.getWorkspaceFolder(uri)
+    if (folder === undefined) return undefined
+    const id = workspaceFolderId(folder)
+    const resolved = this.guard.resolve(id, this.guard.relativePath(folder, uri))
+    await this.guard.assertRegularFile(resolved)
+    throwIfAborted(signal)
+    const info = await Promise.resolve(this.workspace.fs.stat(uri)).catch(() => undefined)
+    if (info !== undefined && info.size > EDITOR_CONTEXT_LIMITS.maxItemBytes) return undefined
+    const document = await this.openCurrentDocument(uri).catch(() => undefined)
+    if (document === undefined) return undefined
+    const source = await this.readSource(document, 'file', undefined)
+    this.assertCaptureIsCurrent(lifecycleGeneration, signal)
+    if (source.bytes.byteLength > EDITOR_CONTEXT_LIMITS.maxItemBytes) return undefined
+    const relativePath = resolved.relativePath
+    const readCurrent = async (): Promise<CurrentEditorContextContent> => {
+      this.assertCaptureIsCurrent(lifecycleGeneration)
+      const current = await this.openCurrentDocument(uri)
+      this.assertCaptureIsCurrent(lifecycleGeneration)
+      return this.readSource(current, 'file', undefined)
+    }
+    return this.store.capture({
+      workspaceFolderId: id,
+      ownerId: this.ownerId,
+      ownerViewId: this.ownerViewId,
+      contextStoreGeneration: this.contextStoreGeneration,
+      kind: 'file',
+      relativePath,
+      sourceCandidateId: openFileCandidateId(uri),
+      label: `file: ${relativePath}`.slice(0, 512),
+      bytes: source.bytes,
+      mimeType: mimeTypeFor(relativePath),
+      ...(source.documentVersion === undefined ? {} : { documentVersion: source.documentVersion }),
+      readCurrent,
+    })
+  }
+
   private async captureActiveEditor(
     input: EditorContextCaptureInput,
     signal?: AbortSignal,
@@ -226,6 +270,11 @@ export class EditorContextProvider implements EditorContextPort, vscode.Disposab
     const resolved = this.guard.resolve(id, this.guard.relativePath(folder, editor.document.uri))
     await this.guard.assertRegularFile(resolved)
     throwIfAborted(signal)
+    if (input.kind === 'file') {
+      const file = await this.captureOpenFile(editor.document.uri, signal, lifecycleGeneration)
+      if (file === undefined) throw contextLimit()
+      return file
+    }
 
     let range: vscode.Range | undefined
     let symbolName: string | undefined
