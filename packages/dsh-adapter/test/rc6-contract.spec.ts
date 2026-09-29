@@ -856,6 +856,56 @@ describe('DeepSeek Harness 0.1.0-rc.6 contract', () => {
     expect(JSON.stringify(event)).not.toContain('source-session-1')
   })
 
+  it('projects late question replies as structured safe Q/A and never forwards the machine payload', () => {
+    const event = rc6Mapper.event('user/message', {
+      sessionId: 's1',
+      message: {
+        id: 'reply-1',
+        source: { kind: 'user-question-reply', callId: 'call-1', outcome: 'answered' },
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({
+              kind: 'answer_to_pending_question',
+              tool: 'ask_user_question',
+              callId: 'call-1',
+              questions: [
+                {
+                  id: 'scope',
+                  question: 'Which scope?',
+                  header: 'Scope',
+                  options: [{ label: 'workspace', description: 'Current workspace only' }],
+                  internalTrace: 'do-not-forward',
+                },
+              ],
+              answers: [{ id: 'scope', selected: ['workspace'], custom: 'include tests' }],
+            }),
+          },
+        ],
+      },
+    })
+
+    expect(event).toMatchObject({
+      type: 'message.user',
+      markdown: '',
+      source: 'user-question-reply',
+      questionReply: {
+        callId: 'call-1',
+        questions: [
+          {
+            id: 'scope',
+            prompt: 'Which scope?',
+            header: 'Scope',
+            choices: [{ id: 'workspace', label: 'workspace', description: 'Current workspace only' }],
+          },
+        ],
+        answers: [{ id: 'scope', selected: ['workspace'], custom: 'include tests' }],
+      },
+    })
+    expect(JSON.stringify(event)).not.toContain('answer_to_pending_question')
+    expect(JSON.stringify(event)).not.toContain('do-not-forward')
+  })
+
   it('fails closed on malformed structured session references', () => {
     for (const references of [
       'not-an-array',
@@ -1208,6 +1258,17 @@ describe('DeepSeek Harness 0.1.0-rc.6 contract', () => {
     })
     expect(
       rc6Mapper.event('question/requested', {
+        rpcId: 'rpc-timed',
+        sessionId: 's1',
+        wait: { callId: 'call-timed', timed: true },
+        questions: [{ id: 'q-timed', question: 'Continue?' }],
+      }),
+    ).toMatchObject({
+      type: 'question.requested',
+      question: { callId: 'call-timed', timed: true, state: 'open' },
+    })
+    expect(
+      rc6Mapper.event('question/requested', {
         rpcId: 'rpc-plan',
         sessionId: 's1',
         questions: [
@@ -1249,6 +1310,14 @@ describe('DeepSeek Harness 0.1.0-rc.6 contract', () => {
     expect(() => rc6Mapper.event('question/requested', { rpcId: 'rpc-missing', sessionId: 's1' })).toThrow(
       /Malformed question\/requested questions/,
     )
+    expect(() =>
+      rc6Mapper.event('question/requested', {
+        rpcId: 'rpc-invalid-wait',
+        sessionId: 's1',
+        wait: { callId: '' },
+        questions: [{ id: 'q1', question: 'Choose' }],
+      }),
+    ).toThrow(/Malformed question\/requested wait identity/)
     expect(() =>
       rc6Mapper.event('question/requested', {
         rpcId: 'rpc-empty',

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { UserQuestion } from '@dsh-vscode/domain'
 import { UserQuestionCard } from './UserQuestionCard.js'
@@ -256,5 +256,204 @@ describe('UserQuestionCard', () => {
     expect(screen.getByRole('button', { name: 'Approve' })).toBeDefined()
     fireEvent.click(screen.getByRole('button', { name: 'Chat about it' }))
     expect(onCancel).toHaveBeenCalledOnce()
+  })
+
+  it('claims timed foreground waits, shows the host countdown, and releases on unmount', async () => {
+    const onAttachWait = vi.fn().mockResolvedValue(2_400)
+    const onReleaseWait = vi.fn().mockResolvedValue(undefined)
+    const { unmount } = render(
+      <UserQuestionCard
+        question={{
+          id: 'scope',
+          callId: 'call-timed',
+          sessionId: 's1',
+          prompt: 'Which scope?',
+          allowFreeText: true,
+          timed: true,
+          state: 'open',
+        }}
+        disabled={false}
+        onRespond={vi.fn()}
+        onCancel={vi.fn()}
+        onAttachWait={onAttachWait}
+        onReleaseWait={onReleaseWait}
+      />,
+    )
+
+    await waitFor(() => expect(onAttachWait).toHaveBeenCalledOnce())
+    expect(await screen.findByText(/You have 3 seconds to answer/u)).toBeDefined()
+    expect(submitButton().disabled).toBe(true)
+    unmount()
+    expect(onReleaseWait).toHaveBeenCalledOnce()
+  })
+
+  it('keeps one timed claim when unrelated renders replace the host callbacks', async () => {
+    const onAttachWait = vi.fn().mockResolvedValue(4_000)
+    const originalRelease = vi.fn().mockResolvedValue(undefined)
+    const currentRelease = vi.fn().mockResolvedValue(undefined)
+    const nextAttach = vi.fn().mockResolvedValue(1_000)
+    const question: UserQuestion = {
+      id: 'scope',
+      callId: 'call-stable',
+      sessionId: 's1',
+      prompt: 'Which scope?',
+      allowFreeText: true,
+      timed: true,
+      state: 'open',
+    }
+    const view = render(
+      <UserQuestionCard
+        question={question}
+        disabled={false}
+        onRespond={vi.fn()}
+        onCancel={vi.fn()}
+        onAttachWait={onAttachWait}
+        onReleaseWait={originalRelease}
+      />,
+    )
+
+    await waitFor(() => expect(onAttachWait).toHaveBeenCalledOnce())
+    view.rerender(
+      <UserQuestionCard
+        question={{ ...question }}
+        disabled={false}
+        onRespond={vi.fn()}
+        onCancel={vi.fn()}
+        onAttachWait={nextAttach}
+        onReleaseWait={currentRelease}
+      />,
+    )
+
+    expect(nextAttach).not.toHaveBeenCalled()
+    view.unmount()
+    expect(originalRelease).not.toHaveBeenCalled()
+    expect(currentRelease).toHaveBeenCalledOnce()
+  })
+
+  it('releases its host route if the timed stream ends before returning a duration', async () => {
+    const onReleaseWait = vi.fn().mockResolvedValue(undefined)
+    const { unmount } = render(
+      <UserQuestionCard
+        question={{
+          id: 'scope',
+          callId: 'call-ended',
+          sessionId: 's1',
+          prompt: 'Which scope?',
+          allowFreeText: true,
+          timed: true,
+          state: 'open',
+        }}
+        disabled={false}
+        onRespond={vi.fn()}
+        onCancel={vi.fn()}
+        onAttachWait={() => Promise.resolve(undefined)}
+        onReleaseWait={onReleaseWait}
+      />,
+    )
+
+    await waitFor(() => expect(onReleaseWait).toHaveBeenCalledOnce())
+    unmount()
+  })
+
+  it('releases the timed claim when the foreground countdown expires', async () => {
+    const onReleaseWait = vi.fn().mockResolvedValue(undefined)
+    const { unmount } = render(
+      <UserQuestionCard
+        question={{
+          id: 'scope',
+          callId: 'call-expiring',
+          sessionId: 's1',
+          prompt: 'Which scope?',
+          allowFreeText: true,
+          timed: true,
+          state: 'open',
+        }}
+        disabled={false}
+        onRespond={vi.fn()}
+        onCancel={vi.fn()}
+        onAttachWait={() => Promise.resolve(1)}
+        onReleaseWait={onReleaseWait}
+      />,
+    )
+
+    await waitFor(() => expect(onReleaseWait).toHaveBeenCalledOnce(), { timeout: 1_500 })
+    unmount()
+  })
+
+  it('restores a queued late reply after Inbox discards it', async () => {
+    const onRespond = vi.fn().mockResolvedValue(undefined)
+    const question: UserQuestion = {
+      id: 'call-late',
+      callId: 'call-late',
+      sessionId: 's1',
+      prompt: 'Which scope?',
+      allowFreeText: true,
+      timed: true,
+      state: 'continued',
+    }
+    const { rerender } = render(
+      <UserQuestionCard question={question} disabled={false} onRespond={onRespond} onCancel={vi.fn()} />,
+    )
+
+    fireEvent.change(screen.getByLabelText('Answer for Which scope?'), { target: { value: 'workspace' } })
+    fireEvent.click(submitButton())
+    expect(await screen.findByText('Answer queued for the next agent turn')).toBeDefined()
+
+    rerender(
+      <UserQuestionCard
+        question={{ ...question, replyQueued: true }}
+        disabled={false}
+        onRespond={onRespond}
+        onCancel={vi.fn()}
+      />,
+    )
+    rerender(
+      <UserQuestionCard
+        question={{ ...question, replyQueued: false }}
+        disabled={false}
+        onRespond={onRespond}
+        onCancel={vi.fn()}
+      />,
+    )
+
+    await waitFor(() => expect(submitButton().disabled).toBe(false))
+    expect(screen.queryByText('Answer queued for the next agent turn')).toBeNull()
+    expect(onRespond).toHaveBeenCalledOnce()
+  })
+
+  it('does not send a stale cancel request for a continued plan review', () => {
+    const onCancel = vi.fn()
+    render(
+      <UserQuestionCard
+        question={{
+          id: 'call-plan',
+          callId: 'call-plan',
+          sessionId: 's1',
+          prompt: 'Proceed?',
+          allowFreeText: true,
+          state: 'continued',
+          items: [
+            {
+              id: 'decision',
+              prompt: 'Proceed?',
+              detail: 'Review the plan',
+              choices: [
+                { id: 'Approve', label: 'Approve' },
+                { id: 'Decline', label: 'Decline' },
+              ],
+              allowFreeText: true,
+              intent: { kind: 'plan-review', approve: 'Approve' },
+            },
+          ],
+        }}
+        disabled={false}
+        onRespond={vi.fn()}
+        onCancel={onCancel}
+      />,
+    )
+
+    expect(screen.queryByRole('button', { name: 'Chat about it' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Approve' })).toBeDefined()
+    expect(onCancel).not.toHaveBeenCalled()
   })
 })

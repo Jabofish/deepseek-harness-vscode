@@ -1,4 +1,4 @@
-import { memo, useState, type ReactElement } from 'react'
+import { memo, useEffect, useRef, useState, type ReactElement } from 'react'
 import type { QuestionAnswer, QuestionChoice, UserQuestion, UserQuestionItem } from '@dsh-vscode/domain'
 import { useI18n } from '../../i18n.js'
 import { ContentFlow } from '../../components/common/ContentFlow.js'
@@ -6,14 +6,24 @@ import { ContentFlow } from '../../components/common/ContentFlow.js'
 export interface UserQuestionCardProps {
   readonly question: UserQuestion
   readonly disabled: boolean
-  readonly onRespond: (response: string | readonly string[] | readonly QuestionAnswer[]) => void
+  readonly onRespond: (
+    response: string | readonly string[] | readonly QuestionAnswer[],
+  ) => void | Promise<void>
   readonly onCancel: () => void
+  readonly onAttachWait?: () => Promise<number | undefined>
+  readonly onReleaseWait?: () => Promise<void>
 }
 
 interface ItemDraft {
   readonly selected: readonly string[]
   readonly custom: string
   readonly skipped: boolean
+}
+
+interface TimedWaitState {
+  readonly key: string
+  readonly phase: 'ready' | 'failed'
+  readonly remainingMs?: number
 }
 
 /**
@@ -28,11 +38,88 @@ export const UserQuestionCard = memo(function UserQuestionCard(props: UserQuesti
   const { t } = useI18n()
   const items = questionItems(props.question)
   const planReview = isPlanReview(items)
+  const timedForeground = props.question.state === 'open' && props.question.timed === true
   const [drafts, setDrafts] = useState<readonly ItemDraft[]>(() =>
     items.map(() => ({ selected: [], custom: '', skipped: false })),
   )
+  const [waitState, setWaitState] = useState<TimedWaitState | undefined>(undefined)
+  const [submitted, setSubmitted] = useState(false)
+  const [waitAttempt, setWaitAttempt] = useState(0)
+  const lastServerQueued = useRef(props.question.replyQueued === true)
+  const waitHandlers = useRef({ attach: props.onAttachWait, release: props.onReleaseWait })
+  useEffect(() => {
+    waitHandlers.current = { attach: props.onAttachWait, release: props.onReleaseWait }
+  }, [props.onAttachWait, props.onReleaseWait])
+  const waitKey = `${props.question.sessionId}\u0000${props.question.callId ?? ''}\u0000${waitAttempt}`
+  const currentWaitState = waitState?.key === waitKey ? waitState : undefined
+  const waitReady = !timedForeground || currentWaitState?.phase === 'ready'
+  const waitFailed =
+    timedForeground && (props.onAttachWait === undefined || currentWaitState?.phase === 'failed')
+  const remainingMs = currentWaitState?.phase === 'ready' ? currentWaitState.remainingMs : undefined
+  useEffect(() => {
+    if (!timedForeground) return
+    const attach = waitHandlers.current.attach
+    if (attach === undefined) return
+    let active = true
+    let timer: number | undefined
+    let waitReleased = false
+    void attach()
+      .then((duration) => {
+        if (!active) return
+        if (duration === undefined) {
+          setWaitState({ key: waitKey, phase: 'ready', remainingMs: 0 })
+          waitReleased = true
+          void waitHandlers.current.release?.()
+          return
+        }
+        if (duration <= 0) {
+          setWaitState({ key: waitKey, phase: 'ready', remainingMs: 0 })
+          waitReleased = true
+          void waitHandlers.current.release?.()
+          return
+        }
+        const deadline = Date.now() + duration
+        const update = (): void => {
+          const remaining = Math.max(0, deadline - Date.now())
+          setWaitState({ key: waitKey, phase: 'ready', remainingMs: remaining })
+          if (remaining === 0 && !waitReleased) {
+            waitReleased = true
+            if (timer !== undefined) window.clearInterval(timer)
+            void waitHandlers.current.release?.()
+          }
+        }
+        update()
+        timer = window.setInterval(update, 250)
+      })
+      .catch(() => {
+        if (active) {
+          setWaitState({ key: waitKey, phase: 'failed' })
+        }
+      })
+    return () => {
+      active = false
+      if (timer !== undefined) window.clearInterval(timer)
+      void waitHandlers.current.release?.()
+    }
+  }, [props.question.callId, props.question.sessionId, timedForeground, waitAttempt, waitKey])
+  useEffect(() => {
+    const serverQueued = props.question.replyQueued === true
+    if (lastServerQueued.current && !serverQueued) setSubmitted(false)
+    lastServerQueued.current = serverQueued
+  }, [props.question.replyQueued])
   const complete =
     drafts.length === items.length && drafts.every((draft) => hasAnswer(draft) || draft.skipped)
+  const replyQueued = props.question.replyQueued === true || submitted
+  const timedUnavailable = timedForeground && (!waitReady || waitFailed || remainingMs === 0)
+  const submitDisabled = props.disabled || replyQueued || timedUnavailable || (!complete && !planReview)
+  const submit = async (response: string | readonly string[] | readonly QuestionAnswer[]): Promise<void> => {
+    try {
+      await props.onRespond(response)
+      if (props.question.state === 'continued') setSubmitted(true)
+    } catch {
+      // The owning hook reports the Host error; keep the draft editable here.
+    }
+  }
   return (
     <section
       className={`dsh-interaction${planReview ? ' dsh-interaction--plan-review' : ''}`}
@@ -50,6 +137,29 @@ export const UserQuestionCard = memo(function UserQuestionCard(props: UserQuesti
           <h2 id={`question-${props.question.id}`}>{items[0]?.prompt ?? ''}</h2>
         </div>
       </header>
+      {timedForeground ? (
+        <div className="dsh-question__wait" role="status">
+          <span>
+            {waitFailed
+              ? t('question.waitUnavailable')
+              : !waitReady
+                ? t('question.waitConnecting')
+                : remainingMs === 0
+                  ? t('question.waitExpired')
+                  : t('question.timeRemaining', { seconds: Math.ceil((remainingMs ?? 0) / 1_000) })}
+          </span>
+          {waitFailed ? (
+            <button
+              className="dsh-button dsh-button--secondary dsh-button--compact"
+              type="button"
+              disabled={props.disabled}
+              onClick={() => setWaitAttempt((attempt) => attempt + 1)}
+            >
+              {t('question.waitRetry')}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       <div className="dsh-interaction__body">
         {items.map((item, index) => (
           <div className="dsh-question__item" key={item.id}>
@@ -166,28 +276,40 @@ export const UserQuestionCard = memo(function UserQuestionCard(props: UserQuesti
       {planReview ? (
         <PlanDecisionRow
           item={items[0]!}
-          disabled={props.disabled}
-          onChat={props.onCancel}
-          onRespond={(choice) => props.onRespond([{ id: items[0]!.id, response: [choice.id] }])}
+          disabled={submitDisabled}
+          {...(props.question.state === 'continued' ? {} : { onChat: props.onCancel })}
+          onRespond={(choice) => {
+            void submit([{ id: items[0]!.id, response: [choice.id] }])
+          }}
         />
       ) : (
         <div className="dsh-interaction__actions">
-          <button
-            className="dsh-button dsh-button--secondary"
-            type="button"
-            disabled={props.disabled}
-            onClick={props.onCancel}
-          >
-            {t('question.cancel')}
-          </button>
-          <button
-            className="dsh-button dsh-button--primary"
-            type="button"
-            disabled={props.disabled || !complete}
-            onClick={() => props.onRespond(encodeAnswers(items, drafts))}
-          >
-            {t('question.submit')}
-          </button>
+          {props.question.state !== 'continued' ? (
+            <button
+              className="dsh-button dsh-button--secondary"
+              type="button"
+              disabled={props.disabled}
+              onClick={props.onCancel}
+            >
+              {t('question.cancel')}
+            </button>
+          ) : null}
+          {replyQueued ? (
+            <span className="dsh-question__wait" role="status">
+              {t('question.replyQueued')}
+            </span>
+          ) : (
+            <button
+              className="dsh-button dsh-button--primary"
+              type="button"
+              disabled={submitDisabled}
+              onClick={() => {
+                void submit(encodeAnswers(items, drafts))
+              }}
+            >
+              {t('question.submit')}
+            </button>
+          )}
         </div>
       )}
     </section>
@@ -245,7 +367,7 @@ function encodeAnswers(
 function PlanDecisionRow(props: {
   readonly item: UserQuestionItem
   readonly disabled: boolean
-  readonly onChat: () => void
+  readonly onChat?: () => void
   readonly onRespond: (choice: QuestionChoice) => void
 }): ReactElement {
   const { t } = useI18n()
@@ -257,14 +379,16 @@ function PlanDecisionRow(props: {
       role="group"
       aria-label={t('question.planDecision')}
     >
-      <button
-        className="dsh-button dsh-button--secondary"
-        type="button"
-        disabled={props.disabled}
-        onClick={props.onChat}
-      >
-        {t('question.discuss')}
-      </button>
+      {props.onChat === undefined ? null : (
+        <button
+          className="dsh-button dsh-button--secondary"
+          type="button"
+          disabled={props.disabled}
+          onClick={props.onChat}
+        >
+          {t('question.discuss')}
+        </button>
+      )}
       <button
         className="dsh-button dsh-button--secondary"
         type="button"

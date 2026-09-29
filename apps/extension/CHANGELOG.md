@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- 接入 DSH `0.2.0-rc.2` timed 用户问题：等待期限由 Host claim 流托管，超时后问题从 Session projection 恢复，迟到答案以完整结构化批次排入 Inbox，入队后显示只读状态；引导安装默认版本更新为精确 rc.2。隔离 CLI live smoke 已验证精确 Adapter 选择及 `userQuestions` answer/attachWait Remote；真实 timed 问答与 VS Code 现场验收仍待完成，能力状态保留 `PARTIAL`。
+- Added DSH `0.2.0-rc.2` timed user questions: the Host owns the wait claim, Session projections restore questions after timeout, and late answers enter the Inbox as one structured batch with a read-only queued state. Guided installation now defaults to exact rc.2. The isolated CLI live smoke verifies exact adapter selection and the `userQuestions` answer/attachWait Remotes; real timed interaction and VS Code acceptance remain pending, so capability status stays `PARTIAL`.
 - 修复同一编辑器文件反复添加到上下文时出现重复芯片；「添加已打开文件」对符合条件的工作区文本文件共用编辑器上下文。其他附件也统一显示为 `file: …` 胶囊样式，文件内容变化后重新添加会更新上下文。
 - Repeatedly adding an editor file now keeps one context chip. Eligible open workspace text files use that same context path; other attachments share its compact `file: …` chip style. Re-adding a changed file refreshes its context.
 - 打开长对话的首帧不再随会话长度增长：虚拟列表首次提交时还没有测量视口，此前这一帧会渲染全部行；现在它只渲染末尾的有界行数并保留相对完整会话的索引，10,000 节点会话的首次提交工作量与其后的每一帧一致。

@@ -1,6 +1,9 @@
 import type { CommandAttachmentWire } from '../command-repository.js'
+import type { SessionProjectionValues } from '@dsh-vscode/domain'
 
 export interface Rc6SessionRepositoryOptions {
+  /** Exact version adapters may normalize selected projection DTOs at the wire boundary. */
+  readonly mapProjectionValues?: (values: Readonly<Record<string, unknown>>) => SessionProjectionValues
   readonly supportsFileUploads?: boolean
   readonly supportsSessionRestore?: boolean
   readonly readPermissionPresets?: ((signal?: AbortSignal) => Promise<readonly string[]>) | undefined

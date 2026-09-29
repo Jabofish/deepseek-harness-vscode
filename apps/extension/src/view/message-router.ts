@@ -39,8 +39,17 @@ interface InFlightRequest {
   phase: 'running' | 'responding'
 }
 
+interface QuestionWaitRoute {
+  readonly key: string
+  readonly lifetime: AbortController
+  readonly signal: AbortSignal
+  unlinkRequest?: () => void
+  unlink?: () => void
+}
+
 export class WebviewMessageRouter {
   private readonly inFlight = new Map<string, InFlightRequest>()
+  private readonly questionWaits = new Map<string, AbortController>()
 
   public constructor(private readonly dependencies: MessageRouterDependencies) {}
 
@@ -94,23 +103,41 @@ export class WebviewMessageRouter {
       )
       return
     }
+    if (isFeature && request.type === 'user-question.wait.release')
+      this.abortQuestionWait(questionWaitKey(request.payload.sessionId, request.payload.callId))
+
+    const waitRoute =
+      isFeature && request.type === 'user-question.wait.attach'
+        ? this.beginQuestionWait(request.payload.sessionId, request.payload.callId, operation.controller)
+        : undefined
     try {
       const payload = isFeature
         ? this.dependencies.handleFeatureRequest === undefined
           ? routeNotEnabled('The staged feature route is not enabled.')
           : await this.dependencies.handleFeatureRequest(
               request as FeatureRequest,
-              operation.controller.signal,
+              waitRoute?.signal ?? operation.controller.signal,
             )
         : this.dependencies.handleRequest === undefined
           ? routeNotEnabled('The Webview request route is not enabled.')
           : await this.dependencies.handleRequest(request as WebviewRequest, operation.controller.signal)
-      await this.complete(
+      const delivered = await this.complete(
         request.requestId,
         request.type,
         response(request.requestId, true, payload, undefined, isFeature),
       )
+      if (waitRoute !== undefined) {
+        if (delivered && isQuestionWaitActive(payload)) waitRoute.unlinkRequest?.()
+        else {
+          waitRoute.unlink?.()
+          this.abortQuestionWait(waitRoute.key, waitRoute.lifetime)
+        }
+      }
     } catch (error) {
+      if (waitRoute !== undefined) {
+        waitRoute.unlink?.()
+        this.abortQuestionWait(waitRoute.key, waitRoute.lifetime)
+      }
       if (!(error instanceof AppError)) this.reportUnexpectedError(unexpectedErrorEntry(request.type, error))
       await this.complete(
         request.requestId,
@@ -124,23 +151,57 @@ export class WebviewMessageRouter {
     for (const operation of this.inFlight.values())
       if (operation.kind === 'request' && operation.phase === 'running') operation.controller.abort()
     this.inFlight.clear()
+    for (const controller of this.questionWaits.values()) controller.abort()
+    this.questionWaits.clear()
+  }
+
+  private beginQuestionWait(sessionId: string, callId: string, request: AbortController): QuestionWaitRoute {
+    const key = questionWaitKey(sessionId, callId)
+    const lifetime = this.questionWaits.get(key) ?? new AbortController()
+    this.questionWaits.set(key, lifetime)
+    const linked = new AbortController()
+    const abortLifetime = (): void => linked.abort(lifetime.signal.reason)
+    const abortRequest = (): void => lifetime.abort(request.signal.reason)
+    lifetime.signal.addEventListener('abort', abortLifetime, { once: true })
+    request.signal.addEventListener('abort', abortRequest, { once: true })
+    if (lifetime.signal.aborted) abortLifetime()
+    if (request.signal.aborted) abortRequest()
+    return {
+      key,
+      lifetime,
+      signal: linked.signal,
+      unlinkRequest: () => request.signal.removeEventListener('abort', abortRequest),
+      unlink: () => {
+        lifetime.signal.removeEventListener('abort', abortLifetime)
+        request.signal.removeEventListener('abort', abortRequest)
+      },
+    }
+  }
+
+  private abortQuestionWait(key: string, expected?: AbortController): void {
+    const controller = this.questionWaits.get(key)
+    if (controller === undefined || (expected !== undefined && controller !== expected)) return
+    this.questionWaits.delete(key)
+    controller.abort()
   }
 
   private async complete(
     requestId: string,
     requestType: string,
     message: HostMessage | FeatureHostMessage,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const operation = this.inFlight.get(requestId)
-    if (operation === undefined) return
+    if (operation === undefined) return false
     operation.phase = 'responding'
     try {
       const delivered = await this.dependencies.postMessage(message)
       if (!delivered) throw new Error('The Webview did not accept the response.')
+      return true
     } catch (error) {
       // Keep the id occupied until its terminal response has been accepted or
       // refused, so a duplicate cannot race the original response in transit.
       this.reportUnexpectedError(unexpectedErrorEntry(requestType, error))
+      return false
     } finally {
       if (this.inFlight.get(requestId) === operation) this.inFlight.delete(requestId)
     }
@@ -237,6 +298,16 @@ function publicError(
         : `Unable to complete ${requestType}: an unexpected host error occurred. Open DSH diagnostics for the redacted failure details.`,
     retryable: true,
   }
+}
+
+function questionWaitKey(sessionId: string, callId: string): string {
+  return JSON.stringify([sessionId, callId])
+}
+
+function isQuestionWaitActive(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const result = value as Record<string, unknown>
+  return result.kind === 'question.wait' && typeof result.remainingMs === 'number'
 }
 
 /** Bound and redact an unexpected failure for the diagnostics channel. */

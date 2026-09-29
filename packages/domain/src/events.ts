@@ -2,6 +2,7 @@ import type { WorkflowSummary } from './advanced.js'
 import type { AgentConfiguration, ModelSelection, TokenUsage, ToolMode } from './models.js'
 import type { PromptAttachment, QueuedInput, SessionProjectionSnapshot } from './sessions.js'
 import type { PermissionRequest, ToolCallView, UserQuestion } from './tools.js'
+import type { UserQuestionReplyView } from './user-questions.js'
 
 export interface GoalView {
   /** Process-local continuation authority, independent of durable status. */
@@ -242,6 +243,8 @@ type BackendEventPayload =
       readonly source?: string
       readonly sourceForm?: string
       readonly sourceSummary?: string
+      /** Structured late question reply; machine-readable JSON stays host-side. */
+      readonly questionReply?: UserQuestionReplyView
       /** Session labels projected from a structured DSH session-reference source. */
       readonly sessionReferenceLabels?: readonly string[]
     }

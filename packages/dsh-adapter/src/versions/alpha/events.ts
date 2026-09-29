@@ -28,6 +28,7 @@ export class AlphaEventSource implements AsyncEventSource<BackendEvent> {
     private readonly observe?: (event: BackendEvent) => void,
     private readonly recover?: StreamRecovery,
     private readonly jobRows?: (sessionId: string, signal: AbortSignal) => AsyncIterable<unknown>,
+    private readonly mapEvent: (event: BackendEvent) => BackendEvent = (event) => event,
   ) {
     this.global = new DshStreamController(transport, (event) => this.handleObserved(event), recover, {
       // The global controller shares the alpha transport with the workspace
@@ -68,8 +69,8 @@ export class AlphaEventSource implements AsyncEventSource<BackendEvent> {
    */
   public publish(event: BackendEvent): void {
     if (this.closed) return
-    this.handleObserved(event)
-    for (const listener of this.listeners) listener(event)
+    const mapped = this.handleObserved(event)
+    for (const listener of this.listeners) listener(mapped)
   }
 
   /** Start the durable follow stream for a Session the first time it is read. */
@@ -139,7 +140,7 @@ export class AlphaEventSource implements AsyncEventSource<BackendEvent> {
     // controller runs its own recovery loop. Keep raw connection.lost scoped
     // out of session listeners, but emit one safe session-level notice so the
     // UI does not silently hide a live-stream interruption.
-    const deliver =
+    const deliverRaw =
       sessionId !== undefined
         ? (event: BackendEvent): void => {
             const failures = this.sessionFailureNotices.get(listener) ?? new Set<string>()
@@ -160,19 +161,23 @@ export class AlphaEventSource implements AsyncEventSource<BackendEvent> {
             listener(event)
           }
         : listener
-    entries.set(listener, controller.subscribe(deliver))
+    entries.set(
+      listener,
+      controller.subscribe((event) => deliverRaw(this.mapEvent(event))),
+    )
     this.subscriptions.set(controller, entries)
   }
 
-  private handleObserved(event: BackendEvent): void {
-    this.observe?.(event)
+  private handleObserved(event: BackendEvent): BackendEvent {
+    const mapped = this.mapEvent(event)
+    this.observe?.(mapped)
     // Existing sessions are lazily watched by SessionRepository.get(). A new
     // session announced by the host must also become live immediately so its
     // durable events are not missed between list refreshes.
-    if (event.type === 'session.added') this.watchSession(event.sessionId)
-    if (event.type === 'archived.sessions.changed') {
+    if (mapped.type === 'session.added') this.watchSession(mapped.sessionId)
+    if (mapped.type === 'archived.sessions.changed') {
       this.archivedSessions.clear()
-      for (const sessionId of event.sessionIds) this.archivedSessions.add(sessionId)
+      for (const sessionId of mapped.sessionIds) this.archivedSessions.add(sessionId)
       for (const sessionId of this.sessions.keys())
         if (this.archivedSessions.has(sessionId)) void this.unwatchSession(sessionId)
     }
@@ -180,10 +185,11 @@ export class AlphaEventSource implements AsyncEventSource<BackendEvent> {
     // stream. Its server stream is gone, so the abandoned controller would
     // reconnect (and report connection losses) forever against a session that
     // no longer exists. SessionRepository.get() re-watches on later access.
-    if (event.type === 'session.removed') {
-      this.archivedSessions.delete(event.sessionId)
-      void this.unwatchSession(event.sessionId)
+    if (mapped.type === 'session.removed') {
+      this.archivedSessions.delete(mapped.sessionId)
+      void this.unwatchSession(mapped.sessionId)
     }
+    return mapped
   }
 
   private sessionIdFor(controller: DshStreamController): string | undefined {

@@ -77,6 +77,40 @@
   border-top: var(--dsh-border);
 }
 
+.dsh-question-reply {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.dsh-question-reply__title,
+.dsh-question-reply__header {
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-xs);
+  font-weight: 600;
+}
+
+.dsh-question-reply__list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+}
+
+.dsh-question-reply__item {
+  display: grid;
+  gap: 3px;
+}
+
+.dsh-question-reply__item dt,
+.dsh-question-reply__item dd,
+.dsh-question-reply__unavailable {
+  margin: 0;
+}
+
+.dsh-question-reply__item dd {
+  color: var(--dsh-muted);
+}
+
 .dsh-question__header,
 .dsh-question__item-title {
   margin: 0;

@@ -4,9 +4,12 @@ import type { MessageImageReference } from './events.js'
 
 export type SessionStatus = 'idle' | 'running' | 'awaiting-input' | 'failed' | 'completed'
 
+/** Projection values remain opaque until the exact version adapter maps a supported key. */
+export type SessionProjectionValues = Readonly<Record<string, unknown>>
+
 export interface SessionProjectionSnapshot {
   readonly asOfSequence: number
-  readonly values: Readonly<Record<string, unknown>>
+  readonly values: SessionProjectionValues
 }
 
 /**

@@ -229,6 +229,14 @@ export function isLocalizedText(value: unknown): value is NonNullable<Permission
 export function question(value: Record<string, unknown>): UserQuestion {
   const rawQuestions = requiredArray(value.questions, 'question/requested questions')
   if (rawQuestions.length === 0) throw new Error('Malformed question/requested questions')
+  const wait = objectOrUndefined(value.wait)
+  if (
+    wait !== undefined &&
+    (typeof wait.callId !== 'string' ||
+      wait.callId.trim() === '' ||
+      (wait.timed !== undefined && typeof wait.timed !== 'boolean'))
+  )
+    throw new Error('Malformed question/requested wait identity')
   const items = rawQuestions.map((entry) => questionItem(object(entry, 'question item')))
   const firstItem = items[0]
   if (firstItem === undefined) throw new Error('Malformed question/requested questions')
@@ -247,6 +255,8 @@ export function question(value: Record<string, unknown>): UserQuestion {
     allowFreeText: firstItem.allowFreeText,
     ...(firstItem.intent === undefined ? {} : { intent: firstItem.intent }),
     ...(items.length === 0 ? {} : { items }),
+    ...(wait === undefined ? {} : { callId: wait.callId as string }),
+    ...(wait?.timed === true ? { timed: true, state: 'open' as const } : {}),
   }
 }
 

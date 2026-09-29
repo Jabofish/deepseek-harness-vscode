@@ -303,6 +303,7 @@ export function reduceTimeline(
             ...(event.source === undefined ? {} : { source: event.source }),
             ...(event.sourceForm === undefined ? {} : { sourceForm: event.sourceForm }),
             ...(event.sourceSummary === undefined ? {} : { sourceSummary: event.sourceSummary }),
+            ...(event.questionReply === undefined ? {} : { questionReply: event.questionReply }),
             ...(event.sessionReferenceLabels === undefined
               ? {}
               : { sessionReferenceLabels: event.sessionReferenceLabels }),
@@ -318,6 +319,7 @@ export function reduceTimeline(
             ...(event.source === undefined ? {} : { source: event.source }),
             ...(event.sourceForm === undefined ? {} : { sourceForm: event.sourceForm }),
             ...(event.sourceSummary === undefined ? {} : { sourceSummary: event.sourceSummary }),
+            ...(event.questionReply === undefined ? {} : { questionReply: event.questionReply }),
             ...(event.sessionReferenceLabels === undefined
               ? {}
               : { sessionReferenceLabels: event.sessionReferenceLabels }),

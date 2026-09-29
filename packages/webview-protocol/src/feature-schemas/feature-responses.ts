@@ -104,6 +104,13 @@ export const featureResponsePayloadSchema = z.discriminatedUnion('kind', [
     .object({ kind: z.literal('schedule.records'), items: z.array(scheduleRecordSchema).max(10_000) })
     .strict(),
   z.object({ kind: z.literal('schedule.history'), result: scheduleHistoryPayloadSchema }).strict(),
+  z
+    .object({
+      kind: z.literal('question.wait'),
+      remainingMs: z.number().int().min(0).max(2_147_483_647).nullable(),
+    })
+    .strict(),
+  z.object({ kind: z.literal('question.answer'), accepted: z.boolean() }).strict(),
   z.object({ kind: z.literal('schedule.updated'), result: scheduleUpdatePayloadSchema }).strict(),
   z.object({ kind: z.literal('schedule.deleted'), result: scheduleDeletePayloadSchema }).strict(),
   z

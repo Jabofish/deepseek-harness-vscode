@@ -11,6 +11,8 @@ import {
   type PluginBundleRepository,
   type PresetRepository,
   type ScheduleRepository,
+  type UserQuestionRepository,
+  type SessionProjectionValues,
 } from '@dsh-vscode/domain'
 
 import { DshVersionAdapterBase, type VersionAdapterIdentity } from '../../adapter-base.js'
@@ -78,6 +80,8 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
   protected readonly supportsSessionRestore: boolean = false
   /** Only exact DSH RC2 exposes the account-controller Remote. */
   protected readonly supportsAccountLifecycle: boolean = false
+  /** Only DSH 0.2.0-rc.2 exposes the timed userQuestions Remotes. */
+  protected readonly supportsUserQuestions: boolean = false
   /** Only DSH 0.1.3-alpha.2 requires `subagent.prompt.delivery`. */
   protected readonly supportsSubagentPromptDelivery: boolean = false
   /** 0.1.3-alpha.1 renamed the commands/execute attachment parameter. */
@@ -152,6 +156,7 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
           'references',
           'feedback',
           ...(this.supportsAccountLifecycle ? ['account-lifecycle'] : []),
+          ...(this.supportsUserQuestions && !compatibility ? ['user-questions'] : []),
         ]),
       }
       return compatibility
@@ -216,12 +221,14 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
       // Alpha171+ derives the complete queue from each V4 follow projection,
       // because fork children can inherit Inbox state without a control event.
       queueBaseline: this.queueBaselineMode,
+      mapProjectionValues: (values) => this.mapProjectionValues(values),
     })
     const goals = new Rc6GoalRepository(transport, this.supportsLiveGoal)
     const jobs = this.createJobRepository(transport)
     const schedules = this.createScheduleRepository(transport)
     const pluginBundles = this.createPluginBundleRepository(transport)
     const account = this.createAccountLifecycleRepository(transport)
+    const userQuestions = this.createUserQuestionRepository(transport)
     const observe = (event: BackendEvent): void => {
       interactions.remember(event)
       sessions.remember(event)
@@ -233,6 +240,7 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
       observe,
       historyGapRecovery(sessions),
       jobs.watchRows === undefined ? undefined : (sessionId, signal) => jobs.watchRows!(sessionId, signal),
+      (event) => this.mapBackendEvent(event),
     )
     eventsHolder.value = events
     let closed = false
@@ -244,6 +252,7 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
       models: new Rc6ModelRepository(transport),
       credentials: new Rc6CredentialRepository(transport),
       interactions,
+      ...(userQuestions === undefined ? {} : { userQuestions }),
       goals,
       jobs,
       subagents: new Rc6SubagentRepository(transport, {
@@ -268,8 +277,11 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
       close: async () => {
         if (closed) return
         closed = true
-        await events?.close()
-        await transport.close()
+        try {
+          await Promise.all([events?.close(), userQuestions?.close()])
+        } finally {
+          await transport.close()
+        }
       },
     }
     return Promise.resolve(backendValue)
@@ -299,6 +311,16 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
     return new Rc6SessionRepository(transport, workspaces, this.options.samePath, options)
   }
 
+  /** Version profiles normalize newly introduced durable projection values here. */
+  protected mapProjectionValues(values: Readonly<Record<string, unknown>>): SessionProjectionValues {
+    return values
+  }
+
+  /** Version profiles normalize structured events before repositories and clients observe them. */
+  protected mapBackendEvent(event: BackendEvent): BackendEvent {
+    return event
+  }
+
   /** Only exact adapter profiles with the Schedule Remote expose this port. */
   protected createScheduleRepository(_transport: AlphaLoopbackApiClient): ScheduleRepository | undefined {
     return undefined
@@ -315,6 +337,13 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
   protected createAccountLifecycleRepository(
     _transport: AlphaLoopbackApiClient,
   ): AccountLifecycleRepository | undefined {
+    return undefined
+  }
+
+  /** Only exact DSH profiles with the timed userQuestions Remotes expose this port. */
+  protected createUserQuestionRepository(
+    _transport: AlphaLoopbackApiClient,
+  ): UserQuestionRepository | undefined {
     return undefined
   }
 }

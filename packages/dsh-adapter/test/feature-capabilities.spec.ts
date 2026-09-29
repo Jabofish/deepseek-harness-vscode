@@ -25,6 +25,33 @@ describe('staged feature capability profile', () => {
     expect(profile.capabilities['SY-01'].upstream).toBe('not-applicable')
     expect(profile.capabilities['RF-01'].state).toBe('verified-contract')
     expect(profile.capabilities['RF-01'].upstream).toBe('not-applicable')
+    expect(profile.capabilities['UQ-01']).toMatchObject({
+      state: 'unavailable',
+      upstream: 'unavailable',
+    })
+  })
+
+  it('enables timed questions only when the exact pinned runtime exposes the new Remote', () => {
+    const rc202 = deriveFeatureCapabilityProfile({
+      protocolVersion: 'rc202',
+      dshVersion: '0.2.0-rc.2',
+      features: new Set(['host', 'workspace', 'session', 'events', 'user-questions']),
+    })
+    expect(rc202.capabilities['UQ-01']).toMatchObject({
+      state: 'verified-contract',
+      upstream: 'verified-contract',
+    })
+
+    const unknown = deriveFeatureCapabilityProfile({
+      protocolVersion: 'rc202',
+      dshVersion: '0.2.1-next',
+      features: new Set(['session', 'user-questions']),
+      compatibilityWarning: 'unknown runtime',
+    })
+    expect(unknown.capabilities['UQ-01']).toMatchObject({
+      state: 'compatibility-fallback',
+      upstream: 'compatibility-fallback',
+    })
   })
 
   it('downgrades unknown runtimes and reports missing upstream prerequisites', () => {

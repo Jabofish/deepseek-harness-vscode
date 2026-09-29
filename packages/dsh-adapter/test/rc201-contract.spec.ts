@@ -6,6 +6,8 @@ import { VersionedBackendFactory } from '../src/backend-factory.js'
 import type { DshTransport } from '../src/contracts.js'
 import { VersionedBackendProbe } from '../src/probe.js'
 import { Rc201VersionAdapter } from '../src/versions/rc201/adapter.js'
+import { Rc202VersionAdapter } from '../src/versions/rc202/adapter.js'
+import { Rc202UserQuestionRepository } from '../src/versions/rc202/user-question-repository.js'
 import { Rc201ScheduleRepository } from '../src/versions/rc201/schedule-repository.js'
 import { Rc172SessionRepository } from '../src/versions/rc172/session-repository.js'
 import { Rc172VersionAdapter } from '../src/versions/rc172/adapter.js'
@@ -76,6 +78,19 @@ class Rc201ProbeFixtureAdapter extends Rc201VersionAdapter {
   }
 }
 
+class Rc202ProbeFixtureAdapter extends Rc202VersionAdapter {
+  public constructor(
+    options: ConstructorParameters<typeof Rc202VersionAdapter>[0],
+    private readonly fixture: DshTransport,
+  ) {
+    super(options)
+  }
+
+  public override createTransport(_endpoint: BackendEndpoint): DshTransport {
+    return this.fixture
+  }
+}
+
 const endpoint: BackendEndpoint = {
   host: '127.0.0.1',
   port: 4567,
@@ -114,7 +129,31 @@ describe('DSH 0.2.0-rc.1 exact adapter contract', () => {
     expect(backend.sessions).toBeInstanceOf(Rc172SessionRepository)
     expect(backend.schedules).toBeInstanceOf(Rc201ScheduleRepository)
     expect(backend.pluginBundles).toBeDefined()
+    expect(backend.userQuestions).toBeUndefined()
     await backend.close()
+  })
+
+  it('selects rc.2 exactly and wires the timed userQuestions port only to that profile', async () => {
+    const fixture = new ProbeFixtureTransport()
+    const rc202 = new Rc202ProbeFixtureAdapter(options, fixture)
+    const rc201 = new Rc201ProbeFixtureAdapter(options, fixture)
+    const adapters = [rc202, rc201]
+    const connected = await new VersionedBackendProbe(adapters).probe(candidate('0.2.0-rc.2'))
+
+    expect(connected?.capabilities).toMatchObject({
+      protocolVersion: 'rc202',
+      dshVersion: '0.2.0-rc.2',
+      adapterId: 'dsh-0.2.0-rc.2',
+      compatibilityMode: 'exact',
+    })
+    expect(connected?.capabilities.features.has('user-questions')).toBe(true)
+    if (connected === undefined) throw new Error('the exact rc202 probe declined its fixture')
+    const backend = await new VersionedBackendFactory(adapters).connect(connected)
+    expect(backend.userQuestions).toBeInstanceOf(Rc202UserQuestionRepository)
+    await backend.close()
+    await expect(new VersionedBackendProbe(adapters).probe(candidate('0.2.0-rc.1'))).resolves.toMatchObject({
+      capabilities: { protocolVersion: 'rc201', dshVersion: '0.2.0-rc.1' },
+    })
   })
 
   it.each(['malformed', 'business-error', 'protocol-error', 'timeout'] as const)(

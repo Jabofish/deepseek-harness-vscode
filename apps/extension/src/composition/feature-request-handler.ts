@@ -4,6 +4,8 @@ import {
   type CheckpointSummary,
   type EditorContextOwner,
   type SessionDetail,
+  type TimedUserQuestionAnswer,
+  type TimedUserQuestionAnswerItem,
 } from '@dsh-vscode/domain'
 import type {
   BackendService,
@@ -14,7 +16,7 @@ import type {
   PromptTemplateUseCases,
   TaskUseCases,
 } from '@dsh-vscode/application'
-import { PluginBundleUseCases, ScheduleUseCases } from '@dsh-vscode/application'
+import { PluginBundleUseCases, ScheduleUseCases, UserQuestionUseCases } from '@dsh-vscode/application'
 import { redactMultilineText } from '@dsh-vscode/dsh-adapter'
 import type { FeatureRequest } from '@dsh-vscode/webview-protocol'
 import { handleAccountFeatureRequest } from '../account/account-feature-handler.js'
@@ -101,6 +103,41 @@ export function createFeatureRequestHandler(deps: FeatureRequestHandlerDependenc
     currentWorkspaceFolders,
   } = deps
   const handleFeatureRequest = async (request: FeatureRequest, signal: AbortSignal): Promise<unknown> => {
+    if (
+      request.type === 'user-question.wait.attach' ||
+      request.type === 'user-question.wait.release' ||
+      request.type === 'user-question.answer'
+    ) {
+      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
+      const userQuestions = new UserQuestionUseCases(backendService)
+      if (request.type === 'user-question.wait.attach') {
+        const remainingMs = await userQuestions.attachWait(
+          request.payload.sessionId,
+          request.payload.callId,
+          signal,
+        )
+        return { kind: 'question.wait', remainingMs: remainingMs ?? null }
+      }
+      if (request.type === 'user-question.wait.release') {
+        await userQuestions.releaseWait(request.payload.sessionId, request.payload.callId)
+        return { kind: 'empty' }
+      }
+      const answer: TimedUserQuestionAnswer = {
+        answers: request.payload.answer.answers.map((item): TimedUserQuestionAnswerItem => {
+          const projected = { id: item.id, selected: item.selected }
+          return typeof item.custom === 'string' ? { ...projected, custom: item.custom } : projected
+        }),
+      }
+      return {
+        kind: 'question.answer',
+        accepted: await userQuestions.answer(
+          request.payload.sessionId,
+          request.payload.callId,
+          answer,
+          signal,
+        ),
+      }
+    }
     if (
       request.type === 'account.state' ||
       request.type === 'account.signIn' ||

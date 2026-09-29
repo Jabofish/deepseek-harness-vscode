@@ -19,6 +19,7 @@ import {
   type TurnEndReasonKind,
   type UserQuestion,
   type UserQuestionItem,
+  type UserQuestionReplyView,
   type WorkflowMember,
   type WorkflowSummary,
 } from '@dsh-vscode/domain'
@@ -376,12 +377,20 @@ export function parsePermissionRequest(value: Record<string, unknown>): Permissi
     (value.displayReason !== undefined && displayReason === undefined) ||
     (value.rpcId !== undefined && typeof value.rpcId !== 'string') ||
     (value.callId !== undefined && !nonEmptyString(value.callId)) ||
+    (value.timed !== undefined && typeof value.timed !== 'boolean') ||
+    (value.state !== undefined && value.state !== 'open' && value.state !== 'continued') ||
+    (value.replyQueued !== undefined && typeof value.replyQueued !== 'boolean') ||
+    (value.callId !== undefined && !nonEmptyString(value.callId)) ||
     (value.commandLine !== undefined && typeof value.commandLine !== 'string')
   )
     return undefined
   return {
     id: value.id,
     ...(value.rpcId === undefined ? {} : { rpcId: value.rpcId }),
+    ...(value.callId === undefined ? {} : { callId: value.callId }),
+    ...(value.timed === undefined ? {} : { timed: value.timed }),
+    ...(value.state === undefined ? {} : { state: value.state }),
+    ...(value.replyQueued === undefined ? {} : { replyQueued: value.replyQueued }),
     sessionId: value.sessionId,
     title: value.title,
     description: value.description,
@@ -522,6 +531,41 @@ export function questionIntent(value: unknown): QuestionIntent | undefined {
   if (intent === undefined || intent.kind !== 'plan-review' || typeof intent.approve !== 'string')
     return undefined
   return { kind: 'plan-review', approve: intent.approve }
+}
+
+export function parseUserQuestionReply(value: unknown): UserQuestionReplyView | undefined {
+  const reply = object(value)
+  const questions = reply?.questions === undefined ? undefined : questionItems(reply.questions)
+  if (
+    reply === undefined ||
+    !nonEmptyString(reply.callId) ||
+    questions === undefined ||
+    !Array.isArray(reply.answers) ||
+    reply.answers.length !== questions.length
+  )
+    return undefined
+  const answers: UserQuestionReplyView['answers'][number][] = []
+  for (const entry of reply.answers) {
+    const answer = object(entry)
+    if (
+      answer === undefined ||
+      !nonEmptyString(answer.id) ||
+      !Array.isArray(answer.selected) ||
+      !answer.selected.every((selected) => typeof selected === 'string') ||
+      (answer.custom !== undefined && typeof answer.custom !== 'string')
+    )
+      return undefined
+    answers.push({
+      id: answer.id,
+      selected: answer.selected,
+      ...(answer.custom === undefined ? {} : { custom: answer.custom }),
+    })
+  }
+  const questionIds = new Set(questions.map((question) => question.id))
+  const answerIds = new Set(answers.map((answer) => answer.id))
+  if (questionIds.size !== questions.length || answerIds.size !== answers.length) return undefined
+  if ([...questionIds].some((id) => !answerIds.has(id))) return undefined
+  return { callId: reply.callId, questions, answers }
 }
 
 export function isPermissionRisk(value: unknown): value is PermissionRequest['risk'] {

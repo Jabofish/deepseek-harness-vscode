@@ -25,6 +25,37 @@ describe.skipIf(process.env.DSH_LIVE_SMOKE !== '1')('live DSH connection smoke',
       const steps = runtime.steps
       try {
         const { backend } = runtime
+        if (runtime.snapshot.version === '0.2.0-rc.2') {
+          expect(
+            backend.userQuestions,
+            'the exact rc.2 adapter must expose timed userQuestions',
+          ).toBeDefined()
+          if (backend.userQuestions === undefined)
+            throw new Error('the rc.2 timed userQuestions port is missing')
+          const workspace = await backend.workspaces.create({
+            name: 'Timed question smoke',
+            path: runtime.snapshot.workspace,
+          })
+          const session = await backend.sessions.create({
+            workspaceId: workspace.id,
+            configuration: {
+              preset: '',
+              toolMode: 'native',
+              permissionPreset: '',
+              planMode: false,
+              model: { providerId: '', modelId: '' },
+            },
+          })
+          await expect(
+            backend.userQuestions.answer(session.id, 'missing-question-call', {
+              answers: [{ id: 'missing-question', selected: [] }],
+            }),
+          ).resolves.toBe(false)
+          await expect(
+            backend.userQuestions.attachWait(session.id, 'missing-question-call'),
+          ).resolves.toBeUndefined()
+          steps.push('userQuestions.answer unknown and attachWait closed-stream routes passed')
+        }
         const page = await backend.sessions.list()
         expect(Array.isArray(page.items)).toBe(true)
         steps.push(`session.list ${page.items.length} session(s)`)

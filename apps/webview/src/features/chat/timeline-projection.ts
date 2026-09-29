@@ -132,8 +132,15 @@ function displayNodeTextSize(node: DisplayTimelineNode): number {
       )
     case 'assistant-message':
     case 'reasoning':
-    case 'user-message':
       return node.markdown.length
+    case 'user-message':
+      return (
+        node.markdown.length +
+        (node.questionReply?.questions.reduce(
+          (total, question) => total + question.prompt.length + (question.header?.length ?? 0),
+          0,
+        ) ?? 0)
+      )
     case 'compaction':
       return node.compaction.summary?.length ?? 0
     case 'event-group':
@@ -177,6 +184,8 @@ function nodeSignature(node: DisplayTimelineNode): string {
   if (node.kind === 'reasoning') return `${node.id}:${node.markdown.length}:${node.streaming}`
   if (node.kind === 'tool') return toolNodeSignature(node)
   if (node.kind === 'event-group') return `${node.id}:${node.events.length}`
+  if (node.kind === 'user-message')
+    return `${node.id}:${node.questionReply?.callId ?? ''}:${node.questionReply?.questions.length ?? 0}:${node.markdown.length}`
   return node.id
 }
 

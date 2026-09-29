@@ -212,7 +212,7 @@ describe('runtime installer', () => {
     await harness.installer.copyInstallCommand()
     await harness.installer.openDocumentation()
 
-    expect(INSTALL_COMMAND).toBe('npm install --global @deepseek-ai/dsh@0.2.0-rc.1')
+    expect(INSTALL_COMMAND).toBe('npm install --global @deepseek-ai/dsh@0.2.0-rc.2')
     expect(harness.writeText).toHaveBeenCalledWith(INSTALL_COMMAND)
     expect(harness.openExternal).toHaveBeenCalledWith({
       value: 'https://github.com/deepseek-ai/deepseek-harness',

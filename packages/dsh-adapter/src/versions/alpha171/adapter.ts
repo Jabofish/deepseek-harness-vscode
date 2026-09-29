@@ -74,6 +74,7 @@ export class Alpha171VersionAdapter extends Alpha162VersionAdapter {
           'references',
           'feedback',
           'jobs',
+          ...(this.supportsUserQuestions ? ['user-questions'] : []),
         ]),
       }
       return withExactAdapterCapabilities(

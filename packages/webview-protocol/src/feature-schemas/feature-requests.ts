@@ -208,6 +208,52 @@ export const featureRequestSchema = z.discriminatedUnion('type', [
     .strict(),
   z
     .object({
+      type: z.literal('user-question.wait.attach'),
+      ...featureRequestBase,
+      payload: z.object({ sessionId: id, callId: id }).strict(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('user-question.wait.release'),
+      ...featureRequestBase,
+      payload: z.object({ sessionId: id, callId: id }).strict(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('user-question.answer'),
+      ...featureRequestBase,
+      payload: z
+        .object({
+          sessionId: id,
+          callId: id,
+          answer: z
+            .object({
+              answers: z
+                .array(
+                  z
+                    .object({
+                      id,
+                      selected: z.array(z.string().max(100_000)).max(64),
+                      custom: z.string().max(100_000).optional(),
+                    })
+                    .strict(),
+                )
+                .min(1)
+                .max(64)
+                .superRefine((answers, context) => {
+                  if (new Set(answers.map((item) => item.id)).size !== answers.length)
+                    context.addIssue({ code: 'custom', message: 'Question answer ids cannot repeat.' })
+                }),
+            })
+            .strict(),
+        })
+        .strict(),
+    })
+    .strict(),
+  z
+    .object({
       type: z.literal('schedule.catalog'),
       ...featureRequestBase,
       payload: z.object({}).strict(),

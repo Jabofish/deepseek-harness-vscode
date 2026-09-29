@@ -762,6 +762,75 @@ describe('Schedule feature protocol', () => {
     expect(declared).not.toContain('schedule.create')
   })
 
+  it('validates timed question wait claims and complete late-answer batches', () => {
+    const requests = [
+      {
+        type: 'user-question.wait.attach',
+        payload: { sessionId: 'session-1', callId: 'call-1' },
+      },
+      {
+        type: 'user-question.wait.release',
+        payload: { sessionId: 'session-1', callId: 'call-1' },
+      },
+      {
+        type: 'user-question.answer',
+        payload: {
+          sessionId: 'session-1',
+          callId: 'call-1',
+          answer: {
+            answers: [
+              { id: 'scope', selected: ['workspace'], custom: 'include the tests' },
+              { id: 'deadline', selected: [] },
+            ],
+          },
+        },
+      },
+    ]
+    for (const [index, request] of requests.entries())
+      expect(featureRequestSchema.safeParse({ ...request, requestId: `question-${index}` }).success).toBe(
+        true,
+      )
+    expect(
+      featureRequestSchema.safeParse({
+        type: 'user-question.answer',
+        requestId: 'question-duplicate',
+        payload: {
+          sessionId: 'session-1',
+          callId: 'call-1',
+          answer: {
+            answers: [
+              { id: 'scope', selected: [] },
+              { id: 'scope', selected: ['all'] },
+            ],
+          },
+        },
+      }).success,
+    ).toBe(false)
+    expect(
+      featureRequestSchema.safeParse({
+        type: 'user-question.wait.attach',
+        requestId: 'question-extra',
+        payload: { sessionId: 'session-1', callId: 'call-1', endpoint: 'http://127.0.0.1' },
+      }).success,
+    ).toBe(false)
+    expect(
+      featureResponseSchema.safeParse({
+        type: 'feature.response',
+        requestId: 'question-wait-response',
+        ok: true,
+        payload: { kind: 'question.wait', remainingMs: 0 },
+      }).success,
+    ).toBe(true)
+    expect(
+      featureResponseSchema.safeParse({
+        type: 'feature.response',
+        requestId: 'question-answer-response',
+        ok: true,
+        payload: { kind: 'question.answer', accepted: false },
+      }).success,
+    ).toBe(true)
+  })
+
   it('rejects unbounded history pages, empty updates, malformed weekly rules, and unknown fields', () => {
     expect(
       featureRequestSchema.safeParse({

@@ -8,6 +8,7 @@ import {
   messageSessionReferenceLabels,
   nonEmptyString,
   parseTokenUsage,
+  parseUserQuestionReply,
   turnEndFailure,
   turnEndReason,
 } from './event-values.js'
@@ -29,15 +30,18 @@ export function parseMessageEvents(
     const hasAttachments = Object.hasOwn(value, 'attachments')
     const hasImages = Object.hasOwn(value, 'images')
     const hasSessionReferenceLabels = Object.hasOwn(value, 'sessionReferenceLabels')
+    const hasQuestionReply = Object.hasOwn(value, 'questionReply')
     const attachments = hasAttachments ? messageAttachments(value.attachments) : undefined
     const images = hasImages ? messageImages(value.images) : undefined
     const sessionReferenceLabels = hasSessionReferenceLabels
       ? messageSessionReferenceLabels(value.sessionReferenceLabels)
       : undefined
+    const questionReply = hasQuestionReply ? parseUserQuestionReply(value.questionReply) : undefined
     if (
       (hasAttachments && attachments === undefined) ||
       (hasImages && images === undefined) ||
       (hasSessionReferenceLabels && sessionReferenceLabels === undefined) ||
+      (hasQuestionReply && questionReply === undefined) ||
       (value.rpcId !== undefined && typeof value.rpcId !== 'string') ||
       (value.source !== undefined && typeof value.source !== 'string') ||
       (value.sourceForm !== undefined && typeof value.sourceForm !== 'string') ||
@@ -56,6 +60,7 @@ export function parseMessageEvents(
       ...(typeof value.sourceForm === 'string' ? { sourceForm: value.sourceForm } : {}),
       ...(typeof value.sourceSummary === 'string' ? { sourceSummary: value.sourceSummary } : {}),
       ...(sessionReferenceLabels === undefined ? {} : { sessionReferenceLabels }),
+      ...(questionReply === undefined ? {} : { questionReply }),
     }
   }
   if ((name === 'turn.started' || name === 'turn.ended') && nonEmptyString(value.sessionId)) {

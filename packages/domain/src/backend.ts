@@ -40,6 +40,7 @@ import type {
   SubagentHistoryQuery,
 } from './sessions.js'
 import type { QuestionAnswer } from './tools.js'
+import type { UserQuestionRepository } from './user-questions.js'
 import type { WorkspaceCreateInput, WorkspaceSummary } from './workspaces.js'
 
 export interface AsyncEventSource<T> {
@@ -314,6 +315,8 @@ export interface DshBackend {
   readonly models: ModelRepository
   readonly credentials: CredentialRepository
   readonly interactions: InteractionRepository
+  /** Present only for exact DSH versions that expose timed question Remotes. */
+  readonly userQuestions?: UserQuestionRepository
   readonly goals: GoalRepository
   readonly jobs: JobRepository
   readonly subagents: SubagentRepository

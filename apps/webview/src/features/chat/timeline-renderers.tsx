@@ -289,7 +289,33 @@ function renderNode(
               {...(onLoadImage === undefined ? {} : { loadImage: onLoadImage })}
               translate={t}
             />
-            {node.markdown.trim() === '' ? null : projected ? (
+            {node.questionReply !== undefined ? (
+              <section className="dsh-question-reply" data-question-reply={node.questionReply.callId}>
+                <strong className="dsh-question-reply__title">{t('question.replyTitle')}</strong>
+                <dl className="dsh-question-reply__list">
+                  {node.questionReply.questions.map((question) => {
+                    const answer = node.questionReply?.answers.find((item) => item.id === question.id)
+                    const selected = answer?.selected ?? []
+                    const values = [...selected, ...(answer?.custom === undefined ? [] : [answer.custom])]
+                    return (
+                      <div className="dsh-question-reply__item" key={question.id}>
+                        <dt>
+                          {question.header === undefined ? null : (
+                            <span className="dsh-question-reply__header">{question.header}</span>
+                          )}
+                          <span>{question.prompt}</span>
+                        </dt>
+                        <dd>{values.length === 0 ? t('question.replySkipped') : values.join(', ')}</dd>
+                      </div>
+                    )
+                  })}
+                </dl>
+              </section>
+            ) : node.source === 'user-question-reply' ? (
+              <p className="dsh-question-reply__unavailable" role="status">
+                {t('question.replyUnavailable')}
+              </p>
+            ) : node.markdown.trim() === '' ? null : projected ? (
               <div className="dsh-timeline__user-text">
                 {projectUserText(
                   node.markdown,

@@ -220,6 +220,14 @@ export interface UserQuestion {
   /** All questions in the rc.6 request. `prompt` remains the first item for
    * older single-question consumers. */
   readonly items?: readonly UserQuestionItem[]
+  /** Timed ask_user_question identity supplied by DSH 0.2.0-rc.2. */
+  readonly callId?: string
+  /** Whether a foreground Client claim controls the countdown. */
+  readonly timed?: boolean
+  /** Projection state; continued questions are answered through the late-reply Remote. */
+  readonly state?: 'open' | 'continued'
+  /** A submitted late reply is waiting in DSH's durable Inbox admission queue. */
+  readonly replyQueued?: boolean
 }
 
 export interface UserQuestionItem {

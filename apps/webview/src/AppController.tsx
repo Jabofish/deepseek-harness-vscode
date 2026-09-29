@@ -357,15 +357,21 @@ const useAppControllerImpl = () => {
   // session's own.
   const sessionModelDirectoryLoading = state.sessionModelDirectoryLoading
   const sessionModelDirectoryError = state.sessionModelDirectoryError
-  const { pendingPermissions, pendingQuestions, approvalRespondFor, questionRespondFor, questionCancelFor } =
-    usePendingInteractions({
-      store,
-      state,
-      activeSessionId,
-      setRespondingInteractionId,
-      setError,
-      t,
-    })
+  const {
+    pendingPermissions,
+    pendingQuestions,
+    approvalRespondFor,
+    questionRespondFor,
+    questionCancelFor,
+    questionWaitFor,
+  } = usePendingInteractions({
+    store,
+    state,
+    activeSessionId,
+    setRespondingInteractionId,
+    setError,
+    t,
+  })
   const assistantLabel = useMemo(
     () => resolveAssistantModelLabel(active, state.configuration, sessionModels, t),
     [active, sessionModels, state.configuration, t],
@@ -913,6 +919,7 @@ const useAppControllerImpl = () => {
     openAccountPageFromSettings,
     pendingPermissions,
     pendingQuestions,
+    questionWaitFor,
     performanceUsage,
     popupSelects,
     questionCancelFor,

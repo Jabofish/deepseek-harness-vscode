@@ -101,6 +101,7 @@ export function deriveFeatureCapabilityProfile(input: CapabilityInput): FeatureC
       upstream: 'not-applicable',
       reason: 'Extension-owned redacted diagnostics and reconnect recovery are available.',
     },
+    'UQ-01': upstream(['session', 'user-questions'], 'UQ-01 timed user questions', 'verified-contract'),
   }
 
   // Keep this assertion close to the construction so adding an ID cannot

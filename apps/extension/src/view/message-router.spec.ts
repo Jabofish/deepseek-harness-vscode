@@ -607,6 +607,54 @@ describe('WebviewMessageRouter command diagnostics', () => {
   })
 })
 
+describe('WebviewMessageRouter timed question wait ownership', () => {
+  it('keeps the remote claim alive after the attach response and releases it on route or view disposal', async () => {
+    const attachedSignals: AbortSignal[] = []
+    const router = new WebviewMessageRouter({
+      postMessage: () => Promise.resolve(true),
+      handleFeatureRequest: (request, signal) => {
+        if (request.type === 'user-question.wait.attach') {
+          attachedSignals.push(signal)
+          return Promise.resolve({ kind: 'question.wait', remainingMs: 2_000 })
+        }
+        return Promise.resolve({ kind: 'empty' })
+      },
+    })
+
+    await router.handle({
+      protocolVersion: 1,
+      message: {
+        type: 'user-question.wait.attach',
+        requestId: 'question-wait-attach-1',
+        payload: { sessionId: 'session-1', callId: 'call-1' },
+      },
+    })
+    expect(attachedSignals[0]?.aborted).toBe(false)
+
+    await router.handle({
+      protocolVersion: 1,
+      message: {
+        type: 'user-question.wait.release',
+        requestId: 'question-wait-release-1',
+        payload: { sessionId: 'session-1', callId: 'call-1' },
+      },
+    })
+    expect(attachedSignals[0]?.aborted).toBe(true)
+
+    await router.handle({
+      protocolVersion: 1,
+      message: {
+        type: 'user-question.wait.attach',
+        requestId: 'question-wait-attach-2',
+        payload: { sessionId: 'session-1', callId: 'call-2' },
+      },
+    })
+    expect(attachedSignals[1]?.aborted).toBe(false)
+    router.cancelAll()
+    expect(attachedSignals[1]?.aborted).toBe(true)
+  })
+})
+
 describe('WebviewMessageRouter attachment diagnostics', () => {
   function routerRejecting(error: AppError, posted: unknown[]): WebviewMessageRouter {
     return new WebviewMessageRouter({

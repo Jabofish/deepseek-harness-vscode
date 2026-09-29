@@ -1,9 +1,13 @@
 import type {
   MessageAttachment,
   MessageImageReference,
+  QuestionChoice,
+  TimedUserQuestionAnswerItem,
   TokenUsage,
   TurnEndFailure,
   TurnEndReasonKind,
+  UserQuestionItem,
+  UserQuestionReplyView,
 } from '@dsh-vscode/domain'
 
 import { attachedFileEnvelope } from '../../attachment-codec.js'
@@ -175,6 +179,120 @@ export function structuredSessionReferenceLabels(
     if (!labels.includes(reference.label)) labels.push(reference.label)
   }
   return labels
+}
+
+/** Validate and project the persisted user-question late-reply payload. */
+export function structuredUserQuestionReply(
+  source: Record<string, unknown> | undefined,
+  message: Record<string, unknown>,
+): UserQuestionReplyView | undefined {
+  if (
+    source?.kind !== 'user-question-reply' ||
+    source.outcome !== 'answered' ||
+    typeof source.callId !== 'string' ||
+    source.callId.trim() === ''
+  )
+    return undefined
+  const text = array(message.content).flatMap((entry) => {
+    const block = objectOrUndefined(entry)
+    return block?.type === 'text' && typeof block.text === 'string' ? [block.text] : []
+  })[0]
+  if (text === undefined || text.length > 1_000_000) return undefined
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    return undefined
+  }
+  const payload = objectOrUndefined(parsed)
+  if (
+    payload?.kind !== 'answer_to_pending_question' ||
+    payload.tool !== 'ask_user_question' ||
+    payload.callId !== source.callId ||
+    !Array.isArray(payload.questions) ||
+    payload.questions.length === 0 ||
+    payload.questions.length > 64 ||
+    !Array.isArray(payload.answers) ||
+    payload.answers.length !== payload.questions.length
+  )
+    return undefined
+  const questions = payload.questions.map(questionReplyItem)
+  if (questions.some((question) => question === undefined)) return undefined
+  const questionIds = new Set((questions as readonly UserQuestionItem[]).map((question) => question.id))
+  if (questionIds.size !== questions.length) return undefined
+  const answers = payload.answers.map(questionReplyAnswer)
+  if (answers.some((answer) => answer === undefined)) return undefined
+  const answerIds = new Set((answers as readonly TimedUserQuestionAnswerItem[]).map((answer) => answer.id))
+  if (answerIds.size !== answers.length || [...questionIds].some((id) => !answerIds.has(id))) return undefined
+  return {
+    callId: source.callId,
+    questions: questions as readonly UserQuestionItem[],
+    answers: answers as readonly TimedUserQuestionAnswerItem[],
+  }
+}
+
+function questionReplyItem(value: unknown): UserQuestionItem | undefined {
+  const item = objectOrUndefined(value)
+  if (
+    item === undefined ||
+    !isBoundedNonEmptyString(item.id, 512) ||
+    !isBoundedString(item.question, 100_000) ||
+    (item.header !== undefined && !isBoundedString(item.header, 100_000)) ||
+    (item.detail !== undefined && !isBoundedString(item.detail, 100_000)) ||
+    (item.options !== undefined && !Array.isArray(item.options)) ||
+    (item.multiSelect !== undefined && typeof item.multiSelect !== 'boolean')
+  )
+    return undefined
+  const choices: QuestionChoice[] = []
+  for (const value of (item.options as readonly unknown[] | undefined) ?? []) {
+    const option = objectOrUndefined(value)
+    if (
+      option === undefined ||
+      !isBoundedString(option.label, 100_000) ||
+      (option.description !== undefined && !isBoundedString(option.description, 100_000))
+    )
+      return undefined
+    choices.push({
+      id: option.label,
+      label: option.label,
+      ...(option.description === undefined ? {} : { description: option.description }),
+    })
+  }
+  return {
+    id: item.id,
+    prompt: item.question,
+    ...(item.detail === undefined ? {} : { detail: item.detail }),
+    ...(item.header === undefined ? {} : { header: item.header }),
+    ...(choices === undefined || choices.length === 0 ? {} : { choices }),
+    ...(item.multiSelect === undefined ? {} : { multiSelect: item.multiSelect }),
+    allowFreeText: true,
+  }
+}
+
+function questionReplyAnswer(value: unknown): TimedUserQuestionAnswerItem | undefined {
+  const item = objectOrUndefined(value)
+  if (
+    item === undefined ||
+    !isBoundedNonEmptyString(item.id, 512) ||
+    !Array.isArray(item.selected) ||
+    item.selected.length > 64 ||
+    !item.selected.every((entry) => isBoundedString(entry, 100_000)) ||
+    (item.custom !== undefined && !isBoundedString(item.custom, 100_000))
+  )
+    return undefined
+  return {
+    id: item.id,
+    selected: [...item.selected],
+    ...(item.custom === undefined ? {} : { custom: item.custom }),
+  }
+}
+
+function isBoundedNonEmptyString(value: unknown, maximum: number): value is string {
+  return typeof value === 'string' && value.trim() !== '' && value.length <= maximum
+}
+
+function isBoundedString(value: unknown, maximum: number): value is string {
+  return typeof value === 'string' && value.length <= maximum
 }
 
 export function messageImages(value: Record<string, unknown> | undefined): readonly MessageImageReference[] {

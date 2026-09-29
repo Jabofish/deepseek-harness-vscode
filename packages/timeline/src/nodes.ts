@@ -9,6 +9,7 @@ import type {
   TokenUsage,
   ToolCallView,
   TurnEndFailure,
+  UserQuestionReplyView,
   WorkflowSummary,
 } from '@dsh-vscode/domain'
 
@@ -48,6 +49,7 @@ export type TimelineNode =
       readonly source?: string
       readonly sourceForm?: string
       readonly sourceSummary?: string
+      readonly questionReply?: UserQuestionReplyView
       /** Labels from a hidden structured DSH session-reference message. */
       readonly sessionReferenceLabels?: readonly string[]
     }

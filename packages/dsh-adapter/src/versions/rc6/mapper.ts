@@ -46,6 +46,7 @@ import {
   messageText,
   reasoningText,
   structuredSessionReferenceLabels,
+  structuredUserQuestionReply,
   tokenUsage,
   assistantStreamUsage,
   turnEndFailure,
@@ -393,13 +394,16 @@ export const rc6Mapper = {
         const sourceForm = stringOr(source?.form, '')
         const sourceSummary = stringOr(source?.summary, '')
         const sessionReferenceLabels = structuredSessionReferenceLabels(source)
+        const questionReply = structuredUserQuestionReply(source, message)
         const rpcId = stringOr(envelope.rpcId ?? data.rpcId ?? source?.rpcId, '')
         const userContent = userMessageContent(message)
         return {
           type: 'message.user',
           sessionId,
           messageId: stringOr(message.id, `user:${indexToken(data.turn) ?? 'unknown'}`),
-          markdown: userContent.markdown,
+          // The late-reply body is a machine payload intended for DSH's tool.
+          // Only its validated, bounded Q/A projection may reach the Webview.
+          markdown: source?.kind === 'user-question-reply' ? '' : userContent.markdown,
           ...(userContent.attachments.length === 0 ? {} : { attachments: userContent.attachments }),
           ...(userContent.images.length === 0 ? {} : { images: userContent.images }),
           ...(rpcId === '' ? {} : { rpcId }),
@@ -411,6 +415,7 @@ export const rc6Mapper = {
           ...(sourceForm === '' ? {} : { sourceForm }),
           ...(sourceSummary === '' ? {} : { sourceSummary }),
           ...(sessionReferenceLabels.length === 0 ? {} : { sessionReferenceLabels }),
+          ...(questionReply === undefined ? {} : { questionReply }),
         }
       }
       case 'tool/call':

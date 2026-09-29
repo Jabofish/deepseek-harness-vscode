@@ -13,6 +13,7 @@ import {
   type SessionHistoryQueryOptions,
   type SessionListQuery,
   type SessionPage,
+  type SessionProjectionValues,
   type SessionRepository,
   type SessionSummary,
 } from '@dsh-vscode/domain'
@@ -75,6 +76,8 @@ export class Rc6SessionRepository implements SessionRepository {
   private readonly sessionSummaries = new Map<string, SessionSummary>()
   private readonly promptQueue: SessionPromptQueue
   private readonly imageLimitsBySession = new Map<string, ImageAttachmentLimits>()
+  private readonly mapProjectionValues:
+    ((values: Readonly<Record<string, unknown>>) => SessionProjectionValues) | undefined
   public constructor(
     private readonly transport: DshTransport,
     private readonly workspaceRepository?: Rc6WorkspaceRepository,
@@ -96,6 +99,7 @@ export class Rc6SessionRepository implements SessionRepository {
     this.executeSessionConfigurationCommand = options.executeSessionConfigCommand
     this.selectAgentPreset = options.selectAgentPreset
     this.readPermissionPresets = options.readPermissionPresets
+    this.mapProjectionValues = options.mapProjectionValues
     this.supportsFileUploads = options.supportsFileUploads === true
     this.supportsSessionRestore = options.supportsSessionRestore === true
     this.promptQueue = new SessionPromptQueue(
@@ -136,6 +140,19 @@ export class Rc6SessionRepository implements SessionRepository {
       this.rememberImageLimitsValue(event.sessionId, event.value)
     }
   }
+
+  private mapSessionSummary(value: unknown): SessionSummary {
+    const summary = rc6Mapper.sessionSummary(value)
+    if (summary.projection === undefined || this.mapProjectionValues === undefined) return summary
+    return {
+      ...summary,
+      projection: {
+        ...summary.projection,
+        values: this.mapProjectionValues(summary.projection.values),
+      },
+    }
+  }
+
   public async list(query?: SessionListQuery, signal?: AbortSignal): Promise<SessionPage> {
     if (query?.cursor !== undefined && query.cursor.trim() !== '')
       throw unavailable('session list pagination')
@@ -157,7 +174,7 @@ export class Rc6SessionRepository implements SessionRepository {
     )
       throw malformedSessionResponse('session list')
     let items = list.items.map((item) => {
-      const mapped = rc6Mapper.sessionSummary(item)
+      const mapped = this.mapSessionSummary(item)
       // session.list carries a partial, possibly stale hint. Only a history
       // baseline or session.subscribed projection may clear omitted cells.
       this.rememberProjectionValues(mapped.id, mapped.projection?.values)
@@ -373,7 +390,17 @@ export class Rc6SessionRepository implements SessionRepository {
     // boundary. A public page omits the prompt marker, but its cursor must
     // still point at the real oldest durable record or pagination can stall
     // on a page whose first record is system/message.
-    const mapped = rc6Mapper.history(historyValue, sessionId, { includeSystemMarkers: true })
+    const rawMapped = rc6Mapper.history(historyValue, sessionId, { includeSystemMarkers: true })
+    const mapped =
+      rawMapped.projection === undefined || this.mapProjectionValues === undefined
+        ? rawMapped
+        : {
+            ...rawMapped,
+            projection: {
+              ...rawMapped.projection,
+              values: this.mapProjectionValues(rawMapped.projection.values),
+            },
+          }
     this.rememberProjectionValues(sessionId, mapped.projection?.values, mapped.projection !== undefined)
     const rawEvents = Array.isArray(historyValue.events) ? historyValue.events : []
     const sequences = mapped.events.map((entry) => entry.sequence).filter((value) => value >= 0)

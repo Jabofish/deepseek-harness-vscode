@@ -100,6 +100,7 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
     openAccountPageFromSettings,
     pendingPermissions,
     pendingQuestions,
+    questionWaitFor,
     performanceUsage,
     popupSelects,
     questionCancelFor,
@@ -559,13 +560,20 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                           disabled={respondingInteractionId !== undefined}
                           onRespond={questionRespondFor(question)}
                           onCancel={questionCancelFor(question)}
+                          {...(question.state === 'open' && question.timed === true
+                            ? {
+                                onAttachWait: questionWaitFor(question).attach,
+                                onReleaseWait: questionWaitFor(question).release,
+                              }
+                            : {})}
                         />
                       ))}
                     </div>
                   ) : null}
                   <div className="dsh-compose-area">
                     <TodoList key={active?.id ?? 'todo-list'} todos={state.todos} />
-                    {pendingPermissions.length === 0 && pendingQuestions.length === 0 ? (
+                    {pendingPermissions.length === 0 &&
+                    pendingQuestions.every((question) => question.state === 'continued') ? (
                       subagentReadOnlyReason === undefined || activeRunning ? (
                         <>
                           <ConnectedComposer

@@ -16,6 +16,7 @@ export const FEATURE_CAPABILITY_IDS = [
   'NAV-01',
   'SY-01',
   'RF-01',
+  'UQ-01',
 ] as const
 
 export type FeatureCapabilityId = (typeof FEATURE_CAPABILITY_IDS)[number]
