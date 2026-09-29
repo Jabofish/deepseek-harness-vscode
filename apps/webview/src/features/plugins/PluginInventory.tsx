@@ -383,7 +383,10 @@ export function PluginInventory(props: PluginInventoryProps): ReactElement {
         </div>
       ) : null}
       {state.status === 'ready' ? (
-        <div className="dsh-plugin-inventory__catalog">
+        <section className="dsh-plugin-inventory__catalog" aria-labelledby={`${catalogId}-heading`}>
+          <h3 className="dsh-plugin-inventory__catalog-title" id={`${catalogId}-heading`}>
+            {t('plugins.list')}
+          </h3>
           {selectedPreset === undefined ? null : (
             <div className="dsh-plugin-inventory__mode-selector">
               <label htmlFor={modeSelectId}>{t('plugins.inventory.chooseAgentMode')}</label>
@@ -426,14 +429,14 @@ export function PluginInventory(props: PluginInventoryProps): ReactElement {
               aria-labelledby={sessionHeadingId}
             >
               <div className="dsh-plugin-inventory__heading">
-                <h3 id={sessionHeadingId}>
+                <h4 id={sessionHeadingId}>
                   <GroupToggle
                     open={openGroupsInEffect.has('session')}
                     onToggle={() => toggleGroup('session')}
                     bodyId={sessionBodyId}
                     label={t('plugins.inventory.session')}
                   />
-                </h3>
+                </h4>
                 <span
                   data-plugin-count={filteredSession.length}
                   data-plugin-total={sessionRows.length}
@@ -514,14 +517,14 @@ export function PluginInventory(props: PluginInventoryProps): ReactElement {
             aria-labelledby={globalHeadingId}
           >
             <div className="dsh-plugin-inventory__heading">
-              <h3 id={globalHeadingId}>
+              <h4 id={globalHeadingId}>
                 <GroupToggle
                   open={openGroupsInEffect.has('global')}
                   onToggle={() => toggleGroup('global')}
                   bodyId={globalBodyId}
                   label={t('plugins.inventory.global')}
                 />
-              </h3>
+              </h4>
               {snapshot?.managementAvailable === undefined ? null : (
                 <span>
                   {t(
@@ -574,7 +577,7 @@ export function PluginInventory(props: PluginInventoryProps): ReactElement {
               {t('plugins.noMatch')}
             </p>
           ) : null}
-        </div>
+        </section>
       ) : null}
     </section>
   )

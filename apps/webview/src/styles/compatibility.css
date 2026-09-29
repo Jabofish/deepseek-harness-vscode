@@ -2628,6 +2628,30 @@
   box-shadow: var(--dsh-shadow, 0 12px 36px color-mix(in srgb, var(--dsh-bg) 78%, transparent));
 }
 
+.dsh-presets__modal-backdrop > .dsh-presets__dialog--composition {
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.dsh-presets__dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--dsh-space-2);
+  min-width: 0;
+}
+
+.dsh-presets__dialog-head h3 {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.dsh-presets__dialog--composition .dsh-presets__code {
+  min-height: 0;
+  margin: 0;
+  overflow: auto;
+}
+
 .dsh-session-controls__context-cell,
 .dsh-session-controls__context-cell .dsh-context-meter,
 .dsh-context-meter__trigger {

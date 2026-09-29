@@ -59,14 +59,13 @@ export function PresetCompositionModal({
     <div className="dsh-presets__modal-backdrop" role="presentation">
       <div
         ref={overlayRef}
-        className="dsh-presets__dialog"
+        className="dsh-presets__dialog dsh-presets__dialog--composition"
         role="dialog"
         aria-modal="true"
         aria-label={t('presets.composition')}
       >
-        <h3>{t('presets.compositionHeading', { name: view.title })}</h3>
-        <pre className="dsh-presets__code">{view.content}</pre>
-        <div className="dsh-presets__dialog-actions">
+        <div className="dsh-presets__dialog-head">
+          <h3>{t('presets.compositionHeading', { name: view.title })}</h3>
           <button
             className="dsh-button dsh-button--secondary dsh-button--compact"
             type="button"
@@ -76,6 +75,7 @@ export function PresetCompositionModal({
             {t('presets.close')}
           </button>
         </div>
+        <pre className="dsh-presets__code">{view.content}</pre>
       </div>
     </div>
   )

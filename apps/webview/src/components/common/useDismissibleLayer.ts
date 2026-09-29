@@ -199,6 +199,9 @@ export function useDismissibleLayer({
       })
     }
     const onPointerDown = (event: PointerEvent): void => {
+      // A portalled child sits outside its ancestor's DOM refs. Let only the
+      // top layer interpret this pointer event so the ancestor stays open.
+      if (openLayers.at(-1)?.identity !== identity) return
       if (!isInside(event)) dismissRef.current()
     }
     const onKeyDown = (event: KeyboardEvent): void => {

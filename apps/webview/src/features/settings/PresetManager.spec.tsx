@@ -249,20 +249,24 @@ describe('PresetManager composition viewer', () => {
   afterEach(() => cleanup())
 
   it('shows a shipped composition read-only', async () => {
+    const content = Array.from({ length: 120 }, (_, index) => `line ${index + 1}`).join('\n')
     const document: AgentPresetDocument = {
       id: 'cordis',
       trust: 'system',
       name: 'Cordis',
-      content: 'instructions:\n  - self-authored presets\n',
+      content,
     }
     const onReadDocument = vi.fn().mockResolvedValue(document)
     renderManager({ onReadDocument })
     await waitFor(() => expect(screen.getByText('Built-in presets')).toBeDefined())
     fireEvent.click(screen.getByRole('button', { name: 'View composition: Cordis' }))
-    await waitFor(() => expect(screen.getByRole('dialog', { name: 'Preset composition' })).toBeDefined())
+    const dialog = await screen.findByRole('dialog', { name: 'Preset composition' })
     expect(onReadDocument).toHaveBeenCalledWith('cordis')
-    expect(screen.getByText(/self-authored presets/)).toBeDefined()
-    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+    expect(dialog.querySelector('.dsh-presets__code')?.textContent).toBe(content)
+    const closeButton = within(dialog).getByRole('button', { name: 'Close' })
+    expect(dialog.classList.contains('dsh-presets__dialog--composition')).toBe(true)
+    expect(closeButton.closest('.dsh-presets__dialog-head')).not.toBeNull()
+    fireEvent.click(closeButton)
     expect(screen.queryByRole('dialog', { name: 'Preset composition' })).toBeNull()
   })
 

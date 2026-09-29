@@ -13,15 +13,23 @@ interface LayerProps {
   readonly label: string
   readonly trapFocus?: boolean
   readonly onTab?: (event: KeyboardEvent) => void
+  readonly onDismiss?: () => void
   readonly children: ReactNode
 }
 
-function Layer({ open, label, trapFocus = false, onTab, children }: LayerProps): ReactElement | null {
+function Layer({
+  open,
+  label,
+  trapFocus = false,
+  onTab,
+  onDismiss,
+  children,
+}: LayerProps): ReactElement | null {
   const ref = useRef<HTMLDivElement>(null)
   useDismissibleLayer({
     open,
     refs: [ref],
-    onDismiss: () => undefined,
+    onDismiss: onDismiss ?? (() => undefined),
     trapFocus,
     ...(onTab === undefined ? {} : { onTab }),
   })
@@ -66,6 +74,31 @@ function NestedLayers({
 }
 
 describe('useDismissibleLayer focus trap', () => {
+  it('does not dismiss an ancestor when a pointer lands inside a portalled child layer', () => {
+    const onOuterDismiss = vi.fn()
+    const onChildDismiss = vi.fn()
+    render(
+      <>
+        <Layer open label="Outer dialog" trapFocus onDismiss={onOuterDismiss}>
+          <button type="button">Outer action</button>
+        </Layer>
+        <Layer open label="Child dialog" onDismiss={onChildDismiss}>
+          <button type="button">Child action</button>
+        </Layer>
+      </>,
+    )
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Child action' }))
+
+    expect(onChildDismiss).not.toHaveBeenCalled()
+    expect(onOuterDismiss).not.toHaveBeenCalled()
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Outer action' }))
+
+    expect(onChildDismiss).toHaveBeenCalledOnce()
+    expect(onOuterDismiss).not.toHaveBeenCalled()
+  })
+
   it('cycles through a portal child owned by the modal without reaching the page', () => {
     const onChildTab = vi.fn((event: KeyboardEvent) => {
       expect(event.defaultPrevented).toBe(false)

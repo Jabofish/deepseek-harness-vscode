@@ -164,6 +164,15 @@ describe('PluginInventory', () => {
     expect(within(global).getByText('shell-tools')).toBeDefined()
   })
 
+  it('nests the shared search and plugin groups under the plugin list heading', async () => {
+    renderInventory()
+
+    const catalog = await screen.findByRole('region', { name: 'Plugin list' })
+    expect(within(catalog).getByRole('searchbox', { name: 'Search plugins' })).toBeDefined()
+    expect(within(catalog).getByRole('region', { name: 'Session plugins' })).toBeDefined()
+    expect(within(catalog).getByRole('region', { name: 'Global plugins' })).toBeDefined()
+  })
+
   it('uses the first host mode when the roster has no default', async () => {
     const modes: readonly AgentPresetPluginGroup[] = [
       { id: 'first', name: 'First mode', isDefault: false, rows: [] },
