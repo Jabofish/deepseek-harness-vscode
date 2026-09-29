@@ -9,6 +9,15 @@ import { defaultRangeExtractor, useVirtualizer, type Range, type VirtualItem } f
 export const DEFAULT_VIRTUALIZATION_THRESHOLD = 24
 export const DEFAULT_VIRTUALIZATION_PAYLOAD_THRESHOLD = 96_000
 export const DEFAULT_VIRTUALIZATION_OVERSCAN = 4
+/**
+ * Rows a caller may keep mounted in the frame before the virtualizer has a
+ * measured viewport range. The window is anchored at the tail: it has to cover
+ * more than a full viewport so the frame that is measured is a real one, but it
+ * must stay a constant. Rendering the whole collection here reintroduces the
+ * unbounded work virtualization exists to remove, and the cost lands exactly
+ * when a long conversation is opened.
+ */
+export const DEFAULT_UNMEASURED_ROW_WINDOW = 32
 const DEFAULT_ESTIMATED_ITEM_SIZE = 96
 function defaultEstimateSize(): number {
   return DEFAULT_ESTIMATED_ITEM_SIZE
@@ -117,7 +126,9 @@ export function useVirtualizedCollection<T>(
   // range; treating that as an empty conversation makes the whole chat vanish
   // until an unrelated rerender (for example switching tasks) occurs. Keep
   // the virtualizer subscribed and let the caller render its normal flow until
-  // a real range is available.
+  // a real range is available. That flow has to be bounded by the caller (see
+  // DEFAULT_UNMEASURED_ROW_WINDOW): the fallback frame runs before any
+  // measurement exists, so an unbounded collection renders every row once.
   const ready = !enabled || virtualItems.length > 0
   return useMemo(
     () => ({

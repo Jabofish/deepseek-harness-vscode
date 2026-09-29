@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { createHash } from 'node:crypto'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import type { Duplex } from 'node:stream'
 import os from 'node:os'
 import path from 'node:path'
@@ -8,15 +8,51 @@ import { pathToFileURL } from 'node:url'
 import { runTests } from '@vscode/test-electron'
 
 import { resolveLiveRuntime } from '../live-dsh/runtime.ts'
+import { resolveVscodeExecutable } from './vscode-executable.ts'
+import { discoverExternalDshEndpoints } from './external-dsh-guard.ts'
 
 /** Not a path, so the extension's settings validation must reject it. */
 const INVALID_EXECUTABLE_PATH = 'relative/dsh'
 
+/**
+ * `managed` keeps the runtime behind the `new-isolated` contract, `auto` is the
+ * shipped default that discovers first and only starts what it must, and
+ * `attach-only` never starts anything.
+ */
+type E2eMode = 'attach-only' | 'managed' | 'auto'
+
+function resolveMode(raw: string | undefined): E2eMode {
+  if (raw === undefined || raw === '' || raw === 'attach-only') return 'attach-only'
+  if (raw === 'managed' || raw === 'auto') return raw
+  throw new Error(`Unknown DSH_VSCODE_E2E_MODE "${raw}". Use attach-only, managed or auto.`)
+}
+
 export async function run(): Promise<void> {
+  // Resolved before the fixture exists: a missing override must fail without
+  // creating a temp workspace, and must never fall back to a download.
+  const vscodeExecutablePath = resolveVscodeExecutable(process.env.DSH_VSCODE_E2E_EXECUTABLE)
+  const mode = resolveMode(process.env.DSH_VSCODE_E2E_MODE)
+  const startsRuntime = mode === 'managed' || mode === 'auto'
+  // `auto` runs every discovery provider, and the default-port and process
+  // providers ignore DSH_HOME entirely. Attaching to a DSH this run does not
+  // own would touch the developer's real sessions, so refuse before anything
+  // exists on disk.
+  if (mode === 'auto') {
+    const external = await discoverExternalDshEndpoints()
+    if (external.length > 0)
+      throw new Error(
+        `auto mode refused to start: ${external.map((entry) => `${entry.source}:${entry.port}`).join(', ')} ` +
+          'is already serving a DSH this run does not own. Stop that instance or use managed.',
+      )
+    console.log('[dsh-vscode-e2e] auto pre-check found no externally owned DSH endpoint')
+  }
   const root = await mkdtemp(path.join(os.tmpdir(), 'dsh-vscode-e2e-'))
   const workspace = path.join(root, 'workspace')
   const settingsDirectory = path.join(workspace, '.vscode')
-  const managed = process.env.DSH_VSCODE_E2E_MODE === 'managed'
+  // Managed and auto modes start a real DSH. Without an explicit home it would
+  // use the user's own profile, so the scenario always runs against a directory
+  // inside this test-owned root and the Extension Host is told to expect it.
+  const isolatedHome = startsRuntime ? path.join(root, 'dsh-home') : undefined
   const invalidSettings = process.env.DSH_VSCODE_E2E_INVALID_SETTINGS === '1'
   // `dsh.runtime.executablePath` is an absolute path by contract, so a bare
   // command name has to be resolved before it is written. Letting it through
@@ -28,7 +64,7 @@ export async function run(): Promise<void> {
       ? undefined
       : resolveLiveRuntime(requestedRuntime)
   if (
-    managed &&
+    startsRuntime &&
     process.platform === 'win32' &&
     runtimeExecutable !== undefined &&
     /\.js$/iu.test(runtimeExecutable)
@@ -81,7 +117,8 @@ export async function run(): Promise<void> {
   })
   try {
     await writeFile(path.join(root, 'workspace-marker.txt'), 'test-owned\n', 'utf8')
-    await import('node:fs/promises').then(({ mkdir }) => mkdir(settingsDirectory, { recursive: true }))
+    await mkdir(settingsDirectory, { recursive: true })
+    if (isolatedHome !== undefined) await mkdir(isolatedHome, { recursive: true })
     await new Promise<void>((resolve, reject) => {
       server.once('error', reject)
       server.listen(0, '127.0.0.1', () => resolve())
@@ -93,11 +130,14 @@ export async function run(): Promise<void> {
       path.join(settingsDirectory, 'settings.json'),
       JSON.stringify(
         {
-          'dsh.connection.mode': managed ? 'new-isolated' : 'attach-only',
-          'dsh.connection.attachPorts': managed ? [] : [address.port],
+          'dsh.connection.mode':
+            mode === 'auto' ? 'auto' : mode === 'managed' ? 'new-isolated' : 'attach-only',
+          // auto must not see the fixture as a candidate, or the run would prove
+          // an attach to simulated traffic instead of discovery over a real runtime.
+          'dsh.connection.attachPorts': startsRuntime ? [] : [address.port],
           'dsh.connection.discoveryTimeoutMs': 3_000,
           'dsh.connection.requestTimeoutMs': 5_000,
-          'dsh.runtime.autoStart': managed,
+          'dsh.runtime.autoStart': startsRuntime,
           ...(executablePathSetting === undefined
             ? {}
             : { 'dsh.runtime.executablePath': executablePathSetting }),
@@ -107,24 +147,18 @@ export async function run(): Promise<void> {
       ),
       'utf8',
     )
-    console.log(
-      `[dsh-vscode-e2e] mode=${managed ? 'managed' : 'attach-only'} fixture listening on loopback port ${address.port}`,
-    )
+    console.log(`[dsh-vscode-e2e] mode=${mode} fixture listening on loopback port ${address.port}`)
     if (invalidSettings)
       console.log(
         `[dsh-vscode-e2e] invalid-settings scenario: dsh.runtime.executablePath=${INVALID_EXECUTABLE_PATH}`,
       )
-    if (managed)
-      console.log(`[dsh-vscode-e2e] managed runtime: ${runtimeExecutable ?? 'discovered from PATH'}`)
-    const vscodeExecutablePath = process.env.DSH_VSCODE_E2E_EXECUTABLE
-    console.log(
-      vscodeExecutablePath === undefined
-        ? '[dsh-vscode-e2e] no local executable override; runTests may download VS Code 1.125.0'
-        : '[dsh-vscode-e2e] using the executable from DSH_VSCODE_E2E_EXECUTABLE',
-    )
+    if (startsRuntime)
+      console.log(
+        `[dsh-vscode-e2e] ${mode} runtime: ${runtimeExecutable ?? 'discovered from PATH'}; user profile excluded via an isolated DSH home`,
+      )
+    console.log('[dsh-vscode-e2e] using the executable from DSH_VSCODE_E2E_EXECUTABLE')
     await runTests({
-      version: '1.125.0',
-      ...(vscodeExecutablePath === undefined ? {} : { vscodeExecutablePath }),
+      vscodeExecutablePath,
       extensionDevelopmentPath: path.resolve('apps/extension'),
       extensionTestsPath: path.resolve('tests/vscode-e2e/suite'),
       extensionTestsEnv: {
@@ -132,6 +166,10 @@ export async function run(): Promise<void> {
         // through makes Code.exe execute the workspace path as a Node script.
         ELECTRON_RUN_AS_NODE: undefined,
         ...(invalidSettings ? { DSH_VSCODE_E2E_INVALID_SETTINGS: '1' } : {}),
+        // The Extension Host passes its environment to the DSH it starts, and
+        // the suite refuses to connect unless both point at the same
+        // test-owned home.
+        ...(isolatedHome === undefined ? {} : { DSH_HOME: isolatedHome, DSH_VSCODE_E2E_HOME: isolatedHome }),
       },
       // The temp workspace must count as trusted, otherwise the extension is
       // required to refuse an automatic start and managed mode can never run.
@@ -146,7 +184,20 @@ export async function run(): Promise<void> {
     console.log(
       `[dsh-vscode-e2e] fixture observed methods=[${observations.methods.join(',')}] mux=${observations.muxUpgrades} host=${observations.hostUpgrades}`,
     )
-    if (!managed && !invalidSettings) {
+    if (isolatedHome !== undefined && !invalidSettings) {
+      // The managed analog of the attach fixture assertion below: a scenario
+      // that never wrote to its own home did not start a real runtime there,
+      // and an empty home would mean the runtime used the user's profile.
+      const entries = await readdir(isolatedHome)
+      console.log(
+        `[dsh-vscode-e2e] managed runtime left ${entries.length} source${entries.length === 1 ? '' : 's'} in the isolated DSH home`,
+      )
+      if (entries.length === 0)
+        throw new Error(
+          'The managed DSH runtime never wrote to the isolated DSH home, so the run cannot prove it started against it.',
+        )
+    }
+    if (mode === 'attach-only' && !invalidSettings) {
       // The suite asserts this too, but a suite that silently stops asking is
       // exactly the failure mode this fixture exists to catch.
       const attached =
@@ -155,6 +206,17 @@ export async function run(): Promise<void> {
         throw new Error(
           `The attach-only fixture was never used by the extension host: ${JSON.stringify(observations)}`,
         )
+    }
+    if (mode === 'auto' && !invalidSettings) {
+      // The extension owns only what auto started here, so once the Extension
+      // Host has exited nothing on these endpoints may still be serving. A
+      // surviving endpoint would mean the owned runtime was never released.
+      const stillServing = await discoverExternalDshEndpoints()
+      if (stillServing.length > 0)
+        throw new Error(
+          `auto mode left ${stillServing.map((entry) => `${entry.source}:${entry.port}`).join(', ')} serving after the Extension Host exited.`,
+        )
+      console.log('[dsh-vscode-e2e] auto released every endpoint it was allowed to own')
     }
   } finally {
     for (const socket of fixtureSockets) socket.destroy()

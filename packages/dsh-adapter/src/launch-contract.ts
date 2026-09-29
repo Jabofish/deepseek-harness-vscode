@@ -18,6 +18,15 @@ const WEB_NO_OPEN_UNSUPPORTED_VERSIONS = new Set([
 ])
 
 /**
+ * The port a DSH Web Profile serves on when no port was chosen.
+ *
+ * Discovery offers it as a `default-port` candidate, and anything deciding
+ * "is an instance I do not own already running?" reads it from here instead of
+ * repeating the literal.
+ */
+export const DEFAULT_DSH_WEB_PORT = 3_080
+
+/**
  * Build the managed Web Profile argument vector for one DSH CLI version.
  *
  * The profile/host/port flags are the common launch contract. `--no-open` is

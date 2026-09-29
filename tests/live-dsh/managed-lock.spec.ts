@@ -1,6 +1,6 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { spawn } from 'node:child_process'
-import { readFile, rm, stat, utimes, writeFile } from 'node:fs/promises'
+import { open, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { createInterface } from 'node:readline'
@@ -209,6 +209,97 @@ describe('acquireManagedRuntimeLock', () => {
       await rm(target, { force: true })
       await rm(gatePath, { force: true })
     }
+  })
+
+  it('retries transient create failures while the previous gate owner is being torn down', async () => {
+    // The failure this guards: on Windows the exclusive gate create can return
+    // EPERM/EBUSY for an instant right after another process released it. The
+    // first live-dsh spec of a run then aborted with a raw EPERM instead of
+    // waiting for the gate like any other contender.
+    const target = lockPath('gate-create-retry')
+    const gatePath = `${target}.gate`
+    const transientErrors = ['EPERM', 'EBUSY'] as const
+    let createAttempts = 0
+    let waitAttempts = 0
+
+    try {
+      const release = await acquireManagedRuntimeLock({
+        lockPath: target,
+        timeoutMs: 1_000,
+        pollIntervalMs: 1,
+        createGate: (path) => {
+          const code = transientErrors[createAttempts]
+          createAttempts += 1
+          if (code !== undefined)
+            return Promise.reject(Object.assign(new Error('temporary sharing violation'), { code }))
+          return open(path, 'wx')
+        },
+        sleep: () => {
+          waitAttempts += 1
+          return Promise.resolve()
+        },
+      })
+
+      expect(createAttempts).toBe(transientErrors.length + 1)
+      expect(waitAttempts).toBe(transientErrors.length)
+      expect(await readFile(target, 'utf8')).toMatch(/^dsh-live-lock-v2\n/u)
+      await release()
+      await expect(readFile(gatePath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally {
+      await rm(target, { force: true })
+      await rm(gatePath, { force: true })
+    }
+  })
+
+  it('times out a gate create that stays temporarily unreadable past the deadline', async () => {
+    const target = lockPath('gate-create-timeout')
+    const gatePath = `${target}.gate`
+    const clock = { value: 0 }
+    let createAttempts = 0
+
+    let caught: unknown
+    try {
+      await acquireManagedRuntimeLock({
+        lockPath: target,
+        timeoutMs: 50,
+        pollIntervalMs: 5,
+        now: () => clock.value,
+        sleep: (ms) => {
+          clock.value += ms
+          return Promise.resolve()
+        },
+        createGate: () => {
+          createAttempts += 1
+          return Promise.reject(Object.assign(new Error('sharing violation persists'), { code: 'EPERM' }))
+        },
+      })
+    } catch (error) {
+      caught = error
+    }
+
+    expect((caught as Error).message).toContain('Timed out waiting to create the managed DSH lock gate')
+    expect((caught as { cause?: { code?: string } }).cause?.code).toBe('EPERM')
+    expect(createAttempts).toBe(11)
+    await expect(readFile(gatePath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('still fails closed on a gate create error that is not a transient sharing violation', async () => {
+    const target = lockPath('gate-create-fatal')
+    let createAttempts = 0
+
+    await expect(
+      acquireManagedRuntimeLock({
+        lockPath: target,
+        timeoutMs: 1_000,
+        pollIntervalMs: 1,
+        createGate: () => {
+          createAttempts += 1
+          return Promise.reject(Object.assign(new Error('lock directory is missing'), { code: 'ENOENT' }))
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+
+    expect(createAttempts).toBe(1)
   })
 
   it('deduplicates a concurrent close failure and retries without reclosing a closed handle', async () => {

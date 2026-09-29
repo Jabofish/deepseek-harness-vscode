@@ -12,6 +12,7 @@ import {
 import type { TimelineNode } from '@dsh-vscode/timeline'
 import type { MessageFeedbackItem, MessageFeedbackRating, MessageImageReference } from '@dsh-vscode/domain'
 import {
+  DEFAULT_UNMEASURED_ROW_WINDOW,
   ScrollToLatestButton,
   useVirtualizedCollection,
   useScrollFollow,
@@ -303,6 +304,11 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
     onScrollAdjustment: applyScrollAdjustment,
   })
   const virtualizedReady = virtualized.enabled && virtualized.ready
+  // Until the virtualizer owns a measured viewport the rows come from the
+  // plain list. Anchor that frame at the tail and keep it a constant: it still
+  // has to cover a viewport for the measurement to be meaningful, and the
+  // reader of a reopened long session is looking at the newest rows.
+  const unmeasuredRowStart = Math.max(0, displayNodes.length - DEFAULT_UNMEASURED_ROW_WINDOW)
   const enteredId = useTailEntrance(latestNode?.id, props.sessionId, props.streaming || running)
   useLayoutEffect(() => {
     if (!virtualizedReady || virtualized.totalSize <= 0) return
@@ -484,10 +490,10 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
                     </div>
                   )
                 })
-              : displayNodes.map((node, index) => (
+              : displayNodes.slice(unmeasuredRowStart).map((node, offset) => (
                   <div
                     key={node.id}
-                    data-index={index}
+                    data-index={unmeasuredRowStart + offset}
                     data-node-id={node.id}
                     className={`dsh-timeline__row${node.id === enteredId ? ' dsh-timeline__row--enter' : ''}`}
                   >

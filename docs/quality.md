@@ -66,7 +66,7 @@ Fixture 只留结构必需字段，路径、Prompt、名称、模型输出和 ke
 
 新增用例必须对应新的行为分支；同一个断言不在 Domain/Adapter、Application/Host、Webview 三层重复铺设，错误分支在离实现最近的一层覆盖一次，另一层只保留跨层组合的代表性场景。版本契约文件只写该版本相对前序版本的增量，版本选择门与共享 fixture 使用 `packages/dsh-adapter/test/support/` 的 harness，按身份表登记，不复制样板。对一个行为的多次断言可以合并在同一用例内，但不能为此合并不同被测单元，也不能删除必测负面路径。
 
-分层执行：日常开发用 `pnpm test:changed` 只运行受未提交改动影响的用例（Vitest 按依赖图判定）；CI 的 PR 只运行受影响用例，外加 styles 契约这类依赖图之外的规格；`main` 推送与发布 workflow 运行全量 `pnpm check`，作为完整门禁与能力证据入口。依赖图判定不到的改动（CSS、按路径直读的 fixture）由始终执行的契约规格与 `main` 全量兜底；新增这类规格时必须登记到始终执行的范围。
+分层执行：日常开发用 `pnpm test:changed` 只运行受未提交改动影响的用例（Vitest 按依赖图判定）；CI 的 PR 只运行受影响用例，外加 styles 契约这类依赖图之外的规格；`main` 推送运行分片全量测试，发布 workflow 才执行字面意义的完整 `pnpm check`。格式、文档、i18n、lint 与类型检查在 PR 和 `main` 推送都随 CI 运行，覆盖范围与本地 `pnpm check` 一致，不需要等到发布才暴露漂移。依赖图判定不到的改动（CSS、按路径直读的 fixture）由始终执行的契约规格与 `main` 全量兜底；新增这类规格时必须登记到始终执行的范围。
 
 ### 隔离真实 DSH
 
@@ -85,7 +85,11 @@ pnpm exec vitest run tests/live-dsh
 
 ### VS Code 现场验证
 
-`tests/vscode-e2e/run.ts` 使用本地指定的 VS Code 可执行文件与一次性工作区，默认 attach-only 到受控 loopback fixture；`managed` 模式走真实扩展持有的启动路径。运行器只清理自己的工作区与 socket，不隐式下载 VS Code。
+`tests/vscode-e2e/run.ts` 使用本地指定的 VS Code 可执行文件与一次性工作区，默认 attach-only 到受控 loopback fixture；`DSH_VSCODE_E2E_MODE=managed` 走真实扩展持有的启动路径，`auto` 走产品默认的全量发现装配（发现返回自有实例则附加，否则自行启动）。运行器只清理自己的工作区与 socket，不隐式下载 VS Code。
+
+`managed` 与 `auto` 一律在运行器临时根下新建一次性 `DSH_HOME` 并注入扩展宿主；套件在发出任何连接前校验该 home 与运行器记录一致且位于系统临时目录内，否则直接失败，真实运行时不会以用户生产 profile 启动。运行后仍要求该 home 确实被写入，空 home 视为未证明启动。
+
+`auto` 还有一道只读预检：默认端口与 companion 注册表记录的端口若已在环回上服务，说明存在本运行并不拥有的实例，运行器在创建任何临时资源之前失败并点名来源，结束后再复核自有端点已释放。该守卫只存在于测试侧——`auto` 装配的默认端口与进程扫描来源都不读 `DSH_HOME`，home 隔离本身挡不住附加到外部实例；预检也不覆盖进程扫描，那一路仍需人工确认没有正在运行的 DSH。
 
 ```powershell
 $env:DSH_VSCODE_E2E_EXECUTABLE = '<path-to-Code.exe>'

@@ -21,6 +21,8 @@ export interface ManagedRuntimeLockDependencies {
   readonly isGateProcessAlive?: (pid: number) => boolean
   /** Read hook for deterministic gate ownership-change cleanup tests. */
   readonly readGateOwner?: (gatePath: string) => Promise<string>
+  /** Create hook for deterministic gate acquisition tests. */
+  readonly createGate?: (gatePath: string) => Promise<GateFileHandle>
   /** Pause a stale reclaim while its gate is held to make the cross-process race reproducible. */
   readonly afterStaleLeaseObserved?: () => Promise<void>
   /** File-operation hooks keep main-lease acquisition and release failures deterministic in tests. */
@@ -72,6 +74,7 @@ export async function acquireManagedRuntimeLock(
   const isProcessAlive = dependencies.isProcessAlive ?? defaultIsProcessAlive
   const isGateProcessAlive = dependencies.isGateProcessAlive ?? defaultIsProcessAlive
   const readGateOwner = dependencies.readGateOwner ?? ((target: string) => readFile(target, 'utf8'))
+  const createGate = dependencies.createGate ?? ((target: string) => open(target, 'wx'))
   const writeLeaseOwner =
     dependencies.writeLeaseOwner ??
     ((handle: ManagedLockFileHandle, owner: string) => handle.writeFile(owner))
@@ -90,6 +93,7 @@ export async function acquireManagedRuntimeLock(
       sleep,
       isGateProcessAlive,
       readGateOwner,
+      createGate,
     })
 
     let result: AcquiredLease | BlockedLease
@@ -144,6 +148,7 @@ export async function acquireManagedRuntimeLock(
         sleep,
         isGateProcessAlive,
         readGateOwner,
+        createGate,
         closeLockFile,
         readLeaseOwner,
         removeLeaseFile,
@@ -169,6 +174,7 @@ interface AcquireGateOptions {
   readonly sleep: (ms: number) => Promise<void>
   readonly isGateProcessAlive: (pid: number) => boolean
   readonly readGateOwner: (gatePath: string) => Promise<string>
+  readonly createGate: (gatePath: string) => Promise<GateFileHandle>
 }
 
 async function acquireGate(options: AcquireGateOptions): Promise<GateLease> {
@@ -176,9 +182,21 @@ async function acquireGate(options: AcquireGateOptions): Promise<GateLease> {
     const owner = `${GATE_FORMAT}\n${randomUUID()}\n${process.pid}\n`
     let handle: GateFileHandle | undefined
     try {
-      handle = await open(options.gatePath, 'wx')
+      handle = await options.createGate(options.gatePath)
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
+        // Windows can deny the exclusive open while the previous owner's handle
+        // is still being torn down. That is contention, not a broken gate, so
+        // retry it under the same deadline the owner read below uses.
+        if (!isTransientGateFileError(error)) throw error
+        if (options.now() >= options.deadline)
+          throw new Error(
+            `Timed out waiting to create the managed DSH lock gate at ${options.gatePath}; its previous owner could not be replaced. The gate was preserved for manual recovery.`,
+            { cause: error },
+          )
+        await options.sleep(options.pollIntervalMs)
+        continue
+      }
     }
 
     if (handle !== undefined) {
@@ -269,7 +287,7 @@ async function acquireGate(options: AcquireGateOptions): Promise<GateLease> {
       current = await options.readGateOwner(options.gatePath)
     } catch (error) {
       if (isMissingFileError(error)) continue
-      if (isGateTemporarilyUnreadableError(error)) {
+      if (isTransientGateFileError(error)) {
         if (options.now() >= options.deadline)
           throw new Error(
             `Timed out waiting for the managed DSH lock gate at ${options.gatePath}; its owner is incomplete or unreadable. The gate was preserved for manual recovery.`,
@@ -404,6 +422,7 @@ interface CreateLeaseReleaseOptions {
   readonly sleep: (ms: number) => Promise<void>
   readonly isGateProcessAlive: (pid: number) => boolean
   readonly readGateOwner: (gatePath: string) => Promise<string>
+  readonly createGate: (gatePath: string) => Promise<GateFileHandle>
   readonly closeLockFile: (handle: ManagedLockFileHandle) => Promise<void>
   readonly readLeaseOwner: (lockPath: string) => Promise<string>
   readonly removeLeaseFile: (lockPath: string) => Promise<void>
@@ -426,6 +445,7 @@ function createLeaseRelease(options: CreateLeaseReleaseOptions): () => Promise<v
         sleep: options.sleep,
         isGateProcessAlive: options.isGateProcessAlive,
         readGateOwner: options.readGateOwner,
+        createGate: options.createGate,
       })
       let error: unknown
       let failed = false
@@ -509,7 +529,7 @@ function isMissingFileError(error: unknown): boolean {
     : false
 }
 
-function isGateTemporarilyUnreadableError(error: unknown): boolean {
+function isTransientGateFileError(error: unknown): boolean {
   if (typeof error !== 'object' || error === null || !('code' in error)) return false
   const code = (error as { readonly code?: unknown }).code
   return code === 'EPERM' || code === 'EACCES' || code === 'EBUSY'

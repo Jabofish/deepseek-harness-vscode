@@ -51,6 +51,10 @@ jobs:
           path: node_modules/.cache/prettier
           key: prettier-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', '**/.prettierrc*', 'prettier.config.*') }}
       - run: pnpm format:check
+      - name: Check documentation links, version drift, and the capability matrix
+        run: pnpm docs:check
+      - name: Check the Webview message catalogues
+        run: pnpm i18n:check
       - run: pnpm typecheck
 
   test:

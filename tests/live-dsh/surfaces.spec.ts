@@ -120,16 +120,23 @@ describe.skipIf(process.env.DSH_LIVE_SMOKE !== '1')('live DSH read-only surfaces
           const value = await backend.settings.read()
           return `${Object.keys(value).length} namespace(s)`
         })
-        await surface('skills.list', async () => {
-          const skills = await backend.skills.list(sessionId)
-          return `${skills.length}`
-        })
-        await surface('commands.list', async () => {
-          const commands = await backend.commands.list(sessionId)
-          return `${commands.length}`
-        })
+
+        // The two directory surfaces read a Session's own directory. Without a
+        // session the adapters answer from their own guards — an empty command
+        // list, a capability refusal — so probing them here would report adapter
+        // policy as a host fact. They are sampled inside the gate below.
+        if (sessionId === undefined)
+          unavailable.push('skills.list/commands.list: the isolated home has no session')
 
         if (sessionId !== undefined) {
+          await surface('skills.list', async () => {
+            const skills = await backend.skills.list(sessionId)
+            return `${skills.length}`
+          })
+          await surface('commands.list', async () => {
+            const commands = await backend.commands.list(sessionId)
+            return `${commands.length}`
+          })
           await surface('sessions.get', async () => {
             const detail = await backend.sessions.get(sessionId)
             return `${detail.history?.length ?? 0} history row(s)`
@@ -226,10 +233,10 @@ describe.skipIf(process.env.DSH_LIVE_SMOKE !== '1')('live DSH read-only surfaces
         }
 
         expect(unexpected, 'no read-only surface may fail protocol or mapping validation').toEqual([])
-        // A fresh isolated DSH_HOME has no session, so the session-scoped
-        // reads are legitimately skipped. Once a session exists, the queue
-        // sample adds the twelfth observation.
-        expect(observed.length).toBeGreaterThanOrEqual(sessionId === undefined ? 11 : 12)
+        // A fresh isolated DSH_HOME has no session, so the session-scoped reads
+        // — the two directory surfaces included — are skipped for exactly that
+        // reason. The floor counts only the surfaces that answer without one.
+        expect(observed.length).toBeGreaterThanOrEqual(sessionId === undefined ? 10 : 12)
       } finally {
         unsubscribe()
         await runtime.stop()

@@ -261,3 +261,46 @@ describe('CompositeInstanceDiscovery phases', () => {
     }
   })
 })
+
+describe('CompositeInstanceDiscovery loopback allow-list', () => {
+  // `[::1]` is loopback, and two other production layers already treat it as
+  // such (account lifecycle origin parsing, the rc172 account repository).
+  // Discovery and the transport guard deliberately do not, because no verified
+  // DSH release has been observed listening on IPv6 loopback. Widening this is
+  // an upstream-evidence decision, not a convenience fix, so the split is
+  // asserted here instead of left implicit.
+  it('keeps only the loopback spellings the transport can actually reach', async () => {
+    const reachable: readonly BackendCandidate['endpoint'][] = [
+      { host: '127.0.0.1', port: 3960, baseUrl: 'http://127.0.0.1:3960' },
+      { host: 'localhost', port: 3961, baseUrl: 'http://localhost:3961' },
+    ]
+    // Domain types `host` as a loopback-only union, so these spellings cannot be
+    // produced by typed code. They can only arrive through a parsed source — the
+    // companion file or a process command line — which is exactly why discovery
+    // re-validates at runtime instead of trusting the shape it was handed.
+    const foreignHosts = [
+      { host: '[::1]', port: 3962, baseUrl: 'http://[::1]:3962' },
+      { host: '10.0.0.8', port: 3963, baseUrl: 'http://10.0.0.8:3963' },
+    ] as unknown as readonly BackendCandidate['endpoint'][]
+    // A loopback host alone is not enough: the baseUrl must describe the same
+    // endpoint, and port 0 is not connectable.
+    const malformed: readonly BackendCandidate['endpoint'][] = [
+      { host: 'localhost', port: 3964, baseUrl: 'http://127.0.0.1:3964' },
+      { host: 'localhost', port: 0, baseUrl: 'http://localhost:0' },
+    ]
+    const candidates = [...reachable, ...foreignHosts, ...malformed].map((endpoint) => ({
+      endpoint,
+      source: 'known' as const,
+      confidence: 50,
+    }))
+    const discovery = new CompositeInstanceDiscovery([
+      { id: 'mixed', discover: vi.fn(() => Promise.resolve(candidates)) },
+    ])
+
+    const resolved = await discovery.discover()
+
+    expect(resolved.map((entry) => entry.endpoint.baseUrl)).toEqual(
+      reachable.map((endpoint) => endpoint.baseUrl),
+    )
+  })
+})

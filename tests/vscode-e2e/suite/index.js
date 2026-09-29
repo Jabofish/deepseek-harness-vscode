@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
 import http from 'node:http'
+import os from 'node:os'
+import path from 'node:path'
 import * as vscode from 'vscode'
 
 const ATTACH_TIMEOUT_MS = 20_000
@@ -28,9 +30,10 @@ export async function run() {
   )
   const mode = settings['dsh.connection.mode']
   assert.ok(
-    mode === 'attach-only' || mode === 'new-isolated',
+    mode === 'attach-only' || mode === 'new-isolated' || mode === 'auto',
     `unexpected DSH connection mode in the e2e workspace: ${String(mode)}`,
   )
+  if (mode !== 'attach-only') assertManagedIsolation(mode)
 
   if (process.env.DSH_VSCODE_E2E_INVALID_SETTINGS === '1') {
     await assertInvalidSettingIsReported()
@@ -62,9 +65,15 @@ export async function run() {
 
   if (mode !== 'attach-only') {
     // In managed mode the extension owns a real runtime and never talks to the
-    // attach fixture, so the wire-level assertions below do not apply. The
-    // owned-process story is covered by tests/live-dsh/run.spec.ts.
-    console.log('[dsh-vscode-e2e] managed mode: no attach fixture traffic expected')
+    // attach fixture, so the wire-level assertions below do not apply.
+    // Reconnecting exercises the owned start → stop → start path end to end.
+    const reconnected = await vscode.commands.executeCommand('dsh.reconnect')
+    assert.deepEqual(
+      reconnected,
+      { connected: true },
+      'the Extension Host must stop the owned runtime and connect again',
+    )
+    console.log(`[dsh-vscode-e2e] ${mode}: connect and reconnect both completed against the owned runtime`)
   } else {
     const port = settings['dsh.connection.attachPorts']?.[0]
     assert.equal(typeof port, 'number', 'attach-only mode must record the fixture port')
@@ -73,6 +82,30 @@ export async function run() {
       `[dsh-vscode-e2e] attached methods=[${observed.methods.join(',')}] mux=${observed.muxUpgrades} host=${observed.hostUpgrades}`,
     )
   }
+}
+
+/**
+ * Any mode that starts a real runtime writes its state under `DSH_HOME`. The
+ * runner creates a throwaway home and mirrors it here, so a mismatch means the
+ * isolation was lost and the next start would use the user's own profile. This
+ * matters more for `auto`, which also queries sources that ignore the home
+ * entirely. Asserting before `dsh.connect` makes that fail before any runtime
+ * exists.
+ */
+function assertManagedIsolation(mode) {
+  const home = process.env.DSH_HOME
+  assert.ok(home, `${mode} mode must run with DSH_HOME set to a test-owned home`)
+  assert.equal(
+    home,
+    process.env.DSH_VSCODE_E2E_HOME,
+    'the Extension Host must receive the isolated home the runner created',
+  )
+  const relative = path.relative(os.tmpdir(), home)
+  assert.ok(
+    relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative),
+    `the isolated DSH home must live under the system temp directory: ${home}`,
+  )
+  console.log(`[dsh-vscode-e2e] ${mode} is isolated from the user DSH home`)
 }
 
 /**

@@ -1,5 +1,10 @@
 # Change Log
 
+## Unreleased
+
+- 打开长对话的首帧不再随会话长度增长：虚拟列表首次提交时还没有测量视口，此前这一帧会渲染全部行；现在它只渲染末尾的有界行数并保留相对完整会话的索引，10,000 节点会话的首次提交工作量与其后的每一帧一致。
+- Opening a long conversation no longer renders every row in its first frame: before the virtual list has a measured viewport, that frame keeps a bounded window at the tail with indexes into the full conversation, so a 10,000-node session commits as cheaply as any later frame.
+
 ## 0.2.9
 
 - Chat 视图现在默认注册在 VS Code 右侧辅助侧边栏；升级时保留原容器与视图 ID，VS Code 中用户已保存的布局选择仍可能生效。

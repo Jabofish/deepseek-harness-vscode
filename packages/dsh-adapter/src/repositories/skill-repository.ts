@@ -1,14 +1,20 @@
 import { AppError, type SkillDescriptor, type SkillRepository } from '@dsh-vscode/domain'
 
 import type { DshTransport } from '../contracts.js'
-import { callRpc, unavailable } from '../versions/rc6/rpc.js'
+import { callRpc } from '../versions/rc6/rpc.js'
 
 export class Rc6SkillRepository implements SkillRepository {
   public constructor(private readonly transport: DshTransport) {}
 
   public async list(sessionId?: string, signal?: AbortSignal): Promise<readonly SkillDescriptor[]> {
+    // The catalog is read per session, so a missing session is a caller-context
+    // gap. The refusal must not read as a capability the host turned out to lack.
     if (sessionId === undefined || sessionId.trim() === '')
-      throw unavailable('skill list without a session context')
+      throw new AppError({
+        code: 'CAPABILITY_UNAVAILABLE',
+        message: 'Skill list requires a session context.',
+        retryable: false,
+      })
     const value = asRecord(await callRpc<unknown>(this.transport, 'skill.list', { sessionId }, signal))
     if (value === undefined || !Array.isArray(value.skills)) throw malformedSkillResponse('list')
     return value.skills.flatMap((entry) => {

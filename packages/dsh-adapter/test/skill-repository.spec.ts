@@ -86,6 +86,24 @@ describe('Rc6SkillRepository skill.list', () => {
 
     await expect(repository.list('session-1')).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
   })
+
+  it('refuses a sessionless read as a missing session, never as a host capability', async () => {
+    const calls: Call[] = []
+    const repository = new Rc6SkillRepository(transportFor({ skills: [] }, calls))
+
+    // The catalog is read per session, so this refusal names the caller's missing
+    // context. Reporting it as something the host does not expose is how this
+    // guard once produced a false host-capability finding.
+    const refusal = await repository.list().then(
+      () => undefined,
+      (error: unknown) => error as Error & { code?: string; retryable?: boolean },
+    )
+    expect(refusal).toMatchObject({ code: 'CAPABILITY_UNAVAILABLE', retryable: false })
+    expect(refusal?.message).toBe('Skill list requires a session context.')
+    await expect(repository.list('   ')).rejects.toMatchObject({ code: 'CAPABILITY_UNAVAILABLE' })
+    await expect(repository.refresh()).rejects.toMatchObject({ code: 'CAPABILITY_UNAVAILABLE' })
+    expect(calls, 'a sessionless read must not reach the wire').toEqual([])
+  })
 })
 
 describe('skill documentation wire validation', () => {
