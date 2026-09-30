@@ -110,7 +110,17 @@ export function assertCanonicalSessionEvent(name: string, value: unknown): void 
       const config = object(header.config, `${name} config`)
       assertCanonicalNonEmptyString(config.provider, `${name} provider`)
       assertCanonicalNonEmptyString(config.model, `${name} model`)
-      if (data.reason !== 'initial' && data.reason !== 'resume' && data.reason !== 'change')
+      // Upstream's `RequestHeaderReason` is 'initial' | 'resume' | 'change' |
+      // 'series': `series` marks a new message series that began with an
+      // unchanged header (or followed a surface replacement). The session log
+      // admission and the format validator both admit it, so rejecting it here
+      // would degrade an ordinary event into a redacted unknown row.
+      if (
+        data.reason !== 'initial' &&
+        data.reason !== 'resume' &&
+        data.reason !== 'change' &&
+        data.reason !== 'series'
+      )
         throw new Error(`Malformed ${name} reason`)
       return
     }

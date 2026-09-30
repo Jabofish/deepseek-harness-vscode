@@ -4,7 +4,7 @@ import { AppError } from '@dsh-vscode/domain'
 import type { DshTransport } from '../src/contracts.js'
 import { VersionedBackendFactory } from '../src/backend-factory.js'
 import { callRpc } from '../src/versions/rc6/rpc.js'
-import { rc6Mapper } from '../src/versions/rc6/mapper.js'
+import { rc6Mapper, assertCanonicalSessionEvent } from '../src/versions/rc6/mapper.js'
 import { Rc6CommandRepository } from '../src/repositories/command-repository.js'
 import { Rc6InteractionRepository } from '../src/repositories/interaction-repository.js'
 import {
@@ -2057,5 +2057,36 @@ describe('rc6 todo frame degradation', () => {
         todos: [{ content: 'broken', status: 'future' }],
       }),
     ).toThrow(/Malformed todo status/)
+  })
+})
+
+describe('rc6 request/header reasons', () => {
+  it('accepts the upstream `series` reason and restates the unchanged configuration', () => {
+    // Upstream's agent loop appends `{ header, reason: 'series' }` whenever a
+    // new message series begins with an unchanged header — for example after a
+    // surface replacement. The upstream `RequestHeaderReason` type and the
+    // session-format validator both admit it alongside `initial`, `resume` and
+    // `change`, so rejecting it here degrades an ordinary event into a
+    // payload-redacted unknown row in the timeline and an `unreadable` row in
+    // a session export.
+    const event = {
+      sessionId: 's1',
+      data: { header: { config: { provider: 'p', model: 'm' } }, reason: 'series' },
+    }
+    expect(() => assertCanonicalSessionEvent('request/header', event)).not.toThrow()
+    expect(rc6Mapper.event('request/header', event)).toEqual({
+      type: 'session.configuration',
+      sessionId: 's1',
+      patch: { model: { providerId: 'p', modelId: 'm' } },
+    })
+  })
+
+  it('keeps rejecting a reason the protocol never defined', () => {
+    expect(() =>
+      assertCanonicalSessionEvent('request/header', {
+        sessionId: 's1',
+        data: { header: { config: { provider: 'p', model: 'm' } }, reason: 'future-reason' },
+      }),
+    ).toThrow(/Malformed request\/header reason/)
   })
 })
