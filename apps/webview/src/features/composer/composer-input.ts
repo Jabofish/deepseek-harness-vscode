@@ -90,6 +90,12 @@ export function referenceMention(candidate: ReferenceCandidate): string {
 }
 
 export function slashCommandQuery(value: string): string | undefined {
+  // Multi-line drafts are ordinary prompts and never claim (`leadingSlashCommandLine`
+  // documents this). The command menu must agree: if the query kept reading
+  // the first line while the draft holds a body, Tab or a row pick would
+  // replace the whole draft with the command line and silently destroy the
+  // lines below it.
+  if (value.includes('\n')) return undefined
   const firstLine = value.split('\n', 1)[0] ?? ''
   return /^\/(?:[a-z][a-z0-9_-]*(?:[ \t]+[^\n]*)?)?$/u.test(firstLine) ? firstLine : undefined
 }

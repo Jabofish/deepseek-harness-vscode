@@ -322,6 +322,68 @@ describe('Composer', () => {
     expect(onDraftChange).toHaveBeenLastCalledWith('@"docs/release notes.md"')
   })
 
+  it('repositions the caret after a picked mention', async () => {
+    // The palette rows pick on mousedown with preventDefault, so the textarea
+    // keeps focus while the draft is rewritten from `…@rea` to
+    // `…@README.md`. React's commit-phase selection restore then puts the
+    // caret back at the old numeric offset -- mid-mention -- and the next
+    // typed character corrupts the reference. The pending-cursor layout
+    // effect is the component's countermeasure; it must fire for the mention
+    // pick exactly as it does for command insertion and mention deletion.
+    // (jsdom does not reproduce React's restore itself, so the observable is
+    // the explicit caret reposition, not the resulting caret offset.)
+    function Host(): ReactElement {
+      const [draft, setDraft] = useState('explain @rea')
+      return (
+        <Composer
+          {...baseProps()}
+          draft={draft}
+          onDraftChange={setDraft}
+          references={[
+            {
+              id: 'file:README.md',
+              kind: 'file',
+              path: 'README.md',
+              label: 'README.md',
+              description: 'README.md',
+            },
+          ]}
+        />
+      )
+    }
+    render(<Host />)
+    const textarea = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })
+    const reposition = vi.spyOn(HTMLTextAreaElement.prototype, 'setSelectionRange')
+
+    fireEvent.mouseDown(screen.getByRole('option', { name: /README\.md/ }))
+    await act(async () => {})
+
+    expect(textarea.value).toBe('explain @README.md')
+    expect(reposition).toHaveBeenCalledWith('explain @README.md'.length, 'explain @README.md'.length)
+    reposition.mockRestore()
+  })
+
+  it('keeps the command menu closed over a multi-line draft', () => {
+    // Multi-line drafts are ordinary prompts and never claim (the enter
+    // adjudication documents this). A menu that still opens over them lets
+    // Tab or a row pick replace the whole draft with the command line,
+    // silently destroying every line below it.
+    const onDraftChange = vi.fn()
+    render(
+      <Composer
+        {...baseProps()}
+        draft={'/plan\nsummarize the repo'}
+        commands={commandFixtures()}
+        onDraftChange={onDraftChange}
+      />,
+    )
+    expect(screen.queryByRole('listbox', { name: 'Commands' })).toBeNull()
+
+    const textarea = screen.getByRole('textbox', { name: 'Prompt' })
+    fireEvent.keyDown(textarea, { key: 'Tab' })
+    expect(onDraftChange).not.toHaveBeenCalled()
+  })
+
   it('deletes a complete session mention on native caret deletion', () => {
     const onDraftChange = vi.fn()
     const mention = '@[Review](dsh-session:s2)'
@@ -871,6 +933,45 @@ describe('Composer', () => {
     })
 
     expect(textarea.value).toBe('/goal fix the parser and the lexer')
+  })
+
+  it('executes a command once while its Host acceptance is still in flight', async () => {
+    // A slow command (compaction) leaves the draft and the command menu in
+    // place until the Host accepts the line, so a second Enter re-enters the
+    // same adjudication. One command gesture at a time: the in-flight
+    // submission must swallow the repeat, not execute the command twice.
+    let admit: (() => void) | undefined
+    const onCommand = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          admit = resolve
+        }),
+    )
+    function Host(): ReactElement {
+      const [draft, setDraft] = useState('/clear')
+      return (
+        <Composer
+          {...baseProps()}
+          draft={draft}
+          commands={commandFixtures()}
+          onCommand={onCommand}
+          onDraftChange={setDraft}
+        />
+      )
+    }
+    render(<Host />)
+    const textarea = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })
+
+    fireEvent.keyDown(textarea, { key: 'Enter' })
+    fireEvent.keyDown(textarea, { key: 'Enter' })
+    await act(async () => {
+      admit?.()
+      await Promise.resolve()
+    })
+
+    expect(onCommand).toHaveBeenCalledTimes(1)
+    expect(onCommand).toHaveBeenCalledWith('/clear')
+    expect(textarea.value).toBe('')
   })
 
   it('clears the command line once the Host accepts it', async () => {

@@ -181,6 +181,7 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
   const attachmentRailRef = useRef<HTMLUListElement>(null)
   const submitting = useRef(false)
   const steeringQueue = useRef(false)
+  const commandSubmitInFlight = useRef(false)
   const mounted = useRef(true)
   const dragDepth = useRef(0)
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -753,15 +754,26 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
   }
   const submitCommand = (command: string): void => {
     if (onCommand === undefined) return
+    // One command gesture at a time. The draft and the command menu survive
+    // until the Host accepts the line, so a second Enter during a slow command
+    // (compaction) re-enters the same adjudication and would execute the
+    // command twice.
+    if (commandSubmitInFlight.current) return
     const result = props.attachments.length === 0 ? onCommand(command) : onCommand(command, props.attachments)
-    if (result !== undefined && typeof result.then === 'function')
+    if (result !== undefined && typeof result.then === 'function') {
+      commandSubmitInFlight.current = true
       void result.then(
         // The Host owns the submitted line once it is accepted; text typed
         // while the command ran is a different draft and has to survive.
-        () => props.onDraftChange((current) => (current === command ? '' : current)),
-        () => undefined,
+        () => {
+          commandSubmitInFlight.current = false
+          props.onDraftChange((current) => (current === command ? '' : current))
+        },
+        () => {
+          commandSubmitInFlight.current = false
+        },
       )
-    else props.onDraftChange('')
+    } else props.onDraftChange('')
   }
   const insertCommand = (command: DynamicCommand): void => {
     const nextDraft = `/${command.name}${command.input === undefined ? '' : ' '}`
@@ -779,6 +791,12 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
     const inserted = referenceMention(candidate)
     const next = props.draft.slice(0, referenceToken.start) + inserted + props.draft.slice(referenceToken.end)
     const nextCursor = referenceToken.start + inserted.length
+    // The pick rewrites the draft while the textarea keeps focus (the rows
+    // preventDefault the mousedown), so React's commit-phase selection restore
+    // would leave the caret at the old numeric offset -- inside the inserted
+    // mention. Ask the layout effect to reposition it, as the command
+    // insertion and mention deletion paths already do.
+    pendingCursorRef.current = nextCursor
     props.onDraftChange(next)
     setReferenceCursor(nextCursor)
     setReferenceHighlight(undefined)
