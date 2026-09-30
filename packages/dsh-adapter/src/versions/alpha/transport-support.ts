@@ -144,11 +144,18 @@ export function normalizeAlphaResult(
   normalizeErrorCode?: AlphaErrorCodeNormalizer,
 ): AlphaResult {
   if (result.ok || normalizeErrorCode === undefined) return result
+  const wireCode = result.error.code
+  const code = normalizeErrorCode(wireCode, result.error.details)
   return {
     ...result,
     error: {
       ...result.error,
-      code: normalizeErrorCode(result.error.code, result.error.details),
+      code,
+      // Several distinct wire codes collapse onto one local code (for example
+      // rc.2 maps both REPLY_QUEUED and CALLER_NOT_LIVE to `writer-held`).
+      // Callers that must tell the underlying condition apart would otherwise
+      // have to guess, so the original spelling is retained alongside it.
+      details: code === wireCode ? result.error.details : { ...result.error.details, wireCode },
     },
   }
 }

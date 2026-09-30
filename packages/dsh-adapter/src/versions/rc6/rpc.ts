@@ -46,6 +46,9 @@ export function unwrapRpcResult<T>(response: RpcResponseLike<T>, method: string)
   // already-published session id from this error so it can surface the
   // session as ungrouped instead of losing it.
   const publishedSessionId = publishedWorkspaceAttachSessionId(code, error?.details)
+  // The transport keeps the pre-normalization wire spelling, when it differed,
+  // so a caller can still distinguish codes that collapsed onto one local code.
+  const wireCode = wireErrorCode(error?.details)
   throw new AppError({
     code: mapRpcError(code),
     message: safeRpcMessage(method, code, error?.message, attachmentReason),
@@ -54,10 +57,17 @@ export function unwrapRpcResult<T>(response: RpcResponseLike<T>, method: string)
     context: {
       rpcMethod: method,
       rpcCode: code,
+      ...(wireCode === undefined ? {} : { wireCode }),
       ...(attachmentReason === undefined ? {} : { attachmentReason }),
       ...(publishedSessionId === undefined ? {} : { publishedSessionId }),
     },
   })
+}
+
+function wireErrorCode(details: unknown): string | undefined {
+  if (typeof details !== 'object' || details === null) return undefined
+  const value = (details as { wireCode?: unknown }).wireCode
+  return typeof value === 'string' && value.length > 0 && value.length <= 128 ? value : undefined
 }
 
 /**

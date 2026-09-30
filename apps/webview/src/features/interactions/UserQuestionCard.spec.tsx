@@ -287,6 +287,102 @@ describe('UserQuestionCard', () => {
     expect(onReleaseWait).toHaveBeenCalledOnce()
   })
 
+  it('keeps the answer submittable when the host reports no remaining time', async () => {
+    // Upstream suspends the Host deadline while a Client holds the claim
+    // (`TimedQuestionWait.schedule` returns early when `claims.size > 0`), so a
+    // card that is still on screen is still answerable. A zero frame means the
+    // wait is over, not that the question became unanswerable — disabling
+    // Submit there strands the user with a question upstream still accepts.
+    const onRespond = vi.fn().mockResolvedValue(undefined)
+    const onReleaseWait = vi.fn().mockResolvedValue(undefined)
+    render(
+      <UserQuestionCard
+        question={{
+          id: 'scope',
+          callId: 'call-timed',
+          sessionId: 's1',
+          prompt: 'Which scope?',
+          choices: [{ id: 'workspace', label: 'workspace' }],
+          allowFreeText: true,
+          timed: true,
+          state: 'open',
+        }}
+        disabled={false}
+        onRespond={onRespond}
+        onCancel={vi.fn()}
+        onAttachWait={vi.fn().mockResolvedValue(0)}
+        onReleaseWait={onReleaseWait}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('radio', { name: /workspace/ }))
+    await waitFor(() => expect(onReleaseWait).toHaveBeenCalled())
+
+    expect(submitButton().disabled).toBe(false)
+    fireEvent.click(submitButton())
+    await waitFor(() => expect(onRespond).toHaveBeenCalledOnce())
+  })
+
+  it('reads the countdown as singular when one second remains', async () => {
+    // The card polls every 250ms and rounds up, so the last whole second is a
+    // state the user reliably sees. The catalog has no plural handling, so the
+    // singular has to be its own message rather than a hardcoded "seconds".
+    render(
+      <UserQuestionCard
+        question={{
+          id: 'scope',
+          callId: 'call-timed',
+          sessionId: 's1',
+          prompt: 'Which scope?',
+          allowFreeText: true,
+          timed: true,
+          state: 'open',
+        }}
+        disabled={false}
+        onRespond={vi.fn()}
+        onCancel={vi.fn()}
+        onAttachWait={vi.fn().mockResolvedValue(1_000)}
+        onReleaseWait={vi.fn().mockResolvedValue(undefined)}
+      />,
+    )
+
+    expect(await screen.findByText('You have 1 second to answer')).toBeDefined()
+    expect(screen.queryByText(/1 seconds/u)).toBeNull()
+  })
+
+  it('freezes the answer fields once the reply is queued', () => {
+    // When a reply is queued the Submit control is replaced by status text, so
+    // the card can no longer act on edits. Leaving the radios and the free-text
+    // box live invites the user to keep "answering" something that is already
+    // sent and can never be submitted again.
+    render(
+      <UserQuestionCard
+        question={{
+          id: 'scope',
+          callId: 'call-timed',
+          sessionId: 's1',
+          prompt: 'Which scope?',
+          choices: [
+            { id: 'workspace', label: 'workspace' },
+            { id: 'all', label: 'all' },
+          ],
+          allowFreeText: true,
+          timed: true,
+          state: 'continued',
+          replyQueued: true,
+        }}
+        disabled={false}
+        onRespond={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    )
+
+    expect(screen.queryByRole('button', { name: 'Submit' })).toBeNull()
+    expect(screen.getByRole('status').textContent).toContain('queued')
+    expect(screen.getByRole('radio', { name: /workspace/ }).hasAttribute('disabled')).toBe(true)
+    expect(screen.getByRole('textbox').hasAttribute('disabled')).toBe(true)
+  })
+
   it('keeps one timed claim when unrelated renders replace the host callbacks', async () => {
     const onAttachWait = vi.fn().mockResolvedValue(4_000)
     const originalRelease = vi.fn().mockResolvedValue(undefined)
@@ -455,5 +551,70 @@ describe('UserQuestionCard', () => {
     expect(screen.queryByRole('button', { name: 'Chat about it' })).toBeNull()
     expect(screen.getByRole('button', { name: 'Approve' })).toBeDefined()
     expect(onCancel).not.toHaveBeenCalled()
+  })
+
+  describe('answers a plan review with the option label', () => {
+    // Upstream carries no option id: `options` hold a `label`, the asker checks
+    // `intent.approve` against `option.label`, and the answer batch carries
+    // those labels. The adapters derive `choice.id` from the label today, so
+    // these tests pin the submitted value rather than a distinction that the
+    // wire cannot currently express.
+    function reviewQuestion(): UserQuestion {
+      return {
+        id: 'call-review',
+        callId: 'call-review',
+        sessionId: 's1',
+        prompt: 'Proceed?',
+        allowFreeText: true,
+        state: 'open',
+        items: [
+          {
+            id: 'decision',
+            prompt: 'Proceed?',
+            detail: 'Review the plan',
+            choices: [
+              { id: 'Approve', label: 'Approve' },
+              { id: 'Decline', label: 'Decline' },
+            ],
+            allowFreeText: true,
+            intent: { kind: 'plan-review', approve: 'Approve' },
+          },
+        ],
+      }
+    }
+
+    it('submits the approve option', async () => {
+      const onRespond = vi.fn().mockResolvedValue(undefined)
+      render(
+        <UserQuestionCard
+          question={reviewQuestion()}
+          disabled={false}
+          onRespond={onRespond}
+          onCancel={vi.fn()}
+        />,
+      )
+
+      fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
+
+      await waitFor(() => expect(onRespond).toHaveBeenCalledOnce())
+      expect(onRespond).toHaveBeenCalledWith([{ id: 'decision', response: ['Approve'] }])
+    })
+
+    it('submits the non-approve option through the refuse control', async () => {
+      const onRespond = vi.fn().mockResolvedValue(undefined)
+      render(
+        <UserQuestionCard
+          question={reviewQuestion()}
+          disabled={false}
+          onRespond={onRespond}
+          onCancel={vi.fn()}
+        />,
+      )
+
+      fireEvent.click(screen.getByRole('button', { name: 'Refuse' }))
+
+      await waitFor(() => expect(onRespond).toHaveBeenCalledOnce())
+      expect(onRespond).toHaveBeenCalledWith([{ id: 'decision', response: ['Decline'] }])
+    })
   })
 })

@@ -433,6 +433,11 @@ function publicErrorMessage(
   // cause they only read the code fallback and cannot tell what to change.
   if (requestType.startsWith('attachment.') || MESSAGE_ATTACHMENT_REQUESTS.has(requestType))
     return withFailureDetail(base, context, message)
+  // Answering a timed question fails for reasons the user can act on: the call
+  // is no longer answerable, or DSH already holds a reply. The code's fallback
+  // ("the interaction is no longer pending") cannot say which, nor whether the
+  // composed batch was recorded, so the bounded cause must reach the card.
+  if (requestType === 'user-question.answer') return withFailureDetail(base, context, message)
   if (requestType === 'session.open' || context?.operation === 'session.open') {
     const stage = typeof context?.stage === 'string' ? context.stage : 'session open'
     const rpcCode = typeof context?.rpcCode === 'string' ? context.rpcCode : undefined

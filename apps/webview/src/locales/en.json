@@ -251,6 +251,7 @@
   "question.approve": "Approve",
   "question.cancel": "Cancel questions",
   "question.timeRemaining": "You have {seconds} seconds to answer",
+  "question.timeRemainingOne": "You have 1 second to answer",
   "question.waitConnecting": "Connecting to the timed question…",
   "question.waitExpired": "The timed wait expired; waiting for the agent to continue.",
   "question.waitUnavailable": "The timed question could not be claimed. Reconnect before answering.",

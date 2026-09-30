@@ -110,8 +110,19 @@ export const UserQuestionCard = memo(function UserQuestionCard(props: UserQuesti
   const complete =
     drafts.length === items.length && drafts.every((draft) => hasAnswer(draft) || draft.skipped)
   const replyQueued = props.question.replyQueued === true || submitted
-  const timedUnavailable = timedForeground && (!waitReady || waitFailed || remainingMs === 0)
+  // A zero local countdown is not by itself proof the question became
+  // unanswerable. While this client holds the claim the Host suspends its own
+  // deadline (`TimedQuestionWait.schedule` returns early while `claims.size > 0`),
+  // and a `0` frame is also what a reconnecting client sees, so submission stays
+  // open; only an unreachable or failed wait blocks it. The countdown is a hint
+  // about the foreground window, not an authority over whether upstream accepts
+  // the batch.
+  const timedUnavailable = timedForeground && (!waitReady || waitFailed)
   const submitDisabled = props.disabled || replyQueued || timedUnavailable || (!complete && !planReview)
+  // Everything the user can edit shares one disabled state: a card whose Submit
+  // is gone (queued reply) or blocked (unreachable wait) must not keep
+  // accepting edits it can never send.
+  const inputsFrozen = props.disabled || replyQueued
   const submit = async (response: string | readonly string[] | readonly QuestionAnswer[]): Promise<void> => {
     try {
       await props.onRespond(response)
@@ -146,7 +157,9 @@ export const UserQuestionCard = memo(function UserQuestionCard(props: UserQuesti
                 ? t('question.waitConnecting')
                 : remainingMs === 0
                   ? t('question.waitExpired')
-                  : t('question.timeRemaining', { seconds: Math.ceil((remainingMs ?? 0) / 1_000) })}
+                  : remainingSeconds(remainingMs ?? 0) === 1
+                    ? t('question.timeRemainingOne')
+                    : t('question.timeRemaining', { seconds: remainingSeconds(remainingMs ?? 0) })}
           </span>
           {waitFailed ? (
             <button
@@ -197,7 +210,7 @@ export const UserQuestionCard = memo(function UserQuestionCard(props: UserQuesti
                       <input
                         type={item.multiSelect === true ? 'checkbox' : 'radio'}
                         name={`${props.question.id}:${item.id}`}
-                        disabled={props.disabled}
+                        disabled={inputsFrozen}
                         checked={checked}
                         onChange={() => {
                           setDrafts((current) =>
@@ -236,7 +249,7 @@ export const UserQuestionCard = memo(function UserQuestionCard(props: UserQuesti
             {!planReview ? (
               <QuestionAnswerField
                 value={drafts[index]?.custom ?? ''}
-                disabled={props.disabled}
+                disabled={inputsFrozen}
                 ariaLabel={t('question.answer', { prompt: item.prompt })}
                 placeholder={t('question.custom')}
                 onChange={(value) => {
@@ -258,7 +271,7 @@ export const UserQuestionCard = memo(function UserQuestionCard(props: UserQuesti
               <button
                 className="dsh-button dsh-button--secondary dsh-button--compact"
                 type="button"
-                disabled={props.disabled}
+                disabled={inputsFrozen}
                 onClick={() =>
                   setDrafts((current) =>
                     current.map((draft, position) =>
@@ -279,7 +292,13 @@ export const UserQuestionCard = memo(function UserQuestionCard(props: UserQuesti
           disabled={submitDisabled}
           {...(props.question.state === 'continued' ? {} : { onChat: props.onCancel })}
           onRespond={(choice) => {
-            void submit([{ id: items[0]!.id, response: [choice.id] }])
+            // Upstream settles an intent against option LABELS: the asker
+            // validates `intent.approve` against `option.label`, and answers
+            // carry labels. Both adapters currently derive `choice.id` from the
+            // label, so using the id would happen to work — answering with the
+            // label states the contract directly instead of depending on that
+            // coincidence holding.
+            void submit([{ id: items[0]!.id, response: [choice.label] }])
           }}
         />
       ) : (
@@ -411,6 +430,11 @@ function PlanDecisionRow(props: {
       </button>
     </div>
   )
+}
+
+/** Whole seconds still shown to the user; the 250ms poll rounds up to the current second. */
+function remainingSeconds(remainingMs: number): number {
+  return Math.ceil(Math.max(0, remainingMs) / 1_000)
 }
 
 function questionItems(question: UserQuestion): readonly UserQuestionItem[] {

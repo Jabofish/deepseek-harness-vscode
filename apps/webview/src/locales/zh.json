@@ -251,6 +251,7 @@
   "question.approve": "批准",
   "question.cancel": "取消整组问题",
   "question.timeRemaining": "还有 {seconds} 秒可回答",
+  "question.timeRemainingOne": "还有 1 秒可回答",
   "question.waitConnecting": "正在连接限时问题…",
   "question.waitExpired": "限时等待已结束，正在等待助手继续处理。",
   "question.waitUnavailable": "无法取得限时问题等待权。请重新连接后再回答。",

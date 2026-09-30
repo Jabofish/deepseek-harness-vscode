@@ -713,6 +713,46 @@ describe('WebviewMessageRouter attachment diagnostics', () => {
   })
 })
 
+describe('WebviewMessageRouter timed question answer diagnostics', () => {
+  it('tells the user a duplicate reply was not recorded instead of only "no longer pending"', async () => {
+    const posted: unknown[] = []
+    const router = new WebviewMessageRouter({
+      postMessage: (message) => {
+        posted.push(message)
+        return Promise.resolve(true)
+      },
+      handleFeatureRequest: () =>
+        Promise.reject(
+          new AppError({
+            code: 'STALE_INTERACTION',
+            message: 'DSH already holds a reply for this question, so this answer was not recorded.',
+            retryable: false,
+            context: { rpcCode: 'REPLY_QUEUED', rpcMethod: 'userQuestions/answer' },
+          }),
+        ),
+    })
+
+    await router.handle({
+      protocolVersion: 1,
+      message: {
+        type: 'user-question.answer',
+        requestId: 'question-answer-diagnostic-1',
+        payload: {
+          sessionId: 'session-1',
+          callId: 'call-1',
+          answer: { answers: [{ id: 'scope', selected: ['workspace'] }] },
+        },
+      },
+    })
+
+    const response = posted[0] as { readonly error?: { readonly code?: string; readonly message?: string } }
+    // The composed batch was discarded, so the card must say so rather than
+    // claim the interaction merely stopped being pending.
+    expect(response.error?.code).toBe('STALE_INTERACTION')
+    expect(response.error?.message).toContain('was not recorded')
+  })
+})
+
 describe('WebviewMessageRouter prompt template diagnostics', () => {
   it('keeps a template validation reason visible instead of blaming the DSH configuration', async () => {
     const posted: unknown[] = []

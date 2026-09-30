@@ -93,10 +93,20 @@ export class Rc202UserQuestionRepository implements UserQuestionRepository {
         signal,
       )
     } catch (error) {
-      // A duplicate is an authoritative receipt that an earlier answer is
-      // already queued. Treat it as accepted while Inbox projection supplies
-      // the durable read-only state to the Webview.
-      if (error instanceof AppError && error.context?.rpcCode === 'REPLY_QUEUED') return true
+      // Upstream raises REPLY_QUEUED from one branch covering several
+      // situations: this client's own earlier reply is recorded (possibly
+      // optimistically, before its steer), or a reply already sits in the
+      // durable Inbox. The error carries no field separating them, so a batch
+      // that was not confirmed recorded must not be reported as accepted.
+      //
+      // The transport never hands over the raw wire code: rc202 installs
+      // `normalizeRc202ErrorCode`, which maps REPLY_QUEUED to `writer-held`
+      // before the AppError is built. Matching the wire spelling here would
+      // read as correct while never firing in production, so the check uses
+      // the normalized code and confirms via the preserved wire spelling —
+      // `writer-held` alone is ambiguous, since rc.2 also normalizes
+      // CALLER_NOT_LIVE and DELEGATED_CALLER onto it.
+      if (error instanceof AppError && isDuplicateReplyError(error)) throw duplicateReplyQueued(error)
       throw error
     }
     const accepted = unwrapRpcResultValue<unknown>(result, 'userQuestions/answer')
@@ -242,6 +252,48 @@ function closedError(): AppError {
     code: 'BACKEND_UNREACHABLE',
     message: 'The DSH user question connection has closed.',
     retryable: true,
+  })
+}
+
+/**
+ * DSH already holds a reply for this call, so the question can no longer take
+ * this batch. Reported rather than silently accepted: upstream raises this
+ * before it records the batch, and the held reply may be this client's own
+ * earlier one or another client's, which only upstream can tell apart.
+ */
+/**
+ * The code the transport actually surfaces for upstream's `REPLY_QUEUED`.
+ * `normalizeRc202ErrorCode` maps the wire spelling onto this local equivalent
+ * (`rc202/error-vocabulary.ts`), so the repository can only ever observe this
+ * value directly. Kept beside the check so the two cannot drift apart silently.
+ */
+const DUPLICATE_REPLY_RPC_CODE = 'writer-held'
+const DUPLICATE_REPLY_WIRE_CODE = 'REPLY_QUEUED'
+
+/**
+ * True only for upstream's duplicate-reply condition. `writer-held` is shared
+ * with the caller-liveness failures, which are a different problem and must
+ * keep their own diagnosis, so the preserved wire spelling has to agree.
+ */
+function isDuplicateReplyError(error: AppError): boolean {
+  return (
+    error.context?.rpcCode === DUPLICATE_REPLY_RPC_CODE &&
+    error.context?.wireCode === DUPLICATE_REPLY_WIRE_CODE
+  )
+}
+
+function duplicateReplyQueued(cause: AppError): AppError {
+  return new AppError({
+    code: 'STALE_INTERACTION',
+    message: 'DSH already holds a reply for this question, so this answer was not recorded.',
+    retryable: false,
+    context: {
+      rpcCode: DUPLICATE_REPLY_RPC_CODE,
+      rpcMethod: 'userQuestions/answer',
+      // The wire spelling is preserved so diagnostics still name the upstream
+      // condition rather than only its local normalization.
+      wireCode: cause.context?.wireCode ?? DUPLICATE_REPLY_WIRE_CODE,
+    },
   })
 }
 
