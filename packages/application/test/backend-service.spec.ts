@@ -161,4 +161,52 @@ describe('BackendService event replay', () => {
 
     expect(replayed).toHaveLength(256)
   })
+
+  it('keeps the bound when a backlog of prompts is all that is left to replay', () => {
+    // A fan-out agent can hold many questions pending at once. Once the cache
+    // has retired every non-prompt entry, a yield-only eviction loop finds
+    // nothing it is allowed to drop and stops evicting altogether: the "bound"
+    // stops bounding, and every reload re-posts the whole backlog. The bound
+    // must still hold, however many prompts are pending.
+    const backend = new FakeBackend()
+    const service = new BackendService()
+    service.attach(backend as unknown as DshBackend, () => undefined)
+    for (let index = 0; index < 400; index += 1) {
+      backend.emit(requested(question(`q-${index}`, `rpc-${index}`)))
+    }
+
+    const replayed: BackendEvent[] = []
+    service.attach(backend as unknown as DshBackend, (event) => replayed.push(event))
+
+    expect(replayed.length).toBeLessThanOrEqual(256)
+  })
+
+  it('replays the projection baseline a reloaded panel cannot recover otherwise', () => {
+    // The baseline is a whole-set replacement, not a delta: it is the panel's
+    // only source for "which sessions have projections at all" and it clears
+    // the per-key sequence index. A reloaded Webview joins an already-open
+    // control stream, so the stream never re-emits it. Dropping it from the
+    // cache blanks every projection readout until the process happens to push
+    // that key again.
+    const backend = new FakeBackend()
+    const service = new BackendService()
+    service.attach(backend as unknown as DshBackend, () => undefined)
+    const baseline: BackendEvent = {
+      type: 'session.projection.baseline',
+      projections: {
+        s1: {
+          asOfSequence: 12,
+          values: {
+            contextPressure: { pressureTokens: 1_024, contextWindow: 1_000_000 },
+          },
+        },
+      },
+    }
+    backend.emit(baseline)
+
+    const replayed: BackendEvent[] = []
+    service.attach(backend as unknown as DshBackend, (event) => replayed.push(event))
+
+    expect(replayed).toContainEqual(baseline)
+  })
 })

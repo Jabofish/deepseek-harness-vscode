@@ -84,14 +84,27 @@ export class BackendService {
    * pending approval or question after a few hundred events and the panel comes
    * back from a reload with no card to answer -- the agent stays blocked on an
    * answer the user can no longer see. Settled interactions and streamed state
-   * are the disposable entries; an unanswered prompt is not, so the bound yields
-   * rather than evict one.
+   * are the disposable entries, so they go first.
+   *
+   * Prompts are only *preferred*, not immune: a fan-out agent can hold more
+   * questions pending at once than the bound allows. If the first pass leaves
+   * the cache over budget because every remaining entry is a prompt, a second
+   * pass evicts in insertion order anyway. Yielding unconditionally would let
+   * the "bound" stop bounding exactly in the case it was written for, and every
+   * reload would then re-post the whole backlog.
    */
   private evictToBound(): void {
     if (this.replay.size <= REPLAY_BOUND) return
     for (const [key, event] of this.replay) {
       if (this.replay.size <= REPLAY_BOUND) return
       if (isPendingPrompt(event)) continue
+      this.replay.delete(key)
+    }
+    // Every remaining entry is a pending prompt. The oldest is the one the
+    // panel is least likely to still need, so fall back to insertion order
+    // rather than growing without limit.
+    for (const key of this.replay.keys()) {
+      if (this.replay.size <= REPLAY_BOUND) return
       this.replay.delete(key)
     }
   }
@@ -106,6 +119,12 @@ function isPendingPrompt(event: BackendEvent): boolean {
 
 function replayKey(event: BackendEvent): string | undefined {
   switch (event.type) {
+    // A single fixed key, not a per-session one: the baseline replaces the
+    // whole projection set, so only the newest is worth replaying. Keeping the
+    // older ones would let a reloaded panel re-apply a stale waterline after
+    // the newer one.
+    case 'session.projection.baseline':
+      return 'projection.baseline'
     case 'permission.requested':
       return `permission:${event.request.sessionId}:${event.request.id}`
     case 'question.requested':
