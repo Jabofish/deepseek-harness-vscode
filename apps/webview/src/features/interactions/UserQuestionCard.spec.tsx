@@ -144,7 +144,7 @@ describe('UserQuestionCard', () => {
           sessionId: 's1',
           prompt: 'Choose',
           choices: [{ id: 'Allow', label: 'Allow' }],
-          allowFreeText: false,
+          allowFreeText: true,
         }}
         disabled={false}
         onRespond={onRespond}
@@ -321,6 +321,73 @@ describe('UserQuestionCard', () => {
     expect(submitButton().disabled).toBe(false)
     fireEvent.click(submitButton())
     await waitFor(() => expect(onRespond).toHaveBeenCalledOnce())
+  })
+
+  it('lets the user answer while the timed claim is still connecting', async () => {
+    // `attach()` resolves only after the Host answers the claim, and nothing
+    // bounds that round trip. Until it settles `waitReady` is false, so a card
+    // that gates Submit on `waitReady` shows a disabled button with no Retry and
+    // no other way forward: the question is on screen, the user has picked an
+    // answer, and every control that could send it is inert. Upstream has not
+    // refused the batch at that point, so the card must not refuse it either.
+    const onRespond = vi.fn().mockResolvedValue(undefined)
+    render(
+      <UserQuestionCard
+        question={{
+          id: 'scope',
+          callId: 'call-timed',
+          sessionId: 's1',
+          prompt: 'Which scope?',
+          choices: [{ id: 'workspace', label: 'workspace' }],
+          allowFreeText: true,
+          timed: true,
+          state: 'open',
+        }}
+        disabled={false}
+        onRespond={onRespond}
+        onCancel={vi.fn()}
+        onAttachWait={() => new Promise<number | undefined>(() => undefined)}
+        onReleaseWait={vi.fn().mockResolvedValue(undefined)}
+      />,
+    )
+
+    expect(await screen.findByText('Connecting to the timed question…')).toBeDefined()
+    fireEvent.click(screen.getByRole('radio', { name: /workspace/ }))
+    expect(submitButton().disabled).toBe(false)
+    fireEvent.click(submitButton())
+    await waitFor(() => expect(onRespond).toHaveBeenCalledOnce())
+  })
+
+  it('freezes the answer fields when the timed wait fails', async () => {
+    // A failed claim is the one timed state where Submit is genuinely blocked
+    // (`question.waitUnavailable` says to reconnect). While that message is on
+    // screen the fields must not keep accepting edits, or the user retypes an
+    // answer into a card whose Submit is disabled and whose only exit is Retry.
+    render(
+      <UserQuestionCard
+        question={{
+          id: 'scope',
+          callId: 'call-timed',
+          sessionId: 's1',
+          prompt: 'Which scope?',
+          choices: [{ id: 'workspace', label: 'workspace' }],
+          allowFreeText: true,
+          timed: true,
+          state: 'open',
+        }}
+        disabled={false}
+        onRespond={vi.fn()}
+        onCancel={vi.fn()}
+        onAttachWait={vi.fn().mockRejectedValue(new Error('claim refused'))}
+        onReleaseWait={vi.fn().mockResolvedValue(undefined)}
+      />,
+    )
+
+    expect(await screen.findByText(/could not be claimed/u)).toBeDefined()
+    expect(screen.getByRole('radio', { name: /workspace/ }).hasAttribute('disabled')).toBe(true)
+    expect(screen.getByLabelText('Answer for Which scope?').hasAttribute('disabled')).toBe(true)
+    expect(submitButton().disabled).toBe(true)
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeDefined()
   })
 
   it('reads the countdown as singular when one second remains', async () => {
@@ -646,6 +713,97 @@ describe('UserQuestionCard', () => {
 
       await waitFor(() => expect(onRespond).toHaveBeenCalledOnce())
       expect(onRespond).toHaveBeenCalledWith([{ id: 'decision', response: ['Decline'] }])
+    })
+  })
+
+  describe('a question that forbids free text', () => {
+    // The DSH answer contract rejects any batch that carries `custom` for an
+    // item whose `allowFreeText` is not true -- `interaction-repository`
+    // `singleAnswer` refuses it before the Host ever sees it. Offering the box
+    // anyway invites an answer the app cannot deliver.
+    function noFreeTextQuestion(): UserQuestion {
+      return {
+        id: 'q-strict',
+        sessionId: 's1',
+        prompt: 'Pick a target',
+        allowFreeText: false,
+        items: [
+          {
+            id: 'q-strict',
+            prompt: 'Pick a target',
+            choices: [
+              { id: 'Web', label: 'Web' },
+              { id: 'Mobile', label: 'Mobile' },
+            ],
+            allowFreeText: false,
+          },
+        ],
+      }
+    }
+
+    it('offers no free-text box', () => {
+      render(
+        <UserQuestionCard
+          question={noFreeTextQuestion()}
+          disabled={false}
+          onRespond={vi.fn()}
+          onCancel={vi.fn()}
+        />,
+      )
+
+      expect(screen.queryByLabelText('Answer for Pick a target')).toBeNull()
+      expect(document.querySelectorAll('.dsh-question__field')).toHaveLength(0)
+    })
+
+    it('keeps submit disabled until a choice is picked', () => {
+      render(
+        <UserQuestionCard
+          question={noFreeTextQuestion()}
+          disabled={false}
+          onRespond={vi.fn()}
+          onCancel={vi.fn()}
+        />,
+      )
+
+      // With no custom box there is no way to answer by typing, so submit must
+      // wait for a selection instead of counting an empty draft as complete.
+      expect(submitButton().disabled).toBe(true)
+      fireEvent.click(screen.getByLabelText('Web'))
+      expect(submitButton().disabled).toBe(false)
+    })
+
+    it('answers with the selected label and no custom text', () => {
+      const onRespond = vi.fn()
+      render(
+        <UserQuestionCard
+          question={noFreeTextQuestion()}
+          disabled={false}
+          onRespond={onRespond}
+          onCancel={vi.fn()}
+        />,
+      )
+
+      fireEvent.click(screen.getByLabelText('Mobile'))
+      fireEvent.click(submitButton())
+
+      expect(onRespond).toHaveBeenCalledWith([{ id: 'q-strict', response: ['Mobile'] }])
+    })
+
+    it('still offers free text when the item allows it, even alongside choices', () => {
+      render(
+        <UserQuestionCard
+          question={{
+            ...noFreeTextQuestion(),
+            allowFreeText: true,
+            items: [{ ...noFreeTextQuestion().items![0]!, allowFreeText: true }],
+          }}
+          disabled={false}
+          onRespond={vi.fn()}
+          onCancel={vi.fn()}
+        />,
+      )
+
+      expect(screen.getByLabelText('Answer for Pick a target')).toBeDefined()
     })
   })
 })

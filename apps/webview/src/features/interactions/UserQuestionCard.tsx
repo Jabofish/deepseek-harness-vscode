@@ -108,7 +108,8 @@ export const UserQuestionCard = memo(function UserQuestionCard(props: UserQuesti
     lastServerQueued.current = serverQueued
   }, [props.question.replyQueued])
   const complete =
-    drafts.length === items.length && drafts.every((draft) => hasAnswer(draft) || draft.skipped)
+    drafts.length === items.length &&
+    drafts.every((draft, index) => hasAnswer(draft, items[index]?.allowFreeText === true) || draft.skipped)
   const replyQueued = props.question.replyQueued === true || submitted
   // A zero local countdown is not by itself proof the question became
   // unanswerable. While this client holds the claim the Host suspends its own
@@ -117,12 +118,18 @@ export const UserQuestionCard = memo(function UserQuestionCard(props: UserQuesti
   // open; only an unreachable or failed wait blocks it. The countdown is a hint
   // about the foreground window, not an authority over whether upstream accepts
   // the batch.
-  const timedUnavailable = timedForeground && (!waitReady || waitFailed)
+  //
+  // A wait that has not settled yet is not proof of failure either. `attach()`
+  // resolves only after the Host answers the claim, and nothing bounds that
+  // round trip, so gating on `waitReady` would present a disabled Submit with no
+  // Retry for as long as the Host is slow — the user has an answer and no
+  // control that sends it. Upstream has not refused the batch at that point.
+  const timedUnavailable = timedForeground && waitFailed
   const submitDisabled = props.disabled || replyQueued || timedUnavailable || (!complete && !planReview)
   // Everything the user can edit shares one disabled state: a card whose Submit
   // is gone (queued reply) or blocked (unreachable wait) must not keep
   // accepting edits it can never send.
-  const inputsFrozen = props.disabled || replyQueued
+  const inputsFrozen = props.disabled || replyQueued || timedUnavailable
   const submit = async (response: string | readonly string[] | readonly QuestionAnswer[]): Promise<void> => {
     try {
       await props.onRespond(response)
@@ -250,7 +257,7 @@ export const UserQuestionCard = memo(function UserQuestionCard(props: UserQuesti
                 })}
               </div>
             )}
-            {!planReview ? (
+            {!planReview && item.allowFreeText ? (
               <QuestionAnswerField
                 value={drafts[index]?.custom ?? ''}
                 disabled={inputsFrozen}
@@ -378,11 +385,16 @@ function encodeAnswers(
 ): readonly QuestionAnswer[] {
   return items.map((item, index) => {
     const draft = drafts[index] ?? { selected: [], custom: '', skipped: false }
+    // Free text is only carried where the item permits it: the Host rejects the
+    // whole batch when `custom` arrives on an item with `allowFreeText: false`.
+    // No shipped adapter emits that flag today, so this guards the wire contract
+    // rather than a reachable state; it is here so a future mapper that starts
+    // reading the flag cannot send the card's draft past the validator.
+    const custom = item.allowFreeText ? draft.custom.trim() : ''
     return {
       id: item.id,
-      response:
-        draft.skipped || (item.multiSelect !== true && draft.custom.trim() !== '') ? [] : draft.selected,
-      ...(draft.skipped || draft.custom.trim() === '' ? {} : { custom: draft.custom.trim() }),
+      response: draft.skipped || (item.multiSelect !== true && custom !== '') ? [] : draft.selected,
+      ...(draft.skipped || custom === '' ? {} : { custom }),
     }
   })
 }
@@ -457,8 +469,12 @@ function questionItems(question: UserQuestion): readonly UserQuestionItem[] {
   ]
 }
 
-function hasAnswer(draft: ItemDraft): boolean {
-  return draft.selected.length > 0 || draft.custom.trim() !== ''
+function hasAnswer(draft: ItemDraft, allowFreeText: boolean): boolean {
+  // A custom draft is only an answer where the question permits free text; the
+  // validator refuses `custom` on an item that forbids it, so counting it here
+  // would enable Submit for a batch that can never be recorded. Like the gate
+  // above, this reads a flag no shipped adapter sets to false today.
+  return draft.selected.length > 0 || (allowFreeText && draft.custom.trim() !== '')
 }
 
 function isPlanReview(items: readonly UserQuestionItem[]): boolean {
