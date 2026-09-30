@@ -36,7 +36,9 @@ describe('RedactedDiagnostics', () => {
     expect(entry.fields.requestType).toBe('session.open')
     expect(entry.fields.name).toBe('TypeError')
     expect(entry.fields.message).not.toContain('super-secret')
-    expect(entry.fields.message).toContain('token: [redacted]')
+    // The value is replaced and the separator it matched is kept, so the
+    // diagnostic still reads as the `token=…` pair it came from.
+    expect(entry.fields.message).toContain('token=[redacted]')
     expect(entry.fields.stack).toContain('[redacted]')
     expect(entry.fields).not.toHaveProperty('pid')
     expect(entry.fields).not.toHaveProperty('endpoint')

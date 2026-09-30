@@ -997,7 +997,8 @@ describe('WebviewMessageRouter unexpected failure diagnostics', () => {
     expect(entry.requestType).toBe('session.list')
     expect(entry.name).toBe('Error')
     expect(entry.message).not.toContain('hunter2')
-    expect(entry.message).toContain('password: [redacted]')
+    // The value is replaced and the separator it matched is kept.
+    expect(entry.message).toContain('password=[redacted]')
     expect(entry.message.length).toBeLessThanOrEqual(320)
     const response = posted[0] as { readonly error?: { readonly code?: string } }
     expect(response.error?.code).toBe('INTERNAL_ERROR')
