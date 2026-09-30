@@ -235,7 +235,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
       publishAccountSessionExpired,
       publishAccountError,
     })
-  const { connect, reconnect, configureConnection } = createConnectionLifecycle({
+  const { connect, reconnect, reconnectOnTransportChange, configureConnection } = createConnectionLifecycle({
     context,
     configuration,
     coordinator,
@@ -336,6 +336,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     runtimeInstaller,
     endpointLaunchUrls,
     reconnect,
+    reconnectOnTransportChange,
     publishState,
     postEvent,
     postFeatureEvent,

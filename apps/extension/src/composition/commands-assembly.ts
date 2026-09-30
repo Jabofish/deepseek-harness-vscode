@@ -45,6 +45,7 @@ export interface CommandsAssemblyDependencies {
   readonly runtimeInstaller: RuntimeInstaller
   readonly endpointLaunchUrls: Map<string, string>
   readonly reconnect: (signal?: AbortSignal) => Promise<unknown>
+  readonly reconnectOnTransportChange: (signal?: AbortSignal) => Promise<unknown>
   readonly publishState: (state: BackendState) => void
   readonly postEvent: (name: string, payload: unknown) => Promise<boolean>
   readonly postFeatureEvent: PostFeatureEvent
@@ -85,6 +86,7 @@ export function createCommandsAssembly(deps: CommandsAssemblyDependencies): Comm
     runtimeInstaller,
     endpointLaunchUrls,
     reconnect,
+    reconnectOnTransportChange,
     publishState,
     postEvent,
     postFeatureEvent,
@@ -224,7 +226,7 @@ export function createCommandsAssembly(deps: CommandsAssemblyDependencies): Comm
         // Disconnect invalidates the coordinator generation and aborts an
         // in-flight attach. The shared reconnect operation coalesces this
         // automatic path with an explicit connection.configure reconnect.
-        void reconnect().catch(() => {
+        void reconnectOnTransportChange().catch(() => {
           publishState({ kind: 'failed', message: 'DSH configuration reload failed.', retryable: true })
         })
       }),

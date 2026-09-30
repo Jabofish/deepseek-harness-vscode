@@ -272,6 +272,13 @@ export interface ConnectionLifecycleDependencies {
 export interface ConnectionLifecycle {
   readonly connect: (signal?: AbortSignal) => Promise<unknown>
   readonly reconnect: (signal?: AbortSignal) => Promise<unknown>
+  /**
+   * The transport-change listener's entry point. Distinct from `reconnect` so
+   * `configureConnection` can suppress the per-write reconnects its own
+   * settings updates trigger, and run exactly one reconnect that reads the
+   * fully committed configuration.
+   */
+  readonly reconnectOnTransportChange: (signal?: AbortSignal) => Promise<unknown>
   readonly configureConnection: (
     mode: 'auto' | 'custom',
     endpoint: string | undefined,
@@ -335,6 +342,28 @@ export function createConnectionLifecycle(deps: ConnectionLifecycleDependencies)
       if (reconnectOperation === operation) reconnectOperation = undefined
     }
   }
+  // A transport-settings change the configuration listener observed. While
+  // `configureConnection` is mid-write this is a no-op: every write the
+  // configure path commits fires this listener, and acting on each one would
+  // reconnect on partially updated configuration (a mode switch could attach
+  // under the old mode) while the coalescer then swallowed the correcting
+  // explicit reconnect.
+  let configuringTransport = false
+  const writeTransportSettings = async (
+    settings: vscode.WorkspaceConfiguration,
+    writes: readonly (readonly [string, unknown])[],
+  ): Promise<void> => {
+    configuringTransport = true
+    try {
+      for (const [key, value] of writes) await settings.update(key, value, vscode.ConfigurationTarget.Global)
+    } finally {
+      configuringTransport = false
+    }
+  }
+  const reconnectOnTransportChange = (signal?: AbortSignal): Promise<unknown> => {
+    if (configuringTransport) return Promise.resolve(undefined)
+    return reconnect(signal)
+  }
   const configureConnection = async (
     mode: 'auto' | 'custom',
     endpoint: string | undefined,
@@ -349,20 +378,26 @@ export function createConnectionLifecycle(deps: ConnectionLifecycleDependencies)
           message: 'Enter an HTTP loopback endpoint such as http://127.0.0.1:3080.',
           retryable: false,
         })
-      // Write the endpoint before switching modes so the configuration is
-      // never observed in a transient custom-without-endpoint state.
-      await settings.update('connection.serverUrl', normalized, vscode.ConfigurationTarget.Global)
-      await settings.update('connection.mode', mode, vscode.ConfigurationTarget.Global)
+      await writeTransportSettings(settings, [
+        // Write the endpoint before switching modes so the configuration is
+        // never observed in a transient custom-without-endpoint state.
+        ['connection.serverUrl', normalized],
+        ['connection.mode', mode],
+      ])
     } else {
-      // Switch out of custom mode before clearing its endpoint for the same
-      // reason. Existing attach-only/new-isolated settings remain untouched
-      // until the user explicitly chooses a mode here.
-      await settings.update('connection.mode', mode, vscode.ConfigurationTarget.Global)
-      await settings.update('connection.serverUrl', '', vscode.ConfigurationTarget.Global)
+      await writeTransportSettings(settings, [
+        // Switch out of custom mode before clearing its endpoint for the same
+        // reason. Existing attach-only/new-isolated settings remain untouched
+        // until the user explicitly chooses a mode here.
+        ['connection.mode', mode],
+        ['connection.serverUrl', ''],
+      ])
     }
+    // One reconnect, after every write has committed, reading the final
+    // configuration.
     return reconnect(signal)
   }
-  return { connect, reconnect, configureConnection }
+  return { connect, reconnect, reconnectOnTransportChange, configureConnection }
 }
 
 export function createManagedEndpointLoginHandler(
