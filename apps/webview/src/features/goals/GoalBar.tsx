@@ -23,10 +23,23 @@ export const GoalBar = memo(function GoalBar(props: GoalBarProps): ReactElement 
   const [error, setError] = useState<string | undefined>()
   const [confirmingClearGoalId, setConfirmingClearGoalId] = useState<string | undefined>()
   const pendingRef = useRef(false)
+  // The title the current draft was seeded from, so an untouched draft can
+  // follow a host-side rename while an edited one is preserved.
+  const seedRef = useRef<string | undefined>(undefined)
   const goalId = goal?.id
+  const goalTitle = goal?.title
   const confirmingClear = confirmingClearGoalId === goalId
 
   useEffect(() => setConfirmingClearGoalId(undefined), [goalId])
+  // An open editor holds a copy of the objective, and the live goal list is
+  // re-read from the host on ordinary session events, so the host's title can
+  // change underneath the input. Re-seeding keeps Save from writing a value the
+  // host has already replaced. A draft the user is editing holds their own
+  // words, so it is left alone: only the untouched seed follows the host.
+  useEffect(() => {
+    setDraft((current) => (current === seedRef.current ? (goalTitle ?? current) : current))
+    seedRef.current = goalTitle
+  }, [goalTitle])
 
   if (goal === undefined) return null
 
@@ -170,6 +183,7 @@ export const GoalBar = memo(function GoalBar(props: GoalBarProps): ReactElement 
               disabled={pending}
               onClick={() => {
                 setDraft(goal.title)
+                seedRef.current = goal.title
                 setError(undefined)
                 setEditingGoalId(goal.id)
               }}

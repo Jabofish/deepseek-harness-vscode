@@ -117,4 +117,48 @@ describe('GoalBar', () => {
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(onUpdate).toHaveBeenCalledWith('g1', { title: '交付重构' })
   })
+
+  describe('an open editor against a live goal list', () => {
+    // The goal list is re-read from the host on ordinary session events, so the
+    // host's objective can change while the inline input is open. The draft is a
+    // copy, and Save posts whatever it holds.
+    it('follows a host-side rename while the draft is untouched', () => {
+      const onUpdate = vi.fn(() => Promise.resolve())
+      const { rerender } = render(<GoalBar goals={[goal]} onUpdate={onUpdate} />)
+      fireEvent.click(screen.getByRole('button', { name: 'Edit goal' }))
+
+      rerender(<GoalBar goals={[{ ...goal, title: 'Ship it later' }]} onUpdate={onUpdate} />)
+
+      expect(screen.getByRole<HTMLInputElement>('textbox', { name: 'Goal objective' }).value).toBe(
+        'Ship it later',
+      )
+    })
+
+    it('keeps the words the user typed instead of replacing them', () => {
+      const onUpdate = vi.fn(() => Promise.resolve())
+      const { rerender } = render(<GoalBar goals={[goal]} onUpdate={onUpdate} />)
+      fireEvent.click(screen.getByRole('button', { name: 'Edit goal' }))
+      fireEvent.change(screen.getByRole('textbox', { name: 'Goal objective' }), {
+        target: { value: 'Ship v2' },
+      })
+
+      rerender(<GoalBar goals={[{ ...goal, title: 'Ship it later' }]} onUpdate={onUpdate} />)
+
+      expect(screen.getByRole<HTMLInputElement>('textbox', { name: 'Goal objective' }).value).toBe('Ship v2')
+    })
+
+    it('seeds the next edit from the refresh rather than the abandoned draft', () => {
+      const onUpdate = vi.fn(() => Promise.resolve())
+      const { rerender } = render(<GoalBar goals={[goal]} onUpdate={onUpdate} />)
+      fireEvent.click(screen.getByRole('button', { name: 'Edit goal' }))
+      fireEvent.keyDown(screen.getByRole('textbox', { name: 'Goal objective' }), { key: 'Escape' })
+
+      rerender(<GoalBar goals={[{ ...goal, title: 'Ship it later' }]} onUpdate={onUpdate} />)
+      fireEvent.click(screen.getByRole('button', { name: 'Edit goal' }))
+
+      expect(screen.getByRole<HTMLInputElement>('textbox', { name: 'Goal objective' }).value).toBe(
+        'Ship it later',
+      )
+    })
+  })
 })
