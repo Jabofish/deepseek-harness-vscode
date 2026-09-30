@@ -283,8 +283,14 @@ export class DshProcessSupervisor implements ProcessSupervisor {
           cause: new AggregateError([error, cleanupError]),
         })
       }
-      const outputTail = errors.tail(160) || output.tail(160)
-      if (/eaddrinuse|address already in use|port is already in use/i.test(outputTail))
+      // Both streams, and each in full: the runtime writes its startup-failure
+      // report with the bind error at the top and a diagnostics-file pointer at
+      // the end, and which stream carries it is a version detail. A fixed
+      // window from the end of one stream sees only the pointer and misreports
+      // a port conflict as a generic unreachable runtime, leaving the dedicated
+      // port-conflict card unreachable for real runtimes.
+      const captured = `${errors.text()} ${output.text()}`
+      if (/eaddrinuse|address already in use|port is already in use/i.test(captured))
         throw new AppError({
           code: 'PORT_CONFLICT',
           message: 'The configured DSH port is already in use.',
@@ -370,6 +376,13 @@ class RingBuffer {
   }
   public tail(limit: number): string {
     return this.value.slice(-limit).replace(/[\r\n]+/g, ' ')
+  }
+  /** The whole retained capture, newlines folded like `tail`. Startup-failure
+   * classification has to match a phrase the runtime can print anywhere in a
+   * multi-kilobyte report — upstream leads the report with the failing bind
+   * error and ends it with a diagnostics-file pointer — not only near its end. */
+  public text(): string {
+    return this.value.replace(/[\r\n]+/g, ' ')
   }
 }
 

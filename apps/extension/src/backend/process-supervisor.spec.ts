@@ -752,4 +752,47 @@ describe('DshProcessSupervisor', () => {
       retryable: true,
     })
   })
+
+  it('classifies a bind failure the runtime reports at the top of its startup diagnostics', async () => {
+    // Upstream prints the failing bind error as one of the first lines of a
+    // multi-kilobyte startup-failure report and ends that report with a
+    // diagnostics-file pointer, so the end of stderr is stack frames plus the
+    // log path and never contains the bind error. A classification that only
+    // reads a fixed window from the end of the stream therefore reports a
+    // generic unreachable runtime for what is a port conflict, and the
+    // dedicated port-conflict card can never appear.
+    const stack = Array.from(
+      { length: 48 },
+      (_, index) => `    at Object.<anonymous> (/dsh/packages/boot/app-boot/src/index.ts:${index + 1}:15)`,
+    ).join('\n')
+    const stderr = [
+      'dsh: startup failed',
+      'Error: listen EADDRINUSE: address already in use 127.0.0.1:3080',
+      stack,
+      'Full diagnostics: C:\\Users\\ada\\.dsh\\logs\\startup-2026-10-01T02-51-23-3f2a1b7c-9d4e-4f0a-8b1c-2e5f6a7b8c9d.log',
+      '',
+    ].join('\n')
+    const exited = deferred<{ code: number | null; signal: string | null }>()
+    const supervisor = new DshProcessSupervisor({
+      managedPort: () => 3080,
+      spawn: () => ({
+        pid: 9,
+        stdout: output(''),
+        // Resolve the exit only after the report has been handed to the
+        // consumer, mirroring a runtime that writes its report and then exits.
+        stderr: (async function* () {
+          yield stderr
+          await Promise.resolve()
+          exited.resolve({ code: 1, signal: null })
+        })(),
+        kill: () => exited.resolve({ code: null, signal: 'SIGTERM' }),
+        exited: exited.promise,
+      }),
+    })
+
+    await expect(supervisor.start(runtime())).rejects.toMatchObject({
+      code: 'PORT_CONFLICT',
+      retryable: true,
+    })
+  })
 })
