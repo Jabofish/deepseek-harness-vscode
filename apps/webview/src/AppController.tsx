@@ -472,13 +472,27 @@ const useAppControllerImpl = () => {
         setError(reason instanceof Error ? reason.message : t('app.error.openLink')),
       )
   })
-  const timelineOnOpenSession = useStableCallback((sessionId: string): void => {
-    discardAttachmentDrafts()
+  /**
+   * Leaving the current session must not cost the user the prompt they were
+   * writing. The composer's draft and its attachment chips belong to the
+   * session on screen, so they are only dropped once the Host has confirmed
+   * the navigation: an open that fails (a disconnected or restarted DSH after
+   * the store's bounded retries) leaves the user exactly where they were, and
+   * the draft has to survive with them. Releasing the attachment handles first
+   * would also be irreversible — they are host-side resources.
+   *
+   * Declared here, ahead of `timelineOnOpenSession`, because both echo it.
+   */
+  const sessionOnOpen = useStableCallback((sessionId: string): void => {
     void store
       .openSession(sessionId)
+      .then(() => discardAttachmentDrafts())
       .catch((reason: unknown) =>
         setError(reason instanceof Error ? reason.message : t('app.error.openSession')),
       )
+  })
+  const timelineOnOpenSession = useStableCallback((sessionId: string): void => {
+    sessionOnOpen(sessionId)
   })
   const timelineOnLoadOlderHistory = useStableCallback((): Promise<void> =>
     store.loadOlderHistory().catch((reason: unknown) => {
@@ -515,12 +529,7 @@ const useAppControllerImpl = () => {
   )
   const timelineOnBranch = useStableCallback((atSeq: number): void => branchSession(atSeq))
   const lineageOnOpenSession = useStableCallback((sessionId: string): void => {
-    discardAttachmentDrafts()
-    void store
-      .openSession(sessionId)
-      .catch((reason: unknown) =>
-        setError(reason instanceof Error ? reason.message : t('app.error.openSession')),
-      )
+    sessionOnOpen(sessionId)
   })
   const goalOnUpdate = useStableCallback(
     (goalId: string, update: Partial<Pick<GoalView, 'title' | 'status' | 'maxGoalRounds'>>) =>
@@ -553,18 +562,11 @@ const useAppControllerImpl = () => {
   const sessionOnOpenChange = useStableCallback((open: boolean): void => {
     store.setDrawer(open ? 'sessions' : undefined)
   })
-  const sessionOnOpen = useStableCallback((sessionId: string): void => {
-    discardAttachmentDrafts()
-    void store
-      .openSession(sessionId)
-      .catch((reason: unknown) =>
-        setError(reason instanceof Error ? reason.message : t('app.error.openSession')),
-      )
-  })
   const beginNewDraft = useStableCallback((workspaceId?: string, presetId?: string): Promise<void> => {
-    discardAttachmentDrafts()
-    setDraft('')
-    return store.stageSession(workspaceId, presetId)
+    return store.stageSession(workspaceId, presetId).then(() => {
+      discardAttachmentDrafts()
+      setDraft('')
+    })
   })
   const sessionOnCreate = useStableCallback((workspaceId: string | undefined): void => {
     void beginNewDraft(workspaceId).catch((reason: unknown) =>

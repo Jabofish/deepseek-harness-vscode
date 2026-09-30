@@ -1647,6 +1647,82 @@ describe('App connected rendering', () => {
     expect(releaseAttachments).toHaveBeenCalledWith([secondUri])
   })
 
+  it('keeps the typed draft and its attachments when opening another session fails', async () => {
+    const state = connectedState(true)
+    const uri = 'dsh-attachment:00000000-0000-4000-8000-000000000009'
+    const pickAttachment = vi.fn().mockResolvedValue({ uri, name: 'notes.txt', mimeType: 'text/plain' })
+    const releaseAttachments = vi.fn().mockResolvedValue(undefined)
+    // A disconnected or restarted DSH rejects the open after the store's own
+    // bounded retries, so a rejected `session.open` is a normal outcome.
+    const openSession = vi.fn().mockRejectedValue(new Error('Unable to open session.'))
+    const withSecond: AppState = {
+      ...state,
+      sessions: [
+        ...state.sessions,
+        {
+          id: 's2',
+          title: 'Another',
+          workspaceId: 'w1',
+          blank: false,
+          status: 'idle' as const,
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+      workspaces: [{ ...state.workspaces[0]!, sessionIds: ['s1', 's2'], sessionCount: 2 }],
+      drawer: 'sessions',
+    }
+    currentStore = { ...storeFor(withSecond), pickAttachment, releaseAttachments, openSession }
+
+    render(<App />)
+    fireEvent.change(screen.getByRole('textbox', { name: 'Prompt' }), {
+      target: { value: 'a prompt I do not want to retype' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Attach file' }))
+    await screen.findByRole('button', { name: 'Remove notes.txt' })
+
+    fireEvent.click(await screen.findByText('Another'))
+    await waitFor(() => expect(openSession).toHaveBeenCalledWith('s2'))
+
+    // The open failed, so the user is still in the session that owns the draft.
+    // Losing it here would cost them both the text and the host-file handle.
+    expect(screen.getByRole('textbox', { name: 'Prompt' }).textContent).toBe(
+      'a prompt I do not want to retype',
+    )
+    expect(screen.getByRole('button', { name: 'Remove notes.txt' })).toBeDefined()
+    expect(releaseAttachments).not.toHaveBeenCalled()
+  })
+
+  it('keeps the typed draft when staging a brand new session is refused', async () => {
+    const state = connectedState(true)
+    const uri = 'dsh-attachment:00000000-0000-4000-8000-000000000010'
+    const pickAttachment = vi.fn().mockResolvedValue({ uri, name: 'notes.txt', mimeType: 'text/plain' })
+    const releaseAttachments = vi.fn().mockResolvedValue(undefined)
+    // `stageSession` throws while no workspace is resolvable yet, which is a
+    // normal transient state on first load.
+    const stageSession = vi.fn().mockRejectedValue(new Error('Loading workspaces…'))
+    currentStore = { ...storeFor(state), pickAttachment, releaseAttachments, stageSession }
+
+    render(<App />)
+    fireEvent.change(screen.getByRole('textbox', { name: 'Prompt' }), {
+      target: { value: 'a prompt I do not want to retype' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Attach file' }))
+    await screen.findByRole('button', { name: 'Remove notes.txt' })
+
+    fireEvent.click(screen.getByRole('button', { name: 'New Session' }))
+    await waitFor(() => expect(stageSession).toHaveBeenCalled())
+
+    // No session was staged, so the draft still belongs to the composer.
+    expect(screen.getByRole('textbox', { name: 'Prompt' }).textContent).toBe(
+      'a prompt I do not want to retype',
+    )
+    expect(screen.getByRole('button', { name: 'Remove notes.txt' })).toBeDefined()
+    expect(releaseAttachments).not.toHaveBeenCalled()
+  })
+
   it('applies the selected interface language across the conversation and export surfaces', async () => {
     let dshLocale = 'en'
     const readDshSettings = vi.fn(() => Promise.resolve(dshLocaleSettingsSnapshot(dshLocale)))

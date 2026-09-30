@@ -46,10 +46,12 @@ export function useScheduleSessionActions({
       ).status !== 'available'
     )
       return
-    discardAttachmentDrafts()
     void store
       .openSession(sessionId)
       .then(() => {
+        // Only now is the composer's draft actually behind us: a failed open
+        // leaves the user in the session that still owns it.
+        discardAttachmentDrafts()
         if (store.getState().drawer === 'schedules') store.setDrawer(undefined)
       })
       .catch((reason: unknown) =>
