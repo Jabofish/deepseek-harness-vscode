@@ -543,7 +543,15 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                     onLoadImage={timelineOnLoadImage}
                   />
                   {pendingPermissions.length > 0 || pendingQuestions.length > 0 ? (
-                    <div className="dsh-conversation__interactions" aria-live="polite">
+                    // No live region here: the cards in this slot carry their
+                    // own semantics, and a timed question re-renders its
+                    // countdown every 250ms. A `polite` container would queue an
+                    // announcement per tick and keep interrupting the user for
+                    // as long as the card is on screen. The cards themselves
+                    // announce the transitions that matter (an unreachable wait,
+                    // a queued reply), and the composer's own `role="status"`
+                    // already reports a newly arrived question.
+                    <div className="dsh-conversation__interactions">
                       {pendingPermissions.map(({ request, command }) => (
                         <ApprovalCard
                           key={request.id}

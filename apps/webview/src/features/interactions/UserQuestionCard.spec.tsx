@@ -383,6 +383,37 @@ describe('UserQuestionCard', () => {
     expect(screen.getByRole('textbox').hasAttribute('disabled')).toBe(true)
   })
 
+  it('keeps the ticking countdown out of a live region', async () => {
+    // The countdown updates every 250ms. Announcing it through `aria-live` or
+    // `role="status"` makes a screen reader speak "you have N seconds" four
+    // times a second, drowning the question the user actually has to answer;
+    // the surrounding container already announces the card's arrival.
+    const { container } = render(
+      <UserQuestionCard
+        question={{
+          id: 'scope',
+          callId: 'call-timed',
+          sessionId: 's1',
+          prompt: 'Which scope?',
+          allowFreeText: true,
+          timed: true,
+          state: 'open',
+        }}
+        disabled={false}
+        onRespond={vi.fn()}
+        onCancel={vi.fn()}
+        onAttachWait={vi.fn().mockResolvedValue(60_000)}
+        onReleaseWait={vi.fn().mockResolvedValue(undefined)}
+      />,
+    )
+
+    await waitFor(() => expect(screen.getByText(/seconds to answer/u)).toBeDefined())
+    const countdown = screen.getByText(/seconds to answer/u)
+    const region = countdown.closest('[role="status"], [aria-live]')
+    expect(region).toBeNull()
+    expect(container.querySelector('.dsh-question__wait')?.getAttribute('role')).toBeNull()
+  })
+
   it('keeps one timed claim when unrelated renders replace the host callbacks', async () => {
     const onAttachWait = vi.fn().mockResolvedValue(4_000)
     const originalRelease = vi.fn().mockResolvedValue(undefined)

@@ -2047,7 +2047,11 @@ describe('App connected rendering', () => {
     const interactions = container.querySelector('.dsh-conversation__interactions')
     expect(interactions).not.toBeNull()
     expect(interactions?.parentElement?.classList.contains('dsh-conversation')).toBe(true)
-    expect(interactions?.getAttribute('aria-live')).toBe('polite')
+    // The slot itself must not be a live region. A timed question rewrites its
+    // countdown every 250ms, and a `polite` container turns that into a stream
+    // of interruptions for as long as the card is visible.
+    expect(interactions?.getAttribute('aria-live')).toBeNull()
+    expect(interactions?.getAttribute('role')).toBeNull()
     expect(container.querySelector('.dsh-compose-area .dsh-interaction')).toBeNull()
   })
 

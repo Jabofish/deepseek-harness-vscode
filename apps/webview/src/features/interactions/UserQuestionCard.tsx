@@ -149,8 +149,12 @@ export const UserQuestionCard = memo(function UserQuestionCard(props: UserQuesti
         </div>
       </header>
       {timedForeground ? (
-        <div className="dsh-question__wait" role="status">
-          <span>
+        <div className="dsh-question__wait">
+          {/* The ticking value is deliberately not a live region: it changes
+              every 250ms, and announcing it would drown the question in
+              screen-reader chatter. The failure that removes the user's ability
+              to answer is announced once instead. */}
+          <span {...(waitFailed ? { role: 'status' } : {})}>
             {waitFailed
               ? t('question.waitUnavailable')
               : !waitReady
