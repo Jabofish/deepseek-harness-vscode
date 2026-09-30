@@ -74,8 +74,34 @@ export class BackendService {
     const key = replayKey(event)
     if (key === undefined) return
     this.replay.set(key, event)
-    while (this.replay.size > 256) this.replay.delete(this.replay.keys().next().value as string)
+    this.evictToBound()
   }
+
+  /**
+   * Keep the replay cache bounded without retiring a prompt the Host still owes
+   * an answer for. Insertion order alone is the wrong key: a working session
+   * publishes status and projections continuously, so a blind FIFO drops a
+   * pending approval or question after a few hundred events and the panel comes
+   * back from a reload with no card to answer -- the agent stays blocked on an
+   * answer the user can no longer see. Settled interactions and streamed state
+   * are the disposable entries; an unanswered prompt is not, so the bound yields
+   * rather than evict one.
+   */
+  private evictToBound(): void {
+    if (this.replay.size <= REPLAY_BOUND) return
+    for (const [key, event] of this.replay) {
+      if (this.replay.size <= REPLAY_BOUND) return
+      if (isPendingPrompt(event)) continue
+      this.replay.delete(key)
+    }
+  }
+}
+
+const REPLAY_BOUND = 256
+
+/** An interaction the Host is still waiting to settle, so it must stay replayable. */
+function isPendingPrompt(event: BackendEvent): boolean {
+  return event.type === 'permission.requested' || event.type === 'question.requested'
 }
 
 function replayKey(event: BackendEvent): string | undefined {

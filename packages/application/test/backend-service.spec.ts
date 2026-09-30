@@ -110,4 +110,55 @@ describe('BackendService event replay', () => {
       },
     ])
   })
+
+  it('keeps an unanswered prompt while a busy session streams past the cache bound', () => {
+    // The cache exists so a re-attach (the Webview reload path) still shows the
+    // prompt the Host is waiting on. Its bound must therefore retire settled
+    // entries first: evicting an unanswered approval leaves the agent blocked on
+    // an answer the user can no longer see or give, and the turn just hangs.
+    const backend = new FakeBackend()
+    const service = new BackendService()
+    service.attach(backend as unknown as DshBackend, () => undefined)
+    const request = {
+      id: 'ap-1',
+      rpcId: 'rpc-1',
+      sessionId: 's1',
+      title: 'Run tests',
+      description: 'Allow the test command.',
+      risk: 'medium' as const,
+      options: [
+        { id: 'allowed-once', label: 'Allow once', kind: 'allow-once' as const },
+        { id: 'rejected', label: 'Reject', kind: 'deny' as const },
+      ],
+    }
+    backend.emit({ type: 'permission.requested', request })
+    backend.emit(requested(question('scope', 'rpc-2')))
+    // A working session keeps publishing status and projections. Each distinct
+    // session id is a distinct key, so this arrives far past the bound.
+    for (let index = 0; index < 400; index += 1) {
+      backend.emit({ type: 'session.status', sessionId: `s-${index}`, status: 'idle' })
+    }
+
+    const replayed: BackendEvent[] = []
+    service.attach(backend as unknown as DshBackend, (event) => replayed.push(event))
+
+    expect(replayed).toContainEqual({ type: 'permission.requested', request })
+    expect(replayed).toContainEqual(requested(question('scope', 'rpc-2')))
+  })
+
+  it('still bounds streamed state that is not a pending prompt', () => {
+    // Keeping a pending prompt must not turn the cache into a leak: the shipped
+    // state that a session streams continuously is what the bound is for.
+    const backend = new FakeBackend()
+    const service = new BackendService()
+    service.attach(backend as unknown as DshBackend, () => undefined)
+    for (let index = 0; index < 1_000; index += 1) {
+      backend.emit({ type: 'session.status', sessionId: `s-${index}`, status: 'idle' })
+    }
+
+    const replayed: BackendEvent[] = []
+    service.attach(backend as unknown as DshBackend, (event) => replayed.push(event))
+
+    expect(replayed).toHaveLength(256)
+  })
 })
