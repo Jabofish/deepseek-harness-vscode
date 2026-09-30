@@ -49,4 +49,26 @@ describe('ReasoningDisclosure', () => {
     )
     expect(container.querySelector('.dsh-timeline__reasoning-summary')).toBeNull()
   })
+
+  it('does not announce every reasoning token as it streams', () => {
+    // Reasoning arrives token by token, and the preview is rebuilt from the
+    // markdown on each render. A live region covering this section would queue
+    // an announcement per token, drowning the answer the user is waiting for.
+    // The Timeline already announces streaming once through its own constant
+    // sr-only region (`Timeline.tsx`), which is the intended signal.
+    const props = {
+      id: 'reasoning-1',
+      streaming: true,
+      expanded: false,
+      onExpandedChange: () => undefined,
+      translate: (key: string) => key,
+    }
+    const { container, rerender } = render(<ReasoningDisclosure {...props} markdown={'step one'} />)
+
+    expect(container.querySelector('[aria-live]')).toBeNull()
+
+    rerender(<ReasoningDisclosure {...props} markdown={'step one\nstep two'} />)
+    expect(container.querySelector('[aria-live]')).toBeNull()
+    expect(container.querySelector('[role="status"]')).toBeNull()
+  })
 })

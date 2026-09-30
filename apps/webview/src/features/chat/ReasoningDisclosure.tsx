@@ -34,7 +34,11 @@ export const ReasoningDisclosure = memo(function ReasoningDisclosure(
   return (
     <section
       className={`dsh-timeline__reasoning-preview${props.expanded ? ' dsh-timeline__reasoning-preview--expanded' : ''}`}
-      aria-live={props.streaming ? 'polite' : undefined}
+      // Deliberately not a live region. Reasoning streams token by token and the
+      // preview is rebuilt from the markdown on every render, so a region here
+      // queues an announcement per token and buries the answer the user is
+      // waiting for. The Timeline already carries one constant sr-only
+      // announcement for a streaming turn, which is the signal that matters.
       data-reasoning-id={props.id}
       data-open={props.expanded}
     >
