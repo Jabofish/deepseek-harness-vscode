@@ -164,8 +164,12 @@ export function createSessionScope(deps: SessionScopeDependencies): SessionScope
     }
     const pending = currentWorkspaceSessionLoads.get(sessionId)
     // An explicit session.open owns a fresh stream baseline. Do not let an
-    // older advisory ownership read bypass that re-baselining hook.
-    if (pending !== undefined && options.fresh !== true) return pending
+    // older advisory ownership read bypass that re-baselining hook. Recovery
+    // reads (allowArchived) share neither direction of the dedup: adopting an
+    // ordinary load would fail a restore or delete with the archived refusal,
+    // and letting an ordinary route adopt a recovery load would hand it an
+    // archived session the route's own contract must refuse.
+    if (pending !== undefined && options.fresh !== true && options.allowArchived !== true) return pending
 
     const generation = currentWorkspaceSessionGeneration
     const load = (async (): Promise<SessionDetail> => {
@@ -215,7 +219,11 @@ export function createSessionScope(deps: SessionScopeDependencies): SessionScope
         currentWorkspaceSessionDetails.set(sessionId, { generation, detail })
       return detail
     })()
-    currentWorkspaceSessionLoads.set(sessionId, load)
+    // Recovery reads stay out of the shared in-flight map, mirroring the cache
+    // policy documented above: an ordinary route must never adopt one, and two
+    // overlapping recovery reads are rare, idempotent, and cheaper to reason
+    // about than a variant-aware dedup key.
+    if (options.allowArchived !== true) currentWorkspaceSessionLoads.set(sessionId, load)
     void load.then(
       () => {
         if (currentWorkspaceSessionLoads.get(sessionId) === load)
