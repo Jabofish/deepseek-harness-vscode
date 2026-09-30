@@ -1079,7 +1079,9 @@ describe('DshStreamController', () => {
     const lost = received.find((event) => event.type === 'connection.lost')
     expect(lost).toMatchObject({
       type: 'connection.lost',
-      reason: 'DSH event stream reported internal: request failed token: [redacted]',
+      // The scrub replaces the value and keeps the separator it matched, so the
+      // diagnostic still reads as the `token=…` pair it came from.
+      reason: 'DSH event stream reported internal: request failed token=[redacted]',
     })
   })
 

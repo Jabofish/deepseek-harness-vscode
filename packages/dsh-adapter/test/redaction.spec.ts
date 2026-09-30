@@ -48,7 +48,8 @@ describe('shared redaction', () => {
     expect(value).toContain('+  indented line')
     expect(value).toContain('\n  unchanged')
     expect(value).not.toContain('abc')
-    expect(value).toContain('token : [redacted]')
+    // The assignment keeps its own `=`; only the value is replaced.
+    expect(value).toContain('token = [redacted]')
   })
 
   it('normalizes CRLF and bounds multi-line text without joining lines', () => {
@@ -78,5 +79,36 @@ describe('shared redaction', () => {
     // scrub must not eat them.
     const value = redactText('src/bundle.js is too large', 240)
     expect(value).toBe('src/bundle.js is too large')
+  })
+
+  it('removes a credential carried in a query string or a bearer scheme', () => {
+    // A model-discovery failure quotes the endpoint the user configured. When
+    // that URL carries its credential in the query, or when the failure echoes
+    // an `Authorization` header, the key must not reach the Webview banner:
+    // it would land in the DOM, in a screenshot and in any filed report.
+    const query = redactText('could not reach https://gw.example.com/v1?key=sk-live-AAA', 240)
+    expect(query).not.toContain('sk-live-AAA')
+
+    const bearer = redactText('could not reach https://gw.example.com/v1?api_key=sk-live-AAA', 240)
+    expect(bearer).not.toContain('sk-live-AAA')
+
+    const header = redactText('discovery failed: Authorization: Bearer sk-live-AAA', 240)
+    expect(header).not.toContain('sk-live-AAA')
+
+    // A bare scheme still names the credential even with no `keyword:` prefix.
+    const bare = redactText('discovery failed with Bearer sk-live-AAA', 240)
+    expect(bare).not.toContain('sk-live-AAA')
+
+    const underscore = redactText('discovery failed auth_token=sk-live-AAA', 240)
+    expect(underscore).not.toContain('sk-live-AAA')
+  })
+
+  it('keeps a redacted identifier looking like the value it replaced', () => {
+    // The scrub rewrites a `keyword=value` pair. It must not also rewrite the
+    // separator: turning `?api_key=...` into `?api_key: ...` invents a URL the
+    // user never configured, which is worse than saying nothing.
+    const query = redactText('could not reach https://gw.example.com/v1?api_key=sk-live-AAA', 240)
+    expect(query).toContain('?api_key=[redacted]')
+    expect(query).not.toContain('api_key:')
   })
 })

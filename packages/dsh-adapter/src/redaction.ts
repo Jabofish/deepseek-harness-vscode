@@ -45,8 +45,50 @@ const SENSITIVE_FIELDS = new Set([
   'server_url',
 ])
 
+// A credential reaches a diagnostic in three shapes, and all three have to go:
+//
+//   `token=abc`, `api_key: abc`   -- a labelled pair, `:` or `=`
+//   `?key=abc`, `&key=abc`        -- a URL query, which the label pattern
+//                                    above misses because `key` alone is not
+//                                    in the keyword alternation (it would match
+//                                    far too much prose)
+//   `Bearer abc`, `Basic abc`     -- an auth scheme, which carries the secret
+//                                    with no label at all
+//
+// The replacement preserves the separator it matched. Rewriting `=` as `:`
+// would turn `?api_key=...` into `?api_key: ...`, inventing a URL the user
+// never configured; a redaction has to stay recognisable as the value it
+// replaced.
 const SENSITIVE_TEXT_PATTERN =
   /\b(?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|authorization|password|secret|private[_ -]?key|token|prompt|body|response)\b\s*[:=]\s*[^\s,;]+/giu
+
+/** `?key=…` / `&api_key=…`: a query parameter whose name is a bare credential word. */
+const QUERY_CREDENTIAL_PATTERN =
+  /([?&](?:key|apikey|api_key|access_token|refresh_token|auth_token|token|secret|password|auth)=)[^&\s]+/giu
+
+/** `auth_token=…`: the same pair outside a query, where `\b` cannot anchor on `_`. */
+const UNDERSCORE_CREDENTIAL_PATTERN =
+  /\b((?:api_key|access_token|refresh_token|auth_token|secret_key|private_key)=)[^\s,;&]+/giu
+
+/**
+ * A labelled auth header: `Authorization: Bearer <token>`. The label pattern
+ * below would stop at the scheme and leave the token behind, so this pair is
+ * matched as one unit before it runs. No length gate here: the label already
+ * proves the value is a credential, and real tokens are often short.
+ */
+const LABELLED_AUTH_SCHEME_PATTERN = /\b(authorization\s*[:=]\s*)(?:bearer|basic|token)\s+\S+/giu
+
+const LABELLED_AUTH_SCHEME_REDACTION = '$1[redacted]'
+
+/**
+ * A bare scheme: `Bearer <token>` with no label at all. `bearer` and `basic`
+ * are auth-scheme names and never appear as prose directly before a word, so
+ * no length gate is needed; `token` is excluded precisely because it reads as
+ * ordinary English ("the token is missing") and would over-redact.
+ */
+const AUTH_SCHEME_PATTERN = /\b(bearer|basic)\s+\S+/giu
+
+const AUTH_SCHEME_REDACTION = '$1 [redacted]'
 
 // A transport failure quotes the socket, lock file or executable the OS refused,
 // so the raw message names the user's home directory and drive layout. Absolute
@@ -97,7 +139,16 @@ function redactLine(line: string): string {
   return line
     .replace(ABSOLUTE_PATH_PATTERN, PATH_REDACTION)
     .replace(/(https?:\/\/)([^/\s:@]+(?::[^/\s@]*)?@)/giu, '$1[redacted]@')
-    .replace(SENSITIVE_TEXT_PATTERN, (match) => match.replace(/[:=].*$/u, ': [redacted]'))
+    .replace(LABELLED_AUTH_SCHEME_PATTERN, LABELLED_AUTH_SCHEME_REDACTION)
+    .replace(AUTH_SCHEME_PATTERN, AUTH_SCHEME_REDACTION)
+    .replace(QUERY_CREDENTIAL_PATTERN, '$1[redacted]')
+    .replace(UNDERSCORE_CREDENTIAL_PATTERN, '$1[redacted]')
+    .replace(SENSITIVE_TEXT_PATTERN, (match) =>
+      // Keep everything up to and including the separator, plus the spacing
+      // that followed it: `token = abc` must read `token = [redacted]`, not
+      // `token : [redacted]` and not `token =[redacted]`.
+      match.replace(/([:=]\s*)\S+$/u, '$1[redacted]'),
+    )
 }
 
 /** Remove sensitive fields and bound recursive unknown protocol payloads. */
