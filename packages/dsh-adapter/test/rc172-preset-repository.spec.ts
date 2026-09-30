@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { AppError } from '@dsh-vscode/domain'
 import type { DshTransport } from '../src/contracts.js'
+import { normalizeAlphaResult, type AlphaResult } from '../src/versions/alpha/transport-support.js'
+import { normalizeRc172ErrorCode } from '../src/versions/rc172/error-vocabulary.js'
 import { Rc172PresetRepository } from '../src/versions/rc172/preset-repository.js'
 
 interface RemoteCall {
@@ -25,7 +27,14 @@ function recordingTransport(responses: readonly unknown[]): {
       calls.push({ endpoint, args, signal })
       if (pending.length === 0) return Promise.reject(new Error('unexpected preset Remote request'))
       const response = pending.shift()
-      return response instanceof Error ? Promise.reject(response) : Promise.resolve(response as TResponse)
+      if (response instanceof Error) return Promise.reject(response)
+      // The real transport normalises the wire error vocabulary inside
+      // `post()`, before a response reaches any repository. Replay that step
+      // here so the tests exercise the codes a repository actually receives,
+      // not the raw spellings that never survive the transport.
+      return Promise.resolve(
+        normalizeAlphaResult(response as AlphaResult, normalizeRc172ErrorCode) as TResponse,
+      )
     },
     openEventStream: async function* () {
       /* preset operations do not open streams */
@@ -84,7 +93,12 @@ describe('DSH 0.1.7-rc.2 Agent Preset Remote contract', () => {
     expect(calls).toEqual([{ endpoint: 'agentPresets/list', args: {}, signal }])
   })
 
-  it('treats only the optional registry invocation failure as an empty roster with no default', async () => {
+  it('treats the optional registry invocation failure as an empty roster with no default', async () => {
+    // The wire reports the unmounted registry as `gateway/invocation-unavailable`;
+    // the transport normalises it to `unknown-command` and retains the original
+    // spelling as `wireCode`. The fallback has to recognise the condition from
+    // what actually arrives, or session creation hard-fails on exactly the
+    // deployments this fallback exists for.
     const { transport, calls } = recordingTransport([
       {
         ok: false,
@@ -107,21 +121,50 @@ describe('DSH 0.1.7-rc.2 Agent Preset Remote contract', () => {
     expect(calls).toEqual([{ endpoint: 'agentPresets/list', args: {}, signal }])
   })
 
-  it.each(['gateway/method-unavailable', 'agent-preset/not-found'])(
-    'propagates a different Remote refusal while listing: %s',
-    async (code) => {
-      const { transport } = recordingTransport([
-        {
-          ok: false,
-          error: { code, message: 'The requested Remote was refused.', details: {} },
-        },
-      ])
+  it('treats a plain unknown method as the same absent registry', async () => {
+    // A runtime that has never registered the method reports the legacy
+    // `unknown-command` literal; the normaliser passes it through unchanged,
+    // so no `wireCode` is retained and the fallback must still hold.
+    const { transport } = recordingTransport([
+      {
+        ok: false,
+        error: { code: 'unknown-command', message: 'Unknown method agentPresets/list.', details: {} },
+      },
+    ])
 
-      await expect(new Rc172PresetRepository(transport).list()).rejects.toMatchObject({
-        context: { rpcMethod: 'agentPresets/list', rpcCode: code },
-      })
+    await expect(new Rc172PresetRepository(transport).list()).resolves.toEqual({
+      presets: [],
+      authorable: false,
+      canOpenPresetLocation: false,
+      canRemoveUserPresets: false,
+      compositionReadable: false,
+    })
+  })
+
+  it.each([
+    // `gateway/context-not-found` normalises to the same local `unknown-command`
+    // as the absent-registry signal but keeps its own wire code: distinct
+    // conditions collapse onto one local code, and only the registry one may
+    // fall back to an empty roster.
+    {
+      wire: 'gateway/method-unavailable',
+      rpcCode: 'unknown-command',
+      wireCode: 'gateway/method-unavailable',
     },
-  )
+    { wire: 'gateway/context-not-found', rpcCode: 'unknown-command', wireCode: 'gateway/context-not-found' },
+    { wire: 'agent-preset/not-found', rpcCode: 'agent-preset-not-found', wireCode: 'agent-preset/not-found' },
+  ])('propagates a different Remote refusal while listing: $wire', async ({ wire, rpcCode, wireCode }) => {
+    const { transport } = recordingTransport([
+      {
+        ok: false,
+        error: { code: wire, message: 'The requested Remote was refused.', details: {} },
+      },
+    ])
+
+    await expect(new Rc172PresetRepository(transport).list()).rejects.toMatchObject({
+      context: { rpcMethod: 'agentPresets/list', rpcCode, wireCode },
+    })
+  })
 
   it('propagates list cancellation and transport timeout failures', async () => {
     const cancelled = new AppError({

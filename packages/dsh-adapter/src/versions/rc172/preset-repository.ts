@@ -117,10 +117,17 @@ function presetTrust(id: string, name: unknown): 'system' | 'user' {
 }
 
 function isOptionalRegistryUnavailable(error: unknown): boolean {
+  if (!(error instanceof AppError) || error.context?.rpcMethod !== LIST_AGENT_PRESETS) return false
+  // The alpha transport normalises the wire vocabulary inside `post()`, before
+  // the RPC mapper runs: `gateway/invocation-unavailable` collapses onto
+  // `unknown-command` and the original spelling is retained as `wireCode`, so
+  // the raw spelling can never appear in `rpcCode`. Match the condition rather
+  // than one spelling of it: the retained wire code, or a runtime that reports
+  // the missing registry as a plain unknown method (a code the normaliser
+  // passes through unchanged, hence no `wireCode` at all).
   return (
-    error instanceof AppError &&
-    error.context?.rpcMethod === LIST_AGENT_PRESETS &&
-    error.context.rpcCode === 'gateway/invocation-unavailable'
+    error.context.wireCode === 'gateway/invocation-unavailable' ||
+    (error.context.rpcCode === 'unknown-command' && error.context.wireCode === undefined)
   )
 }
 
