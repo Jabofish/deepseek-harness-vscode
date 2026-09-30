@@ -605,6 +605,46 @@ describe('WebviewMessageRouter command diagnostics', () => {
     expect(message).toContain('spawn powershell.exe ENOENT')
     expect(message).not.toContain('super-secret')
   })
+
+  it('scrubs an absolute path out of the diagnostic before the Webview sees it', async () => {
+    // A transport failure quotes the socket the OS refused, so the raw message
+    // names the user's home directory. `docs/architecture.md` keeps an absolute
+    // workspace path off the Webview, and this route is how it would arrive.
+    const posted: unknown[] = []
+    const router = new WebviewMessageRouter({
+      postMessage: (message) => {
+        posted.push(message)
+        return Promise.resolve(true)
+      },
+      handleRequest: () =>
+        Promise.reject(
+          new AppError({
+            code: 'BACKEND_UNREACHABLE',
+            message: String.raw`The DSH request command.execute failed: connect EACCES D:\Users\Ada\.dsh\run\agent.sock`,
+            retryable: true,
+            context: { rpcMethod: 'command.execute' },
+          }),
+        ),
+    })
+
+    await router.handle({
+      protocolVersion: 1,
+      message: {
+        type: 'command.execute',
+        requestId: 'command-path-1',
+        payload: { sessionId: 'session-1', command: '/plan' },
+      },
+    })
+
+    const response = posted[0] as { readonly error?: { readonly message?: string } }
+    const message = response.error?.message ?? ''
+    // The actionable part of the failure survives; the path does not.
+    expect(message).toContain('command.execute')
+    expect(message).toContain('connect EACCES')
+    expect(message).not.toContain('Users')
+    expect(message).not.toContain('Ada')
+    expect(message).not.toMatch(/[A-Za-z]:\\/u)
+  })
 })
 
 describe('WebviewMessageRouter timed question wait ownership', () => {

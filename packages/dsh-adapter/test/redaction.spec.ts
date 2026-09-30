@@ -55,4 +55,28 @@ describe('shared redaction', () => {
     expect(redactMultilineText('one\r\ntwo\r\nthree', 4_096)).toBe('one\ntwo\nthree')
     expect(redactMultilineText('one\ntwo\nthree', 7)).toBe('one\ntwo')
   })
+
+  it('does not carry a filesystem path out of a transport diagnostic', () => {
+    // Transport failures quote the socket or file the OS refused, so the raw
+    // message names the user's home directory and drive layout. The Webview
+    // must not receive an absolute path, and this scrubber is the shared gate
+    // both the Adapter and the Extension Host rely on, so it has to drop the
+    // path as well as the credentials.
+    expect(redactText(String.raw`connect EACCES D:\Users\Ada\.dsh\run\agent.sock`, 240)).not.toContain(
+      'Users',
+    )
+    expect(redactText('connect ENOENT /home/ada/.dsh/run/agent.sock', 240)).not.toContain('ada')
+    // A Windows drive prefix and a POSIX root are both absolute.
+    expect(redactText(String.raw`failed to open C:\Users\Ada\project\secret.txt`, 240)).not.toMatch(
+      /[A-Za-z]:\\/u,
+    )
+    expect(redactText('failed to open /Users/ada/project/secret.txt', 240)).not.toMatch(/\/(?:Users|home)\//u)
+  })
+
+  it('keeps a relative identifier a card is allowed to show', () => {
+    // Relative identifiers are the documented Webview contract, so the path
+    // scrub must not eat them.
+    const value = redactText('src/bundle.js is too large', 240)
+    expect(value).toBe('src/bundle.js is too large')
+  })
 })

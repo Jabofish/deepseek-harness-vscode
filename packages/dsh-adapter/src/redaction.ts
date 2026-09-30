@@ -48,6 +48,24 @@ const SENSITIVE_FIELDS = new Set([
 const SENSITIVE_TEXT_PATTERN =
   /\b(?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|authorization|password|secret|private[_ -]?key|token|prompt|body|response)\b\s*[:=]\s*[^\s,;]+/giu
 
+// A transport failure quotes the socket, lock file or executable the OS refused,
+// so the raw message names the user's home directory and drive layout. Absolute
+// paths are on the Webview's deny list, and this scrubber is the shared gate the
+// Adapter and the Extension Host both rely on, so it has to drop them too.
+//
+// Only an absolute path is matched, and each alternative needs a real path start
+// (the string start, or a character that cannot continue an identifier or a
+// URL). That keeps a relative identifier such as `src/bundle.js` — what cards are
+// documented to show — and leaves `https://host/...` readable, because the
+// origin is what makes an endpoint failure actionable and the credential rule
+// below already handles its userinfo. The cost is that a path inside a URL is
+// not rewritten; endpoint values are separately on the deny list, so that path
+// is not the route that carries a directory layout to the Webview.
+const ABSOLUTE_PATH_PATTERN =
+  /(?<![A-Za-z0-9_.~%:/-])(?:[A-Za-z]:[\\/]|\\\\|\/)(?:[^\s\\/"'<>|:*?]+[\\/])*[^\s\\/"'<>|:*?]*/gu
+
+const PATH_REDACTION = '[path]'
+
 const MAX_SAFE_PAYLOAD_DEPTH = 4
 const MAX_SAFE_PAYLOAD_ITEMS = 32
 const MAX_SAFE_PAYLOAD_KEYS = 64
@@ -77,6 +95,7 @@ export function redactMultilineText(value: string, maximumLength: number): strin
 
 function redactLine(line: string): string {
   return line
+    .replace(ABSOLUTE_PATH_PATTERN, PATH_REDACTION)
     .replace(/(https?:\/\/)([^/\s:@]+(?::[^/\s@]*)?@)/giu, '$1[redacted]@')
     .replace(SENSITIVE_TEXT_PATTERN, (match) => match.replace(/[:=].*$/u, ': [redacted]'))
 }
