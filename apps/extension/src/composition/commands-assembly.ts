@@ -19,6 +19,7 @@ import type { RuntimeInstaller } from '../vscode/install-runtime.js'
 import type { VsCodeConfigurationSource } from '../config/configuration-source.js'
 import { moveOrExplainSecondarySidebar } from '../vscode/secondary-sidebar.js'
 import { DSH_DOCUMENTATION_URL } from '../constants.js'
+import { deliverOrRevealView } from '../view/deliver-or-reveal.js'
 import type { WebviewMessageRouter } from '../view/message-router.js'
 import { DshWebviewViewProvider } from '../view/dsh-webview-view-provider.js'
 import { stateSubscriptionDisposable } from './public-projection.js'
@@ -125,7 +126,13 @@ export function createCommandsAssembly(deps: CommandsAssemblyDependencies): Comm
     diagnostics,
     vscode.workspace.onDidChangeWorkspaceFolders(() => {
       invalidateCurrentWorkspaceSessionDetails()
+      // This drops every captured context ref, so the availability keys have
+      // to be recomputed in the same turn. They are what gates the "Add …
+      // Context" menu entries, and none of the editor listeners below fires
+      // for a folder change made from the Explorer while no editor is
+      // touched — leaving the menu enabled over an emptied store.
       editorContextProvider.dispose()
+      void postEditorContextAvailabilityEvent()
       void postEvent('workspace.changed', {})
     }),
     vscode.window.onDidChangeActiveTextEditor(() => {
@@ -138,6 +145,16 @@ export function createCommandsAssembly(deps: CommandsAssemblyDependencies): Comm
       void postEditorContextAvailabilityEvent()
     }),
   ]
+  const revealThenPost = (name: string, payload: unknown): Promise<boolean> =>
+    deliverOrRevealView(
+      {
+        post: postEvent,
+        executeCommand: (command, ...args) => vscode.commands.executeCommand(command, ...args),
+        settle: () => new Promise((resolve) => setTimeout(resolve, 0)),
+      },
+      name,
+      payload,
+    )
   const start = (): Promise<void> => {
     subscriptions.push(
       vscode.window.registerWebviewViewProvider(DshWebviewViewProvider.viewType, provider, {
@@ -153,7 +170,7 @@ export function createCommandsAssembly(deps: CommandsAssemblyDependencies): Comm
       handlers: {
         'dsh.connect': () => reconnect(),
         'dsh.reconnect': () => reconnect(),
-        'dsh.newSession': () => postEvent('ui.sessions.toggle', {}),
+        'dsh.newSession': () => revealThenPost('ui.sessions.toggle', {}),
         'dsh.openSettings': async () => {
           const delivered = await postEvent('ui.settings.toggle', {})
           if (!delivered)
