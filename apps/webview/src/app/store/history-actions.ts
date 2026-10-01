@@ -43,6 +43,14 @@ export function createHistoryActions(deps: HistoryActionDependencies): {
     setState,
   } = deps
 
+  // The loading flag is shared by every session, so one pagination request may
+  // be in flight at a time. Ownership of that flag is not the open barrier: a
+  // failed navigation advances the open version without ever taking the flag
+  // over, and only a newer load may release a newer load's flag. Keying the
+  // release on the open barrier instead strands the flag on the session the
+  // user is still reading and permanently disables its older-page paging.
+  let loadGeneration = 0
+
   const loadOlderHistory = async (): Promise<void> => {
     flushPendingHistory()
     const state = getState()
@@ -55,6 +63,7 @@ export function createHistoryActions(deps: HistoryActionDependencies): {
     if (sessionId === undefined || !state.historyHasMore || beforeSeq === undefined || state.historyLoading)
       return
     const version = getOpenVersion()
+    const generation = ++loadGeneration
     setState((current) =>
       current.activeSessionId === sessionId ? { ...current, historyLoading: true } : current,
     )
@@ -120,7 +129,7 @@ export function createHistoryActions(deps: HistoryActionDependencies): {
       if (discontinuous) throw new Error(translate('app.error.historyDiscontinuous'))
     } finally {
       const current = getState()
-      if (version === getOpenVersion() && current.activeSessionId === sessionId && current.historyLoading)
+      if (generation === loadGeneration && current.activeSessionId === sessionId && current.historyLoading)
         setState((state) =>
           state.activeSessionId === sessionId ? { ...state, historyLoading: false } : state,
         )

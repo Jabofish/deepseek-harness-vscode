@@ -1,5 +1,5 @@
 import type { AgentConfiguration } from '@dsh-vscode/domain'
-import { parseSlashCommand } from '@dsh-vscode/domain'
+import { AppError, parseSlashCommand } from '@dsh-vscode/domain'
 import { translate } from '../../i18n.js'
 import type { ProtocolClient } from '../protocol-client.js'
 import { requestId } from './ids.js'
@@ -120,6 +120,17 @@ export function createSessionCreationActions(
         return Promise.reject(new Error(translate('app.error.prompt')))
       if (parseSlashCommand(text) !== undefined)
         return Promise.reject(new Error(translate('app.error.commandBeforeFirstMessage')))
+      // Any exit after the send started where nothing was delivered — another
+      // navigation owns the panel, or a newer pending draft replaced this
+      // composition — must reject as cancelled. Resolving would run the
+      // composer's success cleanup and wipe the draft and attachments the user
+      // can still see and edit.
+      const supersededSend = (): AppError =>
+        new AppError({
+          code: 'REQUEST_CANCELLED',
+          message: 'The first message was not sent because the view moved on before delivery.',
+          retryable: true,
+        })
       const send = (async () => {
         let sessionId = pending.createdSessionId
         if (sessionId === undefined) {
@@ -162,11 +173,11 @@ export function createSessionCreationActions(
               : current,
           )
         }
-        if (getState().pendingSession?.revision !== pending.revision) return
+        if (getState().pendingSession?.revision !== pending.revision) throw supersededSend()
         await refresh()
-        if (getState().pendingSession?.revision !== pending.revision) return
+        if (getState().pendingSession?.revision !== pending.revision) throw supersededSend()
         await openSession(sessionId)
-        if (getState().activeSessionId !== sessionId) return
+        if (getState().activeSessionId !== sessionId) throw supersededSend()
         await sendUserTurn(sessionId, text, attachments, mode, undefined)
       })()
       const promise = send.finally(() => {

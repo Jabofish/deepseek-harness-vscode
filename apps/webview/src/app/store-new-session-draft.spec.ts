@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { WebviewRequest } from '@dsh-vscode/webview-protocol'
 import type { ProtocolClient } from './protocol-client.js'
 import { createAppStore } from './store.js'
@@ -24,6 +24,17 @@ function session(id: string): Record<string, unknown> {
     history: [],
     configuration,
   }
+}
+
+function deferred<T>(): {
+  readonly promise: Promise<T>
+  readonly resolve: (value: T) => void
+} {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((settle) => {
+    resolve = settle
+  })
+  return { promise, resolve }
 }
 
 function fixture(failFirstOpen = false): {
@@ -125,4 +136,95 @@ describe('New Session draft', () => {
       store.dispose()
     }
   })
+
+  it.each(['create', 'refresh', 'open'] as const)(
+    'rejects a pending send superseded during %s as cancelled instead of resolving as delivered',
+    async (phase) => {
+      const gates = {
+        create: deferred<unknown>(),
+        refresh: deferred<unknown>(),
+        open: deferred<unknown>(),
+      }
+      const armed = { create: false, refresh: false, open: false }
+      let sessionListCalls = 0
+      const requests: WebviewRequest[] = []
+      let created = false
+      const client = {
+        subscribe: () => () => {},
+        dispose: () => {},
+        request: async (request: WebviewRequest) => {
+          await Promise.resolve()
+          requests.push(request)
+          if (request.type === 'workspace.list')
+            return {
+              items: [
+                {
+                  id: 'w1',
+                  name: 'Workspace',
+                  sessionIds: created ? ['created'] : [],
+                  sessionCount: created ? 1 : 0,
+                  createdAt: '2026-09-01T00:00:00.000Z',
+                  updatedAt: '2026-09-01T00:00:00.000Z',
+                },
+              ],
+              archivedSessionIds: [],
+            }
+          if (request.type === 'session.list') {
+            // The first list is the test's own startup refresh; the second is
+            // the send flow's catalog refresh.
+            sessionListCalls += 1
+            if (sessionListCalls >= 2 && phase === 'refresh') {
+              armed.refresh = true
+              await gates.refresh.promise
+            }
+            return { items: created ? [session('created')] : [] }
+          }
+          if (request.type === 'session.create') {
+            if (phase === 'create') {
+              armed.create = true
+              await gates.create.promise
+            }
+            created = true
+            return { id: 'created' }
+          }
+          if (request.type === 'session.open') {
+            if (request.payload.sessionId === 'created' && phase === 'open') {
+              armed.open = true
+              await gates.open.promise
+            }
+            return session(request.payload.sessionId)
+          }
+          if (request.type === 'subagent.list') return { entries: [], parentAvailable: true }
+          if (request.type === 'models.session.list') return { models: [], failures: [], routable: true }
+          return []
+        },
+      }
+      const store = createAppStore(client as unknown as ProtocolClient)
+      try {
+        await store.refreshSessions()
+        await store.stageSession('w1')
+        const send = store.sendPendingPrompt('Hello', [], 'queue')
+        await vi.waitFor(() => expect(armed[phase]).toBe(true))
+
+        if (phase === 'create' || phase === 'refresh') {
+          // A newer pending draft replaces this composition while the send is
+          // still working toward delivery.
+          await store.stageSession('w1')
+        } else {
+          // The user navigates to an existing session while the send's own
+          // open is in flight, so the send's open loses the panel.
+          await store.openSession('existing')
+        }
+        gates[phase].resolve(undefined)
+
+        // Nothing was delivered, so resolving here would run the composer's
+        // success cleanup and wipe the draft and attachments the user can
+        // still see and edit.
+        await expect(send).rejects.toMatchObject({ code: 'REQUEST_CANCELLED' })
+        expect(requests.some((request) => request.type === 'session.sendPrompt')).toBe(false)
+      } finally {
+        store.dispose()
+      }
+    },
+  )
 })

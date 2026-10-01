@@ -1730,6 +1730,82 @@ describe('App connected rendering', () => {
     expect(releaseAttachments).not.toHaveBeenCalled()
   })
 
+  it('keeps the draft and a still-valid attachment when a superseded pending send reports cancelled', async () => {
+    const state = connectedState(false)
+    let rejectSend: (reason: unknown) => void = () => undefined
+    const send = new Promise<void>((_resolve, reject) => {
+      rejectSend = reject
+    })
+    const sendPendingPrompt = vi.fn().mockReturnValueOnce(send)
+    const uri = 'dsh-attachment:00000000-0000-4000-8000-000000000012'
+    const laterUri = 'dsh-attachment:00000000-0000-4000-8000-000000000013'
+    const ingestAttachment = vi
+      .fn()
+      .mockResolvedValueOnce({ uri, name: 'notes.txt', mimeType: 'text/plain' })
+      .mockResolvedValue({ uri: laterUri, name: 'later.txt', mimeType: 'text/plain' })
+    const releaseAttachments = vi.fn().mockResolvedValue(undefined)
+    const { updateState } = renderWithMutableState({
+      ...state,
+      pendingSession: { revision: 1, workspaceId: 'w1', configuration: state.configuration! },
+    })
+    Object.assign(currentStore, { sendPendingPrompt, ingestAttachment, releaseAttachments })
+
+    const input = document.querySelector('.dsh-composer textarea')
+    expect(input).toBeInstanceOf(HTMLTextAreaElement)
+    fireEvent.change(input!, { target: { value: 'a prompt I do not want to retype' } })
+    fireEvent.paste(input!, {
+      clipboardData: { files: [new File(['notes'], 'notes.txt', { type: 'text/plain' })] },
+    })
+    await screen.findByRole('button', { name: 'Remove notes.txt' })
+    fireEvent.submit(input!.closest('form')!)
+    await waitFor(() =>
+      expect(sendPendingPrompt).toHaveBeenCalledWith(
+        'a prompt I do not want to retype',
+        [expect.anything()],
+        'queue',
+      ),
+    )
+
+    // The user navigates to an existing session while the send is still
+    // working: the switch discards the pending composition's own attachment,
+    // and the draft text survives the navigation by design.
+    updateState({
+      ...state,
+      activeSessionId: 's2',
+      sessions: [
+        ...state.sessions,
+        {
+          id: 's2',
+          title: 'Another',
+          workspaceId: 'w1',
+          blank: false,
+          status: 'idle' as const,
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+      workspaces: [{ ...state.workspaces[0]!, sessionIds: ['s1', 's2'], sessionCount: 2 }],
+    })
+    await waitFor(() => expect(releaseAttachments).toHaveBeenCalledWith([uri]))
+    const sessionPrompt = await screen.findByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })
+    fireEvent.paste(sessionPrompt, {
+      clipboardData: { files: [new File(['later'], 'later.txt', { type: 'text/plain' })] },
+    })
+    await screen.findByRole('button', { name: 'Remove later.txt' })
+
+    // The send reports cancelled — nothing was delivered — so the composer
+    // must keep both the visible draft and the attachment added afterwards.
+    await act(async () => {
+      rejectSend(Object.assign(new Error('cancelled'), { code: 'REQUEST_CANCELLED' }))
+      await send.catch(() => undefined)
+    })
+    expect(await screen.findByText('Prompt failed.')).toBeDefined()
+    expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' }).value).toBe(
+      'a prompt I do not want to retype',
+    )
+    expect(screen.getByRole('button', { name: 'Remove later.txt' })).toBeDefined()
+  })
+
   it('releases the previous attachment handles only when the displayed draft changes', async () => {
     const state = connectedState(true)
     const { updateState } = renderWithMutableState(state)

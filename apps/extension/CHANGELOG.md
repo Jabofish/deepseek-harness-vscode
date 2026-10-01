@@ -2,16 +2,12 @@
 
 ## Unreleased
 
-- 修复面板重载时投影基线被淘汰、旧增量恢复已移除会话的问题；回放缓存保持有界并优先保留基线与未答提问。
-- Panel reloads retain the projection baseline and no longer resurrect removed sessions from older deltas. The bounded replay cache prioritizes its baseline and unanswered prompts.
-- 补齐带空格的引号路径、file URI、多词凭据与结构化凭据别名的脱敏，保留原有分隔符和相对标识。
-- Redaction now covers quoted paths with spaces, file URIs, multiword credentials, and structured credential aliases while preserving separators and relative identifiers.
-- 连接设置提交按顺序完成写入与重连；已有重连结束后，新提交会按完整配置重新连接，写入失败不阻塞后续提交。
-- Connection settings submissions serialize their writes and reconnects. A new submission reconnects with the complete settings after any previous reconnect finishes, and failed writes do not block later submissions.
-- 标题栏会话动作等待视图就绪后投递，视图加载超时或销毁时结束等待并提示失败。
-- Title-bar session actions wait for the view to become ready before delivery. A loading timeout or disposal ends the wait and reports failed delivery.
-- 导航失败或被后续操作替代时保留输入草稿和附件；仅在实际切换会话或待建草稿时释放旧附件。
-- Failed or superseded navigation preserves the composer draft and attachments. Old attachment handles are released when the displayed session or pending draft actually changes.
+- 修复面板重载后投影丢失、已移除会话复活的问题。
+- Fixed missing projections and removed sessions reappearing after a panel reload.
+- 导航或发送被取代时保留输入草稿与附件；待建首条消息被取代按取消上报。
+- Superseded navigation and sends preserve the composer draft and attachments; a superseded pending first message reports as cancelled.
+- 修复导航失败后「加载更早历史」永久失效。
+- Fixed "load older history" staying disabled after a failed navigation.
 
 ## 0.2.10
 
