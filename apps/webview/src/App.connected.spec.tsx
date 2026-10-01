@@ -1647,14 +1647,18 @@ describe('App connected rendering', () => {
     expect(releaseAttachments).toHaveBeenCalledWith([secondUri])
   })
 
-  it('keeps the typed draft and its attachments when opening another session fails', async () => {
+  it.each(['rejected', 'superseded'])('keeps the draft when another-session open is %s', async (outcome) => {
     const state = connectedState(true)
     const uri = 'dsh-attachment:00000000-0000-4000-8000-000000000009'
     const pickAttachment = vi.fn().mockResolvedValue({ uri, name: 'notes.txt', mimeType: 'text/plain' })
     const releaseAttachments = vi.fn().mockResolvedValue(undefined)
     // A disconnected or restarted DSH rejects the open after the store's own
     // bounded retries, so a rejected `session.open` is a normal outcome.
-    const openSession = vi.fn().mockRejectedValue(new Error('Unable to open session.'))
+    // Superseded opens resolve without changing the active session.
+    const openSession =
+      outcome === 'rejected'
+        ? vi.fn().mockRejectedValue(new Error('Unable to open session.'))
+        : vi.fn().mockResolvedValue(undefined)
     const withSecond: AppState = {
       ...state,
       sessions: [
@@ -1694,14 +1698,17 @@ describe('App connected rendering', () => {
     expect(releaseAttachments).not.toHaveBeenCalled()
   })
 
-  it('keeps the typed draft when staging a brand new session is refused', async () => {
+  it.each(['rejected', 'superseded'])('keeps the draft when new-session staging is %s', async (outcome) => {
     const state = connectedState(true)
     const uri = 'dsh-attachment:00000000-0000-4000-8000-000000000010'
     const pickAttachment = vi.fn().mockResolvedValue({ uri, name: 'notes.txt', mimeType: 'text/plain' })
     const releaseAttachments = vi.fn().mockResolvedValue(undefined)
     // `stageSession` throws while no workspace is resolvable yet, which is a
     // normal transient state on first load.
-    const stageSession = vi.fn().mockRejectedValue(new Error('Loading workspaces…'))
+    const stageSession =
+      outcome === 'rejected'
+        ? vi.fn().mockRejectedValue(new Error('Loading workspaces…'))
+        : vi.fn().mockResolvedValue(undefined)
     currentStore = { ...storeFor(state), pickAttachment, releaseAttachments, stageSession }
 
     render(<App />)
@@ -1721,6 +1728,37 @@ describe('App connected rendering', () => {
     )
     expect(screen.getByRole('button', { name: 'Remove notes.txt' })).toBeDefined()
     expect(releaseAttachments).not.toHaveBeenCalled()
+  })
+
+  it('releases the previous attachment handles only when the displayed draft changes', async () => {
+    const state = connectedState(true)
+    const { updateState } = renderWithMutableState(state)
+    const uri = 'dsh-attachment:00000000-0000-4000-8000-000000000011'
+    vi.spyOn(currentStore, 'pickAttachment').mockResolvedValue({
+      uri,
+      name: 'notes.txt',
+      mimeType: 'text/plain',
+    })
+    const releaseAttachments = vi.spyOn(currentStore, 'releaseAttachments')
+    fireEvent.change(screen.getByRole('textbox', { name: 'Prompt' }), { target: { value: 'Old draft' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Attach file' }))
+    await screen.findByRole('button', { name: 'Remove notes.txt' })
+
+    updateState({
+      ...state,
+      activeSessionId: undefined,
+      pendingSession: { revision: 1, workspaceId: 'w1', configuration: state.configuration! },
+    })
+    await waitFor(() => expect(releaseAttachments).toHaveBeenCalledWith([uri]))
+    expect(screen.queryByRole('button', { name: 'Remove notes.txt' })).toBeNull()
+    expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' }).value).toBe('')
+    updateState({
+      ...state,
+      activeSessionId: undefined,
+      pendingSession: { revision: 1, workspaceId: 'w1', configuration: state.configuration! },
+    })
+    expect(releaseAttachments).toHaveBeenCalledOnce()
   })
 
   it('applies the selected interface language across the conversation and export surfaces', async () => {

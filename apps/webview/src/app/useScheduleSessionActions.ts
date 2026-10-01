@@ -13,13 +13,11 @@ interface ScheduleSessionActions {
 export function useScheduleSessionActions({
   store,
   workspaceId,
-  discardAttachmentDrafts,
   setError,
   t,
 }: {
   readonly store: AppStore
   readonly workspaceId: string | undefined
-  readonly discardAttachmentDrafts: () => void
   readonly setError: (message: string | undefined) => void
   readonly t: ReturnType<typeof useI18n>['t']
 }): ScheduleSessionActions {
@@ -49,10 +47,8 @@ export function useScheduleSessionActions({
     void store
       .openSession(sessionId)
       .then(() => {
-        // Only now is the composer's draft actually behind us: a failed open
-        // leaves the user in the session that still owns it.
-        discardAttachmentDrafts()
-        if (store.getState().drawer === 'schedules') store.setDrawer(undefined)
+        const opened = store.getState()
+        if (opened.activeSessionId === sessionId && opened.drawer === 'schedules') store.setDrawer(undefined)
       })
       .catch((reason: unknown) =>
         setError(reason instanceof Error ? reason.message : t('app.error.openSession')),

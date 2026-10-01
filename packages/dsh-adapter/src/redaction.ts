@@ -13,10 +13,14 @@ const SENSITIVE_FIELDS = new Set([
   'access_token',
   'refreshtoken',
   'refresh_token',
+  'authtoken',
+  'auth_token',
   'token',
   'secret',
   'secretkey',
+  'secret_key',
   'privatekey',
+  'private_key',
   'password',
   'prompt',
   'body',
@@ -60,15 +64,11 @@ const SENSITIVE_FIELDS = new Set([
 // never configured; a redaction has to stay recognisable as the value it
 // replaced.
 const SENSITIVE_TEXT_PATTERN =
-  /\b(?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|authorization|password|secret|private[_ -]?key|token|prompt|body|response)\b\s*[:=]\s*[^\s,;]+/giu
+  /\b((?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|auth[_ -]?token|authorization|password|secret(?:[_ -]?key)?|private[_ -]?key|token|prompt|body|response)\b["']?\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;&]+)/giu
 
 /** `?key=…` / `&api_key=…`: a query parameter whose name is a bare credential word. */
 const QUERY_CREDENTIAL_PATTERN =
   /([?&](?:key|apikey|api_key|access_token|refresh_token|auth_token|token|secret|password|auth)=)[^&\s]+/giu
-
-/** `auth_token=…`: the same pair outside a query, where `\b` cannot anchor on `_`. */
-const UNDERSCORE_CREDENTIAL_PATTERN =
-  /\b((?:api_key|access_token|refresh_token|auth_token|secret_key|private_key)=)[^\s,;&]+/giu
 
 /**
  * A labelled auth header: `Authorization: Bearer <token>`. The label pattern
@@ -106,6 +106,12 @@ const AUTH_SCHEME_REDACTION = '$1 [redacted]'
 const ABSOLUTE_PATH_PATTERN =
   /(?<![A-Za-z0-9_.~%:/-])(?:[A-Za-z]:[\\/]|\\\\|\/)(?:[^\s\\/"'<>|:*?]+[\\/])*[^\s\\/"'<>|:*?]*/gu
 
+// OS errors quote paths containing spaces. Match the entire quoted value
+// before the unquoted rule, and include file URIs that its URL guard excludes.
+const QUOTED_ABSOLUTE_PATH_PATTERN =
+  /"(?:[A-Za-z]:[\\/]|\\\\|\/|file:\/\/)[^"\r\n]*"|'(?:[A-Za-z]:[\\/]|\\\\|\/|file:\/\/)[^'\r\n]*'/giu
+const FILE_URI_PATTERN = /\bfile:\/\/[^\s"'<>]+/giu
+
 const PATH_REDACTION = '[path]'
 
 const MAX_SAFE_PAYLOAD_DEPTH = 4
@@ -137,18 +143,14 @@ export function redactMultilineText(value: string, maximumLength: number): strin
 
 function redactLine(line: string): string {
   return line
+    .replace(QUOTED_ABSOLUTE_PATH_PATTERN, PATH_REDACTION)
+    .replace(FILE_URI_PATTERN, PATH_REDACTION)
     .replace(ABSOLUTE_PATH_PATTERN, PATH_REDACTION)
     .replace(/(https?:\/\/)([^/\s:@]+(?::[^/\s@]*)?@)/giu, '$1[redacted]@')
     .replace(LABELLED_AUTH_SCHEME_PATTERN, LABELLED_AUTH_SCHEME_REDACTION)
     .replace(AUTH_SCHEME_PATTERN, AUTH_SCHEME_REDACTION)
     .replace(QUERY_CREDENTIAL_PATTERN, '$1[redacted]')
-    .replace(UNDERSCORE_CREDENTIAL_PATTERN, '$1[redacted]')
-    .replace(SENSITIVE_TEXT_PATTERN, (match) =>
-      // Keep everything up to and including the separator, plus the spacing
-      // that followed it: `token = abc` must read `token = [redacted]`, not
-      // `token : [redacted]` and not `token =[redacted]`.
-      match.replace(/([:=]\s*)\S+$/u, '$1[redacted]'),
-    )
+    .replace(SENSITIVE_TEXT_PATTERN, '$1[redacted]')
 }
 
 /** Remove sensitive fields and bound recursive unknown protocol payloads. */

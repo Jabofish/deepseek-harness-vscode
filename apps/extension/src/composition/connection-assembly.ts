@@ -349,16 +349,12 @@ export function createConnectionLifecycle(deps: ConnectionLifecycleDependencies)
   // under the old mode) while the coalescer then swallowed the correcting
   // explicit reconnect.
   let configuringTransport = false
+  let configurationQueue: Promise<void> = Promise.resolve()
   const writeTransportSettings = async (
     settings: vscode.WorkspaceConfiguration,
     writes: readonly (readonly [string, unknown])[],
   ): Promise<void> => {
-    configuringTransport = true
-    try {
-      for (const [key, value] of writes) await settings.update(key, value, vscode.ConfigurationTarget.Global)
-    } finally {
-      configuringTransport = false
-    }
+    for (const [key, value] of writes) await settings.update(key, value, vscode.ConfigurationTarget.Global)
   }
   const reconnectOnTransportChange = (signal?: AbortSignal): Promise<unknown> => {
     if (configuringTransport) return Promise.resolve(undefined)
@@ -369,7 +365,7 @@ export function createConnectionLifecycle(deps: ConnectionLifecycleDependencies)
     endpoint: string | undefined,
     signal?: AbortSignal,
   ): Promise<unknown> => {
-    const settings = vscode.workspace.getConfiguration('dsh')
+    let writes: readonly (readonly [string, unknown])[]
     if (mode === 'custom') {
       const normalized = normalizeLoopbackUrl(endpoint ?? '')
       if (normalized === undefined)
@@ -378,24 +374,43 @@ export function createConnectionLifecycle(deps: ConnectionLifecycleDependencies)
           message: 'Enter an HTTP loopback endpoint such as http://127.0.0.1:3080.',
           retryable: false,
         })
-      await writeTransportSettings(settings, [
+      writes = [
         // Write the endpoint before switching modes so the configuration is
         // never observed in a transient custom-without-endpoint state.
         ['connection.serverUrl', normalized],
         ['connection.mode', mode],
-      ])
+      ]
     } else {
-      await writeTransportSettings(settings, [
+      writes = [
         // Switch out of custom mode before clearing its endpoint for the same
         // reason. Existing attach-only/new-isolated settings remain untouched
         // until the user explicitly chooses a mode here.
         ['connection.mode', mode],
         ['connection.serverUrl', ''],
-      ])
+      ]
     }
-    // One reconnect, after every write has committed, reading the final
-    // configuration.
-    return reconnect(signal)
+    // Serialize the whole transaction, including its reconnect: overlapping
+    // submissions must not interleave endpoint/mode writes or share a reconnect
+    // whose request describes the preceding transaction.
+    const operation = configurationQueue.then(async () => {
+      signal?.throwIfAborted()
+      configuringTransport = true
+      try {
+        await writeTransportSettings(vscode.workspace.getConfiguration('dsh'), writes)
+        // A reconnect already in flight may have read the previous settings.
+        // Its failure must not suppress this new, explicit attempt either.
+        await reconnectOperation?.catch(() => undefined)
+        signal?.throwIfAborted()
+        return await reconnect(signal)
+      } finally {
+        configuringTransport = false
+      }
+    })
+    configurationQueue = operation.then(
+      () => undefined,
+      () => undefined,
+    )
+    return operation
   }
   return { connect, reconnect, reconnectOnTransportChange, configureConnection }
 }

@@ -1,4 +1,5 @@
 import * as vscode from 'vscode'
+import { webviewEnvelopeSchema } from '@dsh-vscode/webview-protocol'
 
 import { VIEW_ID } from '../constants.js'
 import { createWebviewHtml } from './webview-html.js'
@@ -15,11 +16,15 @@ export interface DshWebviewDependencies {
 export class DshWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Disposable {
   public static readonly viewType = VIEW_ID
   private view: vscode.WebviewView | undefined
+  private ready = false
+  private readonly readinessWaiters = new Set<(ready: boolean) => void>()
   private readonly disposables: vscode.Disposable[] = []
 
   public constructor(private readonly dependencies: DshWebviewDependencies) {}
 
   public resolveWebviewView(webviewView: vscode.WebviewView): void {
+    if (this.view !== undefined) this.finishReadinessWait(false)
+    this.ready = false
     this.disposeViewListeners()
     this.view = webviewView
     webviewView.webview.options = {
@@ -37,7 +42,15 @@ export class DshWebviewViewProvider implements vscode.WebviewViewProvider, vscod
         // synchronous throw and a rejected task so a failed response cannot
         // become an unhandled Promise rejection.
         void Promise.resolve()
-          .then(() => this.dependencies.onMessage(message))
+          .then(() => {
+            if (this.view !== webviewView) return
+            const parsed = webviewEnvelopeSchema.safeParse(message)
+            if (parsed.success && parsed.data.message.type === 'app.ready') {
+              this.ready = true
+              this.finishReadinessWait(true)
+            }
+            return this.dependencies.onMessage(message)
+          })
           .catch((error: unknown) => {
             try {
               this.dependencies.onMessageError?.(error)
@@ -47,14 +60,38 @@ export class DshWebviewViewProvider implements vscode.WebviewViewProvider, vscod
           })
       }),
       webviewView.onDidDispose(() => {
-        if (this.view === webviewView) this.view = undefined
+        if (this.view === webviewView) {
+          this.view = undefined
+          this.ready = false
+          this.finishReadinessWait(false)
+        }
         this.disposeViewListeners()
       }),
     )
   }
 
   public postMessage(message: unknown): Thenable<boolean> {
-    return this.view === undefined ? Promise.resolve(false) : this.view.webview.postMessage(message)
+    return this.view === undefined || !this.ready
+      ? Promise.resolve(false)
+      : this.view.webview.postMessage(message)
+  }
+
+  /** A resolved view may still be loading its client script. */
+  public waitUntilReady(timeoutMs = 10_000): Promise<boolean> {
+    if (this.ready && this.view !== undefined) return Promise.resolve(true)
+    return new Promise((resolve) => {
+      const finish = (ready: boolean): void => {
+        clearTimeout(timer)
+        this.readinessWaiters.delete(finish)
+        resolve(ready)
+      }
+      const timer = setTimeout(() => finish(false), timeoutMs)
+      this.readinessWaiters.add(finish)
+    })
+  }
+
+  private finishReadinessWait(ready: boolean): void {
+    for (const finish of [...this.readinessWaiters]) finish(ready)
   }
 
   public reveal(preserveFocus = true): Promise<void> {
@@ -63,6 +100,8 @@ export class DshWebviewViewProvider implements vscode.WebviewViewProvider, vscod
   }
 
   public dispose(): void {
+    this.ready = false
+    this.finishReadinessWait(false)
     this.disposeViewListeners()
     this.view = undefined
   }

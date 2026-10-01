@@ -1,10 +1,10 @@
-import { VIEW_CONTAINER_ID } from '../constants.js'
+import { VIEW_ID } from '../constants.js'
 
 interface RevealDependencies {
   readonly post: (name: string, payload: unknown) => Thenable<boolean>
   readonly executeCommand: (command: string, ...args: unknown[]) => Thenable<unknown>
-  /** Lets the revealed Webview finish resolving before the retry is posted. */
-  readonly settle: () => Thenable<void>
+  /** Wait for a validated client handshake; stop on timeout or disposal. */
+  readonly settle: () => Thenable<boolean>
 }
 
 /**
@@ -16,10 +16,10 @@ interface RevealDependencies {
  * provider holds no `WebviewView`, and a fire-and-forget post is dropped: the
  * button looks enabled and does nothing at all.
  *
- * Focusing the view container is what makes VS Code call `resolveWebviewView`.
- * The provider's own `reveal()` cannot do it, because it only calls `show()` on
- * a view that already exists. So the message is retried after the container is
- * focused, on a later turn, once the new Webview is listening.
+ * Focus the view itself, including when it is collapsed or has been moved to
+ * another container. Its provider's `reveal()` only shows an existing view.
+ * A resolved view may still be loading, so delivery waits for the client's
+ * validated ready handshake rather than a fixed delay.
  */
 export async function deliverOrRevealView(
   { post, executeCommand, settle }: RevealDependencies,
@@ -27,7 +27,7 @@ export async function deliverOrRevealView(
   payload: unknown,
 ): Promise<boolean> {
   if (await post(name, payload)) return true
-  await executeCommand(`workbench.view.extension.${VIEW_CONTAINER_ID}`)
-  await settle()
+  await executeCommand(`${VIEW_ID}.focus`)
+  if (!(await settle())) return false
   return await post(name, payload)
 }

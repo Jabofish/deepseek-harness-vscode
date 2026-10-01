@@ -438,6 +438,18 @@ const useAppControllerImpl = () => {
     setDraft,
     readDraft,
   })
+  const composerOwner =
+    state.pendingSession === undefined ? activeSessionId : `pending:${state.pendingSession.revision}`
+  const previousComposerOwner = useRef(composerOwner)
+  useEffect(() => {
+    // Superseded navigation resolves without switching the store. Clear the
+    // handles only when the displayed conversation actually changes, so a
+    // delayed completion cannot discard the new conversation's attachments.
+    if (composerOwner === undefined || previousComposerOwner.current === composerOwner) return
+    previousComposerOwner.current = composerOwner
+    discardAttachmentDrafts()
+    if (state.pendingSession !== undefined) setDraft('')
+  }, [composerOwner, discardAttachmentDrafts, state.pendingSession])
   // DSH's host/session-status is the authoritative running bit. Timeline
   // nodes describe durable content, but a settled assistant step can remain
   // inside an open turn while tools or a later model step are still active.
@@ -486,7 +498,6 @@ const useAppControllerImpl = () => {
   const sessionOnOpen = useStableCallback((sessionId: string): void => {
     void store
       .openSession(sessionId)
-      .then(() => discardAttachmentDrafts())
       .catch((reason: unknown) =>
         setError(reason instanceof Error ? reason.message : t('app.error.openSession')),
       )
@@ -563,10 +574,7 @@ const useAppControllerImpl = () => {
     store.setDrawer(open ? 'sessions' : undefined)
   })
   const beginNewDraft = useStableCallback((workspaceId?: string, presetId?: string): Promise<void> => {
-    return store.stageSession(workspaceId, presetId).then(() => {
-      discardAttachmentDrafts()
-      setDraft('')
-    })
+    return store.stageSession(workspaceId, presetId)
   })
   const sessionOnCreate = useStableCallback((workspaceId: string | undefined): void => {
     void beginNewDraft(workspaceId).catch((reason: unknown) =>
@@ -779,7 +787,6 @@ const useAppControllerImpl = () => {
   } = useScheduleSessionActions({
     store,
     workspaceId: active?.workspaceId ?? state.workspaces[0]?.id,
-    discardAttachmentDrafts,
     setError,
     t,
   })

@@ -21,7 +21,6 @@ interface AppSettingsDrawerProps {
   readonly updateDshSettingFromDrawer: DrawerProps['onUpdateDshSetting']
   readonly unsetDshSettingFromDrawer: DrawerProps['onUnsetDshSetting']
   readonly mutateDshSettingsFromDrawer: DrawerProps['onMutateDshSettings']
-  readonly discardAttachmentDrafts: () => void
   readonly setError: (message: string | undefined) => void
   readonly t: ReturnType<typeof useI18n>['t']
   readonly loadAccountDetailsFromSettings: NonNullable<DrawerProps['onLoadAccountDetails']>
@@ -43,7 +42,6 @@ export function AppSettingsDrawer({
   updateDshSettingFromDrawer,
   unsetDshSettingFromDrawer,
   mutateDshSettingsFromDrawer,
-  discardAttachmentDrafts,
   setError,
   t,
   loadAccountDetailsFromSettings,
@@ -91,6 +89,7 @@ export function AppSettingsDrawer({
       onRemovePreset={(presetId) => store.removePreset(presetId)}
       onOpenPresetDocument={(presetId) => store.openPresetDocument(presetId)}
       onStartCreatorDraft={async () => {
+        const previousSessionId = store.getState().activeSessionId
         store.setDrawer(undefined)
         try {
           // DSH only lets a preset be chosen while the session is still blank, and
@@ -104,8 +103,8 @@ export function AppSettingsDrawer({
           setError(reason instanceof Error ? reason.message : t('app.error.createSession'))
           return
         }
-        discardAttachmentDrafts()
-        setDraft('')
+        const currentSessionId = store.getState().activeSessionId
+        if (currentSessionId !== undefined && currentSessionId !== previousSessionId) setDraft('')
       }}
       pluginInventoryRevision={store.pluginInventoryRevision}
       pluginInstallProgress={store.pluginInstallProgress}

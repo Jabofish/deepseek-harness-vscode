@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- 修复面板重载时投影基线被淘汰、旧增量恢复已移除会话的问题；回放缓存保持有界并优先保留基线与未答提问。
+- Panel reloads retain the projection baseline and no longer resurrect removed sessions from older deltas. The bounded replay cache prioritizes its baseline and unanswered prompts.
+- 补齐带空格的引号路径、file URI、多词凭据与结构化凭据别名的脱敏，保留原有分隔符和相对标识。
+- Redaction now covers quoted paths with spaces, file URIs, multiword credentials, and structured credential aliases while preserving separators and relative identifiers.
+- 连接设置提交按顺序完成写入与重连；已有重连结束后，新提交会按完整配置重新连接，写入失败不阻塞后续提交。
+- Connection settings submissions serialize their writes and reconnects. A new submission reconnects with the complete settings after any previous reconnect finishes, and failed writes do not block later submissions.
+- 标题栏会话动作等待视图就绪后投递，视图加载超时或销毁时结束等待并提示失败。
+- Title-bar session actions wait for the view to become ready before delivery. A loading timeout or disposal ends the wait and reports failed delivery.
+- 导航失败或被后续操作替代时保留输入草稿和附件；仅在实际切换会话或待建草稿时释放旧附件。
+- Failed or superseded navigation preserves the composer draft and attachments. Old attachment handles are released when the displayed session or pending draft actually changes.
+
 ## 0.2.10
 
 - 接入 DSH `0.2.0-rc.2` timed 用户问题：等待期限由 Host claim 流托管，超时后问题从 Session projection 恢复，迟到答案以完整结构化批次排入 Inbox，入队后显示只读状态；引导安装默认版本更新为精确 rc.2。隔离 CLI live smoke 已验证精确 Adapter 选择及 `userQuestions` answer/attachWait Remote；真实 timed 问答与 VS Code 现场验收仍待完成，能力状态保留 `PARTIAL`。

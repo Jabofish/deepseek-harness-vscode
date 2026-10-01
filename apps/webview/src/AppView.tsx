@@ -77,7 +77,6 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
     conversationFontSize,
     conversationFontStyle,
     conversationView,
-    discardAttachmentDrafts,
     dismissedConnection,
     error,
     estimatedContextTokens,
@@ -178,7 +177,6 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
           updateDshSettingFromDrawer={updateDshSettingFromDrawer}
           unsetDshSettingFromDrawer={unsetDshSettingFromDrawer}
           mutateDshSettingsFromDrawer={mutateDshSettingsFromDrawer}
-          discardAttachmentDrafts={discardAttachmentDrafts}
           setError={setError}
           t={t}
           loadAccountDetailsFromSettings={loadAccountDetailsFromSettings}

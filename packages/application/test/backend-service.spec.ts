@@ -209,4 +209,59 @@ describe('BackendService event replay', () => {
 
     expect(replayed).toContainEqual(baseline)
   })
+
+  it('retires projection deltas superseded by a replacement baseline', () => {
+    const backend = new FakeBackend()
+    const service = new BackendService()
+    service.attach(backend as unknown as DshBackend, () => undefined)
+    backend.emit({ type: 'session.projection.baseline', projections: {} })
+    backend.emit({
+      type: 'session.projection',
+      sessionId: 'removed',
+      key: 'title',
+      value: 'Old',
+      sequence: 12,
+    })
+    const replacement: BackendEvent = {
+      type: 'session.projection.baseline',
+      projections: { s1: { asOfSequence: 20, values: { title: 'Current' } } },
+    }
+    backend.emit(replacement)
+    const delta: BackendEvent = {
+      type: 'session.projection',
+      sessionId: 's1',
+      key: 'title',
+      value: 'New',
+      sequence: 21,
+    }
+    backend.emit(delta)
+
+    const replayed: BackendEvent[] = []
+    service.attach(backend as unknown as DshBackend, (event) => replayed.push(event))
+    expect(replayed).toEqual([replacement, delta])
+  })
+
+  it('keeps the baseline inside the bound even under state and prompt pressure', () => {
+    const backend = new FakeBackend()
+    const service = new BackendService()
+    service.attach(backend as unknown as DshBackend, () => undefined)
+    const baseline: BackendEvent = {
+      type: 'session.projection.baseline',
+      projections: { s1: { asOfSequence: 12, values: { title: 'Current' } } },
+    }
+    backend.emit(baseline)
+    for (let index = 0; index < 400; index += 1)
+      backend.emit({ type: 'session.status', sessionId: `s-${index}`, status: 'idle' })
+    const replayed: BackendEvent[] = []
+    service.attach(backend as unknown as DshBackend, (event) => replayed.push(event))
+    expect(replayed).toContainEqual(baseline)
+    expect(replayed).toHaveLength(256)
+
+    for (let index = 0; index < 400; index += 1)
+      backend.emit(requested(question(`q-${index}`, `rpc-${index}`)))
+    replayed.length = 0
+    service.attach(backend as unknown as DshBackend, (event) => replayed.push(event))
+    expect(replayed).toContainEqual(baseline)
+    expect(replayed).toHaveLength(256)
+  })
 })

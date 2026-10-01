@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('vscode', () => ({
   workspace: {
@@ -11,6 +11,7 @@ vi.mock('vscode', () => ({
         // write; the extension subscribes to it through
         // `reconnectOnTransportChange`.
         for (const listener of harness.transportListeners) await listener()
+        await harness.afterWrite?.(key)
       },
     }),
   },
@@ -29,13 +30,107 @@ const harness = vi.hoisted(() => {
       readonly autoStart: boolean
     }>,
     transportListeners: [] as Array<(signal?: AbortSignal) => Promise<unknown>>,
+    afterWrite: undefined as ((key: string) => Promise<void>) | undefined,
   }
   return state
 })
 
 import { createConnectionLifecycle } from './connection-assembly.js'
 
+function deferred<T>(): { readonly promise: Promise<T>; readonly resolve: (value: T) => void } {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((settle) => {
+    resolve = settle
+  })
+  return { promise, resolve }
+}
+
+function lifecycle(
+  connect: (request: {
+    readonly mode: string
+    readonly endpoint?: unknown
+    readonly autoStart: boolean
+  }) => Promise<unknown> = vi.fn().mockResolvedValue({
+    backend: { connection: { endpoint: { port: 3080 } } },
+    state: { kind: 'connected' },
+  }),
+): ReturnType<typeof createConnectionLifecycle> {
+  const result = createConnectionLifecycle({
+    context: { workspaceState: { update: () => Promise.resolve(undefined) } },
+    configuration: { read: () => harness.configuration },
+    coordinator: {
+      connect: (request: {
+        readonly mode: string
+        readonly endpoint?: unknown
+        readonly autoStart: boolean
+      }) => {
+        harness.connects.push(request)
+        return connect(request)
+      },
+      disconnect: () => Promise.resolve(),
+    },
+    currentWorkspaceFolders: () => [],
+    endpointLaunchUrls: new Map(),
+    attach: () => Promise.resolve(),
+    publishState: () => undefined,
+    disposeAccountLifecycleHost: () => Promise.resolve(),
+    detachSessionAdapters: () => undefined,
+  } as never)
+  harness.transportListeners.push(result.reconnectOnTransportChange)
+  return result
+}
+
 describe('connection.configure reconnect', () => {
+  beforeEach(() => {
+    harness.connects.length = 0
+    harness.transportListeners.length = 0
+    harness.configuration.connection.mode = 'auto'
+    harness.configuration.connection.serverUrl = ''
+    harness.afterWrite = undefined
+  })
+
+  it('does not adopt a reconnect that already read the old settings', async () => {
+    const started = deferred<void>()
+    const admitted = deferred<unknown>()
+    const connect = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        started.resolve()
+        return admitted.promise
+      })
+      .mockResolvedValue({
+        backend: { connection: { endpoint: { port: 3080 } } },
+        state: { kind: 'connected' },
+      })
+    const subject = lifecycle(connect)
+    const previous = subject.reconnect()
+    await started.promise
+    const configured = subject.configureConnection('custom', 'http://127.0.0.1:3080')
+    await vi.waitFor(() => expect(harness.configuration.connection.mode).toBe('custom'))
+    admitted.resolve({ backend: { connection: { endpoint: { port: 3080 } } }, state: { kind: 'connected' } })
+    await Promise.all([previous, configured])
+    expect(harness.connects.map((request) => request.mode)).toEqual(['auto', 'custom'])
+  })
+
+  it('serializes overlapping settings submissions without publishing a mixed pair', async () => {
+    const firstWrite = deferred<void>()
+    const release = deferred<void>()
+    harness.afterWrite = async (key) => {
+      if (key !== 'connection.serverUrl') return
+      harness.afterWrite = undefined
+      firstWrite.resolve()
+      await release.promise
+    }
+    const subject = lifecycle()
+    const custom = subject.configureConnection('custom', 'http://127.0.0.1:3080')
+    await firstWrite.promise
+    const auto = subject.configureConnection('auto', undefined)
+    release.resolve()
+    await Promise.all([custom, auto])
+    expect(harness.connects.map((request) => request.mode)).toEqual(['custom', 'auto'])
+    expect(harness.configuration.connection).toEqual({ mode: 'auto', serverUrl: '' })
+  })
+
   it('reconnects once, on the fully committed configuration', async () => {
     // configureConnection writes its settings in several awaited steps, and
     // VS Code delivers a configuration-change event for every committed
@@ -83,5 +178,29 @@ describe('connection.configure reconnect', () => {
         autoStart: false,
       },
     ])
+  })
+
+  it('releases the settings queue and listener suppression after a failed write', async () => {
+    harness.afterWrite = () => {
+      harness.afterWrite = undefined
+      return Promise.reject(new Error('Settings write failed'))
+    }
+    const subject = lifecycle()
+    await expect(subject.configureConnection('custom', 'http://127.0.0.1:3080')).rejects.toThrow(
+      'Settings write failed',
+    )
+    await subject.configureConnection('auto', undefined)
+    await subject.reconnectOnTransportChange()
+    expect(harness.connects.map((request) => request.mode)).toEqual(['auto', 'auto'])
+  })
+
+  it('does not write settings for an already-cancelled submission', async () => {
+    const signal = AbortSignal.abort(new Error('Cancelled'))
+    const subject = lifecycle()
+    await expect(subject.configureConnection('custom', 'http://127.0.0.1:3080', signal)).rejects.toThrow(
+      'Cancelled',
+    )
+    expect(harness.configuration.connection).toEqual({ mode: 'auto', serverUrl: '' })
+    expect(harness.connects).toEqual([])
   })
 })

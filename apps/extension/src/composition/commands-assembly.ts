@@ -152,7 +152,7 @@ export function createCommandsAssembly(deps: CommandsAssemblyDependencies): Comm
       {
         post: postEvent,
         executeCommand: (command, ...args) => vscode.commands.executeCommand(command, ...args),
-        settle: () => new Promise((resolve) => setTimeout(resolve, 0)),
+        settle: () => provider.waitUntilReady(),
       },
       name,
       payload,
@@ -172,7 +172,12 @@ export function createCommandsAssembly(deps: CommandsAssemblyDependencies): Comm
       handlers: {
         'dsh.connect': () => reconnect(),
         'dsh.reconnect': () => reconnect(),
-        'dsh.newSession': () => revealThenPost('ui.sessions.toggle', {}),
+        'dsh.newSession': async () => {
+          const delivered = await revealThenPost('ui.sessions.toggle', {})
+          if (!delivered)
+            await vscode.window.showWarningMessage('The DSH view could not be opened. Try opening it again.')
+          return delivered
+        },
         'dsh.openSettings': async () => {
           const delivered = await postEvent('ui.settings.toggle', {})
           if (!delivered)

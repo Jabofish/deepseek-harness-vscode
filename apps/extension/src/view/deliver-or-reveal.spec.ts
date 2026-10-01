@@ -9,6 +9,56 @@ import { deliverOrRevealView } from './deliver-or-reveal.js'
 import { DshWebviewViewProvider } from './dsh-webview-view-provider.js'
 
 describe('deliverOrRevealView', () => {
+  it('releases readiness waiters on timeout and provider disposal', async () => {
+    vi.useFakeTimers()
+    const provider = new DshWebviewViewProvider({
+      extensionUri: { toString: () => 'extension-root' } as never,
+      onMessage: () => Promise.resolve(),
+    })
+    try {
+      const expired = provider.waitUntilReady(20)
+      await vi.advanceTimersByTimeAsync(20)
+      await expect(expired).resolves.toBe(false)
+      const disposed = provider.waitUntilReady()
+      provider.dispose()
+      await expect(disposed).resolves.toBe(false)
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      provider.dispose()
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not claim delivery before the resolved Webview sends a valid ready handshake', async () => {
+    let receive: ((message: unknown) => void) | undefined
+    const postMessage = vi.fn().mockResolvedValue(true)
+    const provider = new DshWebviewViewProvider({
+      extensionUri: { toString: () => 'extension-root' } as never,
+      onMessage: () => Promise.resolve(),
+    })
+    provider.resolveWebviewView({
+      webview: {
+        cspSource: 'vscode-resource:',
+        asWebviewUri: (uri: unknown) => uri,
+        postMessage,
+        onDidReceiveMessage: (listener: (message: unknown) => void) => {
+          receive = listener
+          return { dispose: () => undefined }
+        },
+      },
+      onDidDispose: () => ({ dispose: () => undefined }),
+    } as never)
+    expect(await provider.postMessage({ action: 'toggle' })).toBe(false)
+    receive?.({ message: { type: 'app.ready' } })
+    await Promise.resolve()
+    expect(await provider.postMessage({ action: 'toggle' })).toBe(false)
+    receive?.({ protocolVersion: 1, message: { type: 'app.ready', requestId: 'ready-1' } })
+    await Promise.resolve()
+    expect(await provider.postMessage({ action: 'toggle' })).toBe(true)
+    expect(postMessage).toHaveBeenCalledOnce()
+    provider.dispose()
+  })
+
   it('delivers a title-bar action posted before the Webview was ever rendered', async () => {
     // The provider resolves `false` while no WebviewView exists, which is the
     // state of a collapsed view a title-bar button can still be clicked from.
@@ -27,7 +77,7 @@ describe('deliverOrRevealView', () => {
         executeCommand,
         settle: () => {
           settled += 1
-          return Promise.resolve()
+          return Promise.resolve(true)
         },
       },
       'ui.sessions.toggle',
@@ -35,7 +85,7 @@ describe('deliverOrRevealView', () => {
     )
 
     expect(result).toBe(true)
-    expect(commands).toEqual(['workbench.view.extension.dsh-container'])
+    expect(commands).toEqual(['dsh.chatView.focus'])
     // The retry must wait for the revealed view to start listening.
     expect(settled).toBe(1)
   })
@@ -61,7 +111,7 @@ describe('deliverOrRevealView', () => {
           commands.push(command)
           return Promise.resolve(undefined)
         },
-        settle: () => Promise.resolve(),
+        settle: () => Promise.resolve(true),
       },
       'ui.sessions.toggle',
       {},
@@ -71,7 +121,7 @@ describe('deliverOrRevealView', () => {
     // fallback ran and the caller learns the action did not land instead of
     // swallowing it.
     expect(result).toBe(false)
-    expect(commands).toEqual(['workbench.view.extension.dsh-container'])
+    expect(commands).toEqual(['dsh.chatView.focus'])
     expect(attempts).toBe(2)
 
     provider.dispose()
@@ -90,7 +140,7 @@ describe('deliverOrRevealView', () => {
         },
         settle: () => {
           settled += 1
-          return Promise.resolve()
+          return Promise.resolve(true)
         },
       },
       'ui.sessions.toggle',
@@ -107,12 +157,28 @@ describe('deliverOrRevealView', () => {
       {
         post: () => Promise.resolve(false),
         executeCommand: () => Promise.resolve(undefined),
-        settle: () => Promise.resolve(),
+        settle: () => Promise.resolve(true),
       },
       'ui.sessions.toggle',
       {},
     )
 
     expect(result).toBe(false)
+  })
+
+  it('does not retry delivery after the client fails to become ready', async () => {
+    const post = vi.fn().mockResolvedValue(false)
+    await expect(
+      deliverOrRevealView(
+        {
+          post,
+          executeCommand: () => Promise.resolve(),
+          settle: () => Promise.resolve(false),
+        },
+        'ui.sessions.toggle',
+        {},
+      ),
+    ).resolves.toBe(false)
+    expect(post).toHaveBeenCalledOnce()
   })
 })

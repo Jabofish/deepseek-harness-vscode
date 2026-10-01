@@ -45,6 +45,15 @@ export class BackendService {
   }
 
   private remember(event: BackendEvent): void {
+    if (event.type === 'session.projection.baseline') {
+      // Whole-set replacement retires every preceding delta, including those
+      // for sessions absent from this baseline. Otherwise replay resurrects
+      // removed sessions, which no longer have a sequence watermark.
+      for (const [key, remembered] of this.replay) {
+        if (remembered.type === 'session.projection' || remembered.type === 'session.projection.baseline')
+          this.replay.delete(key)
+      }
+    }
     // Resolutions carry no replay key of their own; they are remembered by
     // retiring the interaction they settle. The Webview re-renders whatever
     // this cache replays, and a settled approval or question can no longer be
@@ -97,14 +106,14 @@ export class BackendService {
     if (this.replay.size <= REPLAY_BOUND) return
     for (const [key, event] of this.replay) {
       if (this.replay.size <= REPLAY_BOUND) return
-      if (isPendingPrompt(event)) continue
+      if (isPendingPrompt(event) || event.type === 'session.projection.baseline') continue
       this.replay.delete(key)
     }
-    // Every remaining entry is a pending prompt. The oldest is the one the
-    // panel is least likely to still need, so fall back to insertion order
-    // rather than growing without limit.
-    for (const key of this.replay.keys()) {
+    // Pending prompts may overflow, but the single baseline is indispensable:
+    // joining the existing control stream cannot request it again.
+    for (const [key, event] of this.replay) {
       if (this.replay.size <= REPLAY_BOUND) return
+      if (event.type === 'session.projection.baseline') continue
       this.replay.delete(key)
     }
   }

@@ -111,4 +111,42 @@ describe('shared redaction', () => {
     expect(query).toContain('?api_key=[redacted]')
     expect(query).not.toContain('api_key:')
   })
+
+  it.each([
+    String.raw`open 'C:\Users\Ada Lovelace\private project\secret.txt' failed`,
+    `open "/home/ada lovelace/private project/secret.txt" failed`,
+    'open file:///C:/Users/Ada/private%20project/secret.txt failed',
+    'open file:///home/ada/private%20project/secret.txt failed',
+    'open file://private-server/shared/secret.txt failed',
+    'open "file:///C:/Users/Ada Lovelace/private project/secret.txt" failed',
+  ])('redacts the entire quoted path or file URI: %s', (diagnostic) => {
+    const value = redactText(diagnostic, 512)
+    expect(value).not.toMatch(/Ada|ada|private|secret\.txt/u)
+    expect(value).toContain('[path]')
+    expect(value).toContain('failed')
+  })
+
+  it.each([
+    `password="two word secret" failed`,
+    `{"api_key":"two word secret","status":"failed"}`,
+    `auth_token: 'two word secret' failed`,
+    `auth_token='two word secret' failed`,
+  ])('redacts a quoted credential completely: %s', (diagnostic) => {
+    const value = redactText(diagnostic, 512)
+    expect(value).not.toMatch(/two|\bword\b|secret/u)
+    expect(value).toContain('[redacted]')
+    expect(value).toContain('failed')
+  })
+
+  it('drops credential aliases from structured payloads as well as text', () => {
+    expect(
+      safePayload({
+        authToken: 'fixture-auth',
+        auth_token: 'fixture-auth',
+        secret_key: 'fixture-secret',
+        private_key: 'fixture-private',
+        status: 'failed',
+      }),
+    ).toEqual({ status: 'failed' })
+  })
 })
