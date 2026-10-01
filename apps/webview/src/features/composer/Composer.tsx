@@ -1,13 +1,11 @@
 import {
   memo,
   useCallback,
-  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type ClipboardEvent,
-  type DragEvent,
   type FormEvent,
   type KeyboardEvent,
   type ReactElement,
@@ -34,27 +32,22 @@ import { useI18n } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
 import { UnifiedComposer } from '../../components/common/UnifiedComposer.js'
 import { AttachmentLightbox } from '../attachments/AttachmentLightbox.js'
+import { COMMAND_MENU_ID, CommandPalette, commandMenuOptionId } from '../commands/CommandPalette.js'
+import type { PopupSelectRegistry } from '../commands/popupSelectRegistry.js'
+import { useAttachmentLightbox } from './useAttachmentLightbox.js'
+import { useAttachmentRail } from './useAttachmentRail.js'
+import { useComposerDragDrop } from './useComposerDragDrop.js'
+import { useComposerMenuState } from './useComposerMenuState.js'
+import { useComposerSubmit } from './useComposerSubmit.js'
+import { useDraftHistory } from './useDraftHistory.js'
+import { ComposerAttachmentsRail } from './ComposerAttachmentsRail.js'
+import { SessionControls, type SessionControlsProps } from './SessionControls.js'
 import {
-  COMMAND_MENU_ID,
-  CommandPalette,
-  commandMenuOptionId,
-  commandMenuRows,
-  firstCommandPaletteSelection,
-  parsePaletteQuery,
-  type CommandMenuRow,
-  type CommandPaletteSelection,
-} from '../commands/CommandPalette.js'
-import { commandDispatchKind, type PopupSelectRegistry } from '../commands/popupSelectRegistry.js'
-import { permissionOptions, SessionControls, type SessionControlsProps } from './SessionControls.js'
-import {
-  commandInputOptions,
   embeddedReferenceRange,
   fitComposerTextarea,
   formatByteSize,
   leadingSlashCommandLine,
   orderOpenFileCandidates,
-  pageAttachmentRail,
-  referenceMention,
   referenceQueryToken,
   resolveSubmitMode,
   slashCommandQuery,
@@ -65,9 +58,6 @@ import { ComposerCommandActions } from './ComposerCommandActions.js'
 import { ComposerExtrasMenu } from './ComposerExtrasMenu.js'
 import { ComposerAttachmentActions } from './ComposerAttachmentActions.js'
 
-const EMPTY_COMMANDS: readonly DynamicCommand[] = []
-const EMPTY_COMMAND_MENU_ROWS: readonly CommandMenuRow[] = []
-const EMPTY_STRING_LIST: readonly string[] = []
 const EMPTY_ATTACHMENT_PREVIEWS: Readonly<Record<string, string>> = {}
 const EMPTY_MODELS: readonly ModelDescriptor[] = []
 const EMPTY_MODEL_FAILURES: readonly ModelCatalogFailure[] = []
@@ -172,61 +162,27 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
   const composing = useRef(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const pendingCursorRef = useRef<number | undefined>(undefined)
-  const draftHistoryRef = useRef<{ past: string[]; future: string[]; last: string; skip: boolean }>({
-    past: [props.draft],
-    future: [],
-    last: props.draft,
-    skip: false,
+  const { restoreDraft } = useDraftHistory(props.draft, props.onDraftChange)
+  const { railRef: attachmentRailRef, scrollable: attachmentRailScrollable } = useAttachmentRail(
+    props.attachments.length,
+  )
+  const inputBlocked = props.inputDisabled === true
+  const { isSubmitting, submit, steerQueuedInputs } = useComposerSubmit({
+    disabled: props.disabled,
+    inputBlocked,
+    draft: props.draft,
+    attachments: props.attachments,
+    onSubmit: props.onSubmit,
+    onSteerQueue: props.onSteerQueue,
   })
-  const attachmentRailRef = useRef<HTMLUListElement>(null)
-  const submitting = useRef(false)
-  const steeringQueue = useRef(false)
-  const commandSubmitInFlight = useRef(false)
-  const mounted = useRef(true)
-  const dragDepth = useRef(0)
-  const [isSubmitting, setIsSubmitting] = useState(false)
-  const [dragging, setDragging] = useState(false)
-  const [dropState, setDropState] = useState<'ready' | 'blocked' | undefined>(undefined)
-  useEffect(() => {
-    mounted.current = true
-    return () => {
-      mounted.current = false
-    }
-  }, [])
-  const [attachmentRailScrollable, setAttachmentRailScrollable] = useState(false)
-  const [previewUri, setPreviewUri] = useState<string | undefined>(undefined)
-  /**
-   * The lightbox is `aria-modal`, so the keyboard belongs inside while it is up
-   * and returns to the thumbnail that opened it. The opener is captured at the
-   * click site rather than from the effect, because the lightbox mounts with
-   * its own `autoFocus`.
-   */
-  const previewTriggerRef = useRef<HTMLButtonElement | null>(null)
-  const previewWasOpen = useRef(false)
-  useEffect(() => {
-    if (previewWasOpen.current && previewUri === undefined) {
-      const target = previewTriggerRef.current
-      previewTriggerRef.current = null
-      // A removed attachment takes its thumbnail away; body focus beats a
-      // detached node.
-      if (target !== null && target.isConnected) target.focus()
-    }
-    previewWasOpen.current = previewUri !== undefined
-  }, [previewUri])
+  const { previewUri, previewedAttachment, openPreview, closePreview } = useAttachmentLightbox(
+    props.attachments,
+  )
   const [extrasOpen, setExtrasOpen] = useState(false)
   const changeExtrasOpen = (open: boolean): void => {
     setExtrasOpen(open)
     props.onExtrasOpenChange?.(open)
   }
-  // Official input-trigger menu state: the highlight rides
-  // aria-activedescendant, and Escape dismisses until the query changes.
-  const [menuHighlight, setMenuHighlight] = useState<number | undefined>(undefined)
-  const [menuHighlightFor, setMenuHighlightFor] = useState<string | undefined>(undefined)
-  const [menuDismissed, setMenuDismissed] = useState<string | undefined>(undefined)
-  const [referenceCursor, setReferenceCursor] = useState(() => props.draft.length)
-  const [referenceHighlight, setReferenceHighlight] = useState<number | undefined>(undefined)
-  const [referenceHighlightFor, setReferenceHighlightFor] = useState<string | undefined>(undefined)
-  const [referenceDismissed, setReferenceDismissed] = useState<string | undefined>(undefined)
   useLayoutEffect(() => {
     if (textareaRef.current !== null) {
       fitComposerTextarea(textareaRef.current)
@@ -238,65 +194,24 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
     }
   }, [props.draft])
 
-  useEffect(() => {
-    const history = draftHistoryRef.current
-    if (history.last === props.draft) {
-      // A programmatic restore syncs `last` to the restored value before the
-      // change lands, so the effect sees an unchanged draft here. Its skip
-      // marker still has to be consumed: leaving it set would swallow the
-      // next real edit and keep a stale redo branch alive behind it.
-      history.skip = false
-      return
-    }
-    history.last = props.draft
-    if (history.skip) {
-      history.skip = false
-      return
-    }
-    history.past.push(props.draft)
-    if (history.past.length > 100) history.past.shift()
-    history.future = []
-  }, [props.draft])
-
-  useEffect(() => {
-    const hasFiles = (event: globalThis.DragEvent): boolean =>
-      Array.from(event.dataTransfer?.types ?? []).includes('Files')
-    const onDragOver = (event: globalThis.DragEvent): void => {
-      if (!hasFiles(event)) return
+  const ingestFiles = (files: readonly File[] | FileList | undefined): void => {
+    if (props.attachmentsDisabled === true) return
+    const list = files === undefined ? [] : Array.from(files)
+    if (list.length === 0) return
+    props.onIngestFiles(list)
+  }
+  const onPaste = (event: ClipboardEvent<HTMLTextAreaElement>): void => {
+    if (props.attachmentsDisabled === true) return
+    if (event.clipboardData.files.length > 0) {
       event.preventDefault()
-      setDropState(props.disabled || props.attachmentsDisabled === true ? 'blocked' : 'ready')
+      ingestFiles(event.clipboardData.files)
     }
-    const onDragLeave = (event: globalThis.DragEvent): void => {
-      if (event.relatedTarget === null) setDropState(undefined)
-    }
-    const onDrop = (event: globalThis.DragEvent): void => {
-      if (!hasFiles(event)) return
-      event.preventDefault()
-      setDropState(undefined)
-    }
-    window.addEventListener('dragover', onDragOver)
-    window.addEventListener('dragleave', onDragLeave)
-    window.addEventListener('drop', onDrop)
-    return () => {
-      window.removeEventListener('dragover', onDragOver)
-      window.removeEventListener('dragleave', onDragLeave)
-      window.removeEventListener('drop', onDrop)
-    }
-  }, [props.attachmentsDisabled, props.disabled])
-
-  useEffect(() => {
-    const element = attachmentRailRef.current
-    if (element === null) return
-    const update = (): void => setAttachmentRailScrollable(element.scrollWidth > element.clientWidth + 1)
-    update()
-    element.addEventListener('scroll', update, { passive: true })
-    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(update)
-    observer?.observe(element)
-    return () => {
-      element.removeEventListener('scroll', update)
-      observer?.disconnect()
-    }
-  }, [props.attachments.length])
+  }
+  const { dragging, dropState, onDragEnter, onDragOver, onDragLeave, onDrop } = useComposerDragDrop({
+    disabled: props.disabled,
+    attachmentsDisabled: props.attachmentsDisabled === true,
+    ingestFiles,
+  })
   const configuration = props.configuration
   const onConfigurationChange = props.onConfigurationChange
   const onCommand = props.onCommand
@@ -305,78 +220,43 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
   // Keep model availability visible, but let DSH rc.2 decide whether the
   // runtime can serve a prompt so it can return an actionable provider error.
   const modelUnavailable = props.modelRoutable === false
-  const inputBlocked = props.inputDisabled === true
   const presets = props.presets ?? EMPTY_PRESETS
   const editorContext = props.editorContext ?? EMPTY_EDITOR_CONTEXT
   const editorContextAvailableKinds = props.editorContextAvailableKinds ?? EMPTY_EDITOR_CONTEXT_KINDS
-  const commandQuery = useMemo(() => slashCommandQuery(props.draft), [props.draft])
-  const permissionPresets = props.permissionPresets ?? EMPTY_STRING_LIST
-  const availableCommandPermissionPresets = useMemo(
-    () => permissionOptions(configuration?.permissionPreset ?? '', permissionPresets),
-    [configuration?.permissionPreset, permissionPresets],
-  )
-  const commands = props.commands ?? EMPTY_COMMANDS
-  const commandArgumentOptions = useMemo(
-    () => commandInputOptions(commandQuery, commands, availableCommandPermissionPresets),
-    [availableCommandPermissionPresets, commandQuery, commands],
-  )
-  const menuRows = useMemo(
-    () =>
-      commandQuery === undefined || props.commands === undefined
-        ? EMPTY_COMMAND_MENU_ROWS
-        : commandMenuRows(commandQuery, commands, commandArgumentOptions),
-    [commandArgumentOptions, commandQuery, commands, props.commands],
-  )
-  const commandPaletteSelection = useMemo(
-    () =>
-      commandQuery === undefined || props.commands === undefined
-        ? undefined
-        : firstCommandPaletteSelection(commandQuery, commands, commandArgumentOptions, menuRows),
-    [commandArgumentOptions, commandQuery, commands, menuRows, props.commands],
-  )
-  const referenceToken = useMemo(
-    () => referenceQueryToken(props.draft, referenceCursor),
-    [props.draft, referenceCursor],
-  )
-  const referenceKey = useMemo(
-    () =>
-      referenceToken === undefined
-        ? undefined
-        : `${referenceToken.start}:${referenceToken.end}:${referenceToken.quoted ? 'quoted' : 'plain'}:${referenceToken.query}`,
-    [referenceToken],
-  )
-  const menuOpen =
-    commandQuery !== undefined &&
-    props.commands !== undefined &&
-    props.commands.length > 0 &&
-    menuDismissed !== commandQuery &&
-    referenceToken === undefined
-  const referenceMenuOpen =
-    referenceToken !== undefined && props.references !== undefined && referenceDismissed !== referenceKey
-  // Official behavior, adjusted during render (React's sanctioned pattern for
-  // prop-driven resets): a changed query restarts the highlight tier, and the
-  // effective highlight can never point past the last rendered row.
-  if (menuHighlightFor !== commandQuery) {
-    setMenuHighlightFor(commandQuery)
-    setMenuHighlight(undefined)
-  }
-  if (referenceHighlightFor !== referenceKey) {
-    setReferenceHighlightFor(referenceKey)
-    setReferenceHighlight(undefined)
-  }
-  const highlight = menuHighlight !== undefined && menuHighlight < menuRows.length ? menuHighlight : undefined
-  const referenceHighlightValue =
-    referenceHighlight !== undefined && referenceHighlight < (props.references?.length ?? 0)
-      ? referenceHighlight
-      : undefined
-  const commandListboxOpen = menuOpen && menuRows.length > 0
-  const referenceListboxOpen =
-    referenceMenuOpen && props.referenceLoading !== true && (props.references?.length ?? 0) > 0
-  const parsedCommandQuery = commandQuery === undefined ? undefined : parsePaletteQuery(commandQuery)
-  const freeformCommand =
-    parsedCommandQuery?.argument === undefined
-      ? undefined
-      : commands.find((command) => command.name.toLocaleLowerCase() === parsedCommandQuery.name)
+  const {
+    commandQuery,
+    permissionPresets,
+    commandArgumentOptions,
+    menuRows,
+    commandPaletteSelection,
+    referenceToken,
+    referenceKey,
+    menuOpen,
+    referenceMenuOpen,
+    menuHighlight,
+    menuDismissed,
+    highlight,
+    referenceHighlightValue,
+    commandListboxOpen,
+    referenceListboxOpen,
+    freeformCommand,
+    setMenuHighlight,
+    setMenuDismissed,
+    setReferenceCursor,
+    setReferenceHighlight,
+    setReferenceDismissed,
+    pickMenuRow,
+    adjudicateCommandLine,
+    applyCommandSelection,
+    insertCommand,
+    selectReference,
+  } = useComposerMenuState(props, {
+    setPendingCursor: (cursor) => {
+      pendingCursorRef.current = cursor
+    },
+    closeExtras: () => changeExtrasOpen(false),
+    focusTextarea: () => textareaRef.current?.focus(),
+  })
   const suggestionAnnouncement = menuOpen
     ? menuRows.length > 0
       ? t('composer.commandSuggestionsOpen', { count: menuRows.length })
@@ -441,123 +321,6 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
       onCommand: handleSessionCommand,
     }
     return <SessionControls {...controlProps} />
-  }
-  const submit = (mode: RunningInputMode): void => {
-    if (
-      props.disabled ||
-      inputBlocked ||
-      submitting.current ||
-      (props.draft.trim() === '' && props.attachments.length === 0)
-    )
-      return
-    submitting.current = true
-    setIsSubmitting(true)
-    const resetSubmitting = (): void => {
-      submitting.current = false
-      if (mounted.current) setIsSubmitting(false)
-    }
-    try {
-      const submission = props.onSubmit(mode)
-      if (submission === undefined) {
-        // Preserve a short debounce for synchronous integrations while async
-        // Host requests hold the latch until they actually settle.
-        window.setTimeout(resetSubmitting, 250)
-      } else {
-        void submission.then(resetSubmitting, resetSubmitting)
-      }
-    } catch (reason) {
-      resetSubmitting()
-      throw reason
-    }
-  }
-  const steerQueuedInputs = (): void => {
-    if (steeringQueue.current) return
-    steeringQueue.current = true
-    const resetSteeringQueue = (): void => {
-      steeringQueue.current = false
-    }
-    try {
-      const steering = props.onSteerQueue()
-      if (steering === undefined) {
-        // Keep synchronous integrations from repeating the same gesture in
-        // adjacent key events; the Host-backed path holds this latch until its
-        // request settles.
-        window.setTimeout(resetSteeringQueue, 250)
-      } else {
-        void steering.then(resetSteeringQueue, resetSteeringQueue)
-      }
-    } catch (reason) {
-      resetSteeringQueue()
-      throw reason
-    }
-  }
-  const ingestFiles = (files: readonly File[] | FileList | undefined): void => {
-    if (props.attachmentsDisabled === true) return
-    const list = files === undefined ? [] : Array.from(files)
-    if (list.length === 0) return
-    props.onIngestFiles(list)
-  }
-  const onPaste = (event: ClipboardEvent<HTMLTextAreaElement>): void => {
-    if (props.attachmentsDisabled === true) return
-    if (event.clipboardData.files.length > 0) {
-      event.preventDefault()
-      ingestFiles(event.clipboardData.files)
-    }
-  }
-  const onDragEnter = (event: DragEvent<HTMLFormElement>): void => {
-    if (!event.dataTransfer.types.includes('Files')) return
-    event.preventDefault()
-    if (props.disabled || props.attachmentsDisabled === true) {
-      setDropState('blocked')
-      return
-    }
-    dragDepth.current += 1
-    setDragging(true)
-    setDropState('ready')
-  }
-  const onDragOver = (event: DragEvent<HTMLFormElement>): void => {
-    if (!event.dataTransfer.types.includes('Files')) return
-    event.preventDefault()
-    if (props.disabled || props.attachmentsDisabled === true) setDropState('blocked')
-  }
-  const onDragLeave = (): void => {
-    if (dragDepth.current === 0) return
-    dragDepth.current -= 1
-    if (dragDepth.current === 0) setDragging(false)
-  }
-  const onDrop = (event: DragEvent<HTMLFormElement>): void => {
-    if (!event.dataTransfer.types.includes('Files')) return
-    event.preventDefault()
-    dragDepth.current = 0
-    setDragging(false)
-    if (props.disabled || props.attachmentsDisabled === true) {
-      setDropState(undefined)
-      return
-    }
-    setDropState(undefined)
-    ingestFiles(event.dataTransfer.files)
-  }
-
-  const restoreDraft = (direction: 'undo' | 'redo'): void => {
-    const history = draftHistoryRef.current
-    if (direction === 'undo') {
-      if (history.past.length <= 1) return
-      const current = history.past.pop()
-      if (current === undefined) return
-      history.future.unshift(current)
-      const previous = history.past[history.past.length - 1]
-      if (previous === undefined) return
-      history.skip = true
-      history.last = previous
-      props.onDraftChange(previous)
-      return
-    }
-    const next = history.future.shift()
-    if (next === undefined) return
-    history.past.push(next)
-    history.skip = true
-    history.last = next
-    props.onDraftChange(next)
   }
 
   const deleteEmbeddedReference = (event: KeyboardEvent<HTMLTextAreaElement>): boolean => {
@@ -712,103 +475,7 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
     }
     submit(resolveSubmitMode(props.running, accelerated, props.busyEnter ?? 'queue'))
   }
-  const pickMenuRow = (row: CommandMenuRow): void => {
-    if (row.kind === 'argument') {
-      applyCommandSelection({ command: row.command, argument: row.option.value }, true)
-      return
-    }
-    applyCommandSelection({ command: row.command }, true)
-  }
-  /** Official enter transaction: an args-tolerant command submits the full
-   * line (`/goal fix bugs`) through commands/execute; a bare-token command
-   * submits only the exact token. */
-  const adjudicateCommandLine = (command: DynamicCommand, args: string): void => {
-    if (onCommand === undefined) return
-    submitCommand(args === '' ? `/${command.name}` : `/${command.name} ${args}`)
-  }
-  const applyCommandSelection = (selection: CommandPaletteSelection, executeNoInput: boolean): void => {
-    const command = selection.command
-    if (
-      executeNoInput &&
-      selection.argument === undefined &&
-      commandDispatchKind(command, props.popupSelects) === 'popupSelect' &&
-      props.onPopupSelect !== undefined
-    ) {
-      props.onPopupSelect(command.name)
-      return
-    }
-    if (
-      executeNoInput &&
-      selection.argument === undefined &&
-      command.input === undefined &&
-      onCommand !== undefined
-    ) {
-      submitCommand(`/${command.name}`)
-      return
-    }
-    props.onDraftChange(
-      selection.argument === undefined
-        ? `/${command.name}${command.input === undefined ? '' : ' '}`
-        : `/${command.name} ${selection.argument}`,
-    )
-  }
-  const submitCommand = (command: string): void => {
-    if (onCommand === undefined) return
-    // One command gesture at a time. The draft and the command menu survive
-    // until the Host accepts the line, so a second Enter during a slow command
-    // (compaction) re-enters the same adjudication and would execute the
-    // command twice.
-    if (commandSubmitInFlight.current) return
-    const result = props.attachments.length === 0 ? onCommand(command) : onCommand(command, props.attachments)
-    if (result !== undefined && typeof result.then === 'function') {
-      commandSubmitInFlight.current = true
-      void result.then(
-        // The Host owns the submitted line once it is accepted; text typed
-        // while the command ran is a different draft and has to survive.
-        () => {
-          commandSubmitInFlight.current = false
-          props.onDraftChange((current) => (current === command ? '' : current))
-        },
-        () => {
-          commandSubmitInFlight.current = false
-        },
-      )
-    } else props.onDraftChange('')
-  }
-  const insertCommand = (command: DynamicCommand): void => {
-    const nextDraft = `/${command.name}${command.input === undefined ? '' : ' '}`
-    pendingCursorRef.current = nextDraft.length
-    setReferenceCursor(nextDraft.length)
-    setReferenceDismissed(undefined)
-    props.onDraftChange(nextDraft)
-    props.onCommandQueryChange?.(slashCommandQuery(nextDraft))
-    props.onReferenceQueryChange?.(undefined, false)
-    changeExtrasOpen(false)
-    window.requestAnimationFrame(() => textareaRef.current?.focus())
-  }
-  const selectReference = (candidate: ReferenceCandidate): void => {
-    if (referenceToken === undefined) return
-    const inserted = referenceMention(candidate)
-    const next = props.draft.slice(0, referenceToken.start) + inserted + props.draft.slice(referenceToken.end)
-    const nextCursor = referenceToken.start + inserted.length
-    // The pick rewrites the draft while the textarea keeps focus (the rows
-    // preventDefault the mousedown), so React's commit-phase selection restore
-    // would leave the caret at the old numeric offset -- inside the inserted
-    // mention. Ask the layout effect to reposition it, as the command
-    // insertion and mention deletion paths already do.
-    pendingCursorRef.current = nextCursor
-    props.onDraftChange(next)
-    setReferenceCursor(nextCursor)
-    setReferenceHighlight(undefined)
-    setReferenceDismissed(undefined)
-    const nextToken = referenceQueryToken(next, nextCursor)
-    props.onReferenceQueryChange?.(nextToken?.query, nextToken?.quoted ?? false)
-  }
   const previews = props.attachmentPreviews ?? EMPTY_ATTACHMENT_PREVIEWS
-  const previewedAttachment = useMemo(
-    () => (previewUri === undefined ? undefined : props.attachments.find((item) => item.uri === previewUri)),
-    [previewUri, props.attachments],
-  )
   return (
     <UnifiedComposer
       ref={composerRef}
@@ -845,89 +512,17 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
           </span>
         </div>
       ) : null}
-      {props.attachments.length > 0 ? (
-        <div className="dsh-composer__attachment-rail">
-          {attachmentRailScrollable ? (
-            <button
-              className="dsh-composer__attachment-page"
-              type="button"
-              aria-label={t('composer.attachmentsPrevious')}
-              onClick={() => pageAttachmentRail(attachmentRailRef.current, -1)}
-            >
-              <Icon name="chevron-left" />
-            </button>
-          ) : null}
-          <ul
-            ref={attachmentRailRef}
-            className="dsh-composer__attachments"
-            aria-label={t('composer.attachments')}
-            onWheel={(event) => {
-              const element = event.currentTarget
-              if (event.deltaX === 0 && event.deltaY !== 0 && element.scrollWidth > element.clientWidth) {
-                event.preventDefault()
-                element.scrollLeft += event.deltaY
-              }
-            }}
-          >
-            {props.attachments.map((attachment) => {
-              const isImage = attachment.mimeType?.startsWith('image/') === true
-              const preview = previews[attachment.uri]
-              return (
-                <li className="dsh-composer__attachment dsh-composer__context-chip" key={attachment.uri}>
-                  <span className="dsh-composer__attachment-content">
-                    {isImage ? (
-                      <button
-                        className="dsh-composer__attachment-thumb"
-                        type="button"
-                        aria-label={t('composer.preview', { name: attachment.name })}
-                        title={t('composer.preview', { name: attachment.name })}
-                        onClick={(event) => {
-                          previewTriggerRef.current = event.currentTarget
-                          setPreviewUri(attachment.uri)
-                        }}
-                      >
-                        {preview === undefined ? (
-                          <Icon name="image" />
-                        ) : (
-                          <img src={preview} alt="" aria-hidden="true" />
-                        )}
-                      </button>
-                    ) : (
-                      <span className="dsh-composer__attachment-preview" aria-hidden="true">
-                        <Icon name="file" />
-                      </span>
-                    )}
-                    <span className="dsh-composer__attachment-name" title={attachment.name}>
-                      file: {attachment.name}
-                    </span>
-                  </span>
-                  <button
-                    className="dsh-icon-button dsh-composer__context-remove dsh-composer__attachment-remove"
-                    type="button"
-                    aria-label={t('composer.remove', { name: attachment.name })}
-                    onClick={() => {
-                      if (previewUri === attachment.uri) setPreviewUri(undefined)
-                      props.onRemoveAttachment(attachment.uri)
-                    }}
-                  >
-                    <Icon name="close" />
-                  </button>
-                </li>
-              )
-            })}
-          </ul>
-          {attachmentRailScrollable ? (
-            <button
-              className="dsh-composer__attachment-page"
-              type="button"
-              aria-label={t('composer.attachmentsNext')}
-              onClick={() => pageAttachmentRail(attachmentRailRef.current, 1)}
-            >
-              <Icon name="chevron-right" />
-            </button>
-          ) : null}
-        </div>
-      ) : null}
+      <ComposerAttachmentsRail
+        attachments={props.attachments}
+        previews={previews}
+        railRef={attachmentRailRef}
+        scrollable={attachmentRailScrollable}
+        onOpenPreview={openPreview}
+        onRemove={(uri) => {
+          if (previewUri === uri) closePreview()
+          props.onRemoveAttachment(uri)
+        }}
+      />
       <EditorContextRail
         items={editorContext}
         disabled={props.disabled || props.running || props.attachmentsDisabled === true}
@@ -1119,7 +714,7 @@ export const Composer = memo(function Composer(props: ComposerProps): ReactEleme
             previews[previewedAttachment.uri] === undefined &&
             props.attachmentPreviewFailures?.includes(previewedAttachment.uri) === true
           }
-          onClose={() => setPreviewUri(undefined)}
+          onClose={closePreview}
         />
       )}
     </UnifiedComposer>
