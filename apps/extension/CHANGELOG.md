@@ -2,8 +2,10 @@
 
 ## Unreleased
 
-## 0.2.11
+## 0.2.12
 
+- 修复其他消息的代码高亮完成后，本条消息的文件打开按钮和复制控件被重渲染覆盖的问题。
+- Preserve file-open actions and copy controls when code highlighting finishes in another message.
 - 补齐新版界面入口：插件页动态发现 Creator 并开启空草稿会话；可选 Claude Code mods 提供安全提示带与按钮操作；会话检查器从三点菜单打开，支持类型过滤、分页、记录匹配、聚合行拾取和虚拟列表定位，DevTools 打开/复制由 Host 执行。新增 Markdown frontmatter 字段预览及精确统计明细。精确实验包的隔离接口验证通过；新增 VS Code 界面与 Chrome 打开仍待现场验收。
 - Added a live-roster Creator shortcut, a safe optional Claude Code mods band with button actions, and a Session Inspector in the conversation tools menu with filtering, paging, record matching, grouped-row picking and virtualized conversation reveal. The Host owns DevTools open/copy. Markdown previews now show frontmatter fields, and statistics offer exact details. Isolated exact experimental-package interfaces passed validation; new VS Code UI and Chrome opening await acceptance.
 - 新增工具参数生成期预览：显示脱敏说明、工作区相对路径和解码字符数，明确标记“正在生成参数”。预览不计入执行记录或工具调用统计；支持重连回放，并在执行、中断或重试时清理。真实模型流与 VS Code 交互仍待验收。

@@ -1,9 +1,14 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MarkdownContent } from './MarkdownContent.js'
-import { getWebviewHighlighter } from './shiki.js'
+import {
+  cachedCodeHighlight,
+  getWebviewHighlighter,
+  requestCodeHighlight,
+  subscribeCodeHighlights,
+} from './shiki.js'
 
 describe('MarkdownContent', () => {
   afterEach(() => {
@@ -128,6 +133,7 @@ describe('MarkdownContent', () => {
   })
 
   it('turns unique produced-file mentions into safe open actions', async () => {
+    await warmHighlighter()
     const onOpenLink = vi.fn()
     const { container } = render(
       <MarkdownContent
@@ -146,6 +152,28 @@ describe('MarkdownContent', () => {
     fireEvent.click(link)
     expect(onOpenLink).toHaveBeenCalledWith('site/report.html')
     expect(container.querySelectorAll('.dsh-inline-reference')).toHaveLength(1)
+
+    // Completion in another message invalidates the shared highlight store.
+    // This message's HTML stays identical, so its file actions must survive.
+    const unrelatedCode = 'const producedMentionRefresh = 1'
+    await act(async () => {
+      await new Promise<void>((resolve) => {
+        if (cachedCodeHighlight('typescript', unrelatedCode) !== undefined) {
+          resolve()
+          return
+        }
+        const unsubscribe = subscribeCodeHighlights(() => {
+          if (cachedCodeHighlight('typescript', unrelatedCode) === undefined) return
+          unsubscribe()
+          resolve()
+        })
+        requestCodeHighlight('typescript', unrelatedCode)
+      })
+    })
+    expect(container.querySelectorAll('.dsh-inline-reference')).toHaveLength(1)
+    expect(link.isConnected).toBe(true)
+    fireEvent.click(link)
+    expect(onOpenLink).toHaveBeenCalledTimes(2)
   })
 
   it('renders inline and display dollar math through KaTeX', async () => {

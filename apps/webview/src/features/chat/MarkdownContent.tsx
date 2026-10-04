@@ -142,6 +142,10 @@ export const MarkdownContent = memo(function MarkdownContent({
     return `<div data-dsh-markdown-frozen="true">${frozenHtml}</div>${tail}`
   }, [frozenHtml, tailHtml])
 
+  // A new innerHTML prop object rewrites the DOM even when its text is unchanged.
+  // Keep copy regions and file actions intact on unrelated highlight completions.
+  const renderedMarkup = useMemo(() => ({ __html: renderedHtml }), [renderedHtml])
+
   useEffect(() => {
     const container = contentRef.current
     if (container === null) return
@@ -251,7 +255,7 @@ export const MarkdownContent = memo(function MarkdownContent({
       className={`dsh-markdown${streaming ? ' dsh-markdown--streaming' : ''}`}
       onClick={handleClick}
       onKeyDown={handleKeyDown}
-      dangerouslySetInnerHTML={{ __html: renderedHtml }}
+      dangerouslySetInnerHTML={renderedMarkup}
     />
   )
 })

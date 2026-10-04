@@ -60,4 +60,4 @@ Store/Timeline 保持持久序列不变，预览不进入持久历史/Trajectory
 
 真实回放待完成：在隔离目标运行包与 VS Code 中使用有效模型，触发 read/write/edit/bash/run_code 的分段参数，观察准备行；分别取消和重连，确认路径/正文隔离、准备到执行的替换和执行计数。亮/暗/高对比、窄侧栏、键盘/读屏及跨平台仍须现场验收。代码与模拟流测试不能代替这些证据。
 
-本轮适配和菜单调整归入扩展 `0.2.11`；发布结果以对应 GitHub Release、Actions 和 Marketplace 记录为准。保留 `.codegraph/` 与无关本地产物，不纳入提交或 VSIX。
+本轮适配和菜单调整归入扩展 `0.2.12`；发布结果以对应 GitHub Release、Actions 和 Marketplace 记录为准。`v0.2.11` 发布检查发现 Markdown 的共享高亮完成会覆盖未变化消息的 DOM，导致文件打开按钮消失；该版本未发布。以真实高亮完成通知稳定复现后，保持未变化 HTML prop 的身份，修复后再执行完整门禁。保留 `.codegraph/` 与无关本地产物，不纳入提交或 VSIX。
