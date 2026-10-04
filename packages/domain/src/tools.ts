@@ -163,6 +163,14 @@ export interface ToolCallView {
   readonly category: string
   readonly title: string
   readonly status: ToolCallStatus
+  /** Transient argument preparation; never evidence that the tool executed. */
+  readonly preparation?: {
+    readonly attemptId: string
+    readonly updateIndex: number
+    readonly description?: string
+    readonly filePath?: string
+    readonly contentCharacters?: number
+  }
   readonly startedAt?: string
   readonly completedAt?: string
   readonly inputSummary?: string

@@ -249,7 +249,7 @@ export function applyHostMessage(
   const timeline =
     !belongsToActiveSession ||
     controlPlaneMessage ||
-    !eventMayChangeTimelineState(event) ||
+    !eventMayChangeTimelineState(event, state.timeline) ||
     duplicateGapNotice ||
     deferGapNotice
       ? state.timeline
@@ -586,6 +586,12 @@ export function withoutConnectionScopedSurfaces(state: AppState): AppState {
   const withoutPresetSelection = withPresetSelectionEnabled(state, undefined)
   return {
     ...withoutPresetSelection,
+    timeline: {
+      ...state.timeline,
+      nodes: state.timeline.nodes.filter(
+        (node) => node.kind !== 'tool' || node.tool.preparation === undefined,
+      ),
+    },
     sessionDirectoryStatus: 'loading',
     queue: [],
     jobs: [],
@@ -697,8 +703,13 @@ export function hostOnlyInsertIndex(nodes: readonly TimelineNode[], anchors: rea
 }
 
 /** Session/catalog state events do not need a new TimelineState object. */
-export function eventMayChangeTimelineState(event: BackendEvent): boolean {
+export function eventMayChangeTimelineState(event: BackendEvent, timeline?: TimelineState): boolean {
   switch (event.type) {
+    case 'session.subscribed':
+      return (
+        event.controlBaseline === false &&
+        timeline?.nodes.some((node) => node.kind === 'tool' && node.tool.preparation !== undefined) === true
+      )
     case 'archived.sessions.changed':
     case 'jobs.updated':
     case 'job.follow.updated':
@@ -715,7 +726,6 @@ export function eventMayChangeTimelineState(event: BackendEvent): boolean {
     case 'session.projection':
     case 'session.removed':
     case 'session.status':
-    case 'session.subscribed':
     case 'session.system':
     case 'session.title':
     case 'workspace.changed':

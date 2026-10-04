@@ -39,6 +39,7 @@ import {
 import { StreamingActivity } from './timeline-renderers.js'
 import { TimelineRow } from './TimelineRow.js'
 import { ToolLinkErrorDialog } from './ToolLinkErrorDialog.js'
+import { timelineSourceNodeIds } from './timeline-inspector-target.js'
 
 export interface TimelineProps {
   readonly sessionId: string
@@ -77,6 +78,7 @@ export interface TimelineProps {
   readonly hasMoreHistory?: boolean
   readonly loadingOlderHistory?: boolean
   readonly onLoadOlderHistory?: () => Promise<void> | void
+  readonly revealTarget?: { readonly nodeId: string; readonly requestId: string }
 }
 
 /** Keep row handlers stable while still dispatching to the latest parent callback. */
@@ -267,6 +269,7 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
     scrollRef,
     contentRef,
     userScrollToLatest,
+    userScrollToOffset,
     scheduleScrollToLatest,
     captureScrollAnchor,
     restoreScrollAnchor,
@@ -295,15 +298,40 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
     const shiftedIndex = displayNodes.findIndex((node) => node.id === nodeId)
     return shiftedIndex >= 0 ? shiftedIndex : undefined
   }, [displayNodes, scrollRef])
+  const revealNodeId = props.revealTarget?.nodeId
+  const revealIndex =
+    revealNodeId === undefined
+      ? -1
+      : displayNodes.findIndex((node) => timelineSourceNodeIds(node).includes(revealNodeId))
+  const getPinnedTimelineIndex = useCallback(
+    (): number | undefined => getFocusedTimelineIndex() ?? (revealIndex >= 0 ? revealIndex : undefined),
+    [getFocusedTimelineIndex, revealIndex],
+  )
   const virtualized = useVirtualizedCollection({
     items: displayNodes,
     scrollRef,
     enabled: virtualizeTimeline,
     getItemKey: timelineNodeKey,
-    getPinnedItemIndex: getFocusedTimelineIndex,
+    getPinnedItemIndex: getPinnedTimelineIndex,
     onScrollAdjustment: applyScrollAdjustment,
   })
   const virtualizedReady = virtualized.enabled && virtualized.ready
+  const revealedRequest = useRef<string | undefined>(undefined)
+  useLayoutEffect(() => {
+    const requestId = props.revealTarget?.requestId
+    if (requestId === undefined || revealedRequest.current === requestId || revealIndex < 0) return
+    if (virtualized.enabled && !virtualized.ready) return
+    const row = Array.from(scrollRef.current?.querySelectorAll<HTMLElement>('.dsh-timeline__row') ?? []).find(
+      (element) => Number(element.dataset.index) === revealIndex,
+    )
+    if (row === undefined) return
+    const offset = virtualized.enabled ? virtualized.getItemOffset(revealIndex) : row.offsetTop
+    if (offset === undefined) return
+    revealedRequest.current = requestId
+    userScrollToOffset(offset)
+    row.tabIndex = -1
+    row.focus({ preventScroll: true })
+  }, [props.revealTarget, revealIndex, scrollRef, userScrollToOffset, virtualized])
   // Until the virtualizer owns a measured viewport the rows come from the
   // plain list. Anchor that frame at the tail and keep it a constant: it still
   // has to cover a viewport for the measurement to be meaningful, and the

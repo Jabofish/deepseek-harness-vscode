@@ -1,0 +1,27 @@
+.dsh-document-preview {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.dsh-document-preview dl > div {
+  display: grid;
+  grid-template-columns: minmax(5rem, 1fr) minmax(0, 3fr);
+  gap: 0.5rem;
+  padding: 0.25rem 0;
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+.dsh-document-preview dt {
+  font-weight: 600;
+}
+.dsh-document-preview dd {
+  margin: 0;
+  min-width: 0;
+}
+.dsh-document-preview pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 26rem) {
+  .dsh-document-preview dl > div {
+    grid-template-columns: 1fr;
+  }
+}

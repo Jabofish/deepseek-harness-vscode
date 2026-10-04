@@ -113,6 +113,10 @@ export function PluginsSettingsTab({
       />
       {props.featureRequest === undefined ? null : (
         <OptionalBundleManager
+          onLoadPresetRoster={props.onLoadPresetRoster}
+          {...(props.onStartCreatorDraft === undefined
+            ? {}
+            : { onStartCreatorDraft: props.onStartCreatorDraft })}
           revision={props.pluginInventoryRevision ?? 0}
           {...(props.pluginInstallProgress === undefined
             ? {}

@@ -33,8 +33,12 @@ import {
 } from './optional-bundle-model.js'
 import { BundleCard, PluginRow, type Notice } from './optional-bundle-cards.js'
 import './optional-bundle-manager.css'
+import { PluginCreatorAction } from './PluginCreatorAction.js'
+import type { AgentPresetRoster } from '@dsh-vscode/domain'
 
 export interface OptionalBundleManagerProps {
+  readonly onLoadPresetRoster?: () => Promise<AgentPresetRoster | undefined>
+  readonly onStartCreatorDraft?: () => Promise<void>
   readonly revision?: number
   readonly installProgress?: PluginInstallProgressView | undefined
   readonly installOperation?: PluginInstallRecoveryState | undefined
@@ -399,6 +403,13 @@ export function OptionalBundleManager(props: OptionalBundleManagerProps): ReactE
           </button>
         </h2>
         <div className="dsh-optional-bundles__heading-actions">
+          {props.onLoadPresetRoster !== undefined && props.onStartCreatorDraft !== undefined ? (
+            <PluginCreatorAction
+              revision={props.revision}
+              loadRoster={props.onLoadPresetRoster}
+              startDraft={props.onStartCreatorDraft}
+            />
+          ) : null}
           {bundles.length === 0 ? null : (
             <span className="dsh-optional-bundles__entry-count">
               {t('plugins.manager.entryCount', { count: bundles.length })}

@@ -109,6 +109,14 @@ export const pluginBundleChangeResultSchema = z
       .optional(),
     failedAt: z.enum(['registry', 'spec-host']).optional(),
     bundle: safeLabel.optional(),
+    version: z
+      .string()
+      .min(1)
+      .max(128)
+      .regex(
+        /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u,
+      )
+      .optional(),
     pendingBuilds: z.array(safeLabel).max(256).optional(),
   })
   .strict()

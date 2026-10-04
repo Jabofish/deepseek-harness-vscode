@@ -3,6 +3,7 @@ export { protocolValueWithinBudget } from './protocol-budget.js'
 export { webviewRequestSchema } from './webview-request-schema.js'
 export {
   hostResponseSchema,
+  toolPreparingPayloadSchema,
   jobFollowFrameSchema,
   jobFollowUpdatedPayloadSchema,
   jobFollowFailedPayloadSchema,

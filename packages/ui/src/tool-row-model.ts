@@ -14,7 +14,7 @@ import { removeDuplicateErrorSections, skillSections, structuredSections } from 
 export type ToolRowVariant =
   'search' | 'read' | 'bash' | 'write' | 'edit' | 'code' | 'todo' | 'question' | 'web' | 'skill' | 'other'
 
-export type ToolRowState = 'running' | 'ok' | 'error' | 'stopped'
+export type ToolRowState = 'preparing' | 'running' | 'ok' | 'error' | 'stopped'
 
 export interface ToolRowModel {
   readonly variant: ToolRowVariant
@@ -64,6 +64,7 @@ export function classifyTool(toolName: string): ToolRowVariant {
 }
 
 export function isSpecializedTool(tool: ToolCallView): boolean {
+  if (tool.preparation !== undefined) return true
   const name = tool.name.trim().toLocaleLowerCase()
   return (
     classifyTool(name) !== 'other' ||
@@ -76,6 +77,26 @@ export function isSpecializedTool(tool: ToolCallView): boolean {
 export function toolRowModel(tool: ToolCallView, translate?: PresentationTranslate): ToolRowModel {
   const variant = classifyTool(tool.name)
   const title = rowTitle(variant, tool, translate)
+  if (tool.preparation !== undefined) {
+    const preview = tool.preparation
+    const count = preview.contentCharacters
+    const size =
+      count === undefined
+        ? undefined
+        : translate === undefined
+          ? `${count} characters`
+          : translate('toolrow.preparingCharacters', { count })
+    return {
+      variant,
+      state: 'preparing',
+      title,
+      summary:
+        [preview.filePath ?? preview.description, size]
+          .filter((part) => part !== undefined && part !== '')
+          .join(' · ') || label(translate, 'toolrow.preparing', 'Preparing arguments'),
+      sections: [],
+    }
+  }
   if (tool.autoReviewDenial !== undefined) {
     const summary = label(translate, 'toolrow.autoReview.rejected', 'Rejected by Auto review')
     return {
@@ -117,6 +138,7 @@ export function toolRowModel(tool: ToolCallView, translate?: PresentationTransla
 }
 
 export function rowState(tool: ToolCallView): ToolRowState {
+  if (tool.preparation !== undefined) return 'preparing'
   if (tool.autoReviewDenial !== undefined) return 'error'
   if (tool.status === 'queued' || tool.status === 'running') return 'running'
   if (tool.status === 'cancelled') return 'stopped'

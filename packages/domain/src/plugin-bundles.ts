@@ -116,6 +116,8 @@ export interface PluginBundleChangeResult {
   readonly failureKind?: PluginInstallFailureKind
   readonly failedAt?: 'registry' | 'spec-host'
   readonly bundle?: string
+  /** Manifest version actually installed; may differ from the registry's newest version. */
+  readonly version?: string
   readonly pendingBuilds?: readonly string[]
 }
 

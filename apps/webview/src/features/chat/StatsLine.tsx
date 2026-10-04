@@ -4,6 +4,7 @@ import { billedInputTokens, cacheHitPercent } from '@dsh-vscode/timeline'
 import type { TimelineNode } from '@dsh-vscode/timeline'
 import { useI18n } from '../../i18n.js'
 import type { PerformanceUsageMode } from '../../app/ui-preferences.js'
+import { StatsDetails } from './StatsDetails.js'
 
 export interface StatsLineProps {
   readonly nodes: readonly TimelineNode[]
@@ -104,6 +105,7 @@ export const StatsLine = memo(function StatsLine(props: StatsLineProps): ReactEl
       aria-label={t('stats.aria')}
       data-performance-usage="detailed"
     >
+      <StatsDetails stats={stats} usage={props.usage} />
       {props.sessionStats === undefined ? <span>{t('stats.loadedWindow')}</span> : null}
       <span>{t(stats.turns === 1 ? 'stats.turns' : 'stats.turns.plural', { count: stats.turns })}</span>
       <span aria-hidden="true">·</span>

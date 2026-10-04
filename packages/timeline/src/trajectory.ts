@@ -204,6 +204,7 @@ function trajectoryRecordForNode(node: TimelineNode): TrajectoryRecordData | und
       }
       break
     case 'tool': {
+      if (node.tool.preparation !== undefined) break
       const running = node.tool.status === 'queued' || node.tool.status === 'running'
       const startedAt = toEpochMillis(node.tool.startedAt)
       record = {

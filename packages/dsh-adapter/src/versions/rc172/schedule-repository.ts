@@ -7,7 +7,6 @@ import type {
   ScheduleHistoryPage,
   ScheduleHistoryRequest,
   ScheduleHistoryResult,
-  ScheduleMutationFailure,
   ScheduleRecord,
   ScheduleRepository,
   ScheduleTimingChange,
@@ -75,7 +74,11 @@ export class Rc172ScheduleRepository implements ScheduleRepository {
       await this.transport.remoteRequest('schedule/update', args, signal),
       'schedule/update',
     )
-    return updateResult(value, id)
+    return this.mapUpdateResult(value, id)
+  }
+
+  protected mapUpdateResult(value: unknown, requestedId: string): ScheduleUpdateResult {
+    return updateResult(value, requestedId)
   }
 
   public async delete(sessionId: string, id: string, signal?: AbortSignal): Promise<ScheduleDeleteResult> {
@@ -234,10 +237,10 @@ function deleteResult(value: unknown, requestedId: string): ScheduleDeleteResult
 
 function scheduleFailure(
   record: Record<string, unknown>,
-): Extract<ScheduleMutationFailure, { readonly message: string }> {
+): Extract<ScheduleDeleteResult, { readonly message: string }> {
   if (isScheduleToolFailure(record)) {
     return {
-      code: record.code as Extract<ScheduleMutationFailure, { readonly message: string }>['code'],
+      code: record.code as Extract<ScheduleDeleteResult, { readonly message: string }>['code'],
       message: record.message,
     }
   }

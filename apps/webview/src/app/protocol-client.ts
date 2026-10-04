@@ -61,6 +61,7 @@ const EXTENDED_TIMEOUT_MS: Readonly<Record<string, number>> = {
   'plugin.credential.configure': NATIVE_DIALOG_TIMEOUT_MS,
   'plugin.bundle.install': PLUGIN_INSTALL_TIMEOUT_MS,
   'plugin.bundle.waitForInstall': PLUGIN_INSTALL_TIMEOUT_MS,
+  'mods.band.read': 30_000,
   'runtime.update.check': RUNTIME_UPDATE_CHECK_TIMEOUT_MS,
   'runtime.update.install': RUNTIME_UPDATE_INSTALL_TIMEOUT_MS,
   'checkpoint.create': CHECKPOINT_TIMEOUT_MS,
@@ -149,6 +150,8 @@ export class ProtocolClient {
         if (this.pending.get(parsed.requestId)?.timer !== timer) return
         this.pending.delete(parsed.requestId)
         reject(timeoutError(parsed.type))
+        if (parsed.type === 'mods.band.read' || parsed.type === 'mods.band.press')
+          this.cancelTimedOutRequest(parsed.requestId)
       }, timeoutMs)
       this.pending.set(parsed.requestId, { resolve: (value) => resolve(value as T), reject, timer })
       try {

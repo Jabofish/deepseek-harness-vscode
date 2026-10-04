@@ -43,6 +43,8 @@ export interface VirtualizedCollectionResult {
   readonly totalSize: number
   readonly virtualItems: readonly VirtualItem[]
   readonly measureElement: (element: HTMLDivElement | null) => void
+  /** Read a target offset; explicit reader actions still write through the scroll owner. */
+  readonly getItemOffset: (index: number) => number | undefined
 }
 
 /**
@@ -72,8 +74,7 @@ export function useVirtualizedCollection<T>(
   itemsRef.current = items
   const getItemKeyOptionRef = useRef(getItemKeyOption)
   getItemKeyOptionRef.current = getItemKeyOption
-  const getPinnedItemIndexRef = useRef(options.getPinnedItemIndex)
-  getPinnedItemIndexRef.current = options.getPinnedItemIndex
+  const getPinnedItemIndex = options.getPinnedItemIndex
   const getItemKey = useCallback((index: number): string | number => {
     const item = itemsRef.current[index]
     return item === undefined ? index : (getItemKeyOptionRef.current?.(item, index) ?? index)
@@ -96,18 +97,21 @@ export function useVirtualizedCollection<T>(
   // internal lifecycle write cannot reset a reader who is already at the
   // bottom (or intentionally reading elsewhere) to zero.
   const initialOffset = useCallback(() => scrollRef.current?.scrollTop ?? 0, [scrollRef])
-  const rangeExtractor = useCallback((range: Range): number[] => {
-    const indexes = defaultRangeExtractor(range)
-    const pinnedIndex = getPinnedItemIndexRef.current?.()
-    if (
-      pinnedIndex === undefined ||
-      pinnedIndex < 0 ||
-      pinnedIndex >= range.count ||
-      indexes.includes(pinnedIndex)
-    )
-      return indexes
-    return [...indexes, pinnedIndex].sort((left, right) => left - right)
-  }, [])
+  const rangeExtractor = useCallback(
+    (range: Range): number[] => {
+      const indexes = defaultRangeExtractor(range)
+      const pinnedIndex = getPinnedItemIndex?.()
+      if (
+        pinnedIndex === undefined ||
+        pinnedIndex < 0 ||
+        pinnedIndex >= range.count ||
+        indexes.includes(pinnedIndex)
+      )
+        return indexes
+      return [...indexes, pinnedIndex].sort((left, right) => left - right)
+    },
+    [getPinnedItemIndex],
+  )
   // eslint-disable-next-line react-hooks/incompatible-library
   const virtualizer = useVirtualizer<HTMLDivElement, HTMLDivElement>({
     count,
@@ -137,6 +141,7 @@ export function useVirtualizedCollection<T>(
       totalSize: enabled ? virtualizer.getTotalSize() : 0,
       virtualItems,
       measureElement: virtualizer.measureElement,
+      getItemOffset: (index: number) => virtualizer.getOffsetForIndex(index, 'center')?.[0],
     }),
     [enabled, ready, virtualItems, virtualizer],
   )

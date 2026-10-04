@@ -1,4 +1,4 @@
-import type { ReactElement } from 'react'
+import { useState, type ReactElement } from 'react'
 import { EmptyState } from '@dsh-vscode/ui'
 import { AppErrorBoundary } from './features/errors/AppErrorBoundary.js'
 import { AppSettingsDrawer } from './features/settings/AppSettingsDrawer.js'
@@ -7,6 +7,8 @@ import { RuntimeMissingView } from './features/runtime/RuntimeMissingView.js'
 import { RuntimeConnectionView } from './features/runtime/RuntimeConnectionView.js'
 import { EmptySessionPosture } from './features/sessions/EmptySessionPosture.js'
 import { ConnectedComposer } from './features/composer/ConnectedComposer.js'
+import { ModsBand } from './features/mods/ModsBand.js'
+import { SessionInspector } from './features/inspector/SessionInspector.js'
 import { AppHeader } from './features/shell/AppHeader.js'
 import { SessionLineage } from './features/subagents/SessionLineage.js'
 import { ConversationActionsMenu } from './features/shell/ConversationActionsMenu.js'
@@ -159,6 +161,12 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
     visibleReferenceLoading,
     welcomeVisible,
   } = props
+  const [inspectorOpenRequestId, setInspectorOpenRequestId] = useState<string>()
+  const [inspectorReveal, setInspectorReveal] = useState<{
+    readonly sessionKey: string
+    readonly nodeId: string
+    readonly requestId: string
+  }>()
   return (
     <AppErrorBoundary>
       <main className="dsh-app" data-dsh-theme={themePreference}>
@@ -458,9 +466,45 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                       />
                     ) : null}
                     <ConversationActionsMenu onClose={closeConversationActions}>
-                      {conversationActionItems}
+                      {(closeMenu) => (
+                        <>
+                          {conversationActionItems}
+                          <button
+                            type="button"
+                            className="dsh-button dsh-button--secondary dsh-button--compact dsh-conversation__inspector-trigger"
+                            aria-haspopup="dialog"
+                            onClick={() => {
+                              closeMenu()
+                              setInspectorOpenRequestId(crypto.randomUUID())
+                            }}
+                          >
+                            {t('inspector.title')}
+                          </button>
+                        </>
+                      )}
                     </ConversationActionsMenu>
                   </div>
+                  <SessionInspector
+                    key={`${state.connectionEpoch}:${active.id}`}
+                    history={state.history}
+                    nodes={state.timeline.nodes}
+                    hasMore={state.historyHasMore}
+                    loading={state.historyLoading}
+                    loadOlder={timelineOnLoadOlderHistory}
+                    featureRequest={store.featureRequest}
+                    showDshEvents={showDshEvents}
+                    transcriptView={transcriptView}
+                    openRequestId={inspectorOpenRequestId}
+                    showTrigger={false}
+                    onRevealNode={(nodeId) => {
+                      setConversationView('chat')
+                      setInspectorReveal({
+                        sessionKey: `${state.connectionEpoch}:${active.id}`,
+                        nodeId,
+                        requestId: crypto.randomUUID(),
+                      })
+                    }}
+                  />
                   {visibleExportSessionId === undefined ? null : (
                     <ExportDialog
                       sessionId={visibleExportSessionId}
@@ -483,6 +527,9 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                   {conversationView === 'chat' ? (
                     <Timeline
                       sessionId={active.id}
+                      {...(inspectorReveal?.sessionKey === `${state.connectionEpoch}:${active.id}`
+                        ? { revealTarget: inspectorReveal }
+                        : {})}
                       panelId={CONVERSATION_VIEW_IDS.chat.panel}
                       panelLabelledBy={CONVERSATION_VIEW_IDS.chat.tab}
                       nodes={state.timeline.nodes}
@@ -578,6 +625,13 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                   ) : null}
                   <div className="dsh-compose-area">
                     <TodoList key={active?.id ?? 'todo-list'} todos={state.todos} />
+                    {backend.kind === 'connected' ? (
+                      <ModsBand
+                        key={`${state.connectionEpoch}:${active.id}`}
+                        sessionId={active.id}
+                        featureRequest={store.featureRequest}
+                      />
+                    ) : null}
                     {pendingPermissions.length === 0 &&
                     pendingQuestions.every((question) => question.state === 'continued') ? (
                       subagentReadOnlyReason === undefined || activeRunning ? (

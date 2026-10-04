@@ -31,6 +31,7 @@ function advancesTimelineSequence(event: BackendEvent): boolean {
     case 'workspace.order.changed':
     case 'workspace.removed':
     case 'remote.event':
+    case 'tool.preparing':
       return false
     case 'unknown':
       // An uninterpreted frame is preserved as a raw event row, but it must

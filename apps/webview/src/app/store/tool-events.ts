@@ -1,4 +1,5 @@
 import { isRecord } from './unknown-record.js'
+import { toolPreparingPayloadSchema } from '@dsh-vscode/webview-protocol'
 import {
   parseToolPresentation,
   parsePresentedFiles,
@@ -17,6 +18,24 @@ export function parseToolEvents(
   value: Record<string, unknown>,
   payload: unknown,
 ): BackendEvent | undefined {
+  if (name === 'tool.preparing') {
+    const parsed = toolPreparingPayloadSchema.safeParse(value)
+    if (!parsed.success) return { type: 'unknown', name, payload: {} }
+    const preview = parsed.data
+    return {
+      type: 'tool.preparing',
+      sessionId: preview.sessionId,
+      callId: preview.callId,
+      toolName: preview.toolName,
+      attemptId: preview.attemptId,
+      turn: preview.turn,
+      step: preview.step,
+      updateIndex: preview.updateIndex,
+      ...(preview.description === undefined ? {} : { description: preview.description }),
+      ...(preview.filePath === undefined ? {} : { filePath: preview.filePath }),
+      ...(preview.contentCharacters === undefined ? {} : { contentCharacters: preview.contentCharacters }),
+    }
+  }
   if (name === 'deliverables.presented' && nonEmptyString(value.sessionId)) {
     const turn = positivePresentationNumber(value.turn)
     const callId = presentationIdentifier(value.callId)

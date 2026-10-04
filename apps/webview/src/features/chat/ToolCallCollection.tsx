@@ -57,6 +57,18 @@ export const ToolCallCollection = memo(function ToolCallCollection(
 
 const ToolCallRows = memo(function ToolCallRows(props: ToolCallCollectionProps): ReactElement | null {
   if (props.tools.length === 0) return null
+  const preparing = props.tools.filter((node) => node.tool.preparation !== undefined)
+  if (preparing.length > 0)
+    return (
+      <>
+        <ToolCallRows {...props} tools={props.tools.filter((node) => node.tool.preparation === undefined)} />
+        {projectToolCallTree(preparing).map((root) => (
+          <div className="dsh-timeline__tool-collection" key={root.node.id}>
+            {renderToolCard(root, props)}
+          </div>
+        ))}
+      </>
+    )
   const roots = projectToolCallTree(props.tools)
 
   if (roots.length === 1) {

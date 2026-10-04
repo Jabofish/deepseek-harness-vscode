@@ -9,6 +9,7 @@ import {
   safeLabel,
 } from './feature-shared.js'
 import { pluginRegistrySchema } from './feature-plugin.js'
+import { modsBandActionId } from './feature-mods-band.js'
 import {
   scheduleAtInputSchema,
   schedulePrompt,
@@ -47,6 +48,41 @@ export const promptTemplateOwnerPayload = {
 
 /** Future request union. Do not merge it into `webviewRequestSchema` early. */
 export const featureRequestSchema = z.discriminatedUnion('type', [
+  z
+    .object({
+      type: z.literal('inspector.devtools.status'),
+      ...featureRequestBase,
+      payload: z.object({}).strict(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('inspector.devtools.open'),
+      ...featureRequestBase,
+      payload: z.object({}).strict(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('inspector.devtools.copy'),
+      ...featureRequestBase,
+      payload: z.object({}).strict(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('mods.band.read'),
+      ...featureRequestBase,
+      payload: z.object({ sessionId: id, afterGeneration: generation.optional() }).strict(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('mods.band.press'),
+      ...featureRequestBase,
+      payload: z.object({ sessionId: id, generation, actionId: modsBandActionId }).strict(),
+    })
+    .strict(),
   z
     .object({
       type: z.literal('editor.context.capture'),

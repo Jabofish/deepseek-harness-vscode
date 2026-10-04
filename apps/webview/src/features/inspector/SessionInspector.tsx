@@ -1,0 +1,270 @@
+import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
+import { Drawer } from '@dsh-vscode/ui'
+import type { SessionHistoryEvent } from '@dsh-vscode/domain'
+import type { TimelineNode } from '@dsh-vscode/timeline'
+import type { AppStore } from '../../app/store.js'
+import { useI18n } from '../../i18n.js'
+import { inspectHistory, inspectChatNode } from './inspector-model.js'
+import { InspectorDevtoolsActions } from './InspectorDevtoolsActions.js'
+import './inspector.css'
+import { createDisplayNodeProjector } from '../chat/timeline-projection.js'
+import { timelineSourceNodeIds } from '../chat/timeline-inspector-target.js'
+import type { TranscriptViewMode } from '../../app/ui-preferences.js'
+
+const PAGE_SIZE = 100
+export function SessionInspector(props: {
+  readonly history: readonly SessionHistoryEvent[]
+  readonly nodes: readonly TimelineNode[]
+  readonly hasMore: boolean
+  readonly loading: boolean
+  readonly loadOlder: () => Promise<void> | void
+  readonly featureRequest: AppStore['featureRequest']
+  readonly showDshEvents?: boolean
+  readonly transcriptView?: TranscriptViewMode
+  readonly onRevealNode?: (nodeId: string) => void
+  /** A fresh request opens this mounted session; remounts ignore older requests. */
+  readonly openRequestId?: string | undefined
+  readonly showTrigger?: boolean
+}): ReactElement {
+  const { t } = useI18n()
+  const [open, setOpen] = useState(false)
+  const [lastOpenRequestId, setLastOpenRequestId] = useState(props.openRequestId)
+  const [source, setSource] = useState<'events' | 'nodes'>('events')
+  const [filter, setFilter] = useState('')
+  const [offset, setOffset] = useState(0)
+  const [selectedId, setSelectedId] = useState<string | undefined>(undefined)
+  const [picking, setPicking] = useState(false)
+  const [loadFailed, setLoadFailed] = useState(false)
+  const loading = useRef(false)
+  if (lastOpenRequestId !== props.openRequestId) {
+    setLastOpenRequestId(props.openRequestId)
+    setPicking(false)
+    setOpen(props.openRequestId !== undefined)
+  }
+  const displayProjector = useMemo(() => createDisplayNodeProjector(), [])
+  const records = useMemo(
+    () => (!open ? [] : [...props.history.map(inspectHistory), ...props.nodes.map(inspectChatNode)]),
+    [open, props.history, props.nodes],
+  )
+  const sourceRecords = useMemo(() => records.filter((record) => record.source === source), [records, source])
+  const types = useMemo(
+    () => [...new Set(sourceRecords.map((record) => record.type))].sort(),
+    [sourceRecords],
+  )
+  const filtered = useMemo(
+    () => sourceRecords.filter((record) => filter === '' || record.type === filter),
+    [filter, sourceRecords],
+  )
+  const end = Math.max(0, filtered.length - offset)
+  const start = Math.max(0, end - PAGE_SIZE)
+  const selected = records.find((record) => record.id === selectedId)
+  const matches =
+    selected?.sequence === undefined
+      ? []
+      : records.filter((record) => record.source !== selected.source && record.sequence === selected.sequence)
+  const selectRecord = (record: ReturnType<typeof inspectHistory>): void => {
+    const sameSource = records.filter((candidate) => candidate.source === record.source)
+    const index = sameSource.findIndex((candidate) => candidate.id === record.id)
+    setSource(record.source)
+    setFilter('')
+    setOffset(Math.floor((sameSource.length - 1 - Math.max(0, index)) / PAGE_SIZE) * PAGE_SIZE)
+    setSelectedId(record.id)
+  }
+  useEffect(() => {
+    if (!picking) return
+    const pick = (event: MouseEvent): void => {
+      const target =
+        event.target instanceof Element
+          ? event.target.closest<HTMLElement>('.dsh-timeline__row[data-node-id]')
+          : null
+      const display = displayProjector(
+        props.nodes,
+        props.showDshEvents ?? false,
+        props.transcriptView ?? 'standard',
+      ).nodes.find((item) => item.id === target?.dataset.nodeId)
+      const sourceIds = display === undefined ? [target?.dataset.nodeId] : timelineSourceNodeIds(display)
+      const node = props.nodes.find((item) => sourceIds.includes(item.id))
+      if (node === undefined) return
+      event.preventDefault()
+      event.stopPropagation()
+      setSource('nodes')
+      setFilter('')
+      setSelectedId(`node:${node.id}`)
+      setOffset(Math.floor((props.nodes.length - 1 - props.nodes.indexOf(node)) / PAGE_SIZE) * PAGE_SIZE)
+      setPicking(false)
+      setOpen(true)
+    }
+    const cancel = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setPicking(false)
+    }
+    document.addEventListener('click', pick, true)
+    document.addEventListener('keydown', cancel)
+    return () => {
+      document.removeEventListener('click', pick, true)
+      document.removeEventListener('keydown', cancel)
+    }
+  }, [displayProjector, picking, props.nodes, props.showDshEvents, props.transcriptView])
+  const openInspector = (): void => {
+    setPicking(false)
+    setOpen(true)
+  }
+  return (
+    <>
+      {props.showTrigger === false ? null : (
+        <button
+          type="button"
+          className="dsh-button dsh-button--secondary dsh-button--compact"
+          onClick={openInspector}
+        >
+          {t('inspector.title')}
+        </button>
+      )}
+      {picking ? (
+        <span role="status">
+          {t('inspector.pickHint')}{' '}
+          <button type="button" onClick={() => setPicking(false)}>
+            {t('inspector.cancelPick')}
+          </button>
+        </span>
+      ) : null}
+      <Drawer title={t('inspector.title')} open={open} onClose={() => setOpen(false)}>
+        {open ? (
+          <div className="dsh-session-inspector">
+            <p>{t('inspector.scope')}</p>
+            <label>
+              {t('inspector.source')}{' '}
+              <select
+                value={source}
+                onChange={(event) => {
+                  setSource(event.target.value === 'nodes' ? 'nodes' : 'events')
+                  setFilter('')
+                  setOffset(0)
+                  setSelectedId(undefined)
+                }}
+              >
+                <option value="events">{t('inspector.events')}</option>
+                <option value="nodes">{t('inspector.nodes')}</option>
+              </select>
+            </label>
+            <label>
+              {t('inspector.filter')}{' '}
+              <select
+                value={filter}
+                onChange={(event) => {
+                  setFilter(event.target.value)
+                  setOffset(0)
+                }}
+              >
+                <option value="">{t('inspector.all')}</option>
+                {types.map((type) => (
+                  <option key={type} value={type}>
+                    {type}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="dsh-session-inspector__actions">
+              <button
+                type="button"
+                disabled={start === 0}
+                onClick={() => setOffset((value) => value + PAGE_SIZE)}
+              >
+                {t('inspector.previous')}
+              </button>
+              <button
+                type="button"
+                disabled={offset === 0}
+                onClick={() => setOffset((value) => Math.max(0, value - PAGE_SIZE))}
+              >
+                {t('inspector.next')}
+              </button>
+              <button
+                type="button"
+                disabled={!props.hasMore || props.loading}
+                onClick={() => {
+                  if (loading.current) return
+                  loading.current = true
+                  setLoadFailed(false)
+                  void Promise.resolve()
+                    .then(() => props.loadOlder())
+                    .catch(() => setLoadFailed(true))
+                    .finally(() => {
+                      loading.current = false
+                    })
+                }}
+              >
+                {t('inspector.loadOlder')}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setOpen(false)
+                  setPicking(true)
+                }}
+              >
+                {t('inspector.pick')}
+              </button>
+            </div>
+            {loadFailed ? <p role="alert">{t('inspector.loadFailed')}</p> : null}
+            <p role="status">
+              {t('inspector.rows', {
+                count: filtered.length,
+                start: filtered.length === 0 ? 0 : start + 1,
+                end,
+              })}
+            </p>
+            <ol className="dsh-session-inspector__rows" start={start + 1}>
+              {filtered.slice(start, end).map((record) => (
+                <li key={record.id}>
+                  <button
+                    type="button"
+                    aria-pressed={selectedId === record.id}
+                    onClick={() => setSelectedId(record.id)}
+                  >
+                    {record.sequence === undefined ? '' : `#${record.sequence} `}
+                    {record.type}
+                  </button>
+                </li>
+              ))}
+            </ol>
+            {selected === undefined ? null : (
+              <section aria-label={t('inspector.detail')}>
+                <h3>{selected.type}</h3>
+                {Object.entries(selected.fields).map(([field, value]) => (
+                  <details key={field} open>
+                    <summary>{field}</summary>
+                    <dl>
+                      {Object.entries(value).map(([key, count]) => (
+                        <div key={key}>
+                          <dt>{key}</dt>
+                          <dd>{String(count)}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  </details>
+                ))}
+                {matches.map((record) => (
+                  <button key={record.id} type="button" onClick={() => selectRecord(record)}>
+                    {t('inspector.match', { type: record.type })}
+                  </button>
+                ))}
+                {selected.nodeId === undefined || props.onRevealNode === undefined ? null : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOpen(false)
+                      if (selected.nodeId !== undefined) props.onRevealNode?.(selected.nodeId)
+                    }}
+                  >
+                    {t('inspector.reveal')}
+                  </button>
+                )}
+              </section>
+            )}
+            <InspectorDevtoolsActions featureRequest={props.featureRequest} />
+          </div>
+        ) : null}
+      </Drawer>
+    </>
+  )
+}

@@ -13,6 +13,8 @@ import {
   type ScheduleRepository,
   type UserQuestionRepository,
   type SessionProjectionValues,
+  type ModsBandRepository,
+  type InspectorDevtoolsRepository,
 } from '@dsh-vscode/domain'
 
 import { DshVersionAdapterBase, type VersionAdapterIdentity } from '../../adapter-base.js'
@@ -229,6 +231,8 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
     const pluginBundles = this.createPluginBundleRepository(transport)
     const account = this.createAccountLifecycleRepository(transport)
     const userQuestions = this.createUserQuestionRepository(transport)
+    const modsBand = this.createModsBandRepository(transport)
+    const inspectorDevtools = this.createInspectorRepository(backend.endpoint)
     const observe = (event: BackendEvent): void => {
       interactions.remember(event)
       sessions.remember(event)
@@ -241,6 +245,7 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
       historyGapRecovery(sessions),
       jobs.watchRows === undefined ? undefined : (sessionId, signal) => jobs.watchRows!(sessionId, signal),
       (event) => this.mapBackendEvent(event),
+      () => this.createSessionEventNormalizer(),
     )
     eventsHolder.value = events
     let closed = false
@@ -253,6 +258,8 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
       credentials: new Rc6CredentialRepository(transport),
       interactions,
       ...(userQuestions === undefined ? {} : { userQuestions }),
+      ...(modsBand === undefined ? {} : { modsBand }),
+      ...(inspectorDevtools === undefined ? {} : { inspectorDevtools }),
       goals,
       jobs,
       subagents: new Rc6SubagentRepository(transport, {
@@ -278,7 +285,12 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
         if (closed) return
         closed = true
         try {
-          await Promise.all([events?.close(), userQuestions?.close()])
+          await Promise.all([
+            events?.close(),
+            userQuestions?.close(),
+            modsBand?.close(),
+            inspectorDevtools?.close(),
+          ])
         } finally {
           await transport.close()
         }
@@ -321,8 +333,21 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
     return event
   }
 
+  /** Each watched Session owns its version-specific transient projection state. */
+  protected createSessionEventNormalizer(): ((frame: unknown) => BackendEvent | undefined) | undefined {
+    return undefined
+  }
+
   /** Only exact adapter profiles with the Schedule Remote expose this port. */
   protected createScheduleRepository(_transport: AlphaLoopbackApiClient): ScheduleRepository | undefined {
+    return undefined
+  }
+
+  protected createModsBandRepository(_transport: AlphaLoopbackApiClient): ModsBandRepository | undefined {
+    return undefined
+  }
+
+  protected createInspectorRepository(_endpoint: BackendEndpoint): InspectorDevtoolsRepository | undefined {
     return undefined
   }
 

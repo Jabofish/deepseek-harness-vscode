@@ -4,10 +4,13 @@ import { cleanup, fireEvent, render } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { ReactElement } from 'react'
 import type { HostMessage, WebviewRequest } from '@dsh-vscode/webview-protocol'
+import { hostMessageSchema } from '@dsh-vscode/webview-protocol'
+import { buildTrajectory } from '@dsh-vscode/timeline'
 import type { ProtocolClient } from './protocol-client.js'
 import { createAppStore } from './store.js'
 import { Timeline } from '../features/chat/Timeline.js'
 import { TrajectoryView } from '../features/trajectory/TrajectoryView.js'
+import { createTimelineFactsProjector } from '../features/chat/timeline-projection.js'
 
 class StreamClient {
   public readonly requests: WebviewRequest[] = []
@@ -73,6 +76,162 @@ function event(sequence: number, name: string, payload: unknown): HostMessage {
 
 describe('Store to Timeline streamed rendering', () => {
   afterEach(() => cleanup())
+
+  it('shows preparation without tool execution, history or trajectory counts and replaces it on the durable call', async () => {
+    const client = new StreamClient()
+    const store = createAppStore(client as unknown as ProtocolClient)
+    await store.openSession('session-stream')
+    const payload = {
+      type: 'tool.preparing',
+      sessionId: 'session-stream',
+      callId: 'preparing-call',
+      toolName: 'write',
+      attemptId: 'attempt-1',
+      turn: 1,
+      step: 1,
+      updateIndex: 0,
+      filePath: 'src/new.ts',
+      contentCharacters: 3,
+    } as const
+    const preview = hostMessageSchema.parse(event(100, 'tool.preparing', payload))
+    client.emit(preview)
+    expect(store.timeline.lastSequence).toBe(-1)
+    expect(store.history).toEqual([])
+    expect(buildTrajectory(store.timeline.nodes).recordCount).toBe(0)
+    expect(createTimelineFactsProjector()(store.timeline.nodes).hasActiveTool).toBe(false)
+    const view = render(
+      <Timeline sessionId="session-stream" nodes={store.timeline.nodes} streaming={false} running />,
+    )
+    expect(view.container.querySelector('[data-state="preparing"]')?.textContent).toContain(
+      'Preparing arguments',
+    )
+    expect(view.container.textContent).toContain('src/new.ts')
+    expect(view.container.textContent).toContain('3 characters')
+    client.emit(preview)
+    client.emit(
+      hostMessageSchema.parse(
+        event(101, 'tool.preparing', { ...payload, updateIndex: 1, contentCharacters: 12 }),
+      ),
+    )
+    expect(store.timeline.nodes).toHaveLength(1)
+    view.rerender(
+      <Timeline sessionId="session-stream" nodes={store.timeline.nodes} streaming={false} running />,
+    )
+    expect(view.container.textContent).toContain('12 characters')
+    client.emit(
+      event(102, 'tool.updated', {
+        sessionId: 'session-stream',
+        sequence: 0,
+        tool: {
+          id: payload.callId,
+          name: 'write',
+          category: 'file',
+          title: 'Write',
+          status: 'running',
+          turn: 1,
+          step: 1,
+          inputSummary: '{"file_path":"src/new.ts"}',
+          metadata: {},
+        },
+      }),
+    )
+    const node = store.timeline.nodes[0]
+    expect(node?.kind).toBe('tool')
+    if (node?.kind !== 'tool') throw new Error('missing tool')
+    expect(node.tool.preparation).toBeUndefined()
+    expect(createTimelineFactsProjector()(store.timeline.nodes).hasActiveTool).toBe(true)
+    expect(buildTrajectory(store.timeline.nodes).recordCount).toBe(1)
+    client.emit(hostMessageSchema.parse(event(103, 'tool.preparing', { ...payload, updateIndex: 2 })))
+    expect(store.timeline.nodes).toHaveLength(1)
+    expect(store.timeline.nodes[0]).not.toHaveProperty('tool.preparation')
+    store.dispose()
+  })
+
+  it.each(['reconnect', 'interrupted', 'retry', 'step-end', 'turn-end'] as const)(
+    'removes unexecuted previews on %s through the Store',
+    async (ending) => {
+      const client = new StreamClient()
+      const store = createAppStore(client as unknown as ProtocolClient)
+      await store.openSession('session-stream')
+      const payload = {
+        type: 'tool.preparing',
+        sessionId: 'session-stream',
+        callId: 'preview-1',
+        toolName: 'custom-tool',
+        attemptId: 'attempt-1',
+        turn: 1,
+        step: 1,
+        updateIndex: 0,
+        description: 'Inspect metadata',
+      } as const
+      client.emit(hostMessageSchema.parse(event(10, 'tool.preparing', payload)))
+      if (ending === 'reconnect') {
+        // The unrelated control snapshot must not erase a live follow projection.
+        client.emit(
+          event(11, 'session.subscribed', {
+            sessionId: 'session-stream',
+            lastSequence: 2,
+            controlBaseline: true,
+          }),
+        )
+        expect(store.timeline.nodes.some((node) => node.kind === 'tool')).toBe(true)
+        client.emit(
+          event(12, 'session.subscribed', {
+            sessionId: 'session-stream',
+            lastSequence: 2,
+            controlBaseline: false,
+          }),
+        )
+        expect(store.timeline.nodes.some((node) => node.kind === 'tool')).toBe(false)
+        client.emit(hostMessageSchema.parse(event(13, 'tool.preparing', payload)))
+        expect(store.timeline.nodes.some((node) => node.kind === 'tool')).toBe(true)
+        client.emit(event(14, 'step.ended', { sessionId: 'session-stream', turn: 1, step: 1 }))
+      } else if (ending === 'retry') {
+        client.emit(event(11, 'assistant.attempt', { sessionId: 'session-stream', turn: 1, step: 1 }))
+      } else if (ending === 'interrupted') {
+        client.emit(
+          event(11, 'message.completed', {
+            sessionId: 'session-stream',
+            messageId: 'assistant:1:1',
+            turn: 1,
+            step: 1,
+            interrupted: true,
+          }),
+        )
+      } else if (ending === 'step-end') {
+        client.emit(event(11, 'step.ended', { sessionId: 'session-stream', turn: 1, step: 1 }))
+      } else {
+        client.emit(event(11, 'turn.ended', { sessionId: 'session-stream', turn: 1, reason: 'aborted' }))
+      }
+      expect(store.timeline.nodes.filter((node) => node.kind === 'tool')).toEqual([])
+      store.dispose()
+    },
+  )
+
+  it('rejects raw arguments, absolute/traversing paths and unsafe preparation counters at protocol admission', () => {
+    const payload = {
+      type: 'tool.preparing',
+      sessionId: 's1',
+      callId: 'c1',
+      toolName: 'write',
+      attemptId: 'a1',
+      turn: 1,
+      step: 1,
+      updateIndex: 0,
+    }
+    for (const forbidden of [
+      { arguments: 'private' },
+      { body: 'private' },
+      { filePath: '/private/file' },
+      { filePath: '../outside' },
+      { contentCharacters: -1 },
+      { updateIndex: Number.MAX_SAFE_INTEGER + 1 },
+    ]) {
+      expect(
+        hostMessageSchema.safeParse(event(1, 'tool.preparing', { ...payload, ...forbidden })).success,
+      ).toBe(false)
+    }
+  })
 
   it('keeps reasoning, tool input/output, and assistant text visible without a task switch', async () => {
     const client = new StreamClient()

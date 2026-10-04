@@ -1,0 +1,24 @@
+.dsh-stats-details {
+  min-width: 0;
+}
+.dsh-stats-details summary {
+  cursor: pointer;
+}
+.dsh-stats-details summary:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+}
+.dsh-stats-details dl {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.5rem;
+  border: 1px solid var(--vscode-panel-border);
+}
+.dsh-stats-details dl > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.dsh-stats-details dd {
+  margin: 0;
+}

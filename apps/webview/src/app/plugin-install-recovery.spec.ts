@@ -7,6 +7,8 @@ const installResult = {
   changed: true,
   application: 'applied',
   stage: 'install',
+  bundle: '@dsh-community/review',
+  version: '1.2.3',
 } as const
 
 function reply(result: unknown): unknown {

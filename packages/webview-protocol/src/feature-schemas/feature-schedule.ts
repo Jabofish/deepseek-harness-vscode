@@ -153,6 +153,7 @@ export const scheduleUpdatePayloadSchema = z.union([
     })
     .strict(),
   scheduleToolFailureSchema,
+  z.object({ code: z.literal('subagent_session'), message: z.string().min(1).max(2_000) }).strict(),
 ])
 
 export const scheduleDeletePayloadSchema = z.union([

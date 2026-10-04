@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.2.11
+
+- 补齐新版界面入口：插件页动态发现 Creator 并开启空草稿会话；可选 Claude Code mods 提供安全提示带与按钮操作；会话检查器从三点菜单打开，支持类型过滤、分页、记录匹配、聚合行拾取和虚拟列表定位，DevTools 打开/复制由 Host 执行。新增 Markdown frontmatter 字段预览及精确统计明细。精确实验包的隔离接口验证通过；新增 VS Code 界面与 Chrome 打开仍待现场验收。
+- Added a live-roster Creator shortcut, a safe optional Claude Code mods band with button actions, and a Session Inspector in the conversation tools menu with filtering, paging, record matching, grouped-row picking and virtualized conversation reveal. The Host owns DevTools open/copy. Markdown previews now show frontmatter fields, and statistics offer exact details. Isolated exact experimental-package interfaces passed validation; new VS Code UI and Chrome opening await acceptance.
+- 新增工具参数生成期预览：显示脱敏说明、工作区相对路径和解码字符数，明确标记“正在生成参数”。预览不计入执行记录或工具调用统计；支持重连回放，并在执行、中断或重试时清理。真实模型流与 VS Code 交互仍待验收。
+- Added tool argument preparation previews with redacted descriptions, workspace-relative paths and decoded character counts. Previews have a distinct preparing label, stay out of execution records/counts, recover on reconnect and clear on execution, interruption or retry. Real model streams and VS Code interaction remain pending acceptance.
+- 适配 DSH `0.2.1-alpha.1`：新增精确版本入口，接纳子代理会话的提醒拒绝，将账号 `no-response` 归一为网络故障，并保留插件实际安装版本及同 ID 恢复结果。上游 bundle 来源继续留在 Host；引导安装默认保持稳定版 rc.2。隔离 CLI 验证通过，真实 timed 问答、插件安装/OAuth 与 VS Code 交互仍待验收。
+- Added exact DSH `0.2.1-alpha.1` support: delegated-session reminder refusals, normalized account transport failures, and actual installed plugin versions through recovery. Bundle sources stay in the Host; guided installs keep stable rc.2. Isolated CLI validation passed; real timed interactions, plugin installation/OAuth and VS Code acceptance remain pending.
 - 修复面板重载后投影丢失、已移除会话复活的问题。
 - Fixed missing projections and removed sessions reappearing after a panel reload.
 - 导航或发送被取代时保留输入草稿与附件；待建首条消息被取代按取消上报。

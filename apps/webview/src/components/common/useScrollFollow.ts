@@ -40,6 +40,8 @@ export interface ScrollFollowResult {
   readonly scrollToLatest: () => void
   /** Move to the tail from an explicit reader action with smooth motion. */
   readonly userScrollToLatest: () => void
+  /** A deliberate reader navigation, such as revealing a selected Inspector row. */
+  readonly userScrollToOffset: (offset: number) => void
   /** Capture the current position for a guarded prepend restoration. */
   readonly captureScrollAnchor: () => ScrollAnchor | undefined
   /** Restore a captured prepend position only while the reader is still there. */
@@ -221,6 +223,26 @@ export function useScrollFollow(options: ScrollFollowOptions): ScrollFollowResul
     smoothScrollActiveRef.current = true
     element.scrollTo({ top: maxScrollTop, behavior: 'smooth' })
   }, [cancelScheduledFollow, clearLayoutProtection, clearUserScrollLock])
+
+  const userScrollToOffset = useCallback(
+    (offset: number): void => {
+      if (!Number.isFinite(offset)) return
+      clearLayoutProtection()
+      clearUserScrollLock()
+      cancelScheduledFollow()
+      const element = scrollRef.current
+      if (element === null) return
+      interactionGenerationRef.current += 1
+      stickToBottomRef.current = false
+      setIsPinnedToBottom(false)
+      setShowJumpToLatest(true)
+      const next = Math.min(Math.max(0, element.scrollHeight - element.clientHeight), Math.max(0, offset))
+      internalScrollTopRef.current = next
+      lastReaderScrollTopRef.current = next
+      element.scrollTop = next
+    },
+    [cancelScheduledFollow, clearLayoutProtection, clearUserScrollLock],
+  )
 
   const scheduleScrollToLatest = useCallback(
     (scheduleOptions?: ScrollFollowScheduleOptions): void => {
@@ -509,6 +531,7 @@ export function useScrollFollow(options: ScrollFollowOptions): ScrollFollowResul
     handleScroll,
     scrollToLatest,
     userScrollToLatest,
+    userScrollToOffset,
     captureScrollAnchor,
     restoreScrollAnchor,
     applyScrollAdjustment,

@@ -168,6 +168,7 @@ const SCHEDULE_RESULT_CODE: Record<ScheduleMutationFailure['code'], true> = {
   not_future: true,
   time_out_of_range: true,
   frequency_too_high: true,
+  subagent_session: true,
   internal_error: true,
 }
 const RUNTIME_CONNECTION_STAGE: Record<RuntimeConnectionStage, true> = {

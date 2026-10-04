@@ -25,7 +25,7 @@ describe.skipIf(process.env.DSH_LIVE_SMOKE !== '1')('live DSH connection smoke',
       const steps = runtime.steps
       try {
         const { backend } = runtime
-        if (runtime.snapshot.version === '0.2.0-rc.2') {
+        if (runtime.snapshot.version === '0.2.0-rc.2' || runtime.snapshot.version === '0.2.1-alpha.1') {
           expect(
             backend.userQuestions,
             'the exact rc.2 adapter must expose timed userQuestions',

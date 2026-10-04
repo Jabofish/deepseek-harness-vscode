@@ -1,0 +1,47 @@
+.dsh-session-inspector {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.dsh-session-inspector__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.dsh-session-inspector select {
+  max-width: 100%;
+  color: var(--vscode-dropdown-foreground);
+  background: var(--vscode-dropdown-background);
+  border: 1px solid var(--vscode-dropdown-border);
+}
+.dsh-session-inspector button {
+  color: var(--vscode-button-secondaryForeground);
+  background: var(--vscode-button-secondaryBackground);
+  border: 1px solid var(--vscode-contrastBorder, transparent);
+  padding: 0.25rem 0.5rem;
+  cursor: pointer;
+}
+.dsh-session-inspector button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.dsh-session-inspector button:focus-visible,
+.dsh-session-inspector button[aria-pressed='true'] {
+  outline: 1px solid var(--vscode-focusBorder);
+}
+.dsh-session-inspector__rows {
+  max-height: 18rem;
+  overflow: auto;
+  margin: 0;
+  padding-inline-start: 2rem;
+}
+.dsh-session-inspector dl > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.dsh-session-inspector dd {
+  margin: 0;
+}

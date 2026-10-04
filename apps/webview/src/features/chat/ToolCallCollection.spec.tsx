@@ -43,6 +43,43 @@ function toolNode(
 describe('ToolCallCollection', () => {
   afterEach(() => cleanup())
 
+  it('keeps preparations visible outside the executed-call count and gives generic tools a preparation label', () => {
+    const preview = toolNode('preview')
+    const tools = [
+      toolNode('first'),
+      toolNode('second'),
+      {
+        ...preview,
+        tool: {
+          ...preview.tool,
+          status: 'queued' as const,
+          inputSummary: 'PRIVATE_INPUT',
+          preparation: { attemptId: 'attempt-1', updateIndex: 1, description: 'Inspect metadata' },
+        },
+      },
+    ]
+    const view = render(
+      <ToolCallCollection
+        tools={tools}
+        expanded={new Set()}
+        onExpandedChange={() => undefined}
+        translate={(key, params) =>
+          key === 'toolrow.preparing' ? 'Preparing arguments' : translate(key, params)
+        }
+      />,
+    )
+    expect(screen.getByLabelText('Show 2 tool calls')).toBeDefined()
+    expect(view.container.querySelector('[data-state="preparing"]')?.textContent).toContain(
+      'Preparing arguments',
+    )
+    expect(view.container.textContent).not.toContain('PRIVATE_INPUT')
+    expect(
+      view.container
+        .querySelector('details')
+        ?.contains(view.container.querySelector('[data-state="preparing"]')),
+    ).toBe(false)
+  })
+
   it('labels a collapsed group by the failure its latest shell row states', () => {
     render(
       <ToolCallCollection

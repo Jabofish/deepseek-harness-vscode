@@ -16,7 +16,11 @@ export {
   promptTemplateSummarySchema,
 } from './feature-schemas/feature-checkpoints.js'
 export { featureRequestSchema, featureWebviewEnvelopeSchema } from './feature-schemas/feature-requests.js'
-export { protocolAppErrorCodeSchema, featureResponseSchema } from './feature-schemas/feature-responses.js'
+export {
+  protocolAppErrorCodeSchema,
+  featureResponseSchema,
+  featureResponsePayloadSchema,
+} from './feature-schemas/feature-responses.js'
 export {
   featureHostEventSchema,
   featureHostMessageSchema,

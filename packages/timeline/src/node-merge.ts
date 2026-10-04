@@ -7,8 +7,10 @@ export function mergeTool(
   previous: Extract<TimelineNode, { readonly kind: 'tool' }>['tool'],
   next: Extract<TimelineNode, { readonly kind: 'tool' }>['tool'],
 ): Extract<TimelineNode, { readonly kind: 'tool' }>['tool'] {
+  const { preparation, ...previousTool } = previous
+  void preparation
   const merged: Extract<TimelineNode, { readonly kind: 'tool' }>['tool'] = {
-    ...previous,
+    ...previousTool,
     ...next,
     name: next.name === 'unknown-tool' ? previous.name : next.name,
     category: next.category === 'tool' ? previous.category : next.category,

@@ -182,6 +182,32 @@ function defaultResponse(request: FeatureRequest): unknown {
 }
 
 describe('OptionalBundleManager', () => {
+  it('shows the installed manifest version when it differs from package inspection and needs restart', async () => {
+    mountManager((request) => {
+      if (request.type === 'plugin.bundle.install')
+        return {
+          kind: 'plugin.bundle.changed',
+          result: {
+            name: '@dsh-community/new-plugin',
+            bundle: '@dsh-community/new-plugin',
+            version: '1.2.3',
+            changed: true,
+            application: 'restart-required',
+            enabled: true,
+            stage: 'install',
+          },
+        }
+      return defaultResponse(request)
+    })
+    await screen.findByRole('heading', { name: 'DSH Plugin Manager' })
+    fireEvent.change(screen.getByLabelText('Package name or supported package source'), {
+      target: { value: '@dsh-community/new-plugin' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Check package' }))
+    await screen.findByText('Package: @dsh-community/new-plugin · 2.0.0')
+    fireEvent.click(screen.getByRole('button', { name: 'Install' }))
+    expect(await screen.findByText(/Installed version: 1\.2\.3\./u)).toBeTruthy()
+  })
   it('renders live profile bundles, linked and standalone plugin entries, and DSH registry choices', async () => {
     const { requests } = mountManager()
     expect(await screen.findByRole('heading', { name: 'DSH Plugin Manager' })).toBeTruthy()

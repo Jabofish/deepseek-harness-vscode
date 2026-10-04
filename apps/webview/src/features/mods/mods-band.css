@@ -1,0 +1,54 @@
+.dsh-mods-band {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  overflow-wrap: anywhere;
+  max-height: 12rem;
+  overflow: auto;
+  padding: 0.5rem;
+}
+.dsh-mods-band__box {
+  display: flex;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.dsh-mods-band [data-border='true'] {
+  border: 1px solid var(--vscode-panel-border);
+}
+.dsh-mods-band [data-bold='true'] {
+  font-weight: 700;
+}
+.dsh-mods-band [data-dim='true'] {
+  opacity: 0.7;
+}
+.dsh-mods-band [data-italic='true'] {
+  font-style: italic;
+}
+.dsh-mods-band [data-underline='true'] {
+  text-decoration: underline;
+}
+.dsh-mods-band [data-color='red'] {
+  color: var(--vscode-terminal-ansiRed);
+}
+.dsh-mods-band [data-color='green'] {
+  color: var(--vscode-terminal-ansiGreen);
+}
+.dsh-mods-band [data-color='yellow'] {
+  color: var(--vscode-terminal-ansiYellow);
+}
+.dsh-mods-band [data-color='blue'] {
+  color: var(--vscode-terminal-ansiBlue);
+}
+.dsh-mods-band [data-color='magenta'] {
+  color: var(--vscode-terminal-ansiMagenta);
+}
+.dsh-mods-band [data-color='cyan'] {
+  color: var(--vscode-terminal-ansiCyan);
+}
+.dsh-mods-band [data-color='gray'] {
+  color: var(--vscode-descriptionForeground);
+}
+.dsh-mods-band [data-color='white'],
+.dsh-mods-band [data-color='black'] {
+  color: var(--vscode-foreground);
+}

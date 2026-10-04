@@ -59,12 +59,15 @@ export function ToolRow(props: ToolRowProps): ReactElement {
   const model = toolRowModel(props.tool, props.translate)
   const hasDetails =
     model.sections.length > 0 || props.tool.error !== undefined || model.autoReviewOutput !== undefined
-  const status = toolStatusLabel(
-    props.tool.autoReviewDenial !== undefined || terminalPresentationFailed(props.tool.presentation)
-      ? 'failed'
-      : props.tool.status,
-    props.translate,
-  )
+  const status =
+    props.tool.preparation !== undefined
+      ? label(props.translate, 'toolrow.preparing', 'Preparing arguments')
+      : toolStatusLabel(
+          props.tool.autoReviewDenial !== undefined || terminalPresentationFailed(props.tool.presentation)
+            ? 'failed'
+            : props.tool.status,
+          props.translate,
+        )
   const summary = model.errorSummary ?? model.summary
   // The accessible name is a formatted sentence per locale, never an
   // English "details" fragment glued onto a localized verb.
@@ -103,7 +106,7 @@ export function ToolRow(props: ToolRowProps): ReactElement {
         type="button"
         className="dsh-tool-row__summary"
         aria-expanded={expanded && hasDetails}
-        aria-label={detailsAria}
+        aria-label={model.state === 'preparing' ? `${model.title} · ${summary} · ${status}` : detailsAria}
         title={detailsAria}
         onClick={onToggle}
         disabled={!hasDetails}

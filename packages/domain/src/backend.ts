@@ -1,4 +1,6 @@
 import type { WorkspaceChangeSource } from './changes.js'
+import type { ModsBandRepository } from './mods-band.js'
+import type { InspectorDevtoolsRepository } from './inspector.js'
 import type { BackendEvent, GoalView, JobFollowFrame, JobView, SubagentCatalog } from './events.js'
 import type { MessageFeedbackRepository } from './feedback.js'
 import type { ScheduleRepository } from './schedules.js'
@@ -306,6 +308,8 @@ export interface ExportRepository {
 }
 
 export interface DshBackend {
+  readonly inspectorDevtools?: InspectorDevtoolsRepository
+  readonly modsBand?: ModsBandRepository
   /** Optional account lifecycle exposed only by the exact RC2 profile. */
   readonly account?: AccountLifecycleRepository
   readonly workspaceChanges?: WorkspaceChangeSource

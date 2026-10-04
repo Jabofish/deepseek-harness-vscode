@@ -1837,6 +1837,7 @@
 .dsh-conversation__actions-grid .dsh-diagnostics-popover__trigger,
 .dsh-conversation__actions-grid .dsh-subagent-tree__trigger,
 .dsh-conversation__actions-grid .dsh-conversation__export-trigger,
+.dsh-conversation__actions-grid .dsh-conversation__inspector-trigger,
 .dsh-conversation__actions-grid .dsh-conversation__locale-switch,
 .dsh-conversation__actions-grid .dsh-conversation__events-toggle--menu {
   justify-content: flex-start;

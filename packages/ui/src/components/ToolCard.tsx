@@ -2,6 +2,7 @@ import type { ReactElement } from 'react'
 import type { ToolCallView, ToolLocationView } from '@dsh-vscode/domain'
 import { formatToolText, toolPresentation, type PresentationTranslate } from '../tool-presentation.js'
 import { toolStatusLabel } from '../tool-status.js'
+import { ToolRow } from './ToolRow.js'
 
 export interface ToolCardProps {
   readonly tool: ToolCallView
@@ -14,6 +15,7 @@ export interface ToolCardProps {
 }
 
 export function ToolCard(props: ToolCardProps): ReactElement {
+  if (props.tool.preparation !== undefined) return <ToolRow {...props} />
   const presentation = toolPresentation(props.tool, props.translate)
   const request = presentation.request
   const errorText =

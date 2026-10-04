@@ -16,7 +16,13 @@ import type {
   PromptTemplateUseCases,
   TaskUseCases,
 } from '@dsh-vscode/application'
-import { PluginBundleUseCases, ScheduleUseCases, UserQuestionUseCases } from '@dsh-vscode/application'
+import {
+  PluginBundleUseCases,
+  ScheduleUseCases,
+  UserQuestionUseCases,
+  ModsBandUseCases,
+  InspectorUseCases,
+} from '@dsh-vscode/application'
 import { redactMultilineText } from '@dsh-vscode/dsh-adapter'
 import type { FeatureRequest } from '@dsh-vscode/webview-protocol'
 import { handleAccountFeatureRequest } from '../account/account-feature-handler.js'
@@ -103,6 +109,78 @@ export function createFeatureRequestHandler(deps: FeatureRequestHandlerDependenc
     currentWorkspaceFolders,
   } = deps
   const handleFeatureRequest = async (request: FeatureRequest, signal: AbortSignal): Promise<unknown> => {
+    if (
+      request.type === 'inspector.devtools.status' ||
+      request.type === 'inspector.devtools.open' ||
+      request.type === 'inspector.devtools.copy'
+    ) {
+      const backend = backendService.requireBackend()
+      const target =
+        backend.inspectorDevtools === undefined
+          ? { available: false as const }
+          : await new InspectorUseCases(backend.inspectorDevtools).discover(signal)
+      if (signal.aborted || backendService.requireBackend() !== backend)
+        throw new AppError({
+          code: 'REQUEST_CANCELLED',
+          message: 'Inspector discovery was cancelled.',
+          retryable: false,
+        })
+      if (!target.available) return { kind: 'inspector.devtools', available: false, outcome: 'unavailable' }
+      if (request.type === 'inspector.devtools.copy') {
+        await vscode.env.clipboard.writeText(target.frontendUrl)
+        return { kind: 'inspector.devtools', available: true, outcome: 'copied' }
+      }
+      if (request.type === 'inspector.devtools.open') {
+        const opened = await vscode.env.openExternal(vscode.Uri.parse(target.frontendUrl))
+        if (!opened)
+          throw new AppError({
+            code: 'PROCESS_FAILED',
+            message: 'Chrome DevTools could not be opened. Copy the Inspector link and open it in Chrome.',
+            retryable: true,
+          })
+        return { kind: 'inspector.devtools', available: true, outcome: 'opened' }
+      }
+      return { kind: 'inspector.devtools', available: true, outcome: 'status' }
+    }
+    if (request.type === 'mods.band.read' || request.type === 'mods.band.press') {
+      const backend = backendService.requireBackend()
+      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
+      if (backendService.requireBackend() !== backend || signal.aborted)
+        throw new AppError({
+          code: 'REQUEST_CANCELLED',
+          message: 'The mod drawing request was cancelled.',
+          retryable: false,
+        })
+      if (backend.modsBand === undefined) {
+        if (request.type === 'mods.band.read') return { kind: 'mods.band', available: false, snapshot: null }
+        throw new AppError({
+          code: 'CAPABILITY_UNAVAILABLE',
+          message: 'This DSH connection does not expose mod drawings.',
+          retryable: false,
+        })
+      }
+      const useCases = new ModsBandUseCases(backend.modsBand)
+      const result =
+        request.type === 'mods.band.read'
+          ? await useCases.read(request.payload.sessionId, request.payload.afterGeneration, signal)
+          : {
+              available: true,
+              snapshot: await useCases.press(
+                request.payload.sessionId,
+                request.payload.generation,
+                request.payload.actionId,
+                signal,
+              ),
+            }
+      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
+      if (backendService.requireBackend() !== backend || signal.aborted)
+        throw new AppError({
+          code: 'REQUEST_CANCELLED',
+          message: 'The mod drawing request was cancelled.',
+          retryable: false,
+        })
+      return { kind: 'mods.band', ...result }
+    }
     if (
       request.type === 'user-question.wait.attach' ||
       request.type === 'user-question.wait.release' ||

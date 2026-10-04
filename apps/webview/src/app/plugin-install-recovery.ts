@@ -324,6 +324,7 @@ function toDomainChangeResult(result: PluginBundleChangedPayload['result']): Plu
     ...(result.failureKind === undefined ? {} : { failureKind: result.failureKind }),
     ...(result.failedAt === undefined ? {} : { failedAt: result.failedAt }),
     ...(result.bundle === undefined ? {} : { bundle: result.bundle }),
+    ...(result.version === undefined ? {} : { version: result.version }),
     ...(result.pendingBuilds === undefined ? {} : { pendingBuilds: result.pendingBuilds }),
   }
 }

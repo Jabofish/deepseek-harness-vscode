@@ -338,6 +338,20 @@ type BackendEventPayload =
       readonly time?: number
     }
   | { readonly type: 'tool.updated'; readonly sessionId: string; readonly tool: ToolCallView }
+  | {
+      readonly type: 'tool.preparing'
+      readonly sessionId: string
+      readonly callId: string
+      readonly toolName: string
+      readonly turn: number
+      readonly step: number
+      readonly attemptId: string
+      readonly updateIndex: number
+      readonly description?: string
+      /** Host converts this to an owned workspace-relative display path. */
+      readonly filePath?: string
+      readonly contentCharacters?: number
+    }
   | { readonly type: 'permission.requested'; readonly request: PermissionRequest }
   | { readonly type: 'question.requested'; readonly question: UserQuestion }
   | {

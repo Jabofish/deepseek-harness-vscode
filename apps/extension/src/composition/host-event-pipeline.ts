@@ -1,4 +1,5 @@
 import * as vscode from 'vscode'
+import { redactText } from '@dsh-vscode/dsh-adapter'
 import type {
   AccountLifecycleSnapshot,
   BackendEvent,
@@ -222,9 +223,14 @@ export function createHostEventPipeline(deps: HostEventPipelineDependencies): Ho
   const postEvent = (name: string, payload: unknown): Promise<boolean> => {
     return enqueueEvent(() => Promise.resolve({ name, payload }))
   }
+  const preparationScopes = new WeakMap<
+    DshBackend,
+    Map<string, { attemptId: string; cwd: Promise<string | undefined> }>
+  >()
   const publicBackendEvent = async (backend: DshBackend, event: BackendEvent): Promise<unknown> => {
-    if (event.type !== 'deliverables.presented') return sanitizePublicValue(event)
-    const session = await backend.sessions.get(event.sessionId).catch(() => undefined)
+    if (event.type === 'session.subscribed') preparationScopes.get(backend)?.delete(event.sessionId)
+    if (event.type !== 'deliverables.presented' && event.type !== 'tool.preparing')
+      return sanitizePublicValue(event)
     const roots = [
       ...currentWorkspaceFolders().map((folder) => folder.uri.fsPath),
       ...(temporaryWorkspaceManager.current?.path === undefined
@@ -235,6 +241,52 @@ export function createHostEventPipeline(deps: HostEventPipelineDependencies): Ho
         : [temporaryWorkspaceManager.reference.path]),
     ]
     const uniqueRoots = [...new Set(roots)]
+    if (event.type === 'tool.preparing') {
+      const isCurrentBackend = (): boolean => {
+        try {
+          return backendService.requireBackend() === backend
+        } catch {
+          return false
+        }
+      }
+      if (!isCurrentBackend()) return undefined
+      let relativePath: string | undefined
+      if (event.filePath !== undefined) {
+        const scopes =
+          preparationScopes.get(backend) ??
+          new Map<string, { attemptId: string; cwd: Promise<string | undefined> }>()
+        preparationScopes.set(backend, scopes)
+        let scope = scopes.get(event.sessionId)
+        if (scope?.attemptId !== event.attemptId) {
+          if (scopes.size >= 128) scopes.clear()
+          scope = {
+            attemptId: event.attemptId,
+            cwd: backend.sessions
+              .get(event.sessionId)
+              .then((session) => session.cwd)
+              .catch(() => undefined),
+          }
+          scopes.set(event.sessionId, scope)
+        }
+        relativePath = publicWorkspaceRelativePath(event.filePath, await scope.cwd, uniqueRoots)
+      }
+      if (!isCurrentBackend()) return undefined
+      // Construct an allowlist. Raw arguments, executable input and source paths stay in the Host.
+      return {
+        type: event.type,
+        sessionId: event.sessionId,
+        callId: event.callId,
+        toolName: redactText(event.toolName, 512),
+        attemptId: event.attemptId,
+        turn: event.turn,
+        step: event.step,
+        updateIndex: event.updateIndex,
+        ...(event.description === undefined ? {} : { description: redactText(event.description, 512) }),
+        ...(relativePath === undefined ? {} : { filePath: relativePath }),
+        ...(event.contentCharacters === undefined ? {} : { contentCharacters: event.contentCharacters }),
+      }
+    }
+    const session = await backend.sessions.get(event.sessionId).catch(() => undefined)
     const files = event.files.flatMap((file) => {
       const relativePath = publicWorkspaceRelativePath(file.path, session?.cwd, uniqueRoots)
       return relativePath === undefined ? [] : [{ ...file, path: relativePath }]

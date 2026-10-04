@@ -10,6 +10,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@dsh-vscode/domain": "workspace:*",
     "zod": "4.4.3"
   }
 }

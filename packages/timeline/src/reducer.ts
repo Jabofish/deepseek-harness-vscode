@@ -255,6 +255,33 @@ export function reduceTimeline(
   const openTurn = (turn: number): void => {
     if (!hasClosedTurn(turn)) activeTurn = turn
   }
+  // Transient previews never become failed/cancelled executions when an attempt ends.
+  for (let index = nodes.length - 1; index >= 0; index -= 1) {
+    const node = nodes[index]
+    if (node?.kind !== 'tool' || node.tool.preparation === undefined) continue
+    const sameStep =
+      'turn' in event && event.turn === node.tool.turn && 'step' in event && event.step === node.tool.step
+    const remove =
+      (event.type === 'session.subscribed' && event.controlBaseline === false) ||
+      event.type === 'connection.lost' ||
+      (event.type === 'turn.ended' && event.turn === node.tool.turn) ||
+      (event.type === 'model.retry' &&
+        event.retry.turn === node.tool.turn &&
+        event.retry.step === node.tool.step) ||
+      (sameStep &&
+        (event.type === 'step.ended' ||
+          event.type === 'assistant.attempt' ||
+          (event.type === 'message.completed' && event.interrupted === true))) ||
+      (sameStep && event.type === 'tool.preparing' && node.tool.preparation.attemptId !== event.attemptId) ||
+      (sameStep &&
+        (event.type === 'message.delta' || event.type === 'reasoning.delta') &&
+        event.transientAttemptId !== undefined &&
+        event.transientAttemptId !== node.tool.preparation.attemptId)
+    if (remove) {
+      nodes.splice(index, 1)
+      nodeChangeStart = Math.min(nodeChangeStart ?? index, index)
+    }
+  }
   switch (event.type) {
     case 'turn.started':
       {
@@ -740,6 +767,43 @@ export function reduceTimeline(
           nodes[index] = { ...node, state: 'cancelled' }
       }
       break
+    case 'tool.preparing': {
+      if (hasClosedTurn(event.turn)) break
+      const existingIndex = findNodeIndexFromEnd(
+        nodes,
+        (node) => node.kind === 'tool' && node.id === event.callId,
+      )
+      const existing = nodes[existingIndex]
+      if (
+        existing?.kind === 'tool' &&
+        (existing.tool.preparation === undefined ||
+          (existing.tool.preparation.attemptId === event.attemptId &&
+            existing.tool.preparation.updateIndex >= event.updateIndex))
+      )
+        break
+      upsert(nodes, {
+        kind: 'tool',
+        id: event.callId,
+        tool: {
+          id: event.callId,
+          name: event.toolName,
+          category: 'tool',
+          title: event.toolName,
+          status: 'queued',
+          turn: event.turn,
+          step: event.step,
+          metadata: {},
+          preparation: {
+            attemptId: event.attemptId,
+            updateIndex: event.updateIndex,
+            ...(event.description === undefined ? {} : { description: event.description }),
+            ...(event.filePath === undefined ? {} : { filePath: event.filePath }),
+            ...(event.contentCharacters === undefined ? {} : { contentCharacters: event.contentCharacters }),
+          },
+        },
+      })
+      break
+    }
     case 'tool.updated': {
       if (event.tool.turn !== undefined) openTurn(event.tool.turn)
       if (event.tool.turn !== undefined && hasClosedTurn(event.tool.turn))
@@ -1029,6 +1093,11 @@ export function reduceTimelineBatch(
  */
 function eventMayChangeTimelineNodes(event: BackendEvent, state: TimelineState): boolean {
   switch (event.type) {
+    case 'session.subscribed':
+      return (
+        event.controlBaseline === false &&
+        state.nodes.some((node) => node.kind === 'tool' && node.tool.preparation !== undefined)
+      )
     case 'session.status':
     case 'session.activity':
     case 'session.title':
@@ -1042,7 +1111,6 @@ function eventMayChangeTimelineNodes(event: BackendEvent, state: TimelineState):
     case 'subagent.catalog.updated':
     case 'jobs.updated':
     case 'queue.updated':
-    case 'session.subscribed':
     case 'session.projection':
     case 'session.system':
     case 'workspace.changed':

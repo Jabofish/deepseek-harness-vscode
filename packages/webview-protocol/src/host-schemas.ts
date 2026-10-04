@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { containsControlCharacters, featureRelativePathSchema } from './feature-schemas/feature-shared.js'
 import { protocolAppErrorCodeSchema } from './feature-schemas.js'
 import { id, wireVersion, MAX_HOST_ERROR_MESSAGE_CHARS, boundedUnknown } from './request-common.js'
 import { budgetFailure } from './protocol-budget.js'
@@ -173,6 +174,35 @@ export const jobFollowFailedPayloadSchema = z
   })
   .strict()
 
+/** Preparation is a display-only projection, never a tool invocation. */
+const preparationIdentifierSchema = id.refine(
+  (value) => value.trim() !== '' && !containsControlCharacters(value),
+)
+export const toolPreparingPayloadSchema = z
+  .object({
+    type: z.literal('tool.preparing'),
+    sessionId: preparationIdentifierSchema,
+    callId: preparationIdentifierSchema,
+    toolName: preparationIdentifierSchema,
+    attemptId: preparationIdentifierSchema,
+    turn: jobFollowSafeOffsetSchema,
+    step: jobFollowSafeOffsetSchema,
+    updateIndex: jobFollowSafeOffsetSchema,
+    description: z.string().max(512).optional(),
+    filePath: featureRelativePathSchema.optional(),
+    contentCharacters: jobFollowSafeOffsetSchema.optional(),
+  })
+  .strict()
+
+const toolPreparingHostEventSchema = z
+  .object({
+    type: z.literal('event'),
+    name: z.literal('tool.preparing'),
+    sequence: jobFollowSafeOffsetSchema,
+    payload: toolPreparingPayloadSchema,
+  })
+  .strict()
+
 /**
  * Legacy compatibility envelope. New staged feature events must use the
  * closed `featureHostEventSchema`; generic backend events remain open, while
@@ -186,7 +216,11 @@ const genericHostEventSchema = z
       .min(1)
       .max(256)
       .refine(
-        (name) => name !== 'job.follow.updated' && name !== 'job.follow.failed' && name !== 'queue.updated',
+        (name) =>
+          name !== 'job.follow.updated' &&
+          name !== 'job.follow.failed' &&
+          name !== 'queue.updated' &&
+          name !== 'tool.preparing',
       ),
     sequence: z.number().int().nonnegative(),
     payload: boundedUnknown,
@@ -233,6 +267,7 @@ const jobFollowFailedHostEventSchema = z
   .strict()
 
 export const hostEventSchema = z.union([
+  toolPreparingHostEventSchema,
   queueUpdatedHostEventSchema,
   jobFollowUpdatedHostEventSchema,
   jobFollowFailedHostEventSchema,

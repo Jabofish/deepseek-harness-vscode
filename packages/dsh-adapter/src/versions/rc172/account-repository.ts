@@ -196,9 +196,10 @@ export class Rc172AccountLifecycleRepository implements AccountLifecycleReposito
       throw malformed(method)
 
     if (attempt.expiresAt !== undefined && !isTimestamp(attempt.expiresAt)) throw malformed(method)
+    const errorCode = this.normalizeSignInErrorCode(attempt.errorCode)
     if (
-      attempt.errorCode !== undefined &&
-      (typeof attempt.errorCode !== 'string' || !ERROR_CODES.has(attempt.errorCode as AccountSignInErrorCode))
+      errorCode !== undefined &&
+      (typeof errorCode !== 'string' || !ERROR_CODES.has(errorCode as AccountSignInErrorCode))
     )
       throw malformed(method)
 
@@ -219,9 +220,13 @@ export class Rc172AccountLifecycleRepository implements AccountLifecycleReposito
       id: attempt.id,
       phase: attempt.phase as AccountSignInPhase,
       ...(attempt.expiresAt === undefined ? {} : { expiresAt: attempt.expiresAt }),
-      ...(attempt.errorCode === undefined ? {} : { errorCode: attempt.errorCode as AccountSignInErrorCode }),
+      ...(errorCode === undefined ? {} : { errorCode: errorCode as AccountSignInErrorCode }),
     }
     return { status: record.status, attempt: safeAttempt }
+  }
+
+  protected normalizeSignInErrorCode(value: unknown): unknown {
+    return value
   }
 }
 

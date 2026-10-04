@@ -5,6 +5,7 @@ import { useDismissibleLayer } from '../../components/common/useDismissibleLayer
 import { formatByteSize } from '../../app/attachment-reader.js'
 import { useI18n } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
+import { MarkdownDocumentPreview } from '../documents/MarkdownDocumentPreview.js'
 
 export interface EditorContextChipsProps {
   readonly items: readonly EditorContextItem[]
@@ -135,7 +136,15 @@ export function EditorContextChips(props: EditorContextChipsProps): ReactElement
               <Icon name="close" />
             </button>
           </div>
-          <pre>{visiblePreview.text}</pre>
+          {props.items.some(
+            (item) =>
+              item.ref.contextRef === visiblePreview.contextRef &&
+              /\.(?:md|markdown)$/iu.test(item.ref.relativePath),
+          ) ? (
+            <MarkdownDocumentPreview text={visiblePreview.text} />
+          ) : (
+            <pre>{visiblePreview.text}</pre>
+          )}
         </div>
       )}
     </>

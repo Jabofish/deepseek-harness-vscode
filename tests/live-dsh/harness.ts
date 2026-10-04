@@ -27,6 +27,7 @@ import { Rc171VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc1
 import { Rc172VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc172/adapter.js'
 import { Rc201VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc201/adapter.js'
 import { Rc202VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc202/adapter.js'
+import { Alpha211VersionAdapter } from '../../packages/dsh-adapter/src/versions/alpha211/adapter.js'
 import { acquireManagedRuntimeScope, type ManagedRuntimeScope } from './runtime-scope.js'
 import { resolveLiveRuntime } from './runtime.js'
 
@@ -106,6 +107,8 @@ export async function startManagedRuntime(options?: {
   readonly dshHome?: string
   /** Remove a test-created DSH home only after the managed process is confirmed stopped. */
   readonly removeDshHomeOnStop?: boolean
+  /** Explicit test-only composition overlay, supplied with an isolated home. */
+  readonly patchFile?: string
   readonly exportFileSystem?: ExportFileSystem
 }): Promise<ManagedLiveRuntime> {
   const runtimeExecutable = resolveLiveRuntime(
@@ -115,11 +118,20 @@ export async function startManagedRuntime(options?: {
     options?.runtimeVersion?.trim() || process.env.DSH_LIVE_RUNTIME_VERSION?.trim() || DEFAULT_RUNTIME_VERSION
   const port = await freeLoopbackPort()
   const workspace = await mkdtemp(path.join(os.tmpdir(), 'dsh-live-'))
-  const launchArguments = managedWebArguments(runtimeVersion, port)
+  const launchArguments = [
+    ...(options?.patchFile === undefined ? [] : ['--patch', options.patchFile]),
+    ...managedWebArguments(runtimeVersion, port),
+  ]
   const steps: string[] = []
   const endpointCookie: { value: string | undefined } = { value: undefined }
   const supervisor = new DshProcessSupervisor({
-    spawn: spawnManagedChild,
+    spawn: (executable, args, cwd, environment) =>
+      spawnManagedChild(
+        executable,
+        [...(options?.patchFile === undefined ? [] : ['--patch', options.patchFile]), ...args],
+        cwd,
+        environment,
+      ),
     managedPort: () => port,
     workingDirectory: () => workspace,
     onReadyEndpoint: async (endpoint, launchUrl) => {
@@ -175,6 +187,7 @@ export async function startManagedRuntime(options?: {
     steps.push(`managed start pid=${started.pid} endpoint=${started.endpoint.baseUrl}`)
 
     const adapters = [
+      new Alpha211VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
       new Rc202VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
       new Rc201VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
       new Rc172VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),

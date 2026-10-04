@@ -7,7 +7,7 @@ import { useI18n } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
 
 export interface ConversationActionsMenuProps {
-  readonly children: ReactNode
+  readonly children: ReactNode | ((closeAndFocus: () => void) => ReactNode)
   readonly onClose?: () => void
 }
 
@@ -41,6 +41,11 @@ export const ConversationActionsMenu = memo(function ConversationActionsMenu(
     setOpen(false)
     onClose?.()
   }, [onClose])
+
+  const closeAndFocus = useCallback((): void => {
+    close()
+    triggerRef.current?.focus()
+  }, [close])
 
   // Escape is owned by the layer hook alone: a React handler on this element
   // would run before the document listeners of the drawers nested inside the
@@ -80,7 +85,9 @@ export const ConversationActionsMenu = memo(function ConversationActionsMenu(
           role="dialog"
           aria-label={t('app.conversationActions')}
         >
-          <div className="dsh-conversation__actions-grid">{children}</div>
+          <div className="dsh-conversation__actions-grid">
+            {typeof children === 'function' ? children(closeAndFocus) : children}
+          </div>
         </PopoverCard>
       ) : null}
     </div>

@@ -1873,6 +1873,27 @@ describe('App connected rendering', () => {
     await waitFor(() => expect(updateDshSetting).toHaveBeenCalledWith('locale.preference', 'zh', 1))
   })
 
+  it('opens the Inspector from conversation tools and restores focus after menu dismissal', () => {
+    currentStore = storeFor(connectedState(true))
+    render(<App />)
+
+    const tools = screen.getByRole('button', { name: 'Conversation tools' })
+    expect(screen.queryByRole('button', { name: 'Session Inspector' })).toBeNull()
+    fireEvent.click(tools)
+    fireEvent.click(screen.getByRole('button', { name: 'Session Inspector' }))
+    const inspector = screen.getByRole('dialog', { name: 'Session Inspector' })
+    expect(screen.queryByRole('dialog', { name: 'Conversation tools' })).toBeNull()
+    expect(document.activeElement).toBe(inspector)
+
+    fireEvent.keyDown(inspector, { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: 'Session Inspector' })).toBeNull()
+    expect(document.activeElement).toBe(tools)
+
+    fireEvent.click(tools)
+    fireEvent.click(screen.getByRole('button', { name: 'Session Inspector' }))
+    expect(screen.getByRole('dialog', { name: 'Session Inspector' })).toBeDefined()
+  })
+
   it('keeps the conversation tools panel open when Escape closes the interface-language menu', () => {
     currentStore = storeFor(connectedState(true))
     render(<App />)

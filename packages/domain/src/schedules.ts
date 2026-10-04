@@ -107,6 +107,7 @@ export type ScheduleMutationFailure =
         | 'not_future'
         | 'time_out_of_range'
         | 'frequency_too_high'
+        | 'subagent_session'
         | 'internal_error'
       readonly message: string
     }

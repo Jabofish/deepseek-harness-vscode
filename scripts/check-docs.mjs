@@ -90,10 +90,18 @@ else {
     if (!documented.has(version)) errors.push(`docs/dsh-contract.md: missing ${version}`)
   }
 }
-const installerVersion = code.match(
+const publishedVersion = code.match(
   /LATEST_PUBLISHED_DSH_VERSION = '(\d+\.\d+\.\d+-(?:rc|alpha)\.\d+)'/u,
 )?.[1]
-const documentedInstaller = contract.match(/@deepseek-ai\/dsh@(\d+\.\d+\.\d+-(?:rc|alpha)\.\d+)/u)?.[1]
+const installerVersion = code.match(/DEFAULT_INSTALL_DSH_VERSION = '(\d+\.\d+\.\d+-(?:rc|alpha)\.\d+)'/u)?.[1]
+const documentedPublished = contract.match(
+  /最新发布包为 `@deepseek-ai\/dsh@(\d+\.\d+\.\d+-(?:rc|alpha)\.\d+)`/u,
+)?.[1]
+const documentedInstaller = contract.match(
+  /引导安装默认包为 `@deepseek-ai\/dsh@(\d+\.\d+\.\d+-(?:rc|alpha)\.\d+)`/u,
+)?.[1]
+if (publishedVersion === undefined || documentedPublished !== publishedVersion)
+  errors.push('docs/dsh-contract.md: latest published version differs from code')
 if (installerVersion === undefined || documentedInstaller !== installerVersion)
   errors.push('docs/dsh-contract.md: installer default differs from code')
 

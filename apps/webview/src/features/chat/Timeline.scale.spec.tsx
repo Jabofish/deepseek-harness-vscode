@@ -74,6 +74,53 @@ function withViewport(body: () => void): void {
 }
 
 describe('Long-session timeline scale', () => {
+  it('reveals an offscreen Inspector target without materializing history or following later appends', () => {
+    withViewport(() => {
+      const nodes = largeSessionNodes()
+      const view = render(<Timeline sessionId="session-reveal" nodes={nodes} streaming={false} />)
+      try {
+        const timeline = view.container.querySelector<HTMLDivElement>('.dsh-timeline')
+        if (timeline === null) throw new Error('Timeline is missing')
+        Object.defineProperties(timeline, {
+          scrollHeight: { configurable: true, value: nodes.length * ROW_ESTIMATED_HEIGHT },
+          clientHeight: { configurable: true, value: VIEWPORT_HEIGHT },
+        })
+        const revealTarget = { nodeId: 'assistant-2000', requestId: 'reveal-1' }
+        view.rerender(
+          <Timeline sessionId="session-reveal" nodes={nodes} streaming={false} revealTarget={revealTarget} />,
+        )
+        const row = view.container.querySelector<HTMLElement>(
+          '.dsh-timeline__row[data-node-id="assistant-2000"]',
+        )
+        expect(row).not.toBeNull()
+        expect(document.activeElement).toBe(row)
+        const targetOffset = timeline.scrollTop
+        expect(targetOffset).toBeGreaterThan(1000)
+        expect(targetOffset).toBeLessThan(timeline.scrollHeight - VIEWPORT_HEIGHT)
+        fireEvent.scroll(timeline)
+        expect(view.container.querySelectorAll('.dsh-timeline__row').length).toBeLessThan(MAX_EXPECTED_ROWS)
+        view.rerender(
+          <Timeline
+            sessionId="session-reveal"
+            nodes={[
+              ...nodes,
+              {
+                kind: 'assistant-message',
+                id: 'appended',
+                markdown: 'Later answer',
+                streaming: true,
+              },
+            ]}
+            streaming
+            revealTarget={revealTarget}
+          />,
+        )
+        expect(timeline.scrollTop).toBe(targetOffset)
+      } finally {
+        view.unmount()
+      }
+    })
+  })
   afterEach(() => {
     document.body.innerHTML = ''
   })

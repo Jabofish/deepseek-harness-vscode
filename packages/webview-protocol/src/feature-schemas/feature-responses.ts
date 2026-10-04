@@ -34,8 +34,24 @@ import {
   promptTemplateSummarySchema,
 } from './feature-checkpoints.js'
 import { contextKind, promptTemplateVariable } from './feature-requests.js'
+import { modsBandSnapshotSchema } from './feature-mods-band.js'
 
 export const featureResponsePayloadSchema = z.discriminatedUnion('kind', [
+  z
+    .object({
+      kind: z.literal('inspector.devtools'),
+      available: z.boolean(),
+      outcome: z.enum(['status', 'opened', 'copied', 'unavailable']),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal('mods.band'),
+      available: z.boolean(),
+      snapshot: modsBandSnapshotSchema.nullable(),
+    })
+    .strict()
+    .refine((value) => value.available || value.snapshot === null, 'Unavailable drawing must be empty.'),
   z.object({ kind: z.literal('empty') }).strict(),
   z.object({ kind: z.literal('account.lifecycle'), snapshot: accountLifecycleSnapshotSchema }).strict(),
   z.object({ kind: z.literal('account.impact'), impact: accountSignOutImpactSchema }).strict(),

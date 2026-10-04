@@ -21,8 +21,13 @@ import { LIVE_TIMEOUT_MS, startManagedRuntime, type ManagedLiveRuntime } from '.
  *
  * Both launches use a throwaway `$DSH_HOME`, so the user's own profile is never
  * read or changed, and only the processes started here are signalled.
+ * alpha211 removed this optional bundle; alpha211-surfaces.spec.ts verifies
+ * its directly mounted Schedule service instead. The toggle assertions below
+ * remain intact for the earlier composition that actually ships the bundle.
  */
-describe.skipIf(process.env.DSH_LIVE_SMOKE !== '1')('live DSH optional Schedule bundle', () => {
+describe.skipIf(
+  process.env.DSH_LIVE_SMOKE !== '1' || process.env.DSH_LIVE_RUNTIME_VERSION === '0.2.1-alpha.1',
+)('live DSH optional Schedule bundle', () => {
   it(
     'reports the shipped composition as unavailable and answers once the profile enables it',
     async () => {

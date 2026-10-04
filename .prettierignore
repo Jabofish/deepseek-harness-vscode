@@ -2,6 +2,7 @@ node_modules
 dist
 coverage
 .vscode-test
+.codegraph
 apps/extension/media
 apps/extension/.vscodeignore
 pnpm-lock.yaml

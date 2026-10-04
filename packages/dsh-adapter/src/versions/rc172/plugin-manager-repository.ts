@@ -148,7 +148,7 @@ export class Rc172PluginBundleRepository implements PluginBundleRepository {
       await this.transport.remoteRequest('pluginManager/installBundle', args, signal),
       'pluginManager/installBundle',
     )
-    return installChangeResult(value, spec)
+    return this.mapInstallResult(value, spec)
   }
 
   public async cancelInstall(requestId: string, signal?: AbortSignal): Promise<PluginInstallCancellation> {
@@ -172,7 +172,15 @@ export class Rc172PluginBundleRepository implements PluginBundleRepository {
       await this.transport.remoteRequest('pluginManager/waitForInstall', { requestId }, signal),
       'pluginManager/waitForInstall',
     )
-    return value === null ? null : installRecoveryResult(value)
+    return value === null ? null : this.mapInstallRecoveryResult(value)
+  }
+
+  protected mapInstallResult(value: unknown, expectedSpec: string): PluginBundleChangeResult {
+    return installChangeResult(value, expectedSpec)
+  }
+
+  protected mapInstallRecoveryResult(value: unknown): PluginBundleChangeResult {
+    return installRecoveryResult(value)
   }
 
   public async removeBundle(name: string, signal?: AbortSignal): Promise<PluginBundleChangeResult> {
