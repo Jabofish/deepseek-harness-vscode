@@ -23,7 +23,8 @@
     "lint": "node --max-old-space-size=4096 ./node_modules/eslint/bin/eslint.js --cache --cache-strategy content --cache-location node_modules/.cache/eslint/.eslintcache .",
     "package:vsix": "pnpm build && pnpm --filter deepseek-harness-client package:vsix",
     "test": "vitest run --passWithNoTests",
-    "test:changed": "vitest run --changed --passWithNoTests",
+    "test:changed": "vitest run --changed --passWithNoTests && pnpm test:contracts",
+    "test:contracts": "vitest run apps/webview/src/styles packages/ui/src/motion-tokens.spec.ts apps/webview/src/i18n-keys.spec.ts apps/extension/src/view/protocol-route-coverage.spec.ts apps/extension/src/build/import-meta-url.spec.ts",
     "test:watch": "vitest",
     "typecheck": "pnpm -r --if-present typecheck && pnpm exec tsc -p tests/tsconfig.json --noEmit"
   },

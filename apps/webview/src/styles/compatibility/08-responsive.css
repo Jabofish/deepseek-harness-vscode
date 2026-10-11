@@ -1,0 +1,212 @@
+.dsh-session-lineage__separator {
+  flex: 0 0 auto;
+  margin-inline: 2px;
+  color: var(--dsh-muted);
+}
+
+.dsh-session-lineage__parent,
+.dsh-session-lineage__current {
+  min-width: 0;
+  max-width: min(244px, 100%);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-session-lineage__parent {
+  padding: 3px 4px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.dsh-session-lineage__parent:hover,
+.dsh-session-lineage__parent:focus-visible {
+  color: var(--dsh-text, inherit);
+  background: var(--dsh-surface-hover, color-mix(in srgb, var(--dsh-muted) 10%, transparent));
+}
+
+/* Subagent ancestors are the only session kind the drawer never lists, so the
+ * breadcrumb marks them without relying on colour alone. */
+.dsh-session-lineage__parent--subagent {
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+
+.dsh-session-lineage__current {
+  padding: 3px 4px;
+  color: var(--dsh-text, inherit);
+  font-weight: 500;
+}
+
+/* Metrics occupy a bounded fourth column; without this override the grid
+   would place them in an implicit column and long values could widen the
+   menu beyond the viewport. */
+.dsh-subagent-tree__row {
+  grid-template-columns: 18px 8px minmax(0, 1fr) minmax(0, 96px);
+}
+
+.dsh-settings .dsh-button--compact,
+.dsh-settings__editable-model input,
+.dsh-settings__provider-editor-field input,
+.dsh-settings__model-field input,
+.dsh-settings__custom-provider-grid input,
+.dsh-settings__connection-endpoint input {
+  min-height: var(--dsh-control-height-compact);
+  box-sizing: border-box;
+}
+
+.dsh-settings__runtime-update-check {
+  flex: 0 0 auto;
+  align-self: flex-start;
+  white-space: nowrap;
+}
+
+.dsh-settings__connection-endpoint input,
+.dsh-settings__editable-model input,
+.dsh-settings__provider-editor-field input,
+.dsh-settings__model-field input,
+.dsh-settings__custom-provider-grid input,
+.dsh-settings__runtime-update-version .dsh-select-menu__trigger {
+  padding: 6px 8px;
+  border: 1px solid var(--dsh-control-border);
+  border-radius: var(--dsh-radius-md);
+  font: inherit;
+  font-size: var(--dsh-font-size-xs);
+  line-height: 1.2;
+}
+
+.dsh-settings__runtime-update-version {
+  flex: 1 1 12rem;
+  min-width: min(12rem, 100%);
+}
+
+.dsh-settings__runtime-update-version .dsh-select-menu__trigger {
+  width: 100%;
+  min-height: var(--dsh-control-height-compact);
+  font-size: var(--dsh-font-size-xs);
+}
+
+.dsh-settings__runtime-update-facts,
+.dsh-settings__runtime-update-notice,
+.dsh-settings__runtime-update-progress {
+  font-size: var(--dsh-font-size-xs);
+}
+
+@media (max-width: 420px) {
+  .dsh-settings__editable-model-row {
+    grid-template-columns: minmax(0, 1fr) 28px 28px;
+  }
+
+  .dsh-settings__editable-model-name {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+}
+
+@media (max-width: 360px) {
+  .dsh-todo-list__status {
+    display: none;
+  }
+
+  .dsh-settings__model-picker-backdrop,
+  .dsh-presets__modal-backdrop,
+  .dsh-settings__backdrop,
+  .dsh-session-dialog__backdrop,
+  .dsh-feedback-dialog__backdrop,
+  .dsh-tool-error-modal__backdrop,
+  .dsh-lightbox__backdrop,
+  .dsh-message-image-lightbox {
+    padding: 8px;
+  }
+
+  .dsh-settings[role='dialog'],
+  .dsh-settings__model-picker,
+  .dsh-presets__modal-backdrop > .dsh-presets__dialog,
+  .dsh-session-dialog,
+  .dsh-feedback-dialog,
+  .dsh-tool-error-modal {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .dsh-lightbox {
+    max-width: calc(100vw - 16px);
+    max-height: calc(100vh - 16px);
+  }
+}
+
+@media (max-width: 520px) {
+  .dsh-settings__provider-add-actions,
+  .dsh-settings__model-advanced {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 559px) {
+  .dsh-session-controls__mode,
+  .dsh-model-picker {
+    flex: 0 0 28px;
+    max-width: 28px;
+  }
+}
+
+@container dsh-composer (min-width: 560px) {
+  .dsh-session-controls__mode {
+    flex: 0 1 112px;
+    max-width: 112px;
+  }
+}
+
+@container dsh-composer (min-width: 480px) and (max-width: 559px) {
+  .dsh-session-controls__selectors > .dsh-session-controls__mode {
+    width: 80px;
+    min-width: 80px;
+    max-width: 80px;
+    flex: 0 0 80px;
+  }
+
+  .dsh-session-controls__metrics > div,
+  .dsh-session-controls__context-cell,
+  .dsh-session-controls__context-cell .dsh-context-meter,
+  .dsh-context-meter__trigger {
+    max-width: 100%;
+  }
+}
+
+@container dsh-composer (min-width: 400px) and (max-width: 479px) {
+  .dsh-session-controls__selectors > .dsh-session-controls__mode {
+    width: 60px;
+    min-width: 60px;
+    max-width: 60px;
+    flex: 0 0 60px;
+  }
+
+  .dsh-session-controls__metrics > div,
+  .dsh-session-controls__context-cell,
+  .dsh-session-controls__context-cell .dsh-context-meter,
+  .dsh-context-meter__trigger {
+    max-width: 100%;
+  }
+}
+
+@container dsh-composer (max-width: 399px) {
+  .dsh-select-menu--labelled,
+  .dsh-session-controls__mode,
+  .dsh-model-picker,
+  .dsh-session-controls__selectors > .dsh-select-menu {
+    width: 28px;
+    min-width: 28px;
+    max-width: 28px;
+    flex: 0 0 28px;
+  }
+
+  .dsh-context-meter__trigger {
+    gap: 2px;
+    padding-inline: 2px;
+    font-size: var(--dsh-font-size-2xs);
+  }
+}

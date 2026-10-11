@@ -4,48 +4,9 @@ import type {
   DshUpdateSnapshot,
   ExtensionSettingsSummary,
 } from '@dsh-vscode/domain'
-import type { ProtocolClient } from '../protocol-client.js'
-import { requestId } from './ids.js'
-import {
-  listValues,
-  sameModelDescriptorList,
-  sameModelProviderList,
-  strictListValues,
-} from './list-equality.js'
-import {
-  isAgentConfiguration,
-  isModelDescriptor,
-  isModelProvider,
-  isPermissionPreset,
-} from './model-catalog.js'
-import type { DshSettingsSnapshot, StateSetter } from './types.js'
+import { isAgentConfiguration, isPermissionPreset } from './model-catalog.js'
+import type { DshSettingsSnapshot } from './types.js'
 import { object } from './unknown-record.js'
-
-export async function refreshProvidersAndModels(
-  client: ProtocolClient,
-  setState: StateSetter,
-): Promise<void> {
-  const [providersResult, modelsResult] = await Promise.allSettled([
-    client.request<unknown>({ type: 'providers.list', requestId: requestId() }),
-    client.request<unknown>({ type: 'models.list', requestId: requestId(), payload: {} }),
-  ])
-  const providers =
-    providersResult.status === 'fulfilled'
-      ? listValues(providersResult.value).filter(isModelProvider)
-      : undefined
-  const models =
-    modelsResult.status === 'fulfilled' ? strictListValues(modelsResult.value, isModelDescriptor) : undefined
-  setState((current) => {
-    const nextProviders =
-      providers === undefined || sameModelProviderList(current.providers, providers)
-        ? current.providers
-        : providers
-    const nextModels =
-      models === undefined || sameModelDescriptorList(current.models, models) ? current.models : models
-    if (nextProviders === current.providers && nextModels === current.models) return current
-    return { ...current, providers: nextProviders, models: nextModels }
-  })
-}
 
 export function parseExtensionSettings(value: unknown): ExtensionSettingsSummary | undefined {
   const settings = object(value)

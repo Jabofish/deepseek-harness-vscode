@@ -1,0 +1,388 @@
+.dsh-subagent-tree {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+}
+
+.dsh-subagent-tree__trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border: 1px solid var(--dsh-border-color, var(--dsh-border-color));
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: var(--dsh-font-size-xs);
+  cursor: pointer;
+}
+
+.dsh-subagent-tree__trigger > .dsh-icon {
+  width: 13px;
+  height: 13px;
+  flex: none;
+}
+
+.dsh-subagent-tree__trigger-label {
+  white-space: nowrap;
+}
+
+.dsh-subagent-tree__trigger-count {
+  min-width: 17px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--dsh-badge-bg, color-mix(in srgb, var(--dsh-muted) 22%, transparent));
+  color: var(--dsh-badge-text, inherit);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  line-height: 17px;
+  text-align: center;
+}
+
+.dsh-subagent-tree__trigger:hover {
+  background: var(--dsh-surface-hover, color-mix(in srgb, var(--dsh-muted) 10%, transparent));
+}
+
+.dsh-subagent-tree__trigger:focus-visible {
+  outline: 2px solid var(--dsh-focus, var(--dsh-primary));
+  outline-offset: 1px;
+}
+
+.dsh-subagent-tree__menu {
+  position: fixed;
+  z-index: 50;
+  display: grid;
+  gap: 2px;
+  box-sizing: border-box;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 6px;
+  background: var(--dsh-bg, var(--dsh-surface));
+  border: 1px solid var(--dsh-border-color, var(--dsh-border-color));
+  border-radius: 6px;
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--dsh-bg) 78%, transparent);
+}
+
+.dsh-subagent-tree__row {
+  display: grid;
+  grid-template-columns: 18px 8px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 4px 6px;
+  border-radius: 4px;
+  font-size: var(--dsh-font-size-xs);
+  cursor: pointer;
+}
+
+.dsh-subagent-tree__row:hover,
+.dsh-subagent-tree__row:focus-visible {
+  background: var(--dsh-surface-hover, color-mix(in srgb, var(--dsh-muted) 10%, transparent));
+}
+
+.dsh-subagent-tree__row--disabled {
+  cursor: default;
+  opacity: 0.76;
+}
+
+.dsh-subagent-tree__row--disabled:hover {
+  background: transparent;
+}
+
+/* The row is the tree's own keyboard stop and a plain div, so the app-wide
+ * `:where(button, input, textarea, summary):focus-visible` rule never reaches it. */
+.dsh-subagent-tree__row:focus-visible {
+  outline: 1px solid var(--dsh-focus-ring);
+  outline-offset: 1px;
+}
+
+.dsh-subagent-tree__disclosure {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex: none;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--dsh-muted);
+  cursor: pointer;
+}
+
+.dsh-subagent-tree__disclosure svg {
+  transition: transform var(--dsh-motion-duration-fast) var(--dsh-motion-ease-standard);
+}
+
+.dsh-subagent-tree__disclosure--open svg {
+  transform: rotate(90deg);
+}
+
+.dsh-subagent-tree__spacer {
+  width: 18px;
+  flex: none;
+}
+
+.dsh-subagent-tree__label {
+  grid-column: 3;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-subagent-tree__meta {
+  grid-column: 3;
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-2xs);
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.dsh-subagent-tree__metrics {
+  grid-column: 4;
+  grid-row: 1 / span 2;
+  min-width: 0;
+  max-width: 96px;
+  overflow: hidden;
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-2xs);
+  font-variant-numeric: tabular-nums;
+  line-height: 16px;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-subagent-readonly {
+  display: grid;
+  gap: 3px;
+  padding: 9px 10px;
+  border: 1px solid var(--dsh-border-color, var(--dsh-border-color));
+  border-radius: 6px;
+  background: var(--dsh-surface-soft, color-mix(in srgb, var(--dsh-muted) 8%, transparent));
+  color: var(--dsh-muted, var(--dsh-muted));
+  font-size: var(--dsh-font-size-xs);
+}
+
+.dsh-subagent-readonly strong {
+  color: var(--dsh-text, var(--dsh-text));
+}
+
+.dsh-workflow-runs__run {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 4px 8px;
+  border-radius: 8px;
+  background: var(--dsh-widget-bg, var(--dsh-bg, var(--dsh-surface)));
+}
+
+.dsh-workflow-runs__run-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.dsh-workflow-runs__run-header:hover {
+  background: var(--dsh-surface-hover, color-mix(in srgb, var(--dsh-muted) 10%, transparent));
+}
+
+.dsh-workflow-runs__run-header:focus-visible {
+  outline: 2px solid var(--dsh-focus, var(--dsh-primary));
+  outline-offset: -2px;
+}
+
+.dsh-workflow-runs__run-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--dsh-font-size-xs);
+}
+
+.dsh-workflow-runs__run-count {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-2xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-workflow-runs__run-status {
+  flex: none;
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-2xs);
+}
+
+.dsh-workflow-runs__phases {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding-left: 16px;
+}
+
+.dsh-workflow-runs__empty {
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-xs);
+}
+
+.dsh-workflow-runs__phase {
+  display: grid;
+}
+
+.dsh-workflow-runs__phase-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 3px 6px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: var(--dsh-font-size-xs);
+  text-align: left;
+  cursor: pointer;
+}
+
+.dsh-workflow-runs__phase-header:hover {
+  background: var(--dsh-surface-hover, color-mix(in srgb, var(--dsh-muted) 10%, transparent));
+}
+
+.dsh-workflow-runs__phase-header:focus-visible {
+  outline: 2px solid var(--dsh-focus, var(--dsh-primary));
+  outline-offset: -2px;
+}
+
+.dsh-workflow-runs__phase-label {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-workflow-runs__phase-count {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-2xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-workflow-runs__phase-summary {
+  flex: none;
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-2xs);
+}
+
+.dsh-workflow-runs__members {
+  display: grid;
+  margin: 0;
+  padding: 0 0 0 26px;
+  list-style: none;
+}
+
+.dsh-workflow-runs__member {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 2px 6px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: var(--dsh-font-size-xs);
+  text-align: left;
+  cursor: default;
+}
+
+.dsh-workflow-runs__member:is(button) {
+  cursor: pointer;
+}
+
+.dsh-workflow-runs__member:is(button):hover {
+  background: var(--dsh-surface-hover, color-mix(in srgb, var(--dsh-muted) 10%, transparent));
+}
+
+.dsh-workflow-runs__member:focus-visible {
+  outline: 2px solid var(--dsh-focus, var(--dsh-primary));
+  outline-offset: -2px;
+}
+
+.dsh-workflow-runs__member-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-workflow-runs__member-status {
+  flex: none;
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-2xs);
+}
+
+.dsh-session-item__remove {
+  width: 24px;
+  min-width: 24px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--dsh-radius-sm);
+  color: var(--dsh-muted);
+  background: transparent;
+  opacity: 0.72;
+}
+
+.dsh-session-switcher__list > li:hover .dsh-session-item__remove,
+.dsh-session-switcher__list > li:focus-within .dsh-session-item__remove {
+  opacity: 1;
+}
+
+.dsh-session-item__remove:hover:not(:disabled),
+.dsh-session-item__remove:focus-visible {
+  border-color: var(--dsh-focus, var(--dsh-control-border));
+  color: var(--dsh-danger, var(--dsh-danger));
+  background: var(--dsh-control-hover);
+  outline: none;
+}
+
+.dsh-session-item__remove .dsh-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.dsh-session-switcher--headless {
+  position: static !important;
+  width: 0 !important;
+  min-width: 0 !important;
+  max-width: 0 !important;
+  height: 0 !important;
+  min-height: 0 !important;
+  overflow: visible !important;
+  pointer-events: none;
+}

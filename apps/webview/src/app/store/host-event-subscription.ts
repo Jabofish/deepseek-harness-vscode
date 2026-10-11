@@ -13,7 +13,6 @@ import type { createGapHealing } from './gap-heal.js'
 import type { createTurnWatchers } from './turn-watchers.js'
 import { parseHostDomainEvent, timelineSequenceOptions } from './event-parser.js'
 import { backendEventSessionId, applyHostMessage } from './host-message-reducers.js'
-import { refreshProvidersAndModels } from './host-settings.js'
 import { object } from './unknown-record.js'
 import { stringList } from './list-equality.js'
 
@@ -30,6 +29,7 @@ type CommandDirectory = Pick<ReturnType<typeof createCommandDirectoryCache>, 'in
 type TurnWatchers = ReturnType<typeof createTurnWatchers>
 
 export interface HostEventSubscriptionLifecycle {
+  readonly invalidateGlobalCatalogs: () => void
   readonly advanceSessionModelDirectoryGeneration: () => void
   readonly clearStartupRestorePending: () => void
   readonly getOpenVersion: () => number
@@ -53,6 +53,7 @@ export interface HostEventSubscriptionDependencies {
   readonly pluginInstallRecovery: Pick<PluginInstallRecoveryController, 'progress'>
   readonly projectionSequences: ProjectionSequenceIndex
   readonly refresh: () => Promise<void>
+  readonly refreshModelCatalog: () => Promise<void>
   readonly refreshCommands: (sessionId?: string, force?: boolean) => Promise<void>
   readonly refreshLiveGoals: () => Promise<void>
   readonly refreshSessionModelDirectoryForSession: (sessionId: string) => Promise<void>
@@ -93,6 +94,12 @@ export function subscribeHostEvents(deps: HostEventSubscriptionDependencies): ()
   } = deps
   let permissionCatalogGeneration = 0
   const unsubscribe = client.subscribe((message) => {
+    if (lifecycle.isDisposed()) return
+    if (
+      message.type === 'event' &&
+      (message.name === 'connection.snapshot' || message.name === 'connection.lost')
+    )
+      lifecycle.invalidateGlobalCatalogs()
     if (
       message.type === 'event' &&
       (message.name === 'connection.lost' ||
@@ -270,7 +277,7 @@ export function subscribeHostEvents(deps: HostEventSubscriptionDependencies): ()
       message.name === 'remote.event' &&
       isModelCatalogRefresh(message.payload)
     ) {
-      void refreshProvidersAndModels(client, setState)
+      void deps.refreshModelCatalog()
       // The same host events invalidate the session-scoped directory. Without
       // this re-read a failure row the picker is showing would outlive its
       // cause, for example after the user repairs the credential it names.
@@ -348,6 +355,7 @@ export function subscribeHostEvents(deps: HostEventSubscriptionDependencies): ()
   const unsubscribeFeature =
     typeof client.subscribeFeature === 'function'
       ? client.subscribeFeature((message) => {
+          if (lifecycle.isDisposed()) return
           if (accountActions.applyFeatureEvent(message)) return
           if (message.name === 'plugin.manager.changed')
             setState((current) => ({

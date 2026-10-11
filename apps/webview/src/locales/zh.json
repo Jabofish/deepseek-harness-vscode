@@ -1661,5 +1661,7 @@
   "stats.details": "统计详情",
   "stats.llmTime": "模型耗时",
   "stats.toolTime": "工具耗时",
-  "stats.uncachedInput": "未缓存输入 Token"
+  "stats.uncachedInput": "未缓存输入 Token",
+  "settings.viewLoadFailed": "设置暂时无法打开，请重试。",
+  "settings.viewRetry": "重试"
 }

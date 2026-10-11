@@ -1,0 +1,451 @@
+/* Composer frame ----------------------------------------------------------- */
+
+.dsh-compose-area {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  min-width: 0;
+  gap: var(--dsh-space-2);
+  padding-top: 0;
+}
+
+/* Wide panels center the conversation column; every surface that shares the
+ * composer's tail (queue, to-do dock, the composer itself, its stats line) must
+ * follow the same rail, or the bottom of the panel reads full-width while the
+ * messages above are centered. */
+.dsh-compose-area > *,
+.dsh-conversation > .dsh-goal-bar,
+.dsh-conversation > .dsh-goal-strip {
+  width: min(100%, var(--dsh-timeline-content-max-width));
+  margin-inline: auto;
+}
+
+/* Pending approvals and questions take the composer's slot: the input is hidden
+ * while the agent waits, so the card docks at the bottom of the conversation
+ * instead of floating under the topbar. Each card owns its own scrollport, so a
+ * long batch scrolls its questions while the actions row stays reachable. */
+.dsh-conversation__interactions {
+  display: flex;
+  flex: 0 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  max-height: min(70vh, 42rem, calc(100% - 12rem));
+  gap: var(--dsh-space-2);
+  overflow: hidden;
+}
+
+.dsh-conversation__interactions > .dsh-interaction {
+  display: flex;
+  flex: 0 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  width: min(100%, 56rem);
+  margin-inline: auto;
+  box-shadow: var(--dsh-shadow);
+}
+
+.dsh-unified-composer {
+  container: dsh-composer / inline-size;
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  min-width: 0;
+  gap: var(--dsh-space-1);
+  padding: var(--dsh-space-2);
+  border: 1px solid var(--dsh-input-border);
+  border-radius: var(--dsh-radius-lg);
+  background: var(--dsh-input-bg);
+  box-shadow: none;
+  overflow: visible;
+}
+
+.dsh-unified-composer:focus-within {
+  border-color: var(--dsh-focus-ring);
+  box-shadow: none;
+}
+
+/* One quiet focus treatment for every control in the app. Feature styles may
+ * change the border colour for meaning, but never add a second halo. */
+.dsh-app :where(button, input, textarea, summary):focus-visible {
+  outline: 1px solid var(--dsh-focus-ring);
+  outline-offset: 1px;
+  box-shadow: none;
+}
+
+.dsh-app .dsh-plugin-inventory__search:focus-within {
+  box-shadow: none;
+}
+
+/* Safety actions remain visibly cautionary without turning the whole risk
+ * surface into a saturated warning block. */
+.dsh-session-controls__risk .dsh-button--danger {
+  border-color: color-mix(in srgb, var(--dsh-warning) 58%, var(--dsh-border-color));
+  color: var(--dsh-warning);
+  background: color-mix(in srgb, var(--dsh-warning) 12%, var(--dsh-surface-raised));
+}
+
+.dsh-session-controls__risk .dsh-button--danger:hover:not(:disabled),
+.dsh-session-controls__risk .dsh-button--danger:focus-visible {
+  border-color: color-mix(in srgb, var(--dsh-warning) 72%, var(--dsh-border-color));
+  color: var(--dsh-text);
+  background: color-mix(in srgb, var(--dsh-warning) 19%, var(--dsh-surface-hover));
+}
+
+.dsh-unified-composer .dsh-composer__attachment-rail,
+.dsh-unified-composer .dsh-composer__input-shell,
+.dsh-unified-composer .dsh-composer__toolbar,
+.dsh-unified-composer .dsh-composer__status {
+  min-width: 0;
+}
+
+.dsh-unified-composer .dsh-composer__attachment-rail {
+  flex: 0 0 auto;
+}
+
+.dsh-unified-composer .dsh-composer__input-shell {
+  position: relative;
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: var(--dsh-radius-md);
+  background: transparent;
+  overflow: visible;
+}
+
+.dsh-unified-composer .dsh-composer__textarea {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  /* Keep the empty state aligned with Composer's 42px intrinsic minimum. */
+  min-height: var(--dsh-composer-input-min-height);
+  max-height: 10rem;
+  padding: var(--dsh-space-2);
+  resize: none;
+  border: 0;
+  outline: 0;
+  color: var(--dsh-input-text);
+  background: transparent;
+  line-height: 1.45;
+}
+
+.dsh-unified-composer .dsh-composer__textarea:focus-visible {
+  outline: 0;
+}
+
+.dsh-unified-composer .dsh-composer__toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr) auto;
+  grid-template-areas: 'start controls submit';
+  align-items: center;
+  flex: 0 0 auto;
+  min-width: 0;
+  gap: var(--dsh-space-1);
+  padding-top: var(--dsh-space-1);
+  border-top: 1px solid color-mix(in srgb, var(--dsh-border-color) 62%, transparent);
+}
+
+.dsh-unified-composer .dsh-composer__toolbar-start {
+  display: flex;
+  grid-area: start;
+  align-items: center;
+  min-width: 0;
+  flex-wrap: nowrap;
+  gap: var(--dsh-space-1);
+  overflow: visible;
+}
+
+.dsh-unified-composer .dsh-composer__toolbar-controls {
+  display: flex;
+  grid-area: controls;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 0;
+  /* Keep the primary picker menu visible when it opens above the composer. */
+  overflow: visible;
+}
+
+.dsh-unified-composer .dsh-session-controls--primary {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  flex-wrap: nowrap;
+  gap: var(--dsh-space-1);
+}
+
+.dsh-unified-composer .dsh-session-controls--primary .dsh-session-controls__selectors {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-wrap: nowrap;
+  gap: var(--dsh-space-1);
+  /* The primary rail contains one picker; it does not need a scrolling
+   * viewport and must let that picker's menu escape upward. */
+  overflow: visible;
+  scrollbar-width: none;
+}
+
+.dsh-unified-composer .dsh-session-controls--primary .dsh-session-controls__selectors::-webkit-scrollbar {
+  display: none;
+}
+
+.dsh-unified-composer .dsh-session-controls--primary .dsh-session-controls__selectors > * {
+  flex: 0 0 auto;
+}
+
+.dsh-unified-composer .dsh-session-controls--primary .dsh-model-picker {
+  flex: 0 1 auto;
+  width: fit-content;
+  min-width: 0;
+  max-width: min(22rem, 100%);
+}
+
+.dsh-unified-composer .dsh-session-controls--primary .dsh-model-picker .dsh-select-menu__trigger {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.dsh-unified-composer .dsh-session-controls--primary .dsh-session-controls__access-picker {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: min(12rem, 100%);
+}
+
+.dsh-unified-composer
+  .dsh-session-controls--primary
+  .dsh-session-controls__access-picker
+  .dsh-select-menu__trigger {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.dsh-unified-composer .dsh-session-controls--primary .dsh-session-controls__metrics {
+  display: flex;
+  flex: 0 0 auto;
+  min-width: 0;
+  /* This is a dl. Reset the browser's default block margins or the metrics
+   * row adds an invisible 2em to the composer's height. */
+  margin: 0;
+  margin-inline-start: auto;
+}
+
+.dsh-unified-composer .dsh-session-controls--primary .dsh-session-controls__metrics > div,
+.dsh-unified-composer .dsh-session-controls--primary .dsh-session-controls__context-cell {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  margin: 0;
+  overflow: visible;
+}
+
+.dsh-unified-composer .dsh-composer__toolbar-balance {
+  display: none;
+}
+
+.dsh-unified-composer .dsh-composer__hint {
+  min-width: 0;
+  max-width: 10rem;
+  overflow: hidden;
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-2xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-unified-composer .dsh-composer__submit {
+  grid-area: submit;
+  align-self: center;
+  min-width: 2.25rem;
+  min-height: 2.25rem;
+  padding: var(--dsh-space-2);
+  border-radius: var(--dsh-radius-md);
+}
+
+.dsh-unified-composer .dsh-composer__status {
+  flex: 0 0 auto;
+  min-height: 0;
+  margin: 0;
+  padding: var(--dsh-space-1) var(--dsh-space-1) 0;
+  border-top: 1px solid color-mix(in srgb, var(--dsh-border-color) 54%, transparent);
+  overflow: hidden;
+}
+
+.dsh-unified-composer .dsh-composer__status:has(.dsh-stats-line[aria-hidden='true']) {
+  display: none;
+}
+
+/* Editor context is one compact composer rail. Capture actions and attached
+ * context share the same surface, so the rail never grows into a second
+ * toolbar or hides important context behind the plus menu. */
+.dsh-unified-composer .dsh-composer__context-rail {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  min-height: var(--dsh-control-height);
+  gap: var(--dsh-space-2);
+  padding: 0 var(--dsh-space-1);
+  color: var(--dsh-muted);
+}
+
+.dsh-unified-composer .dsh-composer__context-content {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: var(--dsh-space-1);
+  overflow: visible;
+}
+
+.dsh-unified-composer .dsh-composer__context-chips {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: var(--dsh-space-1);
+  overflow: auto hidden;
+  scrollbar-width: thin;
+}
+
+.dsh-unified-composer .dsh-composer__context-actions {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  min-width: 0;
+  gap: var(--dsh-space-1);
+}
+
+.dsh-unified-composer .dsh-composer__context-capture {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  min-width: 0;
+  min-height: var(--dsh-control-height);
+  gap: var(--dsh-space-1);
+  padding: var(--dsh-space-1) var(--dsh-space-2);
+  border: 1px solid var(--dsh-border-color);
+  border-radius: var(--dsh-radius-md);
+  color: var(--dsh-muted);
+  background: var(--dsh-surface-raised);
+  font-size: var(--dsh-font-size-2xs);
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.dsh-unified-composer .dsh-composer__context-capture:hover:not(:disabled),
+.dsh-unified-composer .dsh-composer__context-capture:focus-visible {
+  color: var(--dsh-text);
+  background: var(--dsh-surface-hover);
+}
+
+.dsh-unified-composer .dsh-composer__context-chip {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  max-width: min(24rem, 72%);
+  flex: 0 1 auto;
+  border: 1px solid var(--dsh-border-color);
+  border-radius: 999px;
+  color: var(--dsh-text);
+  background: var(--dsh-surface-raised);
+}
+
+.dsh-unified-composer .dsh-composer__attachment {
+  min-width: 0;
+  padding: 0;
+  gap: 0;
+}
+
+.dsh-unified-composer .dsh-composer__attachment-content {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: var(--dsh-space-1);
+  padding: var(--dsh-space-1) var(--dsh-space-2);
+}
+
+.dsh-unified-composer .dsh-composer__attachment-thumb,
+.dsh-unified-composer .dsh-composer__attachment-preview {
+  flex: 0 0 auto;
+  width: 1rem;
+  height: 1rem;
+  border-radius: var(--dsh-radius-sm);
+  color: inherit;
+  background: transparent;
+}
+
+.dsh-unified-composer .dsh-composer__attachment-remove {
+  width: var(--dsh-control-height);
+  min-width: var(--dsh-control-height);
+  height: var(--dsh-control-height);
+  min-height: var(--dsh-control-height);
+  padding: var(--dsh-space-1);
+}
+
+.dsh-unified-composer .dsh-composer__context-preview {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: var(--dsh-space-1);
+  padding: var(--dsh-space-1) var(--dsh-space-2);
+  border: 0;
+  border-radius: inherit;
+  color: inherit;
+  background: transparent;
+  text-align: start;
+}
+
+.dsh-unified-composer .dsh-composer__context-preview:hover:not(:disabled),
+.dsh-unified-composer .dsh-composer__context-preview:focus-visible {
+  background: var(--dsh-surface-hover);
+}
+
+.dsh-unified-composer .dsh-composer__context-preview > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-unified-composer .dsh-composer__context-preview > small {
+  flex: 0 0 auto;
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-2xs);
+  white-space: nowrap;
+}
+
+.dsh-unified-composer .dsh-composer__context-remove {
+  flex: 0 0 auto;
+  width: var(--dsh-control-height);
+  min-width: var(--dsh-control-height);
+  min-height: var(--dsh-control-height);
+  padding: var(--dsh-space-1);
+  border: 0;
+  border-radius: 50%;
+}
+
+.dsh-unified-composer .dsh-composer__context-chip--stale {
+  color: var(--dsh-warning);
+}
+
+.dsh-unified-composer .dsh-composer__context-preview-loading,
+.dsh-unified-composer .dsh-composer__context-status {
+  min-width: 0;
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-2xs);
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.dsh-unified-composer .dsh-composer__context-preview-loading {
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dsh-unified-composer .dsh-composer__context-status--error {
+  color: var(--dsh-danger);
+}

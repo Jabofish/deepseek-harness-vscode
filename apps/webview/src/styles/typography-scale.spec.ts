@@ -1,3 +1,4 @@
+import { readStylesheet } from '../../../../scripts/read-stylesheet.mjs'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -25,7 +26,9 @@ const HOST_FONT_SIZES = new Set([
 
 const webviewSrc = fileURLToPath(new URL('../../', import.meta.url))
 const uiStyles = readFileSync(new URL('../../../../packages/ui/src/styles.css', import.meta.url), 'utf8')
-const appStyles = readFileSync(new URL('./app.css', import.meta.url), 'utf8')
+const appStyles = readStylesheet(new URL('./app.css', import.meta.url), [
+  new URL('./compatibility.css', import.meta.url),
+])
 
 function blankComments(stylesheet: string): string {
   return stylesheet.replace(/\/\*[\s\S]*?\*\//gu, (block) => block.replace(/[^\n]/gu, ' '))

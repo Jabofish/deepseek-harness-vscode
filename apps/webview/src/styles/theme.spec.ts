@@ -1,9 +1,12 @@
+import { readStylesheet } from '../../../../scripts/read-stylesheet.mjs'
 import { readFileSync, readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 const themeStyles = readFileSync(new URL('./theme.css', import.meta.url), 'utf8')
-const appStyles = readFileSync(new URL('./app.css', import.meta.url), 'utf8')
+const appStyles = readStylesheet(new URL('./app.css', import.meta.url), [
+  new URL('./compatibility.css', import.meta.url),
+])
 const uiStyles = readFileSync(new URL('../../../../packages/ui/src/styles.css', import.meta.url), 'utf8')
 const webviewSrc = fileURLToPath(new URL('../../', import.meta.url))
 

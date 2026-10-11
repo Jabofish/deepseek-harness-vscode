@@ -37,7 +37,6 @@
   ],
   "main": "./dist/extension.cjs",
   "activationEvents": [
-    "onStartupFinished",
     "onView:dsh.chatView",
     "onCommand:dsh.connect",
     "onCommand:dsh.reconnect",

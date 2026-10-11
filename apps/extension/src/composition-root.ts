@@ -1,10 +1,5 @@
 import * as vscode from 'vscode'
-import type {
-  AgentConfiguration,
-  DshRuntimeUpdateProgress,
-  EditorContextOwner,
-  SessionSummary,
-} from '@dsh-vscode/domain'
+import type { DshRuntimeUpdateProgress, EditorContextOwner, SessionSummary } from '@dsh-vscode/domain'
 import {
   featureHostEnvelopeSchema,
   featureHostMessageSchema,
@@ -30,10 +25,7 @@ import { sessionWorkspaceFolderId } from './view/session-workspace-scope.js'
 import { readExtensionVersion } from './composition/runtime.js'
 import { sameWorkspacePath } from './composition/workspace-state.js'
 import { createSessionScope } from './composition/session-scope.js'
-import {
-  createUseCasesAssembly,
-  resolveSessionConfigurationForRoster,
-} from './composition/use-cases-assembly.js'
+import { createUseCasesAssembly } from './composition/use-cases-assembly.js'
 import { createConnectionLifecycle, createRuntimeAssembly } from './composition/connection-assembly.js'
 import { createHostEventPipeline } from './composition/host-event-pipeline.js'
 import { createChangeCheckpointTaskAssembly } from './composition/change-checkpoint-task-assembly.js'
@@ -47,8 +39,6 @@ import { createCommandsAssembly } from './composition/commands-assembly.js'
 export interface CompositionRoot extends vscode.Disposable {
   start(): Promise<void>
 }
-
-export { resolveSessionConfigurationForRoster }
 
 /**
  * Orchestration shell: builds the shared base services and closures, then
@@ -159,13 +149,6 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     currentWorkspaceFolders,
     currentWorkspaceFolder,
   })
-  const resolveSessionConfiguration = async (
-    requested: AgentConfiguration,
-    signal?: AbortSignal,
-  ): Promise<AgentConfiguration> => {
-    const { presets } = await backendService.requireBackend().presets.list(signal)
-    return resolveSessionConfigurationForRoster(requested, presets)
-  }
   const featureOwner = (): EditorContextOwner => ({
     ownerId: DSH_CHAT_VIEW_OWNER_ID,
     ownerViewId: DSH_CHAT_VIEW_OWNER_ID,
@@ -319,7 +302,6 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     contextOwnerForSession,
     currentFeatureSessionBinding,
     workspaceFolderIdForSession,
-    resolveSessionConfiguration,
     startJobFollow,
     stopJobFollow,
     stopAllJobFollows,

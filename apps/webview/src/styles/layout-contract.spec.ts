@@ -1,3 +1,4 @@
+import { readStylesheet } from '../../../../scripts/read-stylesheet.mjs'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
@@ -12,10 +13,15 @@ import { describe, expect, it } from 'vitest'
 
 // app.css imports the compatibility sheet first, so a later app.css rule wins
 // at equal specificity; reading both in cascade order answers "what applies".
-const compatibilityStyles = readFileSync(new URL('./compatibility.css', import.meta.url), 'utf8')
-const cascade = compatibilityStyles + '\n' + readFileSync(new URL('./app.css', import.meta.url), 'utf8')
-const layoutStyles = readFileSync(new URL('./layout.css', import.meta.url), 'utf8')
-const appStyles = readFileSync(new URL('./app.css', import.meta.url), 'utf8')
+const compatibilityStyles = readStylesheet(new URL('./compatibility.css', import.meta.url))
+const cascade =
+  compatibilityStyles +
+  '\n' +
+  readStylesheet(new URL('./app.css', import.meta.url), [new URL('./compatibility.css', import.meta.url)])
+const layoutStyles = readStylesheet(new URL('./layout.css', import.meta.url))
+const appStyles = readStylesheet(new URL('./app.css', import.meta.url), [
+  new URL('./compatibility.css', import.meta.url),
+])
 
 describe('Conversation interaction dock', () => {
   it('docks pending interaction cards in the composer slot with a scrolling question body', () => {

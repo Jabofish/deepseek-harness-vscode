@@ -1,31 +1,25 @@
 import type { MessageFeedbackItem, SessionSummary, WorkspaceSummary } from '@dsh-vscode/domain'
 import type { WebviewRequest } from '@dsh-vscode/webview-protocol'
 import type { ProtocolClient } from '../protocol-client.js'
-import { parsePresetRoster } from './agent-config.js'
 import { isMessageFeedbackItem } from './feature-parsers.js'
 import { requestId } from './ids.js'
 import { EMPTY_SUBAGENT_CATALOG } from './initial-state.js'
 import {
   deduplicateSessionSummaries,
-  listValues,
   mergeUniqueStrings,
-  sameModelDescriptorList,
-  sameModelProviderList,
-  samePresetDescriptorList,
   sameSessionSummaryList,
   sameWorkspaceSummaryList,
   strictListValues,
   stringList,
 } from './list-equality.js'
-import { isModelDescriptor, isModelProvider } from './model-catalog.js'
 import { isSessionSummary, isWorkspaceSummary } from './session-guards.js'
-import { withPresetSelectionEnabled } from './host-message-reducers.js'
 import type { StateSetter } from './types.js'
 import { object } from './unknown-record.js'
 
 export async function refreshSessions(
   client: ProtocolClient,
   setState: StateSetter,
+  refreshCatalogs: (isCurrent: () => boolean) => Promise<void>,
   isCurrent: () => boolean = () => true,
   awaitCatalogs = true,
 ): Promise<void> {
@@ -43,11 +37,9 @@ export async function refreshSessions(
     }),
     client.request<unknown>({ type: 'workspace.list', requestId: requestId() }),
   ])
-  const catalogResults = Promise.allSettled([
-    client.request<unknown>({ type: 'providers.list', requestId: requestId() }),
-    client.request<unknown>({ type: 'models.list', requestId: requestId(), payload: {} }),
-    client.request<unknown>({ type: 'preset.list', requestId: requestId() }),
-  ])
+  // Advisory catalogs must not turn a successful workspace/session read into
+  // a rejected startup, nor leave a detached background rejection unhandled.
+  const catalogRefresh = refreshCatalogs(isCurrent).catch(() => undefined)
   const [sessionResult, workspaceResult] = await criticalResults
   const value = (result: PromiseSettledResult<unknown>): unknown =>
     result.status === 'fulfilled' ? result.value : undefined
@@ -155,49 +147,7 @@ export async function refreshSessions(
         : {}),
     }
   })
-  const applyCatalogs = (results: readonly PromiseSettledResult<unknown>[]): void => {
-    if (!isCurrent()) return
-    const catalogValue = (index: number): unknown => {
-      const result = results[index]
-      return result?.status === 'fulfilled' ? result.value : undefined
-    }
-    const providers = listValues(catalogValue(0)).filter(isModelProvider)
-    const models = strictListValues(catalogValue(1), isModelDescriptor)
-    const presetRoster = parsePresetRoster(catalogValue(2))
-    const presets = presetRoster?.presets
-    setState((current) => {
-      const nextProviders =
-        providers === undefined || sameModelProviderList(current.providers, providers)
-          ? current.providers
-          : providers
-      const nextModels =
-        models === undefined || sameModelDescriptorList(current.models, models) ? current.models : models
-      const nextPresets =
-        presets === undefined || samePresetDescriptorList(current.presets, presets)
-          ? current.presets
-          : presets
-      const nextPresetSelectionEnabled =
-        presetRoster === undefined ? current.presetSelectionEnabled : presetRoster.modeSelectionEnabled
-      if (
-        nextProviders === current.providers &&
-        nextModels === current.models &&
-        nextPresets === current.presets &&
-        nextPresetSelectionEnabled === current.presetSelectionEnabled
-      )
-        return current
-      return withPresetSelectionEnabled(
-        {
-          ...current,
-          providers: nextProviders,
-          models: nextModels,
-          presets: nextPresets,
-        },
-        nextPresetSelectionEnabled,
-      )
-    })
-  }
-  if (awaitCatalogs) applyCatalogs(await catalogResults)
-  else void catalogResults.then(applyCatalogs)
+  if (awaitCatalogs) await catalogRefresh
 }
 
 /**

@@ -12,7 +12,7 @@ import { LIVE_TIMEOUT_MS, startManagedRuntime, type ManagedLiveRuntime } from '.
  * Live evidence for the Schedule remote gate. A managed `web` profile without
  * an enabled Schedule bundle answers `schedule/*` with HTTP 404 and reports
  * `CAPABILITY_UNAVAILABLE`; the panel must name that cause instead of claiming a
- * load failure. The second launch probes a home-level patch. RC201 has moved
+ * load failure. The second launch probes a home-level patch. RC201/RC202 have moved
  * Schedule into an optional bundle, so a patch naming absent rows cannot
  * enable it; schedule-optional-bundle.spec.ts covers the supported toggle.
  *
@@ -66,8 +66,11 @@ describe.skipIf(process.env.DSH_LIVE_SMOKE !== '1')('live DSH schedule profile g
         const patched = runtime.backend.schedules
         expect(patched, 'the patched profile must expose the Schedule remote').toBeDefined()
         if (patched === undefined) return
-        if (runtime.snapshot.version === '0.2.0-rc.1') {
-          evidence.push(`legacy home patch: ${await describeCatalog(patched)}`)
+        if (runtime.snapshot.version === '0.2.0-rc.1' || runtime.snapshot.version === '0.2.0-rc.2') {
+          // Both pinned versions insert these rows through the optional bundle;
+          // changing disabled flags for absent rows cannot mount the Remote.
+          await expect(patched.catalog()).rejects.toMatchObject({ code: 'CAPABILITY_UNAVAILABLE' })
+          evidence.push('legacy home patch: catalog unavailable [CAPABILITY_UNAVAILABLE]')
           return
         }
         const items = await patched.catalog()

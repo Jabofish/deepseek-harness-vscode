@@ -189,7 +189,7 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
   // Identity-stable across streaming frames: the facts only change when a
   // user-authored row actually does, so the render context below (and with it
   // every memoized TimelineRow) survives tool/assistant deltas untouched.
-  const userTextFacts = userTextFactsProjector(props.nodes)
+  const userTextFacts = userTextFactsProjector(props.nodes, props.nodeChangeStart, props.nodeChangeBase)
   const virtualizationProjector = useMemo(() => createVirtualizationProjector(), [])
 
   const usingTool = timelineFacts.hasActiveTool

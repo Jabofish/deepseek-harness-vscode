@@ -1,0 +1,211 @@
+/* Official General-section writable rows (settings.describe driven). */
+.dsh-presets {
+  display: grid;
+  gap: 12px;
+}
+
+.dsh-presets__intro {
+  margin: 0;
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-xs);
+}
+
+.dsh-presets__group {
+  display: grid;
+  gap: 8px;
+}
+
+.dsh-presets__group h3 {
+  margin: 0;
+  font-size: var(--dsh-font-size-2xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--dsh-muted);
+}
+
+.dsh-presets__empty-group {
+  margin: 0;
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-xs);
+}
+
+.dsh-presets__creator-card {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: 100%;
+  min-height: 64px;
+  padding: 12px;
+  border: 1px dashed color-mix(in srgb, var(--dsh-accent-line) 60%, var(--dsh-border-color));
+  border-radius: 6px;
+  color: var(--dsh-accent-line);
+  background: transparent;
+  cursor: pointer;
+}
+
+.dsh-presets__creator-card:hover:not(:disabled),
+.dsh-presets__creator-card:focus-visible {
+  background: color-mix(in srgb, var(--dsh-accent) 9%, transparent);
+}
+
+.dsh-presets__creator-card:disabled {
+  color: var(--dsh-muted);
+  cursor: not-allowed;
+}
+
+.dsh-preset-card--active {
+  border-color: var(--dsh-focus, currentColor);
+}
+
+.dsh-preset-card--broken {
+  border-color: var(--dsh-error-border, var(--dsh-danger, currentColor));
+}
+
+.dsh-presets__revealed {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  font-size: var(--dsh-font-size-xs);
+  color: var(--dsh-muted);
+}
+
+.dsh-presets__revealed code {
+  font-family: var(--vscode-editor-font-family, monospace);
+  word-break: break-all;
+}
+
+.dsh-presets__dialog {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--dsh-control-border);
+  border-radius: var(--dsh-radius-md, 8px);
+  background: var(--dsh-surface);
+}
+
+.dsh-presets__dialog--guide {
+  width: min(600px, calc(100vw - 24px));
+  max-height: min(82vh, 720px);
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+}
+
+.dsh-presets__guide-actions,
+.dsh-presets__guide-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.dsh-presets__guide-actions {
+  margin-right: auto;
+}
+
+/* Segmented control: both tabs render as the same secondary button, so the pressed
+ * one owns an accented surface instead. */
+.dsh-presets__guide-tabs .dsh-button[aria-pressed='true'] {
+  border-color: var(--dsh-accent-line);
+  color: var(--dsh-text);
+  background: color-mix(in srgb, var(--dsh-accent-line) 14%, var(--dsh-secondary));
+}
+
+.dsh-presets__guide-intro,
+.dsh-presets__guide-content p {
+  margin: 0;
+  color: var(--dsh-muted);
+  line-height: 1.5;
+}
+
+.dsh-presets__guide-content {
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 2px;
+  line-height: 1.5;
+}
+
+.dsh-presets__guide-content p + p {
+  margin-top: 12px;
+}
+
+.dsh-presets__dialog h3 {
+  margin: 0;
+  font-size: var(--dsh-font-size-sm);
+}
+
+.dsh-presets__field {
+  display: grid;
+  gap: 4px;
+  font-size: var(--dsh-font-size-xs);
+}
+
+.dsh-presets__field input {
+  padding: 4px 8px;
+  border: 1px solid var(--dsh-control-border);
+  border-radius: var(--dsh-radius-sm);
+  background: var(--dsh-input-bg, transparent);
+  color: var(--dsh-input-text, inherit);
+  font-size: var(--dsh-font-size-xs);
+}
+
+.dsh-presets__dialog-error {
+  margin: 0;
+  color: var(--dsh-error-text, var(--dsh-danger, inherit));
+  font-size: var(--dsh-font-size-xs);
+}
+
+.dsh-settings__provider-kind,
+.dsh-settings__provider-active {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: var(--dsh-font-size-2xs);
+  border: 1px solid var(--dsh-control-border);
+  color: var(--dsh-muted);
+}
+
+.dsh-settings__provider-active {
+  color: var(--dsh-chart-green, var(--dsh-success));
+  border-color: color-mix(in srgb, var(--dsh-chart-green, var(--dsh-success)) 45%, transparent);
+}
+
+.dsh-settings__model-editor-head,
+.dsh-settings__model-editor-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.dsh-settings__model-editor-actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.dsh-settings__model-editor-note {
+  margin: 0;
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-xs);
+}
+
+.dsh-settings__editable-models {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.dsh-settings__editable-model {
+  min-width: 0;
+}
+
+.dsh-settings__editable-model label {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-xs);
+}

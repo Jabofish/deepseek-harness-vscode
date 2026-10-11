@@ -1,0 +1,549 @@
+.dsh-goal-bar__content,
+.dsh-goal-strip__summary,
+.dsh-interaction__header,
+.dsh-queue__header {
+  justify-content: space-between;
+}
+
+/* Goal titles, approval subjects and question prompts come from the model, so any of them can be
+ * one unbroken token longer than the panel. A nowrap title keeps the whole string as its
+ * min-content width, and a flex item's min-content width propagates through every content-sized
+ * ancestor: measured as 1480px of min-content for a 900px panel, which is what put a horizontal
+ * scrollbar on the page. `overflow-wrap: anywhere` lowers that width to a single character, so
+ * the title now wraps instead; the two-line clamp stops a pathological title from filling the
+ * panel, and duplicates stay reachable through the existing `title` attributes. */
+.dsh-goal-bar__title,
+.dsh-goal-strip__title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  font-size: var(--dsh-font-size-md);
+  white-space: normal;
+}
+
+/* The strip is a `<details>` whose summary labels the list below it, so its rows must not
+ * out-size that label; the goal bar has no header of its own and keeps the larger title. */
+.dsh-goal-strip__heading {
+  font-size: var(--dsh-font-size-md);
+  font-weight: 600;
+}
+
+.dsh-goal-strip__title {
+  font-size: var(--dsh-font-size-sm);
+}
+
+/* A pending question's prompt is not a label: it carries the options the model
+ * inlined as text, so clamping it to two lines hid whole choices. Measured at a
+ * 512px viewport a 67-character prompt needed 3 lines (60px) and only 2 (40px)
+ * were laid out, with `scrollHeight === clientHeight` so no DOM test could see
+ * it. The header is now the one part of the card that must never clip; the
+ * questions scroll in `.dsh-interaction__body` and the actions row stays pinned.
+ * It also drops to the body scale because it is read as prose, not a heading. */
+.dsh-interaction__header h2 {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--dsh-font-size-md);
+  line-height: 1.45;
+  white-space: normal;
+}
+
+.dsh-goal-bar__blocked {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dsh-error-text);
+}
+
+.dsh-goal-bar__clear--confirming {
+  color: var(--dsh-error-text);
+}
+
+.dsh-goal-bar__confirmation {
+  display: block;
+  margin-top: var(--dsh-space-2);
+  color: var(--dsh-error-text);
+  overflow-wrap: anywhere;
+}
+
+.dsh-goal-bar__phase,
+.dsh-goal-strip__count,
+.dsh-queue__count {
+  flex: 0 0 auto;
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-2xs);
+}
+
+.dsh-goal-bar__edit,
+.dsh-goal-bar__input {
+  min-width: 0;
+}
+
+.dsh-goal-bar__edit {
+  display: flex;
+  flex: 1 1 auto;
+  gap: var(--dsh-space-2);
+}
+
+.dsh-goal-bar__input {
+  width: 100%;
+}
+
+.dsh-goal-bar__error,
+.dsh-settings__error,
+.dsh-plugin-configuration__error,
+.dsh-checkpoints-popover__error,
+.dsh-prompt-templates-popover__error,
+.dsh-tasks-popover__error,
+.dsh-session-switcher__error {
+  margin: var(--dsh-space-2) 0 0;
+  color: var(--dsh-danger);
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.dsh-session-switcher__warning {
+  margin: var(--dsh-space-2) 0 0;
+  color: var(--dsh-warning);
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.dsh-goal-strip__list,
+.dsh-queue__list {
+  display: grid;
+  gap: var(--dsh-space-2);
+  min-width: 0;
+  margin: var(--dsh-space-3) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.dsh-queue__list {
+  max-height: 11.25rem;
+  gap: 0;
+  margin: 0;
+  overflow-y: auto;
+}
+
+.dsh-queue__list[hidden] {
+  display: none;
+}
+
+.dsh-goal-strip__list li,
+.dsh-queue__list li {
+  min-width: 0;
+  padding: var(--dsh-space-2);
+  border: var(--dsh-border);
+  border-radius: var(--dsh-radius-sm);
+}
+
+.dsh-queue__list li,
+.dsh-queue__item-main,
+.dsh-queue__item-actions {
+  display: flex;
+  align-items: center;
+}
+
+.dsh-queue__list li {
+  justify-content: space-between;
+  min-height: 2.25rem;
+  gap: var(--dsh-space-2);
+  padding: var(--dsh-space-1) var(--dsh-space-2) var(--dsh-space-1) var(--dsh-space-3);
+  border: 0;
+  border-radius: 0;
+}
+
+.dsh-queue__list li + li {
+  border-top: var(--dsh-border);
+}
+
+.dsh-queue__item-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: var(--dsh-space-2);
+}
+
+.dsh-queue__item-main input {
+  width: 100%;
+  min-width: 0;
+  min-height: var(--dsh-control-height-compact);
+  padding: var(--dsh-space-1) var(--dsh-space-2);
+  font-size: var(--dsh-font-size-sm);
+}
+
+.dsh-queue__item-actions {
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+  gap: var(--dsh-space-1);
+}
+
+.dsh-queue__mode .dsh-select-menu__trigger,
+.dsh-queue .dsh-icon-button {
+  min-height: var(--dsh-control-height-compact);
+}
+
+.dsh-queue__mode .dsh-select-menu__trigger {
+  padding: var(--dsh-space-1) var(--dsh-space-2);
+  font-size: var(--dsh-font-size-sm);
+}
+
+.dsh-queue .dsh-icon-button {
+  width: var(--dsh-control-height-compact);
+  min-width: var(--dsh-control-height-compact);
+  height: var(--dsh-control-height-compact);
+}
+
+.dsh-queue__index {
+  display: grid;
+  place-items: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  color: var(--dsh-muted);
+  background: var(--dsh-surface-soft);
+  font-size: var(--dsh-font-size-2xs);
+}
+
+.dsh-queue__files {
+  display: inline-flex;
+  flex-wrap: wrap;
+  min-width: 0;
+  gap: var(--dsh-space-1);
+}
+
+.dsh-queue__file {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--dsh-space-1);
+  flex: 0 0 auto;
+  min-width: 0;
+  max-width: min(12rem, 100%);
+  padding: 0 var(--dsh-space-2);
+  border: var(--dsh-border);
+  border-radius: 999px;
+  color: var(--dsh-muted);
+  background: var(--dsh-surface-soft);
+  font-size: var(--dsh-font-size-2xs);
+}
+
+.dsh-queue__file > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-session-item {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: var(--dsh-space-2);
+}
+
+.dsh-session-item__button {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  flex: 1 1 auto;
+  gap: var(--dsh-space-2);
+  padding: var(--dsh-space-2);
+  border-color: transparent;
+  color: var(--dsh-text);
+  background: transparent;
+  text-align: start;
+}
+
+.dsh-session-item__button--active,
+.dsh-session-item__button:hover:not(:disabled) {
+  background: var(--dsh-surface-hover);
+}
+
+/* The open session carries an accent rail; the modifier lives on the button, not
+ * on the list item, so it has to be restated at this specificity. */
+.dsh-session-item__button--active {
+  border-inline-start-color: var(--dsh-accent-line);
+  box-shadow: inset 2px 0 var(--dsh-accent-line);
+}
+
+.dsh-session-item__copy {
+  display: grid;
+  min-width: 0;
+  gap: var(--dsh-space-1);
+}
+
+.dsh-session-item__copy strong,
+.dsh-session-item__copy small,
+.dsh-session-item__workspace {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-session-item__copy small,
+.dsh-session-item__workspace {
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-2xs);
+}
+
+.dsh-session-item__status {
+  width: 0.5rem;
+  height: 0.5rem;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--dsh-muted);
+}
+
+.dsh-session-item__status--green {
+  background: var(--dsh-success);
+}
+
+.dsh-session-item__status--blue {
+  background: var(--dsh-info);
+}
+
+.dsh-session-item__status--amber {
+  background: var(--dsh-warning);
+}
+
+.dsh-session-item__status--red {
+  background: var(--dsh-danger);
+}
+
+.dsh-session-switcher {
+  position: relative;
+  min-width: 0;
+}
+
+.dsh-session-switcher__trigger {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  max-width: min(22rem, 42vw);
+  gap: var(--dsh-space-2);
+  padding: var(--dsh-space-2) var(--dsh-space-3);
+  border: var(--dsh-border);
+  border-radius: var(--dsh-radius-md);
+  color: var(--dsh-text);
+  background: var(--dsh-surface-raised);
+}
+
+.dsh-session-switcher__trigger:hover:not(:disabled),
+.dsh-session-switcher__trigger--open {
+  background: var(--dsh-surface-hover);
+}
+
+.dsh-session-switcher__trigger-label {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-session-switcher__panel-title {
+  display: grid;
+  min-width: 0;
+  flex: 1 1 auto;
+  gap: var(--dsh-space-1);
+}
+.dsh-session-switcher__panel-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-session-switcher__chevron {
+  flex: 0 0 auto;
+  color: var(--dsh-muted);
+  transition: transform var(--dsh-motion-duration-fast) var(--dsh-motion-ease-standard);
+}
+
+.dsh-session-switcher__panel {
+  position: absolute;
+  z-index: 35;
+  top: calc(100% + var(--dsh-space-2));
+  inset-inline: 0;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  min-width: min(100%, 24rem);
+  max-height: min(32rem, calc(100vh - 2rem));
+  overflow: hidden;
+  border: var(--dsh-border);
+  border-radius: var(--dsh-radius-md);
+  background: var(--dsh-widget-bg);
+  box-shadow: var(--dsh-shadow);
+}
+
+.dsh-session-switcher__panel-header,
+.dsh-session-switcher__panel-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  gap: var(--dsh-space-2);
+  padding: var(--dsh-space-3);
+  border-bottom: var(--dsh-border);
+}
+
+.dsh-session-switcher__search {
+  padding: var(--dsh-space-3);
+  border-bottom: var(--dsh-border);
+}
+
+.dsh-session-switcher__search input {
+  width: 100%;
+}
+
+.dsh-session-switcher__groups,
+.dsh-session-switcher__list,
+.dsh-session-switcher__workspaces {
+  display: grid;
+  gap: var(--dsh-space-1);
+  min-width: 0;
+  margin: 0;
+  padding: var(--dsh-space-2);
+  overflow: auto;
+  list-style: none;
+}
+
+.dsh-session-switcher__group-label {
+  margin: var(--dsh-space-2) var(--dsh-space-2) var(--dsh-space-1);
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-2xs);
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.dsh-session-switcher__archived {
+  border-top: var(--dsh-border);
+}
+
+.dsh-session-switcher__archived-toggle {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  gap: var(--dsh-space-2);
+  padding: var(--dsh-space-2) var(--dsh-space-3);
+  border: 0;
+  color: var(--dsh-muted);
+  background: transparent;
+  font-size: var(--dsh-font-size-xs);
+  font-weight: 600;
+  text-align: start;
+  text-transform: uppercase;
+}
+
+.dsh-session-switcher__archived-toggle:hover {
+  color: var(--dsh-text);
+  background: var(--dsh-surface-hover);
+}
+
+.dsh-session-switcher__archived-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-session-switcher__archived-count {
+  flex: 0 0 auto;
+  color: var(--dsh-text);
+}
+
+.dsh-session-switcher__archived-toggle .dsh-session-switcher__chevron {
+  margin-inline-start: auto;
+}
+
+.dsh-session-switcher__archived-toggle[aria-expanded='true'] .dsh-session-switcher__chevron {
+  transform: rotate(180deg);
+}
+
+.dsh-session-switcher__archived-body .dsh-session-item {
+  padding: var(--dsh-space-2) var(--dsh-space-3);
+}
+.dsh-session-switcher__workspace {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: var(--dsh-space-2);
+  padding: var(--dsh-space-2);
+  border: var(--dsh-border);
+  border-radius: var(--dsh-radius-sm);
+}
+
+.dsh-session-switcher__workspace--active,
+.dsh-session-switcher__workspace:hover {
+  background: var(--dsh-surface-hover);
+}
+
+.dsh-session-switcher__workspace-button {
+  min-width: 0;
+  flex: 1 1 auto;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  text-align: start;
+}
+
+.dsh-session-switcher__workspace-button > span,
+.dsh-session-switcher__workspace-button > small {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-session-switcher__workspace-button > small {
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-2xs);
+}
+
+.dsh-session-switcher__workspace-actions,
+.dsh-session-item__actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: var(--dsh-space-1);
+}
+
+.dsh-compose-area {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  min-width: 0;
+  gap: var(--dsh-space-3);
+  padding-top: var(--dsh-space-2);
+}
+
+/* While a pending approval or question owns the composer slot, the input is
+ * replaced by this quiet placeholder: the reader learns why typing is off and
+ * that it returns, instead of finding the composer silently gone. */
+.dsh-compose-hint {
+  display: flex;
+  align-items: center;
+  gap: var(--dsh-space-2);
+  min-height: var(--dsh-control-height);
+  padding: var(--dsh-space-2) var(--dsh-space-3);
+  border: 1px dashed var(--dsh-border-color);
+  border-radius: var(--dsh-radius-md);
+  color: var(--dsh-muted);
+  font-size: var(--dsh-font-size-sm);
+}
+
+.dsh-compose-hint .dsh-icon {
+  flex: 0 0 auto;
+  width: var(--dsh-icon-size-sm);
+  height: var(--dsh-icon-size-sm);
+  color: var(--dsh-warning);
+}

@@ -700,7 +700,7 @@ describe('App connected rendering', () => {
     expect(screen.getByRole('button', { name: 'Settings' })).toBeDefined()
   })
 
-  it('restores and applies the conversation font size from General settings', () => {
+  it('restores and applies the conversation font size from General settings', async () => {
     window.localStorage.setItem(CONVERSATION_FONT_SIZE_STORAGE_KEY, 'large')
     currentStore = storeFor({ ...connectedState(true), drawer: 'settings' })
     render(<App />)
@@ -708,7 +708,7 @@ describe('App connected rendering', () => {
     expect(document.querySelector('.dsh-conversation')?.getAttribute('data-conversation-font-size')).toBe(
       'large',
     )
-    fireEvent.click(screen.getByRole('button', { name: 'Small' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Small' }))
 
     expect(document.querySelector('.dsh-conversation')?.getAttribute('data-conversation-font-size')).toBe(
       'small',

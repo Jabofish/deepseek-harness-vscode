@@ -1,0 +1,159 @@
+/* Selection surface -------------------------------------------------------- */
+
+.dsh-select-menu {
+  position: relative;
+  min-width: 0;
+}
+
+.dsh-select-menu__menu {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + var(--dsh-space-2));
+  inset-inline-start: 0;
+  min-width: 12rem;
+  max-width: min(var(--dsh-menu-width), calc(100vw - var(--dsh-space-4)));
+  max-height: min(28rem, calc(100vh - 2rem));
+  display: grid;
+  gap: var(--dsh-space-1);
+  overflow: auto;
+  padding: var(--dsh-space-2);
+  border: var(--dsh-border);
+  border-radius: var(--dsh-radius-md);
+  background: var(--dsh-widget-bg);
+  box-shadow: var(--dsh-shadow);
+  transform-origin: top left;
+  /* `backwards`, never `both`: an entry animation that fills forwards leaves
+   * `transform: scale(1)` on the finished element, and any transform — even an
+   * identity one — makes the element the containing block for `position: fixed`
+   * descendants. Overlay menus and popovers measure the viewport, so a
+   * filled-forward transform offsets and clips them by the element's origin. */
+  animation: dsh-pop-in var(--dsh-motion-duration-standard) var(--dsh-motion-ease-enter) backwards;
+}
+
+/* Form-bound selectors may reserve their own space instead of covering the
+ * next action. This keeps stacked onboarding fields usable in short views
+ * while the default menu remains a viewport-bounded overlay. */
+.dsh-select-menu--flow .dsh-select-menu__menu {
+  position: static;
+  inset: auto;
+  z-index: auto;
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+  margin-top: var(--dsh-space-2);
+}
+
+.dsh-select-menu__trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  min-width: 0;
+  min-height: var(--dsh-control-height-compact);
+  gap: var(--dsh-space-2);
+  padding: var(--dsh-space-1) var(--dsh-space-2);
+  border-color: var(--dsh-border-color);
+  color: var(--dsh-muted);
+  background: var(--dsh-surface-raised);
+  font-size: var(--dsh-font-size-sm);
+  text-align: start;
+}
+
+.dsh-select-menu__trigger:hover:not(:disabled),
+.dsh-select-menu--open .dsh-select-menu__trigger {
+  color: var(--dsh-text);
+  background: var(--dsh-surface-hover);
+}
+
+.dsh-select-menu--regular .dsh-select-menu__trigger {
+  min-height: var(--dsh-control-height);
+  padding: var(--dsh-space-2) var(--dsh-space-3);
+  font-size: var(--dsh-font-size-md);
+}
+
+.dsh-select-menu__trigger-text,
+.dsh-select-menu__trigger-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-select-menu__trigger-label {
+  display: none;
+}
+
+.dsh-select-menu__chevron {
+  width: var(--dsh-icon-size-sm);
+  height: var(--dsh-icon-size-sm);
+  flex: 0 0 auto;
+  margin-inline-start: auto;
+  color: var(--dsh-muted);
+}
+
+.dsh-select-menu--labelled .dsh-select-menu__trigger-label {
+  display: inline;
+}
+
+.dsh-select-menu--labelled .dsh-select-menu__trigger-text {
+  display: none;
+}
+
+.dsh-select-menu__option {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  min-height: var(--dsh-menu-item-height);
+  gap: var(--dsh-space-2);
+  padding: var(--dsh-space-2);
+  border-color: transparent;
+  color: var(--dsh-text);
+  background: transparent;
+  text-align: start;
+}
+
+.dsh-select-menu__option > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-select-menu__option > svg {
+  margin-inline-start: auto;
+}
+
+.dsh-select-menu__option:hover:not(:disabled),
+.dsh-select-menu__option--selected {
+  background: var(--dsh-surface-hover);
+}
+
+/* Inline references deliberately do not inherit the full-size button
+ * contract. They are safe, clickable text tokens inside prose. */
+
+.dsh-inline-reference {
+  display: inline-flex;
+  align-items: baseline;
+  max-width: 100%;
+  min-height: 0;
+  margin: 0;
+  padding: 0 var(--dsh-space-1);
+  border: var(--dsh-border);
+  border-color: transparent;
+  border-radius: var(--dsh-radius-sm);
+  color: var(--dsh-link);
+  background: color-mix(in srgb, var(--dsh-link) 8%, transparent);
+  font: inherit;
+  line-height: inherit;
+  vertical-align: baseline;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dsh-inline-reference:hover:not(:disabled),
+.dsh-inline-reference:focus-visible {
+  border-color: var(--dsh-control-border);
+  color: var(--dsh-text);
+  background: var(--dsh-surface-hover);
+}

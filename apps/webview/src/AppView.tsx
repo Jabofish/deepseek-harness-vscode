@@ -58,7 +58,6 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
     composerOnConfigurationChange,
     composerOnExtrasOpenChange,
     composerOnIngestFiles,
-    composerOnModelRetry,
     composerOnPickAttachment,
     composerOnPopupSelect,
     composerOnPreviewEditorContext,
@@ -119,12 +118,6 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
     scheduleOnOpenLinkedSession,
     scheduleOnStartSession,
     sessionControl,
-    sessionModelCurrent,
-    sessionModelDirectoryError,
-    sessionModelDirectoryLoading,
-    sessionModelFailures,
-    sessionModelRoutable,
-    sessionModels,
     setConversationFontSize,
     setConversationView,
     setDismissedConnection,
@@ -335,12 +328,13 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                   </div>
                   <div className="dsh-compose-area">
                     <ConnectedComposer
+                      store={store}
+                      modelScope="global"
                       key={state.pendingSession.revision}
                       disabled={backend.kind !== 'connected'}
                       running={false}
                       attachments={attachments}
                       configuration={state.pendingSession.configuration}
-                      models={state.models}
                       presets={state.presets}
                       presetMutable
                       {...(newSessionPresetSelectionEnabled === undefined
@@ -637,6 +631,8 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                       subagentReadOnlyReason === undefined || activeRunning ? (
                         <>
                           <ConnectedComposer
+                            store={store}
+                            modelScope="session"
                             disabled={backend.kind !== 'connected'}
                             inputDisabled={
                               subagentReadOnlyReason !== undefined ||
@@ -656,19 +652,6 @@ export function AppView(props: ReturnType<typeof useAppController>): ReactElemen
                                 }
                               : {})}
                             configuration={state.configuration}
-                            models={sessionModels}
-                            modelFailures={sessionModelFailures}
-                            modelLoading={sessionModelDirectoryLoading}
-                            {...(sessionModelCurrent === undefined
-                              ? {}
-                              : { modelCurrent: sessionModelCurrent })}
-                            {...(sessionModelDirectoryError === undefined
-                              ? {}
-                              : { modelError: sessionModelDirectoryError })}
-                            onModelRetry={composerOnModelRetry}
-                            {...(sessionModelRoutable === undefined
-                              ? {}
-                              : { modelRoutable: sessionModelRoutable })}
                             presets={state.presets}
                             {...(newSessionPresetSelectionEnabled === undefined
                               ? {}

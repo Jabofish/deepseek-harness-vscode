@@ -8,7 +8,10 @@ import type {
 import type { FeatureRequest } from '@dsh-vscode/webview-protocol'
 import { PluginInstallRecoveryController } from './plugin-install-recovery.js'
 import { createAccountActions } from './store/account-actions.js'
-import { createSettingsActions, type PresetSessionSyncTarget } from './store/settings-actions.js'
+import { createSettingsActions } from './store/settings-actions.js'
+import { createSessionConfigurationController } from './store/session-configuration-controller.js'
+import { createGlobalCatalogController } from './store/global-catalog-controller.js'
+import { createRetryDelays } from './store/retry-delays.js'
 import { createFeatureActions } from './store/feature-actions.js'
 import { defineStateView, type StoreWithoutStateView } from './store/state-view.js'
 import { createJobActions } from './store/job-actions.js'
@@ -19,11 +22,8 @@ import { requestId } from './store/ids.js'
 import { createPendingOpenBuffer } from './store/pending-open.js'
 import { createGoalQueueActions } from './store/goal-queue-actions.js'
 import { createSessionActions } from './store/session-actions.js'
-import {
-  createCommandDirectoryCache,
-  readCommandList,
-  refreshSessionModelDirectory,
-} from './store/command-directory.js'
+import { createCommandDirectoryCache, readCommandList } from './store/command-directory.js'
+import { refreshSessionModelDirectory } from './store/session-model-directory.js'
 import { createDshUpdateActions } from './store/dsh-update.js'
 import { createGapHealing } from './store/gap-heal.js'
 import { createFeedbackCache } from './store/feedback-cache.js'
@@ -81,6 +81,8 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   let persistedWebviewState = readPersistedWebviewState(vscodeApi.getState())
   let composerPreferences = persistedWebviewState.composerPreferences ?? {}
   let state = createInitialState(composerPreferences)
+  let disposed = false
+  const retryDelays = createRetryDelays()
   // Projection values arrive from both the Alpha Session/follow stream and
   // the independent session/control stream. Keep their DSH cut outside the
   // public state so an older snapshot cannot overwrite a newer live value.
@@ -109,7 +111,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     if (history !== state.history) state = { ...state, history }
   }
   const scheduleNotify = (): void => {
-    if (notifyTimer !== undefined) return
+    if (disposed || notifyTimer !== undefined) return
     notifyTimer = window.setTimeout(() => {
       notifyTimer = undefined
       flushPendingHistory()
@@ -117,6 +119,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     }, STORE_NOTIFY_BATCH_MS)
   }
   const appendLiveHistory: LiveHistoryAppender = (sessionId, entry): void => {
+    if (disposed) return
     if (pendingHistorySessionId !== undefined && pendingHistorySessionId !== sessionId) flushPendingHistory()
     pendingHistorySessionId = sessionId
     pendingHistory.push(entry)
@@ -127,6 +130,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     scheduleNotify()
   }
   const setState: StateSetter = (next): void => {
+    if (disposed) return
     const nextState = typeof next === 'function' ? next(state) : next
     if (nextState === state) {
       // A guarded async refresh can legitimately produce the current object.
@@ -192,6 +196,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     rememberCoveredRanges,
   } = gapHealing
   const persistWebviewState = (overrides: { readonly activeSessionId?: string } = {}): void => {
+    if (disposed) return
     const activeSessionId = overrides.activeSessionId ?? state.activeSessionId
     persistedWebviewState =
       activeSessionId === undefined
@@ -200,6 +205,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     vscodeApi.setState(persistedWebviewState)
   }
   const rememberComposerConfiguration = (configuration: AgentConfiguration): void => {
+    if (disposed) return
     const model = normalizedModelSelection(configuration.model)
     const rememberedModel = model ?? composerPreferences.model
     composerPreferences = {
@@ -214,120 +220,29 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   let goalReadGeneration = 0
   let openVersion = 0
   let sessionModelDirectoryGeneration = 0
-  let configurationGeneration = 0
-  let presetRosterGeneration = 0
   let pendingSessionRevision = 0
   let pendingSend: { readonly revision: number; readonly promise: Promise<void> } | undefined
-  const capturePresetSessionTarget = (): PresetSessionSyncTarget | undefined => {
-    const pending = state.pendingSession
-    if (pending !== undefined && pendingSend?.revision !== pending.revision) {
-      if (
-        pending.createdSessionId === undefined ||
-        state.sessions.some(
-          (session) => session.id === pending.createdSessionId && session.blank && session.status === 'idle',
-        )
-      )
-        return {
-          kind: 'pending',
-          revision: pending.revision,
-          ...(pending.createdSessionId === undefined ? {} : { createdSessionId: pending.createdSessionId }),
-          configuration: pending.configuration,
-        }
-    }
-    const sessionId = state.activeSessionId
-    const summary = state.sessions.find((session) => session.id === sessionId)
-    if (
-      sessionId !== undefined &&
-      state.activeSubagent === undefined &&
-      state.configuration !== undefined &&
-      summary?.blank === true &&
-      summary.status === 'idle'
-    )
-      return { kind: 'active', sessionId, configuration: state.configuration }
-    return undefined
-  }
-  const presetSessionTargetIsCurrent = (target: PresetSessionSyncTarget): boolean => {
-    if (target.kind === 'pending') {
-      const pending = state.pendingSession
-      return (
-        pending?.revision === target.revision &&
-        pending.createdSessionId === target.createdSessionId &&
-        pendingSend?.revision !== target.revision &&
-        pending.configuration.preset === target.configuration.preset &&
-        (target.createdSessionId === undefined ||
-          state.sessions.some(
-            (session) => session.id === target.createdSessionId && session.blank && session.status === 'idle',
-          ))
-      )
-    }
-    const summary = state.sessions.find((session) => session.id === target.sessionId)
-    return (
-      state.activeSessionId === target.sessionId &&
-      state.activeSubagent === undefined &&
-      state.configuration?.preset === target.configuration.preset &&
-      summary?.blank === true &&
-      summary.status === 'idle'
-    )
-  }
-  const synchronizeBlankSessionPreset = async (
-    target: PresetSessionSyncTarget,
-    preset: string,
-  ): Promise<void> => {
-    if (target.configuration.preset === preset || !presetSessionTargetIsCurrent(target)) return
-    const configuration = { ...target.configuration, preset }
-    if (target.kind === 'pending' && target.createdSessionId === undefined) {
-      setState((current) => {
-        const pending = current.pendingSession
-        if (
-          pending?.revision !== target.revision ||
-          pending.createdSessionId !== undefined ||
-          pending.configuration.preset !== target.configuration.preset ||
-          pendingSend?.revision === target.revision
-        )
-          return current
-        return { ...current, pendingSession: { ...pending, configuration } }
-      })
-      return
-    }
-    if (!presetSessionTargetIsCurrent(target)) return
-    const sessionId = target.kind === 'active' ? target.sessionId : target.createdSessionId
-    if (sessionId === undefined) return
-    const generation = ++configurationGeneration
-    await client.request<unknown>({
-      type: 'session.configure',
-      requestId: requestId(),
-      payload: { sessionId, configuration },
-    })
-    if (generation !== configurationGeneration || !presetSessionTargetIsCurrent(target)) return
-    if (target.kind === 'active')
-      setState((current) => {
-        const summary = current.sessions.find((session) => session.id === target.sessionId)
-        if (
-          current.activeSessionId !== target.sessionId ||
-          current.activeSubagent !== undefined ||
-          current.configuration?.preset !== target.configuration.preset ||
-          summary?.blank !== true ||
-          summary.status !== 'idle'
-        )
-          return current
-        return { ...current, configuration }
-      })
-    else
-      setState((current) => {
-        const pending = current.pendingSession
-        const summary = current.sessions.find((session) => session.id === target.createdSessionId)
-        if (
-          pending?.revision !== target.revision ||
-          pending.createdSessionId !== target.createdSessionId ||
-          pending.configuration.preset !== target.configuration.preset ||
-          pendingSend?.revision === target.revision ||
-          summary?.blank !== true ||
-          summary.status !== 'idle'
-        )
-          return current
-        return { ...current, pendingSession: { ...pending, configuration } }
-      })
-  }
+  const {
+    capturePresetSessionTarget,
+    synchronizeBlankSessionPreset,
+    nextConfigurationGeneration,
+    isConfigurationGenerationCurrent,
+    nextPresetRosterGeneration,
+    isPresetRosterCurrent,
+  } = createSessionConfigurationController({
+    client,
+    getState: () => state,
+    setState,
+    getPendingSendRevision: () => pendingSend?.revision,
+  })
+  const globalCatalogs = createGlobalCatalogController({
+    client,
+    setState,
+    isDisposed: () => disposed,
+    nextPresetRosterGeneration,
+    isPresetRosterCurrent,
+  })
+
   const refreshLiveGoals = async (): Promise<void> => {
     const sessionId = state.activeSessionId
     if (sessionId === undefined || !goalActivationAvailable) return
@@ -353,7 +268,6 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   // Claims the "most recent view request" slot for opens that have to await a
   // catalog read before they can claim `openVersion`.
   let openIntent = 0
-  let disposed = false
   const refreshSessionModelDirectoryForSession = (sessionId: string): Promise<void> => {
     // This store projects one active session's catalog. An off-screen refresh
     // has nowhere useful to merge and must not retire that active session's
@@ -384,7 +298,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     sessionId: string | undefined = state.activeSessionId,
     force = false,
   ): Promise<void> => {
-    if (sessionId === undefined) return
+    if (disposed || sessionId === undefined) return
     const commands = await loadCommandDirectory(sessionId, force)
     if (commands === undefined) return
     setState((current) =>
@@ -409,11 +323,18 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     }
   }
   const refresh = async (): Promise<void> => {
+    if (disposed) return
     const version = ++refreshVersion
     // Session/workspace visibility is enough to choose the startup session.
     // Global providers, models, and presets are merged in the background so
     // their latency cannot delay opening the conversation.
-    await refreshSessions(client, setState, () => version === refreshVersion, false)
+    await refreshSessions(
+      client,
+      setState,
+      globalCatalogs.refreshAll,
+      () => !disposed && version === refreshVersion,
+      false,
+    )
     // The first session.list can legitimately be an empty projection while a
     // workspace attach is still being committed. Retry the automatic restore
     // after every authoritative refresh until a session has been opened.
@@ -483,7 +404,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       } catch (reason) {
         if (attempt >= OPEN_RETRY_ATTEMPTS || version !== openVersion || !isRetryableOpenFailure(reason))
           throw reason
-        await new Promise((resolve) => setTimeout(resolve, OPEN_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1)))
+        if (!(await retryDelays.wait(OPEN_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1)))) throw reason
         // A newer open() owns the panel now; do not re-request the stale one.
         if (version !== openVersion) throw reason
       }
@@ -575,6 +496,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
    */
   const resubscribeActiveView = async (): Promise<void> => {
     for (let attempt = 1; ; attempt += 1) {
+      if (disposed) return
       const subagent = state.activeSubagent
       const sessionId = subagent === undefined ? state.activeSessionId : subagent.entry.id
       if (sessionId === undefined) return
@@ -587,8 +509,8 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
           subagent === undefined
             ? state.activeSubagent === undefined && state.activeSessionId === sessionId
             : state.activeSubagent?.entry.id === sessionId
-        if (attempt >= OPEN_RETRY_ATTEMPTS || !stillCurrent) return
-        await new Promise((resolve) => setTimeout(resolve, OPEN_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1)))
+        if (disposed || attempt >= OPEN_RETRY_ATTEMPTS || !stillCurrent) return
+        if (!(await retryDelays.wait(OPEN_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1)))) return
       }
     }
   }
@@ -609,6 +531,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     getState: () => state,
     invalidateFeedback,
     lifecycle: {
+      invalidateGlobalCatalogs: globalCatalogs.invalidate,
       advanceSessionModelDirectoryGeneration: () => {
         sessionModelDirectoryGeneration += 1
       },
@@ -629,6 +552,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     pluginInstallRecovery,
     projectionSequences,
     refresh,
+    refreshModelCatalog: globalCatalogs.refreshModels,
     refreshCommands,
     refreshLiveGoals,
     refreshSessionModelDirectoryForSession,
@@ -640,7 +564,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     turnWatchers,
   })
   const attemptStartupRestore = (): Promise<void> => {
-    if (!startupRestorePending || state.activeSessionId !== undefined) return Promise.resolve()
+    if (disposed || !startupRestorePending || state.activeSessionId !== undefined) return Promise.resolve()
     if (startupRestorePromise !== undefined) return startupRestorePromise
     const sessionId = selectStartupSessionId(
       state.sessions,
@@ -674,10 +598,11 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
   const settingsActions = createSettingsActions({
     client,
     setState,
+    refreshModelCatalog: globalCatalogs.refreshModels,
     applyBusyEnter,
     capturePresetSessionTarget,
-    nextPresetRosterGeneration: () => ++presetRosterGeneration,
-    isPresetRosterCurrent: (generation) => generation === presetRosterGeneration,
+    nextPresetRosterGeneration,
+    isPresetRosterCurrent,
     synchronizeBlankSessionPreset,
   })
   const feedbackActions = createFeedbackActions({ client, setState, getState: () => state, feedbackCache })
@@ -742,8 +667,8 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     rememberComposerConfiguration,
     rememberPromptMode,
     rememberOpenFileId: rememberOpenFilePreference,
-    nextConfigurationGeneration: () => ++configurationGeneration,
-    isConfigurationGenerationCurrent: (generation) => generation === configurationGeneration,
+    nextConfigurationGeneration,
+    isConfigurationGenerationCurrent,
   })
   const goalQueueActions = createGoalQueueActions({
     client,
@@ -772,6 +697,7 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
     },
     getState: () => state,
     subscribe: (listener) => {
+      if (disposed) return () => undefined
       listeners.add(listener)
       return () => listeners.delete(listener)
     },
@@ -840,6 +766,9 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       if (openingSessionsDrawer) void refresh()
     },
     dispose: () => {
+      if (disposed) return
+      disposed = true
+      retryDelays.dispose()
       if (notifyTimer !== undefined) {
         window.clearTimeout(notifyTimer)
         notifyTimer = undefined
@@ -848,11 +777,12 @@ export function createAppStore(client = new ProtocolClient(getVsCodeApi())): App
       // bumping it retires them without letting a late continuation touch a
       // disposed store. Gap backfills also read `disposed`: they outlive a
       // superseded open on purpose so their announced range is not lost.
-      disposed = true
       turnWatchers.disposeAll()
       pluginInstallRecovery.dispose()
       openVersion += 1
       sessionModelDirectoryGeneration += 1
+      globalCatalogs.invalidate()
+      commandDirectory.invalidate()
       accountActions.invalidate()
       gapHealing.dispose()
       pendingHistory = []

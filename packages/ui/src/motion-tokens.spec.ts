@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
+import { readStylesheet } from '../../../scripts/read-stylesheet.mjs'
 
 const uiStyles = readFileSync(new URL('./styles.css', import.meta.url), 'utf8')
 const webviewStylePaths = [
@@ -9,7 +10,7 @@ const webviewStylePaths = [
   '../../../apps/webview/src/styles/compatibility.css',
 ] as const
 
-const webviewStyles = webviewStylePaths.map((path) => readFileSync(new URL(path, import.meta.url), 'utf8'))
+const webviewStyles = webviewStylePaths.map((path) => readStylesheet(new URL(path, import.meta.url)))
 
 describe('motion system', () => {
   it('keeps the shared motion tokens stable and complete', () => {

@@ -4,11 +4,8 @@ import type { ProtocolClient } from '../protocol-client.js'
 import { requestId } from './ids.js'
 import { createDefaultConfiguration, isAgentConfiguration } from './model-catalog.js'
 import { promptModeForConfiguration } from './agent-config.js'
-import {
-  loadSessionModelDirectory,
-  mergeSessionModelDirectory,
-  type CommandDirectoryCache,
-} from './command-directory.js'
+import { loadSessionModelDirectory, mergeSessionModelDirectory } from './session-model-directory.js'
+import type { CommandDirectoryCache } from './command-directory.js'
 import { isGoalView, isJobView, isQueuedInput, nonEmptyString } from './event-values.js'
 import { feedbackRecord } from './feature-parsers.js'
 import {

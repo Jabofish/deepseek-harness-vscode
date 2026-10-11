@@ -1,138 +1,28 @@
-import * as vscode from 'vscode'
-import { stat, readFile } from 'node:fs/promises'
-import path from 'node:path'
-import type {
-  AgentConfiguration,
-  EditorContextOwner,
-  SessionDetail,
-  SessionSummary,
-} from '@dsh-vscode/domain'
 import { AppError } from '@dsh-vscode/domain'
-import type {
-  AdvancedAgentUseCases,
-  BackendService,
-  DshConnectionCoordinator,
-  EditorContextUseCases,
-  ExportUseCases,
-  InteractionUseCases,
-  ModelSettingsUseCases,
-  ProviderSettingsUseCases,
-  RuntimeUseCases,
-  SessionUseCases,
-  SettingsUseCases,
-  WorkspaceUseCases,
-} from '@dsh-vscode/application'
-import type { WebviewRequest, FeatureRequest } from '@dsh-vscode/webview-protocol'
-import { WebviewMessageRouter } from '../view/message-router.js'
-import { DshWebviewViewProvider } from '../view/dsh-webview-view-provider.js'
-import { publicWorkspaceSummary } from '../view/public-value.js'
-import type { DshRuntimeLocator } from '../backend/runtime-locator.js'
-import type { TemporaryWorkspaceManager } from '../backend/temporary-workspace.js'
-import type { VsCodeConfigurationSource } from '../config/configuration-source.js'
-import type { RedactedDiagnostics } from '../backend/diagnostics.js'
-import type { EditorContextProvider } from '../editor/editor-context-provider.js'
+import type { WebviewRequest } from '@dsh-vscode/webview-protocol'
+import * as vscode from 'vscode'
 import { openSkillDocument, publicSkills } from '../backend/skill-documents.js'
+import { resolveLinkTarget } from '../navigation/link-target.js'
+import { DshWebviewViewProvider } from '../view/dsh-webview-view-provider.js'
+import { WebviewMessageRouter } from '../view/message-router.js'
+import { publicWorkspaceSummary } from '../view/public-value.js'
 import { requestOptionalProviderApiKey, requestProviderSecret } from '../vscode/credential-input.js'
+import { createAttachmentRequestHandler, isAttachmentRequest } from './attachment-request-handler.js'
 import {
-  decodeCanonicalBase64,
-  MAX_ATTACHMENT_BYTES,
-  MAX_IMAGE_ATTACHMENT_BYTES,
-  type AttachmentStore,
-  type StoredAttachmentInput,
-} from '../attachments/attachment-store.js'
-import {
-  attachmentMimeType,
-  isImageMimeType,
-  prepareAttachment,
-  isAttachmentSupported,
-  assertAttachmentSupported,
-  validImageBytes,
-} from '../attachments/attachment-codec.js'
-import { requiresTrustedWorkspace } from './workspace-guards.js'
-import {
+  publicValue as projectPublicValue,
   publicDiagnosticsSnapshot,
   publicExtensionSettings,
   publicList,
-  publicValue as projectPublicValue,
 } from './public-projection.js'
+import type { RequestGatewayDependencies } from './request-gateway-dependencies.js'
 import { questionResponse } from './session-payload.js'
-import { featureContextItem, listOpenFileCandidates, readOpenFileAttachment } from './editor-files.js'
-import { pathExists } from './runtime.js'
-import { sameWorkspacePath } from './workspace-state.js'
-import { resolveLinkTarget } from '../navigation/link-target.js'
-import { requireCatalogOwnedSession, type SessionScope } from './session-scope.js'
-import type { PostHostMessage } from './host-event-pipeline.js'
+import { createSessionRequestHandler, isSessionRequest } from './session-request-handler.js'
+import { requiresTrustedWorkspace } from './workspace-guards.js'
+export type { RequestGatewayDependencies } from './request-gateway-dependencies.js'
 
 export interface OpenLinkResult {
   readonly opened: boolean
   readonly message?: string
-}
-
-export interface RequestGatewayDependencies {
-  readonly post: PostHostMessage
-  readonly handleFeatureRequest: (request: FeatureRequest, signal: AbortSignal) => Promise<unknown>
-  readonly diagnostics: RedactedDiagnostics
-  readonly context: vscode.ExtensionContext
-  readonly currentWorkspaceFolders: () => readonly vscode.WorkspaceFolder[]
-  readonly currentWorkspaceFolder: () => vscode.WorkspaceFolder | undefined
-  readonly connect: (signal?: AbortSignal) => Promise<unknown>
-  readonly reconnect: (signal?: AbortSignal) => Promise<unknown>
-  readonly configureConnection: (
-    mode: 'auto' | 'custom',
-    endpoint: string | undefined,
-    signal?: AbortSignal,
-  ) => Promise<unknown>
-  readonly runtimeUseCases: RuntimeUseCases
-  readonly runtimeLocator: DshRuntimeLocator
-  readonly coordinator: DshConnectionCoordinator
-  readonly extensionVersion: string
-  readonly configuration: VsCodeConfigurationSource
-  readonly backendService: BackendService
-  readonly listCurrentWorkspaces: SessionScope['listCurrentWorkspaces']
-  readonly listCurrentArchivedSessionIds: SessionScope['listCurrentArchivedSessionIds']
-  readonly ensureCurrentWorkspace: SessionScope['ensureCurrentWorkspace']
-  readonly requireCurrentWorkspaceSession: SessionScope['requireCurrentWorkspaceSession']
-  readonly requireCurrentWorkspaceId: SessionScope['requireCurrentWorkspaceId']
-  readonly requireOwnedQueuedInput: SessionScope['requireOwnedQueuedInput']
-  readonly requireOwnedGoal: SessionScope['requireOwnedGoal']
-  readonly requireOwnedPermission: SessionScope['requireOwnedPermission']
-  readonly requireOwnedQuestion: SessionScope['requireOwnedQuestion']
-  readonly workspaceUseCases: WorkspaceUseCases
-  readonly sessionUseCases: SessionUseCases
-  readonly modelUseCases: ModelSettingsUseCases
-  readonly interactionUseCases: InteractionUseCases
-  readonly settingsUseCases: SettingsUseCases
-  readonly providerSettingsUseCases: ProviderSettingsUseCases
-  readonly advancedUseCases: AdvancedAgentUseCases
-  readonly exportUseCases: ExportUseCases
-  readonly temporaryWorkspaceManager: TemporaryWorkspaceManager
-  readonly attachmentTokens: AttachmentStore
-  readonly editorContextUseCases: EditorContextUseCases
-  readonly contextOwnerForSession: (
-    session: SessionDetail,
-    requestedWorkspaceFolderId: string | undefined,
-    hasContext: boolean,
-  ) => EditorContextOwner
-  readonly currentFeatureSessionBinding: (sessionId: string) => {
-    readonly sessionId: string
-    readonly backendInstanceId: string
-    readonly connectionGeneration: number
-  }
-  readonly workspaceFolderIdForSession: (session: Pick<SessionSummary, 'cwd'>) => string | undefined
-  readonly resolveSessionConfiguration: (
-    requested: AgentConfiguration,
-    signal?: AbortSignal,
-  ) => Promise<AgentConfiguration>
-  readonly startJobFollow: (
-    sessionId: string,
-    jobId: string,
-    followId: string,
-    requestedFrom: number | undefined,
-    signal: AbortSignal,
-  ) => Promise<{ readonly started: boolean }>
-  readonly stopJobFollow: (sessionId: string, jobId: string, followId: string) => boolean
-  readonly stopAllJobFollows: (this: void) => void
-  readonly editorContextProvider: EditorContextProvider
 }
 
 export interface RequestGateway {
@@ -181,7 +71,6 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
     contextOwnerForSession,
     currentFeatureSessionBinding,
     workspaceFolderIdForSession,
-    resolveSessionConfiguration,
     startJobFollow,
     stopJobFollow,
     stopAllJobFollows,
@@ -233,30 +122,34 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
       return { opened: false, message: 'The linked workspace file could not be opened.' }
     }
   }
-  /**
-   * State the VS Code folder that guards a session's paths. Only this id is
-   * accepted by feature routes, and the DSH workspace id is a different
-   * namespace, so the Webview reads the ownership here instead of inferring it.
-   */
-  const withSessionWorkspaceScope = <T extends Pick<SessionSummary, 'cwd'>>(
-    session: T,
-  ): T & { readonly workspaceFolderId?: string } => {
-    const folderId = workspaceFolderIdForSession(session)
-    return folderId === undefined ? session : { ...session, workspaceFolderId: folderId }
-  }
-  const supportsBinaryAttachments = (): boolean => {
-    try {
-      return backendService.requireBackend().sessions.supportsFileUploads === true
-    } catch {
-      return false
-    }
-  }
-  const rememberSupportedAttachment = (
-    input: StoredAttachmentInput,
-  ): ReturnType<typeof attachmentTokens.remember> => {
-    assertAttachmentSupported(input, supportsBinaryAttachments())
-    return attachmentTokens.remember(input)
-  }
+  const handleSessionRequest = createSessionRequestHandler({
+    backendService,
+    workspaceUseCases,
+    sessionUseCases,
+    modelUseCases,
+    exportUseCases,
+    attachmentTokens,
+    editorContextUseCases,
+    contextOwnerForSession,
+    currentFeatureSessionBinding,
+    workspaceFolderIdForSession,
+    currentWorkspaceFolders,
+    listCurrentWorkspaces,
+    listCurrentArchivedSessionIds,
+    ensureCurrentWorkspace,
+    requireCurrentWorkspaceSession,
+    requireCurrentWorkspaceId,
+    requireOwnedQueuedInput,
+    publicValue,
+  })
+  const handleAttachmentRequest = createAttachmentRequestHandler({
+    backendService,
+    sessionUseCases,
+    attachmentTokens,
+    editorContextProvider,
+    requireCurrentWorkspaceSession,
+  })
+
   const handleRequest = async (request: WebviewRequest, signal: AbortSignal): Promise<unknown> => {
     if (request.type === 'app.ready') return connect(signal)
     if (request.type === 'connection.configure')
@@ -304,6 +197,9 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
         message: 'Trust this workspace before running DSH operations that access files or execute tools.',
         retryable: false,
       })
+    if (isSessionRequest(request)) return handleSessionRequest(request, signal)
+    if (isAttachmentRequest(request)) return handleAttachmentRequest(request, signal)
+
     if (request.type === 'workspace.list') {
       const workspaces = await listCurrentWorkspaces(signal)
       const archivedSessionIds = await listCurrentArchivedSessionIds(workspaces, signal)
@@ -336,365 +232,6 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
         request.payload.beforeWorkspaceId,
         signal,
       )
-    }
-    if (request.type === 'session.move') {
-      await requireCurrentWorkspaceId(request.payload.workspaceId, signal)
-      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
-      return workspaceUseCases.insertSessionBefore(
-        request.payload.workspaceId,
-        request.payload.sessionId,
-        request.payload.beforeSessionId,
-        signal,
-      )
-    }
-    if (request.type === 'session.list') {
-      const folders = currentWorkspaceFolders()
-      const workspaces = await listCurrentWorkspaces(signal)
-      const archivedSessionIds = new Set(await listCurrentArchivedSessionIds(workspaces, signal))
-      const workspaceIds = new Set(workspaces.map((workspace) => workspace.id))
-      const sessionIds = new Set(workspaces.flatMap((workspace) => workspace.sessionIds ?? []))
-      const workspaceId = request.payload.workspaceId
-      const includeArchived = request.payload.archived ?? false
-      if (workspaceId !== undefined && !workspaceIds.has(workspaceId)) return publicValue({ items: [] })
-      const page = await sessionUseCases.list(
-        {
-          ...(workspaceId === undefined ? {} : { workspaceId }),
-          ...(request.payload.search === undefined ? {} : { search: request.payload.search }),
-          // The normal conversation list is the active, recoverable surface.
-          // Archived sessions remain in DSH for recovery but must not stay in
-          // the switcher after the user archives one.
-          archived: includeArchived,
-          ...(request.payload.cursor === undefined ? {} : { cursor: request.payload.cursor }),
-          ...(request.payload.limit === undefined ? {} : { limit: request.payload.limit }),
-        },
-        signal,
-      )
-      return publicValue({
-        ...page,
-        items: page.items
-          .filter((session) => {
-            const belongsToCurrentWorkspace =
-              (workspaceId === undefined
-                ? workspaceIds.has(session.workspaceId)
-                : session.workspaceId === workspaceId) || sessionIds.has(session.id)
-            const sessionCwd = session.cwd
-            const belongsByCwd =
-              sessionCwd !== undefined &&
-              folders.some((folder) => sameWorkspacePath(sessionCwd, folder.uri.fsPath))
-            return (
-              (belongsToCurrentWorkspace || belongsByCwd) &&
-              archivedSessionIds.has(session.id) === includeArchived
-            )
-          })
-          .map((session) => withSessionWorkspaceScope(session)),
-      })
-    }
-    if (request.type === 'session.open') {
-      const detail = await requireCurrentWorkspaceSession(request.payload.sessionId, signal, {
-        fresh: true,
-      })
-      return publicValue(withSessionWorkspaceScope(detail))
-    }
-    if (request.type === 'session.history') {
-      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
-      const page = await backendService
-        .requireBackend()
-        .sessions.history(request.payload.sessionId, request.payload.beforeSeq, signal, {
-          ...(request.payload.maxMessages === undefined ? {} : { pageSize: request.payload.maxMessages }),
-          ...(request.payload.pagePurpose === undefined ? {} : { pagePurpose: request.payload.pagePurpose }),
-        })
-      return publicValue({
-        events: page.events,
-        hasMore: page.hasMore,
-        ...(page.beforeSequence === undefined ? {} : { beforeSeq: page.beforeSequence }),
-        ...(page.coveredSequenceRanges === undefined ? {} : { coveredSeqRanges: page.coveredSequenceRanges }),
-        ...(page.projection === undefined ? {} : { projection: page.projection }),
-      })
-    }
-    if (request.type === 'session.create') {
-      const workspace = await ensureCurrentWorkspace(request.payload.workspaceId, signal)
-      const source = request.payload.configuration
-      const requestedConfiguration: AgentConfiguration = {
-        preset: source.preset,
-        toolMode: source.toolMode,
-        permissionPreset: source.permissionPreset,
-        planMode: source.planMode,
-        ...(source.sandboxMode === undefined ? {} : { sandboxMode: source.sandboxMode }),
-        ...(source.approvalPolicy === undefined ? {} : { approvalPolicy: source.approvalPolicy }),
-        model:
-          source.model.reasoningLevel === undefined
-            ? { providerId: source.model.providerId, modelId: source.model.modelId }
-            : {
-                providerId: source.model.providerId,
-                modelId: source.model.modelId,
-                reasoningLevel: source.model.reasoningLevel,
-              },
-      }
-      const resolvedConfiguration = await resolveSessionConfiguration(requestedConfiguration, signal)
-      return publicValue(
-        withSessionWorkspaceScope(
-          await sessionUseCases.create(
-            {
-              workspaceId: workspace.id,
-              ...(request.payload.sessionId === undefined ? {} : { sessionId: request.payload.sessionId }),
-              ...(request.payload.reuseWorkspaceBlank === true ? { reuseWorkspaceBlank: true as const } : {}),
-              ...(request.payload.title === undefined ? {} : { title: request.payload.title }),
-              configuration: resolvedConfiguration,
-            },
-            signal,
-          ),
-        ),
-      )
-    }
-    if (request.type === 'session.rename') {
-      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
-      // The host normalizes the stored title and returns what it accepted; the
-      // Webview shows that value so the row never claims a title the session
-      // log does not hold.
-      return {
-        title: await backendService
-          .requireBackend()
-          .sessions.rename(request.payload.sessionId, request.payload.title, signal),
-      }
-    }
-    if (request.type === 'session.remove') {
-      await requireCurrentWorkspaceSession(request.payload.sessionId, signal, { allowArchived: true })
-      return sessionUseCases.remove(request.payload.sessionId, signal)
-    }
-    if (request.type === 'session.fork') {
-      await requireCatalogOwnedSession(
-        backendService.requireBackend(),
-        request.payload.sessionId,
-        await listCurrentWorkspaces(signal),
-        currentWorkspaceFolders(),
-        signal,
-      )
-      return publicValue(
-        withSessionWorkspaceScope(
-          await sessionUseCases.fork(request.payload.sessionId, request.payload.atSeq, signal),
-        ),
-      )
-    }
-    if (request.type === 'session.archive') {
-      // Restoring is the one archiving direction that must reach an archived
-      // session; archiving an archived session stays refused like any other
-      // route to it.
-      await requireCurrentWorkspaceSession(
-        request.payload.sessionId,
-        signal,
-        request.payload.archived === false ? { allowArchived: true } : {},
-      )
-      return sessionUseCases.setArchived(request.payload.sessionId, request.payload.archived, signal)
-    }
-    if (request.type === 'session.sendPrompt') {
-      const session = await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
-      const attachments = attachmentTokens.resolve(request.payload.attachments)
-      const contextRefs = request.payload.contextRefs ?? []
-      const contextOwner = contextOwnerForSession(
-        session,
-        request.payload.contextWorkspaceFolderId,
-        contextRefs.length > 0,
-      )
-      const resolvedContext =
-        contextRefs.length === 0
-          ? []
-          : await editorContextUseCases.resolveForPrompt(
-              {
-                ...contextOwner,
-                ...currentFeatureSessionBinding(request.payload.sessionId),
-                contextRefs,
-              },
-              signal,
-            )
-      const result = await sessionUseCases.sendPrompt(
-        {
-          sessionId: request.payload.sessionId,
-          text: request.payload.text,
-          attachments: [...attachments, ...resolvedContext.map((entry) => entry.attachment)],
-        },
-        request.payload.mode ?? 'queue',
-        signal,
-      )
-      // The Webview keeps the chips after a failed send so the user can retry;
-      // retain their opaque handles on that path as well. Successful admission
-      // consumes them exactly once.
-      attachmentTokens.release(request.payload.attachments)
-      if (contextRefs.length > 0) await editorContextUseCases.release(contextRefs, contextOwner)
-      return result
-    }
-    if (request.type === 'session.cancel') {
-      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
-      return sessionUseCases.cancel(request.payload.sessionId, signal)
-    }
-    if (request.type === 'session.queue.list') {
-      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
-      return publicList(
-        await backendService.requireBackend().sessions.listQueue(request.payload.sessionId, signal),
-      )
-    }
-    if (request.type === 'session.queue.update') {
-      await requireOwnedQueuedInput(request.payload.inputId, signal)
-      return backendService
-        .requireBackend()
-        .sessions.updateQueuedInput(request.payload.inputId, request.payload.text, signal)
-    }
-    if (request.type === 'session.queue.remove') {
-      await requireOwnedQueuedInput(request.payload.inputId, signal)
-      return backendService.requireBackend().sessions.removeQueuedInput(request.payload.inputId, signal)
-    }
-    if (request.type === 'session.queue.steer') {
-      await requireOwnedQueuedInput(request.payload.inputId, signal)
-      return backendService
-        .requireBackend()
-        .sessions.convertQueuedInputToSteer(request.payload.inputId, signal)
-    }
-    if (request.type === 'session.configure') {
-      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
-      const source = request.payload.configuration
-      const requestedConfiguration: AgentConfiguration = {
-        preset: source.preset,
-        toolMode: source.toolMode,
-        permissionPreset: source.permissionPreset,
-        planMode: source.planMode,
-        ...(source.sandboxMode === undefined ? {} : { sandboxMode: source.sandboxMode }),
-        ...(source.approvalPolicy === undefined ? {} : { approvalPolicy: source.approvalPolicy }),
-        model:
-          source.model.reasoningLevel === undefined
-            ? { providerId: source.model.providerId, modelId: source.model.modelId }
-            : {
-                providerId: source.model.providerId,
-                modelId: source.model.modelId,
-                reasoningLevel: source.model.reasoningLevel,
-              },
-      }
-      const resolvedConfiguration = await resolveSessionConfiguration(requestedConfiguration, signal)
-      return backendService
-        .requireBackend()
-        .sessions.setConfiguration(request.payload.sessionId, resolvedConfiguration, signal)
-    }
-    if (request.type === 'attachment.pick') {
-      const selected = await vscode.window.showOpenDialog({
-        canSelectFiles: true,
-        canSelectFolders: false,
-        canSelectMany: false,
-        openLabel: 'Attach file',
-      })
-      const uri = selected?.[0]
-      if (uri === undefined) return { cancelled: true }
-      const info = await stat(uri.fsPath)
-      if (!info.isFile() || info.size > MAX_IMAGE_ATTACHMENT_BYTES)
-        throw new AppError({
-          code: 'INVALID_CONFIGURATION',
-          message: 'The selected file is too large or is not a regular file.',
-          retryable: false,
-        })
-      const bytes = await readFile(uri.fsPath)
-      if (bytes.length > MAX_IMAGE_ATTACHMENT_BYTES)
-        throw new AppError({
-          code: 'INVALID_CONFIGURATION',
-          message: 'The selected file is too large.',
-          retryable: false,
-        })
-      const mimeType = attachmentMimeType(uri.fsPath, bytes)
-      if (mimeType === undefined)
-        throw new AppError({
-          code: 'INVALID_CONFIGURATION',
-          message: 'The selected file contents do not match its declared text type.',
-          retryable: false,
-        })
-      const maximumBytes = isImageMimeType(mimeType) ? MAX_IMAGE_ATTACHMENT_BYTES : MAX_ATTACHMENT_BYTES
-      if (bytes.length > maximumBytes)
-        throw new AppError({
-          code: 'INVALID_CONFIGURATION',
-          message: 'The selected file is too large.',
-          retryable: false,
-        })
-      if (isImageMimeType(mimeType) && !validImageBytes(mimeType, bytes))
-        throw new AppError({
-          code: 'INVALID_CONFIGURATION',
-          message: 'The selected file contents do not match its declared image type.',
-          retryable: false,
-        })
-      return {
-        cancelled: false,
-        attachment: rememberSupportedAttachment({
-          name: path.basename(uri.fsPath),
-          mimeType,
-          dataUri: `data:${mimeType};base64,${bytes.toString('base64')}`,
-        }),
-      }
-    }
-    if (request.type === 'attachment.ingest') {
-      const { name, mimeType, dataBase64 } = request.payload
-      const bytes = decodeCanonicalBase64(dataBase64, MAX_IMAGE_ATTACHMENT_BYTES)
-      return {
-        cancelled: false,
-        attachment: rememberSupportedAttachment(prepareAttachment(name, bytes, mimeType)),
-      }
-    }
-    if (request.type === 'attachment.preview') {
-      const dataUri = attachmentTokens.preview(request.payload.uri)
-      return dataUri === undefined ? { cancelled: true } : { cancelled: false, dataUri }
-    }
-    if (request.type === 'attachment.release') {
-      attachmentTokens.releaseUris(request.payload.uris)
-      return undefined
-    }
-    if (request.type === 'attachment.open.list') {
-      const candidates = listOpenFileCandidates()
-      return {
-        items: candidates.map((candidate) => ({
-          id: candidate.id,
-          name: candidate.name,
-          ...(candidate.mimeType === undefined ? {} : { mimeType: candidate.mimeType }),
-          active: candidate.active,
-          supported: isAttachmentSupported(candidate.mimeType, supportsBinaryAttachments()),
-        })),
-      }
-    }
-    if (request.type === 'attachment.open.attach') {
-      const candidate = listOpenFileCandidates().find((item) => item.id === request.payload.candidateId)
-      if (candidate === undefined || !isAttachmentSupported(candidate.mimeType, supportsBinaryAttachments()))
-        return { cancelled: true }
-      const attachment = await readOpenFileAttachment(candidate)
-      if (attachment === undefined) return { cancelled: true }
-      if (
-        candidate.uri.scheme === 'file' &&
-        attachment.mimeType !== undefined &&
-        attachment.mimeType !== 'application/octet-stream' &&
-        !isImageMimeType(attachment.mimeType)
-      ) {
-        const context = await editorContextProvider
-          .captureOpenFile(candidate.uri, signal)
-          .catch((error: unknown) => {
-            if (error instanceof AppError && error.code === 'CONTEXT_LIMIT') return undefined
-            throw error
-          })
-        if (context !== undefined) return { kind: 'editor.context', items: [featureContextItem(context)] }
-      }
-      return {
-        cancelled: false,
-        attachment: rememberSupportedAttachment(attachment),
-      }
-    }
-    if (request.type === 'attachment.read') {
-      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
-      const attachment = await sessionUseCases.readAttachment(
-        request.payload.sessionId,
-        request.payload.attachmentId,
-        signal,
-      )
-      return {
-        cancelled: false,
-        attachment: {
-          name: attachment.name,
-          ...(attachment.mimeType === undefined ? {} : { mimeType: attachment.mimeType }),
-        },
-        // The adapter has already validated this as a bounded image data URI.
-        // It is display data, not an endpoint or credential, so historical
-        // images do not need a second opaque-handle round trip.
-        dataUri: attachment.uri,
-      }
     }
     if (request.type === 'reference.list') {
       await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
@@ -1027,21 +564,6 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
       return advancedUseCases.openPresetDocument(request.payload.presetId, signal)
     if (request.type === 'preset.remove')
       return advancedUseCases.removePreset(request.payload.presetId, signal)
-    if (request.type === 'session.export') {
-      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
-      const uri = await vscode.window.showSaveDialog({ saveLabel: 'Export DSH session' })
-      if (uri === undefined) return { cancelled: true }
-      const destinationExists = await pathExists(uri.fsPath)
-      if (destinationExists) {
-        const choice = await vscode.window.showWarningMessage(
-          'The selected export file already exists. Replace it?',
-          { modal: true, detail: 'The existing file will be recoverably replaced only after confirmation.' },
-          'Overwrite',
-        )
-        if (choice !== 'Overwrite') return { cancelled: true }
-      }
-      return exportUseCases.exportSession(request.payload, uri.fsPath, signal, destinationExists)
-    }
     // Every declared route returns above, so this branch is unreachable while
     // the protocol and the host agree. A request the host cannot dispatch must
     // still fail: an invented success would hide the drift from the user.

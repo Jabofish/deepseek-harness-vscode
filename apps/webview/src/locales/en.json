@@ -1661,5 +1661,7 @@
   "stats.details": "Statistics details",
   "stats.llmTime": "Model time",
   "stats.toolTime": "Tool time",
-  "stats.uncachedInput": "Uncached input tokens"
+  "stats.uncachedInput": "Uncached input tokens",
+  "settings.viewLoadFailed": "Settings could not be opened. Please try again.",
+  "settings.viewRetry": "Retry"
 }

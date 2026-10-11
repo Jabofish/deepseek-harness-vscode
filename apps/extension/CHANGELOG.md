@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- 改善长对话的历史加载和流式回复显示，保留历史补载后的消息顺序与会话引用。
+- Improve long-conversation history loading and streamed reply display while preserving message order and session references after older history loads.
+
+- 修复模型目录被迟到结果覆盖、目录暂时读取失败后已有 Provider 消失，以及动态命令变化未及时刷新的问题。
+- Prevent delayed model catalogs from replacing newer lists, retain known providers after temporary read failures, and refresh dynamic commands after registry changes.
+
+- 扩展改为打开 DSH 视图或执行命令时激活；设置界面首次打开时加载，后续打开复用已加载的界面。
+- Activate when a DSH view or command is requested; load Settings on first open and reuse the loaded view on subsequent opens.
+
 - 适配 DSH `0.2.1-alpha.2`，并补齐 alpha.1 子代理目录读取。支持工作目录变化后的安全文件导航、外部子代理目录展示、旧会话升级提示与官方按需插件包安装；分叉不再隐式升级旧会话，安装取消与断线恢复沿用同一请求 ID。引导安装默认保持稳定 rc.2。
 - Added exact DSH `0.2.1-alpha.2` support and repaired alpha.1 subagent discovery. File navigation uses the operation's actual path after directory changes; external executions appear without a local conversation; old sessions show an upgrade hint; official bundles install on demand with existing cancellation and recovery. Forking requires opening an old source session first. Guided installation keeps stable rc.2.
 
