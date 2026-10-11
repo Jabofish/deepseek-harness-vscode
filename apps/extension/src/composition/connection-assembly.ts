@@ -54,7 +54,8 @@ const RUNTIME_PATH_STATE_KEY = 'dsh.runtime.lastKnownPath'
 // restarts (it lives in the DSH home directory), so a cookie minted by one
 // process keeps authorizing later processes until its 30-day expiry. Persisting
 // the cookie lets the extension reconnect to a restarted container without
-// re-exchanging the (ephemeral) launch token.
+// re-exchanging the (ephemeral) launch token. Cookies are credentials, so they
+// are stored in SecretStorage (OS keychain) rather than plain-text globalState.
 const ENDPOINT_COOKIE_STATE_KEY = 'dsh.connection.endpointCookies'
 
 export interface RuntimeAssemblyDependencies {
@@ -81,7 +82,7 @@ export interface RuntimeAssembly {
 }
 
 /** Locate the runtime, discover endpoints, and own the connection machinery. */
-export function createRuntimeAssembly(deps: RuntimeAssemblyDependencies): RuntimeAssembly {
+export async function createRuntimeAssembly(deps: RuntimeAssemblyDependencies): Promise<RuntimeAssembly> {
   const { context, configuration, diagnostics, currentWorkspaceFolder, onRuntimeUpdateProgress } = deps
   const runtimeLocator = new DshRuntimeLocator({
     os: platform(),
@@ -162,18 +163,22 @@ export function createRuntimeAssembly(deps: RuntimeAssemblyDependencies): Runtim
   // valid as long as the DSH home directory (and its signing secret) is
   // unchanged, so a restarted container can be reauthorized without a fresh
   // launch-token exchange.
-  const storedEndpointCookies = context.globalState.get<unknown>(ENDPOINT_COOKIE_STATE_KEY)
-  if (
-    storedEndpointCookies !== undefined &&
-    typeof storedEndpointCookies === 'object' &&
-    storedEndpointCookies !== null
-  ) {
-    for (const [baseUrl, cookie] of Object.entries(storedEndpointCookies as Record<string, unknown>)) {
-      if (typeof cookie === 'string' && cookie !== '') endpointCookies.set(baseUrl, cookie)
+  const storedEndpointCookies = await context.secrets.get(ENDPOINT_COOKIE_STATE_KEY)
+  if (storedEndpointCookies !== undefined && storedEndpointCookies !== '') {
+    try {
+      const parsed: unknown = JSON.parse(storedEndpointCookies)
+      if (typeof parsed === 'object' && parsed !== null) {
+        for (const [baseUrl, cookie] of Object.entries(parsed as Record<string, unknown>)) {
+          if (typeof cookie === 'string' && cookie !== '') endpointCookies.set(baseUrl, cookie)
+        }
+      }
+    } catch {
+      // A corrupt or non-JSON value must not block activation; drop it and
+      // re-authenticate through the launch token on the next connect.
     }
   }
   const persistEndpointCookies = (): void => {
-    void context.globalState.update(ENDPOINT_COOKIE_STATE_KEY, Object.fromEntries(endpointCookies))
+    void context.secrets.store(ENDPOINT_COOKIE_STATE_KEY, JSON.stringify(Object.fromEntries(endpointCookies)))
   }
   // Keep the process launch URL in the Extension Host so the browser can
   // perform its own cookie exchange. The URL is never included in Webview

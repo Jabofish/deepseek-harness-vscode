@@ -248,7 +248,7 @@
             "new-isolated"
           ],
           "default": "auto",
-          "markdownDescription": "Connection policy. `auto` discovers and starts a local DSH as needed; `custom` probes only the configured local endpoint; `attach-only` never starts DSH; `new-isolated` always starts an extension-owned instance."
+          "markdownDescription": "Connection policy. `auto` discovers and starts a local DSH as needed; `custom` probes only the configured HTTP(S) endpoint (which may be remote); `attach-only` never starts DSH; `new-isolated` always starts an extension-owned instance."
         },
         "dsh.connection.managedPort": {
           "type": "integer",

@@ -10,8 +10,8 @@
 - Add `dsh.connection.runtimeVersion` to explicitly select the wire version for instances that cannot be discovered (for example containerized DSH), bypassing the compatibility fallback probe.
 - 新增 `dsh.connection.launchToken` 及启动令牌换取会话 Cookie 的登录流程，用于已运行的外部 DSH（如 Docker 化实例）。
 - Add `dsh.connection.launchToken` and a launch-token → session-cookie login flow for an already-running external DSH (for example the Dockerized instance).
-- 会话 Cookie 持久化到全局状态并在跨重启连接时复用，使 DSH 容器重启后无需重新认证。
-- Persist session cookies to global state and reuse them across reconnects, so a restarted DSH container reconnects without re-authentication.
+- 会话 Cookie 持久化到 SecretStorage（操作系统钥匙串）并在跨重启连接时复用，使 DSH 容器重启后无需重新认证。
+- Persist session cookies to SecretStorage (the OS keychain) and reuse them across reconnects, so a restarted DSH container reconnects without re-authentication.
 
 ## 0.2.12
 

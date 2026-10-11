@@ -60,7 +60,6 @@ export class VsCodeConfigurationSource {
     return {
       connection: {
         mode,
-        host: 'localhost',
         ...(serverUrl === undefined ? {} : { serverUrl }),
         ...(launchToken === undefined ? {} : { launchToken }),
         ...(runtimeVersion === undefined ? {} : { runtimeVersion }),
@@ -76,7 +75,6 @@ export class VsCodeConfigurationSource {
       },
       security: {
         defaultPermissionPreset: permissionPreset,
-        allowRemoteHost: false,
         redactDiagnostics: true,
       },
       defaultAgent,

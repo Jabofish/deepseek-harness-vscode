@@ -511,7 +511,7 @@ describe('SettingsDrawer', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Apply and reconnect' }))
 
     expect(onConfigureConnection).not.toHaveBeenCalled()
-    expect((await screen.findByRole('alert')).textContent).toContain('Enter a local DSH endpoint first.')
+    expect((await screen.findByRole('alert')).textContent).toContain('Enter a DSH endpoint first.')
   })
 
   it('does not preselect a connection mode the page cannot represent and blocks Apply until one is chosen', async () => {

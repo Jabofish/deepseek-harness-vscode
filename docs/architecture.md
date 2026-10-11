@@ -27,7 +27,7 @@ domain         -> nothing platform-specific
 
 ## 连接与进程
 
-`auto` 必须先完成设置、已知实例、官方默认、经校验的 companion registry 和受限进程发现的候选验证，全部不可用后才允许启动本机 DSH。`attach-only` 只连接；`new-isolated` 只创建一个扩展持有的实例；`custom` 只探测用户给定且经校验的单个 loopback 端点，不转入自动启动。候选去重、排序、失败后继续和并发入口合并由连接协调器负责；不扫描任意端口范围。
+`auto` 必须先完成设置、已知实例、官方默认、经校验的 companion registry 和受限进程发现的候选验证，全部不可用后才允许启动本机 DSH。`attach-only` 只连接；`new-isolated` 只创建一个扩展持有的实例；`custom` 只探测用户给定且经校验的单个 HTTP(S) 端点（可为远程主机），不转入自动启动。候选去重、排序、失败后继续和并发入口合并由连接协调器负责；不扫描任意端口范围。
 
 | 来源                                 | 所有权     | 断开或停用时                                       |
 | ------------------------------------ | ---------- | -------------------------------------------------- |
@@ -54,7 +54,7 @@ Job 输出的 `at`/`next` 是 UTF-8 字节偏移，首次数据帧可合法重�
 
 ## 安全规则
 
-- DSH 网络目标仅限经过验证的 `127.0.0.1`/`localhost` 和合法端口；Webview 不直接联网、读文件或启动进程。
+- DSH 网络目标仅限经规范化校验的 HTTP(S) origin 和合法端口：本机发现默认只接受 `127.0.0.1`/`localhost`，`custom` 模式允许用户显式配置的远程地址；Webview 不直接联网、读文件或启动进程。
 - Webview CSP 使用 nonce，禁止远程脚本、`unsafe-eval`、内联事件和任意 frame；模型 Markdown 禁止原始 HTML，链接只接受安全 scheme 并由 Host 打开。
 - Secret 经 VS Code 密码输入或 SecretStorage 交给 Extension Host 和本机 DSH；Webview 只见 configured/missing，Secret 不进入日志、状态、fixture 或剪贴板。
 - 日志以字段 allowlist 为准，对 prompt、body、response、工具输入输出、token、authorization、password、secret 和路径做递归脱敏；诊断只发布有界的版本、状态、来源类别、可重连标志及脱敏日志。完整 endpoint、PID、环境变量和堆栈不外传。

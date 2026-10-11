@@ -8,7 +8,7 @@ export async function activateExtension(context: vscode.ExtensionContext): Promi
   if (lifecycle.root !== undefined) return
   try {
     const { createCompositionRoot } = await import('./composition-root.js')
-    const root = createCompositionRoot(context)
+    const root = await createCompositionRoot(context)
     lifecycle.root = root
     await root.start()
   } catch (error) {

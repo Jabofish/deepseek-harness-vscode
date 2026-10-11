@@ -36,12 +36,12 @@ The extension first looks for a compatible local DSH. It starts one only when th
 | `auto`          | Attach to a running DSH; start an extension-owned one only if no candidate connects. |
 | `attach-only`   | Discover and attach; never start DSH.                                                |
 | `new-isolated`  | Start one dedicated extension-owned DSH.                                             |
-| `custom`        | Probe only the single validated loopback endpoint supplied by the user.              |
+| `custom`        | Probe only the single validated HTTP(S) endpoint supplied by the user.               |
 
 The General settings page can check upstream package versions and install an exact verified version. Updating a global package never stops an external DSH.
 
 ## Privacy and support
 
-DSH connections, credentials, files, and processes stay in the VS Code Extension Host. The Webview receives no secrets or direct filesystem/network access. Endpoints are restricted to validated loopback addresses; diagnostics are redacted. See the [security model](docs/architecture.md) and [support instructions](apps/extension/SUPPORT.md).
+DSH connections, credentials, files, and processes stay in the VS Code Extension Host. The Webview receives no secrets or direct filesystem/network access. Endpoints are limited to validated HTTP(S) origins (local discovery defaults to loopback, and `custom` mode may target a user-configured remote host); diagnostics are redacted. See the [security model](docs/architecture.md) and [support instructions](apps/extension/SUPPORT.md).
 
 Developer documentation starts at the [documentation index](docs/README.md). The [contribution guide](CONTRIBUTING.md) explains validation and evidence. User-facing changes are recorded in the [extension changelog](apps/extension/CHANGELOG.md). Licensed under [MIT](LICENSE).

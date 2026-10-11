@@ -3,7 +3,6 @@ import type { ConnectionMode } from './runtime.js'
 
 export interface ConnectionSettings {
   readonly mode: ConnectionMode
-  readonly host: string
   readonly serverUrl?: string
   /**
    * DSH web launch token for an already-running instance (for example the
@@ -33,7 +32,6 @@ export interface RuntimeSettings {
 
 export interface SecuritySettings {
   readonly defaultPermissionPreset: PermissionPreset
-  readonly allowRemoteHost: boolean
   readonly redactDiagnostics: true
 }
 

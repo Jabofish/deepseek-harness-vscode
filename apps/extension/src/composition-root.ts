@@ -56,7 +56,7 @@ export { resolveSessionConfigurationForRoster }
  * moved body lives in a dedicated assembly module; the start/dispose sequence
  * in `commands-assembly.ts` preserves the original teardown order exactly.
  */
-export function createCompositionRoot(context: vscode.ExtensionContext): CompositionRoot {
+export async function createCompositionRoot(context: vscode.ExtensionContext): Promise<CompositionRoot> {
   const pluginInstallRequests = new PluginInstallRequestCoordinator()
   const configuration = new VsCodeConfigurationSource(vscode.workspace)
   const extensionVersion = readExtensionVersion(context)
@@ -121,7 +121,7 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     endpointLaunchUrls,
     loginWithToken,
     hasCookie,
-  } = createRuntimeAssembly({
+  } = await createRuntimeAssembly({
     context,
     configuration,
     diagnostics,

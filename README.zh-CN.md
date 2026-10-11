@@ -36,12 +36,12 @@ DeepSeek Harness 的 Chat 视图默认注册在辅助侧边栏（VS Code 默认�
 | `auto`         | 连接正在运行的 DSH；没有候选可连接时才启动扩展持有的实例。 |
 | `attach-only`  | 只发现和连接，绝不启动 DSH。                               |
 | `new-isolated` | 启动一个专用、由扩展持有的 DSH。                           |
-| `custom`       | 只探测用户给定且经过校验的单个 loopback 端点。             |
+| `custom`       | 只探测用户给定且经过校验的单个 HTTP(S) 端点。              |
 
 常规设置页可以检查上游包版本并安装已验证的精确版本。更新全局包不会停止外部 DSH。
 
 ## 隐私与支持
 
-DSH 连接、凭据、文件和进程均留在 VS Code Extension Host。Webview 不接收密钥，也不能直接访问文件系统或网络。端点只能是经验证的 loopback 地址，诊断会脱敏。详见[安全模型](docs/architecture.md)和[支持说明](apps/extension/SUPPORT.md)。
+DSH 连接、凭据、文件和进程均留在 VS Code Extension Host。Webview 不接收密钥，也不能直接访问文件系统或网络。端点仅限经过校验的 HTTP(S) 地址（本机发现默认使用 loopback，`custom` 模式可指向用户配置的远程主机），诊断会脱敏。详见[安全模型](docs/architecture.md)和[支持说明](apps/extension/SUPPORT.md)。
 
 开发者文档从[文档索引](docs/README.md)开始；[贡献指南](CONTRIBUTING.md)说明验证与证据要求。用户可见的变化记录在[扩展更新日志](apps/extension/CHANGELOG.md)。项目使用 [MIT 许可](LICENSE)。
