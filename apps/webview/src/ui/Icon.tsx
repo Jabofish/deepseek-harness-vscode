@@ -4,6 +4,7 @@ export type IconName =
   | 'add'
   | 'alert'
   | 'arrow-down'
+  | 'arrow-up'
   | 'box'
   | 'branch'
   | 'check'
@@ -86,6 +87,13 @@ function renderIcon(name: IconName): ReactElement {
         <>
           <path d="M12 4v15" />
           <path d="m6 13 6 6 6-6" />
+        </>
+      )
+    case 'arrow-up':
+      return (
+        <>
+          <path d="M12 20V5" />
+          <path d="m6 11 6-6 6 6" />
         </>
       )
     case 'box':

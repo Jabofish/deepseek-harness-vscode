@@ -12,6 +12,8 @@ import { MessageActions } from './MessageActions.js'
 import { containsUserTextReferences, projectUserText } from './UserText.js'
 import { ReasoningDisclosure } from './ReasoningDisclosure.js'
 import { ToolCallCollection, type ToolTimelineNode } from './ToolCallCollection.js'
+import { FocusedToolActivity } from './FocusedToolActivity.js'
+import { focusedPresentationPolicy } from './focused-presentation-policy.js'
 import { WorkflowRunCard } from '../workflows/WorkflowDrawer.js'
 import { Icon } from '../../ui/Icon.js'
 import type { PerformanceUsageMode, TranscriptViewMode } from '../../app/ui-preferences.js'
@@ -60,9 +62,22 @@ function renderNode(
   feedbackUnavailable = false,
   transcriptView: TranscriptViewMode = 'standard',
   performanceUsage: PerformanceUsageMode = 'detailed',
+  focused = false,
 ): ReactElement {
   switch (node.kind) {
     case 'tool':
+      if (focused)
+        return (
+          <FocusedToolActivity
+            tools={[node]}
+            expanded={expanded}
+            onExpandedChange={setExpanded}
+            translate={t}
+            transcriptView={transcriptView}
+            {...(onOpenLink === undefined ? {} : { onOpenLink })}
+            {...(onLoadImage === undefined ? {} : { onLoadImage })}
+          />
+        )
       return (
         <ToolCallCollection
           tools={[node]}
@@ -95,6 +110,7 @@ function renderNode(
         feedbackUnavailable,
         transcriptView,
         performanceUsage,
+        focused,
       )
     case 'goal':
       return (
@@ -356,6 +372,7 @@ function renderNode(
         feedbackUnavailable,
         transcriptView,
         performanceUsage,
+        focused,
       )
     case 'reasoning':
       if (transcriptView === 'compact') return <></>
@@ -393,6 +410,7 @@ function renderNode(
         feedbackUnavailable,
         transcriptView,
         performanceUsage,
+        focused,
       )
   }
 }
@@ -422,6 +440,7 @@ export function renderTimelineNode(
     context.feedbackUnavailable,
     context.transcriptView,
     context.performanceUsage,
+    context.conversationLayout === 'focused',
   )
 }
 
@@ -518,6 +537,7 @@ function renderAssistantTurn(
   feedbackUnavailable = false,
   transcriptView: TranscriptViewMode = 'standard',
   performanceUsage: PerformanceUsageMode = 'detailed',
+  focused = false,
 ): ReactElement {
   const inProgress = assistantNodeInProgress(node)
   const actionsUnavailable = running || inProgress || (node.turn !== undefined && node.turnCompleted !== true)
@@ -554,6 +574,7 @@ function renderAssistantTurn(
           t,
           producedFiles,
           transcriptView,
+          focused,
         )}
         {renderProducedFiles(producedFiles, onOpenLink, onShowInFolder, t)}
       </article>
@@ -599,6 +620,7 @@ function renderAssistantMessage(
   feedbackUnavailable = false,
   transcriptView: TranscriptViewMode = 'standard',
   performanceUsage: PerformanceUsageMode = 'detailed',
+  focused = false,
 ): ReactElement {
   const inProgress = assistantNodeInProgress(node)
   const actionsUnavailable = running || inProgress || (node.turn !== undefined && node.turnCompleted !== true)
@@ -630,10 +652,15 @@ function renderAssistantMessage(
             id={`reasoning:${node.id}`}
             markdown={node.reasoning.markdown}
             streaming={node.reasoning.streaming}
-            hideSettledPreview={transcriptView === 'compact'}
+            hideSettledPreview={
+              focused
+                ? !focusedPresentationPolicy(transcriptView).settledReasoningPreview
+                : transcriptView === 'compact'
+            }
             expanded={expanded.has(`reasoning:${node.id}`)}
             onExpandedChange={reasoningExpandedChange(setExpanded, `reasoning:${node.id}`)}
             translate={t}
+            onOpenLink={onOpenLink}
           />
         )}
         <MessageImages
@@ -677,6 +704,7 @@ function renderAssistantBlocks(
   t: Translate,
   producedFiles: readonly string[],
   transcriptView: TranscriptViewMode,
+  focused = false,
 ): ReactElement[] {
   const blocks = node.blocks.length === 0 ? assistantBlocksFromAggregates(node) : node.blocks
   const lastMessageIndex = blocks.reduce(
@@ -695,10 +723,15 @@ function renderAssistantBlocks(
             id={`reasoning:${node.id}:${block.id}`}
             markdown={block.markdown}
             streaming={block.streaming}
-            hideSettledPreview={transcriptView === 'compact'}
+            hideSettledPreview={
+              focused
+                ? !focusedPresentationPolicy(transcriptView).settledReasoningPreview
+                : transcriptView === 'compact'
+            }
             expanded={expanded.has(`reasoning:${node.id}:${block.id}`)}
             onExpandedChange={reasoningExpandedChange(setExpanded, `reasoning:${node.id}:${block.id}`)}
             translate={t}
+            onOpenLink={onOpenLink}
           />
         </Fragment>,
       )
@@ -733,14 +766,26 @@ function renderAssistantBlocks(
     }
     rendered.push(
       <div className="dsh-timeline__assistant-tools" key={`tools:${tools.map((tool) => tool.id).join('|')}`}>
-        <ToolCallCollection
-          tools={tools}
-          expanded={expanded}
-          onExpandedChange={setExpanded}
-          translate={t}
-          {...(onOpenLink === undefined ? {} : { onOpenLink })}
-          {...(onLoadImage === undefined ? {} : { onLoadImage })}
-        />
+        {focused ? (
+          <FocusedToolActivity
+            tools={tools}
+            expanded={expanded}
+            onExpandedChange={setExpanded}
+            translate={t}
+            transcriptView={transcriptView}
+            {...(onOpenLink === undefined ? {} : { onOpenLink })}
+            {...(onLoadImage === undefined ? {} : { onLoadImage })}
+          />
+        ) : (
+          <ToolCallCollection
+            tools={tools}
+            expanded={expanded}
+            onExpandedChange={setExpanded}
+            translate={t}
+            {...(onOpenLink === undefined ? {} : { onOpenLink })}
+            {...(onLoadImage === undefined ? {} : { onLoadImage })}
+          />
+        )}
       </div>,
     )
   }

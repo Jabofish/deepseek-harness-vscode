@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AgentConfiguration, DynamicCommand } from '@dsh-vscode/domain'
 import { I18nProvider, LOCALE_EXPLICIT_STORAGE_KEY, LOCALE_STORAGE_KEY, setActiveLocale } from '../../i18n.js'
 import { Composer } from './Composer.js'
+import { ConversationLayoutProvider } from '../../app/ConversationLayoutProvider.js'
 
 function baseProps(): Parameters<typeof Composer>[0] {
   return {
@@ -48,6 +49,28 @@ function typePrompt(value: string): HTMLTextAreaElement {
 }
 
 describe('Composer', () => {
+  it('keeps the draft caret when the focused card or Send is pressed and retains submission', () => {
+    const onSubmit = vi.fn()
+    render(
+      <ConversationLayoutProvider initialLayout="focused">
+        <Composer {...baseProps()} draft="Keep this draft" onSubmit={onSubmit} />
+      </ConversationLayoutProvider>,
+    )
+    const textarea = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Prompt' })
+    textarea.focus()
+    textarea.setSelectionRange(5, 9)
+    const send = screen.getByRole('button', { name: 'Send message' })
+    fireEvent.mouseDown(send, { button: 0 })
+    expect(document.activeElement).toBe(textarea)
+    expect([textarea.selectionStart, textarea.selectionEnd]).toEqual([5, 9])
+    textarea.blur()
+    fireEvent.mouseDown(composerForm(), { button: 0 })
+    expect(document.activeElement).toBe(textarea)
+    expect([textarea.selectionStart, textarea.selectionEnd]).toEqual([5, 9])
+    expect(textarea.getAttribute('aria-describedby')).toBeTruthy()
+    fireEvent.click(send)
+    expect(onSubmit).toHaveBeenCalledWith('queue')
+  })
   afterEach(() => {
     cleanup()
     vi.useRealTimers()

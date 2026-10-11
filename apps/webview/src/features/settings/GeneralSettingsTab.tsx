@@ -29,6 +29,7 @@ import {
 } from './update-labels.js'
 import type { SettingsDrawerProps } from './settings-drawer-props.js'
 import type { Translate, Locale } from '../../i18n.js'
+import { ConversationLayoutControl } from '../../app/ConversationLayoutControl.js'
 
 const LOCALE_OPTIONS: readonly Locale[] = ['en', 'zh']
 
@@ -435,6 +436,7 @@ export function GeneralSettingsTab(input: GeneralSettingsTabProps): ReactElement
         </section>
       ) : null}
       <SettingCard ariaLabel={t('settings.extensionPreferences')} title={t('settings.extensionPreferences')}>
+        <ConversationLayoutControl />
         <SettingRow
           title={t('settings.language.label')}
           description={t('settings.language.hint')}

@@ -7,6 +7,7 @@ import type { ModelCatalogFailure, ModelDescriptor, ModelSelection } from '@dsh-
 
 import { I18nProvider } from '../../i18n.js'
 import { ModelPicker } from './ModelPicker.js'
+import { ConversationLayoutProvider } from '../../app/ConversationLayoutProvider.js'
 
 const MODELS: readonly ModelDescriptor[] = [
   { id: 'deepseek-chat', providerId: 'deepseek', label: 'DeepSeek Chat', supportsReasoning: false },
@@ -41,6 +42,83 @@ const REASONER: ModelSelection = {
   modelId: 'deepseek-reasoner',
   reasoningLevel: 'low',
 }
+
+describe('DSH model selection behavior', () => {
+  afterEach(() => cleanup())
+  function focusedPicker(onChange = vi.fn()): ReturnType<typeof render> {
+    return render(
+      <ConversationLayoutProvider initialLayout="focused">
+        <ModelPicker
+          models={[
+            ...MODELS,
+            { id: 'swift-small', providerId: 'local', label: 'Swift Small', supportsReasoning: false },
+            { id: 'swift-large', providerId: 'local', label: 'Swift Large', supportsReasoning: false },
+          ]}
+          value={REASONER}
+          onChange={onChange}
+          showIcon={false}
+        />
+      </ConversationLayoutProvider>,
+    )
+  }
+  it('keeps search focused while arrows highlight and Enter chooses a filtered model', () => {
+    const onChange = vi.fn()
+    focusedPicker(onChange)
+    openRoot()
+    activate(screen.getByRole('menuitem', { name: /^Model/u }))
+    const search = screen.getByRole('searchbox', { name: 'Search models' })
+    expect(document.activeElement).toBe(search)
+    fireEvent.change(search, { target: { value: 'swl' } })
+    expect(screen.getByRole('menuitemradio', { name: 'Swift Large' })).toBeDefined()
+    fireEvent.change(search, { target: { value: 'swift' } })
+    fireEvent.keyDown(search, { key: 'ArrowDown' })
+    expect(document.activeElement).toBe(search)
+    const highlighted = document.getElementById(search.getAttribute('aria-activedescendant')!)
+    expect(highlighted?.textContent).toBe('Swift Large')
+    fireEvent.keyDown(search, { key: 'Enter' })
+    expect(onChange).toHaveBeenCalledWith({ providerId: 'local', modelId: 'swift-large' })
+    expect(screen.queryByRole('menu')).toBeNull()
+    expect(document.activeElement).toBe(trigger())
+    expect(trigger().querySelectorAll('svg')).toHaveLength(1)
+  })
+  it('clears search without losing focus and backs out with Shift+Tab before closing', () => {
+    focusedPicker()
+    openRoot()
+    activate(screen.getByRole('menuitem', { name: /^Model/u }))
+    const search = screen.getByRole('searchbox')
+    fireEvent.change(search, { target: { value: 'missing-model' } })
+    expect(screen.getByRole('status').textContent).toBe('No matching models.')
+    fireEvent.click(screen.getByRole('button', { name: 'Clear model search' }))
+    expect(document.activeElement).toBe(search)
+    expect(screen.getAllByRole('menuitemradio')).toHaveLength(5)
+    fireEvent.keyDown(search, { key: 'Tab', shiftKey: true })
+    expect(screen.queryByRole('searchbox')).toBeNull()
+    expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: /^Model/u }))
+    fireEvent.keyDown(document.activeElement!, { key: 'Tab', shiftKey: true })
+    expect(screen.queryByRole('menu')).toBeNull()
+    expect(document.activeElement).toBe(trigger())
+  })
+  it('settles Tab from an effort row and keeps IME Enter from selecting a model', () => {
+    const onChange = vi.fn()
+    focusedPicker(onChange)
+    openRoot()
+    activate(screen.getByRole('menuitem', { name: /^Reasoning effort/u }))
+    expect(document.activeElement).toBe(screen.getByRole('menuitemradio', { name: 'Low' }))
+    fireEvent.keyDown(screen.getByRole('menuitemradio', { name: 'High' }), { key: 'Tab' })
+    expect(onChange).toHaveBeenCalledWith({ ...REASONER, reasoningLevel: 'high' })
+    openRoot()
+    activate(screen.getByRole('menuitem', { name: /^Model/u }))
+    fireEvent.keyDown(screen.getByRole('searchbox'), { key: 'Enter', isComposing: true })
+    expect(onChange).toHaveBeenCalledTimes(1)
+  })
+  it('returns to the effort row when backing out of its pane', () => {
+    focusedPicker()
+    openRoot()
+    activate(screen.getByRole('menuitem', { name: /^Reasoning effort/u }))
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' })
+    expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: /^Reasoning effort/u }))
+  })
+})
 
 describe('ModelPicker keyboard and focus contract', () => {
   afterEach(() => cleanup())

@@ -40,7 +40,7 @@ export function ToolTerminalPreview(props: ToolTerminalRenderProps): ReactElemen
       {empty ? (
         <div className="dsh-tool-terminal-preview__empty">{translate('toolrow.presentation.noOutput')}</div>
       ) : (
-        <pre className="dsh-tool-terminal-preview__body">
+        <pre className="dsh-tool-terminal-preview__body" tabIndex={0}>
           {(capped ? lines.slice(0, headLines) : lines).map((line, index) => (
             <span className="dsh-tool-terminal-preview__line" key={`${index}:${line}`}>
               {line}

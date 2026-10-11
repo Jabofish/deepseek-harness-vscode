@@ -15,6 +15,8 @@ import { useI18n } from '../../i18n.js'
 import { Icon } from '../../ui/Icon.js'
 import { useDismissibleLayer } from '../../components/common/useDismissibleLayer.js'
 import { useViewportMenuPosition } from '../../components/common/useViewportMenuPosition.js'
+import { useConversationLayout } from '../../app/ConversationLayoutProvider.js'
+import { rankByName } from './rank-by-name.js'
 
 type ModelPane = 'root' | 'models' | 'effort'
 
@@ -42,6 +44,7 @@ export interface ModelPickerProps {
   readonly value: ModelSelection
   readonly disabled?: boolean
   readonly displayLabel?: boolean
+  readonly showIcon?: boolean
   readonly openRequest?: number
   readonly onChange: (value: ModelSelection) => void | Promise<void>
 }
@@ -54,6 +57,9 @@ export interface ModelPickerProps {
  */
 export const ModelPicker = memo(function ModelPicker(props: ModelPickerProps): ReactElement {
   const { t } = useI18n()
+  const focused = useConversationLayout()?.layout === 'focused'
+  const [search, setSearch] = useState<{ readonly query: string; readonly index?: number }>({ query: '' })
+  const searchRef = useRef<HTMLInputElement>(null)
   const [open, setOpen] = useState(false)
   const [pane, setPane] = useState<ModelPane>('root')
   const [applying, setApplying] = useState(false)
@@ -74,6 +80,7 @@ export const ModelPicker = memo(function ModelPicker(props: ModelPickerProps): R
     props.models.length === 0 && failures.length === 0 && props.loading !== true && props.error === undefined
   /** Where the next open should land the keyboard cursor. */
   const openEntryRef = useRef<'first' | 'last'>('first')
+  const returnPaneRef = useRef<ModelPane | undefined>(undefined)
   /**
    * Requests are one-shot: the counter stays above zero for the rest of the
    * session, so a value seen at mount is already spent and a remount must not
@@ -83,7 +90,27 @@ export const ModelPicker = memo(function ModelPicker(props: ModelPickerProps): R
   const selected = props.models.find(
     (model) => model.providerId === props.value.providerId && model.id === props.value.modelId,
   )
-  const groups = useMemo(() => groupModels(props.models), [props.models])
+  const showSearch = focused && props.models.length > 4
+  const groups = useMemo(
+    () =>
+      groupModels(props.models)
+        .map((group) => ({
+          ...group,
+          models: showSearch
+            ? rankByName(
+                group.models.map((model) => ({ ...model, name: model.id })),
+                search.query.trim(),
+              )
+            : group.models,
+        }))
+        .filter((group) => group.models.length > 0),
+    [props.models, search.query, showSearch],
+  )
+  const visibleModels = useMemo(() => groups.flatMap((group) => group.models), [groups])
+  const currentIndex = visibleModels.findIndex(
+    (model) => model.providerId === props.value.providerId && model.id === props.value.modelId,
+  )
+  const activeIndex = Math.min(search.index ?? Math.max(0, currentIndex), visibleModels.length - 1)
   const reasoningLevels = selected?.supportsReasoning ? (selected.reasoningLevels ?? []) : []
   /**
    * The effort in effect, as far as the host has stated it: an explicitly
@@ -125,13 +152,24 @@ export const ModelPicker = memo(function ModelPicker(props: ModelPickerProps): R
   const close = useCallback((): void => {
     setOpen(false)
     setPane('root')
+    returnPaneRef.current = undefined
   }, [])
 
-  const openMenu = useCallback((entry: 'first' | 'last' = 'first'): void => {
-    openEntryRef.current = entry
+  const back = (): void => {
+    returnPaneRef.current = pane
     setPane('root')
-    setOpen(true)
-  }, [])
+  }
+
+  const hasSelection = selected !== undefined
+  const openMenu = useCallback(
+    (entry: 'first' | 'last' = 'first'): void => {
+      openEntryRef.current = entry
+      setSearch({ query: '' })
+      setPane(focused && !hasSelection ? 'models' : 'root')
+      setOpen(true)
+    },
+    [focused, hasSelection],
+  )
 
   /**
    * Every surface of this menu is keyboard-reachable: opening it and switching
@@ -140,12 +178,29 @@ export const ModelPicker = memo(function ModelPicker(props: ModelPickerProps): R
    */
   useLayoutEffect(() => {
     if (!open) return
+    if (pane === 'models' && showSearch) {
+      searchRef.current?.focus()
+      return
+    }
     const items = menuItems(menuRef.current)
     if (items.length === 0) return
     const entry = openEntryRef.current
     openEntryRef.current = 'first'
-    items[entry === 'last' ? items.length - 1 : 0]?.focus()
-  }, [open, pane])
+    const returnedPane = returnPaneRef.current
+    returnPaneRef.current = undefined
+    const checked =
+      focused && pane !== 'root'
+        ? menuRef.current?.querySelector<HTMLElement>('[aria-checked="true"]')
+        : undefined
+    const index =
+      focused && pane === 'root' && returnedPane === 'effort' ? 1 : entry === 'last' ? items.length - 1 : 0
+    ;(checked ?? items[index])?.focus()
+  }, [focused, open, pane, showSearch])
+
+  useLayoutEffect(() => {
+    if (open && pane === 'models' && showSearch && activeIndex >= 0)
+      document.getElementById(`${menuId}-model-${activeIndex}`)?.scrollIntoView?.({ block: 'nearest' })
+  }, [activeIndex, menuId, open, pane, showSearch, visibleModels])
 
   useDismissibleLayer({
     open,
@@ -187,13 +242,43 @@ export const ModelPicker = memo(function ModelPicker(props: ModelPickerProps): R
   }
 
   const onMenuKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
-    if (event.key === 'Escape') {
+    if (event.nativeEvent.isComposing) return
+    if (event.key === 'Escape' || (focused && event.key === 'Tab' && event.shiftKey)) {
       event.preventDefault()
-      if (pane === 'root') {
+      if (pane === 'root' || (focused && selected === undefined)) {
         close()
         triggerRef.current?.focus()
       } else {
-        setPane('root')
+        back()
+      }
+      return
+    }
+    if (showSearch && pane === 'models') {
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault()
+        if (!applying && visibleModels.length > 0)
+          setSearch({
+            ...search,
+            index:
+              (activeIndex + (event.key === 'ArrowDown' ? 1 : -1) + visibleModels.length) %
+              visibleModels.length,
+          })
+        searchRef.current?.focus()
+        return
+      }
+      if (event.target === searchRef.current && (event.key === 'Enter' || event.key === 'Tab')) {
+        if (event.key === 'Tab' && visibleModels.length === 0) return
+        event.preventDefault()
+        const model = visibleModels[activeIndex]
+        if (!applying && model !== undefined) selectModel(model)
+        return
+      }
+    }
+    if (focused && event.key === 'Tab') {
+      const target = event.target
+      if (target instanceof HTMLButtonElement && menuItems(menuRef.current).includes(target)) {
+        event.preventDefault()
+        target.click()
       }
       return
     }
@@ -277,7 +362,7 @@ export const ModelPicker = memo(function ModelPicker(props: ModelPickerProps): R
         }}
         onKeyDown={onTriggerKeyDown}
       >
-        <Icon name="model" />
+        {props.showIcon === false ? null : <Icon name="model" />}
         <span className="dsh-select-menu__trigger-text">{currentLabel}</span>
         <span className="dsh-select-menu__trigger-label">{currentLabel}</span>
         <Icon name="chevron-down" className="dsh-select-menu__chevron" />
@@ -287,7 +372,7 @@ export const ModelPicker = memo(function ModelPicker(props: ModelPickerProps): R
           ref={menuRef}
           id={menuId}
           className="dsh-select-menu__menu dsh-model-picker__menu"
-          role="menu"
+          role={focused && pane === 'models' ? 'group' : 'menu'}
           aria-label={t('model.select')}
           aria-busy={applying}
           style={menuPosition}
@@ -323,14 +408,46 @@ export const ModelPicker = memo(function ModelPicker(props: ModelPickerProps): R
               <button
                 className="dsh-model-picker__back"
                 type="button"
-                role="menuitem"
-                onClick={() => setPane('root')}
+                role={focused && pane === 'models' ? undefined : 'menuitem'}
+                onClick={back}
               >
                 <Icon name="chevron-left" />
                 <span>{t('model.back')}</span>
               </button>
               {pane === 'models' ? (
                 <>
+                  {showSearch ? (
+                    <div className="dsh-model-picker__search-row">
+                      <input
+                        ref={searchRef}
+                        type="text"
+                        role="searchbox"
+                        className="dsh-model-picker__search"
+                        aria-label={t('model.search')}
+                        placeholder={t('model.search')}
+                        aria-controls={`${menuId}-models`}
+                        aria-activedescendant={activeIndex < 0 ? undefined : `${menuId}-model-${activeIndex}`}
+                        value={search.query}
+                        readOnly={applying}
+                        maxLength={160}
+                        onChange={(event) => setSearch({ query: event.currentTarget.value, index: 0 })}
+                      />
+                      {search.query === '' ? null : (
+                        <button
+                          type="button"
+                          className="dsh-icon-button"
+                          aria-label={t('model.clearSearch')}
+                          disabled={applying}
+                          onClick={() => {
+                            setSearch({ query: '', index: 0 })
+                            searchRef.current?.focus()
+                          }}
+                        >
+                          <Icon name="close" />
+                        </button>
+                      )}
+                    </div>
+                  ) : null}
                   {props.loading === true ? (
                     <p className="dsh-model-picker__status" role="status">
                       {t('model.loading')}
@@ -364,44 +481,71 @@ export const ModelPicker = memo(function ModelPicker(props: ModelPickerProps): R
                       ))}
                     </div>
                   )}
-                  {groups.length === 0 ? (
-                    answeredEmpty ? (
-                      <p className="dsh-model-picker__empty" role="status">
-                        {t('model.noModels')}
-                      </p>
-                    ) : null
-                  ) : (
-                    groups.map((group) => (
-                      <section
-                        className="dsh-model-picker__group"
-                        key={group.id}
-                        role="group"
-                        aria-label={group.id}
-                      >
-                        <h3>{group.id}</h3>
-                        {group.models.map((model) => {
-                          const isSelected =
-                            model.providerId === props.value.providerId && model.id === props.value.modelId
-                          return (
-                            <button
-                              className={`dsh-select-menu__option${
-                                isSelected ? ' dsh-select-menu__option--selected' : ''
-                              }`}
-                              key={model.id}
-                              type="button"
-                              role="menuitemradio"
-                              aria-checked={isSelected}
-                              aria-disabled={applying}
-                              onClick={() => selectModel(model)}
-                            >
-                              <span>{model.label}</span>
-                              {isSelected ? <Icon name="check" /> : null}
-                            </button>
-                          )
-                        })}
-                      </section>
-                    ))
-                  )}
+                  <div
+                    id={`${menuId}-models`}
+                    className="dsh-model-picker__groups"
+                    role={focused && groups.length > 0 ? 'menu' : undefined}
+                    aria-label={focused && groups.length > 0 ? t('model.menuModel') : undefined}
+                  >
+                    {groups.length === 0 ? (
+                      showSearch && search.query.trim() !== '' ? (
+                        <p role="status" className="dsh-model-picker__empty">
+                          {t('model.noMatches')}
+                        </p>
+                      ) : answeredEmpty ? (
+                        <p className="dsh-model-picker__empty" role="status">
+                          {t('model.noModels')}
+                        </p>
+                      ) : null
+                    ) : (
+                      groups.map((group) => (
+                        <section
+                          className="dsh-model-picker__group"
+                          key={group.id}
+                          role="group"
+                          aria-label={group.id}
+                        >
+                          {focused ? (
+                            <div className="dsh-model-picker__group-heading">{group.id}</div>
+                          ) : (
+                            <h3>{group.id}</h3>
+                          )}
+                          {group.models.map((model) => {
+                            const isSelected =
+                              model.providerId === props.value.providerId && model.id === props.value.modelId
+                            return (
+                              <button
+                                className={`dsh-select-menu__option${
+                                  isSelected ? ' dsh-select-menu__option--selected' : ''
+                                }`}
+                                key={model.id}
+                                type="button"
+                                role="menuitemradio"
+                                id={`${menuId}-model-${visibleModels.indexOf(model)}`}
+                                tabIndex={showSearch ? -1 : 0}
+                                data-highlighted={
+                                  showSearch && visibleModels.indexOf(model) === activeIndex
+                                    ? 'true'
+                                    : undefined
+                                }
+                                onMouseMove={
+                                  showSearch && !applying
+                                    ? () => setSearch({ ...search, index: visibleModels.indexOf(model) })
+                                    : undefined
+                                }
+                                aria-checked={isSelected}
+                                aria-disabled={applying}
+                                onClick={() => selectModel(model)}
+                              >
+                                <span>{model.label}</span>
+                                {isSelected ? <Icon name="check" /> : null}
+                              </button>
+                            )
+                          })}
+                        </section>
+                      ))
+                    )}
+                  </div>
                 </>
               ) : (
                 <>

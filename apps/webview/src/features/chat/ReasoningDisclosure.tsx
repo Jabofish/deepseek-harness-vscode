@@ -2,6 +2,8 @@ import { memo, type ReactElement } from 'react'
 import { ContentFlow } from '../../components/common/index.js'
 import { Icon } from '../../ui/Icon.js'
 import type { Translate } from '../../i18n.js'
+import { useConversationLayout } from '../../app/ConversationLayoutProvider.js'
+import { MarkdownContent } from './MarkdownContent.js'
 
 export interface ReasoningDisclosureProps {
   readonly id: string
@@ -12,6 +14,7 @@ export interface ReasoningDisclosureProps {
   readonly expanded: boolean
   readonly onExpandedChange: (expanded: boolean) => void
   readonly translate: Translate
+  readonly onOpenLink?: ((href: string) => void) | undefined
 }
 
 /**
@@ -22,10 +25,13 @@ export interface ReasoningDisclosureProps {
 export const ReasoningDisclosure = memo(function ReasoningDisclosure(
   props: ReasoningDisclosureProps,
 ): ReactElement | null {
+  const focused = useConversationLayout()?.layout === 'focused'
   const content = props.markdown.trim()
   if (content === '') return null
 
-  const preview = latestReasoningLines(content)
+  const preview = focused
+    ? focusedReasoningSummary(props.markdown, props.streaming)
+    : latestReasoningLines(content)
   const contentId = `${props.id}:content`
   const showPreview = props.expanded || (props.streaming && preview !== '')
   const showCollapsedPreview = preview !== '' && (!props.hideSettledPreview || props.streaming)
@@ -79,13 +85,41 @@ export const ReasoningDisclosure = memo(function ReasoningDisclosure(
             className="dsh-timeline__reasoning-preview-content"
             aria-hidden={!props.expanded}
           >
-            {showPreview ? (props.expanded ? content : preview) : null}
+            {focused ? (
+              props.expanded ? (
+                <MarkdownContent
+                  markdown={content}
+                  streaming={props.streaming}
+                  onOpenLink={props.onOpenLink}
+                />
+              ) : null
+            ) : showPreview ? (
+              props.expanded ? (
+                content
+              ) : (
+                preview
+              )
+            ) : null}
           </ContentFlow>
         </div>
       </div>
     </section>
   )
 })
+
+/** DSH previews the first line; a stream advances only after that line completes. */
+function focusedReasoningSummary(text: string, streaming: boolean): string {
+  if (!streaming) return (text.split(/\r?\n/u, 1)[0] ?? '').replaceAll('**', '').trim()
+  const paragraphs = text.split(/\r?\n(?:[\t ]*\r?\n)+/u)
+  let summary = ''
+  paragraphs.forEach((paragraph, index) => {
+    const newline = paragraph.indexOf('\n')
+    if (newline < 0 && index === paragraphs.length - 1) return
+    const candidate = (newline < 0 ? paragraph : paragraph.slice(0, newline)).trim()
+    if (candidate !== '') summary = candidate
+  })
+  return summary.replaceAll('**', '')
+}
 
 function latestReasoningLines(markdown: string): string {
   let end = markdown.length

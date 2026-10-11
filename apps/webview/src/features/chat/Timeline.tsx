@@ -31,7 +31,6 @@ import {
   createUserTextFactsProjector,
 } from './timeline-projection.js'
 import {
-  type DisplayTimelineNode,
   type FeedbackPrepare,
   type FeedbackSubmit,
   type TimelineNodeRenderContext,
@@ -39,7 +38,13 @@ import {
 import { StreamingActivity } from './timeline-renderers.js'
 import { TimelineRow } from './TimelineRow.js'
 import { ToolLinkErrorDialog } from './ToolLinkErrorDialog.js'
-import { timelineSourceNodeIds } from './timeline-inspector-target.js'
+import {
+  createFocusedTimelineProjector,
+  presentedSourceNodeIds,
+  type PresentedTimelineNode,
+} from './focused-timeline-projection.js'
+import { useConversationLayout } from '../../app/ConversationLayoutProvider.js'
+import type { ConversationLayout } from '../../app/conversation-layout.js'
 
 export interface TimelineProps {
   readonly sessionId: string
@@ -139,6 +144,15 @@ function handleTimelineScrollKeyDown(event: ReactKeyboardEvent<HTMLDivElement>):
 
 export const Timeline = memo(function Timeline(props: TimelineProps): ReactElement {
   const { t } = useI18n()
+  const layoutPreference = useConversationLayout()
+  const conversationLayout = layoutPreference?.layout ?? 'classic'
+  const [layoutAnchor, setLayoutAnchor] = useState<{
+    readonly layout: ConversationLayout
+    readonly sessionId: string
+    readonly nodeId: string
+    readonly offset: number
+  }>()
+  const focusedProjector = useMemo(() => createFocusedTimelineProjector(), [])
   const prependAnchorRef = useRef<ScrollAnchor | undefined>(undefined)
   const olderHistoryRequestRef = useRef<{ readonly sessionId: string } | undefined>(undefined)
   useLayoutEffect(() => {
@@ -161,7 +175,7 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
       displayProjector(
         props.nodes,
         showDshEvents,
-        transcriptView,
+        conversationLayout === 'focused' ? 'verbose' : transcriptView,
         props.nodeChangeStart,
         props.nodeChangeBase,
       ),
@@ -172,9 +186,14 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
       props.nodes,
       showDshEvents,
       transcriptView,
+      conversationLayout,
     ],
   )
-  const displayNodes = displayProjection.nodes
+  const displayNodes = useMemo(
+    () =>
+      conversationLayout === 'focused' ? focusedProjector(displayProjection.nodes) : displayProjection.nodes,
+    [conversationLayout, displayProjection.nodes, focusedProjector],
+  )
   const running = props.running ?? props.streaming
   const hasMoreHistory = props.hasMoreHistory
   const loadingOlderHistory = props.loadingOlderHistory
@@ -263,8 +282,11 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
     if (control !== null) openLinkTriggerRef.current = control
   }
   const latestNode = displayNodes[displayNodes.length - 1]
-  const latestSignature = nodeSignatureProjector(latestNode)
-  const virtualizeTimeline = virtualizationProjector(displayNodes, displayNodeTextSizeProjector)
+  const latestSignature =
+    latestNode?.kind === 'focused-turn'
+      ? `${latestNode.id}:${latestNode.foldable}:${latestNode.nodes.map(nodeSignatureProjector).join('|')}`
+      : nodeSignatureProjector(latestNode)
+  const virtualizeTimeline = virtualizationProjector(displayProjection.nodes, displayNodeTextSizeProjector)
   const {
     scrollRef,
     contentRef,
@@ -302,10 +324,17 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
   const revealIndex =
     revealNodeId === undefined
       ? -1
-      : displayNodes.findIndex((node) => timelineSourceNodeIds(node).includes(revealNodeId))
+      : displayNodes.findIndex((node) => presentedSourceNodeIds(node).includes(revealNodeId))
+  const anchorIndex =
+    layoutAnchor?.layout === conversationLayout && layoutAnchor.sessionId === props.sessionId
+      ? displayNodes.findIndex((node) => presentedSourceNodeIds(node).includes(layoutAnchor.nodeId))
+      : -1
   const getPinnedTimelineIndex = useCallback(
-    (): number | undefined => getFocusedTimelineIndex() ?? (revealIndex >= 0 ? revealIndex : undefined),
-    [getFocusedTimelineIndex, revealIndex],
+    (): number | undefined =>
+      anchorIndex >= 0
+        ? anchorIndex
+        : (getFocusedTimelineIndex() ?? (revealIndex >= 0 ? revealIndex : undefined)),
+    [anchorIndex, getFocusedTimelineIndex, revealIndex],
   )
   const virtualized = useVirtualizedCollection({
     items: displayNodes,
@@ -316,6 +345,77 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
     onScrollAdjustment: applyScrollAdjustment,
   })
   const virtualizedReady = virtualized.enabled && virtualized.ready
+  const beforeLayoutChange = layoutPreference?.beforeChange
+  useLayoutEffect(
+    () =>
+      beforeLayoutChange?.((next) => {
+        const timeline = scrollRef.current
+        if (next === conversationLayout || isPinnedToBottom || timeline === null) return
+        const viewport = timeline.getBoundingClientRect()
+        const rows = Array.from(timeline.querySelectorAll<HTMLElement>('.dsh-timeline__row'))
+        const row =
+          rows.find((element) => {
+            const bounds = element.getBoundingClientRect()
+            return bounds.top >= viewport.top && bounds.top < viewport.bottom
+          }) ?? rows.find((element) => element.getBoundingClientRect().bottom > viewport.top)
+        const node = row === undefined ? undefined : displayNodes[Number(row.dataset.index)]
+        if (node === undefined || row === undefined) return
+        const nodeId =
+          node.kind === 'focused-turn'
+            ? (node.answer?.id ?? node.sourceIds[0])
+            : presentedSourceNodeIds(node)[0]
+        if (nodeId === undefined) return
+        setLayoutAnchor({
+          layout: next,
+          sessionId: props.sessionId,
+          nodeId,
+          offset: row.getBoundingClientRect().top - viewport.top,
+        })
+      }),
+    [beforeLayoutChange, conversationLayout, displayNodes, isPinnedToBottom, props.sessionId, scrollRef],
+  )
+  useLayoutEffect(() => {
+    if (layoutAnchor === undefined || anchorIndex < 0 || (virtualized.enabled && !virtualized.ready)) return
+    const timeline = scrollRef.current
+    if (timeline === null) return
+    const correct = (): void => {
+      const row = Array.from(timeline.querySelectorAll<HTMLElement>('.dsh-timeline__row')).find(
+        (element) => Number(element.dataset.index) === anchorIndex,
+      )
+      if (row !== undefined)
+        userScrollToOffset(
+          timeline.scrollTop +
+            row.getBoundingClientRect().top -
+            timeline.getBoundingClientRect().top -
+            layoutAnchor.offset,
+        )
+    }
+    correct()
+    // The virtualizer refines row heights after commit. Pin the original source
+    // until that measurement has settled, then release it without stealing focus.
+    let frame: number
+    let remaining = 8
+    const release = (): void => {
+      window.cancelAnimationFrame(frame)
+      setLayoutAnchor((current) => (current === layoutAnchor ? undefined : current))
+    }
+    const settle = (): void => {
+      correct()
+      if (--remaining > 0) frame = window.requestAnimationFrame(settle)
+      else release()
+    }
+    frame = window.requestAnimationFrame(settle)
+    // A new reader gesture always wins over the bounded measurement pass.
+    timeline.addEventListener('wheel', release, { passive: true })
+    timeline.addEventListener('pointerdown', release)
+    timeline.addEventListener('keydown', release)
+    return () => {
+      window.cancelAnimationFrame(frame)
+      timeline.removeEventListener('wheel', release)
+      timeline.removeEventListener('pointerdown', release)
+      timeline.removeEventListener('keydown', release)
+    }
+  }, [anchorIndex, layoutAnchor, scrollRef, userScrollToOffset, virtualized.enabled, virtualized.ready])
   const revealedRequest = useRef<string | undefined>(undefined)
   useLayoutEffect(() => {
     const requestId = props.revealTarget?.requestId
@@ -378,6 +478,8 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
   const hasFeedback = props.onFeedback !== undefined || props.onFeedbackSubmit !== undefined
   const nodeRenderContext = useMemo<TimelineNodeRenderContext>(
     () => ({
+      conversationLayout,
+      revealSourceNodeId: props.revealTarget?.nodeId,
       expandedDetails,
       setExpandedDetails,
       assistantLabel: props.assistantLabel,
@@ -400,6 +502,8 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
       t,
     }),
     [
+      conversationLayout,
+      props.revealTarget?.nodeId,
       expandedDetails,
       hasBranch,
       hasFeedback,
@@ -456,6 +560,7 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
         className="dsh-timeline"
         data-scroll-follow={isPinnedToBottom ? 'pinned' : 'free'}
         data-transcript-view={transcriptView}
+        data-conversation-layout={conversationLayout}
         data-performance-usage={performanceUsage}
         data-coding-tools-enabled={codingToolsEnabled}
         role="region"
@@ -560,6 +665,6 @@ export const Timeline = memo(function Timeline(props: TimelineProps): ReactEleme
   )
 })
 
-function timelineNodeKey(node: DisplayTimelineNode): string {
+function timelineNodeKey(node: PresentedTimelineNode): string {
   return node.id
 }

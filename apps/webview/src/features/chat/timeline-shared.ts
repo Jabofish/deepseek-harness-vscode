@@ -91,6 +91,8 @@ export type ExpandedDetailsSetter = (
 ) => void
 
 export interface TimelineNodeRenderContext {
+  readonly conversationLayout?: 'focused' | 'classic'
+  readonly revealSourceNodeId?: string | undefined
   readonly expandedDetails: ReadonlySet<string>
   readonly setExpandedDetails: ExpandedDetailsSetter
   readonly assistantLabel: string | undefined

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- 新增参考 DSH 原版源码的聚焦布局：平面正文、回合过程折叠、常驻产出文件入口、宽视图工作区导航、紧凑输入栏与统一的设置、插件、轨迹和任务界面。模型图标移除，大目录支持模糊搜索及键盘高亮，输入按钮保留草稿选区；设置记住上次分区，并允许随时切回经典布局。
+- Added a DSH-style focused layout with flat replies, collapsible turn processes, visible file actions, wide-view workspace navigation, a compact composer, and consistent Settings, Plugins, Trajectory and task surfaces. The model trigger has no icon; large catalogs support fuzzy search and keyboard highlighting. Composer actions preserve the caret, Settings remembers its last section, and the original classic layout remains selectable.
+
+- 工具和思考也采用紧凑摘要；文件和网页链接可直接打开，读取、diff、终端、搜索和插件详情按需展开，保留失败提示与复制。审批、提问、计划、队列和统计统一改版，默认输入框进一步缩小，代码结果可用键盘滚动。
+- Tool calls and reasoning now use compact summaries with direct file and web links, expandable read/diff/terminal/search/plugin results, visible failures and copy actions. Approvals, questions, plans, queues and statistics share the new presentation; the default composer is shorter and result panes support keyboard scrolling.
+
 - 改善长对话的历史加载和流式回复显示，保留历史补载后的消息顺序与会话引用。
 - Improve long-conversation history loading and streamed reply display while preserving message order and session references after older history loads.
 

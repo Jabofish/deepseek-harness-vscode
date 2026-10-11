@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { TimelineNode } from '@dsh-vscode/timeline'
 
 import { ToolCallCollection } from './ToolCallCollection.js'
+import { ConversationLayoutProvider } from '../../app/ConversationLayoutProvider.js'
 
 const translate = (key: string, params?: Readonly<Record<string, string | number>>): string => {
   if (key === 'timeline.toolSubcalls') return 'Nested tool calls'
@@ -42,6 +43,41 @@ function toolNode(
 
 describe('ToolCallCollection', () => {
   afterEach(() => cleanup())
+
+  it('opens a focused web target without toggling its independently controlled details', () => {
+    const open = vi.fn()
+    const expand = vi.fn()
+    const source = toolNode('web_fetch', undefined, 'completed', {
+      phase: 'result',
+      card: 'web',
+      kind: 'fetch',
+      url: 'https://example.test/page',
+      statusCode: 200,
+      truncated: false,
+    })
+    const view = render(
+      <ConversationLayoutProvider initialLayout="focused">
+        <ToolCallCollection
+          tools={[source]}
+          grouped={false}
+          expanded={new Set()}
+          onExpandedChange={expand}
+          translate={translate}
+          onOpenLink={open}
+        />
+      </ConversationLayoutProvider>,
+    )
+    const target = view.container.querySelector<HTMLButtonElement>('.dsh-tool-row__inline-target')!
+    target.focus()
+    fireEvent.click(target)
+    expect(open).toHaveBeenCalledWith('https://example.test/page')
+    expect(expand).not.toHaveBeenCalled()
+    const toggle = view.container.querySelector<HTMLButtonElement>('.dsh-tool-row__toggle')!
+    fireEvent.click(toggle)
+    expect(expand).toHaveBeenCalledWith(new Set(['web_fetch']))
+    expect(target.closest('button')?.parentElement?.closest('button')).toBeNull()
+    expect(document.getElementById(toggle.getAttribute('aria-controls') ?? '')).not.toBeNull()
+  })
 
   it('keeps preparations visible outside the executed-call count and gives generic tools a preparation label', () => {
     const preview = toolNode('preview')

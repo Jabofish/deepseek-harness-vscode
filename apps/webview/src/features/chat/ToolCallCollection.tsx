@@ -21,6 +21,7 @@ import { ToolDiffPreview } from './ToolDiffPreview.js'
 import { ToolSearchPreview } from './ToolSearchPreview.js'
 import { ToolTerminalPreview } from './ToolTerminalPreview.js'
 import { ToolWebPreview } from './ToolWebPreview.js'
+import { useConversationLayout } from '../../app/ConversationLayoutProvider.js'
 
 export type ToolTimelineNode = Extract<TimelineNode, { readonly kind: 'tool' }>
 
@@ -29,6 +30,8 @@ export interface ToolCallCollectionProps {
   readonly expanded: ReadonlySet<string>
   readonly onExpandedChange: (expanded: ReadonlySet<string>) => void
   readonly translate: Translate
+  /** A parent presentation can own the disclosure; classic collections group by default. */
+  readonly grouped?: boolean
   readonly onOpenLink?: (href: string) => void
   readonly onLoadImage?: (image: MessageImageReference) => Promise<string | undefined>
 }
@@ -70,6 +73,17 @@ const ToolCallRows = memo(function ToolCallRows(props: ToolCallCollectionProps):
       </>
     )
   const roots = projectToolCallTree(props.tools)
+
+  if (props.grouped === false)
+    return (
+      <>
+        {roots.map((root) => (
+          <div className="dsh-timeline__tool-collection" key={root.node.id}>
+            {renderToolCard(root, props)}
+          </div>
+        ))}
+      </>
+    )
 
   if (roots.length === 1) {
     const root = roots[0]
@@ -147,6 +161,7 @@ interface ToolCardViewProps {
 }
 
 const ToolCardView = memo(function ToolCardView(props: ToolCardViewProps): ReactElement {
+  const focused = useConversationLayout()?.layout === 'focused'
   const { expanded: expandedKeys, tree, onExpandedChange } = props
   const node = tree.node
   const expanded = expandedKeys.has(node.id)
@@ -160,6 +175,7 @@ const ToolCardView = memo(function ToolCardView(props: ToolCardViewProps): React
   return (
     <div className="dsh-timeline__tool-call" data-tool-call-id={node.id}>
       {toolRendererRegistry.render(node.tool, {
+        focused,
         expanded,
         translate: props.translate,
         onToggle,
@@ -227,6 +243,7 @@ function toolCollectionEqual(previous: ToolCallCollectionProps, next: ToolCallCo
     previous.onOpenLink !== next.onOpenLink ||
     previous.onLoadImage !== next.onLoadImage ||
     previous.translate !== next.translate ||
+    previous.grouped !== next.grouped ||
     previous.tools.length !== next.tools.length
   )
     return false

@@ -29,6 +29,7 @@ vi.mock('./features/chat/Timeline.js', () => ({
 }))
 
 import { App } from './App.js'
+import { ConversationLayoutProvider } from './app/ConversationLayoutProvider.js'
 import { CONVERSATION_FONT_SIZE_STORAGE_KEY, THEME_PREFERENCE_STORAGE_KEY } from './app/ui-preferences.js'
 import { I18nProvider, LOCALE_EXPLICIT_STORAGE_KEY, LOCALE_STORAGE_KEY, useI18n } from './i18n.js'
 
@@ -708,7 +709,9 @@ describe('App connected rendering', () => {
     expect(document.querySelector('.dsh-conversation')?.getAttribute('data-conversation-font-size')).toBe(
       'large',
     )
-    fireEvent.click(await screen.findByRole('button', { name: 'Small' }))
+    // The first settings opening loads a separate chunk; allow module loading
+    // under the full parallel suite before checking the actual preference write.
+    fireEvent.click(await screen.findByRole('button', { name: 'Small' }, { timeout: 5_000 }))
 
     expect(document.querySelector('.dsh-conversation')?.getAttribute('data-conversation-font-size')).toBe(
       'small',
@@ -1871,6 +1874,33 @@ describe('App connected rendering', () => {
     expect(screen.getByText('包含附件')).toBeDefined()
     expect(screen.getByRole('button', { name: '选择保存位置并导出' })).toBeDefined()
     await waitFor(() => expect(updateDshSetting).toHaveBeenCalledWith('locale.preference', 'zh', 1))
+  })
+
+  it('switches and restores layout from Settings without changing DSH or offering it in the conversation menu', async () => {
+    const updateDshSetting = vi.fn()
+    currentStore = { ...storeFor({ ...connectedState(true), drawer: 'settings' }), updateDshSetting }
+    const view = render(
+      <ConversationLayoutProvider>
+        <App />
+      </ConversationLayoutProvider>,
+    )
+    expect(document.querySelector('.dsh-app')?.getAttribute('data-conversation-layout')).toBe('focused')
+    const picker = await screen.findByRole<HTMLSelectElement>('combobox', { name: 'Conversation layout' })
+    fireEvent.change(picker, {
+      target: { value: 'classic' },
+    })
+    expect(document.querySelector('.dsh-app')?.getAttribute('data-conversation-layout')).toBe('classic')
+    view.unmount()
+    expect(updateDshSetting).not.toHaveBeenCalled()
+    currentStore = storeFor(connectedState(true))
+    render(
+      <ConversationLayoutProvider>
+        <App />
+      </ConversationLayoutProvider>,
+    )
+    expect(document.querySelector('.dsh-app')?.getAttribute('data-conversation-layout')).toBe('classic')
+    fireEvent.click(screen.getByRole('button', { name: 'Conversation tools' }))
+    expect(screen.queryByRole('combobox', { name: 'Conversation layout' })).toBeNull()
   })
 
   it('opens the Inspector from conversation tools and restores focus after menu dismissal', () => {

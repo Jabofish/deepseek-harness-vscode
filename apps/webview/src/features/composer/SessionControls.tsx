@@ -54,7 +54,7 @@ export interface SessionControlsProps {
   readonly modelPickerOpenRequest?: number
   /** Keep the primary model selector in the toolbar and move secondary
    * session switches into the composer's extras surface. */
-  readonly surface?: 'all' | 'primary' | 'secondary'
+  readonly surface?: 'all' | 'primary' | 'secondary' | 'model' | 'permission'
   readonly onChange: (configuration: AgentConfiguration) => void | Promise<void>
   readonly onCommand: (command: string) => void
   readonly onPromptModeChange?: (mode: PromptMode) => void
@@ -64,7 +64,10 @@ export const SessionControls = memo(function SessionControls(props: SessionContr
   const { t } = useI18n()
   const { configuration, onChange, onCommand, onPromptModeChange } = props
   const showPrimary = props.surface !== 'secondary'
-  const showSecondary = props.surface !== 'primary'
+  const showSecondary =
+    props.surface === undefined || props.surface === 'all' || props.surface === 'secondary'
+  const showModel = showPrimary && props.surface !== 'permission'
+  const showPermission = showPrimary && props.surface !== 'model'
   const selectorsRef = useRef<HTMLDivElement>(null)
   const riskContext = JSON.stringify([
     props.configuration.permissionPreset,
@@ -315,7 +318,7 @@ export const SessionControls = memo(function SessionControls(props: SessionContr
     >
       <div ref={selectorsRef} className="dsh-session-controls__selectors">
         {showSecondary && !props.presetMutable ? modeMenu : null}
-        {showPrimary && props.presetMutable ? modeMenu : null}
+        {showModel && props.presetMutable ? modeMenu : null}
         {showSecondary && props.promptMode !== undefined && props.onPromptModeChange !== undefined ? (
           <SelectMenu
             className="dsh-session-controls__workflow-mode"
@@ -334,7 +337,7 @@ export const SessionControls = memo(function SessionControls(props: SessionContr
             onChange={handlePromptModeChange}
           />
         ) : null}
-        {showPrimary ? (
+        {showModel ? (
           <ModelPicker
             models={props.models}
             value={model}
@@ -346,11 +349,12 @@ export const SessionControls = memo(function SessionControls(props: SessionContr
               ? {}
               : { openRequest: props.modelPickerOpenRequest })}
             displayLabel
+            showIcon={props.surface !== 'model'}
             disabled={props.disabled}
             onChange={handleModelChange}
           />
         ) : null}
-        {showPrimary ? (
+        {showPermission ? (
           <SelectMenu
             className={`dsh-session-controls__access-picker${
               isFullAccessPreset(permissionPreset) ? ' dsh-session-controls__access-picker--full-access' : ''
@@ -413,7 +417,7 @@ export const SessionControls = memo(function SessionControls(props: SessionContr
         ) : null}
       </div>
       <dl className="dsh-session-controls__metrics">
-        {showPrimary && contextLabel !== undefined ? (
+        {showModel && contextLabel !== undefined ? (
           <div>
             <dt className="dsh-sr-only">{t('controls.context')}</dt>
             <dd className="dsh-session-controls__context-cell">

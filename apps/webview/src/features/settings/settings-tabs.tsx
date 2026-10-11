@@ -1,10 +1,21 @@
 import { useEffect, useState, type ReactElement } from 'react'
 import { useI18n } from '../../i18n.js'
+import { useConversationLayout } from '../../app/ConversationLayoutProvider.js'
 
 export type SettingsTab = 'general' | 'models' | 'presets' | 'plugins'
 type SettingsTabOrientation = 'horizontal' | 'vertical'
 
 const SETTINGS_TABS: readonly SettingsTab[] = ['general', 'models', 'presets', 'plugins']
+const SECTION_STORAGE_KEY = 'dsh-webview-settings-section'
+
+function previousSection(): SettingsTab {
+  try {
+    const section = window.sessionStorage.getItem(SECTION_STORAGE_KEY)
+    return SETTINGS_TABS.find((entry) => entry === section) ?? 'general'
+  } catch {
+    return 'general'
+  }
+}
 
 function settingsTabOrientation(): SettingsTabOrientation {
   return typeof window !== 'undefined' &&
@@ -20,7 +31,18 @@ export interface SettingsTabsProps {
 
 export function SettingsTabs(props: SettingsTabsProps): ReactElement {
   const { t } = useI18n()
-  const [tab, setTab] = useState<SettingsTab>('general')
+  const focused = useConversationLayout()?.layout === 'focused'
+  const [tab, setTab] = useState<SettingsTab>(() => (focused ? previousSection() : 'general'))
+  const selectTab = (next: SettingsTab): void => {
+    setTab(next)
+    if (focused) {
+      try {
+        window.sessionStorage.setItem(SECTION_STORAGE_KEY, next)
+      } catch {
+        /* Restricted storage keeps this opening usable. */
+      }
+    }
+  }
   const [tabOrientation, setTabOrientation] = useState<SettingsTabOrientation>(settingsTabOrientation)
 
   useEffect(() => {
@@ -51,7 +73,7 @@ export function SettingsTabs(props: SettingsTabsProps): ReactElement {
             aria-selected={tab === entry}
             aria-controls={tab === entry ? `dsh-settings-panel-${entry}` : undefined}
             tabIndex={tab === entry ? 0 : -1}
-            onClick={() => setTab(entry)}
+            onClick={() => selectTab(entry)}
             onKeyDown={(event) => {
               const index = SETTINGS_TABS.indexOf(entry)
               let next: SettingsTab | undefined
@@ -71,7 +93,7 @@ export function SettingsTabs(props: SettingsTabsProps): ReactElement {
 
               event.preventDefault()
               if (next === undefined) return
-              setTab(next)
+              selectTab(next)
               document.getElementById(`dsh-settings-tab-${next}`)?.focus()
             }}
           >
