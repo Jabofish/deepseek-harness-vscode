@@ -1396,7 +1396,7 @@ describe('App connected rendering', () => {
 
     render(<App />)
     fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Attach file' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Attach file' }))
     const remove = await screen.findByRole('button', { name: 'Remove notes.txt' })
     fireEvent.click(remove)
 
@@ -1416,7 +1416,7 @@ describe('App connected rendering', () => {
 
     render(<App />)
     fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Attach file' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Attach file' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Preview photo.png' }))
 
     const lightbox = await screen.findByRole('dialog', { name: 'Preview photo.png' })
@@ -1435,7 +1435,7 @@ describe('App connected rendering', () => {
 
     render(<App />)
     fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Attach file' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Attach file' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Preview photo.png' }))
 
     const lightbox = await screen.findByRole('dialog', { name: 'Preview photo.png' })
@@ -1456,7 +1456,7 @@ describe('App connected rendering', () => {
 
     render(<App />)
     fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Attach file' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Attach file' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Preview photo.png' }))
     const lightbox = await screen.findByRole('dialog', { name: 'Preview photo.png' })
     await waitFor(() => expect(within(lightbox).getByText('Unable to load image')).toBeDefined())
@@ -1464,7 +1464,7 @@ describe('App connected rendering', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Remove photo.png' }))
     fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Attach file' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Attach file' }))
     await screen.findByRole('button', { name: 'Preview photo.png' })
 
     await waitFor(() => expect(previewAttachment).toHaveBeenCalledTimes(2))
@@ -1484,7 +1484,7 @@ describe('App connected rendering', () => {
 
     render(<App />)
     fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Choose an open file' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Choose an open file' }))
     fireEvent.click(await screen.findByRole('option', { name: /LICENSE/u }))
 
     await waitFor(() => expect(attachOpenFile).toHaveBeenCalledWith('dsh-open-file-1', expect.any(Function)))
@@ -1501,7 +1501,7 @@ describe('App connected rendering', () => {
       render(<App />)
       const failAttachment = async (): Promise<void> => {
         fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
-        fireEvent.click(screen.getByRole('menuitem', { name: 'Attach file' }))
+        fireEvent.click(screen.getByRole('button', { name: 'Attach file' }))
         await act(async () => {
           await Promise.resolve()
         })
@@ -1538,7 +1538,7 @@ describe('App connected rendering', () => {
 
     render(<App />)
     fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Attach file' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Attach file' }))
     await screen.findByText('Host refused the attachment')
 
     fireEvent.click(screen.getByRole('button', { name: 'Dismiss error' }))
@@ -1560,8 +1560,8 @@ describe('App connected rendering', () => {
     })
 
     expect(listOpenFiles).toHaveBeenCalled()
-    expect(screen.getByRole('menuitem', { name: 'Attach file' })).toBeDefined()
-    expect(screen.queryByRole('menuitem', { name: 'Choose an open file' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Attach file' })).toBeDefined()
+    expect(screen.queryByRole('button', { name: 'Choose an open file' })).toBeNull()
   })
 
   it('does not leave the open-file picker open after its menu is dismissed', async () => {
@@ -1575,7 +1575,7 @@ describe('App connected rendering', () => {
 
     render(<App />)
     fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Choose an open file' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Choose an open file' }))
     await screen.findByRole('option', { name: /LICENSE/u })
 
     fireEvent.keyDown(document, { key: 'Escape' })
@@ -1600,12 +1600,12 @@ describe('App connected rendering', () => {
 
     render(<App />)
     fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Choose an open file' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Choose an open file' }))
     await screen.findByRole('dialog', { name: 'Open files' })
     expect(screen.getByText('Loading…')).toBeDefined()
 
     fireEvent.click(screen.getByRole('button', { name: 'Close open files' }))
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Choose an open file' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Choose an open file' }))
     expect(await screen.findByRole('dialog', { name: 'Open files' })).toBeDefined()
     expect(screen.getByText('Loading…')).toBeDefined()
 
@@ -1642,9 +1642,9 @@ describe('App connected rendering', () => {
 
     render(<App />)
     fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Attach file' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Attach file' }))
     fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Attach file' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Attach file' }))
 
     await waitFor(() => expect(screen.getAllByRole('button', { name: 'Remove notes.txt' })).toHaveLength(1))
     expect(releaseAttachments).toHaveBeenCalledWith([secondUri])
@@ -1686,7 +1686,7 @@ describe('App connected rendering', () => {
       target: { value: 'a prompt I do not want to retype' },
     })
     fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Attach file' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Attach file' }))
     await screen.findByRole('button', { name: 'Remove notes.txt' })
 
     fireEvent.click(await screen.findByText('Another'))
@@ -1719,7 +1719,7 @@ describe('App connected rendering', () => {
       target: { value: 'a prompt I do not want to retype' },
     })
     fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Attach file' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Attach file' }))
     await screen.findByRole('button', { name: 'Remove notes.txt' })
 
     fireEvent.click(screen.getByRole('button', { name: 'New Session' }))
@@ -1821,7 +1821,7 @@ describe('App connected rendering', () => {
     const releaseAttachments = vi.spyOn(currentStore, 'releaseAttachments')
     fireEvent.change(screen.getByRole('textbox', { name: 'Prompt' }), { target: { value: 'Old draft' } })
     fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Attach file' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Attach file' }))
     await screen.findByRole('button', { name: 'Remove notes.txt' })
 
     updateState({

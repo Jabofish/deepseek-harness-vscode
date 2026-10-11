@@ -288,7 +288,7 @@
 }
 
 .dsh-app[data-conversation-layout='focused'] .dsh-conversation__interactions {
-  width: min(100%, var(--dsh-timeline-content-max-width));
+  width: min(calc(100% - 2 * clamp(4px, 1.5vw, 12px)), var(--dsh-timeline-content-max-width));
   margin-inline: auto;
 }
 
@@ -302,6 +302,17 @@
 .dsh-app[data-conversation-layout='focused'] .dsh-interaction__header h2 {
   font-size: var(--dsh-font-size-md);
   font-weight: 500;
+}
+
+.dsh-app[data-conversation-layout='focused']
+  :is(
+    .dsh-interaction__description,
+    .dsh-interaction__risk,
+    .dsh-approval__takeover,
+    .dsh-question__prompt,
+    .dsh-question__detail
+  ) {
+  margin: 0;
 }
 
 .dsh-app[data-conversation-layout='focused'] .dsh-question__choice {

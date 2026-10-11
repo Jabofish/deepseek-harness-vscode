@@ -1,4 +1,4 @@
-import { useRef, type ReactElement, type ReactNode, type RefObject } from 'react'
+import { useId, useRef, type ReactElement, type ReactNode, type RefObject } from 'react'
 import { PopoverCard } from '../../components/common/PopoverCard.js'
 import { useDismissibleLayer } from '../../components/common/useDismissibleLayer.js'
 import { useViewportMenuPosition } from '../../components/common/useViewportMenuPosition.js'
@@ -20,6 +20,7 @@ export interface ComposerExtrasMenuProps {
  * in this anchored menu until the user asks for them.
  */
 export function ComposerExtrasMenu(props: ComposerExtrasMenuProps): ReactElement {
+  const dialogId = useId()
   const rootRef = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const menuPosition = useViewportMenuPosition({
@@ -44,7 +45,8 @@ export function ComposerExtrasMenu(props: ComposerExtrasMenuProps): ReactElement
         aria-label={props.label}
         title={props.label}
         aria-expanded={props.open}
-        aria-haspopup="menu"
+        aria-haspopup="dialog"
+        aria-controls={props.open ? dialogId : undefined}
         disabled={props.disabled}
         onClick={() => props.onOpenChange(!props.open)}
       >
@@ -59,7 +61,8 @@ export function ComposerExtrasMenu(props: ComposerExtrasMenuProps): ReactElement
         <PopoverCard
           ref={menuRef}
           className="dsh-composer__extras-panel"
-          role="menu"
+          id={dialogId}
+          role="dialog"
           aria-label={props.label}
           style={menuPosition}
         >

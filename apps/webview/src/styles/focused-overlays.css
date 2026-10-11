@@ -1,28 +1,30 @@
 /* Portalled confirmations and feedback inherit the active frontend layout. */
-:root[data-dsh-conversation-layout='focused'] :is(.dsh-session-dialog, .dsh-feedback-dialog) {
+:root[data-dsh-conversation-layout='focused']
+  :is(.dsh-session-dialog, .dsh-feedback-dialog, .dsh-presets__dialog) {
   gap: 12px;
   padding: 20px;
   border-radius: 16px;
 }
 
-:root[data-dsh-conversation-layout='focused'] .dsh-session-dialog__title {
+:root[data-dsh-conversation-layout='focused'] :is(.dsh-session-dialog__title, .dsh-presets__dialog h3) {
   font-size: var(--dsh-font-size-md);
   font-weight: 500;
 }
 
-:root[data-dsh-conversation-layout='focused'] .dsh-session-dialog__input {
+:root[data-dsh-conversation-layout='focused'] :is(.dsh-session-dialog__input, .dsh-presets__field input) {
   border-radius: 8px;
 }
 
 :root[data-dsh-conversation-layout='focused']
-  :is(.dsh-session-dialog, .dsh-feedback-dialog)
+  :is(.dsh-session-dialog, .dsh-feedback-dialog, .dsh-presets__dialog)
   :is(.dsh-button, .dsh-feedback-dialog__chip) {
   min-height: 32px;
   border-radius: 8px;
   font-weight: 400;
 }
 
-:root[data-dsh-conversation-layout='focused'] .dsh-session-dialog__actions {
+:root[data-dsh-conversation-layout='focused']
+  :is(.dsh-session-dialog__actions, .dsh-presets__dialog-actions) {
   gap: 8px;
   flex-wrap: wrap;
 }

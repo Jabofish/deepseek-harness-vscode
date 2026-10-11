@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- 修复窄栏输入区多余换行、附件菜单名称截断、矮窗口审批按钮和长问题选项被裁切的问题；统一 Provider、预设及复制弹窗的细节，并改善附件面板的屏幕阅读器语义。
+- Fixed unnecessary composer wrapping, truncated attachment controls, clipped approval actions and long-question content in short views. Provider, preset and copy-dialog details now follow the focused layout; attachment panels use appropriate accessible semantics.
+
 - 新增参考 DSH 原版源码的聚焦布局：平面正文、回合过程折叠、常驻产出文件入口、宽视图工作区导航、紧凑输入栏与统一的设置、插件、轨迹和任务界面。模型图标移除，大目录支持模糊搜索及键盘高亮，输入按钮保留草稿选区；设置记住上次分区，并允许随时切回经典布局。
 - Added a DSH-style focused layout with flat replies, collapsible turn processes, visible file actions, wide-view workspace navigation, a compact composer, and consistent Settings, Plugins, Trajectory and task surfaces. The model trigger has no icon; large catalogs support fuzzy search and keyboard highlighting. Composer actions preserve the caret, Settings remembers its last section, and the original classic layout remains selectable.
 

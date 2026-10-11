@@ -150,8 +150,8 @@ describe('Composer', () => {
     )
 
     fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
-    expect(screen.getByRole('menuitem', { name: 'Attach file' })).toBeDefined()
-    expect(screen.getByRole('menuitem', { name: 'Choose an open file' })).toBeDefined()
+    expect(screen.getByRole('button', { name: 'Attach file' })).toBeDefined()
+    expect(screen.getByRole('button', { name: 'Choose an open file' })).toBeDefined()
     expect(screen.getByRole('button', { name: `Remove ${name}` })).toBeDefined()
     expect(screen.getByText(`file: ${name}`).getAttribute('title')).toBe(name)
     expect(screen.getByText(`file: ${name}`).closest('li')?.className).toContain('dsh-composer__context-chip')
@@ -200,14 +200,19 @@ describe('Composer', () => {
     const onExtrasOpenChange = vi.fn()
     render(<Composer {...baseProps()} onExtrasOpenChange={onExtrasOpenChange} />)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
+    const trigger = screen.getByRole('button', { name: 'Editor context' })
+    fireEvent.click(trigger)
     expect(onExtrasOpenChange).toHaveBeenLastCalledWith(true)
+    expect(trigger.getAttribute('aria-haspopup')).toBe('dialog')
+    expect(trigger.getAttribute('aria-controls')).toBe(
+      screen.getByRole('dialog', { name: 'Editor context' }).id,
+    )
 
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(onExtrasOpenChange).toHaveBeenLastCalledWith(false)
 
     fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Attach file' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Attach file' }))
     expect(onExtrasOpenChange).toHaveBeenLastCalledWith(false)
   })
 
@@ -232,7 +237,7 @@ describe('Composer', () => {
     render(<Host />)
 
     fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Choose an open file' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Choose an open file' }))
     expect(screen.getByRole('dialog', { name: 'Open files' })).toBeDefined()
 
     fireEvent.click(screen.getByRole('menuitem', { name: /\/goal/ }))
@@ -248,8 +253,8 @@ describe('Composer', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Editor context' }))
 
-    expect(screen.getByRole('menuitem', { name: 'Attach file' })).toBeDefined()
-    expect(screen.queryByRole('menuitem', { name: 'Choose an open file' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Attach file' })).toBeDefined()
+    expect(screen.queryByRole('button', { name: 'Choose an open file' })).toBeNull()
   })
 
   it('ingests pasted files instead of pasting their bytes into the draft', () => {
