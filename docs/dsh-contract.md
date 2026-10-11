@@ -4,7 +4,7 @@
 
 ## 上游来源与安装默认
 
-当前上游最新发布包为 `@deepseek-ai/dsh@0.2.1-alpha.1`；扩展引导安装默认包为 `@deepseek-ai/dsh@0.2.0-rc.2`。`LATEST_PUBLISHED_DSH_VERSION` 与 `DEFAULT_INSTALL_DSH_VERSION` 分别记录发布版本和明确选定的安装默认，支持新 alpha 入口不自动切换稳定安装默认。安装始终使用精确版本，不解析浮动 dist-tag。真实 timed 提问与 VS Code 交互验收仍未完成，见能力矩阵 UQ-01；默认版本不代表这项能力已标为 `DONE`。npm 通道指向会改变，不在规范中复制“当前 latest/next/alpha”快照。更新功能可从上游目录选择经过验证的**精确**版本，不能把源码适配视为已完成真实运行验证。
+当前上游最新发布包为 `@deepseek-ai/dsh@0.2.1-alpha.2`；扩展引导安装默认包为 `@deepseek-ai/dsh@0.2.0-rc.2`。`LATEST_PUBLISHED_DSH_VERSION` 与 `DEFAULT_INSTALL_DSH_VERSION` 分别记录发布版本和明确选定的安装默认，支持新 alpha 入口不自动切换稳定安装默认。安装始终使用精确版本，不解析浮动 dist-tag。真实 timed 提问与 VS Code 交互验收仍未完成，见能力矩阵 UQ-01；默认版本不代表这项能力已标为 `DONE`。npm 通道指向会改变，不在规范中复制“当前 latest/next/alpha”快照。更新功能可从上游目录选择经过验证的**精确**版本，不能把源码适配视为已完成真实运行验证。
 
 历史 Host API 的固定基线是提交 [`47f943859bef60e4160492346772ded9b24f765a`](https://github.com/deepseek-ai/deepseek-harness/tree/47f943859bef60e4160492346772ded9b24f765a)：[RPC map](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/host/apiproxy/src/api/rpc-map.ts)、[events](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/host/apiproxy/src/api/events.ts)、[tool catalog](https://github.com/deepseek-ai/deepseek-harness/tree/47f943859bef60e4160492346772ded9b24f765a/packages/core/tools)。它只证明该 Host API 家族；较新的 Connection/Gateway、typed Remote 和 Session Controller 必须从**目标版本自己的 tag/commit 和实际存在的接口文件**核对。尤其 `0.1.5-rc.2` 与 `0.1.5-rc.3` 的 wire 比较不能引用上述已不存在的旧 RPC 文件；两者被适配器消费的 Session Controller、typed Remote、Connection/Gateway 与工具运行时源码相同，仍保留各自精确身份。
 
@@ -29,6 +29,7 @@
 | `0.2.0-rc.1`                                                                        | `rc201`                                         | 复用已核对的 rc.2 Gateway/Session V4 wire；保留失败工具结果恢复与 Schedule 缺失能力映射；仅精确身份，不作为未知版本回退                                           |
 | `0.2.0-rc.2`                                                                        | `rc202`                                         | 保留 rc.1 的精确契约，新增 timed `userQuestions/answer` 与 `userQuestions/attachWait`、`userQuestions` 会话投影及结构化迟到答复；非幂等 answer 不重试；仅精确身份 |
 | `0.2.1-alpha.1`                                                                     | `alpha211`                                      | Session V4 与 timed question wire 沿用已核对的 rc.2；新增 Schedule 子代理拒绝、账号失败归一与插件实际安装版本；默认 Schedule 服务不再依赖可选 bundle；仅精确身份  |
+| `0.2.1-alpha.2`                                                                     | `alpha212`                                      | `alpha212` 为 `alpha211` 的纯子类，沿用 Session V4 / projection-v2 / pinned-v2 控制线；仅版本身份不同，仅精确身份，不作为未知版本回退                             |
 
 `0.1.7-rc.2` 的固定源码是 [tag `dsh-v0.1.7-rc.2`](https://github.com/deepseek-ai/deepseek-harness/tree/dsh-v0.1.7-rc.2)，提交 `477b4f420553e8a52c2fbccc464d7561b239c443`。其他新增版本也必须在 fixture 注明 tag、commit、文件和类型；版本身份、schema、错误词汇、启动参数与能力声明一起核对。
 
@@ -38,6 +39,7 @@
 
 `0.2.1-alpha.1` 的固定来源是 [tag `dsh-v0.2.1-alpha.1`](https://github.com/deepseek-ai/deepseek-harness/tree/dsh-v0.2.1-alpha.1)，提交 `5badb15009ae1756c3afe0ae0cef1faafc290ccc`。`alpha211` 独立继承 `rc202`，仅接受完整精确身份，不作为未知版本回退。核对目标提交的 Connection/Gateway、typed Remote、Session V4/history/control、Workspace、Job、userQuestions 和工具目录后，既有请求/事件形状保持可复用；Session list 的时间片和上传 receipt 的 Session 实例隔离是上游内部实现变化。web CLI 新增 `--public-url`，受管启动仍使用已验证的 loopback/port/`--no-open` 参数。
 
+`0.2.1-alpha.2` 的固定来源是 [tag `dsh-v0.2.1-alpha.2`](https://github.com/deepseek-ai/deepseek-harness/tree/dsh-v0.2.1-alpha.2)，提交 `6851e496285b2c9670066fdd142e7e46da586649`。`alpha212` 是 `alpha211` 的纯子类，沿用 Session V4 / projection-v2 / pinned-v2 控制线与 typed Remote；alpha.1→alpha.2 的上游增量主要落在会话兼容策略与标题、typert 远程方法调用和浏览器目录选择，逐字段核对仍未完成，扩展入口保持对 alpha211 已验证表面的复用并维持 `PARTIAL`。
 目标版本的增量保留在 `versions/alpha211/`：
 
 - [Schedule 类型与 Remote](https://github.com/deepseek-ai/deepseek-harness/blob/5badb15009ae1756c3afe0ae0cef1faafc290ccc/packages/schedule/schedule/src/types.ts)新增非变更 `subagent_session` 拒绝；仅 alpha211 的 update mapper 接纳并投影为 Domain/严格协议/本地化 UI 错误，旧入口仍拒绝未知形状。web profile 直接挂载服务，`standard`、`cordis`、`ptc` Preset 挂载 `tool-schedule`；旧可选 Schedule bundle 已删除。工具创建仍由 DSH 执行，扩展不调用未声明的 create Remote。

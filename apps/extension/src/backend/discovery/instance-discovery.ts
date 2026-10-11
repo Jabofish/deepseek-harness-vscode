@@ -1,5 +1,5 @@
 import type { BackendDiscovery } from '@dsh-vscode/application'
-import type { BackendCandidate } from '@dsh-vscode/domain'
+import { isCanonicalEndpoint, type BackendCandidate } from '@dsh-vscode/domain'
 import { isDshPackageVersion } from '@dsh-vscode/dsh-adapter'
 
 import { discoveryCancelled, type DiscoveryProvider } from './provider.js'
@@ -31,7 +31,7 @@ export class CompositeInstanceDiscovery implements BackendDiscovery {
     for (const result of results) {
       if (result.status !== 'fulfilled') continue
       for (const candidate of result.value) {
-        if (!isLoopbackCandidate(candidate)) continue
+        if (!isCanonicalEndpoint(candidate.endpoint)) continue
         const key = `${candidate.endpoint.host}:${candidate.endpoint.port}`
         const existing = byEndpoint.get(key)
         if (existing === undefined) byEndpoint.set(key, [candidate])
@@ -131,14 +131,4 @@ function rank(candidate: BackendCandidate): number {
     'default-port': 10,
   }
   return sourceWeight[candidate.source] * 1000 + candidate.confidence
-}
-
-function isLoopbackCandidate(candidate: BackendCandidate): boolean {
-  return (
-    (candidate.endpoint.host === '127.0.0.1' || candidate.endpoint.host === 'localhost') &&
-    Number.isInteger(candidate.endpoint.port) &&
-    candidate.endpoint.port >= 1 &&
-    candidate.endpoint.port <= 65535 &&
-    candidate.endpoint.baseUrl === `http://${candidate.endpoint.host}:${candidate.endpoint.port}`
-  )
 }

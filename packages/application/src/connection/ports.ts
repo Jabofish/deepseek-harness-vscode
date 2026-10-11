@@ -45,4 +45,9 @@ export interface ConnectionRequest {
   readonly autoStart: boolean
   /** Required only for `custom`; the Webview never receives this value back. */
   readonly endpoint?: BackendEndpoint
+  /**
+   * Optional explicit wire version for an external endpoint whose runtime
+   * version cannot be discovered. Overrides the probe's version inference.
+   */
+  readonly runtimeVersion?: string
 }

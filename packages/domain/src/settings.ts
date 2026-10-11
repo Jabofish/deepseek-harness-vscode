@@ -3,8 +3,21 @@ import type { ConnectionMode } from './runtime.js'
 
 export interface ConnectionSettings {
   readonly mode: ConnectionMode
-  readonly host: '127.0.0.1' | 'localhost'
+  readonly host: string
   readonly serverUrl?: string
+  /**
+   * DSH web launch token for an already-running instance (for example the
+   * Dockerized DSH). Exchanged for a session cookie on connect. Empty when
+   * not configured.
+   */
+  readonly launchToken?: string
+  /**
+   * Optional explicit DSH wire version for an external instance whose runtime
+   * version cannot be discovered (for example a containerized DSH). Bypasses
+   * the compatibility-fallback probe and selects the exact adapter. Empty when
+   * not configured.
+   */
+  readonly runtimeVersion?: string
   /** Zero means ask DSH to allocate an isolated free port. */
   readonly managedPort: number
   readonly attachPorts: readonly number[]
@@ -20,7 +33,7 @@ export interface RuntimeSettings {
 
 export interface SecuritySettings {
   readonly defaultPermissionPreset: PermissionPreset
-  readonly allowRemoteHost: false
+  readonly allowRemoteHost: boolean
   readonly redactDiagnostics: true
 }
 

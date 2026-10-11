@@ -1,4 +1,4 @@
-import type { BackendCandidate } from '@dsh-vscode/domain'
+import { parseServerOrigin, type BackendCandidate } from '@dsh-vscode/domain'
 
 import { discoveryCancelled, type DiscoveryProvider } from './provider.js'
 
@@ -22,27 +22,13 @@ export class ConfiguredPortDiscoveryProvider implements DiscoveryProvider {
     }))
     const url = this.serverUrl()
     if (url !== undefined) {
-      try {
-        const parsed = new URL(url)
-        if (
-          parsed.protocol === 'http:' &&
-          (parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost') &&
-          parsed.port !== ''
-        ) {
-          const port = Number(parsed.port)
-          if (Number.isInteger(port) && port >= 1 && port <= 65_535)
-            candidates.unshift({
-              endpoint: {
-                host: parsed.hostname,
-                port,
-                baseUrl: `http://${parsed.hostname}:${port}`,
-              },
-              source: 'configured',
-              confidence: 110,
-            })
-        }
-      } catch {
-        /* Configuration validation normally catches this; discovery remains a soft failure. */
+      const origin = parseServerOrigin(url)
+      if (origin !== undefined) {
+        candidates.unshift({
+          endpoint: { host: origin.host, port: origin.port, baseUrl: origin.baseUrl },
+          source: 'configured',
+          confidence: 110,
+        })
       }
     }
     return Promise.resolve(candidates)

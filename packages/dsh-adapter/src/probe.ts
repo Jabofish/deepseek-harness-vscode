@@ -1,5 +1,5 @@
 import type { BackendCandidate, ConnectedBackend } from '@dsh-vscode/domain'
-import { AppError } from '@dsh-vscode/domain'
+import { AppError, isCanonicalEndpoint } from '@dsh-vscode/domain'
 
 import type { BackendProbe } from '@dsh-vscode/application'
 import {
@@ -28,16 +28,11 @@ export class VersionedBackendProbe implements BackendProbe {
   ) {}
 
   public probe(candidate: BackendCandidate, signal?: AbortSignal): Promise<ConnectedBackend | undefined> {
-    if (
-      (candidate.endpoint.host !== '127.0.0.1' && candidate.endpoint.host !== 'localhost') ||
-      !Number.isInteger(candidate.endpoint.port) ||
-      candidate.endpoint.port < 1 ||
-      candidate.endpoint.port > 65_535
-    ) {
+    if (!isCanonicalEndpoint(candidate.endpoint)) {
       return Promise.reject(
         new AppError({
           code: 'INVALID_ENDPOINT',
-          message: 'Only loopback DSH endpoints are allowed.',
+          message: 'Only validated HTTP(S) DSH endpoints are allowed.',
           retryable: false,
         }),
       )

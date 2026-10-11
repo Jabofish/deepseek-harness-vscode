@@ -124,12 +124,13 @@ export class Alpha1VersionAdapter extends DshVersionAdapterBase {
     const hintedVersion = normalizeDshVersion(candidate.runtimeVersion)
     if (!compatibility && candidate.runtimeVersion !== hintedVersion) return undefined
     // Exact probes are still strict. Compatibility probes are a separate,
-    // read-only path for a non-empty unknown runtime label; the successful
+    // read-only path for an unknown or absent runtime label; the successful
     // response, not the release suffix, is what permits reuse of this
-    // adapter's known contract.
+    // adapter's known contract. A known release is declined here because an
+    // exact adapter owns it.
     if (
       compatibility
-        ? hintedVersion === undefined || isKnownDshVersion(hintedVersion)
+        ? hintedVersion !== undefined && isKnownDshVersion(hintedVersion)
         : hintedVersion !== this.supportedVersion
     )
       return undefined

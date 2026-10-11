@@ -32,6 +32,7 @@ import {
   Rc201VersionAdapter,
   Rc202VersionAdapter,
   Alpha211VersionAdapter,
+  Alpha212VersionAdapter,
 } from '@dsh-vscode/dsh-adapter'
 import type { createAdapterOptions } from './adapter-options.js'
 
@@ -54,6 +55,7 @@ export function createVersionAdapters(
   const rc201Adapter = new Rc201VersionAdapter(adapterOptions)
   const rc202Adapter = new Rc202VersionAdapter(adapterOptions)
   const alpha211Adapter = new Alpha211VersionAdapter(adapterOptions)
+  const alpha212Adapter = new Alpha212VersionAdapter(adapterOptions)
   const alpha13Adapter = new Alpha13VersionAdapter(adapterOptions)
   const rc13Adapter = new Rc13VersionAdapter(adapterOptions)
   const alpha3Adapter = new Alpha3VersionAdapter(adapterOptions)
@@ -71,6 +73,7 @@ export function createVersionAdapters(
   const legacyRc2Adapter = new LegacyRc2VersionAdapter(adapterOptions)
   const legacyRc1Adapter = new LegacyRc1VersionAdapter(adapterOptions)
   const adapters = [
+    alpha212Adapter,
     alpha211Adapter,
     rc202Adapter,
     rc201Adapter,

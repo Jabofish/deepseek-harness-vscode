@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- 允许连接任意 HTTP(S) 主机上的外部 DSH 实例（移除仅回环限制），新增服务器地址规范化与端点校验，使容器化 DSH 可通过局域网地址访问。
+- Support external DSH instances on any HTTP(S) host (drop the loopback-only restriction), with server-origin normalization and canonical endpoint validation so a containerized DSH can be reached over a LAN address.
+- 精确适配 DSH `0.2.1-alpha.2`（沿用 alpha.1 的 Session V4 / projection-v2 控制线），并将其设为最新已发布版本。
+- Add exact DSH `0.2.1-alpha.2` support (retains the alpha.1 Session V4 / projection-v2 wire) and mark it the latest published version.
+- 新增 `dsh.connection.runtimeVersion`，为无法被探测（如容器化）的实例显式指定线版本，绕过兼容性回退探测。
+- Add `dsh.connection.runtimeVersion` to explicitly select the wire version for instances that cannot be discovered (for example containerized DSH), bypassing the compatibility fallback probe.
+- 新增 `dsh.connection.launchToken` 及启动令牌换取会话 Cookie 的登录流程，用于已运行的外部 DSH（如 Docker 化实例）。
+- Add `dsh.connection.launchToken` and a launch-token → session-cookie login flow for an already-running external DSH (for example the Dockerized instance).
+- 会话 Cookie 持久化到全局状态并在跨重启连接时复用，使 DSH 容器重启后无需重新认证。
+- Persist session cookies to global state and reuse them across reconnects, so a restarted DSH container reconnects without re-authentication.
+
 ## 0.2.12
 
 - 修复其他消息的代码高亮完成后，本条消息的文件打开按钮和复制控件被重渲染覆盖的问题。

@@ -307,6 +307,31 @@ describe('DshConnectionCoordinator', () => {
     expect(deps.processSupervisor.start).not.toHaveBeenCalled()
   })
 
+  it('applies an explicit runtime-version override to the configured candidate', async () => {
+    const selected = endpoint(4311)
+    const connected = fakeConnectedBackend(4311)
+    const probe = { probe: vi.fn(async () => connected) }
+    const deps = dependencies({ probe })
+    const coordinator = new DshConnectionCoordinator(deps)
+
+    await coordinator.connect({
+      mode: 'custom',
+      autoStart: true,
+      endpoint: selected,
+      runtimeVersion: '0.2.1-alpha.2',
+    })
+
+    expect(probe.probe).toHaveBeenCalledWith(
+      expect.objectContaining({
+        endpoint: selected,
+        source: 'configured',
+        confidence: 120,
+        runtimeVersion: '0.2.1-alpha.2',
+      }),
+      expect.any(AbortSignal),
+    )
+  })
+
   it('borrows an exact runtime hint only from discovery of the identical custom endpoint', async () => {
     const selected = endpoint(4316)
     const discovered: BackendCandidate & { runtimeVersionEvidence: 'process-manifest' } = {

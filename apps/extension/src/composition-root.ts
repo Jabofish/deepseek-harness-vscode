@@ -119,6 +119,8 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     runtimeInstaller,
     runtimeUseCases,
     endpointLaunchUrls,
+    loginWithToken,
+    hasCookie,
   } = createRuntimeAssembly({
     context,
     configuration,
@@ -241,6 +243,8 @@ export function createCompositionRoot(context: vscode.ExtensionContext): Composi
     coordinator,
     currentWorkspaceFolders,
     endpointLaunchUrls,
+    loginWithToken,
+    hasCookie,
     attach,
     publishState,
     disposeAccountLifecycleHost,

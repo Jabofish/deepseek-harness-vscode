@@ -260,7 +260,17 @@
         "dsh.connection.serverUrl": {
           "type": "string",
           "default": "",
-          "description": "Optional existing local DSH URL, restricted to http://127.0.0.1 or http://localhost."
+          "description": "Optional existing DSH URL, an http:// or https:// origin (any host)."
+        },
+        "dsh.connection.launchToken": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Launch token for an already-running DSH that requires browser-session authentication (for example the Dockerized DSH). The token is exchanged for a session cookie on connect. It is a secret: keep it out of shared or committed settings, and re-read it from the DSH logs after each container recreate. Leave empty when the DSH instance was started by this extension."
+        },
+        "dsh.connection.runtimeVersion": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Optional explicit DSH wire version for an external instance whose runtime version cannot be discovered (for example a containerized DSH such as `0.2.1-alpha.2`). Bypasses the compatibility-fallback probe and selects the exact matching adapter. Leave empty to auto-detect."
         },
         "dsh.connection.attachPorts": {
           "type": "array",

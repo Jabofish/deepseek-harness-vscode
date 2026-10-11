@@ -6,7 +6,7 @@ import { AppError } from '@dsh-vscode/domain'
 import type { DshTransport } from '../../contracts.js'
 import { cancelled, httpFailure, normalizeTransportError } from '../../transport-errors.js'
 import {
-  assertLoopback,
+  assertValidEndpoint,
   closedConnectionError as closedError,
   combineSignals,
   isAlphaIdempotentMethod,
@@ -93,7 +93,7 @@ export class AlphaLoopbackApiClient implements DshTransport {
   public readonly sessionHistoryTurnWindow: boolean
 
   public constructor(private readonly options: AlphaLoopbackApiClientOptions) {
-    assertLoopback(options.endpoint)
+    assertValidEndpoint(options.endpoint)
     this.sessionHistoryTurnWindow = options.sessionHistoryTurnWindow === true
     this.remoteMux = new AlphaRemoteMux(options)
     this.legacyRpc = createAlphaLegacyRpc({

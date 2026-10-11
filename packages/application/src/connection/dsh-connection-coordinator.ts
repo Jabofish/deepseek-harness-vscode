@@ -1,5 +1,6 @@
 import {
   AppError,
+  isCanonicalEndpoint,
   type BackendCandidate,
   type BackendEndpoint,
   type BackendState,
@@ -290,16 +291,26 @@ export class DshConnectionCoordinator {
           (candidate) =>
             candidate.pid !== undefined && Number.isSafeInteger(candidate.pid) && candidate.pid > 0,
         )
+      // An explicit runtime-version override takes precedence over discovery:
+      // a containerized DSH cannot expose a process manifest, so the only
+      // evidence of its wire version is the user's configured value.
+      const configuredRuntimeVersion =
+        request.runtimeVersion !== undefined && request.runtimeVersion.trim() !== ''
+          ? request.runtimeVersion.trim()
+          : undefined
+      const discoveredRuntimeVersion = [...runtimeVersions][0]
       const candidate: BackendCandidate = {
         endpoint,
         source: 'configured',
         confidence: 120,
-        ...(hasVerifiedRuntimeIdentity
-          ? {
-              runtimeVersion: [...runtimeVersions][0],
-              runtimeVersionEvidence: 'process-manifest' as const,
-            }
-          : {}),
+        ...(configuredRuntimeVersion !== undefined
+          ? { runtimeVersion: configuredRuntimeVersion }
+          : hasVerifiedRuntimeIdentity && discoveredRuntimeVersion !== undefined
+            ? {
+                runtimeVersion: discoveredRuntimeVersion,
+                runtimeVersionEvidence: 'process-manifest' as const,
+              }
+            : {}),
         ...(hasVerifiedRuntimeIdentity && uniquePid !== undefined ? { pid: uniquePid } : {}),
       }
       this.publish({ kind: 'connecting', candidate })
@@ -655,14 +666,10 @@ function sameRequest(left: ConnectionRequest | undefined, right: ConnectionReque
 
 function matchesCustomEndpoint(candidate: BackendCandidate, selected: BackendEndpoint): boolean {
   const discovered = candidate.endpoint
-  if (!isCanonicalLoopbackEndpoint(discovered) || !isCanonicalLoopbackEndpoint(selected)) return false
+  if (!isCanonicalEndpoint(discovered) || !isCanonicalEndpoint(selected)) return false
   if (discovered.port !== selected.port) return false
   if (discovered.host === selected.host) return discovered.baseUrl === selected.baseUrl
-  const loopbackAlias =
-    (discovered.host === '127.0.0.1' && selected.host === 'localhost') ||
-    (discovered.host === 'localhost' && selected.host === '127.0.0.1')
   return (
-    loopbackAlias &&
     candidate.pid !== undefined &&
     Number.isSafeInteger(candidate.pid) &&
     candidate.pid > 0 &&
@@ -673,10 +680,6 @@ function matchesCustomEndpoint(candidate: BackendCandidate, selected: BackendEnd
 
 function candidateEndpointKey(candidate: BackendCandidate): string {
   return `${candidate.endpoint.host}:${candidate.endpoint.port}`
-}
-
-function isCanonicalLoopbackEndpoint(endpoint: BackendEndpoint): boolean {
-  return endpoint.baseUrl === `http://${endpoint.host}:${endpoint.port}`
 }
 
 function isDshRuntimeVersion(value: string): boolean {

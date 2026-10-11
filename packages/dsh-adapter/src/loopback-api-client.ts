@@ -26,7 +26,7 @@ import {
 } from './loopback-rpc-envelope.js'
 import { httpFailure, normalizeTransportError } from './transport-errors.js'
 import {
-  assertLoopback,
+  assertValidEndpoint,
   closedConnectionError,
   IDEMPOTENT_METHODS,
   mergeSignals,
@@ -53,7 +53,7 @@ export class LoopbackApiClient extends AbstractApiClient implements DshTransport
 
   public constructor(private readonly options: LoopbackApiClientOptions) {
     super(options.requestTimeoutMs)
-    assertLoopback(options.endpoint)
+    assertValidEndpoint(options.endpoint)
   }
 
   protected override async doFetch(input: URL, init?: RequestInit): Promise<Response> {

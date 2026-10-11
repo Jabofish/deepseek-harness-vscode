@@ -37,6 +37,8 @@ function buildLifecycle(
     } as never,
     currentWorkspaceFolders: () => folders as never,
     endpointLaunchUrls: new Map<string, string>(),
+    loginWithToken: () => Promise.resolve(),
+    hasCookie: () => false,
     attach: () => Promise.resolve(),
     publishState: () => {},
     disposeAccountLifecycleHost: () => Promise.resolve(),

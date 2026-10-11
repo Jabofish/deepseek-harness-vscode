@@ -1,6 +1,6 @@
 import { AppError, type InspectorDevtoolsRepository, type InspectorDevtoolsTarget } from '@dsh-vscode/domain'
 import type { AlphaLoopbackApiClientOptions } from '../alpha/transport.js'
-import { assertLoopback, releaseUnreadBody } from '../../transport-internal.js'
+import { assertValidEndpoint, releaseUnreadBody } from '../../transport-internal.js'
 import { httpFailure, normalizeTransportError } from '../../transport-errors.js'
 
 const malformed = (): AppError =>
@@ -19,7 +19,7 @@ export class Alpha211InspectorRepository implements InspectorDevtoolsRepository 
       'endpoint' | 'fetch' | 'authCookie' | 'requestTimeoutMs'
     >,
   ) {
-    assertLoopback(options.endpoint)
+    assertValidEndpoint(options.endpoint)
   }
   public async discover(signal?: AbortSignal): Promise<InspectorDevtoolsTarget> {
     const combined = AbortSignal.any([
