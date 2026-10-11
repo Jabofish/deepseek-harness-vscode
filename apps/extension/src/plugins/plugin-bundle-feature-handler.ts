@@ -25,6 +25,7 @@ export type PluginBundleFeatureRequest =
       readonly type: 'plugin.bundle.install'
       readonly payload: {
         readonly spec: string
+        readonly officialBundle?: boolean | undefined
         readonly installRequestId: string
         readonly registry?: PluginRegistry | undefined
         readonly approvedBuilds?: readonly string[] | undefined
@@ -89,6 +90,7 @@ export async function handlePluginBundleFeatureRequest(
           confirmations?.install,
           confirmations?.builds,
           cancelInstallRemote,
+          request.payload.officialBundle === true,
         ),
       })
       return coordinator === undefined
@@ -350,7 +352,7 @@ function installRequestIdentity(
   const approvedBuilds =
     payload.approvedBuilds === undefined ? ['omitted'] : ['provided', ...payload.approvedBuilds]
   return createHash('sha256')
-    .update(JSON.stringify([payload.spec, registry, approvedBuilds]), 'utf8')
+    .update(JSON.stringify([payload.spec, registry, approvedBuilds, payload.officialBundle === true]), 'utf8')
     .digest('hex')
 }
 

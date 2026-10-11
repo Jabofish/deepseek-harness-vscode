@@ -79,7 +79,7 @@ export function isSubagentView(value: unknown): value is SubagentView {
     (item.activity === 'running' || item.activity === 'inactive') &&
     typeof item.parentSessionId === 'string' &&
     item.parentSessionId.length > 0 &&
-    (item.mode === 'one-shot' || item.mode === 'continuable') &&
+    (item.mode === 'one-shot' || item.mode === 'continuable' || item.mode === 'external') &&
     typeof item.hasChildren === 'boolean'
   )
 }

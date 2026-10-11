@@ -1,6 +1,6 @@
 import * as vscode from 'vscode'
 import path from 'node:path'
-import { AppError, type SessionDetail, type WorkspaceSummary } from '@dsh-vscode/domain'
+import { AppError, type DshBackend, type SessionDetail, type WorkspaceSummary } from '@dsh-vscode/domain'
 import type { BackendService, WorkspaceUseCases } from '@dsh-vscode/application'
 import type { TemporaryWorkspaceManager } from '../backend/temporary-workspace.js'
 import { registerWorkspaceFolders } from '../backend/register-workspace-folders.js'
@@ -21,6 +21,37 @@ export interface SessionScopeDependencies {
   readonly temporaryWorkspaceManager: TemporaryWorkspaceManager
   readonly currentWorkspaceFolders: () => readonly vscode.WorkspaceFolder[]
   readonly currentWorkspaceFolder: () => vscode.WorkspaceFolder | undefined
+}
+
+/** Fork ownership must never open history: opening an old Session may migrate it. */
+export async function requireCatalogOwnedSession(
+  backend: DshBackend,
+  sessionId: string,
+  workspaces: readonly WorkspaceSummary[],
+  folders: readonly vscode.WorkspaceFolder[],
+  signal: AbortSignal,
+): Promise<void> {
+  const archived = await backend.workspaces.listArchivedSessionIds(signal)
+  if (archived.includes(sessionId))
+    throw new AppError({
+      code: 'PERMISSION_DENIED',
+      message: 'The requested session is archived.',
+      retryable: false,
+    })
+  const catalog = await backend.sessions.list(undefined, signal)
+  const visited = new Set<string>()
+  let candidate: string | undefined = sessionId
+  while (candidate !== undefined && !visited.has(candidate)) {
+    visited.add(candidate)
+    const summary = catalog.items.find((item) => item.id === candidate)
+    if (summary !== undefined && sessionBelongsToWorkspaces(summary, workspaces, folders)) return
+    candidate = backend.subagents.parentOf?.(candidate)
+  }
+  throw new AppError({
+    code: 'PERMISSION_DENIED',
+    message: 'The requested session is not part of the current VS Code workspace.',
+    retryable: false,
+  })
 }
 
 export interface SessionScope {

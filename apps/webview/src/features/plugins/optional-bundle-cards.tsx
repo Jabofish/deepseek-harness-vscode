@@ -19,6 +19,7 @@ export interface PluginRowProps {
 }
 
 export interface BundleCardProps {
+  readonly onInstallOfficial?: ((bundle: PluginManagerBundle) => void) | undefined
   readonly bundle: PluginManagerBundle
   readonly rows: PluginManagerBundle['rows']
   readonly open: boolean
@@ -94,7 +95,11 @@ export function BundleCard(props: BundleCardProps): ReactElement {
             <span
               className={`dsh-optional-bundles__state${bundle.enabled ? ' dsh-optional-bundles__state--enabled' : ''}`}
             >
-              {bundle.enabled ? t('plugins.bundles.selected') : t('plugins.bundles.notSelected')}
+              {bundle.availability === 'missing'
+                ? t('plugins.manager.missing')
+                : bundle.enabled
+                  ? t('plugins.bundles.selected')
+                  : t('plugins.bundles.notSelected')}
             </span>
             {bundle.optional ? (
               <span className="dsh-optional-bundles__state">{t('plugins.manager.bundle.optional')}</span>
@@ -107,6 +112,19 @@ export function BundleCard(props: BundleCardProps): ReactElement {
           </span>
         </button>
         <div className="dsh-optional-bundles__actions">
+          {bundle.installable === true ? (
+            <button
+              type="button"
+              className="dsh-button dsh-button--secondary dsh-button--compact"
+              disabled={
+                props.busyKey !== undefined || props.installBusy || props.onInstallOfficial === undefined
+              }
+              onClick={() => props.onInstallOfficial?.(bundle)}
+            >
+              {t('plugins.manager.installOfficial')}
+              {bundle.targetVersion === undefined ? '' : ` ${bundle.targetVersion}`}
+            </button>
+          ) : null}
           <button
             className="dsh-button dsh-button--secondary dsh-button--compact"
             type="button"
@@ -114,7 +132,7 @@ export function BundleCard(props: BundleCardProps): ReactElement {
             aria-label={t(bundle.enabled ? 'plugins.bundles.disableNamed' : 'plugins.bundles.enableNamed', {
               name: title,
             })}
-            disabled={actionDisabled}
+            disabled={actionDisabled || bundle.availability === 'missing'}
             onClick={() => props.onSetBundle(bundle, !bundle.enabled)}
           >
             {t(bundle.enabled ? 'plugins.bundles.disable' : 'plugins.bundles.enable')}

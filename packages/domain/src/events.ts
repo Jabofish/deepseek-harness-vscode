@@ -60,7 +60,7 @@ export interface SubagentView {
   readonly activity: 'running' | 'inactive'
   readonly parentSessionId: string
   /** Delegation mode; only continuable children accept follow-up prompts. */
-  readonly mode: 'one-shot' | 'continuable'
+  readonly mode: 'one-shot' | 'continuable' | 'external'
   /** Whether the catalog knows this child to have children of its own. */
   readonly hasChildren: boolean
 }
@@ -81,7 +81,7 @@ export interface SubagentCatalog {
 export interface SubagentCatalogEntryFact {
   readonly id: string
   readonly createdAt: number
-  readonly mode: 'one-shot' | 'continuable'
+  readonly mode: 'one-shot' | 'continuable' | 'external' | 'unknown'
   readonly label?: string
 }
 

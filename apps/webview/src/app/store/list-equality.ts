@@ -95,6 +95,7 @@ export function sameSessionSummary(left: SessionSummary, right: SessionSummary):
     left.parentSessionId === right.parentSessionId &&
     left.origin === right.origin &&
     left.agentAvailable === right.agentAvailable &&
+    left.formatStatus === right.formatStatus &&
     left.status === right.status &&
     left.createdAt === right.createdAt &&
     left.updatedAt === right.updatedAt &&

@@ -360,6 +360,7 @@ export function createSessionOpenController(host: SessionOpenHost): {
     }
   }
   const openSubagent = async (entry: SubagentView, parentAvailable: boolean): Promise<void> => {
+    if (entry.mode === 'external') throw new Error(translate('subagents.externalUnavailable'))
     // A direct child open (drawer, task row) also supersedes an in-flight
     // by-id resolution inside `open`.
     host.nextOpenIntent()

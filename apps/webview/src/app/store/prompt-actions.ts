@@ -91,7 +91,7 @@ export function createPromptActions(deps: PromptActionDependencies): {
     // optimistic preview.
     const showOptimisticPreview = subagent !== undefined || mode === 'steer'
     if (subagent !== undefined) {
-      if (subagent.entry.mode === 'one-shot') throw new Error(translate('app.error.subagentReadOnly'))
+      if (subagent.entry.mode !== 'continuable') throw new Error(translate('app.error.subagentReadOnly'))
       if (!subagent.parentAvailable) throw new Error(translate('app.error.subagentParentUnavailable'))
       if (attachments.length > 0 && state.subagentImagePrompts !== true)
         throw new Error(translate('app.error.subagentAttachments'))

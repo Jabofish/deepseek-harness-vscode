@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- 适配 DSH `0.2.1-alpha.2`，并补齐 alpha.1 子代理目录读取。支持工作目录变化后的安全文件导航、外部子代理目录展示、旧会话升级提示与官方按需插件包安装；分叉不再隐式升级旧会话，安装取消与断线恢复沿用同一请求 ID。引导安装默认保持稳定 rc.2。
+- Added exact DSH `0.2.1-alpha.2` support and repaired alpha.1 subagent discovery. File navigation uses the operation's actual path after directory changes; external executions appear without a local conversation; old sessions show an upgrade hint; official bundles install on demand with existing cancellation and recovery. Forking requires opening an old source session first. Guided installation keeps stable rc.2.
+
 ## 0.2.12
 
 - 修复其他消息的代码高亮完成后，本条消息的文件打开按钮和复制控件被重渲染覆盖的问题。

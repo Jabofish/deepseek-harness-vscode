@@ -69,6 +69,9 @@ export function isSessionSummary(value: unknown): value is SessionSummary {
       (typeof item.workspaceFolderId === 'string' && item.workspaceFolderId.trim() !== '')) &&
     (item.parentSessionId === undefined ||
       (typeof item.parentSessionId === 'string' && item.parentSessionId.trim() !== '')) &&
+    (item.formatStatus === undefined ||
+      item.formatStatus === 'current' ||
+      item.formatStatus === 'migration-required') &&
     (item.origin === undefined || item.origin === 'subagent') &&
     (item.agentAvailable === undefined || typeof item.agentAvailable === 'boolean') &&
     (item.modelLabel === undefined || typeof item.modelLabel === 'string') &&

@@ -326,6 +326,7 @@ export const featureRequestSchema = z.discriminatedUnion('type', [
         .object({
           spec: z.string().min(1).max(4_096),
           installRequestId: id,
+          officialBundle: z.boolean().optional(),
           registry: pluginRegistrySchema.optional(),
           approvedBuilds: z.array(safeLabel).max(256).optional(),
         })

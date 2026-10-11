@@ -73,6 +73,7 @@ describe.skipIf(
             model: { providerId: '', modelId: '' },
           },
         })
+        await expect(backend.subagents.list(session.id)).resolves.toMatchObject({ entries: [] })
         await expect(mods.read(session.id)).resolves.toEqual({ available: false, snapshot: null })
         steps.push(
           'Creator discovered; unmounted mods and Inspector safely unavailable without port scanning',

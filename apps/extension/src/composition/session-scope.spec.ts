@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { SessionDetail, WorkspaceSummary } from '@dsh-vscode/domain'
+import type { DshBackend, SessionDetail, WorkspaceSummary } from '@dsh-vscode/domain'
 
 import type * as SessionOwnership from '../view/session-ownership.js'
 import type * as RegisterWorkspaceFolders from '../backend/register-workspace-folders.js'
@@ -24,9 +24,43 @@ vi.mock(
   }),
 )
 
-import { createSessionScope } from './session-scope.js'
+import { createSessionScope, requireCatalogOwnedSession } from './session-scope.js'
 
 const workspace: WorkspaceSummary = { id: 'ws-1', name: 'project', path: '/project' } as WorkspaceSummary
+
+describe('fork ownership without migration', () => {
+  it('checks the catalog and durable parents without reading or opening history', async () => {
+    const get = vi.fn()
+    const open = vi.fn()
+    const backend = {
+      sessions: {
+        get,
+        open,
+        list: vi.fn(() =>
+          Promise.resolve({
+            items: [
+              { id: 'old', workspaceId: 'ws-1', formatStatus: 'migration-required' },
+              { id: 'foreign', workspaceId: 'ws-2' },
+            ],
+          }),
+        ),
+      },
+      workspaces: { listArchivedSessionIds: vi.fn(() => Promise.resolve(['archived'])) },
+      subagents: { parentOf: (id: string) => (id === 'child' ? 'old' : undefined) },
+    } as unknown as DshBackend
+    const signal = new AbortController().signal
+    await expect(requireCatalogOwnedSession(backend, 'old', [workspace], [], signal)).resolves.toBeUndefined()
+    await expect(
+      requireCatalogOwnedSession(backend, 'child', [workspace], [], signal),
+    ).resolves.toBeUndefined()
+    for (const id of ['foreign', 'missing', 'archived'])
+      await expect(requireCatalogOwnedSession(backend, id, [workspace], [], signal)).rejects.toMatchObject({
+        code: 'PERMISSION_DENIED',
+      })
+    expect(get).not.toHaveBeenCalled()
+    expect(open).not.toHaveBeenCalled()
+  })
+})
 
 function scopeWith(overrides: {
   readonly archivedSessionIds?: readonly string[]

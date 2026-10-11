@@ -27,6 +27,7 @@ import { Rc171VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc1
 import { Rc172VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc172/adapter.js'
 import { Rc201VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc201/adapter.js'
 import { Rc202VersionAdapter } from '../../packages/dsh-adapter/src/versions/rc202/adapter.js'
+import { Alpha212VersionAdapter } from '../../packages/dsh-adapter/src/versions/alpha212/adapter.js'
 import { Alpha211VersionAdapter } from '../../packages/dsh-adapter/src/versions/alpha211/adapter.js'
 import { acquireManagedRuntimeScope, type ManagedRuntimeScope } from './runtime-scope.js'
 import { resolveLiveRuntime } from './runtime.js'
@@ -187,6 +188,7 @@ export async function startManagedRuntime(options?: {
     steps.push(`managed start pid=${started.pid} endpoint=${started.endpoint.baseUrl}`)
 
     const adapters = [
+      new Alpha212VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
       new Alpha211VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
       new Rc202VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),
       new Rc201VersionAdapter(adapterOptions(endpointCookie, options?.exportFileSystem)),

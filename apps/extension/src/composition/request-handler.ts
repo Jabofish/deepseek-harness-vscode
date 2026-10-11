@@ -53,14 +53,14 @@ import {
   publicDiagnosticsSnapshot,
   publicExtensionSettings,
   publicList,
-  publicValue,
+  publicValue as projectPublicValue,
 } from './public-projection.js'
 import { questionResponse } from './session-payload.js'
 import { featureContextItem, listOpenFileCandidates, readOpenFileAttachment } from './editor-files.js'
 import { pathExists } from './runtime.js'
 import { sameWorkspacePath } from './workspace-state.js'
 import { resolveLinkTarget } from '../navigation/link-target.js'
-import type { SessionScope } from './session-scope.js'
+import { requireCatalogOwnedSession, type SessionScope } from './session-scope.js'
 import type { PostHostMessage } from './host-event-pipeline.js'
 
 export interface OpenLinkResult {
@@ -187,6 +187,16 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
     stopAllJobFollows,
     editorContextProvider,
   } = deps
+  const publicValue = (value: unknown): unknown =>
+    projectPublicValue(value, [
+      ...currentWorkspaceFolders().map((folder) => folder.uri.fsPath),
+      ...(temporaryWorkspaceManager.current?.path === undefined
+        ? []
+        : [temporaryWorkspaceManager.current.path]),
+      ...(temporaryWorkspaceManager.reference?.path === undefined
+        ? []
+        : [temporaryWorkspaceManager.reference.path]),
+    ])
   const openMarkdownLink = async (href: string, revealInFolder = false): Promise<OpenLinkResult> => {
     const target = href.trim()
     const fileUri = target.toLowerCase().startsWith('file:') ? vscode.Uri.parse(target) : undefined
@@ -452,7 +462,13 @@ export function createRequestGateway(deps: RequestGatewayDependencies): RequestG
       return sessionUseCases.remove(request.payload.sessionId, signal)
     }
     if (request.type === 'session.fork') {
-      await requireCurrentWorkspaceSession(request.payload.sessionId, signal)
+      await requireCatalogOwnedSession(
+        backendService.requireBackend(),
+        request.payload.sessionId,
+        await listCurrentWorkspaces(signal),
+        currentWorkspaceFolders(),
+        signal,
+      )
       return publicValue(
         withSessionWorkspaceScope(
           await sessionUseCases.fork(request.payload.sessionId, request.payload.atSeq, signal),

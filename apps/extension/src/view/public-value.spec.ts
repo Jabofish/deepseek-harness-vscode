@@ -1,9 +1,30 @@
 import { describe, expect, it } from 'vitest'
+import path from 'node:path'
 import { rc6Mapper } from '@dsh-vscode/dsh-adapter'
 
 import { publicWorkspaceRelativePath, publicWorkspaceSummary, sanitizePublicValue } from './public-value.js'
 
 describe('public Webview value projection', () => {
+  it('projects operation-time paths within owned roots and hides directory projections and install targets', () => {
+    const root = path.resolve('fixture-project')
+    const operationPath = path.join(root, 'next', 'file.ts')
+    const outside = path.resolve('fixture-outside', 'secret.ts')
+    const payload = {
+      projection: { values: { workingDirectory: path.join(root, 'next'), title: 'Fixture' } },
+      tool: { locations: [{ path: operationPath }, { path: outside }], presentation: { cwd: root } },
+      installTarget: { spec: outside, version: '0.2.1-alpha.2' },
+    }
+    const result = sanitizePublicValue(payload, undefined, [root])
+    expect(result).toEqual({
+      projection: { values: { title: 'Fixture' } },
+      tool: { locations: [{ path: 'next/file.ts' }], presentation: {} },
+    })
+    expect(
+      sanitizePublicValue({ type: 'session.projection', key: 'workingDirectory', value: root, sequence: 4 }),
+    ).toEqual({ type: 'session.projection', key: 'workingDirectory', value: null, sequence: 4 })
+    expect(JSON.stringify(result)).not.toContain(root)
+  })
+
   it('retains the bounded session-search signal for the Webview', () => {
     expect(sanitizePublicValue({ items: [], searchHasMore: true })).toEqual({
       items: [],
@@ -125,5 +146,10 @@ describe('public Webview value projection', () => {
         root,
       ]),
     ).toBeUndefined()
+    const inside = process.platform === 'win32' ? 'C:\\workspace\\file.ts' : '/workspace/file.ts'
+    const outside = process.platform === 'win32' ? 'C:\\private\\file.ts' : '/private/file.ts'
+    expect(sanitizePublicValue({ paths: [inside, outside] }, undefined, [root])).toEqual({
+      paths: ['file.ts'],
+    })
   })
 })

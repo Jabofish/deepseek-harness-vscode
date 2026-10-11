@@ -24,6 +24,21 @@ const SESSION_EVENT_KEYS = [
   'sourceEventSeqs',
 ] as const
 
+/** Exact adapters extend V4 admission without changing older versions. */
+export interface AlphaV4SessionProfile {
+  readonly validateHeader?: (header: unknown) => void
+  readonly validateEvent?: (event: unknown) => void
+  readonly restoreArtifact?: (artifact: unknown, known: ReadonlySet<string>) => void
+  readonly eventValidators: Readonly<Record<string, (data: unknown) => boolean>>
+  readonly normalizeEvent?: (event: Record<string, unknown>) => Record<string, unknown>
+}
+
+function knownTypes(profile?: AlphaV4SessionProfile): ReadonlySet<string> {
+  return profile === undefined
+    ? KNOWN_SESSION_EVENT_TYPES
+    : new Set([...KNOWN_SESSION_EVENT_TYPES, ...Object.keys(profile.eventValidators)])
+}
+
 export interface Alpha171SessionEvent extends Record<string, unknown> {
   readonly type: string
   readonly seq: number
@@ -46,7 +61,10 @@ export interface Alpha171SessionSnapshot extends Record<string, unknown> {
   readonly assistantStream?: unknown
 }
 
-export function validAlpha171SessionEvent(value: unknown): value is Alpha171SessionEvent {
+export function validAlpha171SessionEvent(
+  value: unknown,
+  profile?: AlphaV4SessionProfile,
+): value is Alpha171SessionEvent {
   const event = plainRecord(value)
   if (
     event === undefined ||
@@ -64,13 +82,18 @@ export function validAlpha171SessionEvent(value: unknown): value is Alpha171Sess
     return false
 
   try {
-    if (!KNOWN_SESSION_EVENT_TYPES.has(event.type)) return event.ignorable === true
-    validateSurfaceMetadata(event as Alpha171SessionEvent)
-    assertV4RowAdmission(event, KNOWN_SESSION_EVENT_TYPES)
+    const known = knownTypes(profile)
+    if (!known.has(event.type)) return event.ignorable === true
+    const validate = profile?.eventValidators[event.type]
+    if (validate !== undefined && !validate(event.data)) return false
+    validateSurfaceMetadata(event as Alpha171SessionEvent, known)
+    assertV4RowAdmission(event, known)
     validateMessageSources(event as Alpha171SessionEvent)
-    releasedV4SessionFormatCodec.encodeEvent(
-      event as Parameters<typeof releasedV4SessionFormatCodec.encodeEvent>[0],
-    )
+    if (profile?.validateEvent !== undefined) profile.validateEvent(event)
+    else
+      releasedV4SessionFormatCodec.encodeEvent(
+        event as Parameters<typeof releasedV4SessionFormatCodec.encodeEvent>[0],
+      )
     if (event.type === 'tool/result' && !validV4ToolResultEvent(event)) return false
     const data = plainRecord(event.data)
     if (
@@ -85,17 +108,23 @@ export function validAlpha171SessionEvent(value: unknown): value is Alpha171Sess
   }
 }
 
-export function validAlpha171HistoryRecord(value: unknown): value is Alpha171SessionHistoryRecord {
+export function validAlpha171HistoryRecord(
+  value: unknown,
+  profile?: AlphaV4SessionProfile,
+): value is Alpha171SessionHistoryRecord {
   const record = plainRecord(value)
   return (
     record !== undefined &&
     hasExactKeys(record, ['type', 'event']) &&
     record.type === 'event' &&
-    validAlpha171SessionEvent(record.event)
+    validAlpha171SessionEvent(record.event, profile)
   )
 }
 
-export function validAlpha171SessionSnapshot(value: unknown): value is Alpha171SessionSnapshot {
+export function validAlpha171SessionSnapshot(
+  value: unknown,
+  profile?: AlphaV4SessionProfile,
+): value is Alpha171SessionSnapshot {
   const record = plainRecord(value)
   if (record === undefined || record.type !== 'snapshot') return false
   const expectedKeys = Object.hasOwn(record, 'assistantStream')
@@ -103,11 +132,11 @@ export function validAlpha171SessionSnapshot(value: unknown): value is Alpha171S
     : ['type', 'header', 'cursor', 'records', 'hasMore', 'projections']
   return (
     hasExactKeys(record, expectedKeys) &&
-    validAlpha171SessionHeader(record.header) &&
+    validAlpha171SessionHeader(record.header, profile) &&
     isSafeCursor(record.cursor) &&
     Array.isArray(record.records) &&
-    record.records.every(validAlpha171HistoryRecord) &&
-    validSnapshotRelationships(record) &&
+    record.records.every((entry) => validAlpha171HistoryRecord(entry, profile)) &&
+    validSnapshotRelationships(record, knownTypes(profile), profile) &&
     typeof record.hasMore === 'boolean' &&
     validAlpha171ProjectionBaseline(record.projections) &&
     (record.assistantStream === undefined || isJsonLike(record.assistantStream))
@@ -127,13 +156,14 @@ export function validAlpha171ProjectionBaseline(value: unknown): value is Record
 
 export function validAlpha171SessionEventFrame(
   value: unknown,
+  profile?: AlphaV4SessionProfile,
 ): value is { readonly type: 'event'; readonly event: Alpha171SessionEvent } {
   const record = plainRecord(value)
   return (
     record !== undefined &&
     hasExactKeys(record, ['type', 'event']) &&
     record.type === 'event' &&
-    validAlpha171SessionEvent(record.event)
+    validAlpha171SessionEvent(record.event, profile)
   )
 }
 
@@ -322,14 +352,14 @@ const SURFACE_EVENT_TYPES = new Set([
   'assistant/message',
   'tool/result',
 ])
-function validateSurfaceMetadata(event: Alpha171SessionEvent): void {
+function validateSurfaceMetadata(event: Alpha171SessionEvent, known: ReadonlySet<string>): void {
   const isSurface = SURFACE_EVENT_TYPES.has(event.type)
   const surfaceOp = event.surfaceOp
   const sourceEventSeqs = event.sourceEventSeqs
   if (!isSurface) {
     // Unknown ignorable records may carry opaque metadata. Known and required
     // records must not silently acquire surface semantics.
-    if (!(!KNOWN_SESSION_EVENT_TYPES.has(event.type) && event.ignorable === true)) {
+    if (!(!known.has(event.type) && event.ignorable === true)) {
       if (surfaceOp !== undefined || sourceEventSeqs !== undefined)
         throw new Error('non-surface event carries surface metadata')
     }
@@ -362,9 +392,9 @@ function validateSurfaceMetadata(event: Alpha171SessionEvent): void {
   }
 }
 
-function validAlpha171SessionHeader(value: unknown): boolean {
+function validAlpha171SessionHeader(value: unknown, profile?: AlphaV4SessionProfile): boolean {
   try {
-    assertReleasedV4Header(headerForArtifactValidation(value))
+    ;(profile?.validateHeader ?? assertReleasedV4Header)(headerForArtifactValidation(value))
     return true
   } catch {
     return false
@@ -423,7 +453,11 @@ function validateMessageSources(event: Alpha171SessionEvent): void {
   }
 }
 
-function validSnapshotRelationships(snapshot: Record<string, unknown>): boolean {
+function validSnapshotRelationships(
+  snapshot: Record<string, unknown>,
+  known: ReadonlySet<string>,
+  profile?: AlphaV4SessionProfile,
+): boolean {
   const records = snapshot.records as Alpha171SessionHistoryRecord[]
   const events = records.map((record) => record.event)
   for (let i = 1; i < events.length; i++) if (events[i]!.seq <= events[i - 1]!.seq) return false
@@ -436,13 +470,13 @@ function validSnapshotRelationships(snapshot: Record<string, unknown>): boolean 
       events
         .filter((event) => event.type === 'session/end-seed' && plainRecord(event.data)?.inherited === true)
         .at(-1)?.seq ?? 0
-    restoreReleasedV4Artifact(
+    ;(profile?.restoreArtifact ?? restoreReleasedV4Artifact)(
       {
         header: headerForArtifactValidation(snapshot.header),
         inheritedEventCount: inherited,
         events,
       } as Parameters<typeof restoreReleasedV4Artifact>[0],
-      KNOWN_SESSION_EVENT_TYPES,
+      known,
     )
     return true
   } catch {
